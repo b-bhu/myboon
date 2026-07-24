@@ -1,134 +1,42 @@
-import {
-  type MeteoraExecutionController,
-  type MeteoraExecutionError,
-  type MeteoraExecutionProgress,
-  type MeteoraExecutionRequest,
-  type MeteoraExecutionResult,
-  type MeteoraExecutionWallet,
-  type MeteoraPendingExecution,
-  type MeteoraTransactionBundleLike,
-  type MeteoraWalletReadiness,
-} from './meteora.pending';
-
-export * from './meteora.pending';
-
-export interface MeteoraExecutionDependencies {
-  connection?: unknown;
-  pendingStore?: unknown;
-  pendingStorage?: unknown;
-  getWalletSnapshot?: () => MeteoraExecutionWallet;
-  explorerBaseUrl?: string;
-}
-
-const UNSUPPORTED_MESSAGE = 'Meteora transaction execution is available in the mobile app only.';
-
-function unsupportedError(): MeteoraExecutionError {
-  return {
-    code: 'EXECUTION_UNSUPPORTED',
-    message: UNSUPPORTED_MESSAGE,
-    retryable: false,
-  };
-}
-
-function emitUnsupported<TTransaction, TSigner>(
-  request: MeteoraExecutionRequest<TTransaction, TSigner>,
-): MeteoraExecutionProgress {
-  const progress: MeteoraExecutionProgress = {
-    intentId: request.intentId,
-    stage: 'unsupported',
-    currentStep: 0,
-    totalSteps: 0,
-    signatures: [],
-    explorerUrls: [],
-    message: UNSUPPORTED_MESSAGE,
-    error: unsupportedError(),
-    pending: null,
-  };
-  request.onProgress?.(progress);
-  return progress;
-}
-
-function unsupportedResult(
-  intentId: string,
-  pending: MeteoraPendingExecution | null = null,
-): MeteoraExecutionResult {
-  return {
-    intentId,
-    status: 'unsupported',
-    signatures: pending?.steps.map((step) => step.signature) ?? [],
-    explorerUrls: pending?.steps.map((step) => step.explorerUrl) ?? [],
-    resourceAddress: pending?.resourceAddress ?? null,
-    pending,
-    error: unsupportedError(),
-  };
-}
-
-export function getMeteoraWalletReadiness(
-  wallet: MeteoraExecutionWallet,
-): MeteoraWalletReadiness {
-  if (wallet.isPreparing) {
-    return {
-      status: 'wallet_preparing',
-      canExecute: false,
-      walletAddress: wallet.address,
-      message: 'Wallet session is still preparing.',
-      requirement: 'wait',
-    };
-  }
-  if (!wallet.connected || !wallet.address) {
-    return {
-      status: 'disconnected',
-      canExecute: false,
-      walletAddress: null,
-      message: 'Connect a Solana wallet in the mobile app to continue.',
-      requirement: 'connect_wallet',
-    };
-  }
-  return {
-    status: 'wallet_unsupported',
-    canExecute: false,
-    walletAddress: wallet.address,
-    message: UNSUPPORTED_MESSAGE,
-    requirement: 'sign_and_send_transaction',
-  };
-}
+import type { MeteoraPendingStorage } from './meteora.pending';
 
 /**
- * Browser-safe execution controller. It never imports web3, the DLMM SDK, or
- * invokes the build callback, so opening the read-only web detail screen cannot
- * pull transaction dependencies into the browser bundle.
+ * Web execution controller.
+ *
+ * The engine in `meteora.execution.native.ts` is plain Solana/web3.js logic
+ * with no React Native dependency except its `AsyncStorage`-backed pending
+ * storage, which is already an injectable `pendingStorage` option. Re-export
+ * that same engine here and swap in a browser-storage backend so web (via a
+ * connected browser wallet, e.g. Phantom) can build, simulate, sign, submit,
+ * and recover Meteora transactions exactly like native does. This exists for
+ * local testing — myBoon does not ship Meteora execution as a web product
+ * feature (see meteora.form-execution.web.ts).
  */
-export function createMeteoraExecutionController<
-  TTransaction = unknown,
-  TSigner = unknown,
->(
-  _dependencies: MeteoraExecutionDependencies = {},
-): MeteoraExecutionController<TTransaction, TSigner> {
+export * from './meteora.execution.native';
+
+export function createWebMeteoraPendingStorage(): MeteoraPendingStorage {
   return {
-    async execute(request) {
-      emitUnsupported(request);
-      return unsupportedResult(request.intentId);
+    async getItem(key) {
+      try {
+        return window.localStorage.getItem(key);
+      } catch {
+        return null;
+      }
     },
-    async recover(pending, options) {
-      const progress: MeteoraExecutionProgress = {
-        intentId: pending.intentId,
-        stage: 'unsupported',
-        currentStep: pending.steps.length,
-        totalSteps: pending.totalSteps,
-        signatures: pending.steps.map((step) => step.signature),
-        explorerUrls: pending.steps.map((step) => step.explorerUrl),
-        message: UNSUPPORTED_MESSAGE,
-        error: unsupportedError(),
-        pending,
-      };
-      options?.onProgress?.(progress);
-      return unsupportedResult(pending.intentId, pending);
+    async setItem(key, value) {
+      try {
+        window.localStorage.setItem(key, value);
+      } catch {
+        // Best-effort only — a private-browsing quota error must never break
+        // a submission that has already reached the network.
+      }
     },
-    activeIntentId() {
-      return null;
+    async removeItem(key) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        // Ignore — see setItem.
+      }
     },
   };
 }
-
-// Ensures structural bundle compatibility remains visible to TypeScript users.
-export type WebMeteoraTransactionBundle = MeteoraTransactionBundleLike<unknown, unknown>;

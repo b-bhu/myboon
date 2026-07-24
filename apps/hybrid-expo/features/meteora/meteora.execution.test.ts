@@ -17,7 +17,7 @@ import {
 } from './meteora.execution';
 import {
   createMeteoraExecutionController as createWebExecutionController,
-  getMeteoraWalletReadiness as getWebWalletReadiness,
+  createWebMeteoraPendingStorage,
 } from './meteora.execution.web';
 
 const walletKeypair = Keypair.generate();
@@ -612,30 +612,49 @@ async function testOnchainFailureAndSyncPending(): Promise<void> {
   assert.ok(syncPending.pending);
 }
 
-async function testWebExecutionIsGuardedWithoutBuilding(): Promise<void> {
-  let buildCalls = 0;
-  const web = createWebExecutionController<Transaction, Keypair>();
-  assert.equal(getWebWalletReadiness({
-    connected: true,
-    address: walletKeypair.publicKey.toBase58(),
-    signAndSendTransaction: async () => 'not-used',
-  }).status, 'wallet_unsupported');
+// Web reuses the same engine as native (browser wallets satisfy the same
+// signAndSendTransaction/Connection shape) — only the pending-storage backend
+// differs, so this exercises the real happy path through the web entry point
+// rather than a separate "guarded/unsupported" contract.
+async function testWebExecutionRunsTheRealEngine(): Promise<void> {
+  const connection = new FakeConnection();
+  const web = createWebExecutionController({
+    connection,
+    pendingStore: createMeteoraPendingStore(createMemoryMeteoraPendingStorage()),
+  });
 
   const response = await web.execute(request({
-    build: async () => {
-      buildCalls += 1;
-      return {
-        action: 'create_position',
-        poolAddress,
-        resourceAddress: null,
-        transactions: [transaction()],
-        additionalSigners: [],
-      };
-    },
+    build: async () => ({
+      action: 'create_position',
+      poolAddress,
+      resourceAddress: null,
+      transactions: [transaction()],
+      additionalSigners: [],
+    }),
   }));
-  assert.equal(response.status, 'unsupported');
-  assert.equal(response.error?.code, 'EXECUTION_UNSUPPORTED');
-  assert.equal(buildCalls, 0);
+  assert.equal(response.status, 'complete');
+  assert.equal(response.signatures.length, 1);
+}
+
+async function testWebPendingStorageIsBrowserBacked(): Promise<void> {
+  const store = new Map<string, string>();
+  const fakeLocalStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value); },
+    removeItem: (key: string) => { store.delete(key); },
+  };
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = { localStorage: fakeLocalStorage };
+  try {
+    const storage = createWebMeteoraPendingStorage();
+    await storage.setItem('k', 'v');
+    assert.equal(await storage.getItem('k'), 'v');
+    assert.equal(store.get('k'), 'v');
+    await storage.removeItem('k');
+    assert.equal(await storage.getItem('k'), null);
+  } finally {
+    (globalThis as { window?: unknown }).window = originalWindow;
+  }
 }
 
 async function main(): Promise<void> {
@@ -652,7 +671,8 @@ async function main(): Promise<void> {
   await testPersistenceFailureBlocksWalletPrompt();
   await testStartedMultiStepPlanContinuesPastPreviewExpiry();
   await testOnchainFailureAndSyncPending();
-  await testWebExecutionIsGuardedWithoutBuilding();
+  await testWebExecutionRunsTheRealEngine();
+  await testWebPendingStorageIsBrowserBacked();
   console.log('Meteora mobile execution tests passed');
 }
 
