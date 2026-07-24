@@ -1,9 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   EntityInput,
+  EntityMemoryConsolidationPatch,
   EntityMemoryInput,
   EntityMemoryRecord,
   EntityMemoryStore,
+  EntityMemoryType,
   EntityRecord,
   MemoryLookupKey,
 } from './types'
@@ -213,6 +215,35 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     if (error) throw new Error(`entity memory upsert failed: ${error.message}`)
     return (data ?? []).map(normalizeMemory)
   }
+
+  async findLatestMemorySince(
+    entityId: string,
+    memoryType: EntityMemoryType,
+    sinceIso: string,
+  ): Promise<EntityMemoryRecord | null> {
+    const { data, error } = await this.db
+      .from('entity_memories')
+      .select(MEMORY_SELECT)
+      .eq('entity_id', entityId)
+      .eq('memory_type', memoryType)
+      .gte('observed_at', sinceIso)
+      .order('observed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle() as unknown as EntityRowResult
+    if (error) throw new Error(`latest entity memory lookup failed: ${error.message}`)
+    return data ? normalizeMemory(data) : null
+  }
+
+  async updateMemory(id: string, patch: EntityMemoryConsolidationPatch): Promise<EntityMemoryRecord> {
+    const { data, error } = await this.db
+      .from('entity_memories')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select(MEMORY_SELECT)
+      .single() as unknown as EntityRowResult
+    if (error) throw new Error(`entity memory update failed: ${error.message}`)
+    return normalizeMemory(data)
+  }
 }
 
 function isMissingCarouselColumn(error: { message?: string; code?: string } | null | undefined): boolean {
@@ -228,6 +259,7 @@ function carouselMigrationError(): Error {
 export const __testing = {
   ENTITY_SELECT,
   LEGACY_ENTITY_SELECT,
+  MEMORY_SELECT,
   normalizeEntity,
   isMissingCarouselColumn,
 }

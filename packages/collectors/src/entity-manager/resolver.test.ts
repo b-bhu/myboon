@@ -149,6 +149,164 @@ test('writeExtraction preserves carousel selection while reusing and enriching a
   assert.deepEqual(store.entities[0].aliases, ['Bitcoin', 'BTC'])
 })
 
+test('writeExtraction consolidates a same-window Polymarket market_signal into the existing entity memory instead of inserting a new row', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const first = await writeExtraction(store, {
+    ...packet,
+    sourceResearchId: 'research-wti-60',
+    context: { candidate: { tag_slug: 'commodities' } },
+  }, provider({
+    primaryEntities: [{ name: 'Crude Oil (WTI)', type: 'asset', slug: 'crude-oil-wti', aliases: ['WTI'] }],
+    memories: [{
+      entitySlug: 'crude-oil-wti',
+      memoryType: 'market_signal',
+      title: 'WTI hit $60 low',
+      summary: 'WTI $60 low odds moved from 41.5% to 22.5%.',
+      evidence: [{ url: 'https://polymarket.com/market/wti-60-low' }],
+      mentions: ['Polymarket'],
+    }],
+  }))
+  assert.equal(first.entitiesCreated, 1)
+  assert.equal(first.memoriesConsolidated, 0)
+
+  const second = await writeExtraction(store, {
+    ...packet,
+    sourceResearchId: 'research-wti-80',
+    observedAt: new Date(Date.parse(packet.observedAt) + 3_600_000).toISOString(),
+    context: { candidate: { tag_slug: 'commodities' } },
+  }, provider({
+    primaryEntities: [{ name: 'Crude Oil (WTI)', type: 'asset', slug: 'crude-oil-wti', aliases: ['WTI'] }],
+    memories: [{
+      entitySlug: 'crude-oil-wti',
+      memoryType: 'market_signal',
+      title: 'WTI hit $80 high',
+      summary: 'WTI $80 high odds moved from 19% to 9%.',
+      evidence: [{ url: 'https://polymarket.com/market/wti-80-high' }],
+      mentions: ['Polymarket'],
+    }],
+  }))
+
+  assert.equal(second.entitiesCreated, 0)
+  assert.equal(second.memoriesConsolidated, 1)
+  const marketSignals = store.memories.filter((memory) => memory.memory_type === 'market_signal')
+  assert.equal(marketSignals.length, 1, 'the second observation should fold into the first row, not add a new one')
+  assert.equal(marketSignals[0].summary, 'WTI $80 high odds moved from 19% to 9%.')
+  assert.equal(marketSignals[0].context.consolidated_observation_count, 2)
+  assert.deepEqual(marketSignals[0].evidence, [
+    { url: 'https://polymarket.com/market/wti-60-low' },
+    { url: 'https://polymarket.com/market/wti-80-high' },
+  ])
+})
+
+test('writeExtraction inserts a fresh Polymarket market_signal once the consolidation window has elapsed', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  await writeExtraction(store, {
+    ...packet,
+    sourceResearchId: 'research-wti-early',
+    context: { candidate: { tag_slug: 'commodities' } },
+  }, provider({
+    primaryEntities: [{ name: 'Crude Oil (WTI)', type: 'asset', slug: 'crude-oil-wti', aliases: ['WTI'] }],
+    memories: [{
+      entitySlug: 'crude-oil-wti',
+      memoryType: 'market_signal',
+      title: 'WTI hit $60 low',
+      summary: 'First observation.',
+    }],
+  }))
+
+  const later = await writeExtraction(store, {
+    ...packet,
+    sourceResearchId: 'research-wti-later',
+    // commodities window is 12h — 13h later must not consolidate.
+    observedAt: new Date(Date.parse(packet.observedAt) + 13 * 3_600_000).toISOString(),
+    context: { candidate: { tag_slug: 'commodities' } },
+  }, provider({
+    primaryEntities: [{ name: 'Crude Oil (WTI)', type: 'asset', slug: 'crude-oil-wti', aliases: ['WTI'] }],
+    memories: [{
+      entitySlug: 'crude-oil-wti',
+      memoryType: 'market_signal',
+      title: 'WTI hit $90 high',
+      summary: 'Second, later observation.',
+    }],
+  }))
+
+  assert.equal(later.memoriesConsolidated, 0)
+  const marketSignals = store.memories.filter((memory) => memory.memory_type === 'market_signal')
+  assert.equal(marketSignals.length, 2, 'observations outside the window should remain separate rows')
+})
+
+test('writeExtraction uses the default 24h window for a Polymarket tag not in the shortened list', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  await writeExtraction(store, {
+    ...packet,
+    sourceResearchId: 'research-politics-1',
+    context: { candidate: { tag_slug: 'politics' } },
+  }, provider({
+    primaryEntities: [{ name: 'US Election', type: 'event', slug: 'us-election' }],
+    memories: [{
+      entitySlug: 'us-election',
+      memoryType: 'market_signal',
+      title: 'Election odds moved',
+      summary: 'First observation.',
+    }],
+  }))
+
+  // 13h later is inside the 24h default window (unlike the 12h commodities window).
+  const second = await writeExtraction(store, {
+    ...packet,
+    sourceResearchId: 'research-politics-2',
+    observedAt: new Date(Date.parse(packet.observedAt) + 13 * 3_600_000).toISOString(),
+    context: { candidate: { tag_slug: 'politics' } },
+  }, provider({
+    primaryEntities: [{ name: 'US Election', type: 'event', slug: 'us-election' }],
+    memories: [{
+      entitySlug: 'us-election',
+      memoryType: 'market_signal',
+      title: 'Election odds moved again',
+      summary: 'Second observation.',
+    }],
+  }))
+
+  assert.equal(second.memoriesConsolidated, 1)
+  assert.equal(store.memories.filter((memory) => memory.memory_type === 'market_signal').length, 1)
+})
+
+test('writeExtraction does not consolidate memories from non-Polymarket sources', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const newsPacket: ResearchPacket = {
+    ...packet,
+    source: 'news',
+    sourceArea: 'crypto',
+    sourceResearchId: 'news-1',
+  }
+  await writeExtraction(store, newsPacket, provider({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+    memories: [{
+      entitySlug: 'bitcoin',
+      memoryType: 'market_signal',
+      title: 'Bitcoin news event one',
+      summary: 'First article.',
+    }],
+  }))
+
+  const second = await writeExtraction(store, {
+    ...newsPacket,
+    sourceResearchId: 'news-2',
+    observedAt: new Date(Date.parse(packet.observedAt) + 3_600_000).toISOString(),
+  }, provider({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+    memories: [{
+      entitySlug: 'bitcoin',
+      memoryType: 'market_signal',
+      title: 'Bitcoin news event two',
+      summary: 'Second article.',
+    }],
+  }))
+
+  assert.equal(second.memoriesConsolidated, 0)
+  assert.equal(store.memories.filter((memory) => memory.memory_type === 'market_signal').length, 2)
+})
+
 test('writeExtraction stores a market signal under the durable entity instead of the market', async () => {
   const store = new InMemoryEntityMemoryStore()
   await writeExtraction(store, {

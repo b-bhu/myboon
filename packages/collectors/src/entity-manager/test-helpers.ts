@@ -1,8 +1,10 @@
 import type {
   EntityInput,
+  EntityMemoryConsolidationPatch,
   EntityMemoryInput,
   EntityMemoryRecord,
   EntityMemoryStore,
+  EntityMemoryType,
   EntityRecord,
   MemoryLookupKey,
 } from './types'
@@ -95,5 +97,28 @@ export class InMemoryEntityMemoryStore implements EntityMemoryStore {
       upserted.push(memory)
     }
     return upserted
+  }
+
+  async findLatestMemorySince(
+    entityId: string,
+    memoryType: EntityMemoryType,
+    sinceIso: string,
+  ): Promise<EntityMemoryRecord | null> {
+    const since = Date.parse(sinceIso)
+    const matches = this.memories
+      .filter((memory) => (
+        memory.entity_id === entityId
+        && memory.memory_type === memoryType
+        && Date.parse(memory.observed_at) >= since
+      ))
+      .sort((a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at))
+    return matches[0] ?? null
+  }
+
+  async updateMemory(id: string, patch: EntityMemoryConsolidationPatch): Promise<EntityMemoryRecord> {
+    const index = this.memories.findIndex((memory) => memory.id === id)
+    if (index === -1) throw new Error(`missing memory ${id}`)
+    this.memories[index] = { ...this.memories[index], ...patch, updated_at: new Date().toISOString() }
+    return this.memories[index]
   }
 }

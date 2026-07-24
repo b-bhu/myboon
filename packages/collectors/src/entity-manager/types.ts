@@ -141,6 +141,25 @@ export interface EntityMemoryStore {
   updateEntity(entity: EntityRecord): Promise<EntityRecord>
   findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]>
   upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]>
+  /**
+   * Most recent memory of `memoryType` for `entityId` at or after `sinceIso`,
+   * using the existing `entity_memories_entity_time_idx` (entity_id,
+   * observed_at DESC) partial index — no schema change required.
+   */
+  findLatestMemorySince(entityId: string, memoryType: EntityMemoryType, sinceIso: string): Promise<EntityMemoryRecord | null>
+  updateMemory(id: string, patch: EntityMemoryConsolidationPatch): Promise<EntityMemoryRecord>
+}
+
+export interface EntityMemoryConsolidationPatch {
+  observed_at: string
+  event_at: string | null
+  summary: string
+  body: string | null
+  confidence: number | null
+  evidence: unknown[]
+  mentions: string[]
+  metrics: Record<string, unknown>
+  context: Record<string, unknown>
 }
 
 export interface MemoryLookupKey {
@@ -163,6 +182,14 @@ export interface WriteExtractionResult {
   entitiesCreated: number
   entitiesReused: number
   memoriesWritten: number
+  /**
+   * Market-signal memories folded into an existing recent memory for the
+   * same entity instead of inserting a new row (see
+   * POLYMARKET_CONSOLIDATION_WINDOW_HOURS in resolver.ts). Included in
+   * memoriesWritten's total for backward-compatible counters, but broken out
+   * separately so the actual bloat-prevention rate is visible.
+   */
+  memoriesConsolidated: number
   markerStatus: SourceProcessingStatus
 }
 
