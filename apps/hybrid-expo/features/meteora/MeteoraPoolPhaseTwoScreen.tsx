@@ -56,6 +56,8 @@ import {
 } from '@/features/meteora/meteora.form';
 import { meteoraPositionActionsAdapter } from '@/features/meteora/meteora.position-actions';
 import { useWallet } from '@/hooks/useWallet';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 
 const PREVIEW_DEBOUNCE_MS = 450;
 
@@ -108,6 +110,7 @@ export function MeteoraPoolPhaseTwoScreen({
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const wallet = useWallet();
+  const connectSheet = useConnectionSheet('solana');
   const requestId = useRef(0);
   const walletRef = useRef(wallet);
   const recoveryAttemptRef = useRef<string | null>(null);
@@ -585,12 +588,9 @@ export function MeteoraPoolPhaseTwoScreen({
     if (!wallet.connected) {
       setOperationState('awaiting_wallet');
       setOperationMessage('Connect your Solana wallet, then review and press the action again.');
-      try {
-        await wallet.connect();
-      } catch (error) {
-        setOperationState('error');
-        setOperationMessage(error instanceof Error ? error.message : 'Wallet connection was cancelled');
-      }
+      // The sheet surfaces its own connection errors on an error step, so there
+      // is no failure to catch and mirror into `operationMessage` here.
+      connectSheet.open('solana');
       return;
     }
     if (wallet.source === 'privy' || typeof wallet.signAndSendTransaction !== 'function') {
@@ -655,6 +655,7 @@ export function MeteoraPoolPhaseTwoScreen({
     onRefresh,
     stalePool,
     wallet,
+    connectSheet.open,
     addModePosition,
   ]);
 
@@ -986,6 +987,12 @@ export function MeteoraPoolPhaseTwoScreen({
           </Text>
         </ScrollView>
       )}
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }

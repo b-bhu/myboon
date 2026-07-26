@@ -21,6 +21,8 @@ import { AvatarTrigger } from '@/components/drawer/AvatarTrigger';
 import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
 import { MeteoraPositionActionSheet } from '@/features/meteora/components/MeteoraPositionActionSheet';
 import { meteoraClient } from '@/features/meteora/meteora.client';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useWallet } from '@/hooks/useWallet';
 
 type ProfileTab = 'positions' | 'history';
@@ -37,6 +39,7 @@ export function MeteoraProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const wallet = useWallet();
+  const connectSheet = useConnectionSheet('solana');
   const profileRequestId = useRef(0);
   const historyRequestId = useRef(0);
 
@@ -242,7 +245,7 @@ export function MeteoraProfileScreen() {
 
       {!wallet.connected ? (
         <DisconnectedState
-          onConnect={() => { void wallet.connect(); }}
+          onConnect={() => connectSheet.open('solana')}
           onBrowse={() => router.replace('/markets/meteora')}
         />
       ) : wallet.source !== 'mwa' ? (
@@ -307,6 +310,12 @@ export function MeteoraProfileScreen() {
         onClose={closeActionSheet}
         onAddLiquidity={goToAddLiquidity}
         onChanged={handlePositionChanged}
+      />
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
       />
     </View>
   );

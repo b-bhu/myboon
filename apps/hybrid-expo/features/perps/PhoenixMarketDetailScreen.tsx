@@ -14,6 +14,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTopBar } from '@/components/AppTopBar';
 import { useWallet } from '@/hooks/useWallet';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { formatUsdCompact } from '@/lib/format';
 import {
   buildPhoenixCancelConditionalOrder,
@@ -105,6 +107,7 @@ interface PhoenixMarketDetailScreenProps {
 export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenProps) {
   const router = useRouter();
   const wallet = useWallet();
+  const connectSheet = useConnectionSheet('solana');
   const insets = useSafeAreaInsets();
 
   const [market, setMarket] = useState<PhoenixMarket | null>(null);
@@ -522,9 +525,9 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
   const primaryButton = useMemo(() => {
     if (!wallet.connected) {
       return {
-        label: 'Connect Wallet',
+        label: 'Connect wallet',
         disabled: false,
-        onPress: () => wallet.connect(),
+        onPress: () => connectSheet.open('solana'),
       };
     }
     if (!readiness.wallet.canSignAndSendTransaction) {
@@ -569,6 +572,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
     };
   }, [
     wallet,
+    connectSheet.open,
     readiness.wallet.canSignAndSendTransaction,
     market?.tradeable,
     amountUsdc,
@@ -648,8 +652,8 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
               <Text style={styles.disconnectedText}>
                 Connect your wallet to trade {market.baseSymbol} perpetuals
               </Text>
-              <Pressable style={styles.connectWalletBtn} onPress={() => wallet.connect()}>
-                <Text style={styles.connectWalletText}>Connect Wallet</Text>
+              <Pressable style={styles.connectWalletBtn} onPress={() => connectSheet.open('solana')}>
+                <Text style={styles.connectWalletText}>Connect wallet</Text>
               </Pressable>
             </View>
           ) : (
@@ -853,6 +857,12 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
         if (!tpslModalBusy) setTpslModalPosition(null);
       }}
       onSubmit={handleSetPositionTpsl}
+    />
+
+    <ConnectionSheet
+      visible={connectSheet.visible}
+      chain={connectSheet.chain}
+      onClose={connectSheet.close}
     />
     </>
   );

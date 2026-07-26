@@ -21,6 +21,8 @@ import type { PricePoint, SportMarketDetail, SportOutcomeDetail, Orderbook } fro
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { useWallet } from '@/hooks/useWallet';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { semantic, tokens } from '@/theme';
 import { formatUsdCompact } from '@/lib/format';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
@@ -113,6 +115,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const router = useRouter();
   const poly = usePolymarketWallet();
   const wallet = useWallet();
+  const connectSheet = useConnectionSheet('solana');
   const { format, setFormat, formatOdds } = useOddsFormat();
   const { width: screenWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -710,20 +713,19 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     }
   }
 
-  async function handlePredictSetupPress() {
+  function handlePredictSetupPress() {
     if (setupSubmitting) return;
     if (!wallet.connected) {
+      // Predict's CLOB session is derived from a *Solana* signature
+      // (`usePolymarketWallet.enable()` signs with `useWallet().signMessage` and
+      // throws 'Connect your Solana wallet first'), so this opens the sheet for
+      // Solana even though Polymarket itself settles on Polygon. The effect
+      // below resumes session setup once the wallet lands.
       setSetupAfterConnect(true);
-      try {
-        await wallet.connect();
-      } catch (err: unknown) {
-        setSetupAfterConnect(false);
-        const msg = err instanceof Error ? err.message : 'Connect your wallet first.';
-        Alert.alert('Sign in failed', msg);
-      }
+      connectSheet.open('solana');
       return;
     }
-    await runPredictSetup();
+    void runPredictSetup();
   }
 
   useEffect(() => {
@@ -1001,6 +1003,17 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         quoteError={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.error ?? null : null}
         onClose={() => setCashOutPosition(null)}
         onConfirm={confirmCashOut}
+      />
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={() => {
+          // Cancelling the sheet abandons the pending session setup, so the
+          // resume effect must not fire if the user later connects elsewhere.
+          setSetupAfterConnect(false);
+          connectSheet.close();
+        }}
       />
     </View>
   );

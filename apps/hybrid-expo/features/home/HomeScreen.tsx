@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,8 +27,14 @@ import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { WalletActivityTiles } from '@/features/wallet/WalletActivityTiles';
 import { WalletHero } from '@/features/wallet/WalletHero';
+import { ChainRow } from '@/features/wallet/components/ChainRow';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useProtocolAccounts } from '@/features/wallet/useProtocolAccounts';
 import { useSectionVisibility } from '@/features/wallet/useSectionVisibility';
+import { activeChains, useChainActivation } from '@/features/chain/activation';
+import type { Chain } from '@/features/chain/chain.contract';
+import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import {
   WALLET_PROTOCOL_IDS,
   type WalletProtocolId,
@@ -120,6 +126,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const wallet = useWallet();
+  const evm = usePrivyEvmWallet();
+  const { activation, deactivate } = useChainActivation();
+  const connectSheet = useConnectionSheet('solana');
   const walletAddress = wallet.connected ? wallet.address : null;
   const { totals: walletTotals, sources: walletSources, notifyVisibility, refreshAll: refreshWallet, retrySource: retryWalletSource } = useProtocolAccounts(walletAddress);
   const { isVisible: walletSectionVisible, onSectionLayout, onViewportLayout, onScroll: onWalletScroll } = useSectionVisibility();
@@ -202,6 +211,40 @@ export default function HomeScreen() {
     router.push(app.route);
   }, [router]);
 
+  /**
+   * The Wallet surface forks on *activation*, not on `wallet.connected`.
+   * A user who logged in through an EVM application has an active EVM chain and
+   * a dormant Solana one, and must see EVM only — forking on the Solana
+   * accessor would have shown them nothing (spec, "Dormancy").
+   */
+  const chains = activeChains(activation);
+
+  const chainAddress = useCallback((chain: Chain): string | null => (
+    chain === 'solana' ? (wallet.connected ? wallet.address : null) : evm.address
+  ), [wallet.connected, wallet.address, evm.address]);
+
+  // Only chains with a real address render. An active chain whose wallet has not
+  // hydrated yet is omitted rather than shown with a placeholder address.
+  const displayChains = chains.filter((chain) => chainAddress(chain) !== null);
+
+  const handleDisconnectChain = useCallback((chain: Chain) => {
+    Alert.alert('Disconnect?', 'You can reconnect anytime.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: () => {
+          // Clearing activation is the session boundary. The underlying Privy
+          // login is left alone — this disconnects the chain, not the account.
+          void deactivate(chain);
+          if (chain === 'solana' && wallet.connected) {
+            void wallet.disconnect();
+          }
+        },
+      },
+    ]);
+  }, [deactivate, wallet]);
+
   return (
     <View style={styles.screen}>
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor }]} />
@@ -275,8 +318,12 @@ export default function HomeScreen() {
 
         <HomeSectionTitle title="Wallet" />
         <View style={styles.walletSection} onLayout={onSectionLayout}>
-          {wallet.connected ? (
+          {displayChains.length > 0 ? (
             <WalletPreview
+              chains={displayChains}
+              chainAddress={chainAddress}
+              solanaConnected={wallet.connected}
+              onDisconnectChain={handleDisconnectChain}
               walletTotals={walletTotals}
               walletSources={walletSources}
               hasAnyResolved={WALLET_PROTOCOL_IDS.some((id) => walletSources[id].valueUsd !== null && walletSources[id].resolvedAt !== null)}
@@ -288,7 +335,7 @@ export default function HomeScreen() {
               onOpenPacifica={() => router.push('/trade?view=profile')}
             />
           ) : (
-            <DisconnectedWalletState onConnect={() => { void wallet.connect(); }} />
+            <DisconnectedWalletState onConnect={() => connectSheet.open('solana')} />
           )}
         </View>
 
@@ -297,6 +344,11 @@ export default function HomeScreen() {
 
       <NarrativeSheet item={sheetItem} onClose={() => setSheetItem(null)} />
       <StorySheet story={storySheet} onClose={() => setStorySheet(null)} />
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }
@@ -427,6 +479,10 @@ function MarketAppBrandIcon({ icon }: { icon: MarketAppIcon }) {
 }
 
 function WalletPreview({
+  chains,
+  chainAddress,
+  solanaConnected,
+  onDisconnectChain,
   walletTotals,
   walletSources,
   hasAnyResolved,
@@ -437,6 +493,10 @@ function WalletPreview({
   onOpenPhoenix,
   onOpenPacifica,
 }: {
+  chains: readonly Chain[];
+  chainAddress: (chain: Chain) => string | null;
+  solanaConnected: boolean;
+  onDisconnectChain: (chain: Chain) => void;
   walletTotals: WalletTotals;
   walletSources: WalletSourcesState;
   hasAnyResolved: boolean;
@@ -447,26 +507,59 @@ function WalletPreview({
   onOpenPhoenix: () => void;
   onOpenPacifica: () => void;
 }) {
+  // The Solana protocol rows below are driven by `useProtocolAccounts`, which is
+  // keyed on the Solana address. They render only when Solana is connected — an
+  // EVM-only user sees their EVM chain row and nothing Solana-shaped.
+  const showSolanaProtocolRows = solanaConnected && chains.includes('solana');
+
   return (
     <View style={styles.walletWrap}>
-      <WalletHero
-        totals={walletTotals}
-        hasAnyResolved={hasAnyResolved}
-        isRefreshing={walletRefreshing}
-        onRefresh={onWalletRefresh}
-      />
-      <WalletActivityTiles />
+      {showSolanaProtocolRows ? (
+        <>
+          <WalletHero
+            totals={walletTotals}
+            hasAnyResolved={hasAnyResolved}
+            isRefreshing={walletRefreshing}
+            onRefresh={onWalletRefresh}
+          />
+          <WalletActivityTiles />
+        </>
+      ) : null}
+
       <View style={styles.accountsList}>
-        <WalletAccountRow protocol="spot" source={walletSources.spot} onRetry={onRetrySource} />
-        <WalletAccountRow
-          protocol="meteora"
-          source={walletSources.meteora}
-          onRetry={onRetrySource}
-          onPress={onOpenMeteora}
-        />
-        <PerpsAccountRow protocol="phoenix" source={walletSources.phoenix} onRetry={onRetrySource} onPress={onOpenPhoenix} />
-        <PerpsAccountRow protocol="pacifica" source={walletSources.pacifica} onRetry={onRetrySource} onPress={onOpenPacifica} />
+        {chains.map((chain) => {
+          const address = chainAddress(chain);
+          if (!address) return null;
+          return (
+            <ChainRow
+              key={chain}
+              chain={chain}
+              address={address}
+              // Solana's figure is the combined protocol total already computed
+              // for this address. No client-side EVM balance source exists yet,
+              // so EVM shows an explicit unavailable marker rather than a
+              // fabricated zero.
+              balanceUsd={chain === 'solana' ? walletTotals.totalUsd : null}
+              balanceUnavailableLabel={chain === 'evm' ? 'Balance unavailable' : undefined}
+              onDisconnect={onDisconnectChain}
+            />
+          );
+        })}
       </View>
+
+      {showSolanaProtocolRows ? (
+        <View style={styles.accountsList}>
+          <WalletAccountRow protocol="spot" source={walletSources.spot} onRetry={onRetrySource} />
+          <WalletAccountRow
+            protocol="meteora"
+            source={walletSources.meteora}
+            onRetry={onRetrySource}
+            onPress={onOpenMeteora}
+          />
+          <PerpsAccountRow protocol="phoenix" source={walletSources.phoenix} onRetry={onRetrySource} onPress={onOpenPhoenix} />
+          <PerpsAccountRow protocol="pacifica" source={walletSources.pacifica} onRetry={onRetrySource} onPress={onOpenPacifica} />
+        </View>
+      ) : null}
     </View>
   );
 }

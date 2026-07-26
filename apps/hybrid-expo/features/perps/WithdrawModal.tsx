@@ -31,10 +31,19 @@ const WITHDRAWAL_FEE = 1; // Pacific charges $1 per withdrawal
 interface WithdrawModalProps {
   visible: boolean;
   onClose: () => void;
+  /**
+   * Ask the parent screen to open the shared connection sheet.
+   *
+   * The sheet is *not* rendered inside this modal: a Modal nested in another
+   * Modal is unreliable on iOS. Instead this closes itself and hands the request
+   * up, so the sheet mounts at the screen level. Omitted callers fall back to
+   * the modal's own connect-less message rather than a dead button.
+   */
+  onRequestConnect?: () => void;
 }
 
-export function WithdrawModal({ visible, onClose }: WithdrawModalProps) {
-  const { connected, address, connect, signMessage } = useWallet();
+export function WithdrawModal({ visible, onClose, onRequestConnect }: WithdrawModalProps) {
+  const { connected, address, signMessage } = useWallet();
   const [available, setAvailable] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -106,9 +115,19 @@ export function WithdrawModal({ visible, onClose }: WithdrawModalProps) {
           {!connected ? (
             <View style={styles.body}>
               <Text style={styles.infoText}>Connect your wallet to withdraw</Text>
-              <Pressable style={styles.primaryBtn} onPress={() => connect()}>
-                <Text style={styles.primaryBtnText}>Connect Wallet</Text>
-              </Pressable>
+              {onRequestConnect ? (
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={() => {
+                    // Close first, then hand up: the sheet mounts at screen
+                    // level, so this modal must be out of the way.
+                    onClose();
+                    onRequestConnect();
+                  }}
+                >
+                  <Text style={styles.primaryBtnText}>Connect wallet</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : loading ? (
             <View style={styles.body}>

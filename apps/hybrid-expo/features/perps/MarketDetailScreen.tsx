@@ -1,6 +1,8 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Haptics from 'expo-haptics';
 import { useWallet } from '@/hooks/useWallet';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
@@ -55,7 +57,8 @@ interface MarketDetailScreenProps {
 
 export function MarketDetailScreen({ symbol }: MarketDetailScreenProps) {
   const router = useRouter();
-  const { connected, address, signMessage, connect } = useWallet();
+  const { connected, address, signMessage } = useWallet();
+  const connectSheet = useConnectionSheet('solana');
 
   // Market data
   const [market, setMarket] = useState<PerpsMarket | null>(null);
@@ -555,8 +558,8 @@ export function MarketDetailScreen({ symbol }: MarketDetailScreenProps) {
                 <Text style={styles.disconnectedText}>
                   Connect your wallet to trade {symbol} perpetuals
                 </Text>
-                <Pressable style={styles.connectWalletBtn} onPress={() => connect()}>
-                  <Text style={styles.connectWalletText}>Connect Wallet</Text>
+                <Pressable style={styles.connectWalletBtn} onPress={() => connectSheet.open('solana')}>
+                  <Text style={styles.connectWalletText}>Connect wallet</Text>
                 </Pressable>
               </View>
             ) : hasAccount === false ? (
@@ -947,7 +950,17 @@ export function MarketDetailScreen({ symbol }: MarketDetailScreenProps) {
         </Pressable>
       )}
 
-      <DepositModal visible={depositOpen} onClose={() => setDepositOpen(false)} />
+      <DepositModal
+        visible={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        onRequestConnect={() => connectSheet.open('solana')}
+      />
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }

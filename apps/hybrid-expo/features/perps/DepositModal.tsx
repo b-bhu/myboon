@@ -30,6 +30,15 @@ function showAlert(title: string, msg: string) {
 interface DepositModalProps {
   visible: boolean;
   onClose: () => void;
+  /**
+   * Ask the parent screen to open the shared connection sheet.
+   *
+   * The sheet is *not* rendered inside this modal: a Modal nested in another
+   * Modal is unreliable on iOS. Instead this closes itself and hands the request
+   * up, so the sheet mounts at the screen level. Omitted callers fall back to
+   * the modal's own connect-less message rather than a dead button.
+   */
+  onRequestConnect?: () => void;
 }
 
 async function fetchTokenBalance(owner: string): Promise<number> {
@@ -54,8 +63,8 @@ async function fetchTokenBalance(owner: string): Promise<number> {
   return typeof amount === 'number' ? amount : 0;
 }
 
-export function DepositModal({ visible, onClose }: DepositModalProps) {
-  const { connected, address, connect, signAndSendTransaction } = useWallet();
+export function DepositModal({ visible, onClose, onRequestConnect }: DepositModalProps) {
+  const { connected, address, signAndSendTransaction } = useWallet();
   const connection = new Connection(SOLANA_RPC);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [pacificBalance, setPacificBalance] = useState<number | null>(null);
@@ -151,9 +160,19 @@ export function DepositModal({ visible, onClose }: DepositModalProps) {
           {!connected ? (
             <View style={styles.body}>
               <Text style={styles.infoText}>Connect your wallet to deposit</Text>
-              <Pressable style={styles.primaryBtn} onPress={() => connect()}>
-                <Text style={styles.primaryBtnText}>Connect Wallet</Text>
-              </Pressable>
+              {onRequestConnect ? (
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={() => {
+                    // Close first, then hand up: the sheet mounts at screen
+                    // level, so this modal must be out of the way.
+                    onClose();
+                    onRequestConnect();
+                  }}
+                >
+                  <Text style={styles.primaryBtnText}>Connect wallet</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : loading ? (
             <View style={styles.body}>

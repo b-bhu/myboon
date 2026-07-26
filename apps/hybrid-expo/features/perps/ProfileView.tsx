@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWallet } from '@/hooks/useWallet';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import {
   fetchPerpsAccount,
   fetchPerpsPositions,
@@ -91,7 +93,8 @@ const POLL_INTERVAL = 30_000;
 
 export function ProfileView({ onBack }: ProfileViewProps) {
   const router = useRouter();
-  const { connected, address, connect, signMessage } = useWallet();
+  const { connected, address, signMessage } = useWallet();
+  const connectSheet = useConnectionSheet('solana');
   const [account, setAccount] = useState<PerpsAccount | null>(null);
   const [positions, setPositions] = useState<PerpsPosition[]>([]);
   const [orders, setOrders] = useState<PerpsOrder[]>([]);
@@ -435,12 +438,12 @@ export function ProfileView({ onBack }: ProfileViewProps) {
         {!connected && (
           <View style={styles.emptyState}>
             <MaterialIcons name="account-balance-wallet" size={28} color={semantic.text.faint} />
-            <Text style={styles.emptyTitle}>Connect Your Wallet</Text>
+            <Text style={styles.emptyTitle}>Connect wallet</Text>
             <Text style={styles.emptyDesc}>
               Connect a Solana wallet to view your Pacifica trading account.
             </Text>
-            <Pressable style={styles.primaryBtn} onPress={() => connect()}>
-              <Text style={styles.primaryBtnText}>Connect Wallet</Text>
+            <Pressable style={styles.primaryBtn} onPress={() => connectSheet.open('solana')}>
+              <Text style={styles.primaryBtnText}>Connect wallet</Text>
             </Pressable>
           </View>
         )}
@@ -706,12 +709,20 @@ export function ProfileView({ onBack }: ProfileViewProps) {
 
       {depositModalLoaded && (
         <Suspense fallback={null}>
-          <LazyDepositModal visible={depositOpen} onClose={() => setDepositOpen(false)} />
+          <LazyDepositModal
+            visible={depositOpen}
+            onClose={() => setDepositOpen(false)}
+            onRequestConnect={() => connectSheet.open('solana')}
+          />
         </Suspense>
       )}
       {withdrawModalLoaded && (
         <Suspense fallback={null}>
-          <LazyWithdrawModal visible={withdrawOpen} onClose={() => setWithdrawOpen(false)} />
+          <LazyWithdrawModal
+            visible={withdrawOpen}
+            onClose={() => setWithdrawOpen(false)}
+            onRequestConnect={() => connectSheet.open('solana')}
+          />
         </Suspense>
       )}
 
@@ -859,6 +870,12 @@ export function ProfileView({ onBack }: ProfileViewProps) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }
