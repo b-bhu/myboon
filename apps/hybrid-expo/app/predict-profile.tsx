@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -18,7 +17,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { DepositModal } from '@/components/predict/DepositModal';
 import { WithdrawModal } from '@/components/predict/WithdrawModal';
-import { PredictOwnerKeyExportModal } from '@/features/predict/components/PredictOwnerKeyExportModal';
 import { fetchPortfolio, fetchClobBalance, fetchOpenOrders, cancelOrder, placeBet } from '@/features/predict/predict.api';
 import type { OpenOrder, PortfolioData, PortfolioPosition } from '@/features/predict/predict.api';
 import { getPredictMarketHref } from '@/features/predict/predict.navigation';
@@ -26,6 +24,8 @@ import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useDrawer } from '@/components/drawer/DrawerProvider';
 import { EmptyPortfolio } from '@/features/predict/profile/EmptyPortfolio';
 import { YourPicksSection } from '@/features/predict/profile/YourPicksSection';
@@ -80,8 +80,10 @@ function getOrderCost(order: OpenOrder): number {
 export default function PredictProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { connected, address: solanaAddress, source, sessionKey, signMessage } = useWallet();
+  const { connected, address: solanaAddress, source, sessionKey } = useWallet();
   const poly = usePolymarketWallet();
+  // Predict settles on Polygon, so its requirement is EVM.
+  const connectSheet = useConnectionSheet('evm');
   const { open: openDrawer } = useDrawer();
   const [busy, setBusy] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
@@ -104,7 +106,6 @@ export default function PredictProfileScreen() {
   const [currencyFormat, setCurrencyFormat] = useState<PredictProfileCurrency>('INR');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<PredictSettingsView>('menu');
-  const [predictExportOpen, setPredictExportOpen] = useState(false);
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
   const [cashOutSubmitting, setCashOutSubmitting] = useState(false);
 
@@ -293,14 +294,14 @@ export default function PredictProfileScreen() {
       }
     }
 
-    if (!poly.polygonAddress) {
+    if (!poly.polygonAddress || !poly.signer) {
       Alert.alert('Cash out failed', 'Wallet session not ready.');
       return;
     }
 
     setCashOutSubmitting(true);
     try {
-      const result = await placeBet({
+      const result = await placeBet(poly.signer, {
         polygonAddress: poly.polygonAddress,
         tradingAddress: poly.tradingAddress,
         tokenID: position.asset,
@@ -377,31 +378,15 @@ export default function PredictProfileScreen() {
   }, [poly]);
 
   const handleConnectPredictAccount = useCallback(() => {
-    if (!connected) {
-      Alert.alert('Connect Wallet', 'Connect your Solana wallet first.');
+    // Predict signs on Polygon, so the requirement is EVM. When the resolver
+    // has no signer yet, the shared connection sheet is the entry point.
+    if (!poly.signer) {
+      connectSheet.open('evm');
       return;
     }
 
-    if (Platform.OS === 'web') {
-      void connectPredictAccount();
-      return;
-    }
-
-    Alert.alert(
-        'Sign in to Predict',
-        'Sign once to restore or set up the Predict account linked to this wallet.\n\n' +
-        '• One signature to verify ownership\n' +
-        '• No transaction, no gas, no cost\n' +
-        '• No extra seed phrases or wallets to manage',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Continue',
-          onPress: () => void connectPredictAccount(),
-        },
-      ],
-    );
-  }, [connectPredictAccount, connected]);
+    void connectPredictAccount();
+  }, [connectPredictAccount, connectSheet, poly.signer]);
 
   const handleReconnect = useCallback(async () => {
     if (!connected) return;
@@ -626,6 +611,7 @@ export default function PredictProfileScreen() {
               redeemablePositions={redeemablePositions}
               closedPositions={closedPositions}
               polygonAddress={poly.polygonAddress}
+              signer={poly.signer}
               cancellingOrderId={cancellingId}
               freshness={{ ...activityFreshness, loading: portfolioLoading || refreshing }}
               sellQuotes={sellQuotes}
@@ -667,6 +653,7 @@ export default function PredictProfileScreen() {
           polygonAddress={poly.polygonAddress}
           tradingAddress={poly.tradingAddress ?? poly.polygonAddress}
           solanaAddress={solanaAddress}
+          signer={poly.signer}
           cashBalance={cashBalance}
           onSuccess={loadPortfolio}
         />
@@ -682,15 +669,6 @@ export default function PredictProfileScreen() {
         onClose={() => setCashOutPosition(null)}
         onConfirm={handleConfirmCashOut}
         formatMoney={formatProfileMoney}
-      />
-
-      <PredictOwnerKeyExportModal
-        visible={predictExportOpen}
-        onClose={() => setPredictExportOpen(false)}
-        solanaAddress={solanaAddress}
-        polygonAddress={poly.polygonAddress}
-        depositWalletAddress={poly.tradingAddress ?? poly.depositWalletAddress}
-        signMessage={signMessage}
       />
 
       <Modal visible={settingsOpen} transparent animationType="fade" onRequestClose={closeSettings}>
@@ -795,30 +773,21 @@ export default function PredictProfileScreen() {
                     <Text style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
                   </View>
                 </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Export Predict owner key"
-                  style={[styles.exportOwnerButton, !isEnabled && styles.exportOwnerButtonDisabled]}
-                  disabled={!isEnabled}
-                  onPress={() => {
-                    setSettingsOpen(false);
-                    setSettingsView('menu');
-                    setPredictExportOpen(true);
-                  }}
-                >
-                  <MaterialIcons name="key" size={16} color={tokens.colors.backgroundDark} />
-                  <Text style={styles.exportOwnerButtonText}>Export Predict owner key</Text>
-                </Pressable>
                 <Text style={styles.settingsFinePrint}>
-                  {source === 'privy'
-                    ? 'Your Privy Solana wallet export lives in the main wallet drawer.'
-                    : 'This does not export your external Solana wallet. Export that from your wallet app.'}
+                  Your Predict wallet is an embedded wallet managed by Privy. There
+                  is no key to export from this screen.
                 </Text>
               </>
             )}
           </View>
         </View>
       </Modal>
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }

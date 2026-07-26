@@ -133,7 +133,8 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
       }
       const orderPrice = mode === 'market' ? marketQuote!.limitPrice! : price;
 
-      const result = await placeBet({
+      if (!poly.signer) throw new Error('Wallet session not ready');
+      const result = await placeBet(poly.signer, {
         polygonAddress: poly.polygonAddress,
         tradingAddress: poly.tradingAddress,
         tokenID,

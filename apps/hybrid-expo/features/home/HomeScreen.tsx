@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
@@ -29,6 +29,12 @@ import { WalletActivityTiles } from '@/features/wallet/WalletActivityTiles';
 import { WalletHero } from '@/features/wallet/WalletHero';
 import { ChainRow } from '@/features/wallet/components/ChainRow';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { DormantChainNotice } from '@/features/wallet/components/DormantChainNotice';
+import {
+  findFundedDormantChains,
+  observeChains,
+  reportFundedDormantChains,
+} from '@/features/wallet/dormantBalance';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useProtocolAccounts } from '@/features/wallet/useProtocolAccounts';
 import { useSectionVisibility } from '@/features/wallet/useSectionVisibility';
@@ -127,7 +133,7 @@ export default function HomeScreen() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const wallet = useWallet();
   const evm = usePrivyEvmWallet();
-  const { activation, deactivate } = useChainActivation();
+  const { activation, activate, deactivate } = useChainActivation();
   const connectSheet = useConnectionSheet('solana');
   const walletAddress = wallet.connected ? wallet.address : null;
   const { totals: walletTotals, sources: walletSources, notifyVisibility, refreshAll: refreshWallet, retrySource: retryWalletSource } = useProtocolAccounts(walletAddress);
@@ -227,6 +233,54 @@ export default function HomeScreen() {
   // hydrated yet is omitted rather than shown with a placeholder address.
   const displayChains = chains.filter((chain) => chainAddress(chain) !== null);
 
+  /**
+   * Safety net for a chain that was provisioned without the user asking and is
+   * holding funds. Deferred provisioning means this cannot happen — a dormant
+   * chain has no wallet and no address — so anything found here is a
+   * provisioning bug, not an expected state (spec, "Dormancy").
+   *
+   * Provisioning is only *observed* here: `wallet.connected` and
+   * `evm.isProvisioned` are already read above for rendering. Nothing on this
+   * path calls `create()`, so checking cannot itself provision a chain.
+   *
+   * EVM's balance is null because no client-side EVM balance source exists yet
+   * (#261), so an EVM entry can never qualify today — a fabricated zero would
+   * assert the funded case away rather than detect it. Solana works.
+   */
+  const fundedDormantChains = useMemo(() => findFundedDormantChains(
+    observeChains({
+      activation,
+      provisioned: {
+        solana: wallet.connected && !!wallet.address,
+        evm: evm.isProvisioned && !!evm.address,
+      },
+      addresses: {
+        solana: wallet.connected ? wallet.address : null,
+        evm: evm.address,
+      },
+      balancesUsd: {
+        solana: walletTotals.totalUsd,
+        evm: null,
+      },
+    }),
+  ), [activation, wallet.connected, wallet.address, evm.isProvisioned, evm.address, walletTotals.totalUsd]);
+
+  // Log on transition into the funded-dormant state rather than every render, so
+  // a regression is one visible line per chain instead of scroll-rate noise.
+  const reportedDormantRef = useRef<string>('');
+  useEffect(() => {
+    const key = fundedDormantChains.map((entry) => entry.chain).sort().join(',');
+    if (key === reportedDormantRef.current) return;
+    reportedDormantRef.current = key;
+    if (fundedDormantChains.length > 0) reportFundedDormantChains(fundedDormantChains);
+  }, [fundedDormantChains]);
+
+  const handleActivateDormantChain = useCallback((chain: Chain) => {
+    // Activating moves the chain into `activeChains`, so its balance renders in
+    // the normal ChainRow and this notice stops matching.
+    void activate(chain);
+  }, [activate]);
+
   const handleDisconnectChain = useCallback((chain: Chain) => {
     Alert.alert('Disconnect?', 'You can reconnect anytime.', [
       { text: 'Cancel', style: 'cancel' },
@@ -318,6 +372,20 @@ export default function HomeScreen() {
 
         <HomeSectionTitle title="Wallet" />
         <View style={styles.walletSection} onLayout={onSectionLayout}>
+          {/*
+            Sits above the active/disconnected fork deliberately. A user whose
+            only funded chain is a dormant one has no active chains at all, so
+            rendering this inside the connected branch would hide exactly the
+            case it exists to surface.
+          */}
+          {fundedDormantChains.map((entry) => (
+            <DormantChainNotice
+              key={entry.chain}
+              chain={entry.chain}
+              balanceUsd={entry.balanceUsd}
+              onActivate={handleActivateDormantChain}
+            />
+          ))}
           {displayChains.length > 0 ? (
             <WalletPreview
               chains={displayChains}
@@ -835,6 +903,9 @@ const styles = StyleSheet.create({
   walletSection: {
     minHeight: WALLET_SECTION_MIN_HEIGHT,
     justifyContent: 'flex-start',
+    // Separates a dormant-chain notice from the wallet content below it. No-op
+    // in the normal case, where this section has a single child.
+    gap: tokens.spacing.md,
   },
   meta: {
     color: semantic.text.faint,

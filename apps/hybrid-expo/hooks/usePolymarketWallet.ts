@@ -1,21 +1,32 @@
 /**
- * usePolymarketWallet — Derives a Polymarket-compatible Polygon wallet from a Solana signature.
+ * usePolymarketWallet — the Polymarket enable flow, over a resolved EVM signer.
  *
  * Architecture:
- * - The EVM private key is derived and kept only in-memory on the phone.
+ * - The EOA is a Privy embedded EVM wallet resolved through
+ *   `useChainSigner(POLYMARKET_REQUIREMENT)`. This app never sees key material,
+ *   and no key is derived from any signature.
  * - The phone stores public Polygon/deposit-wallet addresses in AsyncStorage so the UI
  *   remembers the user is "enabled" across app restarts.
- * - On enable: Phantom signs a message -> phone derives EVM key, creates CLOB creds,
- *   then sends only public address + CLOB creds to the server.
+ * - On enable: the embedded wallet signs CLOB auth, then only the public address
+ *   and CLOB L2 credentials go to the server.
  * - On app reopen: phone reads stored address from AsyncStorage. If the server session expired,
- *   the next CLOB operation will fail and the user re-signs with Phantom.
+ *   the next CLOB operation will fail and the user re-enables.
  * - On disable: clears both local storage and server session.
+ *
+ * Sessions are keyed on the EVM address, because the EOA is what determines the
+ * deposit wallet server-side (CREATE2 in
+ * `packages/api/src/polymarket/trading/routes/session.ts`). Keying on anything
+ * else would let a stored session point at a deposit wallet the current signer
+ * does not control.
+ *
+ * Model: docs/modules/wallet/specs/wallet_connectivity.md
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useWallet } from '@/hooks/useWallet';
-import { PREDICT_DERIVE_MESSAGE } from '@/hooks/useEvmSigner';
+import { useChainSigner } from '@/features/chain/useChainSigner';
+import { POLYMARKET_REQUIREMENT } from '@/features/chain/chain.contract';
+import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import { onClobSessionExpired } from '@/features/predict/predict.api';
 
@@ -50,34 +61,51 @@ export interface PolymarketWallet {
   isLoading: boolean;
   /** Server lost the CLOB session (restart/TTL) — UI should prompt the user to reconnect via enable() */
   sessionExpired: boolean;
-  /** Sign with Solana wallet, derive EVM key locally, and set up deposit-wallet trading */
+  /** Resolve the EVM signer, authenticate with the CLOB, and set up deposit-wallet trading */
   enable: () => Promise<void>;
-  /** Clear session (server + local + EVM key) */
+  /** Clear session (server + local) */
   disable: () => void;
-  /** Whether local EVM signer is initialized */
+  /** Whether an EVM signer is resolved and able to sign */
   canSignLocally: boolean;
+  /**
+   * The resolved EVM signer, or null when the requirement is unsatisfied.
+   * Callers pass this to the signing entry points in `predict.api`.
+   */
+  signer: Signer | null;
+  /** Resolver status, so the UI can open the connection sheet on `needs_connection`. */
+  signerStatus: ReturnType<typeof useChainSigner>['status'];
+  /** Satisfy the EVM requirement (activate, provisioning the wallet if needed). */
+  connectSigner: () => Promise<void>;
 }
 
 export function usePolymarketWallet(): PolymarketWallet {
-  const {
-    connected,
-    address: solanaAddress,
-    signMessage,
-    isPreparing: walletPreparing,
-    sessionKey,
-  } = useWallet();
+  const { signer, status: signerStatus, connect: connectSigner } = useChainSigner(POLYMARKET_REQUIREMENT);
+
+  // The EOA the deposit wallet is derived from. Everything below is keyed on it.
+  const evmAddress = signer?.descriptor.address ?? null;
+  const connected = !!signer;
+  const walletPreparing = signerStatus === 'preparing';
+  // Identity of the current signer. A different EOA is a different session, and
+  // must not inherit the previous one's stored deposit wallet.
+  const sessionKey = useMemo(
+    () => (evmAddress ? `evm:${evmAddress.toLowerCase()}` : null),
+    [evmAddress],
+  );
+
   const [polygonAddress, setPolygonAddress] = useState<string | null>(null);
   const [safeAddress, setSafeAddress] = useState<string | null>(null);
   const [depositWalletAddress, setDepositWalletAddress] = useState<string | null>(null);
   const [walletMode, setWalletMode] = useState<PolymarketWalletMode | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [canSignLocally, setCanSignLocally] = useState(false);
+  // Derived, not stored: signing ability is exactly "the resolver gave us a
+  // signer", so there is no separate flag that can go stale.
+  const canSignLocally = !!signer;
   const [sessionExpired, setSessionExpired] = useState(false);
   const prevWalletSessionKey = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
   const activePolygonAddressRef = useRef<string | null>(null);
-  const walletSnapshotRef = useRef({ connected, solanaAddress, sessionKey, walletPreparing });
-  walletSnapshotRef.current = { connected, solanaAddress, sessionKey, walletPreparing };
+  const walletSnapshotRef = useRef({ connected, evmAddress, sessionKey, walletPreparing });
+  walletSnapshotRef.current = { connected, evmAddress, sessionKey, walletPreparing };
 
   useEffect(() => {
     activePolygonAddressRef.current = polygonAddress;
@@ -102,20 +130,18 @@ export function usePolymarketWallet(): PolymarketWallet {
   }, []);
 
   const clearWalletSessionState = useCallback(() => {
-    import('./useEvmSigner').then(({ clearActiveEvmWallet }) => clearActiveEvmWallet()).catch(() => {});
     setPolygonAddress(null);
     setSafeAddress(null);
     setDepositWalletAddress(null);
     setWalletMode(null);
-    setCanSignLocally(false);
     setSessionExpired(false);
   }, []);
 
   const clearStoredSession = useCallback(() => {
     loadGenerationRef.current += 1;
-    if (solanaAddress) removeStoredSessionForAddress(solanaAddress);
+    if (evmAddress) removeStoredSessionForAddress(evmAddress);
     clearWalletSessionState();
-  }, [solanaAddress, removeStoredSessionForAddress, clearWalletSessionState]);
+  }, [evmAddress, removeStoredSessionForAddress, clearWalletSessionState]);
 
   const clearServerSession = useCallback((address: string | null) => {
     if (address) {
@@ -133,15 +159,15 @@ export function usePolymarketWallet(): PolymarketWallet {
       return;
     }
 
-    const nextWalletSessionKey = connected && solanaAddress ? sessionKey : null;
+    const nextWalletSessionKey = connected && evmAddress ? sessionKey : null;
     const previousWalletSessionKey = prevWalletSessionKey.current;
 
     if (previousWalletSessionKey && previousWalletSessionKey !== nextWalletSessionKey) {
       clearServerSession(activePolygonAddressRef.current);
     }
 
-    // Wallet disconnected or provider/address changed - immediately clear UI-visible state.
-    if (!connected || !solanaAddress || !nextWalletSessionKey) {
+    // Signer unresolved or the EOA changed - immediately clear UI-visible state.
+    if (!connected || !evmAddress || !nextWalletSessionKey) {
       loadGenerationRef.current += 1;
       clearWalletSessionState();
       setIsLoading(false);
@@ -159,22 +185,22 @@ export function usePolymarketWallet(): PolymarketWallet {
     clearWalletSessionState();
 
     Promise.all([
-      AsyncStorage.getItem(`${STORAGE_KEY}:${solanaAddress}`),
-      AsyncStorage.getItem(`${DEPOSIT_WALLET_STORAGE_KEY}:${solanaAddress}`),
-      AsyncStorage.getItem(`${WALLET_MODE_STORAGE_KEY}:${solanaAddress}`),
+      AsyncStorage.getItem(`${STORAGE_KEY}:${evmAddress}`),
+      AsyncStorage.getItem(`${DEPOSIT_WALLET_STORAGE_KEY}:${evmAddress}`),
+      AsyncStorage.getItem(`${WALLET_MODE_STORAGE_KEY}:${evmAddress}`),
     ])
       .then(([storedEoa, storedDepositWallet, storedWalletMode]) => {
         const current = walletSnapshotRef.current;
         if (
           loadGenerationRef.current !== loadGeneration
-          || current.solanaAddress !== solanaAddress
+          || current.evmAddress !== evmAddress
           || current.sessionKey !== nextWalletSessionKey
         ) {
           return;
         }
 
         if (storedEoa && (!storedDepositWallet || storedWalletMode !== 'deposit_wallet')) {
-          removeStoredSessionForAddress(solanaAddress);
+          removeStoredSessionForAddress(evmAddress);
           return;
         }
 
@@ -191,7 +217,7 @@ export function usePolymarketWallet(): PolymarketWallet {
         const current = walletSnapshotRef.current;
         if (
           loadGenerationRef.current === loadGeneration
-          && current.solanaAddress === solanaAddress
+          && current.evmAddress === evmAddress
           && current.sessionKey === nextWalletSessionKey
         ) {
           setIsLoading(false);
@@ -199,7 +225,7 @@ export function usePolymarketWallet(): PolymarketWallet {
       });
   }, [
     connected,
-    solanaAddress,
+    evmAddress,
     sessionKey,
     walletPreparing,
     clearWalletSessionState,
@@ -208,12 +234,12 @@ export function usePolymarketWallet(): PolymarketWallet {
   ]);
 
   const enable = useCallback(async () => {
-    const startAddress = solanaAddress;
+    const activeSigner = signer;
+    const startAddress = evmAddress;
     const startSessionKey = connected && startAddress ? sessionKey : null;
-    const startSignMessage = signMessage;
 
-    if (!startSessionKey || !startAddress || !startSignMessage) {
-      throw new Error('Connect your Solana wallet first');
+    if (!activeSigner || !startSessionKey || !startAddress) {
+      throw new Error('Connect your wallet first');
     }
 
     setSessionExpired(false);
@@ -223,7 +249,7 @@ export function usePolymarketWallet(): PolymarketWallet {
       if (
         !current.connected
         || current.walletPreparing
-        || current.solanaAddress !== startAddress
+        || current.evmAddress !== startAddress
         || current.sessionKey !== startSessionKey
       ) {
         throw new Error(WALLET_CHANGED_MESSAGE);
@@ -233,23 +259,18 @@ export function usePolymarketWallet(): PolymarketWallet {
     const enableGeneration = ++loadGenerationRef.current;
     setIsLoading(true);
     try {
-      // Step 1: Sign deterministic message with Solana wallet (MWA prompt)
-      const messageBytes = new TextEncoder().encode(PREDICT_DERIVE_MESSAGE);
-      const signature = await startSignMessage(messageBytes);
-      assertWalletUnchanged();
+      // The EOA is the embedded EVM wallet itself — nothing is derived, and no
+      // key material exists outside Privy.
+      const eoaAddress = startAddress;
 
-      // Step 2: Derive EVM key locally. The signature never leaves the device.
-      const { deriveEvmSignerFromSignature } = await import('./useEvmSigner');
-      const { eoaAddress } = deriveEvmSignerFromSignature(signature);
-      assertWalletUnchanged();
-      setCanSignLocally(true);
-
-      // Step 3: Create/derive CLOB credentials locally, then send only public
-      // address + CLOB L2 credentials to the server. The server cannot recreate
-      // the EVM private key from this payload.
+      // Create/derive CLOB credentials locally, then send only the public
+      // address + CLOB L2 credentials to the server. These are protocol session
+      // credentials, not account-level key material: they can place and cancel
+      // orders but cannot move funds out.
       const { createPolymarketApiCreds, createPredictSessionProof, signAndSubmitDepositWalletBatch } = await import('@/features/predict/predict.signing');
-      const creds = await createPolymarketApiCreds();
-      const authProof = await createPredictSessionProof(eoaAddress);
+      const creds = await createPolymarketApiCreds(activeSigner);
+      assertWalletUnchanged();
+      const authProof = await createPredictSessionProof(activeSigner, eoaAddress);
 
       const res = await fetchWithTimeout(`${API_BASE}/clob/auth`, {
         method: 'POST',
@@ -270,7 +291,7 @@ export function usePolymarketWallet(): PolymarketWallet {
         throw new Error('Deposit wallet setup incomplete - please try again');
       }
       if (data.signatureRequest) {
-        await signAndSubmitDepositWalletBatch(eoaAddress, data.signatureRequest, { operation: 'predict_setup' });
+        await signAndSubmitDepositWalletBatch(activeSigner, eoaAddress, data.signatureRequest, { operation: 'predict_setup' });
       }
       if (loadGenerationRef.current !== enableGeneration) {
         throw new Error(WALLET_CHANGED_MESSAGE);
@@ -295,15 +316,15 @@ export function usePolymarketWallet(): PolymarketWallet {
       throw err;
     } finally {
       const current = walletSnapshotRef.current;
-      if (current.solanaAddress === startAddress && current.sessionKey === startSessionKey) {
+      if (current.evmAddress === startAddress && current.sessionKey === startSessionKey) {
         setIsLoading(false);
       }
     }
   }, [
+    signer,
     connected,
-    solanaAddress,
+    evmAddress,
     sessionKey,
-    signMessage,
     removeStoredSessionForAddress,
     clearWalletSessionState,
   ]);
@@ -335,6 +356,9 @@ export function usePolymarketWallet(): PolymarketWallet {
       enable: async () => {},
       disable: () => {},
       canSignLocally: true,
+      signer: null,
+      signerStatus: 'ready',
+      connectSigner: async () => {},
     };
   }
 
@@ -350,5 +374,8 @@ export function usePolymarketWallet(): PolymarketWallet {
     enable,
     disable,
     canSignLocally,
+    signer,
+    signerStatus,
+    connectSigner,
   };
 }

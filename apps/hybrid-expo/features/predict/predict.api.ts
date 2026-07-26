@@ -18,6 +18,7 @@ import type {
   TrendingMarket,
 } from '@/features/predict/predict.types';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
+import type { Signer } from '@/features/chain/chain.contract';
 import {
   createSignedPredictOrder,
   signDepositWalletBatch,
@@ -576,9 +577,9 @@ function friendlyPlaceBetError(detail: string): string {
 /**
  * Place bet through the server-side deposit-wallet order path.
  */
-export async function placeBet(params: PlaceBetParams): Promise<PlaceBetResult> {
+export async function placeBet(signer: Signer, params: PlaceBetParams): Promise<PlaceBetResult> {
   const baseUrl = resolveApiBaseUrl();
-  const signedOrder = await createSignedPredictOrder(params);
+  const signedOrder = await createSignedPredictOrder(signer, params);
 
   const response = await fetchWithTimeout(`${baseUrl}/clob/order`, {
     method: 'POST',
@@ -681,7 +682,14 @@ export interface ClobBalance {
   };
 }
 
-export async function fetchClobBalance(polygonAddress: string, autoWrap = true): Promise<ClobBalance | null> {
+/**
+ * Auto-wrap needs a signature, so it only runs when the caller supplied a
+ * signer. Balance reads themselves are unauthenticated and work without one.
+ */
+export async function fetchClobBalance(
+  polygonAddress: string,
+  wrapSigner: Signer | null = null,
+): Promise<ClobBalance | null> {
   const baseUrl = resolveApiBaseUrl();
   const response = await fetchWithTimeout(`${baseUrl}/clob/balance/${encodeURIComponent(polygonAddress)}`);
   if (!response.ok) {
@@ -693,9 +701,9 @@ export async function fetchClobBalance(polygonAddress: string, autoWrap = true):
   const wrap = data.wrap && typeof data.wrap === 'object'
     ? data.wrap as ClobBalance['wrap']
     : undefined;
-  if (autoWrap && wrap?.signatureRequired) {
-    await wrapPolymarketCash(polygonAddress).catch(() => null);
-    return fetchClobBalance(polygonAddress, false);
+  if (wrapSigner && wrap?.signatureRequired) {
+    await wrapPolymarketCash(wrapSigner, polygonAddress).catch(() => null);
+    return fetchClobBalance(polygonAddress, null);
   }
   return {
     balance: typeof data.balance === 'number' ? data.balance : 0,
@@ -704,7 +712,10 @@ export async function fetchClobBalance(polygonAddress: string, autoWrap = true):
   };
 }
 
-export async function wrapPolymarketCash(polygonAddress: string): Promise<PredictOperationMeta & { ok: boolean; error?: string }> {
+export async function wrapPolymarketCash(
+  signer: Signer,
+  polygonAddress: string,
+): Promise<PredictOperationMeta & { ok: boolean; error?: string }> {
   const baseUrl = resolveApiBaseUrl();
   const response = await fetchWithTimeout(`${baseUrl}/clob/wrap`, {
     method: 'POST',
@@ -714,7 +725,7 @@ export async function wrapPolymarketCash(polygonAddress: string): Promise<Predic
   const data = await response.json() as Record<string, unknown>;
   const signatureRequest = getSignatureRequest(data);
   if (signatureRequest) {
-    const batch = await signDepositWalletBatch(signatureRequest, { operation: 'wrap' });
+    const batch = await signDepositWalletBatch(signer, signatureRequest, { operation: 'wrap' });
     const signedResponse = await fetchWithTimeout(`${baseUrl}/clob/wrap`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -930,7 +941,10 @@ async function fetchExpectedWithdrawBridgeAddress(params: WithdrawParams): Promi
   return bridgeAddress;
 }
 
-export async function withdrawFromPolymarket(params: WithdrawParams): Promise<WithdrawResult> {
+export async function withdrawFromPolymarket(
+  signer: Signer,
+  params: WithdrawParams,
+): Promise<WithdrawResult> {
   const baseUrl = resolveApiBaseUrl();
   const response = await fetchWithTimeout(`${baseUrl}/clob/withdraw`, {
     method: 'POST',
@@ -943,7 +957,7 @@ export async function withdrawFromPolymarket(params: WithdrawParams): Promise<Wi
   const signatureRequest = getSignatureRequest(data);
   if (signatureRequest) {
     const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(params);
-    const batch = await signDepositWalletBatch(signatureRequest, {
+    const batch = await signDepositWalletBatch(signer, signatureRequest, {
       operation: 'withdraw',
       amount: params.amount,
       bridgeAddress,
@@ -1009,6 +1023,7 @@ export interface RedeemPositionInput {
 }
 
 export async function redeemPosition(
+  signer: Signer,
   polygonAddress: string,
   position: RedeemPositionInput,
 ): Promise<RedeemResult> {
@@ -1037,7 +1052,7 @@ export async function redeemPosition(
 
   const signatureRequest = getSignatureRequest(data);
   if (signatureRequest) {
-    const batch = await signDepositWalletBatch(signatureRequest, {
+    const batch = await signDepositWalletBatch(signer, signatureRequest, {
       operation: 'redeem',
       conditionId: position.conditionId,
       negativeRisk: position.negativeRisk,
