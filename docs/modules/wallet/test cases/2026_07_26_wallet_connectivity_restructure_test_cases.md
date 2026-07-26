@@ -1236,6 +1236,218 @@ Ambiguities.
 
 ---
 
+## Execution status — as implemented (updated 2026-07-26, issue #252)
+
+The restructure has shipped (`4cfae7c`, `81bf4bd`, `3b7ddf2`, `314db9f`). This
+section records what is now **actually wired**, as distinct from what this
+document specified before implementation. Where the two disagree, the divergence
+is named below rather than silently resolved.
+
+### Automated suite
+
+**137 tests pass** across three scripts, run from `apps/hybrid-expo`:
+
+| Script | File | Tests |
+|---|---|---|
+| `pnpm test:chain` | `features/chain/chain.test.ts` | 27 |
+| | `features/chain/activation.test.ts` *(new)* | 22 |
+| | `features/chain/deferredCreation.test.ts` *(new)* | 23 |
+| `pnpm test:wallet` | `features/wallet/components/connect.options.test.ts` | 5 |
+| | `features/wallet/components/connect.filtering.test.ts` *(new)* | 12 |
+| | `features/wallet/dormantBalance.test.ts` | 19 |
+| `pnpm test:security` | `features/chain/security.deletions.test.ts` *(new)* | 29 |
+| **Total** | | **137** |
+
+`pnpm test` runs all three. Runner is `node:test` via `tsx --test`, matching the
+`packages/*` convention.
+
+### Case-by-case status
+
+`Automated` = runs in CI now. `Checklist` = in the device checklist.
+`Not automated` = neither, with a reason.
+
+| TC | Status | Where |
+|---|---|---|
+| RESOLVE-001 | Automated | `chain.test.ts` — branch 1 |
+| RESOLVE-002 | Automated | `chain.test.ts` — branch 2 ×2 |
+| RESOLVE-003 | Automated | `chain.test.ts` — branch 3 |
+| RESOLVE-004 | Automated | `chain.test.ts` — branch 4, does-not-throw |
+| RESOLVE-005 | Automated | `deferredCreation.test.ts` — full matrix, determinism |
+| RESOLVE-006 | Automated | `chain.test.ts` — descriptor flags, privy/evm |
+| RESOLVE-007 | Automated | `chain.test.ts` — descriptor flags, mwa/solana |
+| RESOLVE-008 | Automated (partial) | `chain.test.ts` — second EVM app resolves. The byte-identical-module assertion is **not** implemented; see gap G1. |
+| RESOLVE-009 | Automated | `security.deletions.test.ts` — four symbols, module-scope scan |
+| RESOLVE-010 | Automated | `deferredCreation.test.ts` — capability mismatch |
+| RESOLVE-011 | Automated | `deferredCreation.test.ts` — concurrent create dedupe |
+| MODAL-001 | Automated | `connect.filtering.test.ts` (count diverges — D1) |
+| MODAL-002 | Automated | `connect.filtering.test.ts` (count diverges — D1) |
+| MODAL-003 | Automated (partial) | `connect.filtering.test.ts` — single derivation source; one-sheet grep in `security.deletions.test.ts`. Render-tree identity not asserted; see G2. |
+| MODAL-004 | Automated | `connect.filtering.test.ts` — substituted backend table, no residue |
+| MODAL-005 | Not automated | Needs the harness; see G2. |
+| MODAL-006 | Checklist | Phantom |
+| MODAL-007 | Checklist | Privy |
+| MODAL-008 | Automated | `security.deletions.test.ts` — no option list outside `features/wallet` |
+| DORMANT-001 | Automated | `security.deletions.test.ts` — `createOnLogin: 'off'` on both chains |
+| DORMANT-002 | Checklist | Privy (fresh) |
+| DORMANT-003 | Checklist | Privy (fresh) |
+| DORMANT-004 | Checklist | Privy (fresh) |
+| DORMANT-005 | Automated (state half) + Checklist | `deferredCreation.test.ts` asserts create-exactly-once against a double; device pass confirms the real hook |
+| DORMANT-006 | Automated | `deferredCreation.test.ts` — rejection leaves nothing provisioned, retry succeeds. Backgrounding sub-run is checklist-adjacent; see G3. |
+| DORMANT-007 | Automated | `dormantBalance.test.ts`, `deferredCreation.test.ts` |
+| DORMANT-008 | Automated | `deferredCreation.test.ts` — zero and `Number.MIN_VALUE` boundary |
+| DORMANT-009 | Automated | `deferredCreation.test.ts` — normal path never fires |
+| SESSION-001 | Automated | `activation.test.ts` — keyed by chain, shared across apps |
+| SESSION-002 | Automated | `activation.test.ts` — no cross-chain leak |
+| SESSION-003 | Automated | `deferredCreation.test.ts` — MWA keeps precedence over Privy on Solana |
+| SESSION-004 | Checklist | Phantom + Privy |
+| SESSION-005 | Automated (partial) | `activation.test.ts` — activation does not reverse implicitly. No-deactivation-control-in-UI is not asserted; see G2. |
+| SESSION-006 | Automated + Checklist | `activation.test.ts` simulates process death by dropping the module cache and re-hydrating from the backing store; device pass confirms |
+| SESSION-007 | Automated + Checklist | `activation.test.ts` — logout clears, durably |
+| WALLET-001…005, 007 | Not automated | UI state; needs the harness. See G2 and divergence D4. |
+| WALLET-006 | Checklist | Phantom. Activation half automated in `activation.test.ts`. |
+| SEC-001 | Automated | `security.deletions.test.ts` |
+| SEC-002 | Automated (see D5) | `security.deletions.test.ts` — clean in app source; harness excepted |
+| SEC-003 | Automated (see D5) | `security.deletions.test.ts` — clean in app source; harness excepted |
+| SEC-004 | Automated | `security.deletions.test.ts` — no Solana in `predict.signing.ts` code |
+| SEC-005 | Automated | `security.deletions.test.ts` — modal gone, clipboard args are addresses, no `.privateKey` |
+| SEC-006 | Not automated | Grep for "logger call whose arguments include a signer" is not mechanically decidable; needs review. See G4. |
+| SEC-007 | Not automated | Needs a recording proxy and the harness. See G2. |
+| SEC-008 | Not automated | Calldata validation negative suite not wired; see G5. **This is the most significant automation gap.** |
+| SEC-009 | Automated | `security.deletions.test.ts` — exactly two backends, no secure-store import |
+| POLY-001 | Automated | `security.deletions.test.ts` — resolver-sourced signer, no singleton, no stale-signature copy |
+| POLY-002 | Checklist | Was specified as harness-automatable; harness not built |
+| POLY-003 | Checklist | **Mainnet funds** |
+| POLY-004 | Automated (partial) | `security.deletions.test.ts` — modal deleted and unimported. UI absence not asserted; see G2. |
+| POLY-005 | Not automated | Needs the harness. |
+| POLY-006 | Automated | `security.deletions.test.ts` — descriptor field-by-field |
+| BUILD-001…004 | Not automated | Needs a real build invocation; see G6. |
+| DRAWER-001…004 | Not automated (001 partially) | Connect path is gone from `WalletDrawer.tsx` by inspection; UI assertions need the harness. |
+| A11Y-001, 002, 003 | Checklist | TalkBack |
+| A11Y-004 | Not automated | Needs the harness plus the injected funded-dormant state. |
+
+**Totals:** 33 of the 69 cases are fully automated, 6 partially, 15 are on the
+device checklist, and 15 are not automated for the reasons in G1–G6 below. Every
+P0 case has either an automated test or a checklist entry — none were dropped.
+
+### Divergences between this document and the shipped code
+
+Recorded rather than silently rewritten. Each names which side I believe is
+wrong.
+
+**D1 — Modal option counts. This document is stale; the code is right.**
+TC-MODAL-001 expects "exactly two entries" on Solana and TC-MODAL-002 "exactly
+one" on EVM. The shipped sheet renders **three** on Solana (email, passkey,
+external wallet) and **two** on EVM (email, passkey), because Privy is surfaced
+as two auth methods rather than one "Continue with Privy" row. The spec's table
+describes options by *backend*, and by that reading the code is correct — one
+Privy backend, two ways to reach it. The structural requirement both cases exist
+to protect (no external-wallet row on EVM, absent rather than disabled) holds and
+is asserted. **Recommendation:** amend TC-MODAL-001/002 to assert on the presence
+and absence of the external-wallet row rather than on a raw count.
+
+**D2 — Predict routes to `evm`, not `solana`. This document is stale.**
+#250 moved Predict onto a real EVM signer. Both detail screens call
+`useConnectionSheet('evm')` (`PredictMarketDetailScreen.tsx:88`,
+`PredictSportDetailScreen.tsx:118`), and `POLYMARKET_REQUIREMENT` declares
+`chain: 'evm'`. Any case or prose assuming Predict connects Solana is obsolete.
+
+**D3 — Sessions are keyed on the EVM address.**
+`usePolymarketWallet.ts` derives its session key as `evm:${address}`, because the
+EOA determines the deposit wallet server-side via CREATE2. This is correct and
+now asserted indirectly (POLY-001), but the document's Solana-era phrasing does
+not reflect it.
+
+**D4 — The Wallet surface is inside `HomeScreen`, not a dedicated route.**
+TC-WALLET-001 asserts Wallet is a "top-level destination … reachable in one tap".
+It ships as a section within `features/home/HomeScreen.tsx`, with no
+`app/wallet.tsx` route. Tracked as #262. The two-state behavior the spec requires
+is present; the navigation shape is not what this document assumed. **I believe
+the document describes the intended end state and the code is the interim** —
+confirm against #262 before amending either.
+
+**D5 — `keccak256`-over-signature survives in two E2E harness files.**
+`e2e/predict-live.spec.ts:68` and `playwright.predict.config.ts:62` still build a
+Polygon key by hashing a Solana signature — the exact pattern the restructure
+deleted from the app. TC-SEC-002/003 are written as repo-wide assertions and
+would fail. **Shipped application code is clean**, which is the property that
+matters: the harness is never bundled and signs for a throwaway account. Tracked
+as #263. `security.deletions.test.ts` asserts the *known* state — the pattern is
+confined to exactly those two files and absent from app source — so the suite
+stays green while the gap stays visible. When #263 lands, those assertions should
+be replaced with plain zero-hit checks.
+
+**D6 — EVM has no balance source.**
+`ChainRow` renders an explicit unavailable marker when `balanceUsd` is null, and
+EVM is always null today (#261). Any case expecting an EVM balance figure cannot
+pass. `dormantBalance.ts` deliberately treats null as *unknown* rather than zero,
+so the funded-dormant net does not fire spuriously on every EVM-dormant user.
+
+### Gaps in automation, with reasons
+
+**G1 — Byte-identical-module assertions (TC-RESOLVE-008, TC-MODAL-004).**
+Both cases specify hashing a module file and asserting it is unchanged after
+adding a descriptor. Not implemented as written: a content hash of a source file
+fails on any unrelated edit (a comment, a formatting pass) and would be deleted
+within a month as noise. The *property* — that a second EVM application needs no
+resolver change, and that adding an external EVM transport is a rule change only
+— is tested behaviorally instead, by resolving a second requirement and by
+recomputing the option list from a substituted backend table.
+
+**G2 — No UI/harness layer exists.** 23 cases were specified as
+"Automatable (harness)" against a Detox/Playwright harness with mocked
+Privy/MWA transports. That harness is not built. Everything harness-dependent
+(`WALLET-*` rendering, `MODAL-005`, `POLY-005`, `DRAWER-*`, `A11Y-004`,
+`SEC-007`) is therefore unautomated. Building it is a larger piece of work than
+this issue and should be its own issue. The logic underneath the UI is covered
+by the pure-function tests above.
+
+**G3 — Backgrounding mid-`create()` (TC-DORMANT-006 sub-run B).** The rejection
+path is automated. Backgrounding mid-flight cannot be simulated without a device
+or emulator lifecycle; the invariant it protects (never "active with no wallet
+behind it") is asserted structurally, since activation is recorded only after
+`provision()` resolves.
+
+**G4 — "No key material is logged" (TC-SEC-006) is not mechanically decidable.**
+A grep can find `console.log`, but deciding whether an argument *is* key material
+requires reading each call site. The spec files this under "enforce in review"
+for the same reason. What is automated: no `.privateKey` access anywhere in app
+source, and the specific `[evm-signer] Derived EOA` log is gone with its file.
+
+**G5 — TC-SEC-008 (calldata validation negative suite) is not wired.** This is
+the most significant remaining gap. `validateDepositWalletSignatureRequest` still
+exists in `predict.signing.ts` and the spec calls it "the required pattern for
+any adapter that signs transactions", but its five negative inputs (mismatched
+operation, wrong `chainId`, non-zero native value, unexpected target, unexpected
+`conditionId`) have no automated coverage. It is pure and testable — it needs no
+harness. **Recommend a follow-up issue.**
+
+**G6 — Build fence cases (TC-BUILD-001…004) need real builds.** The fence exists
+and is readable in `app.config.js`, which throws when `EXPO_PUBLIC_PREDICT_E2E=1`
+in a production build. Asserting it properly means invoking `expo export` / EAS
+four times with different environments — minutes per run, and EAS credentials for
+the production paths. Better suited to a CI job than to the unit suite.
+
+### Bug found while writing these tests
+
+**An unregistered chain crashes the resolver instead of resolving `unsupported`.**
+`backendsForRequirement` indexes `CHAIN_BACKENDS[requirement.chain]` and calls
+`.filter` on the result with no guard (`chain.contract.ts:154`), so a requirement
+naming a chain with no table entry throws
+`TypeError: Cannot read properties of undefined`.
+
+Severity is **low today**: `Chain` is a closed union, so TypeScript rejects this
+at every in-repo call site and it is reachable only via a cast. It matters
+because `unsupportedReason`'s own contract states the resolver "never throws for
+an unsatisfiable requirement", and that holds only while the union stays closed.
+Adding a third chain to `Chain` without adding it to `CHAIN_BACKENDS` turns this
+into a crash on a real path — precisely what TC-RESOLVE-004 exists to prevent.
+
+Recorded in `deferredCreation.test.ts` as a `KNOWN GAP` test asserting current
+behavior, so the suite stays green and the assertion flips loudly when a guard
+lands. Not fixed here: this pass does not modify production code.
+
+---
+
 ## Traceability — PRD acceptance criteria to test cases
 
 | # | Acceptance criterion (abridged) | Covered by | Coverage |
@@ -1429,10 +1641,20 @@ Traceability.
 | `A11Y` | 0 | 3 | 1 | 4 |
 | **Total** | **51** | **17** | **1** | **69** |
 
-By execution mode: **33 Automatable** (CI, no hardware — every `SEC` and `BUILD`
-case plus most of `RESOLVE` and `MODAL`), **23 Automatable (harness)** (emulator
-or mocked Privy/MWA transport; 5 of these also call for one confirming run on a
-real device), and **13 Real device**.
+By execution mode as originally specified: **33 Automatable** (CI, no hardware —
+every `SEC` and `BUILD` case plus most of `RESOLVE` and `MODAL`), **23
+Automatable (harness)** (emulator or mocked Privy/MWA transport; 5 of these also
+call for one confirming run on a real device), and **13 Real device**.
+
+> **As implemented (2026-07-26):** 33 cases are fully automated across 137
+> passing tests, 6 more partially, 15 are on the device checklist
+> (`2026_07_26_wallet_connectivity_device_checklist.md`), and 15 remain
+> unautomated — chiefly because the Detox/Playwright harness those cases assume
+> does not exist (gap G2), plus the build-fence cases (G6) and the calldata
+> validation suite (G5). The `BUILD` group is **not** automated, contrary to the
+> original claim above. See "Execution status — as implemented" near the top of
+> this document for the case-by-case table, six divergences between this document
+> and the shipped code, and one resolver bug found while writing the tests.
 
 Real-device dependencies, called out explicitly:
 - **Real Phantom install — 3 cases:** TC-MODAL-006, TC-SESSION-004,
