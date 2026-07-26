@@ -35,10 +35,21 @@ export function useWallet() {
   const raw = account?.address;
   const mwaAddress = raw ? (typeof raw === 'string' ? raw : raw.toBase58()) : null;
 
-  // Privy user takes priority — they authenticated via passkey/email (in-app, no app switch).
-  // While Privy's embedded wallet is hydrating, expose a disconnected Privy session instead
-  // of falling back to any stale MWA account still cached by the mobile wallet adapter.
-  if (privy.isPrivyUser) {
+  // A connected external wallet (Phantom / Solflare via MWA) wins over a Privy embedded
+  // wallet: the user connected it deliberately and it is the Solana account they expect to
+  // trade from. Privy remains authenticated underneath — nothing here clears it.
+  //
+  // The hydration guard still holds. `MobileWalletProvider` rehydrates its authorization
+  // from AsyncStorage on mount, so `account` can be a stale cached entry rather than a live
+  // authorization, and the adapter exposes no flag telling the two apart. We therefore only
+  // let MWA win once Privy has settled (`isPreparing === false`). While Privy is still
+  // hydrating we fall through to the Privy branch below, which reports a disconnected Privy
+  // session — so no cached MWA account is ever exposed during the hydration window, exactly
+  // as before. Stale-vs-live is resolved the same way it is for MWA-only users: the first
+  // signing call re-authorizes through `transact` and fails if the cache is dead.
+  const preferMwa = !!account && !privy.isPreparing;
+
+  if (privy.isPrivyUser && !preferMwa) {
     return {
       connected: privy.connected,
       address: privy.connected ? privy.address : null,
