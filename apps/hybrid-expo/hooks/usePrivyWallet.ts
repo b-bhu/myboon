@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { usePrivy, useEmbeddedSolanaWallet, useLoginWithEmail, isConnected } from '@privy-io/expo';
 import { useLoginWithPasskey, useSignupWithPasskey } from '@privy-io/expo/passkey';
+import { clearActivation } from '@/features/chain/activation';
 
 export interface PrivyWalletState {
   /** Whether the user is authenticated via Privy AND has an embedded wallet */
@@ -57,7 +58,16 @@ export function usePrivyWallet(): PrivyWalletState {
   const solanaWalletStatus = solanaWallet.status;
   const createSolanaWallet = solanaWallet.create;
 
-  // Auto-create embedded wallet if authenticated but wallet not yet created.
+  // Provisioning is deferred, not automatic. Privy is configured with
+  // `createOnLogin: 'off'` for both chains (providers/PrivyProvider.tsx), so
+  // authenticating creates nothing — a dormant chain has no wallet in existence
+  // and therefore no address that can receive funds by accident.
+  //
+  // `create()` is called from `waitForWallet()` instead, which every caller
+  // reaches only from an explicit Solana-connect intent: the drawer's
+  // email/passkey login flows and `useWallet().connect()`. So logging in through
+  // an EVM application provisions no Solana wallet, while the existing Solana
+  // flows are unchanged from the caller's point of view.
   const creatingRef = useRef(false);
   const walletWaitersRef = useRef<{ resolve: () => void; reject: (err: Error) => void }[]>([]);
 
@@ -75,23 +85,31 @@ export function usePrivyWallet(): PrivyWalletState {
     walletWaitersRef.current.splice(0).forEach(({ resolve }) => resolve());
   }, [address]);
 
-  useEffect(() => {
-    if (authenticated && solanaWalletStatus === 'not-created' && createSolanaWallet && !creatingRef.current) {
-      creatingRef.current = true;
-      console.log('[PrivyWallet] Auto-creating embedded Solana wallet...');
-      createSolanaWallet()
-        .catch((err: unknown) => {
-          creatingRef.current = false;
-          console.error('[PrivyWallet] Failed to create wallet:', err);
-          walletWaitersRef.current.splice(0).forEach(({ reject }) => {
-            reject(err instanceof Error ? err : new Error('Failed to create Privy wallet'));
-          });
-        });
-    }
+  /**
+   * Create the embedded Solana wallet on demand. Idempotent, and deduped via
+   * `creatingRef` so two concurrent callers cannot race two `create()` calls.
+   */
+  const provisionSolanaWallet = useCallback(() => {
+    if (!authenticated || solanaWalletStatus !== 'not-created') return;
+    if (!createSolanaWallet || creatingRef.current) return;
+
+    creatingRef.current = true;
+    console.log('[PrivyWallet] Creating embedded Solana wallet on activation...');
+    createSolanaWallet().catch((err: unknown) => {
+      creatingRef.current = false;
+      console.error('[PrivyWallet] Failed to create wallet:', err);
+      walletWaitersRef.current.splice(0).forEach(({ reject }) => {
+        reject(err instanceof Error ? err : new Error('Failed to create Privy wallet'));
+      });
+    });
   }, [authenticated, solanaWalletStatus, createSolanaWallet]);
 
   const waitForEmbeddedWallet = useCallback(async () => {
     if (address) return;
+
+    // Reaching here is an explicit Solana-connect intent, so this is the
+    // activation moment at which provisioning is allowed.
+    provisionSolanaWallet();
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -110,7 +128,17 @@ export function usePrivyWallet(): PrivyWalletState {
         },
       });
     });
-  }, [address]);
+  }, [address, provisionSolanaWallet]);
+
+  // `waitForWallet()` may be called the instant login resolves, before Privy has
+  // settled the embedded wallet status to 'not-created'. In that window the
+  // provision call above is a no-op, so re-attempt whenever the status settles
+  // and someone is still waiting. Without a pending waiter this never fires —
+  // authentication alone still provisions nothing.
+  useEffect(() => {
+    if (walletWaitersRef.current.length === 0) return;
+    provisionSolanaWallet();
+  }, [provisionSolanaWallet]);
 
   const signMessage = wallet
     ? async (message: Uint8Array): Promise<Uint8Array> => {
@@ -151,6 +179,10 @@ export function usePrivyWallet(): PrivyWalletState {
       await loginWithEmailCode({ code });
     },
     disconnect: async () => {
+      // Logout is one of the two explicit session boundaries (the other is
+      // disconnecting a wallet). Everything else — backgrounding, process death,
+      // app restart — leaves activation intact.
+      await clearActivation();
       await logout();
     },
     waitForWallet: waitForEmbeddedWallet,
