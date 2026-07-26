@@ -36,7 +36,7 @@ All in `.env` files (gitignored). Never in code.
 
 ## Workflow
 
-- Discuss + plan → write PRD to `docs/issues/` → coder subagent → reviewer subagent → commit + push
+- Discuss + plan → write PRD to `docs/PRDs/` → open issue on GitHub → coder subagent → reviewer subagent → commit + push
 - Reviewer runs before EVERY commit — no exceptions
 - Reviewer checks: no secrets, no .env staged, code matches task
 
@@ -44,4 +44,5 @@ All in `.env` files (gitignored). Never in code.
 
 - `docs/ARCHITECTURE.md` — source of truth for product direction
 - `docs/HANDOFF.md` — latest session summary + next steps
-- `docs/issues/` — PRDs for individual tasks
+- `docs/PRDs/` — durable PRDs, kept in-repo for context
+- Issues live in GitHub (`bucketshop69/myboon`), never as files in the repo
