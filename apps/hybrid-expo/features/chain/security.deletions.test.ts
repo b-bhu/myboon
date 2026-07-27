@@ -335,7 +335,11 @@ describe('TC-MODAL-008: applications do not own connection UI', () => {
   });
 
   it('there is exactly one connection sheet component', () => {
-    const hits = gitGrep('export function ConnectionSheet', 'apps/hybrid-expo');
+    // This suite greps for the strings it asserts about, so its own source is a
+    // hit for every pattern it searches. Excluded, or the test fails on itself.
+    const hits = gitGrep('export function ConnectionSheet', 'apps/hybrid-expo').filter(
+      (hit) => !isTestFile(hitPath(hit)),
+    );
     assert.equal(hits.length, 1, `expected one connection sheet, found: ${hits.join(', ')}`);
   });
 });
@@ -359,11 +363,17 @@ describe('#263: the E2E harness still derives a key from a signature', () => {
     'apps/hybrid-expo/playwright.predict.config.ts',
   ];
 
-  /** Source files (not docs or manifests) containing a pattern. */
+  /**
+   * Source files (not docs, manifests, or this suite) containing a pattern.
+   *
+   * This suite greps for the very strings it asserts about, so its own source
+   * matches every pattern it searches for. Excluded, or each assertion fails on
+   * itself rather than on a real regression.
+   */
   function sourceFilesContaining(pattern: string): string[] {
     const files = gitGrep(pattern, 'apps/hybrid-expo')
       .map(hitPath)
-      .filter((file) => !isProse(file));
+      .filter((file) => !isProse(file) && !isTestFile(file));
     return [...new Set(files)].sort();
   }
 

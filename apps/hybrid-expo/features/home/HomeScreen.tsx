@@ -406,8 +406,6 @@ export default function HomeScreen() {
             <DisconnectedWalletState onConnect={() => connectSheet.open('solana')} />
           )}
         </View>
-
-        <DummySignalsSection />
       </Animated.ScrollView>
 
       <NarrativeSheet item={sheetItem} onClose={() => setSheetItem(null)} />
@@ -478,15 +476,6 @@ function RouteCard({
         <Text style={styles.routePillText}>{cta}</Text>
       </View>
     </Pressable>
-  );
-}
-
-function PreviewHeader({ title, meta }: { title: string; meta: string }) {
-  return (
-    <View style={styles.previewHeader}>
-      <Text style={styles.previewTitle}>{title}</Text>
-      <Text style={styles.previewMeta}>{meta}</Text>
-    </View>
   );
 }
 
@@ -656,27 +645,6 @@ function DisconnectedWalletState({ onConnect }: { onConnect: () => void }) {
       >
         <Text style={styles.walletConnectActionText}>Connect wallet</Text>
       </Pressable>
-    </View>
-  );
-}
-
-function DummySignalsSection() {
-  return (
-    <View style={styles.dummyCard}>
-      <PreviewHeader title="Next up" meta="Preview" />
-      <DummyRow label="Alerts" text="Wallet and market events that need attention" value="Soon" />
-      <DummyRow label="Agent" text="Personalized summaries from your active positions" value="3" />
-      <DummyRow label="Watchlist" text="Pinned markets, tokens, and wallets in one place" value="Beta" />
-    </View>
-  );
-}
-
-function DummyRow({ label, text, value }: { label: string; text: string; value: string }) {
-  return (
-    <View style={styles.dummyRow}>
-      <Text style={styles.dummyLabel}>{label}</Text>
-      <Text style={styles.dummyText} numberOfLines={1}>{text}</Text>
-      <Text style={styles.dummyValue}>{value}</Text>
     </View>
   );
 }
@@ -877,26 +845,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
-  previewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: tokens.spacing.md,
-    marginBottom: tokens.spacing.md,
-  },
-  previewTitle: {
-    color: semantic.text.primary,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  previewMeta: {
-    color: semantic.text.faint,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
   walletWrap: {
     gap: tokens.spacing.md,
   },
@@ -958,41 +906,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
-  },
-  dummyCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(24,90,112,0.72)',
-    backgroundColor: 'rgba(6,51,67,0.62)',
-    padding: 13,
-  },
-  dummyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.sm,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(24,90,112,0.50)',
-  },
-  dummyLabel: {
-    width: 70,
-    color: tokens.colors.accent,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '900',
-    letterSpacing: 0.7,
-    textTransform: 'uppercase',
-  },
-  dummyText: {
-    flex: 1,
-    color: semantic.text.dim,
-    fontSize: tokens.fontSize.sm,
-  },
-  dummyValue: {
-    color: semantic.text.primary,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '800',
   },
   pressed: {
     opacity: 0.82,
