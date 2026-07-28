@@ -147,13 +147,21 @@ export function backendSatisfies(
   return true;
 }
 
-/** Every backend that could satisfy this requirement. Empty means `unsupported`. */
+/**
+ * Every backend that could satisfy this requirement. Empty means `unsupported`.
+ *
+ * The table lookup is guarded rather than indexed directly. `Chain` is a closed
+ * union today so TypeScript prevents an unregistered value, but adding a chain
+ * without a `CHAIN_BACKENDS` entry would otherwise throw a `TypeError` here —
+ * at exactly the moment the resolver is supposed to degrade to `unsupported`
+ * with a readable reason. Cheap insurance for the next person extending this.
+ */
 export function backendsForRequirement(
   requirement: ChainRequirement,
 ): readonly WalletBackend[] {
-  return CHAIN_BACKENDS[requirement.chain].filter((backend) =>
-    backendSatisfies(backend, requirement),
-  );
+  const backends = CHAIN_BACKENDS[requirement.chain];
+  if (!backends) return [];
+  return backends.filter((backend) => backendSatisfies(backend, requirement));
 }
 
 /**
@@ -162,8 +170,13 @@ export function backendsForRequirement(
  * throws for an unsatisfiable requirement.
  */
 export function unsupportedReason(requirement: ChainRequirement): string {
-  const chainLabel = requirement.chain === 'evm' ? 'EVM' : 'Solana';
-  const supportsChain = CHAIN_BACKENDS[requirement.chain].length > 0;
+  // Falls back to the raw chain value rather than mislabelling an unregistered
+  // chain as Solana, and guards the lookup for the same reason as
+  // `backendsForRequirement` — this function's contract is that the resolver
+  // never throws for an unsatisfiable requirement.
+  const chainLabel =
+    requirement.chain === 'evm' ? 'EVM' : requirement.chain === 'solana' ? 'Solana' : requirement.chain;
+  const supportsChain = (CHAIN_BACKENDS[requirement.chain] ?? []).length > 0;
 
   if (!supportsChain) {
     return `No wallet backend in this app can sign on ${chainLabel}.`;

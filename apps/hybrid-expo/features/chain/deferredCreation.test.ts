@@ -332,21 +332,24 @@ describe('TC-RESOLVE-005: the full resolution matrix', () => {
    * scenario TC-RESOLVE-004 exists to prevent. Flip this assertion to expect
    * `unsupported` when the guard lands.
    */
-  it('KNOWN GAP: an unregistered chain throws instead of resolving unsupported', () => {
-    assert.throws(
-      () =>
-        resolveChainSigner(
-          {
-            applicationId: 'hypothetical',
-            chain: 'bitcoin' as Chain,
-            needsTypedData: false,
-            needsRawTransaction: false,
-          },
-          input(),
-        ),
-      /Cannot read properties of undefined/,
-      'if this now resolves cleanly, the guard has landed — assert unsupported instead',
+  it('an unregistered chain resolves unsupported rather than throwing', () => {
+    // The resolver's contract is that an unsatisfiable requirement returns a
+    // reason, never an exception. `Chain` is closed today, so this can only be
+    // reached by adding a chain without a CHAIN_BACKENDS entry — which is
+    // exactly when a TypeError inside a hook would be hardest to diagnose.
+    const resolution = resolveChainSigner(
+      {
+        applicationId: 'hypothetical',
+        chain: 'bitcoin' as Chain,
+        needsTypedData: false,
+        needsRawTransaction: false,
+      },
+      input(),
     );
+
+    assert.equal(resolution.status, 'unsupported');
+    assert.ok(resolution.reason, 'unsupported must carry a human-readable reason');
+    assert.match(resolution.reason ?? '', /bitcoin/, 'the reason names the chain rather than mislabelling it');
   });
 });
 

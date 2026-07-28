@@ -36,6 +36,7 @@ import {
   reportFundedDormantChains,
 } from '@/features/wallet/dormantBalance';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import { useEvmBalance } from '@/features/wallet/useEvmBalance';
 import { useProtocolAccounts } from '@/features/wallet/useProtocolAccounts';
 import { useSectionVisibility } from '@/features/wallet/useSectionVisibility';
 import { activeChains, useChainActivation } from '@/features/chain/activation';
@@ -133,6 +134,7 @@ export default function HomeScreen() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const wallet = useWallet();
   const evm = usePrivyEvmWallet();
+  const { balanceUsd: evmBalanceUsd } = useEvmBalance(evm.address);
   const { activation, activate, deactivate } = useChainActivation();
   const connectSheet = useConnectionSheet('solana');
   const walletAddress = wallet.connected ? wallet.address : null;
@@ -229,6 +231,13 @@ export default function HomeScreen() {
     chain === 'solana' ? (wallet.connected ? wallet.address : null) : evm.address
   ), [wallet.connected, wallet.address, evm.address]);
 
+  // Solana is the combined protocol total; EVM is USDC collateral on Polygon.
+  // Null means unknown — still loading, or the read failed — and renders the
+  // unavailable marker rather than a zero we did not measure.
+  const chainBalance = useCallback((chain: Chain): number | null => (
+    chain === 'solana' ? walletTotals.totalUsd : evmBalanceUsd
+  ), [walletTotals.totalUsd, evmBalanceUsd]);
+
   // Only chains with a real address render. An active chain whose wallet has not
   // hydrated yet is omitted rather than shown with a placeholder address.
   const displayChains = chains.filter((chain) => chainAddress(chain) !== null);
@@ -260,10 +269,10 @@ export default function HomeScreen() {
       },
       balancesUsd: {
         solana: walletTotals.totalUsd,
-        evm: null,
+        evm: evmBalanceUsd,
       },
     }),
-  ), [activation, wallet.connected, wallet.address, evm.isProvisioned, evm.address, walletTotals.totalUsd]);
+  ), [activation, wallet.connected, wallet.address, evm.isProvisioned, evm.address, walletTotals.totalUsd, evmBalanceUsd]);
 
   // Log on transition into the funded-dormant state rather than every render, so
   // a regression is one visible line per chain instead of scroll-rate noise.
@@ -382,6 +391,7 @@ export default function HomeScreen() {
             <WalletPreview
               chains={displayChains}
               chainAddress={chainAddress}
+              chainBalance={chainBalance}
               solanaConnected={wallet.connected}
               onDisconnectChain={handleDisconnectChain}
               walletTotals={walletTotals}
@@ -530,6 +540,7 @@ function MarketAppBrandIcon({ icon }: { icon: MarketAppIcon }) {
 function WalletPreview({
   chains,
   chainAddress,
+  chainBalance,
   solanaConnected,
   onDisconnectChain,
   walletTotals,
@@ -544,6 +555,8 @@ function WalletPreview({
 }: {
   chains: readonly Chain[];
   chainAddress: (chain: Chain) => string | null;
+  /** Null means unknown — loading or failed — never a measured zero. */
+  chainBalance: (chain: Chain) => number | null;
   solanaConnected: boolean;
   onDisconnectChain: (chain: Chain) => void;
   walletTotals: WalletTotals;
@@ -584,12 +597,10 @@ function WalletPreview({
               key={chain}
               chain={chain}
               address={address}
-              // Solana's figure is the combined protocol total already computed
-              // for this address. No client-side EVM balance source exists yet,
-              // so EVM shows an explicit unavailable marker rather than a
-              // fabricated zero.
-              balanceUsd={chain === 'solana' ? walletTotals.totalUsd : null}
-              balanceUnavailableLabel={chain === 'evm' ? 'Balance unavailable' : undefined}
+              // Solana's figure is the combined protocol total; EVM's is the
+              // USDC collateral read from the backend. Null renders the
+              // unavailable marker rather than a fabricated zero.
+              balanceUsd={chainBalance(chain)}
               onDisconnect={onDisconnectChain}
             />
           );
