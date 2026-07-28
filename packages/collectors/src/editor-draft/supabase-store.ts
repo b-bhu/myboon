@@ -1,11 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildEntityDraftBundles } from './input-builder'
 import type { EntityMemoryRecord, EntityRecord } from '../entity-manager/types'
+import type { PipelineDraftUpsertInput, PipelineStore } from '../pipeline-store/store'
 import type {
   EntityDraftBundle,
+  EditorDraftAction,
   EditorDraftInput,
   EditorDraftRecord,
+  EditorDraftStatus,
   EditorDraftStore,
+  EvidenceQuality,
   FetchEditorDraftBundlesOptions,
   PriorEditorDraft,
   PublishedHistoryItem,
@@ -13,9 +17,7 @@ import type {
 
 const ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, show_in_carousel, metadata, created_at, updated_at'
 const MEMORY_SELECT = 'id, entity_id, source, source_area, source_type, source_ref_id, source_research_id, memory_type, title, summary, body, event_at, observed_at, confidence, evidence, mentions, metrics, context, created_at, updated_at'
-const DRAFT_SELECT = 'id, entity_id, entity_slug, entity_name, entity_type, bundle_key, source_memory_ids, source_memory_hash, source, source_area, action, status, title, angle, summary, body, reasoning, reason_codes, evidence_quality, priority, confidence, merge_target_draft_id, related_draft_ids, follow_up_questions, research_instructions, backend, model, created_at, updated_at'
 const ENTITY_PUBLISHED_HISTORY_TABLE = 'entity_published_history'
-const LOOKUP_CHUNK_SIZE = 25
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -66,59 +68,6 @@ function normalizeMemory(row: unknown): EntityMemoryRecord {
     context: asRecord(record.context),
     created_at: typeof record.created_at === 'string' ? record.created_at : undefined,
     updated_at: typeof record.updated_at === 'string' ? record.updated_at : undefined,
-  }
-}
-
-function normalizePriorDraft(row: unknown): PriorEditorDraft {
-  const record = row as Record<string, unknown>
-  return {
-    id: String(record.id),
-    entity_id: String(record.entity_id),
-    source_memory_ids: asStringArray(record.source_memory_ids),
-    source_memory_hash: String(record.source_memory_hash),
-    action: record.action as PriorEditorDraft['action'],
-    status: record.status as PriorEditorDraft['status'],
-    title: typeof record.title === 'string' ? record.title : null,
-    angle: typeof record.angle === 'string' ? record.angle : null,
-    summary: typeof record.summary === 'string' ? record.summary : null,
-    reasoning: typeof record.reasoning === 'string' ? record.reasoning : '',
-    reason_codes: asStringArray(record.reason_codes),
-    created_at: String(record.created_at),
-  }
-}
-
-function normalizeDraftRecord(row: unknown): EditorDraftRecord {
-  const record = row as Record<string, unknown>
-  return {
-    id: String(record.id),
-    entity_id: String(record.entity_id),
-    entity_slug: String(record.entity_slug),
-    entity_name: String(record.entity_name),
-    entity_type: String(record.entity_type),
-    bundle_key: String(record.bundle_key),
-    source_memory_ids: asStringArray(record.source_memory_ids),
-    source_memory_hash: String(record.source_memory_hash),
-    source: typeof record.source === 'string' ? record.source : null,
-    source_area: typeof record.source_area === 'string' ? record.source_area : null,
-    action: record.action as EditorDraftRecord['action'],
-    status: record.status as EditorDraftRecord['status'],
-    title: typeof record.title === 'string' ? record.title : null,
-    angle: typeof record.angle === 'string' ? record.angle : null,
-    summary: typeof record.summary === 'string' ? record.summary : null,
-    body: typeof record.body === 'string' ? record.body : null,
-    reasoning: String(record.reasoning),
-    reason_codes: asStringArray(record.reason_codes),
-    evidence_quality: record.evidence_quality as EditorDraftRecord['evidence_quality'],
-    priority: typeof record.priority === 'number' ? record.priority : null,
-    confidence: typeof record.confidence === 'number' ? record.confidence : null,
-    merge_target_draft_id: typeof record.merge_target_draft_id === 'string' ? record.merge_target_draft_id : null,
-    related_draft_ids: asStringArray(record.related_draft_ids),
-    follow_up_questions: asStringArray(record.follow_up_questions),
-    research_instructions: typeof record.research_instructions === 'string' ? record.research_instructions : null,
-    backend: String(record.backend),
-    model: typeof record.model === 'string' ? record.model : null,
-    created_at: String(record.created_at),
-    updated_at: String(record.updated_at),
   }
 }
 
@@ -191,61 +140,6 @@ async function fetchMemoriesForEntities(
   return rows.flat()
 }
 
-async function fetchPriorDrafts(
-  db: SupabaseClient,
-  entityIds: string[],
-  limit: number
-): Promise<PriorEditorDraft[]> {
-  const rows = await Promise.all(entityIds.map(async (entityId) => {
-    const { data, error } = await db
-      .from('editor_drafts')
-      .select('id, entity_id, source_memory_ids, source_memory_hash, action, status, title, angle, summary, reasoning, reason_codes, created_at')
-      .eq('entity_id', entityId)
-      .order('created_at', { ascending: false })
-      .limit(limit)
-    if (error) throw new Error(`editor draft prior draft fetch failed: ${error.message}`)
-    return (data ?? []).map(normalizePriorDraft)
-  }))
-  return rows.flat()
-}
-
-function chunks<T>(items: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let index = 0; index < items.length; index += size) out.push(items.slice(index, index + size))
-  return out
-}
-
-function sourceMemoryContainsFilter(memoryIds: string[]): string {
-  return memoryIds
-    .map((id) => `source_memory_ids.cs.${JSON.stringify([id])}`)
-    .join(',')
-}
-
-async function fetchReviewedMemoryIds(
-  db: SupabaseClient,
-  memoryIds: string[]
-): Promise<Set<string>> {
-  const reviewed = new Set<string>()
-  const uniqueMemoryIds = unique(memoryIds)
-  if (uniqueMemoryIds.length === 0) return reviewed
-
-  for (const memoryIdChunk of chunks(uniqueMemoryIds, LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await db
-      .from('editor_drafts')
-      .select('source_memory_ids')
-      .or(sourceMemoryContainsFilter(memoryIdChunk))
-
-    if (error) throw new Error(`editor draft reviewed memory lookup failed: ${error.message}`)
-    for (const row of data ?? []) {
-      for (const id of asStringArray((row as { source_memory_ids?: unknown }).source_memory_ids)) {
-        if (memoryIdChunk.includes(id)) reviewed.add(id)
-      }
-    }
-  }
-
-  return reviewed
-}
-
 async function fetchPublishedHistory(
   db: SupabaseClient,
   entityIds: string[],
@@ -265,7 +159,8 @@ async function fetchPublishedHistory(
     if (error) {
       // V1 only loads published history from an entity-addressable table. The
       // current feed table is not entity-addressable, so missing table/column
-      // errors intentionally produce an empty history.
+      // errors intentionally produce an empty history. This error-tolerance
+      // is load-bearing - preserve it.
       if (isMissingPublishedHistoryTable(error)) return []
       throw new Error(`editor draft published history fetch failed: ${error.message}`)
     }
@@ -278,13 +173,146 @@ function unique(values: string[]): string[] {
   return [...new Set(values)]
 }
 
+// ---------------------------------------------------------------------------
+// Local-store (PipelineStore) <-> editor-draft type mapping.
+//
+// editor_drafts moved off Supabase into PipelineStore's `pipeline_editor_drafts`
+// table. Everything else fetchBundles reads (entities, entity_memories,
+// entity_published_history) is durable product data and stays on Supabase.
+// ---------------------------------------------------------------------------
+
+function toPriorEditorDraft(row: {
+  id: string
+  entityId: string
+  sourceMemoryIds: string[]
+  sourceMemoryHash: string
+  action: string
+  status: string
+  title: string | null
+  angle: string | null
+  summary: string | null
+  reasoning: string
+  reasonCodes: unknown
+  createdAt: string
+}): PriorEditorDraft {
+  return {
+    id: row.id,
+    entity_id: row.entityId,
+    source_memory_ids: row.sourceMemoryIds,
+    source_memory_hash: row.sourceMemoryHash,
+    action: row.action as PriorEditorDraft['action'],
+    status: row.status as PriorEditorDraft['status'],
+    title: row.title,
+    angle: row.angle,
+    summary: row.summary,
+    reasoning: row.reasoning,
+    reason_codes: asStringArray(row.reasonCodes),
+    created_at: row.createdAt,
+  }
+}
+
+function toEditorDraftRecord(row: {
+  id: string
+  entityId: string
+  entitySlug: string
+  entityName: string
+  entityType: string
+  bundleKey: string
+  sourceMemoryIds: string[]
+  sourceMemoryHash: string
+  source: string | null
+  sourceArea: string | null
+  action: string
+  status: string
+  title: string | null
+  angle: string | null
+  summary: string | null
+  body: string | null
+  reasoning: string
+  reasonCodes: unknown
+  evidenceQuality: string | null
+  priority: number | null
+  confidence: number | null
+  mergeTargetDraftId: string | null
+  relatedDraftIds: unknown
+  followUpQuestions: unknown
+  researchInstructions: string | null
+  backend: string
+  model: string | null
+  createdAt: string
+  updatedAt: string
+}): EditorDraftRecord {
+  return {
+    id: row.id,
+    entity_id: row.entityId,
+    entity_slug: row.entitySlug,
+    entity_name: row.entityName,
+    entity_type: row.entityType,
+    bundle_key: row.bundleKey,
+    source_memory_ids: row.sourceMemoryIds,
+    source_memory_hash: row.sourceMemoryHash,
+    source: row.source,
+    source_area: row.sourceArea,
+    action: row.action as EditorDraftAction,
+    status: row.status as EditorDraftStatus,
+    title: row.title,
+    angle: row.angle,
+    summary: row.summary,
+    body: row.body,
+    reasoning: row.reasoning,
+    reason_codes: asStringArray(row.reasonCodes),
+    evidence_quality: row.evidenceQuality as EvidenceQuality | null,
+    priority: row.priority,
+    confidence: row.confidence,
+    merge_target_draft_id: row.mergeTargetDraftId,
+    related_draft_ids: asStringArray(row.relatedDraftIds),
+    follow_up_questions: asStringArray(row.followUpQuestions),
+    research_instructions: row.researchInstructions,
+    backend: row.backend,
+    model: row.model,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  }
+}
+
+function toDraftUpsertInput(draft: EditorDraftInput): PipelineDraftUpsertInput {
+  return {
+    entityId: draft.entity_id,
+    entitySlug: draft.entity_slug,
+    entityName: draft.entity_name,
+    entityType: draft.entity_type,
+    bundleKey: draft.bundle_key,
+    sourceMemoryIds: draft.source_memory_ids,
+    sourceMemoryHash: draft.source_memory_hash,
+    source: draft.source,
+    sourceArea: draft.source_area,
+    action: draft.action,
+    status: draft.status,
+    title: draft.title,
+    angle: draft.angle,
+    summary: draft.summary,
+    body: draft.body,
+    reasoning: draft.reasoning,
+    reasonCodes: draft.reason_codes,
+    evidenceQuality: draft.evidence_quality,
+    priority: draft.priority,
+    confidence: draft.confidence,
+    mergeTargetDraftId: draft.merge_target_draft_id,
+    relatedDraftIds: draft.related_draft_ids,
+    followUpQuestions: draft.follow_up_questions,
+    researchInstructions: draft.research_instructions,
+    backend: draft.backend,
+    model: draft.model,
+  }
+}
+
 export class SupabaseEditorDraftStore implements EditorDraftStore {
-  constructor(private readonly db: SupabaseClient) {}
+  constructor(private readonly db: SupabaseClient, private readonly store: PipelineStore) {}
 
   async fetchBundles(options: FetchEditorDraftBundlesOptions): Promise<EntityDraftBundle[]> {
     const recentFetchLimit = Math.max(options.batchSize * options.recentMemoryLimit * 10, options.batchSize)
     const recentMemories = await fetchRecentMemories(this.db, recentFetchLimit)
-    const recentReviewed = await fetchReviewedMemoryIds(this.db, recentMemories.map((memory) => memory.id))
+    const recentReviewed = await this.store.findReviewedMemoryIds(recentMemories.map((memory) => memory.id))
     const eligibleEntityIds = unique(
       recentMemories
         .filter((memory) => memory.entity_id && !recentReviewed.has(memory.id))
@@ -293,13 +321,15 @@ export class SupabaseEditorDraftStore implements EditorDraftStore {
 
     if (eligibleEntityIds.length === 0) return []
 
-    const [entities, laneMemories, priorDrafts, publishedHistory] = await Promise.all([
+    const [entities, laneMemories, priorDraftsByEntity, publishedHistory] = await Promise.all([
       fetchEntities(this.db, eligibleEntityIds),
       fetchMemoriesForEntities(this.db, eligibleEntityIds, options.laneMemoryLimit),
-      fetchPriorDrafts(this.db, eligibleEntityIds, options.priorDraftLimit),
+      this.store.fetchPriorDraftsByEntity(eligibleEntityIds, options.priorDraftLimit),
       fetchPublishedHistory(this.db, eligibleEntityIds, options.publishedHistoryLimit),
     ])
-    const laneReviewed = await fetchReviewedMemoryIds(this.db, laneMemories.map((memory) => memory.id))
+    const priorDrafts = eligibleEntityIds.flatMap((entityId) => priorDraftsByEntity.get(entityId) ?? [])
+      .map(toPriorEditorDraft)
+    const laneReviewed = await this.store.findReviewedMemoryIds(laneMemories.map((memory) => memory.id))
 
     return buildEntityDraftBundles(
       entities,
@@ -316,36 +346,8 @@ export class SupabaseEditorDraftStore implements EditorDraftStore {
 
   async upsertDrafts(drafts: EditorDraftInput[]): Promise<EditorDraftRecord[]> {
     if (drafts.length === 0) return []
-    const records = await Promise.all(drafts.map(async (draft) => {
-      const { data: existing, error: existingError } = await this.db
-        .from('editor_drafts')
-        .select('id')
-        .eq('bundle_key', draft.bundle_key)
-        .maybeSingle()
-
-      if (existingError) throw new Error(`editor draft lookup failed: ${existingError.message}`)
-
-      if (existing) {
-        const { created_at: _createdAt, ...updatePayload } = draft
-        const { data, error } = await this.db
-          .from('editor_drafts')
-          .update(updatePayload)
-          .eq('bundle_key', draft.bundle_key)
-          .select(DRAFT_SELECT)
-          .single()
-        if (error) throw new Error(`editor draft update failed: ${error.message}`)
-        return normalizeDraftRecord(data)
-      }
-
-      const { data, error } = await this.db
-        .from('editor_drafts')
-        .insert(draft)
-        .select(DRAFT_SELECT)
-        .single()
-      if (error) throw new Error(`editor draft insert failed: ${error.message}`)
-      return normalizeDraftRecord(data)
-    }))
-    return records
+    const rows = await this.store.upsertDraftsByBundleKey(drafts.map(toDraftUpsertInput))
+    return rows.map(toEditorDraftRecord)
   }
 }
 

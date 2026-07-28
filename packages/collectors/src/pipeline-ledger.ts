@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { PipelineStore } from './pipeline-store/store'
 
 export type PipelineRunStatus = 'running' | 'succeeded' | 'failed' | 'skipped' | 'partial'
 
@@ -73,6 +74,32 @@ export class SupabasePipelineLedgerStore implements PipelineLedgerStore {
       .eq('id', id)
 
     if (error) throw new Error(`pipeline run finish failed: ${error.message}`)
+  }
+}
+
+/**
+ * Adapts any PipelineStore (e.g. SqlitePipelineStore) to PipelineLedgerStore.
+ *
+ * PipelineStore's startRun/finishRun (P1/P2) require startedAt/finishedAt as
+ * real strings with no default - the SQLite implementation has no
+ * server-side "now" to fall back on the way a Postgres DEFAULT would.
+ * PipelineLedgerStore, by contrast, treats both as optional and expects the
+ * store to default them, matching how SupabasePipelineLedgerStore behaved.
+ * This adapter defaults them the same way (`?? new Date().toISOString()`)
+ * before delegating to the underlying store, so callers that construct a
+ * PipelineStore-backed ledger can drop in withPipelineRun exactly like the
+ * Supabase-backed one, without needing to remember to pass startedAt/
+ * finishedAt themselves.
+ */
+export class PipelineStoreLedgerStore implements PipelineLedgerStore {
+  constructor(private readonly store: PipelineStore) {}
+
+  async startRun(input: PipelineRunStartInput): Promise<PipelineRunRecord> {
+    return this.store.startRun({ ...input, startedAt: input.startedAt ?? new Date().toISOString() })
+  }
+
+  async finishRun(id: string, input: PipelineRunFinishInput): Promise<void> {
+    await this.store.finishRun(id, { ...input, finishedAt: input.finishedAt ?? new Date().toISOString() })
   }
 }
 

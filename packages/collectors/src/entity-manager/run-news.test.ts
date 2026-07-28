@@ -184,7 +184,7 @@ test('fetchUnprocessedNewsPackets ignores non-ready research results', async () 
   })
 })
 
-test('runNewsEntityManager writes entity memory, processed marker, and local handed-off status', async () => {
+test('runNewsEntityManager writes entity memory and local handed-off status without a source_marker row', async () => {
   await withNewsStore(async (newsStore) => {
     const entityStore = new InMemoryEntityMemoryStore()
     const provider = new CapturingExtractionProvider(extraction())
@@ -211,15 +211,14 @@ test('runNewsEntityManager writes entity memory, processed marker, and local han
 
     const normalMemory = entityStore.memories.find((memory) => memory.title === 'Ethereum treasury article observed')
     assert.equal(normalMemory?.memory_type, 'news_event')
-    const marker = entityStore.memories.find((memory) => memory.title === 'entity_manager:processed')
-    assert.equal(marker?.source, 'news')
-    assert.equal(marker?.source_area, source.sourceId)
-    assert.equal(marker?.source_research_id, resultRow.id)
-    assert.equal(marker?.memory_type, 'source_marker')
+    // entity_memories forbids memory_type = 'source_marker' post-migration:
+    // the "processed" outcome is reported via result.results[0].markerStatus
+    // above and via the news lane's own local status, not a persisted marker row.
+    assert.equal(entityStore.memories.some((memory) => memory.memory_type === 'source_marker'), false)
   })
 })
 
-test('runNewsEntityManager writes failed marker and local failed status when extraction fails', async () => {
+test('runNewsEntityManager writes local failed status without a source_marker row when extraction fails', async () => {
   await withNewsStore(async (newsStore) => {
     const entityStore = new InMemoryEntityMemoryStore()
     const provider = new CapturingExtractionProvider(new Error('extract failed'))
@@ -237,19 +236,15 @@ test('runNewsEntityManager writes failed marker and local failed status when ext
     assert.equal(result.failed, 1)
     assert.equal(result.failures[0].sourceResearchId, resultRow.id)
     assert.match(result.failures[0].error, /extract failed/)
-    assert.equal(result.memoriesWritten, 1)
+    assert.equal(result.memoriesWritten, 0)
 
     const stored = await newsStore.fetchResearchResult(resultRow.id)
     assert.equal(stored?.status, 'failed_entity_memory')
-    const marker = entityStore.memories.find((memory) => memory.title === 'entity_manager:failed')
-    assert.equal(marker?.source, 'news')
-    assert.equal(marker?.source_area, source.sourceId)
-    assert.equal(marker?.source_research_id, resultRow.id)
-    assert.equal(marker?.memory_type, 'source_marker')
+    assert.equal(entityStore.memories.some((memory) => memory.memory_type === 'source_marker'), false)
   })
 })
 
-test('runNewsEntityManager does not write failed marker when local handed-off status update fails', async () => {
+test('runNewsEntityManager does not write a source_marker row when local handed-off status update fails', async () => {
   const newsStore = new StatusUpdateFailingNewsStore(':memory:')
   try {
     const entityStore = new InMemoryEntityMemoryStore()
@@ -271,25 +266,23 @@ test('runNewsEntityManager does not write failed marker when local handed-off st
     assert.equal(result.failures[0].stage, 'news_status_update')
     assert.match(result.failures[0].error, /local status update failed/)
     assert.equal((await newsStore.fetchResearchResult(resultRow.id))?.status, 'pending_entity_memory')
-
-    const processedMarker = entityStore.memories.find((memory) => memory.title === 'entity_manager:processed')
-    assert.equal(processedMarker?.source_research_id, resultRow.id)
-    const failedMarker = entityStore.memories.find((memory) => memory.title === 'entity_manager:failed')
-    assert.equal(failedMarker, undefined)
+    assert.equal(entityStore.memories.some((memory) => memory.memory_type === 'source_marker'), false)
   } finally {
     newsStore.close()
   }
 })
 
-test('runNewsEntityManager skips already processed or failed source markers', async () => {
+test('runNewsEntityManager skips research results already marked handed-off or failed via the NewsStore cursor', async () => {
   await withNewsStore(async (newsStore) => {
     const entityStore = new InMemoryEntityMemoryStore()
     const processed = await insertResearchResult(newsStore, candidate({ article_url: 'https://www.coindesk.com/a' }))
     const failed = await insertResearchResult(newsStore, candidate({ article_url: 'https://www.coindesk.com/b' }))
-    await entityStore.upsertMemories([
-      markerMemory(processed.id, processed.sourceId, 'entity_manager:processed'),
-      markerMemory(failed.id, failed.sourceId, 'entity_manager:failed'),
-    ])
+    // Seed the skip state directly through the news lane's own authoritative
+    // cursor (NewsStore.markResearchResultStatus) instead of an
+    // entity_memories source_marker row - fetchPendingResearchResults filters
+    // strictly on this status column.
+    await newsStore.markResearchResultStatus(processed.id, 'handed_to_entity_memory')
+    await newsStore.markResearchResultStatus(failed.id, 'failed_entity_memory')
     const provider = new CapturingExtractionProvider(extraction())
 
     const result = await runNewsEntityManager({
@@ -299,14 +292,13 @@ test('runNewsEntityManager skips already processed or failed source markers', as
       batchSize: 10,
     })
 
-    assert.equal(result.fetched, 2)
-    assert.equal(result.skippedAlreadyMarked, 2)
+    assert.equal(result.fetched, 0)
+    assert.equal(result.skippedAlreadyMarked, 0)
     assert.equal(result.processed, 0)
     assert.equal(result.failed, 0)
     assert.equal(provider.packets.length, 0)
     assert.equal((await newsStore.fetchResearchResult(processed.id))?.status, 'handed_to_entity_memory')
     assert.equal((await newsStore.fetchResearchResult(failed.id))?.status, 'failed_entity_memory')
-    assert.equal((await newsStore.fetchCandidateObservation(processed.candidateObservationId))?.status, 'handed_to_entity_memory')
     assert.deepEqual(await newsStore.fetchPendingResearchResults(10), [])
   })
 })
@@ -361,25 +353,3 @@ test('runNewsEntityManager does not call downstream stages or Hermes scout/resea
     assert.equal(entityStore.memories.some((memory) => memory.title.includes('publisher')), false)
   })
 })
-
-function markerMemory(sourceResearchId: string, sourceArea: string, title: 'entity_manager:processed' | 'entity_manager:failed') {
-  return {
-    entity_id: null,
-    source: 'news',
-    source_area: sourceArea,
-    source_type: 'article',
-    source_ref_id: 'https://www.coindesk.com/already-marked',
-    source_research_id: sourceResearchId,
-    memory_type: 'source_marker' as const,
-    title,
-    summary: 'already marked',
-    body: null,
-    event_at: observedAt,
-    observed_at: observedAt,
-    confidence: null,
-    evidence: [],
-    mentions: [],
-    metrics: {},
-    context: {},
-  }
-}

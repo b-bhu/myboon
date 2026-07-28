@@ -148,6 +148,31 @@ export interface EntityMemoryStore {
    */
   findLatestMemorySince(entityId: string, memoryType: EntityMemoryType, sinceIso: string): Promise<EntityMemoryRecord | null>
   updateMemory(id: string, patch: EntityMemoryConsolidationPatch): Promise<EntityMemoryRecord>
+  /**
+   * Replay-idempotency log for manual Entity commands (dashboard/CLI/Codex),
+   * backed by the dedicated `manual_command_log` table rather than an
+   * `entity_memories` `source_marker` row — a command that creates an entity
+   * has no entity_id to attach a memory to at write time, and entity_memories
+   * forbids both a null entity_id and memory_type = 'source_marker' entirely
+   * (see the entity_memories_drop_source_marker migration).
+   */
+  findManualCommand(requestId: string): Promise<ManualCommandLogRecord | null>
+  recordManualCommand(input: ManualCommandLogInput): Promise<ManualCommandLogRecord>
+}
+
+export interface ManualCommandLogInput {
+  requestId: string
+  commandHash: string
+  actor: ManualEntityActor
+  entityId: string | null
+}
+
+export interface ManualCommandLogRecord {
+  requestId: string
+  commandHash: string
+  actor: ManualEntityActor
+  entityId: string | null
+  appliedAt: string
 }
 
 export interface EntityMemoryConsolidationPatch {

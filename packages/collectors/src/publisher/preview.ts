@@ -5,6 +5,7 @@ loadEnv({ path: '../../.env' })
 loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
 
@@ -20,12 +21,17 @@ async function main(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const result = await runPublisher({
-    store: new SupabasePublisherStore(supabase),
-    batchSize: config.batchSize,
-    dryRun: true,
-  })
-  console.log(JSON.stringify(result, null, 2))
+  const pipelineStore = new SqlitePipelineStore()
+  try {
+    const result = await runPublisher({
+      store: new SupabasePublisherStore(supabase, pipelineStore),
+      batchSize: config.batchSize,
+      dryRun: true,
+    })
+    console.log(JSON.stringify(result, null, 2))
+  } finally {
+    pipelineStore.close()
+  }
 }
 
 main().catch((err) => {

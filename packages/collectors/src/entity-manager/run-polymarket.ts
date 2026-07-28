@@ -2,12 +2,16 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
 import { config as loadEnv } from 'dotenv'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEntityExtractionProvider } from './extractor'
 import { polymarketResearchToPacket, type PolymarketCandidateContext, type PolymarketResearchRow } from './polymarket-adapter'
 import { EntityService } from './entity-service'
 import { SupabaseEntityMemoryStore } from './supabase-store'
 import type { ExtractionProvider, ResearchPacket, WriteExtractionResult } from './types'
 
+const SOURCE = 'polymarket'
+const AREA = 'markets'
 const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000
 
@@ -31,123 +35,164 @@ export interface PolymarketEntityManagerResult {
   failures: Array<{ sourceResearchId: string, error: string }>
 }
 
-export const POLYMARKET_ENTITY_MANAGER_RESEARCH_SELECT = [
-  'id',
-  'candidate_id',
-  'source',
-  'area',
-  'slug',
-  'title',
-  'candidate_type',
-  'research_mode',
-  'summary',
-  'notes',
-  'key_findings',
-  'evidence_links',
-  'uncertainty',
-  'editor_notes',
-  'researched_at',
-  'research_family_key',
-  'research_cluster_key',
-  'research_depth',
-  'evidence_quality',
-  'catalyst_found',
-  'recommended_editor_action',
-  'research_backend',
-  'research_model',
-].join(', ')
-
-const CANDIDATE_SELECT = [
-  'id',
-  'market_id',
-  'slug',
-  'title',
-  'tag_slug',
-  'tag_label',
-  'observed_at',
-  'what_changed',
-  'why_flagged',
-  'score',
-  'score_breakdown',
-  'metrics',
-  'evidence_refs',
-].join(', ')
-
-async function fetchProcessedResearchIds(db: SupabaseClient, researchIds: string[]): Promise<Set<string>> {
-  if (researchIds.length === 0) return new Set()
-  const { data, error } = await db
-    .from('entity_memories')
-    .select('source_research_id')
-    .eq('source', 'polymarket')
-    .eq('source_area', 'markets')
-    .eq('memory_type', 'source_marker')
-    .in('source_research_id', researchIds)
-    .in('title', ['entity_manager:processed', 'entity_manager:failed'])
-  if (error) throw new Error(`entity manager marker lookup failed: ${error.message}`)
-  return new Set((data ?? []).map((row) => String((row as { source_research_id: unknown }).source_research_id)))
-}
-
-async function fetchResearchRows(db: SupabaseClient, limit: number, offset = 0): Promise<PolymarketResearchRow[]> {
-  const { data, error } = await db
-    .from('polymarket_market_candidate_research')
-    .select(POLYMARKET_ENTITY_MANAGER_RESEARCH_SELECT)
-    .eq('source', 'polymarket')
-    .eq('area', 'markets')
-    .eq('status', 'pending_editor')
-    .order('researched_at', { ascending: true })
-    .range(offset, offset + limit - 1)
-  if (error) throw new Error(`polymarket research fetch failed: ${error.message}`)
-  return (data ?? []) as unknown as PolymarketResearchRow[]
-}
-
-async function fetchCandidateContext(db: SupabaseClient, candidateIds: string[]): Promise<Map<string, PolymarketCandidateContext>> {
-  if (candidateIds.length === 0) return new Map()
-  const { data, error } = await db
-    .from('polymarket_market_candidates')
-    .select(CANDIDATE_SELECT)
-    .in('id', candidateIds)
-  if (error) throw new Error(`polymarket candidate context fetch failed: ${error.message}`)
-  const byId = new Map<string, PolymarketCandidateContext>()
-  for (const row of data ?? []) {
-    const candidate = row as unknown as PolymarketCandidateContext
-    byId.set(candidate.id, candidate)
+function toPolymarketResearchRow(row: {
+  id: string
+  candidateId: string
+  source: string
+  area: string
+  slug: string
+  title: string
+  candidateType: string
+  researchMode: string
+  summary: string
+  notes: string
+  keyFindings: unknown
+  evidenceLinks: unknown
+  uncertainty: string
+  editorNotes: string
+  researchedAt: string
+  researchFamilyKey: string
+  researchClusterKey: string
+  researchDepth: string
+  evidenceQuality: string
+  catalystFound: boolean
+  recommendedEditorAction: string
+  researchBackend: string
+  researchModel: string | null
+}): PolymarketResearchRow {
+  return {
+    id: row.id,
+    candidate_id: row.candidateId,
+    source: row.source,
+    area: row.area,
+    slug: row.slug,
+    title: row.title,
+    candidate_type: row.candidateType,
+    research_mode: row.researchMode,
+    summary: row.summary,
+    notes: row.notes,
+    key_findings: row.keyFindings,
+    evidence_links: row.evidenceLinks,
+    uncertainty: row.uncertainty,
+    editor_notes: row.editorNotes,
+    researched_at: row.researchedAt,
+    research_family_key: row.researchFamilyKey,
+    research_cluster_key: row.researchClusterKey,
+    research_depth: row.researchDepth,
+    evidence_quality: row.evidenceQuality,
+    catalyst_found: row.catalystFound,
+    recommended_editor_action: row.recommendedEditorAction,
+    research_backend: row.researchBackend,
+    research_model: row.researchModel,
   }
-  return byId
+}
+
+function toPolymarketCandidateContext(row: {
+  id: string
+  marketId: string
+  slug: string
+  title: string
+  tagSlug: string
+  tagLabel: string | null
+  observedAt: string
+  whatChanged: string
+  whyFlagged: string
+  score: number
+  scoreBreakdown: unknown
+  metrics: unknown
+  evidenceRefs: unknown
+}): PolymarketCandidateContext {
+  return {
+    id: row.id,
+    market_id: row.marketId,
+    slug: row.slug,
+    title: row.title,
+    tag_slug: row.tagSlug,
+    tag_label: row.tagLabel,
+    observed_at: row.observedAt,
+    what_changed: row.whatChanged,
+    why_flagged: row.whyFlagged,
+    score: row.score,
+    score_breakdown: row.scoreBreakdown,
+    metrics: row.metrics,
+    evidence_refs: row.evidenceRefs,
+  }
+}
+
+/**
+ * Finds the next batch of Polymarket research rows the entity manager has not
+ * yet processed.
+ *
+ * This used to page through up to 50 pages of `polymarket_market_candidate_research`
+ * via Supabase `.range()` and cross-check every row against `source_marker`
+ * rows in `entity_memories` to find what was already handled - an O(pages)
+ * fan-out of marker-lookup queries per run. `entity_memories.source_marker`
+ * rows are gone (a Supabase migration now forbids them), so that cross-check
+ * is no longer possible even in principle.
+ *
+ * KNOWN GAP (reported, not silently worked around): `PipelineStore` gives the
+ * entity manager no cursor of its own over research rows. `PipelineResearchRow`
+ * has exactly one status column, and it is owned end-to-end by the editor
+ * stage (`pending_editor` -> `editing` -> `edited`/`rejected`/`needs_more_research`
+ * -> `published`), which runs as an independent consumer of the SAME rows on
+ * its own schedule. There is no second flag/timestamp/lease field the entity
+ * manager could use to mark "I have already turned this into entity_memories"
+ * without colliding with the editor's own claim. `claimWithLease` and friends
+ * are candidate-only (see `pipeline_candidates.lease_owner` /
+ * `lease_expires_at` / `attempt_count` in sqlite-store.ts) - there is no
+ * research-row equivalent.
+ *
+ * Given that gap, this reads `status = 'pending_editor'` (the same "not yet
+ * claimed" signal the editor uses) WITHOUT writing back to it, and leans on
+ * `writeExtraction`'s existing idempotent-by-key dedup (see
+ * entity-manager/resolver.ts) to make re-processing the same row safe. The
+ * tradeoff: until the editor stage claims a row and moves it off
+ * `pending_editor`, every entity-manager run re-fetches and re-attempts it,
+ * doing a no-op write instead of skipping outright. That is wasted work, not
+ * a correctness bug - `writeExtraction`'s memory dedup keys already prevent
+ * duplicate memories, and the destructive alternative (writing a second
+ * status onto the shared column) would risk starving the editor of its own
+ * queue. Fixing the waste needs a real interface change (a second status/lease
+ * column scoped to this stage), which is out of scope here and reported back
+ * as a `PipelineStore` gap.
+ */
+async function fetchUnprocessedPolymarketResearchRows(
+  store: PipelineStore,
+  limit: number
+): Promise<PolymarketResearchRow[]> {
+  const rows = await store.fetchResearchByStatus({
+    source: SOURCE,
+    area: AREA,
+    status: 'pending_editor',
+    limit,
+  })
+  return rows.map(toPolymarketResearchRow)
 }
 
 export async function fetchUnprocessedPolymarketPackets(
-  db: SupabaseClient,
+  store: PipelineStore,
   batchSize: number
 ): Promise<ResearchPacket[]> {
-  const pageSize = Math.max(batchSize * 10, 100)
-  const maxPages = 50
-  const unprocessed: PolymarketResearchRow[] = []
+  const rows = await fetchUnprocessedPolymarketResearchRows(store, batchSize)
+  if (rows.length === 0) return []
 
-  for (let page = 0; page < maxPages && unprocessed.length < batchSize; page += 1) {
-    const offset = page * pageSize
-    const rows = await fetchResearchRows(db, pageSize, offset)
-    if (rows.length === 0) break
+  const candidateIds = [...new Set(rows.map((row) => row.candidate_id))]
+  const candidateRows = await store.getCandidatesByIds(candidateIds)
+  const candidates = new Map(candidateRows.map((row) => [row.id, toPolymarketCandidateContext(row)]))
 
-    const processed = await fetchProcessedResearchIds(db, rows.map((row) => row.id))
-    unprocessed.push(...rows.filter((row) => !processed.has(row.id)))
-
-    if (rows.length < pageSize) break
-  }
-
-  const selected = unprocessed.slice(0, batchSize)
-  const candidates = await fetchCandidateContext(db, [...new Set(selected.map((row) => row.candidate_id))])
-  return selected.map((row) => polymarketResearchToPacket(row, candidates.get(row.candidate_id) ?? null))
+  return rows.map((row) => polymarketResearchToPacket(row, candidates.get(row.candidate_id) ?? null))
 }
 
 export async function runPolymarketEntityManager(
+  store: PipelineStore,
   db: SupabaseClient,
   options: RunPolymarketEntityManagerOptions = {}
 ): Promise<PolymarketEntityManagerResult> {
   const batchSize = options.batchSize ?? 20
   const extractionProvider = options.extractionProvider ?? new HermesEntityExtractionProvider()
-  const store = new SupabaseEntityMemoryStore(db)
-  const entityService = new EntityService(store)
-  const packets = await fetchUnprocessedPolymarketPackets(db, batchSize)
+  const entityStore = new SupabaseEntityMemoryStore(db)
+  const entityService = new EntityService(entityStore)
+  const packets = await fetchUnprocessedPolymarketPackets(store, batchSize)
   const results: WriteExtractionResult[] = []
   const failures: Array<{ sourceResearchId: string, error: string }> = []
 
@@ -195,7 +240,11 @@ function requiredEnv(name: string): string {
   return value
 }
 
-async function runAndLog(db: SupabaseClient, config: PolymarketEntityManagerCliConfig): Promise<void> {
+async function runAndLog(
+  store: PipelineStore,
+  db: SupabaseClient,
+  config: PolymarketEntityManagerCliConfig
+): Promise<void> {
   const result = await withPipelineRun(
     new SupabasePipelineLedgerStore(db),
     {
@@ -206,7 +255,7 @@ async function runAndLog(db: SupabaseClient, config: PolymarketEntityManagerCliC
         batchSize: config.batchSize,
       },
     },
-    () => runPolymarketEntityManager(db, {
+    () => runPolymarketEntityManager(store, db, {
       batchSize: config.batchSize,
       extractionProvider: new HermesEntityExtractionProvider({ timeoutMs: config.hermesTimeoutMs }),
     })
@@ -224,15 +273,20 @@ async function main(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
+  const store = new SqlitePipelineStore()
 
-  await runAndLog(supabase, config)
-  if (config.runOnce) return
+  try {
+    await runAndLog(store, supabase, config)
+    if (config.runOnce) return
 
-  setInterval(() => {
-    runAndLog(supabase, config).catch((err) => {
-      console.error('[entity-manager:polymarket] run failed:', err)
-    })
-  }, config.intervalMs)
+    setInterval(() => {
+      runAndLog(store, supabase, config).catch((err) => {
+        console.error('[entity-manager:polymarket] run failed:', err)
+      })
+    }, config.intervalMs)
+  } finally {
+    if (config.runOnce) store.close()
+  }
 }
 
 if (require.main === module) {

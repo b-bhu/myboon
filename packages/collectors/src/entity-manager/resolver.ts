@@ -9,7 +9,6 @@ import type {
   PrimaryEntityCandidate,
   ResearchPacket,
   ResolvedEntity,
-  SourceProcessingStatus,
   WriteExtractionResult,
 } from './types'
 
@@ -214,28 +213,6 @@ function memoryInput(packet: ResearchPacket, memory: EntityMemoryCandidate, enti
   }
 }
 
-function markerMemory(packet: ResearchPacket, status: SourceProcessingStatus, detail: string): EntityMemoryInput {
-  return {
-    entity_id: null,
-    source: packet.source,
-    source_area: packet.sourceArea,
-    source_type: packet.sourceType,
-    source_ref_id: packet.sourceRefId,
-    source_research_id: packet.sourceResearchId,
-    memory_type: 'source_marker',
-    title: `entity_manager:${status}`,
-    summary: detail,
-    body: null,
-    event_at: packet.eventAt ?? packet.observedAt,
-    observed_at: packet.observedAt,
-    confidence: null,
-    evidence: [],
-    mentions: [],
-    metrics: {},
-    context: { status, packet_id: packet.id },
-  }
-}
-
 /**
  * For Polymarket market_signal memories only: fold a new observation into a
  * recent existing memory for the same entity (per
@@ -284,7 +261,13 @@ export async function writeExtraction(
     const entityId = bySlug.get(memory.entitySlug)
     return entityId ? [memoryInput(packet, memory, entityId)] : []
   })
-  memoryInputs.push(markerMemory(packet, 'processed', `Processed Entity Manager packet ${packet.id}.`))
+  // No longer writes a `source_marker` "processed" marker into entity_memories:
+  // that table now forbids memory_type = 'source_marker' entirely (a Supabase
+  // migration drops the CHECK constraint that used to permit it). Callers that
+  // need a processed/failed cursor must track it themselves - see
+  // entity-manager/run-polymarket.ts's fetchUnprocessedPolymarketPackets for
+  // the Polymarket lane, and entity-manager/run-news.ts for news (which still
+  // reads for this marker defensively; see the comment there).
 
   const { remaining, consolidated } = await consolidatePolymarketMarketSignals(store, packet, memoryInputs)
 
@@ -329,12 +312,16 @@ export async function markExtractionFailed(
   packet: ResearchPacket,
   error: string
 ): Promise<WriteExtractionResult> {
-  const written = await store.upsertMemories([markerMemory(packet, 'failed', error.slice(0, 1000))])
+  // No `source_marker` row written here either (see writeExtraction above) -
+  // this now only reports the failure outcome; it does not persist a
+  // durable "failed" marker into entity_memories. Callers that need to skip
+  // re-attempting a permanently-failed packet must track that themselves.
+  void error
   return {
     sourceResearchId: packet.sourceResearchId,
     entitiesCreated: 0,
     entitiesReused: 0,
-    memoriesWritten: written.length,
+    memoriesWritten: 0,
     memoriesConsolidated: 0,
     markerStatus: 'failed',
   }
@@ -342,5 +329,4 @@ export async function markExtractionFailed(
 
 export const __testing = {
   resolvePrimaryEntities,
-  markerMemory,
 }

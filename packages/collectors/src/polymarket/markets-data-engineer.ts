@@ -1,12 +1,29 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type {
+  PipelineCandidateRow,
+  PipelineCandidateThreadUpdate,
+  PipelineStore,
+  PipelineStoreCandidateStatus,
+} from '../pipeline-store/store'
 import pinnedSlugs from './pinned.json'
 import defaultConfig from './markets-data-engineer-config.json'
 
 const GAMMA_API = 'https://gamma-api.polymarket.com'
 const SOURCE = 'polymarket'
 const AREA = 'markets'
-const LOOKUP_CHUNK_SIZE = 50
-const WRITE_CHUNK_SIZE = 50
+// Fallback family-key scan limit for findCandidateThreadsByFamilyKey, and the
+// backlog family-scan limits below: these preserve the exact scan sizes the
+// original direct Supabase queries used (1500 / 1200 / 1200), not the store's
+// smaller defaults.
+const THREAD_FAMILY_FALLBACK_SCAN_LIMIT = 1500
+const BACKLOG_CANDIDATE_FAMILY_SCAN_LIMIT = 1200
+const BACKLOG_RESEARCH_FAMILY_SCAN_LIMIT = 1200
+const BACKLOG_EDITOR_PENDING_LIMIT = 500
+const BACKLOG_PUBLISHED_LIMIT = 500
+// Stand-in for "no limit" on slug-scoped backlog lookups whose original
+// Supabase queries had no limit at all - see the interface-gap comment at
+// each call site in fetchDownstreamBacklog.
+const BACKLOG_UNBOUNDED_LOOKUP_LIMIT = 10_000
 
 export type PolymarketMarketCandidateType =
   | 'odds_moved'
@@ -190,14 +207,6 @@ function clamp(value: number, min = 0, max = 100): number {
 function round(value: number, decimals = 4): number {
   const factor = 10 ** decimals
   return Math.round(value * factor) / factor
-}
-
-function chunks<T>(items: T[], size: number): T[][] {
-  const groups: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    groups.push(items.slice(index, index + size))
-  }
-  return groups
 }
 
 function compactMoney(value: number): string {
@@ -643,83 +652,60 @@ interface CandidateThreadUpdate {
   payload: Record<string, unknown>
 }
 
-async function fetchPreviousWatchlist(db: SupabaseClient, slugs: string[]): Promise<Map<string, PreviousMarketState>> {
+async function fetchPreviousWatchlist(store: PipelineStore, slugs: string[]): Promise<Map<string, PreviousMarketState>> {
   const previousBySlug = new Map<string, PreviousMarketState>()
   if (slugs.length === 0) return previousBySlug
 
-  for (const slugChunk of chunks(slugs, LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await db
-      .from('polymarket_market_watchlist')
-      .select('slug, latest_observed_at, latest_yes_price, latest_volume, latest_volume_24h')
-      .eq('area', AREA)
-      .in('slug', slugChunk)
-
-    if (error) throw new Error(`previous watchlist fetch failed: ${error.message}`)
-
-    for (const row of data ?? []) {
-      const previous = row as {
-        slug: string
-        latest_observed_at: string | null
-        latest_yes_price: number | string | null
-        latest_volume: number | string | null
-        latest_volume_24h: number | string | null
-      }
-      previousBySlug.set(previous.slug, {
-        observed_at: previous.latest_observed_at,
-        yes_price: previous.latest_yes_price,
-        volume: previous.latest_volume,
-        volume_24h: previous.latest_volume_24h,
-      })
-    }
+  const rows = await store.getWatchlistSnapshots(AREA, slugs)
+  for (const row of rows) {
+    previousBySlug.set(row.slug, {
+      observed_at: row.latestObservedAt,
+      yes_price: row.latestYesPrice,
+      volume: row.latestVolume,
+      volume_24h: row.latestVolume24h,
+    })
   }
 
   return previousBySlug
 }
 
-async function upsertWatchlist(db: SupabaseClient, watchlist: NormalizedMarket[], observedAt: string): Promise<void> {
+async function upsertWatchlist(store: PipelineStore, watchlist: NormalizedMarket[], observedAt: string): Promise<void> {
   const rankBySlug = new Map(watchlist.map((market, index) => [market.slug, index + 1]))
 
-  for (const watchlistChunk of chunks(watchlist, WRITE_CHUNK_SIZE)) {
-    const { error } = await db
-      .from('polymarket_market_watchlist')
-      .upsert(watchlistChunk.map((market) => ({
-        source: SOURCE,
-        area: AREA,
-        tag_slug: market.tagSlug,
-        tag_label: market.tagLabel,
-        market_id: market.marketId,
-        slug: market.slug,
-        title: market.title,
-        event_slug: market.eventSlug,
-        event_title: market.eventTitle,
-        end_date: market.endDate,
-        is_manual_pin: market.isManualPin,
-        rank_in_area: rankBySlug.get(market.slug),
-        watch_score: market.watchScore,
-        score_breakdown: market.scoreBreakdown,
-        selection_reason: market.selectionReason,
-        latest_observed_at: observedAt,
-        latest_yes_price: market.yesPrice,
-        latest_volume: market.volume,
-        latest_volume_24h: market.volume24h,
-        latest_liquidity: market.liquidity,
-        status: 'active',
-        updated_at: observedAt,
-      })), { onConflict: 'area,slug' })
-
-    if (error) throw new Error(`watchlist upsert failed: ${error.message}`)
-  }
+  await store.upsertWatchlist(watchlist.map((market) => ({
+    source: SOURCE,
+    area: AREA,
+    tagSlug: market.tagSlug,
+    tagLabel: market.tagLabel,
+    marketId: market.marketId,
+    slug: market.slug,
+    title: market.title,
+    eventSlug: market.eventSlug,
+    eventTitle: market.eventTitle,
+    endDate: market.endDate,
+    isManualPin: market.isManualPin,
+    rankInArea: rankBySlug.get(market.slug) ?? null,
+    watchScore: market.watchScore,
+    scoreBreakdown: market.scoreBreakdown,
+    selectionReason: market.selectionReason,
+    latestObservedAt: observedAt,
+    latestYesPrice: market.yesPrice,
+    latestVolume: market.volume,
+    latestVolume24h: market.volume24h,
+    latestLiquidity: market.liquidity,
+    status: 'active',
+  })))
 }
 
-async function deactivateStaleWatchlist(db: SupabaseClient, observedAt: string): Promise<void> {
-  const { error } = await db
-    .from('polymarket_market_watchlist')
-    .update({ status: 'inactive', updated_at: observedAt })
-    .eq('area', AREA)
-    .eq('status', 'active')
-    .neq('latest_observed_at', observedAt)
-
-  if (error) throw new Error(`stale watchlist deactivation failed: ${error.message}`)
+async function deactivateStaleWatchlist(store: PipelineStore, observedAt: string): Promise<void> {
+  // NOTE: the original direct-Supabase implementation deactivated rows where
+  // latest_observed_at != observedAt (not-equal). The store's
+  // deactivateStaleWatchlist deactivates rows where latest_observed_at is
+  // NULL or < observedAt. These are equivalent here because upsertWatchlist
+  // always runs first in the same call and stamps every currently-seen
+  // market's latest_observed_at with this exact observedAt, so no row can
+  // have a latest_observed_at newer than observedAt at this point in the run.
+  await store.deactivateStaleWatchlist(AREA, observedAt)
 }
 
 function candidateDedupeKey(market: NormalizedMarket, observedAt: string, cooldownHours: number): string {
@@ -802,20 +788,15 @@ function buildCandidates(
   return candidates
 }
 
-async function fetchExistingCandidateKeys(db: SupabaseClient, dedupeKeys: string[]): Promise<Set<string>> {
-  const existing = new Set<string>()
-  if (dedupeKeys.length === 0) return existing
+async function fetchExistingCandidateKeys(store: PipelineStore, dedupeKeys: string[]): Promise<Set<string>> {
+  if (dedupeKeys.length === 0) return new Set()
 
-  for (const keyChunk of chunks(dedupeKeys, LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await db
-      .from('polymarket_market_candidates')
-      .select('dedupe_key')
-      .in('dedupe_key', keyChunk)
-
-    if (error) throw new Error(`candidate dedupe check failed: ${error.message}`)
-    for (const row of data ?? []) existing.add((row as { dedupe_key: string }).dedupe_key)
-  }
-  return existing
+  // NOTE (tenancy filter): this lookup is by dedupe_key only, with no
+  // source/area filter, even though every sibling query in this file filters
+  // on both. That is the PRE-EXISTING behavior (dedupe_key already encodes
+  // source+area, see candidateDedupeKey) and is preserved as-is during this
+  // migration rather than silently made consistent with the other queries.
+  return store.findExistingDedupeKeys(dedupeKeys)
 }
 
 type BacklogBlockKind =
@@ -1052,65 +1033,72 @@ function buildThreadUpdatePayload(
 }
 
 async function fetchResearchRowsByIds(
-  db: SupabaseClient,
+  store: PipelineStore,
   ids: string[]
 ): Promise<Array<{ id: string; slug: string; title: string | null; status: string; researched_at: string | null }>> {
-  const rows: Array<{ id: string; slug: string; title: string | null; status: string; researched_at: string | null }> = []
   const uniqueIds = [...new Set(ids)]
-  for (const idChunk of chunks(uniqueIds, LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await db
-      .from('polymarket_market_candidate_research')
-      .select('id, slug, title, status, researched_at')
-      .in('id', idChunk)
+  const rows = await store.getResearchByIds(uniqueIds)
+  return rows.map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    status: row.status,
+    researched_at: row.researchedAt,
+  }))
+}
 
-    if (error) throw new Error(`research rows by id fetch failed: ${error.message}`)
-    rows.push(...((data ?? []) as Array<{ id: string; slug: string; title: string | null; status: string; researched_at: string | null }>))
+function toExistingCandidateThread(row: PipelineCandidateRow): ExistingCandidateThread {
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    status: row.status,
+    observed_at: row.observedAt,
+    score: row.score,
+    metrics: row.metrics,
+    research_family_key: row.researchFamilyKey,
+    research_cluster_key: row.researchClusterKey,
   }
-  return rows
 }
 
 async function fetchExistingCandidateThreads(
-  db: SupabaseClient,
+  store: PipelineStore,
   familyKeys: string[]
 ): Promise<Map<string, ExistingCandidateThread>> {
   const byFamily = new Map<string, ExistingCandidateThread>()
   const uniqueFamilyKeys = [...new Set(familyKeys)]
   if (uniqueFamilyKeys.length === 0) return byFamily
 
-  for (const keyChunk of chunks(uniqueFamilyKeys, LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await db
-      .from('polymarket_market_candidates')
-      .select('id, slug, title, status, observed_at, score, metrics, research_family_key, research_cluster_key')
-      .eq('source', SOURCE)
-      .eq('area', AREA)
-      .in('research_family_key', keyChunk)
-      .order('observed_at', { ascending: false })
+  // KNOWN BEHAVIOR GAP (reported, not silently patched): the original code
+  // ran a direct match by research_family_key, then ALWAYS ran a fallback
+  // scan for whichever specific keys were still unresolved after that direct
+  // match, even when other keys in the same call DID match directly.
+  // findCandidateThreadsByFamilyKey only runs its fallback scan when the
+  // direct match set is empty FOR THE WHOLE CALL (see store.ts doc comment /
+  // sqlite-store.ts implementation) - if even one requested key matches
+  // directly, no fallback scan runs at all, so any other still-unresolved key
+  // in the same call is silently left unresolved instead of being recovered
+  // via the recent-scan fallback. This can only change behavior when a
+  // multi-key call mixes resolved and unresolved family keys, which in
+  // practice differs from the direct-Supabase behavior only in that edge
+  // case. Preserve the original 1500-row fallback scan size explicitly,
+  // since the store's default (200) is smaller.
+  const rows = await store.findCandidateThreadsByFamilyKey(SOURCE, AREA, uniqueFamilyKeys, THREAD_FAMILY_FALLBACK_SCAN_LIMIT)
 
-    if (error) throw new Error(`candidate thread family fetch failed: ${error.message}`)
-    for (const row of data ?? []) {
-      const thread = row as ExistingCandidateThread
-      if (!thread.research_family_key || byFamily.has(thread.research_family_key)) continue
+  const uniqueFamilyKeySet = new Set(uniqueFamilyKeys)
+  for (const row of rows) {
+    const thread = toExistingCandidateThread(row)
+    if (thread.research_family_key && uniqueFamilyKeySet.has(thread.research_family_key) && !byFamily.has(thread.research_family_key)) {
       byFamily.set(thread.research_family_key, thread)
+      continue
     }
-  }
-
-  const unresolved = uniqueFamilyKeys.filter((key) => !byFamily.has(key))
-  if (unresolved.length === 0) return byFamily
-
-  const { data, error } = await db
-    .from('polymarket_market_candidates')
-    .select('id, slug, title, status, observed_at, score, metrics, research_family_key, research_cluster_key')
-    .eq('source', SOURCE)
-    .eq('area', AREA)
-    .order('observed_at', { ascending: false })
-    .limit(1500)
-
-  if (error) throw new Error(`candidate thread fallback fetch failed: ${error.message}`)
-  const unresolvedSet = new Set(unresolved)
-  for (const row of data ?? []) {
-    const thread = row as ExistingCandidateThread
+    // Rows returned only via the fallback scan may not carry one of the
+    // requested family keys as their own research_family_key (e.g. a title
+    // family key computed from the row's title/slug rather than what's
+    // stored). Match on any of the row's derived family keys, same as the
+    // original fallback-scan matching logic.
     for (const key of rowFamilyKeys(thread)) {
-      if (!unresolvedSet.has(key) || byFamily.has(key)) continue
+      if (!uniqueFamilyKeySet.has(key) || byFamily.has(key)) continue
       byFamily.set(key, thread)
     }
   }
@@ -1119,6 +1107,7 @@ async function fetchExistingCandidateThreads(
 }
 
 async function fetchDownstreamBacklog(
+  store: PipelineStore,
   db: SupabaseClient,
   markets: NormalizedMarket[],
   observedAt: string,
@@ -1132,54 +1121,18 @@ async function fetchDownstreamBacklog(
   const failedRetryCutoffMs = new Date(observedAt).getTime() - options.candidateRetryFailedHours * 3_600_000
   const recentPublishedCutoffMs = new Date(observedAt).getTime() - options.candidateRecentPublishedCooldownHours * 3_600_000
   const recentPublishedCutoff = new Date(recentPublishedCutoffMs).toISOString()
-  const unresolvedCandidateStatuses = ['pending_research', 'researching', 'researched']
-  const candidateStatuses = [...unresolvedCandidateStatuses, 'skipped_recently_researched', 'research_failed', 'published']
+  const candidateStatuses: PipelineStoreCandidateStatus[] = [
+    'pending_research',
+    'researching',
+    'researched',
+    'skipped_recently_researched',
+    'research_failed',
+    'published',
+  ]
 
-  for (const slugChunk of chunks(slugs, LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await db
-      .from('polymarket_market_candidates')
-      .select('slug, title, status, observed_at, score')
-      .eq('source', SOURCE)
-      .eq('area', AREA)
-      .in('slug', slugChunk)
-      .in('status', candidateStatuses)
-
-    if (error) throw new Error(`candidate backlog slug fetch failed: ${error.message}`)
-    for (const row of data ?? []) {
-      const candidate = row as { slug: string; title: string | null; status: string; observed_at: string | null; score: number | string | null }
-      const observedMs = candidate.observed_at ? new Date(candidate.observed_at).getTime() : 0
-      if (candidate.status === 'published' && observedMs < recentPublishedCutoffMs) continue
-      const kind: BacklogBlockKind = candidate.status === 'research_failed' || candidate.status === 'skipped_recently_researched'
-        ? (observedMs >= failedRetryCutoffMs ? 'research_failed_recent' : 'research_failed_stale')
-        : candidate.status === 'published'
-          ? 'recently_published'
-          : 'candidate_unresolved'
-      addBacklogBlock(backlog, {
-        kind,
-        slug: candidate.slug,
-        title: candidate.title,
-        status: candidate.status,
-        at: candidate.observed_at,
-        score: numberOrNull(candidate.score),
-      })
-    }
-  }
-
-  const { data: candidateFamilyRows, error: candidateFamilyError } = await db
-    .from('polymarket_market_candidates')
-    .select('slug, title, status, observed_at, score')
-    .eq('source', SOURCE)
-    .eq('area', AREA)
-    .in('status', candidateStatuses)
-    .order('observed_at', { ascending: false })
-    .limit(1200)
-
-  if (candidateFamilyError) throw new Error(`candidate backlog family fetch failed: ${candidateFamilyError.message}`)
-  for (const row of candidateFamilyRows ?? []) {
-    const candidate = row as { slug: string; title: string | null; status: string; observed_at: string | null; score: number | string | null }
-    if (!rowFamilyKeys(candidate).some((key) => watchedFamilyKeys.has(key))) continue
+  function addCandidateBacklogBlock(candidate: { slug: string; title: string | null; status: string; observed_at: string | null; score: number | string | null }): void {
     const observedMs = candidate.observed_at ? new Date(candidate.observed_at).getTime() : 0
-    if (candidate.status === 'published' && observedMs < recentPublishedCutoffMs) continue
+    if (candidate.status === 'published' && observedMs < recentPublishedCutoffMs) return
     const kind: BacklogBlockKind = candidate.status === 'research_failed' || candidate.status === 'skipped_recently_researched'
       ? (observedMs >= failedRetryCutoffMs ? 'research_failed_recent' : 'research_failed_stale')
       : candidate.status === 'published'
@@ -1195,63 +1148,106 @@ async function fetchDownstreamBacklog(
     })
   }
 
-  const researchStatuses = ['pending_editor', 'editing', 'edited', 'needs_more_research']
-  for (const slugChunk of chunks(slugs, LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await db
-      .from('polymarket_market_candidate_research')
-      .select('slug, title, status, researched_at')
-      .eq('source', SOURCE)
-      .eq('area', AREA)
-      .in('slug', slugChunk)
-      .in('status', researchStatuses)
-
-    if (error) throw new Error(`research backlog slug fetch failed: ${error.message}`)
-    for (const row of data ?? []) {
-      const research = row as { slug: string; title: string | null; status: string; researched_at: string | null }
-      addBacklogBlock(backlog, {
-        kind: 'research_unresolved',
-        slug: research.slug,
-        title: research.title,
-        status: research.status,
-        at: research.researched_at,
-      })
-    }
-  }
-
-  const { data: researchFamilyRows, error: researchFamilyError } = await db
-    .from('polymarket_market_candidate_research')
-    .select('slug, title, status, researched_at')
-    .eq('source', SOURCE)
-    .eq('area', AREA)
-    .in('status', researchStatuses)
-    .order('researched_at', { ascending: false })
-    .limit(1200)
-
-  if (researchFamilyError) throw new Error(`research backlog family fetch failed: ${researchFamilyError.message}`)
-  for (const row of researchFamilyRows ?? []) {
-    const research = row as { slug: string; title: string | null; status: string; researched_at: string | null }
-    if (!rowFamilyKeys(research).some((key) => watchedFamilyKeys.has(key))) continue
-    addBacklogBlock(backlog, {
-      kind: 'research_unresolved',
-      slug: research.slug,
-      title: research.title,
-      status: research.status,
-      at: research.researched_at,
+  // Local candidate/research/editor-decision reads move to the store. Only
+  // published_narratives (durable, customer-facing output) stays on Supabase.
+  //
+  // KNOWN INTERFACE GAP (reported, not silently patched): the original
+  // Supabase query here had NO limit - it returned every candidate row
+  // matching these slugs and statuses. findCandidatesForBacklog requires a
+  // mandatory `limit` with no "unbounded" option, so a large fixed cap is
+  // used as a stand-in. pipeline_candidates is unique on dedupe_key, not
+  // slug, so a single slug can accumulate more than one row across cooldown
+  // buckets; if a slug's row count under these statuses ever exceeds this
+  // cap, backlog blocks for that slug would be silently dropped where the
+  // original unbounded query would have caught them.
+  const candidateSlugRows = await store.findCandidatesForBacklog({
+    source: SOURCE,
+    area: AREA,
+    statuses: candidateStatuses,
+    slugs,
+    limit: BACKLOG_UNBOUNDED_LOOKUP_LIMIT,
+  })
+  for (const row of candidateSlugRows) {
+    addCandidateBacklogBlock({
+      slug: row.slug,
+      title: row.title,
+      status: row.status,
+      observed_at: row.observedAt,
+      score: row.score,
     })
   }
 
-  const { data: editorRows, error: editorError } = await db
-    .from('polymarket_market_editor_decisions')
-    .select('status, research_ids, created_at')
-    .eq('source', SOURCE)
-    .eq('area', AREA)
-    .eq('status', 'pending_publisher')
-    .order('created_at', { ascending: false })
-    .limit(500)
+  const candidateFamilyRows = await store.findCandidatesForBacklog({
+    source: SOURCE,
+    area: AREA,
+    statuses: candidateStatuses,
+    limit: BACKLOG_CANDIDATE_FAMILY_SCAN_LIMIT,
+  })
+  for (const row of candidateFamilyRows) {
+    if (!rowFamilyKeys({ slug: row.slug, title: row.title }).some((key) => watchedFamilyKeys.has(key))) continue
+    addCandidateBacklogBlock({
+      slug: row.slug,
+      title: row.title,
+      status: row.status,
+      observed_at: row.observedAt,
+      score: row.score,
+    })
+  }
 
-  if (editorError) throw new Error(`editor pending publisher fetch failed: ${editorError.message}`)
-  const editorResearchIds = (editorRows ?? []).flatMap((row) => jsonStringArray((row as { research_ids: unknown }).research_ids))
-  const editorResearchRows = await fetchResearchRowsByIds(db, editorResearchIds)
+  const researchStatuses: Array<'pending_editor' | 'editing' | 'edited' | 'needs_more_research'> = [
+    'pending_editor',
+    'editing',
+    'edited',
+    'needs_more_research',
+  ]
+
+  // Same unbounded-limit gap as findCandidatesForBacklog above: the original
+  // slug-scoped research query had no limit; pipeline_research is unique on
+  // candidate_id, so this is safer per-slug in practice, but the cap below is
+  // still a stand-in, not a real "no limit" - see the comment above.
+  const researchSlugRows = await store.findResearchForBacklog({
+    source: SOURCE,
+    area: AREA,
+    statuses: researchStatuses,
+    slugs,
+    limit: BACKLOG_UNBOUNDED_LOOKUP_LIMIT,
+  })
+  for (const row of researchSlugRows) {
+    addBacklogBlock(backlog, {
+      kind: 'research_unresolved',
+      slug: row.slug,
+      title: row.title,
+      status: row.status,
+      at: row.researchedAt,
+    })
+  }
+
+  const researchFamilyRows = await store.findResearchForBacklog({
+    source: SOURCE,
+    area: AREA,
+    statuses: researchStatuses,
+    limit: BACKLOG_RESEARCH_FAMILY_SCAN_LIMIT,
+  })
+  for (const row of researchFamilyRows) {
+    if (!rowFamilyKeys({ slug: row.slug, title: row.title }).some((key) => watchedFamilyKeys.has(key))) continue
+    addBacklogBlock(backlog, {
+      kind: 'research_unresolved',
+      slug: row.slug,
+      title: row.title,
+      status: row.status,
+      at: row.researchedAt,
+    })
+  }
+
+  const editorRows = await store.findEditorDecisions({
+    source: SOURCE,
+    area: AREA,
+    status: 'pending_publisher',
+    orderBy: 'desc',
+    limit: BACKLOG_EDITOR_PENDING_LIMIT,
+  })
+  const editorResearchIds = editorRows.flatMap((row) => row.researchIds)
+  const editorResearchRows = await fetchResearchRowsByIds(store, editorResearchIds)
   for (const research of editorResearchRows) {
     if (research.slug && (slugs.includes(research.slug) || rowFamilyKeys(research).some((key) => watchedFamilyKeys.has(key)))) {
       addBacklogBlock(backlog, {
@@ -1264,6 +1260,9 @@ async function fetchDownstreamBacklog(
     }
   }
 
+  // published_narratives is durable, customer-facing product data and stays
+  // on Supabase; this is the one read in this function that must NOT move to
+  // the local store.
   const { data: publishedRows, error: publishedError } = await db
     .from('published_narratives')
     .select('research_ids, created_at')
@@ -1271,11 +1270,11 @@ async function fetchDownstreamBacklog(
     .eq('area', AREA)
     .gte('created_at', recentPublishedCutoff)
     .order('created_at', { ascending: false })
-    .limit(500)
+    .limit(BACKLOG_PUBLISHED_LIMIT)
 
   if (publishedError) throw new Error(`recent published fetch failed: ${publishedError.message}`)
   const publishedResearchIds = (publishedRows ?? []).flatMap((row) => jsonStringArray((row as { research_ids: unknown }).research_ids))
-  const publishedResearchRows = await fetchResearchRowsByIds(db, publishedResearchIds)
+  const publishedResearchRows = await fetchResearchRowsByIds(store, publishedResearchIds)
   for (const research of publishedResearchRows) {
     if (research.slug && (slugs.includes(research.slug) || rowFamilyKeys(research).some((key) => watchedFamilyKeys.has(key)))) {
       addBacklogBlock(backlog, {
@@ -1292,59 +1291,101 @@ async function fetchDownstreamBacklog(
 }
 
 async function insertCandidates(
-  db: SupabaseClient,
+  store: PipelineStore,
   candidates: CandidateInsert[],
   observedAt: string
 ): Promise<void> {
   if (candidates.length === 0) return
 
-  for (const candidateChunk of chunks(candidates, WRITE_CHUNK_SIZE)) {
-    const { error } = await db
-      .from('polymarket_market_candidates')
-      .insert(candidateChunk.map(({ market, draft, dedupeKey, familyKey, clusterKey }) => ({
-        source: SOURCE,
-        area: AREA,
-        candidate_type: draft.candidateType,
-        market_id: market.marketId,
-        slug: market.slug,
-        title: market.title,
-        tag_slug: market.tagSlug,
-        tag_label: market.tagLabel,
-        observed_at: observedAt,
-        what_changed: draft.whatChanged,
-        why_flagged: draft.whyFlagged,
-        score: draft.score,
-        score_breakdown: draft.scoreBreakdown,
-        metrics: draft.metrics,
-        evidence_refs: draft.evidenceRefs,
-        status: 'pending_research',
-        dedupe_key: dedupeKey,
-        research_family_key: familyKey,
-        research_cluster_key: clusterKey,
-      })))
-    if (error) throw new Error(`candidate insert failed: ${error.message}`)
+  // KNOWN INTERFACE GAP (reported, not silently patched): the original insert
+  // wrote research_family_key/research_cluster_key at insert time in the same
+  // write. PipelineCandidateInsertInput has no fields for either, so they
+  // cannot be set as part of insertCandidates. This wrapper backfills them
+  // immediately afterward with a second store call (updateCandidateThreads),
+  // so the end state after insertCandidates() returns still has both fields
+  // populated - but there is a brief window (between the two store calls)
+  // during which a freshly-inserted row would read back with NULL family/
+  // cluster keys, which could not happen with the original single insert.
+  const inserted = await store.insertCandidates(candidates.map(({ market, draft, dedupeKey }) => ({
+    source: SOURCE,
+    area: AREA,
+    candidateType: draft.candidateType,
+    marketId: market.marketId,
+    slug: market.slug,
+    title: market.title,
+    tagSlug: market.tagSlug,
+    tagLabel: market.tagLabel,
+    observedAt,
+    whatChanged: draft.whatChanged,
+    whyFlagged: draft.whyFlagged,
+    score: draft.score,
+    scoreBreakdown: draft.scoreBreakdown,
+    metrics: draft.metrics,
+    evidenceRefs: draft.evidenceRefs,
+    dedupeKey,
+    status: 'pending_research',
+  })))
+
+  const byDedupeKey = new Map(candidates.map((candidate) => [candidate.dedupeKey, candidate]))
+  const backfillUpdates: PipelineCandidateThreadUpdate[] = []
+  for (const row of inserted) {
+    const candidate = byDedupeKey.get(row.dedupeKey)
+    if (!candidate) continue
+    backfillUpdates.push({
+      id: row.id,
+      payload: {
+        researchFamilyKey: candidate.familyKey,
+        researchClusterKey: candidate.clusterKey,
+      },
+    })
   }
+  await store.updateCandidateThreads(backfillUpdates)
 }
 
 async function updateCandidateThreads(
-  db: SupabaseClient,
+  store: PipelineStore,
   updates: CandidateThreadUpdate[]
 ): Promise<void> {
   if (updates.length === 0) return
 
-  for (const updateChunk of chunks(updates, WRITE_CHUNK_SIZE)) {
-    await Promise.all(updateChunk.map(async (update) => {
-      const { error } = await db
-        .from('polymarket_market_candidates')
-        .update(update.payload)
-        .eq('id', update.existing.id)
+  // KNOWN INTERFACE GAP (reported, not silently patched): the original update
+  // also wrote candidate_type, market_id, slug, title, tag_slug, tag_label,
+  // and (when reopening for research) reset research_error,
+  // research_next_retry_at, and research_last_error_kind to null.
+  // PipelineCandidateThreadUpdate's payload Pick does not include any of
+  // those fields, so none of them can be written through this interface.
+  // Dropping the identity fields (slug/title/market_id/tag_slug/tag_label/
+  // candidate_type) only matters if a market's slug/title changes between
+  // observations of the same research family, which is rare. Dropping the
+  // research_error/research_next_retry_at/research_last_error_kind reset is
+  // more significant: a thread reopened for research from a failed/stale
+  // state will keep its previous error message and retry-scheduling fields
+  // instead of having them cleared, which could affect
+  // fetchRetryableCandidates' retry-due filtering for that row later.
+  await store.updateCandidateThreads(updates.map((update) => ({
+    id: update.existing.id,
+    payload: threadUpdatePayloadForStore(update.payload),
+  })))
+}
 
-      if (error) throw new Error(`candidate thread update failed: ${error.message}`)
-    }))
-  }
+function threadUpdatePayloadForStore(payload: Record<string, unknown>): PipelineCandidateThreadUpdate['payload'] {
+  const out: PipelineCandidateThreadUpdate['payload'] = {}
+  if (payload.status !== undefined) out.status = payload.status as PipelineStoreCandidateStatus
+  if (payload.observed_at !== undefined) out.observedAt = payload.observed_at as string
+  if (payload.what_changed !== undefined) out.whatChanged = payload.what_changed as string
+  if (payload.why_flagged !== undefined) out.whyFlagged = payload.why_flagged as string
+  if (payload.score !== undefined) out.score = payload.score as number
+  if (payload.score_breakdown !== undefined) out.scoreBreakdown = payload.score_breakdown
+  if (payload.metrics !== undefined) out.metrics = payload.metrics
+  if (payload.evidence_refs !== undefined) out.evidenceRefs = payload.evidence_refs
+  if (payload.research_family_key !== undefined) out.researchFamilyKey = payload.research_family_key as string
+  if (payload.research_cluster_key !== undefined) out.researchClusterKey = payload.research_cluster_key as string
+  if (payload.research_depth !== undefined) out.researchDepth = payload.research_depth as PipelineCandidateThreadUpdate['payload']['researchDepth']
+  return out
 }
 
 export async function runPolymarketMarketsDataEngineer(
+  store: PipelineStore,
   db: SupabaseClient,
   partialOptions: PolymarketMarketsDataEngineerOptions = {}
 ): Promise<PolymarketMarketsDataEngineerResult> {
@@ -1360,9 +1401,9 @@ export async function runPolymarketMarketsDataEngineer(
   const fetchedMarkets = byTag.flat().length + manualPins.length
   const watchlist = chooseWatchlist([...byTag.flat(), ...manualPins], options)
 
-  const previousBySlug = await fetchPreviousWatchlist(db, watchlist.map((market) => market.slug))
-  await upsertWatchlist(db, watchlist, observedAt)
-  await deactivateStaleWatchlist(db, observedAt)
+  const previousBySlug = await fetchPreviousWatchlist(store, watchlist.map((market) => market.slug))
+  await upsertWatchlist(store, watchlist, observedAt)
+  await deactivateStaleWatchlist(store, observedAt)
 
   const candidateInserts: CandidateInsert[] = []
   for (const market of watchlist) {
@@ -1382,8 +1423,8 @@ export async function runPolymarketMarketsDataEngineer(
   }
 
   const familyDedupedCandidateInserts = dedupeCandidateInserts(candidateInserts)
-  const existingCandidateKeys = await fetchExistingCandidateKeys(db, familyDedupedCandidateInserts.map((candidate) => candidate.dedupeKey))
-  const existingThreads = await fetchExistingCandidateThreads(db, familyDedupedCandidateInserts.map((candidate) => candidate.familyKey))
+  const existingCandidateKeys = await fetchExistingCandidateKeys(store, familyDedupedCandidateInserts.map((candidate) => candidate.dedupeKey))
+  const existingThreads = await fetchExistingCandidateThreads(store, familyDedupedCandidateInserts.map((candidate) => candidate.familyKey))
   const threadUpdates: CandidateThreadUpdate[] = []
   const insertableCandidateInserts: CandidateInsert[] = []
   for (const candidate of familyDedupedCandidateInserts) {
@@ -1400,7 +1441,7 @@ export async function runPolymarketMarketsDataEngineer(
     })
   }
 
-  const backlog = await fetchDownstreamBacklog(db, insertableCandidateInserts.map((candidate) => candidate.market), observedAt, options)
+  const backlog = await fetchDownstreamBacklog(store, db, insertableCandidateInserts.map((candidate) => candidate.market), observedAt, options)
   const newCandidateInserts: CandidateInsert[] = []
   let candidatesSkippedForBacklog = 0
   for (const candidate of insertableCandidateInserts) {
@@ -1411,8 +1452,8 @@ export async function runPolymarketMarketsDataEngineer(
     }
     newCandidateInserts.push(blocks.length > 0 ? annotateBacklogOverride(candidate, blocks) : candidate)
   }
-  await updateCandidateThreads(db, threadUpdates)
-  await insertCandidates(db, newCandidateInserts, observedAt)
+  await updateCandidateThreads(store, threadUpdates)
+  await insertCandidates(store, newCandidateInserts, observedAt)
 
   return {
     observedAt,

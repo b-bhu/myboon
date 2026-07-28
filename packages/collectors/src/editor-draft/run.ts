@@ -5,7 +5,10 @@ loadEnv({ path: '../../.env' })
 loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { editorDraftCliConfig, runEditorDraft } from './runner'
 
@@ -15,12 +18,8 @@ function requiredEnv(name: string): string {
   return value
 }
 
-async function runOnce(): Promise<void> {
+async function runOnce(supabase: SupabaseClient, pipelineStore: PipelineStore): Promise<void> {
   const config = editorDraftCliConfig()
-  const supabase = createClient(
-    requiredEnv('SUPABASE_URL'),
-    requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
-  )
   const result = await withPipelineRun(
     new SupabasePipelineLedgerStore(supabase),
     {
@@ -31,7 +30,7 @@ async function runOnce(): Promise<void> {
         batchSize: config.batchSize,
       },
     },
-    () => runEditorDraft(supabase, {
+    () => runEditorDraft(supabase, pipelineStore, {
       batchSize: config.batchSize,
       recentMemoryLimit: config.recentMemoryLimit,
       laneMemoryLimit: config.laneMemoryLimit,
@@ -45,15 +44,24 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   const config = editorDraftCliConfig()
-  await runOnce()
+  const supabase = createClient(
+    requiredEnv('SUPABASE_URL'),
+    requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
+  )
+  const pipelineStore = new SqlitePipelineStore()
 
-  if (config.runOnce) return
+  try {
+    await runOnce(supabase, pipelineStore)
+    if (config.runOnce) return
 
-  setInterval(() => {
-    runOnce().catch((err) => {
-      console.error('[editor-draft] run failed:', err)
-    })
-  }, config.intervalMs)
+    setInterval(() => {
+      runOnce(supabase, pipelineStore).catch((err) => {
+        console.error('[editor-draft] run failed:', err)
+      })
+    }, config.intervalMs)
+  } finally {
+    if (config.runOnce) pipelineStore.close()
+  }
 }
 
 main().catch((err) => {

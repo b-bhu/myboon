@@ -4,6 +4,12 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import type {
+  PipelineCandidateRow,
+  PipelineResearchRow,
+  PipelineResearchUpsertInput,
+  PipelineStore,
+} from '../pipeline-store/store'
 import { fetchPolymarketNativeContext, type PolymarketNativeContext } from './market-context'
 
 const execFileAsync = promisify(execFile)
@@ -468,80 +474,99 @@ function clusterKeyForCandidate(candidate: PendingCandidate): string {
   return `${SOURCE}:${AREA}:${primaryFamilyKey(candidate)}`
 }
 
-const CANDIDATE_SELECT = [
-  'id',
-  'source',
-  'area',
-  'candidate_type',
-  'market_id',
-  'slug',
-  'title',
-  'tag_slug',
-  'tag_label',
-  'observed_at',
-  'what_changed',
-  'why_flagged',
-  'score',
-  'score_breakdown',
-  'metrics',
-  'evidence_refs',
-  'status',
-  'research_retry_count',
-  'research_next_retry_at',
-  'research_last_error_kind',
-  'research_family_key',
-  'research_cluster_key',
-  'research_depth',
-].join(', ')
-
 function candidateObservedAfter(options: Required<PolymarketResearcherOptions>): string | null {
   if (!Number.isFinite(options.maxCandidateAgeHours) || options.maxCandidateAgeHours <= 0) return null
   return new Date(new Date(options.now).getTime() - options.maxCandidateAgeHours * 60 * 60 * 1000).toISOString()
 }
 
+function toPendingCandidate(row: PipelineCandidateRow): PendingCandidate {
+  return {
+    id: row.id,
+    source: row.source,
+    area: row.area,
+    candidate_type: row.candidateType,
+    market_id: row.marketId,
+    slug: row.slug,
+    title: row.title,
+    tag_slug: row.tagSlug,
+    tag_label: row.tagLabel,
+    observed_at: row.observedAt,
+    what_changed: row.whatChanged,
+    why_flagged: row.whyFlagged,
+    score: row.score,
+    score_breakdown: row.scoreBreakdown,
+    metrics: row.metrics,
+    evidence_refs: row.evidenceRefs,
+    status: row.status as CandidateStatus,
+    research_retry_count: row.researchRetryCount,
+    research_next_retry_at: row.researchNextRetryAt,
+    research_last_error_kind: row.researchLastErrorKind,
+  }
+}
+
 async function fetchResearchCandidates(
-  db: SupabaseClient,
+  store: PipelineStore,
   options: Required<PolymarketResearcherOptions>
 ): Promise<PendingCandidate[]> {
   const observedAfter = candidateObservedAfter(options)
-  let pendingQuery = db
-    .from('polymarket_market_candidates')
-    .select(CANDIDATE_SELECT)
-    .eq('source', SOURCE)
-    .eq('area', AREA)
-    .eq('status', 'pending_research')
-    .order('score', { ascending: false })
-    .order('observed_at', { ascending: true })
-    .limit(options.batchSize)
-  if (observedAfter) pendingQuery = pendingQuery.gte('observed_at', observedAfter)
 
-  const { data: pendingData, error: pendingError } = await pendingQuery
+  // KNOWN INTERFACE GAP (reported, not silently patched): the original
+  // pending-lane query ordered by score DESC, observed_at ASC, and the
+  // retry-lane query ordered by research_next_retry_at ASC NULLS FIRST,
+  // score DESC. fetchPendingCandidates/fetchRetryableCandidates only order by
+  // observed_at ASC (see their doc comments / sqlite-store.ts). Since both
+  // queries are limited (batchSize / remaining), a batch that gets truncated
+  // will pick different rows than before: the original prioritized
+  // highest-score (pending lane) or soonest-due (retry lane) candidates
+  // within the batch window, while the store version prioritizes oldest
+  // observed_at only.
+  const pending = (await store.fetchPendingCandidates({
+    source: SOURCE,
+    area: AREA,
+    limit: options.batchSize,
+    observedAfter,
+  })).map(toPendingCandidate)
 
-  if (pendingError) throw new Error(`pending candidate fetch failed: ${pendingError.message}`)
-  const pending = (pendingData ?? []) as unknown as PendingCandidate[]
   const remaining = options.batchSize - pending.length
   if (remaining <= 0) return pending
 
-  let retryQuery = db
-    .from('polymarket_market_candidates')
-    .select(CANDIDATE_SELECT)
-    .eq('source', SOURCE)
-    .eq('area', AREA)
-    .eq('status', 'research_failed')
-    .lt('research_retry_count', options.maxRetryCount)
-    .or(`research_next_retry_at.is.null,research_next_retry_at.lte.${options.now}`)
-    .order('research_next_retry_at', { ascending: true, nullsFirst: true })
-    .order('score', { ascending: false })
-    .limit(remaining)
-  if (observedAfter) retryQuery = retryQuery.gte('observed_at', observedAfter)
+  const retryable = (await store.fetchRetryableCandidates({
+    source: SOURCE,
+    area: AREA,
+    limit: remaining,
+    maxRetryCount: options.maxRetryCount,
+    now: options.now,
+    observedAfter,
+  })).map(toPendingCandidate)
 
-  const { data: retryData, error: retryError } = await retryQuery
-
-  if (retryError) throw new Error(`retry candidate fetch failed: ${retryError.message}`)
-  return [...pending, ...((retryData ?? []) as unknown as PendingCandidate[])]
+  return [...pending, ...retryable]
 }
 
-async function fetchRecentResearch(db: SupabaseClient, slugs: string[], familyKeys: string[]): Promise<{
+function toPriorResearch(row: PipelineResearchRow): PriorResearch {
+  return {
+    id: row.id,
+    candidate_id: row.candidateId,
+    slug: row.slug,
+    research_mode: row.researchMode,
+    summary: row.summary,
+    notes: row.notes,
+    key_findings: row.keyFindings,
+    evidence_links: row.evidenceLinks,
+    uncertainty: row.uncertainty,
+    editor_notes: row.editorNotes,
+    researched_at: row.researchedAt,
+    research_family_key: row.researchFamilyKey,
+    research_cluster_key: row.researchClusterKey,
+    research_depth: row.researchDepth,
+    evidence_quality: row.evidenceQuality,
+    catalyst_found: row.catalystFound,
+    recommended_editor_action: row.recommendedEditorAction,
+    research_backend: row.researchBackend,
+    research_model: row.researchModel,
+  }
+}
+
+async function fetchRecentResearch(store: PipelineStore, slugs: string[], familyKeys: string[]): Promise<{
   bySlug: Map<string, PriorResearch[]>
   byFamilyKey: Map<string, PriorResearch[]>
 }> {
@@ -550,34 +575,20 @@ async function fetchRecentResearch(db: SupabaseClient, slugs: string[], familyKe
   if (slugs.length === 0 && familyKeys.length === 0) return { bySlug, byFamilyKey }
   const uniqueRows = new Map<string, PriorResearch>()
 
+  // NOTE (tenancy filter): this lookup has no source/area filter, matching
+  // the PRE-EXISTING behavior of the direct Supabase queries it replaces
+  // (neither `.in('slug', slugs)` nor `.in('research_family_key', ...)` here
+  // filtered on source/area either), even though every sibling query in this
+  // file does filter on both. Preserved as-is during this migration rather
+  // than silently made consistent with the other queries.
   if (slugs.length > 0) {
-    const { data, error } = await db
-      .from('polymarket_market_candidate_research')
-      .select(POLYMARKET_RESEARCHER_PRIOR_RESEARCH_SELECT)
-      .in('slug', slugs)
-      .order('researched_at', { ascending: false })
-      .limit(100)
-
-    if (error) throw new Error(`prior research slug fetch failed: ${error.message}`)
-    for (const row of data ?? []) {
-      const research = row as unknown as PriorResearch
-      uniqueRows.set(research.id, research)
-    }
+    const rows = await store.findPriorResearch({ keyType: 'slug', keys: slugs, limit: 100 })
+    for (const row of rows) uniqueRows.set(row.id, toPriorResearch(row))
   }
 
   if (familyKeys.length > 0) {
-    const { data, error } = await db
-      .from('polymarket_market_candidate_research')
-      .select(POLYMARKET_RESEARCHER_PRIOR_RESEARCH_SELECT)
-      .in('research_family_key', familyKeys)
-      .order('researched_at', { ascending: false })
-      .limit(200)
-
-    if (error) throw new Error(`prior research family fetch failed: ${error.message}`)
-    for (const row of data ?? []) {
-      const research = row as unknown as PriorResearch
-      uniqueRows.set(research.id, research)
-    }
+    const rows = await store.findPriorResearch({ keyType: 'family', keys: familyKeys, limit: 200 })
+    for (const row of rows) uniqueRows.set(row.id, toPriorResearch(row))
   }
 
   for (const research of uniqueRows.values()) {
@@ -603,29 +614,38 @@ function recentPrior(prior: PriorResearch[] | undefined, nowMs: number, cooldown
   return ageMs >= 0 && ageMs < cooldownMinutes * 60 * 1000 ? latest : null
 }
 
+interface CandidateStatusExtra {
+  researchRetryCount?: number
+  researchNextRetryAt?: string | null
+  researchLastErrorKind?: string | null
+}
+
 async function updateCandidateStatus(
-  db: SupabaseClient,
+  store: PipelineStore,
   ids: string[],
   status: CandidateStatus,
   observedAt: string,
   researchError?: string | null,
-  extraPayload: Record<string, unknown> = {}
+  extraPayload: CandidateStatusExtra = {}
 ): Promise<void> {
   if (ids.length === 0) return
-  const payload: Record<string, unknown> = {
+
+  // KNOWN GAP (minor, reported): the original write also set
+  // updated_at = observedAt. PipelineSetCandidateStatusInput has no
+  // updatedAt field - setCandidateStatus stamps its own updated_at with
+  // CURRENT_TIMESTAMP server-side instead of the caller-supplied observedAt.
+  // Nothing in this file reads updated_at back for filtering, so this is
+  // bookkeeping-only, not a behavior change to any decision logic.
+  await store.setCandidateStatus({
+    ids,
     status,
-    updated_at: observedAt,
-    research_attempted_at: observedAt,
-    ...extraPayload,
-  }
-  if (researchError !== undefined) payload.research_error = researchError
-
-  const { error } = await db
-    .from('polymarket_market_candidates')
-    .update(payload)
-    .in('id', ids)
-
-  if (error) throw new Error(`candidate status update failed: ${error.message}`)
+    observedAt,
+    researchError,
+    extra: {
+      ...extraPayload,
+      researchAttemptedAt: observedAt,
+    },
+  })
 }
 
 function errorKind(error: string): string {
@@ -641,27 +661,37 @@ function retryCount(candidate: PendingCandidate): number {
 }
 
 async function updateSuccessfulCandidates(
-  db: SupabaseClient,
+  store: PipelineStore,
   ids: string[],
   observedAt: string
 ): Promise<void> {
-  await updateCandidateStatus(db, ids, 'researched', observedAt, null, {
-    research_next_retry_at: null,
-    research_last_error_kind: null,
+  await updateCandidateStatus(store, ids, 'researched', observedAt, null, {
+    researchNextRetryAt: null,
+    researchLastErrorKind: null,
   })
 }
 
 async function updateFailedCandidate(
-  db: SupabaseClient,
+  store: PipelineStore,
   failure: ResearchFailure,
   observedAt: string,
   options: Required<PolymarketResearcherOptions>
 ): Promise<void> {
   const nextRetryAt = new Date(new Date(observedAt).getTime() + options.retryWindowMinutes * 60 * 1000).toISOString()
-  await updateCandidateStatus(db, [failure.candidate.id], 'research_failed', observedAt, failure.error.slice(0, 2000), {
-    research_retry_count: retryCount(failure.candidate) + 1,
-    research_next_retry_at: nextRetryAt,
-    research_last_error_kind: errorKind(failure.error),
+  // KNOWN GAP (reported): retryCount(failure.candidate) + 1 is a
+  // read-modify-write computed in application code, not a SQL-side atomic
+  // increment. setCandidateStatus's `extra.researchRetryCount` is a plain
+  // "set to this value" field (see sqlite-store.ts: `research_retry_count = ?`),
+  // not `research_retry_count = research_retry_count + 1`, so the interface
+  // does not provide SQL-side increment semantics for this field the way
+  // claimWithLease's attemptCount does. This preserves the exact PRE-EXISTING
+  // read-modify-write behavior from before the migration; it does not fix or
+  // regress the theoretical lost-update race the brief asked about, because
+  // the interface has no atomic-increment alternative to use instead.
+  await updateCandidateStatus(store, [failure.candidate.id], 'research_failed', observedAt, failure.error.slice(0, 2000), {
+    researchRetryCount: retryCount(failure.candidate) + 1,
+    researchNextRetryAt: nextRetryAt,
+    researchLastErrorKind: errorKind(failure.error),
   })
 }
 
@@ -1658,18 +1688,60 @@ async function researchCandidatesWithFallback(
   return { results, failures }
 }
 
+function toResearchUpsertInput(row: ResearchRowInput): PipelineResearchUpsertInput {
+  return {
+    candidateId: row.candidate_id,
+    source: row.source,
+    area: row.area,
+    slug: row.slug,
+    title: row.title,
+    candidateType: row.candidate_type,
+    researchMode: row.research_mode,
+    summary: row.summary,
+    notes: row.notes,
+    keyFindings: row.key_findings,
+    evidenceLinks: row.evidence_links,
+    relatedContext: row.related_context,
+    uncertainty: row.uncertainty,
+    editorNotes: row.editor_notes,
+    status: row.status,
+    researchedAt: row.researched_at,
+    researchFamilyKey: row.research_family_key,
+    researchClusterKey: row.research_cluster_key,
+    researchDepth: row.research_depth,
+    evidenceQuality: row.evidence_quality,
+    catalystFound: row.catalyst_found,
+    recommendedEditorAction: row.recommended_editor_action,
+    duplicateOfResearchId: row.duplicate_of_research_id,
+    researchBackend: row.research_backend,
+    researchModel: row.research_model,
+  }
+}
+
+/**
+ * Upserts research rows and returns the CANDIDATE ids that were actually
+ * persisted (not research row ids - callers of this function historically
+ * treat its return value as candidate ids, e.g. to feed
+ * updateSuccessfulCandidates and the failure-classification filter below).
+ *
+ * This used to fake success by echoing `rows.map(r => r.candidate_id)`
+ * regardless of what was actually written (the exact bug the migration brief
+ * flagged). store.upsertResearchRows returns the REAL persisted research row
+ * ids, so this reads those rows back via getResearchByIds and reports the
+ * candidateId of each one that truly exists - a row that silently failed to
+ * persist no longer shows up here as a false success.
+ */
 async function insertResearchRows(
-  db: SupabaseClient,
+  store: PipelineStore,
   rows: ResearchRowInput[]
 ): Promise<string[]> {
   if (rows.length === 0) return []
 
-  const { error } = await db
-    .from('polymarket_market_candidate_research')
-    .upsert(rows, { onConflict: 'candidate_id' })
+  const persistedResearchIds = await store.upsertResearchRows(rows.map(toResearchUpsertInput))
+  if (persistedResearchIds.length === 0) return []
 
-  if (error) throw new Error(`research row insert failed: ${error.message}`)
-  return rows.map((row) => row.candidate_id)
+  const persistedRows = await store.getResearchByIds(persistedResearchIds)
+  return persistedRows.map((row) => row.candidateId)
 }
 
 function buildHermesResearchRows(
@@ -1753,29 +1825,31 @@ async function researchDeepWebCandidates(
   return { results, failures }
 }
 
+// N+1 elimination: this used to issue one Supabase UPDATE per decision in a
+// sequential loop. claimCandidatesForResearch takes the whole batch and
+// writes it in a single store transaction (status='researching' plus
+// family/cluster/depth plus research_attempted_at, exactly what was written
+// per-row before). As with updateCandidateStatus above, updated_at is now
+// stamped by the store (CURRENT_TIMESTAMP) rather than observedAt -
+// bookkeeping-only, not read back anywhere in this file.
 async function markCandidatesResearching(
-  db: SupabaseClient,
+  store: PipelineStore,
   decisions: TriageDecision[],
   observedAt: string
 ): Promise<void> {
-  for (const decision of decisions) {
-    const { error } = await db
-      .from('polymarket_market_candidates')
-      .update({
-        status: 'researching',
-        updated_at: observedAt,
-        research_attempted_at: observedAt,
-        research_family_key: decision.familyKey,
-        research_cluster_key: decision.clusterKey,
-        research_depth: decision.depth,
-      })
-      .eq('id', decision.candidate.id)
-
-    if (error) throw new Error(`candidate researching update failed: ${error.message}`)
-  }
+  await store.claimCandidatesForResearch(
+    decisions.map((decision) => ({
+      id: decision.candidate.id,
+      familyKey: decision.familyKey,
+      clusterKey: decision.clusterKey,
+      depth: decision.depth,
+    })),
+    observedAt
+  )
 }
 
 export async function runPolymarketResearcher(
+  store: PipelineStore,
   db: SupabaseClient,
   partialOptions: PolymarketResearcherOptions = {}
 ): Promise<PolymarketResearcherResult> {
@@ -1783,9 +1857,9 @@ export async function runPolymarketResearcher(
   const observedAt = options.now
   const nowMs = new Date(observedAt).getTime()
 
-  const candidates = await fetchResearchCandidates(db, options)
+  const candidates = await fetchResearchCandidates(store, options)
   const familyKeys = [...new Set(candidates.map(primaryFamilyKey))]
-  const priorResearch = await fetchRecentResearch(db, [...new Set(candidates.map((candidate) => candidate.slug))], familyKeys)
+  const priorResearch = await fetchRecentResearch(store, [...new Set(candidates.map((candidate) => candidate.slug))], familyKeys)
   const triage = triageCandidates(candidates, priorResearch, nowMs, options)
 
   if (triage.length === 0) {
@@ -1808,7 +1882,7 @@ export async function runPolymarketResearcher(
     }
   }
 
-  await markCandidatesResearching(db, triage, observedAt)
+  await markCandidatesResearching(store, triage, observedAt)
 
   const reuseRows = triage
     .filter((decision) => decision.depth === 'reuse_prior')
@@ -1820,7 +1894,7 @@ export async function runPolymarketResearcher(
   const attempt = await researchDeepWebCandidates(deepDecisions, priorResearch, options)
   const hermesRows = buildHermesResearchRows(deepDecisions, attempt.results, observedAt, options)
   const allRows = [...reuseRows, ...structureRows, ...hermesRows]
-  const successfulIds = await insertResearchRows(db, allRows)
+  const successfulIds = await insertResearchRows(store, allRows)
   const failed = deepDecisions
     .map((decision) => decision.candidate)
     .filter((candidate) => !successfulIds.includes(candidate.id))
@@ -1829,9 +1903,9 @@ export async function runPolymarketResearcher(
       error: 'Research reflection loop did not return a valid result for this candidate.',
     })
 
-  await updateSuccessfulCandidates(db, successfulIds, observedAt)
+  await updateSuccessfulCandidates(store, successfulIds, observedAt)
   for (const failure of failed) {
-    await updateFailedCandidate(db, failure, observedAt, options)
+    await updateFailedCandidate(store, failure, observedAt, options)
   }
 
   return {

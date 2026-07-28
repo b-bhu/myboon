@@ -29,7 +29,7 @@ function provider(extraction: EntityMemoryExtraction): ExtractionProvider {
   }
 }
 
-test('writeExtraction creates entities, writes memory items, and adds a processed marker', async () => {
+test('writeExtraction creates entities and writes memory items without a source_marker row', async () => {
   const store = new InMemoryEntityMemoryStore()
   const result = await writeExtraction(store, packet, provider({
     primaryEntities: [{
@@ -50,10 +50,14 @@ test('writeExtraction creates entities, writes memory items, and adds a processe
   }))
 
   assert.equal(result.entitiesCreated, 1)
-  assert.equal(result.memoriesWritten, 2)
+  // entity_memories forbids memory_type = 'source_marker' post-migration, so
+  // writeExtraction no longer writes a processed marker - only the real
+  // memory item survives.
+  assert.equal(result.memoriesWritten, 1)
+  assert.equal(result.markerStatus, 'processed')
   assert.equal(store.entities.some((entity) => entity.slug === 'federal-reserve'), true)
   assert.equal(store.entities[0].show_in_carousel, false)
-  assert.equal(store.memories.some((memory) => memory.title === 'entity_manager:processed' && memory.entity_id === null), true)
+  assert.equal(store.memories.some((memory) => memory.memory_type === 'source_marker'), false)
 })
 
 test('writeExtraction is idempotent for the same packet and memory item keys', async () => {
@@ -76,9 +80,9 @@ test('writeExtraction is idempotent for the same packet and memory item keys', a
   const first = await writeExtraction(store, packet, provider(extraction))
   const second = await writeExtraction(store, packet, provider(extraction))
 
-  assert.equal(first.memoriesWritten, 2)
+  assert.equal(first.memoriesWritten, 1)
   assert.equal(second.memoriesWritten, 0)
-  assert.equal(store.memories.length, 2)
+  assert.equal(store.memories.length, 1)
 })
 
 test('writeExtraction reuses entities by alias and merges aliases', async () => {

@@ -10,6 +10,7 @@ import { access } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { defaultLast30DaysScriptPath } from './researcher'
 import { fetchPolymarketNativeContext } from './market-context'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 
 const execFileAsync = promisify(execFile)
 
@@ -64,24 +65,29 @@ async function main(): Promise<void> {
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY'),
   ]
 
-  results.push(await runCheck('supabase:polymarket_market_candidates:read', async () => {
-    const db = createClient(envString('SUPABASE_URL'), envString('SUPABASE_SERVICE_ROLE_KEY'))
-    const { error } = await db
-      .from('polymarket_market_candidates')
-      .select('id')
-      .limit(1)
-    if (error) throw new Error(error.message)
-    return 'read ok'
+  results.push(await runCheck('local_pipeline_store:candidates:read', async () => {
+    // polymarket_market_candidates now lives in the local SQLite pipeline
+    // store, not Supabase (Supabase's copy is empty post-migration) - do a
+    // cheap read against the same store the researcher/data-engineer use.
+    const store = new SqlitePipelineStore()
+    try {
+      await store.fetchPendingCandidates({ source: 'polymarket', area: 'markets', limit: 1 })
+      return 'read ok'
+    } finally {
+      store.close()
+    }
   }))
 
-  results.push(await runCheck('supabase:polymarket_market_candidate_research:read', async () => {
-    const db = createClient(envString('SUPABASE_URL'), envString('SUPABASE_SERVICE_ROLE_KEY'))
-    const { error } = await db
-      .from('polymarket_market_candidate_research')
-      .select('id')
-      .limit(1)
-    if (error) throw new Error(error.message)
-    return 'read ok'
+  results.push(await runCheck('local_pipeline_store:candidate_research:read', async () => {
+    // polymarket_market_candidate_research likewise moved to the local
+    // pipeline store.
+    const store = new SqlitePipelineStore()
+    try {
+      await store.fetchResearchByStatus({ source: 'polymarket', area: 'markets', status: 'pending_editor', limit: 1 })
+      return 'read ok'
+    } finally {
+      store.close()
+    }
   }))
 
   results.push(await runCheck('polymarket:gamma_api', async () => {

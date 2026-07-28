@@ -5,6 +5,7 @@ loadEnv({ path: '../../.env' })
 loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketPublisher } from './publisher'
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000
@@ -25,9 +26,14 @@ async function runOnce(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
+  const store = new SqlitePipelineStore()
 
-  const result = await runPolymarketPublisher(supabase)
-  console.log(JSON.stringify(result, null, 2))
+  try {
+    const result = await runPolymarketPublisher(store, supabase)
+    console.log(JSON.stringify(result, null, 2))
+  } finally {
+    store.close()
+  }
 }
 
 async function main(): Promise<void> {

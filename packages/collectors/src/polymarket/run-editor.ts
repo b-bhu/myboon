@@ -4,7 +4,7 @@ loadEnv({ path: '.env' })
 loadEnv({ path: '../../.env' })
 loadEnv()
 
-import { createClient } from '@supabase/supabase-js'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketEditor } from './editor'
 
 const DEFAULT_INTERVAL_MS = 90 * 60 * 1000
@@ -14,20 +14,16 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
-
 async function runOnce(): Promise<void> {
-  const supabase = createClient(
-    requiredEnv('SUPABASE_URL'),
-    requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
-  )
-
-  const result = await runPolymarketEditor(supabase)
-  console.log(JSON.stringify(result, null, 2))
+  // Editor decisions/research now live in the local pipeline store; this
+  // stage has no remaining Supabase dependency.
+  const store = new SqlitePipelineStore()
+  try {
+    const result = await runPolymarketEditor(store)
+    console.log(JSON.stringify(result, null, 2))
+  } finally {
+    store.close()
+  }
 }
 
 async function main(): Promise<void> {

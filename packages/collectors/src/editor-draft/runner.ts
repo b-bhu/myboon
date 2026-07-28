@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
 import { SupabaseEditorDraftStore } from './supabase-store'
@@ -76,6 +77,7 @@ function sourceMemoryIds(record: EditorDraftRecord): string[] {
 
 export async function runEditorDraft(
   db: SupabaseClient,
+  pipelineStore: PipelineStore | null,
   options: RunEditorDraftOptions = {}
 ): Promise<EditorDraftRunResult> {
   const observedAt = options.now ?? new Date().toISOString()
@@ -86,7 +88,11 @@ export async function runEditorDraft(
     priorDraftLimit: options.priorDraftLimit ?? DEFAULT_PRIOR_DRAFT_LIMIT,
     publishedHistoryLimit: options.publishedHistoryLimit ?? DEFAULT_PUBLISHED_HISTORY_LIMIT,
   }
-  const store = options.store ?? new SupabaseEditorDraftStore(db)
+  let store = options.store
+  if (!store) {
+    if (!pipelineStore) throw new Error('runEditorDraft requires a PipelineStore when options.store is not provided')
+    store = new SupabaseEditorDraftStore(db, pipelineStore)
+  }
   const provider = options.provider ?? new HermesEditorDraftProvider()
   const backend = options.backend ?? 'hermes_cli'
   const model = options.model ?? null

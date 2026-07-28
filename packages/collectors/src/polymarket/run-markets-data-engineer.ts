@@ -5,7 +5,8 @@ loadEnv({ path: '../../.env' })
 loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
-import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import {
   previewPolymarketMarketsDataEngineer,
   runPolymarketMarketsDataEngineer,
@@ -31,16 +32,24 @@ async function runOnce(): Promise<void> {
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
 
-  const result = await withPipelineRun(
-    new SupabasePipelineLedgerStore(supabase),
-    {
-      source: 'polymarket',
-      sourceArea: 'markets',
-      stage: 'polymarket.data_engineer',
-    },
-    () => runPolymarketMarketsDataEngineer(supabase)
-  )
-  console.log(JSON.stringify(result, null, 2))
+  // Local pipeline state (candidates, research, watchlist, etc.) now lives in
+  // SQLite; only published_narratives reads still go through Supabase, done
+  // inside runPolymarketMarketsDataEngineer itself.
+  const store = new SqlitePipelineStore()
+  try {
+    const result = await withPipelineRun(
+      new PipelineStoreLedgerStore(store),
+      {
+        source: 'polymarket',
+        sourceArea: 'markets',
+        stage: 'polymarket.data_engineer',
+      },
+      () => runPolymarketMarketsDataEngineer(store, supabase)
+    )
+    console.log(JSON.stringify(result, null, 2))
+  } finally {
+    store.close()
+  }
 }
 
 async function main(): Promise<void> {

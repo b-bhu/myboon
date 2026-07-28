@@ -41,14 +41,21 @@ test('previews and applies a new Entity through the shared service', async () =>
   assert.equal(result.auditMarkerWritten, true)
   assert.equal(result.entity.show_in_carousel, true)
   assert.equal(store.entities.length, 1)
-  assert.equal(store.memories.filter((memory) => memory.memory_type !== 'source_marker').length, 1)
-  assert.equal(store.memories.filter((memory) => memory.memory_type === 'source_marker').length, 1)
+  // Timeline memories only - no entity_memories source_marker row. Replay
+  // idempotency is tracked in the dedicated manual_command_log mechanism
+  // instead (see EntityService.applyManual / findAppliedCommand).
+  assert.equal(store.memories.length, 1)
+  assert.equal(store.memories.every((memory) => memory.memory_type !== 'source_marker'), true)
+  assert.equal(store.manualCommandLog.length, 1)
+  assert.equal(store.manualCommandLog[0].requestId, 'manual-new-001')
+  assert.equal(store.manualCommandLog[0].entityId, result.entity.id)
 
   const replay = await service.applyManual(preview.command, preview.planHash)
   assert.equal(replay.replayed, true)
   assert.equal(replay.memoriesWritten, 0)
   assert.equal(store.entities.length, 1)
-  assert.equal(store.memories.length, 2)
+  assert.equal(store.memories.length, 1)
+  assert.equal(store.manualCommandLog.length, 1)
 })
 
 test('reuses and updates an existing Entity instead of creating a duplicate', async () => {
@@ -99,6 +106,23 @@ test('requires a fresh preview when the Entity state changes', async () => {
 
   await assert.rejects(
     () => service.applyManual(preview.command, preview.planHash),
+    ManualEntityConflictError,
+  )
+})
+
+test('rejects replay of a requestId whose logged command_hash does not match (manual_command_log)', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const service = new EntityService(store)
+  const preview = await service.previewManual(command('manual-conflict-001'))
+  await service.applyManual(preview.command, preview.planHash)
+  assert.equal(store.manualCommandLog.length, 1)
+
+  const differentCommand = command('manual-conflict-001')
+  differentCommand.entity.name = 'A different name entirely'
+  const differentPreview = await service.previewManual(differentCommand)
+
+  await assert.rejects(
+    () => service.applyManual(differentPreview.command, differentPreview.planHash),
     ManualEntityConflictError,
   )
 })
