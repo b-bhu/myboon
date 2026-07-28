@@ -12,7 +12,7 @@
     "android:aab": "eas build --platform android --profile production",
     "android:list-builds": "eas build:list --platform android",
     "ios": "expo run:ios",
-    "web": "NODE_OPTIONS=--max-old-space-size=8192 expo start --web",
+    "web": "NODE_OPTIONS=--max-old-space-size=4096 expo start --web",
     "lint": "expo lint",
     "test:chain": "tsx --test features/chain/chain.test.ts features/chain/activation.test.ts features/chain/deferredCreation.test.ts",
     "test:wallet": "tsx --test features/wallet/components/connect.options.test.ts features/wallet/components/connect.filtering.test.ts features/wallet/dormantBalance.test.ts",
