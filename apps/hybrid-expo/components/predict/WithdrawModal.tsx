@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { withdrawFromPolymarket } from '@/features/predict/predict.api';
+import type { Signer } from '@/features/chain/chain.contract';
 import { semantic, tokens } from '@/theme';
 
 interface WithdrawModalProps {
@@ -17,7 +18,10 @@ interface WithdrawModalProps {
   onClose: () => void;
   polygonAddress: string;
   tradingAddress: string;
+  /** Withdrawal destination on Solana — the bridge recipient, not a signer. */
   solanaAddress: string;
+  /** EVM signer for the deposit-wallet transfer. */
+  signer: Signer | null;
   cashBalance: number | null;
   onSuccess?: () => void;
 }
@@ -30,6 +34,7 @@ export function WithdrawModal({
   polygonAddress,
   tradingAddress,
   solanaAddress,
+  signer,
   cashBalance,
   onSuccess,
 }: WithdrawModalProps) {
@@ -71,10 +76,15 @@ export function WithdrawModal({
   };
 
   const handleSubmit = async () => {
+    if (!signer) {
+      setError('Wallet session not ready');
+      setState('error');
+      return;
+    }
     setState('submitting');
     setError(null);
     try {
-      const result = await withdrawFromPolymarket({
+      const result = await withdrawFromPolymarket(signer, {
         polygonAddress,
         tradingAddress,
         amount: parsedAmount,

@@ -4,12 +4,12 @@ export function getPredictMarketHref(slug: string): Href {
   const sport = sportForMarketSlug(slug);
   if (sport) {
     return {
-      pathname: '/predict-sport/[sport]/[slug]',
+      pathname: '/markets/polymarket/sport/[sport]/[slug]',
       params: { sport, slug },
     };
   }
   return {
-    pathname: '/predict-market/[slug]',
+    pathname: '/markets/polymarket/market/[slug]',
     params: { slug },
   };
 }

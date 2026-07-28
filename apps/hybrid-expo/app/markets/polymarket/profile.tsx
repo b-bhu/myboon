@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -18,7 +17,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { DepositModal } from '@/components/predict/DepositModal';
 import { WithdrawModal } from '@/components/predict/WithdrawModal';
-import { PredictOwnerKeyExportModal } from '@/features/predict/components/PredictOwnerKeyExportModal';
 import { fetchPortfolio, fetchClobBalance, fetchOpenOrders, cancelOrder, placeBet } from '@/features/predict/predict.api';
 import type { OpenOrder, PortfolioData, PortfolioPosition } from '@/features/predict/predict.api';
 import { getPredictMarketHref } from '@/features/predict/predict.navigation';
@@ -26,7 +24,8 @@ import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
-import { useDrawer } from '@/components/drawer/DrawerProvider';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { EmptyPortfolio } from '@/features/predict/profile/EmptyPortfolio';
 import { YourPicksSection } from '@/features/predict/profile/YourPicksSection';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
@@ -80,9 +79,11 @@ function getOrderCost(order: OpenOrder): number {
 export default function PredictProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { connected, address: solanaAddress, source, sessionKey, signMessage } = useWallet();
+  const { connected, address: solanaAddress, source, sessionKey } = useWallet();
   const poly = usePolymarketWallet();
-  const { open: openDrawer } = useDrawer();
+  // Predict settles on Polygon, so its requirement is EVM.
+  const connectSheet = useConnectionSheet('evm');
+  const openConnect = useCallback(() => connectSheet.open('evm'), [connectSheet]);
   const [busy, setBusy] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -104,7 +105,6 @@ export default function PredictProfileScreen() {
   const [currencyFormat, setCurrencyFormat] = useState<PredictProfileCurrency>('INR');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<PredictSettingsView>('menu');
-  const [predictExportOpen, setPredictExportOpen] = useState(false);
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
   const [cashOutSubmitting, setCashOutSubmitting] = useState(false);
 
@@ -287,20 +287,20 @@ export default function PredictProfileScreen() {
       try {
         await poly.enable();
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Failed to enable Predict account';
+        const msg = err instanceof Error ? err.message : 'Failed to enable Polymarket account';
         Alert.alert('Wallet', msg);
         return;
       }
     }
 
-    if (!poly.polygonAddress) {
+    if (!poly.polygonAddress || !poly.signer) {
       Alert.alert('Cash out failed', 'Wallet session not ready.');
       return;
     }
 
     setCashOutSubmitting(true);
     try {
-      const result = await placeBet({
+      const result = await placeBet(poly.signer, {
         polygonAddress: poly.polygonAddress,
         tradingAddress: poly.tradingAddress,
         tokenID: position.asset,
@@ -369,7 +369,7 @@ export default function PredictProfileScreen() {
       await poly.enable();
       setSessionExpired(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to connect Predict account';
+      const msg = err instanceof Error ? err.message : 'Failed to connect Polymarket account';
       Alert.alert('Error', msg);
     } finally {
       setBusy(false);
@@ -377,31 +377,15 @@ export default function PredictProfileScreen() {
   }, [poly]);
 
   const handleConnectPredictAccount = useCallback(() => {
-    if (!connected) {
-      Alert.alert('Connect Wallet', 'Connect your Solana wallet first.');
+    // Predict signs on Polygon, so the requirement is EVM. When the resolver
+    // has no signer yet, the shared connection sheet is the entry point.
+    if (!poly.signer) {
+      connectSheet.open('evm');
       return;
     }
 
-    if (Platform.OS === 'web') {
-      void connectPredictAccount();
-      return;
-    }
-
-    Alert.alert(
-        'Sign in to Predict',
-        'Sign once to restore or set up the Predict account linked to this wallet.\n\n' +
-        '• One signature to verify ownership\n' +
-        '• No transaction, no gas, no cost\n' +
-        '• No extra seed phrases or wallets to manage',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Continue',
-          onPress: () => void connectPredictAccount(),
-        },
-      ],
-    );
-  }, [connectPredictAccount, connected]);
+    void connectPredictAccount();
+  }, [connectPredictAccount, connectSheet, poly.signer]);
 
   const handleReconnect = useCallback(async () => {
     if (!connected) return;
@@ -481,7 +465,7 @@ export default function PredictProfileScreen() {
             <AppTopBarIconButton
               icon="settings"
               onPress={() => setSettingsOpen(true)}
-              accessibilityLabel="Open Predict profile currency settings"
+              accessibilityLabel="Open Polymarket profile currency settings"
               color={semantic.text.dim}
             />
           </View>
@@ -528,11 +512,11 @@ export default function PredictProfileScreen() {
 
           {!isEnabled && !poly.isLoading && !connected && (
             <Pressable
-              onPress={openDrawer}
+              onPress={openConnect}
               style={styles.passkeyCta}
             >
               <MaterialIcons name="login" size={14} color={tokens.colors.backgroundDark} />
-              <Text style={styles.passkeyCtaText}>Sign In</Text>
+              <Text style={styles.passkeyCtaText}>Connect wallet</Text>
             </Pressable>
           )}
           {isEnabled && (
@@ -562,8 +546,8 @@ export default function PredictProfileScreen() {
           <View style={styles.positionsSection}>
             <EmptyPortfolio
               mode="no-account"
-              onPrimaryAction={!connected ? openDrawer : handleConnectPredictAccount}
-              primaryLabel={!connected ? 'Sign In' : 'Sign in to Predict'}
+              onPrimaryAction={!connected ? openConnect : handleConnectPredictAccount}
+              primaryLabel={!connected ? 'Connect wallet' : 'Set up Polymarket'}
             />
           </View>
         )}
@@ -578,7 +562,7 @@ export default function PredictProfileScreen() {
             <View style={styles.equityCard}>
               <View style={styles.equityRow}>
                 <View style={styles.eqItem}>
-                  <Text style={styles.eqLabel}>Predict value</Text>
+                  <Text style={styles.eqLabel}>Polymarket value</Text>
                   <Text style={styles.eqVal}>
                     {formatProfileMoney(predictValue)}
                   </Text>
@@ -626,6 +610,7 @@ export default function PredictProfileScreen() {
               redeemablePositions={redeemablePositions}
               closedPositions={closedPositions}
               polygonAddress={poly.polygonAddress}
+              signer={poly.signer}
               cancellingOrderId={cancellingId}
               freshness={{ ...activityFreshness, loading: portfolioLoading || refreshing }}
               sellQuotes={sellQuotes}
@@ -640,7 +625,7 @@ export default function PredictProfileScreen() {
               <View style={styles.positionsSection}>
                 <EmptyPortfolio
                   mode={(cashBalance ?? 0) > 0 ? 'no-picks' : 'no-balance'}
-                  onPrimaryAction={(cashBalance ?? 0) > 0 ? () => router.push('/predict') : () => setDepositOpen(true)}
+                  onPrimaryAction={(cashBalance ?? 0) > 0 ? () => router.push('/markets/polymarket') : () => setDepositOpen(true)}
                   primaryLabel={(cashBalance ?? 0) > 0 ? 'Browse Markets' : 'Deposit'}
                 />
               </View>
@@ -667,6 +652,7 @@ export default function PredictProfileScreen() {
           polygonAddress={poly.polygonAddress}
           tradingAddress={poly.tradingAddress ?? poly.polygonAddress}
           solanaAddress={solanaAddress}
+          signer={poly.signer}
           cashBalance={cashBalance}
           onSuccess={loadPortfolio}
         />
@@ -684,27 +670,18 @@ export default function PredictProfileScreen() {
         formatMoney={formatProfileMoney}
       />
 
-      <PredictOwnerKeyExportModal
-        visible={predictExportOpen}
-        onClose={() => setPredictExportOpen(false)}
-        solanaAddress={solanaAddress}
-        polygonAddress={poly.polygonAddress}
-        depositWalletAddress={poly.tradingAddress ?? poly.depositWalletAddress}
-        signMessage={signMessage}
-      />
-
       <Modal visible={settingsOpen} transparent animationType="fade" onRequestClose={closeSettings}>
         <View style={styles.settingsBackdrop}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close Predict profile settings"
+            accessibilityLabel="Close Polymarket profile settings"
             style={StyleSheet.absoluteFill}
             onPress={closeSettings}
           />
           <View style={styles.settingsCard} accessibilityViewIsModal>
-            <Text style={styles.settingsEyebrow}>Predict settings</Text>
+            <Text style={styles.settingsEyebrow}>Polymarket settings</Text>
             {settingsView !== 'menu' && (
-              <Pressable style={styles.settingsBackRow} onPress={() => setSettingsView('menu')} accessibilityRole="button" accessibilityLabel="Back to Predict settings">
+              <Pressable style={styles.settingsBackRow} onPress={() => setSettingsView('menu')} accessibilityRole="button" accessibilityLabel="Back to Polymarket settings">
                 <MaterialIcons name="chevron-left" size={16} color={semantic.text.dim} />
                 <Text style={styles.settingsBackText}>Back</Text>
               </Pressable>
@@ -731,7 +708,7 @@ export default function PredictProfileScreen() {
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Open Predict wallet settings"
+                  accessibilityLabel="Open Polymarket wallet settings"
                   style={styles.settingsOption}
                   onPress={() => setSettingsView('wallet')}
                 >
@@ -739,7 +716,7 @@ export default function PredictProfileScreen() {
                     <MaterialIcons name="vpn-key" size={15} color={tokens.colors.viridian} />
                   </View>
                   <View style={styles.settingsOptionCopy}>
-                    <Text style={styles.settingsOptionTitle}>Predict wallet</Text>
+                    <Text style={styles.settingsOptionTitle}>Polymarket wallet</Text>
                     <Text style={styles.settingsOptionSub}>{poly.polygonAddress ? truncate(poly.polygonAddress) : 'Not connected'}</Text>
                   </View>
                   <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
@@ -750,14 +727,14 @@ export default function PredictProfileScreen() {
             {settingsView === 'currency' && (
               <>
                 <Text style={styles.settingsTitle}>Currency display</Text>
-                <Text style={styles.settingsCopy}>Choose how money shows on your Predict profile.</Text>
+                <Text style={styles.settingsCopy}>Choose how money shows on your Polymarket profile.</Text>
                 {(['USD', 'INR'] as const).map((currency) => {
                   const selected = currencyFormat === currency;
                   return (
                     <Pressable
                       key={currency}
                       accessibilityRole="button"
-                      accessibilityLabel={`Show Predict profile values in ${currency}`}
+                      accessibilityLabel={`Show Polymarket profile values in ${currency}`}
                       accessibilityState={{ selected }}
                       style={[styles.currencyOption, selected && styles.currencyOptionSelected]}
                       onPress={() => selectCurrencyFormat(currency)}
@@ -777,9 +754,9 @@ export default function PredictProfileScreen() {
 
             {settingsView === 'wallet' && (
               <>
-                <Text style={styles.settingsTitle}>Predict wallet</Text>
+                <Text style={styles.settingsTitle}>Polymarket wallet</Text>
                 <Text style={styles.settingsCopy}>
-                  Export the Polygon owner key that controls your Predict deposit wallet. Your Solana wallet signs once so the key can be derived locally.
+                  Export the Polygon owner key that controls your Polymarket deposit wallet. Your Solana wallet signs once so the key can be derived locally.
                 </Text>
                 <View style={styles.walletInfoBox}>
                   <View style={styles.walletInfoRow}>
@@ -795,30 +772,21 @@ export default function PredictProfileScreen() {
                     <Text style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
                   </View>
                 </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Export Predict owner key"
-                  style={[styles.exportOwnerButton, !isEnabled && styles.exportOwnerButtonDisabled]}
-                  disabled={!isEnabled}
-                  onPress={() => {
-                    setSettingsOpen(false);
-                    setSettingsView('menu');
-                    setPredictExportOpen(true);
-                  }}
-                >
-                  <MaterialIcons name="key" size={16} color={tokens.colors.backgroundDark} />
-                  <Text style={styles.exportOwnerButtonText}>Export Predict owner key</Text>
-                </Pressable>
                 <Text style={styles.settingsFinePrint}>
-                  {source === 'privy'
-                    ? 'Your Privy Solana wallet export lives in the main wallet drawer.'
-                    : 'This does not export your external Solana wallet. Export that from your wallet app.'}
+                  Your Polymarket wallet is an embedded wallet managed by Privy. There
+                  is no key to export from this screen.
                 </Text>
               </>
             )}
           </View>
         </View>
       </Modal>
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }

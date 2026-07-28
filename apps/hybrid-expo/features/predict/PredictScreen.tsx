@@ -14,7 +14,9 @@ import {
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppTopBar, AppTopBarLogo, AppTopBarProfileButton } from '@/components/AppTopBar';
+import { AppTopBar, AppTopBarLogo } from '@/components/AppTopBar';
+import { AppProfileButton } from '@/components/AppProfileButton';
+import { useWallet } from '@/hooks/useWallet';
 import { fetchFeaturedMarkets, fetchLivePrices } from '@/features/predict/predict.api';
 import type { FeedItem, FeedItemBinary, FeedItemMatch, FeedResponse } from '@/features/predict/predict.types';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
@@ -343,6 +345,7 @@ const SectionHeader = memo(function SectionHeader({ label, count, onPress, isLiv
 
 export default function PredictScreen() {
   const router = useRouter();
+  const wallet = useWallet();
   const { format } = useOddsFormat();
   const formatOdds = useCallback((price: number | null) => formatOddsForFormat(price, format), [format]);
   const insets = useSafeAreaInsets();
@@ -468,11 +471,11 @@ export default function PredictScreen() {
   });
 
   const navigateBinary = useCallback((slug: string) => {
-    router.push({ pathname: '/predict-market/[slug]', params: { slug } });
+    router.push({ pathname: '/markets/polymarket/market/[slug]', params: { slug } });
   }, [router]);
 
   const navigateMatch = useCallback((sport: string, slug: string) => {
-    router.push({ pathname: '/predict-sport/[sport]/[slug]', params: { sport, slug } });
+    router.push({ pathname: '/markets/polymarket/sport/[sport]/[slug]', params: { sport, slug } });
   }, [router]);
 
   const showSports = useCallback(() => {
@@ -636,7 +639,14 @@ export default function PredictScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <AppTopBar
         left={<AppTopBarLogo />}
-        right={<AppTopBarProfileButton onPress={() => router.push('/predict-profile')} />}
+        right={
+          <AppProfileButton
+            onPress={() => router.push('/markets/polymarket/profile')}
+            connected={wallet.connected}
+            label="Open Predict profile"
+            hint="View your Predict account, picks, and winnings"
+          />
+        }
       />
 
       {/* feed list */}

@@ -20,7 +20,9 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MeteoraProfileButton } from '@/features/meteora/components/MeteoraProfileButton';
+import { AppProfileButton } from '@/components/AppProfileButton';
+import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
+import { useWallet } from '@/hooks/useWallet';
 import { meteoraClient } from '@/features/meteora/meteora.client';
 
 const PAGE_SIZE = 30;
@@ -274,6 +276,8 @@ export function MeteoraPoolsScreen() {
     });
   }, [router]);
 
+  const wallet = useWallet();
+
   const openProfile = useCallback(() => {
     router.push('/markets/meteora/profile');
   }, [router]);
@@ -298,7 +302,15 @@ export function MeteoraPoolsScreen() {
           </Pressable>
           <Text style={styles.headerTitle}>Pools</Text>
         </View>
-        <MeteoraProfileButton onPress={openProfile} />
+        <AppProfileButton
+          onPress={openProfile}
+          connected={wallet.connected}
+          label="Open Meteora profile"
+          hint="View your Meteora positions, orders, and history"
+          borderColor={METEORA_COLORS.border}
+          iconColor={METEORA_COLORS.text}
+          backgroundColor="rgba(21,27,48,0.72)"
+        />
       </View>
 
       <FlatList

@@ -1,6 +1,22 @@
+/**
+ * predict.signing — every signature Polymarket needs, over a resolver-supplied
+ * `Signer`.
+ *
+ * Each entry point takes its `Signer` as an argument. There is deliberately no
+ * module-level signer here: the spec's governing rule is that applications
+ * declare a requirement and receive a signer scoped to the call, rather than
+ * reaching for a global. Callers obtain one from
+ * `useChainSigner(POLYMARKET_REQUIREMENT)`.
+ *
+ * Key material never appears in this module. The EOA is a Privy embedded EVM
+ * wallet; we only ever ask it to sign.
+ *
+ * Model: docs/modules/wallet/specs/wallet_connectivity.md
+ */
+
 import { ClobClient, OrderType, Side, SignatureTypeV2, Chain } from '@polymarket/clob-client-v2';
 import type { ApiKeyCreds, SignedOrder } from '@polymarket/clob-client-v2';
-import { requireActiveEvmWallet } from '@/hooks/useEvmSigner';
+import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import type { PlaceBetParams } from './predict.api';
 
@@ -285,14 +301,41 @@ function validateDepositWalletSignatureRequest(
   }
 }
 
-export async function createPredictSessionProof(address: string): Promise<{ authTimestamp: number; authSignature: string }> {
-  const wallet = requireActiveEvmWallet();
-  const signerAddress = (await wallet.getAddress()).toLowerCase();
-  if (signerAddress !== address.toLowerCase()) {
+/**
+ * `ClobClient` accepts an `EthersSigner`, which is structural: `getAddress()`
+ * plus `_signTypedData()`. Our `Signer` already provides both under different
+ * names, so this adapter is a rename — not a wallet, and it holds no key.
+ */
+function toClobSigner(signer: Signer) {
+  return {
+    getAddress: () => signer.getAddress(),
+    _signTypedData: (
+      domain: Record<string, unknown>,
+      types: Record<string, { name: string; type: string }[]>,
+      value: Record<string, unknown>,
+    ) => signer.signTypedData(domain, types, value),
+  };
+}
+
+/**
+ * Guard every signature against the signer having changed underneath the flow —
+ * a different EOA means a different deposit wallet, so signing on regardless
+ * would produce a valid signature for the wrong account.
+ */
+async function assertSignerAddress(signer: Signer, expected: string): Promise<void> {
+  const signerAddress = (await signer.getAddress()).toLowerCase();
+  if (signerAddress !== expected.toLowerCase()) {
     throw new Error('Predict signer changed. Reconnect Predict and try again.');
   }
+}
+
+export async function createPredictSessionProof(
+  signer: Signer,
+  address: string,
+): Promise<{ authTimestamp: number; authSignature: string }> {
+  await assertSignerAddress(signer, address);
   const authTimestamp = Date.now();
-  const authSignature = await wallet.signMessage([
+  const authSignature = await signer.signMessage([
     'myboon:predict:server-session',
     `address:${address.toLowerCase()}`,
     `timestamp:${authTimestamp}`,
@@ -300,12 +343,11 @@ export async function createPredictSessionProof(address: string): Promise<{ auth
   return { authTimestamp, authSignature };
 }
 
-export async function createPolymarketApiCreds(): Promise<ApiKeyCreds> {
-  const wallet = requireActiveEvmWallet();
+export async function createPolymarketApiCreds(signer: Signer): Promise<ApiKeyCreds> {
   const client = new ClobClient({
     host: CLOB_HOST,
     chain: CHAIN_ID,
-    signer: wallet,
+    signer: toClobSigner(signer),
   });
   let deriveFailure: unknown = null;
   try {
@@ -326,14 +368,12 @@ export async function createPolymarketApiCreds(): Promise<ApiKeyCreds> {
 }
 
 export async function signDepositWalletBatch(
+  signer: Signer,
   request: DepositWalletSignatureRequest,
   context: DepositWalletSigningContext,
 ): Promise<SignedDepositWalletBatch> {
-  const wallet = requireActiveEvmWallet();
-  const signerAddress = (await wallet.getAddress()).toLowerCase();
-  if (signerAddress !== request.ownerAddress.toLowerCase()) {
-    throw new Error('Predict signer changed. Reconnect Predict and try again.');
-  }
+  await assertSignerAddress(signer, request.ownerAddress);
+  // Calldata is validated before the signature is produced, never after.
   validateDepositWalletSignatureRequest(request, context);
 
   const domain = {
@@ -348,7 +388,7 @@ export async function signDepositWalletBatch(
     deadline: request.deadline,
     calls: request.calls,
   };
-  const signature = await wallet._signTypedData(domain, DEPOSIT_WALLET_TYPES, message);
+  const signature = await signer.signTypedData(domain, DEPOSIT_WALLET_TYPES, message);
 
   return {
     type: 'WALLET',
@@ -365,11 +405,12 @@ export async function signDepositWalletBatch(
 }
 
 export async function signAndSubmitDepositWalletBatch(
+  signer: Signer,
   polygonAddress: string,
   request: DepositWalletSignatureRequest,
   context: DepositWalletSigningContext,
 ): Promise<Record<string, unknown>> {
-  const batch = await signDepositWalletBatch(request, context);
+  const batch = await signDepositWalletBatch(signer, request, context);
   const baseUrl = resolveApiBaseUrl();
   const response = await fetchWithTimeout(`${baseUrl}/clob/wallet-batch`, {
     method: 'POST',
@@ -389,12 +430,14 @@ export async function signAndSubmitDepositWalletBatch(
   return data;
 }
 
-export async function createSignedPredictOrder(params: PlaceBetParams): Promise<SignedOrder> {
-  const wallet = requireActiveEvmWallet();
+export async function createSignedPredictOrder(
+  signer: Signer,
+  params: PlaceBetParams,
+): Promise<SignedOrder> {
   const client = new ClobClient({
     host: CLOB_HOST,
     chain: CHAIN_ID,
-    signer: wallet,
+    signer: toClobSigner(signer),
     signatureType: SignatureTypeV2.POLY_1271,
     funderAddress: params.tradingAddress ?? params.polygonAddress,
     builderConfig: { builderCode: BUILDER_CODE },

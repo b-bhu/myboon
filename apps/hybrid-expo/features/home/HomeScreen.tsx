@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
 import { AppTopBarLogo } from '@/components/AppTopBar';
-import { AvatarTrigger } from '@/components/drawer/AvatarTrigger';
+import { AvatarTrigger } from '@/components/AvatarTrigger';
 import { FeedCard } from '@/features/feed/components/FeedCard';
 import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
 import { StoryCarousel, StoryCarouselSkeleton } from '@/features/feed/components/StoryCarousel';
@@ -27,8 +27,20 @@ import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { WalletActivityTiles } from '@/features/wallet/WalletActivityTiles';
 import { WalletHero } from '@/features/wallet/WalletHero';
+import { ChainRow } from '@/features/wallet/components/ChainRow';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { DormantChainNotice } from '@/features/wallet/components/DormantChainNotice';
+import {
+  findFundedDormantChains,
+  observeChains,
+  reportFundedDormantChains,
+} from '@/features/wallet/dormantBalance';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useProtocolAccounts } from '@/features/wallet/useProtocolAccounts';
 import { useSectionVisibility } from '@/features/wallet/useSectionVisibility';
+import { activeChains, useChainActivation } from '@/features/chain/activation';
+import type { Chain } from '@/features/chain/chain.contract';
+import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import {
   WALLET_PROTOCOL_IDS,
   type WalletProtocolId,
@@ -54,7 +66,7 @@ type MarketHomeApp = {
   id: 'polymarket' | 'pacifica' | 'phoenix' | 'meteora' | 'orca' | 'raydium' | 'kamino';
   name: string;
   icon: MarketAppIcon;
-  route?: '/predict' | '/trade' | '/markets/phoenix' | '/markets/meteora';
+  route?: '/markets/polymarket' | '/markets/pacifica' | '/markets/phoenix' | '/markets/meteora';
 };
 
 const MARKET_APPS: MarketHomeApp[] = [
@@ -62,13 +74,13 @@ const MARKET_APPS: MarketHomeApp[] = [
     id: 'polymarket',
     name: 'Polymarket',
     icon: { xml: POLYMARKET_MARK_SVG, width: 46, height: 50 },
-    route: '/predict',
+    route: '/markets/polymarket',
   },
   {
     id: 'pacifica',
     name: 'Pacifica',
     icon: { xml: PACIFICA_MARK_SVG, width: 52, height: 52 },
-    route: '/trade',
+    route: '/markets/pacifica',
   },
   {
     id: 'phoenix',
@@ -120,6 +132,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const wallet = useWallet();
+  const evm = usePrivyEvmWallet();
+  const { activation, activate, deactivate } = useChainActivation();
+  const connectSheet = useConnectionSheet('solana');
   const walletAddress = wallet.connected ? wallet.address : null;
   const { totals: walletTotals, sources: walletSources, notifyVisibility, refreshAll: refreshWallet, retrySource: retryWalletSource } = useProtocolAccounts(walletAddress);
   const { isVisible: walletSectionVisible, onSectionLayout, onViewportLayout, onScroll: onWalletScroll } = useSectionVisibility();
@@ -202,6 +217,80 @@ export default function HomeScreen() {
     router.push(app.route);
   }, [router]);
 
+  /**
+   * The Wallet surface forks on *activation*, not on `wallet.connected`.
+   * A user who logged in through an EVM application has an active EVM chain and
+   * a dormant Solana one, and must see EVM only — forking on the Solana
+   * accessor would have shown them nothing (spec, "Dormancy").
+   */
+  const chains = activeChains(activation);
+
+  const chainAddress = useCallback((chain: Chain): string | null => (
+    chain === 'solana' ? (wallet.connected ? wallet.address : null) : evm.address
+  ), [wallet.connected, wallet.address, evm.address]);
+
+  // Only chains with a real address render. An active chain whose wallet has not
+  // hydrated yet is omitted rather than shown with a placeholder address.
+  const displayChains = chains.filter((chain) => chainAddress(chain) !== null);
+
+  /**
+   * Safety net for a chain that was provisioned without the user asking and is
+   * holding funds. Deferred provisioning means this cannot happen — a dormant
+   * chain has no wallet and no address — so anything found here is a
+   * provisioning bug, not an expected state (spec, "Dormancy").
+   *
+   * Provisioning is only *observed* here: `wallet.connected` and
+   * `evm.isProvisioned` are already read above for rendering. Nothing on this
+   * path calls `create()`, so checking cannot itself provision a chain.
+   *
+   * EVM's balance is null because no client-side EVM balance source exists yet
+   * (#261), so an EVM entry can never qualify today — a fabricated zero would
+   * assert the funded case away rather than detect it. Solana works.
+   */
+  const fundedDormantChains = useMemo(() => findFundedDormantChains(
+    observeChains({
+      activation,
+      provisioned: {
+        solana: wallet.connected && !!wallet.address,
+        evm: evm.isProvisioned && !!evm.address,
+      },
+      addresses: {
+        solana: wallet.connected ? wallet.address : null,
+        evm: evm.address,
+      },
+      balancesUsd: {
+        solana: walletTotals.totalUsd,
+        evm: null,
+      },
+    }),
+  ), [activation, wallet.connected, wallet.address, evm.isProvisioned, evm.address, walletTotals.totalUsd]);
+
+  // Log on transition into the funded-dormant state rather than every render, so
+  // a regression is one visible line per chain instead of scroll-rate noise.
+  const reportedDormantRef = useRef<string>('');
+  useEffect(() => {
+    const key = fundedDormantChains.map((entry) => entry.chain).sort().join(',');
+    if (key === reportedDormantRef.current) return;
+    reportedDormantRef.current = key;
+    if (fundedDormantChains.length > 0) reportFundedDormantChains(fundedDormantChains);
+  }, [fundedDormantChains]);
+
+  const handleActivateDormantChain = useCallback((chain: Chain) => {
+    // Activating moves the chain into `activeChains`, so its balance renders in
+    // the normal ChainRow and this notice stops matching.
+    void activate(chain);
+  }, [activate]);
+
+  /**
+   * Disconnect goes through the wallet sheet, which owns the confirmation step.
+   *
+   * It deliberately does not use `Alert.alert`: that renders nothing on React
+   * Native Web, so a confirm-then-act flow built on it silently never acts.
+   */
+  const handleDisconnectChain = useCallback((chain: Chain) => {
+    connectSheet.open(chain);
+  }, [connectSheet]);
+
   return (
     <View style={styles.screen}>
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor }]} />
@@ -275,8 +364,26 @@ export default function HomeScreen() {
 
         <HomeSectionTitle title="Wallet" />
         <View style={styles.walletSection} onLayout={onSectionLayout}>
-          {wallet.connected ? (
+          {/*
+            Sits above the active/disconnected fork deliberately. A user whose
+            only funded chain is a dormant one has no active chains at all, so
+            rendering this inside the connected branch would hide exactly the
+            case it exists to surface.
+          */}
+          {fundedDormantChains.map((entry) => (
+            <DormantChainNotice
+              key={entry.chain}
+              chain={entry.chain}
+              balanceUsd={entry.balanceUsd}
+              onActivate={handleActivateDormantChain}
+            />
+          ))}
+          {displayChains.length > 0 ? (
             <WalletPreview
+              chains={displayChains}
+              chainAddress={chainAddress}
+              solanaConnected={wallet.connected}
+              onDisconnectChain={handleDisconnectChain}
               walletTotals={walletTotals}
               walletSources={walletSources}
               hasAnyResolved={WALLET_PROTOCOL_IDS.some((id) => walletSources[id].valueUsd !== null && walletSources[id].resolvedAt !== null)}
@@ -285,18 +392,21 @@ export default function HomeScreen() {
               onRetrySource={retryWalletSource}
               onOpenMeteora={() => router.push('/markets/meteora/profile')}
               onOpenPhoenix={() => router.push('/markets/phoenix/profile')}
-              onOpenPacifica={() => router.push('/trade?view=profile')}
+              onOpenPacifica={() => router.push('/markets/pacifica/profile')}
             />
           ) : (
-            <DisconnectedWalletState onConnect={() => { void wallet.connect(); }} />
+            <DisconnectedWalletState onConnect={() => connectSheet.open('solana')} />
           )}
         </View>
-
-        <DummySignalsSection />
       </Animated.ScrollView>
 
       <NarrativeSheet item={sheetItem} onClose={() => setSheetItem(null)} />
       <StorySheet story={storySheet} onClose={() => setStorySheet(null)} />
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }
@@ -361,15 +471,6 @@ function RouteCard({
   );
 }
 
-function PreviewHeader({ title, meta }: { title: string; meta: string }) {
-  return (
-    <View style={styles.previewHeader}>
-      <Text style={styles.previewTitle}>{title}</Text>
-      <Text style={styles.previewMeta}>{meta}</Text>
-    </View>
-  );
-}
-
 function MarketsHomeLauncher({
   apps,
   onAppPress,
@@ -427,6 +528,10 @@ function MarketAppBrandIcon({ icon }: { icon: MarketAppIcon }) {
 }
 
 function WalletPreview({
+  chains,
+  chainAddress,
+  solanaConnected,
+  onDisconnectChain,
   walletTotals,
   walletSources,
   hasAnyResolved,
@@ -437,6 +542,10 @@ function WalletPreview({
   onOpenPhoenix,
   onOpenPacifica,
 }: {
+  chains: readonly Chain[];
+  chainAddress: (chain: Chain) => string | null;
+  solanaConnected: boolean;
+  onDisconnectChain: (chain: Chain) => void;
   walletTotals: WalletTotals;
   walletSources: WalletSourcesState;
   hasAnyResolved: boolean;
@@ -447,26 +556,59 @@ function WalletPreview({
   onOpenPhoenix: () => void;
   onOpenPacifica: () => void;
 }) {
+  // The Solana protocol rows below are driven by `useProtocolAccounts`, which is
+  // keyed on the Solana address. They render only when Solana is connected — an
+  // EVM-only user sees their EVM chain row and nothing Solana-shaped.
+  const showSolanaProtocolRows = solanaConnected && chains.includes('solana');
+
   return (
     <View style={styles.walletWrap}>
-      <WalletHero
-        totals={walletTotals}
-        hasAnyResolved={hasAnyResolved}
-        isRefreshing={walletRefreshing}
-        onRefresh={onWalletRefresh}
-      />
-      <WalletActivityTiles />
+      {showSolanaProtocolRows ? (
+        <>
+          <WalletHero
+            totals={walletTotals}
+            hasAnyResolved={hasAnyResolved}
+            isRefreshing={walletRefreshing}
+            onRefresh={onWalletRefresh}
+          />
+          <WalletActivityTiles />
+        </>
+      ) : null}
+
       <View style={styles.accountsList}>
-        <WalletAccountRow protocol="spot" source={walletSources.spot} onRetry={onRetrySource} />
-        <WalletAccountRow
-          protocol="meteora"
-          source={walletSources.meteora}
-          onRetry={onRetrySource}
-          onPress={onOpenMeteora}
-        />
-        <PerpsAccountRow protocol="phoenix" source={walletSources.phoenix} onRetry={onRetrySource} onPress={onOpenPhoenix} />
-        <PerpsAccountRow protocol="pacifica" source={walletSources.pacifica} onRetry={onRetrySource} onPress={onOpenPacifica} />
+        {chains.map((chain) => {
+          const address = chainAddress(chain);
+          if (!address) return null;
+          return (
+            <ChainRow
+              key={chain}
+              chain={chain}
+              address={address}
+              // Solana's figure is the combined protocol total already computed
+              // for this address. No client-side EVM balance source exists yet,
+              // so EVM shows an explicit unavailable marker rather than a
+              // fabricated zero.
+              balanceUsd={chain === 'solana' ? walletTotals.totalUsd : null}
+              balanceUnavailableLabel={chain === 'evm' ? 'Balance unavailable' : undefined}
+              onDisconnect={onDisconnectChain}
+            />
+          );
+        })}
       </View>
+
+      {showSolanaProtocolRows ? (
+        <View style={styles.accountsList}>
+          <WalletAccountRow protocol="spot" source={walletSources.spot} onRetry={onRetrySource} />
+          <WalletAccountRow
+            protocol="meteora"
+            source={walletSources.meteora}
+            onRetry={onRetrySource}
+            onPress={onOpenMeteora}
+          />
+          <PerpsAccountRow protocol="phoenix" source={walletSources.phoenix} onRetry={onRetrySource} onPress={onOpenPhoenix} />
+          <PerpsAccountRow protocol="pacifica" source={walletSources.pacifica} onRetry={onRetrySource} onPress={onOpenPacifica} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -495,27 +637,6 @@ function DisconnectedWalletState({ onConnect }: { onConnect: () => void }) {
       >
         <Text style={styles.walletConnectActionText}>Connect wallet</Text>
       </Pressable>
-    </View>
-  );
-}
-
-function DummySignalsSection() {
-  return (
-    <View style={styles.dummyCard}>
-      <PreviewHeader title="Next up" meta="Preview" />
-      <DummyRow label="Alerts" text="Wallet and market events that need attention" value="Soon" />
-      <DummyRow label="Agent" text="Personalized summaries from your active positions" value="3" />
-      <DummyRow label="Watchlist" text="Pinned markets, tokens, and wallets in one place" value="Beta" />
-    </View>
-  );
-}
-
-function DummyRow({ label, text, value }: { label: string; text: string; value: string }) {
-  return (
-    <View style={styles.dummyRow}>
-      <Text style={styles.dummyLabel}>{label}</Text>
-      <Text style={styles.dummyText} numberOfLines={1}>{text}</Text>
-      <Text style={styles.dummyValue}>{value}</Text>
     </View>
   );
 }
@@ -716,32 +837,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
-  previewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: tokens.spacing.md,
-    marginBottom: tokens.spacing.md,
-  },
-  previewTitle: {
-    color: semantic.text.primary,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  previewMeta: {
-    color: semantic.text.faint,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
   walletWrap: {
     gap: tokens.spacing.md,
   },
   walletSection: {
     minHeight: WALLET_SECTION_MIN_HEIGHT,
     justifyContent: 'flex-start',
+    // Separates a dormant-chain notice from the wallet content below it. No-op
+    // in the normal case, where this section has a single child.
+    gap: tokens.spacing.md,
   },
   meta: {
     color: semantic.text.faint,
@@ -794,41 +898,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
-  },
-  dummyCard: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(24,90,112,0.72)',
-    backgroundColor: 'rgba(6,51,67,0.62)',
-    padding: 13,
-  },
-  dummyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.sm,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(24,90,112,0.50)',
-  },
-  dummyLabel: {
-    width: 70,
-    color: tokens.colors.accent,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '900',
-    letterSpacing: 0.7,
-    textTransform: 'uppercase',
-  },
-  dummyText: {
-    flex: 1,
-    color: semantic.text.dim,
-    fontSize: tokens.fontSize.sm,
-  },
-  dummyValue: {
-    color: semantic.text.primary,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '800',
   },
   pressed: {
     opacity: 0.82,

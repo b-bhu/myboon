@@ -46,5 +46,5 @@ export interface BottomNavItem {
   key: string;
   icon: ComponentProps<typeof MaterialIcons>['name'];
   label: string;
-  route: '/' | '/predict' | '/swap' | '/trade';
+  route: '/' | '/markets/polymarket' | '/swap' | '/markets/pacifica';
 }

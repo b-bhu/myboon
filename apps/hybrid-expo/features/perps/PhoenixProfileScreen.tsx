@@ -15,6 +15,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { useWallet } from '@/hooks/useWallet';
+import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import {
   activatePhoenixInvite,
   buildPhoenixCancelConditionalOrder,
@@ -126,6 +128,7 @@ export function PhoenixProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const wallet = useWallet();
+  const connectSheet = useConnectionSheet('solana');
 
   const [state, setState] = useState<PhoenixTraderState | null>(null);
   const [tradeHistory, setTradeHistory] = useState<PhoenixTradeHistoryItem[]>([]);
@@ -612,10 +615,10 @@ export function PhoenixProfileScreen() {
       {!wallet.connected ? (
         <View style={styles.emptyState}>
           <MaterialIcons name="account-balance-wallet" size={28} color={semantic.text.faint} />
-          <Text style={styles.emptyTitle}>Connect Wallet</Text>
-          <Text style={styles.emptyDesc}>Connect a Solana wallet to view your Phoenix trading account.</Text>
-          <Pressable style={styles.primaryBtn} onPress={() => wallet.connect()}>
-            <Text style={styles.primaryBtnText}>Connect Wallet</Text>
+          <Text style={styles.emptyTitle}>Connect wallet</Text>
+          <Text style={styles.emptyDesc}>Connect a wallet to view your Phoenix trading account.</Text>
+          <Pressable style={styles.primaryBtn} onPress={() => connectSheet.open('solana')}>
+            <Text style={styles.primaryBtnText}>Connect wallet</Text>
           </Pressable>
         </View>
       ) : loading ? (
@@ -1030,6 +1033,12 @@ export function PhoenixProfileScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onClose={connectSheet.close}
+      />
     </View>
   );
 }

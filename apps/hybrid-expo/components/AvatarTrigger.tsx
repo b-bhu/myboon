@@ -1,13 +1,20 @@
+/**
+ * AvatarTrigger — opens the wallet sheet from any header.
+ *
+ * Previously opened the side drawer. The drawer is gone; the sheet is the one
+ * place wallet connection state is presented, so the avatar goes there.
+ */
+
 import React from 'react';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { useDrawer } from './DrawerProvider';
+import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import { useWallet } from '@/hooks/useWallet';
 import { semantic, tokens } from '@/theme';
 
 export function AvatarTrigger({ onPress }: { onPress?: () => void }) {
-  const { open } = useDrawer();
+  const { open } = useWalletSheet();
   const { connected, shortAddress } = useWallet();
 
   const letter = shortAddress ? shortAddress.charAt(0).toUpperCase() : 'U';

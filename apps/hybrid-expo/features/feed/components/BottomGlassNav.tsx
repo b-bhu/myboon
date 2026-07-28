@@ -19,15 +19,9 @@ export function BottomGlassNav({ items }: BottomGlassNavProps) {
     if (route === '/') {
       return pathname === '/' || pathname === '/index';
     }
-    if (route === '/predict') {
-      return pathname === '/predict'
-        || pathname.startsWith('/predict/')
-        || pathname.startsWith('/predict-');
-    }
-    if (route === '/trade') {
-      return pathname === '/trade'
-        || pathname.startsWith('/trade/');
-    }
+    // Every app's sub-routes now nest under its own path
+    // (`/markets/polymarket/profile`, `/markets/pacifica/BTC`), so the prefix
+    // check covers them. The old flat routes needed per-app special cases.
     return pathname === route || pathname.startsWith(`${route}/`);
   }
 
