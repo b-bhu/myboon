@@ -4,9 +4,9 @@ import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import type {
   PipelineCandidateInsertInput,
-  PipelineCandidateResearchClaim,
   PipelineCandidateRow,
   PipelineCandidateThreadUpdate,
+  PipelineClaimRetryableWithLeaseInput,
   PipelineClaimWithLeaseInput,
   PipelineDraftAction,
   PipelineDraftRow,
@@ -719,26 +719,6 @@ export class SqlitePipelineStore implements PipelineStore {
     })
   }
 
-  async claimCandidatesForResearch(claims: PipelineCandidateResearchClaim[], observedAt: string): Promise<void> {
-    if (claims.length === 0) return
-
-    this.tx(() => {
-      const stmt = this.db.prepare(`
-        UPDATE pipeline_candidates
-        SET status = 'researching',
-            research_family_key = ?,
-            research_cluster_key = ?,
-            research_depth = ?,
-            research_attempted_at = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `)
-      for (const claim of claims) {
-        stmt.run(claim.familyKey, claim.clusterKey, claim.depth, observedAt, claim.id)
-      }
-    })
-  }
-
   async fetchPendingCandidates(input: PipelineFetchPendingCandidatesInput): Promise<PipelineCandidateRow[]> {
     const params: unknown[] = [input.source, input.area]
     let observedClause = ''
@@ -1364,6 +1344,58 @@ export class SqlitePipelineStore implements PipelineStore {
         ORDER BY observed_at ASC
         LIMIT ?
       `).all(input.source, input.area, input.now, input.now, Math.max(0, input.limit)) as Array<Record<string, unknown>>
+
+      const ids = claimable.map((row) => String(row.id))
+      if (ids.length === 0) return []
+
+      const leaseExpiresAt = new Date(new Date(input.now).getTime() + input.leaseSeconds * 1000).toISOString()
+
+      for (const batch of chunk(ids)) {
+        this.db.prepare(`
+          UPDATE pipeline_candidates
+          SET status = 'researching',
+              lease_owner = ?,
+              lease_expires_at = ?,
+              attempt_count = attempt_count + 1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id IN (${placeholders(batch.length)})
+        `).run(input.leaseOwner, leaseExpiresAt, ...batch)
+      }
+
+      const claimed: PipelineCandidateRow[] = []
+      for (const batch of chunk(ids)) {
+        const rows = this.db.prepare(`
+          SELECT * FROM pipeline_candidates WHERE id IN (${placeholders(batch.length)})
+        `).all(...batch) as Array<Record<string, unknown>>
+        claimed.push(...rows.map(mapCandidateRow))
+      }
+      return claimed
+    })
+  }
+
+  async claimRetryableWithLease(input: PipelineClaimRetryableWithLeaseInput): Promise<PipelineCandidateRow[]> {
+    return this.tx(() => {
+      // Claimable work here is the retry lane ONLY: 'research_failed' rows
+      // that have not exhausted their retry budget and are past their
+      // next-retry-at (or never had one set). This does not overlap
+      // claimWithLease's claimable set (pending_research / expired-lease
+      // researching), so the two claims can run back-to-back without either
+      // one seeing a row the other already claimed.
+      const claimable = this.db.prepare(`
+        SELECT id FROM pipeline_candidates
+        WHERE source = ? AND area = ?
+          AND status = 'research_failed'
+          AND attempt_count < ?
+          AND (research_next_retry_at IS NULL OR research_next_retry_at <= ?)
+        ORDER BY observed_at ASC
+        LIMIT ?
+      `).all(
+        input.source,
+        input.area,
+        input.maxRetryCount,
+        input.now,
+        Math.max(0, input.limit)
+      ) as Array<Record<string, unknown>>
 
       const ids = claimable.map((row) => String(row.id))
       if (ids.length === 0) return []

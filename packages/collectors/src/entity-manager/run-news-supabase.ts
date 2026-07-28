@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { config as loadEnv } from 'dotenv'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
 import { SupabaseNewsStore } from '../news/supabase-store'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { HermesEntityExtractionProvider } from './extractor'
 import { runNewsEntityManager } from './run-news'
 import { SupabaseEntityMemoryStore } from './supabase-store'
@@ -73,11 +74,11 @@ async function main(): Promise<void> {
   if (envFlag(process.env.ENTITY_MANAGER_NEWS_RUN_ONCE)) return
 
   const intervalMs = positiveInteger(process.env.ENTITY_MANAGER_NEWS_INTERVAL_MS, DEFAULT_INTERVAL_MS)
-  setInterval(() => {
-    runOnce().catch((error) => {
-      console.error('[entity-manager:news] run failed:', error)
-    })
-  }, intervalMs)
+  startIntervalRunner({
+    label: 'entity-manager:news',
+    intervalMs,
+    run: runOnce,
+  })
 }
 
 if (require.main === module) {

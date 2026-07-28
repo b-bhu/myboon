@@ -22,7 +22,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {
   PipelineCandidateInsertInput,
-  PipelineCandidateResearchClaim,
   PipelineCandidateRow,
   PipelineCandidateThreadUpdate,
   PipelineDraftUpsertInput,
@@ -292,10 +291,12 @@ export function runPipelineStoreContract(
   test(`${label}: findCandidateThreadsByFamilyKey finds candidates by research family key`, async () => {
     await withStore(async (store) => {
       const [inserted] = await store.insertCandidates([makeCandidate({ dedupeKey: 'dk-family-1' })])
-      await store.claimCandidatesForResearch(
-        [{ id: inserted.id, familyKey: 'family-x', clusterKey: 'cluster-x', depth: 'deep_web' }],
-        T0
-      )
+      await store.updateCandidateThreads([
+        {
+          id: inserted.id,
+          payload: { researchFamilyKey: 'family-x', researchClusterKey: 'cluster-x', researchDepth: 'deep_web' },
+        },
+      ])
 
       const threads = await store.findCandidateThreadsByFamilyKey('polymarket', 'crypto', ['family-x'])
       assert.equal(threads.length, 1)
@@ -358,35 +359,6 @@ export function runPipelineStoreContract(
   test(`${label}: updateCandidateThreads handles an empty array without throwing`, async () => {
     await withStore(async (store) => {
       await assert.doesNotReject(() => store.updateCandidateThreads([]))
-    })
-  })
-
-  test(`${label}: claimCandidatesForResearch sets per-row familyKey/clusterKey/depth correctly`, async () => {
-    await withStore(async (store) => {
-      const [a, b] = await store.insertCandidates([
-        makeCandidate({ dedupeKey: 'dk-claim-a' }),
-        makeCandidate({ dedupeKey: 'dk-claim-b' }),
-      ])
-
-      const claims: PipelineCandidateResearchClaim[] = [
-        { id: a.id, familyKey: 'family-a', clusterKey: 'cluster-a', depth: 'deep_web' },
-        { id: b.id, familyKey: 'family-b', clusterKey: 'cluster-b', depth: 'reuse_prior' },
-      ]
-      await store.claimCandidatesForResearch(claims, T0_PLUS_1H)
-
-      const [fetchedA, fetchedB] = await store.getCandidatesByIds([a.id, b.id])
-      assert.equal(fetchedA.researchFamilyKey, 'family-a')
-      assert.equal(fetchedA.researchClusterKey, 'cluster-a')
-      assert.equal(fetchedA.researchDepth, 'deep_web')
-      assert.equal(fetchedB.researchFamilyKey, 'family-b')
-      assert.equal(fetchedB.researchClusterKey, 'cluster-b')
-      assert.equal(fetchedB.researchDepth, 'reuse_prior')
-    })
-  })
-
-  test(`${label}: claimCandidatesForResearch handles an empty array without throwing`, async () => {
-    await withStore(async (store) => {
-      await assert.doesNotReject(() => store.claimCandidatesForResearch([], T0))
     })
   })
 
@@ -1057,6 +1029,195 @@ export function runPipelineStoreContract(
       assert.equal(secondClaim.length, 1)
       assert.equal(secondClaim[0].id, seeded.id)
       assert.equal(secondClaim[0].attemptCount, 2)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // claimRetryableWithLease - atomic retry-lane claim (queue migration gap 1)
+  // -------------------------------------------------------------------------
+
+  async function seedRetryFailedCandidate(
+    store: PipelineStore,
+    overrides: { attemptCount?: number; nextRetryAt?: string | null } = {}
+  ): Promise<PipelineCandidateRow> {
+    const [seeded] = await seedClaimableCandidates(store, 1)
+
+    // Drive attempt_count up the same SQL-side way production does: claim
+    // (increments attempt_count) then release, attemptCount times. This
+    // keeps the seed honest about what column claimRetryableWithLease
+    // actually gates on, instead of faking a value nothing else would ever
+    // produce. claimWithLease claims by source/area (not by id), so this
+    // must confirm it actually got the target row - other claimable rows
+    // seeded by the same test (e.g. a plain pending_research fixture) could
+    // otherwise be claimed instead, silently corrupting the seed.
+    const attemptCount = overrides.attemptCount ?? 1
+    for (let i = 0; i < attemptCount; i += 1) {
+      const claimed = await store.claimWithLease({
+        source: seeded.source,
+        area: seeded.area,
+        stage: 'research',
+        limit: 1,
+        leaseOwner: `seed-attempt-${i}`,
+        leaseSeconds: 60,
+        now: T0,
+      })
+      assert.equal(claimed.length, 1, 'seedRetryFailedCandidate expected exactly one claimable row')
+      assert.equal(claimed[0].id, seeded.id, 'seedRetryFailedCandidate claimed the wrong row - seed elsewhere first')
+      await store.releaseLease([seeded.id], `seed-attempt-${i}`)
+    }
+
+    await store.setCandidateStatus({
+      ids: [seeded.id],
+      status: 'research_failed',
+      observedAt: T0,
+      extra: {
+        researchNextRetryAt: overrides.nextRetryAt === undefined ? T0 : overrides.nextRetryAt,
+      },
+    })
+    const [refetched] = await store.getCandidatesByIds([seeded.id])
+    return refetched
+  }
+
+  test(`${label}: claimRetryableWithLease claims only retry-eligible rows (respects maxRetryCount and the not-yet-due filter)`, async () => {
+    await withStore(async (store) => {
+      // a: retry-eligible - attempt_count under max, due now
+      const a = await seedRetryFailedCandidate(store, { attemptCount: 1, nextRetryAt: T0 })
+      // b: attempt_count already at/over max -> not retryable
+      const b = await seedRetryFailedCandidate(store, { attemptCount: 3, nextRetryAt: T0 })
+      // c: not yet due (next retry in the future)
+      const c = await seedRetryFailedCandidate(store, { attemptCount: 1, nextRetryAt: T0_PLUS_2H })
+      // d: no next-retry-at set at all -> still eligible (NULL means due)
+      const d = await seedRetryFailedCandidate(store, { attemptCount: 1, nextRetryAt: null })
+
+      const claimed = await store.claimRetryableWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 10,
+        leaseOwner: 'owner-retry',
+        leaseSeconds: 60,
+        now: T0_PLUS_1H,
+        maxRetryCount: 3,
+      })
+
+      const claimedIds = claimed.map((row) => row.id)
+      assert.ok(claimedIds.includes(a.id))
+      assert.ok(!claimedIds.includes(b.id))
+      assert.ok(!claimedIds.includes(c.id))
+      assert.ok(claimedIds.includes(d.id))
+      assert.equal(claimedIds.length, 2)
+    })
+  })
+
+  test(`${label}: two concurrent claimRetryableWithLease callers never get the same row`, async () => {
+    await withStore(async (store) => {
+      await seedRetryFailedCandidate(store)
+      await seedRetryFailedCandidate(store)
+
+      const claimA = await store.claimRetryableWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 1,
+        leaseOwner: 'owner-retry-a',
+        leaseSeconds: 60,
+        now: T0_PLUS_1H,
+        maxRetryCount: 3,
+      })
+      const claimB = await store.claimRetryableWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 1,
+        leaseOwner: 'owner-retry-b',
+        leaseSeconds: 60,
+        now: T0_PLUS_1H,
+        maxRetryCount: 3,
+      })
+
+      assert.equal(claimA.length, 1)
+      assert.equal(claimB.length, 1)
+      assert.notEqual(claimA[0].id, claimB[0].id)
+    })
+  })
+
+  test(`${label}: claimRetryableWithLease increments attempt_count SQL-side`, async () => {
+    await withStore(async (store) => {
+      const seeded = await seedRetryFailedCandidate(store)
+      const attemptCountBefore = seeded.attemptCount
+
+      const claimed = await store.claimRetryableWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 5,
+        leaseOwner: 'owner-retry-attempt',
+        leaseSeconds: 60,
+        now: T0_PLUS_1H,
+        maxRetryCount: 3,
+      })
+
+      assert.equal(claimed.length, 1)
+      assert.equal(claimed[0].attemptCount, attemptCountBefore + 1)
+    })
+  })
+
+  test(`${label}: claimRetryableWithLease-claimed rows carry owner + expiry`, async () => {
+    await withStore(async (store) => {
+      await seedRetryFailedCandidate(store)
+
+      const now = T0_PLUS_1H
+      const leaseSeconds = 300
+      const claimed = await store.claimRetryableWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 5,
+        leaseOwner: 'owner-retry-lease',
+        leaseSeconds,
+        now,
+        maxRetryCount: 3,
+      })
+
+      assert.equal(claimed.length, 1)
+      assert.equal(claimed[0].leaseOwner, 'owner-retry-lease')
+      assert.equal(claimed[0].status, 'researching')
+      assert.ok(claimed[0].leaseExpiresAt)
+      const expectedExpiry = new Date(new Date(now).getTime() + leaseSeconds * 1000).toISOString()
+      assert.equal(claimed[0].leaseExpiresAt, expectedExpiry)
+    })
+  })
+
+  test(`${label}: claimRetryableWithLease does not touch rows in other statuses`, async () => {
+    await withStore(async (store) => {
+      // Seed the retry-eligible row FIRST, while it is the only claimable row
+      // in this store - seedRetryFailedCandidate drives attempt_count up via
+      // claimWithLease, which claims by source/area, not by id, so any other
+      // pending_research row present at that point could be claimed instead.
+      const retryEligible = await seedRetryFailedCandidate(store)
+
+      const [pending] = await seedClaimableCandidates(store, 1) // status = pending_research
+      const [published] = await store.insertCandidates([makeCandidate({ dedupeKey: 'dk-retry-other-published' })])
+      await store.setCandidateStatus({ ids: [published.id], status: 'published', observedAt: T0 })
+
+      const claimed = await store.claimRetryableWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 10,
+        leaseOwner: 'owner-retry-scope',
+        leaseSeconds: 60,
+        now: T0_PLUS_1H,
+        maxRetryCount: 3,
+      })
+
+      const claimedIds = claimed.map((row) => row.id)
+      assert.deepEqual(claimedIds, [retryEligible.id])
+
+      const [fetchedPending] = await store.getCandidatesByIds([pending.id])
+      assert.equal(fetchedPending.status, 'pending_research')
+      const [fetchedPublished] = await store.getCandidatesByIds([published.id])
+      assert.equal(fetchedPublished.status, 'published')
     })
   })
 

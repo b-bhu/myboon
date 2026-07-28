@@ -6,6 +6,7 @@ loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import {
   previewPolymarketMarketsDataEngineer,
@@ -58,11 +59,11 @@ async function main(): Promise<void> {
   if (process.env.POLYMARKET_MARKETS_RUN_ONCE === '1') return
 
   const intervalMs = Number(process.env.POLYMARKET_MARKETS_RUN_INTERVAL_MS) || DEFAULT_RUN_INTERVAL_MS
-  setInterval(() => {
-    runOnce().catch((err) => {
-      console.error('[polymarket-markets-data-engineer] run failed:', err)
-    })
-  }, intervalMs)
+  startIntervalRunner({
+    label: 'polymarket-markets-data-engineer',
+    intervalMs,
+    run: runOnce,
+  })
 }
 
 main().catch((err) => {

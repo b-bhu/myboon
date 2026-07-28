@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { config as loadEnv } from 'dotenv'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { HermesWorkerClient } from './hermes-client'
 import { runNewsPipelineOnce } from './runner'
 import {
@@ -76,11 +77,11 @@ async function main(): Promise<void> {
   if (envFlag(process.env.NEWS_RUNNER_RUN_ONCE)) return
 
   const intervalMs = positiveInteger(process.env.NEWS_RUNNER_INTERVAL_MS, DEFAULT_INTERVAL_MS)
-  setInterval(() => {
-    runOnce().catch((error) => {
-      console.error('[news-runner] run failed:', error)
-    })
-  }, intervalMs)
+  startIntervalRunner({
+    label: 'news-runner',
+    intervalMs,
+    run: runOnce,
+  })
 }
 
 if (require.main === module) {

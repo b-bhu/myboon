@@ -6,6 +6,7 @@ loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
@@ -57,11 +58,11 @@ async function main(): Promise<void> {
 
   if (config.runOnce) return
 
-  setInterval(() => {
-    runOnce().catch((err) => {
-      console.error('[publisher] run failed:', err)
-    })
-  }, config.intervalMs)
+  startIntervalRunner({
+    label: 'publisher',
+    intervalMs: config.intervalMs,
+    run: runOnce,
+  })
 }
 
 main().catch((err) => {

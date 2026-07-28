@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { hostname } from 'node:os'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -16,6 +18,7 @@ const execFileAsync = promisify(execFile)
 
 const SOURCE = 'polymarket'
 const AREA = 'markets'
+const RESEARCH_STAGE = 'research'
 const ONE_HOUR_MS = 60 * 60 * 1000
 const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_SLUG_COOLDOWN_MINUTES = 60
@@ -31,6 +34,18 @@ const DEFAULT_LAST30DAYS_PYTHON = 'python3.12'
 const DEFAULT_LAST30DAYS_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_LAST30DAYS_WEB_BACKEND = 'auto'
 const DEFAULT_MAX_CANDIDATE_AGE_HOURS = 48
+// A single deep_web candidate can take ~11 minutes worst case (hermes planner
+// + up to MAX_RETRIEVAL_PASSES last30days retrieval calls). Candidates in a
+// batch are researched SEQUENTIALLY (see researchCandidatesWithFallback /
+// researchDeepWebCandidates), so an earlier claim in the same batch must not
+// expire while later items in the batch are still being worked. Rather than
+// sizing one lease for the whole batch's worst case (batchSize * 11min, which
+// would make crash recovery unacceptably slow), the lease is sized generously
+// for ONE candidate (20 minutes - ~2x the worst single-candidate case) and
+// renewed after each candidate finishes (see renewOutstandingLeases below),
+// so the remaining, not-yet-processed claims in the batch keep a fresh
+// window right up until they are actually worked.
+const DEFAULT_LEASE_SECONDS = 20 * 60
 const VPS_LAST30DAYS_SCRIPT = '/root/.agents/skills/last30days/scripts/last30days.py'
 const LAST30DAYS_ALLOWED_SOURCES = new Set(['reddit', 'grounding', 'polymarket', 'jobs'])
 const LAST30DAYS_DEFAULT_SOURCES = ['reddit', 'grounding', 'polymarket']
@@ -79,6 +94,8 @@ export interface PolymarketResearcherOptions {
   last30DaysTimeoutMs?: number
   last30DaysWebBackend?: string
   maxCandidateAgeHours?: number
+  leaseOwner?: string
+  leaseSeconds?: number
 }
 
 type ResearchBackend = 'hermes_cli'
@@ -116,6 +133,16 @@ interface PendingCandidate {
   research_retry_count: number | string | null
   research_next_retry_at: string | null
   research_last_error_kind: string | null
+  /**
+   * SQL-side counter incremented atomically by claimWithLease (see its doc
+   * comment in store.ts: "attemptCount must be incremented in the database,
+   * never read-modify-write"). This is the source of truth for retry
+   * limiting going forward - see retryCount() below - because
+   * research_retry_count is still a read-modify-write field on
+   * setCandidateStatus's `extra` (a known, reported interface gap; see
+   * updateFailedCandidate).
+   */
+  attempt_count: number
 }
 
 interface PriorResearch {
@@ -342,6 +369,8 @@ function selectedOptions(partial: PolymarketResearcherOptions): Required<Polymar
     last30DaysTimeoutMs: partial.last30DaysTimeoutMs ?? DEFAULT_LAST30DAYS_TIMEOUT_MS,
     last30DaysWebBackend: partial.last30DaysWebBackend ?? DEFAULT_LAST30DAYS_WEB_BACKEND,
     maxCandidateAgeHours: partial.maxCandidateAgeHours ?? DEFAULT_MAX_CANDIDATE_AGE_HOURS,
+    leaseOwner: partial.leaseOwner ?? `researcher:${hostname()}:${process.pid}:${randomUUID()}`,
+    leaseSeconds: partial.leaseSeconds ?? DEFAULT_LEASE_SECONDS,
   }
 }
 
@@ -474,7 +503,18 @@ function clusterKeyForCandidate(candidate: PendingCandidate): string {
   return `${SOURCE}:${AREA}:${primaryFamilyKey(candidate)}`
 }
 
-function candidateObservedAfter(options: Required<PolymarketResearcherOptions>): string | null {
+/**
+ * Cutoff used by expireAgedWork (BUG 2 fix). This used to also gate the
+ * pending-candidate FETCH via `.gte('observed_at', cutoff)`
+ * (`observedAfter` below): candidates older than maxCandidateAgeHours simply
+ * never appeared in a query again, with no terminal status, no retry, no
+ * visibility - they sat in 'pending_research' forever. That silent filter has
+ * been removed from every fetch. This cutoff is now used ONLY to decide what
+ * counts as "aged" for expireAgedWork, which WRITES the terminal
+ * 'stale_expired' status, so aged-out work becomes a countable, queryable
+ * outcome instead of vanishing.
+ */
+function candidateAgeCutoff(options: Required<PolymarketResearcherOptions>): string | null {
   if (!Number.isFinite(options.maxCandidateAgeHours) || options.maxCandidateAgeHours <= 0) return null
   return new Date(new Date(options.now).getTime() - options.maxCandidateAgeHours * 60 * 60 * 1000).toISOString()
 }
@@ -501,45 +541,86 @@ function toPendingCandidate(row: PipelineCandidateRow): PendingCandidate {
     research_retry_count: row.researchRetryCount,
     research_next_retry_at: row.researchNextRetryAt,
     research_last_error_kind: row.researchLastErrorKind,
+    attempt_count: row.attemptCount,
   }
 }
 
-async function fetchResearchCandidates(
+/**
+ * Claims the pending lane AND the retry lane through the SAME lease-backed
+ * path (BUG 1 fix).
+ *
+ * The old flow selected candidates with a plain read (fetchPendingCandidates)
+ * and only flipped them to 'researching' afterwards, in a separate step
+ * (markCandidatesResearching), with no lease and no expiry. Any crash between
+ * those two steps - or during the research itself - stranded the row in
+ * 'researching' forever: the fetch queries only look at 'pending_research'
+ * and 'research_failed', so a 'researching' row becomes permanently invisible
+ * to every future run. That is the exact "researching black hole" that
+ * stranded 14 rows in production.
+ *
+ * claimWithLease closes this by claiming AND leasing atomically: a claimed
+ * row's lease_expires_at is set in the same transaction that flips its
+ * status, and a lease that is never renewed or released (worker crashed,
+ * process killed, box rebooted) becomes reclaimable again once it expires -
+ * see recoverExpiredLeases, called once per run in runPolymarketResearcher.
+ *
+ * The retry lane (status = 'research_failed') is a separate SQL lane that
+ * claimWithLease's claimable-set predicate does not cover (it only matches
+ * 'pending_research' and expired-lease 'researching' rows - see its doc
+ * comment in store.ts). claimRetryableWithLease claims that lane atomically
+ * too - selecting retry-eligible rows, flipping them to leased-and-in-flight,
+ * and incrementing attempt_count, all in the SAME transaction - so retry-lane
+ * work never passes through an intermediate promoted-but-unleased state the
+ * way a separate setCandidateStatus-then-claimWithLease call would.
+ */
+interface ClaimedResearchCandidates {
+  candidates: PendingCandidate[]
+  /** Ids that came from the retry lane (status was 'research_failed'), for reporting. */
+  retriedCandidateIds: string[]
+}
+
+async function claimResearchCandidates(
   store: PipelineStore,
   options: Required<PolymarketResearcherOptions>
-): Promise<PendingCandidate[]> {
-  const observedAfter = candidateObservedAfter(options)
+): Promise<ClaimedResearchCandidates> {
+  const claimed = await store.claimWithLease({
+    source: SOURCE,
+    area: AREA,
+    stage: RESEARCH_STAGE,
+    limit: options.batchSize,
+    leaseOwner: options.leaseOwner,
+    leaseSeconds: options.leaseSeconds,
+    now: options.now,
+  })
+
+  const remaining = options.batchSize - claimed.length
+  if (remaining <= 0) return { candidates: claimed.map(toPendingCandidate), retriedCandidateIds: [] }
 
   // KNOWN INTERFACE GAP (reported, not silently patched): the original
   // pending-lane query ordered by score DESC, observed_at ASC, and the
   // retry-lane query ordered by research_next_retry_at ASC NULLS FIRST,
-  // score DESC. fetchPendingCandidates/fetchRetryableCandidates only order by
+  // score DESC. claimWithLease/claimRetryableWithLease only order by
   // observed_at ASC (see their doc comments / sqlite-store.ts). Since both
   // queries are limited (batchSize / remaining), a batch that gets truncated
   // will pick different rows than before: the original prioritized
   // highest-score (pending lane) or soonest-due (retry lane) candidates
   // within the batch window, while the store version prioritizes oldest
   // observed_at only.
-  const pending = (await store.fetchPendingCandidates({
+  const claimedRetries = await store.claimRetryableWithLease({
     source: SOURCE,
     area: AREA,
-    limit: options.batchSize,
-    observedAfter,
-  })).map(toPendingCandidate)
-
-  const remaining = options.batchSize - pending.length
-  if (remaining <= 0) return pending
-
-  const retryable = (await store.fetchRetryableCandidates({
-    source: SOURCE,
-    area: AREA,
+    stage: RESEARCH_STAGE,
     limit: remaining,
-    maxRetryCount: options.maxRetryCount,
+    leaseOwner: options.leaseOwner,
+    leaseSeconds: options.leaseSeconds,
     now: options.now,
-    observedAfter,
-  })).map(toPendingCandidate)
+    maxRetryCount: options.maxRetryCount,
+  })
 
-  return [...pending, ...retryable]
+  return {
+    candidates: [...claimed, ...claimedRetries].map(toPendingCandidate),
+    retriedCandidateIds: claimedRetries.map((row) => row.id),
+  }
 }
 
 function toPriorResearch(row: PipelineResearchRow): PriorResearch {
@@ -656,7 +737,25 @@ function errorKind(error: string): string {
   return 'backend_error'
 }
 
+/**
+ * Retry count for cap-enforcement and reporting purposes.
+ *
+ * Prefers attempt_count - the SQL-side counter claimWithLease increments
+ * atomically in the same transaction that claims the row (`attempt_count =
+ * attempt_count + 1`, see sqlite-store.ts and store.ts's doc comment: "must
+ * be incremented in the database, never read-modify-write"). Every candidate
+ * this function sees has been through claimWithLease (see
+ * claimResearchCandidates), so attempt_count is always populated and always
+ * reflects the true number of claims - including claims from workers that
+ * crashed mid-research and never wrote research_retry_count at all, which a
+ * research_retry_count-only read would silently miss.
+ *
+ * Falls back to research_retry_count only for callers/tests constructing a
+ * PendingCandidate by hand without an attempt_count.
+ */
 function retryCount(candidate: PendingCandidate): number {
+  const attempts = numberOrNull(candidate.attempt_count)
+  if (attempts != null) return attempts
   return numberOrNull(candidate.research_retry_count) ?? 0
 }
 
@@ -678,18 +777,18 @@ async function updateFailedCandidate(
   options: Required<PolymarketResearcherOptions>
 ): Promise<void> {
   const nextRetryAt = new Date(new Date(observedAt).getTime() + options.retryWindowMinutes * 60 * 1000).toISOString()
-  // KNOWN GAP (reported): retryCount(failure.candidate) + 1 is a
-  // read-modify-write computed in application code, not a SQL-side atomic
-  // increment. setCandidateStatus's `extra.researchRetryCount` is a plain
-  // "set to this value" field (see sqlite-store.ts: `research_retry_count = ?`),
-  // not `research_retry_count = research_retry_count + 1`, so the interface
-  // does not provide SQL-side increment semantics for this field the way
-  // claimWithLease's attemptCount does. This preserves the exact PRE-EXISTING
-  // read-modify-write behavior from before the migration; it does not fix or
-  // regress the theoretical lost-update race the brief asked about, because
-  // the interface has no atomic-increment alternative to use instead.
+  // research_retry_count is written here purely to mirror attempt_count into
+  // a column kept for reporting/back-compat (claimRetryableWithLease, like
+  // claimWithLease, gates on attempt_count - see its doc comment in
+  // store.ts - not on research_retry_count; see the interface-gap note on
+  // retryCount above). Writing retryCount(candidate) directly (attempt_count,
+  // already incremented atomically and race-free by claimWithLease at claim
+  // time) is NOT a read-modify-write: unlike the prior
+  // `retryCount(candidate) + 1`, this does not add to a value read at an
+  // earlier point in time, it copies a count that was already correct and
+  // atomic the moment the candidate was claimed.
   await updateCandidateStatus(store, [failure.candidate.id], 'research_failed', observedAt, failure.error.slice(0, 2000), {
-    researchRetryCount: retryCount(failure.candidate) + 1,
+    researchRetryCount: retryCount(failure.candidate),
     researchNextRetryAt: nextRetryAt,
     researchLastErrorKind: errorKind(failure.error),
   })
@@ -1674,7 +1773,9 @@ async function researchSingleCandidate(
 
 async function researchCandidatesWithFallback(
   decisions: EnrichedTriageDecision[],
-  options: Required<PolymarketResearcherOptions>
+  options: Required<PolymarketResearcherOptions>,
+  store: PipelineStore,
+  outstandingLeaseIds: Set<string>
 ): Promise<ResearchAttempt> {
   const results = new Map<string, HermesResearchResult>()
   const failures: ResearchFailure[] = []
@@ -1683,6 +1784,15 @@ async function researchCandidatesWithFallback(
     const attempt = await researchSingleCandidate(decision, options, 'reflection research')
     if (attempt.result) results.set(decision.candidate.id, attempt.result)
     if (attempt.failure) failures.push(attempt.failure)
+
+    // Lease renewal for long work (see DEFAULT_LEASE_SECONDS): this candidate
+    // is about to get a terminal status written outside this loop, so it no
+    // longer needs its lease renewed. Everything else still outstanding in
+    // the batch does, since a single deep_web candidate can take ~11 minutes
+    // and their individual leases must not expire while this loop is still
+    // working through the rest of the batch.
+    outstandingLeaseIds.delete(decision.candidate.id)
+    await renewOutstandingLeases(store, [...outstandingLeaseIds], options)
   }
 
   return { results, failures }
@@ -1804,7 +1914,8 @@ async function enrichTriageWithPolymarketContext(decisions: TriageDecision[]): P
 async function researchDeepWebCandidates(
   decisions: TriageDecision[],
   _priorResearch: { bySlug: Map<string, PriorResearch[]> },
-  options: Required<PolymarketResearcherOptions>
+  options: Required<PolymarketResearcherOptions>,
+  store: PipelineStore
 ): Promise<ResearchAttempt> {
   const results = new Map<string, HermesResearchResult>()
   const failures: ResearchFailure[] = []
@@ -1816,9 +1927,13 @@ async function researchDeepWebCandidates(
     byCluster.set(decision.clusterKey, cluster)
   }
 
+  // All deep_web candidates' leases start outstanding; researchCandidatesWithFallback
+  // removes each one as its research finishes and renews everything still left,
+  // across cluster group boundaries too (a single shared set, not reset per group).
+  const outstandingLeaseIds = new Set(decisions.map((decision) => decision.candidate.id))
   const grouped = [...byCluster.values()].sort((a, b) => b.length - a.length)
   for (const group of grouped) {
-    const attempt = await researchCandidatesWithFallback(group, options)
+    const attempt = await researchCandidatesWithFallback(group, options, store, outstandingLeaseIds)
     for (const [id, result] of attempt.results) results.set(id, result)
     failures.push(...attempt.failures)
   }
@@ -1826,26 +1941,57 @@ async function researchDeepWebCandidates(
 }
 
 // N+1 elimination: this used to issue one Supabase UPDATE per decision in a
-// sequential loop. claimCandidatesForResearch takes the whole batch and
-// writes it in a single store transaction (status='researching' plus
-// family/cluster/depth plus research_attempted_at, exactly what was written
-// per-row before). As with updateCandidateStatus above, updated_at is now
-// stamped by the store (CURRENT_TIMESTAMP) rather than observedAt -
-// bookkeeping-only, not read back anywhere in this file.
-async function markCandidatesResearching(
+// sequential loop. updateCandidateThreads takes the whole batch and writes it
+// in a single store transaction.
+//
+// This no longer flips status (BUG 1 fix): the status='researching' flip and
+// its lease now happen earlier, atomically, inside claimResearchCandidates'
+// claimWithLease call - before triage even runs. This function only attaches
+// the triage OUTCOME (family/cluster/depth) to rows that are already safely
+// claimed and leased. If this step never runs because of a crash, the row is
+// still safely 'researching' with a live lease that will either get renewed
+// (see renewOutstandingLeases) or expire and become reclaimable
+// (recoverExpiredLeases) - it is never stranded, unlike the old
+// claimCandidatesForResearch flip this replaced (that store method has since
+// been removed as dead code - nothing called it once this landed).
+async function recordTriageOutcome(
   store: PipelineStore,
-  decisions: TriageDecision[],
-  observedAt: string
+  decisions: TriageDecision[]
 ): Promise<void> {
-  await store.claimCandidatesForResearch(
+  await store.updateCandidateThreads(
     decisions.map((decision) => ({
       id: decision.candidate.id,
-      familyKey: decision.familyKey,
-      clusterKey: decision.clusterKey,
-      depth: decision.depth,
-    })),
-    observedAt
+      payload: {
+        researchFamilyKey: decision.familyKey,
+        researchClusterKey: decision.clusterKey,
+        researchDepth: decision.depth,
+      },
+    }))
   )
+}
+
+/**
+ * Keeps the leases of not-yet-finished candidates in this batch fresh while
+ * a long sequential research run is in progress (lease-renewal decision -
+ * see DEFAULT_LEASE_SECONDS above).
+ *
+ * Candidates are researched sequentially within a batch
+ * (researchCandidatesWithFallback's `for` loop), and a deep_web candidate can
+ * take ~11 minutes. Rather than sizing one lease for the whole batch's
+ * worst-case sequential runtime, each claim gets a lease sized for ONE
+ * candidate and this function pushes every STILL-OUTSTANDING claim's expiry
+ * back out after each candidate finishes, so items later in the batch don't
+ * have their lease expire - and get silently reclaimed and double-researched
+ * by another worker - just because earlier items in the same batch took a
+ * while.
+ */
+async function renewOutstandingLeases(
+  store: PipelineStore,
+  ids: string[],
+  options: Required<PolymarketResearcherOptions>
+): Promise<void> {
+  if (ids.length === 0) return
+  await store.renewLease(ids, options.leaseOwner, options.leaseSeconds, new Date().toISOString())
 }
 
 export async function runPolymarketResearcher(
@@ -1857,7 +2003,24 @@ export async function runPolymarketResearcher(
   const observedAt = options.now
   const nowMs = new Date(observedAt).getTime()
 
-  const candidates = await fetchResearchCandidates(store, options)
+  // Recovery pass (BUG 1 fix): reclaim any 'researching' row whose lease
+  // expired since the last run - a worker that crashed, was killed, or a box
+  // that rebooted mid-research. Run first, before this run claims anything
+  // new, so recovered rows are immediately eligible for THIS run's claim.
+  await store.recoverExpiredLeases({ stage: RESEARCH_STAGE, now: observedAt })
+
+  // Aging pass (BUG 2 fix): candidates older than maxCandidateAgeHours used
+  // to be silently excluded from every fetch by an `observed_at` filter and
+  // sit in 'pending_research' forever - not failed, not retried, invisible.
+  // expireAgedWork WRITES the terminal 'stale_expired' status instead, so
+  // aged-out work becomes a countable, queryable outcome. The fetch itself
+  // (claimResearchCandidates) no longer filters on age at all.
+  const ageCutoff = candidateAgeCutoff(options)
+  if (ageCutoff) {
+    await store.expireAgedWork({ stage: RESEARCH_STAGE, olderThan: ageCutoff, now: observedAt })
+  }
+
+  const { candidates, retriedCandidateIds } = await claimResearchCandidates(store, options)
   const familyKeys = [...new Set(candidates.map(primaryFamilyKey))]
   const priorResearch = await fetchRecentResearch(store, [...new Set(candidates.map((candidate) => candidate.slug))], familyKeys)
   const triage = triageCandidates(candidates, priorResearch, nowMs, options)
@@ -1869,7 +2032,7 @@ export async function runPolymarketResearcher(
       pendingFetched: candidates.length,
       eligibleForResearch: 0,
       skippedRecentlyResearched: 0,
-      retriedFailedCandidates: 0,
+      retriedFailedCandidates: retriedCandidateIds.length,
       reusedPriorResearch: 0,
       marketStructureOnly: 0,
       deepWebResearched: 0,
@@ -1882,7 +2045,10 @@ export async function runPolymarketResearcher(
     }
   }
 
-  await markCandidatesResearching(store, triage, observedAt)
+  // No status flip here (BUG 1 fix): claimResearchCandidates already claimed
+  // and leased every row above, atomically, before triage even ran. This only
+  // attaches the triage outcome (family/cluster/depth) to already-safe rows.
+  await recordTriageOutcome(store, triage)
 
   const reuseRows = triage
     .filter((decision) => decision.depth === 'reuse_prior')
@@ -1891,7 +2057,12 @@ export async function runPolymarketResearcher(
     .filter((decision) => decision.depth === 'market_structure_only')
     .map((decision) => buildMarketStructureRow(decision, observedAt, options))
   const deepDecisions = triage.filter((decision) => decision.depth === 'deep_web')
-  const attempt = await researchDeepWebCandidates(deepDecisions, priorResearch, options)
+
+  // reuse_prior and market_structure_only decisions never enter the
+  // sequential deep_web research loop, so their leases are held for the rest
+  // of this (fast) synchronous run and released below once their terminal
+  // status is written - they do not need mid-run renewal.
+  const attempt = await researchDeepWebCandidates(deepDecisions, priorResearch, options, store)
   const hermesRows = buildHermesResearchRows(deepDecisions, attempt.results, observedAt, options)
   const allRows = [...reuseRows, ...structureRows, ...hermesRows]
   const successfulIds = await insertResearchRows(store, allRows)
@@ -1908,13 +2079,20 @@ export async function runPolymarketResearcher(
     await updateFailedCandidate(store, failure, observedAt, options)
   }
 
+  // Every claimed candidate now has a terminal status (researched or
+  // research_failed) written above. Release their leases for hygiene -
+  // claimability no longer depends on lease state once status is terminal,
+  // but a released lease keeps pipeline_candidates free of stale
+  // lease_owner/lease_expires_at values on rows that are done.
+  await store.releaseLease(triage.map((decision) => decision.candidate.id), options.leaseOwner)
+
   return {
     observedAt,
     backend: options.backend,
     pendingFetched: candidates.length,
     eligibleForResearch: triage.length,
     skippedRecentlyResearched: 0,
-    retriedFailedCandidates: candidates.filter((candidate) => candidate.status === 'research_failed').length,
+    retriedFailedCandidates: retriedCandidateIds.length,
     reusedPriorResearch: reuseRows.length,
     marketStructureOnly: structureRows.length,
     deepWebResearched: hermesRows.length,
@@ -1944,7 +2122,7 @@ export async function runPolymarketResearcher(
 export const __testing = {
   buildMarketStructureRow,
   buildReusePriorRow,
-  candidateObservedAfter,
+  candidateAgeCutoff,
   classifyResearchDepth,
   clusterKeyForCandidate,
   defaultLast30DaysScriptPath,
@@ -1956,6 +2134,7 @@ export const __testing = {
   normalizeRetrievalReflection,
   primaryFamilyKey,
   recentPrior,
+  researchCandidatesWithFallback,
   retryCount,
   sanitizeLast30DaysSources,
   titleFamilyKey,

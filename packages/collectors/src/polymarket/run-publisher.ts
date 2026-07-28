@@ -5,6 +5,7 @@ loadEnv({ path: '../../.env' })
 loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketPublisher } from './publisher'
 
@@ -41,11 +42,11 @@ async function main(): Promise<void> {
 
   if (process.env.POLYMARKET_PUBLISHER_RUN_ONCE === '1') return
 
-  setInterval(() => {
-    runOnce().catch((err) => {
-      console.error('[polymarket-publisher] run failed:', err)
-    })
-  }, envNumber('POLYMARKET_PUBLISHER_INTERVAL_MS', DEFAULT_INTERVAL_MS))
+  startIntervalRunner({
+    label: 'polymarket-publisher',
+    intervalMs: envNumber('POLYMARKET_PUBLISHER_INTERVAL_MS', DEFAULT_INTERVAL_MS),
+    run: runOnce,
+  })
 }
 
 main().catch((err) => {

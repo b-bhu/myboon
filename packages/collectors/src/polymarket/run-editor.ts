@@ -4,6 +4,7 @@ loadEnv({ path: '.env' })
 loadEnv({ path: '../../.env' })
 loadEnv()
 
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketEditor } from './editor'
 
@@ -31,11 +32,11 @@ async function main(): Promise<void> {
 
   if (process.env.POLYMARKET_EDITOR_RUN_ONCE === '1') return
 
-  setInterval(() => {
-    runOnce().catch((err) => {
-      console.error('[polymarket-editor] run failed:', err)
-    })
-  }, envNumber('POLYMARKET_EDITOR_INTERVAL_MS', DEFAULT_INTERVAL_MS))
+  startIntervalRunner({
+    label: 'polymarket-editor',
+    intervalMs: envNumber('POLYMARKET_EDITOR_INTERVAL_MS', DEFAULT_INTERVAL_MS),
+    run: runOnce,
+  })
 }
 
 main().catch((err) => {

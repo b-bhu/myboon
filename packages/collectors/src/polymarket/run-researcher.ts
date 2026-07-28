@@ -6,6 +6,7 @@ loadEnv()
 
 import { createClient } from '@supabase/supabase-js'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketResearcher } from './researcher'
 
@@ -46,11 +47,15 @@ async function runOnce(): Promise<void> {
 async function main(): Promise<void> {
   await runOnce()
 
-  setInterval(() => {
-    runOnce().catch((err) => {
-      console.error('[polymarket-researcher] run failed:', err)
-    })
-  }, RESEARCHER_INTERVAL_MS)
+  // Overlap guard: a single deep_web candidate can take ~11 minutes and a
+  // batch can contain several, so a run can plausibly exceed this 5-minute
+  // tick. Without this guard a slow tick would overlap the next one and
+  // start a second concurrent researcher run against the same store.
+  startIntervalRunner({
+    label: 'polymarket-researcher',
+    intervalMs: RESEARCHER_INTERVAL_MS,
+    run: runOnce,
+  })
 }
 
 main().catch((err) => {

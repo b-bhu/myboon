@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
 import { config as loadEnv } from 'dotenv'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEntityExtractionProvider } from './extractor'
@@ -279,11 +280,11 @@ async function main(): Promise<void> {
     await runAndLog(store, supabase, config)
     if (config.runOnce) return
 
-    setInterval(() => {
-      runAndLog(store, supabase, config).catch((err) => {
-        console.error('[entity-manager:polymarket] run failed:', err)
-      })
-    }, config.intervalMs)
+    startIntervalRunner({
+      label: 'entity-manager:polymarket',
+      intervalMs: config.intervalMs,
+      run: () => runAndLog(store, supabase, config),
+    })
   } finally {
     if (config.runOnce) store.close()
   }

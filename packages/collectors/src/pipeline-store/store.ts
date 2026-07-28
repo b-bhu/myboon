@@ -203,13 +203,6 @@ export interface PipelineCandidateThreadUpdate {
   >
 }
 
-export interface PipelineCandidateResearchClaim {
-  id: string
-  familyKey: string
-  clusterKey: string
-  depth: PipelineResearchDepth
-}
-
 export interface PipelineFetchPendingCandidatesInput {
   source: string
   area: string
@@ -506,6 +499,18 @@ export interface PipelineClaimWithLeaseInput {
   now: string
 }
 
+export interface PipelineClaimRetryableWithLeaseInput {
+  source: string
+  area: string
+  stage: string
+  limit: number
+  leaseOwner: string
+  leaseSeconds: number
+  now: string
+  /** Only claim 'research_failed' rows whose attempt_count is strictly less than this. */
+  maxRetryCount: number
+}
+
 export interface PipelineRecoverExpiredLeasesInput {
   stage: string
   now: string
@@ -554,7 +559,6 @@ export interface PipelineStore {
   findCandidatesForBacklog(input: PipelineFindCandidatesForBacklogInput): Promise<PipelineCandidateRow[]>
   insertCandidates(rows: PipelineCandidateInsertInput[]): Promise<PipelineCandidateRow[]>
   updateCandidateThreads(updates: PipelineCandidateThreadUpdate[]): Promise<void>
-  claimCandidatesForResearch(claims: PipelineCandidateResearchClaim[], observedAt: string): Promise<void>
   fetchPendingCandidates(input: PipelineFetchPendingCandidatesInput): Promise<PipelineCandidateRow[]>
   fetchRetryableCandidates(input: PipelineFetchRetryableCandidatesInput): Promise<PipelineCandidateRow[]>
   setCandidateStatus(input: PipelineSetCandidateStatusInput): Promise<void>
@@ -612,6 +616,29 @@ export interface PipelineStore {
    * `attemptCount` must be incremented in the database, never read-modify-write.
    */
   claimWithLease(input: PipelineClaimWithLeaseInput): Promise<PipelineCandidateRow[]>
+  /**
+   * Atomically claims up to `limit` retry-eligible 'research_failed' rows and
+   * marks them leased, in the SAME sense as `claimWithLease` but for the
+   * retry lane instead of the pending lane.
+   *
+   * THE CLAIMABLE SET is 'research_failed' rows where:
+   *   - attempt_count < maxRetryCount, AND
+   *   - research_next_retry_at IS NULL OR research_next_retry_at <= now
+   *
+   * This exists so promoting a retry-eligible row to leased-and-in-flight is
+   * ONE atomic step instead of two (setCandidateStatus to 'pending_research'
+   * followed by a separate claimWithLease call). The two-step version leaves
+   * a window, if the caller crashes between the steps, where a row is
+   * promoted but not yet leased - recoverable (the row is still claimable),
+   * but still a status that misrepresents reality, which is exactly what the
+   * lease model exists to avoid.
+   *
+   * Must be atomic: two concurrent callers must never receive the same row.
+   * `attemptCount` must be incremented in the database, never read-modify-write.
+   * Rows in any other status (including unexpired 'researching' leases) must
+   * be left untouched.
+   */
+  claimRetryableWithLease(input: PipelineClaimRetryableWithLeaseInput): Promise<PipelineCandidateRow[]>
   renewLease(ids: string[], leaseOwner: string, leaseSeconds: number, now: string): Promise<void>
   releaseLease(ids: string[], leaseOwner: string): Promise<void>
   recoverExpiredLeases(input: PipelineRecoverExpiredLeasesInput): Promise<PipelineRecoverExpiredLeasesResult>

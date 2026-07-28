@@ -7,6 +7,7 @@ loadEnv()
 import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
@@ -54,11 +55,11 @@ async function main(): Promise<void> {
     await runOnce(supabase, pipelineStore)
     if (config.runOnce) return
 
-    setInterval(() => {
-      runOnce(supabase, pipelineStore).catch((err) => {
-        console.error('[editor-draft] run failed:', err)
-      })
-    }, config.intervalMs)
+    startIntervalRunner({
+      label: 'editor-draft',
+      intervalMs: config.intervalMs,
+      run: () => runOnce(supabase, pipelineStore),
+    })
   } finally {
     if (config.runOnce) pipelineStore.close()
   }
