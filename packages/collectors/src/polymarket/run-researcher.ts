@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
@@ -11,12 +9,6 @@ import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketResearcher } from './researcher'
 
 const RESEARCHER_INTERVAL_MS = 5 * 60 * 1000
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 async function runOnce(): Promise<void> {
   const supabase = createClient(

@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
@@ -10,12 +8,6 @@ import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 function previewOnly(env: NodeJS.ProcessEnv): boolean {
   return env.PUBLISHER_PREVIEW_ONLY === '1' || env.PUBLISHER_DRY_RUN === '1'

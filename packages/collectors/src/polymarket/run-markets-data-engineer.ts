@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
@@ -14,12 +12,6 @@ import {
 } from './markets-data-engineer'
 
 const DEFAULT_RUN_INTERVAL_MS = 2 * 60 * 60 * 1000
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 async function runOnce(): Promise<void> {
   if (process.env.POLYMARKET_MARKETS_PREVIEW_ONLY === '1') {

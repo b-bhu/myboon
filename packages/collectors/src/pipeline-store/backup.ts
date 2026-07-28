@@ -322,8 +322,3 @@ export async function pruneOldBackups(options?: {
   }
   return deleted
 }
-
-export const __testing = {
-  PIPELINE_TABLES,
-  filenameSafeTimestamp,
-}

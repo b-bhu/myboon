@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -12,12 +10,6 @@ import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { editorDraftCliConfig, runEditorDraft } from './runner'
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 async function runOnce(supabase: SupabaseClient, pipelineStore: PipelineStore): Promise<void> {
   const config = editorDraftCliConfig()

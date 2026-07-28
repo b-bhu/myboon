@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { previewHyperliquidCollector, runHyperliquidCollector } from './collector'
@@ -11,12 +9,6 @@ import { runHyperliquidCollectorToSqlite } from './sqlite-store'
 const DEFAULT_EVALUATION_INTERVAL_HOURS = 4
 const DEFAULT_EVALUATION_DELAY_MS = 2 * 60 * 1000
 const MAX_TIMEOUT_MS = 2_147_483_647
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 function envNumber(name: string, fallback: number): number {
   const parsed = Number(process.env[name])

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 import { newsResearchToPacket } from './news-adapter'
 import { EntityService } from './entity-service'
 import { HermesEntityExtractionProvider } from './extractor'
@@ -155,22 +155,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value) return fallback
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
 async function main(): Promise<void> {
-  loadEnv({ path: '.env' })
-  loadEnv({ path: '../../.env' })
-  loadEnv()
+  loadDotenvChain()
 
   const newsStore = new SqliteNewsStore()
   try {

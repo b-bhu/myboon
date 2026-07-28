@@ -210,15 +210,6 @@ export interface PipelineFetchPendingCandidatesInput {
   observedAfter?: string | null
 }
 
-export interface PipelineFetchRetryableCandidatesInput {
-  source: string
-  area: string
-  limit: number
-  maxRetryCount: number
-  now: string
-  observedAfter?: string | null
-}
-
 export interface PipelineFindCandidatesForBacklogInput {
   source: string
   area: string
@@ -611,7 +602,6 @@ export interface PipelineStore {
   insertCandidates(rows: PipelineCandidateInsertInput[]): Promise<PipelineCandidateRow[]>
   updateCandidateThreads(updates: PipelineCandidateThreadUpdate[]): Promise<void>
   fetchPendingCandidates(input: PipelineFetchPendingCandidatesInput): Promise<PipelineCandidateRow[]>
-  fetchRetryableCandidates(input: PipelineFetchRetryableCandidatesInput): Promise<PipelineCandidateRow[]>
   setCandidateStatus(input: PipelineSetCandidateStatusInput): Promise<void>
   getCandidatesByIds(ids: string[]): Promise<PipelineCandidateRow[]>
 

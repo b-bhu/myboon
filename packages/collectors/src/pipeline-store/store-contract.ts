@@ -386,51 +386,6 @@ export function runPipelineStoreContract(
     })
   })
 
-  test(`${label}: fetchRetryableCandidates respects maxRetryCount and retry-due filter`, async () => {
-    await withStore(async (store) => {
-      const [a, b, c] = await store.insertCandidates([
-        makeCandidate({ dedupeKey: 'dk-retry-a' }),
-        makeCandidate({ dedupeKey: 'dk-retry-b' }),
-        makeCandidate({ dedupeKey: 'dk-retry-c' }),
-      ])
-
-      // a: retryable, due now, retry count under max
-      await store.setCandidateStatus({
-        ids: [a.id],
-        status: 'research_failed',
-        observedAt: T0,
-        extra: { researchRetryCount: 1, researchNextRetryAt: T0 },
-      })
-      // b: retry count at/over max -> should not be retryable
-      await store.setCandidateStatus({
-        ids: [b.id],
-        status: 'research_failed',
-        observedAt: T0,
-        extra: { researchRetryCount: 5, researchNextRetryAt: T0 },
-      })
-      // c: not yet due (next retry in the future)
-      await store.setCandidateStatus({
-        ids: [c.id],
-        status: 'research_failed',
-        observedAt: T0,
-        extra: { researchRetryCount: 1, researchNextRetryAt: T0_PLUS_2H },
-      })
-
-      const retryable = await store.fetchRetryableCandidates({
-        source: 'polymarket',
-        area: 'crypto',
-        limit: 10,
-        maxRetryCount: 3,
-        now: T0_PLUS_1H,
-      })
-
-      const ids = retryable.map((row) => row.id)
-      assert.ok(ids.includes(a.id))
-      assert.ok(!ids.includes(b.id))
-      assert.ok(!ids.includes(c.id))
-    })
-  })
-
   test(`${label}: setCandidateStatus applies to all supplied ids`, async () => {
     await withStore(async (store) => {
       const [a, b] = await store.insertCandidates([

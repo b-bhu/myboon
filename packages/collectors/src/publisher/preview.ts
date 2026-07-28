@@ -1,19 +1,11 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 async function main(): Promise<void> {
   const config = publisherCliConfig()

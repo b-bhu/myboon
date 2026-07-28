@@ -25,7 +25,6 @@ import type {
   PipelineFetchEligibleDraftsInput,
   PipelineFetchPendingCandidatesInput,
   PipelineFetchResearchByStatusInput,
-  PipelineFetchRetryableCandidatesInput,
   PipelineFindCandidatesForBacklogInput,
   PipelineFindEditorDecisionsInput,
   PipelineFindPriorResearchInput,
@@ -733,28 +732,6 @@ export class SqlitePipelineStore implements PipelineStore {
     const rows = this.db.prepare(`
       SELECT * FROM pipeline_candidates
       WHERE source = ? AND area = ? AND status = 'pending_research'${observedClause}
-      ORDER BY observed_at ASC
-      LIMIT ?
-    `).all(...params) as Array<Record<string, unknown>>
-    return rows.map(mapCandidateRow)
-  }
-
-  async fetchRetryableCandidates(input: PipelineFetchRetryableCandidatesInput): Promise<PipelineCandidateRow[]> {
-    const params: unknown[] = [input.source, input.area, input.maxRetryCount, input.now, input.now]
-    let observedClause = ''
-    if (input.observedAfter) {
-      observedClause = ' AND observed_at > ?'
-      params.push(input.observedAfter)
-    }
-    params.push(Math.max(0, input.limit))
-
-    const rows = this.db.prepare(`
-      SELECT * FROM pipeline_candidates
-      WHERE source = ? AND area = ?
-        AND status = 'research_failed'
-        AND research_retry_count < ?
-        AND (research_next_retry_at IS NULL OR research_next_retry_at <= ?)
-        AND (lease_expires_at IS NULL OR lease_expires_at <= ?)${observedClause}
       ORDER BY observed_at ASC
       LIMIT ?
     `).all(...params) as Array<Record<string, unknown>>
@@ -1704,10 +1681,4 @@ function mapDraftRow(row: Record<string, unknown>): PipelineDraftRow {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   }
-}
-
-export const __testing = {
-  ensurePipelineSqliteSchema,
-  openPipelineSqlite,
-  sqlitePath,
 }

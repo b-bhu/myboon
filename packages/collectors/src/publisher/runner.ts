@@ -1,3 +1,4 @@
+import { envFlag, positiveInteger } from '../pipeline-store/cli-env'
 import { deriveActionsFromMemories } from './actions'
 import type {
   PublishedNarrativeInput,
@@ -39,16 +40,6 @@ export interface PublisherRunResult {
     existing: boolean
   }>
   skips: Array<{ editorDraftId: string, reason: string }>
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value) return fallback
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function envFlag(value: string | undefined): boolean {
-  return value === '1' || value?.toLowerCase() === 'true'
 }
 
 function directString(record: Record<string, unknown>, keys: string[]): string | null {

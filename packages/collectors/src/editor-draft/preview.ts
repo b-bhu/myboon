@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
@@ -10,12 +8,6 @@ import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
 import { editorDraftCliConfig } from './runner'
 import { SupabaseEditorDraftStore } from './supabase-store'
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 function shouldWrite(argv: string[], env: NodeJS.ProcessEnv): boolean {
   return argv.includes('--write') || env.EDITOR_DRAFT_PREVIEW_WRITE === '1'

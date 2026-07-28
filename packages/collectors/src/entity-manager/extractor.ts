@@ -178,14 +178,6 @@ export class HermesEntityExtractionProvider implements ExtractionProvider {
   }
 }
 
-export function createStaticExtractionProvider(extraction: EntityMemoryExtraction): ExtractionProvider {
-  return {
-    async extract(packet: ResearchPacket): Promise<EntityMemoryExtraction> {
-      return normalizeExtraction(extraction, packet)
-    },
-  }
-}
-
 export const __testing = {
   buildPrompt,
   extractJson,

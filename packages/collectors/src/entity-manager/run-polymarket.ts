@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
-import { config as loadEnv } from 'dotenv'
+import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
@@ -216,16 +216,6 @@ export async function runPolymarketEntityManager(
   }
 }
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value) return fallback
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function envFlag(value: string | undefined): boolean {
-  return value === '1' || value?.toLowerCase() === 'true'
-}
-
 export function polymarketEntityManagerCliConfig(env: NodeJS.ProcessEnv = process.env): PolymarketEntityManagerCliConfig {
   return {
     batchSize: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_BATCH_SIZE, DEFAULT_BATCH_SIZE),
@@ -233,12 +223,6 @@ export function polymarketEntityManagerCliConfig(env: NodeJS.ProcessEnv = proces
     runOnce: envFlag(env.ENTITY_MANAGER_POLYMARKET_RUN_ONCE),
     hermesTimeoutMs: positiveInteger(env.ENTITY_MANAGER_HERMES_TIMEOUT_MS, 60_000),
   }
-}
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
 }
 
 async function runAndLog(
@@ -265,9 +249,7 @@ async function runAndLog(
 }
 
 async function main(): Promise<void> {
-  loadEnv({ path: '.env' })
-  loadEnv({ path: '../../.env' })
-  loadEnv()
+  loadDotenvChain()
 
   const config = polymarketEntityManagerCliConfig()
   const supabase = createClient(

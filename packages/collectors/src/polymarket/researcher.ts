@@ -52,28 +52,6 @@ const LAST30DAYS_DEFAULT_SOURCES = ['reddit', 'grounding', 'polymarket']
 const LAST30DAYS_DISABLED_SOURCE_ALIASES = new Set(['x', 'x_search', 'twitter', 'twitter_search'])
 const MAX_RETRIEVAL_PASSES = 2
 
-export const POLYMARKET_RESEARCHER_PRIOR_RESEARCH_SELECT = [
-  'id',
-  'candidate_id',
-  'slug',
-  'research_mode',
-  'summary',
-  'notes',
-  'key_findings',
-  'evidence_links',
-  'uncertainty',
-  'editor_notes',
-  'researched_at',
-  'research_family_key',
-  'research_cluster_key',
-  'research_depth',
-  'evidence_quality',
-  'catalyst_found',
-  'recommended_editor_action',
-  'research_backend',
-  'research_model',
-].join(', ')
-
 export interface PolymarketResearcherOptions {
   now?: string
   batchSize?: number

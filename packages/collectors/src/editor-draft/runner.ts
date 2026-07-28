@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { envFlag, positiveInteger } from '../pipeline-store/cli-env'
 import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
@@ -44,16 +45,6 @@ export interface EditorDraftRunResult {
     sourceMemoryIds: string[]
   }>
   failures: Array<{ entityId: string, entitySlug: string, error: string }>
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value) return fallback
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function envFlag(value: string | undefined): boolean {
-  return value === '1' || value?.toLowerCase() === 'true'
 }
 
 export function editorDraftCliConfig(env: NodeJS.ProcessEnv = process.env): EditorDraftCliConfig {

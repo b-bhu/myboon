@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
@@ -14,12 +12,6 @@ const DEFAULT_INTERVAL_MS = 60 * 60 * 1000
 function envNumber(name: string, fallback: number): number {
   const parsed = Number(process.env[name])
   return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
 }
 
 async function runOnce(): Promise<void> {

@@ -1,10 +1,7 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
 import { execFile } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { promisify } from 'node:util'
