@@ -11,11 +11,11 @@
  *
  * Run: pnpm --filter hybrid-expo test:security
  *
- * Scope note: these scan `apps/hybrid-expo` **application source**. The E2E
- * harness (`e2e/`, `playwright.predict.config.ts`) is scanned separately and
- * deliberately, because it still derives a key from a signature — see the
- * `E2E harness` block at the bottom and issue #263. Silently excluding it would
- * make TC-SEC-002 and TC-SEC-003 claim a clean repo that does not exist.
+ * Scope note: most cases scan `apps/hybrid-expo` **application source**, since
+ * docs and manifests quote the deleted symbols in order to specify that they
+ * must not exist. TC-SEC-002 / TC-SEC-003 additionally assert repo-wide, which
+ * they can now do cleanly: the Predict Playwright harness used to mirror the
+ * app's derivation and was deleted with it rather than rewritten.
  */
 
 import { describe, it } from 'node:test';
@@ -347,24 +347,17 @@ describe('TC-MODAL-008: applications do not own connection UI', () => {
 });
 
 /**
- * The E2E harness is NOT clean, and these tests record that rather than hide it.
+ * The derivation is gone repo-wide, harness included.
  *
- * `e2e/predict-live.spec.ts` and `playwright.predict.config.ts` still derive a
- * Polygon key by hashing a Solana signature — the exact pattern the restructure
- * deleted from the app. It never ships (the harness is not bundled) and it signs
- * for a throwaway test account, so it is not the original vulnerability. But
- * TC-SEC-002 and TC-SEC-003 are written as repo-wide assertions, and a repo-wide
- * assertion that quietly excludes the failing files is a false pass.
+ * The Predict Playwright harness used to mirror the app's old scheme so it
+ * could predict the deposit address in advance. It was deleted along with the
+ * derivation rather than rewritten — it tested a flow that no longer exists.
  *
- * These tests therefore assert the *known* state. When #263 removes the pattern,
- * they fail loudly and should be replaced with a plain zero-hit assertion.
+ * These are now plain zero-hit assertions. Previously they recorded the harness
+ * as a known exception, because a repo-wide claim that quietly skips its own
+ * failing files is a false pass.
  */
-describe('#263: the E2E harness still derives a key from a signature', () => {
-  const KNOWN_HARNESS_FILES = [
-    'apps/hybrid-expo/e2e/predict-live.spec.ts',
-    'apps/hybrid-expo/playwright.predict.config.ts',
-  ];
-
+describe('TC-SEC-002 / TC-SEC-003: no signature-derived key material anywhere', () => {
   /**
    * Source files (not docs, manifests, or this suite) containing a pattern.
    *
@@ -379,22 +372,16 @@ describe('#263: the E2E harness still derives a key from a signature', () => {
     return [...new Set(files)].sort();
   }
 
-  it('the derivation is confined to exactly the two known harness files', () => {
+  it('no source file hashes anything with keccak256', () => {
     assert.deepEqual(
       sourceFilesContaining('keccak256'),
-      KNOWN_HARNESS_FILES,
-      'keccak256 appeared outside the two known harness files — this may be a real regression',
+      [],
+      'keccak256 reappeared — a signature must never become key material',
     );
   });
 
-  it('the derive string is likewise confined to the harness', () => {
-    assert.deepEqual(sourceFilesContaining('myboon:polymarket:enable'), KNOWN_HARNESS_FILES);
-  });
-
-  it('no harness key material leaks into the shipped app', () => {
-    // The load-bearing half: whatever the harness does, none of it is reachable
-    // from application source.
-    assert.deepEqual(appSourceHits('keccak256'), []);
-    assert.deepEqual(appSourceHits('myboon:polymarket:enable'), []);
+  it('the derive message string appears nowhere', () => {
+    assert.deepEqual(sourceFilesContaining('myboon:polymarket:enable'), []);
   });
 });
+
