@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import type {
+  PipelineBacklogDepth,
+  PipelineBacklogDepthInput,
   PipelineCandidateInsertInput,
   PipelineCandidateRow,
   PipelineCandidateThreadUpdate,
@@ -1509,6 +1511,67 @@ export class SqlitePipelineStore implements PipelineStore {
 
       return { expired: ids.length }
     })
+  }
+
+  // -------------------------------------------------------------------------
+  // Backlog depth
+  // -------------------------------------------------------------------------
+
+  async getBacklogDepth(input: PipelineBacklogDepthInput): Promise<PipelineBacklogDepth> {
+    const now = input.now ?? new Date().toISOString()
+
+    const countCandidates = (whereSql: string, params: unknown[]): number => {
+      const row = this.db.prepare(`
+        SELECT COUNT(*) AS n FROM pipeline_candidates
+        WHERE source = ? AND area = ? AND ${whereSql}
+      `).get(input.source, input.area, ...params) as Record<string, unknown>
+      return numberValue(row.n)
+    }
+
+    const candidatesPending = countCandidates(`status = 'pending_research'`, [])
+    const candidatesFailed = countCandidates(`status = 'research_failed'`, [])
+    const candidatesStaleExpired = countCandidates(`status = 'stale_expired'`, [])
+    const candidatesInFlight = countCandidates(
+      `status = 'researching' AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
+      [now]
+    )
+    const candidatesLeaseExpired = countCandidates(
+      `status = 'researching' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?`,
+      [now]
+    )
+
+    const researchRow = this.db.prepare(`
+      SELECT COUNT(*) AS n
+      FROM pipeline_research r
+      JOIN pipeline_candidates c ON c.id = r.candidate_id
+      WHERE c.source = ? AND c.area = ? AND r.status = 'pending_editor'
+    `).get(input.source, input.area) as Record<string, unknown>
+    const researchPendingEditor = numberValue(researchRow.n)
+
+    const decisionsRow = this.db.prepare(`
+      SELECT COUNT(*) AS n FROM pipeline_editor_decisions
+      WHERE source = ? AND area = ? AND status = 'pending_publisher'
+    `).get(input.source, input.area) as Record<string, unknown>
+    const decisionsPendingPublisher = numberValue(decisionsRow.n)
+
+    const draftsRow = this.db.prepare(`
+      SELECT COUNT(*) AS n FROM pipeline_editor_drafts
+      WHERE source = ? AND source_area = ? AND status = 'drafted'
+    `).get(input.source, input.area) as Record<string, unknown>
+    const draftsDrafted = numberValue(draftsRow.n)
+
+    return {
+      source: input.source,
+      area: input.area,
+      candidatesPending,
+      candidatesInFlight,
+      candidatesFailed,
+      candidatesStaleExpired,
+      candidatesLeaseExpired,
+      researchPendingEditor,
+      decisionsPendingPublisher,
+      draftsDrafted,
+    }
   }
 }
 

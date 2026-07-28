@@ -52,6 +52,12 @@ module.exports = {
         POLYMARKET_MARKETS_RUN_ONCE: '0',
         POLYMARKET_MARKETS_PREVIEW_ONLY: '0',
         POLYMARKET_MARKETS_RUN_INTERVAL_MS: '7200000',
+        // Backpressure: throttle candidate creation once pending_research
+        // depth reaches these levels. Material moves get a bounded bypass up
+        // to the hard ceiling, not an unbounded one - see
+        // isMaterialCandidate/backpressureVerdict in markets-data-engineer.ts.
+        POLYMARKET_MARKETS_BACKLOG_THRESHOLD: '100',
+        POLYMARKET_MARKETS_BACKLOG_HARD_CEILING: '250',
       },
     },
     {

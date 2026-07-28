@@ -1440,4 +1440,147 @@ export function runPipelineStoreContract(
       assert.equal(fetched.status, 'rejected')
     })
   })
+
+  // -------------------------------------------------------------------------
+  // Backlog depth
+  // -------------------------------------------------------------------------
+
+  test(`${label}: getBacklogDepth returns exact per-stage counts for seeded state`, async () => {
+    await withStore(async (store) => {
+      // Each claimWithLease call below claims from the WHOLE pending pool for
+      // this source/area (oldest observed_at first, limit only bounds count) -
+      // so batches that must stay pending are inserted LAST, and every batch
+      // that gets claimed is claimed with a limit exactly matching its own
+      // size immediately after it is inserted, before the next batch exists.
+
+      // 2 in-flight with a live (unexpired) lease.
+      const inFlightSeed = await store.insertCandidates([
+        makeCandidate({ dedupeKey: 'dk-depth-inflight-1' }),
+        makeCandidate({ dedupeKey: 'dk-depth-inflight-2' }),
+      ])
+      assert.equal(inFlightSeed.length, 2)
+      const inFlightClaimed = await store.claimWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 2,
+        leaseOwner: 'owner-depth-inflight',
+        leaseSeconds: 7200, // expires after T0_PLUS_1H, the depth read's "now"
+        now: T0,
+      })
+      assert.equal(inFlightClaimed.length, 2)
+
+      // 1 researching with an EXPIRED lease - not yet recovered.
+      const [leaseExpiredSeed] = await store.insertCandidates([
+        makeCandidate({ dedupeKey: 'dk-depth-lease-expired' }),
+      ])
+      const leaseExpiredClaimed = await store.claimWithLease({
+        source: 'polymarket',
+        area: 'crypto',
+        stage: 'research',
+        limit: 1,
+        leaseOwner: 'owner-depth-expired',
+        leaseSeconds: 1, // expires 1s after T0
+        now: T0,
+      })
+      assert.equal(leaseExpiredClaimed.length, 1)
+      assert.equal(leaseExpiredClaimed[0].id, leaseExpiredSeed.id)
+
+      // 4 research_failed.
+      const failed = await store.insertCandidates([
+        makeCandidate({ dedupeKey: 'dk-depth-failed-1' }),
+        makeCandidate({ dedupeKey: 'dk-depth-failed-2' }),
+        makeCandidate({ dedupeKey: 'dk-depth-failed-3' }),
+        makeCandidate({ dedupeKey: 'dk-depth-failed-4' }),
+      ])
+      await store.setCandidateStatus({
+        ids: failed.map((row) => row.id),
+        status: 'research_failed',
+        observedAt: T0,
+      })
+
+      // 5 stale_expired.
+      const staleExpired = await store.insertCandidates(
+        Array.from({ length: 5 }, (_, i) => makeCandidate({ dedupeKey: `dk-depth-stale-${i}` }))
+      )
+      await store.setCandidateStatus({
+        ids: staleExpired.map((row) => row.id),
+        status: 'stale_expired',
+        observedAt: T0,
+      })
+
+      // 6 research rows pending_editor.
+      const researchCandidates = await store.insertCandidates(
+        Array.from({ length: 6 }, (_, i) => makeCandidate({ dedupeKey: `dk-depth-research-${i}` }))
+      )
+      // These candidates move to 'researched' once research exists for them -
+      // otherwise they would double-count into candidatesPending below.
+      await store.setCandidateStatus({
+        ids: researchCandidates.map((row) => row.id),
+        status: 'researched',
+        observedAt: T0,
+      })
+      await store.upsertResearchRows(
+        researchCandidates.map((row) => makeResearchInput(row.id, { status: 'pending_editor' }))
+      )
+
+      // 7 editor decisions pending_publisher.
+      await store.insertEditorDecisions(
+        Array.from({ length: 7 }, () => makeEditorDecisionInput(['research-x'], { status: 'pending_publisher' }))
+      )
+
+      // 8 drafts with status 'drafted'.
+      await store.upsertDraftsByBundleKey(
+        Array.from({ length: 8 }, (_, i) => makeDraftInput({ bundleKey: `bundle-depth-${i}`, status: 'drafted' }))
+      )
+
+      // 3 pending_research - inserted LAST so none of the earlier
+      // claimWithLease calls could have swept them up.
+      const pending = await store.insertCandidates([
+        makeCandidate({ dedupeKey: 'dk-depth-pending-1' }),
+        makeCandidate({ dedupeKey: 'dk-depth-pending-2' }),
+        makeCandidate({ dedupeKey: 'dk-depth-pending-3' }),
+      ])
+      assert.equal(pending.length, 3)
+
+      const depth = await store.getBacklogDepth({ source: 'polymarket', area: 'crypto', now: T0_PLUS_1H })
+
+      assert.equal(depth.source, 'polymarket')
+      assert.equal(depth.area, 'crypto')
+      assert.equal(depth.candidatesPending, 3)
+      assert.equal(depth.candidatesInFlight, 2)
+      assert.equal(depth.candidatesLeaseExpired, 1)
+      assert.equal(depth.candidatesFailed, 4)
+      assert.equal(depth.candidatesStaleExpired, 5)
+      assert.equal(depth.researchPendingEditor, 6)
+      assert.equal(depth.decisionsPendingPublisher, 7)
+      assert.equal(depth.draftsDrafted, 8)
+    })
+  })
+
+  test(`${label}: getBacklogDepth scopes counts to the requested source/area only`, async () => {
+    await withStore(async (store) => {
+      await store.insertCandidates([
+        makeCandidate({ source: 'polymarket', area: 'crypto', dedupeKey: 'dk-depth-scope-crypto' }),
+        makeCandidate({ source: 'polymarket', area: 'sports', dedupeKey: 'dk-depth-scope-sports' }),
+      ])
+
+      const depth = await store.getBacklogDepth({ source: 'polymarket', area: 'crypto', now: T0 })
+      assert.equal(depth.candidatesPending, 1)
+    })
+  })
+
+  test(`${label}: getBacklogDepth returns all zeros for an area with no work`, async () => {
+    await withStore(async (store) => {
+      const depth = await store.getBacklogDepth({ source: 'polymarket', area: 'empty-area', now: T0 })
+      assert.equal(depth.candidatesPending, 0)
+      assert.equal(depth.candidatesInFlight, 0)
+      assert.equal(depth.candidatesFailed, 0)
+      assert.equal(depth.candidatesStaleExpired, 0)
+      assert.equal(depth.candidatesLeaseExpired, 0)
+      assert.equal(depth.researchPendingEditor, 0)
+      assert.equal(depth.decisionsPendingPublisher, 0)
+      assert.equal(depth.draftsDrafted, 0)
+    })
+  })
 }

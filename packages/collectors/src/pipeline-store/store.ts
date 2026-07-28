@@ -532,6 +532,57 @@ export interface PipelineExpireAgedWorkResult {
 }
 
 // ---------------------------------------------------------------------------
+// Backlog depth
+// ---------------------------------------------------------------------------
+
+export interface PipelineBacklogDepthInput {
+  source: string
+  area: string
+  /** Reference instant used to decide whether an in-flight lease is still live. Defaults to "now" in the caller if omitted. */
+  now?: string
+}
+
+/**
+ * Cheap, COUNT-only view of how much work is sitting at each stage of the
+ * collector -> researcher -> editor -> draft -> publish pipeline, for a given
+ * (source, area).
+ *
+ * This exists so supply (the collector inserting candidates) can see drain
+ * (the researcher's throughput) before creating more work, and so a status
+ * surface can report backlog without ever fetching full rows. Every field
+ * must be answerable with `COUNT(*) ... WHERE`, never a row scan.
+ */
+export interface PipelineBacklogDepth {
+  source: string
+  area: string
+  /** pipeline_candidates rows with status = 'pending_research'. */
+  candidatesPending: number
+  /**
+   * pipeline_candidates rows with status = 'researching' AND an unexpired
+   * lease (lease_expires_at > now). Distinct from candidatesLeaseExpired -
+   * see that field's doc.
+   */
+  candidatesInFlight: number
+  /** pipeline_candidates rows with status = 'research_failed'. */
+  candidatesFailed: number
+  /** pipeline_candidates rows with status = 'stale_expired' (see expireAgedWork). */
+  candidatesStaleExpired: number
+  /**
+   * pipeline_candidates rows with status = 'researching' whose lease has
+   * expired (lease_expires_at <= now) but have not yet been recovered by
+   * recoverExpiredLeases. This is work that LOOKS in-flight but is actually
+   * stuck - the leaks this whole effort exists to keep visible.
+   */
+  candidatesLeaseExpired: number
+  /** pipeline_research rows with status = 'pending_editor'. */
+  researchPendingEditor: number
+  /** pipeline_editor_decisions rows with status = 'pending_publisher'. */
+  decisionsPendingPublisher: number
+  /** pipeline_editor_drafts rows with status = 'drafted'. */
+  draftsDrafted: number
+}
+
+// ---------------------------------------------------------------------------
 // PipelineStore
 // ---------------------------------------------------------------------------
 
@@ -643,6 +694,14 @@ export interface PipelineStore {
   releaseLease(ids: string[], leaseOwner: string): Promise<void>
   recoverExpiredLeases(input: PipelineRecoverExpiredLeasesInput): Promise<PipelineRecoverExpiredLeasesResult>
   expireAgedWork(input: PipelineExpireAgedWorkInput): Promise<PipelineExpireAgedWorkResult>
+
+  // Backlog depth
+  /**
+   * Cheap per-stage backlog counts for (source, area). Must be implemented as
+   * COUNT queries only - no row fetching - so it is safe to call before every
+   * candidate-creation run and from a status CLI/endpoint on demand.
+   */
+  getBacklogDepth(input: PipelineBacklogDepthInput): Promise<PipelineBacklogDepth>
 
   // Lifecycle
   close(): void

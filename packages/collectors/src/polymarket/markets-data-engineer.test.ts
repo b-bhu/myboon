@@ -20,6 +20,8 @@ const options: Required<PolymarketMarketsDataEngineerOptions> = {
   candidateRetryFailedHours: 24,
   candidateRecentPublishedCooldownHours: 168,
   candidateMaterialMoveMultiplier: 2,
+  backlogThreshold: 100,
+  backlogHardCeiling: 250,
 }
 
 function market(overrides: Record<string, unknown> = {}): any {
@@ -156,6 +158,44 @@ test('blocksCandidate respects failed-research retry window', () => {
 
   assert.equal(__testing.blocksCandidate(candidate(), [recentFailed as any], options.now, options), true)
   assert.equal(__testing.blocksCandidate(candidate(), [staleFailed as any], options.now, options), false)
+})
+
+// ---------------------------------------------------------------------------
+// Backpressure: backpressureVerdict (bounded material-move bypass)
+// ---------------------------------------------------------------------------
+
+const normalCandidate = candidate() // oddsDelta 0.06 / threshold 0.05 = 1.2x, score 60 -> not material
+const materialCandidate = candidate({ draft: { metrics: { oddsDelta: 0.15 }, score: 60 } }) // 0.15/0.05 = 3x >= multiplier 2 -> material
+
+test('isMaterialCandidate classifies the shared fixtures as expected', () => {
+  assert.equal(__testing.isMaterialCandidate(normalCandidate.draft, options), false)
+  assert.equal(__testing.isMaterialCandidate(materialCandidate.draft, options), true)
+})
+
+test('backpressure: normal candidate is allowed below backlogThreshold', () => {
+  assert.equal(__testing.backpressureVerdict(normalCandidate, options.backlogThreshold - 1, options), 'allow')
+})
+
+test('backpressure: normal candidate is blocked at/above backlogThreshold', () => {
+  assert.equal(__testing.backpressureVerdict(normalCandidate, options.backlogThreshold, options), 'throttled_normal')
+  assert.equal(__testing.backpressureVerdict(normalCandidate, options.backlogThreshold + 50, options), 'throttled_normal')
+})
+
+test('backpressure: material candidate is ALLOWED above backlogThreshold (bounded bypass)', () => {
+  // Backlog is past the normal threshold but still below the hard ceiling -
+  // this is exactly the bypass window the policy grants to material moves.
+  const depth = options.backlogThreshold + 20
+  assert.ok(depth < options.backlogHardCeiling)
+  assert.equal(__testing.backpressureVerdict(materialCandidate, depth, options), 'allow')
+})
+
+test('backpressure: material candidate is BLOCKED at/above backlogHardCeiling', () => {
+  assert.equal(__testing.backpressureVerdict(materialCandidate, options.backlogHardCeiling, options), 'throttled_hard_ceiling')
+  assert.equal(__testing.backpressureVerdict(materialCandidate, options.backlogHardCeiling + 100, options), 'throttled_hard_ceiling')
+})
+
+test('backpressure: material candidate below backlogThreshold is simply allowed', () => {
+  assert.equal(__testing.backpressureVerdict(materialCandidate, 0, options), 'allow')
 })
 
 test('buildThreadUpdatePayload reopens an existing researched family for material movement', () => {

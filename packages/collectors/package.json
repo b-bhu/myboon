@@ -30,6 +30,7 @@
     "news:scout:preview": "tsx src/news/run-scout-preview.ts",
     "build": "tsc",
     "pipeline-store:backup": "tsx src/pipeline-store/run-backup.ts",
+    "pipeline-store:status": "tsx src/pipeline-store/run-status.ts",
     "test:pipeline-ledger": "tsx --test src/pipeline-ledger.test.ts",
     "test:pipeline-store": "tsx --test src/pipeline-store/*.test.ts",
     "test:news": "tsx --test src/news/tests/*.test.ts",

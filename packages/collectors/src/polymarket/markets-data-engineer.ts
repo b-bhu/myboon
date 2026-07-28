@@ -48,6 +48,28 @@ export interface PolymarketMarketsDataEngineerOptions {
   candidateRetryFailedHours?: number
   candidateRecentPublishedCooldownHours?: number
   candidateMaterialMoveMultiplier?: number
+  /**
+   * Backpressure: once candidatesPending (from getBacklogDepth) reaches this
+   * many pending_research rows for (source, area), NORMAL candidates are
+   * throttled - blocked from insertion - because the researcher (drain) is
+   * nowhere near fast enough to keep up with the collector (supply) at that
+   * depth. See backlogHardCeiling for the bounded exception that still
+   * applies to material moves.
+   */
+  backlogThreshold?: number
+  /**
+   * Backpressure ceiling for MATERIAL candidates (isMaterialCandidate).
+   * Material moves are allowed to exceed backlogThreshold - a time-sensitive
+   * story should not silently wait behind a deep backlog of routine
+   * candidates - but they are NOT exempt from backpressure entirely. Once
+   * candidatesPending reaches this higher absolute ceiling, even material
+   * candidates are throttled. An unbounded bypass is exactly what caused the
+   * original backlog (isMaterialCandidate bypassed blocksCandidate
+   * entirely); blocking material moves at the normal threshold would lose
+   * time-sensitive stories. A bounded bypass keeps urgency without unbounded
+   * growth. Must be >= backlogThreshold to have any effect.
+   */
+  backlogHardCeiling?: number
 }
 
 interface GammaTag {
@@ -159,6 +181,24 @@ export interface PolymarketMarketsDataEngineerResult {
   candidateThreadsReopened: number
   candidatesSkippedAsDuplicates: number
   candidatesSkippedForBacklog: number
+  /**
+   * Normal (non-material) candidates blocked because candidatesPending was
+   * at or above backlogThreshold. Distinct from candidatesSkippedForBacklog,
+   * which is the pre-existing per-slug/family unresolved-work block.
+   */
+  candidatesThrottledByBackpressure: number
+  /**
+   * Material candidates blocked because candidatesPending was at or above
+   * backlogHardCeiling - the bounded exception to the material-move bypass.
+   */
+  candidatesThrottledAtHardCeiling: number
+  backlogDepthAtRun: {
+    candidatesPending: number
+    candidatesInFlight: number
+    candidatesFailed: number
+    candidatesStaleExpired: number
+    candidatesLeaseExpired: number
+  } | null
   topWatchlist: Array<{
     slug: string
     tag: string
@@ -518,6 +558,8 @@ function selectedOptions(partial: PolymarketMarketsDataEngineerOptions): Require
     candidateRetryFailedHours: partial.candidateRetryFailedHours ?? envNumber('POLYMARKET_MARKETS_CANDIDATE_RETRY_FAILED_HOURS', defaultConfig.candidateRetryFailedHours),
     candidateRecentPublishedCooldownHours: partial.candidateRecentPublishedCooldownHours ?? envNumber('POLYMARKET_MARKETS_CANDIDATE_RECENT_PUBLISHED_COOLDOWN_HOURS', defaultConfig.candidateRecentPublishedCooldownHours),
     candidateMaterialMoveMultiplier: partial.candidateMaterialMoveMultiplier ?? envNumber('POLYMARKET_MARKETS_CANDIDATE_MATERIAL_MOVE_MULTIPLIER', defaultConfig.candidateMaterialMoveMultiplier),
+    backlogThreshold: partial.backlogThreshold ?? envNumber('POLYMARKET_MARKETS_BACKLOG_THRESHOLD', defaultConfig.backlogThreshold),
+    backlogHardCeiling: partial.backlogHardCeiling ?? envNumber('POLYMARKET_MARKETS_BACKLOG_HARD_CEILING', defaultConfig.backlogHardCeiling),
   }
 }
 
@@ -903,6 +945,38 @@ function blocksCandidate(
     const ageHours = (nowMs - new Date(block.at).getTime()) / 3_600_000
     return ageHours < options.candidateRetryFailedHours
   })
+}
+
+type BackpressureVerdict = 'allow' | 'throttled_normal' | 'throttled_hard_ceiling'
+
+/**
+ * Supply-side backpressure: blocks candidate CREATION based on how deep the
+ * pending_research backlog already is, independent of the per-slug/family
+ * blocksCandidate check above.
+ *
+ * THE POLICY (bounded bypass, not unbounded):
+ *   - Normal candidates are throttled once candidatesPending >= backlogThreshold.
+ *   - Material candidates (isMaterialCandidate) may exceed backlogThreshold -
+ *     a time-sensitive story should not queue behind routine candidates -
+ *     but are ALSO throttled once candidatesPending >= backlogHardCeiling.
+ *
+ * An unbounded material-move bypass is what caused the original backlog
+ * (isMaterialCandidate used to skip blocksCandidate entirely, with nothing
+ * downstream to stop it). Blocking material moves at the same threshold as
+ * everything else would lose genuinely time-sensitive stories. A bounded
+ * bypass - allowed further, but not forever - keeps urgency without
+ * unbounded growth.
+ */
+function backpressureVerdict(
+  candidate: CandidateInsert,
+  candidatesPending: number,
+  options: Required<PolymarketMarketsDataEngineerOptions>
+): BackpressureVerdict {
+  const material = isMaterialCandidate(candidate.draft, options)
+  if (!material) {
+    return candidatesPending >= options.backlogThreshold ? 'throttled_normal' : 'allow'
+  }
+  return candidatesPending >= options.backlogHardCeiling ? 'throttled_hard_ceiling' : 'allow'
 }
 
 function annotateBacklogOverride(candidate: CandidateInsert, blocks: BacklogBlock[]): CandidateInsert {
@@ -1442,16 +1516,48 @@ export async function runPolymarketMarketsDataEngineer(
   }
 
   const backlog = await fetchDownstreamBacklog(store, db, insertableCandidateInserts.map((candidate) => candidate.market), observedAt, options)
+
+  // Backlog-aware supply (backpressure): read current depth ONCE for this
+  // run and gate insertion on it. This is deliberately a single snapshot,
+  // not re-read per candidate - candidatesPending only grows within this
+  // loop via candidates this same run is about to insert, and re-reading per
+  // candidate would cost a query per candidate for no behavioral benefit
+  // (the throttle decision does not need to react to its own pending writes
+  // mid-loop).
+  const backlogDepth = await store.getBacklogDepth({ source: SOURCE, area: AREA, now: observedAt })
+
   const newCandidateInserts: CandidateInsert[] = []
   let candidatesSkippedForBacklog = 0
+  let candidatesThrottledByBackpressure = 0
+  let candidatesThrottledAtHardCeiling = 0
   for (const candidate of insertableCandidateInserts) {
     const blocks = candidateBacklogBlocks(backlog, candidate.market)
     if (blocksCandidate(candidate, blocks, observedAt, options)) {
       candidatesSkippedForBacklog += 1
       continue
     }
+
+    const verdict = backpressureVerdict(candidate, backlogDepth.candidatesPending, options)
+    if (verdict === 'throttled_normal') {
+      candidatesThrottledByBackpressure += 1
+      continue
+    }
+    if (verdict === 'throttled_hard_ceiling') {
+      candidatesThrottledAtHardCeiling += 1
+      continue
+    }
+
     newCandidateInserts.push(blocks.length > 0 ? annotateBacklogOverride(candidate, blocks) : candidate)
   }
+
+  if (candidatesThrottledByBackpressure > 0 || candidatesThrottledAtHardCeiling > 0) {
+    console.warn(
+      `[markets-data-engineer] backpressure throttling: candidatesPending=${backlogDepth.candidatesPending} ` +
+      `backlogThreshold=${options.backlogThreshold} backlogHardCeiling=${options.backlogHardCeiling} ` +
+      `throttledNormal=${candidatesThrottledByBackpressure} throttledAtHardCeiling=${candidatesThrottledAtHardCeiling}`
+    )
+  }
+
   await updateCandidateThreads(store, threadUpdates)
   await insertCandidates(store, newCandidateInserts, observedAt)
 
@@ -1470,6 +1576,15 @@ export async function runPolymarketMarketsDataEngineer(
     )).length,
     candidatesSkippedAsDuplicates: candidateInserts.length - familyDedupedCandidateInserts.length + familyDedupedCandidateInserts.filter((candidate) => existingCandidateKeys.has(candidate.dedupeKey) && !existingThreads.has(candidate.familyKey)).length,
     candidatesSkippedForBacklog,
+    candidatesThrottledByBackpressure,
+    candidatesThrottledAtHardCeiling,
+    backlogDepthAtRun: {
+      candidatesPending: backlogDepth.candidatesPending,
+      candidatesInFlight: backlogDepth.candidatesInFlight,
+      candidatesFailed: backlogDepth.candidatesFailed,
+      candidatesStaleExpired: backlogDepth.candidatesStaleExpired,
+      candidatesLeaseExpired: backlogDepth.candidatesLeaseExpired,
+    },
     topWatchlist: watchlist.slice(0, 12).map((market) => ({
       slug: market.slug,
       tag: market.tagSlug,
@@ -1516,6 +1631,7 @@ export async function previewPolymarketMarketsDataEngineer(
 }
 
 export const __testing = {
+  backpressureVerdict,
   blocksCandidate,
   buildThreadUpdatePayload,
   candidateBacklogBlocks,
@@ -1523,6 +1639,7 @@ export const __testing = {
   chooseWatchlist,
   dedupeCandidateInserts,
   fetchDownstreamBacklog,
+  isMaterialCandidate,
   mergedThreadMetrics,
   marketFamilyKeys,
   primaryMarketFamilyKey,
