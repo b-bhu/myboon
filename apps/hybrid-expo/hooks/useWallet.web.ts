@@ -98,11 +98,17 @@ export function useWallet() {
     signTransaction: signTransaction ?? (async () => { throw new Error('signTransaction not supported'); }),
     signAndSendTransaction: handleSignAndSendTransaction,
     connection,
-    walletOptions: wallets.map(({ adapter, readyState }) => ({
-      name: adapter.name,
-      icon: adapter.icon,
-      readyState,
-    })),
+    // Only wallets the user can actually connect to right now. The adapter also
+    // reports `NotDetected` (extension not installed) and `Unsupported` (wrong
+    // platform); listing those gives the user options that fail on tap.
+    // `Loadable` is included — it means available without prior installation.
+    walletOptions: wallets
+      .filter(({ readyState }) => readyState === 'Installed' || readyState === 'Loadable')
+      .map(({ adapter, readyState }) => ({
+        name: adapter.name,
+        icon: adapter.icon,
+        readyState,
+      })),
     source: 'mwa' as const,
     sessionKey: addressStr ? `mwa:${addressStr}` : 'mwa:disconnected',
   };

@@ -174,7 +174,14 @@ export interface ChainActivation {
   clearAll: () => Promise<void>;
 }
 
-/** React binding over the persisted activation state. */
+/**
+ * React binding over the persisted activation state.
+ *
+ * Deliberately free of wallet imports so this module stays testable without a
+ * renderer — pulling `useWallet` in here drags React Native's Flow-typed entry
+ * point into the unit runner. Reconciling a live connection into activation is
+ * `useActivationReconciler`, mounted once at the app root.
+ */
 export function useChainActivation(): ChainActivation {
   const [activation, setActivation] = useState<ActivationState>(getActivationSnapshot);
   const [isHydrated, setIsHydrated] = useState<boolean>(isActivationHydrated);
@@ -196,6 +203,7 @@ export function useChainActivation(): ChainActivation {
       unsubscribe();
     };
   }, []);
+
 
   const activate = useCallback(async (chain: Chain) => {
     await activateChain(chain);

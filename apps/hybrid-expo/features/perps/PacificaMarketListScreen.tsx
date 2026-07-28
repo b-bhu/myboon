@@ -1,6 +1,6 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
 import {
   ActivityIndicator,
@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
 import { AppTopBar, AppTopBarLogo } from '@/components/AppTopBar';
-import { AvatarTrigger } from '@/components/drawer/AvatarTrigger';
+import { AppProfileButton } from '@/components/AppProfileButton';
 import {
   fetchPerpsMarkets,
   formatChange,
@@ -23,13 +23,8 @@ import {
   formatUsdCompact,
 } from '@/features/perps/perps.public-api';
 import type { PerpsMarket } from '@/features/perps/perps.types';
+import { useWallet } from '@/hooks/useWallet';
 import { semantic, tokens } from '@/theme';
-
-type TradeView = 'markets' | 'profile';
-
-const LazyProfileView = lazy(() =>
-  import('@/features/perps/ProfileView').then((module) => ({ default: module.ProfileView })),
-);
 
 // In-memory SVG cache — persists for the app session
 const svgCache = new Map<string, string | null>();
@@ -95,14 +90,12 @@ const MarketRow = memo(function MarketRow({
 });
 
 
-export function TradeListScreen() {
+export function PacificaMarketListScreen() {
   const router = useRouter();
-  const { view: viewParam } = useLocalSearchParams<{ view?: string }>();
   const [markets, setMarkets] = useState<PerpsMarket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [view, setView] = useState<TradeView>(viewParam === 'profile' ? 'profile' : 'markets');
   const [searchText, setSearchText] = useState('');
 
   const filteredMarkets = useMemo(() => {
@@ -137,7 +130,7 @@ export function TradeListScreen() {
   }, []);
 
   const goToMarket = useCallback((symbol: string) => {
-    router.push(`/trade/${encodeURIComponent(symbol)}`);
+    router.push(`/markets/pacifica/${encodeURIComponent(symbol)}`);
   }, [router]);
 
   const renderMarket = useCallback(
@@ -148,18 +141,20 @@ export function TradeListScreen() {
   const keyExtractor = useCallback((market: PerpsMarket) => market.symbol, []);
 
   const insets = useSafeAreaInsets();
+  const wallet = useWallet();
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      {view === 'profile' ? (
-        <Suspense fallback={<ProfileFallback />}>
-          <LazyProfileView onBack={() => setView('markets')} />
-        </Suspense>
-      ) : (
-        <>
-          <AppTopBar
+      <AppTopBar
             left={<AppTopBarLogo />}
-            right={<AvatarTrigger />}
+            right={
+              <AppProfileButton
+                onPress={() => router.push('/markets/pacifica/profile')}
+                connected={wallet.connected}
+                label="Open Pacifica profile"
+                hint="View your Pacifica trading account"
+              />
+            }
           />
 
           {/* Markets table */}
@@ -222,18 +217,6 @@ export function TradeListScreen() {
               </View>
             </View>
           )}
-        </>
-      )}
-
-    </View>
-  );
-}
-
-function ProfileFallback() {
-  return (
-    <View style={styles.stateContainer}>
-      <ActivityIndicator size="small" color={semantic.text.accent} />
-      <Text style={styles.stateText}>Loading profile...</Text>
     </View>
   );
 }

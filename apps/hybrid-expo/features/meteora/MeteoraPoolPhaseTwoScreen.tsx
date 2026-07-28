@@ -29,7 +29,7 @@ import {
   SegmentedControl,
   TokenAmountField,
 } from '@/features/meteora/components/MeteoraExecutionControls';
-import { MeteoraProfileButton } from '@/features/meteora/components/MeteoraProfileButton';
+import { AppProfileButton } from '@/components/AppProfileButton';
 import { meteoraClient } from '@/features/meteora/meteora.client';
 import { meteoraPhaseTwoAdapter } from '@/features/meteora/meteora.form-execution';
 import {
@@ -694,7 +694,15 @@ export function MeteoraPoolPhaseTwoScreen({
             <Text style={styles.headerPrice} numberOfLines={1}>{conversion}</Text>
           </View>
         </View>
-        <MeteoraProfileButton onPress={() => router.push('/markets/meteora/profile')} />
+        <AppProfileButton
+          onPress={() => router.push('/markets/meteora/profile')}
+          connected={wallet.connected}
+          label="Open Meteora profile"
+          hint="View your Meteora positions, orders, and history"
+          borderColor={METEORA_COLORS.border}
+          iconColor={METEORA_COLORS.text}
+          backgroundColor="rgba(21,27,48,0.72)"
+        />
       </View>
 
       {loading ? (

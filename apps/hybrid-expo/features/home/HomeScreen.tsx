@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
 import { AppTopBarLogo } from '@/components/AppTopBar';
-import { AvatarTrigger } from '@/components/drawer/AvatarTrigger';
+import { AvatarTrigger } from '@/components/AvatarTrigger';
 import { FeedCard } from '@/features/feed/components/FeedCard';
 import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
 import { StoryCarousel, StoryCarouselSkeleton } from '@/features/feed/components/StoryCarousel';
@@ -66,7 +66,7 @@ type MarketHomeApp = {
   id: 'polymarket' | 'pacifica' | 'phoenix' | 'meteora' | 'orca' | 'raydium' | 'kamino';
   name: string;
   icon: MarketAppIcon;
-  route?: '/predict' | '/trade' | '/markets/phoenix' | '/markets/meteora';
+  route?: '/markets/polymarket' | '/markets/pacifica' | '/markets/phoenix' | '/markets/meteora';
 };
 
 const MARKET_APPS: MarketHomeApp[] = [
@@ -74,13 +74,13 @@ const MARKET_APPS: MarketHomeApp[] = [
     id: 'polymarket',
     name: 'Polymarket',
     icon: { xml: POLYMARKET_MARK_SVG, width: 46, height: 50 },
-    route: '/predict',
+    route: '/markets/polymarket',
   },
   {
     id: 'pacifica',
     name: 'Pacifica',
     icon: { xml: PACIFICA_MARK_SVG, width: 52, height: 52 },
-    route: '/trade',
+    route: '/markets/pacifica',
   },
   {
     id: 'phoenix',
@@ -281,23 +281,15 @@ export default function HomeScreen() {
     void activate(chain);
   }, [activate]);
 
+  /**
+   * Disconnect goes through the wallet sheet, which owns the confirmation step.
+   *
+   * It deliberately does not use `Alert.alert`: that renders nothing on React
+   * Native Web, so a confirm-then-act flow built on it silently never acts.
+   */
   const handleDisconnectChain = useCallback((chain: Chain) => {
-    Alert.alert('Disconnect?', 'You can reconnect anytime.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Disconnect',
-        style: 'destructive',
-        onPress: () => {
-          // Clearing activation is the session boundary. The underlying Privy
-          // login is left alone — this disconnects the chain, not the account.
-          void deactivate(chain);
-          if (chain === 'solana' && wallet.connected) {
-            void wallet.disconnect();
-          }
-        },
-      },
-    ]);
-  }, [deactivate, wallet]);
+    connectSheet.open(chain);
+  }, [connectSheet]);
 
   return (
     <View style={styles.screen}>
@@ -400,7 +392,7 @@ export default function HomeScreen() {
               onRetrySource={retryWalletSource}
               onOpenMeteora={() => router.push('/markets/meteora/profile')}
               onOpenPhoenix={() => router.push('/markets/phoenix/profile')}
-              onOpenPacifica={() => router.push('/trade?view=profile')}
+              onOpenPacifica={() => router.push('/markets/pacifica/profile')}
             />
           ) : (
             <DisconnectedWalletState onConnect={() => connectSheet.open('solana')} />

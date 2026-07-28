@@ -11,13 +11,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { useWallet } from '@/hooks/useWallet';
 import { fetchPerpsAccount } from '@/features/perps/perps.public-api';
-import { buildDepositInstruction } from '@/features/perps/perps.deposit-api';
-import { SOLANA_RPC, USDC_MINT, USDC_LABEL, PACIFIC_MIN_DEPOSIT } from '@/features/perps/pacific.config';
+import { requestWithdrawal } from '@/features/perps/perps.signed-api';
+import { USDC_LABEL } from '@/features/perps/pacific.config';
 import { semantic, tokens } from '@/theme';
-import { fetchWithTimeout } from '@/lib/api';
 
 function showAlert(title: string, msg: string) {
   if (Platform.OS === 'web') {
@@ -27,7 +25,10 @@ function showAlert(title: string, msg: string) {
   }
 }
 
-interface DepositModalProps {
+const MIN_WITHDRAWAL = 1; // Pacific minimum: $1
+const WITHDRAWAL_FEE = 1; // Pacific charges $1 per withdrawal
+
+interface PacificaWithdrawModalProps {
   visible: boolean;
   onClose: () => void;
   /**
@@ -41,105 +42,59 @@ interface DepositModalProps {
   onRequestConnect?: () => void;
 }
 
-async function fetchTokenBalance(owner: string): Promise<number> {
-  const res = await fetchWithTimeout(SOLANA_RPC, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'getTokenAccountsByOwner',
-      params: [
-        owner,
-        { mint: USDC_MINT },
-        { encoding: 'jsonParsed' },
-      ],
-    }),
-  });
-  const json = await res.json();
-  const accounts = json?.result?.value ?? [];
-  if (accounts.length === 0) return 0;
-  const amount = accounts[0]?.account?.data?.parsed?.info?.tokenAmount?.uiAmount;
-  return typeof amount === 'number' ? amount : 0;
-}
-
-export function DepositModal({ visible, onClose, onRequestConnect }: DepositModalProps) {
-  const { connected, address, signAndSendTransaction } = useWallet();
-  const connection = new Connection(SOLANA_RPC);
-  const [walletBalance, setWalletBalance] = useState<number | null>(null);
-  const [pacificBalance, setPacificBalance] = useState<number | null>(null);
+export function PacificaWithdrawModal({ visible, onClose, onRequestConnect }: PacificaWithdrawModalProps) {
+  const { connected, address, signMessage } = useWallet();
+  const [available, setAvailable] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [txSignature, setTxSignature] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
   const [amount, setAmount] = useState('');
 
   useEffect(() => {
     if (visible && connected && address) {
       setLoading(true);
-      Promise.all([
-        fetchTokenBalance(address),
-        fetchPerpsAccount(address).catch(() => null),
-      ])
-        .then(([wallet, acc]) => {
-          setWalletBalance(wallet);
-          setPacificBalance(acc ? acc.equity : null);
-        })
+      fetchPerpsAccount(address)
+        .then((acc) => setAvailable(acc.availableToWithdraw))
+        .catch(() => setAvailable(null))
         .finally(() => setLoading(false));
     }
     if (!visible) {
       setAmount('');
-      setTxSignature(null);
+      setSuccess(false);
       setSubmitting(false);
     }
   }, [visible, connected, address]);
 
   function handleMax() {
-    if (walletBalance !== null) {
-      setAmount(walletBalance.toFixed(2));
+    if (available !== null) {
+      setAmount(available.toFixed(2));
     }
   }
 
-  async function handleDeposit() {
-    const depositAmount = parseFloat(amount);
-    const sendTransaction = signAndSendTransaction as ((tx: Transaction) => Promise<string>) | null;
-    if (!address || !depositAmount || depositAmount < PACIFIC_MIN_DEPOSIT) {
-      showAlert('Invalid amount', `Minimum deposit is ${PACIFIC_MIN_DEPOSIT} ${USDC_LABEL}`);
+  async function handleWithdraw() {
+    const withdrawAmount = parseFloat(amount);
+    if (!address || !withdrawAmount || withdrawAmount < MIN_WITHDRAWAL) {
+      showAlert('Invalid amount', `Minimum withdrawal is $${MIN_WITHDRAWAL}`);
       return;
     }
-    if (!sendTransaction) {
-      showAlert('Unsupported wallet', 'This wallet cannot send a Solana transaction from the app.');
-      return;
-    }
-    if (walletBalance !== null && depositAmount > walletBalance) {
-      showAlert('Insufficient balance', `You only have ${walletBalance.toFixed(2)} ${USDC_LABEL}`);
+    if (available !== null && withdrawAmount > available) {
+      showAlert('Insufficient balance', `Available: $${available.toFixed(2)}`);
       return;
     }
 
     setSubmitting(true);
-    setTxSignature(null);
+    setSuccess(false);
     try {
-      const depositor = new PublicKey(address);
-      const ix = buildDepositInstruction(depositor, depositAmount);
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-      const tx = new Transaction({
-        feePayer: depositor,
-        blockhash,
-        lastValidBlockHeight,
-      }).add(ix);
-      const sig = await sendTransaction(tx);
-      setTxSignature(sig);
-
-      // Refresh balances after deposit
-      const [wallet, acc] = await Promise.all([
-        fetchTokenBalance(address),
-        fetchPerpsAccount(address).catch(() => null),
-      ]);
-      setWalletBalance(wallet);
-      setPacificBalance(acc ? acc.equity : null);
+      await requestWithdrawal(withdrawAmount, address, signMessage);
+      setSuccess(true);
       setAmount('');
+
+      // Refresh balance
+      const acc = await fetchPerpsAccount(address).catch(() => null);
+      if (acc) setAvailable(acc.availableToWithdraw);
     } catch (err: any) {
-      const msg = err?.message ?? 'Deposit failed';
-      showAlert('Deposit failed', msg);
+      const msg = err?.message ?? 'Withdrawal failed';
+      showAlert('Withdrawal failed', msg);
     } finally {
       setSubmitting(false);
     }
@@ -151,7 +106,7 @@ export function DepositModal({ visible, onClose, onRequestConnect }: DepositModa
         <View style={styles.sheet}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>Deposit</Text>
+            <Text style={styles.title}>Withdraw</Text>
             <Pressable onPress={onClose} hitSlop={12}>
               <MaterialIcons name="close" size={18} color={semantic.text.dim} />
             </Pressable>
@@ -159,7 +114,7 @@ export function DepositModal({ visible, onClose, onRequestConnect }: DepositModa
 
           {!connected ? (
             <View style={styles.body}>
-              <Text style={styles.infoText}>Connect your wallet to deposit</Text>
+              <Text style={styles.infoText}>Connect your wallet to withdraw</Text>
               {onRequestConnect ? (
                 <Pressable
                   style={styles.primaryBtn}
@@ -177,30 +132,28 @@ export function DepositModal({ visible, onClose, onRequestConnect }: DepositModa
           ) : loading ? (
             <View style={styles.body}>
               <ActivityIndicator size="small" color={semantic.text.accent} />
-              <Text style={styles.infoText}>Loading balances...</Text>
+              <Text style={styles.infoText}>Loading balance...</Text>
             </View>
           ) : (
             <View style={styles.body}>
-              {/* Balances */}
+              {/* Balance card */}
               <View style={styles.balanceCard}>
                 <View style={styles.balanceRow}>
-                  <Text style={styles.balanceLabel}>Wallet</Text>
+                  <Text style={styles.balanceLabel}>Available to Withdraw</Text>
                   <Text style={styles.balanceVal}>
-                    {walletBalance !== null ? `${walletBalance.toFixed(2)} ${USDC_LABEL}` : '—'}
+                    {available !== null ? `$${available.toFixed(2)}` : '—'}
                   </Text>
                 </View>
                 <View style={styles.balanceDivider} />
                 <View style={styles.balanceRow}>
-                  <Text style={styles.balanceLabel}>Pacific Account</Text>
-                  <Text style={styles.balanceVal}>
-                    {pacificBalance !== null ? `$${pacificBalance.toFixed(2)}` : '—'}
-                  </Text>
+                  <Text style={styles.balanceLabel}>Withdrawal Fee</Text>
+                  <Text style={styles.balanceVal}>${WITHDRAWAL_FEE}</Text>
                 </View>
               </View>
 
               {/* Amount input */}
               <View style={styles.inputSection}>
-                <Text style={styles.inputLabel}>Amount to Deposit</Text>
+                <Text style={styles.inputLabel}>Amount to Withdraw</Text>
                 <View style={styles.inputRow}>
                   <TextInput
                     style={styles.input}
@@ -218,34 +171,43 @@ export function DepositModal({ visible, onClose, onRequestConnect }: DepositModa
                 </View>
               </View>
 
-              {/* Deposit button */}
+              {/* Net receive preview */}
+              {amount !== '' && parseFloat(amount) > 0 && (
+                <View style={styles.netRow}>
+                  <Text style={styles.netLabel}>You receive</Text>
+                  <Text style={styles.netVal}>
+                    ~{Math.max(0, parseFloat(amount) - WITHDRAWAL_FEE).toFixed(2)} {USDC_LABEL}
+                  </Text>
+                </View>
+              )}
+
+              {/* Withdraw button */}
               <Pressable
                 style={({ pressed }) => [
                   styles.primaryBtn,
-                  (!amount || parseFloat(amount) < PACIFIC_MIN_DEPOSIT || submitting) && styles.primaryBtnDisabled,
+                  (!amount || parseFloat(amount) < MIN_WITHDRAWAL || submitting) && styles.primaryBtnDisabled,
                   pressed && styles.primaryBtnPressed,
                 ]}
                 disabled={submitting}
-                onPress={handleDeposit}>
+                onPress={handleWithdraw}>
                 {submitting ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>Deposit</Text>
+                  <Text style={styles.primaryBtnText}>Withdraw</Text>
                 )}
               </Pressable>
 
-              {txSignature && (
+              {success && (
                 <View style={styles.successRow}>
                   <MaterialIcons name="check-circle" size={14} color={tokens.colors.viridian} />
                   <Text style={styles.successText}>
-                    Deposited! Tx: {txSignature.slice(0, 8)}...{txSignature.slice(-8)}
+                    {'Withdrawal requested! ' + USDC_LABEL + ' will arrive in your wallet shortly.'}
                   </Text>
                 </View>
               )}
 
               <Text style={styles.footnote}>
-                Deposits transfer {USDC_LABEL} from your wallet to your Pacific trading account.
-                Minimum {PACIFIC_MIN_DEPOSIT} {USDC_LABEL}.
+                {'Withdrawals send ' + USDC_LABEL + ' from your Pacific account to your wallet. $' + WITHDRAWAL_FEE + ' fee per withdrawal. Minimum $' + MIN_WITHDRAWAL + '.'}
               </Text>
             </View>
           )}
@@ -290,8 +252,6 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     alignItems: 'stretch',
   },
-
-  // Balances
   balanceCard: {
     backgroundColor: semantic.background.lift,
     borderRadius: tokens.radius.md,
@@ -322,8 +282,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: semantic.text.primary,
   },
-
-  // Input
   inputSection: {
     gap: tokens.spacing.xs,
   },
@@ -373,8 +331,29 @@ const styles = StyleSheet.create({
     color: semantic.text.dim,
     letterSpacing: 0.8,
   },
-
-  // Buttons
+  netRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(199,183,112,0.06)',
+    borderRadius: tokens.radius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(199,183,112,0.14)',
+    paddingHorizontal: tokens.spacing.md,
+    paddingVertical: tokens.spacing.sm,
+  },
+  netLabel: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xxs,
+    color: semantic.text.dim,
+    letterSpacing: 0.8,
+  },
+  netVal: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.sm,
+    fontWeight: '700',
+    color: tokens.colors.primary,
+  },
   primaryBtn: {
     backgroundColor: tokens.colors.viridian,
     borderRadius: tokens.radius.md,
@@ -394,7 +373,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     letterSpacing: 1,
   },
-
   infoText: {
     fontFamily: 'monospace',
     fontSize: tokens.fontSize.xs,

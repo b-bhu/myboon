@@ -616,7 +616,7 @@ export function PhoenixProfileScreen() {
         <View style={styles.emptyState}>
           <MaterialIcons name="account-balance-wallet" size={28} color={semantic.text.faint} />
           <Text style={styles.emptyTitle}>Connect wallet</Text>
-          <Text style={styles.emptyDesc}>Connect a Solana wallet to view your Phoenix trading account.</Text>
+          <Text style={styles.emptyDesc}>Connect a wallet to view your Phoenix trading account.</Text>
           <Pressable style={styles.primaryBtn} onPress={() => connectSheet.open('solana')}>
             <Text style={styles.primaryBtnText}>Connect wallet</Text>
           </Pressable>

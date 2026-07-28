@@ -1,54 +1,32 @@
-import React, { Suspense, useEffect, useState } from 'react';
+import React from 'react';
 import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { PrivyProvider } from '@/providers/PrivyProvider';
 import { WalletProvider } from '@/providers/WalletProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { DrawerProvider, useDrawer } from '@/components/drawer/DrawerProvider';
+import { WalletSheetProvider } from '@/features/wallet/WalletSheetProvider';
 import 'react-native-reanimated';
-
-const LazyWalletDrawer = React.lazy(() =>
-  import('@/components/drawer/WalletDrawer').then((module) => ({
-    default: module.WalletDrawer,
-  })),
-);
-
-function WalletDrawerMount() {
-  const { isOpen } = useDrawer();
-  const [hasOpened, setHasOpened] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) setHasOpened(true);
-  }, [isOpen]);
-
-  if (!hasOpened) return null;
-
-  return (
-    <Suspense fallback={null}>
-      <LazyWalletDrawer />
-    </Suspense>
-  );
-}
 
 export default function RootLayout() {
   return (
     <PrivyProvider>
     <WalletProvider>
-    <DrawerProvider>
+    <WalletSheetProvider>
       <View style={{ flex: 1 }}>
         <ErrorBoundary>
           <Stack>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="feed" options={{ headerShown: false }} />
-            <Stack.Screen name="predict" options={{ headerShown: false }} />
-            <Stack.Screen name="predict-market/[slug]" options={{ headerShown: false }} />
-            <Stack.Screen name="predict-sport/[sport]/[slug]" options={{ headerShown: false }} />
-            <Stack.Screen name="predict-profile" options={{ headerShown: false }} />
-            <Stack.Screen name="predict-position/[conditionId]" options={{ headerShown: false }} />
             <Stack.Screen name="swap" options={{ headerShown: false }} />
-            <Stack.Screen name="trade" options={{ headerShown: false }} />
-            <Stack.Screen name="trade/[symbol]" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/polymarket" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/polymarket/profile" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/polymarket/market/[slug]" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/polymarket/sport/[sport]/[slug]" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/polymarket/position/[conditionId]" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/pacifica" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/pacifica/profile" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/pacifica/[symbol]" options={{ headerShown: false }} />
             <Stack.Screen name="markets/phoenix" options={{ headerShown: false }} />
             <Stack.Screen name="markets/phoenix/profile" options={{ headerShown: false }} />
             <Stack.Screen name="markets/phoenix/[symbol]" options={{ headerShown: false }} />
@@ -57,10 +35,9 @@ export default function RootLayout() {
             <Stack.Screen name="markets/meteora/[poolAddress]" options={{ headerShown: false }} />
           </Stack>
         </ErrorBoundary>
-        <WalletDrawerMount />
       </View>
       <StatusBar style="light" />
-    </DrawerProvider>
+    </WalletSheetProvider>
     </WalletProvider>
     </PrivyProvider>
   );

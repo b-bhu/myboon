@@ -25,8 +25,8 @@ const EMPTY_COPY: Record<EmptyPortfolioProps['mode'], {
 }> = {
   'no-account': {
     icon: 'check-circle',
-    title: 'Sign in to Predict',
-    description: 'Sign in to set up Predict and start making picks. One signature, no transaction, no gas, no cost.',
+    title: 'Set up Polymarket',
+    description: 'Set up Polymarket to start making picks. No transaction, no gas, no cost.',
   },
   'no-balance': {
     icon: 'add-card',
@@ -45,7 +45,11 @@ export function EmptyPortfolio({ mode, onPrimaryAction, primaryLabel }: EmptyPor
   const [trending, setTrending] = useState<TrendingMarket[]>([]);
   const [loading, setLoading] = useState(true);
   const copy = EMPTY_COPY[mode];
-  const signedOut = mode === 'no-account' && primaryLabel.toLowerCase() === 'sign in';
+  // Matched on the label because that is the only signal the caller passes.
+  // Kept in step with `predict-profile.tsx`, which sends 'Connect wallet' when
+  // no wallet is connected and 'Set up Polymarket' once one is — a stale value
+  // here silently shows setup copy above a connect button.
+  const signedOut = mode === 'no-account' && primaryLabel.toLowerCase() === 'connect wallet';
 
   useEffect(() => {
     fetchTrendingMarkets(5)
@@ -62,11 +66,11 @@ export function EmptyPortfolio({ mode, onPrimaryAction, primaryLabel }: EmptyPor
             <MaterialIcons name={copy.icon} size={24} color={tokens.colors.viridian} />
           </View>
           <Text style={styles.onboardTitle}>
-            {signedOut ? 'Sign in to use Predict' : copy.title}
+            {signedOut ? 'Connect wallet' : copy.title}
           </Text>
           <Text style={styles.onboardSubtitle}>
             {signedOut
-              ? 'Connect your wallet to set up Predict, make picks, and collect winnings in one place.'
+              ? 'Connect a wallet to set up Polymarket, make picks, and collect winnings in one place.'
               : copy.description}
           </Text>
         </View>
@@ -77,7 +81,7 @@ export function EmptyPortfolio({ mode, onPrimaryAction, primaryLabel }: EmptyPor
           </Pressable>
           {!signedOut && (
             <Text style={styles.reassurance}>
-              One signature prepares your Predict account.{'\n'}No transaction. No gas. No cost.
+              One signature prepares your Polymarket account.{'\n'}No transaction. No gas. No cost.
             </Text>
           )}
         </View>
@@ -130,7 +134,7 @@ export function EmptyPortfolio({ mode, onPrimaryAction, primaryLabel }: EmptyPor
               <Pressable
                 key={`${m.slug}-${i}`}
                 style={styles.marketRow}
-                onPress={() => router.push(`/predict-market/${encodeURIComponent(m.slug)}`)}
+                onPress={() => router.push(`/markets/polymarket/market/${encodeURIComponent(m.slug)}`)}
                 accessibilityLabel={`View market: ${m.question}`}
               >
                 <View style={styles.marketInfo}>

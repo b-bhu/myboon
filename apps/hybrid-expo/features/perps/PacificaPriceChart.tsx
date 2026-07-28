@@ -32,7 +32,7 @@ interface PriceChartProps {
   onScrub?: (price: number | null, time: number | null) => void;
 }
 
-export function PriceChart({ symbol, height = 160, onScrub }: PriceChartProps) {
+export function PacificaPriceChart({ symbol, height = 160, onScrub }: PriceChartProps) {
   const [tfIndex, setTfIndex] = useState(1); // default 1D
   const [candles, setCandles] = useState<Candle[]>([]);
   const [loading, setLoading] = useState(true);

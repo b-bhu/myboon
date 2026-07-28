@@ -27,7 +27,7 @@ interface InlineNumpadProps {
   /** Whether the confirm button should be disabled (e.g. wallet not ready) */
   disabled?: boolean;
   guardrail?: PredictOrderGuardrail | null;
-  /** Show Predict sign-in/setup prompt instead of the amount entry controls. */
+  /** Show Polymarket sign-in/setup prompt instead of the amount entry controls. */
   setupRequired?: boolean;
   onSetupPress?: () => void;
   setupSubmitting?: boolean;
@@ -130,19 +130,19 @@ export function InlineNumpad({
       <View style={styles.inner}>
         {setupRequired ? (
           <View style={styles.setupPrompt}>
-            <Text style={styles.setupEyebrow}>Predict setup</Text>
-            <Text style={styles.setupTitle}>Sign in to use Predict</Text>
+            <Text style={styles.setupEyebrow}>Polymarket setup</Text>
+            <Text style={styles.setupTitle}>Set up Polymarket</Text>
             <Text style={styles.setupCopy}>
-              Sign once to set up the Predict account linked to this wallet. One signature, no transaction, no gas, no cost.
+              Sign once to set up the Polymarket account linked to this wallet. One signature, no transaction, no gas, no cost.
             </Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={setupSubmitting ? 'Signing in to Predict' : 'Sign in to Predict'}
+              accessibilityLabel={setupSubmitting ? 'Setting up Polymarket' : 'Set up Polymarket'}
               accessibilityState={{ disabled: setupSubmitting, busy: setupSubmitting }}
               disabled={setupSubmitting}
               style={[styles.setupBtn, setupSubmitting && styles.confirmDisabled]}
               onPress={onSetupPress}>
-              <Text style={styles.setupBtnText}>{setupSubmitting ? 'Signing in...' : 'Sign in to Predict'}</Text>
+              <Text style={styles.setupBtnText}>{setupSubmitting ? 'Setting up...' : 'Set up Polymarket'}</Text>
             </Pressable>
             <Text style={styles.setupReassurance}>No transaction. No gas. No cost.</Text>
           </View>

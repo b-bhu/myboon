@@ -218,7 +218,9 @@ describe('TC-SEC-005: no key material reaches the clipboard', () => {
     // Rather than assert zero — copying a public address is a legitimate
     // feature — assert that each surviving call site copies an address. A new
     // call site with any other argument fails here and must be reviewed.
-    const allowed = /setStringAsync\((address|walletAddress|depositAddress)\)/;
+    // `connectedAddress` is the wallet sheet's copy affordance. It reads from
+    // `solana.address` / `evm.address` — a public address, never key material.
+    const allowed = /setStringAsync\((address|walletAddress|depositAddress|connectedAddress)\)/;
     for (const hit of hits) {
       assert.ok(
         allowed.test(hit),

@@ -67,30 +67,34 @@ export function PerpsAccountRow({
   const isPending = (source.status === 'idle' || source.status === 'loading' || source.status === 'failed') && !hasValue;
 
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${ROW_LABEL[protocol]}`}
-      style={({ pressed }) => [
-        styles.row,
-        { backgroundColor: ROW_TINT[protocol] },
-        isPending && styles.rowPending,
-        pressed && styles.rowPressed,
-      ]}
-    >
-      <View style={styles.topRow}>
-        <View style={styles.nameRow}>
-          <Text style={[styles.name, { color: ROW_NAME_COLOR[protocol] }]}>{ROW_LABEL[protocol]}</Text>
-          <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
+    <View style={[styles.row, { backgroundColor: ROW_TINT[protocol] }, isPending && styles.rowPending]}>
+      {/*
+        Only the summary is pressable. React Native Web renders a `Pressable`
+        with `accessibilityRole="button"` as a real `<button>`, and a `<button>`
+        inside a `<button>` is invalid HTML — React logs a hydration error and
+        the inner control does not reliably receive clicks. The retry buttons
+        below are therefore siblings of this pressable, never descendants.
+      */}
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${ROW_LABEL[protocol]}`}
+        style={({ pressed }) => [styles.summary, pressed && styles.rowPressed]}
+      >
+        <View style={styles.topRow}>
+          <View style={styles.nameRow}>
+            <Text style={[styles.name, { color: ROW_NAME_COLOR[protocol] }]}>{ROW_LABEL[protocol]}</Text>
+            <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
+          </View>
+          {hasValue && source.valueUsd !== null ? (
+            <Text style={styles.value}>{formatUsd(source.valueUsd)}</Text>
+          ) : (
+            <View style={styles.valueSkeleton} />
+          )}
         </View>
-        {hasValue && source.valueUsd !== null ? (
-          <Text style={styles.value}>{formatUsd(source.valueUsd)}</Text>
-        ) : (
-          <View style={styles.valueSkeleton} />
-        )}
-      </View>
 
-      {hasValue ? <PerpsSignal detail={source.detail as PerpsRowDetail | null} /> : null}
+        {hasValue ? <PerpsSignal detail={source.detail as PerpsRowDetail | null} /> : null}
+      </Pressable>
 
       {isStale ? (
         <StaleSignal resolvedAt={source.resolvedAt} onRetry={() => onRetry(protocol)} />
@@ -102,7 +106,7 @@ export function PerpsAccountRow({
           onRetry={() => onRetry(protocol)}
         />
       ) : null}
-    </Pressable>
+    </View>
   );
 }
 
@@ -206,6 +210,15 @@ const styles = StyleSheet.create({
   },
   rowPressed: {
     opacity: 0.82,
+  },
+  /**
+   * The tappable summary. Carries no padding or background of its own — the
+   * parent `row` owns those — so splitting the row into a pressable summary
+   * plus sibling retry controls is visually identical to the old single
+   * pressable, while keeping the retry `<button>` out of the outer one.
+   */
+  summary: {
+    alignSelf: 'stretch',
   },
   topRow: {
     flexDirection: 'row',

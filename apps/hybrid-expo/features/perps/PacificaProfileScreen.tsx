@@ -33,11 +33,11 @@ import type { PerpsAccount, PerpsPosition, PerpsOrder } from '@/features/perps/p
 import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { semantic, tokens } from '@/theme';
 
-const LazyDepositModal = lazy(() =>
-  import('@/features/perps/DepositModal').then((module) => ({ default: module.DepositModal })),
+const LazyPacificaDepositModal = lazy(() =>
+  import('@/features/perps/PacificaDepositModal').then((module) => ({ default: module.PacificaDepositModal })),
 );
-const LazyWithdrawModal = lazy(() =>
-  import('@/features/perps/WithdrawModal').then((module) => ({ default: module.WithdrawModal })),
+const LazyPacificaWithdrawModal = lazy(() =>
+  import('@/features/perps/PacificaWithdrawModal').then((module) => ({ default: module.PacificaWithdrawModal })),
 );
 
 // C-15: Trade history stored in AsyncStorage
@@ -84,14 +84,15 @@ function orderTypeLabel(type: string): string {
   return type;
 }
 
-interface ProfileViewProps {
-  onBack: () => void;
+interface PacificaProfileScreenProps {
+  /** Optional override. Defaults to router back, matching the other profiles. */
+  onBack?: () => void;
 }
 
 // C-14: Polling interval (30 seconds)
 const POLL_INTERVAL = 30_000;
 
-export function ProfileView({ onBack }: ProfileViewProps) {
+export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
   const router = useRouter();
   const { connected, address, signMessage } = useWallet();
   const connectSheet = useConnectionSheet('solana');
@@ -157,7 +158,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
   }, [account]);
 
   const goToMarket = useCallback((symbol: string) => {
-    router.push(`/trade/${encodeURIComponent(symbol)}`);
+    router.push(`/markets/pacifica/${encodeURIComponent(symbol)}`);
   }, [router]);
 
   const fetchAll = useCallback((addr: string, mode: 'initial' | 'refresh' | 'silent' = 'initial') => {
@@ -360,7 +361,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
   return (
     <View style={styles.container}>
       <AppTopBar
-        left={<AppTopBarIconButton icon="arrow-back" onPress={onBack} accessibilityLabel="Go back" />}
+        left={<AppTopBarIconButton icon="arrow-back" onPress={onBack ?? (() => router.back())} accessibilityLabel="Go back" />}
         center={<AppTopBarTitle align="left">Profile</AppTopBarTitle>}
         right={hasPacificAccount ? (
           <View style={styles.headerActions}>
@@ -399,7 +400,11 @@ export function ProfileView({ onBack }: ProfileViewProps) {
           ) : undefined
         }>
 
-        {/* ── Identity section ── */}
+        {/* ── Identity section ──
+            Hidden while disconnected. An empty avatar over "Not Connected"
+            duplicates the connect prompt below it, and no other app's profile
+            shows an identity row before there is an identity. */}
+        {connected ? (
         <View style={styles.identity}>
           <View style={styles.avatarRing}>
             <View style={styles.avatarInner}>
@@ -432,6 +437,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
             </View>
           ) : null}
         </View>
+        ) : null}
 
 
         {/* ── Not connected ── */}
@@ -440,7 +446,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
             <MaterialIcons name="account-balance-wallet" size={28} color={semantic.text.faint} />
             <Text style={styles.emptyTitle}>Connect wallet</Text>
             <Text style={styles.emptyDesc}>
-              Connect a Solana wallet to view your Pacifica trading account.
+              Connect a wallet to view your Pacifica trading account.
             </Text>
             <Pressable style={styles.primaryBtn} onPress={() => connectSheet.open('solana')}>
               <Text style={styles.primaryBtnText}>Connect wallet</Text>
@@ -709,7 +715,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
 
       {depositModalLoaded && (
         <Suspense fallback={null}>
-          <LazyDepositModal
+          <LazyPacificaDepositModal
             visible={depositOpen}
             onClose={() => setDepositOpen(false)}
             onRequestConnect={() => connectSheet.open('solana')}
@@ -718,7 +724,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
       )}
       {withdrawModalLoaded && (
         <Suspense fallback={null}>
-          <LazyWithdrawModal
+          <LazyPacificaWithdrawModal
             visible={withdrawOpen}
             onClose={() => setWithdrawOpen(false)}
             onRequestConnect={() => connectSheet.open('solana')}
@@ -1023,19 +1029,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
   },
+  // Matches the Phoenix and Meteora connect prompts — one primary-action
+  // treatment across every app's disconnected profile.
   primaryBtn: {
-    backgroundColor: tokens.colors.viridian,
-    borderRadius: tokens.radius.md,
-    paddingVertical: tokens.spacing.sm + 2,
-    paddingHorizontal: tokens.spacing.xl,
     marginTop: tokens.spacing.xs,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: tokens.colors.accent,
+    paddingHorizontal: tokens.spacing.lg,
   },
   primaryBtnText: {
     fontFamily: 'monospace',
-    fontSize: tokens.fontSize.sm,
-    fontWeight: '700',
-    color: '#fff',
-    letterSpacing: 1,
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '900',
+    color: semantic.background.screen,
+    textTransform: 'uppercase',
   },
 
   // Equity card (C-16 enhanced)

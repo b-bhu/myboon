@@ -23,6 +23,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -30,6 +31,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import type { Chain, WalletBackend } from '@/features/chain/chain.contract';
 import {
@@ -46,10 +48,24 @@ type ConnectStep =
   | { kind: 'options' }
   | { kind: 'email_otp'; email: string }
   | { kind: 'connecting'; backend: WalletBackend }
+  | { kind: 'confirm_disconnect' }
   | { kind: 'error'; message: string };
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+/**
+ * Did the user dismiss the wallet's own prompt?
+ *
+ * Wallet adapters signal this by throwing, with no error code to key off — so
+ * matching the message text is the only option available. Kept deliberately
+ * narrow: an unrecognised failure falls through to the error step rather than
+ * being silently swallowed as a cancellation.
+ */
+function isUserCancelled(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /plugin closed|user rejected|user denied|request rejected|cancell?ed/i.test(message);
 }
 
 export function ConnectionSheet({
@@ -68,7 +84,7 @@ export function ConnectionSheet({
   const privy = usePrivyWallet();
   const evm = usePrivyEvmWallet();
   const solana = useWallet();
-  const { activate } = useChainActivation();
+  const { activate, deactivate } = useChainActivation();
 
   const [step, setStep] = useState<ConnectStep>({ kind: 'options' });
   const [emailInput, setEmailInput] = useState('');
@@ -169,6 +185,11 @@ export function ConnectionSheet({
       if (chain === 'solana') await privy.waitForWallet();
       await finishConnect();
     } catch (error: unknown) {
+      // Dismissing the system passkey prompt is a choice, not a failure.
+      if (isUserCancelled(error)) {
+        setStep({ kind: 'options' });
+        return;
+      }
       setStep({ kind: 'error', message: errorMessage(error, 'Passkey failed') });
     } finally {
       setBusy(false);
@@ -182,14 +203,27 @@ export function ConnectionSheet({
    * cancelled the wallet chooser or hit a transport failure sees the UI simply
    * vanish with nothing connected. Here the failure surfaces as an error step.
    */
-  const handleWalletConnect = useCallback(async () => {
+  const handleWalletConnect = useCallback(async (walletName?: string) => {
     if (busy) return;
     setBusy(true);
     setStep({ kind: 'connecting', backend: 'external_mwa' });
     try {
-      await solana.connect();
+      // Naming the wallet matters on web, where the adapter can enumerate
+      // installed extensions: without one it silently connects to `wallets[0]`,
+      // so a user with several extensions gets whichever happens to be first
+      // rather than the one they meant. On native the argument is ignored —
+      // MWA cannot enumerate, and the OS shows its own chooser.
+      await solana.connect(walletName);
       await finishConnect();
     } catch (error: unknown) {
+      // Cancelling is not a failure. Wallet adapters report a dismissed popup
+      // as a thrown error ("Plugin Closed", "User rejected the request"), and
+      // showing that as a connection failure blames the user for changing
+      // their mind. Return to the options instead.
+      if (isUserCancelled(error)) {
+        setStep({ kind: 'options' });
+        return;
+      }
       setStep({
         kind: 'error',
         message: errorMessage(error, 'Could not connect a Solana wallet.'),
@@ -199,12 +233,64 @@ export function ConnectionSheet({
     }
   }, [busy, solana, finishConnect]);
 
+  /**
+   * A wallet is already connected for the requested chain, so the sheet shows
+   * who you are rather than how to connect. Same sheet, two states — opening it
+   * from the avatar when connected must not offer to connect again.
+   */
+  const connectedAddress = chain === 'solana' ? solana.address : evm.address;
+  const isConnected = step.kind === 'options' && !!connectedAddress;
+
+  const handleCopyAddress = useCallback(async () => {
+    if (!connectedAddress) return;
+    await Clipboard.setStringAsync(connectedAddress);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [connectedAddress]);
+
+  /**
+   * Confirmation is a step in the sheet, not `Alert.alert`.
+   *
+   * `Alert.alert` renders nothing on React Native Web — it is a no-op there, so
+   * a confirm-then-act flow built on it silently never acts. The old drawer had
+   * this bug too, which is why disconnect never worked in a browser.
+   */
+  const handleDisconnect = useCallback(() => {
+    if (busy) return;
+    setStep({ kind: 'confirm_disconnect' });
+  }, [busy]);
+
+  const confirmDisconnect = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // Drop the connection first, then the activation record. The reverse
+      // order re-activates immediately: activation reconciles from the live
+      // connection, so clearing the record while the wallet is still connected
+      // just gets undone on the next render.
+      if (chain === 'solana' && solana.disconnect) await solana.disconnect();
+      else if (privy.isPrivyUser) await privy.disconnect();
+      await deactivate(chain);
+      resetAndClose();
+    } catch (error) {
+      setStep({
+        kind: 'error',
+        message: errorMessage(error, 'Could not disconnect.'),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, chain, deactivate, solana, privy, resetAndClose]);
+
   const title =
     step.kind === 'email_otp'
       ? 'Enter code'
       : step.kind === 'error'
         ? 'Connection failed'
-        : 'Connect wallet';
+        : step.kind === 'confirm_disconnect'
+          ? 'Disconnect?'
+          : isConnected
+            ? 'Wallet'
+            : 'Connect wallet';
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={resetAndClose}>
@@ -217,7 +303,46 @@ export function ConnectionSheet({
             </Pressable>
           </View>
 
-          {step.kind === 'options' ? (
+          {isConnected ? (
+            <ConnectedStep
+              address={connectedAddress}
+              busy={busy}
+              onCopy={handleCopyAddress}
+              onDisconnect={handleDisconnect}
+            />
+          ) : null}
+
+          {step.kind === 'confirm_disconnect' ? (
+            <View style={styles.body}>
+              <Text style={styles.infoText}>You can reconnect anytime.</Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.disconnectBtn,
+                  busy && styles.primaryBtnDisabled,
+                  pressed && styles.primaryBtnPressed,
+                ]}
+                onPress={confirmDisconnect}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm disconnect"
+              >
+                <MaterialIcons name="power-settings-new" size={14} color={tokens.colors.vermillion} />
+                <Text style={styles.disconnectText}>
+                  {busy ? 'Disconnecting...' : 'Disconnect'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setStep({ kind: 'options' })}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={styles.backLink}>Cancel</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {step.kind === 'options' && !isConnected ? (
             <OptionsStep
               chain={chain}
               options={options}
@@ -227,6 +352,7 @@ export function ConnectionSheet({
               onSendEmail={handleSendEmail}
               onPasskey={handlePasskey}
               onWalletConnect={handleWalletConnect}
+              walletOptions={solana.walletOptions ?? []}
             />
           ) : null}
 
@@ -305,6 +431,58 @@ export function ConnectionSheet({
   );
 }
 
+/**
+ * The sheet when a wallet is already connected: identity, not connection.
+ *
+ * Address and disconnect only. Balances and positions live in the wallet
+ * module — this answers "who am I", not "what do I have".
+ */
+function ConnectedStep({
+  address,
+  busy,
+  onCopy,
+  onDisconnect,
+}: {
+  address: string;
+  busy: boolean;
+  onCopy: () => void;
+  onDisconnect: () => void;
+}) {
+  const short = `${address.slice(0, 6)}···${address.slice(-4)}`;
+
+  return (
+    <View style={styles.body}>
+      <Pressable
+        style={({ pressed }) => [styles.addressRow, pressed && styles.primaryBtnPressed]}
+        onPress={onCopy}
+        accessibilityRole="button"
+        accessibilityLabel={`Copy address ${short}`}
+      >
+        <View style={styles.addressText}>
+          <Text style={styles.addressValue}>{short}</Text>
+          <Text style={styles.addressHint}>Tap to copy</Text>
+        </View>
+        <MaterialIcons name="content-copy" size={16} color={semantic.text.dim} />
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [
+          styles.disconnectBtn,
+          busy && styles.primaryBtnDisabled,
+          pressed && styles.primaryBtnPressed,
+        ]}
+        onPress={onDisconnect}
+        disabled={busy}
+        accessibilityRole="button"
+        accessibilityLabel="Disconnect wallet"
+      >
+        <MaterialIcons name="power-settings-new" size={14} color={tokens.colors.vermillion} />
+        <Text style={styles.disconnectText}>{busy ? 'Disconnecting...' : 'Disconnect'}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function OptionsStep({
   chain,
   options,
@@ -314,6 +492,7 @@ function OptionsStep({
   onSendEmail,
   onPasskey,
   onWalletConnect,
+  walletOptions,
 }: {
   chain: Chain;
   options: readonly ConnectOption[];
@@ -322,7 +501,9 @@ function OptionsStep({
   onChangeEmail: (value: string) => void;
   onSendEmail: () => void;
   onPasskey: () => void;
-  onWalletConnect: () => void;
+  onWalletConnect: (walletName?: string) => void;
+  /** Detected external wallets. Empty where the platform cannot enumerate. */
+  walletOptions: readonly { name: string; icon?: string }[];
 }) {
   const hasEmail = options.includes('email');
   const secondary = options.filter((option) => option !== 'email');
@@ -377,28 +558,72 @@ function OptionsStep({
         </View>
       ) : null}
 
-      {secondary.map((option) => (
-        <Pressable
-          key={option}
-          style={({ pressed }) => [
-            styles.secondaryBtn,
-            busy && styles.primaryBtnDisabled,
-            pressed && styles.primaryBtnPressed,
-          ]}
-          disabled={busy}
-          onPress={option === 'passkey' ? onPasskey : onWalletConnect}
-          accessibilityRole="button"
-        >
-          <MaterialIcons
-            name={option === 'passkey' ? 'fingerprint' : 'account-balance-wallet'}
-            size={16}
-            color={semantic.text.dim}
-          />
-          <Text style={styles.secondaryBtnText}>
-            {option === 'passkey' ? 'Sign in with Passkey' : 'Solana Wallet'}
-          </Text>
-        </Pressable>
-      ))}
+      {secondary.map((option) => {
+        if (option === 'passkey') {
+          return (
+            <Pressable
+              key={option}
+              style={({ pressed }) => [
+                styles.secondaryBtn,
+                busy && styles.primaryBtnDisabled,
+                pressed && styles.primaryBtnPressed,
+              ]}
+              disabled={busy}
+              onPress={onPasskey}
+              accessibilityRole="button"
+            >
+              <MaterialIcons name="fingerprint" size={16} color={semantic.text.dim} />
+              <Text style={styles.secondaryBtnText}>Sign in with Passkey</Text>
+            </Pressable>
+          );
+        }
+
+        // One row per detected wallet where the platform can enumerate them
+        // (web, via the wallet adapter). Naming the wallet is what stops the
+        // adapter silently defaulting to `wallets[0]`. Native returns an empty
+        // list — MWA cannot enumerate — so it falls through to a single button
+        // and the OS shows its own chooser.
+        if (walletOptions.length > 0) {
+          return walletOptions.map((wallet) => (
+            <Pressable
+              key={wallet.name}
+              style={({ pressed }) => [
+                styles.secondaryBtn,
+                busy && styles.primaryBtnDisabled,
+                pressed && styles.primaryBtnPressed,
+              ]}
+              disabled={busy}
+              onPress={() => onWalletConnect(wallet.name)}
+              accessibilityRole="button"
+              accessibilityLabel={`Connect ${wallet.name}`}
+            >
+              {wallet.icon ? (
+                <Image source={{ uri: wallet.icon }} style={styles.walletIcon} />
+              ) : (
+                <MaterialIcons name="account-balance-wallet" size={16} color={semantic.text.dim} />
+              )}
+              <Text style={styles.secondaryBtnText}>{wallet.name}</Text>
+            </Pressable>
+          ));
+        }
+
+        return (
+          <Pressable
+            key={option}
+            style={({ pressed }) => [
+              styles.secondaryBtn,
+              busy && styles.primaryBtnDisabled,
+              pressed && styles.primaryBtnPressed,
+            ]}
+            disabled={busy}
+            onPress={() => onWalletConnect()}
+            accessibilityRole="button"
+          >
+            <MaterialIcons name="account-balance-wallet" size={16} color={semantic.text.dim} />
+            <Text style={styles.secondaryBtnText}>Solana Wallet</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -494,6 +719,52 @@ const styles = StyleSheet.create({
     fontSize: tokens.fontSize.md,
     fontWeight: '600',
     color: semantic.text.dim,
+  },
+  walletIcon: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: tokens.spacing.md,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    borderRadius: tokens.radius.md,
+    paddingVertical: tokens.spacing.md,
+    paddingHorizontal: tokens.spacing.md,
+    minHeight: 44,
+  },
+  addressText: {
+    gap: 2,
+  },
+  addressValue: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.md,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  addressHint: {
+    fontSize: tokens.fontSize.xs,
+    color: semantic.text.faint,
+  },
+  disconnectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: tokens.spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(239,71,111,0.35)',
+    borderRadius: tokens.radius.md,
+    paddingVertical: tokens.spacing.md + 2,
+    minHeight: 44,
+  },
+  disconnectText: {
+    fontSize: tokens.fontSize.md,
+    fontWeight: '600',
+    color: tokens.colors.vermillion,
   },
   orRow: {
     flexDirection: 'row',

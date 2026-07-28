@@ -134,7 +134,7 @@ function statusFromTransaction(transaction: DepositBridgeTransaction | null, sta
     case 'SUBMITTED':
       return {
         label: 'Wrapping / bridging funds',
-        detail: 'The bridge is routing funds into your Predict wallet.',
+        detail: 'The bridge is routing funds into your Polymarket wallet.',
         tone: 'active',
       };
     case 'COMPLETED':

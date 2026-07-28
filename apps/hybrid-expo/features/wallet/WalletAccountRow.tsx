@@ -71,7 +71,16 @@ export function WalletAccountRow({
   const isStale = source.status === 'stale' || (source.status === 'loading' && hasValue);
   const isPending = (source.status === 'idle' || source.status === 'loading' || source.status === 'failed') && !hasValue;
 
-  const content = (
+  /**
+   * The tappable part of the row: name, value, and detail.
+   *
+   * Deliberately excludes the retry affordances below. React Native Web renders
+   * a `Pressable` with `accessibilityRole="button"` as a real `<button>`, and a
+   * `<button>` inside a `<button>` is invalid HTML — React logs a hydration
+   * error and the inner control does not reliably receive clicks. So the retry
+   * buttons are siblings of this pressable, never descendants.
+   */
+  const summary = (
     <>
       <View style={styles.topRow}>
         <View style={styles.nameRow}>
@@ -88,7 +97,11 @@ export function WalletAccountRow({
       </View>
 
       {hasValue ? <RowSignal protocol={protocol} detail={source.detail} /> : null}
+    </>
+  );
 
+  const signals = (
+    <>
       {isStale ? (
         <StaleSignal resolvedAt={source.resolvedAt} onRetry={() => onRetry(protocol)} />
       ) : null}
@@ -102,28 +115,22 @@ export function WalletAccountRow({
     </>
   );
 
-  if (!onPress) {
-    return (
-      <View style={[styles.row, { backgroundColor: ROW_TINT[protocol] }, isPending && styles.rowPending]}>
-        {content}
-      </View>
-    );
-  }
-
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${ROW_LABEL[protocol]}`}
-      style={({ pressed }) => [
-        styles.row,
-        { backgroundColor: ROW_TINT[protocol] },
-        isPending && styles.rowPending,
-        pressed && styles.rowPressed,
-      ]}
-    >
-      {content}
-    </Pressable>
+    <View style={[styles.row, { backgroundColor: ROW_TINT[protocol] }, isPending && styles.rowPending]}>
+      {onPress ? (
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${ROW_LABEL[protocol]}`}
+          style={({ pressed }) => [styles.summary, pressed && styles.rowPressed]}
+        >
+          {summary}
+        </Pressable>
+      ) : (
+        <View style={styles.summary}>{summary}</View>
+      )}
+      {signals}
+    </View>
   );
 }
 
@@ -294,6 +301,15 @@ const styles = StyleSheet.create({
   },
   rowPressed: {
     opacity: 0.82,
+  },
+  /**
+   * The tappable summary. Carries no padding or background of its own — the
+   * parent `row` owns those — so splitting the row into a pressable summary
+   * plus sibling retry controls is visually identical to the old single
+   * pressable, while keeping the retry `<button>` out of the outer one.
+   */
+  summary: {
+    alignSelf: 'stretch',
   },
   topRow: {
     flexDirection: 'row',

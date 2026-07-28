@@ -36,9 +36,9 @@ import {
 } from '@/features/perps/perps.signed-api';
 import type { PerpsMarket, PerpsOrder, PerpsPosition } from '@/features/perps/perps.types';
 import { usePerpsLivePrice } from '@/features/perps/usePerpsWebSocket';
-import { PriceChart } from '@/features/perps/PriceChart';
+import { PacificaPriceChart } from '@/features/perps/PacificaPriceChart';
 import { PACIFIC_BUILDER_CODE } from '@/features/perps/pacific.config';
-import { DepositModal } from '@/features/perps/DepositModal';
+import { PacificaDepositModal } from '@/features/perps/PacificaDepositModal';
 import { semantic, tokens } from '@/theme';
 
 type Side = 'long' | 'short';
@@ -51,11 +51,11 @@ const HOLD_DURATION = 800;
 // Button feedback states
 type ButtonState = 'idle' | 'holding' | 'submitting' | 'success' | 'error';
 
-interface MarketDetailScreenProps {
+interface PacificaMarketDetailScreenProps {
   symbol: string;
 }
 
-export function MarketDetailScreen({ symbol }: MarketDetailScreenProps) {
+export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScreenProps) {
   const router = useRouter();
   const { connected, address, signMessage } = useWallet();
   const connectSheet = useConnectionSheet('solana');
@@ -501,7 +501,7 @@ export function MarketDetailScreen({ symbol }: MarketDetailScreenProps) {
         </View>
         )}
         right={(
-        <Pressable onPress={() => router.push('/trade?view=profile')} style={styles.avatarRing}>
+        <Pressable onPress={() => router.push('/markets/pacifica/profile')} style={styles.avatarRing}>
           <View style={styles.avatarInner}>
             <MaterialIcons name="person" size={12} color={semantic.text.primary} />
           </View>
@@ -526,7 +526,7 @@ export function MarketDetailScreen({ symbol }: MarketDetailScreenProps) {
         <>
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
             {/* Chart */}
-            <PriceChart symbol={symbol} height={140} onScrub={handleScrub} />
+            <PacificaPriceChart symbol={symbol} height={140} onScrub={handleScrub} />
 
             {/* Stats strip */}
             <View style={styles.statsStrip}>
@@ -950,7 +950,7 @@ export function MarketDetailScreen({ symbol }: MarketDetailScreenProps) {
         </Pressable>
       )}
 
-      <DepositModal
+      <PacificaDepositModal
         visible={depositOpen}
         onClose={() => setDepositOpen(false)}
         onRequestConnect={() => connectSheet.open('solana')}
@@ -1005,7 +1005,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // Avatar (matches TradeListScreen pattern)
+  // Avatar (matches PacificaMarketListScreen pattern)
   avatarRing: {
     width: 28,
     height: 28,

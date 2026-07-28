@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTopBar, AppTopBarLogo } from '@/components/AppTopBar';
-import { AvatarTrigger } from '@/components/drawer/AvatarTrigger';
+import { AppProfileButton } from '@/components/AppProfileButton';
 import { formatUsdCompact } from '@/lib/format';
 import {
   fetchPhoenixMarkets,
@@ -21,6 +21,7 @@ import {
   formatPhoenixPrice,
   type PhoenixMarket,
 } from '@/features/perps/phoenix.api';
+import { useWallet } from '@/hooks/useWallet';
 import { semantic, tokens } from '@/theme';
 
 const MarketRow = memo(function MarketRow({
@@ -71,6 +72,7 @@ const MarketRow = memo(function MarketRow({
 export function PhoenixMarketListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const wallet = useWallet();
   const [markets, setMarkets] = useState<PhoenixMarket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -125,7 +127,14 @@ export function PhoenixMarketListScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <AppTopBar
         left={<AppTopBarLogo />}
-        right={<AvatarTrigger />}
+        right={
+          <AppProfileButton
+            onPress={() => router.push('/markets/phoenix/profile')}
+            connected={wallet.connected}
+            label="Open Phoenix profile"
+            hint="View your Phoenix trading account"
+          />
+        }
       />
 
       {loading ? (

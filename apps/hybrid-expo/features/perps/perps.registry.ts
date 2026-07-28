@@ -39,7 +39,7 @@ export const PACIFICA_VENUE_DESCRIPTOR = {
   venueId: 'pacifica',
   displayName: 'Pacifica',
   shortName: 'Pacifica',
-  routeBase: '/trade',
+  routeBase: '/markets/pacifica',
   apiBasePath: '/perps/pacifica',
   env: PACIFIC_ENV,
   integrationStatus: 'active',

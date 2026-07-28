@@ -17,7 +17,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AvatarTrigger } from '@/components/drawer/AvatarTrigger';
+import { AvatarTrigger } from '@/components/AvatarTrigger';
 import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
 import { MeteoraPositionActionSheet } from '@/features/meteora/components/MeteoraPositionActionSheet';
 import { meteoraClient } from '@/features/meteora/meteora.client';
@@ -541,7 +541,7 @@ function DisconnectedState({ onConnect, onBrowse }: { onConnect: () => void; onB
   return (
     <View style={styles.fullState}>
       <MaterialIcons name="account-balance-wallet" size={34} color={METEORA_COLORS.cyan} />
-      <Text style={styles.stateTitle}>Connect a Solana wallet</Text>
+      <Text style={styles.stateTitle}>Connect wallet</Text>
       <Text style={styles.stateMessage}>Your address is needed to load Meteora positions, orders, and history.</Text>
       <Pressable onPress={onConnect} style={styles.primaryAction} accessibilityRole="button">
         <Text style={styles.primaryActionText}>Connect wallet</Text>

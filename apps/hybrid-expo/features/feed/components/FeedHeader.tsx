@@ -1,7 +1,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { AvatarTrigger } from '@/components/drawer/AvatarTrigger';
+import { AvatarTrigger } from '@/components/AvatarTrigger';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 
 export function FeedHeader() {
