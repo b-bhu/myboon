@@ -24,7 +24,9 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -294,7 +296,16 @@ export function ConnectionSheet({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={resetAndClose}>
-      <View style={styles.overlay}>
+      {/*
+        The sheet is bottom-anchored, so the keyboard covers the email and OTP
+        inputs — the user cannot see what they are typing. Lifting the whole
+        overlay is simpler than scrolling within the sheet, since its content is
+        short enough to fit above the keyboard.
+      */}
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         <View style={styles.sheet}>
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
@@ -426,7 +437,7 @@ export function ConnectionSheet({
             </View>
           ) : null}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

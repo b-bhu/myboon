@@ -27,6 +27,26 @@ export interface PrivyEvmWalletState {
   request: (<T = unknown>(args: { method: string; params?: unknown[] }) => Promise<T>) | null;
 }
 
+/**
+ * Poll a predicate until it holds, or give up.
+ *
+ * Privy settles auth into React state a tick or two after `login*` resolves.
+ * Anything that acts on the login immediately reads the pre-login render and
+ * concludes the user is logged out, so a short wait is the difference between a
+ * working flow and one that fails on a login that actually succeeded.
+ */
+async function waitFor(
+  predicate: () => boolean,
+  { timeoutMs = 5000, intervalMs = 50 } = {},
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return predicate();
+}
+
 export function usePrivyEvmWallet(): PrivyEvmWalletState {
   const { user, isReady } = usePrivy();
   const ethereumWallet = useEmbeddedEthereumWallet();
@@ -40,12 +60,33 @@ export function usePrivyEvmWallet(): PrivyEvmWalletState {
   const address = wallet?.address ?? null;
   const createWallet = ethereumWallet.create;
 
+  // `provision()` is called immediately after login resolves, but this hook's
+  // `authenticated` comes from the render that captured the callback — Privy's
+  // `user` has not propagated through React state yet, so reading the closure
+  // reports a logged-in user as logged out. A ref tracks the live value.
+  const authenticatedRef = useRef(authenticated);
+  authenticatedRef.current = authenticated;
+
+  // `create` is undefined until Privy is ready, and lands on the same delayed
+  // render as `user` — so it needs the same treatment, or provisioning fails
+  // one step later with "embedded EVM wallets are unavailable".
+  const createWalletRef = useRef(createWallet);
+  createWalletRef.current = createWallet;
+
   const provision = useCallback(async (): Promise<string> => {
     if (address) return address;
-    if (!authenticated) {
-      throw new Error('Log in before activating an EVM wallet.');
+    if (!authenticatedRef.current) {
+      // Give Privy's state a moment to land. The alternative is failing a login
+      // that actually succeeded, which is what "Log in before activating an EVM
+      // wallet" reported when the user had just logged in.
+      const settled = await waitFor(() => authenticatedRef.current);
+      if (!settled) {
+        throw new Error('Log in before activating an EVM wallet.');
+      }
     }
-    if (!createWallet) {
+    const create = createWalletRef.current
+      ?? ((await waitFor(() => !!createWalletRef.current)) ? createWalletRef.current : null);
+    if (!create) {
       throw new Error('Privy embedded EVM wallets are unavailable.');
     }
     if (inflightRef.current) return inflightRef.current;
@@ -53,7 +94,7 @@ export function usePrivyEvmWallet(): PrivyEvmWalletState {
     const pending = (async () => {
       setIsProvisioning(true);
       try {
-        const { user: updated } = await createWallet();
+        const { user: updated } = await create();
         // `create()` resolves with the updated user before the hook's `wallets`
         // array re-renders, so read the address off the returned user rather
         // than waiting a tick for hook state.

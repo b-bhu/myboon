@@ -497,20 +497,24 @@ export default function PredictProfileScreen() {
             </View>
           </View>
           <View style={styles.identityInfo}>
+            {/*
+              Polymarket settles on Polygon, so this header reports the EVM
+              wallet. It previously read `useWallet()` — the Solana accessor —
+              and so showed a connected Phantom address on a screen that cannot
+              use it, telling the user they were ready when setup would fail.
+            */}
             <Text style={styles.handle}>
-              {portfolio?.profile?.name ?? (solanaAddress ? truncate(solanaAddress) : poly.polygonAddress ? truncate(poly.polygonAddress) : '—')}
+              {portfolio?.profile?.name ?? (poly.polygonAddress ? truncate(poly.polygonAddress) : '—')}
             </Text>
-            {connected && (
+            {poly.polygonAddress && (
               <View style={styles.connectedChip}>
                 <View style={styles.connectedDot} />
-                <Text style={styles.connectedText}>
-                  {source === 'privy' ? 'Passkey' : 'Connected'}
-                </Text>
+                <Text style={styles.connectedText}>Connected</Text>
               </View>
             )}
           </View>
 
-          {!isEnabled && !poly.isLoading && !connected && (
+          {!isEnabled && !poly.isLoading && !poly.polygonAddress && (
             <Pressable
               onPress={openConnect}
               style={styles.passkeyCta}
@@ -546,8 +550,11 @@ export default function PredictProfileScreen() {
           <View style={styles.positionsSection}>
             <EmptyPortfolio
               mode="no-account"
-              onPrimaryAction={!connected ? openConnect : handleConnectPredictAccount}
-              primaryLabel={!connected ? 'Connect wallet' : 'Set up Polymarket'}
+              // Gated on the EVM wallet, not the Solana one: offering "Set up
+              // Polymarket" to a user with only a Solana wallet connected sends
+              // them into a flow that cannot complete.
+              onPrimaryAction={!poly.polygonAddress ? openConnect : handleConnectPredictAccount}
+              primaryLabel={!poly.polygonAddress ? 'Connect wallet' : 'Set up Polymarket'}
             />
           </View>
         )}
