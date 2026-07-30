@@ -87,12 +87,13 @@ export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRun
       })
   }, intervalMs)
 
-  // Ticking on an interval is a long-running background job by nature; this
-  // must never hold the process open on its own beyond what setInterval
-  // already implies, so unref() keeps a clean shutdown possible - matching
-  // how every run-*.ts entrypoint here otherwise exits solely on process
-  // signals or an uncaught error, not on this timer's presence.
-  timer.unref?.()
+  // This timer MUST hold a ref. In every run-*.ts daemon entrypoint it is
+  // the ONLY thing keeping the event loop alive between ticks - an earlier
+  // unref() here let each process exit cleanly after its first cycle, which
+  // under PM2 became an infinite restart loop (a new pid every ~7 seconds,
+  // observed live on 2026-07-30). Daemons exit on signals or fatal errors,
+  // not by the scheduler letting go. See the liveness regression test in
+  // polymarket/interval-runner.test.ts.
 
   return {
     stop: () => clearInterval(timer),

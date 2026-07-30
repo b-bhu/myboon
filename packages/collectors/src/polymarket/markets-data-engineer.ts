@@ -424,7 +424,10 @@ async function tagBySlug(slug: string): Promise<GammaTag> {
 
 async function fetchMarketsForTag(tagSlug: string, options: Required<Pick<PolymarketMarketsDataEngineerOptions, 'fetchLimitPerTag'>>, nowMs: number): Promise<NormalizedMarket[]> {
   const tag = await tagBySlug(tagSlug)
-  const url = `${GAMMA_API}/events?tag_slug=${encodeURIComponent(tagSlug)}&active=true&closed=false&limit=${options.fetchLimitPerTag}&order=volume_24hr&ascending=false`
+  // Gamma renamed this order field: `volume_24hr` started returning
+  // `422 {"error":"order fields are not valid"}` (observed 2026-07-30 after
+  // the collectors' ~10-day stop); `volume24hr` is the accepted spelling.
+  const url = `${GAMMA_API}/events?tag_slug=${encodeURIComponent(tagSlug)}&active=true&closed=false&limit=${options.fetchLimitPerTag}&order=volume24hr&ascending=false`
   const events = await fetchJson<GammaEvent[]>(url)
   const markets: NormalizedMarket[] = []
   for (const event of events) {

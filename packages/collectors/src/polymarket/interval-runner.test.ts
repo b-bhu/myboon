@@ -138,3 +138,41 @@ test('interval runner: stop() prevents further ticks from starting', async () =>
 
   assert.equal(runCount, countAtStop)
 })
+
+test('interval runner: KEEPS THE PROCESS ALIVE between ticks (daemon liveness)', async () => {
+  // Regression test for the unref() crash-loop: every run-*.ts entrypoint
+  // finishes its first cycle and then has NOTHING but this interval timer
+  // holding the event loop open. An unref()'d timer let the process exit
+  // cleanly after the first cycle, which under PM2 became an infinite
+  // restart loop (observed live: restart counts of 10+ within two minutes,
+  // a new pid every ~7 seconds). The runner's timer must therefore hold a
+  // ref: a child process whose only pending work is the interval MUST
+  // survive long enough for ticks to fire.
+  const { execFile } = await import('node:child_process')
+  const { mkdtemp, rm, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join, resolve } = await import('node:path')
+
+  const runnerPath = resolve(__dirname, '../pipeline-store/interval-runner.ts')
+  const dir = await mkdtemp(join(tmpdir(), 'interval-liveness-'))
+  const fixture = join(dir, 'fixture.ts')
+  await writeFile(fixture, [
+    `import { startIntervalRunner } from ${JSON.stringify(runnerPath)}`,
+    "startIntervalRunner({ label: 'liveness', intervalMs: 50, run: async () => { console.log('tick') } })",
+    "setTimeout(() => process.exit(0), 400).unref()",
+  ].join('\n'))
+
+  const tsxBin = resolve(__dirname, '../../node_modules/.bin/tsx')
+  try {
+    const { stdout } = await new Promise<{ stdout: string }>((resolvePromise, rejectPromise) => {
+      execFile(tsxBin, [fixture], { timeout: 15_000 }, (error, stdout) => {
+        if (error) rejectPromise(error)
+        else resolvePromise({ stdout })
+      })
+    })
+    // An unref'd timer exits the child before ANY tick fires -> no output.
+    assert.ok(stdout.includes('tick'), `child exited without a single tick; stdout=${JSON.stringify(stdout)}`)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
