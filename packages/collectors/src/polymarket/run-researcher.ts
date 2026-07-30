@@ -61,6 +61,12 @@ async function runOnce(): Promise<void> {
 async function main(): Promise<void> {
   await runOnce()
 
+  // One-shot mode for controlled runs and end-to-end tests. The flag has
+  // been listed in docs/DEPLOY.md's env reference since the PM2 era but the
+  // code never honored it - every sibling runner (data engineer,
+  // entity-manager, editor-draft, publisher) already supports its own.
+  if (process.env.POLYMARKET_RESEARCHER_RUN_ONCE === '1') return
+
   // Overlap guard: a single deep_web candidate can take ~11 minutes and a
   // batch can contain several, so a run can plausibly exceed this 5-minute
   // tick. Without this guard a slow tick would overlap the next one and
