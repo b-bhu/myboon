@@ -15,6 +15,55 @@
 
 PM2 is the source of truth for VPS runtime. `infra/vps/systemd/*` is deprecated and should not be installed for the current Feed pipeline.
 
+Note: `packages/collectors/src/polymarket/run-editor.ts` and `run-publisher.ts`
+(the research-row editor/publisher lane) are intentionally NOT in PM2. The
+production path is researcher → entity-manager → editor-draft → publisher.
+
+---
+
+## Hermes CLI prerequisite
+
+Five of the eight processes shell out to the `hermes` CLI (researcher, both
+entity-managers, editor-draft, news-runner). Before starting PM2 the box needs:
+
+```bash
+# hermes installed, on PATH, and authenticated
+hermes --version
+
+# one-shot structured mode (gate, extractor, editor-draft)
+hermes --ignore-rules -z 'Return exactly this JSON: {"ok": true}'
+
+# chat/tool mode with page reading (news lane AND the research engine)
+hermes chat --profile myboonfeed --toolsets browser,web --quiet \
+  --query 'Open https://example.com and return its <title> as JSON: {"title": "..."}'
+```
+
+If the last command fails, the news lane and the research engine cannot work;
+fix hermes before starting, or set `RESEARCH_ENGINE_DISABLED=1` (researcher
+falls back to the legacy retrieval path, which additionally needs `python3.12`
+and the last30days script at
+`/root/.agents/skills/last30days/scripts/last30days.py`).
+
+---
+
+## Pipeline state lives in SQLite on this box
+
+Since the entity pipeline rebuild, all Polymarket pipeline state (candidates,
+research rows, editor decisions, leases, run ledger) lives in a local SQLite
+file, NOT in Supabase:
+
+```
+packages/collectors/.data/pipeline.sqlite
+```
+
+- This file is the pipeline's queue and memory. Deleting it loses all
+  in-flight work. It is not in git and is not reproducible from Supabase.
+- Backlog / per-stage status: `pnpm --filter @myboon/collectors pipeline-store:status`
+- Backup: `pnpm --filter @myboon/collectors pipeline-store:backup`
+  (run it on a cron; it is cheap)
+- Supabase keeps only the product tables the app/API read: `entities`,
+  `entity_memories`, `published_narratives`, `entity_published_history`.
+
 ---
 
 ## First-time VPS setup
@@ -46,10 +95,10 @@ pm2 startup   # run the printed command as root/sudo
 ```bash
 # Pull latest and reload (zero-downtime for API)
 # Apply pending Supabase migrations first when new migrations exist.
-# For this PR, apply:
-# - supabase/migrations/20260706_pipeline_runs.sql
-# - supabase/migrations/20260706_news_source_state.sql
-# - supabase/migrations/20260710041040_internal_entity_browser_security.sql
+# Currently pending (entity pipeline rebuild):
+# - supabase/migrations/20260728_entity_memories_drop_source_marker.sql
+#   (safe to apply: every source_marker WRITE was removed in the rebuild;
+#   this drops the CHECK-constraint allowance for that memory_type)
 infra/vps/deploy.sh
 
 # Or manually:
@@ -150,6 +199,19 @@ pnpm dlx supabase db push
 ```
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
+
+# --- Hermes (central service: src/hermes/) ---
+# HERMES_COMMAND=hermes            # override the CLI binary if not on PATH
+# NEWS_HERMES_PROFILE=myboonfeed   # news worker chat profile
+# NEWS_HERMES_TOOLSETS=browser,web
+# EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
+
+# --- Research gate + engine (entity pipeline rebuild) ---
+# Both ON by default. Kill switches, '1' disables:
+# RESEARCH_GATE_DISABLED=0         # skip the pre-research entity-memory check
+# RESEARCH_ENGINE_DISABLED=0       # fall back to legacy planner/last30days path
+# RESEARCH_ENGINE_HERMES_PROFILE=  # optional chat profile for engine runs
+
 POLYMARKET_MARKETS_RUN_ONCE=0
 POLYMARKET_RESEARCHER_RUN_ONCE=0
 ENTITY_MANAGER_POLYMARKET_RUN_ONCE=0
@@ -179,4 +241,18 @@ curl http://localhost:3000/health
 # {"status":"ok"}
 
 pnpm --filter @myboon/api smoke
+
+# Pipeline: per-stage backlog + statuses (should list stages, not error)
+pnpm --filter @myboon/collectors pipeline-store:status
+
+# Watch the researcher's first cycle end-to-end. Expect gate verdicts in the
+# result JSON (skippedRecentlyResearched / skipped[].reason gate_already_known)
+# and engine outcomes (nothingFound count, research_backend research_engine).
+pm2 logs myboon-polymarket-researcher --lines 100
 ```
+
+After a restart following downtime, prefer a cautious first cycle: watch the
+first few engine conclusions by hand before trusting the cadence. Kill
+switches if anything misbehaves: `RESEARCH_GATE_DISABLED=1`,
+`RESEARCH_ENGINE_DISABLED=1` (set in `packages/collectors/.env` or the
+researcher's PM2 env, then `pm2 restart myboon-polymarket-researcher --update-env`).

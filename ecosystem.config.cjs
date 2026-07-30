@@ -70,6 +70,17 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env: {
+        // Pre-research entity gate and read-and-conclude research engine
+        // (src/research-gate/, src/research-engine/). Both ON by default;
+        // flip a switch to '1' to fall back to the previous behavior
+        // without a code change. The engine runs
+        // `hermes chat --toolsets browser,web` - the hermes CLI must be
+        // installed and authenticated on this box (see docs/DEPLOY.md,
+        // "Hermes CLI prerequisite").
+        RESEARCH_GATE_DISABLED: '0',
+        RESEARCH_ENGINE_DISABLED: '0',
+      },
     },
     {
       name: 'myboon-news-runner',
