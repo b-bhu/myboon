@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { HermesService, extractJson } from '../hermes'
 import { gateSignal, type EntityMemoryReader, type GateDecision, type GateEntityContext } from '../research-gate'
+import type { ResearchConclusion, ResearchTask } from '../research-engine'
 import type {
   PipelineCandidateRow,
   PipelineResearchRow,
@@ -89,12 +90,26 @@ export interface PolymarketResearcherOptions {
    * Wired in run-researcher.ts, where the Supabase-backed reader lives.
    */
   gate?: PolymarketResearchGateConfig | null
+  /**
+   * Read-and-conclude research engine (see src/research-engine/). When
+   * configured, deep_web candidates run one engine task - an agent with
+   * browser/web tools that actually reads sources and is allowed to conclude
+   * 'nothing_found' - instead of the legacy planner->last30days->reflection
+   * retrieval pipeline. null (the default) keeps the legacy path. Structural
+   * contract (just `research(task)`) so tests can inject a stub.
+   * Wired in run-researcher.ts; RESEARCH_ENGINE_DISABLED=1 is the kill switch.
+   */
+  engine?: PolymarketResearchEngineLike | null
 }
 
 export interface PolymarketResearchGateConfig {
   reader: EntityMemoryReader
   memoryLimit?: number
   timeoutMs?: number
+}
+
+export interface PolymarketResearchEngineLike {
+  research(task: ResearchTask): Promise<ResearchConclusion>
 }
 
 type ResearchBackend = 'hermes_cli'
@@ -190,6 +205,10 @@ interface HermesResearchResult {
   evidence_quality?: unknown
   catalyst_found?: unknown
   recommended_editor_action?: unknown
+  /** Set only on results produced by the research engine; drives per-outcome
+   * research-row status ('nothing_found' rows are written status=rejected so
+   * they never enter the editor queue) and backend labeling. */
+  engine_outcome?: 'answered' | 'nothing_found' | 'partial'
 }
 
 interface ResearchFailure {
@@ -296,7 +315,10 @@ interface ResearchRowInput {
   related_context: unknown[]
   uncertainty: string
   editor_notes: string
-  status: 'pending_editor'
+  /** 'rejected' is used for engine 'nothing_found' conclusions: the row is
+   * the audit trail (what was checked), but it never reaches the editor and
+   * never files entity memories - both consume only 'pending_editor' rows. */
+  status: 'pending_editor' | 'rejected'
   researched_at: string
   updated_at: string
   research_family_key: string
@@ -320,6 +342,9 @@ export interface PolymarketResearcherResult {
   reusedPriorResearch: number
   marketStructureOnly: number
   deepWebResearched: number
+  /** Engine conclusions of 'nothing_found': researched, audited, and kept
+   * away from the editor. Subset of researchRowsWritten. */
+  nothingFound: number
   researchRowsWritten: number
   candidatesMarkedResearched: number
   candidatesMarkedFailed: number
@@ -378,6 +403,7 @@ function selectedOptions(partial: PolymarketResearcherOptions): Required<Polymar
     leaseSeconds: partial.leaseSeconds ?? DEFAULT_LEASE_SECONDS,
     hermes: partial.hermes ?? new HermesService({ command: partial.hermesCommand ?? DEFAULT_HERMES_COMMAND }),
     gate: partial.gate ?? null,
+    engine: partial.engine ?? null,
   }
 }
 
@@ -1750,6 +1776,109 @@ function normalizeResearchResult(result: HermesResearchResult): HermesResearchRe
   }
 }
 
+function buildEngineTask(decision: EnrichedTriageDecision): ResearchTask {
+  const candidate = decision.candidate
+  const entityContext = decision.entityContext ?? null
+  const newest = entityContext?.recentMemories[0]
+  // Diff question when the gate resolved a timeline: research targets what
+  // happened AFTER our newest entry, not the story from scratch. This is the
+  // entire point of consulting entity memory before researching.
+  const question = newest
+    ? `Our knowledge timeline for this subject ends at ${newest.eventAt} with: "${newest.summary}". Since then this market signal arrived: ${candidate.what_changed} What happened after ${newest.eventAt} that explains it?`
+    : `${candidate.what_changed} What concrete recent development could explain this for the market "${candidate.title}"?`
+
+  return {
+    taskId: `polymarket:markets:${candidate.id}`,
+    source: 'polymarket',
+    subject: entityContext && entityContext.entities.length > 0
+      ? entityContext.entities.map((entity) => entity.slug).join(', ')
+      : candidate.slug,
+    title: candidate.title,
+    question,
+    signal: candidate.what_changed,
+    observedAt: candidate.observed_at,
+    known: entityContext,
+    sourceContext: decision.polymarketNativeContext ? compactContext(decision.polymarketNativeContext) : null,
+    answerSpec: {
+      kind: 'catalyst',
+      instruction: 'An answer is a concrete, dated, verifiable catalyst - an event, data release, official statement, filing, or credible report - that plausibly explains why traders repriced this market. Polymarket odds movement itself is not a catalyst.',
+    },
+  }
+}
+
+function engineConclusionToResearchResult(
+  decision: EnrichedTriageDecision,
+  conclusion: ResearchConclusion
+): HermesResearchResult {
+  const candidate = decision.candidate
+  const context = decision.polymarketNativeContext
+  const outcome = conclusion.outcome as 'answered' | 'nothing_found' | 'partial'
+  // Outcome-derived, mechanical mappings - not researcher judgment calls:
+  // 'answered' means a verified catalyst exists (catalyst_found is factual),
+  // and the editor recommendation follows the outcome one-to-one.
+  const recommendedEditorAction: RecommendedEditorAction = outcome === 'answered'
+    ? 'publish_candidate'
+    : outcome === 'nothing_found' ? 'reject_thin' : 'needs_more_research'
+
+  const result: HermesResearchResult = {
+    candidate_id: candidate.id,
+    research_mode: researchModeForCandidate(candidate),
+    market_about: context?.market.title ?? candidate.title,
+    resolution_rules: {
+      condition: context?.market.description ?? null,
+      deadline: context?.market.end_date ?? null,
+      resolution_source: context?.market.resolution_source ?? null,
+      rule_notes: context?.source_native_questions ?? sourceNativeFallbackQuestions(candidate),
+    },
+    polymarket_context: context ? { source_native_context: compactContext(context) } : null,
+    external_research: {
+      needed: true,
+      why: conclusion.whatChanged || conclusion.summary,
+      sources_checked: conclusion.checked,
+      engine_outcome: outcome,
+      engine_duration_ms: conclusion.durationMs,
+    },
+    verified_facts: conclusion.verifiedFacts.map((fact) => fact.fact),
+    unverified_claims: conclusion.unverifiedClaims,
+    entities_mentioned: [],
+    claims_found: [],
+    relationships_found: [],
+    open_questions: conclusion.openQuestions,
+    research_completeness: outcome === 'answered' ? 'complete' : 'partial',
+    summary: conclusion.summary,
+    notes: [
+      `Research engine outcome: ${outcome}.`,
+      conclusion.whatChanged ? `What changed: ${conclusion.whatChanged}` : '',
+      conclusion.checked.length > 0 ? `Checked: ${conclusion.checked.join('; ')}` : '',
+      conclusion.unverifiedClaims.length > 0 ? `Unverified claims: ${conclusion.unverifiedClaims.join('; ')}` : '',
+    ].filter(Boolean).join('\n'),
+    key_findings: conclusion.verifiedFacts.map((fact) => fact.fact),
+    evidence_links: conclusion.evidenceLinks,
+    related_context: [
+      {
+        kind: 'research_engine_conclusion',
+        outcome,
+        what_changed: conclusion.whatChanged,
+        checked: conclusion.checked,
+        duration_ms: conclusion.durationMs,
+        verified_facts: conclusion.verifiedFacts,
+      },
+      { kind: 'polymarket_source_native_context', context: context ? compactContext(context) : null },
+    ],
+    uncertainty: conclusion.openQuestions.length > 0
+      ? `Open questions: ${conclusion.openQuestions.join('; ')}`
+      : (outcome === 'partial' ? 'Partial conclusion - see unverified claims.' : ''),
+    editor_notes: outcome === 'answered'
+      ? `Verified catalyst research. ${conclusion.whatChanged}`.trim()
+      : `Engine outcome ${outcome}. ${conclusion.summary}`.trim(),
+    evidence_quality: outcome === 'answered' ? 'medium' : 'weak',
+    catalyst_found: outcome === 'answered',
+    recommended_editor_action: recommendedEditorAction,
+    engine_outcome: outcome,
+  }
+  return { ...result, related_context: [researchPacketForResult(result), ...result.related_context] }
+}
+
 async function researchSingleCandidate(
   decision: EnrichedTriageDecision,
   options: Required<PolymarketResearcherOptions>,
@@ -1764,6 +1893,23 @@ async function researchSingleCandidate(
         },
       }
     }
+
+    // Engine path: one read-and-conclude agent run replaces the legacy
+    // planner -> last30days -> reflection retrieval pipeline entirely.
+    // engine_failed routes to the existing failure/retry lane.
+    if (options.engine) {
+      const conclusion = await options.engine.research(buildEngineTask(decision))
+      if (conclusion.outcome === 'engine_failed') {
+        return {
+          failure: {
+            candidate: decision.candidate,
+            error: conclusion.summary || 'Research engine run failed.',
+          },
+        }
+      }
+      return { result: engineConclusionToResearchResult(decision, conclusion) }
+    }
+
     const planner = await runHermesPlanner(decision.polymarketNativeContext, decision.candidate, options, decision.entityContext)
     let brief = buildResearchBrief(planner.plan)
     let research = await runLast30Days(brief, options)
@@ -1909,7 +2055,7 @@ function buildHermesResearchRows(
       related_context: result.related_context,
       uncertainty: result.uncertainty,
       editor_notes: result.editor_notes,
-      status: 'pending_editor',
+      status: result.engine_outcome === 'nothing_found' ? 'rejected' : 'pending_editor',
       researched_at: observedAt,
       updated_at: observedAt,
       research_family_key: decision.familyKey,
@@ -1919,7 +2065,7 @@ function buildHermesResearchRows(
       catalyst_found: asBoolean(result.catalyst_found),
       recommended_editor_action: normalizeRecommendedEditorAction(result.recommended_editor_action),
       duplicate_of_research_id: null,
-      research_backend: options.backend,
+      research_backend: result.engine_outcome ? 'research_engine' : options.backend,
       research_model: options.researchModel,
     }]
   })
@@ -2066,6 +2212,7 @@ export async function runPolymarketResearcher(
       reusedPriorResearch: 0,
       marketStructureOnly: 0,
       deepWebResearched: 0,
+      nothingFound: 0,
       researchRowsWritten: 0,
       candidatesMarkedResearched: 0,
       candidatesMarkedFailed: 0,
@@ -2155,6 +2302,7 @@ export async function runPolymarketResearcher(
     reusedPriorResearch: reuseRows.length,
     marketStructureOnly: structureRows.length,
     deepWebResearched: hermesRows.length,
+    nothingFound: hermesRows.filter((row) => row.status === 'rejected').length,
     researchRowsWritten: successfulIds.length,
     candidatesMarkedResearched: successfulIds.length,
     candidatesMarkedFailed: failed.length,
@@ -2183,9 +2331,12 @@ export async function runPolymarketResearcher(
 }
 
 export const __testing = {
+  buildEngineTask,
+  buildHermesResearchRows,
   buildMarketStructureRow,
   buildPlannerPrompt,
   buildReusePriorRow,
+  engineConclusionToResearchResult,
   candidateAgeCutoff,
   classifyResearchDepth,
   clusterKeyForCandidate,

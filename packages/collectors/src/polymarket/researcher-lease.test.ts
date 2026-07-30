@@ -63,6 +63,7 @@ function fullOptions(overrides: Partial<PolymarketResearcherOptions> = {}): Requ
     leaseSeconds: 1200,
     hermes: new HermesService({ command: 'hermes' }),
     gate: null,
+    engine: null,
     ...overrides,
   }
 }

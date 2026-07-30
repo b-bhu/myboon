@@ -3,9 +3,11 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
+import { HermesService } from '../hermes'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { ResearchEngine } from '../research-engine'
 import { SupabaseEntityMemoryReader } from '../research-gate'
 import { runPolymarketResearcher } from './researcher'
 
@@ -29,12 +31,26 @@ async function runOnce(): Promise<void> {
         sourceArea: 'markets',
         stage: 'polymarket.researcher',
       },
-      // The pre-research entity gate reads entity memory from Supabase (its
-      // only remote read). RESEARCH_GATE_DISABLED=1 is the operational kill
-      // switch back to the pre-gate behavior.
-      () => runPolymarketResearcher(store, supabase, process.env.RESEARCH_GATE_DISABLED === '1'
-        ? {}
-        : { gate: { reader: new SupabaseEntityMemoryReader(supabase) } })
+      // One shared Hermes service for the whole run: the gate's cheap novelty
+      // checks, the legacy planner/reflection calls (if the engine is
+      // disabled) and the read-and-conclude engine all report into the same
+      // per-call observability stream.
+      //
+      // Kill switches (each independently returns to the previous behavior):
+      //   RESEARCH_GATE_DISABLED=1   - skip the pre-research entity gate
+      //   RESEARCH_ENGINE_DISABLED=1 - use the legacy planner/last30days path
+      () => {
+        const hermes = new HermesService()
+        return runPolymarketResearcher(store, supabase, {
+          hermes,
+          ...(process.env.RESEARCH_GATE_DISABLED === '1'
+            ? {}
+            : { gate: { reader: new SupabaseEntityMemoryReader(supabase) } }),
+          ...(process.env.RESEARCH_ENGINE_DISABLED === '1'
+            ? {}
+            : { engine: new ResearchEngine({ hermes }) }),
+        })
+      }
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {

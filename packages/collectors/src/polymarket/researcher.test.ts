@@ -28,6 +28,7 @@ const options: Required<PolymarketResearcherOptions> = {
   leaseSeconds: 1200,
   hermes: new HermesService({ command: 'hermes' }),
   gate: null,
+  engine: null,
 }
 
 function candidate(overrides: Record<string, unknown> = {}): any {
