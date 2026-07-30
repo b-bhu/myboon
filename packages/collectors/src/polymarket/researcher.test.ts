@@ -27,6 +27,7 @@ const options: Required<PolymarketResearcherOptions> = {
   leaseOwner: 'researcher:test-owner',
   leaseSeconds: 1200,
   hermes: new HermesService({ command: 'hermes' }),
+  gate: null,
 }
 
 function candidate(overrides: Record<string, unknown> = {}): any {

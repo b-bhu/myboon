@@ -62,6 +62,7 @@ function fullOptions(overrides: Partial<PolymarketResearcherOptions> = {}): Requ
     leaseOwner: 'owner-test-default',
     leaseSeconds: 1200,
     hermes: new HermesService({ command: 'hermes' }),
+    gate: null,
     ...overrides,
   }
 }

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { HermesService, extractJson } from '../hermes'
+import { gateSignal, type EntityMemoryReader, type GateDecision, type GateEntityContext } from '../research-gate'
 import type {
   PipelineCandidateRow,
   PipelineResearchRow,
@@ -78,6 +79,22 @@ export interface PolymarketResearcherOptions {
   /** Central Hermes service (see src/hermes/). Defaults to an instance built
    * from hermesCommand; injectable for tests and shared observability. */
   hermes?: HermesService
+  /**
+   * Pre-research entity gate (see src/research-gate/). When configured,
+   * deep_web candidates are checked against entity memory BEFORE any research
+   * is paid for: signals the timeline already covers are terminally skipped
+   * ('skipped_recently_researched') and never reach the editor; everything
+   * else proceeds carrying the entity timeline as research context. null
+   * (the default) disables the gate entirely - the pre-gate behavior.
+   * Wired in run-researcher.ts, where the Supabase-backed reader lives.
+   */
+  gate?: PolymarketResearchGateConfig | null
+}
+
+export interface PolymarketResearchGateConfig {
+  reader: EntityMemoryReader
+  memoryLimit?: number
+  timeoutMs?: number
 }
 
 type ResearchBackend = 'hermes_cli'
@@ -253,7 +270,13 @@ interface TriageDecision {
   reason: string
 }
 
-interface EnrichedTriageDecision extends TriageDecision {
+/** A triage decision that survived the pre-research gate; when the gate
+ * resolved entities, their timeline rides along as research context. */
+interface GatedTriageDecision extends TriageDecision {
+  entityContext?: GateEntityContext
+}
+
+interface EnrichedTriageDecision extends GatedTriageDecision {
   polymarketNativeContext?: PolymarketNativeContext
   polymarketNativeContextError?: string
 }
@@ -354,6 +377,7 @@ function selectedOptions(partial: PolymarketResearcherOptions): Required<Polymar
     leaseOwner: partial.leaseOwner ?? `researcher:${hostname()}:${process.pid}:${randomUUID()}`,
     leaseSeconds: partial.leaseSeconds ?? DEFAULT_LEASE_SECONDS,
     hermes: partial.hermes ?? new HermesService({ command: partial.hermesCommand ?? DEFAULT_HERMES_COMMAND }),
+    gate: partial.gate ?? null,
   }
 }
 
@@ -914,7 +938,60 @@ function compactContext(context: PolymarketNativeContext): Record<string, unknow
   }
 }
 
-function buildPlannerPrompt(context: PolymarketNativeContext, candidate: PendingCandidate): string {
+/**
+ * Partition deep_web triage decisions through the pre-research entity gate.
+ *
+ * Sequential on purpose: gate calls are cheap structured hermes calls, and
+ * the hermes CLI is one local subprocess - fanning out buys nothing. With no
+ * gate configured (options.gate === null) every decision proceeds untouched,
+ * which is the exact pre-gate behavior.
+ *
+ * Only 'already_known' stops a candidate. All other verdicts - including
+ * every gate-infrastructure failure (fail open, see research-gate/gate.ts) -
+ * proceed, carrying the resolved entity timeline when one exists so the
+ * planner can ask a diff question instead of researching from scratch.
+ */
+async function gateDeepWebDecisions(
+  decisions: TriageDecision[],
+  options: Required<PolymarketResearcherOptions>
+): Promise<{
+  proceed: GatedTriageDecision[]
+  known: Array<{ decision: TriageDecision, gate: GateDecision }>
+}> {
+  if (!options.gate || decisions.length === 0) {
+    return { proceed: decisions, known: [] }
+  }
+
+  const proceed: GatedTriageDecision[] = []
+  const known: Array<{ decision: TriageDecision, gate: GateDecision }> = []
+  for (const decision of decisions) {
+    const candidate = decision.candidate
+    const gate = await gateSignal({
+      source: candidate.source,
+      sourceRefId: candidate.slug,
+      title: candidate.title,
+      whatChanged: candidate.what_changed,
+      observedAt: candidate.observed_at,
+    }, {
+      hermes: options.hermes,
+      reader: options.gate.reader,
+      memoryLimit: options.gate.memoryLimit,
+      timeoutMs: options.gate.timeoutMs,
+    })
+    if (!gate.proceed) {
+      known.push({ decision, gate })
+    } else {
+      proceed.push({ ...decision, entityContext: gate.entityContext ?? undefined })
+    }
+  }
+  return { proceed, known }
+}
+
+function buildPlannerPrompt(
+  context: PolymarketNativeContext,
+  candidate: PendingCandidate,
+  entityContext?: GateEntityContext
+): string {
   return [
     'You are the myboon Polymarket Research Planner.',
     '',
@@ -974,6 +1051,26 @@ function buildPlannerPrompt(context: PolymarketNativeContext, candidate: Pending
     '',
     'Polymarket-native context:',
     JSON.stringify(compactContext(context), null, 2),
+    ...(entityContext ? [
+      '',
+      'Entity memory timeline - what we already know about this subject (newest first):',
+      JSON.stringify({
+        entities: entityContext.entities.map((entity) => ({
+          slug: entity.slug,
+          name: entity.name,
+          summary: entity.summary,
+        })),
+        recent_memories: entityContext.recentMemories.map((memory) => ({
+          event_at: memory.eventAt,
+          memory_type: memory.memoryType,
+          title: memory.title,
+          summary: memory.summary,
+        })),
+      }, null, 2),
+      '',
+      'The research goal MUST target what changed AFTER the newest timeline entry above.',
+      'Do not ask the worker to re-research facts the timeline already records.',
+    ] : []),
   ].join('\n')
 }
 
@@ -1162,9 +1259,10 @@ function buildResearchBrief(plan: ResearchReflectionPlan): ResearchBrief {
 async function runHermesPlanner(
   context: PolymarketNativeContext,
   candidate: PendingCandidate,
-  options: Required<PolymarketResearcherOptions>
+  options: Required<PolymarketResearcherOptions>,
+  entityContext?: GateEntityContext
 ): Promise<PlannerResult> {
-  const prompt = buildPlannerPrompt(context, candidate)
+  const prompt = buildPlannerPrompt(context, candidate, entityContext)
   try {
     const { value, stdout } = await options.hermes.structured<Partial<ResearchReflectionPlan>>({
       purpose: 'polymarket.researcher.planner',
@@ -1666,7 +1764,7 @@ async function researchSingleCandidate(
         },
       }
     }
-    const planner = await runHermesPlanner(decision.polymarketNativeContext, decision.candidate, options)
+    const planner = await runHermesPlanner(decision.polymarketNativeContext, decision.candidate, options, decision.entityContext)
     let brief = buildResearchBrief(planner.plan)
     let research = await runLast30Days(brief, options)
 
@@ -1990,15 +2088,44 @@ export async function runPolymarketResearcher(
     .map((decision) => buildMarketStructureRow(decision, observedAt, options))
   const deepDecisions = triage.filter((decision) => decision.depth === 'deep_web')
 
+  // Pre-research entity gate: check deep_web candidates against entity
+  // memory BEFORE paying for research. Runs after recordTriageOutcome (the
+  // triage record is still true - the candidate WAS classified deep_web) and
+  // before native-context enrichment, so gated-out candidates cost zero
+  // Polymarket fetches, zero planner calls and zero retrieval passes.
+  const gated = await gateDeepWebDecisions(deepDecisions, options)
+
+  // Terminal-skip the already-known ones NOW, before deep research starts:
+  // if the process dies mid-batch these are already safely terminal instead
+  // of waiting on lease expiry to be re-gated by the next worker.
+  // 'skipped_recently_researched' is the store's existing terminal skip
+  // status (present in the sqlite CHECK constraint since the store landed,
+  // designed for exactly this "we already have this knowledge" outcome).
+  if (gated.known.length > 0) {
+    await updateCandidateStatus(
+      store,
+      gated.known.map((entry) => entry.decision.candidate.id),
+      'skipped_recently_researched',
+      observedAt,
+      null,
+      { researchNextRetryAt: null, researchLastErrorKind: null }
+    )
+  }
+
+  // The gate pass itself can take a while on a large batch (one cheap hermes
+  // call per candidate with prior entities); push the survivors' lease
+  // expiries back out before the long sequential research loop begins.
+  await renewOutstandingLeases(store, gated.proceed.map((decision) => decision.candidate.id), options)
+
   // reuse_prior and market_structure_only decisions never enter the
   // sequential deep_web research loop, so their leases are held for the rest
   // of this (fast) synchronous run and released below once their terminal
   // status is written - they do not need mid-run renewal.
-  const attempt = await researchDeepWebCandidates(deepDecisions, priorResearch, options, store)
-  const hermesRows = buildHermesResearchRows(deepDecisions, attempt.results, observedAt, options)
+  const attempt = await researchDeepWebCandidates(gated.proceed, priorResearch, options, store)
+  const hermesRows = buildHermesResearchRows(gated.proceed, attempt.results, observedAt, options)
   const allRows = [...reuseRows, ...structureRows, ...hermesRows]
   const successfulIds = await insertResearchRows(store, allRows)
-  const failed = deepDecisions
+  const failed = gated.proceed
     .map((decision) => decision.candidate)
     .filter((candidate) => !successfulIds.includes(candidate.id))
     .map((candidate) => attempt.failures.find((failure) => failure.candidate.id === candidate.id) ?? {
@@ -2023,7 +2150,7 @@ export async function runPolymarketResearcher(
     backend: options.backend,
     pendingFetched: candidates.length,
     eligibleForResearch: triage.length,
-    skippedRecentlyResearched: 0,
+    skippedRecentlyResearched: gated.known.length,
     retriedFailedCandidates: retriedCandidateIds.length,
     reusedPriorResearch: reuseRows.length,
     marketStructureOnly: structureRows.length,
@@ -2042,7 +2169,11 @@ export async function runPolymarketResearcher(
         summary: row.summary,
       }]
     }),
-    skipped: [],
+    skipped: gated.known.map((entry) => ({
+      candidateId: entry.decision.candidate.id,
+      slug: entry.decision.candidate.slug,
+      reason: `gate_already_known: ${entry.gate.reason}`,
+    })),
     failed: failed.map((failure) => ({
       candidateId: failure.candidate.id,
       slug: failure.candidate.slug,
@@ -2053,12 +2184,14 @@ export async function runPolymarketResearcher(
 
 export const __testing = {
   buildMarketStructureRow,
+  buildPlannerPrompt,
   buildReusePriorRow,
   candidateAgeCutoff,
   classifyResearchDepth,
   clusterKeyForCandidate,
   defaultLast30DaysScriptPath,
   errorKind,
+  gateDeepWebDecisions,
   briefFromRetrievalReflection,
   last30DaysPlanPayload,
   last30DaysToResearchResult,

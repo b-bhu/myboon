@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { SupabaseEntityMemoryReader } from '../research-gate'
 import { runPolymarketResearcher } from './researcher'
 
 const RESEARCHER_INTERVAL_MS = 5 * 60 * 1000
@@ -28,7 +29,12 @@ async function runOnce(): Promise<void> {
         sourceArea: 'markets',
         stage: 'polymarket.researcher',
       },
-      () => runPolymarketResearcher(store, supabase)
+      // The pre-research entity gate reads entity memory from Supabase (its
+      // only remote read). RESEARCH_GATE_DISABLED=1 is the operational kill
+      // switch back to the pre-gate behavior.
+      () => runPolymarketResearcher(store, supabase, process.env.RESEARCH_GATE_DISABLED === '1'
+        ? {}
+        : { gate: { reader: new SupabaseEntityMemoryReader(supabase) } })
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {
