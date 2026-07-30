@@ -13,16 +13,17 @@
     "test:spot": "tsx --test src/spot.test.ts"
   },
   "dependencies": {
-    "@myboon/collectors": "workspace:*",
-    "@supabase/supabase-js": "2.98.0",
     "@ellipsis-labs/rise": "0.4.9",
     "@hono/node-server": "^1.13.0",
+    "@myboon/collectors": "workspace:*",
     "@polymarket/builder-relayer-client": "^0.0.9",
     "@polymarket/builder-signing-sdk": "^1.0.0",
     "@polymarket/clob-client-v2": "1.0.3-canary.0",
+    "@supabase/supabase-js": "2.98.0",
     "dotenv": "^16.0.0",
     "ethers": "5",
     "hono": "^4.6.0",
+    "tslib": "^2.8.1",
     "viem": "^2.47.12"
   },
   "devDependencies": {
