@@ -27,6 +27,7 @@ import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PipelineCandidateInsertInput } from '../pipeline-store/store'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { HermesService } from '../hermes'
 import type { PolymarketResearcherOptions } from './researcher'
 import { runPolymarketResearcher, __testing } from './researcher'
 
@@ -60,6 +61,7 @@ function fullOptions(overrides: Partial<PolymarketResearcherOptions> = {}): Requ
     maxCandidateAgeHours: 48,
     leaseOwner: 'owner-test-default',
     leaseSeconds: 1200,
+    hermes: new HermesService({ command: 'hermes' }),
     ...overrides,
   }
 }

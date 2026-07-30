@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { HermesService } from '../hermes'
 import type { PolymarketResearcherOptions } from './researcher'
 import { __testing } from './researcher'
 
@@ -25,6 +26,7 @@ const options: Required<PolymarketResearcherOptions> = {
   maxCandidateAgeHours: 48,
   leaseOwner: 'researcher:test-owner',
   leaseSeconds: 1200,
+  hermes: new HermesService({ command: 'hermes' }),
 }
 
 function candidate(overrides: Record<string, unknown> = {}): any {

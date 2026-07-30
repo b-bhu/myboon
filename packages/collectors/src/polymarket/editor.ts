@@ -1,7 +1,6 @@
-import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
+import { HermesService, extractJson } from '../hermes'
 import type {
   PipelineEditorDecision as EditorDecisionValue,
   PipelineEditorDecisionInsertInput,
@@ -13,8 +12,6 @@ import type {
   PipelineStore,
   PipelineTopicConfidence as TopicConfidence,
 } from '../pipeline-store/store'
-
-const execFileAsync = promisify(execFile)
 
 const SOURCE = 'polymarket'
 const AREA = 'markets'
@@ -159,49 +156,6 @@ function researchStatusForDecision(decision: EditorDecisionValue): ResearchStatu
   return 'rejected'
 }
 
-function extractJson<T>(text: string): T | null {
-  const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-  try {
-    return JSON.parse(cleaned) as T
-  } catch {
-    // Continue into fragment extraction.
-  }
-
-  const start = cleaned.search(/[{[]/)
-  if (start === -1) return null
-  const opener = cleaned[start]
-  const closer = opener === '{' ? '}' : ']'
-  let depth = 0
-  let inString = false
-  let escape = false
-  for (let index = start; index < cleaned.length; index += 1) {
-    const ch = cleaned[index]
-    if (escape) {
-      escape = false
-      continue
-    }
-    if (ch === '\\' && inString) {
-      escape = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === opener) depth += 1
-    else if (ch === closer) depth -= 1
-    if (depth === 0) {
-      try {
-        return JSON.parse(cleaned.slice(start, index + 1)) as T
-      } catch {
-        return null
-      }
-    }
-  }
-  return null
-}
-
 async function loadStablePrompt(): Promise<string> {
   return readFile(join(__dirname, 'editor-prompt.md'), 'utf8')
 }
@@ -283,28 +237,24 @@ function buildEditorPrompt(researchRows: PipelineResearchRow[], recentDecisions:
   ].join('\n')
 }
 
+const hermes = new HermesService()
+
 async function runEditorAgent(prompt: string, options: Required<PolymarketEditorOptions>): Promise<AgentEditorResponse> {
   const stablePrompt = await loadStablePrompt()
   const fullPrompt = prompt.replace('{{STABLE_PROMPT}}', stablePrompt)
-  const args = options.editorToolsets
-    ? ['-t', options.editorToolsets, '-z', fullPrompt]
-    : ['-z', fullPrompt]
-  const { stdout, stderr } = await execFileAsync(
-    options.editorCommand,
-    args,
-    {
-      timeout: options.editorTimeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env },
-    }
-  )
+  const { value, stdout, stderr } = await hermes.structured<AgentEditorResponse>({
+    purpose: 'polymarket.editor',
+    prompt: fullPrompt,
+    timeoutMs: options.editorTimeoutMs,
+    toolsets: options.editorToolsets || undefined,
+    commandOverride: options.editorCommand,
+  })
 
-  const parsed = extractJson<AgentEditorResponse>(stdout)
-  if (!parsed || !Array.isArray(parsed.decisions)) {
+  if (!value || !Array.isArray(value.decisions)) {
     throw new Error(`Editor returned invalid JSON. stderr=${stderr.slice(0, 500)} stdout=${stdout.slice(0, 1000)}`)
   }
 
-  return parsed
+  return value
 }
 
 function normalizeEditorDecision(decision: AgentEditorDecision, validResearchIds: Set<string>): NormalizedEditorDecision | null {

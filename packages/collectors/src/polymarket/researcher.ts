@@ -6,6 +6,7 @@ import { hostname } from 'node:os'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { HermesService, extractJson } from '../hermes'
 import type {
   PipelineCandidateRow,
   PipelineResearchRow,
@@ -74,6 +75,9 @@ export interface PolymarketResearcherOptions {
   maxCandidateAgeHours?: number
   leaseOwner?: string
   leaseSeconds?: number
+  /** Central Hermes service (see src/hermes/). Defaults to an instance built
+   * from hermesCommand; injectable for tests and shared observability. */
+  hermes?: HermesService
 }
 
 type ResearchBackend = 'hermes_cli'
@@ -349,6 +353,7 @@ function selectedOptions(partial: PolymarketResearcherOptions): Required<Polymar
     maxCandidateAgeHours: partial.maxCandidateAgeHours ?? DEFAULT_MAX_CANDIDATE_AGE_HOURS,
     leaseOwner: partial.leaseOwner ?? `researcher:${hostname()}:${process.pid}:${randomUUID()}`,
     leaseSeconds: partial.leaseSeconds ?? DEFAULT_LEASE_SECONDS,
+    hermes: partial.hermes ?? new HermesService({ command: partial.hermesCommand ?? DEFAULT_HERMES_COMMAND }),
   }
 }
 
@@ -409,49 +414,6 @@ function researchPacketForResult(result: HermesResearchResult): Record<string, u
     open_questions: asArray(result.open_questions),
     research_completeness: asString(result.research_completeness, 'partial'),
   }
-}
-
-function extractJson<T>(text: string): T | null {
-  const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-  try {
-    return JSON.parse(cleaned) as T
-  } catch {
-    // Continue into fragment extraction.
-  }
-
-  const start = cleaned.search(/[{[]/)
-  if (start === -1) return null
-  const opener = cleaned[start]
-  const closer = opener === '{' ? '}' : ']'
-  let depth = 0
-  let inString = false
-  let escape = false
-  for (let index = start; index < cleaned.length; index += 1) {
-    const ch = cleaned[index]
-    if (escape) {
-      escape = false
-      continue
-    }
-    if (ch === '\\' && inString) {
-      escape = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === opener) depth += 1
-    else if (ch === closer) depth -= 1
-    if (depth === 0) {
-      try {
-        return JSON.parse(cleaned.slice(start, index + 1)) as T
-      } catch {
-        return null
-      }
-    }
-  }
-  return null
 }
 
 function titleFamilyKey(text: string): string {
@@ -1203,22 +1165,19 @@ async function runHermesPlanner(
   options: Required<PolymarketResearcherOptions>
 ): Promise<PlannerResult> {
   const prompt = buildPlannerPrompt(context, candidate)
-  const args = options.researchPlannerHermesIgnoreRules ? ['--ignore-rules'] : []
-  args.push(...(options.researchPlannerHermesToolsets
-    ? ['-t', options.researchPlannerHermesToolsets, '-z', prompt]
-    : ['-z', prompt]))
-
   try {
-    const { stdout } = await execFileAsync(options.hermesCommand, args, {
-      timeout: options.researchPlannerHermesTimeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env },
+    const { value, stdout } = await options.hermes.structured<Partial<ResearchReflectionPlan>>({
+      purpose: 'polymarket.researcher.planner',
+      prompt,
+      timeoutMs: options.researchPlannerHermesTimeoutMs,
+      toolsets: options.researchPlannerHermesToolsets || undefined,
+      ignoreRules: options.researchPlannerHermesIgnoreRules,
+      commandOverride: options.hermesCommand,
     })
-    const parsed = extractJson<Partial<ResearchReflectionPlan>>(stdout)
     return {
-      plan: normalizeReflectionPlan(parsed, context, candidate),
+      plan: normalizeReflectionPlan(value, context, candidate),
       raw: stdout.trim(),
-      error: parsed ? null : 'Hermes planner returned non-JSON output; normalized with fallback fields.',
+      error: value ? null : 'Hermes planner returned non-JSON output; normalized with fallback fields.',
     }
   } catch (error) {
     return {
@@ -1227,14 +1186,6 @@ async function runHermesPlanner(
       error: error instanceof Error ? error.message.replace(/\s+/g, ' ').slice(0, 800) : String(error).slice(0, 800),
     }
   }
-}
-
-function hermesArgs(prompt: string, options: Required<PolymarketResearcherOptions>): string[] {
-  const args = options.researchPlannerHermesIgnoreRules ? ['--ignore-rules'] : []
-  args.push(...(options.researchPlannerHermesToolsets
-    ? ['-t', options.researchPlannerHermesToolsets, '-z', prompt]
-    : ['-z', prompt]))
-  return args
 }
 
 function last30DaysArgs(brief: ResearchBrief, planPath: string, options: Required<PolymarketResearcherOptions>): string[] {
@@ -1407,12 +1358,15 @@ async function runHermesRetrievalReflection(
 ): Promise<RetrievalReflection> {
   const prompt = buildRetrievalReflectionPrompt(context, candidate, brief, report, stderr)
   try {
-    const { stdout } = await execFileAsync(options.hermesCommand, hermesArgs(prompt, options), {
-      timeout: options.researchPlannerHermesTimeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env },
+    const { value } = await options.hermes.structured<Partial<RetrievalReflection>>({
+      purpose: 'polymarket.researcher.reflection',
+      prompt,
+      timeoutMs: options.researchPlannerHermesTimeoutMs,
+      toolsets: options.researchPlannerHermesToolsets || undefined,
+      ignoreRules: options.researchPlannerHermesIgnoreRules,
+      commandOverride: options.hermesCommand,
     })
-    return normalizeRetrievalReflection(extractJson<Partial<RetrievalReflection>>(stdout), brief)
+    return normalizeRetrievalReflection(value, brief)
   } catch {
     return normalizeRetrievalReflection(null, brief)
   }

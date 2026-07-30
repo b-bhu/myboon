@@ -1,58 +1,14 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { HermesService, extractJson } from '../hermes'
 import { normalizeExtraction } from './normalization'
 import type { EntityMemoryExtraction, ExtractionProvider, ResearchPacket } from './types'
-
-const execFileAsync = promisify(execFile)
 
 export interface HermesEntityExtractionOptions {
   command?: string
   timeoutMs?: number
   toolsets?: string
   ignoreRules?: boolean
-}
-
-function extractJson<T>(text: string): T | null {
-  const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-  try {
-    return JSON.parse(cleaned) as T
-  } catch {
-    // Continue into fragment extraction.
-  }
-
-  const start = cleaned.search(/[{[]/)
-  if (start === -1) return null
-  const opener = cleaned[start]
-  const closer = opener === '{' ? '}' : ']'
-  let depth = 0
-  let inString = false
-  let escape = false
-  for (let index = start; index < cleaned.length; index += 1) {
-    const ch = cleaned[index]
-    if (escape) {
-      escape = false
-      continue
-    }
-    if (ch === '\\' && inString) {
-      escape = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === opener) depth += 1
-    if (ch === closer) depth -= 1
-    if (depth === 0) {
-      try {
-        return JSON.parse(cleaned.slice(start, index + 1)) as T
-      } catch {
-        return null
-      }
-    }
-  }
-  return null
+  /** Injectable central Hermes service; built from `command` when omitted. */
+  service?: HermesService
 }
 
 function compactString(value: string, maxLength: number): string {
@@ -148,30 +104,29 @@ function buildPrompt(packet: ResearchPacket): string {
 }
 
 export class HermesEntityExtractionProvider implements ExtractionProvider {
-  private readonly command: string
   private readonly timeoutMs: number
   private readonly toolsets: string
   private readonly ignoreRules: boolean
+  private readonly service: HermesService
 
   constructor(options: HermesEntityExtractionOptions = {}) {
-    this.command = options.command ?? 'hermes'
     this.timeoutMs = options.timeoutMs ?? 60_000
     this.toolsets = options.toolsets ?? ''
     this.ignoreRules = options.ignoreRules ?? true
+    this.service = options.service ?? new HermesService({ command: options.command ?? 'hermes' })
   }
 
   async extract(packet: ResearchPacket): Promise<EntityMemoryExtraction> {
     const prompt = buildPrompt(packet)
-    const args = this.ignoreRules ? ['--ignore-rules'] : []
-    args.push(...(this.toolsets ? ['-t', this.toolsets, '-z', prompt] : ['-z', prompt]))
     try {
-      const { stdout } = await execFileAsync(this.command, args, {
-        timeout: this.timeoutMs,
-        maxBuffer: 10 * 1024 * 1024,
-        env: { ...process.env },
+      const { value } = await this.service.structured<unknown>({
+        purpose: 'entity-manager.extractor',
+        prompt,
+        timeoutMs: this.timeoutMs,
+        toolsets: this.toolsets || undefined,
+        ignoreRules: this.ignoreRules,
       })
-      const parsed = extractJson<unknown>(stdout)
-      return normalizeExtraction(parsed, packet)
+      return normalizeExtraction(value, packet)
     } catch (error) {
       throw sanitizeHermesError(error)
     }
