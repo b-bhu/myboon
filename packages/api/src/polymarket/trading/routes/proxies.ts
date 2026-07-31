@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { CLOB_HOST } from '../contracts.js'
+import { CLOB_HOST, RELAYER_URL } from '../contracts.js'
 
 export function registerProxyRoutes(routes: Hono) {
   routes.get('/book', async (c) => {
@@ -160,4 +160,55 @@ export function registerProxyRoutes(routes: Hono) {
   routes.get('/price', relayToClob)
   routes.get('/spread', relayToClob)
   routes.get('/time', relayToClob)
+
+  /**
+   * Relayer proxy — `@polymarket/client`'s `SecureClient` calls
+   * `relayer-v2.polymarket.com` directly (e.g. `GET /deployed` to check
+   * whether a signer's deposit wallet already exists), not through this
+   * app's `/clob` proxy. Confirmed on-device: this host times out on the
+   * same networks `clob.polymarket.com` did, which is exactly why the CLOB
+   * relay above exists — the new SDK just talks to a second Polymarket host
+   * the old one never did.
+   *
+   * Same trust shape as `relayToClob`: whatever headers/body the SDK sends
+   * are forwarded verbatim, upstream status passes through untouched, and no
+   * key material crosses this boundary — Builder-authorized calls carry
+   * `POLY_BUILDER_*` headers computed on the server side already
+   * (`relayerBuilderConfig` in `wallet.ts`), and this route does not
+   * generate or need those; it only relays whatever the caller already
+   * built. Path-agnostic for the same reason as the CLOB relay: enumerating
+   * the SDK's relayer endpoints here would leave the next one (e.g. `/nonce`,
+   * `/submit`) to fail in production exactly like `/deployed` just did.
+   */
+  async function relayToRelayer(c: any) {
+    const url = new URL(c.req.url)
+    const path = url.pathname.replace(/^\/clob\/relayer-proxy/, '') || '/'
+    const target = `${RELAYER_URL}${path}${url.search}`
+
+    const method = c.req.method
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    const contentType = c.req.header('content-type')
+    if (contentType) headers['Content-Type'] = contentType
+    for (const [name, value] of Object.entries(c.req.header())) {
+      if (name.toLowerCase().startsWith('poly_builder')) headers[name] = value as string
+    }
+
+    let body: string | undefined
+    if (method !== 'GET' && method !== 'HEAD') {
+      body = await c.req.text()
+    }
+
+    try {
+      const res = await fetch(target, { method, headers, body })
+      const text = await res.text()
+      return new Response(text, {
+        status: res.status,
+        headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/json' },
+      })
+    } catch (err: any) {
+      return c.json({ error: 'Relayer proxy failed', detail: err.message, path }, 502)
+    }
+  }
+
+  routes.all('/relayer-proxy/*', relayToRelayer)
 }

@@ -39,6 +39,18 @@ import type { PlaceBetParams } from './predict.api';
  */
 const CLOB_HOST = process.env.EXPO_PUBLIC_CLOB_HOST?.trim()
   || `${resolveApiBaseUrl()}/clob`;
+/**
+ * Where `@polymarket/client` sends relayer calls (e.g. `GET /deployed`,
+ * checked during `createSecureClient`). Confirmed on-device: the relayer
+ * times out on the same networks `clob.polymarket.com` did, so it needs the
+ * same proxy treatment — see `packages/api/src/polymarket/trading/routes/proxies.ts`'s
+ * `relayToRelayer`.
+ *
+ * Set `EXPO_PUBLIC_RELAYER_HOST` to override — point it at
+ * `https://relayer-v2.polymarket.com` to go direct on a network that allows it.
+ */
+const RELAYER_HOST = process.env.EXPO_PUBLIC_RELAYER_HOST?.trim()
+  || `${resolveApiBaseUrl()}/clob/relayer-proxy`;
 const CHAIN_ID = Chain.POLYGON;
 const BUILDER_CODE = '0xda0aa9e10ba50d0077e25e94cf9e4d9ef749821528acf6fc758df962d67b63ed';
 const DEPOSIT_WALLET_FACTORY = '0x00000000000fb5c9adea0298d729a0cb3823cc07';
@@ -506,22 +518,21 @@ function toPolymarketSigner(signer: Signer): PolymarketSigner {
 
 /**
  * The environment `@polymarket/client` calls against — production, except the
- * CLOB REST base, redirected to this app's own proxy.
+ * CLOB and relayer REST bases, redirected to this app's own proxies.
  *
- * Devices on some networks cannot reach `clob.polymarket.com` directly (an
- * axios "Network Error" with no status) — the same reason `CLOB_HOST` exists
- * below for the old SDK. `forkEnvironmentConfig` is the unified SDK's
- * equivalent of the old `ClobClient`'s `host` option: everything else
- * (contracts, chain ID, relayer, gamma) stays at production defaults, only
- * the CLOB REST endpoint is overridden. Marked `@experimental` by the SDK's
- * own type comments — confirmed to type-check and construct without error,
- * not yet exercised against a live network call; if it turns out not to work
- * end-to-end, the fallback is pointing `rest` at `https://clob.polymarket.com`
- * directly via `EXPO_PUBLIC_CLOB_HOST`, same escape hatch the old SDK had.
+ * Devices on some networks cannot reach Polymarket's own hosts directly (an
+ * axios "Network Error" with no status on `clob.polymarket.com`; a plain
+ * request timeout on `relayer-v2.polymarket.com`, confirmed on-device —
+ * `createSecureClient`'s `GET /deployed` check hung until timeout before the
+ * relayer fork was added below). `forkEnvironmentConfig` is the unified
+ * SDK's equivalent of the old `ClobClient`'s `host` option: everything else
+ * (contracts, chain ID, gamma) stays at production defaults, only these two
+ * REST endpoints are overridden.
  */
 const POLYMARKET_ENVIRONMENT = forkEnvironmentConfig({
   name: 'myboon-clob-proxy',
   clob: { rest: CLOB_HOST },
+  relayer: { rest: RELAYER_HOST },
 });
 
 /**

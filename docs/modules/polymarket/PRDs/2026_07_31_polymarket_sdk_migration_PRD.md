@@ -8,7 +8,16 @@ Owner: myboon Apps
 
 ## Implementation status (read this first)
 
-**Done, on `polymarket-sdk-migration`, not yet run on a real device:**
+**First on-device run surfaced a real gap: `@polymarket/client` also calls
+Polymarket's relayer directly (`GET /deployed`), not just the CLOB host, and
+that call timed out on-device.** This needed one small server-side addition —
+see "Done" below. Earlier language in this document (and told to the user)
+claiming the migration needed zero server changes was wrong: it was accurate
+for what the type-level bundle/construct investigation could show, but a live
+network call surfaced a runtime dependency that investigation didn't cover.
+Recorded here so the gap in reasoning is visible, not smoothed over.
+
+**Done, on `polymarket-sdk-migration`:**
 - `chain.contract.ts`: `Signer.sendTransaction` + `canBroadcastTransaction`
   capability + `needsBroadcastTransaction` requirement flag, distinct from
   the pre-existing sign-only `signTransaction`/`canSendTransaction`.
@@ -17,21 +26,31 @@ Owner: myboon Apps
   `eth_sendTransaction`.
 - `predict.signing.ts`: `createPolymarketSecureClient` — constructs
   `@polymarket/client`'s `SecureClient` with a real adapter over the app's
-  `Signer`, pointed at this app's CLOB proxy via `forkEnvironmentConfig`. A
-  client-side `waitForTransaction` poller backs `TransactionHandle.wait()`
-  (the app never broadcast a transaction directly before this).
+  `Signer`, pointed at this app's CLOB **and relayer** proxies via
+  `forkEnvironmentConfig`. A client-side `waitForTransaction` poller backs
+  `TransactionHandle.wait()` (the app never broadcast a transaction directly
+  before this).
 - `usePolymarketWallet.ts`: `enable()` now calls
   `createPolymarketSecureClient` → `client.setupTradingApprovals()` →
   registers the resulting address with the server via `/clob/auth`, passing
   it as `knownDepositWalletAddress` so the server's existing on-chain
   `owner()` verification accepts it immediately rather than running its own
   (wrong) derivation.
+- **`packages/api/src/polymarket/trading/routes/proxies.ts`: added
+  `relayToRelayer` / `GET|* /clob/relayer-proxy/*`** — a genuine server-side
+  change, added after the first on-device failure (`Request timed out: GET
+  https://relayer-v2.polymarket.com/deployed`). Mirrors the existing
+  `relayToClob` pattern exactly; confirmed working against the local dev
+  server (real Polymarket relayer responses pass through, an unknown
+  sub-path returns Polymarket's own 404). Not yet confirmed from the actual
+  phone.
 - `apps/hybrid-expo` gained `@polymarket/client` + `viem`; confirmed to
   bundle cleanly under Metro/Hermes on iOS and Android (probe import, not
   yet the full app running on a device).
 - All existing tests (136, across chain/wallet/security suites) and
   TypeScript pass. No test exercises the new code against a live signer or
-  network — see the Definition of Done below for what still needs a device.
+  network beyond the relayer-proxy curl check above — see the Definition of
+  Done below for what still needs a device.
 
 **Deliberately not done in this pass, and why:**
 - **The server's `/clob/auth`, `resolveDepositWallet`, and
@@ -167,7 +186,7 @@ packages/api/src/polymarket/trading/routes/session.ts   — shrinks to proof ver
 packages/api/src/polymarket/trading/routes/orders.ts    — likely deletes; client posts orders directly to Polymarket via its own SDK/proxy
 packages/api/src/polymarket/trading/routes/funds.ts     — /wrap, /withdraw need per-route decisions in step 4
 packages/api/src/polymarket/trading/routes/redeem.ts    — likely deletes, same reasoning as orders.ts
-packages/api/src/polymarket/trading/routes/proxies.ts   — kept and possibly the only route file left; may need new pass-through paths for whatever @polymarket/client's viem/privy signer calls that the phone can't reach directly
+packages/api/src/polymarket/trading/routes/proxies.ts   — kept and possibly the only route file left. DONE: added `relayToRelayer`/`/relayer-proxy/*` — confirmed needed on first on-device test (see Open Questions #2)
 packages/api/package.json                                — remove the three deprecated deps; @polymarket/client does NOT get added here (it's a client dependency now)
 apps/hybrid-expo/package.json                            — add @polymarket/client, viem or the Privy adapter
 .npmrc                                                    — drop tslib hoist once builder-relayer-client is uninstalled
@@ -540,18 +559,31 @@ directly, not just by inference from the client working.
    (`@noble/hashes/crypto.js` not in package exports, Metro falls back to
    file-based resolution automatically) — not a blocker, nothing to fix.
 2. ~~Can `@polymarket/client` point its CLOB host at this app's own proxy?~~
-   **Resolved, yes, via a different mechanism than the old SDK's `host`
-   option.** `createSecureClient`/`createPublicClient` accept an
-   `environment: EnvironmentConfig`, and the SDK exports
-   `forkEnvironmentConfig({ clob: { rest: 'https://our-proxy/clob' } })` to
-   override just the CLOB REST base URL while leaving contracts, chain ID,
-   relayer, and gamma endpoints at production defaults
-   (`types-vvy5wT5V.d.ts:3869-3906`). Marked `@experimental` in its doc
-   comment — the type-level mechanism is confirmed, but it hasn't been
-   exercised against a live network call yet (that requires a real signer
-   past `beginAuthentication`, i.e. step 3's on-device verification). Treat
-   as "very likely works, confirm on first real device test," not fully
-   closed.
+   **Resolved, yes — and the first on-device test proved it's needed for
+   more than just the CLOB host.** `forkEnvironmentConfig` (per
+   `types-vvy5wT5V.d.ts:3869-3906`) forks `clob` and `relayer` independently.
+   The first real-device run of `createPolymarketSecureClient` failed with
+   `Request timed out: GET https://relayer-v2.polymarket.com/deployed` — the
+   device could reach `clob.*` fine (through our proxy) but not
+   `relayer-v2.polymarket.com` at all, because only `clob` had been forked at
+   the time. `createSecureClient` calls the relayer directly to check
+   whether a signer's deposit wallet already exists — a call the old SDK
+   never made from the phone (the old flow's relayer calls were all
+   server-side). Fixed by adding a second proxy route,
+   `routes/proxies.ts`'s `relayToRelayer` (mirrors `relayToClob`'s
+   path-agnostic pattern exactly), and forking `relayer: { rest:
+   RELAYER_HOST }` alongside `clob` in `predict.signing.ts`. Confirmed
+   working against the local dev server (`tsx --watch`, hot-reloaded the new
+   route automatically): `GET /clob/relayer-proxy/deployed?address=...`
+   returns Polymarket's real `{"deployed":false}` response, and an unknown
+   sub-path correctly returns Polymarket's own 404 through the relay rather
+   than a local route-not-found — proof it's a live pass-through, not a
+   locally-answered stub. **This is a genuine, if small, server-side change**
+   — the "no server changes needed" read from the type-level investigation
+   was incomplete; it covered whether the SDK could construct and bundle,
+   not every host it talks to at runtime. Not yet confirmed from the actual
+   phone (only from this Mac's dev server and a direct `curl` test) — that's
+   the next on-device check.
 3. For each of wrap/withdraw/redeem, does moving calldata construction and
    submission to the phone's `SecureClient` still allow gasless,
    Builder-sponsored execution the way today's relayer flow does — or does
