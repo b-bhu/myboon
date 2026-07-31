@@ -76,7 +76,16 @@ const BACKUP_FILE_SUFFIX = '.sqlite'
 export interface PipelineBackupResult {
   path: string
   sizeBytes: number
+  /** Counts read back from the freshly written backup FILE. */
   tableCounts: Record<string, number>
+  /**
+   * Counts read from the SOURCE database immediately after the backup
+   * completed (same connection, before close). This is what
+   * verifyPipelineBackup should receive as `expected` - comparing the backup
+   * against the backup's own counts can never detect a dropped row (PR
+   * review finding).
+   */
+  sourceTableCounts: Record<string, number>
   createdAt: string
 }
 
@@ -149,8 +158,15 @@ export async function backupPipelineStore(options?: {
   const backupPath = join(backupDir, fileName)
 
   const source = openReadWrite(sourcePath)
+  let sourceTableCounts: Record<string, number>
   try {
     await sqliteBackup(source, backupPath)
+    // Read source counts on the SAME connection, immediately after the
+    // backup completed - the closest observable moment to the snapshot the
+    // online backup produced. A concurrent writer between backup completion
+    // and this read can still cause a benign mismatch, but that surfaces as
+    // a loud verification failure, never as a silently wrong "ok".
+    sourceTableCounts = readTableCounts(source)
   } finally {
     source.close()
   }
@@ -167,6 +183,7 @@ export async function backupPipelineStore(options?: {
     path: backupPath,
     sizeBytes: fileSize(backupPath),
     tableCounts,
+    sourceTableCounts,
     createdAt,
   }
 }

@@ -213,10 +213,17 @@ export function isNearDuplicate(candidate: NamedThing, entity: CanonEntity): boo
   const similarity = jaccard(candidateTokens, entityTokens)
   if (similarity >= 0.5) return true
   // Slug tokens are the core identity; names add descriptive words
-  // ("China-Taiwan tensions") that dilute full-set containment. A candidate
-  // whose tokens swallow an existing entity's SLUG (or vice versa) plus a
-  // modest overall overlap is the granular-variant signature.
-  const slugContainment = contains(candidateTokens, new Set(tokenize(entity.slug)))
-    || contains(entityTokens, new Set(tokenize(candidate.slug)))
-  return slugContainment && similarity >= 0.25
+  // ("China-Taiwan tensions") that dilute full-set containment. Containment
+  // is checked in ONE direction only: the candidate's tokens swallowing the
+  // existing entity's SLUG marks the candidate as a NARROWER/granular
+  // variant of it (`china-taiwan-military-clash-2027` of `china-taiwan`,
+  // `nvidia-h100` of `nvidia`) - safe to snap onto the existing entity.
+  // The reverse direction is deliberately NOT matched: a BROADER candidate
+  // (`china` when only `china-taiwan` exists, `korea` vs `north-korea`) is a
+  // genuinely distinct subject, and silently merging it into a narrower
+  // entity would corrupt the catalog in a hard-to-undo way (PR review
+  // finding). Broader-vs-narrower judgment is left to the registrar
+  // reflection, which can reason about identity instead of tokens.
+  const candidateSwallowsEntitySlug = contains(candidateTokens, new Set(tokenize(entity.slug)))
+  return candidateSwallowsEntitySlug && similarity >= 0.25
 }

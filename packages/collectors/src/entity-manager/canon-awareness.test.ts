@@ -181,6 +181,37 @@ test('resolver snaps a granular variant onto the existing entity instead of crea
   assert.equal(store.entities.length, 1, 'no new entity was created')
 })
 
+test('resolver does NOT snap a broader candidate into a narrower existing entity', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  store.entities.push(entityRecord({ slug: 'china-taiwan', name: 'China-Taiwan tensions', aliases: ['Taiwan strait'] }))
+  const catalog = canonOf(store.entities[0]).catalog
+
+  const resolved = await resolverTesting.resolvePrimaryEntities(store, [
+    { name: 'China', type: 'country', slug: 'china' },
+  ], catalog)
+
+  assert.equal(resolved[0].created, true, 'a genuinely broader subject gets its own entity')
+  assert.equal(resolved[0].entity.slug, 'china')
+})
+
+test('resolver checks the top-5 nearest, not just rank one, for the duplicate snap (review finding)', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  // rank 1 by token overlap: NOT a near-duplicate (no slug containment);
+  // rank 2: the true duplicate. The snap must still find it.
+  const decoy = entityRecord({ slug: 'h100-gpu-cloud-pricing', name: 'H100 GPU cloud pricing', aliases: [] })
+  const nvidia = entityRecord({ slug: 'nvidia', name: 'NVIDIA', aliases: ['NVDA'] })
+  store.entities.push(decoy, nvidia)
+  const catalog = canonOf(decoy, nvidia).catalog
+
+  const resolved = await resolverTesting.resolvePrimaryEntities(store, [
+    { name: 'NVIDIA H100 GPU', type: 'asset', slug: 'nvidia-h100-gpu' },
+  ], catalog)
+
+  assert.equal(resolved[0].created, false)
+  assert.equal(resolved[0].entity.slug, 'nvidia')
+  assert.equal(store.entities.length, 2, 'no new entity was created')
+})
+
 test('resolver drops banned source-object entities entirely', async () => {
   const store = new InMemoryEntityMemoryStore()
   const resolved = await resolverTesting.resolvePrimaryEntities(store, [

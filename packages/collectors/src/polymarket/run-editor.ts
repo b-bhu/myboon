@@ -26,6 +26,20 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // LEGACY LANE GUARD (PR review finding): this research-row editor lane is
+  // intentionally NOT in ecosystem.config.cjs - production runs the
+  // entity-draft lane (editor-draft/ + publisher/), which writes
+  // published_narratives with a different column set. Running this lane by
+  // accident would produce rows the new pipeline's consumers don't expect.
+  if (process.env.POLYMARKET_LEGACY_RESEARCH_LANE !== 'I_UNDERSTAND') {
+    console.error(
+      '[polymarket-editor] REFUSING TO START: legacy research-row editor lane. '
+      + 'Production uses the entity-draft lane (editor-draft/ + publisher/). '
+      + 'Set POLYMARKET_LEGACY_RESEARCH_LANE=I_UNDERSTAND to run it anyway.'
+    )
+    process.exit(1)
+  }
+
   await runOnce()
 
   if (process.env.POLYMARKET_EDITOR_RUN_ONCE === '1') return

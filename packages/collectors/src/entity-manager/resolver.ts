@@ -203,17 +203,19 @@ async function resolvePrimaryEntities(
     if (candidate.createIfMissing === false) continue
 
     // Deterministic near-duplicate guardrail (see canon.ts): a proposed NEW
-    // entity that is an existing entity at different granularity gets
-    // snapped onto it instead of created - the mechanical backstop behind
-    // the registrar reflection, and the direct kill for a fifth
-    // 'china-taiwan-*' or an 'nvidia-h100' next to 'nvidia'.
-    const nearest = nearestEntities(catalog, {
-      slug: entitySlug(candidate),
-      name: candidate.name,
-      aliases: candidate.aliases,
-    }, 1)[0]
-    if (nearest && isNearDuplicate({ slug: entitySlug(candidate), name: candidate.name, aliases: candidate.aliases }, nearest)) {
-      const [snapTarget] = await store.findEntities([nearest.slug], [nearest.name])
+    // entity that is a granular variant of an existing entity gets snapped
+    // onto it instead of created - the mechanical backstop behind the
+    // registrar reflection, and the direct kill for a fifth
+    // 'china-taiwan-*' or an 'nvidia-h100' next to 'nvidia'. The top FIVE
+    // nearest are checked, not just rank one: Jaccard ranks by overall
+    // token overlap, so a high-overlap NON-duplicate can outrank the true
+    // duplicate sitting at rank two (PR review finding) - the same width
+    // the registrar reflection already looks at.
+    const candidateShape = { slug: entitySlug(candidate), name: candidate.name, aliases: candidate.aliases }
+    const nearDup = nearestEntities(catalog, candidateShape, 5)
+      .find((nearest) => isNearDuplicate(candidateShape, nearest))
+    if (nearDup) {
+      const [snapTarget] = await store.findEntities([nearDup.slug], [nearDup.name])
       if (snapTarget) {
         await resolveAsMatch(candidate, snapTarget)
         continue

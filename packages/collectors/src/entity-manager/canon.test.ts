@@ -93,6 +93,17 @@ test('isNearDuplicate does NOT conflate genuinely different entities', () => {
   assert.equal(isNearDuplicate({ slug: 'apple', name: 'Apple', aliases: [] }, CATALOG.find((e) => e.slug === 'nvidia')!), false)
 })
 
+test('isNearDuplicate never swallows a BROADER candidate into a narrower existing entity (review finding)', () => {
+  // A new broader subject must not silently merge into an existing narrower
+  // one - that direction corrupts the catalog irreversibly. Only the
+  // registrar reflection may judge broader-vs-narrower identity.
+  assert.equal(isNearDuplicate({ slug: 'china', name: 'China', aliases: [] }, CATALOG.find((e) => e.slug === 'china-taiwan')!), false)
+  const northKorea = entity({ slug: 'north-korea', name: 'North Korea', aliases: ['DPRK'] })
+  assert.equal(isNearDuplicate({ slug: 'korea', name: 'Korea', aliases: [] }, northKorea), false)
+  // ...while the narrower-variant direction still snaps:
+  assert.equal(isNearDuplicate({ slug: 'north-korea-missile-program', name: 'North Korea missile program', aliases: [] }, northKorea), true)
+})
+
 test('normalizeEntityType collapses the historical type zoo into the fixed vocabulary', () => {
   assert.equal(normalizeEntityType('organization'), 'organization')
   assert.equal(normalizeEntityType('company'), 'organization')

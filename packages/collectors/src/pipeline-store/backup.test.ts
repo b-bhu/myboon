@@ -413,3 +413,31 @@ test('pruneOldBackups: defaults to keeping 7 backups when keep is not specified'
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('verification catches a backup that silently lost rows (source-vs-backup, review finding)', async () => {
+  const dir = makeTmpDir('backup-tamper-')
+  try {
+    const sourcePath = join(dir, 'source.sqlite')
+    await seedStore(sourcePath)
+
+    const backup = await backupPipelineStore({ sourcePath, backupDir: join(dir, 'backups') })
+    assert.deepEqual(backup.tableCounts, backup.sourceTableCounts, 'untampered backup matches its source')
+
+    // Simulate a backup that dropped rows mid-copy: delete one watchlist row
+    // from the BACKUP file only. Verification against the SOURCE counts must
+    // now fail - the old self-comparison could never catch this.
+    const { createRequire } = await import('node:module')
+    const { DatabaseSync } = createRequire(__filename)('node:sqlite') as {
+      DatabaseSync: new (path: string) => { exec(sql: string): void; close(): void }
+    }
+    const tampered = new DatabaseSync(backup.path)
+    tampered.exec('DELETE FROM pipeline_watchlist WHERE rowid = (SELECT rowid FROM pipeline_watchlist LIMIT 1)')
+    tampered.close()
+
+    const verification = await verifyPipelineBackup(backup.path, backup.sourceTableCounts)
+    assert.equal(verification.ok, false)
+    assert.ok(verification.mismatches.some((m) => m.includes('pipeline_watchlist')))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

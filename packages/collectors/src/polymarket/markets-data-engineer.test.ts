@@ -265,3 +265,15 @@ test('buildThreadUpdatePayload keeps researched status for non-material repeated
   assert.equal((payload.metrics as any).thread.observationCount, 1)
   assert.equal((payload.score_breakdown as any).reopenedForResearch, false)
 })
+
+test('the Gamma events fetch pins order=volume24hr (regression guard for the renamed field)', async () => {
+  // 2026-07-30: Gamma renamed its order field; `order=volume_24hr` started
+  // returning 422 "order fields are not valid" and every market fetch died.
+  // Pin the literal query string so a refactor cannot silently reintroduce
+  // the old spelling.
+  const { readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const source = await readFile(join(__dirname, 'markets-data-engineer.ts'), 'utf8')
+  assert.ok(source.includes('order=volume24hr&ascending=false'), 'events URL uses the accepted order field')
+  assert.ok(!source.includes('order=volume_24hr'), 'the 422-producing spelling must not reappear in any URL')
+})

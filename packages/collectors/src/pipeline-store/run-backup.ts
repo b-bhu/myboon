@@ -11,7 +11,10 @@ async function runOnce(): Promise<void> {
   const keep = keepRaw ? Number(keepRaw) : undefined
 
   const backupResult = await backupPipelineStore({ sourcePath, backupDir })
-  const verification = await verifyPipelineBackup(backupResult.path, backupResult.tableCounts)
+  // Verify the backup FILE against the SOURCE database's counts - passing
+  // the backup's own counts here compared the backup against itself and
+  // could never detect a dropped row (PR review finding).
+  const verification = await verifyPipelineBackup(backupResult.path, backupResult.sourceTableCounts)
   const deletedBackups = await pruneOldBackups({
     backupDir,
     keep: Number.isFinite(keep) ? keep : undefined,
