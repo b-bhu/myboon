@@ -16,7 +16,7 @@
 
 import { ClobClient, OrderType, Side, SignatureTypeV2, Chain } from '@polymarket/clob-client-v2';
 import type { ApiKeyCreds, SignedOrder } from '@polymarket/clob-client-v2';
-import { createSecureClient, forkEnvironmentConfig } from '@polymarket/client';
+import { createSecureClient, forkEnvironmentConfig, remoteBuilderSigning } from '@polymarket/client';
 import type { SecureClient, Signer as PolymarketSigner, TransactionHandle } from '@polymarket/client';
 import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
@@ -536,6 +536,25 @@ const POLYMARKET_ENVIRONMENT = forkEnvironmentConfig({
 });
 
 /**
+ * Authorizes gasless deposit-wallet deployment without shipping the Builder
+ * secret to the phone.
+ *
+ * Confirmed on-device: `createSecureClient` throws "Deposit Wallet
+ * deployment requires a Relayer API Key or Builder API Key in the client
+ * configuration" without this. `builderApiKey({ key, secret, passphrase })`
+ * — the SDK's other option — embeds the raw secret in whatever process calls
+ * it; correct for a trusted server, wrong for a phone app bundle, since the
+ * secret authorizes gasless relaying for this app's entire Builder account,
+ * not scoped per user.
+ *
+ * `remoteBuilderSigning` is the SDK's documented alternative for exactly
+ * this: it POSTs `{ method, path, body }` to our own signing endpoint, which
+ * holds the secret server-side and returns the four `POLY_BUILDER_*`
+ * headers — see `packages/api/src/polymarket/trading/routes/builder-sign.ts`.
+ */
+const BUILDER_SIGN_URL = `${resolveApiBaseUrl()}/clob/builder/sign`;
+
+/**
  * The unified SDK's account-setup client: CLOB L1 auth, deposit-wallet
  * derivation, and first-time deployment collapse into this one call.
  *
@@ -551,6 +570,7 @@ export async function createPolymarketSecureClient(
   return createSecureClient({
     environment: POLYMARKET_ENVIRONMENT,
     signer: toPolymarketSigner(signer),
+    apiKey: remoteBuilderSigning({ url: BUILDER_SIGN_URL }),
   });
 }
 

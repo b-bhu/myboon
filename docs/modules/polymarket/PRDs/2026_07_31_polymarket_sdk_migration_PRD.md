@@ -1,21 +1,58 @@
 # Polymarket SDK Migration PRD
 
-Status: account-setup path implemented on branch `polymarket-sdk-migration`,
-awaiting on-device verification. Order placement, wrap, withdraw, redeem, and
-the server route triage (step 4) are not started.
+Status: **account setup verified end-to-end against a real, fresh, on-chain
+deposit wallet** (see "Proven" below) — via a Node script driving the real
+SDK/proxy/signing chain, not yet from the actual phone app. Order placement,
+wrap, withdraw, redeem, and the server route triage (step 4) are not started.
 Date: 2026-07-31
 Owner: myboon Apps
 
 ## Implementation status (read this first)
 
-**First on-device run surfaced a real gap: `@polymarket/client` also calls
-Polymarket's relayer directly (`GET /deployed`), not just the CLOB host, and
-that call timed out on-device.** This needed one small server-side addition —
-see "Done" below. Earlier language in this document (and told to the user)
-claiming the migration needed zero server changes was wrong: it was accurate
-for what the type-level bundle/construct investigation could show, but a live
-network call surfaced a runtime dependency that investigation didn't cover.
-Recorded here so the gap in reasoning is visible, not smoothed over.
+Two on-device/local failures surfaced real gaps the type-level investigation
+couldn't show, both now fixed and both genuinely required server-side
+changes — correcting the earlier claim (made to the user) that this
+migration needed zero server changes. That claim was accurate only for what
+bundling/type-checking could prove; each live network call surfaced a new
+runtime dependency. Recorded in order they were found:
+
+1. **`@polymarket/client` calls Polymarket's relayer directly** (`GET
+   /deployed`, checking whether a signer's deposit wallet already exists) —
+   a call the old SDK never made from the phone. Only the CLOB host had been
+   proxied; the relayer host timed out on-device the same way
+   `clob.polymarket.com` used to. Fixed: `routes/proxies.ts`'s
+   `relayToRelayer` (mirrors the existing CLOB relay exactly) +
+   `predict.signing.ts` forking `relayer` alongside `clob`.
+2. **`createSecureClient` throws without Builder or Relayer API Key
+   authorization**: `"Deposit Wallet deployment requires a Relayer API Key
+   or Builder API Key in the client configuration."` The SDK's
+   `builderApiKey({ key, secret, passphrase })` embeds the raw secret in
+   whatever process calls it — correct for a trusted server, wrong for a
+   phone bundle, since this app's Builder secret authorizes gasless relaying
+   for the whole account, not per-user. Fixed with the SDK's documented
+   alternative for exactly this: `remoteBuilderSigning({ url })`, backed by
+   a new server route, `routes/builder-sign.ts`'s `POST /clob/builder/sign`,
+   which holds the secret and returns signed headers per request — the
+   secret never leaves the server.
+
+**Proven end-to-end** (Node script, real `@polymarket/client`, real HTTP
+calls through both new proxies, no shortcuts): a freshly generated,
+never-before-used private key ran through `createSecureClient` with Builder
+auth via the remote signer, deployed a real `WALLET-CREATE` transaction
+through the relayer, and resolved `client.account.wallet ==
+0xc4eec2e6d5818f2df34e5056de015c8fe559fdd4`. Independently confirmed via two
+public Polygon RPCs (`polygon.drpc.org`, `polygon-bor-rpc.publicnode.com`,
+agreeing) that this address holds real contract bytecode — a genuine beacon
+proxy, with the factory address and signer EOA visibly embedded in the
+returned code. **This is direct proof the original bug is fixed**: a fresh
+signer now deploys to and resolves the address the factory actually uses,
+with no manual intervention.
+
+**Not yet done: the same flow from the actual phone app**, through Privy's
+embedded wallet and the real UI (`usePolymarketWallet.ts`'s `enable()`). The
+Node script proves the SDK, the proxies, and the signing chain are correct;
+it does not exercise `createPrivyEvmSigner`'s `sendTransaction`/`eth_sendTransaction`
+path, Privy's actual signing behavior, or the UI's handling of the result.
 
 **Done, on `polymarket-sdk-migration`:**
 - `chain.contract.ts`: `Signer.sendTransaction` + `canBroadcastTransaction`
@@ -27,9 +64,9 @@ Recorded here so the gap in reasoning is visible, not smoothed over.
 - `predict.signing.ts`: `createPolymarketSecureClient` — constructs
   `@polymarket/client`'s `SecureClient` with a real adapter over the app's
   `Signer`, pointed at this app's CLOB **and relayer** proxies via
-  `forkEnvironmentConfig`. A client-side `waitForTransaction` poller backs
-  `TransactionHandle.wait()` (the app never broadcast a transaction directly
-  before this).
+  `forkEnvironmentConfig`, with Builder auth via `remoteBuilderSigning`. A
+  client-side `waitForTransaction` poller backs `TransactionHandle.wait()`
+  (the app never broadcast a transaction directly before this).
 - `usePolymarketWallet.ts`: `enable()` now calls
   `createPolymarketSecureClient` → `client.setupTradingApprovals()` →
   registers the resulting address with the server via `/clob/auth`, passing
@@ -37,20 +74,21 @@ Recorded here so the gap in reasoning is visible, not smoothed over.
   `owner()` verification accepts it immediately rather than running its own
   (wrong) derivation.
 - **`packages/api/src/polymarket/trading/routes/proxies.ts`: added
-  `relayToRelayer` / `GET|* /clob/relayer-proxy/*`** — a genuine server-side
-  change, added after the first on-device failure (`Request timed out: GET
-  https://relayer-v2.polymarket.com/deployed`). Mirrors the existing
-  `relayToClob` pattern exactly; confirmed working against the local dev
-  server (real Polymarket relayer responses pass through, an unknown
-  sub-path returns Polymarket's own 404). Not yet confirmed from the actual
-  phone.
-- `apps/hybrid-expo` gained `@polymarket/client` + `viem`; confirmed to
-  bundle cleanly under Metro/Hermes on iOS and Android (probe import, not
-  yet the full app running on a device).
+  `relayToRelayer` / `GET|* /clob/relayer-proxy/*`.** Mirrors the existing
+  `relayToClob` pattern exactly. Confirmed working end-to-end (see "Proven"
+  above), not yet from the actual phone.
+- **`packages/api/src/polymarket/trading/routes/builder-sign.ts` (new file):
+  `POST /clob/builder/sign`** — remote HMAC signing for Builder
+  authorization, keeping `POLYMARKET_BUILDER_SECRET` server-side. Same HMAC
+  algorithm as the old `@polymarket/builder-signing-sdk`'s signer (verified
+  against both implementations' compiled source). Confirmed working
+  end-to-end (see "Proven" above).
+- `apps/hybrid-expo` gained `@polymarket/client`; confirmed to bundle
+  cleanly under Metro/Hermes on iOS and Android (probe import — the full app
+  has not yet run this path on a device).
 - All existing tests (136, across chain/wallet/security suites) and
-  TypeScript pass. No test exercises the new code against a live signer or
-  network beyond the relayer-proxy curl check above — see the Definition of
-  Done below for what still needs a device.
+  TypeScript pass. Neither exercises the new SDK path — that coverage is the
+  Node-script proof above and the on-device run still to come.
 
 **Deliberately not done in this pass, and why:**
 - **The server's `/clob/auth`, `resolveDepositWallet`, and

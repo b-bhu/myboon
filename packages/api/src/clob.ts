@@ -7,6 +7,7 @@
  */
 
 import { Hono } from 'hono'
+import { registerBuilderSignRoutes } from './polymarket/trading/routes/builder-sign.js'
 import { registerFundRoutes } from './polymarket/trading/routes/funds.js'
 import { registerOperationRoutes } from './polymarket/trading/routes/operations.js'
 import { registerOrderRoutes } from './polymarket/trading/routes/orders.js'
@@ -22,5 +23,6 @@ registerOrderRoutes(clobRoutes)
 registerFundRoutes(clobRoutes)
 registerRedeemRoutes(clobRoutes)
 registerProxyRoutes(clobRoutes)
+registerBuilderSignRoutes(clobRoutes)
 
 console.log('[clob] Routes loaded: /auth, /order, /positions/:polygonAddress, /balance/:polygonAddress, /redeem')
