@@ -1,12 +1,12 @@
 import type { Hono } from 'hono'
 import type { ApiKeyCreds } from '@polymarket/clob-client-v2'
-import { deriveDepositWallet, TransactionType } from '@polymarket/builder-relayer-client'
+import { TransactionType } from '@polymarket/builder-relayer-client'
 import type { DepositWalletBatchRequest } from '@polymarket/builder-relayer-client'
 import {
   CONTRACTS,
   DEPOSIT_WALLET_FACTORY,
-  DEPOSIT_WALLET_IMPLEMENTATION,
   RELAYER_URL,
+  polygonProvider,
 } from '../contracts.js'
 import { failedOperation, sessionExpired, withOperation } from '../operations.js'
 import { sessions, verifyPredictSessionProof, type ClobSession } from '../sessions.js'
@@ -19,6 +19,137 @@ import {
   submitSignedDepositWalletBatch,
   syncCollateralBalance,
 } from '../wallet.js'
+
+/**
+ * `DepositWalletCreated(address wallet, address owner, address signer)` — the
+ * factory's creation event. `keccak256` of that signature; the wallet address is
+ * the first indexed topic.
+ */
+const DEPOSIT_WALLET_CREATED_TOPIC =
+  '0x7441de0ad639fe5d2bf1c22447715a0528b682385736bb40ae8dd92555eb8276'
+
+/**
+ * The deposit wallet this signer owns, deploying it first if it does not exist.
+ *
+ * Reads the address from the factory's creation event rather than computing it.
+ * See the note at the call site for why the CREATE2 derivation cannot be
+ * trusted here.
+ */
+async function resolveDepositWallet(eoaAddress: string): Promise<string> {
+  const existing = await findDeployedDepositWallet(eoaAddress)
+  if (existing) {
+    console.log(`[clob] Deposit wallet already deployed: ${existing}`)
+    return existing
+  }
+
+  if (!relayerBuilderConfig) throw new Error('Builder not configured')
+  console.log(`[clob] Deploying deposit wallet for ${eoaAddress}...`)
+
+  const createBody = JSON.stringify({
+    type: TransactionType.WALLET_CREATE,
+    from: eoaAddress,
+    to: DEPOSIT_WALLET_FACTORY,
+    metadata: 'Deploy Deposit Wallet',
+  })
+  const headers = await relayerBuilderConfig.generateBuilderHeaders('POST', '/submit', createBody)
+  const deployRes = await fetch(`${RELAYER_URL}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
+    body: createBody,
+  })
+  const deployPayload: any = await deployRes.json().catch(() => ({}))
+
+  if (!deployRes.ok) {
+    // "already exists" means the relayer has this signer on file. That is not a
+    // failure — the wallet is findable on-chain, so fall through to the lookup
+    // below rather than aborting a setup that is further along than it looks.
+    const message = String(deployPayload?.error ?? deployPayload?.message ?? '')
+    if (!/already (deployed|exists)/i.test(message)) {
+      throw new Error(message || `Deposit wallet deploy failed (${deployRes.status})`)
+    }
+    console.log(`[clob] Relayer reports wallet present: ${message}`)
+  }
+
+  const relay = getReadOnlyRelay()
+  if (deployPayload?.transactionID) {
+    const mined = await relay.pollUntilState(
+      deployPayload.transactionID,
+      ['STATE_MINED', 'STATE_CONFIRMED'],
+      'STATE_FAILED',
+      100,
+    )
+    const hash = (mined as any)?.transactionHash ?? deployPayload?.transactionHash
+    if (hash) {
+      // The node can lag the relayer's confirmation by a block, so the receipt
+      // is not always available on the first read.
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const created = await depositWalletFromTx(hash)
+        if (created) {
+          console.log(`[clob] Deposit wallet deployed: ${created} (tx=${hash})`)
+          rememberDepositWallet(eoaAddress, created)
+          return created
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      }
+    }
+  }
+
+  // Deploy reported success but the address could not be read back — or the
+  // relayer said the wallet already existed. Ask its history.
+  const existingAfterDeploy = await findDeployedDepositWallet(eoaAddress)
+  if (existingAfterDeploy) {
+    console.log(`[clob] Deposit wallet resolved from relayer history: ${existingAfterDeploy}`)
+    return existingAfterDeploy
+  }
+
+  throw new Error(`Deposit wallet was not found on chain for signer ${eoaAddress}`)
+}
+
+/**
+ * The deposit wallet created by a given relayer transaction.
+ *
+ * Reads the factory's creation event out of the transaction receipt rather than
+ * scanning history: `eth_getLogs` over the full chain is refused by rate-limited
+ * RPC providers (Alchemy's free tier caps the range at 10 blocks), and the
+ * receipt carries the same event with no range to scan.
+ */
+async function depositWalletFromTx(txHash: string): Promise<string | null> {
+  const receipt = await polygonProvider.getTransactionReceipt(txHash)
+  if (!receipt) return null
+  const log = receipt.logs.find(
+    (entry) =>
+      entry.address.toLowerCase() === DEPOSIT_WALLET_FACTORY.toLowerCase()
+      && entry.topics[0]?.toLowerCase() === DEPOSIT_WALLET_CREATED_TOPIC,
+  )
+  // topics[1] is the created wallet; topics[2..3] are owner and signer.
+  const walletTopic = log?.topics[1]
+  if (!walletTopic) return null
+  return `0x${walletTopic.slice(-40)}`.toLowerCase()
+}
+
+/**
+ * The signer's deposit wallet, if one has already been created for it.
+ *
+ * Cached per signer: the address is immutable once deployed, and the only other
+ * way to recover it is the deploy receipt, which a later session no longer has.
+ * Without this a returning user whose wallet exists would have no path back to
+ * its address — the relayer refuses to re-create it, and the CREATE2 derivation
+ * points somewhere the wallet is not.
+ */
+const depositWalletByEoa = new Map<string, string>()
+
+async function findDeployedDepositWallet(eoaAddress: string): Promise<string | null> {
+  const cached = depositWalletByEoa.get(eoaAddress.toLowerCase())
+  if (!cached) return null
+  // Confirm it still holds code rather than trusting the cache blindly; a
+  // reorged deploy would otherwise strand the session on a dead address.
+  const code = await polygonProvider.getCode(cached).catch(() => '0x')
+  return code && code !== '0x' ? cached : null
+}
+
+function rememberDepositWallet(eoaAddress: string, depositWallet: string): void {
+  depositWalletByEoa.set(eoaAddress.toLowerCase(), depositWallet.toLowerCase())
+}
 
 export function registerSessionRoutes(routes: Hono) {
   routes.post('/auth', async (c) => {
@@ -52,54 +183,27 @@ export function registerSessionRoutes(routes: Hono) {
 
     try {
       const eoaAddress = ownerAddress
-      const relay = getReadOnlyRelay()
       console.log('[clob] Using deposit wallet signatureType=3')
-      const depositWalletAddress = deriveDepositWallet(eoaAddress, DEPOSIT_WALLET_FACTORY, DEPOSIT_WALLET_IMPLEMENTATION)
-      console.log(`[clob] Deposit wallet address (derived): ${depositWalletAddress}`)
 
-      try {
-        const deployed = await relay.getDeployed(depositWalletAddress, TransactionType.WALLET)
-        if (!deployed) {
-          console.log(`[clob] Deploying deposit wallet for ${eoaAddress}...`)
-          const createBody = JSON.stringify({ type: TransactionType.WALLET_CREATE, from: eoaAddress, to: DEPOSIT_WALLET_FACTORY })
-          const headers = await relayerBuilderConfig.generateBuilderHeaders('POST', '/submit', createBody)
-          const deployRes = await fetch(`${RELAYER_URL}/submit`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
-            body: createBody,
-          })
-          const deployPayload = await deployRes.json().catch(() => ({}))
-          if (!deployRes.ok) {
-            throw new Error(deployPayload?.error || deployPayload?.message || `Deposit wallet deploy failed (${deployRes.status})`)
-          }
-          const deployResult = deployPayload?.transactionID
-            ? await relay.pollUntilState(deployPayload.transactionID, ['STATE_MINED', 'STATE_CONFIRMED'], 'STATE_FAILED', 100)
-            : undefined
-          if (deployResult) console.log(`[clob] Deposit wallet deployed: tx=${deployResult.transactionHash}`)
-          else console.warn('[clob] Deposit wallet deploy may have failed — continuing anyway')
-        } else {
-          console.log('[clob] Deposit wallet already deployed')
-        }
-      } catch (deployErr: any) {
-        // The relayer reports an existing wallet with two different phrasings —
-        // "already deployed" from the deploy poll, and "deposit wallet already
-        // exists for signer 0x…" from /submit. Matching only the first meant the
-        // second escaped as a failure, aborting `/auth` for any signer the
-        // relayer already knows about and leaving the client with no session at
-        // all. Both mean the same thing: the wallet is there, proceed.
-        //
-        // This is reachable even when the relayer's own /deployed check returns
-        // false — it can hold a registration for an address that was never mined,
-        // so "not deployed" and "already exists" are both true of the same
-        // wallet. The session below only needs the derived address, which is
-        // CREATE2-deterministic and correct either way.
-        const deployMessage = String(deployErr?.message ?? '')
-        if (/already (deployed|exists)/i.test(deployMessage)) {
-          console.log(`[clob] Deposit wallet already present (caught): ${deployMessage}`)
-        } else {
-          throw deployErr
-        }
-      }
+      // The deposit wallet address is *read*, never predicted.
+      //
+      // `deriveDepositWallet()` computes a CREATE2 address from the SDK's
+      // DepositWalletImplementation constant, but the live factory clones the
+      // Beacon at 0x7A18EDfe… (docs: /resources/contracts). The two disagree, so
+      // the derived address is not where the wallet lands — verified on two
+      // fresh signers, both of which deployed successfully to an address the
+      // derivation did not predict. Every downstream step then targeted a
+      // non-existent contract and the approval batch failed with "deposit wallet
+      // … is not deployed", which is exactly what it was.
+      //
+      // Polymarket's own docs prescribe reading the address back rather than
+      // computing it (/trading/wallets-auth: "The confirmed transaction includes
+      // the new Deposit Wallet address as proxyAddress"). That field is empty in
+      // practice for WALLET-CREATE, so the address comes from the factory's
+      // creation event in the transaction receipt — the same value, one layer
+      // down, and the only source that cannot drift from what was deployed.
+      const depositWalletAddress = await resolveDepositWallet(eoaAddress)
+      console.log(`[clob] Deposit wallet address (resolved): ${depositWalletAddress}`)
 
       const sessionDraft: Omit<ClobSession, 'creds' | 'createdAt'> = {
         eoaAddress: eoaAddress.toLowerCase(),
@@ -251,21 +355,18 @@ export function registerSessionRoutes(routes: Hono) {
     const session = sessions.get(eoaAddress)
 
     try {
-      const depositWalletAddress = deriveDepositWallet(
-        eoaAddress,
-        DEPOSIT_WALLET_FACTORY,
-        DEPOSIT_WALLET_IMPLEMENTATION,
-      ).toLowerCase()
-
-      const relay = getReadOnlyRelay()
-      const deployed = await relay.getDeployed(depositWalletAddress, TransactionType.WALLET)
+      // Never derived — same reason as `/auth`. A live session already carries
+      // the resolved address; otherwise fall back to what this process recorded
+      // when it deployed the wallet.
+      const depositWalletAddress =
+        session?.depositWalletAddress ?? (await findDeployedDepositWallet(eoaAddress))
 
       return c.json({
-        hasAccount: !!deployed,
+        hasAccount: !!depositWalletAddress,
         polygonAddress: eoaAddress,
         walletMode: 'deposit_wallet' as const,
-        tradingAddress: deployed ? depositWalletAddress : null,
-        depositWalletAddress: deployed ? depositWalletAddress : null,
+        tradingAddress: depositWalletAddress ?? null,
+        depositWalletAddress: depositWalletAddress ?? null,
         sessionLive: !!session,
       })
     } catch (err: any) {
