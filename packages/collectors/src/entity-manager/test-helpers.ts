@@ -18,6 +18,10 @@ export class InMemoryEntityMemoryStore implements EntityMemoryStore {
   private nextEntityId = 1
   private nextMemoryId = 1
 
+  async listEntities(limit = 1000): Promise<EntityRecord[]> {
+    return this.entities.slice(0, limit)
+  }
+
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
     const slugSet = new Set(slugs)
     const aliasSet = new Set(aliases.map((alias) => alias.toLowerCase()))

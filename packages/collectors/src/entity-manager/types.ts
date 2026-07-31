@@ -59,7 +59,14 @@ export interface EntityMemoryExtraction {
 }
 
 export interface ExtractionProvider {
-  extract(packet: ResearchPacket): Promise<EntityMemoryExtraction>
+  /**
+   * `canon` (see canon.ts) carries the entity catalog awareness: a shortlist
+   * of plausible existing homes for the prompt menu and the full catalog for
+   * near-duplicate reflection. Optional so fakes and legacy callers that
+   * extract without awareness keep working; when omitted the provider
+   * behaves as before (menu-less filing).
+   */
+  extract(packet: ResearchPacket, canon?: import('./canon').ExtractionCanon): Promise<EntityMemoryExtraction>
 }
 
 export interface EntityRecord {
@@ -137,6 +144,12 @@ export interface EntityMemoryInput {
 
 export interface EntityMemoryStore {
   findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]>
+  /**
+   * The full entity catalog (bounded), for canon awareness: the extraction
+   * shortlist and the resolver's near-duplicate guardrail both read it.
+   * See canon.ts.
+   */
+  listEntities(limit?: number): Promise<EntityRecord[]>
   createEntities(entities: EntityInput[]): Promise<EntityRecord[]>
   updateEntity(entity: EntityRecord): Promise<EntityRecord>
   findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]>

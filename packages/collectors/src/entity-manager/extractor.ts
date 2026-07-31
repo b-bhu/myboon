@@ -1,6 +1,7 @@
 import { HermesService, extractJson } from '../hermes'
-import { normalizeExtraction } from './normalization'
-import type { EntityMemoryExtraction, ExtractionProvider, ResearchPacket } from './types'
+import { nearestEntities, type CanonEntity, type ExtractionCanon } from './canon'
+import { normalizeExtraction, normalizeSlug } from './normalization'
+import type { EntityMemoryExtraction, ExtractionProvider, PrimaryEntityCandidate, ResearchPacket } from './types'
 
 export interface HermesEntityExtractionOptions {
   command?: string
@@ -50,12 +51,34 @@ function sanitizeHermesError(error: unknown): Error {
   return new Error(`Hermes entity extraction failed${detail ? ` (${detail})` : ''}`)
 }
 
-function buildPrompt(packet: ResearchPacket): string {
+function shortlistSection(shortlist: CanonEntity[]): string[] {
+  if (shortlist.length === 0) return []
+  return [
+    '',
+    'KNOWN ENTITIES likely relevant to this packet. File memories into one of these unless none genuinely fits:',
+    JSON.stringify(shortlist.map((entity) => ({
+      slug: entity.slug,
+      name: entity.name,
+      type: entity.type,
+      aliases: entity.aliases,
+      summary: entity.summary,
+    })), null, 2),
+    '',
+    'Filing rules:',
+    '- STRONGLY prefer filing under an existing entity from the list above. Creating a new entity is exceptional and requires a createReason.',
+    '- File a story under the most specific durable entity it is about: an institution\'s decision belongs to the institution, not its country (a central-bank rate decision files under the central bank entity, never a country entity).',
+    '- Use a broad country entity only when the story is about the country itself.',
+    '- One memory = one story. Never bundle unrelated developments into a single memory.',
+  ]
+}
+
+function buildPrompt(packet: ResearchPacket, canon?: ExtractionCanon): string {
   const compactPacket = packetForPrompt(packet)
   return [
     'You are the myboon Entity Extraction Agent.',
     '',
     'Assign the research packet to durable primary entities and create memory entries for their research record.',
+    ...shortlistSection(canon?.shortlist ?? []),
     'Do not write to a database. Do not make editor, publisher, or feed decisions.',
     'Do not judge evidence quality, importance, causality, sentiment, or whether the item is publishable.',
     'Do not use verdict language such as weak, strong, reject, accept, blocked, noise, likely, plausibly, no signal, or needs more research.',
@@ -103,6 +126,80 @@ function buildPrompt(packet: ResearchPacket): string {
   ].join('\n')
 }
 
+function candidateMatchesCatalog(candidate: PrimaryEntityCandidate, catalog: CanonEntity[]): boolean {
+  const slug = normalizeSlug(candidate.slug, candidate.name)
+  const aliases = new Set([candidate.name, ...(candidate.aliases ?? [])].map((alias) => alias.toLowerCase()))
+  return catalog.some((entity) =>
+    entity.slug === slug
+    || entity.name.toLowerCase() === candidate.name.toLowerCase()
+    || entity.aliases.some((alias) => aliases.has(alias.toLowerCase()))
+  )
+}
+
+function buildRegistrarPrompt(candidate: PrimaryEntityCandidate, nearest: CanonEntity[]): string {
+  return [
+    'You are the myboon Entity Registrar.',
+    '',
+    'The extraction agent proposes CREATING a new durable entity. Your only job is to decide whether it genuinely deserves to exist, or whether it is the same durable subject as an existing entity at a different granularity.',
+    'Prefer file_under when the proposal is a product, sub-topic, variant, or narrower framing of an existing entity. Create only for a genuinely distinct durable subject.',
+    'Do NOT judge importance or newsworthiness - only identity.',
+    '',
+    'Return strict JSON only: {"decision": "create" | "file_under", "existing_slug": "slug when file_under", "reason": "one short sentence"}',
+    '',
+    'Proposed new entity:',
+    JSON.stringify({
+      name: candidate.name,
+      slug: candidate.slug,
+      type: candidate.type,
+      aliases: candidate.aliases ?? [],
+      summary: candidate.summary ?? null,
+      create_reason: candidate.createReason || null,
+    }, null, 2),
+    '',
+    'Nearest existing entities:',
+    JSON.stringify(nearest.map((entity) => ({
+      slug: entity.slug,
+      name: entity.name,
+      type: entity.type,
+      aliases: entity.aliases,
+      summary: entity.summary,
+    })), null, 2),
+  ].join('\n')
+}
+
+/**
+ * Re-home a proposed creation onto an existing catalog entity: the candidate
+ * becomes a reference to the existing entity (keeping its own aliases so the
+ * resolver can merge them in - a "file_under nvidia" verdict for `nvidia-h100`
+ * teaches `nvidia` the H100 alias), and every memory pointed at the old slug
+ * moves to the existing one.
+ */
+function rehomeCandidate(
+  extraction: EntityMemoryExtraction,
+  candidate: PrimaryEntityCandidate,
+  existing: CanonEntity
+): EntityMemoryExtraction {
+  const oldSlug = normalizeSlug(candidate.slug, candidate.name)
+  const replacement: PrimaryEntityCandidate = {
+    name: existing.name,
+    type: existing.type,
+    slug: existing.slug,
+    aliases: [existing.name, ...(candidate.aliases ?? [])],
+    summary: existing.summary ?? candidate.summary,
+    createIfMissing: false,
+    metadata: candidate.metadata,
+  }
+  const alreadyListed = extraction.primaryEntities.some((entity) =>
+    entity !== candidate && normalizeSlug(entity.slug, entity.name) === existing.slug)
+  const primaryEntities = extraction.primaryEntities.flatMap((entity) => {
+    if (entity !== candidate) return [entity]
+    return alreadyListed ? [] : [replacement]
+  })
+  const memories = extraction.memories.map((memory) =>
+    memory.entitySlug === oldSlug ? { ...memory, entitySlug: existing.slug } : memory)
+  return { primaryEntities, memories }
+}
+
 export class HermesEntityExtractionProvider implements ExtractionProvider {
   private readonly timeoutMs: number
   private readonly toolsets: string
@@ -116,8 +213,9 @@ export class HermesEntityExtractionProvider implements ExtractionProvider {
     this.service = options.service ?? new HermesService({ command: options.command ?? 'hermes' })
   }
 
-  async extract(packet: ResearchPacket): Promise<EntityMemoryExtraction> {
-    const prompt = buildPrompt(packet)
+  async extract(packet: ResearchPacket, canon?: ExtractionCanon): Promise<EntityMemoryExtraction> {
+    const prompt = buildPrompt(packet, canon)
+    let extraction: EntityMemoryExtraction
     try {
       const { value } = await this.service.structured<unknown>({
         purpose: 'entity-manager.extractor',
@@ -126,15 +224,64 @@ export class HermesEntityExtractionProvider implements ExtractionProvider {
         toolsets: this.toolsets || undefined,
         ignoreRules: this.ignoreRules,
       })
-      return normalizeExtraction(value, packet)
+      extraction = normalizeExtraction(value, packet)
     } catch (error) {
       throw sanitizeHermesError(error)
     }
+    return this.reflectOnCreations(extraction, canon)
+  }
+
+  /**
+   * Registrar reflection: fires ONLY when the extraction proposes creating a
+   * new entity (the rare, catalog-polluting path), never on ordinary filings
+   * into existing entities. A second cheap structured call judges identity -
+   * "is this the same durable subject as an existing entity at different
+   * granularity?" - with the nearest catalog entries as context. Every
+   * failure mode (call error, unparseable output, unknown verdict, verdict
+   * naming a slug outside the catalog) fails OPEN to the original creation:
+   * the deterministic near-duplicate snap in the resolver remains the
+   * backstop.
+   */
+  private async reflectOnCreations(
+    extraction: EntityMemoryExtraction,
+    canon?: ExtractionCanon
+  ): Promise<EntityMemoryExtraction> {
+    if (!canon || canon.catalog.length === 0) return extraction
+
+    let current = extraction
+    const creations = extraction.primaryEntities.filter((candidate) => !candidateMatchesCatalog(candidate, canon.catalog))
+    for (const candidate of creations) {
+      const nearest = nearestEntities(canon.catalog, {
+        slug: normalizeSlug(candidate.slug, candidate.name),
+        name: candidate.name,
+        aliases: candidate.aliases,
+      }, 5)
+      if (nearest.length === 0) continue
+      try {
+        const { value } = await this.service.structured<{ decision?: unknown, existing_slug?: unknown }>({
+          purpose: 'entity-manager.registrar',
+          prompt: buildRegistrarPrompt(candidate, nearest),
+          timeoutMs: this.timeoutMs,
+          toolsets: this.toolsets || undefined,
+          ignoreRules: this.ignoreRules,
+        })
+        if (value?.decision !== 'file_under' || typeof value.existing_slug !== 'string') continue
+        const existing = canon.catalog.find((entity) => entity.slug === value.existing_slug)
+        if (!existing) continue
+        current = rehomeCandidate(current, candidate, existing)
+      } catch {
+        // Fail open: keep the creation; the resolver guardrail still runs.
+      }
+    }
+    return current
   }
 }
 
 export const __testing = {
   buildPrompt,
+  buildRegistrarPrompt,
+  candidateMatchesCatalog,
   extractJson,
   packetForPrompt,
+  rehomeCandidate,
 }

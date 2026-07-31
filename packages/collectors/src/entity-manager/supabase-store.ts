@@ -81,6 +81,26 @@ function normalizeMemory(row: unknown): EntityMemoryRecord {
 export class SupabaseEntityMemoryStore implements EntityMemoryStore {
   constructor(private readonly db: SupabaseClient) {}
 
+  async listEntities(limit = 1000): Promise<EntityRecord[]> {
+    let result = await this.db
+      .from('entities')
+      .select(ENTITY_SELECT)
+      .eq('status', 'active')
+      .order('created_at', { ascending: true })
+      .limit(limit) as unknown as EntityRowsResult
+    if (isMissingCarouselColumn(result.error)) {
+      result = await this.db
+        .from('entities')
+        .select(LEGACY_ENTITY_SELECT)
+        .eq('status', 'active')
+        .order('created_at', { ascending: true })
+        .limit(limit) as unknown as EntityRowsResult
+    }
+    const { data, error } = result
+    if (error) throw new Error(`entity catalog list failed: ${error.message}`)
+    return (data ?? []).map(normalizeEntity)
+  }
+
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
     const byId = new Map<string, EntityRecord>()
     const uniqueSlugs = [...new Set(slugs)]

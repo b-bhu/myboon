@@ -1,3 +1,12 @@
+import {
+  isBannedEntitySlug,
+  isNearDuplicate,
+  nearestEntities,
+  normalizeEntityType,
+  shortlistForPacket,
+  toCanonEntity,
+  type CanonEntity,
+} from './canon'
 import { normalizeSlug } from './normalization'
 import type {
   EntityInput,
@@ -116,7 +125,10 @@ function entityInput(candidate: PrimaryEntityCandidate): EntityInput {
   return {
     slug: entitySlug(candidate),
     name: candidate.name.trim(),
-    type: candidate.type.trim() || 'unknown',
+    // Fixed vocabulary at creation time (see canon.ts): the historical
+    // free-formed type zoo (`nation` next to `country`, one-off `index`,
+    // `legislation`, ...) stops growing here.
+    type: normalizeEntityType(candidate.type),
     aliases: aliasesFor(candidate),
     summary: candidate.summary?.trim() || null,
     status: 'active',
@@ -141,10 +153,18 @@ function findMatchingEntity(
   return existing.find((entity) => entity.slug === slug || aliasesIntersect(entity.aliases ?? [], aliases)) ?? null
 }
 
-async function resolvePrimaryEntities(store: EntityMemoryStore, candidates: PrimaryEntityCandidate[]): Promise<ResolvedEntity[]> {
+async function resolvePrimaryEntities(
+  store: EntityMemoryStore,
+  candidates: PrimaryEntityCandidate[],
+  catalog: CanonEntity[] = []
+): Promise<ResolvedEntity[]> {
   const deduped = new Map<string, PrimaryEntityCandidate>()
   for (const candidate of candidates.slice(0, 3)) {
     if (!candidate.name.trim()) continue
+    // Source objects (the platforms we collect FROM) are never entities -
+    // the extraction prompt forbids it and production data shows it happened
+    // anyway ('polymarket' accumulated 8 memories). Hard-dropped here.
+    if (isBannedEntitySlug(entitySlug(candidate))) continue
     deduped.set(entitySlug(candidate), candidate)
   }
   const inputs = [...deduped.values()]
@@ -157,27 +177,51 @@ async function resolvePrimaryEntities(store: EntityMemoryStore, candidates: Prim
   const toCreate: EntityInput[] = []
   const createCandidates: PrimaryEntityCandidate[] = []
 
+  const resolveAsMatch = async (candidate: PrimaryEntityCandidate, match: Awaited<ReturnType<EntityMemoryStore['findEntities']>>[number]) => {
+    const mergedAliases = unique([...(match.aliases ?? []), ...aliasesFor(candidate)])
+    const nextMetadata = { ...(match.metadata ?? {}), ...(candidate.metadata ?? {}) }
+    const needsUpdate = mergedAliases.length !== (match.aliases ?? []).length
+      || (!match.summary && candidate.summary)
+      || JSON.stringify(nextMetadata) !== JSON.stringify(match.metadata ?? {})
+    const entity = needsUpdate
+      ? await store.updateEntity({
+        ...match,
+        aliases: mergedAliases,
+        summary: match.summary || candidate.summary || null,
+        metadata: nextMetadata,
+      })
+      : match
+    resolved.push({ candidate, entity, created: false })
+  }
+
   for (const candidate of inputs) {
     const match = findMatchingEntity(candidate, existing)
     if (match) {
-      const mergedAliases = unique([...(match.aliases ?? []), ...aliasesFor(candidate)])
-      const nextMetadata = { ...(match.metadata ?? {}), ...(candidate.metadata ?? {}) }
-      const needsUpdate = mergedAliases.length !== (match.aliases ?? []).length
-        || (!match.summary && candidate.summary)
-        || JSON.stringify(nextMetadata) !== JSON.stringify(match.metadata ?? {})
-      const entity = needsUpdate
-        ? await store.updateEntity({
-          ...match,
-          aliases: mergedAliases,
-          summary: match.summary || candidate.summary || null,
-          metadata: nextMetadata,
-        })
-        : match
-      resolved.push({ candidate, entity, created: false })
-    } else if (candidate.createIfMissing !== false) {
-      toCreate.push(entityInput(candidate))
-      createCandidates.push(candidate)
+      await resolveAsMatch(candidate, match)
+      continue
     }
+    if (candidate.createIfMissing === false) continue
+
+    // Deterministic near-duplicate guardrail (see canon.ts): a proposed NEW
+    // entity that is an existing entity at different granularity gets
+    // snapped onto it instead of created - the mechanical backstop behind
+    // the registrar reflection, and the direct kill for a fifth
+    // 'china-taiwan-*' or an 'nvidia-h100' next to 'nvidia'.
+    const nearest = nearestEntities(catalog, {
+      slug: entitySlug(candidate),
+      name: candidate.name,
+      aliases: candidate.aliases,
+    }, 1)[0]
+    if (nearest && isNearDuplicate({ slug: entitySlug(candidate), name: candidate.name, aliases: candidate.aliases }, nearest)) {
+      const [snapTarget] = await store.findEntities([nearest.slug], [nearest.name])
+      if (snapTarget) {
+        await resolveAsMatch(candidate, snapTarget)
+        continue
+      }
+    }
+
+    toCreate.push(entityInput(candidate))
+    createCandidates.push(candidate)
   }
 
   const created = await store.createEntities(toCreate)
@@ -254,8 +298,21 @@ export async function writeExtraction(
   packet: ResearchPacket,
   extractionProvider: ExtractionProvider
 ): Promise<WriteExtractionResult> {
-  const extraction = await extractionProvider.extract(packet)
-  const resolvedEntities = await resolvePrimaryEntities(store, extraction.primaryEntities)
+  // Canon awareness (see canon.ts): load the catalog once, hand the
+  // extraction a shortlist of plausible existing homes, and give the
+  // resolver the full catalog for its near-duplicate guardrail. Catalog
+  // load failures fail OPEN into menu-less extraction - awareness improves
+  // filing, it must never block it.
+  let catalog: CanonEntity[] = []
+  try {
+    catalog = (await store.listEntities()).map(toCanonEntity)
+  } catch {
+    catalog = []
+  }
+  const shortlist = shortlistForPacket(catalog, packet)
+
+  const extraction = await extractionProvider.extract(packet, { shortlist, catalog })
+  const resolvedEntities = await resolvePrimaryEntities(store, extraction.primaryEntities, catalog)
   const bySlug = new Map(resolvedEntities.map((resolved) => [entitySlug(resolved.candidate), resolved.entity.id]))
   const memoryInputs = extraction.memories.flatMap((memory) => {
     const entityId = bySlug.get(memory.entitySlug)
