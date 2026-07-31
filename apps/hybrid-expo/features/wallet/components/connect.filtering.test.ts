@@ -42,7 +42,7 @@ function optionsFrom(
   backends: Record<Chain, readonly WalletBackend[]>,
   chain: Chain,
 ): readonly ConnectOption[] {
-  const order: readonly ConnectOption[] = ['email', 'passkey', 'external_wallet'];
+  const order: readonly ConnectOption[] = ['email', 'google', 'external_wallet'];
   const offered = new Set<ConnectOption>();
   for (const backend of backends[chain]) {
     for (const option of BACKEND_OPTIONS[backend]) offered.add(option);
@@ -91,7 +91,7 @@ describe('TC-MODAL-001/002: option filtering per chain', () => {
     for (const chain of CHAINS) {
       const options = availableOptions(chain);
       assert.ok(options.includes('email'), `${chain} must offer email`);
-      assert.ok(options.includes('passkey'), `${chain} must offer passkey`);
+      assert.ok(options.includes('google'), `${chain} must offer google`);
     }
   });
 

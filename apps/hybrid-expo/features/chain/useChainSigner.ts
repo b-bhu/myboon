@@ -20,6 +20,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { useChainActivation } from '@/features/chain/activation';
+import { logChainState } from '@/features/chain/chain.debug';
 import {
   createPrivyEvmSigner,
   createSolanaSigner,
@@ -88,6 +89,21 @@ export function useChainSigner(requirement: ChainRequirement): ChainSignerResult
       solana.isPreparing,
     ],
   );
+
+  // Stage 2: how the requirement resolved, and from what. `status` here is the
+  // single fact every Predict screen gates on, so when a screen says "connect"
+  // for a wallet that exists, this line names which input produced that.
+  logChainState(`resolve.${requirement.applicationId}`, {
+    chain: requirement.chain,
+    status: resolution.status,
+    backend: resolution.backend,
+    isActive: activation[requirement.chain],
+    isActivationHydrated: isHydrated,
+    provisionedBackends,
+    isPrivyUser: privy.isPrivyUser,
+    evmAddress: evm.address,
+    evmIsProvisioned: evm.isProvisioned,
+  });
 
   const signer = useMemo<Signer | null>(() => {
     if (resolution.status !== 'ready' || !resolution.backend) return null;

@@ -79,12 +79,21 @@ function getOrderCost(order: OpenOrder): number {
 export default function PredictProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { connected, address: solanaAddress, source, sessionKey } = useWallet();
+  // Solana is read only as a withdrawal destination — never as this screen's
+  // connection state. Predict settles on Polygon, so `poly` is the source of truth.
+  const { address: solanaAddress } = useWallet();
   const poly = usePolymarketWallet();
   // Predict settles on Polygon, so its requirement is EVM.
   const connectSheet = useConnectionSheet('evm');
-  const openConnect = useCallback(() => connectSheet.open('evm'), [connectSheet]);
   const [busy, setBusy] = useState(false);
+  // Set when the connection sheet is opened to reach Polymarket setup, so the
+  // effect below can finish the job once a signer resolves. Without it a user
+  // who signs in here lands back on a screen with a wallet and no next step —
+  // the detail screens already do this; profile was the one that did not.
+  const [setupAfterConnect, setSetupAfterConnect] = useState(false);
+  // Set by the sheet's `onConnected` so the close handler can tell a successful
+  // connection from a cancellation — the sheet closes itself in both cases.
+  const connectedViaSheetRef = useRef(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
@@ -113,7 +122,15 @@ export default function PredictProfileScreen() {
   const ordersRefreshInFlight = useRef(false);
 
   const isEnabled = poly.isReady && poly.polygonAddress;
-  const walletScopedKey = connected && solanaAddress ? `${sessionKey}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}` : 'disconnected';
+  // Two different questions, and the screen must not confuse them:
+  //   walletAddress      — the EVM wallet exists and can sign. Local, from Privy,
+  //                        available at app load. This is "connected".
+  //   poly.polygonAddress — the Polymarket CLOB session is live. Server-side,
+  //                        set only by enable(). This is "account set up".
+  // Gating connection UI on polygonAddress showed "Connect wallet" to a user who
+  // already had a working wallet, with no control that advanced them.
+  const walletAddress = poly.signer?.descriptor.address ?? null;
+  const walletScopedKey = poly.signer ? `${poly.signer.descriptor.address.toLowerCase()}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}` : 'disconnected';
   const walletScopedKeyRef = useRef(walletScopedKey);
   const formatProfileMoney = useCallback(
     (value: number | null | undefined) => formatProfileCurrency(value, currencyFormat, usdToInrRate),
@@ -378,8 +395,11 @@ export default function PredictProfileScreen() {
 
   const handleConnectPredictAccount = useCallback(() => {
     // Predict signs on Polygon, so the requirement is EVM. When the resolver
-    // has no signer yet, the shared connection sheet is the entry point.
+    // has no signer yet, the shared connection sheet is the entry point and the
+    // effect below resumes setup once the signer lands — signing in and setting
+    // up Polymarket is one user action, not two.
     if (!poly.signer) {
+      setSetupAfterConnect(true);
       connectSheet.open('evm');
       return;
     }
@@ -387,8 +407,28 @@ export default function PredictProfileScreen() {
     void connectPredictAccount();
   }, [connectPredictAccount, connectSheet, poly.signer]);
 
+  // Resume setup after the connection sheet resolves a signer. Mirrors
+  // PredictMarketDetailScreen / PredictSportDetailScreen.
+  //
+  // `connectPredictAccount` is deliberately not a dependency: it closes over
+  // `poly`, which is a new object every render, so including it would re-run
+  // this effect continuously. The ref guard is what makes the resume fire once
+  // per connection rather than on every render while setup is in flight.
+  const setupResumeRef = useRef(false);
+  useEffect(() => {
+    if (!setupAfterConnect || !poly.signer || poly.isReady) return;
+    if (setupResumeRef.current) return;
+    setupResumeRef.current = true;
+    setSetupAfterConnect(false);
+    void connectPredictAccount().finally(() => {
+      setupResumeRef.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setupAfterConnect, poly.signer, poly.isReady]);
+
   const handleReconnect = useCallback(async () => {
-    if (!connected) return;
+    // Re-auth needs the EVM signer that signs CLOB auth, not a Solana wallet.
+    if (!poly.signer) return;
     setBusy(true);
     try {
       await poly.enable();
@@ -401,7 +441,7 @@ export default function PredictProfileScreen() {
     } finally {
       setBusy(false);
     }
-  }, [connected, poly, loadPortfolio]);
+  }, [poly, loadPortfolio]);
 
   const handleOpenMarket = useCallback((slug: string) => {
     router.push(getPredictMarketHref(slug));
@@ -499,14 +539,15 @@ export default function PredictProfileScreen() {
           <View style={styles.identityInfo}>
             {/*
               Polymarket settles on Polygon, so this header reports the EVM
-              wallet. It previously read `useWallet()` — the Solana accessor —
-              and so showed a connected Phantom address on a screen that cannot
-              use it, telling the user they were ready when setup would fail.
+              wallet — the signer's address, which exists as soon as the user is
+              signed in. Reading `polygonAddress` here showed "—" to a user with
+              a perfectly good wallet, because that field only lands after CLOB
+              auth has run.
             */}
             <Text style={styles.handle}>
-              {portfolio?.profile?.name ?? (poly.polygonAddress ? truncate(poly.polygonAddress) : '—')}
+              {portfolio?.profile?.name ?? (walletAddress ? truncate(walletAddress) : '—')}
             </Text>
-            {poly.polygonAddress && (
+            {walletAddress && (
               <View style={styles.connectedChip}>
                 <View style={styles.connectedDot} />
                 <Text style={styles.connectedText}>Connected</Text>
@@ -514,9 +555,9 @@ export default function PredictProfileScreen() {
             )}
           </View>
 
-          {!isEnabled && !poly.isLoading && !poly.polygonAddress && (
+          {!isEnabled && !poly.isLoading && !walletAddress && (
             <Pressable
-              onPress={openConnect}
+              onPress={handleConnectPredictAccount}
               style={styles.passkeyCta}
             >
               <MaterialIcons name="login" size={14} color={tokens.colors.backgroundDark} />
@@ -550,11 +591,13 @@ export default function PredictProfileScreen() {
           <View style={styles.positionsSection}>
             <EmptyPortfolio
               mode="no-account"
-              // Gated on the EVM wallet, not the Solana one: offering "Set up
-              // Polymarket" to a user with only a Solana wallet connected sends
-              // them into a flow that cannot complete.
-              onPrimaryAction={!poly.polygonAddress ? openConnect : handleConnectPredictAccount}
-              primaryLabel={!poly.polygonAddress ? 'Connect wallet' : 'Set up Polymarket'}
+              // Gated on the EVM wallet, not the CLOB session: a user with a
+              // resolved signer and no session needs "Set up Polymarket", not a
+              // connection sheet that shows an already-connected wallet and
+              // offers nothing. Both paths run the same handler, which opens the
+              // sheet only when there is genuinely no signer.
+              onPrimaryAction={handleConnectPredictAccount}
+              primaryLabel={!walletAddress ? 'Connect wallet' : 'Set up Polymarket'}
             />
           </View>
         )}
@@ -792,7 +835,16 @@ export default function PredictProfileScreen() {
       <ConnectionSheet
         visible={connectSheet.visible}
         chain={connectSheet.chain}
-        onClose={connectSheet.close}
+        // A successful connect also closes the sheet, and `onConnected` fires
+        // first — so this flag distinguishes "connected, keep the pending setup"
+        // from "user cancelled, drop it". Without it, closing on success would
+        // clear `setupAfterConnect` and the resume would never run.
+        onConnected={() => { connectedViaSheetRef.current = true; }}
+        onClose={() => {
+          if (!connectedViaSheetRef.current) setSetupAfterConnect(false);
+          connectedViaSheetRef.current = false;
+          connectSheet.close();
+        }}
       />
     </View>
   );

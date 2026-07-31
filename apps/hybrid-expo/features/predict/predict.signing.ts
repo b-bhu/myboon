@@ -20,7 +20,23 @@ import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import type { PlaceBetParams } from './predict.api';
 
-const CLOB_HOST = process.env.EXPO_PUBLIC_CLOB_HOST || 'https://clob.polymarket.com';
+/**
+ * Where the CLOB client sends L1 auth calls.
+ *
+ * Defaults to our own `/clob` proxy rather than `clob.polymarket.com` directly:
+ * devices on some networks cannot reach Polymarket at all, which surfaced as an
+ * axios "Network Error" with no status. Every other Polymarket read in the app
+ * already goes through this proxy for the same reason — the credential calls
+ * were simply written before it existed.
+ *
+ * The EIP-712 signature is still produced on the device and travels in the
+ * `POLY_SIGNATURE` header; the server relays bytes and never sees key material.
+ *
+ * Set `EXPO_PUBLIC_CLOB_HOST` to override — point it at `https://clob.polymarket.com`
+ * to go direct on a network that allows it.
+ */
+const CLOB_HOST = process.env.EXPO_PUBLIC_CLOB_HOST?.trim()
+  || `${resolveApiBaseUrl()}/clob`;
 const CHAIN_ID = Chain.POLYGON;
 const BUILDER_CODE = '0xda0aa9e10ba50d0077e25e94cf9e4d9ef749821528acf6fc758df962d67b63ed';
 const DEPOSIT_WALLET_FACTORY = '0x00000000000fb5c9adea0298d729a0cb3823cc07';
@@ -118,13 +134,50 @@ function isApiKeyCreds(value: unknown): value is ApiKeyCreds {
   );
 }
 
+/**
+ * Describe why a CLOB credential call failed, whatever shape it failed in.
+ *
+ * Anything unrecognised previously returned `null`, so the caller's message
+ * ended in a bare "." — which reported a real failure (a geoblock HTML 403, an
+ * L1 auth rejection, a transport error) as if nothing had gone wrong. The
+ * unknown shapes are exactly the ones worth seeing, so they are stringified
+ * rather than dropped, and any HTTP status the client attached is preserved.
+ */
 function apiCredsFailureMessage(value: unknown): string | null {
-  if (value instanceof Error) return value.message;
-  if (!value || typeof value !== 'object') return null;
-  const candidate = value as { error?: unknown; status?: unknown };
-  if (typeof candidate.error !== 'string') return null;
-  const status = typeof candidate.status === 'number' ? ` (${candidate.status})` : '';
-  return `${candidate.error}${status}`;
+  if (value === null || value === undefined) return null;
+
+  if (value instanceof Error) {
+    // Axios attaches the response to the error; a transport failure ("Network
+    // Error") has none, which is itself the useful signal.
+    const response = (value as { response?: { status?: unknown; data?: unknown } }).response;
+    const status = typeof response?.status === 'number' ? ` (HTTP ${response.status})` : '';
+    const code = (value as { code?: unknown }).code;
+    const codeLabel = typeof code === 'string' && code ? ` [${code}]` : '';
+    return `${value.message}${status}${codeLabel}`;
+  }
+
+  if (typeof value === 'string') return value || null;
+
+  if (typeof value === 'object') {
+    const candidate = value as { error?: unknown; status?: unknown; message?: unknown };
+    const status = typeof candidate.status === 'number' ? ` (${candidate.status})` : '';
+    if (typeof candidate.error === 'string' && candidate.error) {
+      return `${candidate.error}${status}`;
+    }
+    if (typeof candidate.message === 'string' && candidate.message) {
+      return `${candidate.message}${status}`;
+    }
+    // Unknown object shape — say what came back rather than swallowing it.
+    try {
+      const serialised = JSON.stringify(value);
+      if (serialised && serialised !== '{}') return `${serialised.slice(0, 200)}${status}`;
+    } catch {
+      // Circular or otherwise unserialisable; fall through to the type label.
+    }
+    return `unexpected response${status}`;
+  }
+
+  return String(value);
 }
 
 function ensureHexWord(data: string, index: number): string {
@@ -358,13 +411,36 @@ export async function createPolymarketApiCreds(signer: Signer): Promise<ApiKeyCr
     deriveFailure = error;
   }
 
-  const created: unknown = await client.createApiKey();
-  if (isApiKeyCreds(created)) return created;
+  // `createApiKey()` throws on a transport failure rather than resolving with an
+  // error shape. Letting that escape surfaced the raw axios "Network Error" and
+  // lost the derive attempt's reason entirely — both matter when diagnosing a
+  // geoblock, so catch it and report the pair.
+  let created: unknown = null;
+  try {
+    created = await client.createApiKey();
+    if (isApiKeyCreds(created)) return created;
+  } catch (error) {
+    created = error;
+  }
+
+  // A wallet that already has a key gets "Could not create api key" here, which
+  // is not a dead end: the key exists, the first derive just missed it. Each
+  // call signs a fresh timestamp, so retrying derive is a genuinely new request
+  // rather than a replay of the one that failed.
+  try {
+    const rederived: unknown = await client.deriveApiKey();
+    if (isApiKeyCreds(rederived)) return rederived;
+  } catch {
+    // Fall through to the combined error below — the first two attempts carry
+    // the diagnostic detail worth reporting.
+  }
 
   const failures = [apiCredsFailureMessage(deriveFailure), apiCredsFailureMessage(created)]
     .filter(Boolean)
     .join('; ');
-  throw new Error(`Predict could not create Polymarket API credentials${failures ? `: ${failures}` : '.'}`);
+  throw new Error(
+    `Predict could not reach Polymarket to set up your account${failures ? `: ${failures}` : '.'}`,
+  );
 }
 
 export async function signDepositWalletBatch(
@@ -419,12 +495,19 @@ export async function signAndSubmitDepositWalletBatch(
   });
   const data = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) {
+    // `detail` and `error` before `userMessage`. The server's `failedOperation`
+    // sets `userMessage` to a fixed "Something went wrong. Try again in a
+    // moment." for every failure, so reading it first replaced the actual cause
+    // — relayer rejections, missing builder config, bad nonces — with a string
+    // that says nothing. The specific text is what makes a failure diagnosable.
+    const detail = typeof data.detail === 'string' && data.detail ? data.detail : null;
+    const error = typeof data.error === 'string' && data.error ? data.error : null;
+    const userMessage = typeof data.userMessage === 'string' && data.userMessage
+      ? data.userMessage
+      : null;
+    const specific = [error, detail].filter(Boolean).join(': ');
     throw new Error(
-      typeof data.userMessage === 'string'
-        ? data.userMessage
-        : typeof data.detail === 'string'
-          ? data.detail
-          : 'Failed to submit signed Predict wallet action',
+      specific || userMessage || 'Failed to submit signed Predict wallet action',
     );
   }
   return data;

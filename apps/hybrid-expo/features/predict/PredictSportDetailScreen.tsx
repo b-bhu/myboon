@@ -20,7 +20,6 @@ import type { ActivityItem, ClosedPortfolioPosition, OpenOrder, PortfolioPositio
 import type { PricePoint, SportMarketDetail, SportOutcomeDetail, Orderbook } from '@/features/predict/predict.types';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
-import { useWallet } from '@/hooks/useWallet';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { semantic, tokens } from '@/theme';
@@ -114,7 +113,6 @@ function DisplayTab({
 export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScreenProps) {
   const router = useRouter();
   const poly = usePolymarketWallet();
-  const wallet = useWallet();
   const connectSheet = useConnectionSheet('evm');
   const { format, setFormat, formatOdds } = useOddsFormat();
   const { width: screenWidth } = useWindowDimensions();
@@ -182,7 +180,10 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const reconcileTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
   const submitInFlightRef = useRef(false);
   const buyBookRefreshInFlight = useRef(false);
-  const walletScopedKey = wallet.connected && wallet.address ? `${wallet.sessionKey}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}` : 'disconnected';
+  // Predict settles on Polygon, so its cache scope is the EVM signer — never the
+  // Solana wallet. Keying on Solana meant an email/EVM user read as disconnected
+  // and a Solana disconnect wiped Predict state that did not depend on it.
+  const walletScopedKey = poly.signer ? `${poly.signer.descriptor.address.toLowerCase()}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}` : 'disconnected';
   const walletScopedKeyRef = useRef(walletScopedKey);
 
   // Drag gesture — swipe down to collapse numpad

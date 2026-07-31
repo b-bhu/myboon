@@ -20,7 +20,7 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -50,7 +50,7 @@ type ConnectStep =
   | { kind: 'options' }
   | { kind: 'email_otp'; email: string }
   | { kind: 'connecting'; backend: WalletBackend }
-  | { kind: 'confirm_disconnect' }
+  | { kind: 'confirm_disconnect'; chain: Chain }
   | { kind: 'error'; message: string };
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -120,6 +120,8 @@ export function ConnectionSheet({
    */
   const finishConnect = useCallback(async () => {
     if (chain === 'evm' && !evm.isProvisioned) {
+      // Throws with a readable message when the account has an unusable wallet
+      // (entropy missing on this device), which the error step then shows.
       await evm.provision();
     }
     await activate(chain);
@@ -159,40 +161,28 @@ export function ConnectionSheet({
   }, [otpCode, busy, privy, chain, finishConnect]);
 
   /**
-   * Passkey login, falling back to signup.
+   * Google login.
    *
-   * The drawer falls back on *any* throw, which turns a cancelled login or a
-   * network blip into an unexpected signup prompt. Deliberately narrowed: the
-   * fallback fires only when the failure looks like "no passkey exists for this
-   * user yet". Anything else surfaces as an error step, which is what a user who
-   * cancelled expects to see rather than a second system dialog.
+   * Unlike email and passkey, this leaves the app: Privy opens a browser for
+   * Google's consent screen and returns through the `myboon` deep link declared
+   * in `app.json`. Signup and login are the same call — Privy creates the
+   * account if the Google identity is new.
    */
-  const handlePasskey = useCallback(async () => {
+  const handleGoogle = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     setStep({ kind: 'connecting', backend: 'privy_embedded' });
     try {
-      try {
-        await privy.loginWithPasskey();
-      } catch (loginError: unknown) {
-        const message = errorMessage(loginError, '').toLowerCase();
-        const isNoCredential =
-          message.includes('no ')
-          || message.includes('not found')
-          || message.includes('no account')
-          || message.includes('does not exist');
-        if (!isNoCredential) throw loginError;
-        await privy.signupWithPasskey();
-      }
+      await privy.loginWithGoogle();
       if (chain === 'solana') await privy.waitForWallet();
       await finishConnect();
     } catch (error: unknown) {
-      // Dismissing the system passkey prompt is a choice, not a failure.
+      // Closing the browser without finishing is a choice, not a failure.
       if (isUserCancelled(error)) {
         setStep({ kind: 'options' });
         return;
       }
-      setStep({ kind: 'error', message: errorMessage(error, 'Passkey failed') });
+      setStep({ kind: 'error', message: errorMessage(error, 'Google sign-in failed') });
     } finally {
       setBusy(false);
     }
@@ -240,14 +230,33 @@ export function ConnectionSheet({
    * who you are rather than how to connect. Same sheet, two states — opening it
    * from the avatar when connected must not offer to connect again.
    */
-  const connectedAddress = chain === 'solana' ? solana.address : evm.address;
-  const isConnected = step.kind === 'options' && !!connectedAddress;
+  /**
+   * Every wallet this session actually holds, not just the requested chain's.
+   *
+   * The avatar opens this sheet for Solana (the provider's default), so a user
+   * whose only wallet is the Privy EVM one saw an empty connect screen and had
+   * no way to sign out — the disconnect control was reachable only from a chain
+   * they had not connected. Listing both chains makes the sheet report the
+   * session rather than one slice of it.
+   */
+  const connectedWallets = useMemo(
+    () => [
+      ...(solana.address
+        ? [{ chain: 'solana' as Chain, label: 'Solana', address: solana.address }]
+        : []),
+      ...(evm.address
+        ? [{ chain: 'evm' as Chain, label: 'Polygon / EVM', address: evm.address }]
+        : []),
+    ],
+    [solana.address, evm.address],
+  );
 
-  const handleCopyAddress = useCallback(async () => {
-    if (!connectedAddress) return;
-    await Clipboard.setStringAsync(connectedAddress);
+  const isConnected = step.kind === 'options' && connectedWallets.length > 0;
+
+  const handleCopyAddress = useCallback(async (address: string) => {
+    await Clipboard.setStringAsync(address);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [connectedAddress]);
+  }, []);
 
   /**
    * Confirmation is a step in the sheet, not `Alert.alert`.
@@ -256,22 +265,35 @@ export function ConnectionSheet({
    * a confirm-then-act flow built on it silently never acts. The old drawer had
    * this bug too, which is why disconnect never worked in a browser.
    */
-  const handleDisconnect = useCallback(() => {
+  const handleDisconnect = useCallback((target: Chain) => {
     if (busy) return;
-    setStep({ kind: 'confirm_disconnect' });
+    setStep({ kind: 'confirm_disconnect', chain: target });
   }, [busy]);
 
   const confirmDisconnect = useCallback(async () => {
     if (busy) return;
+    const target = step.kind === 'confirm_disconnect' ? step.chain : chain;
     setBusy(true);
     try {
       // Drop the connection first, then the activation record. The reverse
       // order re-activates immediately: activation reconciles from the live
       // connection, so clearing the record while the wallet is still connected
       // just gets undone on the next render.
-      if (chain === 'solana' && solana.disconnect) await solana.disconnect();
-      else if (privy.isPrivyUser) await privy.disconnect();
-      await deactivate(chain);
+      //
+      // An external Solana wallet can be dropped on its own. The Privy embedded
+      // wallets cannot: one login owns every chain, so signing out of Privy ends
+      // both. `privy.disconnect()` calls `clearActivation()` for that reason,
+      // and deactivating the single requested chain afterwards would be a no-op
+      // over an already-cleared record.
+      if (target === 'solana' && solana.source !== 'privy' && solana.disconnect) {
+        await solana.disconnect();
+        await deactivate(target);
+      } else if (privy.isPrivyUser) {
+        await privy.disconnect();
+      } else if (solana.disconnect) {
+        await solana.disconnect();
+        await deactivate(target);
+      }
       resetAndClose();
     } catch (error) {
       setStep({
@@ -281,7 +303,7 @@ export function ConnectionSheet({
     } finally {
       setBusy(false);
     }
-  }, [busy, chain, deactivate, solana, privy, resetAndClose]);
+  }, [busy, chain, step, deactivate, solana, privy, resetAndClose]);
 
   const title =
     step.kind === 'email_otp'
@@ -291,7 +313,7 @@ export function ConnectionSheet({
         : step.kind === 'confirm_disconnect'
           ? 'Disconnect?'
           : isConnected
-            ? 'Wallet'
+            ? (connectedWallets.length > 1 ? 'Wallets' : 'Wallet')
             : 'Connect wallet';
 
   return (
@@ -301,10 +323,16 @@ export function ConnectionSheet({
         inputs — the user cannot see what they are typing. Lifting the whole
         overlay is simpler than scrolling within the sheet, since its content is
         short enough to fit above the keyboard.
+
+        Android is deliberately left to the OS. The manifest sets
+        `windowSoftInputMode="adjustResize"`, so the window is already resized
+        natively; adding `behavior="height"` re-ran that same resize in JS on
+        every frame of the OS animation, and the two fighting over the layout is
+        what made the sheet jitter while the keyboard opened.
       */}
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={styles.sheet}>
           <View style={styles.header}>
@@ -316,7 +344,7 @@ export function ConnectionSheet({
 
           {isConnected ? (
             <ConnectedStep
-              address={connectedAddress}
+              wallets={connectedWallets}
               busy={busy}
               onCopy={handleCopyAddress}
               onDisconnect={handleDisconnect}
@@ -325,7 +353,17 @@ export function ConnectionSheet({
 
           {step.kind === 'confirm_disconnect' ? (
             <View style={styles.body}>
-              <Text style={styles.infoText}>You can reconnect anytime.</Text>
+              {/*
+                Say what actually happens. One Privy login owns every embedded
+                chain, so signing out of it drops Solana and EVM together —
+                promising a per-chain disconnect it cannot deliver would be a
+                lie the next screen exposes.
+              */}
+              <Text style={styles.infoText}>
+                {privy.isPrivyUser && !(step.chain === 'solana' && solana.source !== 'privy')
+                  ? 'This signs you out of Privy and disconnects every wallet in this session. You can sign back in anytime.'
+                  : 'You can reconnect anytime.'}
+              </Text>
               <Pressable
                 style={({ pressed }) => [
                   styles.disconnectBtn,
@@ -361,7 +399,7 @@ export function ConnectionSheet({
               emailInput={emailInput}
               onChangeEmail={setEmailInput}
               onSendEmail={handleSendEmail}
-              onPasskey={handlePasskey}
+              onGoogle={handleGoogle}
               onWalletConnect={handleWalletConnect}
               walletOptions={solana.walletOptions ?? []}
             />
@@ -449,47 +487,56 @@ export function ConnectionSheet({
  * module — this answers "who am I", not "what do I have".
  */
 function ConnectedStep({
-  address,
+  wallets,
   busy,
   onCopy,
   onDisconnect,
 }: {
-  address: string;
+  /** Every wallet held this session, one row each. */
+  wallets: readonly { chain: Chain; label: string; address: string }[];
   busy: boolean;
-  onCopy: () => void;
-  onDisconnect: () => void;
+  onCopy: (address: string) => void;
+  onDisconnect: (chain: Chain) => void;
 }) {
-  const short = `${address.slice(0, 6)}···${address.slice(-4)}`;
-
   return (
     <View style={styles.body}>
-      <Pressable
-        style={({ pressed }) => [styles.addressRow, pressed && styles.primaryBtnPressed]}
-        onPress={onCopy}
-        accessibilityRole="button"
-        accessibilityLabel={`Copy address ${short}`}
-      >
-        <View style={styles.addressText}>
-          <Text style={styles.addressValue}>{short}</Text>
-          <Text style={styles.addressHint}>Tap to copy</Text>
-        </View>
-        <MaterialIcons name="content-copy" size={16} color={semantic.text.dim} />
-      </Pressable>
+      {wallets.map((wallet) => {
+        const short = `${wallet.address.slice(0, 6)}···${wallet.address.slice(-4)}`;
+        return (
+          <View key={wallet.chain} style={styles.walletGroup}>
+            <Text style={styles.chainLabel}>{wallet.label}</Text>
+            <Pressable
+              style={({ pressed }) => [styles.addressRow, pressed && styles.primaryBtnPressed]}
+              onPress={() => onCopy(wallet.address)}
+              accessibilityRole="button"
+              accessibilityLabel={`Copy ${wallet.label} address ${short}`}
+            >
+              <View style={styles.addressText}>
+                <Text style={styles.addressValue}>{short}</Text>
+                <Text style={styles.addressHint}>Tap to copy</Text>
+              </View>
+              <MaterialIcons name="content-copy" size={16} color={semantic.text.dim} />
+            </Pressable>
 
-      <Pressable
-        style={({ pressed }) => [
-          styles.disconnectBtn,
-          busy && styles.primaryBtnDisabled,
-          pressed && styles.primaryBtnPressed,
-        ]}
-        onPress={onDisconnect}
-        disabled={busy}
-        accessibilityRole="button"
-        accessibilityLabel="Disconnect wallet"
-      >
-        <MaterialIcons name="power-settings-new" size={14} color={tokens.colors.vermillion} />
-        <Text style={styles.disconnectText}>{busy ? 'Disconnecting...' : 'Disconnect'}</Text>
-      </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.disconnectBtn,
+                busy && styles.primaryBtnDisabled,
+                pressed && styles.primaryBtnPressed,
+              ]}
+              onPress={() => onDisconnect(wallet.chain)}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel={`Disconnect ${wallet.label} wallet`}
+            >
+              <MaterialIcons name="power-settings-new" size={14} color={tokens.colors.vermillion} />
+              <Text style={styles.disconnectText}>
+                {busy ? 'Disconnecting...' : `Disconnect ${wallet.label}`}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -501,7 +548,7 @@ function OptionsStep({
   emailInput,
   onChangeEmail,
   onSendEmail,
-  onPasskey,
+  onGoogle,
   onWalletConnect,
   walletOptions,
 }: {
@@ -511,7 +558,7 @@ function OptionsStep({
   emailInput: string;
   onChangeEmail: (value: string) => void;
   onSendEmail: () => void;
-  onPasskey: () => void;
+  onGoogle: () => void;
   onWalletConnect: (walletName?: string) => void;
   /** Detected external wallets. Empty where the platform cannot enumerate. */
   walletOptions: readonly { name: string; icon?: string }[];
@@ -570,7 +617,7 @@ function OptionsStep({
       ) : null}
 
       {secondary.map((option) => {
-        if (option === 'passkey') {
+        if (option === 'google') {
           return (
             <Pressable
               key={option}
@@ -580,11 +627,11 @@ function OptionsStep({
                 pressed && styles.primaryBtnPressed,
               ]}
               disabled={busy}
-              onPress={onPasskey}
+              onPress={onGoogle}
               accessibilityRole="button"
             >
-              <MaterialIcons name="fingerprint" size={16} color={semantic.text.dim} />
-              <Text style={styles.secondaryBtnText}>Sign in with Passkey</Text>
+              <MaterialIcons name="account-circle" size={16} color={semantic.text.dim} />
+              <Text style={styles.secondaryBtnText}>Continue with Google</Text>
             </Pressable>
           );
         }
@@ -747,6 +794,16 @@ const styles = StyleSheet.create({
     paddingVertical: tokens.spacing.md,
     paddingHorizontal: tokens.spacing.md,
     minHeight: 44,
+  },
+  walletGroup: {
+    gap: tokens.spacing.sm,
+  },
+  chainLabel: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xs,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: semantic.text.faint,
   },
   addressText: {
     gap: 2,

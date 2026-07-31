@@ -16,7 +16,8 @@ import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTopBar, AppTopBarLogo } from '@/components/AppTopBar';
 import { AppProfileButton } from '@/components/AppProfileButton';
-import { useWallet } from '@/hooks/useWallet';
+import { useChainSigner } from '@/features/chain/useChainSigner';
+import { POLYMARKET_REQUIREMENT } from '@/features/chain/chain.contract';
 import { fetchFeaturedMarkets, fetchLivePrices } from '@/features/predict/predict.api';
 import type { FeedItem, FeedItemBinary, FeedItemMatch, FeedResponse } from '@/features/predict/predict.types';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
@@ -345,7 +346,8 @@ const SectionHeader = memo(function SectionHeader({ label, count, onPress, isLiv
 
 export default function PredictScreen() {
   const router = useRouter();
-  const wallet = useWallet();
+  // Predict settles on Polygon: the profile dot reflects the EVM signer, not Solana.
+  const { signer: evmSigner } = useChainSigner(POLYMARKET_REQUIREMENT);
   const { format } = useOddsFormat();
   const formatOdds = useCallback((price: number | null) => formatOddsForFormat(price, format), [format]);
   const insets = useSafeAreaInsets();
@@ -642,7 +644,7 @@ export default function PredictScreen() {
         right={
           <AppProfileButton
             onPress={() => router.push('/markets/polymarket/profile')}
-            connected={wallet.connected}
+            connected={!!evmSigner}
             label="Open Predict profile"
             hint="View your Predict account, picks, and winnings"
           />

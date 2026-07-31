@@ -12,22 +12,22 @@ import { availableOptions, BACKEND_OPTIONS } from './connect.options';
 import { CHAIN_BACKENDS } from '@/features/chain/chain.contract';
 
 describe('availableOptions', () => {
-  it('offers external wallet, email and passkey on Solana', () => {
+  it('offers external wallet, email and google on Solana', () => {
     assert.deepEqual(
       [...availableOptions('solana')].sort(),
-      ['email', 'external_wallet', 'passkey'],
+      ['email', 'external_wallet', 'google'],
     );
   });
 
   it('drops only the external wallet row on EVM', () => {
-    assert.deepEqual([...availableOptions('evm')].sort(), ['email', 'passkey']);
+    assert.deepEqual([...availableOptions('evm')].sort(), ['email', 'google']);
   });
 
   it('offers Privy as two auth methods on every chain', () => {
     for (const chain of ['solana', 'evm'] as const) {
       const options = availableOptions(chain);
       assert.ok(options.includes('email'), `${chain} should offer email`);
-      assert.ok(options.includes('passkey'), `${chain} should offer passkey`);
+      assert.ok(options.includes('google'), `${chain} should offer google`);
     }
   });
 
@@ -44,6 +44,6 @@ describe('availableOptions', () => {
 
   it('returns options in a stable order across calls', () => {
     assert.deepEqual(availableOptions('solana'), availableOptions('solana'));
-    assert.deepEqual([...availableOptions('solana')], ['email', 'passkey', 'external_wallet']);
+    assert.deepEqual([...availableOptions('solana')], ['email', 'google', 'external_wallet']);
   });
 });

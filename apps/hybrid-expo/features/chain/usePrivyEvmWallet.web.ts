@@ -6,6 +6,7 @@
 export interface PrivyEvmWalletState {
   isPrivyUser: boolean;
   isProvisioned: boolean;
+  needsRecovery: boolean;
   isProvisioning: boolean;
   address: string | null;
   provision: () => Promise<string>;
@@ -15,6 +16,7 @@ export interface PrivyEvmWalletState {
 const webPrivyEvmWallet: PrivyEvmWalletState = {
   isPrivyUser: false,
   isProvisioned: false,
+  needsRecovery: false,
   isProvisioning: false,
   address: null,
   provision: async () => {

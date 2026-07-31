@@ -3,14 +3,13 @@ export interface PrivyWalletState {
   isPrivyUser: boolean;
   address: string | null;
   shortAddress: string | null;
-  loginWithPasskey: () => Promise<void>;
-  signupWithPasskey: () => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   sendEmailOTP: (email: string) => Promise<void>;
   loginWithEmailOTP: (code: string) => Promise<void>;
   disconnect: () => Promise<void>;
   waitForWallet: () => Promise<void>;
   signMessage: ((message: Uint8Array) => Promise<Uint8Array>) | null;
-  authMethod: 'email' | 'passkey' | 'wallet' | null;
+  authMethod: 'email' | 'google' | 'wallet' | null;
 }
 
 const unavailable = async () => {
@@ -22,8 +21,7 @@ const webPrivyWallet: PrivyWalletState = {
   isPrivyUser: false,
   address: null,
   shortAddress: null,
-  loginWithPasskey: unavailable,
-  signupWithPasskey: unavailable,
+  loginWithGoogle: unavailable,
   sendEmailOTP: unavailable,
   loginWithEmailOTP: unavailable,
   disconnect: async () => {},

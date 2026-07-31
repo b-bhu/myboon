@@ -68,21 +68,46 @@ export function createPrivyEvmSigner(params: {
 
     signTypedData: async (domain, types, value) => {
       // `eth_signTypedData_v4` takes the full EIP-712 payload as a JSON string.
-      // `primaryType` is the one type that is not EIP712Domain.
-      const primaryType = Object.keys(types).find((key) => key !== 'EIP712Domain');
+      //
+      // The primary type is the struct nothing else references. Picking the
+      // first non-EIP712Domain key instead breaks any nested type set:
+      // Polymarket's deposit-wallet batch declares `Call` before `Batch`, so
+      // that would sign the wrong struct — a wrong-but-valid signature the
+      // contract rejects, which is far worse than an error.
+      const candidates = Object.keys(types).filter((key) => key !== 'EIP712Domain');
+      const referenced = new Set(
+        candidates.flatMap((key) =>
+          (types[key] ?? []).map((field) => field.type.replace(/\[\]$/, '')),
+        ),
+      );
+      const primaryType = candidates.find((key) => !referenced.has(key)) ?? candidates[0];
       if (!primaryType) {
         throw new Error('signTypedData requires a primary type besides EIP712Domain.');
       }
+      // The domain type must describe exactly the fields the domain actually
+      // carries. A fixed four-field list declared `verifyingContract` even when
+      // the domain omitted it — Polymarket's `ClobAuthDomain` is name/version/
+      // chainId only — and the signer then tried to encode `undefined` as an
+      // address, failing with `Address "undefined" is invalid`. Deriving the
+      // list from the domain's own keys keeps the two in step for any domain.
+      const EIP712_DOMAIN_FIELD_TYPES: Record<string, string> = {
+        name: 'string',
+        version: 'string',
+        chainId: 'uint256',
+        verifyingContract: 'address',
+        salt: 'bytes32',
+      };
+      const domainType =
+        types.EIP712Domain
+        ?? Object.keys(EIP712_DOMAIN_FIELD_TYPES)
+          .filter((field) => domain[field] !== undefined)
+          .map((field) => ({ name: field, type: EIP712_DOMAIN_FIELD_TYPES[field] }));
+
       const payload = {
         domain,
         types: {
-          EIP712Domain: types.EIP712Domain ?? [
-            { name: 'name', type: 'string' },
-            { name: 'version', type: 'string' },
-            { name: 'chainId', type: 'uint256' },
-            { name: 'verifyingContract', type: 'address' },
-          ],
           ...types,
+          EIP712Domain: domainType,
         },
         primaryType,
         message: value,

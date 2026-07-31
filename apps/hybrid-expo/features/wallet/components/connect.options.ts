@@ -16,25 +16,28 @@
 import { CHAIN_BACKENDS, type Chain, type WalletBackend } from '@/features/chain/chain.contract';
 
 /**
- * A row the user can tap. `email` and `passkey` are two auth methods that both
+ * A row the user can tap. `email` and `google` are two auth methods that both
  * land on the same Privy embedded wallet — which is why Privy is two rows, not
  * one.
+ *
+ * Passkey was a third; it is disabled in the Privy dashboard, so offering it
+ * would fail at the point of tapping.
  */
-export type ConnectOption = 'external_wallet' | 'email' | 'passkey';
+export type ConnectOption = 'external_wallet' | 'email' | 'google';
 
 /** Which options each backend contributes. */
 export const BACKEND_OPTIONS: Record<WalletBackend, readonly ConnectOption[]> = {
-  privy_embedded: ['email', 'passkey'],
+  privy_embedded: ['email', 'google'],
   external_mwa: ['external_wallet'],
 };
 
 /** Stable display order, independent of backend resolution preference. */
-const OPTION_ORDER: readonly ConnectOption[] = ['email', 'passkey', 'external_wallet'];
+const OPTION_ORDER: readonly ConnectOption[] = ['email', 'google', 'external_wallet'];
 
 /**
  * Options offered for a chain.
  *
- * Solana -> email + passkey + external wallet. EVM -> email + passkey, because
+ * Solana -> email + Google + external wallet. EVM -> email + Google, because
  * `CHAIN_BACKENDS.evm` contains no `external_mwa`. The EVM case drops the wallet
  * row and nothing else.
  */

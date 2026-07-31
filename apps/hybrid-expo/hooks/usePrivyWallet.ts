@@ -2,14 +2,20 @@
  * usePrivyWallet — Adapter hook that wraps Privy's embedded Solana wallet
  * to expose the same interface as useWallet (MWA).
  *
- * Passkey auth → Privy creates embedded Solana wallet → this hook
+ * Email or Google auth → Privy creates embedded Solana wallet → this hook
  * exposes { connected, address, signMessage } so usePolymarketWallet
  * works identically for both Privy and MWA users.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { usePrivy, useEmbeddedSolanaWallet, useLoginWithEmail, isConnected } from '@privy-io/expo';
-import { useLoginWithPasskey, useSignupWithPasskey } from '@privy-io/expo/passkey';
+import {
+  usePrivy,
+  useEmbeddedSolanaWallet,
+  useLoginWithEmail,
+  useLoginWithOAuth,
+  isConnected,
+} from '@privy-io/expo';
+
 import { clearActivation } from '@/features/chain/activation';
 
 export interface PrivyWalletState {
@@ -23,10 +29,8 @@ export interface PrivyWalletState {
   address: string | null;
   /** Shortened address for display */
   shortAddress: string | null;
-  /** Trigger passkey login (existing account) */
-  loginWithPasskey: () => Promise<void>;
-  /** Trigger passkey signup (new account) */
-  signupWithPasskey: () => Promise<void>;
+  /** Google OAuth. Leaves the app for a browser and returns via deep link. */
+  loginWithGoogle: () => Promise<void>;
   /** Send email OTP code */
   sendEmailOTP: (email: string) => Promise<void>;
   /** Login with email OTP code */
@@ -37,17 +41,14 @@ export interface PrivyWalletState {
   waitForWallet: () => Promise<void>;
   /** Sign a message with the embedded Solana wallet */
   signMessage: ((message: Uint8Array) => Promise<Uint8Array>) | null;
-  /** Auth method the user used (email, passkey, wallet, or null) */
-  authMethod: 'email' | 'passkey' | 'wallet' | null;
+  /** Auth method the user used (email, google, wallet, or null) */
+  authMethod: 'email' | 'google' | 'wallet' | null;
 }
-
-const RELYING_PARTY = 'https://myboon.tech';
 
 export function usePrivyWallet(): PrivyWalletState {
   const { user, isReady, logout } = usePrivy();
   const solanaWallet = useEmbeddedSolanaWallet();
-  const { loginWithPasskey } = useLoginWithPasskey();
-  const { signupWithPasskey } = useSignupWithPasskey();
+  const { login: loginWithOAuth } = useLoginWithOAuth();
   const { sendCode: sendEmailCode, loginWithCode: loginWithEmailCode } = useLoginWithEmail();
 
   const authenticated = isReady && !!user;
@@ -151,11 +152,13 @@ export function usePrivyWallet(): PrivyWalletState {
       }
     : null;
 
-  // Determine auth method from linked accounts
-  const authMethod: 'email' | 'passkey' | 'wallet' | null = (() => {
+  // Determine auth method from linked accounts. Privy records a Google login as
+  // a `google_oauth` account; older passkey accounts, if any survive, fall
+  // through to 'wallet' since passkey is no longer an offered method.
+  const authMethod: 'email' | 'google' | 'wallet' | null = (() => {
     if (!user) return null;
     const linked = user.linked_accounts ?? [];
-    if (linked.some((a: { type: string }) => a.type === 'passkey')) return 'passkey';
+    if (linked.some((a: { type: string }) => a.type === 'google_oauth')) return 'google';
     if (linked.some((a: { type: string }) => a.type === 'email')) return 'email';
     return 'wallet';
   })();
@@ -166,11 +169,10 @@ export function usePrivyWallet(): PrivyWalletState {
     isPreparing,
     address,
     shortAddress: address ? `${address.slice(0, 4)}···${address.slice(-4)}` : null,
-    loginWithPasskey: async () => {
-      await loginWithPasskey({ relyingParty: RELYING_PARTY });
-    },
-    signupWithPasskey: async () => {
-      await signupWithPasskey({ relyingParty: RELYING_PARTY });
+    loginWithGoogle: async () => {
+      // Privy creates the account when the Google identity is new, so there is
+      // no separate signup call the way passkey needed one.
+      await loginWithOAuth({ provider: 'google' });
     },
     sendEmailOTP: async (email: string) => {
       await sendEmailCode({ email });
