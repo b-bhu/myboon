@@ -1,8 +1,56 @@
 # Polymarket SDK Migration PRD
 
-Status: revised after spike — architecture inverted from server-side to client-side
+Status: account-setup path implemented on branch `polymarket-sdk-migration`,
+awaiting on-device verification. Order placement, wrap, withdraw, redeem, and
+the server route triage (step 4) are not started.
 Date: 2026-07-31
 Owner: myboon Apps
+
+## Implementation status (read this first)
+
+**Done, on `polymarket-sdk-migration`, not yet run on a real device:**
+- `chain.contract.ts`: `Signer.sendTransaction` + `canBroadcastTransaction`
+  capability + `needsBroadcastTransaction` requirement flag, distinct from
+  the pre-existing sign-only `signTransaction`/`canSendTransaction`.
+  `POLYMARKET_REQUIREMENT` now declares `needsBroadcastTransaction: true`.
+- `chain.signers.ts`: `createPrivyEvmSigner` implements `sendTransaction` via
+  `eth_sendTransaction`.
+- `predict.signing.ts`: `createPolymarketSecureClient` — constructs
+  `@polymarket/client`'s `SecureClient` with a real adapter over the app's
+  `Signer`, pointed at this app's CLOB proxy via `forkEnvironmentConfig`. A
+  client-side `waitForTransaction` poller backs `TransactionHandle.wait()`
+  (the app never broadcast a transaction directly before this).
+- `usePolymarketWallet.ts`: `enable()` now calls
+  `createPolymarketSecureClient` → `client.setupTradingApprovals()` →
+  registers the resulting address with the server via `/clob/auth`, passing
+  it as `knownDepositWalletAddress` so the server's existing on-chain
+  `owner()` verification accepts it immediately rather than running its own
+  (wrong) derivation.
+- `apps/hybrid-expo` gained `@polymarket/client` + `viem`; confirmed to
+  bundle cleanly under Metro/Hermes on iOS and Android (probe import, not
+  yet the full app running on a device).
+- All existing tests (136, across chain/wallet/security suites) and
+  TypeScript pass. No test exercises the new code against a live signer or
+  network — see the Definition of Done below for what still needs a device.
+
+**Deliberately not done in this pass, and why:**
+- **The server's `/clob/auth`, `resolveDepositWallet`, and
+  `knownDepositWalletAddress` hint mechanism are still present**, not
+  deleted. The client now always sends the *correct* address as the hint
+  (instead of sometimes sending a stale one or none), so the server's
+  existing `owner()` verification accepts it on the first pass and its own
+  wrong CREATE2 derivation is never reached in practice — but the dead
+  derivation code itself, and the routes built around it, are untouched.
+  This is intentional: order placement, wrap, withdraw, and redeem
+  (`routes/orders.ts`, `routes/funds.ts`, `routes/redeem.ts`) still depend on
+  the server-side `ClobSession` that `/clob/auth` populates, so deleting it
+  now would break working functionality. Deleting the dead derivation code
+  and shrinking these routes is step 4 below, scoped separately on purpose —
+  it needs its own route-by-route triage, not a rider on the bug fix.
+  **The "no `knownDepositWalletAddress` anywhere in the repo" acceptance
+  criterion further down describes step 4's end state, not this pass's.**
+- Order placement, wrap, withdraw, redeem, and the "predict" → "polymarket"
+  rename are all untouched — same reasoning.
 Builds on: `docs/modules/polymarket/PRDs/2026_07_30_polymarket_account_setup_PRD.md` (client-side state model, unimplemented, independent of this work)
 
 This is a change plan for `apps/hybrid-expo/features/predict/predict.signing.ts`
@@ -414,23 +462,36 @@ direct SDK calls, not the server's.
       `@polymarket/builder-relayer-client`, `@polymarket/builder-signing-sdk`,
       `@polymarket/client` — the last one is a client dependency now, not a
       server one.
-- [ ] `apps/hybrid-expo/package.json` contains `@polymarket/client`.
-- [ ] `createPrivyEvmSigner` (`chain.signers.ts`) implements `sendTransaction`
+- [x] `apps/hybrid-expo/package.json` contains `@polymarket/client`.
+- [x] `createPrivyEvmSigner` (`chain.signers.ts`) implements `sendTransaction`
       via the existing EIP-1193 `request`.
-- [ ] `predict.signing.ts` constructs `@polymarket/client`'s `SecureClient`
+- [x] `predict.signing.ts` constructs `@polymarket/client`'s `SecureClient`
       directly with the real Privy-backed signer — no server round trip for
       client construction, no address-known stub anywhere in this codebase.
 - [ ] For a fresh, never-before-used EOA, `client.account.wallet` (read on
       the phone) resolves to an address independently confirmed to hold
-      contract code on Polygon.
+      contract code on Polygon. **Not yet run on a device — this is the
+      actual bug-fix proof and the top priority for on-device testing.**
+
+The following are **step 4's** acceptance criteria (server route triage —
+not started), kept here rather than deleted so the full end state stays
+visible, but they are not expected to pass yet:
+
 - [ ] Every server route deletion or survival in step 4 is a deliberate,
       justified decision recorded in the implementation PR's description —
       not a silent carryover of the current route list.
 - [ ] `resolveDepositWallet`, `depositWalletByEoa`, `verifyDepositWalletHint`,
       `scanForDepositWallet`, `depositWalletFromTx`, and
-      `knownDepositWalletAddress` do not appear anywhere in the repo.
+      `knownDepositWalletAddress` do not appear anywhere in the repo. **As of
+      this pass, `knownDepositWalletAddress` still exists and is used
+      correctly** — the client always sends the true address now, so the
+      server's dead derivation path is never exercised in practice, but the
+      mechanism and the routes around it are untouched pending step 4.
 - [ ] `0a3dc77` is not reverted. `9bdc587`, `8eb59a4`, `46fd56d` are reverted,
       and `packages/api/src/__verify.ts` is deleted as part of that revert.
+      **Not done — these three commits' server-side workarounds are still in
+      place; only the client now works around them correctly rather than
+      needing them fixed.**
 - [ ] No file touched by this PRD contains the identifier `Predict`/`predict`
       in a type name, function name, operation-string literal, or
       user-facing message, except the deliberately-kept `predict.signing.ts`
