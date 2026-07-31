@@ -28,6 +28,9 @@ import {
 const DEPOSIT_WALLET_CREATED_TOPIC =
   '0x7441de0ad639fe5d2bf1c22447715a0528b682385736bb40ae8dd92555eb8276'
 
+/** `owner()` — the deposit wallet reports the signer that controls it. */
+const OWNER_SELECTOR = '0x8da5cb5b'
+
 /**
  * The deposit wallet this signer owns, deploying it first if it does not exist.
  *
@@ -35,7 +38,17 @@ const DEPOSIT_WALLET_CREATED_TOPIC =
  * See the note at the call site for why the CREATE2 derivation cannot be
  * trusted here.
  */
-async function resolveDepositWallet(eoaAddress: string): Promise<string> {
+async function resolveDepositWallet(
+  eoaAddress: string,
+  knownDepositWallet?: string,
+): Promise<string> {
+  const verifiedHint = await verifyDepositWalletHint(eoaAddress, knownDepositWallet)
+  if (verifiedHint) {
+    console.log(`[clob] Deposit wallet from verified client hint: ${verifiedHint}`)
+    depositWalletByEoa.set(eoaAddress.toLowerCase(), verifiedHint)
+    return verifiedHint
+  }
+
   const existing = await findDeployedDepositWallet(eoaAddress)
   if (existing) {
     console.log(`[clob] Deposit wallet already deployed: ${existing}`)
@@ -102,7 +115,15 @@ async function resolveDepositWallet(eoaAddress: string): Promise<string> {
     return existingAfterDeploy
   }
 
-  throw new Error(`Deposit wallet was not found on chain for signer ${eoaAddress}`)
+  // The relayer says this signer has a wallet, but nothing available here can
+  // name it: the deploy receipt belongs to a session that is gone, the recent
+  // window did not cover it, and the client sent no address it had stored.
+  // Say so precisely rather than reporting a generic failure — the fix is a
+  // client that remembers, not a retry.
+  throw new Error(
+    `Deposit wallet exists for signer ${eoaAddress} but its address could not be recovered. `
+    + 'Reconnect from a device that has completed setup for this wallet.',
+  )
 }
 
 /**
@@ -138,13 +159,115 @@ async function depositWalletFromTx(txHash: string): Promise<string | null> {
  */
 const depositWalletByEoa = new Map<string, string>()
 
+/**
+ * How far back to look for a signer's creation event when it is not cached.
+ *
+ * Only reached for a wallet this process did not deploy — an earlier attempt, or
+ * a restart. The RPC plan caps `eth_getLogs` at 10 blocks per call, so the range
+ * is a direct latency cost: ~170ms per window. 3000 blocks is roughly the last
+ * 90 minutes of Polygon and about 50 seconds of worst-case scanning, which
+ * covers the case this exists for — a user retrying a setup that just failed —
+ * without stalling the request.
+ *
+ * A wallet older than that is recovered from `depositWalletAddress` in the
+ * client's own request instead; the app stores it per wallet and sends it back.
+ */
+const DEPOSIT_WALLET_LOOKBACK_BLOCKS = 200
+
+/** The RPC plan refuses `eth_getLogs` spans wider than 10 blocks. */
+const LOG_WINDOW = 10
+
 async function findDeployedDepositWallet(eoaAddress: string): Promise<string | null> {
-  const cached = depositWalletByEoa.get(eoaAddress.toLowerCase())
-  if (!cached) return null
-  // Confirm it still holds code rather than trusting the cache blindly; a
-  // reorged deploy would otherwise strand the session on a dead address.
-  const code = await polygonProvider.getCode(cached).catch(() => '0x')
-  return code && code !== '0x' ? cached : null
+  const key = eoaAddress.toLowerCase()
+  const cached = depositWalletByEoa.get(key)
+  if (cached) {
+    // Confirm it still holds code rather than trusting the cache blindly; a
+    // reorged deploy would otherwise strand the session on a dead address.
+    const code = await polygonProvider.getCode(cached).catch(() => '0x')
+    if (code && code !== '0x') return cached
+    depositWalletByEoa.delete(key)
+  }
+
+  const found = await scanForDepositWallet(key)
+  if (found) depositWalletByEoa.set(key, found)
+  return found
+}
+
+/**
+ * Accept a client-supplied deposit wallet only if the chain agrees it belongs to
+ * this signer.
+ *
+ * Two checks, both required. The address must hold contract code — otherwise it
+ * is the stale CREATE2 derivation or a typo. And the factory's creation event
+ * for it must name this signer as the owner — otherwise a client could point a
+ * session at someone else's wallet and route funds there. The hint is a
+ * shortcut past an unbounded log scan, never a grant of authority.
+ */
+async function verifyDepositWalletHint(
+  eoaAddress: string,
+  candidate?: string,
+): Promise<string | null> {
+  if (!candidate || !/^0x[a-f0-9]{40}$/iu.test(candidate)) return null
+  const wallet = candidate.toLowerCase()
+
+  try {
+    const code = await polygonProvider.getCode(wallet)
+    if (!code || code === '0x') return null
+
+    // `owner()` — the wallet states who controls it. One call, no log range to
+    // scan, and it answers over all history regardless of when the wallet was
+    // created, which a filtered `eth_getLogs` cannot do on a capped RPC plan.
+    const owner = await polygonProvider.call({ to: wallet, data: OWNER_SELECTOR })
+    if (!owner || owner === '0x') return null
+    const ownerAddress = `0x${owner.slice(-40)}`.toLowerCase()
+    return ownerAddress === eoaAddress.toLowerCase() ? wallet : null
+  } catch (err: any) {
+    console.warn(`[clob] Could not verify deposit wallet hint: ${err?.message ?? err}`)
+    return null
+  }
+}
+
+/**
+ * Search the factory's creation events for this signer's wallet.
+ *
+ * Bounded hard, and deliberately narrow. The RPC plan caps `eth_getLogs` at 10
+ * blocks per call at ~170ms, so every block of range costs latency inside a
+ * request the user is waiting on — an earlier 3000-block version took 78
+ * seconds and still missed. This window covers a deploy that just happened in
+ * this same flow (the receipt read failing, the event landing a block later),
+ * which is the only case where scanning is both necessary and likely to hit.
+ *
+ * Anything older is recovered from the client's `knownDepositWalletAddress`,
+ * which is verified on chain via `owner()` — a single call that works over all
+ * history and does not depend on log ranges at all.
+ */
+async function scanForDepositWallet(eoaAddress: string): Promise<string | null> {
+  const signerTopic = `0x${eoaAddress.replace(/^0x/, '').padStart(64, '0')}`
+  let head: number
+  try {
+    head = await polygonProvider.getBlockNumber()
+  } catch {
+    return null
+  }
+
+  const floor = Math.max(0, head - DEPOSIT_WALLET_LOOKBACK_BLOCKS)
+  for (let end = head; end > floor; end -= LOG_WINDOW) {
+    const start = Math.max(floor, end - (LOG_WINDOW - 1))
+    let logs
+    try {
+      logs = await polygonProvider.getLogs({
+        address: DEPOSIT_WALLET_FACTORY,
+        topics: [DEPOSIT_WALLET_CREATED_TOPIC, null, signerTopic],
+        fromBlock: start,
+        toBlock: end,
+      })
+    } catch {
+      continue
+    }
+    const walletTopic = logs[0]?.topics[1]
+    if (walletTopic) return `0x${walletTopic.slice(-40)}`.toLowerCase()
+  }
+  return null
 }
 
 function rememberDepositWallet(eoaAddress: string, depositWallet: string): void {
@@ -159,6 +282,15 @@ export function registerSessionRoutes(routes: Hono) {
       creds?: ApiKeyCreds
       authTimestamp?: number
       authSignature?: string
+      /**
+       * The deposit wallet this client already knows about, from a previous
+       * successful setup. Only a hint: it is verified on chain and against this
+       * signer before use, so a wrong or hostile value is discarded rather than
+       * trusted. It exists because the address is otherwise unrecoverable after
+       * a server restart — the relayer refuses to re-create the wallet and
+       * offers no signer-scoped lookup.
+       */
+      knownDepositWalletAddress?: string
     }
     try {
       body = await c.req.json()
@@ -202,7 +334,7 @@ export function registerSessionRoutes(routes: Hono) {
       // practice for WALLET-CREATE, so the address comes from the factory's
       // creation event in the transaction receipt — the same value, one layer
       // down, and the only source that cannot drift from what was deployed.
-      const depositWalletAddress = await resolveDepositWallet(eoaAddress)
+      const depositWalletAddress = await resolveDepositWallet(eoaAddress, body.knownDepositWalletAddress)
       console.log(`[clob] Deposit wallet address (resolved): ${depositWalletAddress}`)
 
       const sessionDraft: Omit<ClobSession, 'creds' | 'createdAt'> = {

@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useChainSigner } from '@/features/chain/useChainSigner';
+import { logChainEvent, logChainState } from '@/features/chain/chain.debug';
 import { POLYMARKET_REQUIREMENT } from '@/features/chain/chain.contract';
 import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
@@ -268,14 +269,34 @@ export function usePolymarketWallet(): PolymarketWallet {
       // credentials, not account-level key material: they can place and cancel
       // orders but cannot move funds out.
       const { createPolymarketApiCreds, createPredictSessionProof, signAndSubmitDepositWalletBatch } = await import('@/features/predict/predict.signing');
+      logChainEvent('polymarket.enable', '1/4 creating CLOB API creds', { eoaAddress });
       const creds = await createPolymarketApiCreds(activeSigner);
       assertWalletUnchanged();
+      logChainEvent('polymarket.enable', '2/4 creds ok, signing session proof');
       const authProof = await createPredictSessionProof(activeSigner, eoaAddress);
+
+      // Read from storage rather than state: `enable()` often runs on a fresh
+      // mount where state has not hydrated yet, and this is exactly the case
+      // where the stored address matters — a wallet deployed in an earlier
+      // session that the server can no longer recover on its own.
+      const storedDepositWallet = await AsyncStorage.getItem(
+        `${DEPOSIT_WALLET_STORAGE_KEY}:${startAddress}`,
+      ).catch(() => null);
 
       const res = await fetchWithTimeout(`${API_BASE}/clob/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ polygonAddress: eoaAddress, creds, ...authProof }),
+        // The deposit wallet address this device already knows, when it has one.
+        // The server cannot recompute it — the address is only recoverable from
+        // the deploy receipt, which a later session no longer has — so the phone's
+        // stored copy is what lets a returning user re-auth without redeploying.
+        // The server verifies it on chain against this signer before using it.
+        body: JSON.stringify({
+          polygonAddress: eoaAddress,
+          creds,
+          ...authProof,
+          ...(storedDepositWallet ? { knownDepositWalletAddress: storedDepositWallet } : {}),
+        }),
       });
       assertWalletUnchanged();
 
@@ -287,11 +308,19 @@ export function usePolymarketWallet(): PolymarketWallet {
 
       const data = await res.json();
       assertWalletUnchanged();
+      logChainEvent('polymarket.enable', '3/4 /clob/auth ok', {
+        polygonAddress: data.polygonAddress,
+        depositWalletAddress: data.depositWalletAddress,
+        walletMode: data.walletMode,
+        needsSignatureRequest: !!data.signatureRequest,
+      });
       if (!data.depositWalletAddress) {
         throw new Error('Deposit wallet setup incomplete - please try again');
       }
       if (data.signatureRequest) {
+        logChainEvent('polymarket.enable', '4/4 submitting approval batch');
         await signAndSubmitDepositWalletBatch(activeSigner, eoaAddress, data.signatureRequest, { operation: 'predict_setup' });
+        logChainEvent('polymarket.enable', '4/4 approval batch ok');
       }
       if (loadGenerationRef.current !== enableGeneration) {
         throw new Error(WALLET_CHANGED_MESSAGE);
@@ -309,6 +338,10 @@ export function usePolymarketWallet(): PolymarketWallet {
       setDepositWalletAddress(data.depositWalletAddress);
       setWalletMode('deposit_wallet');
     } catch (err) {
+      logChainEvent('polymarket.enable', 'FAILED', {
+        message: err instanceof Error ? err.message : String(err),
+        eoaAddress: startAddress,
+      });
       if (isWalletChangedError(err)) {
         removeStoredSessionForAddress(startAddress);
         clearWalletSessionState();
@@ -336,6 +369,21 @@ export function usePolymarketWallet(): PolymarketWallet {
 
   const tradingAddress = depositWalletAddress;
   const isReady = !!polygonAddress && walletMode === 'deposit_wallet' && !!depositWalletAddress;
+
+  // Stage 3: what the screens gate on. `signerStatus: 'ready'` with
+  // `polygonAddress: null` is the state that renders "Set up Polymarket" — a
+  // usable wallet whose CLOB session has not been established, which is
+  // exactly the distinction these two fields are meant to keep apart.
+  logChainState('polymarket.account', {
+    signerStatus,
+    signerAddress: signer?.descriptor.address ?? null,
+    polygonAddress,
+    depositWalletAddress,
+    walletMode,
+    isReady,
+    isLoading,
+    sessionExpired,
+  });
 
   if (process.env.EXPO_PUBLIC_PREDICT_E2E === '1') {
     const runtime = globalThis as typeof globalThis & {
