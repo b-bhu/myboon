@@ -123,6 +123,26 @@ export function createPrivyEvmSigner(params: {
         method: 'eth_signTransaction',
         params: [{ from: descriptor.address, ...tx }],
       }),
+
+    // `eth_sendTransaction` signs AND broadcasts through Privy's own
+    // infrastructure, returning the transaction hash once submitted — unlike
+    // `eth_signTransaction` above, there is no separate raw-signed artifact to
+    // hand back. This is the only broadcast path Privy's embedded wallet
+    // exposes; it does not support export-then-broadcast-elsewhere for a
+    // custodial embedded key.
+    sendTransaction: async (tx) =>
+      params.request<string>({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: descriptor.address,
+          to: tx.to,
+          ...(tx.data !== undefined ? { data: tx.data } : {}),
+          // EIP-1193 takes `value` as a 0x-prefixed hex quantity, not a
+          // decimal bigint literal.
+          ...(tx.value !== undefined ? { value: `0x${tx.value.toString(16)}` } : {}),
+          ...(tx.chainId !== undefined ? { chainId: `0x${tx.chainId.toString(16)}` } : {}),
+        }],
+      }),
   };
 }
 
@@ -167,5 +187,7 @@ export function createSolanaSigner(params: {
       }
       return params.signTransaction(tx);
     },
+
+    sendTransaction: async () => unsupported(descriptor, 'send transactions (EIP-1193 has no Solana equivalent)'),
   };
 }

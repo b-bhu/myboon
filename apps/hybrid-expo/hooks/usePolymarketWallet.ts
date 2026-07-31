@@ -264,38 +264,54 @@ export function usePolymarketWallet(): PolymarketWallet {
       // key material exists outside Privy.
       const eoaAddress = startAddress;
 
-      // Create/derive CLOB credentials locally, then send only the public
-      // address + CLOB L2 credentials to the server. These are protocol session
-      // credentials, not account-level key material: they can place and cancel
-      // orders but cannot move funds out.
-      const { createPolymarketApiCreds, createPredictSessionProof, signAndSubmitDepositWalletBatch } = await import('@/features/predict/predict.signing');
-      logChainEvent('polymarket.enable', '1/4 creating CLOB API creds', { eoaAddress });
-      const creds = await createPolymarketApiCreds(activeSigner);
+      // `@polymarket/client`'s SecureClient does CLOB L1 auth, deposit-wallet
+      // derivation, and first-time deployment in one call — this is the fix
+      // for the wrong-address bug (docs/modules/polymarket/PRDs/2026_07_31_polymarket_sdk_migration_PRD.md):
+      // the old server-side CREATE2 derivation computed an address the live
+      // factory never deploys to. `client.account.wallet` is correct by
+      // construction because the SDK that derives it is the SDK the factory
+      // actually matches.
+      const { createPolymarketSecureClient, createPredictSessionProof } = await import('@/features/predict/predict.signing');
+      logChainEvent('polymarket.enable', '1/4 creating SecureClient (auth + deposit wallet)', { eoaAddress });
+      const client = await createPolymarketSecureClient(activeSigner);
       assertWalletUnchanged();
-      logChainEvent('polymarket.enable', '2/4 creds ok, signing session proof');
-      const authProof = await createPredictSessionProof(activeSigner, eoaAddress);
+      const depositWalletAddress = client.account.wallet;
+      const creds = client.credentials;
+      logChainEvent('polymarket.enable', '2/4 SecureClient ready', {
+        depositWalletAddress,
+        walletType: client.account.walletType,
+      });
 
-      // Read from storage rather than state: `enable()` often runs on a fresh
-      // mount where state has not hydrated yet, and this is exactly the case
-      // where the stored address matters — a wallet deployed in an earlier
-      // session that the server can no longer recover on its own.
-      const storedDepositWallet = await AsyncStorage.getItem(
-        `${DEPOSIT_WALLET_STORAGE_KEY}:${startAddress}`,
-      ).catch(() => null);
+      // Grants the ERC-20/ERC-1155 approvals the CTF exchanges need before an
+      // order can fill — the SDK's replacement for the old server-relayed
+      // approval batch (`buildApprovalTxs` + `/wallet-batch`). Called on every
+      // enable() rather than gated on "first time only": the SDK's type
+      // comments don't state whether it's a no-op when approvals already
+      // exist, so this needs confirming on-device (does a second call cost
+      // gas/time, or return immediately?) rather than assumed either way.
+      logChainEvent('polymarket.enable', '3/4 setting up trading approvals');
+      await client.setupTradingApprovals();
+      assertWalletUnchanged();
+      logChainEvent('polymarket.enable', '3/4 trading approvals ok');
+
+      // The server still holds the CLOB session for order placement, wrap,
+      // withdraw, and redeem — those haven't migrated to call the SDK
+      // directly yet (PRD step 4, still open). Register this correct address
+      // and these credentials with it rather than letting the server derive
+      // anything itself: passed as `knownDepositWalletAddress`, the server's
+      // existing on-chain `owner()` verification accepts it immediately and
+      // never reaches its own (wrong) CREATE2 derivation or blind-deploy path.
+      logChainEvent('polymarket.enable', '4/4 signing session proof and registering with server');
+      const authProof = await createPredictSessionProof(activeSigner, eoaAddress);
 
       const res = await fetchWithTimeout(`${API_BASE}/clob/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // The deposit wallet address this device already knows, when it has one.
-        // The server cannot recompute it — the address is only recoverable from
-        // the deploy receipt, which a later session no longer has — so the phone's
-        // stored copy is what lets a returning user re-auth without redeploying.
-        // The server verifies it on chain against this signer before using it.
         body: JSON.stringify({
           polygonAddress: eoaAddress,
           creds,
           ...authProof,
-          ...(storedDepositWallet ? { knownDepositWalletAddress: storedDepositWallet } : {}),
+          knownDepositWalletAddress: depositWalletAddress,
         }),
       });
       assertWalletUnchanged();
@@ -308,19 +324,18 @@ export function usePolymarketWallet(): PolymarketWallet {
 
       const data = await res.json();
       assertWalletUnchanged();
-      logChainEvent('polymarket.enable', '3/4 /clob/auth ok', {
+      logChainEvent('polymarket.enable', '4/4 server session registered', {
         polygonAddress: data.polygonAddress,
         depositWalletAddress: data.depositWalletAddress,
         walletMode: data.walletMode,
-        needsSignatureRequest: !!data.signatureRequest,
       });
-      if (!data.depositWalletAddress) {
-        throw new Error('Deposit wallet setup incomplete - please try again');
-      }
-      if (data.signatureRequest) {
-        logChainEvent('polymarket.enable', '4/4 submitting approval batch');
-        await signAndSubmitDepositWalletBatch(activeSigner, eoaAddress, data.signatureRequest, { operation: 'predict_setup' });
-        logChainEvent('polymarket.enable', '4/4 approval batch ok');
+      // The server is expected to echo back exactly the address the SDK
+      // derived, since it was handed as a verified hint — anything else means
+      // the server's verification rejected it (wrong signer, no code at that
+      // address) and fell through to its own derivation, which is the bug
+      // this migration exists to avoid resurfacing silently.
+      if (!data.depositWalletAddress || data.depositWalletAddress.toLowerCase() !== depositWalletAddress.toLowerCase()) {
+        throw new Error('Server reported a different deposit wallet than the SDK derived — reconnect and try again.');
       }
       if (loadGenerationRef.current !== enableGeneration) {
         throw new Error(WALLET_CHANGED_MESSAGE);

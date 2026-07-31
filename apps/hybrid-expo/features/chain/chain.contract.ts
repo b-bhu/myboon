@@ -32,6 +32,8 @@ export interface ChainRequirement {
   chainId?: number;
   needsTypedData: boolean;
   needsRawTransaction: boolean;
+  /** Sign-and-broadcast, not sign-only. See `BackendCapabilities.canBroadcastTransaction`. */
+  needsBroadcastTransaction?: boolean;
 }
 
 /**
@@ -48,6 +50,7 @@ export interface SignerDescriptor {
   canSignMessage: boolean;
   canSignTypedData: boolean;
   canSendTransaction: boolean;
+  canBroadcastTransaction: boolean;
   survivesReinstall: boolean;
   survivesDeviceLoss: boolean;
 }
@@ -62,6 +65,18 @@ export interface Signer {
     value: Record<string, unknown>,
   ): Promise<string>;
   signTransaction(tx: Record<string, unknown>): Promise<string>;
+  /**
+   * Sign and broadcast a transaction, returning its hash once submitted.
+   * Throws for a descriptor with `canBroadcastTransaction: false` — check the
+   * descriptor before calling, the same as any other capability-gated method
+   * on this interface.
+   */
+  sendTransaction(tx: {
+    to: string;
+    data?: string;
+    value?: bigint;
+    chainId?: number;
+  }): Promise<string>;
 }
 
 /**
@@ -77,6 +92,16 @@ export interface BackendCapabilities {
   canSignMessage: boolean;
   canSignTypedData: boolean;
   canSendTransaction: boolean;
+  /**
+   * Sign AND broadcast a transaction, returning a hash the caller can poll —
+   * distinct from `canSendTransaction`, which despite its name backs
+   * `Signer.signTransaction()` (sign-only, returns a raw signed transaction
+   * for the caller to broadcast itself). Added for `@polymarket/client`'s
+   * `Signer.sendTransaction()`, which needs the embedded wallet to submit the
+   * transaction directly — Privy's embedded wallet exposes broadcast via
+   * `eth_sendTransaction`, not raw-signed export.
+   */
+  canBroadcastTransaction: boolean;
   survivesReinstall: boolean;
   survivesDeviceLoss: boolean;
 }
@@ -93,6 +118,7 @@ export const BACKEND_CAPABILITIES: Record<
       canSignMessage: true,
       canSignTypedData: false, // EIP-712 is an EVM concept
       canSendTransaction: true,
+      canBroadcastTransaction: false, // no EIP-1193 sendTransaction on Solana
       survivesReinstall: true,
       survivesDeviceLoss: true,
     },
@@ -100,6 +126,7 @@ export const BACKEND_CAPABILITIES: Record<
       canSignMessage: true,
       canSignTypedData: true,
       canSendTransaction: true,
+      canBroadcastTransaction: true,
       survivesReinstall: true,
       survivesDeviceLoss: true,
     },
@@ -112,6 +139,7 @@ export const BACKEND_CAPABILITIES: Record<
       canSignMessage: true,
       canSignTypedData: false,
       canSendTransaction: true,
+      canBroadcastTransaction: false,
       survivesReinstall: true,
       survivesDeviceLoss: true,
     },
@@ -144,6 +172,7 @@ export function backendSatisfies(
   if (!capabilities) return false;
   if (requirement.needsTypedData && !capabilities.canSignTypedData) return false;
   if (requirement.needsRawTransaction && !capabilities.canSendTransaction) return false;
+  if (requirement.needsBroadcastTransaction && !capabilities.canBroadcastTransaction) return false;
   return true;
 }
 
@@ -187,6 +216,9 @@ export function unsupportedReason(requirement: ChainRequirement): string {
   if (requirement.needsRawTransaction) {
     return `No available ${chainLabel} wallet can sign transactions, which ${requirement.applicationId} requires.`;
   }
+  if (requirement.needsBroadcastTransaction) {
+    return `No available ${chainLabel} wallet can send transactions, which ${requirement.applicationId} requires.`;
+  }
   return `No available wallet backend can satisfy ${requirement.applicationId} on ${chainLabel}.`;
 }
 
@@ -215,6 +247,7 @@ export function buildSignerDescriptor(params: {
     canSignMessage: capabilities.canSignMessage,
     canSignTypedData: capabilities.canSignTypedData,
     canSendTransaction: capabilities.canSendTransaction,
+    canBroadcastTransaction: capabilities.canBroadcastTransaction,
     survivesReinstall: capabilities.survivesReinstall,
     survivesDeviceLoss: capabilities.survivesDeviceLoss,
   };
@@ -229,4 +262,8 @@ export const POLYMARKET_REQUIREMENT: ChainRequirement = {
   chainId: POLYGON_CHAIN_ID,
   needsTypedData: true,
   needsRawTransaction: false,
+  // @polymarket/client's SecureClient sends a real transaction to deploy the
+  // deposit wallet the first time a signer sets up an account — see
+  // docs/modules/polymarket/PRDs/2026_07_31_polymarket_sdk_migration_PRD.md.
+  needsBroadcastTransaction: true,
 };

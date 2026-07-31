@@ -213,6 +213,7 @@ describe('SignerDescriptor flags per backend', () => {
     assert.equal(descriptor.canSignMessage, true);
     assert.equal(descriptor.canSignTypedData, true);
     assert.equal(descriptor.canSendTransaction, true);
+    assert.equal(descriptor.canBroadcastTransaction, true);
     assert.equal(descriptor.survivesReinstall, true);
     assert.equal(descriptor.survivesDeviceLoss, true);
   });

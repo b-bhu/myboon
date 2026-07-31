@@ -16,6 +16,8 @@
 
 import { ClobClient, OrderType, Side, SignatureTypeV2, Chain } from '@polymarket/clob-client-v2';
 import type { ApiKeyCreds, SignedOrder } from '@polymarket/clob-client-v2';
+import { createSecureClient, forkEnvironmentConfig } from '@polymarket/client';
+import type { SecureClient, Signer as PolymarketSigner, TransactionHandle } from '@polymarket/client';
 import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import type { PlaceBetParams } from './predict.api';
@@ -394,6 +396,151 @@ export async function createPredictSessionProof(
     `timestamp:${authTimestamp}`,
   ].join('\n'));
   return { authTimestamp, authSignature };
+}
+
+/**
+ * Public Polygon RPC for polling transaction receipts client-side.
+ *
+ * Only used for a plain `eth_getTransactionReceipt` poll — not a ranged
+ * `eth_getLogs` scan, so the free-tier range cap that mattered on the server
+ * side (docs/modules/polymarket/PRDs/2026_07_31_polymarket_sdk_migration_PRD.md)
+ * doesn't apply here. The app has never needed a client-side Polygon RPC
+ * before (every prior write went through the server's relayer, never
+ * broadcast directly), so there is no existing client to reuse.
+ */
+const POLYGON_RPC_URL = process.env.EXPO_PUBLIC_POLYGON_RPC_URL?.trim()
+  || 'https://polygon-rpc.com';
+
+/**
+ * Poll for a transaction's receipt after `sendTransaction` returns a hash.
+ *
+ * `Signer.sendTransaction()` resolves once the transaction is broadcast, per
+ * standard EIP-1193 `eth_sendTransaction` semantics — not once it's mined.
+ * `@polymarket/client`'s `TransactionHandle.wait()` needs the mined outcome,
+ * so this fills that gap directly against the chain rather than through the
+ * signer (the app's `Signer` interface has no raw JSON-RPC read method, only
+ * signing operations).
+ */
+async function waitForTransaction(
+  transactionHash: TransactionHandle['transactionHash'],
+  { timeoutMs = 60_000, intervalMs = 2_000 } = {},
+): Promise<{ transactionHash: NonNullable<TransactionHandle['transactionHash']>; transactionId: null }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await fetchWithTimeout(POLYGON_RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_getTransactionReceipt',
+        params: [transactionHash],
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    const receipt = body?.result;
+    if (receipt) {
+      if (receipt.status === '0x0') {
+        throw new Error(`Transaction ${transactionHash} reverted.`);
+      }
+      return { transactionHash: transactionHash as NonNullable<TransactionHandle['transactionHash']>, transactionId: null };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out waiting for transaction ${transactionHash} to be mined.`);
+}
+
+/**
+ * Adapts the app's `Signer` to `@polymarket/client`'s `Signer` shape.
+ *
+ * Structurally similar to `toClobSigner` above but a different target type:
+ * the unified SDK's `Signer` bundles `domain`/`types`/`message` into one
+ * `TypedDataPayload` object (`toClobSigner`'s target took them as three
+ * positional args), and requires `sendTransaction` — a capability the old
+ * `ClobClient` never asked for, because deposit-wallet derivation used to be
+ * a pure computation. The new SDK's `createSecureClient` sends a real
+ * transaction to deploy the deposit wallet the first time a signer sets up
+ * an account (see docs/modules/polymarket/PRDs/2026_07_31_polymarket_sdk_migration_PRD.md
+ * for how this was confirmed by reading the SDK's compiled source), so this
+ * adapter's `sendTransaction` is load-bearing, not incidental.
+ */
+function toPolymarketSigner(signer: Signer): PolymarketSigner {
+  return {
+    // `EvmAddress`/`EvmSignature`/`TransactionHandle`'s hash field are
+    // branded string types the SDK uses to keep addresses, signatures, and
+    // hashes from being confused with plain strings at compile time — plain
+    // strings at runtime, so a cast through `Awaited<ReturnType<...>>` is
+    // correct here, not a lie.
+    getAddress: async () => (await signer.getAddress()) as Awaited<ReturnType<PolymarketSigner['getAddress']>>,
+    signMessage: async (message) => (await signer.signMessage(message)) as Awaited<ReturnType<PolymarketSigner['signMessage']>>,
+    signTypedData: async (payload) => {
+      // `payload.types` is `TypedData` (readonly field arrays); our `Signer`
+      // takes a mutable `{ name, type }[]` — copy rather than cast through,
+      // since a `readonly` array assigned into a mutable-typed parameter is
+      // a real (if narrow) safety gap the compiler is right to flag.
+      const mutableTypes = Object.fromEntries(
+        Object.entries(payload.types).map(([key, fields]) => [key, [...fields]]),
+      );
+      const signature = await signer.signTypedData(payload.domain, mutableTypes, payload.message);
+      return signature as Awaited<ReturnType<PolymarketSigner['signTypedData']>>;
+    },
+    sendTransaction: async (request): Promise<TransactionHandle> => {
+      const hash = await signer.sendTransaction({
+        to: request.to,
+        data: request.data,
+        value: request.value,
+        chainId: request.chainId,
+      });
+      const transactionHash = hash as TransactionHandle['transactionHash'];
+      // `transactionId` is documented as null "when submitted directly to
+      // the blockchain" — exactly this path, since we broadcast via the
+      // signer's own EIP-1193 provider, never through Polymarket's relayer.
+      return {
+        transactionHash,
+        transactionId: null,
+        wait: () => waitForTransaction(transactionHash),
+      };
+    },
+  };
+}
+
+/**
+ * The environment `@polymarket/client` calls against — production, except the
+ * CLOB REST base, redirected to this app's own proxy.
+ *
+ * Devices on some networks cannot reach `clob.polymarket.com` directly (an
+ * axios "Network Error" with no status) — the same reason `CLOB_HOST` exists
+ * below for the old SDK. `forkEnvironmentConfig` is the unified SDK's
+ * equivalent of the old `ClobClient`'s `host` option: everything else
+ * (contracts, chain ID, relayer, gamma) stays at production defaults, only
+ * the CLOB REST endpoint is overridden. Marked `@experimental` by the SDK's
+ * own type comments — confirmed to type-check and construct without error,
+ * not yet exercised against a live network call; if it turns out not to work
+ * end-to-end, the fallback is pointing `rest` at `https://clob.polymarket.com`
+ * directly via `EXPO_PUBLIC_CLOB_HOST`, same escape hatch the old SDK had.
+ */
+const POLYMARKET_ENVIRONMENT = forkEnvironmentConfig({
+  name: 'myboon-clob-proxy',
+  clob: { rest: CLOB_HOST },
+});
+
+/**
+ * The unified SDK's account-setup client: CLOB L1 auth, deposit-wallet
+ * derivation, and first-time deployment collapse into this one call.
+ *
+ * Replaces `createPolymarketApiCreds` + the server's old CREATE2 derivation
+ * for the *setup* path specifically. `createPolymarketApiCreds` (below)
+ * still backs order placement's `ClobClient` construction until that path
+ * migrates too — see the PRD's step 4 for why wrap/withdraw/redeem/order
+ * signing aren't moved in this same change.
+ */
+export async function createPolymarketSecureClient(
+  signer: Signer,
+): Promise<SecureClient> {
+  return createSecureClient({
+    environment: POLYMARKET_ENVIRONMENT,
+    signer: toPolymarketSigner(signer),
+  });
 }
 
 export async function createPolymarketApiCreds(signer: Signer): Promise<ApiKeyCreds> {

@@ -471,17 +471,26 @@ directly, not just by inference from the client working.
 
 ## Open questions to resolve during implementation
 
-1. Does `@polymarket/client` run under Metro/Hermes (React Native) without
-   modification, or does it need polyfills/bundler config the way the old
-   packages needed `metro.config.js` shims? This is the first thing to
-   check in step 2, before writing any signer-adapter code — a bundler
-   incompatibility would be a much bigger blocker than anything else in this
-   PRD.
-2. Can `@polymarket/client` point its CLOB host at this app's own proxy
-   (`proxies.ts`), the way the old `ClobClient`'s `host` option did? If not,
-   confirm the device can reach Polymarket's endpoints directly for
-   everything the SDK needs — the original reason for the proxy
-   (`0a3dc77`) may or may not still apply per-endpoint.
+1. ~~Does `@polymarket/client` run under Metro/Hermes (React Native)?~~
+   **Resolved, yes.** Bundled a probe entry (`import { createSecureClient }
+   from '@polymarket/client'`) through `expo export:embed` for both `ios` and
+   `android` platforms — both bundled cleanly, 342 modules, no config
+   changes to `metro.config.js` needed. One benign warning
+   (`@noble/hashes/crypto.js` not in package exports, Metro falls back to
+   file-based resolution automatically) — not a blocker, nothing to fix.
+2. ~~Can `@polymarket/client` point its CLOB host at this app's own proxy?~~
+   **Resolved, yes, via a different mechanism than the old SDK's `host`
+   option.** `createSecureClient`/`createPublicClient` accept an
+   `environment: EnvironmentConfig`, and the SDK exports
+   `forkEnvironmentConfig({ clob: { rest: 'https://our-proxy/clob' } })` to
+   override just the CLOB REST base URL while leaving contracts, chain ID,
+   relayer, and gamma endpoints at production defaults
+   (`types-vvy5wT5V.d.ts:3869-3906`). Marked `@experimental` in its doc
+   comment — the type-level mechanism is confirmed, but it hasn't been
+   exercised against a live network call yet (that requires a real signer
+   past `beginAuthentication`, i.e. step 3's on-device verification). Treat
+   as "very likely works, confirm on first real device test," not fully
+   closed.
 3. For each of wrap/withdraw/redeem, does moving calldata construction and
    submission to the phone's `SecureClient` still allow gasless,
    Builder-sponsored execution the way today's relayer flow does — or does
