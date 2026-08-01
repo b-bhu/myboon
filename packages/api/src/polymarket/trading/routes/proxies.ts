@@ -198,9 +198,16 @@ export function registerProxyRoutes(routes: Hono) {
       body = await c.req.text()
     }
 
+    // Temporary diagnostic — remove once the on-device "invalid address"
+    // failure is understood. curl and a Node script both succeed against
+    // this exact route for the same address, so something about the real
+    // phone request differs; logging it directly is faster than guessing.
+    console.log('[relayer-proxy] incoming', { incomingUrl: c.req.url, method, path, target, headers })
+
     try {
       const res = await fetch(target, { method, headers, body })
       const text = await res.text()
+      console.log('[relayer-proxy] upstream response', { status: res.status, text: text.slice(0, 500) })
       return new Response(text, {
         status: res.status,
         headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/json' },
