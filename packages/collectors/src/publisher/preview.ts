@@ -1,18 +1,11 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
 
 async function main(): Promise<void> {
   const config = publisherCliConfig()
@@ -20,12 +13,17 @@ async function main(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const result = await runPublisher({
-    store: new SupabasePublisherStore(supabase),
-    batchSize: config.batchSize,
-    dryRun: true,
-  })
-  console.log(JSON.stringify(result, null, 2))
+  const pipelineStore = new SqlitePipelineStore()
+  try {
+    const result = await runPublisher({
+      store: new SupabasePublisherStore(supabase, pipelineStore),
+      batchSize: config.batchSize,
+      dryRun: true,
+    })
+    console.log(JSON.stringify(result, null, 2))
+  } finally {
+    pipelineStore.close()
+  }
 }
 
 main().catch((err) => {

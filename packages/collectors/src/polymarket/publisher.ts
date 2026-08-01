@@ -1,18 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
-
-const execFileAsync = promisify(execFile)
+import { HermesService, extractJson } from '../hermes'
+import type { PipelineCandidateRow, PipelineResearchRow, PipelineStore } from '../pipeline-store/store'
 
 const SOURCE = 'polymarket'
 const AREA = 'markets'
 const DEFAULT_PUBLISHER_TIMEOUT_MS = 10 * 60 * 1000
-
-type EditorDecisionStatus = 'pending_publisher' | 'rejected' | 'needs_more_research' | 'published'
-type ResearchStatus = 'pending_editor' | 'editing' | 'edited' | 'rejected' | 'needs_more_research' | 'published'
-type CandidateStatus = 'pending_research' | 'researching' | 'researched' | 'skipped_recently_researched' | 'research_failed' | 'rejected' | 'published'
 
 export interface PolymarketPublisherOptions {
   now?: string
@@ -115,20 +109,6 @@ interface InsertedPublication {
   id: string
   editor_decision_id: string | null
 }
-
-export const POLYMARKET_PUBLISHER_RESEARCH_SELECT = [
-  'id',
-  'candidate_id',
-  'slug',
-  'title',
-  'candidate_type',
-  'research_mode',
-  'summary',
-  'notes',
-  'key_findings',
-  'evidence_links',
-  'uncertainty',
-].join(', ')
 
 export interface PolymarketPublisherResult {
   observedAt: string
@@ -311,99 +291,59 @@ function inferEditorialVoiceProfile(
   }
 }
 
-function extractJson<T>(text: string): T | null {
-  const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-  try {
-    return JSON.parse(cleaned) as T
-  } catch {
-    // Continue into fragment extraction.
-  }
-
-  const start = cleaned.search(/[{[]/)
-  if (start === -1) return null
-  const opener = cleaned[start]
-  const closer = opener === '{' ? '}' : ']'
-  let depth = 0
-  let inString = false
-  let escape = false
-  for (let index = start; index < cleaned.length; index += 1) {
-    const ch = cleaned[index]
-    if (escape) {
-      escape = false
-      continue
-    }
-    if (ch === '\\' && inString) {
-      escape = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === opener) depth += 1
-    else if (ch === closer) depth -= 1
-    if (depth === 0) {
-      try {
-        return JSON.parse(cleaned.slice(start, index + 1)) as T
-      } catch {
-        return null
-      }
-    }
-  }
-  return null
-}
-
-async function fetchPendingPublisherDecisions(db: SupabaseClient, batchSize: number): Promise<PendingPublisherDecision[]> {
-  const { data, error } = await db
-    .from('polymarket_market_editor_decisions')
-    .select('id, research_ids, decision, status, angle, why_this_matters, reasoning, reason_codes, evidence_quality, primary_topic, related_topics, publisher_notes, created_at')
-    .eq('source', SOURCE)
-    .eq('area', AREA)
-    .eq('status', 'pending_publisher')
-    .eq('decision', 'publish')
-    .order('created_at', { ascending: true })
-    .limit(batchSize)
-
-  if (error) throw new Error(`pending publisher decisions fetch failed: ${error.message}`)
-  const rows = (data ?? []) as any[]
-  return rows.map((r) => ({
-    id: r.id,
-    research_ids: asStringArray(r.research_ids),
+async function fetchPendingPublisherDecisions(store: PipelineStore, batchSize: number): Promise<PendingPublisherDecision[]> {
+  const rows = await store.findEditorDecisions({
+    source: SOURCE,
+    area: AREA,
+    status: 'pending_publisher',
+    decision: 'publish',
+    orderBy: 'asc',
+    limit: batchSize,
+  })
+  return rows.map((row) => ({
+    id: row.id,
+    research_ids: row.researchIds,
     decision: 'publish' as const,
     status: 'pending_publisher' as const,
-    angle: asNullableString(r.angle),
-    why_this_matters: asNullableString(r.why_this_matters),
-    reasoning: asString(r.reasoning),
-    reason_codes: asStringArray(r.reason_codes),
-    evidence_quality: (['strong', 'medium', 'weak'].includes(r.evidence_quality) ? r.evidence_quality : 'medium') as 'strong' | 'medium' | 'weak',
-    primary_topic: asNullableString(r.primary_topic),
-    related_topics: asStringArray(r.related_topics),
-    publisher_notes: asNullableString(r.publisher_notes),
-    created_at: r.created_at,
+    angle: row.angle,
+    why_this_matters: row.whyThisMatters,
+    reasoning: row.reasoning,
+    reason_codes: asStringArray(row.reasonCodes),
+    evidence_quality: row.evidenceQuality,
+    primary_topic: row.primaryTopic,
+    related_topics: asStringArray(row.relatedTopics),
+    publisher_notes: row.publisherNotes,
+    created_at: row.createdAt,
   }))
 }
 
-async function fetchResearchRows(db: SupabaseClient, researchIds: string[]): Promise<ResearchRowForPublish[]> {
-  if (researchIds.length === 0) return []
-  const { data, error } = await db
-    .from('polymarket_market_candidate_research')
-    .select(POLYMARKET_PUBLISHER_RESEARCH_SELECT)
-    .in('id', researchIds)
-
-  if (error) throw new Error(`research rows fetch failed: ${error.message}`)
-  return (data ?? []) as unknown as ResearchRowForPublish[]
+function toResearchRowForPublish(row: PipelineResearchRow): ResearchRowForPublish {
+  return {
+    id: row.id,
+    candidate_id: row.candidateId,
+    slug: row.slug,
+    title: row.title,
+    candidate_type: row.candidateType,
+    research_mode: row.researchMode,
+    summary: row.summary,
+    notes: row.notes,
+    key_findings: row.keyFindings,
+    evidence_links: row.evidenceLinks,
+    uncertainty: row.uncertainty,
+  }
 }
 
-async function fetchCandidates(db: SupabaseClient, candidateIds: string[]): Promise<CandidateLite[]> {
-  if (candidateIds.length === 0) return []
-  const { data, error } = await db
-    .from('polymarket_market_candidates')
-    .select('id, slug, title, candidate_type, what_changed, why_flagged, observed_at, score')
-    .in('id', candidateIds)
-
-  if (error) throw new Error(`candidates fetch failed: ${error.message}`)
-  return (data ?? []) as CandidateLite[]
+function toCandidateLite(row: PipelineCandidateRow): CandidateLite {
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    candidate_type: row.candidateType,
+    what_changed: row.whatChanged,
+    why_flagged: row.whyFlagged,
+    observed_at: row.observedAt,
+    score: row.score,
+  }
 }
 
 async function fetchRecentPublished(db: SupabaseClient, limit: number): Promise<RecentPublished[]> {
@@ -415,50 +355,6 @@ async function fetchRecentPublished(db: SupabaseClient, limit: number): Promise<
 
   if (error) throw new Error(`recent published fetch failed: ${error.message}`)
   return (data ?? []) as RecentPublished[]
-}
-
-async function updateEditorDecisionStatus(
-  db: SupabaseClient,
-  id: string,
-  status: EditorDecisionStatus,
-  observedAt: string
-): Promise<void> {
-  const { error } = await db
-    .from('polymarket_market_editor_decisions')
-    .update({ status, updated_at: observedAt })
-    .eq('id', id)
-
-  if (error) throw new Error(`editor decision status update failed: ${error.message}`)
-}
-
-async function updateResearchStatus(
-  db: SupabaseClient,
-  ids: string[],
-  status: ResearchStatus,
-  observedAt: string
-): Promise<void> {
-  if (ids.length === 0) return
-  const { error } = await db
-    .from('polymarket_market_candidate_research')
-    .update({ status, updated_at: observedAt })
-    .in('id', ids)
-
-  if (error) throw new Error(`research status update failed: ${error.message}`)
-}
-
-async function updateCandidateStatus(
-  db: SupabaseClient,
-  ids: string[],
-  status: CandidateStatus,
-  observedAt: string
-): Promise<void> {
-  if (ids.length === 0) return
-  const { error } = await db
-    .from('polymarket_market_candidates')
-    .update({ status, updated_at: observedAt })
-    .in('id', ids)
-
-  if (error) throw new Error(`candidate status update failed: ${error.message}`)
 }
 
 async function loadStablePrompt(): Promise<string> {
@@ -552,28 +448,24 @@ function buildPublisherPrompt(
   ].join('\n')
 }
 
+const hermes = new HermesService()
+
 async function runPublisherAgent(prompt: string, options: Required<PolymarketPublisherOptions>): Promise<AgentPublisherResponse> {
   const stablePrompt = await loadStablePrompt()
   const fullPrompt = prompt.replace('{{STABLE_PROMPT}}', stablePrompt)
-  const args = options.publisherToolsets
-    ? ['-t', options.publisherToolsets, '-z', fullPrompt]
-    : ['-z', fullPrompt]
-  const { stdout, stderr } = await execFileAsync(
-    options.publisherCommand,
-    args,
-    {
-      timeout: options.publisherTimeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env },
-    }
-  )
+  const { value, stdout, stderr } = await hermes.structured<AgentPublisherResponse>({
+    purpose: 'polymarket.publisher',
+    prompt: fullPrompt,
+    timeoutMs: options.publisherTimeoutMs,
+    toolsets: options.publisherToolsets || undefined,
+    commandOverride: options.publisherCommand,
+  })
 
-  const parsed = extractJson<AgentPublisherResponse>(stdout)
-  if (!parsed || !Array.isArray(parsed.publications)) {
+  if (!value || !Array.isArray(value.publications)) {
     throw new Error(`Publisher returned invalid JSON. stderr=${stderr.slice(0, 500)} stdout=${stdout.slice(0, 1000)}`)
   }
 
-  return parsed
+  return value
 }
 
 function normalizePublication(
@@ -728,58 +620,64 @@ async function insertPublishedNarratives(
   })) as InsertedPublication[]
 }
 
+/**
+ * Marks published state for a batch of publications in a small, fixed number
+ * of store calls instead of one editor-decision UPDATE + one research UPDATE
+ * per publication: all editor decision ids are batched into a single
+ * setEditorDecisionStatus call, and all research ids into a single
+ * setResearchStatus call.
+ */
 async function markPublished(
-  db: SupabaseClient,
+  store: PipelineStore,
   inserted: InsertedPublication[],
   decisions: PendingPublisherDecision[],
   researchByDecision: Map<string, ResearchRowForPublish[]>,
   observedAt: string
 ): Promise<{ researchCount: number; candidateCount: number }> {
-  let researchCount = 0
-  let candidateCount = 0
-
   const decisionMap = new Map(decisions.map((d) => [d.id, d]))
 
-  for (const ins of inserted) {
-    const decId = ins.editor_decision_id
-    if (!decId) continue
-    await updateEditorDecisionStatus(db, decId, 'published', observedAt)
+  const publishedDecisionIds = inserted
+    .map((ins) => ins.editor_decision_id)
+    .filter((id): id is string => Boolean(id))
 
-    const dec = decisionMap.get(decId)
-    const resIds = dec?.research_ids ?? []
-    if (resIds.length > 0) {
-      await updateResearchStatus(db, resIds, 'published', observedAt)
-      researchCount += resIds.length
-    }
+  if (publishedDecisionIds.length > 0) {
+    await store.setEditorDecisionStatus(publishedDecisionIds, 'published', observedAt)
   }
 
-  // Collect candidate ids only from the decisions that were successfully published (inserted)
-  const publishedDecisionIds = new Set(
-    inserted.map((ins) => ins.editor_decision_id).filter((id): id is string => Boolean(id))
-  )
+  const allResearchIds: string[] = []
   const allCandidateIds = new Set<string>()
   for (const decId of publishedDecisionIds) {
-    const researches = researchByDecision.get(decId) ?? []
-    for (const r of researches) {
+    const dec = decisionMap.get(decId)
+    const resIds = dec?.research_ids ?? []
+    allResearchIds.push(...resIds)
+    for (const r of researchByDecision.get(decId) ?? []) {
       allCandidateIds.add(r.candidate_id)
     }
   }
+
+  if (allResearchIds.length > 0) {
+    await store.setResearchStatus(allResearchIds, 'published', observedAt)
+  }
   if (allCandidateIds.size > 0) {
-    await updateCandidateStatus(db, Array.from(allCandidateIds), 'published', observedAt)
-    candidateCount = allCandidateIds.size
+    await store.setCandidateStatus({
+      ids: Array.from(allCandidateIds),
+      status: 'published',
+      observedAt,
+    })
   }
 
-  return { researchCount, candidateCount }
+  return { researchCount: allResearchIds.length, candidateCount: allCandidateIds.size }
 }
 
 export async function runPolymarketPublisher(
+  store: PipelineStore,
   db: SupabaseClient,
   partialOptions: PolymarketPublisherOptions = {}
 ): Promise<PolymarketPublisherResult> {
   const options = selectedOptions(partialOptions)
   const observedAt = options.now
 
-  const decisions = await fetchPendingPublisherDecisions(db, options.batchSize)
+  const decisions = await fetchPendingPublisherDecisions(store, options.batchSize)
   if (decisions.length === 0) {
     return {
       observedAt,
@@ -797,7 +695,8 @@ export async function runPolymarketPublisher(
 
   try {
     const allResearchIds = Array.from(new Set(decisions.flatMap((d) => d.research_ids)))
-    const allResearches = await fetchResearchRows(db, allResearchIds)
+    const allResearchRows = await store.getResearchByIds(allResearchIds)
+    const allResearches = allResearchRows.map(toResearchRowForPublish)
     const researchByDecision = new Map<string, ResearchRowForPublish[]>()
     for (const d of decisions) {
       researchByDecision.set(
@@ -806,11 +705,13 @@ export async function runPolymarketPublisher(
       )
     }
 
-    const allCandidateIds = Array.from(new Set(allResearches.map((r) => r.candidate_id)))
-    const candidates = await fetchCandidates(db, allCandidateIds)
+    const allCandidateIds = Array.from(new Set(allResearchRows.map((r) => r.candidateId)))
+    const candidateRows = await store.getCandidatesByIds(allCandidateIds)
+    const candidates = candidateRows.map(toCandidateLite)
     const candidatesByResearch = new Map<string, CandidateLite>()
-    for (const c of candidates) {
-      candidatesByResearch.set(c.id, c)
+    for (const r of allResearchRows) {
+      const candidate = candidates.find((c) => c.id === r.candidateId)
+      if (candidate) candidatesByResearch.set(r.id, candidate)
     }
 
     const recent = await fetchRecentPublished(db, options.recentPublishedLimit)
@@ -842,7 +743,7 @@ export async function runPolymarketPublisher(
 
     // Update statuses
     const { researchCount, candidateCount } = await markPublished(
-      db,
+      store,
       inserted,
       decisions,
       researchByDecision,
@@ -857,6 +758,9 @@ export async function runPolymarketPublisher(
       researchRowsPublished: researchCount,
       candidatesPublished: candidateCount,
       publications: inserted.map((ins) => {
+        // Map explicitly by editor_decision_id instead of relying on array
+        // index: the DB upsert can reorder or partially fail rows, so index
+        // alignment between `inserted` and `normalizedPubs` is not guaranteed.
         const pub = normalizedPubs.find((p) => p.editor_decision_id === ins.editor_decision_id)
         return {
           id: ins.id,

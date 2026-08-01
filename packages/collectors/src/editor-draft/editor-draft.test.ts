@@ -266,8 +266,8 @@ test('runEditorDraft writes idempotently by source memory bundle', async () => {
   const store = new InMemoryDraftStore([bundle])
   const provider = new StaticProvider('draft_post')
 
-  await runEditorDraft({} as any, { store, provider, now: '2026-07-01T00:00:00.000Z' })
-  await runEditorDraft({} as any, { store, provider, now: '2026-07-01T00:01:00.000Z' })
+  await runEditorDraft({} as any, null, { store, provider, now: '2026-07-01T00:00:00.000Z' })
+  await runEditorDraft({} as any, null, { store, provider, now: '2026-07-01T00:01:00.000Z' })
 
   assert.equal(store.rows.length, 1)
   assert.equal(store.rows[0].action, 'draft_post')

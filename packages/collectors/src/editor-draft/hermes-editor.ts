@@ -1,17 +1,17 @@
-import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
+import { HermesService } from '../hermes'
 import { parseAgentEditorDraftResponse } from './normalizer'
 import type { AgentEditorDraftDecision, EditorDraftProvider, EntityDraftBundle } from './types'
 
-const execFileAsync = promisify(execFile)
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
 export interface HermesEditorDraftProviderOptions {
   command?: string
   toolsets?: string
   timeoutMs?: number
+  /** Injectable central Hermes service; built from `command` when omitted. */
+  service?: HermesService
 }
 
 function memoryPayload(memory: EntityDraftBundle['memoryLane'][number]): Record<string, unknown> {
@@ -77,31 +77,27 @@ export async function buildHermesEditorDraftPrompt(bundle: EntityDraftBundle): P
 }
 
 export class HermesEditorDraftProvider implements EditorDraftProvider {
-  private readonly command: string
   private readonly toolsets: string
   private readonly timeoutMs: number
+  private readonly service: HermesService
 
   constructor(options: HermesEditorDraftProviderOptions = {}) {
-    this.command = options.command ?? process.env.EDITOR_DRAFT_HERMES_COMMAND ?? 'hermes'
     this.toolsets = options.toolsets ?? process.env.EDITOR_DRAFT_HERMES_TOOLSETS ?? ''
     const envTimeout = Number(process.env.EDITOR_DRAFT_HERMES_TIMEOUT_MS)
     this.timeoutMs = options.timeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : DEFAULT_TIMEOUT_MS)
+    this.service = options.service ?? new HermesService({
+      command: options.command ?? process.env.EDITOR_DRAFT_HERMES_COMMAND ?? 'hermes',
+    })
   }
 
   async decide(bundle: EntityDraftBundle): Promise<AgentEditorDraftDecision> {
     const prompt = await buildHermesEditorDraftPrompt(bundle)
-    const args = this.toolsets
-      ? ['-t', this.toolsets, '-z', prompt]
-      : ['-z', prompt]
-    const { stdout, stderr } = await execFileAsync(
-      this.command,
-      args,
-      {
-        timeout: this.timeoutMs,
-        maxBuffer: 10 * 1024 * 1024,
-        env: { ...process.env },
-      }
-    )
+    const { stdout, stderr } = await this.service.oneshot({
+      purpose: 'editor-draft.decide',
+      prompt,
+      timeoutMs: this.timeoutMs,
+      toolsets: this.toolsets || undefined,
+    })
 
     const parsed = parseAgentEditorDraftResponse(stdout)
     const decision = parsed.decisions[0]

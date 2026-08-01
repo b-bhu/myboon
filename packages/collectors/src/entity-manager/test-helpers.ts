@@ -6,14 +6,21 @@ import type {
   EntityMemoryStore,
   EntityMemoryType,
   EntityRecord,
+  ManualCommandLogInput,
+  ManualCommandLogRecord,
   MemoryLookupKey,
 } from './types'
 
 export class InMemoryEntityMemoryStore implements EntityMemoryStore {
   entities: EntityRecord[] = []
   memories: EntityMemoryRecord[] = []
+  manualCommandLog: ManualCommandLogRecord[] = []
   private nextEntityId = 1
   private nextMemoryId = 1
+
+  async listEntities(limit = 1000): Promise<EntityRecord[]> {
+    return this.entities.slice(0, limit)
+  }
 
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
     const slugSet = new Set(slugs)
@@ -120,5 +127,26 @@ export class InMemoryEntityMemoryStore implements EntityMemoryStore {
     if (index === -1) throw new Error(`missing memory ${id}`)
     this.memories[index] = { ...this.memories[index], ...patch, updated_at: new Date().toISOString() }
     return this.memories[index]
+  }
+
+  async findManualCommand(requestId: string): Promise<ManualCommandLogRecord | null> {
+    return this.manualCommandLog.find((record) => record.requestId === requestId) ?? null
+  }
+
+  async recordManualCommand(input: ManualCommandLogInput): Promise<ManualCommandLogRecord> {
+    const existingIndex = this.manualCommandLog.findIndex((record) => record.requestId === input.requestId)
+    const record: ManualCommandLogRecord = {
+      requestId: input.requestId,
+      commandHash: input.commandHash,
+      actor: input.actor,
+      entityId: input.entityId,
+      appliedAt: new Date().toISOString(),
+    }
+    if (existingIndex === -1) {
+      this.manualCommandLog.push(record)
+    } else {
+      this.manualCommandLog[existingIndex] = record
+    }
+    return record
   }
 }

@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { envFlag, positiveInteger } from '../pipeline-store/cli-env'
+import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
 import { SupabaseEditorDraftStore } from './supabase-store'
@@ -45,16 +47,6 @@ export interface EditorDraftRunResult {
   failures: Array<{ entityId: string, entitySlug: string, error: string }>
 }
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value) return fallback
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function envFlag(value: string | undefined): boolean {
-  return value === '1' || value?.toLowerCase() === 'true'
-}
-
 export function editorDraftCliConfig(env: NodeJS.ProcessEnv = process.env): EditorDraftCliConfig {
   return {
     batchSize: positiveInteger(env.EDITOR_DRAFT_BATCH_SIZE, DEFAULT_BATCH_SIZE),
@@ -76,6 +68,7 @@ function sourceMemoryIds(record: EditorDraftRecord): string[] {
 
 export async function runEditorDraft(
   db: SupabaseClient,
+  pipelineStore: PipelineStore | null,
   options: RunEditorDraftOptions = {}
 ): Promise<EditorDraftRunResult> {
   const observedAt = options.now ?? new Date().toISOString()
@@ -86,7 +79,11 @@ export async function runEditorDraft(
     priorDraftLimit: options.priorDraftLimit ?? DEFAULT_PRIOR_DRAFT_LIMIT,
     publishedHistoryLimit: options.publishedHistoryLimit ?? DEFAULT_PUBLISHED_HISTORY_LIMIT,
   }
-  const store = options.store ?? new SupabaseEditorDraftStore(db)
+  let store = options.store
+  if (!store) {
+    if (!pipelineStore) throw new Error('runEditorDraft requires a PipelineStore when options.store is not provided')
+    store = new SupabaseEditorDraftStore(db, pipelineStore)
+  }
   const provider = options.provider ?? new HermesEditorDraftProvider()
   const backend = options.backend ?? 'hermes_cli'
   const model = options.model ?? null

@@ -1,8 +1,6 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { summarizeHyperliquidSqlite } from './sqlite-store'
 

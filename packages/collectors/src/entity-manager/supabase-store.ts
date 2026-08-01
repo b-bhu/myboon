@@ -7,12 +7,15 @@ import type {
   EntityMemoryStore,
   EntityMemoryType,
   EntityRecord,
+  ManualCommandLogInput,
+  ManualCommandLogRecord,
   MemoryLookupKey,
 } from './types'
 
 const ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, show_in_carousel, metadata, created_at, updated_at'
 const LEGACY_ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, metadata, created_at, updated_at'
 const MEMORY_SELECT = 'id, entity_id, source, source_area, source_type, source_ref_id, source_research_id, memory_type, title, summary, body, event_at, observed_at, confidence, evidence, mentions, metrics, context, created_at, updated_at'
+const MANUAL_COMMAND_LOG_SELECT = 'request_id, command_hash, actor, entity_id, applied_at'
 
 interface EntityRowsResult {
   data: unknown[] | null
@@ -77,6 +80,26 @@ function normalizeMemory(row: unknown): EntityMemoryRecord {
 
 export class SupabaseEntityMemoryStore implements EntityMemoryStore {
   constructor(private readonly db: SupabaseClient) {}
+
+  async listEntities(limit = 1000): Promise<EntityRecord[]> {
+    let result = await this.db
+      .from('entities')
+      .select(ENTITY_SELECT)
+      .eq('status', 'active')
+      .order('created_at', { ascending: true })
+      .limit(limit) as unknown as EntityRowsResult
+    if (isMissingCarouselColumn(result.error)) {
+      result = await this.db
+        .from('entities')
+        .select(LEGACY_ENTITY_SELECT)
+        .eq('status', 'active')
+        .order('created_at', { ascending: true })
+        .limit(limit) as unknown as EntityRowsResult
+    }
+    const { data, error } = result
+    if (error) throw new Error(`entity catalog list failed: ${error.message}`)
+    return (data ?? []).map(normalizeEntity)
+  }
 
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
     const byId = new Map<string, EntityRecord>()
@@ -243,6 +266,48 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
       .single() as unknown as EntityRowResult
     if (error) throw new Error(`entity memory update failed: ${error.message}`)
     return normalizeMemory(data)
+  }
+
+  async findManualCommand(requestId: string): Promise<ManualCommandLogRecord | null> {
+    const { data, error } = await this.db
+      .from('manual_command_log')
+      .select(MANUAL_COMMAND_LOG_SELECT)
+      .eq('request_id', requestId)
+      .maybeSingle() as unknown as EntityRowResult
+    if (error) throw new Error(`manual command log lookup failed: ${error.message}`)
+    return data ? normalizeManualCommandLog(data) : null
+  }
+
+  async recordManualCommand(input: ManualCommandLogInput): Promise<ManualCommandLogRecord> {
+    const { data, error } = await this.db
+      .from('manual_command_log')
+      .insert({
+        request_id: input.requestId,
+        command_hash: input.commandHash,
+        actor: input.actor,
+        entity_id: input.entityId,
+      })
+      .select(MANUAL_COMMAND_LOG_SELECT)
+      .single() as unknown as EntityRowResult
+    if (error) throw new Error(`manual command log insert failed: ${error.message}`)
+    return normalizeManualCommandLog(data)
+  }
+}
+
+function normalizeManualCommandLog(row: unknown): ManualCommandLogRecord {
+  const record = row as Record<string, unknown>
+  const actor = record.actor && typeof record.actor === 'object' && !Array.isArray(record.actor)
+    ? record.actor as Record<string, unknown>
+    : {}
+  return {
+    requestId: String(record.request_id),
+    commandHash: String(record.command_hash),
+    actor: {
+      kind: (actor.kind as ManualCommandLogRecord['actor']['kind']) ?? 'agent',
+      name: typeof actor.name === 'string' ? actor.name : '',
+    },
+    entityId: typeof record.entity_id === 'string' ? record.entity_id : null,
+    appliedAt: String(record.applied_at),
   }
 }
 

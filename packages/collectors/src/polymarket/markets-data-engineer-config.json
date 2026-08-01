@@ -31,5 +31,7 @@
   "manualPinScoreBoost": 8,
   "candidateRetryFailedHours": 24,
   "candidateRecentPublishedCooldownHours": 168,
-  "candidateMaterialMoveMultiplier": 2
+  "candidateMaterialMoveMultiplier": 2,
+  "backlogThreshold": 100,
+  "backlogHardCeiling": 250
 }

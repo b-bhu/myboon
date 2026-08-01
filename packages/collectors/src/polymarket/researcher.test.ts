@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { HermesService } from '../hermes'
 import type { PolymarketResearcherOptions } from './researcher'
 import { __testing } from './researcher'
 
@@ -23,6 +24,11 @@ const options: Required<PolymarketResearcherOptions> = {
   last30DaysTimeoutMs: 300_000,
   last30DaysWebBackend: 'auto',
   maxCandidateAgeHours: 48,
+  leaseOwner: 'researcher:test-owner',
+  leaseSeconds: 1200,
+  hermes: new HermesService({ command: 'hermes' }),
+  gate: null,
+  engine: null,
 }
 
 function candidate(overrides: Record<string, unknown> = {}): any {
@@ -47,6 +53,7 @@ function candidate(overrides: Record<string, unknown> = {}): any {
     research_retry_count: (overrides.research_retry_count as number | null | undefined) ?? 0,
     research_next_retry_at: (overrides.research_next_retry_at as string | null | undefined) ?? null,
     research_last_error_kind: (overrides.research_last_error_kind as string | null | undefined) ?? null,
+    attempt_count: (overrides.attempt_count as number | undefined) ?? 0,
   }
 }
 
@@ -163,12 +170,30 @@ test('buildMarketStructureRow writes neutral market-structure packets', () => {
 
 test('retry helpers classify timeout failures and existing retry counts', () => {
   assert.equal(__testing.errorKind('Hermes timed out after 600000ms'), 'timeout')
-  assert.equal(__testing.retryCount(candidate({ research_retry_count: '1' })), 1)
+
+  // attempt_count is the SQL-side counter claimWithLease increments
+  // atomically (see store.ts's doc comment: "must be incremented in the
+  // database, never read-modify-write"). retryCount must prefer it over
+  // research_retry_count so retry limiting is based on the race-free count,
+  // not a value that could be stale after a crash mid-research.
+  assert.equal(__testing.retryCount(candidate({ research_retry_count: '1', attempt_count: 3 })), 3)
+
+  // Falls back to research_retry_count only when attempt_count is genuinely
+  // absent (e.g. a PendingCandidate constructed by hand without ever going
+  // through claimWithLease).
+  const { attempt_count: _drop, ...withoutAttemptCount } = candidate({ research_retry_count: '1' })
+  assert.equal(__testing.retryCount(withoutAttemptCount), 1)
 })
 
-test('candidateObservedAfter limits researcher fetches to recent candidates', () => {
-  assert.equal(__testing.candidateObservedAfter(options), '2026-06-08T00:00:00.000Z')
-  assert.equal(__testing.candidateObservedAfter({ ...options, maxCandidateAgeHours: 0 }), null)
+test('candidateAgeCutoff computes the expireAgedWork threshold, not a fetch filter', () => {
+  // BUG 2 fix: this cutoff used to also gate the pending-candidate FETCH
+  // (`.gte('observed_at', cutoff)`), so anything older silently vanished from
+  // every future query with no terminal status. It is now used ONLY to feed
+  // expireAgedWork, which WRITES the terminal 'stale_expired' status - see
+  // runPolymarketResearcher and the aging-pass test coverage in
+  // pipeline-store/store-contract.ts.
+  assert.equal(__testing.candidateAgeCutoff(options), '2026-06-08T00:00:00.000Z')
+  assert.equal(__testing.candidateAgeCutoff({ ...options, maxCandidateAgeHours: 0 }), null)
 })
 
 test('defaultLast30DaysScriptPath uses VPS root path and local Codex path', () => {

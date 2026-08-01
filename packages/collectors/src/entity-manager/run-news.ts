@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 import { newsResearchToPacket } from './news-adapter'
 import { EntityService } from './entity-service'
 import { HermesEntityExtractionProvider } from './extractor'
@@ -8,13 +8,11 @@ import { SqliteNewsStore } from '../news/sqlite-store'
 import type {
   NewsCandidateObservationRow,
   NewsResearchResultRow,
-  NewsResearchResultStatus,
   NewsStore,
 } from '../news/store'
 import type {
   EntityMemoryStore,
   ExtractionProvider,
-  MemoryLookupKey,
   ResearchPacket,
   WriteExtractionResult,
 } from './types'
@@ -121,6 +119,17 @@ export async function runNewsEntityManager(input: RunNewsEntityManagerInput): Pr
   }
 }
 
+/**
+ * The news lane's own local store (`NewsStore`, in `news/sqlite-store.ts`)
+ * is the sole, authoritative cursor for dedup/skip:
+ * `fetchPendingResearchResults` filters strictly on its own `status` column,
+ * which this module advances via `markResearchResultStatus` below. There is
+ * no second cursor into `entity_memories` `source_marker` rows to keep in
+ * sync - `entity-manager/resolver.ts` no longer writes those rows at all
+ * (Supabase forbids `memory_type = 'source_marker'` entirely as of the
+ * `entity_memories_drop_source_marker` migration), so a reconciliation
+ * lookup against them would always read back empty.
+ */
 async function fetchNewsPackets(input: {
   newsStore: NewsStore
   entityStore: EntityMemoryStore
@@ -128,74 +137,17 @@ async function fetchNewsPackets(input: {
 }): Promise<FetchNewsPacketsResult> {
   const limit = Math.max(input.batchSize * 10, 100)
   const pending = await input.newsStore.fetchPendingResearchResults(limit)
-  const packets = pending.map((item) => ({
-    ...item,
-    packet: newsResearchToPacket(item.result, item.candidate),
-  }))
-  const marked = await fetchMarkedNewsResearchStatuses(input.entityStore, packets)
-  await reconcileMarkedNewsResearchResults(input.newsStore, packets, marked)
-  const skippedAlreadyMarked = packets.filter((item) => marked.has(item.result.id)).length
-  const unprocessed = packets
-    .filter((item) => !marked.has(item.result.id))
+  const packets = pending
+    .map((item) => ({
+      ...item,
+      packet: newsResearchToPacket(item.result, item.candidate),
+    }))
     .slice(0, Math.max(0, input.batchSize))
 
   return {
     fetched: pending.length,
-    skippedAlreadyMarked,
-    packets: unprocessed,
-  }
-}
-
-async function fetchMarkedNewsResearchStatuses(
-  entityStore: EntityMemoryStore,
-  packets: PendingNewsPacket[]
-): Promise<Map<string, NewsResearchResultStatus>> {
-  const keys = packets.flatMap((item): MemoryLookupKey[] => ([
-    processedMarkerKey(item.packet),
-    failedMarkerKey(item.packet),
-  ]))
-  const memories = await entityStore.findMemories(keys)
-  const statuses = new Map<string, NewsResearchResultStatus>()
-  for (const memory of memories) {
-    if (memory.source !== 'news' || memory.memory_type !== 'source_marker') continue
-    if (memory.title === 'entity_manager:failed' && !statuses.has(memory.source_research_id)) {
-      statuses.set(memory.source_research_id, 'failed_entity_memory')
-    }
-    if (memory.title === 'entity_manager:processed') {
-      statuses.set(memory.source_research_id, 'handed_to_entity_memory')
-    }
-  }
-  return statuses
-}
-
-async function reconcileMarkedNewsResearchResults(
-  newsStore: NewsStore,
-  packets: PendingNewsPacket[],
-  marked: Map<string, NewsResearchResultStatus>
-): Promise<void> {
-  for (const item of packets) {
-    const status = marked.get(item.result.id)
-    if (!status) continue
-    await newsStore.markResearchResultStatus(item.result.id, status)
-  }
-}
-
-function processedMarkerKey(packet: ResearchPacket): MemoryLookupKey {
-  return markerKey(packet, 'entity_manager:processed')
-}
-
-function failedMarkerKey(packet: ResearchPacket): MemoryLookupKey {
-  return markerKey(packet, 'entity_manager:failed')
-}
-
-function markerKey(packet: ResearchPacket, title: string): MemoryLookupKey {
-  return {
-    source: 'news',
-    sourceArea: packet.sourceArea,
-    sourceResearchId: packet.sourceResearchId,
-    entityId: null,
-    memoryType: 'source_marker',
-    title,
+    skippedAlreadyMarked: 0,
+    packets,
   }
 }
 
@@ -203,22 +155,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value) return fallback
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
 async function main(): Promise<void> {
-  loadEnv({ path: '.env' })
-  loadEnv({ path: '../../.env' })
-  loadEnv()
+  loadDotenvChain()
 
   const newsStore = new SqliteNewsStore()
   try {

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { PipelineStore } from '../pipeline-store/store'
 import type {
   PublishedNarrativeInput,
   PublishedNarrativeRecord,
@@ -9,15 +10,9 @@ import type {
   PublisherWriteResult,
 } from './types'
 
-const DRAFT_SELECT = 'id, entity_id, entity_slug, entity_name, entity_type, source_memory_ids, source_memory_hash, source, source_area, action, status, title, angle, summary, body, reasoning, evidence_quality, priority, confidence, created_at, updated_at'
 const MEMORY_SELECT = 'id, source, source_area, source_type, source_ref_id, source_research_id, title, summary, evidence, context'
 const ENTITY_SELECT = 'id, slug, name, type, metadata'
 const NARRATIVE_SELECT = 'id, editor_draft_id, created_at, published_at'
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === 'string')
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -36,33 +31,6 @@ function nullableNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null
   }
   return null
-}
-
-function normalizeDraft(row: unknown): PublisherDraftRecord {
-  const record = row as Record<string, unknown>
-  return {
-    id: String(record.id),
-    entity_id: String(record.entity_id),
-    entity_slug: String(record.entity_slug),
-    entity_name: String(record.entity_name),
-    entity_type: String(record.entity_type),
-    source_memory_ids: asStringArray(record.source_memory_ids),
-    source_memory_hash: String(record.source_memory_hash),
-    source: nullableString(record.source),
-    source_area: nullableString(record.source_area),
-    action: String(record.action),
-    status: record.status as PublisherDraftRecord['status'],
-    title: nullableString(record.title),
-    angle: nullableString(record.angle),
-    summary: nullableString(record.summary),
-    body: nullableString(record.body),
-    reasoning: typeof record.reasoning === 'string' ? record.reasoning : '',
-    evidence_quality: record.evidence_quality as PublisherDraftRecord['evidence_quality'],
-    priority: nullableNumber(record.priority),
-    confidence: nullableNumber(record.confidence),
-    created_at: String(record.created_at),
-    updated_at: String(record.updated_at),
-  }
 }
 
 function normalizeMemory(row: unknown): PublisherMemoryRecord {
@@ -107,22 +75,50 @@ function isUniqueViolation(error: { code?: string, message?: string } | null): b
   return error.code === '23505' || /duplicate key|unique/i.test(error.message ?? '')
 }
 
+/**
+ * `PublisherStore` implementation for the post-migration split:
+ * `published_narratives` and `entity_published_history` stay on Supabase
+ * (durable product data); `editor_drafts` now lives in the local
+ * `PipelineStore` (pipeline scratch state).
+ *
+ * `publishDraft` therefore writes across two systems with no shared
+ * transaction. See the reconciliation contract on `publishDraft` below for
+ * how that inconsistency window is bounded and recovered from.
+ */
 export class SupabasePublisherStore implements PublisherStore {
-  constructor(private readonly db: SupabaseClient) {}
+  constructor(private readonly db: SupabaseClient, private readonly store: PipelineStore) {}
 
   async fetchEligibleDrafts(batchSize: number): Promise<PublisherDraftRecord[]> {
-    const { data, error } = await this.db
-      .from('editor_drafts')
-      .select(DRAFT_SELECT)
-      .eq('action', 'draft_post')
-      .eq('status', 'drafted')
-      .not('title', 'is', null)
-      .not('body', 'is', null)
-      .order('created_at', { ascending: true })
-      .limit(batchSize)
-
-    if (error) throw new Error(`publisher draft fetch failed: ${error.message}`)
-    return (data ?? []).map(normalizeDraft)
+    const rows = await this.store.fetchEligibleDrafts({
+      action: 'draft_post',
+      status: 'drafted',
+      limit: batchSize,
+    })
+    return rows
+      .filter((row) => Boolean(row.title) && Boolean(row.body))
+      .map((row) => ({
+        id: row.id,
+        entity_id: row.entityId,
+        entity_slug: row.entitySlug,
+        entity_name: row.entityName,
+        entity_type: row.entityType,
+        source_memory_ids: row.sourceMemoryIds,
+        source_memory_hash: row.sourceMemoryHash,
+        source: row.source,
+        source_area: row.sourceArea,
+        action: row.action,
+        status: row.status as PublisherDraftRecord['status'],
+        title: row.title,
+        angle: row.angle,
+        summary: row.summary,
+        body: row.body,
+        reasoning: row.reasoning,
+        evidence_quality: row.evidenceQuality,
+        priority: row.priority,
+        confidence: row.confidence,
+        created_at: row.createdAt,
+        updated_at: row.updatedAt,
+      }))
   }
 
   async fetchMemories(memoryIds: string[]): Promise<PublisherMemoryRecord[]> {
@@ -147,6 +143,32 @@ export class SupabasePublisherStore implements PublisherStore {
     return data ? normalizeEntity(data) : null
   }
 
+  /**
+   * Publishes a draft: writes the public narrative to Supabase, then
+   * reconciles the local draft's status.
+   *
+   * Supabase is the source of truth for "was this published" - the narrative
+   * row is what the product actually reads. The local `editor_drafts.status`
+   * flip is a SEPARATE, non-transactional write that only exists so this
+   * stage does not re-offer an already-published draft to the publisher
+   * agent next run. Order matters and is deliberate:
+   *
+   *   1. write the Supabase narrative (source of truth)
+   *   2. write entity_published_history (Supabase, same durable side)
+   *   3. mark the local draft published (bookkeeping only)
+   *
+   * If step 3 fails or the process dies between 1/2 and 3, the narrative
+   * already exists and is not lost or duplicated - that is an acceptable,
+   * recoverable state, not a bug. The recovery path is this method itself:
+   * on the NEXT run, before doing any agent/publish work, it checks
+   * `findPublishedNarrative(editor_draft_id)` FIRST. If a narrative already
+   * exists, this method treats the draft as already published, skips writing
+   * a duplicate narrative and duplicate history row, and only reconciles the
+   * local draft status to 'published' - making the whole operation idempotent
+   * across crashes and re-runs. The existing 23505 unique-violation catch
+   * below is the same idea applied to a race between two concurrent
+   * publisher runs instead of a crash-and-retry.
+   */
   async publishDraft(publication: PublishedNarrativeInput): Promise<PublisherWriteResult> {
     const existing = await this.findPublishedNarrative(publication.editor_draft_id)
     if (existing) {
@@ -235,12 +257,13 @@ export class SupabasePublisherStore implements PublisherStore {
     if (error) throw new Error(`publisher history upsert failed: ${error.message}`)
   }
 
+  /**
+   * Idempotent local bookkeeping write: marks the local draft published.
+   * Safe to call repeatedly (setDraftPublished is a plain status write, not
+   * an insert) and safe to skip on failure - see the reconciliation contract
+   * on publishDraft above.
+   */
   private async markDraftPublished(editorDraftId: string, observedAt: string): Promise<void> {
-    const { error } = await this.db
-      .from('editor_drafts')
-      .update({ status: 'published', updated_at: observedAt })
-      .eq('id', editorDraftId)
-
-    if (error) throw new Error(`publisher draft status update failed: ${error.message}`)
+    await this.store.setDraftPublished(editorDraftId, observedAt)
   }
 }

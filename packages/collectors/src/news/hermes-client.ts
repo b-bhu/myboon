@@ -1,12 +1,11 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
+import { HermesService } from '../hermes'
 import type {
   HermesWorkerClientOptions,
   HermesWorkerRequest,
   HermesWorkerResult,
-  HermesWorkerStatus,
 } from './types'
 
-const DEFAULT_HERMES_COMMAND = 'hermes'
 const DEFAULT_HERMES_PROFILE = 'myboonfeed'
 const DEFAULT_HERMES_TOOLSETS = ['browser', 'web']
 
@@ -18,89 +17,59 @@ type SpawnHermesProcess = (
 
 export interface HermesWorkerClientConstructorOptions extends Partial<HermesWorkerClientOptions> {
   spawnProcess?: SpawnHermesProcess
+  /** Preferred injection point: a shared HermesService instance. spawnProcess
+   * is kept for back-compat with existing tests/callers and threads into an
+   * internally-built service when no service is supplied. */
+  service?: HermesService
 }
 
+/**
+ * News-lane adapter over the central HermesService (see src/hermes/).
+ *
+ * This class used to own its own spawn/timeout/settle plumbing; that logic
+ * now lives in HermesService.chat verbatim. What remains here is only the
+ * news-worker envelope: per-request jobId/taskType threading and the
+ * NEWS_HERMES_* env configuration.
+ */
 export class HermesWorkerClient {
-  private readonly command: string
   private readonly profile?: string
   private readonly toolsets: string[]
-  private readonly spawnProcess: SpawnHermesProcess
+  private readonly service: HermesService
 
   constructor(options: HermesWorkerClientConstructorOptions = {}) {
-    this.command = options.command ?? process.env.NEWS_HERMES_COMMAND ?? DEFAULT_HERMES_COMMAND
+    const command = options.command ?? process.env.NEWS_HERMES_COMMAND
     this.profile = options.profile ?? process.env.NEWS_HERMES_PROFILE ?? DEFAULT_HERMES_PROFILE
     this.toolsets = options.toolsets ?? toolsetsFromEnv(process.env.NEWS_HERMES_TOOLSETS) ?? DEFAULT_HERMES_TOOLSETS
-    this.spawnProcess = options.spawnProcess ?? spawn
+    this.service = options.service ?? new HermesService({
+      command,
+      spawnImpl: options.spawnProcess,
+    })
   }
 
-  run(request: HermesWorkerRequest): Promise<HermesWorkerResult> {
+  async run(request: HermesWorkerRequest): Promise<HermesWorkerResult> {
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0) {
       throw new Error(`Hermes worker timeoutMs must be positive for job ${request.jobId}`)
     }
 
-    const startedAtMs = Date.now()
-    const startedAt = new Date(startedAtMs).toISOString()
-    const child = this.spawnProcess(this.command, this.argsForPrompt(request.prompt), {
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
+    const result = await this.service.chat({
+      purpose: `news.worker.${request.taskType}`,
+      prompt: request.prompt,
+      timeoutMs: request.timeoutMs,
+      profile: this.profile,
+      toolsets: this.toolsets,
     })
 
-    let stdout = ''
-    let stderr = ''
-    let exitCode: number | null = null
-    let settled = false
-
-    child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
-    })
-    child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString()
-    })
-
-    return new Promise((resolve) => {
-      const finish = (status: HermesWorkerStatus) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeout)
-        const finishedAtMs = Date.now()
-        resolve({
-          jobId: request.jobId,
-          taskType: request.taskType,
-          status,
-          stdout,
-          stderr,
-          exitCode,
-          startedAt,
-          finishedAt: new Date(finishedAtMs).toISOString(),
-          durationMs: finishedAtMs - startedAtMs,
-        })
-      }
-
-      const timeout = setTimeout(() => {
-        child.kill('SIGTERM')
-        exitCode = null
-        finish('timed_out')
-      }, request.timeoutMs)
-
-      child.once('error', (error) => {
-        stderr += stderr ? `\n${error.message}` : error.message
-        exitCode = null
-        finish('failed')
-      })
-
-      child.once('close', (code) => {
-        exitCode = typeof code === 'number' ? code : null
-        finish(exitCode === 0 ? 'succeeded' : 'failed')
-      })
-    })
-  }
-
-  private argsForPrompt(prompt: string): string[] {
-    const args = ['chat']
-    if (this.profile) args.push('--profile', this.profile)
-    if (this.toolsets.length > 0) args.push('--toolsets', this.toolsets.join(','))
-    args.push('--quiet', '--query', prompt)
-    return args
+    return {
+      jobId: request.jobId,
+      taskType: request.taskType,
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+    }
   }
 }
 

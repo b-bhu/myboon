@@ -653,9 +653,9 @@ test('Supabase-backed News Entity Manager intake uses the shared resolver handof
 
   const memory = entityStore.memories.find((item) => item.title === 'Bitcoin treasury article observed')
   assert.equal(memory?.memory_type, 'news_event')
-  const marker = entityStore.memories.find((item) => item.title === 'entity_manager:processed')
-  assert.equal(marker?.source, 'news')
-  assert.equal(marker?.source_area, source.sourceId)
-  assert.equal(marker?.source_research_id, resultRow.id)
-  assert.equal(marker?.memory_type, 'source_marker')
+  // entity_memories forbids memory_type = 'source_marker' post-migration:
+  // the processed outcome is reported via result.results[0].markerStatus and
+  // the news lane's own local status (asserted above), not a persisted marker row.
+  assert.equal(result.results[0].markerStatus, 'processed')
+  assert.equal(entityStore.memories.some((item) => item.memory_type === 'source_marker'), false)
 })

@@ -68,19 +68,24 @@ export class EntityService {
     if (!entity) throw new Error('Entity creation returned no row.')
 
     const eventInputs = normalized.memories.map((memory, index) => memoryInput(normalized, entity.id, memory, index))
-    const auditInput = auditMarker(normalized, plan.existing, entity, plan.preview.entity.changes)
-    const candidates = [...eventInputs, auditInput]
-    const existing = await this.store.findMemories(candidates.map(memoryLookupKey))
+    const existing = await this.store.findMemories(eventInputs.map(memoryLookupKey))
     const existingKeys = new Set(existing.map(memoryRecordKey))
-    const pending = candidates.filter((memory) => !existingKeys.has(memoryInputKey(memory)))
+    const pending = eventInputs.filter((memory) => !existingKeys.has(memoryInputKey(memory)))
     const written = await this.store.upsertMemories(pending)
+
+    await this.store.recordManualCommand({
+      requestId: normalized.requestId,
+      commandHash: hash(normalized),
+      actor: normalized.actor,
+      entityId: entity.id,
+    })
 
     return {
       requestId: normalized.requestId,
       entity,
-      memoriesWritten: written.filter((memory) => memory.memory_type !== 'source_marker').length,
-      duplicateMemoriesSkipped: eventInputs.length - pending.filter((memory) => memory.memory_type !== 'source_marker').length,
-      auditMarkerWritten: written.some((memory) => memory.memory_type === 'source_marker'),
+      memoriesWritten: written.length,
+      duplicateMemoriesSkipped: eventInputs.length - pending.length,
+      auditMarkerWritten: true,
       replayed: false,
     }
   }
@@ -147,17 +152,9 @@ export class EntityService {
   }
 
   private async findAppliedCommand(command: NormalizedManualEntityCommand): Promise<ManualEntityApplyResult | null> {
-    const markerKey: MemoryLookupKey = {
-      source: 'manual',
-      sourceArea: command.actor.kind,
-      sourceResearchId: command.requestId,
-      entityId: null,
-      memoryType: 'source_marker',
-      title: 'manual_change:applied',
-    }
-    const marker = (await this.store.findMemories([markerKey]))[0]
-    if (!marker) return null
-    if (marker.context.command_hash !== hash(command)) {
+    const logged = await this.store.findManualCommand(command.requestId)
+    if (!logged) return null
+    if (logged.commandHash !== hash(command)) {
       throw new ManualEntityConflictError('requestId has already been applied with a different command.')
     }
     const matches = await this.store.findEntities([command.entity.slug], command.entity.aliases)
@@ -254,43 +251,6 @@ function memoryInput(
       source_label: memory.sourceLabel,
       source_url: memory.sourceUrl,
       command_memory_index: index,
-    },
-  }
-}
-
-function auditMarker(
-  command: NormalizedManualEntityCommand,
-  before: EntityRecord | null,
-  after: EntityRecord,
-  changes: string[],
-): EntityMemoryInput {
-  return {
-    entity_id: null,
-    source: 'manual',
-    source_area: command.actor.kind,
-    source_type: 'manual_command',
-    source_ref_id: command.requestId,
-    source_research_id: command.requestId,
-    memory_type: 'source_marker',
-    title: 'manual_change:applied',
-    summary: `Applied manual Entity command ${command.requestId}.`,
-    body: null,
-    event_at: null,
-    observed_at: new Date().toISOString(),
-    confidence: null,
-    evidence: [],
-    mentions: [],
-    metrics: {},
-    context: {
-      actor: command.actor,
-      entity_id: after.id,
-      entity_slug: after.slug,
-      entity_created: before === null,
-      entity_changes: changes,
-      memory_titles: command.memories.map((memory) => memory.title),
-      entity_before: before,
-      entity_after: after,
-      command_hash: hash(command),
     },
   }
 }

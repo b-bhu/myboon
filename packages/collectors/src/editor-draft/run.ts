@@ -1,26 +1,18 @@
-import { config as loadEnv } from 'dotenv'
+import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
-loadEnv({ path: '.env' })
-loadEnv({ path: '../../.env' })
-loadEnv()
+loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { editorDraftCliConfig, runEditorDraft } from './runner'
 
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing required env var: ${name}`)
-  return value
-}
-
-async function runOnce(): Promise<void> {
+async function runOnce(supabase: SupabaseClient, pipelineStore: PipelineStore): Promise<void> {
   const config = editorDraftCliConfig()
-  const supabase = createClient(
-    requiredEnv('SUPABASE_URL'),
-    requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
-  )
   const result = await withPipelineRun(
     new SupabasePipelineLedgerStore(supabase),
     {
@@ -31,7 +23,7 @@ async function runOnce(): Promise<void> {
         batchSize: config.batchSize,
       },
     },
-    () => runEditorDraft(supabase, {
+    () => runEditorDraft(supabase, pipelineStore, {
       batchSize: config.batchSize,
       recentMemoryLimit: config.recentMemoryLimit,
       laneMemoryLimit: config.laneMemoryLimit,
@@ -45,15 +37,24 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   const config = editorDraftCliConfig()
-  await runOnce()
+  const supabase = createClient(
+    requiredEnv('SUPABASE_URL'),
+    requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
+  )
+  const pipelineStore = new SqlitePipelineStore()
 
-  if (config.runOnce) return
+  try {
+    await runOnce(supabase, pipelineStore)
+    if (config.runOnce) return
 
-  setInterval(() => {
-    runOnce().catch((err) => {
-      console.error('[editor-draft] run failed:', err)
+    startIntervalRunner({
+      label: 'editor-draft',
+      intervalMs: config.intervalMs,
+      run: () => runOnce(supabase, pipelineStore),
     })
-  }, config.intervalMs)
+  } finally {
+    if (config.runOnce) pipelineStore.close()
+  }
 }
 
 main().catch((err) => {
