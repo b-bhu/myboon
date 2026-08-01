@@ -574,21 +574,52 @@ const BUILDER_SIGN_URL = `${resolveApiBaseUrl()}/clob/builder/sign`;
  * Keep this trace through the next on-device run to confirm every relayer
  * call now carries its query string, then remove it.
  */
+function bigintSafeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? `${v}n` : v));
+  } catch (err) {
+    return `<unstringifiable: ${err instanceof Error ? err.message : String(err)}>`;
+  }
+}
+
 function withFetchTrace<T>(run: () => Promise<T>): Promise<T> {
+  // If "Do not know how to serialize a BigInt" is thrown by something
+  // calling JSON.stringify before a request is ever built (e.g. inside
+  // setupTradingApprovals's calldata construction), the fetch wrapper below
+  // never sees it. Wrapping JSON.stringify itself catches the exact bad
+  // value regardless of where the call originates.
+  const originalStringify = JSON.stringify;
+  (JSON as any).stringify = (value: unknown, ...rest: unknown[]) => {
+    try {
+      return (originalStringify as any)(value, ...rest);
+    } catch (err) {
+      if (err instanceof TypeError && /serialize a BigInt/i.test(err.message)) {
+        console.log('[polymarket.trace] JSON.stringify THREW on', bigintSafeStringify(value));
+      }
+      throw err;
+    }
+  };
+
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: any, init?: any) => {
     const url = typeof input === 'string' ? input : input?.url;
-    if (typeof url === 'string' && (url.includes('relayer-proxy') || url.includes('/clob/'))) {
-      console.log('[polymarket.trace] -->', init?.method ?? 'GET', url);
+    console.log('[polymarket.trace] -->', init?.method ?? 'GET', url, init?.body !== undefined ? `BODY_TYPE=${typeof init.body}` : '');
+    if (init?.body !== undefined) {
+      console.log('[polymarket.trace] body', bigintSafeStringify(init.body));
     }
-    const res = await originalFetch(input, init);
-    if (typeof url === 'string' && (url.includes('relayer-proxy') || url.includes('/clob/'))) {
-      console.log('[polymarket.trace] <--', res.status, url);
+    let res: Response;
+    try {
+      res = await originalFetch(input, init);
+    } catch (err) {
+      console.log('[polymarket.trace] fetch THREW', url, err instanceof Error ? err.message : String(err));
+      throw err;
     }
+    console.log('[polymarket.trace] <--', res.status, url);
     return res;
   }) as typeof fetch;
   return run().finally(() => {
     globalThis.fetch = originalFetch;
+    JSON.stringify = originalStringify;
   });
 }
 
