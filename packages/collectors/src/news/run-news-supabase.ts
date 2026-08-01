@@ -68,9 +68,10 @@ async function main(): Promise<void> {
   })
 }
 
-if (require.main === module) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error))
-    process.exit(1)
-  })
-}
+// NOTE: no `require.main === module` guard here. PM2 fork mode wraps
+// entrypoints in its ProcessContainer, so require.main is never this module
+// under PM2 and a guarded main() would silently never run (restart loop).
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error))
+  process.exit(1)
+})
