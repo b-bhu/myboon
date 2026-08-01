@@ -555,21 +555,24 @@ const POLYMARKET_ENVIRONMENT = forkEnvironmentConfig({
 const BUILDER_SIGN_URL = `${resolveApiBaseUrl()}/clob/builder/sign`;
 
 /**
- * The unified SDK's account-setup client: CLOB L1 auth, deposit-wallet
- * derivation, and first-time deployment collapse into this one call.
+ * Temporary: logs every fetch the SDK makes while confirming the fix for the
+ * on-device "invalid address" failure against `/clob/relayer-proxy/deployed`.
  *
- * Replaces `createPolymarketApiCreds` + the server's old CREATE2 derivation
- * for the *setup* path specifically. `createPolymarketApiCreds` (below)
- * still backs order placement's `ClobClient` construction until that path
- * migrates too — see the PRD's step 4 for why wrap/withdraw/redeem/order
- * signing aren't moved in this same change.
- */
-/**
- * Temporary: logs every fetch the SDK makes while diagnosing the on-device
- * "invalid address" failure against `/clob/relayer-proxy/deployed` — a
- * Node script driving the identical SDK/server/address succeeds, so the
- * discrepancy is specific to something about the real device/RN runtime.
- * Remove once found.
+ * Root cause found: `@polymarket/client` builds query params as a real
+ * `URLSearchParams` instance; `ky` (the SDK's HTTP client) only serializes
+ * `options.searchParams` into a query string if it passes `instanceof
+ * URLSearchParams` — otherwise it silently treats it as absent. Under
+ * Metro/Hermes, without a polyfill forcing one canonical `URLSearchParams`
+ * across the bundle, different chunks can resolve the global to different
+ * constructor references, so the `instanceof` check fails across that
+ * boundary and every request loses its query string. Reproducible only on
+ * device — Node has one single `URLSearchParams` global with no
+ * bundler-caused realm split, so scripts driving the identical SDK/server/
+ * address never failed. Fixed by importing `react-native-url-polyfill/auto`
+ * first in `index.js`, before any other module loads.
+ *
+ * Keep this trace through the next on-device run to confirm every relayer
+ * call now carries its query string, then remove it.
  */
 function withFetchTrace<T>(run: () => Promise<T>): Promise<T> {
   const originalFetch = globalThis.fetch;
@@ -589,6 +592,16 @@ function withFetchTrace<T>(run: () => Promise<T>): Promise<T> {
   });
 }
 
+/**
+ * The unified SDK's account-setup client: CLOB L1 auth, deposit-wallet
+ * derivation, and first-time deployment collapse into this one call.
+ *
+ * Replaces `createPolymarketApiCreds` + the server's old CREATE2 derivation
+ * for the *setup* path specifically. `createPolymarketApiCreds` (below)
+ * still backs order placement's `ClobClient` construction until that path
+ * migrates too — see the PRD's step 4 for why wrap/withdraw/redeem/order
+ * signing aren't moved in this same change.
+ */
 export async function createPolymarketSecureClient(
   signer: Signer,
 ): Promise<SecureClient> {
