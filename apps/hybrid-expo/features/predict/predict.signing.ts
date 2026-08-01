@@ -564,14 +564,39 @@ const BUILDER_SIGN_URL = `${resolveApiBaseUrl()}/clob/builder/sign`;
  * migrates too — see the PRD's step 4 for why wrap/withdraw/redeem/order
  * signing aren't moved in this same change.
  */
+/**
+ * Temporary: logs every fetch the SDK makes while diagnosing the on-device
+ * "invalid address" failure against `/clob/relayer-proxy/deployed` — a
+ * Node script driving the identical SDK/server/address succeeds, so the
+ * discrepancy is specific to something about the real device/RN runtime.
+ * Remove once found.
+ */
+function withFetchTrace<T>(run: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = typeof input === 'string' ? input : input?.url;
+    if (typeof url === 'string' && (url.includes('relayer-proxy') || url.includes('/clob/'))) {
+      console.log('[polymarket.trace] -->', init?.method ?? 'GET', url);
+    }
+    const res = await originalFetch(input, init);
+    if (typeof url === 'string' && (url.includes('relayer-proxy') || url.includes('/clob/'))) {
+      console.log('[polymarket.trace] <--', res.status, url);
+    }
+    return res;
+  }) as typeof fetch;
+  return run().finally(() => {
+    globalThis.fetch = originalFetch;
+  });
+}
+
 export async function createPolymarketSecureClient(
   signer: Signer,
 ): Promise<SecureClient> {
-  return createSecureClient({
+  return withFetchTrace(() => createSecureClient({
     environment: POLYMARKET_ENVIRONMENT,
     signer: toPolymarketSigner(signer),
     apiKey: remoteBuilderSigning({ url: BUILDER_SIGN_URL }),
-  });
+  }));
 }
 
 export async function createPolymarketApiCreds(signer: Signer): Promise<ApiKeyCreds> {
