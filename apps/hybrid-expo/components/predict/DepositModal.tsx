@@ -30,16 +30,37 @@ interface DepositModalProps {
 interface DepositAddresses {
   svm?: string;
   evm?: string;
-  btc?: string;
-  tron?: string;
+  /**
+   * The bridge returns additional chains beyond these two. They are typed as
+   * possible but never rendered — see `SUPPORTED_CHAINS`.
+   */
   [key: string]: string | undefined;
 }
 
-const CHAIN_META: Record<string, { label: string; color: string; note: string; min: string }> = {
-  svm: { label: 'Solana', color: '#9945ff', note: 'Send USDC on Solana', min: 'Min: $1 USDC' },
+/**
+ * The chains this app offers, in render order.
+ *
+ * An allowlist rather than a filter on the response: the bridge also returns
+ * native-asset routes with different minimums and slower, less predictable
+ * settlement, which widen the support surface for no benefit. Any chain the
+ * bridge adds later is ignored until it is added here deliberately.
+ *
+ * This also fixes row order, which was previously whatever
+ * `Object.entries()` happened to yield from the response.
+ */
+const SUPPORTED_CHAINS = ['evm', 'svm'] as const;
+
+type SupportedChain = (typeof SUPPORTED_CHAINS)[number];
+
+/**
+ * Keyed by `SupportedChain` but indexable by any string: a *tracked* deposit
+ * persisted before a chain was dropped can still reference one that is no
+ * longer offered, and that lookup falls back rather than crashing.
+ */
+const CHAIN_META: Partial<Record<string, { label: string; color: string; note: string; min: string }>>
+  & Record<SupportedChain, { label: string; color: string; note: string; min: string }> = {
   evm: { label: 'Ethereum / Polygon / Base', color: '#627eea', note: 'Send USDC from any EVM chain', min: 'Min: $1 USDC' },
-  btc: { label: 'Bitcoin', color: '#f7931a', note: 'Send BTC', min: 'Min: 0.0001 BTC' },
-  tron: { label: 'Tron', color: '#ff0013', note: 'Send USDT on Tron', min: 'Min: $1 USDT' },
+  svm: { label: 'Solana', color: '#9945ff', note: 'Send USDC on Solana', min: 'Min: $1 USDC' },
 };
 
 function truncateAddress(addr: string): string {
@@ -362,9 +383,12 @@ export function DepositModal({
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const chains = addresses
-    ? Object.entries(addresses).filter(([, v]) => typeof v === 'string' && v.length > 0)
-    : [];
+  const chains = SUPPORTED_CHAINS.flatMap((chain) => {
+    const address = addresses?.[chain];
+    return typeof address === 'string' && address.length > 0
+      ? [[chain, address] as const]
+      : [];
+  });
 
   return (
     <Modal visible={isOpen} transparent animationType="slide" onRequestClose={onClose}>
@@ -400,18 +424,15 @@ export function DepositModal({
           {!loading && !error && chains.length > 0 && (
             <View style={styles.list}>
               {chains.map(([chain, address]) => {
-                const meta = CHAIN_META[chain] ?? {
-                  label: chain.toUpperCase(),
-                  color: '#888',
-                  note: `Send to ${chain}`,
-                  min: '',
-                };
+                // Total, because `chain` comes from `SUPPORTED_CHAINS` — the
+                // previous unknown-chain fallback is unreachable now.
+                const meta = CHAIN_META[chain];
                 const isCopied = copied === chain;
 
                 return (
                   <Pressable
                     key={chain}
-                    onPress={() => handleCopy(chain, address!)}
+                    onPress={() => handleCopy(chain, address)}
                     style={styles.chainCard}
                   >
                     <View style={styles.chainHeader}>
@@ -438,6 +459,21 @@ export function DepositModal({
                   </Pressable>
                 );
               })}
+            </View>
+          )}
+
+          {/*
+            The request succeeded but carried no chain this app supports.
+            Without this the sheet renders a blank gap between the subtitle
+            and the footer, which reads as a broken screen rather than a
+            temporary upstream state.
+          */}
+          {!loading && !error && chains.length === 0 && (
+            <View style={styles.errorWrap}>
+              <MaterialIcons name="info-outline" size={16} color={semantic.text.dim} />
+              <Text style={styles.errorText}>
+                No deposit address is available right now. Try again in a moment.
+              </Text>
             </View>
           )}
 

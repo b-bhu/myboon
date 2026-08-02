@@ -20,9 +20,10 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -92,6 +93,48 @@ export function ConnectionSheet({
   const [emailInput, setEmailInput] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [busy, setBusy] = useState(false);
+  /**
+   * Whether a text field currently holds focus, which is the only time the
+   * keyboard covers this bottom-anchored sheet.
+   *
+   * Driven by focus rather than by `step`, because the step alone is too
+   * coarse: the options step shows the wallet list with no keyboard up, and
+   * anchoring on it would move the sheet to the top of the screen for every
+   * user who merely opens "Connect wallet". Focus is exactly the condition
+   * the layout needs to react to.
+   */
+  const [inputFocused, setInputFocused] = useState(false);
+
+  /**
+   * Drives the anchor swap as a fade rather than an instant cut.
+   *
+   * `Modal`'s own `animationType` only covers mount and unmount, so a style
+   * change on an already-visible sheet would snap. `Animated` is used instead
+   * of `LayoutAnimation` because this app runs the New Architecture
+   * (`newArchEnabled: true` in app.json), where `LayoutAnimation` is
+   * deprecated and behaves inconsistently under Fabric.
+   *
+   * `useNativeDriver` because opacity is a native-drivable property — the
+   * transition then runs off the JS thread, alongside the keyboard's own
+   * animation rather than competing with it.
+   */
+  const anchorFade = useRef(new Animated.Value(1)).current;
+
+  const anchorTo = useCallback((focused: boolean) => {
+    Animated.timing(anchorFade, {
+      toValue: 0,
+      duration: 110,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setInputFocused(focused);
+      Animated.timing(anchorFade, {
+        toValue: 1,
+        duration: 110,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [anchorFade]);
 
   const options = availableOptions(chain);
 
@@ -105,8 +148,12 @@ export function ConnectionSheet({
     setEmailInput('');
     setOtpCode('');
     setBusy(false);
+    // Without this a sheet closed while an input held focus reopens
+    // top-anchored, since `onBlur` does not fire on unmount.
+    setInputFocused(false);
+    anchorFade.setValue(1);
     onClose();
-  }, [onClose]);
+  }, [onClose, anchorFade]);
 
   /**
    * Record intent for the requested chain once a backend has resolved.
@@ -319,22 +366,32 @@ export function ConnectionSheet({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={resetAndClose}>
       {/*
-        The sheet is bottom-anchored, so the keyboard covers the email and OTP
-        inputs — the user cannot see what they are typing. Lifting the whole
-        overlay is simpler than scrolling within the sheet, since its content is
-        short enough to fit above the keyboard.
+        The sheet is bottom-anchored, which puts the email and OTP inputs
+        directly under the keyboard. The fix is positional: while a text field
+        holds focus the sheet anchors to the *top* of the screen instead, so
+        the input, its label, and the submit button all sit above the keyboard
+        by construction rather than by lifting a bottom sheet into a shrinking
+        gap.
 
-        Android is deliberately left to the OS. The manifest sets
+        Keyed on focus, not on `step` — the options step shows the wallet list
+        with no keyboard raised, and anchoring on the step would relocate the
+        sheet for every user who merely opens "Connect wallet".
+
+        `KeyboardAvoidingView` stays for iOS to absorb the case where the
+        top-anchored sheet is still tall enough to reach the keyboard. Android
+        remains with the OS: the manifest sets
         `windowSoftInputMode="adjustResize"`, so the window is already resized
-        natively; adding `behavior="height"` re-ran that same resize in JS on
-        every frame of the OS animation, and the two fighting over the layout is
-        what made the sheet jitter while the keyboard opened.
+        natively, and adding `behavior="height"` re-ran that same resize in JS
+        on every frame — the two fighting over layout is what made the sheet
+        jitter while the keyboard opened.
       */}
       <KeyboardAvoidingView
-        style={styles.overlay}
+        style={[styles.overlay, inputFocused && styles.overlayTop]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={styles.sheet}>
+        <Animated.View
+          style={[styles.sheet, inputFocused && styles.sheetTop, { opacity: anchorFade }]}
+        >
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
             <Pressable onPress={resetAndClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close">
@@ -399,6 +456,8 @@ export function ConnectionSheet({
               emailInput={emailInput}
               onChangeEmail={setEmailInput}
               onSendEmail={handleSendEmail}
+              onEmailFocusChange={anchorTo}
+              compactBody={inputFocused}
               onGoogle={handleGoogle}
               onWalletConnect={handleWalletConnect}
               walletOptions={solana.walletOptions ?? []}
@@ -406,7 +465,7 @@ export function ConnectionSheet({
           ) : null}
 
           {step.kind === 'email_otp' ? (
-            <View style={styles.body}>
+            <View style={[styles.body, inputFocused && styles.bodyTop]}>
               <Text style={styles.infoText}>Code sent to {step.email}</Text>
               <View style={styles.inputRow}>
                 <MaterialIcons name="pin" size={16} color={semantic.text.faint} />
@@ -418,6 +477,8 @@ export function ConnectionSheet({
                   onChangeText={setOtpCode}
                   keyboardType="number-pad"
                   autoFocus
+                  onFocus={() => anchorTo(true)}
+                  onBlur={() => anchorTo(false)}
                 />
               </View>
               <Pressable
@@ -474,7 +535,7 @@ export function ConnectionSheet({
               </Pressable>
             </View>
           ) : null}
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -548,6 +609,8 @@ function OptionsStep({
   emailInput,
   onChangeEmail,
   onSendEmail,
+  onEmailFocusChange,
+  compactBody,
   onGoogle,
   onWalletConnect,
   walletOptions,
@@ -558,6 +621,10 @@ function OptionsStep({
   emailInput: string;
   onChangeEmail: (value: string) => void;
   onSendEmail: () => void;
+  /** Lets the parent re-anchor the sheet while the keyboard is up. */
+  onEmailFocusChange: (focused: boolean) => void;
+  /** True while the sheet is top-anchored, so the body can drop its bottom padding. */
+  compactBody: boolean;
   onGoogle: () => void;
   onWalletConnect: (walletName?: string) => void;
   /** Detected external wallets. Empty where the platform cannot enumerate. */
@@ -567,7 +634,7 @@ function OptionsStep({
   const secondary = options.filter((option) => option !== 'email');
 
   return (
-    <View style={styles.body}>
+    <View style={[styles.body, compactBody && styles.bodyTop]}>
       <Text style={styles.blurb}>
         {chain === 'evm'
           ? 'Sign in to create a wallet that can sign on Polygon and other EVM networks.'
@@ -587,6 +654,8 @@ function OptionsStep({
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              onFocus={() => onEmailFocusChange(true)}
+              onBlur={() => onEmailFocusChange(false)}
             />
           </View>
           <Pressable
@@ -692,12 +761,29 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.72)',
     justifyContent: 'flex-end',
   },
+  /** Applied while a text field is focused — see the note in the render. */
+  overlayTop: {
+    justifyContent: 'flex-start',
+    paddingTop: tokens.spacing.xl,
+  },
   sheet: {
     backgroundColor: semantic.background.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     borderTopWidth: 1,
     borderColor: semantic.border.muted,
+  },
+  /**
+   * Detached from the bottom edge, so it reads as a floating card rather than
+   * a sheet that has drifted upward: rounded on all four corners, bordered all
+   * the way round, and inset from the screen edges.
+   */
+  sheetTop: {
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+    borderWidth: 1,
+    marginHorizontal: tokens.spacing.md,
+    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',
@@ -720,6 +806,14 @@ const styles = StyleSheet.create({
     gap: tokens.spacing.md,
     paddingBottom: 40,
     alignItems: 'stretch',
+  },
+  /**
+   * `body`'s 40pt bottom padding clears the home indicator on a bottom sheet.
+   * Top-anchored there is nothing to clear, so it is only dead space between
+   * the last control and the keyboard.
+   */
+  bodyTop: {
+    paddingBottom: tokens.spacing.lg,
   },
   blurb: {
     fontSize: tokens.fontSize.sm,
