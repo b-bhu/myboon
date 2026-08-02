@@ -273,7 +273,7 @@ export function usePolymarketWallet(): PolymarketWallet {
       // actually matches.
       const { createPolymarketSecureClient, createPredictSessionProof } = await import('@/features/predict/predict.signing');
       logChainEvent('polymarket.enable', '1/4 creating SecureClient (auth + deposit wallet)', { eoaAddress });
-      const client = await createPolymarketSecureClient(activeSigner);
+      const client = await createPolymarketSecureClient(activeSigner, eoaAddress);
       assertWalletUnchanged();
       const depositWalletAddress = client.account.wallet;
       const creds = client.credentials;

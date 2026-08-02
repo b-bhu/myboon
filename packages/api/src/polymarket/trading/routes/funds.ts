@@ -1,6 +1,6 @@
 import type { Hono } from 'hono'
 import type { DepositWalletBatchRequest } from '@polymarket/builder-relayer-client'
-import { encodeFunctionData } from 'viem'
+import { encodeFunctionData, parseUnits } from 'viem'
 import { CONTRACTS, ERC20_APPROVE_ABI } from '../contracts.js'
 import { failedOperation, sessionExpired, withOperation } from '../operations.js'
 import { getClient, sessions } from '../sessions.js'
@@ -225,7 +225,12 @@ export function registerFundRoutes(routes: Hono) {
         console.error('[clob] No EVM bridge address in response:', bridgeData)
         return c.json(failedOperation('withdraw', 'No bridge deposit address returned', null), 502)
       }
-      const amountRaw = BigInt(Math.floor(amount * 1e6))
+      // Exact decimal -> base units. `Math.floor(amount * 1e6)` is one unit
+      // short for values binary floats cannot represent exactly (2.01 gives
+      // 2009999), which both under-transfers and makes the client-side
+      // calldata check in `predict.signing.ts` reject its own withdrawal.
+      // Both sides must derive this identically.
+      const amountRaw = parseUnits(amount.toFixed(6), 6)
       const transferTx = {
         to: CONTRACTS.PUSD,
         data: encodeFunctionData({

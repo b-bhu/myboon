@@ -10,7 +10,8 @@
     "test:internal": "tsx --test src/internal/*.test.ts",
     "test:feed": "tsx --test src/stories.test.ts src/narratives.test.ts",
     "test:polymarket-read": "tsx --test src/polymarket/catalog/*.test.ts src/polymarket/routes/*.test.ts",
-    "test:spot": "tsx --test src/spot.test.ts"
+    "test:spot": "tsx --test src/spot.test.ts",
+    "test:polymarket-trading": "tsx --test src/polymarket/trading/routes/*.test.ts"
   },
   "dependencies": {
     "@ellipsis-labs/rise": "0.4.9",
