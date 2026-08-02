@@ -112,32 +112,39 @@ export function ConnectionSheet({
   /**
    * Track the keyboard and lift the sheet by exactly its height.
    *
-   * iOS only. Android's manifest sets `windowSoftInputMode="adjustResize"`, so
-   * the OS already shrinks the window and a bottom-anchored sheet rides up on
-   * its own; animating it here as well is what made the sheet jitter
-   * previously — two systems moving the same view.
+   * Both platforms need this. The activity sets
+   * `windowSoftInputMode="adjustResize"`, but that governs the *activity*
+   * window — this sheet lives in a `Modal`, which Android hosts in a separate
+   * window that does not inherit it. So nothing resizes underneath the sheet
+   * and it has to move itself.
    *
-   * `keyboardWillShow` fires *before* the keyboard animates and carries the
-   * OS's own duration, so matching it makes the sheet and the keyboard move as
-   * one. (Android has no `will` event, which is the other reason this is
-   * iOS-only.)
+   * Event names differ by platform and the distinction matters:
+   * `keyboardWillShow` (iOS only) fires *before* the keyboard animates and
+   * carries the OS's own duration, so the sheet can travel alongside it.
+   * Android only emits `keyboardDidShow`, after the fact, so the lift is a
+   * short catch-up rather than a synchronised move — matching the platform
+   * convention rather than trying to predict a height that is not known yet.
    */
   useEffect(() => {
-    if (Platform.OS !== 'ios') return;
+    const isIOS = Platform.OS === 'ios';
+    const showEvent = isIOS ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = isIOS ? 'keyboardWillHide' : 'keyboardDidHide';
 
-    const onShow = Keyboard.addListener('keyboardWillShow', (event) => {
+    const onShow = Keyboard.addListener(showEvent, (event) => {
       setLifted(true);
       Animated.timing(keyboardLift, {
         toValue: event.endCoordinates.height,
-        duration: event.duration || 250,
+        // Android reports no duration on the `did` events; 150ms keeps the
+        // catch-up brief enough not to read as a separate animation.
+        duration: event.duration || (isIOS ? 250 : 150),
         useNativeDriver: true,
       }).start();
     });
 
-    const onHide = Keyboard.addListener('keyboardWillHide', (event) => {
+    const onHide = Keyboard.addListener(hideEvent, (event) => {
       Animated.timing(keyboardLift, {
         toValue: 0,
-        duration: event.duration || 250,
+        duration: event.duration || (isIOS ? 250 : 150),
         useNativeDriver: true,
       }).start(({ finished }) => {
         if (finished) setLifted(false);
@@ -379,7 +386,18 @@ export function ConnectionSheet({
             : 'Connect wallet';
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={resetAndClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={resetAndClose}
+      // Android hosts a Modal in its own window, which by default is inset by
+      // the system bars. Without these the window's bottom edge sits above the
+      // navigation bar, so the sheet's idea of "the bottom" disagrees with the
+      // keyboard height the OS reports and the lift overshoots.
+      statusBarTranslucent
+      navigationBarTranslucent
+    >
       {/*
         The sheet stays bottom-anchored and slides up by the keyboard's height
         when it opens, so the email and OTP inputs clear it without the sheet
@@ -390,15 +408,12 @@ export function ConnectionSheet({
         whole view leaves the layout untouched, and `useNativeDriver` runs it
         off the JS thread so it tracks the keyboard smoothly.
 
-        iOS only — see the listener above for why Android is left to
-        `adjustResize`.
-
-        The sheet carries a fixed `paddingBottom` equal to the screen height
-        while lifted, so its own background fills the strip the translate opens
-        up underneath it — otherwise the dark overlay shows through between the
-        sheet and the keyboard. It is a plain style rather than an animated one
-        because padding cannot be driven natively, and mixing a JS-driven
-        property into this animation would put it back on the JS thread.
+        The sheet carries a fixed `paddingBottom` while lifted, so its own
+        background fills the strip the translate opens up underneath it —
+        otherwise the dark overlay shows through between the sheet and the
+        keyboard. It is a plain style rather than an animated one because
+        padding cannot be driven natively, and mixing a JS-driven property into
+        this animation would put it back on the JS thread.
       */}
       <View style={styles.overlay}>
         <Animated.View
