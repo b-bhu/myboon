@@ -18,7 +18,8 @@
     "test:wallet": "tsx --test features/wallet/components/connect.options.test.ts features/wallet/components/connect.filtering.test.ts features/wallet/dormantBalance.test.ts",
     "postinstall": "rm -rf node_modules/@wallet-ui/react-native-web3js/node_modules/@react-native-async-storage node_modules/@solana-mobile/wallet-adapter-mobile/node_modules/@react-native-async-storage 2>/dev/null || true",
     "test:security": "tsx --test features/chain/security.deletions.test.ts",
-    "test": "pnpm test:chain && pnpm test:wallet && pnpm test:security"
+    "test:predict": "tsx --test components/predict/deposit.chains.test.ts",
+    "test": "pnpm test:chain && pnpm test:wallet && pnpm test:security && pnpm test:predict"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",

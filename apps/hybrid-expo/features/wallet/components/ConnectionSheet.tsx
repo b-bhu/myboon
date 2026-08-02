@@ -20,10 +20,12 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -92,6 +94,79 @@ export function ConnectionSheet({
   const [emailInput, setEmailInput] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [busy, setBusy] = useState(false);
+  /**
+   * How far the sheet is lifted so the keyboard does not cover it.
+   *
+   * The sheet stays bottom-anchored and simply translates upward by the
+   * keyboard's height — one continuous motion, driven by the keyboard's own
+   * show/hide events so it uses the same duration and easing the OS does.
+   *
+   * An earlier version re-anchored the sheet to the top of the screen while a
+   * field held focus. That required cross-fading between two positions, which
+   * read as the sheet vanishing and reappearing somewhere else rather than as
+   * a sheet moving.
+   */
+  const keyboardLift = useRef(new Animated.Value(0)).current;
+  /** True while the sheet is lifted, so the body can shed its bottom padding. */
+  const [lifted, setLifted] = useState(false);
+
+  /**
+   * Lift the sheet by the keyboard's height, iOS only.
+   *
+   * `keyboardWillShow` fires *before* the keyboard animates and carries the
+   * OS's own duration, so the sheet travels alongside it as one motion.
+   *
+   * Android is handled by `KeyboardAvoidingView` in the render instead. Doing
+   * it manually there needs the keyboard height and the Modal window's bottom
+   * edge to share a baseline, and they do not: Android reports keyboard height
+   * against the full screen while a Modal window is inset by the system bars,
+   * so the sheet lifted by roughly keyboard + navigation bar and shot off the
+   * top. `KeyboardAvoidingView` measures the window itself and avoids that
+   * arithmetic entirely.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+
+    const onShow = Keyboard.addListener('keyboardWillShow', (event) => {
+      setLifted(true);
+      Animated.timing(keyboardLift, {
+        toValue: event.endCoordinates.height,
+        duration: event.duration || 250,
+        useNativeDriver: true,
+      }).start();
+    });
+
+    const onHide = Keyboard.addListener('keyboardWillHide', (event) => {
+      Animated.timing(keyboardLift, {
+        toValue: 0,
+        duration: event.duration || 250,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished) setLifted(false);
+      });
+    });
+
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [keyboardLift]);
+
+  /**
+   * Android's keyboard state, tracked only so the body can shed its bottom
+   * padding while raised — the movement itself is `KeyboardAvoidingView`'s job.
+   */
+  useEffect(() => {
+    if (Platform.OS === 'ios') return;
+
+    const onShow = Keyboard.addListener('keyboardDidShow', () => setLifted(true));
+    const onHide = Keyboard.addListener('keyboardDidHide', () => setLifted(false));
+
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
 
   const options = availableOptions(chain);
 
@@ -105,8 +180,13 @@ export function ConnectionSheet({
     setEmailInput('');
     setOtpCode('');
     setBusy(false);
+    // The keyboard's hide event does not fire when the sheet unmounts with a
+    // field still focused, so the lift is reset here rather than left to
+    // carry over into the next open.
+    setLifted(false);
+    keyboardLift.setValue(0);
     onClose();
-  }, [onClose]);
+  }, [onClose, keyboardLift]);
 
   /**
    * Record intent for the requested chain once a backend has resolved.
@@ -319,22 +399,36 @@ export function ConnectionSheet({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={resetAndClose}>
       {/*
-        The sheet is bottom-anchored, so the keyboard covers the email and OTP
-        inputs — the user cannot see what they are typing. Lifting the whole
-        overlay is simpler than scrolling within the sheet, since its content is
-        short enough to fit above the keyboard.
+        The sheet stays bottom-anchored and rises so the keyboard never covers
+        the email or OTP input — by two different mechanisms, because the two
+        platforms expose different things.
 
-        Android is deliberately left to the OS. The manifest sets
-        `windowSoftInputMode="adjustResize"`, so the window is already resized
-        natively; adding `behavior="height"` re-ran that same resize in JS on
-        every frame of the OS animation, and the two fighting over the layout is
-        what made the sheet jitter while the keyboard opened.
+        iOS translates the sheet by the keyboard height from `keyboardWillShow`
+        (see the effect above). That fires ahead of the animation and carries
+        the OS duration, so the sheet moves as one gesture with the keyboard,
+        and `useNativeDriver` keeps it off the JS thread. The extra bottom
+        padding while lifted fills the strip the translate opens up underneath,
+        which would otherwise show the dark overlay.
+
+        Android uses `KeyboardAvoidingView`. A manual translate needs the
+        keyboard height and the sheet's bottom edge to share a baseline, and on
+        Android they do not — keyboard height is reported against the full
+        screen while a Modal window is inset by the system bars, so the sheet
+        lifted by roughly keyboard + navigation bar and shot off the top of the
+        screen. `KeyboardAvoidingView` measures the window itself, so none of
+        that arithmetic is ours to get wrong.
       */}
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? undefined : 'height'}
       >
-        <View style={styles.sheet}>
+        <Animated.View
+          style={[
+            styles.sheet,
+            Platform.OS === 'ios' && lifted && styles.sheetLifted,
+            { transform: [{ translateY: Animated.multiply(keyboardLift, -1) }] },
+          ]}
+        >
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
             <Pressable onPress={resetAndClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close">
@@ -399,6 +493,7 @@ export function ConnectionSheet({
               emailInput={emailInput}
               onChangeEmail={setEmailInput}
               onSendEmail={handleSendEmail}
+              compactBody={lifted}
               onGoogle={handleGoogle}
               onWalletConnect={handleWalletConnect}
               walletOptions={solana.walletOptions ?? []}
@@ -406,7 +501,7 @@ export function ConnectionSheet({
           ) : null}
 
           {step.kind === 'email_otp' ? (
-            <View style={styles.body}>
+            <View style={[styles.body, lifted && styles.bodyLifted]}>
               <Text style={styles.infoText}>Code sent to {step.email}</Text>
               <View style={styles.inputRow}>
                 <MaterialIcons name="pin" size={16} color={semantic.text.faint} />
@@ -474,7 +569,7 @@ export function ConnectionSheet({
               </Pressable>
             </View>
           ) : null}
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -548,6 +643,7 @@ function OptionsStep({
   emailInput,
   onChangeEmail,
   onSendEmail,
+  compactBody,
   onGoogle,
   onWalletConnect,
   walletOptions,
@@ -558,6 +654,8 @@ function OptionsStep({
   emailInput: string;
   onChangeEmail: (value: string) => void;
   onSendEmail: () => void;
+  /** True while the sheet is lifted, so the body can drop its bottom padding. */
+  compactBody: boolean;
   onGoogle: () => void;
   onWalletConnect: (walletName?: string) => void;
   /** Detected external wallets. Empty where the platform cannot enumerate. */
@@ -567,7 +665,7 @@ function OptionsStep({
   const secondary = options.filter((option) => option !== 'email');
 
   return (
-    <View style={styles.body}>
+    <View style={[styles.body, compactBody && styles.bodyLifted]}>
       <Text style={styles.blurb}>
         {chain === 'evm'
           ? 'Sign in to create a wallet that can sign on Polygon and other EVM networks.'
@@ -699,6 +797,18 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: semantic.border.muted,
   },
+  /**
+   * Extends the sheet's own background below its content while it is lifted,
+   * so the strip the `translateY` opens up underneath shows sheet rather than
+   * the dark overlay. Any value at least as tall as the tallest keyboard works;
+   * the excess is simply off-screen.
+   *
+   * iOS only — it pairs with the translate, and applying it on Android (where
+   * `KeyboardAvoidingView` does the moving) just adds 400pt of empty sheet.
+   */
+  sheetLifted: {
+    paddingBottom: 400,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -720,6 +830,14 @@ const styles = StyleSheet.create({
     gap: tokens.spacing.md,
     paddingBottom: 40,
     alignItems: 'stretch',
+  },
+  /**
+   * `body`'s 40pt bottom padding clears the home indicator on a resting bottom
+   * sheet. Lifted above the keyboard there is no home indicator to clear, so
+   * it is only dead space between the last control and the keyboard.
+   */
+  bodyLifted: {
+    paddingBottom: tokens.spacing.lg,
   },
   blurb: {
     fontSize: tokens.fontSize.sm,
