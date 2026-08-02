@@ -87,9 +87,17 @@ export function deriveMatchStatus(
 
 // Multi-day formats (Tests, first-class) genuinely run for days; limited-overs
 // cricket does not. Since every cricket competition shares the 'cricket' display
-// sport, the long window has to be earned by the league code rather than applied
-// to all of them — otherwise a 3-hour T20 reads as live for six days.
-const MULTI_DAY_CRICKET_RE = /^cr(int|aus|eng|ind|pak|sou|new|ban|uae|icc)/
+// sport, the long window has to be earned by the specific competition rather
+// than applied to all of them — otherwise a 3-hour T20 reads as live for six
+// days. An explicit set rather than a prefix test: the cric* prefix covers both
+// franchise T20 (cricbbl) and first-class (cricwncl, Australia's multi-day
+// women's competition), so prefix shape does not predict format.
+const MULTI_DAY_CRICKET_CODES = new Set([
+  // National boards — Test and first-class fixtures.
+  'crint', 'craus', 'creng', 'crind', 'crpak', 'crsou', 'crnew', 'crban', 'cruae',
+  // First-class competitions that carry the cric* prefix.
+  'cricwncl', 'crwncl',
+])
 const LIMITED_OVERS_HOURS = 9
 const MULTI_DAY_HOURS = 144
 
@@ -97,12 +105,8 @@ function maxLiveHours(sport: string | undefined, slug: string | null | undefined
   if (sport === 'ipl') return 5
   if (sport === 'epl') return 3
   if (sport !== 'cricket') return 4
-  const code = (slug ?? '').toLowerCase()
-  // One-day and first-class competitions share the crint-style national codes;
-  // franchise T20 leagues all use the cric* prefix.
-  return MULTI_DAY_CRICKET_RE.test(code) && !code.startsWith('cric')
-    ? MULTI_DAY_HOURS
-    : LIMITED_OVERS_HOURS
+  const code = (slug ?? '').toLowerCase().split('-')[0]
+  return MULTI_DAY_CRICKET_CODES.has(code) ? MULTI_DAY_HOURS : LIMITED_OVERS_HOURS
 }
 
 export function mapSingleMatchGammaEventToFeaturedMarket(e: Record<string, unknown>): FeaturedMarket | null {

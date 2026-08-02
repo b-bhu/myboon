@@ -289,6 +289,19 @@ test('ends finished T20 fixtures while multi-day cricket keeps its long live win
     deriveMatchStatus(start, true, false, [0.5, 0.5], 'cricket', null, Date.parse('2026-07-29T09:00:00.000Z'), 'cricmukono-mpa-bus-2026-07-29'),
     'live',
   )
+  // cricwncl is Australia's multi-day first-class women's competition. It
+  // carries the cric* prefix that franchise T20 leagues use, so prefix shape
+  // cannot decide the window — it has to be named explicitly.
+  assert.equal(
+    deriveMatchStatus(start, true, false, [0.5, 0.5], 'cricket', null, twoDaysLater, 'cricwncl-new-que-2026-07-29'),
+    'live',
+    'first-class cricket keeps the long window despite the cric prefix',
+  )
+  // The oracle still ends a multi-day match ahead of the duration ceiling.
+  assert.equal(
+    deriveMatchStatus(start, true, false, [0, 1], 'cricket', 'resolved', twoDaysLater, 'cricwncl-new-que-2026-07-29'),
+    'ended',
+  )
 })
 
 test('maps legacy grouped EPL event pins as home, draw, and away outcomes', () => {
