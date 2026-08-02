@@ -57,7 +57,7 @@ export interface FeaturedMarket {
  *  1. closed flag (if Gamma eventually flips it)
  *  2. UMA oracle status — "proposed" or "resolved" means outcome is decided on-chain
  *  3. Price signal — any outcome ≥0.995 means market is effectively resolved
- *  4. Time elapsed — use sport-aware maximum durations (including multi-day cricket)
+ *  4. Time elapsed — use format-aware maximum durations (see maxLiveHours)
  *  5. gameStartTime vs now — upcoming / live fallback */
 export function deriveMatchStatus(
   gameStartTime: string | null | undefined,
@@ -67,6 +67,7 @@ export function deriveMatchStatus(
   sport?: string,
   umaResolutionStatus?: string | null,
   nowMs: number = Date.now(),
+  slug?: string | null,
 ): 'live' | 'upcoming' | 'ended' {
   if (closed) return 'ended'
   // UMA oracle: proposed = outcome asserted (2h dispute window), resolved = finalized
@@ -79,10 +80,29 @@ export function deriveMatchStatus(
   if (now < start) return 'upcoming'
   // Time-based: match can't still be live after max duration
   const hoursElapsed = (now - start) / (1000 * 60 * 60)
-  const maxDuration = sport === 'ipl' ? 5 : sport === 'cricket' ? 144 : sport === 'epl' ? 3 : 4
-  if (hoursElapsed > maxDuration) return 'ended'
+  if (hoursElapsed > maxLiveHours(sport, slug)) return 'ended'
   if (active) return 'live'
   return 'ended'
+}
+
+// Multi-day formats (Tests, first-class) genuinely run for days; limited-overs
+// cricket does not. Since every cricket competition shares the 'cricket' display
+// sport, the long window has to be earned by the league code rather than applied
+// to all of them — otherwise a 3-hour T20 reads as live for six days.
+const MULTI_DAY_CRICKET_RE = /^cr(int|aus|eng|ind|pak|sou|new|ban|uae|icc)/
+const LIMITED_OVERS_HOURS = 9
+const MULTI_DAY_HOURS = 144
+
+function maxLiveHours(sport: string | undefined, slug: string | null | undefined): number {
+  if (sport === 'ipl') return 5
+  if (sport === 'epl') return 3
+  if (sport !== 'cricket') return 4
+  const code = (slug ?? '').toLowerCase()
+  // One-day and first-class competitions share the crint-style national codes;
+  // franchise T20 leagues all use the cric* prefix.
+  return MULTI_DAY_CRICKET_RE.test(code) && !code.startsWith('cric')
+    ? MULTI_DAY_HOURS
+    : LIMITED_OVERS_HOURS
 }
 
 export function mapSingleMatchGammaEventToFeaturedMarket(e: Record<string, unknown>): FeaturedMarket | null {
@@ -132,6 +152,7 @@ export function mapGammaEventToFeaturedMarket(
       sport,
       umaStatus,
       options.now,
+      e.slug as string,
     ),
     gameStartTime: gameStart || null,
     startDate: (e.startDate as string) ?? null,
