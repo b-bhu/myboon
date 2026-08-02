@@ -26,6 +26,7 @@ import {
   Animated,
   Image,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -110,41 +111,35 @@ export function ConnectionSheet({
   const [lifted, setLifted] = useState(false);
 
   /**
-   * Track the keyboard and lift the sheet by exactly its height.
+   * Lift the sheet by the keyboard's height, iOS only.
    *
-   * Both platforms need this. The activity sets
-   * `windowSoftInputMode="adjustResize"`, but that governs the *activity*
-   * window — this sheet lives in a `Modal`, which Android hosts in a separate
-   * window that does not inherit it. So nothing resizes underneath the sheet
-   * and it has to move itself.
+   * `keyboardWillShow` fires *before* the keyboard animates and carries the
+   * OS's own duration, so the sheet travels alongside it as one motion.
    *
-   * Event names differ by platform and the distinction matters:
-   * `keyboardWillShow` (iOS only) fires *before* the keyboard animates and
-   * carries the OS's own duration, so the sheet can travel alongside it.
-   * Android only emits `keyboardDidShow`, after the fact, so the lift is a
-   * short catch-up rather than a synchronised move — matching the platform
-   * convention rather than trying to predict a height that is not known yet.
+   * Android is handled by `KeyboardAvoidingView` in the render instead. Doing
+   * it manually there needs the keyboard height and the Modal window's bottom
+   * edge to share a baseline, and they do not: Android reports keyboard height
+   * against the full screen while a Modal window is inset by the system bars,
+   * so the sheet lifted by roughly keyboard + navigation bar and shot off the
+   * top. `KeyboardAvoidingView` measures the window itself and avoids that
+   * arithmetic entirely.
    */
   useEffect(() => {
-    const isIOS = Platform.OS === 'ios';
-    const showEvent = isIOS ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = isIOS ? 'keyboardWillHide' : 'keyboardDidHide';
+    if (Platform.OS !== 'ios') return;
 
-    const onShow = Keyboard.addListener(showEvent, (event) => {
+    const onShow = Keyboard.addListener('keyboardWillShow', (event) => {
       setLifted(true);
       Animated.timing(keyboardLift, {
         toValue: event.endCoordinates.height,
-        // Android reports no duration on the `did` events; 150ms keeps the
-        // catch-up brief enough not to read as a separate animation.
-        duration: event.duration || (isIOS ? 250 : 150),
+        duration: event.duration || 250,
         useNativeDriver: true,
       }).start();
     });
 
-    const onHide = Keyboard.addListener(hideEvent, (event) => {
+    const onHide = Keyboard.addListener('keyboardWillHide', (event) => {
       Animated.timing(keyboardLift, {
         toValue: 0,
-        duration: event.duration || (isIOS ? 250 : 150),
+        duration: event.duration || 250,
         useNativeDriver: true,
       }).start(({ finished }) => {
         if (finished) setLifted(false);
@@ -156,6 +151,22 @@ export function ConnectionSheet({
       onHide.remove();
     };
   }, [keyboardLift]);
+
+  /**
+   * Android's keyboard state, tracked only so the body can shed its bottom
+   * padding while raised — the movement itself is `KeyboardAvoidingView`'s job.
+   */
+  useEffect(() => {
+    if (Platform.OS === 'ios') return;
+
+    const onShow = Keyboard.addListener('keyboardDidShow', () => setLifted(true));
+    const onHide = Keyboard.addListener('keyboardDidHide', () => setLifted(false));
+
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
 
   const options = availableOptions(chain);
 
@@ -386,40 +397,35 @@ export function ConnectionSheet({
             : 'Connect wallet';
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={resetAndClose}
-      // Android hosts a Modal in its own window, which by default is inset by
-      // the system bars. Without these the window's bottom edge sits above the
-      // navigation bar, so the sheet's idea of "the bottom" disagrees with the
-      // keyboard height the OS reports and the lift overshoots.
-      statusBarTranslucent
-      navigationBarTranslucent
-    >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={resetAndClose}>
       {/*
-        The sheet stays bottom-anchored and slides up by the keyboard's height
-        when it opens, so the email and OTP inputs clear it without the sheet
-        ever changing position on screen or disappearing.
+        The sheet stays bottom-anchored and rises so the keyboard never covers
+        the email or OTP input — by two different mechanisms, because the two
+        platforms expose different things.
 
-        `translateY` rather than `KeyboardAvoidingView`: `behavior="padding"`
-        resizes the sheet, which reflows its contents mid-animation. Moving the
-        whole view leaves the layout untouched, and `useNativeDriver` runs it
-        off the JS thread so it tracks the keyboard smoothly.
+        iOS translates the sheet by the keyboard height from `keyboardWillShow`
+        (see the effect above). That fires ahead of the animation and carries
+        the OS duration, so the sheet moves as one gesture with the keyboard,
+        and `useNativeDriver` keeps it off the JS thread. The extra bottom
+        padding while lifted fills the strip the translate opens up underneath,
+        which would otherwise show the dark overlay.
 
-        The sheet carries a fixed `paddingBottom` while lifted, so its own
-        background fills the strip the translate opens up underneath it —
-        otherwise the dark overlay shows through between the sheet and the
-        keyboard. It is a plain style rather than an animated one because
-        padding cannot be driven natively, and mixing a JS-driven property into
-        this animation would put it back on the JS thread.
+        Android uses `KeyboardAvoidingView`. A manual translate needs the
+        keyboard height and the sheet's bottom edge to share a baseline, and on
+        Android they do not — keyboard height is reported against the full
+        screen while a Modal window is inset by the system bars, so the sheet
+        lifted by roughly keyboard + navigation bar and shot off the top of the
+        screen. `KeyboardAvoidingView` measures the window itself, so none of
+        that arithmetic is ours to get wrong.
       */}
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? undefined : 'height'}
+      >
         <Animated.View
           style={[
             styles.sheet,
-            lifted && styles.sheetLifted,
+            Platform.OS === 'ios' && lifted && styles.sheetLifted,
             { transform: [{ translateY: Animated.multiply(keyboardLift, -1) }] },
           ]}
         >
@@ -564,7 +570,7 @@ export function ConnectionSheet({
             </View>
           ) : null}
         </Animated.View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -796,6 +802,9 @@ const styles = StyleSheet.create({
    * so the strip the `translateY` opens up underneath shows sheet rather than
    * the dark overlay. Any value at least as tall as the tallest keyboard works;
    * the excess is simply off-screen.
+   *
+   * iOS only — it pairs with the translate, and applying it on Android (where
+   * `KeyboardAvoidingView` does the moving) just adds 400pt of empty sheet.
    */
   sheetLifted: {
     paddingBottom: 400,
