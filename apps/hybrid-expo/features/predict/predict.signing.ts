@@ -298,6 +298,29 @@ function validateWrapCalls(calls: DepositWalletCallToSign[], depositWalletAddres
   }
 }
 
+/**
+ * Convert a token amount to 6-decimal base units without going through
+ * float arithmetic.
+ *
+ * `Math.floor(amount * 1_000_000)` is wrong for values that binary floating
+ * point cannot represent exactly: 2.01 yields 2009999, not 2010000, because
+ * `2.01 * 1e6` lands just below the integer and `floor` takes the shortfall.
+ * The error is one base unit, but it is systematically *downward* and it sits
+ * on the withdrawal path, so the signed amount would silently disagree with
+ * the amount the user asked for. Parsing the decimal representation keeps
+ * the value exact.
+ */
+function toBaseUnits6(amount: number): bigint {
+  if (!Number.isFinite(amount)) {
+    throw new Error('Predict refused to sign a withdraw for a non-finite amount.');
+  }
+  // `toFixed(6)` rounds half-away-from-zero at the 6th decimal, which is the
+  // smallest unit the token can express — anything finer is not representable
+  // on-chain regardless.
+  const [whole, fraction = ''] = amount.toFixed(6).split('.');
+  return BigInt(`${whole}${fraction.padEnd(6, '0')}`);
+}
+
 function validateWithdrawCalls(calls: DepositWalletCallToSign[], amount: number, bridgeAddress: string) {
   if (calls.length !== 1) throw new Error('Predict refused to sign an unexpected withdraw action count.');
   const call = calls[0];
@@ -309,7 +332,7 @@ function validateWithdrawCalls(calls: DepositWalletCallToSign[], amount: number,
   if (normalizeAddress(wordAddress(ensureHexWord(data, 0))) !== normalizeAddress(bridgeAddress)) {
     throw new Error('Predict refused to sign withdraw to an unverified bridge address.');
   }
-  const expectedAmount = BigInt(Math.floor(amount * 1_000_000));
+  const expectedAmount = toBaseUnits6(amount);
   if (expectedAmount <= 0n || wordBigInt(ensureHexWord(data, 1)) !== expectedAmount) {
     throw new Error('Predict refused to sign withdraw for an unexpected amount.');
   }
@@ -459,7 +482,15 @@ async function waitForTransaction(
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error(`Timed out waiting for transaction ${transactionHash} to be mined.`);
+  // Deliberately worded as unknown, not failed. The transaction was
+  // broadcast and may still confirm after this deadline; a caller that reads
+  // a timeout as "it failed" and retries would submit a second deploy or
+  // approval for work already in flight. Polling stopped — the outcome did
+  // not.
+  throw new Error(
+    `Transaction ${transactionHash} was submitted but has not confirmed yet. `
+    + 'It may still succeed — check before retrying.',
+  );
 }
 
 /**
@@ -555,72 +586,42 @@ const POLYMARKET_ENVIRONMENT = forkEnvironmentConfig({
 const BUILDER_SIGN_URL = `${resolveApiBaseUrl()}/clob/builder/sign`;
 
 /**
- * Temporary: logs every fetch the SDK makes while confirming the fix for the
- * on-device "invalid address" failure against `/clob/relayer-proxy/deployed`.
+ * How long a signed proof is reused before a fresh one is requested.
  *
- * Root cause found: `@polymarket/client` builds query params as a real
- * `URLSearchParams` instance; `ky` (the SDK's HTTP client) only serializes
- * `options.searchParams` into a query string if it passes `instanceof
- * URLSearchParams` — otherwise it silently treats it as absent. Under
- * Metro/Hermes, without a polyfill forcing one canonical `URLSearchParams`
- * across the bundle, different chunks can resolve the global to different
- * constructor references, so the `instanceof` check fails across that
- * boundary and every request loses its query string. Reproducible only on
- * device — Node has one single `URLSearchParams` global with no
- * bundler-caused realm split, so scripts driving the identical SDK/server/
- * address never failed. Fixed by importing `react-native-url-polyfill/auto`
- * first in `index.js`, before any other module loads.
- *
- * Keep this trace through the next on-device run to confirm every relayer
- * call now carries its query string, then remove it.
+ * The server rejects proofs older than `AUTH_PROOF_MAX_AGE_MS` (5 minutes,
+ * `packages/api/src/polymarket/trading/contracts.ts`). Re-signing on every
+ * call would prompt the embedded wallet repeatedly during a single setup, so
+ * a proof is cached and rotated comfortably inside that window.
  */
-function bigintSafeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? `${v}n` : v));
-  } catch (err) {
-    return `<unstringifiable: ${err instanceof Error ? err.message : String(err)}>`;
-  }
-}
+const BUILDER_PROOF_TTL_MS = 3 * 60 * 1000;
 
-function withFetchTrace<T>(run: () => Promise<T>): Promise<T> {
-  // If "Do not know how to serialize a BigInt" is thrown by something
-  // calling JSON.stringify before a request is ever built (e.g. inside
-  // setupTradingApprovals's calldata construction), the fetch wrapper below
-  // never sees it. Wrapping JSON.stringify itself catches the exact bad
-  // value regardless of where the call originates.
-  const originalStringify = JSON.stringify;
-  (JSON as any).stringify = (value: unknown, ...rest: unknown[]) => {
-    try {
-      return (originalStringify as any)(value, ...rest);
-    } catch (err) {
-      if (err instanceof TypeError && /serialize a BigInt/i.test(err.message)) {
-        console.log('[polymarket.trace] JSON.stringify THREW on', bigintSafeStringify(value));
-      }
-      throw err;
+/**
+ * Supplies the per-request proof that a real wallet holder is asking for a
+ * Builder signature.
+ *
+ * `/clob/builder/sign` hands out authorization billed to this app's Builder
+ * account, so it authenticates the caller the same way `/clob/auth` does —
+ * an EOA-signed timestamped message the server recovers the address from.
+ * The SDK invokes this callback fresh on every `authorize()` (verified
+ * against its compiled source), so the proof is minted lazily and reused
+ * until it approaches the server's expiry window.
+ */
+function createBuilderProofHeaders(signer: Signer, address: string) {
+  let cached: { headers: Record<string, string>; mintedAt: number } | null = null;
+
+  return async (): Promise<Record<string, string>> => {
+    if (cached && Date.now() - cached.mintedAt < BUILDER_PROOF_TTL_MS) {
+      return cached.headers;
     }
+    const { authTimestamp, authSignature } = await createPredictSessionProof(signer, address);
+    const headers = {
+      'X-Predict-Address': address,
+      'X-Predict-Timestamp': `${authTimestamp}`,
+      'X-Predict-Signature': authSignature,
+    };
+    cached = { headers, mintedAt: Date.now() };
+    return headers;
   };
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: any, init?: any) => {
-    const url = typeof input === 'string' ? input : input?.url;
-    console.log('[polymarket.trace] -->', init?.method ?? 'GET', url, init?.body !== undefined ? `BODY_TYPE=${typeof init.body}` : '');
-    if (init?.body !== undefined) {
-      console.log('[polymarket.trace] body', bigintSafeStringify(init.body));
-    }
-    let res: Response;
-    try {
-      res = await originalFetch(input, init);
-    } catch (err) {
-      console.log('[polymarket.trace] fetch THREW', url, err instanceof Error ? err.message : String(err));
-      throw err;
-    }
-    console.log('[polymarket.trace] <--', res.status, url);
-    return res;
-  }) as typeof fetch;
-  return run().finally(() => {
-    globalThis.fetch = originalFetch;
-    JSON.stringify = originalStringify;
-  });
 }
 
 /**
@@ -632,15 +633,24 @@ function withFetchTrace<T>(run: () => Promise<T>): Promise<T> {
  * still backs order placement's `ClobClient` construction until that path
  * migrates too — see the PRD's step 4 for why wrap/withdraw/redeem/order
  * signing aren't moved in this same change.
+ *
+ * `address` is the EOA this client is being built for. It is required rather
+ * than read back from the signer because it is what the Builder-signing
+ * proof is bound to, and `assertSignerAddress` inside
+ * `createPredictSessionProof` verifies the two still agree at signing time.
  */
 export async function createPolymarketSecureClient(
   signer: Signer,
+  address: string,
 ): Promise<SecureClient> {
-  return withFetchTrace(() => createSecureClient({
+  return createSecureClient({
     environment: POLYMARKET_ENVIRONMENT,
     signer: toPolymarketSigner(signer),
-    apiKey: remoteBuilderSigning({ url: BUILDER_SIGN_URL }),
-  }));
+    apiKey: remoteBuilderSigning({
+      url: BUILDER_SIGN_URL,
+      headers: createBuilderProofHeaders(signer, address),
+    }),
+  });
 }
 
 export async function createPolymarketApiCreds(signer: Signer): Promise<ApiKeyCreds> {

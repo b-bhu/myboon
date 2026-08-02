@@ -29,9 +29,24 @@ import './polyfill';
 // RN app that touches BigInt-heavy libraries (viem, ethers): giving BigInt
 // a toJSON changes what JSON.stringify calls, regardless of which reference
 // is used to invoke it, without needing to find the specific caller.
+//
+// Tradeoff worth naming: this makes BigInt serialize as a *string* process-
+// wide and permanently. Anything that previously threw loudly on a stray
+// BigInt now silently emits `"1000000"`. On a money path a loud crash is
+// safer than a quiet wrong value, so the first use is logged in dev with a
+// stack — that is the call site to fix properly, after which this can go.
 if (typeof BigInt.prototype.toJSON !== 'function') {
+  let warned = false;
   // eslint-disable-next-line no-extend-native
   BigInt.prototype.toJSON = function toJSON() {
+    if (__DEV__ && !warned) {
+      warned = true;
+      console.warn(
+        '[polyfill] BigInt.toJSON used — a BigInt is being JSON-serialized as a string. '
+        + 'Fix the call site to serialize explicitly.\n'
+        + new Error('BigInt.toJSON call site').stack,
+      );
+    }
     return this.toString();
   };
 }

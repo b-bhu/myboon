@@ -43,7 +43,9 @@ function cleanSessions() {
   }
 }
 
-setInterval(cleanSessions, 60 * 60 * 1000)
+// `unref` so this housekeeping timer never by itself keeps the process
+// alive — it holds no work worth delaying shutdown (or a test run) for.
+setInterval(cleanSessions, 60 * 60 * 1000).unref?.()
 
 function addressOnlySigner(address: string) {
   return {
