@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PolymarketCatalogRelease } from './contracts.js'
 import { hydratePolymarketCatalogRelease } from './hydrate.js'
-import { mapGammaEventToFeaturedMarket } from '../read/featured-markets.js'
+import { deriveMatchStatus, mapGammaEventToFeaturedMarket } from '../read/featured-markets.js'
 
 test('hydrates ordered sports events and binary markets into the shared featured contract', async (context) => {
   const originalFetch = globalThis.fetch
@@ -156,6 +156,154 @@ test('expands automatic sports rules, excludes props, re-resolves series, and de
   assert.deepEqual(hydrated.items[3]?.outcomes?.map((outcome) => outcome.price), [0.4, 0.25, 0.35])
 })
 
+test('expands a sports tag across every league beneath it, paginating and excluding props', async (context) => {
+  const originalFetch = globalThis.fetch
+  const now = Date.parse('2026-08-02T12:00:00.000Z')
+  const requestedOffsets: string[] = []
+  // Two leagues that share the cricket tag but no series slug — the case a
+  // per-code sports_rule cannot express.
+  const firstPage = [
+    leagueGame('crichundred-tre-sun-2026-08-02', 'Trent Rockets vs Sunrisers', '2026-08-02T13:30:00.000Z', 'the-hundred'),
+    {
+      ...leagueGame('crichundred-tre-sun-2026-08-02-most-sixes', 'Most sixes', '2026-08-02T13:30:00.000Z', 'the-hundred'),
+      markets: [{
+        sportsMarketType: 'cricket_most_sixes',
+        outcomes: JSON.stringify(['Yes', 'No']),
+        outcomePrices: JSON.stringify(['0.5', '0.5']),
+        clobTokenIds: JSON.stringify(['sixes-yes', 'sixes-no']),
+        gameStartTime: '2026-08-02T13:30:00.000Z',
+      }],
+    },
+    leagueGame('cricodc-ham-dur-2026-08-02', 'Hampshire vs Durham', '2026-08-02T15:30:00.000Z', 'cricodc'),
+  ]
+  const secondPage = [
+    leagueGame('crickerala-a-b-2026-08-03', 'Kerala match', '2026-08-03T10:00:00.000Z', 'crickerala'),
+  ]
+
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input))
+    if (url.pathname === '/events' && url.searchParams.get('tag_id') === '517') {
+      const offset = url.searchParams.get('offset') ?? '0'
+      requestedOffsets.push(offset)
+      if (offset === '0') {
+        // Pad to a full page so discovery keeps paging.
+        return Response.json([
+          ...firstPage,
+          ...Array.from({ length: 97 }, (_, index) => leagueGame(
+            `filler-${index}`,
+            `Filler ${index}`,
+            '2019-01-01T00:00:00.000Z',
+            'cricfiller',
+          )),
+        ])
+      }
+      if (offset === '100') return Response.json(secondPage)
+      return Response.json([])
+    }
+    throw new Error(`Unexpected request ${url}`)
+  }
+  context.after(() => { globalThis.fetch = originalFetch })
+
+  const release: PolymarketCatalogRelease = {
+    id: 'release-tag',
+    version: 1,
+    revision: 1,
+    status: 'published',
+    note: null,
+    createdBy: 'test',
+    publishedBy: 'test',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    publishedAt: '2026-08-02T00:00:00.000Z',
+    items: [tagItem('cricket', '517', 0)],
+  }
+
+  const hydrated = await hydratePolymarketCatalogRelease(release, { now, limit: 50 })
+
+  assert.deepEqual(requestedOffsets, ['0', '100'], 'paginates until a short page')
+  assert.deepEqual(hydrated.items.map((item) => item.slug), [
+    'crichundred-tre-sun-2026-08-02',
+    'cricodc-ham-dur-2026-08-02',
+    'crickerala-a-b-2026-08-03',
+  ])
+  // Leagues with unrelated series slugs still resolve under one tag.
+  assert.equal(hydrated.items.every((item) => item.sport === 'cricket'), true)
+  assert.equal(hydrated.items.some((item) => item.slug.includes('most-sixes')), false)
+  assert.equal(hydrated.items.some((item) => item.slug.startsWith('filler-')), false)
+})
+
+test('caps a sports tag at its configured game limit', async (context) => {
+  const originalFetch = globalThis.fetch
+  const now = Date.parse('2026-08-02T12:00:00.000Z')
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input))
+    if (url.pathname === '/events' && url.searchParams.get('tag_id') === '517') {
+      if ((url.searchParams.get('offset') ?? '0') !== '0') return Response.json([])
+      return Response.json(Array.from({ length: 8 }, (_, index) => leagueGame(
+        `cricodc-game-${index}-2026-08-02`,
+        `Game ${index}`,
+        '2026-08-02T15:30:00.000Z',
+        'cricodc',
+      )))
+    }
+    throw new Error(`Unexpected request ${url}`)
+  }
+  context.after(() => { globalThis.fetch = originalFetch })
+
+  const release: PolymarketCatalogRelease = {
+    id: 'release-tag-limit',
+    version: 1,
+    revision: 1,
+    status: 'published',
+    note: null,
+    createdBy: 'test',
+    publishedBy: 'test',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    publishedAt: '2026-08-02T00:00:00.000Z',
+    items: [tagItem('cricket', '517', 0, 3)],
+  }
+
+  const hydrated = await hydratePolymarketCatalogRelease(release, { now, limit: 50 })
+  assert.equal(hydrated.items.length, 3)
+})
+
+test('ends finished T20 fixtures while multi-day cricket keeps its long live window', () => {
+  const start = '2026-07-29T07:00:00.000Z'
+  // Two days after a 3-hour franchise T20: Gamma still says active, prices are
+  // 50/50, and the oracle has not resolved — only the duration cap can end it.
+  const twoDaysLater = Date.parse('2026-07-31T07:00:00.000Z')
+
+  assert.equal(
+    deriveMatchStatus(start, true, false, [0.5, 0.5], 'cricket', null, twoDaysLater, 'cricmukono-mpa-bus-2026-07-29'),
+    'ended',
+    'franchise T20 must not stay live for days',
+  )
+  assert.equal(
+    deriveMatchStatus(start, true, false, [0.5, 0.5], 'cricket', null, twoDaysLater, 'crint-eng-aus-2026-07-29'),
+    'live',
+    'international multi-day cricket keeps the long window',
+  )
+  // A T20 still in progress is unaffected.
+  assert.equal(
+    deriveMatchStatus(start, true, false, [0.5, 0.5], 'cricket', null, Date.parse('2026-07-29T09:00:00.000Z'), 'cricmukono-mpa-bus-2026-07-29'),
+    'live',
+  )
+  // cricwncl is Australia's multi-day first-class women's competition. It
+  // carries the cric* prefix that franchise T20 leagues use, so prefix shape
+  // cannot decide the window — it has to be named explicitly.
+  assert.equal(
+    deriveMatchStatus(start, true, false, [0.5, 0.5], 'cricket', null, twoDaysLater, 'cricwncl-new-que-2026-07-29'),
+    'live',
+    'first-class cricket keeps the long window despite the cric prefix',
+  )
+  // The oracle still ends a multi-day match ahead of the duration ceiling.
+  assert.equal(
+    deriveMatchStatus(start, true, false, [0, 1], 'cricket', 'resolved', twoDaysLater, 'cricwncl-new-que-2026-07-29'),
+    'ended',
+  )
+})
+
 test('maps legacy grouped EPL event pins as home, draw, and away outcomes', () => {
   const legacy = threeWayGame('epl-ars-che-2026-08-15', 'Arsenal vs Chelsea', '2026-08-15T12:00:00.000Z')
   for (const market of legacy.markets) delete (market as { sportsMarketType?: string }).sportsMarketType
@@ -207,6 +355,30 @@ function ruleItem(sourceSlug: string, sourceId: string, position: number, resolv
     displayOverrides: resolvedSeriesSlug ? { resolvedSeriesSlug } : {},
     ruleConfig: { windowDays: 30, limit, marketType: 'moneyline' as const },
   }
+}
+
+function tagItem(sourceSlug: string, tagId: string, position: number, limit = 60) {
+  return {
+    id: `tag-${position}`,
+    sourceKind: 'sports_tag' as const,
+    sourceSlug,
+    sourceId: tagId,
+    conditionId: null,
+    title: `${sourceSlug} — all leagues`,
+    category: 'sports',
+    sport: sourceSlug,
+    position,
+    isEnabled: true,
+    activeFrom: null,
+    activeUntil: null,
+    displayOverrides: {},
+    ruleConfig: { windowDays: 14, limit, marketType: 'moneyline' as const, tagId },
+  }
+}
+
+/** A consolidated match in an arbitrary league — tags span many series slugs. */
+function leagueGame(slug: string, title: string, startTime: string, seriesSlug: string) {
+  return { ...consolidatedGame(slug, title, startTime), seriesSlug }
 }
 
 function consolidatedGame(slug: string, title: string, startTime: string) {

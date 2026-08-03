@@ -9,7 +9,7 @@ import {
   registerTokenIds,
 } from '../read/market-read.js'
 import type { PolymarketCatalogRelease } from './contracts.js'
-import { discoverSportsRuleMarkets } from './sports-rules.js'
+import { discoverSportsRuleMarkets, discoverSportsTagMarkets } from './sports-rules.js'
 
 export interface HydratedPolymarketCollection {
   items: FeaturedMarket[]
@@ -33,9 +33,11 @@ export async function hydratePolymarketCatalogRelease(
   for (const item of activeItems) {
     if (items.length >= limit) break
     try {
-      const hydrated = item.sourceKind === 'sports_rule'
-        ? await discoverSportsRuleMarkets(item, now)
-        : await hydratePinnedItem(item)
+      const hydrated = item.sourceKind === 'sports_tag'
+        ? await discoverSportsTagMarkets(item, now)
+        : item.sourceKind === 'sports_rule'
+          ? await discoverSportsRuleMarkets(item, now)
+          : await hydratePinnedItem(item)
       let addedForSource = 0
       for (const featured of hydrated) {
         if (seenSlugs.has(featured.slug)) continue
@@ -44,7 +46,9 @@ export async function hydratePolymarketCatalogRelease(
         items.push(featured)
         addedForSource += 1
         if (items.length >= limit) break
-        if (item.sourceKind === 'sports_rule' && item.ruleConfig && addedForSource >= item.ruleConfig.limit) break
+        if ((item.sourceKind === 'sports_rule' || item.sourceKind === 'sports_tag')
+          && item.ruleConfig
+          && addedForSource >= item.ruleConfig.limit) break
       }
     } catch (error) {
       console.error(

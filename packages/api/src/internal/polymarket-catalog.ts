@@ -9,8 +9,8 @@ import {
   PolymarketCatalogConflictError,
   PolymarketCatalogValidationError,
 } from '../polymarket/catalog/contracts.js'
-import { resolvePolymarketCatalogItems } from '../polymarket/catalog/source.js'
-import { listSportsRuleOptions } from '../polymarket/catalog/sports-rules.js'
+import { resolvePolymarketCatalogItems, TAG_RULE_MAX_LIMIT } from '../polymarket/catalog/source.js'
+import { listSportsRuleOptions, SPORTS_TAG_OPTIONS } from '../polymarket/catalog/sports-rules.js'
 import type { SportsRuleOption } from '../polymarket/catalog/sports-rules.js'
 
 interface InternalPolymarketCatalogRoutesConfig {
@@ -63,6 +63,12 @@ export function createInternalPolymarketCatalogRoutes(
       return catalogError(c, error, 'GET /internal/polymarket/collections/options/sports')
     }
   })
+
+  routes.get('/options/tags', (c) => c.json({
+    options: SPORTS_TAG_OPTIONS,
+    defaults: { windowDays: 14, limit: 60, marketType: 'moneyline' },
+    maxLimit: TAG_RULE_MAX_LIMIT,
+  }))
 
   routes.get('/:key', async (c) => {
     const key = collectionKey(c)
@@ -139,10 +145,13 @@ function parseItems(value: unknown): PolymarketCatalogItemInput[] {
     }
     const item = raw as Record<string, unknown>
     const sourceKind = item.sourceKind
+    const isRuleKind = sourceKind === 'sports_rule' || sourceKind === 'sports_tag'
     const rawSourceSlug = typeof item.sourceSlug === 'string' ? item.sourceSlug.trim() : ''
-    const sourceSlug = sourceKind === 'sports_rule' ? rawSourceSlug.toLowerCase() : rawSourceSlug
-    if (sourceKind !== 'event' && sourceKind !== 'market' && sourceKind !== 'sports_rule') {
-      throw new PolymarketCatalogValidationError(`items[${index}].sourceKind must be event, market, or sports_rule.`)
+    const sourceSlug = isRuleKind ? rawSourceSlug.toLowerCase() : rawSourceSlug
+    if (sourceKind !== 'event' && sourceKind !== 'market' && !isRuleKind) {
+      throw new PolymarketCatalogValidationError(
+        `items[${index}].sourceKind must be event, market, sports_rule, or sports_tag.`,
+      )
     }
     if (!SAFE_SLUG_RE.test(sourceSlug)) {
       throw new PolymarketCatalogValidationError(`items[${index}].sourceSlug is invalid.`)
@@ -151,14 +160,14 @@ function parseItems(value: unknown): PolymarketCatalogItemInput[] {
     if (seen.has(dedupeKey)) throw new PolymarketCatalogValidationError(`Duplicate catalog item: ${sourceSlug}`)
     seen.add(dedupeKey)
 
-    const ruleConfig = sourceKind === 'sports_rule'
-      ? parseSportsRuleConfig(item.ruleConfig, index)
+    const ruleConfig = isRuleKind
+      ? parseSportsRuleConfig(item.ruleConfig, index, sourceKind)
       : null
     return {
       sourceKind,
       sourceSlug,
-      category: sourceKind === 'sports_rule' ? 'sports' : optionalShortText(item.category, `items[${index}].category`),
-      sport: sourceKind === 'sports_rule' ? null : optionalShortText(item.sport, `items[${index}].sport`),
+      category: isRuleKind ? 'sports' : optionalShortText(item.category, `items[${index}].category`),
+      sport: isRuleKind ? null : optionalShortText(item.sport, `items[${index}].sport`),
       isEnabled: true,
       displayOverrides: {},
       ...(ruleConfig ? { ruleConfig } : {}),
@@ -166,18 +175,19 @@ function parseItems(value: unknown): PolymarketCatalogItemInput[] {
   })
 }
 
-function parseSportsRuleConfig(value: unknown, index: number) {
+function parseSportsRuleConfig(value: unknown, index: number, sourceKind: 'sports_rule' | 'sports_tag') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new PolymarketCatalogValidationError(`items[${index}].ruleConfig is required for automatic sports sources.`)
   }
   const config = value as Record<string, unknown>
   const windowDays = config.windowDays
   const limit = config.limit
+  const maxLimit = sourceKind === 'sports_tag' ? TAG_RULE_MAX_LIMIT : 50
   if (!Number.isSafeInteger(windowDays) || Number(windowDays) < 1 || Number(windowDays) > 30) {
     throw new PolymarketCatalogValidationError(`items[${index}].ruleConfig.windowDays must be between 1 and 30.`)
   }
-  if (!Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 50) {
-    throw new PolymarketCatalogValidationError(`items[${index}].ruleConfig.limit must be between 1 and 50.`)
+  if (!Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > maxLimit) {
+    throw new PolymarketCatalogValidationError(`items[${index}].ruleConfig.limit must be between 1 and ${maxLimit}.`)
   }
   if (config.marketType !== 'moneyline') {
     throw new PolymarketCatalogValidationError(`items[${index}].ruleConfig.marketType must be moneyline.`)

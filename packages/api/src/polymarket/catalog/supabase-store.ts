@@ -37,7 +37,7 @@ interface ReleaseRow {
 interface ItemRow {
   id: string
   release_id: string
-  source_kind: 'event' | 'market' | 'sports_rule'
+  source_kind: 'event' | 'market' | 'sports_rule' | 'sports_tag'
   source_slug: string
   source_id: string | null
   condition_id: string | null
@@ -234,7 +234,8 @@ function mapSportsRuleConfig(value: unknown): PolymarketCatalogItem['ruleConfig'
   if (!Number.isSafeInteger(windowDays) || !Number.isSafeInteger(limit) || value.marketType !== 'moneyline') {
     return null
   }
-  return { windowDays, limit, marketType: 'moneyline' }
+  const tagId = typeof value.tagId === 'string' && value.tagId.trim() ? value.tagId.trim() : null
+  return { windowDays, limit, marketType: 'moneyline', ...(tagId ? { tagId } : {}) }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

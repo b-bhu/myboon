@@ -2,10 +2,13 @@ import { deriveCategoryFromText } from '../../curated.js'
 import { gammaFetch } from '../read/market-read.js'
 import type { PolymarketCatalogItemInput } from './contracts.js'
 import { PolymarketCatalogValidationError } from './contracts.js'
-import { resolveSportsRuleForSave } from './sports-rules.js'
+import { resolveSportsRuleForSave, resolveSportsTagForSave } from './sports-rules.js'
 
 const SAFE_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/
 const RESOLUTION_CONCURRENCY = 8
+// A tag spans every league beneath it, so it needs a higher ceiling than a
+// single-series rule — cricket alone runs ~57 fixtures in a 14-day window.
+export const TAG_RULE_MAX_LIMIT = 100
 
 export async function resolvePolymarketCatalogItems(
   inputs: PolymarketCatalogItemInput[],
@@ -113,7 +116,37 @@ export async function resolvePolymarketCatalogItem(
     }
   }
 
-  throw new PolymarketCatalogValidationError('sourceKind must be event, market, or sports_rule.')
+  if (input.sourceKind === 'sports_tag') {
+    const ruleConfig = input.ruleConfig
+    if (!ruleConfig
+      || !Number.isSafeInteger(ruleConfig.windowDays)
+      || ruleConfig.windowDays < 1
+      || ruleConfig.windowDays > 30
+      || !Number.isSafeInteger(ruleConfig.limit)
+      || ruleConfig.limit < 1
+      || ruleConfig.limit > TAG_RULE_MAX_LIMIT
+      || ruleConfig.marketType !== 'moneyline') {
+      throw new PolymarketCatalogValidationError(
+        `Automatic sports tags require a 1–30 day window and a 1–${TAG_RULE_MAX_LIMIT} game limit.`,
+      )
+    }
+    const resolved = resolveSportsTagForSave(sourceSlug)
+    return {
+      ...input,
+      sourceKind: 'sports_tag',
+      sourceSlug: resolved.slug,
+      sourceId: resolved.tagId,
+      conditionId: null,
+      title: resolved.label,
+      category: 'sports',
+      sport: resolved.slug,
+      isEnabled: input.isEnabled ?? true,
+      displayOverrides: input.displayOverrides ?? {},
+      ruleConfig: { ...ruleConfig, tagId: resolved.tagId },
+    }
+  }
+
+  throw new PolymarketCatalogValidationError('sourceKind must be event, market, sports_rule, or sports_tag.')
 }
 
 async function fetchFirst(path: string, slug: string): Promise<Record<string, unknown>> {

@@ -7,6 +7,10 @@ import { PolymarketCatalogValidationError } from './contracts.js'
 const LIVE_LOOKBACK_DAYS = 7
 const DISCOVERY_PAGE_SIZE = 100
 const MAX_DISCOVERY_PAGES = 3
+// Tag discovery spans every league under a tag, so it sweeps deeper than a
+// single series. Gamma does apply start_time_min/max to tag queries, which keeps
+// this bounded — cricket's full window fits in two pages today.
+const MAX_TAG_DISCOVERY_PAGES = 6
 
 interface SportsMetadata {
   sport: string
@@ -80,6 +84,83 @@ export async function listSportsRuleOptions(): Promise<SportsRuleOption[]> {
 
   return [...new Map(options.map((option) => [option.sportCode, option])).values()]
     .sort((left, right) => left.sportCode.localeCompare(right.sportCode))
+}
+
+/** Tags an operator may expand into every league beneath them. */
+export const SPORTS_TAG_OPTIONS: SportsTagOption[] = [
+  { tagId: '517', slug: 'cricket', label: 'Cricket — all leagues' },
+]
+
+export interface SportsTagOption {
+  tagId: string
+  slug: string
+  label: string
+}
+
+export function findSportsTagOption(value: string): SportsTagOption | null {
+  const needle = value.trim().toLowerCase()
+  return SPORTS_TAG_OPTIONS.find(
+    (option) => option.slug === needle || option.tagId === needle,
+  ) ?? null
+}
+
+export function resolveSportsTagForSave(slug: string): SportsTagOption {
+  const option = findSportsTagOption(slug)
+  if (!option) {
+    throw new PolymarketCatalogValidationError(
+      `“${slug}” is not a supported automatic sports tag.`,
+    )
+  }
+  return option
+}
+
+/**
+ * Expand a tag into every eligible main-moneyline fixture beneath it, across all
+ * of that tag's leagues. Unlike a sports_rule this needs no series resolution —
+ * new competitions appear as soon as Polymarket tags them.
+ */
+export async function discoverSportsTagMarkets(
+  item: PolymarketCatalogItem,
+  nowMs: number,
+): Promise<FeaturedMarket[]> {
+  const tagId = item.ruleConfig?.tagId ?? item.sourceId
+  if (!item.ruleConfig || !tagId) return []
+
+  const from = new Date(nowMs - LIVE_LOOKBACK_DAYS * 86_400_000).toISOString()
+  const until = new Date(nowMs + item.ruleConfig.windowDays * 86_400_000).toISOString()
+  const events: Record<string, unknown>[] = []
+
+  for (let page = 0; page < MAX_TAG_DISCOVERY_PAGES; page += 1) {
+    const params = new URLSearchParams({
+      tag_id: tagId,
+      active: 'true',
+      closed: 'false',
+      start_time_min: from,
+      start_time_max: until,
+      limit: String(DISCOVERY_PAGE_SIZE),
+      offset: String(page * DISCOVERY_PAGE_SIZE),
+      order: 'startTime',
+      ascending: 'true',
+    })
+    const rows = await gammaFetchCached<unknown>(`events?${params.toString()}`)
+    if (!Array.isArray(rows)) break
+    const pageEvents = rows.filter(isRecord)
+    events.push(...pageEvents)
+    if (pageEvents.length < DISCOVERY_PAGE_SIZE) break
+  }
+
+  return events
+    // A tag spans many leagues, so there is no single series slug to match on.
+    .filter((event) => isEligibleMainGame(event, null, nowMs, item.ruleConfig!.windowDays))
+    .map((event) => mapGammaEventToFeaturedMarket(event, {
+      category: item.category,
+      sport: item.sport,
+      mainMoneylineOnly: true,
+      now: nowMs,
+    }))
+    .filter((market): market is FeaturedMarket => market !== null)
+    .filter((market) => market.status === 'live' || market.status === 'upcoming')
+    .sort(compareDiscoveredMarkets)
 }
 
 export async function discoverSportsRuleMarkets(

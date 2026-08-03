@@ -1,10 +1,12 @@
-export type PolymarketCatalogSourceKind = 'event' | 'market' | 'sports_rule'
+export type PolymarketCatalogSourceKind = 'event' | 'market' | 'sports_rule' | 'sports_tag'
 export type PolymarketCatalogReleaseStatus = 'draft' | 'published' | 'archived'
 
 export interface PolymarketSportsRuleConfig {
   windowDays: number
   limit: number
   marketType: 'moneyline'
+  /** Set only for sports_tag sources — the Gamma tag whose leagues are expanded. */
+  tagId?: string
 }
 
 export interface PolymarketCatalogItemInput {
