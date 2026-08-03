@@ -5,6 +5,12 @@
       "name": "expo-web",
       "url": "http://localhost:8081",
       "port": 8081
+    },
+    {
+      "name": "internal-dashboard",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "web", "dev"],
+      "port": 3001
     }
   ]
 }

@@ -18,10 +18,19 @@ const COLLECTION_KEY = 'featured'
 const COLLECTION_ENDPOINT = `/internal/polymarket/api/collections/${COLLECTION_KEY}`
 const SPORTS_OPTIONS_ENDPOINT = '/internal/polymarket/api/options/sports'
 const SAFE_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/
+// A whole-sport source expands one tag into every league beneath it, so it needs
+// a higher ceiling than a single-league rule — cricket alone runs ~55 fixtures
+// in a two-week window.
+const TAG_MAX_LIMIT = 100
 
 interface EditorItem extends PolymarketCatalogItemInput {
   clientId: string
   title: string
+}
+
+/** Both automatic kinds carry a ruleConfig and sports metadata. */
+function isRuleKind(kind: PolymarketCatalogSourceKind): boolean {
+  return kind === 'sports_rule' || kind === 'sports_tag'
 }
 
 interface AddItemForm {
@@ -131,6 +140,13 @@ export function PolymarketCollectionEditor() {
       setError('Automatic sources need a 1–30 day window and a 1–50 game limit.')
       return
     }
+    if (form.sourceKind === 'sports_tag' && (
+      !Number.isSafeInteger(windowDays) || windowDays < 1 || windowDays > 30
+      || !Number.isSafeInteger(ruleLimit) || ruleLimit < 1 || ruleLimit > TAG_MAX_LIMIT
+    )) {
+      setError(`Whole-sport sources need a 1–30 day window and a 1–${TAG_MAX_LIMIT} game limit.`)
+      return
+    }
     if (items.some((item) => item.sourceKind === form.sourceKind && item.sourceSlug === sourceSlug)) {
       setError(`The ${form.sourceKind} “${sourceSlug}” is already in this collection.`)
       return
@@ -141,9 +157,9 @@ export function PolymarketCollectionEditor() {
       sourceKind: form.sourceKind,
       sourceSlug,
       title: sourceSlug,
-      category: form.sourceKind === 'sports_rule' ? 'sports' : category || null,
-      sport: form.sourceKind === 'sports_rule' ? null : sport || null,
-      ruleConfig: form.sourceKind === 'sports_rule'
+      category: isRuleKind(form.sourceKind) ? 'sports' : category || null,
+      sport: isRuleKind(form.sourceKind) ? null : sport || null,
+      ruleConfig: isRuleKind(form.sourceKind)
         ? { windowDays, limit: ruleLimit, marketType: 'moneyline' }
         : null,
     }])
@@ -162,9 +178,11 @@ export function PolymarketCollectionEditor() {
     if (value === '') return
     const parsed = Number(value)
     if (!Number.isSafeInteger(parsed)) return
+    const item = items.find((candidate) => candidate.clientId === clientId)
+    const kindCeiling = item?.sourceKind === 'sports_tag' ? TAG_MAX_LIMIT : 50
     const maximum = field === 'windowDays'
       ? 30
-      : Math.min(50, collectionState?.collection.defaultLimit ?? 50)
+      : Math.min(kindCeiling, collectionState?.collection.defaultLimit ?? kindCeiling)
     const normalized = Math.max(1, Math.min(maximum, parsed))
     setItems((current) => current.map((item) => item.clientId === clientId && item.ruleConfig
       ? { ...item, ruleConfig: { ...item.ruleConfig, [field]: normalized } }
@@ -172,10 +190,12 @@ export function PolymarketCollectionEditor() {
     markDirty()
   }
 
-  function selectSourceMode(mode: 'automatic' | 'individual') {
-    setForm(mode === 'automatic'
-      ? { ...EMPTY_FORM, sourceKind: 'sports_rule' }
-      : { ...EMPTY_FORM, sourceKind: 'event' })
+  function selectSourceMode(mode: 'whole-sport' | 'automatic' | 'individual') {
+    setForm(mode === 'whole-sport'
+      ? { ...EMPTY_FORM, sourceKind: 'sports_tag', sourceSlug: 'cricket', limit: '60' }
+      : mode === 'automatic'
+        ? { ...EMPTY_FORM, sourceKind: 'sports_rule' }
+        : { ...EMPTY_FORM, sourceKind: 'event' })
     setError(null)
     setNotice(null)
   }
@@ -222,7 +242,7 @@ export function PolymarketCollectionEditor() {
         sourceSlug: item.sourceSlug.trim(),
         category: normalizedOptionalText(item.category),
         sport: normalizedOptionalText(item.sport),
-        ruleConfig: item.sourceKind === 'sports_rule' ? item.ruleConfig : undefined,
+        ruleConfig: isRuleKind(item.sourceKind) ? item.ruleConfig : undefined,
       })),
     }
 
@@ -355,22 +375,75 @@ export function PolymarketCollectionEditor() {
             <div className={styles.sourceTabs} aria-label="Source mode">
               <button
                 type="button"
-                aria-pressed={form.sourceKind === 'sports_rule'}
-                onClick={() => selectSourceMode('automatic')}
+                aria-pressed={form.sourceKind === 'sports_tag'}
+                onClick={() => selectSourceMode('whole-sport')}
               >
-                Automatic games
+                Whole sport
               </button>
               <button
                 type="button"
-                aria-pressed={form.sourceKind !== 'sports_rule'}
+                aria-pressed={form.sourceKind === 'sports_rule'}
+                onClick={() => selectSourceMode('automatic')}
+              >
+                One league
+              </button>
+              <button
+                type="button"
+                aria-pressed={!isRuleKind(form.sourceKind)}
                 onClick={() => selectSourceMode('individual')}
               >
                 Individual slug
               </button>
             </div>
 
-            <form className={`${styles.addForm} ${form.sourceKind === 'sports_rule' ? styles.ruleForm : ''}`} onSubmit={addItem}>
-              {form.sourceKind === 'sports_rule' ? (
+            <form className={`${styles.addForm} ${isRuleKind(form.sourceKind) ? styles.ruleForm : ''}`} onSubmit={addItem}>
+              {form.sourceKind === 'sports_tag' ? (
+                <>
+                  <label className={styles.slugField}>
+                    <span>Sport</span>
+                    <select
+                      value={form.sourceSlug}
+                      onChange={(event) => setForm((current) => ({ ...current, sourceSlug: event.target.value }))}
+                      required
+                    >
+                      <option value="cricket">Cricket — all leagues</option>
+                    </select>
+                    <small>Covers every league Polymarket tags for this sport, including ones added later.</small>
+                  </label>
+                  <label>
+                    <span>Show next</span>
+                    <div className={styles.suffixedInput}>
+                      <input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={form.windowDays}
+                        onChange={(event) => setForm((current) => ({ ...current, windowDays: event.target.value }))}
+                        required
+                      />
+                      <span>days</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span>Maximum</span>
+                    <div className={styles.suffixedInput}>
+                      <input
+                        type="number"
+                        min={1}
+                        max={Math.min(TAG_MAX_LIMIT, collectionLimit)}
+                        value={form.limit}
+                        onChange={(event) => setForm((current) => ({ ...current, limit: event.target.value }))}
+                        required
+                      />
+                      <span>games</span>
+                    </div>
+                  </label>
+                  <div className={styles.ruleInvariant}>
+                    <span className="material-symbols-outlined" aria-hidden="true">public</span>
+                    <span>All leagues · main games · live + upcoming · collection cap {collectionLimit}</span>
+                  </div>
+                </>
+              ) : form.sourceKind === 'sports_rule' ? (
                 <>
                   <label className={styles.slugField}>
                     <span>Polymarket sports code</span>
@@ -501,11 +574,19 @@ export function PolymarketCollectionEditor() {
                   <li className={styles.itemRow} key={item.clientId}>
                     <div className={styles.position}>{String(index + 1).padStart(2, '0')}</div>
                     <div className={styles.itemIdentity}>
-                      <span className={styles.kindBadge}>{item.sourceKind === 'sports_rule' ? 'auto' : item.sourceKind}</span>
+                      <span className={styles.kindBadge}>
+                        {item.sourceKind === 'sports_tag'
+                          ? 'all leagues'
+                          : item.sourceKind === 'sports_rule' ? 'auto' : item.sourceKind}
+                      </span>
                       <strong>{item.title || item.sourceSlug}</strong>
-                      <code>{item.sourceKind === 'sports_rule' ? `sport code: ${item.sourceSlug}` : item.sourceSlug}</code>
+                      <code>
+                        {item.sourceKind === 'sports_tag'
+                          ? `sport: ${item.sourceSlug}`
+                          : item.sourceKind === 'sports_rule' ? `sport code: ${item.sourceSlug}` : item.sourceSlug}
+                      </code>
                     </div>
-                    {item.sourceKind === 'sports_rule' && item.ruleConfig ? (
+                    {isRuleKind(item.sourceKind) && item.ruleConfig ? (
                       <div className={styles.ruleControls}>
                         <label className={styles.inlineField}>
                           <span>Next days</span>
@@ -522,7 +603,7 @@ export function PolymarketCollectionEditor() {
                           <input
                             type="number"
                             min={1}
-                            max={Math.min(50, collectionLimit)}
+                            max={Math.min(item.sourceKind === 'sports_tag' ? TAG_MAX_LIMIT : 50, collectionLimit)}
                             value={item.ruleConfig.limit}
                             onChange={(event) => updateRuleItem(item.clientId, 'limit', event.target.value)}
                           />
@@ -683,7 +764,8 @@ function validateEditorItems(items: EditorItem[], collectionLimit: number): stri
     if (item.sourceKind === 'event' && !normalizedOptionalText(item.sport)) {
       return `The event “${item.sourceSlug}” needs a sport before this draft can be saved.`
     }
-    if (item.sourceKind === 'sports_rule') {
+    if (isRuleKind(item.sourceKind)) {
+      const kindCeiling = item.sourceKind === 'sports_tag' ? TAG_MAX_LIMIT : 50
       const config = item.ruleConfig
       if (!config
         || !Number.isSafeInteger(config.windowDays)
@@ -691,7 +773,7 @@ function validateEditorItems(items: EditorItem[], collectionLimit: number): stri
         || config.windowDays > 30
         || !Number.isSafeInteger(config.limit)
         || config.limit < 1
-        || config.limit > Math.min(50, collectionLimit)) {
+        || config.limit > Math.min(kindCeiling, collectionLimit)) {
         return `The automatic source “${item.sourceSlug}” needs a valid window and a game limit no greater than the collection cap (${collectionLimit}).`
       }
     }
