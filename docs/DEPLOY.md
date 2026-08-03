@@ -44,6 +44,11 @@ falls back to the legacy retrieval path, which additionally needs `python3.12`
 and the last30days script at
 `/root/.agents/skills/last30days/scripts/last30days.py`).
 
+Optional: the same `hermes` binary can run a persistent gateway process that
+relays messages to/from a Buzz (Nostr) community channel for ops chat and
+notification delivery. Not enabled on the VPS yet — see
+[`BUZZ_MESSAGING.md`](./BUZZ_MESSAGING.md) for the setup guide.
+
 ---
 
 ## Pipeline state lives in SQLite on this box
@@ -205,6 +210,14 @@ SUPABASE_SERVICE_ROLE_KEY=
 # NEWS_HERMES_PROFILE=myboonfeed   # news worker chat profile
 # NEWS_HERMES_TOOLSETS=browser,web
 # EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
+
+# --- Buzz gateway (optional, not yet enabled — see docs/BUZZ_MESSAGING.md) ---
+# These belong to the `hermes gateway` process, not this package, and the
+# private key belongs in ~/.hermes/.env on the VPS, never here.
+# BUZZ_RELAY_URL=
+# BUZZ_CHANNELS=
+# BUZZ_HOME_CHANNEL=
+# BUZZ_ALLOW_ALL_USERS=false
 
 # --- Research gate + engine (entity pipeline rebuild) ---
 # Both ON by default. Kill switches, '1' disables:
