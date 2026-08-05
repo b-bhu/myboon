@@ -53,14 +53,18 @@ import { verifyPredictSessionProof } from '../sessions.js'
  */
 
 /**
- * Relayer operations the SDK legitimately needs signed.
+ * Relayer and CLOB operations the SDK legitimately needs signed.
  *
  * `GET /deployed` (does this signer's deposit wallet exist) and
- * `POST /submit` (execute a gasless transaction) are the only two paths
- * `@polymarket/client` requests builder authorization for — verified against
- * its compiled source. Allowlisting them means a stolen or replayed proof
- * still cannot direct this app's Builder credential at arbitrary relayer
- * operations.
+ * `POST /submit` (execute a gasless transaction) are relayer calls.
+ * `POST /auth/api-key` (derive this signer's CLOB API key credentials) is a
+ * CLOB call — new account setup calls it through the same `authorize()`
+ * extension point right after the relayer calls, so it needs the same
+ * Builder-signed headers. All three are the only paths `@polymarket/client`
+ * requests builder authorization for — verified against its compiled source
+ * (`e.clob.post("/auth/api-key", ...)` alongside the relayer calls).
+ * Allowlisting them means a stolen or replayed proof still cannot direct
+ * this app's Builder credential at arbitrary relayer or CLOB operations.
  *
  * If a future SDK version adds an endpoint, it fails closed here with a 403
  * naming the path, rather than silently widening what this key authorizes.
@@ -68,6 +72,7 @@ import { verifyPredictSessionProof } from '../sessions.js'
 const ALLOWED_BUILDER_PATHS: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: 'GET', path: /^\/deployed(\?.*)?$/ },
   { method: 'POST', path: /^\/submit$/ },
+  { method: 'POST', path: /^\/auth\/api-key$/ },
 ]
 
 function isAllowedBuilderRequest(method: string, path: string): boolean {
