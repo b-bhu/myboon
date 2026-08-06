@@ -44,7 +44,8 @@
           "backgroundColor": "#073B4C"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withCleartextTraffic.js"
     ],
     "experiments": {
       "typedRoutes": true,
