@@ -57,22 +57,38 @@ import { verifyPredictSessionProof } from '../sessions.js'
  *
  * `GET /deployed` (does this signer's deposit wallet exist) and
  * `POST /submit` (execute a gasless transaction) are relayer calls.
- * `POST /auth/api-key` (derive this signer's CLOB API key credentials) is a
- * CLOB call — new account setup calls it through the same `authorize()`
- * extension point right after the relayer calls, so it needs the same
- * Builder-signed headers. All three are the only paths `@polymarket/client`
- * requests builder authorization for — verified against its compiled source
- * (`e.clob.post("/auth/api-key", ...)` alongside the relayer calls).
- * Allowlisting them means a stolen or replayed proof still cannot direct
- * this app's Builder credential at arbitrary relayer or CLOB operations.
+ *
+ * The two `/auth` entries are one CLOB operation, not two. `@polymarket/client`
+ * obtains CLOB credentials through a create-then-derive fallback — from its
+ * compiled source:
+ *
+ *     try { return await Tc(e, r) }   // POST /auth/api-key
+ *     catch (t) { if (!(t instanceof f) || t.status !== 400) throw t }
+ *     return xc(e, r)                 // GET /auth/derive-api-key
+ *
+ * A signer with no key yet takes the POST and stops there. A signer that
+ * already has one gets a 400 from Polymarket ("key exists"), and the SDK falls
+ * back to the GET to fetch the existing credentials. So the POST is the
+ * first-time path and the GET is the *returning user* path — allowlisting only
+ * the POST leaves every account broken from its second setup onward, which is
+ * what issue #275 was (a returning wallet 403'd on the fallback, surfacing as
+ * the SDK's generic "Could not authorize the builder-authenticated request").
+ *
+ * Allowlisting means a stolen or replayed proof still cannot direct this app's
+ * Builder credential at arbitrary relayer or CLOB operations.
  *
  * If a future SDK version adds an endpoint, it fails closed here with a 403
  * naming the path, rather than silently widening what this key authorizes.
+ * Fail-closed is the right default, but note it makes a missing path look like
+ * an auth failure from the client — check for `[builder-sign] refused` here
+ * before assuming the credentials or the proof are at fault.
  */
 const ALLOWED_BUILDER_PATHS: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: 'GET', path: /^\/deployed(\?.*)?$/ },
   { method: 'POST', path: /^\/submit$/ },
+  // Credential acquisition: create first, then derive if one already exists.
   { method: 'POST', path: /^\/auth\/api-key$/ },
+  { method: 'GET', path: /^\/auth\/derive-api-key$/ },
 ]
 
 function isAllowedBuilderRequest(method: string, path: string): boolean {

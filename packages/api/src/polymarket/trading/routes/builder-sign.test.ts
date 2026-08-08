@@ -114,6 +114,21 @@ describe('/builder/sign path allowlist', () => {
     }
   })
 
+  test('permits both credential paths, so returning users are not locked out', async () => {
+    // The SDK creates a key first and falls back to deriving when one already
+    // exists (Polymarket answers the POST with a 400 in that case). A first-time
+    // signer only ever needs the POST, so allowlisting that alone still passes a
+    // new-account test while breaking every returning account — issue #275.
+    const credentialCalls = [
+      { method: 'POST', path: '/auth/api-key', body: '{}' },
+      { method: 'GET', path: '/auth/derive-api-key' },
+    ]
+    for (const req of credentialCalls) {
+      const res = await post(await signedHeaders(), req)
+      assert.equal(res.status, 200, `expected ${req.method} ${req.path} to be allowed`)
+    }
+  })
+
   test('refuses an arbitrary path even with a valid proof', async () => {
     const res = await post(await signedHeaders(), { method: 'POST', path: '/withdraw', body: '{}' })
     assert.equal(res.status, 403)
