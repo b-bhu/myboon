@@ -72,7 +72,56 @@ function assertE2EStubIsFencedOff(env) {
   );
 }
 
+/**
+ * Every `EXPO_PUBLIC_` variable the app cannot function without.
+ *
+ * `.env` is gitignored and EAS builds from git, so an EAS build sees *only*
+ * what `eas.json`'s `env` block provides — never the local `.env`. That
+ * asymmetry is invisible during development: `expo run:android` reads `.env`
+ * off disk and works, while the EAS artifact ships with the variable undefined
+ * and fails at runtime, far from the cause. It cost us a debugging cycle when
+ * the Privy keys were missing from every EAS profile and login silently died.
+ *
+ * Listing them here turns that into a build-time failure naming the variable.
+ */
+const REQUIRED_PUBLIC_ENV = [
+  ['EXPO_PUBLIC_API_BASE_URL', 'the API every screen reads from'],
+  ['EXPO_PUBLIC_PRIVY_APP_ID', 'Privy auth — login and embedded wallets'],
+  ['EXPO_PUBLIC_PRIVY_CLIENT_ID', 'Privy auth — required for mobile clients'],
+  ['EXPO_PUBLIC_SOLANA_RPC_URL', 'Solana reads; the public fallback is rate-limited'],
+];
+
+/**
+ * Enforced only for builds that can reach a user, matching the E2E fence above.
+ * A developer running `expo start` against a half-filled `.env` is a normal
+ * working state and must not be blocked.
+ */
+function assertRequiredEnvIsPresent(env) {
+  if (!isProductionBuild(env)) return;
+
+  const missing = REQUIRED_PUBLIC_ENV.filter(([name]) => !env[name]?.trim());
+  if (missing.length === 0) return;
+
+  throw new Error(
+    [
+      `Missing required environment ${missing.length === 1 ? 'variable' : 'variables'} in a production build. Refusing to build.`,
+      '',
+      ...missing.map(([name, why]) => `  ${name} — ${why}`),
+      '',
+      'EXPO_PUBLIC_ values are inlined at build time, so this artifact would ship',
+      'with them undefined and fail at runtime instead of here.',
+      '',
+      `Detected: EAS_BUILD_PROFILE=${env.EAS_BUILD_PROFILE ?? '(none)'}, NODE_ENV=${env.NODE_ENV ?? '(none)'}`,
+      '',
+      'Fix: add them to this profile\'s `env` block in eas.json, or set them as EAS',
+      'environment variables (`eas env:create`). A local .env does not reach EAS —',
+      'it is gitignored, and EAS builds from git.',
+    ].join('\n'),
+  );
+}
+
 module.exports = ({ config }) => {
   assertE2EStubIsFencedOff(process.env);
+  assertRequiredEnvIsPresent(process.env);
   return config;
 };
