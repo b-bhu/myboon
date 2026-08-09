@@ -102,6 +102,14 @@ export function registerProxyRoutes(routes: Hono) {
   // Signed with the user's key (L1) or their CLOB session secret (L2). Relayed
   // verbatim — the signature covers the method and path, so altering either
   // would invalidate it.
+  //
+  // The `POLY_BUILDER_*` four are a second, independent credential on the same
+  // request: `@polymarket/client` calls `resolveClobHeaders()` before a
+  // builder-authenticated CLOB request and merges the headers our own
+  // `/clob/builder/sign` route returned into it. They are not interchangeable
+  // with the L1 set — upstream wants both, and dropping them makes an otherwise
+  // valid request fail as "Invalid L1 Request headers", which reads like a
+  // signature problem on the device rather than a header the proxy discarded.
   const POLY_AUTH_HEADERS = [
     'POLY_ADDRESS',
     'POLY_SIGNATURE',
@@ -109,6 +117,10 @@ export function registerProxyRoutes(routes: Hono) {
     'POLY_NONCE',
     'POLY_API_KEY',
     'POLY_PASSPHRASE',
+    'POLY_BUILDER_API_KEY',
+    'POLY_BUILDER_SIGNATURE',
+    'POLY_BUILDER_TIMESTAMP',
+    'POLY_BUILDER_PASSPHRASE',
   ]
 
   /**
