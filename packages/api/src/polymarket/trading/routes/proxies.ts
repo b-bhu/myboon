@@ -154,6 +154,21 @@ export function registerProxyRoutes(routes: Hono) {
     try {
       const res = await fetch(target, { method, headers, body })
       const text = await res.text()
+      // Log what upstream actually said on a rejection.
+      //
+      // Without this the only evidence of a failed auth is a bare status code,
+      // and every distinct upstream cause — bad signature, unknown signer,
+      // missing builder credential, nonce mismatch — looks identical from here.
+      // Reconstructing the reason from status codes alone cost several rounds of
+      // wrong guesses; the body says it outright. Header *names* only: their
+      // values are signatures and credentials, which must not reach the log.
+      if (!res.ok) {
+        console.warn(
+          `[clob-relay] ${method} ${path} → ${res.status} `
+          + `sent=[${Object.keys(headers).join(',')}] `
+          + `upstream=${text.slice(0, 400)}`,
+        )
+      }
       // Upstream status passes through untouched: a 401 is a real auth failure
       // the client must act on, not a proxy error to flatten into a 502.
       return new Response(text, {
