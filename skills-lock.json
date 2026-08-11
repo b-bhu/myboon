@@ -1,6 +1,18 @@
 {
   "version": 1,
   "skills": {
+    "colosseum-copilot": {
+      "source": "ColosseumOrg/colosseum-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/colosseum-copilot/SKILL.md",
+      "computedHash": "4038e366dd3bbcbc3065abc61c5cc9453b29655f2e5c390a8d3441181d6021b5"
+    },
+    "design-taste-frontend": {
+      "source": "leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/taste-skill/SKILL.md",
+      "computedHash": "6d838b246d0e35d0b53f4f23f98ba7a1dd561937e64f7d0c7553b0928e376c3e"
+    },
     "frontend-design": {
       "source": "anthropics/skills",
       "sourceType": "github",
