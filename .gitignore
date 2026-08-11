@@ -55,6 +55,10 @@ packages/collectors/logs/
 packages/brain/reports/narratives.csv
 reports/world-cup/
 apps/video/--props
+# Video working files: renders, extracted audio, transcripts, ffmpeg shim
+apps/video/out/
+apps/video/bin/
+apps/video/public/week1/
 packages/collectors/src/world-cup/
 docs/specs/world-cup-x-campaign.md
 docs/scripts/
