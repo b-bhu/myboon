@@ -13,6 +13,9 @@ import { createPolymarketReadRoutes } from '../polymarket/routes/index.js'
 import { SupabasePolymarketCatalogStore } from '../polymarket/catalog/supabase-store.js'
 import { spotRoutes } from '../spot.js'
 import { createStoryRoutes } from '../stories.js'
+import { createSwapRoutes } from '../swap.js'
+import { iconSourceUrlForAssetId, resolveCatalog, resolveRef } from '../tokens/identity-service.js'
+import { createTokenRoutes } from '../tokens/routes.js'
 import type { ApiConfig } from './config.js'
 
 export function createApp(config: ApiConfig): Hono {
@@ -69,6 +72,11 @@ export function createApp(config: ApiConfig): Hono {
   app.route('/perps/pacifica', pacificaRoutes)
   app.route('/perps/phoenix', phoenixRoutes)
   app.route('/spot', spotRoutes)
+  app.route('/tokens', createTokenRoutes({
+    enabled: config.tokenIdentityEnabled,
+    service: { resolveRef, iconSourceUrlForAssetId, resolveCatalog },
+  }))
+  app.route('/swap', createSwapRoutes({ jupApiKey: config.jupApiKey }))
 
   app.get('/health', (c) => c.json({ status: 'ok' }))
 

@@ -15,6 +15,8 @@ export interface PhoenixMarket {
   baseSymbol: string;
   displayName: string;
   quoteSymbol: 'USDC' | 'USD';
+  /** API-relative cached icon path, same shape as Pacifica's. Null until resolved. */
+  iconPath: string | null;
   status: PhoenixMarketStatus;
   tradeable: boolean;
   maxLeverage: number | null;
@@ -341,6 +343,7 @@ function normalizeMarket(input: unknown): PhoenixMarket | null {
     baseSymbol: asString(record.baseSymbol) ?? venueSymbol,
     displayName: `${venueSymbol} Perpetual`,
     quoteSymbol: (asString(record.quoteSymbol) === 'USD' ? 'USD' : 'USDC'),
+    iconPath: asString(record.iconPath),
     status,
     tradeable: asBoolean(record.tradeable) ?? status === 'active',
     maxLeverage: asNumber(record.maxLeverage),
@@ -625,22 +628,12 @@ export async function buildPhoenixWithdraw(input: PhoenixTransferBuilderInput): 
   return normalizeInstructionBuilderResult(payload, 'withdraw', '/tx/withdraw');
 }
 
-export function formatPhoenixPrice(price: number | null): string {
-  if (price === null || !Number.isFinite(price) || price <= 0) return '--';
-  if (price >= 1000) return `$${price.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-  if (price >= 1) return `$${price.toFixed(3)}`;
-  if (price >= 0.001) return `$${price.toFixed(6)}`;
-  return `$${price.toExponential(3)}`;
-}
-
-export function formatPhoenixPercent(value: number | null, decimals = 2): string {
-  if (value === null || !Number.isFinite(value)) return '--';
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(decimals)}%`;
-}
-
-export function formatPhoenixRate(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return '--';
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${(value * 100).toFixed(4)}%`;
-}
+// Re-export aliases onto lib/format's consolidated formatters. Keeps every
+// existing detail/profile/chart screen importing from this module compiling
+// with zero edits, per the token-identity-and-venue-adapters PRD (formatter
+// consolidation, acceptance criterion 6).
+export {
+  formatPrice as formatPhoenixPrice,
+  formatPercent as formatPhoenixPercent,
+  formatRate as formatPhoenixRate,
+} from '@/lib/format';

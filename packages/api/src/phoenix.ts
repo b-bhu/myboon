@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { Direction, OrderFlags, Side, StopLossOrderKind, baseLots, baseUnitsToBaseLotsWithMarketParams, createPhoenixClient, priceUsdToTicksWithMarketParams } from '@ellipsis-labs/rise'
 import type { Authority, BaseLots, Symbol as PhoenixSymbol, TriggerOrderParams } from '@ellipsis-labs/rise'
+import { perpIconPath } from './tokens/identity-service.js'
 
 const PHOENIX_API_BASE = process.env.PHOENIX_API_BASE || 'https://perp-api.phoenix.trade'
 const PHOENIX_WS_URL = process.env.PHOENIX_WS_URL || `${PHOENIX_API_BASE.replace(/^http/i, 'ws').replace(/\/$/, '')}/v1/ws`
@@ -757,7 +758,7 @@ function normalizeMarket(market: PhoenixMarketConfig, fetchedAt: number): Normal
     volume24h: null,
     change24h: null,
     yesterdayPrice: null,
-    iconPath: null,
+    iconPath: perpIconPath(venueSymbol),
     dataFreshness: 'partial',
     dataFreshnessReason: 'Phoenix REST market config does not include WS-only mark, mid, oracle, funding, open interest, or 24h volume stats in this slice.',
     configFetchedAt: new Date(fetchedAt).toISOString(),

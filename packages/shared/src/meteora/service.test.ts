@@ -95,6 +95,104 @@ async function testUnverifiedPoolsAreHidden(): Promise<void> {
   assert.equal(result.data.items.length, 0)
 }
 
+async function testPortfolioTokensCarryHonestNulls(): Promise<void> {
+  const fetcher: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        page: 1,
+        pageSize: 20,
+        hasNext: false,
+        totalCount: 1,
+        totalPositions: 1,
+        total: {},
+        pools: [
+          {
+            poolAddress: '5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6',
+            tokenXMint: 'So11111111111111111111111111111111111111112',
+            tokenX: 'SOL',
+            tokenXIcon: 'https://example.com/sol.png',
+            tokenYMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            tokenY: 'USDC',
+            tokenYIcon: 'https://example.com/usdc.png',
+            binStep: 4,
+            baseFee: '0.04',
+            poolPrice: '76.33',
+            balances: '100',
+            unclaimedFees: '1',
+            pnl: '2',
+            pnlPctChange: '3',
+            totalDeposit: '100',
+            openPositionCount: 1,
+            listPositions: [],
+            positionsOutOfRange: [],
+            outOfRange: false,
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+
+  const client = new MeteoraDataApiClient({ fetch: fetcher })
+  const result = await client.getOpenPortfolio('4xQzFC8N9Y1qeKQMKzBz6iUZmoDXe5vJp4bJvHfxAcnf')
+  const [portfolioPool] = result.data.pools
+
+  assert.ok(portfolioPool)
+  assert.equal(portfolioPool.tokenX.symbol, 'SOL')
+  assert.equal(portfolioPool.tokenX.decimals, null)
+  assert.equal(portfolioPool.tokenX.verified, null)
+  assert.equal(portfolioPool.tokenY.symbol, 'USDC')
+  assert.equal(portfolioPool.tokenY.decimals, null)
+  assert.equal(portfolioPool.tokenY.verified, null)
+}
+
+async function testLimitOrderPoolTokensCarryHonestNulls(): Promise<void> {
+  const fetcher: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        total: 1,
+        pages: 1,
+        current_page: 1,
+        page_size: 20,
+        data: [
+          {
+            pool: {
+              pool_address: '5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6',
+              pair_name: 'SOL-USDC',
+              token_x_mint: 'So11111111111111111111111111111111111111112',
+              token_x: 'SOL',
+              token_x_icon: 'https://example.com/sol.png',
+              token_y_mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+              token_y: 'USDC',
+              token_y_icon: 'https://example.com/usdc.png',
+              bin_step: 4,
+              base_fee: '0.04',
+            },
+            total_orders: 1,
+            fully_filled_orders: 0,
+            filled_pct: '0',
+            total_deposit_usd: '100',
+            total_deposit_sol: '1',
+            total_bonus_usd: '0',
+            total_bonus_sol: '0',
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+
+  const client = new MeteoraDataApiClient({ fetch: fetcher })
+  const result = await client.getOpenLimitOrderPools('4xQzFC8N9Y1qeKQMKzBz6iUZmoDXe5vJp4bJvHfxAcnf')
+  const [limitOrderPool] = result.data.items
+
+  assert.ok(limitOrderPool)
+  assert.equal(limitOrderPool.tokenX.symbol, 'SOL')
+  assert.equal(limitOrderPool.tokenX.decimals, null)
+  assert.equal(limitOrderPool.tokenX.verified, null)
+  assert.equal(limitOrderPool.tokenY.symbol, 'USDC')
+  assert.equal(limitOrderPool.tokenY.decimals, null)
+  assert.equal(limitOrderPool.tokenY.verified, null)
+}
+
 function testValidation(): void {
   assert.equal(assertAtomicAmount('0', 'amount'), '0')
   assert.equal(assertAtomicAmount('1000000', 'amount'), '1000000')
@@ -111,6 +209,8 @@ function testValidation(): void {
 
 await testPoolNormalizationAndCache()
 await testUnverifiedPoolsAreHidden()
+await testPortfolioTokensCarryHonestNulls()
+await testLimitOrderPoolTokensCarryHonestNulls()
 testValidation()
 
 console.log('Meteora service tests passed')

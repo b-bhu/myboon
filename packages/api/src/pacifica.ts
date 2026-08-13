@@ -1,9 +1,15 @@
 import { Hono } from 'hono'
+import { perpIconPath } from './tokens/identity-service.js'
 
 const PACIFICA_API_BASE = process.env.PACIFICA_API_BASE || 'https://api.pacifica.fi/api/v1'
 const PACIFICA_ICON_BASE = process.env.PACIFICA_ICON_BASE || 'https://app.pacifica.fi/imgs/tokens'
 const MARKETS_CACHE_TTL_MS = 15_000
+// Legacy negative-cache TTL: this is the flag-off path and also serves
+// symbols the token identity perp map does not cover, so misses should not
+// stay broken all day — matches the new proxy's ICON_NEGATIVE_TTL_MS policy
+// (tokens/icon-proxy.ts).
 const ICON_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const ICON_NEGATIVE_CACHE_TTL_MS = 60 * 60 * 1000
 
 const marketCache = new Map<string, { data: unknown; expiresAt: number }>()
 const iconCache = new Map<string, { svg: string | null; expiresAt: number }>()
@@ -87,6 +93,12 @@ async function getMarkets(): Promise<PacificaMarket[]> {
       const yesterdayPrice = safeNumber(price.yesterday_price)
       const change24h = yesterdayPrice > 0 ? ((markPrice - yesterdayPrice) / yesterdayPrice) * 100 : 0
       const iconBase = tokenBase(market.symbol)
+      // perpIconPath() returns the token-identity-proxied path
+      // (/tokens/icon/<assetId>) when the flag is on and the perp symbol
+      // map hits; otherwise fall back to the legacy per-venue proxy below,
+      // which stays the flag-off path and also covers symbols the frozen
+      // perp map does not list.
+      const iconPath = perpIconPath(market.symbol) ?? `/perps/pacifica/icons/${encodeURIComponent(iconBase)}.svg`
 
       return {
         symbol: market.symbol,
@@ -102,7 +114,7 @@ async function getMarkets(): Promise<PacificaMarket[]> {
         volume24h: safeNumber(price.volume_24h),
         change24h,
         yesterdayPrice,
-        iconPath: `/perps/pacifica/icons/${encodeURIComponent(iconBase)}.svg`,
+        iconPath,
       }
     })
     .filter((market): market is PacificaMarket => market !== null)
@@ -145,7 +157,10 @@ pacificaRoutes.get('/icons/:file', async (c) => {
   try {
     const res = await fetch(`${PACIFICA_ICON_BASE}/${encodeURIComponent(base)}.svg`)
     if (!res.ok) {
-      iconCache.set(base, { svg: null, expiresAt: now + ICON_CACHE_TTL_MS })
+      // Negative-cache misses for an hour, not a day — see
+      // ICON_NEGATIVE_CACHE_TTL_MS above; a newly listed token must not be
+      // broken all day.
+      iconCache.set(base, { svg: null, expiresAt: now + ICON_NEGATIVE_CACHE_TTL_MS })
       return c.body(null, 404)
     }
 

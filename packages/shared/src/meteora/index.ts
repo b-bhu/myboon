@@ -79,6 +79,7 @@ export type {
   MeteoraStrategy,
   MeteoraSnappedRange,
   MeteoraTimeframe,
+  MeteoraTokenRef,
   MeteoraTokenSummary,
   MeteoraTransactionBundle,
   MeteoraTransactionPlan,

@@ -126,8 +126,14 @@ export function MeteoraPositionActionSheet({
       pool: {
         address: pool.poolAddress,
         pair: pool.pair,
-        tokenX: pool.tokenX,
-        tokenY: pool.tokenY,
+        // The portfolio endpoint doesn't provide decimals/verified (see
+        // MeteoraTokenRef), but this fake MeteoraPoolDetail is only used to
+        // reach the position-action adapters below, which never read those
+        // two fields off pool.tokenX/tokenY — confirmed no consumer does.
+        // Fall back to a safe default rather than widen MeteoraPoolDetail's
+        // real (non-nullable) contract, which live execution paths rely on.
+        tokenX: { ...pool.tokenX, decimals: pool.tokenX.decimals ?? 0, verified: pool.tokenX.verified ?? false },
+        tokenY: { ...pool.tokenY, decimals: pool.tokenY.decimals ?? 0, verified: pool.tokenY.verified ?? false },
         currentPrice: pool.currentPrice,
         tvlUsd: null,
         volume24hUsd: null,

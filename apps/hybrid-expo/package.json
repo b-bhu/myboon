@@ -19,7 +19,9 @@
     "postinstall": "rm -rf node_modules/@wallet-ui/react-native-web3js/node_modules/@react-native-async-storage node_modules/@solana-mobile/wallet-adapter-mobile/node_modules/@react-native-async-storage 2>/dev/null || true",
     "test:security": "tsx --test features/chain/security.deletions.test.ts",
     "test:predict": "tsx --test components/predict/deposit.chains.test.ts features/predict/predict.navigation.test.ts",
-    "test": "pnpm test:chain && pnpm test:wallet && pnpm test:security && pnpm test:predict"
+    "test:format": "tsx --test lib/format.test.ts",
+    "test:markets": "tsx --test features/markets/venue.registry.core.test.ts features/perps/pacifica.rows.test.ts features/perps/phoenix.rows.test.ts features/meteora/meteora.rows.test.ts",
+    "test": "pnpm test:chain && pnpm test:wallet && pnpm test:security && pnpm test:predict && pnpm test:format && pnpm test:markets"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",

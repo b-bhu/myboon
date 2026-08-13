@@ -10,6 +10,9 @@ export type ApiConfig = {
   aiExplanationApiKey?: string
   aiExplanationBaseUrl: string
   aiExplanationModel: string
+  tokenIdentityEnabled: boolean
+  tokensApiKey?: string
+  jupApiKey?: string
 }
 
 export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -39,6 +42,8 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       ? (env.CLASSIFIER_MODEL ?? 'MiniMax-M2.7-lightning')
       : (env.OPENAI_API_KEY ? 'gpt-4o-mini' : (env.XAI_MODEL ?? 'grok-3-mini')))
 
+  const tokenIdentityEnabled = env.TOKEN_IDENTITY_ENABLED === '1' || env.TOKEN_IDENTITY_ENABLED === 'true'
+
   return {
     supabaseUrl: supabaseUrl!,
     supabaseServiceRoleKey: supabaseServiceRoleKey!,
@@ -51,5 +56,8 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     aiExplanationApiKey,
     aiExplanationBaseUrl,
     aiExplanationModel,
+    tokenIdentityEnabled,
+    tokensApiKey: env.TOKENS_API_KEY,
+    jupApiKey: env.JUP_API_KEY,
   }
 }

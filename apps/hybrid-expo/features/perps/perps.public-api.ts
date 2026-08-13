@@ -117,22 +117,8 @@ export async function fetchCandles(
   }));
 }
 
-export function formatPrice(price: number): string {
-  if (price === 0) return '--';
-  if (price >= 1000) return `$${price.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-  if (price >= 1) return `$${price.toFixed(3)}`;
-  if (price >= 0.001) return `$${price.toFixed(6)}`;
-  return `$${price.toExponential(3)}`;
-}
-
-export function formatChange(change: number): string {
-  const sign = change >= 0 ? '+' : '';
-  return `${sign}${change.toFixed(2)}%`;
-}
-
-export { formatUsdCompact } from '@/lib/format';
-
-export function formatFunding(rate: number): string {
-  const sign = rate >= 0 ? '+' : '';
-  return `${sign}${(rate * 100).toFixed(4)}%`;
-}
+// Re-export aliases onto lib/format's consolidated formatters. Keeps every
+// existing detail/profile/chart screen importing from this module compiling
+// with zero edits, per the token-identity-and-venue-adapters PRD (formatter
+// consolidation, acceptance criterion 6).
+export { formatPrice, formatPercent as formatChange, formatUsdCompact, formatRate as formatFunding } from '@/lib/format';
