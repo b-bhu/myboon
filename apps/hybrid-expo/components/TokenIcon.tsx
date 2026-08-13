@@ -34,11 +34,21 @@ import { Image, type ImageStyle } from 'expo-image';
 import { memo, useMemo, useState } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { tokenIconUrl, type TokenIdentity } from '@/lib/token-identity';
+import { tokenIconUrl } from '@/lib/token-identity';
 import { semantic, tokens } from '@/theme';
 
+/**
+ * Only the two fields this component actually reads, so callers can pass a
+ * resolved icon URL without threading a whole TokenIdentity through the row
+ * model. A full TokenIdentity satisfies this structurally.
+ */
+export interface TokenIconIdentity {
+  iconUrl: string | null;
+  fallbackLetter?: string;
+}
+
 export interface TokenIconProps {
-  identity?: TokenIdentity | null;
+  identity?: TokenIconIdentity | null;
   venueIconUrl?: string | null;
   letter: string;
   size?: number;
@@ -144,8 +154,8 @@ export const TokenIcon = memo(function TokenIcon({
  * override, letting Meteora keep its cyan/violet pair tinting.
  */
 export interface TokenPairIconProps {
-  x: { identity?: TokenIdentity | null; venueIconUrl: string | null; letter: string; tint?: string };
-  y: { identity?: TokenIdentity | null; venueIconUrl: string | null; letter: string; tint?: string };
+  x: { identity?: TokenIconIdentity | null; venueIconUrl: string | null; letter: string; tint?: string };
+  y: { identity?: TokenIconIdentity | null; venueIconUrl: string | null; letter: string; tint?: string };
   size?: number;
 }
 

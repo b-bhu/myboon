@@ -104,6 +104,9 @@ describe('phoenixToRow', () => {
     assert.deepEqual(row.lead, {
       kind: 'token',
       identityRef: 'perp:BTC',
+      // The resolved identity icon has to reach the row model, or the shell has
+      // no way to render tier 1 and every row falls back to the letter box.
+      identityIconUrl: '/tokens/icon/btc',
       venueIconUrl: '/icons/btc.svg',
       letter: 'B',
     });

@@ -8,11 +8,14 @@
  * own origin, commit them (2.9 MB for ~100 icons).
  *
  * Per asset it takes the best icon available:
- *   1. the Tokens registry's canonical logo (needs TOKENS_API_KEY), which is
- *      the real, curated artwork — used for ~34 of our assets today
- *   2. the venue's own icon from the seed, for everything the registry has
- *      never curated (most crypto mid-caps and every meme coin)
- * Anything neither source has stays absent and renders a letter box, which is
+ *   1. Jupiter, keyed by MINT, for anything that has one. Keyed by mint means
+ *      it returns that exact token's logo — the registry groups USDC and USDT
+ *      under `usd` and hands back a generic dollar for both, which makes a
+ *      SOL/USDC row indistinguishable from SOL/USDT.
+ *   2. the Tokens registry's canonical logo (needs TOKENS_API_KEY) — the right
+ *      artwork for perp symbols, which have no mint
+ *   3. the venue's own icon from the seed
+ * Anything none of them has stays absent and renders a letter box, which is
  * the honest outcome — never a guessed logo.
  *
  * Usage:
@@ -31,6 +34,7 @@ const TOKENS_API_BASE = process.env.TOKENS_API_BASE || 'https://api.tokens.xyz/v
 interface SeedEntry {
   assetId: string
   symbol: string
+  mint: string | null
   iconSourceUrl: string | null
 }
 
@@ -71,6 +75,25 @@ async function canonicalIconUrl(assetId: string, apiKey: string): Promise<string
   }
 }
 
+/** That specific mint's own logo, from Jupiter's index (keyed by mint). */
+async function jupiterIconUrl(mint: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`,
+      { signal: AbortSignal.timeout(20_000) },
+    )
+    if (!res.ok) return null
+    const rows = await res.json() as Array<Record<string, unknown>>
+    const match = Array.isArray(rows)
+      ? rows.find((row) => row.id === mint || row.address === mint)
+      : null
+    const icon = match?.icon ?? match?.logoURI
+    return typeof icon === 'string' && icon.length > 0 ? icon : null
+  } catch {
+    return null
+  }
+}
+
 async function main(): Promise<void> {
   const apiKey = process.env.TOKENS_API_KEY
   if (!apiKey) {
@@ -81,6 +104,7 @@ async function main(): Promise<void> {
   const seed = JSON.parse(await readFile(SEED_URL, 'utf8')) as SeedEntry[]
 
   let fromTokens = 0
+  let fromJupiter = 0
   let fromVenue = 0
   let skipped = 0
   const missing: string[] = []
@@ -91,8 +115,15 @@ async function main(): Promise<void> {
       continue
     }
 
-    const canonical = apiKey ? await canonicalIconUrl(entry.assetId, apiKey) : null
-    const url = canonical ?? entry.iconSourceUrl
+    // Prefer Jupiter for anything with a mint. The registry's canonical logo is
+    // the right artwork for a perp symbol, but for an SPL token it can be the
+    // *group's* logo rather than the token's — USDC and USDT both resolve to a
+    // generic dollar icon under the registry's `usd` grouping, which makes a
+    // SOL/USDC row indistinguishable from SOL/USDT. Jupiter is keyed by mint,
+    // so it always returns that specific token's own logo.
+    const jupiter = entry.mint ? await jupiterIconUrl(entry.mint) : null
+    const canonical = jupiter ? null : apiKey ? await canonicalIconUrl(entry.assetId, apiKey) : null
+    const url = jupiter ?? canonical ?? entry.iconSourceUrl
     if (!url) {
       missing.push(entry.symbol)
       continue
@@ -110,7 +141,8 @@ async function main(): Promise<void> {
         continue
       }
       await writeFile(new URL(`${entry.assetId}.${extensionFor(url)}`, DEST_DIR), bytes)
-      if (canonical) fromTokens += 1
+      if (jupiter) fromJupiter += 1
+      else if (canonical) fromTokens += 1
       else fromVenue += 1
     } catch (err) {
       missing.push(`${entry.symbol} (${err instanceof Error ? err.message : 'failed'})`)
@@ -118,7 +150,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`[tokens:icons] into ${fileURLToPath(DEST_DIR)}`)
-  console.log(`[tokens:icons] canonical (Tokens): ${fromTokens}  venue: ${fromVenue}  already present: ${skipped}`)
+  console.log(`[tokens:icons] jupiter (per-mint): ${fromJupiter}  canonical (Tokens): ${fromTokens}  venue: ${fromVenue}  already present: ${skipped}`)
   if (missing.length > 0) {
     // Not a failure: these render the shared letter box, which is correct.
     console.log(`[tokens:icons] no icon available (${missing.length}): ${missing.join(', ')}`)

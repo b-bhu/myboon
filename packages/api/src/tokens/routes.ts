@@ -35,6 +35,13 @@ export interface TokenIdentityService {
   iconSourceUrlForAssetId(assetId: string): string | null
   /** Every resolvable ref, for the one-shot catalog. */
   resolveCatalog(): TokenIdentity[]
+  /**
+   * Upstream icon URL for an arbitrary mint (Jupiter-indexed long tail).
+   * Optional so tests can build a service without it.
+   */
+  iconSourceUrlForMint?(mint: string): string | null
+  /** Look up mints we do not know yet, so the next resolve returns identity. */
+  warmMintIdentities?(mints: readonly string[]): Promise<void>
 }
 
 /**
@@ -51,6 +58,23 @@ function catalogETag(body: string): string {
     h2 = Math.imul(h2 + c + 1, 0x85ebca6b) >>> 0
   }
   return `W/"${h1.toString(36)}${h2.toString(36)}-${body.length.toString(36)}"`
+}
+
+/**
+ * Weak ETag over icon bytes. Icons carry a week-long max-age, which is right —
+ * they almost never change — but without a validator a client that cached a
+ * wrong image keeps it for that whole week with no way to notice. (That is not
+ * hypothetical: USDC and USDT briefly served the same file, and fixing the
+ * bytes did not fix already-cached browsers.) With an ETag the client
+ * revalidates, gets a 304 in the normal case, and picks up new bytes the moment
+ * they differ.
+ */
+function iconETag(bytes: Uint8Array, contentType: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < bytes.length; i += 1) {
+    hash = Math.imul(hash ^ bytes[i], 0x01000193) >>> 0
+  }
+  return `W/"${hash.toString(36)}-${bytes.length.toString(36)}-${contentType.length.toString(36)}"`
 }
 
 export interface CreateTokenRoutesConfig {
@@ -102,12 +126,36 @@ export function createTokenRoutes(config: CreateTokenRoutesConfig): Hono {
     return service.resolveRef(ref)
   }
 
+  /**
+   * Fill the mint cache before resolving, so a caller asking about a Meteora
+   * pool leg (or any arbitrary mint) gets real identity on THIS response rather
+   * than a letter box now and the real thing on some later call.
+   *
+   * Bounded and non-fatal: only mints we have no warm entry for are looked up,
+   * and a failure just means those rows fall back — resolution below never
+   * depends on it having succeeded.
+   */
+  async function warmUnknownMints(refs: readonly string[]): Promise<void> {
+    if (!enabled || !service.warmMintIdentities) return
+    const mints = refs
+      .filter((ref) => ref.startsWith('mint:'))
+      .map((ref) => ref.slice('mint:'.length).trim())
+      .filter((mint) => mint.length > 0)
+    if (mints.length === 0) return
+    try {
+      await service.warmMintIdentities(mints)
+    } catch {
+      // Identity decorates a row; it never blocks one.
+    }
+  }
+
   // GET /tokens/resolve?refs=<comma-separated> — max 100 refs.
-  routes.get('/resolve', (c) => {
+  routes.get('/resolve', async (c) => {
     const refs = parseGetRefs(c.req.query('refs'))
     if (refs === null) {
       return c.json({ error: `Too many refs (max ${MAX_REFS_GET})` }, 400)
     }
+    await warmUnknownMints(refs)
     const identities = refs.map(resolveOne)
     return c.json({ identities })
   })
@@ -129,6 +177,7 @@ export function createTokenRoutes(config: CreateTokenRoutesConfig): Hono {
       return c.json({ error: `Too many refs (max ${MAX_REFS_POST})` }, 400)
     }
 
+    await warmUnknownMints(refs as string[])
     const identities = (refs as string[]).map(resolveOne)
     return c.json({ identities })
   })
@@ -163,6 +212,40 @@ export function createTokenRoutes(config: CreateTokenRoutesConfig): Hono {
 
   // GET /tokens/icon/:assetId — image bytes. 404 on unknown/no-icon, and
   // whenever the flag is off (no third-party fetch happens in that state).
+  // GET /tokens/icon/mint/:mint — icons for arbitrary SPL mints (Meteora pool
+  // legs today; spot lists and meme feeds later). Registered BEFORE the
+  // /icon/:assetId route so "mint" is not swallowed as an assetId.
+  //
+  // The upstream here is whatever host the token's own metadata points at —
+  // IPFS, Arweave, a launchpad CDN. Caching the bytes on our side is the whole
+  // point: the client gets one origin, and a slow gateway costs one server-side
+  // miss rather than a broken row on every device.
+  routes.get('/icon/mint/:mint', async (c) => {
+    if (!enabled) return c.body(null, 404)
+
+    const mint = c.req.param('mint')
+    const result = await getIcon(`mint/${mint}`, () => service.iconSourceUrlForMint?.(mint) ?? null)
+    if (!result) {
+      return new Response(null, {
+        status: 404,
+        headers: { 'Cache-Control': ICON_MISS_CACHE_CONTROL },
+      })
+    }
+
+    const etag = iconETag(result.bytes, result.contentType)
+    if (c.req.header('if-none-match') === etag) {
+      return c.body(null, 304, { etag, 'Cache-Control': result.cacheControl })
+    }
+
+    return new Response(result.bytes, {
+      headers: {
+        'Content-Type': result.contentType,
+        'Cache-Control': result.cacheControl,
+        ETag: etag,
+      },
+    })
+  })
+
   routes.get('/icon/:assetId', async (c) => {
     if (!enabled) return c.body(null, 404)
 
@@ -175,10 +258,16 @@ export function createTokenRoutes(config: CreateTokenRoutesConfig): Hono {
       })
     }
 
+    const etag = iconETag(result.bytes, result.contentType)
+    if (c.req.header('if-none-match') === etag) {
+      return c.body(null, 304, { etag, 'Cache-Control': result.cacheControl })
+    }
+
     return new Response(result.bytes, {
       headers: {
         'Content-Type': result.contentType,
         'Cache-Control': result.cacheControl,
+        ETag: etag,
       },
     })
   })

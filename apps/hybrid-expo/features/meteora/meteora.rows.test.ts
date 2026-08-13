@@ -161,3 +161,31 @@ describe('METEORA_COLUMNS', () => {
     );
   });
 });
+
+describe('identity reaches the lead (regression)', () => {
+  // The bug this guards: meteoraToRow looked identities up, used them for the
+  // fallback LETTER, and then dropped them — so the row model carried no icon
+  // URL at all and every pool rendered a letter box even though the server had
+  // resolved a real icon. Meteora's own API has no icon field, so identity is
+  // the ONLY icon source a pool row has; losing it here loses it entirely.
+  it('carries identityIconUrl for both legs when identities resolve', () => {
+    const p = pool();
+    const identities = new Map([
+      [`mint:${p.tokenX.address}`, identity({ iconUrl: '/tokens/icon/mint/x-mint' })],
+      [`mint:${p.tokenY.address}`, identity({ iconUrl: '/tokens/icon/mint/y-mint' })],
+    ]);
+    const row = meteoraToRow(p, identities);
+    assert.equal(row.lead.kind, 'pair');
+    if (row.lead.kind !== 'pair') return;
+    assert.equal(row.lead.x.identityIconUrl, '/tokens/icon/mint/x-mint');
+    assert.equal(row.lead.y.identityIconUrl, '/tokens/icon/mint/y-mint');
+  });
+
+  it('leaves identityIconUrl null when nothing resolved, so the letter box shows', () => {
+    const row = meteoraToRow(pool(), new Map());
+    assert.equal(row.lead.kind, 'pair');
+    if (row.lead.kind !== 'pair') return;
+    assert.equal(row.lead.x.identityIconUrl, null);
+    assert.equal(row.lead.y.identityIconUrl, null);
+  });
+});

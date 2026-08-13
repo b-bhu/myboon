@@ -17,10 +17,10 @@ Companion change plan:
 
 A screen never decides what a token looks like. It asks the server for an
 identity by *ref* and renders what comes back. The server resolves that ref
-against a warm in-memory map — built from a nightly snapshot table layered over
-a checked-in seed file — and always answers, even when it knows nothing. Icons
-are served from our own origin so that the same token is byte-identical across
-Pacifica, Phoenix and Meteora. Identity is a decoration on a market list, never
+against warm in-memory maps — a checked-in seed for the curated set, a
+Jupiter-backed mint cache for everything else — and always answers, even when it
+knows nothing. Icons are served from our own origin so that the same token is
+byte-identical across Pacifica, Phoenix and Meteora. Identity is a decoration on a market list, never
 a precondition for one.
 
 ## The contract
@@ -81,19 +81,35 @@ Code that branches on a status code will silently render blanks.
 
 Three layers, checked per field, in order:
 
-1. **Snapshot** — a row in `public.token_identities`, written by the nightly job.
-2. **Seed** — the checked-in JSON at `packages/api/src/tokens/seed/token-identities.seed.json`.
-3. **Static fallback** — symbol derived from the ref, `fallbackLetter` computed,
-   `iconUrl: null`.
+1. **Seed** — the checked-in JSON at
+   `packages/api/src/tokens/seed/token-identities.seed.json`. The curated set:
+   every perp symbol both venues list, plus spot majors. Reports
+   `source: 'static'`.
+2. **Jupiter mint cache** — `jupiter-tokens.ts`, keyed by mint, filled on
+   demand. The open-ended long tail: Meteora pool legs today, spot and meme
+   lists later. Reports `source: 'venue'`.
+3. **Static fallback** — symbol derived from the ref (a shortened mint for an
+   unknown one), `fallbackLetter` computed, `iconUrl: null`.
 
-Per-field is the important part. A snapshot row with a null `icon_source_url`
-does not shadow the seed's icon; that one field falls through while the rest of
-the row is used.
+**There is deliberately no database layer.** Identity for the curated set does
+not change, so it is checked in. Identity for the long tail is far too large and
+too fast-moving to snapshot — Meteora alone lists ~153,000 pools with new mints
+daily — so it is fetched on demand and cached in memory. A table would only have
+restated one of those two facts.
 
-Layers 2 and 3 both report `source: 'static'`. The union is frozen and exists
-for observability, not to enumerate internal layers — a seed hit *is* static
-checked-in data. If seed-vs-nothing needs distinguishing for debugging, use a
-log line or a non-contract field, never a new `source` value.
+### Why two sources
+
+The Tokens registry curates a few hundred assets by hand and does not accept
+outside pull requests, so it will never cover a venue listing new mints daily.
+Measured: it has icons for 34 of our 104 perp symbols and essentially none of
+Meteora's pool tokens.
+
+Jupiter *indexes* rather than curates. Measured against 40 real Meteora pool
+mints it returned an icon for **40 of 40**, including tokens minted that week.
+
+So each source does what it is actually good at: the registry for curated
+identity and canonical grouping on perps and majors, Jupiter for everything
+else.
 
 `resolveRef()` is pure and synchronous. It reads only the warm maps and never
 awaits an upstream call, which is what lets a market list render immediately.
@@ -136,17 +152,34 @@ map explicitly to their underlying assets.
 
 ## Icons
 
-The proxy is keyed on `assetId` and fetches from the upstream URL recorded for
-that asset. Icon bytes cache for a week; misses negative-cache for an **hour**,
-not a day, so a newly listed token is not broken for a full day.
+Two routes, both serving bytes from our own origin:
+
+| Route | Source |
+|---|---|
+| `GET /tokens/icon/:assetId` | Checked-in files under `packages/api/assets/token-icons/` — read from disk, no network call. |
+| `GET /tokens/icon/mint/:mint` | Fetched on demand from whatever host the mint's metadata names, then cached. |
+
+Curated icons are **files on disk**, not a live dependency. A token's logo does
+not change, so `tokens:icons` downloads ~100 of them once (2.9 MB) and the API
+serves them in single-digit milliseconds with no upstream involved.
+
+Long-tail icons cannot work that way — the set is unbounded — so they are
+proxied. That proxying is the point, not an implementation detail: those images
+live on IPFS, Arweave, Irys and assorted launchpad CDNs (8+ distinct hosts
+across 40 sampled Meteora pool tokens). Measured on real tokens, one icon took
+**5.4 s** from a slow IPFS gateway and another was a **907 KB** full-resolution
+PNG. Fetching those per device would mean slow, broken-looking rows and wasted
+mobile data; fetched once and cached, the second request served in **1.9 ms**.
+
+Bytes cache for a week; misses negative-cache for an **hour**, and transient
+network failures for a **minute** — a 404 is an answer, a timeout is not.
+
+`iconUrl` is `null` when we have no artwork at all, so the client renders its
+letter box without first making a request that is certain to fail.
 
 Upstream icon URLs are stored **exact-cased**. Pacifica's icon CDN is
 case-sensitive — `kPEPE.svg` serves, `KPEPE.svg` 404s — so any code path that
 uppercases a symbol before building an icon URL breaks the denominated markets.
-
-Venue-supplied icons remain a second-tier fallback rather than being deleted.
-Meteora lists brand-new tokens constantly and most will be unresolved; a
-slightly-off icon beats no icon on a pool row.
 
 ## What this service does not own
 
@@ -156,30 +189,22 @@ Showing a registry spot price next to a perp mark price is a correctness bug,
 not a cosmetic one. `TokenIdentity` has no price field, and it must not grow
 one — that absence is the enforcement mechanism.
 
-## The snapshot job
+## Refreshing the icons
 
-A nightly job (`packages/api/src/tokens/snapshot-job.ts`, entry point
-`run-snapshot.ts`) writes into `public.token_identities`.
-
-It runs in two modes. With `TOKENS_API_KEY` set it pulls the upstream curated
-lists, resolves the known mint universe, fetches per-asset icon and category,
-and upserts rows tagged `source: 'tokens'`. Without a key it upserts the
-checked-in seed and logs that the upstream pull was skipped — so the whole
-system is buildable, runnable and testable with no upstream access at all.
-
-The job **never deletes rows**. A bad or empty upstream response degrades to
-stale-but-correct data rather than to nothing.
-
-Run it once by hand with:
+Icons are bytes on disk, fetched once by a script rather than a running job:
 
 ```bash
-TOKENS_SNAPSHOT_RUN_ONCE=1 pnpm --filter @myboon/api run tokens:snapshot
+TOKENS_API_KEY=... pnpm --filter @myboon/api run tokens:icons
 ```
 
-Apply the table migration with `pnpm dlx supabase db push`.
+Per asset it takes the best available artwork — the Tokens registry's canonical
+logo where it has one (34 today), the venue's otherwise — and writes it to
+`packages/api/assets/token-icons/`. Existing files are skipped unless `--force`
+is passed. Re-run it after adding markets to the seed, then restart the API so
+it re-reads the directory.
 
-The table row's own `source` column (`'tokens' | 'seed'`) records table
-provenance and is unrelated to the `TokenIdentity.source` response field.
+Long-tail icons need no script: they are fetched through the proxy on first
+request and cached in memory.
 
 ## Configuration
 
@@ -218,16 +243,24 @@ require a redeploy to take effect.
 
 ## Known limits
 
-Every cache in `packages/api` is a module-level `Map`, which is per-process. On
-a multi-instance deploy the hit rate collapses and upstream call volume
-multiplies by instance count. The nightly-snapshot design mostly sidesteps this
-for identity data, but the icon proxy needs a CDN in front of it before it
-matters.
+**Caches are per-process.** The Jupiter mint cache and the icon byte cache are
+module-level `Map`s. The curated set is unaffected — seed and icon files are on
+disk, so every instance has them — but on a multi-instance deploy the long-tail
+caches warm independently and upstream call volume multiplies by instance count.
+Shared caching (Redis, or a CDN in front of the icon routes) is the fix, and it
+becomes worth doing when either instance count or long-tail traffic grows. Not
+before.
 
-Coverage of the long tail is thin by design. The upstream registry curates
-rather than indexes, so newly listed tokens resolve to nothing and render the
-letter box or the venue's own icon. That is the intended behavior, not a gap to
-close by loosening the matching rules.
+**Nothing here is built for fast-moving data.** Identity is treated as static:
+multi-day catalog caching, week-long icon TTLs, a directory read at boot. That
+is correct for what a token *is*, and wrong for anything that changes by the
+minute. A meme-discovery or spot feed will need shorter TTLs and probably a push
+channel; that is a separate design, not a tuning exercise on this one.
+
+**Icon availability is not identity availability.** Jupiter covered 40 of 40
+sampled Meteora pool mints, but a token minted seconds ago may not be indexed
+yet. Those cache as a miss for ten minutes and retry, so a brand-new token can
+show a letter box briefly before its icon appears.
 
 Portfolio and limit-order legs from Meteora's upstream omit `decimals`. Those
 now carry `null` rather than a fabricated `0`; any math downstream must resolve

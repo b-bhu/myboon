@@ -1,30 +1,30 @@
 // Token identity service: warm in-memory maps + pure synchronous resolution.
 //
-// Three-layer resolution, evaluated PER FIELD and triggered by an EMPTY
-// field, never by HTTP status:
-//   1. snapshot rows loaded from the token_identities table -> source 'snapshot'
-//   2. checked-in seed (packages/api/src/tokens/seed/token-identities.seed.json) -> source 'static'
+// Resolution layers, evaluated PER FIELD and triggered by an EMPTY field,
+// never by HTTP status:
+//   1. checked-in seed (seed/token-identities.seed.json) — perps and majors,
+//      the curated set, source 'static'
+//   2. Jupiter mint cache (jupiter-tokens.ts) — the open-ended long tail keyed
+//      by mint: Meteora pool legs today, spot and meme lists later. source
+//      'venue'
 //   3. computed static fallback (symbol from the ref, fallbackLetter, iconUrl
-//      null) -> source 'static'
-// Layers 2 and 3 share the response's 'static' tag (see the frozen
-// TokenIdentitySource union in types.ts) — the field is for production
-// observability, not for enumerating internal layers.
+//      null) — source 'static'
 //
-// A snapshot row with an empty icon_source_url falls through, per field, to
-// the seed layer and then the static layer for that field only — it does
-// not discard the rest of the snapshot row.
+// There is deliberately NO database layer. Identity for the curated set does
+// not change, so it is checked in; identity for the long tail is far too large
+// and too fast-moving to snapshot, so it is fetched on demand and cached in
+// memory. A table would only have restated one of those two facts.
 //
 // resolveRef is PURE AND SYNCHRONOUS: the request path must never await an
-// upstream call. hydrateFromStore swaps the warm maps in place and never
-// clears them on failure, so a cold or failed refresh degrades to whatever
-// was last warm, never to nothing.
+// upstream call. The Jupiter lookup happens in warmMintIdentities, off the
+// resolution path, so a market list renders immediately and icons fill in.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import type { TokenIdentityRow, TokenIdentityStore } from './identity-store.js'
 import { PERP_SYMBOL_TO_ASSET_ID, perpAssetId } from './perp-symbol-map.js'
 import type { TokenIdentity, TokenIdentitySource } from './types.js'
 import { canonicalAssetIdFor } from './canonical-asset-map.js'
+import { getCachedJupiterToken, warmJupiterTokens } from './jupiter-tokens.js'
 import { categoryForSymbol, fallbackLetter, parseTokenRef } from './types.js'
 
 interface SeedEntry {
@@ -58,8 +58,7 @@ function loadSeed(): SeedEntry[] {
 }
 
 // --- warm maps -------------------------------------------------------------
-// Seed layer is pre-loaded at module init so resolution works before the
-// first snapshot refresh ever runs.
+// Seed layer is pre-loaded at module init — no warm-up, no first-request stall.
 
 const SEED_ENTRIES: SeedEntry[] = loadSeed()
 const seedByAssetId = new Map<string, SeedEntry>()
@@ -69,39 +68,6 @@ for (const entry of SEED_ENTRIES) {
   if (entry.mint) seedByMint.set(entry.mint, entry)
 }
 
-let snapshotByAssetId = new Map<string, TokenIdentityRow>()
-let snapshotByMint = new Map<string, TokenIdentityRow>()
-
-/** Swap the warm snapshot maps in place. Never called with partial data on failure. */
-function setSnapshotMaps(rows: TokenIdentityRow[]): void {
-  const byAssetId = new Map<string, TokenIdentityRow>()
-  const byMint = new Map<string, TokenIdentityRow>()
-  for (const row of rows) {
-    byAssetId.set(row.assetId, row)
-    if (row.mint) byMint.set(row.mint, row)
-  }
-  snapshotByAssetId = byAssetId
-  snapshotByMint = byMint
-}
-
-/**
- * Load snapshot rows from the store and swap the warm maps in place.
- * On failure, logs and leaves the existing maps untouched — a cold or
- * failed identity lookup degrades the icon, never the row.
- */
-export async function hydrateFromStore(store: TokenIdentityStore): Promise<void> {
-  try {
-    const rows = await store.loadAll()
-    setSnapshotMaps(rows)
-  } catch (err) {
-    console.error('[api] Token identity hydrate failed, keeping previous snapshot:', err instanceof Error ? err.message : err)
-  }
-}
-
-/** Test-only escape hatch to seed the warm snapshot maps directly. */
-export function __setSnapshotForTest(rows: TokenIdentityRow[]): void {
-  setSnapshotMaps(rows)
-}
 
 /**
  * assetIds that have a checked-in icon file, read once at module init.
@@ -156,35 +122,34 @@ function iconUrlFor(assetId: string | null): string | null {
 // --- per-field, three-layer merge ------------------------------------------
 
 function resolveByAssetId(assetId: string): { fields: IdentityFields; source: TokenIdentitySource } | null {
-  const snapshot = snapshotByAssetId.get(assetId)
   const seed = seedByAssetId.get(assetId)
-  if (!snapshot && !seed) return null
+  if (!seed) return null
 
-  // Per-field fallthrough: snapshot -> seed. Never keyed on HTTP status —
-  // an empty field on the snapshot row falls through to seed for that field.
-  const symbol = nonEmpty(snapshot?.symbol) ?? nonEmpty(seed?.symbol) ?? assetId
-  const name = nonEmpty(snapshot?.name) ?? nonEmpty(seed?.name) ?? symbol
-  const mint = nonEmpty(snapshot?.mint) ?? nonEmpty(seed?.mint) ?? null
-  const decimals = snapshot?.decimals ?? seed?.decimals ?? null
-  const category = snapshot?.category ?? seed?.category ?? categoryForSymbol(symbol)
-  const verified = snapshot?.verified ?? seed?.verified ?? false
-  const iconSourceUrl = nonEmpty(snapshot?.iconSourceUrl) ?? nonEmpty(seed?.iconSourceUrl) ?? null
-
-  // 'source' is frozen at the PRD's 4-value union (see types.ts) and exists
-  // for production observability, not to enumerate internal layers. A hit
-  // against the snapshot table is 'snapshot'; a hit against the checked-in
-  // seed file with no table row loaded is 'static' — it is checked-in
-  // static data, which is exactly what 'static' means for this field.
-  const source: TokenIdentitySource = snapshot ? 'snapshot' : 'static'
-
+  const symbol = nonEmpty(seed.symbol) ?? assetId
   return {
-    fields: { assetId, symbol, name, mint, decimals, category, verified, iconSourceUrl },
-    source,
+    fields: {
+      assetId,
+      symbol,
+      name: nonEmpty(seed.name) ?? symbol,
+      mint: nonEmpty(seed.mint) ?? null,
+      decimals: seed.decimals ?? null,
+      category: seed.category ?? categoryForSymbol(symbol),
+      verified: seed.verified ?? false,
+      iconSourceUrl: nonEmpty(seed.iconSourceUrl) ?? null,
+    },
+    // Checked-in static data — exactly what 'static' means in the frozen
+    // TokenIdentitySource union (see types.ts).
+    source: 'static',
   }
 }
 
 function nonEmpty(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+/** Display stand-in for a mint we know nothing about yet: `So11…1112`. */
+function shortMint(mint: string): string {
+  return `${mint.slice(0, 4)}…${mint.slice(-4)}`
 }
 
 function staticFallback(raw: string, symbol: string): TokenIdentity {
@@ -216,7 +181,7 @@ export function resolveRef(ref: string): TokenIdentity {
   const parsed = parseTokenRef(ref)
 
   if (parsed.kind === 'mint') {
-    const assetId = snapshotByMint.get(parsed.mint)?.assetId ?? seedByMint.get(parsed.mint)?.assetId ?? null
+    const assetId = seedByMint.get(parsed.mint)?.assetId ?? null
     if (assetId) {
       const resolved = resolveByAssetId(assetId)
       if (resolved) {
@@ -235,8 +200,34 @@ export function resolveRef(ref: string): TokenIdentity {
         }
       }
     }
-    // Unresolved mint: symbol falls back to a shortened mint, per the static layer.
-    return staticFallback(ref, `${parsed.mint.slice(0, 4)}…${parsed.mint.slice(-4)}`)
+    // Not in the curated registry — the normal case for a Meteora pool leg, a
+    // meme token, or anything else minted this week. Fall through to whatever
+    // Jupiter told us on a previous warm pass. Read-only and synchronous: the
+    // lookup itself happens in the background (warmJupiterTokens), never here,
+    // so a market list is never blocked on it.
+    const jupiter = getCachedJupiterToken(parsed.mint)
+    if (jupiter) {
+      const symbol = nonEmpty(jupiter.symbol) ?? shortMint(parsed.mint)
+      return {
+        key: ref,
+        assetId: null, // no canonical registry id — identity is Jupiter's, keyed by mint
+        symbol,
+        name: nonEmpty(jupiter.name) ?? symbol,
+        // Icon is served from OUR origin keyed on the mint; the upstream URL
+        // (IPFS/Arweave/a launchpad CDN) never reaches a client.
+        iconUrl: jupiter.iconUrl ? `/tokens/icon/mint/${parsed.mint}` : null,
+        decimals: jupiter.decimals,
+        mint: parsed.mint,
+        verified: jupiter.verified,
+        category: 'crypto',
+        fallbackLetter: fallbackLetter(symbol),
+        source: 'venue',
+      }
+    }
+
+    // Nothing anywhere yet: shortened mint + letter box, and the next warm pass
+    // may fill it in.
+    return staticFallback(ref, shortMint(parsed.mint))
   }
 
   if (parsed.kind === 'perp') {
@@ -279,6 +270,27 @@ export function perpIconPath(venueSymbol: string): string | null {
 }
 
 /**
+ * Upstream icon URL for an arbitrary mint, from the warm Jupiter cache.
+ * Used by GET /tokens/icon/mint/:mint — the proxy fetches these bytes once and
+ * serves them from our origin, so the third-party host never reaches a client.
+ */
+export function iconSourceUrlForMint(mint: string): string | null {
+  return getCachedJupiterToken(mint)?.iconUrl ?? null
+}
+
+/**
+ * Look up any mints we do not know yet, so the NEXT resolve for them returns
+ * real identity. Await it before resolving if you want icons on first paint;
+ * fire-and-forget if you would rather the rows render immediately and fill in.
+ *
+ * Mint-generic on purpose: Meteora pool legs today, spot and meme lists later.
+ */
+export async function warmMintIdentities(mints: readonly string[]): Promise<void> {
+  if (mints.length === 0) return
+  await warmJupiterTokens(mints)
+}
+
+/**
  * Every ref the app could ask about, resolved — the whole catalog in one shot.
  *
  * This exists so the client makes ONE call instead of a per-screen resolve for
@@ -317,62 +329,9 @@ export function resolveCatalog(): TokenIdentity[] {
  */
 export function iconSourceUrlForAssetId(assetId: string): string | null {
   const canonicalId = canonicalAssetIdFor(assetId)
-  const canonicalSnapshot = canonicalId ? snapshotByAssetId.get(canonicalId) : undefined
-  const snapshot = snapshotByAssetId.get(assetId)
+  const canonicalSeed = canonicalId ? seedByAssetId.get(canonicalId) : undefined
   const seed = seedByAssetId.get(assetId)
-  return (
-    nonEmpty(canonicalSnapshot?.iconSourceUrl)
-    ?? nonEmpty(snapshot?.iconSourceUrl)
-    ?? nonEmpty(seed?.iconSourceUrl)
-    ?? null
-  )
+  return nonEmpty(canonicalSeed?.iconSourceUrl) ?? nonEmpty(seed?.iconSourceUrl) ?? null
 }
 
-// --- background refresh -----------------------------------------------------
 
-export interface TokenIdentityRefreshConfig {
-  store: TokenIdentityStore
-  enabled: boolean
-  intervalMs?: number
-}
-
-const DEFAULT_REFRESH_INTERVAL_MS = 60 * 60 * 1000 // 1h
-
-let refreshInterval: ReturnType<typeof setInterval> | null = null
-let initialRefreshTimeout: ReturnType<typeof setTimeout> | null = null
-
-/**
- * Start the background snapshot-table refresh, mirroring
- * startMarketReadPolling in packages/api/src/polymarket/read/market-read.ts:
- * an initial 2s setTimeout plus a recurring setInterval. No-op when the
- * feature flag is off.
- */
-export function startTokenIdentityRefresh(config: TokenIdentityRefreshConfig): void {
-  if (!config.enabled) return
-  if (refreshInterval) return
-
-  const intervalMs = config.intervalMs
-    ?? parseInterval(process.env.TOKENS_REFRESH_INTERVAL_MS)
-    ?? DEFAULT_REFRESH_INTERVAL_MS
-
-  const run = () => {
-    void hydrateFromStore(config.store)
-  }
-
-  refreshInterval = setInterval(run, intervalMs)
-  initialRefreshTimeout = setTimeout(run, 2_000)
-  console.log(`[api] Token identity refresh started (every ${Math.round(intervalMs / 1000)}s)`)
-}
-
-export function stopTokenIdentityRefresh(): void {
-  if (refreshInterval) clearInterval(refreshInterval)
-  if (initialRefreshTimeout) clearTimeout(initialRefreshTimeout)
-  refreshInterval = null
-  initialRefreshTimeout = null
-}
-
-function parseInterval(value: string | undefined): number | null {
-  if (!value) return null
-  const parsed = Number.parseInt(value, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
-}

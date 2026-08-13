@@ -37,6 +37,12 @@ export interface ColumnSpec {
 /** One leg of a token pair lead (Meteora's `SOL / USDC` rows). */
 export interface MarketLeadToken {
   identityRef: string;
+  /**
+   * Resolved identity icon (origin-relative, e.g. `/tokens/icon/mint/<mint>`).
+   * The mapper fills this from the identity map it is already given, so the
+   * shell does not need to look identities up a second time to render a row.
+   */
+  identityIconUrl?: string | null;
   venueIconUrl: string | null;
   letter: string;
   tint?: string;
@@ -44,7 +50,14 @@ export interface MarketLeadToken {
 
 /** Describes the leading icon/avatar of a row — a single token, or a pair. */
 export type MarketLead =
-  | { kind: 'token'; identityRef: string; venueIconUrl: string | null; letter: string }
+  | {
+      kind: 'token';
+      identityRef: string;
+      /** Resolved identity icon (origin-relative). Preferred over venueIconUrl. */
+      identityIconUrl?: string | null;
+      venueIconUrl: string | null;
+      letter: string;
+    }
   | { kind: 'pair'; x: MarketLeadToken; y: MarketLeadToken };
 
 export interface MarketListRow {

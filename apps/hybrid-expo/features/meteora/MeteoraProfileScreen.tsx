@@ -23,6 +23,7 @@ import { MeteoraPositionActionSheet } from '@/features/meteora/components/Meteor
 import { meteoraClient } from '@/features/meteora/meteora.client';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import { mintRef, useTokenIdentities } from '@/lib/token-identity';
 import { useWallet } from '@/hooks/useWallet';
 
 type ProfileTab = 'positions' | 'history';
@@ -151,6 +152,21 @@ export function MeteoraProfileScreen() {
     }
     return map;
   }, [portfolio]);
+
+  // Closed positions fall through to the raw upstream fields, which are mint
+  // addresses rather than symbols (Issue 4 below). Resolve those through the
+  // identity service so history shows "ANTFUN / SOL" instead of
+  // "CWZ6Bsdnj… / So1111…". Non-blocking, as everywhere else.
+  const historyMintRefs = useMemo(() => {
+    const mints = new Set<string>();
+    for (const event of history) {
+      if (poolSymbolsByAddress.has(event.poolAddress)) continue;
+      if (looksLikeMint(event.tokenXSymbol)) mints.add(mintRef(event.tokenXSymbol));
+      if (looksLikeMint(event.tokenYSymbol)) mints.add(mintRef(event.tokenYSymbol));
+    }
+    return [...mints];
+  }, [history, poolSymbolsByAddress]);
+  const historyIdentities = useTokenIdentities(historyMintRefs);
 
   const loadHistory = useCallback(async () => {
     if (!solanaWalletReady || historyLoaded || historyLoading || !portfolio) return;
@@ -292,6 +308,7 @@ export function MeteoraProfileScreen() {
             <HistoryList
               events={history}
               poolSymbols={poolSymbolsByAddress}
+              identities={historyIdentities}
               loading={historyLoading}
               loaded={historyLoaded}
               error={historyError}
@@ -452,6 +469,7 @@ function PositionPoolRow({
 }
 
 function HistoryList({
+  identities,
   events,
   poolSymbols,
   loading,
@@ -461,6 +479,7 @@ function HistoryList({
 }: {
   events: MeteoraPositionEvent[];
   poolSymbols: Map<string, { tokenXSymbol: string; tokenYSymbol: string }>;
+  identities: ReadonlyMap<string, { symbol: string }>;
   loading: boolean;
   loaded: boolean;
   error: string | null;
@@ -486,7 +505,7 @@ function HistoryList({
       {error ? <Text style={styles.historyWarning}>{error}</Text> : null}
       <SectionHeading label="RECENT ACTIVITY" count={events.length} />
       {events.map((event) => {
-        const pair = resolvePairLabel(event, poolSymbols);
+        const pair = resolvePairLabel(event, poolSymbols, identities);
         return (
           <View key={`${event.signature}:${event.instructionIndex}`} style={styles.historyRow}>
             <View style={styles.historyIcon}>
@@ -506,17 +525,34 @@ function HistoryList({
   );
 }
 
+/** Base58 and long enough to be a mint rather than a ticker. */
+function looksLikeMint(value: string): boolean {
+  return value.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(value);
+}
+
+/**
+ * Prefer the loaded portfolio, then token identity, then the raw upstream
+ * field. The middle tier matters for CLOSED positions: their pool is no longer
+ * in the portfolio, and upstream returns mint addresses rather than symbols
+ * there (METEORA_QA_ISSUES.md Issue 4), so without identity the user sees
+ * "CWZ6Bsdnj… / So1111…" in their own history.
+ */
 function resolvePairLabel(
   event: MeteoraPositionEvent,
   poolSymbols: Map<string, { tokenXSymbol: string; tokenYSymbol: string }>,
+  identities: ReadonlyMap<string, { symbol: string }>,
 ): string {
   const resolved = poolSymbols.get(event.poolAddress);
   if (resolved) return `${resolved.tokenXSymbol} / ${resolved.tokenYSymbol}`;
-  // Fall back to the raw upstream fields only when the pool isn't in the
-  // currently loaded portfolio (e.g. a fully closed position/pool). Upstream
-  // may return mint addresses here rather than symbols — see
-  // METEORA_QA_ISSUES.md Issue 4 — so this is a degraded, not ideal, fallback.
-  return `${event.tokenXSymbol} / ${event.tokenYSymbol}`;
+
+  const label = (raw: string): string => {
+    if (!looksLikeMint(raw)) return raw;
+    const identity = identities.get(mintRef(raw));
+    if (identity?.symbol) return identity.symbol;
+    // Still unresolved: a shortened mint reads far better than 44 characters.
+    return `${raw.slice(0, 4)}…${raw.slice(-4)}`;
+  };
+  return `${label(event.tokenXSymbol)} / ${label(event.tokenYSymbol)}`;
 }
 
 function SectionHeading({ label, count }: { label: string; count: number }) {

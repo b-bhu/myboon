@@ -51,6 +51,7 @@ export function phoenixToRow(
     lead: {
       kind: 'token',
       identityRef: ref,
+      identityIconUrl: identity?.iconUrl ?? null,
       venueIconUrl: market.iconPath ?? null,
       letter: identity?.fallbackLetter ?? (label.charAt(0) || '?'),
     },

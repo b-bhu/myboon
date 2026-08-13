@@ -55,6 +55,7 @@ import {
   type MeteoraPrepareContext,
 } from '@/features/meteora/meteora.form';
 import { meteoraPositionActionsAdapter } from '@/features/meteora/meteora.position-actions';
+import { mintRef, tokenIconUrl, useTokenIdentities } from '@/lib/token-identity';
 import { useWallet } from '@/hooks/useWallet';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
@@ -120,6 +121,21 @@ export function MeteoraPoolPhaseTwoScreen({
   walletRef.current = wallet;
 
   const [pool, setPool] = useState<MeteoraPoolDetail | null>(null);
+
+  // Meteora's API carries no icon field, so identity is the only icon source
+  // for a pool's tokens here — same as on the pools list. Non-blocking: the
+  // screen renders with letter circles and swaps in icons when they land.
+  const poolIdentityRefs = useMemo(
+    () => (pool ? [mintRef(pool.tokenX.address), mintRef(pool.tokenY.address)] : []),
+    [pool?.tokenX.address, pool?.tokenY.address],
+  );
+  const poolIdentities = useTokenIdentities(poolIdentityRefs);
+  const tokenXIconUrl = pool
+    ? tokenIconUrl(poolIdentities.get(mintRef(pool.tokenX.address))?.iconUrl) ?? pool.tokenX.iconUrl
+    : null;
+  const tokenYIconUrl = pool
+    ? tokenIconUrl(poolIdentities.get(mintRef(pool.tokenY.address))?.iconUrl) ?? pool.tokenY.iconUrl
+    : null;
   const [freshness, setFreshness] = useState<MeteoraFreshness | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -762,7 +778,7 @@ export function MeteoraPoolPhaseTwoScreen({
                 ) : null}
                 <TokenAmountField
                   symbol={pool.tokenX.symbol}
-                  iconUrl={pool.tokenX.iconUrl}
+                  iconUrl={tokenXIconUrl}
                   value={positionDraft.amountX}
                   balance={
                     wallet.connected
@@ -779,7 +795,7 @@ export function MeteoraPoolPhaseTwoScreen({
 
                 <TokenAmountField
                   symbol={pool.tokenY.symbol}
-                  iconUrl={pool.tokenY.iconUrl}
+                  iconUrl={tokenYIconUrl}
                   value={positionDraft.amountY}
                   balance={
                     wallet.connected

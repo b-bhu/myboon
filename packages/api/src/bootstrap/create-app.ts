@@ -14,7 +14,13 @@ import { SupabasePolymarketCatalogStore } from '../polymarket/catalog/supabase-s
 import { spotRoutes } from '../spot.js'
 import { createStoryRoutes } from '../stories.js'
 import { createSwapRoutes } from '../swap.js'
-import { iconSourceUrlForAssetId, resolveCatalog, resolveRef } from '../tokens/identity-service.js'
+import {
+  iconSourceUrlForAssetId,
+  iconSourceUrlForMint,
+  resolveCatalog,
+  resolveRef,
+  warmMintIdentities,
+} from '../tokens/identity-service.js'
 import { createTokenRoutes } from '../tokens/routes.js'
 import type { ApiConfig } from './config.js'
 
@@ -74,7 +80,13 @@ export function createApp(config: ApiConfig): Hono {
   app.route('/spot', spotRoutes)
   app.route('/tokens', createTokenRoutes({
     enabled: config.tokenIdentityEnabled,
-    service: { resolveRef, iconSourceUrlForAssetId, resolveCatalog },
+    service: {
+      resolveRef,
+      iconSourceUrlForAssetId,
+      resolveCatalog,
+      iconSourceUrlForMint,
+      warmMintIdentities,
+    },
   }))
   app.route('/swap', createSwapRoutes({ jupApiKey: config.jupApiKey }))
 

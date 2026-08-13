@@ -30,8 +30,12 @@ test('the known many-to-one groupings are intentional', () => {
   assert.equal(canonicalAssetIdFor('paxg'), 'gold')
   assert.equal(canonicalAssetIdFor('xau'), 'gold')
   assert.equal(canonicalAssetIdFor('xag'), 'silver')
-  assert.equal(canonicalAssetIdFor('usdc'), 'usd')
-  assert.equal(canonicalAssetIdFor('usdt'), 'usd')
+  // USDC and USDT are deliberately NOT grouped under 'usd': the registry's
+  // canonical grouping is right for "same asset, different name" and wrong for
+  // two stablecoins a user has to tell apart on a market row — grouping them
+  // gave both the same generic dollar icon.
+  assert.equal(canonicalAssetIdFor('usdc'), null)
+  assert.equal(canonicalAssetIdFor('usdt'), null)
 })
 
 test('no slug maps to itself', () => {

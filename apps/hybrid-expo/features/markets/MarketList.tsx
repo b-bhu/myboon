@@ -216,8 +216,20 @@ function RowLead({ lead, styles }: { lead: MarketListRow['lead']; styles: Styles
     return (
       <View style={styles.leadSlot}>
         <TokenPairIcon
-          x={{ venueIconUrl: lead.x.venueIconUrl, letter: lead.x.letter, tint: lead.x.tint }}
-          y={{ venueIconUrl: lead.y.venueIconUrl, letter: lead.y.letter, tint: lead.y.tint }}
+          x={{
+            // identity first — for a Meteora pool leg this is the ONLY icon
+            // source, since their API carries no icon field of its own.
+            identity: lead.x.identityIconUrl ? { iconUrl: lead.x.identityIconUrl } : null,
+            venueIconUrl: lead.x.venueIconUrl,
+            letter: lead.x.letter,
+            tint: lead.x.tint,
+          }}
+          y={{
+            identity: lead.y.identityIconUrl ? { iconUrl: lead.y.identityIconUrl } : null,
+            venueIconUrl: lead.y.venueIconUrl,
+            letter: lead.y.letter,
+            tint: lead.y.tint,
+          }}
         />
       </View>
     );
@@ -225,7 +237,11 @@ function RowLead({ lead, styles }: { lead: MarketListRow['lead']; styles: Styles
 
   return (
     <View style={styles.leadSlot}>
-      <TokenIcon venueIconUrl={lead.venueIconUrl} letter={lead.letter} />
+      <TokenIcon
+        identity={lead.identityIconUrl ? { iconUrl: lead.identityIconUrl } : null}
+        venueIconUrl={lead.venueIconUrl}
+        letter={lead.letter}
+      />
     </View>
   );
 }

@@ -90,12 +90,16 @@ export function meteoraToRow(
       kind: 'pair',
       x: {
         identityRef: xRef,
+        // Meteora's own API carries NO icon field (confirmed against their
+        // docs), so identity is the only icon source a pool row has.
+        identityIconUrl: xIdentity?.iconUrl ?? null,
         venueIconUrl: pool.tokenX.iconUrl,
         letter: xIdentity?.fallbackLetter ?? (pool.tokenX.symbol.charAt(0) || '?'),
         tint: METEORA_COLORS.cyan,
       },
       y: {
         identityRef: yRef,
+        identityIconUrl: yIdentity?.iconUrl ?? null,
         venueIconUrl: pool.tokenY.iconUrl,
         letter: yIdentity?.fallbackLetter ?? (pool.tokenY.symbol.charAt(0) || '?'),
         tint: METEORA_COLORS.violet,

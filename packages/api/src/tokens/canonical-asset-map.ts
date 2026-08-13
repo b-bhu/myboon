@@ -22,12 +22,14 @@
  * Deliberate many-to-one groupings (the registry's canonical grouping at work):
  *   paxg, xau -> gold      both are gold; one icon is correct
  *   xag       -> silver
- *   usdc, usdt -> usd      NOTE: this collapses two distinct stablecoins onto
- *                          one USD icon. Correct for grouping, arguably wrong
- *                          on a market row where USDC and USDT should be
- *                          visually distinct. Left mapped for now because a
- *                          real dollar icon beats a letter box; revisit if the
- *                          two needing to differ matters more.
+ *
+ * NOT mapped, on purpose: `usdc` and `usdt`. The registry groups both under
+ * `usd`, which is right for canonical grouping and wrong on a market row —
+ * it gave USDC and USDT the same generic dollar icon (verified: byte-identical
+ * files), so a SOL/USDC pool was indistinguishable from a SOL/USDT one. They
+ * keep their own logos instead. The lesson generalises: this map is for
+ * "different name for the same asset", never for "related assets a user still
+ * has to tell apart".
  */
 export const SEED_SLUG_TO_CANONICAL_ASSET_ID: Readonly<Record<string, string>> = {
   aapl: 'apple',
@@ -60,8 +62,6 @@ export const SEED_SLUG_TO_CANONICAL_ASSET_ID: Readonly<Record<string, string>> =
   sui: 'sui',
   trx: 'tron',
   uni: 'uniswap',
-  usdc: 'usd',
-  usdt: 'usd',
   xag: 'silver',
   xau: 'gold',
   // Our seed slug for Tesla is 'tesla-stock'; the registry's id is 'tesla'.
