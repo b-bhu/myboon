@@ -6,9 +6,19 @@ import { PrivyProvider } from '@/providers/PrivyProvider';
 import { WalletProvider } from '@/providers/WalletProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { WalletSheetProvider } from '@/features/wallet/WalletSheetProvider';
+import { warmTokenIdentityCatalog } from '@/lib/token-identity';
 import 'react-native-reanimated';
 
 export default function RootLayout() {
+  // Pull the whole token catalog once, up front. The app opens on the feed and
+  // markets are below the fold, so this is done well before a market row needs
+  // an icon — and it replaces the per-screen resolves that round-tripped for
+  // tokens two venues share. Fire-and-forget by design: it never throws, and
+  // until it lands rows render the venue icon or the letter box as usual.
+  React.useEffect(() => {
+    void warmTokenIdentityCatalog();
+  }, []);
+
   return (
     <PrivyProvider>
     <WalletProvider>

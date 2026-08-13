@@ -38,6 +38,24 @@ export interface MeteoraTokenSummary {
   verified: boolean
 }
 
+/**
+ * Token reference for pool legs whose decimals/verified status the upstream
+ * endpoint does not actually provide (the portfolio and open-limit-order
+ * endpoints, unlike the pool listing endpoint). `MeteoraTokenSummary`
+ * hardcoded `decimals: 0` and `verified: true` for these — a fabrication,
+ * not a real answer, and anything doing math downstream of those was wrong.
+ * This type makes the unknown honest: null, not a guessed value. See
+ * docs/modules/wallet/PRDs/2026_08_11_token_identity_and_venue_adapters_PRD.md.
+ */
+export interface MeteoraTokenRef {
+  address: string
+  symbol: string
+  name: string
+  decimals: number | null
+  iconUrl: string | null
+  verified: boolean | null
+}
+
 export interface MeteoraPoolSummary {
   address: string
   pair: string
@@ -124,8 +142,8 @@ export interface MeteoraOhlcvSeries {
 export interface MeteoraPortfolioPool {
   poolAddress: string
   pair: string
-  tokenX: MeteoraTokenSummary
-  tokenY: MeteoraTokenSummary
+  tokenX: MeteoraTokenRef
+  tokenY: MeteoraTokenRef
   binStep: number
   baseFeePct: string
   currentPrice: string | null
@@ -216,8 +234,8 @@ export interface MeteoraLimitOrderSummary {
 export interface MeteoraLimitOrderPool {
   poolAddress: string
   pair: string
-  tokenX: MeteoraTokenSummary
-  tokenY: MeteoraTokenSummary
+  tokenX: MeteoraTokenRef
+  tokenY: MeteoraTokenRef
   binStep: number
   baseFeePct: string
   totalOrders: number

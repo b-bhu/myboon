@@ -20,6 +20,7 @@ import type {
   MeteoraPositionEvent,
   MeteoraPositionQuery,
   MeteoraResult,
+  MeteoraTokenRef,
   MeteoraTokenSummary,
 } from './types.js'
 
@@ -183,14 +184,18 @@ function normalizeToken(raw: RawToken, fallbackSymbol = ''): MeteoraTokenSummary
 function normalizePortfolioToken(
   record: Record<string, unknown>,
   side: 'X' | 'Y',
-): MeteoraTokenSummary {
+): MeteoraTokenRef {
+  // The portfolio endpoint doesn't return decimals or verified status —
+  // decimals: 0 / verified: true here used to be a fabrication, not a real
+  // answer. null is the honest value for an unknown the upstream API never
+  // sends. See docs/modules/wallet/PRDs/2026_08_11_token_identity_and_venue_adapters_PRD.md.
   return {
     address: stringValue(record, `token${side}Mint`),
     symbol: stringValue(record, `token${side}`),
     name: stringValue(record, `token${side}`),
-    decimals: 0,
+    decimals: null,
     iconUrl: nullableString(record, `token${side}Icon`),
-    verified: true,
+    verified: null,
   }
 }
 
@@ -550,6 +555,9 @@ export class MeteoraDataApiClient {
 
     const items = result.data.data.map((record) => {
       const pool = (record.pool ?? {}) as Record<string, unknown>
+      // The limit-orders pools endpoint, like the portfolio endpoint, never
+      // sends decimals or verified status — null is the honest unknown, not
+      // the fabricated decimals: 0 / verified: true this used to hardcode.
       return {
         poolAddress: stringValue(pool, 'pool_address'),
         pair: stringValue(pool, 'pair_name'),
@@ -557,17 +565,17 @@ export class MeteoraDataApiClient {
           address: stringValue(pool, 'token_x_mint'),
           symbol: stringValue(pool, 'token_x'),
           name: stringValue(pool, 'token_x'),
-          decimals: 0,
+          decimals: null,
           iconUrl: nullableString(pool, 'token_x_icon'),
-          verified: true,
+          verified: null,
         },
         tokenY: {
           address: stringValue(pool, 'token_y_mint'),
           symbol: stringValue(pool, 'token_y'),
           name: stringValue(pool, 'token_y'),
-          decimals: 0,
+          decimals: null,
           iconUrl: nullableString(pool, 'token_y_icon'),
-          verified: true,
+          verified: null,
         },
         binStep: numberValue(pool, 'bin_step'),
         baseFeePct: stringValue(pool, 'base_fee', '0'),

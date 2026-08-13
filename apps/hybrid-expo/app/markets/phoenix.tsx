@@ -1,5 +1,5 @@
-import { PhoenixMarketListScreen } from '@/features/perps/PhoenixMarketListScreen';
+import { VenueMarketListScreen } from '@/features/markets/VenueMarketListScreen';
 
 export default function PhoenixMarketsRoute() {
-  return <PhoenixMarketListScreen />;
+  return <VenueMarketListScreen venueId="phoenix" />;
 }

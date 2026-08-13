@@ -5,14 +5,11 @@ import type {
   MeteoraProtocolMetrics,
 } from '@myboon/shared/meteora';
 import { useRouter } from 'expo-router';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
-  Image,
   Modal,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -20,30 +17,23 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { AppProfileButton } from '@/components/AppProfileButton';
 import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
-import { useWallet } from '@/hooks/useWallet';
+import { MarketList } from '@/features/markets/MarketList';
+import { METEORA_COLUMNS, METEORA_THEME, meteoraToRow } from '@/features/meteora/meteora.rows';
 import { meteoraClient } from '@/features/meteora/meteora.client';
+import { useTokenIdentities } from '@/lib/token-identity';
+import { mintRef } from '@/lib/token-identity.core';
+import { formatCount, formatUsdCompact } from '@/lib/format';
+import { useWallet } from '@/hooks/useWallet';
+
+import type { ColumnSpec, MarketListRow } from '@/features/markets/venue.contract';
 
 const PAGE_SIZE = 30;
 const SEARCH_DELAY_MS = 300;
-const COL_FEES = 58;
-const COL_TVL = 58;
-const COL_VOLUME = 62;
 
-const METEORA = {
-  screen: '#103D4C',
-  surface: '#151B30',
-  surfaceLift: '#1D2540',
-  border: '#2B3453',
-  text: '#F6F3FF',
-  textDim: '#9AA3BD',
-  textFaint: '#68728E',
-  violet: '#7A6CFF',
-  cyan: '#29C6D1',
-  coral: '#FF6B4A',
-  green: '#34D399',
-} as const;
+const METEORA = METEORA_COLORS;
 
 const STABLECOIN_SYMBOLS = new Set([
   'DAI',
@@ -58,10 +48,10 @@ const STABLECOIN_SYMBOLS = new Set([
 type PoolFilter = 'all' | 'stable' | 'sol' | 'low_fee';
 type PoolSort = 'volume' | 'fees' | 'tvl';
 
-const SORT_OPTIONS: { id: PoolSort; label: string; apiValue: string }[] = [
-  { id: 'volume', label: '24h volume', apiValue: 'volume_24h:desc' },
-  { id: 'fees', label: '24h fees', apiValue: 'fee_24h:desc' },
-  { id: 'tvl', label: 'Liquidity', apiValue: 'tvl:desc' },
+const SORT_OPTIONS: { id: PoolSort; label: string; apiValue: string; columnKey: string }[] = [
+  { id: 'volume', label: '24h volume', apiValue: 'volume_24h:desc', columnKey: 'volume' },
+  { id: 'fees', label: '24h fees', apiValue: 'fee_24h:desc', columnKey: 'fees' },
+  { id: 'tvl', label: 'Liquidity', apiValue: 'tvl:desc', columnKey: 'tvl' },
 ];
 
 const FILTER_OPTIONS: { id: PoolFilter; label: string }[] = [
@@ -70,90 +60,6 @@ const FILTER_OPTIONS: { id: PoolFilter; label: string }[] = [
   { id: 'sol', label: 'SOL pairs' },
   { id: 'low_fee', label: 'Low fee' },
 ];
-
-const PoolRow = memo(function PoolRow({
-  pool,
-  onPress,
-}: {
-  pool: MeteoraPoolSummary;
-  onPress: (poolAddress: string) => void;
-}) {
-  return (
-    <Pressable
-      onPress={() => onPress(pool.address)}
-      accessibilityRole="button"
-      accessibilityLabel={[
-        `Open ${pool.tokenX.symbol} ${pool.tokenY.symbol} Meteora pool.`,
-        `${formatFee(pool.baseFeePct)} base fee.`,
-        `${formatUsdAccessible(pool.fees24hUsd)} fees in 24 hours.`,
-        `${formatUsdAccessible(pool.tvlUsd)} total liquidity.`,
-        `${formatUsdAccessible(pool.volume24hUsd)} volume in 24 hours.`,
-      ].join(' ')}
-      accessibilityHint="View pool details"
-      style={({ pressed }) => [styles.tableRow, pressed && styles.tableRowPressed]}
-    >
-      <TokenPair pool={pool} />
-
-      <View style={styles.poolColumn}>
-        <Text style={styles.rowPair} numberOfLines={1}>
-          {pool.tokenX.symbol} / {pool.tokenY.symbol}
-        </Text>
-        <Text style={styles.rowFee} numberOfLines={1}>
-          {formatFee(pool.baseFeePct)} fee{pool.hasFarm ? ' · Farm' : ''}
-        </Text>
-      </View>
-
-      <Text style={[styles.rowCell, styles.rowFees]}>
-        {formatUsdCompact(pool.fees24hUsd)}
-      </Text>
-      <Text style={[styles.rowCell, styles.rowTvl]}>
-        {formatUsdCompact(pool.tvlUsd)}
-      </Text>
-      <Text style={[styles.rowCell, styles.rowVolume]}>
-        {formatUsdCompact(pool.volume24hUsd)}
-      </Text>
-    </Pressable>
-  );
-});
-
-function TokenPair({ pool }: { pool: MeteoraPoolSummary }) {
-  return (
-    <View style={styles.tokenPair}>
-      <TokenMark
-        symbol={pool.tokenX.symbol}
-        iconUrl={pool.tokenX.iconUrl}
-        color={METEORA.cyan}
-      />
-      <View style={styles.secondToken}>
-        <TokenMark
-          symbol={pool.tokenY.symbol}
-          iconUrl={pool.tokenY.iconUrl}
-          color={METEORA.violet}
-        />
-      </View>
-    </View>
-  );
-}
-
-function TokenMark({
-  symbol,
-  iconUrl,
-  color,
-}: {
-  symbol: string;
-  iconUrl: string | null;
-  color: string;
-}) {
-  if (iconUrl) {
-    return <Image source={{ uri: iconUrl }} style={styles.tokenImage} />;
-  }
-
-  return (
-    <View style={[styles.tokenFallback, { backgroundColor: color }]}>
-      <Text style={styles.tokenFallbackText}>{symbol.charAt(0) || '?'}</Text>
-    </View>
-  );
-}
 
 export function MeteoraPoolsScreen() {
   const router = useRouter();
@@ -233,6 +139,29 @@ export function MeteoraPoolsScreen() {
     [activeFilter, pools],
   );
 
+  const identityRefs = useMemo(() => {
+    const refs = new Set<string>();
+    for (const pool of filteredPools) {
+      refs.add(mintRef(pool.tokenX.address));
+      refs.add(mintRef(pool.tokenY.address));
+    }
+    return Array.from(refs);
+  }, [filteredPools]);
+  const identities = useTokenIdentities(identityRefs);
+
+  const rows: MarketListRow[] = useMemo(
+    () => filteredPools.map((pool) => meteoraToRow(pool, identities)),
+    [filteredPools, identities],
+  );
+
+  const columns = useMemo<[ColumnSpec, ColumnSpec, ColumnSpec]>(
+    () => METEORA_COLUMNS.map((column) => ({
+      ...column,
+      active: column.key === currentSort.columnKey,
+    })) as [ColumnSpec, ColumnSpec, ColumnSpec],
+    [currentSort.columnKey],
+  );
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadFirstPage({ showLoading: false, clearCache: true });
@@ -269,10 +198,10 @@ export function MeteoraPoolsScreen() {
     searchQuery,
   ]);
 
-  const openPool = useCallback((poolAddress: string) => {
+  const onPressRow = useCallback((row: MarketListRow) => {
     router.push({
       pathname: '/markets/meteora/[poolAddress]',
-      params: { poolAddress },
+      params: { poolAddress: row.key },
     });
   }, [router]);
 
@@ -282,10 +211,13 @@ export function MeteoraPoolsScreen() {
     router.push('/markets/meteora/profile');
   }, [router]);
 
-  const renderPool = useCallback(
-    ({ item }: { item: MeteoraPoolSummary }) => <PoolRow pool={item} onPress={openPool} />,
-    [openPool],
-  );
+  const resetDiscovery = useCallback(() => {
+    setSearchText('');
+    setActiveFilter('all');
+  }, []);
+
+  const hasQuery = searchQuery.length > 0;
+  const hasFilter = activeFilter !== 'all';
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -313,17 +245,17 @@ export function MeteoraPoolsScreen() {
         />
       </View>
 
-      <FlatList
-        data={loading ? [] : filteredPools}
-        keyExtractor={(pool) => pool.address}
-        renderItem={renderPool}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.content,
-          { paddingBottom: Math.max(insets.bottom, 18) + 24 },
-          !loading && filteredPools.length === 0 && styles.emptyContent,
-        ]}
-        ListHeaderComponent={(
+      <MarketList
+        rows={rows}
+        columns={columns}
+        theme={METEORA_THEME}
+        loading={loading}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        error={errorMessage ? { message: errorMessage, onRetry: () => void loadFirstPage() } : undefined}
+        empty={!errorMessage ? { searching: hasQuery || hasFilter, onReset: resetDiscovery } : undefined}
+        searchBar={null}
+        header={(
           <PoolsHeader
             metrics={metrics}
             freshness={freshness}
@@ -331,44 +263,18 @@ export function MeteoraPoolsScreen() {
             onSearchTextChange={setSearchText}
             filter={activeFilter}
             onFilterChange={setActiveFilter}
-            sort={activeSort}
             sortLabel={currentSort.label}
             onOpenSort={() => setSortOpen(true)}
           />
         )}
-        ListEmptyComponent={(
-          loading
-            ? <PoolsSkeleton />
-            : errorMessage
-              ? <PoolsFailure message={errorMessage} onRetry={() => void loadFirstPage()} />
-              : (
-                <PoolsEmpty
-                  searching={searchQuery.length > 0}
-                  filtered={activeFilter !== 'all'}
-                  onReset={() => {
-                    setSearchText('');
-                    setActiveFilter('all');
-                  }}
-                />
-              )
-        )}
-        ListFooterComponent={
-          loadingMore ? (
-            <View style={styles.loadingMore}>
-              <ActivityIndicator size="small" color={METEORA.violet} />
-            </View>
-          ) : null
-        }
+        footer={loadingMore ? (
+          <View style={styles.loadingMore}>
+            <ActivityIndicator size="small" color={METEORA.violet} />
+          </View>
+        ) : undefined}
         onEndReached={() => void loadMore()}
-        onEndReachedThreshold={0.4}
-        refreshControl={(
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={METEORA.violet}
-            colors={[METEORA.violet]}
-          />
-        )}
+        onPressRow={onPressRow}
+        displayName="Meteora"
       />
 
       <SortSheet
@@ -391,7 +297,6 @@ function PoolsHeader({
   onSearchTextChange,
   filter,
   onFilterChange,
-  sort,
   sortLabel,
   onOpenSort,
 }: {
@@ -401,117 +306,92 @@ function PoolsHeader({
   onSearchTextChange: (value: string) => void;
   filter: PoolFilter;
   onFilterChange: (value: PoolFilter) => void;
-  sort: PoolSort;
   sortLabel: string;
   onOpenSort: () => void;
 }) {
   return (
-    <View>
-      <View style={styles.headerContent}>
-        <View style={styles.protocolCard}>
-          <View style={styles.protocolTop}>
-            <View>
-              <Text style={styles.protocolEyebrow}>Meteora DLMM</Text>
-              <Text style={styles.protocolTitle}>Liquidity, in motion.</Text>
-            </View>
-            <View style={[styles.liveBadge, freshness?.state === 'stale' && styles.staleBadge]}>
-              <View style={[styles.liveDot, freshness?.state === 'stale' && styles.staleDot]} />
-              <Text style={styles.liveText}>
-                {freshness?.state === 'stale' ? 'STALE' : 'LIVE'}
-              </Text>
-            </View>
+    <View style={styles.headerContent}>
+      <View style={styles.protocolCard}>
+        <View style={styles.protocolTop}>
+          <View>
+            <Text style={styles.protocolEyebrow}>Meteora DLMM</Text>
+            <Text style={styles.protocolTitle}>Liquidity, in motion.</Text>
           </View>
-
-          <View style={styles.protocolMetrics}>
-            <ProtocolMetric label="24H FEES" value={formatUsdCompact(metrics?.fees24hUsd)} />
-            <View style={styles.metricDivider} />
-            <ProtocolMetric label="LIQUIDITY" value={formatUsdCompact(metrics?.totalTvlUsd)} />
-            <View style={styles.metricDivider} />
-            <ProtocolMetric label="POOLS" value={metrics ? formatCount(metrics.totalPools) : '—'} />
+          <View style={[styles.liveBadge, freshness?.state === 'stale' && styles.staleBadge]}>
+            <View style={[styles.liveDot, freshness?.state === 'stale' && styles.staleDot]} />
+            <Text style={styles.liveText}>
+              {freshness?.state === 'stale' ? 'STALE' : 'LIVE'}
+            </Text>
           </View>
         </View>
 
-        <View style={styles.discoveryRow}>
-          <View style={styles.searchBar}>
-            <MaterialIcons name="search" size={18} color={METEORA.textDim} />
-            <TextInput
-              value={searchText}
-              onChangeText={onSearchTextChange}
-              placeholder="Search pools or tokens"
-              placeholderTextColor={METEORA.textFaint}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              style={styles.searchInput}
-              accessibilityLabel="Search Meteora pools"
-            />
-            {searchText.length > 0 ? (
-              <Pressable
-                onPress={() => onSearchTextChange('')}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Clear pool search"
-              >
-                <MaterialIcons name="close" size={17} color={METEORA.textDim} />
-              </Pressable>
-            ) : null}
-          </View>
+        <View style={styles.protocolMetrics}>
+          <ProtocolMetric label="24H FEES" value={formatUsdCompact(metrics?.fees24hUsd)} />
+          <View style={styles.metricDivider} />
+          <ProtocolMetric label="LIQUIDITY" value={formatUsdCompact(metrics?.totalTvlUsd)} />
+          <View style={styles.metricDivider} />
+          <ProtocolMetric label="POOLS" value={metrics ? formatCount(metrics.totalPools) : '—'} />
+        </View>
+      </View>
 
-          <Pressable
-            onPress={onOpenSort}
-            style={({ pressed }) => [styles.sortButton, pressed && styles.pressed]}
-            accessibilityRole="button"
-            accessibilityLabel={`Sort pools by ${sortLabel}`}
-          >
-            <MaterialIcons name="sort" size={19} color={METEORA.text} />
-          </Pressable>
+      <View style={styles.discoveryRow}>
+        <View style={styles.searchBar}>
+          <MaterialIcons name="search" size={18} color={METEORA.textDim} />
+          <TextInput
+            value={searchText}
+            onChangeText={onSearchTextChange}
+            placeholder="Search pools or tokens"
+            placeholderTextColor={METEORA.textFaint}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            style={styles.searchInput}
+            accessibilityLabel="Search Meteora pools"
+          />
+          {searchText.length > 0 ? (
+            <Pressable
+              onPress={() => onSearchTextChange('')}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Clear pool search"
+            >
+              <MaterialIcons name="close" size={17} color={METEORA.textDim} />
+            </Pressable>
+          ) : null}
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
+        <Pressable
+          onPress={onOpenSort}
+          style={({ pressed }) => [styles.sortButton, pressed && styles.pressed]}
+          accessibilityRole="button"
+          accessibilityLabel={`Sort pools by ${sortLabel}`}
         >
-          {FILTER_OPTIONS.map((option) => {
-            const selected = filter === option.id;
-            return (
-              <Pressable
-                key={option.id}
-                onPress={() => onFilterChange(option.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`Filter pools: ${option.label}`}
-                accessibilityState={{ selected }}
-                style={[styles.filterChip, selected && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterText, selected && styles.filterTextActive]}>
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+          <MaterialIcons name="sort" size={19} color={METEORA.text} />
+        </Pressable>
       </View>
 
-      <View style={styles.tableHeader}>
-        <Text style={[styles.tableHeading, styles.tableHeadingPool]}>Pool</Text>
-        <Text style={[
-          styles.tableHeading,
-          styles.tableHeadingRight,
-          styles.tableHeadingFees,
-          sort === 'fees' && styles.tableHeadingActive,
-        ]}>Fees</Text>
-        <Text style={[
-          styles.tableHeading,
-          styles.tableHeadingRight,
-          styles.tableHeadingTvl,
-          sort === 'tvl' && styles.tableHeadingActive,
-        ]}>TVL</Text>
-        <Text style={[
-          styles.tableHeading,
-          styles.tableHeadingRight,
-          styles.tableHeadingVolume,
-          sort === 'volume' && styles.tableHeadingActive,
-        ]}>Volume</Text>
-      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterRow}
+      >
+        {FILTER_OPTIONS.map((option) => {
+          const selected = filter === option.id;
+          return (
+            <Pressable
+              key={option.id}
+              onPress={() => onFilterChange(option.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter pools: ${option.label}`}
+              accessibilityState={{ selected }}
+              style={[styles.filterChip, selected && styles.filterChipActive]}
+            >
+              <Text style={[styles.filterText, selected && styles.filterTextActive]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -521,81 +401,6 @@ function ProtocolMetric({ label, value }: { label: string; value: string }) {
     <View style={styles.protocolMetric}>
       <Text style={styles.protocolMetricLabel}>{label}</Text>
       <Text style={styles.protocolMetricValue}>{value}</Text>
-    </View>
-  );
-}
-
-function PoolsSkeleton() {
-  return (
-    <View style={styles.skeletonStack}>
-      {[0, 1, 2, 3, 4, 5].map((item) => (
-        <View key={item} style={styles.skeletonRow}>
-          <View style={styles.skeletonToken} />
-          <View style={styles.skeletonCopy}>
-            <View style={styles.skeletonTitle} />
-            <View style={styles.skeletonMeta} />
-          </View>
-          <View style={styles.skeletonValue} />
-          <View style={styles.skeletonValue} />
-          <View style={styles.skeletonValueWide} />
-        </View>
-      ))}
-    </View>
-  );
-}
-
-function PoolsFailure({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <View style={styles.stateCard}>
-      <View style={styles.stateIcon}>
-        <MaterialIcons name="cloud-off" size={23} color={METEORA.coral} />
-      </View>
-      <Text style={styles.stateTitle}>Pools unavailable</Text>
-      <Text style={styles.stateText}>{message}</Text>
-      <Pressable
-        onPress={onRetry}
-        style={styles.stateButton}
-        accessibilityRole="button"
-        accessibilityLabel="Try loading Meteora pools again"
-      >
-        <Text style={styles.stateButtonText}>Try again</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function PoolsEmpty({
-  searching,
-  filtered,
-  onReset,
-}: {
-  searching: boolean;
-  filtered: boolean;
-  onReset: () => void;
-}) {
-  return (
-    <View style={styles.stateCard}>
-      <View style={styles.stateIcon}>
-        <MaterialIcons name="water-drop" size={23} color={METEORA.cyan} />
-      </View>
-      <Text style={styles.stateTitle}>
-        {searching || filtered ? 'No matching pools' : 'No approved pools'}
-      </Text>
-      <Text style={styles.stateText}>
-        {searching || filtered
-          ? 'Try another token name or reset the active filter.'
-          : 'Meteora has not returned any approved pools.'}
-      </Text>
-      {searching || filtered ? (
-        <Pressable
-          onPress={onReset}
-          style={styles.stateButton}
-          accessibilityRole="button"
-          accessibilityLabel="Reset pool search and filters"
-        >
-          <Text style={styles.stateButtonText}>Reset discovery</Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -672,38 +477,6 @@ function mergePools(
   return [...current, ...incoming.filter((pool) => !addresses.has(pool.address))];
 }
 
-function formatUsdCompact(value: string | null | undefined): string {
-  if (value === null || value === undefined) return '—';
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return '—';
-
-  const absolute = Math.abs(amount);
-  if (absolute >= 1_000_000_000) return `$${(amount / 1_000_000_000).toFixed(1)}B`;
-  if (absolute >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
-  if (absolute >= 1_000) return `$${(amount / 1_000).toFixed(1)}K`;
-  return `$${amount.toFixed(amount >= 100 ? 0 : 2)}`;
-}
-
-function formatFee(value: string | null): string {
-  const fee = Number(value);
-  if (!Number.isFinite(fee)) return '—';
-  return `${fee.toFixed(fee < 0.1 ? 3 : 2).replace(/0+$/, '').replace(/\.$/, '')}%`;
-}
-
-function formatUsdAccessible(value: string | null): string {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return 'Unavailable';
-  return `${amount.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 2,
-  })} US dollars`;
-}
-
-function formatCount(value: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
-}
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -736,14 +509,8 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     fontWeight: '800',
   },
-  content: {
-    paddingHorizontal: 0,
-  },
   headerContent: {
     paddingHorizontal: 16,
-  },
-  emptyContent: {
-    flexGrow: 1,
   },
   protocolCard: {
     marginTop: 10,
@@ -894,218 +661,8 @@ const styles = StyleSheet.create({
   filterTextActive: {
     color: METEORA.text,
   },
-  tableHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 5,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: METEORA.border,
-  },
-  tableHeading: {
-    color: METEORA.textFaint,
-    fontFamily: 'monospace',
-    fontSize: 9,
-    lineHeight: 12,
-    fontWeight: '700',
-    letterSpacing: 1.1,
-    textTransform: 'uppercase',
-  },
-  tableHeadingPool: {
-    flex: 1,
-  },
-  tableHeadingRight: {
-    textAlign: 'right',
-  },
-  tableHeadingFees: {
-    width: COL_FEES,
-  },
-  tableHeadingTvl: {
-    width: COL_TVL,
-  },
-  tableHeadingVolume: {
-    width: COL_VOLUME,
-  },
-  tableHeadingActive: {
-    color: METEORA.violet,
-  },
-  tableRow: {
-    minHeight: 62,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(43,52,83,0.72)',
-  },
-  tableRowPressed: {
-    backgroundColor: 'rgba(122,108,255,0.06)',
-  },
   pressed: {
     opacity: 0.72,
-  },
-  tokenPair: {
-    width: 38,
-    height: 30,
-    position: 'relative',
-    marginRight: 8,
-  },
-  secondToken: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-  },
-  tokenImage: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: METEORA.surface,
-    backgroundColor: METEORA.surfaceLift,
-  },
-  tokenFallback: {
-    width: 26,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: METEORA.surface,
-  },
-  tokenFallbackText: {
-    color: '#07111B',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  poolColumn: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowPair: {
-    color: METEORA.text,
-    fontFamily: 'monospace',
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '700',
-    letterSpacing: 0.1,
-  },
-  rowFee: {
-    color: METEORA.textFaint,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    lineHeight: 11,
-    marginTop: 2,
-  },
-  rowCell: {
-    color: METEORA.text,
-    fontFamily: 'monospace',
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: '600',
-    textAlign: 'right',
-  },
-  rowFees: {
-    width: COL_FEES,
-  },
-  rowTvl: {
-    width: COL_TVL,
-  },
-  rowVolume: {
-    width: COL_VOLUME,
-    color: METEORA.textDim,
-  },
-  skeletonStack: {
-    gap: 1,
-  },
-  skeletonRow: {
-    minHeight: 62,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(43,52,83,0.72)',
-  },
-  skeletonToken: {
-    width: 38,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: METEORA.surfaceLift,
-    marginRight: 8,
-  },
-  skeletonCopy: {
-    flex: 1,
-    gap: 7,
-  },
-  skeletonTitle: {
-    width: '62%',
-    height: 11,
-    borderRadius: 4,
-    backgroundColor: METEORA.surfaceLift,
-  },
-  skeletonMeta: {
-    width: '38%',
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: METEORA.surfaceLift,
-  },
-  skeletonValue: {
-    width: 58,
-    height: 12,
-    borderRadius: 4,
-    backgroundColor: METEORA.surfaceLift,
-  },
-  skeletonValueWide: {
-    width: 62,
-    height: 12,
-    borderRadius: 5,
-    backgroundColor: METEORA.surfaceLift,
-  },
-  stateCard: {
-    flex: 1,
-    minHeight: 260,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 28,
-  },
-  stateIcon: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 24,
-    backgroundColor: METEORA.surface,
-    marginBottom: 14,
-  },
-  stateTitle: {
-    color: METEORA.text,
-    fontSize: 18,
-    lineHeight: 22,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  stateText: {
-    maxWidth: 280,
-    color: METEORA.textDim,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    marginTop: 7,
-  },
-  stateButton: {
-    minHeight: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 20,
-    backgroundColor: METEORA.violet,
-    paddingHorizontal: 18,
-    marginTop: 16,
-  },
-  stateButtonText: {
-    color: METEORA.text,
-    fontSize: 12,
-    fontWeight: '800',
   },
   loadingMore: {
     paddingVertical: 22,

@@ -1,7 +1,19 @@
 import type { SwapQuotePreview, SwapToken } from '@/features/swap/swap.types';
-import { fetchWithTimeout } from '@/lib/api';
+import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
 
-const JUP_BASE_URL = 'https://api.jup.ag';
+/**
+ * Jupiter proxy mounted server-side at `${resolveApiBaseUrl()}/swap`. The
+ * Jupiter API key used to live in the client bundle (EXPO_PUBLIC_JUP_API_KEY)
+ * — that prefix inlines into the shipped JS, so the key was extractable from
+ * any release build. It now lives behind this proxy instead; the client
+ * never sees it. See docs/modules/wallet/PRDs/2026_08_11_token_identity_and_venue_adapters_PRD.md.
+ */
+const jupProxyBase = () => `${resolveApiBaseUrl()}/swap`;
+
+/** Build a same-origin icon URL for a fallback token, per the frozen /tokens/icon contract. */
+function fallbackIconUrl(assetId: string): string {
+  return `${resolveApiBaseUrl()}/tokens/icon/${assetId}`;
+}
 
 const FALLBACK_TOKENS: SwapToken[] = [
   {
@@ -9,39 +21,34 @@ const FALLBACK_TOKENS: SwapToken[] = [
     symbol: 'SOL',
     name: 'Solana',
     decimals: 9,
-    logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/info/logo.png',
+    logoURI: fallbackIconUrl('sol'),
   },
   {
     address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     symbol: 'USDC',
     name: 'USD Coin',
     decimals: 6,
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+    logoURI: fallbackIconUrl('usdc'),
   },
   {
-    address: 'Es9vMFrzaCER7xN4k3qfKxuxMxDPZWS9Vyuk3F7S3w7P',
+    // Verified on-chain: this is the real Jupiter-verified USDT mint. The
+    // previous value here (Es9vMFrzaCER7xN4k3qfKxuxMxDPZWS9Vyuk3F7S3w7P) does
+    // not exist on mainnet — anything routed through the known-token check
+    // silently missed USDT. packages/tx-parser already has the correct mint.
+    address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
     symbol: 'USDT',
     name: 'Tether USD',
     decimals: 6,
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCER7xN4k3qfKxuxMxDPZWS9Vyuk3F7S3w7P/logo.svg',
+    logoURI: fallbackIconUrl('usdt'),
   },
   {
     address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
     symbol: 'JUP',
     name: 'Jupiter',
     decimals: 6,
-    logoURI: 'https://static.jup.ag/jup/icon.png',
+    logoURI: fallbackIconUrl('jup'),
   },
 ];
-
-function jupiterHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  const apiKey = process.env.EXPO_PUBLIC_JUP_API_KEY?.trim();
-  if (apiKey) {
-    headers['x-api-key'] = apiKey;
-  }
-  return headers;
-}
 
 function toSwapToken(row: unknown): SwapToken | null {
   if (!row || typeof row !== 'object') return null;
@@ -72,8 +79,7 @@ export async function searchSwapTokens(query: string): Promise<SwapToken[]> {
   if (!normalized) return FALLBACK_TOKENS;
 
   const response = await fetchWithTimeout(
-    `${JUP_BASE_URL}/tokens/v2/search?query=${encodeURIComponent(normalized)}`,
-    { headers: jupiterHeaders() }
+    `${jupProxyBase()}/tokens/search?query=${encodeURIComponent(normalized)}`,
   );
 
   if (!response.ok) {
@@ -92,8 +98,7 @@ export async function searchSwapTokens(query: string): Promise<SwapToken[]> {
 export async function fetchTokenPrices(mints: string[]): Promise<Record<string, number>> {
   if (mints.length === 0) return {};
   const response = await fetchWithTimeout(
-    `${JUP_BASE_URL}/price/v3?ids=${encodeURIComponent(mints.join(','))}`,
-    { headers: jupiterHeaders() }
+    `${jupProxyBase()}/prices?ids=${encodeURIComponent(mints.join(','))}`,
   );
 
   if (!response.ok) {
@@ -145,13 +150,13 @@ export async function fetchSwapQuotePreview(args: {
   }
 
   const url =
-    `${JUP_BASE_URL}/swap/v1/quote` +
+    `${jupProxyBase()}/quote` +
     `?inputMint=${encodeURIComponent(args.inputMint)}` +
     `&outputMint=${encodeURIComponent(args.outputMint)}` +
     `&amount=${encodeURIComponent(amount)}` +
     `&slippageBps=${encodeURIComponent(String(args.slippageBps))}`;
 
-  const response = await fetchWithTimeout(url, { headers: jupiterHeaders() });
+  const response = await fetchWithTimeout(url);
   if (!response.ok) {
     throw new Error(`Quote preview failed (${response.status})`);
   }
