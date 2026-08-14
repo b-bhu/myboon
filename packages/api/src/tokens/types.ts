@@ -108,3 +108,102 @@ export function categoryForSymbol(symbol: string): TokenIdentity['category'] {
   if (FOREX_INDEX_SYMBOLS.has(upper)) return 'unknown'
   return 'crypto'
 }
+
+// --- tokens.xyz news feed ----------------------------------------------
+//
+// Wire contract for `news-feed.ts`. These are OUR shapes, not the upstream's:
+// the upstream field names (`title`, `posted_at`, `source_name`, `feed_source`,
+// `related_coin_ids`) appear only inside news-feed.ts, so a rename on their
+// side is a one-file change here rather than a sweep through the collectors.
+//
+// Articles and posts are separate types on purpose — see the news-feed.ts
+// header. An article is third-party reporting with an outlet; a post is one
+// account's timeline. Code that handles both should branch on `kind` rather
+// than treat them as one loose shape.
+
+/** A published press article, sourced from CoinGecko's news aggregation. */
+export interface TokensNewsArticle {
+  kind: 'article'
+  title: string
+  url: string
+  /** ISO 8601, normalized. null when the upstream value was missing/unparseable. */
+  publishedAt: string | null
+  /** Publishing outlet, e.g. 'FXStreet', 'PANews (EN)'. */
+  outlet: string | null
+  author: string | null
+  imageUrl: string | null
+  /**
+   * UNTRUSTED. CoinGecko's own coin tagging, passed through verbatim and
+   * demonstrably noisy: a 2026-08-13 story about the MSCI China Index carried
+   * ['2026-token', 'composite', 'micro', 'test-4', 'test-3'], and a CPI story
+   * carried ['grok-2', '4', 'reserve-3', 'u', ...] alongside a correct
+   * 'bitcoin'. It behaves like naive substring matching against a coin-id list,
+   * so common English words map to junk ids.
+   *
+   * Usable as a weak prior for narrowing work. NEVER usable as entity truth —
+   * writing these straight into the entity graph would poison it.
+   */
+  relatedCoinIds: string[]
+}
+
+/** A post from the @tokens account on X. One account's timeline, not a search. */
+export interface TokensNewsPost {
+  kind: 'post'
+  /** Full post body. The upstream puts this in its `title` field. */
+  text: string
+  url: string
+  /** ISO 8601, normalized. null when the upstream value was missing/unparseable. */
+  postedAt: string | null
+  /** Display handle, e.g. '@tokens'. */
+  handle: string | null
+  imageUrl: string | null
+  /** UNTRUSTED — see TokensNewsArticle.relatedCoinIds. Usually empty for posts. */
+  relatedCoinIds: string[]
+}
+
+/**
+ * Upstream response metadata, kept because it is the only way to tell an
+ * empty feed apart from a filter that matched nothing: `xCandidates: 0` with
+ * `mode: 'token'` means the term filter excluded everything, which is a
+ * different situation from the upstream having nothing to serve.
+ */
+export interface TokensNewsFeedMeta {
+  /** 'token' when any token filter was sent, else 'global'. */
+  mode: 'global' | 'token'
+  /** The term list the upstream actually matched on, after its own dedupe. */
+  terms: string[]
+  /** The limit the upstream applied, after its own clamping. */
+  limit: number
+  coingeckoCandidates: number
+  xCandidates: number
+}
+
+export interface TokensNewsFeedResult<TItem> {
+  items: TItem[]
+  meta: TokensNewsFeedMeta
+}
+
+/**
+ * Every token filter here lands in one deduped term list upstream, and sending
+ * any of them switches the response to token mode. `coinId` is the only one
+ * that filters the article half at the source; the others filter the post half
+ * on their end.
+ */
+export interface TokensNewsFetchOptions {
+  /** 1..50. Values outside are clamped, not rejected. Defaults to 10. */
+  limit?: number
+  /** CoinGecko coin id, e.g. 'bitcoin'. */
+  coinId?: string
+  /** Ticker, e.g. 'BTC'. */
+  symbol?: string
+  /** Display name, e.g. 'Bitcoin'. */
+  name?: string
+  /** Canonical asset id. */
+  assetId?: string
+  /** Extra keywords; sent comma-joined. */
+  terms?: string[]
+  /** Defaults to process.env.TOKENS_API_KEY. */
+  apiKey?: string
+  /** Injection point for tests; defaults to global fetch. */
+  fetchImpl?: typeof fetch
+}
