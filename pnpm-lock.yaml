@@ -222,6 +222,9 @@ importers:
 
   apps/video:
     dependencies:
+      '@remotion/captions':
+        specifier: 4.0.448
+        version: 4.0.448
       '@remotion/cli':
         specifier: ^4.0.0
         version: 4.0.448(@swc/helpers@0.5.15)(bufferutil@4.1.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(utf-8-validate@5.0.10)
@@ -2588,6 +2591,9 @@ packages:
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
+
+  '@remotion/captions@4.0.448':
+    resolution: {integrity: sha512-rEMKkAQ3dWJFdtMCKvy1CnQIEbTMTnvYgBl+K/aVrdGXVDMZ08+LS9oSxzq2LreTTE0zMt86G6Zej9f3dU3TIw==}
 
   '@remotion/cli@4.0.448':
     resolution: {integrity: sha512-n5ghra63XUoLvlUdHdyLj6EXWB4KhxOWo8wUn8UB1+c6jSpNDAPbwbu6XdPCSbgPJn3A1LjZ4LZPm1lP0xYmvQ==}
@@ -11890,6 +11896,8 @@ snapshots:
       - utf-8-validate
       - webpack-cli
       - webpack-hot-middleware
+
+  '@remotion/captions@4.0.448': {}
 
   '@remotion/cli@4.0.448(@swc/helpers@0.5.15)(bufferutil@4.1.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(utf-8-validate@5.0.10)':
     dependencies:

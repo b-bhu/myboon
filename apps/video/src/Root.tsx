@@ -11,6 +11,7 @@ import {
 import { ChainOverlay, HeadlineAloneOverlay } from "./week1/ProblemOverlay";
 import { Captions } from "./week1/Captions";
 import { Thumbnail } from "./week1/Thumbnail";
+import { Week2Captions } from "./week2/Captions";
 
 /** Source clip lengths, in frames at 30fps, for the caption compositions. */
 const CAPTION_SECTIONS = [
@@ -79,6 +80,14 @@ export const RemotionRoot: React.FC = () => {
           defaultProps={{ section: id }}
         />
       ))}
+      <Composition
+        id="Week2Captions"
+        component={Week2Captions}
+        durationInFrames={2292}
+        fps={30}
+        width={1920}
+        height={1080}
+      />
       <Composition
         id="Week1ProblemHeadline"
         component={HeadlineAloneOverlay}
