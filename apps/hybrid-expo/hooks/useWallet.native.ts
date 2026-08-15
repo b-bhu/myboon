@@ -63,8 +63,9 @@ export function useWallet() {
   if (privy.isPrivyUser && selection !== 'mwa') {
     // An embedded Solana wallet is not an automatic fallback for a disconnected
     // external signer. It becomes usable only after the user explicitly
-    // activates "Use myboon wallet". This keeps every transaction on the
-    // address the user last chose and prevents a silent signer change.
+    // activates the explicit in-app Solana wallet action. This keeps every
+    // transaction on the address the user last chose and prevents a silent
+    // signer change.
     const privyConnected = selection === 'privy';
     return {
       connected: privyConnected,

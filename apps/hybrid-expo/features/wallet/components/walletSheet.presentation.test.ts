@@ -44,6 +44,7 @@ function session(
     activationHydrated: true,
     privyAuthenticated: false,
     accounts,
+    embeddedProvisionedChains: [],
     recoveryChains: [],
     ...overrides,
   };
@@ -94,8 +95,9 @@ describe('management mode', () => {
     );
     assert.equal(presentation.kind, 'manage_wallets');
     assert.deepEqual(presentation.wallets.map((wallet) => wallet.chain), ['evm']);
-    assert.equal(presentation.wallets[0]?.sourceLabel, 'myboon wallet');
-    assert.equal(presentation.wallets[0]?.usageLabel, 'Used by Polymarket');
+    assert.equal(presentation.wallets[0]?.displayLabel, 'EVM');
+    assert.equal(presentation.wallets[0]?.sourceLabel, 'Privy');
+    assert.equal('usageLabel' in (presentation.wallets[0] ?? {}), false);
   });
 
   it('shows both active chains, Solana first', () => {
@@ -105,6 +107,10 @@ describe('management mode', () => {
     );
     assert.equal(presentation.title, 'Wallets');
     assert.deepEqual(presentation.wallets.map((wallet) => wallet.chain), ['solana', 'evm']);
+    assert.deepEqual(
+      presentation.wallets.map((wallet) => wallet.displayLabel),
+      ['Solana', 'EVM'],
+    );
     assert.equal(presentation.wallets[0]?.sourceLabel, 'External wallet');
   });
 
@@ -127,12 +133,24 @@ describe('management mode', () => {
     assert.deepEqual(presentation.wallets.map((wallet) => wallet.chain), ['solana']);
   });
 
-  it('offers explicit myboon activation instead of login to an authenticated user', () => {
+  it('offers creation instead of pretending an uncreated Solana wallet exists', () => {
     const presentation = deriveWalletSheetPresentation(
       { kind: 'manage' },
       session([], { privyAuthenticated: true }),
     );
-    assert.equal(presentation.actionLabel, 'Use myboon wallet');
+    assert.equal(presentation.actionLabel, 'Create Solana wallet');
+    assert.deepEqual(presentation.options, ['external_wallet']);
+  });
+
+  it('offers an existing Solana wallet when the embedded wallet is provisioned', () => {
+    const presentation = deriveWalletSheetPresentation(
+      { kind: 'manage' },
+      session([], {
+        privyAuthenticated: true,
+        embeddedProvisionedChains: ['solana'],
+      }),
+    );
+    assert.equal(presentation.actionLabel, 'Use existing Solana wallet');
     assert.deepEqual(presentation.options, ['external_wallet']);
   });
 
@@ -189,8 +207,28 @@ describe('application requirement mode', () => {
       session([PRIVY_POLYGON]),
     );
     assert.equal(presentation.contextRail, 'PHOENIX · SOLANA');
+    assert.equal(presentation.title, 'Connect a Solana wallet');
     assert.deepEqual(presentation.options, ['email', 'google', 'external_wallet']);
     assert.equal(presentation.wallets.length, 0);
+  });
+
+  it('names Solana creation and existing-wallet activation accurately', () => {
+    const needsCreation = deriveWalletSheetPresentation(
+      requirement('solana', 'Phoenix'),
+      session([PRIVY_POLYGON], { privyAuthenticated: true }),
+    );
+    assert.equal(needsCreation.title, 'Connect a Solana wallet');
+    assert.equal(needsCreation.actionLabel, 'Create Solana wallet');
+
+    const alreadyProvisioned = deriveWalletSheetPresentation(
+      requirement('solana', 'Phoenix'),
+      session([PRIVY_POLYGON], {
+        privyAuthenticated: true,
+        embeddedProvisionedChains: ['solana', 'evm'],
+      }),
+    );
+    assert.equal(alreadyProvisioned.actionLabel, 'Use existing Solana wallet');
+    assert.doesNotMatch(JSON.stringify(alreadyProvisioned), /myboon wallet/i);
   });
 
   it('marks a requested active chain satisfied and never renders the other chain as a row', () => {

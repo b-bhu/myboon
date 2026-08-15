@@ -96,6 +96,10 @@ export function ConnectionSheet({
   const session = useMemo<WalletSessionSnapshot>(() => ({
     activationHydrated: isHydrated,
     privyAuthenticated: evm.isPrivyUser,
+    embeddedProvisionedChains: [
+      ...(privy.connected ? ['solana' as const] : []),
+      ...(evm.isProvisioned ? ['evm' as const] : []),
+    ],
     accounts: [
       {
         chain: 'solana',
@@ -127,6 +131,7 @@ export function ConnectionSheet({
     evm.needsRecovery,
     evm.request,
     isHydrated,
+    privy.connected,
     privy.needsRecovery,
     solana.address,
     solana.connected,
@@ -309,7 +314,7 @@ export function ConnectionSheet({
       if (wallet.chain === 'solana' && wallet.source === 'external_wallet') {
         await solana.disconnect?.();
         // Deliberately do not activate an embedded Solana wallet here. A new
-        // signer must be chosen explicitly through "Use myboon wallet".
+        // signer must be chosen explicitly through the in-app wallet action.
         await deactivate('solana');
       } else {
         // Privy authentication is shared by its embedded chain wallets. Preserve
@@ -452,7 +457,9 @@ export function ConnectionSheet({
                 ? 'Waiting for your wallet app…'
                 : step.chain === 'evm'
                   ? 'Creating your Polygon wallet…'
-                  : 'Preparing your Solana wallet…'}
+                  : privy.connected
+                    ? 'Activating your Solana wallet…'
+                    : 'Creating your Solana wallet…'}
             />
           ) : null}
 
@@ -461,7 +468,7 @@ export function ConnectionSheet({
               <Text style={styles.infoText}>
                 {step.wallet.source === 'external_wallet'
                   ? 'Solana will become inactive. myboon will not silently switch transactions to another signer.'
-                  : 'This signs out of your myboon wallet session and disconnects every Privy-backed chain. A separate external Solana wallet stays connected.'}
+                  : 'This signs you out and disconnects the Polygon and Solana wallets linked to this account. A separate external Solana wallet stays connected.'}
               </Text>
               <DangerButton label={busy ? 'Disconnecting…' : `Disconnect ${step.wallet.chainLabel}`} disabled={busy} onPress={confirmDisconnect} />
               <TextButton label="Cancel" disabled={busy} onPress={() => setStep({ kind: 'options' })} />
@@ -531,7 +538,7 @@ function OptionsBody({
           ))
         : null}
       {hasExternal && walletOptions.length === 0 ? (
-        <SecondaryButton label="Connect Solana wallet" icon="account-balance-wallet" onPress={() => onExternalWallet()} disabled={busy} />
+        <SecondaryButton label="Connect external wallet" icon="account-balance-wallet" onPress={() => onExternalWallet()} disabled={busy} />
       ) : null}
       {reassurance ? <Text style={styles.reassurance}>{reassurance}</Text> : null}
     </View>
@@ -552,14 +559,10 @@ function WalletRows({
       {wallets.map((wallet) => (
         <View key={wallet.chain} style={styles.walletCard}>
           <View style={styles.walletCardHeader}>
-            <View style={styles.chainMark}>
-              <Text style={styles.chainMarkText}>{wallet.chain === 'solana' ? 'S' : 'P'}</Text>
-            </View>
             <View style={styles.walletIdentity}>
-              <Text style={styles.walletChain}>{wallet.chainLabel}</Text>
+              <Text style={styles.walletChain}>{wallet.displayLabel}</Text>
               <Text style={styles.walletSource}>{wallet.sourceLabel}</Text>
             </View>
-            {wallet.usageLabel ? <Text style={styles.usageLabel}>{wallet.usageLabel}</Text> : null}
           </View>
           <Pressable
             style={({ pressed }) => [styles.addressRow, pressed && styles.pressed]}
@@ -772,13 +775,10 @@ const styles = StyleSheet.create({
   dividerText: { fontSize: tokens.fontSize.sm, color: semantic.text.faint },
   walletList: { gap: tokens.spacing.md },
   walletCard: { gap: tokens.spacing.sm, padding: tokens.spacing.md, borderRadius: tokens.radius.md, borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: semantic.background.lift },
-  walletCardHeader: { minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: tokens.spacing.sm },
-  chainMark: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(20,167,125,0.14)', borderWidth: 1, borderColor: 'rgba(20,167,125,0.28)' },
-  chainMarkText: { fontFamily: 'monospace', fontSize: 13, fontWeight: '800', color: semantic.text.accent },
+  walletCardHeader: { minHeight: 40, flexDirection: 'row', alignItems: 'center' },
   walletIdentity: { flex: 1, gap: 2 },
   walletChain: { fontSize: tokens.fontSize.md, fontWeight: '700', color: semantic.text.primary },
   walletSource: { fontSize: tokens.fontSize.xs, color: semantic.text.faint },
-  usageLabel: { maxWidth: 112, fontSize: 10, lineHeight: 14, textAlign: 'right', color: semantic.text.accent },
   addressRow: { minHeight: 44, paddingHorizontal: tokens.spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: tokens.radius.md, backgroundColor: semantic.background.surface },
   address: { fontFamily: 'monospace', fontSize: tokens.fontSize.sm, color: semantic.text.dim },
   dangerButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: tokens.spacing.sm, borderWidth: 1, borderColor: 'rgba(239,71,111,0.35)', borderRadius: tokens.radius.md },

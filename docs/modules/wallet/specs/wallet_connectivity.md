@@ -54,8 +54,11 @@ Email or Google authentication establishes one Privy user identity. It does
 not provision every supported chain. The first explicit requirement for a
 chain creates that chain's embedded wallet and activates it; other chains stay
 dormant and uncreated. An authenticated user therefore does not repeat login,
-but still explicitly chooses **Use myboon wallet** or **Enable Polygon wallet**
-when activating a new chain.
+but still makes an explicit per-chain choice. For Solana, the sheet shows
+**Create Solana wallet** when none exists or **Use existing Solana wallet**
+when a dormant embedded wallet already exists. Polygon uses **Enable Polygon
+wallet**. User-facing connection copy must not introduce “myboon wallet” as an
+unexplained wallet type.
 
 Privy exposes `useEmbeddedEthereumWallet()` and `useEmbeddedSolanaWallet()`,
 each with a `create()` method, and `createOnLogin` is configurable
@@ -115,6 +118,10 @@ local instance. They open it with one of two intents:
 - **Requirement** — supply the required chain and venue label. Render only that
   chain's actions, while reassuring the user that another active chain remains
   unchanged.
+
+Active wallet rows are text-only: **Solana** or **EVM**, followed by
+the source **External wallet** or **Privy**. They do not show chain-initial
+badges or venue-specific usage text.
 
 The available connection options are:
 
@@ -185,9 +192,10 @@ fallback preference hidden inside a transaction hook.
 
 Disconnecting an external Solana wallet deactivates Solana. It must not silently
 switch transactions to an embedded Solana wallet, even if one already exists.
-The user must explicitly choose **Use myboon wallet** before that signer becomes
-active. Every transaction therefore retains the signer the user selected until
-an explicit connection or disconnect action changes it.
+The user must explicitly choose **Create Solana wallet** or **Use existing
+Solana wallet**, as appropriate, before that signer becomes active. Every
+transaction therefore retains the signer the user selected until an explicit
+connection or disconnect action changes it.
 
 Signing out of Privy disconnects every Privy-backed chain because those wallets
 share authentication. A separately connected external Solana wallet remains

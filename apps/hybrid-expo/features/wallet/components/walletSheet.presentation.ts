@@ -28,6 +28,8 @@ export interface WalletSessionSnapshot {
   activationHydrated: boolean;
   privyAuthenticated: boolean;
   accounts: readonly WalletAccountSnapshot[];
+  /** Embedded wallets that exist even when their chain is not active. */
+  embeddedProvisionedChains?: readonly Chain[];
   /** Recorded wallets that exist but cannot sign on this device. */
   recoveryChains?: readonly Chain[];
 }
@@ -35,10 +37,10 @@ export interface WalletSessionSnapshot {
 export interface WalletRowPresentation {
   chain: Chain;
   chainLabel: 'Solana' | 'Polygon';
+  displayLabel: 'Solana' | 'EVM';
   address: string;
   source: WalletAccountSource;
-  sourceLabel: 'External wallet' | 'myboon wallet';
-  usageLabel: 'Used by Polymarket' | null;
+  sourceLabel: 'External wallet' | 'Privy';
 }
 
 export type WalletSheetPresentationKind =
@@ -78,10 +80,10 @@ function toWalletRow(account: WalletAccountSnapshot): WalletRowPresentation | nu
   return {
     chain: account.chain,
     chainLabel: CHAIN_LABEL[account.chain],
+    displayLabel: account.chain === 'evm' ? 'EVM' : 'Solana',
     address: account.address,
     source: account.source,
-    sourceLabel: account.source === 'external_wallet' ? 'External wallet' : 'myboon wallet',
-    usageLabel: account.chain === 'evm' ? 'Used by Polymarket' : null,
+    sourceLabel: account.source === 'external_wallet' ? 'External wallet' : 'Privy',
   };
 }
 
@@ -128,6 +130,7 @@ export function deriveWalletSheetPresentation(
 ): WalletSheetPresentation {
   const activeWallets = deriveActiveWallets(session);
   const recoveryChains = session.recoveryChains ?? [];
+  const embeddedSolanaProvisioned = session.embeddedProvisionedChains?.includes('solana') ?? false;
 
   if (!session.activationHydrated) {
     return {
@@ -182,10 +185,16 @@ export function deriveWalletSheetPresentation(
       contextRail: 'WALLETS',
       title: 'Connect your wallet',
       body: session.privyAuthenticated
-        ? 'Use your myboon wallet for Solana, or connect an external Solana wallet.'
-        : 'Start with a myboon wallet or connect a Solana wallet you use.',
+        ? embeddedSolanaProvisioned
+          ? 'Use your existing Solana wallet or connect an external wallet.'
+          : 'Create a Solana wallet or connect an external wallet.'
+        : 'Create a Solana wallet with email or Google, or connect an external wallet.',
       reassurance: null,
-      actionLabel: session.privyAuthenticated ? 'Use myboon wallet' : null,
+      actionLabel: session.privyAuthenticated
+        ? embeddedSolanaProvisioned
+          ? 'Use existing Solana wallet'
+          : 'Create Solana wallet'
+        : null,
       options: session.privyAuthenticated
         ? availableOptions('solana').filter((option) => option === 'external_wallet')
         : availableOptions('solana'),
@@ -240,12 +249,18 @@ export function deriveWalletSheetPresentation(
       contextRail,
       title: intent.chain === 'evm'
         ? 'Enable your Polygon wallet'
-        : 'Use your myboon Solana wallet',
+        : 'Connect a Solana wallet',
       body: intent.chain === 'evm'
         ? 'You’re already signed in to myboon. No new login is needed.'
-        : `Use your myboon wallet for ${intent.applicationLabel}.`,
+        : embeddedSolanaProvisioned
+          ? `${intent.applicationLabel} requires a Solana wallet. Use your existing wallet or connect an external wallet.`
+          : `${intent.applicationLabel} requires a Solana wallet. Create one or connect an external wallet.`,
       reassurance,
-      actionLabel: intent.chain === 'evm' ? 'Enable Polygon wallet' : 'Use myboon wallet',
+      actionLabel: intent.chain === 'evm'
+        ? 'Enable Polygon wallet'
+        : embeddedSolanaProvisioned
+          ? 'Use existing Solana wallet'
+          : 'Create Solana wallet',
       options: intent.chain === 'solana'
         ? availableOptions('solana').filter((option) => option === 'external_wallet')
         : [],
@@ -258,10 +273,12 @@ export function deriveWalletSheetPresentation(
   return {
     kind: 'requirement_options',
     contextRail,
-    title: `Connect ${CHAIN_LABEL[intent.chain]} wallet`,
+    title: intent.chain === 'solana'
+      ? 'Connect a Solana wallet'
+      : `Connect ${CHAIN_LABEL[intent.chain]} wallet`,
     body: intent.chain === 'evm'
       ? `${intent.applicationLabel} uses a Polygon wallet for orders, deposits and payouts.`
-      : `Choose the wallet you’ll use for ${intent.applicationLabel}.`,
+      : `${intent.applicationLabel} requires a Solana wallet. Create one with email or Google, or connect an external wallet.`,
     reassurance,
     actionLabel: null,
     options: availableOptions(intent.chain),
