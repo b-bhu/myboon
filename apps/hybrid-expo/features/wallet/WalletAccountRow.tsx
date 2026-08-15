@@ -8,6 +8,7 @@ import type {
   WalletProtocolId,
   WalletSourceState,
 } from '@/features/wallet/wallet.types';
+import { deriveWalletRowPresentation } from '@/features/wallet/wallet.rowPresentation';
 
 /**
  * Shared Spot/Meteora account row for Home's Wallet section (issue #238).
@@ -63,13 +64,10 @@ export function WalletAccountRow({
    */
   onPress?: () => void;
 }) {
-  // A value is shown whenever one has ever resolved — including while a retry
-  // of a stale row is in flight (status 'loading' but a prior value is still
-  // held) — so a previously-known value is never blanked mid-retry
-  // (TC-STATE-003, TC-STATE-005).
-  const hasValue = source.valueUsd !== null && source.resolvedAt !== null;
-  const isStale = source.status === 'stale' || (source.status === 'loading' && hasValue);
-  const isPending = (source.status === 'idle' || source.status === 'loading' || source.status === 'failed') && !hasValue;
+  // Warm refreshes retain the last successful row without adding a loading or
+  // retry signal. Stale is reserved for a refresh that actually failed.
+  const { hasValue, isPending, showColdRetry, showStaleRetry } =
+    deriveWalletRowPresentation(source);
 
   /**
    * The tappable part of the row: name, value, and detail.
@@ -102,13 +100,13 @@ export function WalletAccountRow({
 
   const signals = (
     <>
-      {isStale ? (
+      {showStaleRetry ? (
         <StaleSignal resolvedAt={source.resolvedAt} onRetry={() => onRetry(protocol)} />
       ) : null}
 
       {!hasValue ? (
         <SyncingSignal
-          failed={source.status === 'failed'}
+          failed={showColdRetry}
           onRetry={() => onRetry(protocol)}
         />
       ) : null}

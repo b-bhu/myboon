@@ -2,6 +2,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { semantic, tokens } from '@/theme';
 import type { PerpsRowDetail, WalletProtocolId, WalletSourceState } from '@/features/wallet/wallet.types';
+import { deriveWalletRowPresentation } from '@/features/wallet/wallet.rowPresentation';
 
 /**
  * Shared account row for perps protocols (Phoenix, Pacifica — issue #239).
@@ -58,13 +59,10 @@ export function PerpsAccountRow({
   /** Tap-through destination for this row (issue #240, TC-NAV-002/003). */
   onPress: () => void;
 }) {
-  // A value is shown whenever one has ever resolved — including while a retry
-  // of a stale row is in flight (status 'loading' but a prior value is still
-  // held) — so a previously-known value is never blanked mid-retry
-  // (TC-STATE-003, TC-STATE-005).
-  const hasValue = source.valueUsd !== null && source.resolvedAt !== null;
-  const isStale = source.status === 'stale' || (source.status === 'loading' && hasValue);
-  const isPending = (source.status === 'idle' || source.status === 'loading' || source.status === 'failed') && !hasValue;
+  // Warm refreshes retain the last successful row without adding a loading or
+  // retry signal. Stale is reserved for a refresh that actually failed.
+  const { hasValue, isPending, showColdRetry, showStaleRetry } =
+    deriveWalletRowPresentation(source);
 
   return (
     <View style={[styles.row, { backgroundColor: ROW_TINT[protocol] }, isPending && styles.rowPending]}>
@@ -96,13 +94,13 @@ export function PerpsAccountRow({
         {hasValue ? <PerpsSignal detail={source.detail as PerpsRowDetail | null} /> : null}
       </Pressable>
 
-      {isStale ? (
+      {showStaleRetry ? (
         <StaleSignal resolvedAt={source.resolvedAt} onRetry={() => onRetry(protocol)} />
       ) : null}
 
       {!hasValue ? (
         <SyncingSignal
-          failed={source.status === 'failed'}
+          failed={showColdRetry}
           onRetry={() => onRetry(protocol)}
         />
       ) : null}
