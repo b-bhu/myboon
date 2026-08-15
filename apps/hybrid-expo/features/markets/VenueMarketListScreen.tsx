@@ -20,7 +20,8 @@ import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppProfileButton } from '@/components/AppProfileButton';
-import { AppTopBar, AppTopBarLogo } from '@/components/AppTopBar';
+import { AppTopBar, AppTopBarActions, AppTopBarLogo } from '@/components/AppTopBar';
+import { WalletTrigger } from '@/components/WalletTrigger';
 import { MarketList } from '@/features/markets/MarketList';
 import { venueRegistry } from '@/features/markets/venue.registry';
 import { useTokenIdentities } from '@/lib/token-identity';
@@ -113,12 +114,15 @@ export function VenueMarketListScreen({ venueId }: VenueMarketListScreenProps) {
       <AppTopBar
         left={<AppTopBarLogo />}
         right={
-          <AppProfileButton
-            onPress={openProfile}
-            connected={wallet.connected}
-            label={`Open ${adapter.displayName} profile`}
-            hint={`View your ${adapter.displayName} trading account`}
-          />
+          <AppTopBarActions>
+            <WalletTrigger />
+            <AppProfileButton
+              onPress={openProfile}
+              connected={wallet.connected}
+              label={`Open ${adapter.displayName} profile`}
+              hint={`View your ${adapter.displayName} trading account`}
+            />
+          </AppTopBarActions>
         }
       />
 

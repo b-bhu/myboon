@@ -28,6 +28,29 @@ export interface ActivationState {
   evm: boolean;
 }
 
+/**
+ * Reconcile only a newly observed live connection.
+ *
+ * An explicit disconnect clears activation after asking the adapter to
+ * disconnect. React can render the cleared activation while the adapter still
+ * exposes its previous account for one tick. Treating every connected render as
+ * activation would resurrect Solana in that window and could expose a different
+ * embedded signer after the external account disappears.
+ */
+export function shouldReconcileConnectedChain({
+  isHydrated,
+  isConnected,
+  wasConnected,
+  isActive,
+}: {
+  isHydrated: boolean;
+  isConnected: boolean;
+  wasConnected: boolean;
+  isActive: boolean;
+}): boolean {
+  return isHydrated && isConnected && !wasConnected && !isActive;
+}
+
 export const EMPTY_ACTIVATION: ActivationState = Object.freeze({
   solana: false,
   evm: false,

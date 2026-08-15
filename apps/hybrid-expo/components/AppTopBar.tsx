@@ -28,6 +28,10 @@ interface AppTopBarIconButtonProps {
   size?: number;
 }
 
+export function AppTopBarActions({ children }: { children: ReactNode }) {
+  return <View style={styles.actions}>{children}</View>;
+}
+
 export function AppTopBar({ left, center, right }: AppTopBarProps) {
   return (
     <View style={styles.bar}>
@@ -145,6 +149,12 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     alignItems: 'flex-end',
     justifyContent: 'center',
+  },
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 2,
   },
   logo: {
     width: tokens.sizing.headerLogoWidth,

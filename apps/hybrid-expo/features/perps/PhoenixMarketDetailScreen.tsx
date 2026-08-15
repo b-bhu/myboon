@@ -14,7 +14,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTopBar } from '@/components/AppTopBar';
 import { useWallet } from '@/hooks/useWallet';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { formatUsdCompact } from '@/lib/format';
 import {
@@ -107,7 +106,7 @@ interface PhoenixMarketDetailScreenProps {
 export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenProps) {
   const router = useRouter();
   const wallet = useWallet();
-  const connectSheet = useConnectionSheet('solana');
+  const connectSheet = useConnectionSheet({ chain: 'solana', applicationLabel: 'Phoenix' });
   const insets = useSafeAreaInsets();
 
   const [market, setMarket] = useState<PhoenixMarket | null>(null);
@@ -527,7 +526,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
       return {
         label: 'Connect wallet',
         disabled: false,
-        onPress: () => connectSheet.open('solana'),
+        onPress: () => { void connectSheet.open().catch(() => {}); },
       };
     }
     if (!readiness.wallet.canSignAndSendTransaction) {
@@ -652,7 +651,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
               <Text style={styles.disconnectedText}>
                 Connect your wallet to trade {market.baseSymbol} perpetuals
               </Text>
-              <Pressable style={styles.connectWalletBtn} onPress={() => connectSheet.open('solana')}>
+              <Pressable style={styles.connectWalletBtn} onPress={() => { void connectSheet.open().catch(() => {}); }}>
                 <Text style={styles.connectWalletText}>Connect wallet</Text>
               </Pressable>
             </View>
@@ -859,11 +858,6 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
       onSubmit={handleSetPositionTpsl}
     />
 
-    <ConnectionSheet
-      visible={connectSheet.visible}
-      chain={connectSheet.chain}
-      onClose={connectSheet.close}
-    />
     </>
   );
 }

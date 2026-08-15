@@ -200,7 +200,7 @@ describe('backend eligibility', () => {
 });
 
 describe('SignerDescriptor flags per backend', () => {
-  it('privy_embedded on evm: full capability, survives reinstall and device loss', () => {
+  it('privy_embedded on evm has full signing capability without an unverified recovery claim', () => {
     const descriptor = buildSignerDescriptor({
       backend: 'privy_embedded',
       chain: 'evm',
@@ -214,16 +214,16 @@ describe('SignerDescriptor flags per backend', () => {
     assert.equal(descriptor.canSignTypedData, true);
     assert.equal(descriptor.canSendTransaction, true);
     assert.equal(descriptor.canBroadcastTransaction, true);
-    assert.equal(descriptor.survivesReinstall, true);
-    assert.equal(descriptor.survivesDeviceLoss, true);
+    assert.equal(descriptor.survivesReinstall, null);
+    assert.equal(descriptor.survivesDeviceLoss, null);
   });
 
-  it('privy_embedded is survivesReinstall and survivesDeviceLoss on every chain it supports', () => {
+  it('leaves Privy reinstall and device-loss durability unknown on every chain', () => {
     for (const [chain, capabilities] of Object.entries(
       BACKEND_CAPABILITIES.privy_embedded,
     )) {
-      assert.equal(capabilities.survivesReinstall, true, `${chain} survivesReinstall`);
-      assert.equal(capabilities.survivesDeviceLoss, true, `${chain} survivesDeviceLoss`);
+      assert.equal(capabilities.survivesReinstall, null, `${chain} survivesReinstall`);
+      assert.equal(capabilities.survivesDeviceLoss, null, `${chain} survivesDeviceLoss`);
     }
   });
 

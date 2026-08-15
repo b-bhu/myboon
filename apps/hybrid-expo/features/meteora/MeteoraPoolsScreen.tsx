@@ -19,6 +19,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppProfileButton } from '@/components/AppProfileButton';
+import { WalletTrigger } from '@/components/WalletTrigger';
 import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
 import { MarketList } from '@/features/markets/MarketList';
 import { METEORA_COLUMNS, METEORA_THEME, meteoraToRow } from '@/features/meteora/meteora.rows';
@@ -234,15 +235,18 @@ export function MeteoraPoolsScreen() {
           </Pressable>
           <Text style={styles.headerTitle}>Pools</Text>
         </View>
-        <AppProfileButton
-          onPress={openProfile}
-          connected={wallet.connected}
-          label="Open Meteora profile"
-          hint="View your Meteora positions, orders, and history"
-          borderColor={METEORA_COLORS.border}
-          iconColor={METEORA_COLORS.text}
-          backgroundColor="rgba(21,27,48,0.72)"
-        />
+        <View style={styles.headerActions}>
+          <WalletTrigger />
+          <AppProfileButton
+            onPress={openProfile}
+            connected={wallet.connected}
+            label="Open Meteora profile"
+            hint="View your Meteora positions, orders, and history"
+            borderColor={METEORA_COLORS.border}
+            iconColor={METEORA_COLORS.text}
+            backgroundColor="rgba(21,27,48,0.72)"
+          />
+        </View>
       </View>
 
       <MarketList
@@ -494,6 +498,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 4,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
   headerBack: {
     width: 30,

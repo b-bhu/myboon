@@ -1,9 +1,8 @@
 /**
  * AppProfileButton — the right-top affordance inside an application.
  *
- * Every app screen (Polymarket, Pacifica, Phoenix, Meteora) shows this. Home
- * shows `AvatarTrigger` instead, because home is not an application and has no
- * profile to open — it opens the wallet sheet directly.
+ * Application roots keep profile identity separate from the adjacent global
+ * wallet control. Home has no venue profile and shows only the wallet control.
  *
  * The border carries connection state: green when a wallet is connected, muted
  * when not. That is the only signal — the icon itself never changes, so the

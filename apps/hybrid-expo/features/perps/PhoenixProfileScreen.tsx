@@ -15,7 +15,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { useWallet } from '@/hooks/useWallet';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import {
   activatePhoenixInvite,
@@ -128,7 +127,7 @@ export function PhoenixProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const wallet = useWallet();
-  const connectSheet = useConnectionSheet('solana');
+  const connectSheet = useConnectionSheet({ chain: 'solana', applicationLabel: 'Phoenix' });
 
   const [state, setState] = useState<PhoenixTraderState | null>(null);
   const [tradeHistory, setTradeHistory] = useState<PhoenixTradeHistoryItem[]>([]);
@@ -617,7 +616,7 @@ export function PhoenixProfileScreen() {
           <MaterialIcons name="account-balance-wallet" size={28} color={semantic.text.faint} />
           <Text style={styles.emptyTitle}>Connect wallet</Text>
           <Text style={styles.emptyDesc}>Connect a wallet to view your Phoenix trading account.</Text>
-          <Pressable style={styles.primaryBtn} onPress={() => connectSheet.open('solana')}>
+          <Pressable style={styles.primaryBtn} onPress={() => { void connectSheet.open().catch(() => {}); }}>
             <Text style={styles.primaryBtnText}>Connect wallet</Text>
           </Pressable>
         </View>
@@ -1034,11 +1033,6 @@ export function PhoenixProfileScreen() {
         </Pressable>
       </Modal>
 
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        onClose={connectSheet.close}
-      />
     </View>
   );
 }

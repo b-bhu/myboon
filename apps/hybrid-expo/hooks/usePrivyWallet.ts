@@ -25,6 +25,8 @@ export interface PrivyWalletState {
   isPrivyUser: boolean;
   /** Whether Privy auth is complete but the embedded wallet is still hydrating/creating */
   isPreparing: boolean;
+  /** Privy records a Solana wallet that cannot sign on this device. */
+  needsRecovery: boolean;
   /** Solana address from embedded wallet */
   address: string | null;
   /** Shortened address for display */
@@ -55,8 +57,18 @@ export function usePrivyWallet(): PrivyWalletState {
   const walletConnected = isConnected(solanaWallet);
   const wallet = walletConnected ? solanaWallet.wallets?.[0] ?? null : null;
   const address = wallet?.address ?? null;
-  const isPreparing = authenticated && !wallet;
   const solanaWalletStatus = solanaWallet.status;
+  // `not-created` is a settled dormant state, not preparation. Treating it as
+  // perpetually busy prevents an already-connected external Solana wallet from
+  // winning after the user authenticates with Privy for Polygon.
+  const isPreparing = authenticated
+    && !wallet
+    && (
+      solanaWalletStatus === 'connecting'
+      || solanaWalletStatus === 'reconnecting'
+      || solanaWalletStatus === 'creating'
+    );
+  const needsRecovery = authenticated && solanaWalletStatus === 'needs-recovery';
   const createSolanaWallet = solanaWallet.create;
 
   // Provisioning is deferred, not automatic. Privy is configured with
@@ -66,7 +78,7 @@ export function usePrivyWallet(): PrivyWalletState {
   //
   // `create()` is called from `waitForWallet()` instead, which every caller
   // reaches only from an explicit Solana-connect intent: the drawer's
-  // email/passkey login flows and `useWallet().connect()`. So logging in through
+  // email/Google login flows and `useWallet().connect()`. So logging in through
   // an EVM application provisions no Solana wallet, while the existing Solana
   // flows are unchanged from the caller's point of view.
   const creatingRef = useRef(false);
@@ -167,6 +179,7 @@ export function usePrivyWallet(): PrivyWalletState {
     connected: authenticated && !!wallet,
     isPrivyUser: authenticated,
     isPreparing,
+    needsRecovery,
     address,
     shortAddress: address ? `${address.slice(0, 4)}···${address.slice(-4)}` : null,
     loginWithGoogle: async () => {

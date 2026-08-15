@@ -15,7 +15,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test:chain": "tsx --test features/chain/chain.test.ts features/chain/activation.test.ts features/chain/deferredCreation.test.ts",
-    "test:wallet": "tsx --test features/wallet/components/connect.options.test.ts features/wallet/components/connect.filtering.test.ts features/wallet/dormantBalance.test.ts features/wallet/wallet.rowPresentation.test.ts",
+    "test:wallet": "tsx --test features/wallet/components/connect.options.test.ts features/wallet/components/connect.filtering.test.ts features/wallet/components/walletSheet.presentation.test.ts features/wallet/dormantBalance.test.ts features/wallet/wallet.rowPresentation.test.ts hooks/walletSourceSelection.test.ts",
     "postinstall": "rm -rf node_modules/@wallet-ui/react-native-web3js/node_modules/@react-native-async-storage node_modules/@solana-mobile/wallet-adapter-mobile/node_modules/@react-native-async-storage 2>/dev/null || true",
     "test:security": "tsx --test features/chain/security.deletions.test.ts",
     "test:predict": "tsx --test components/predict/deposit.chains.test.ts features/predict/predict.navigation.test.ts",

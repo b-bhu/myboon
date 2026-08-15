@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWallet } from '@/hooks/useWallet';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import {
   fetchPerpsAccount,
@@ -95,7 +94,7 @@ const POLL_INTERVAL = 30_000;
 export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
   const router = useRouter();
   const { connected, address, signMessage } = useWallet();
-  const connectSheet = useConnectionSheet('solana');
+  const connectSheet = useConnectionSheet({ chain: 'solana', applicationLabel: 'Pacifica' });
   const [account, setAccount] = useState<PerpsAccount | null>(null);
   const [positions, setPositions] = useState<PerpsPosition[]>([]);
   const [orders, setOrders] = useState<PerpsOrder[]>([]);
@@ -448,7 +447,7 @@ export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
             <Text style={styles.emptyDesc}>
               Connect a wallet to view your Pacifica trading account.
             </Text>
-            <Pressable style={styles.primaryBtn} onPress={() => connectSheet.open('solana')}>
+            <Pressable style={styles.primaryBtn} onPress={() => { void connectSheet.open().catch(() => {}); }}>
               <Text style={styles.primaryBtnText}>Connect wallet</Text>
             </Pressable>
           </View>
@@ -718,7 +717,7 @@ export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
           <LazyPacificaDepositModal
             visible={depositOpen}
             onClose={() => setDepositOpen(false)}
-            onRequestConnect={() => connectSheet.open('solana')}
+            onRequestConnect={() => { void connectSheet.open().catch(() => {}); }}
           />
         </Suspense>
       )}
@@ -727,7 +726,7 @@ export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
           <LazyPacificaWithdrawModal
             visible={withdrawOpen}
             onClose={() => setWithdrawOpen(false)}
-            onRequestConnect={() => connectSheet.open('solana')}
+            onRequestConnect={() => { void connectSheet.open().catch(() => {}); }}
           />
         </Suspense>
       )}
@@ -877,11 +876,6 @@ export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
         </Pressable>
       </Modal>
 
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        onClose={connectSheet.close}
-      />
     </View>
   );
 }

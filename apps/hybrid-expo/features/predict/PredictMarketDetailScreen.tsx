@@ -20,8 +20,8 @@ import type { ActivityItem, ClosedPortfolioPosition, OpenOrder, PortfolioPositio
 import type { GeopoliticsMarketDetail, Orderbook, PricePoint } from '@/features/predict/predict.types';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import { continueAfterWalletRequirement } from '@/features/wallet/components/walletSheet.presentation';
 import { semantic, tokens } from '@/theme';
 import { formatUsdCompact } from '@/lib/format';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
@@ -83,7 +83,9 @@ function DisplayTab({
 export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenProps) {
   const router = useRouter();
   const poly = usePolymarketWallet();
-  const connectSheet = useConnectionSheet('evm');
+  const polyRef = useRef(poly);
+  polyRef.current = poly;
+  const connectSheet = useConnectionSheet({ chain: 'evm', applicationLabel: 'Polymarket' });
   const { format, setFormat, formatOdds } = useOddsFormat();
   const { width: screenWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -444,11 +446,19 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const noPrice = getBestAsk(noBook) ?? (noTokenId ? liveTokenPrices[noTokenId] : null) ?? (detail?.outcomePrices[1] ?? null);
   const visibleOpenOrders = mergeOpenOrders(pendingOpenOrders, openOrders);
 
+  async function enablePolymarket(): Promise<boolean> {
+    const outcome = await continueAfterWalletRequirement(
+      connectSheet.open(),
+      () => polyRef.current.enable(),
+    );
+    return outcome === 'satisfied';
+  }
+
   async function runPredictSetup() {
     if (setupSubmitting) return;
     setSetupSubmitting(true);
     try {
-      await poly.enable();
+      if (!(await enablePolymarket())) return;
       await Promise.allSettled([loadCashBalance(), loadPicks()]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to sign in to Predict';
@@ -460,22 +470,9 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
 
   function handlePredictSetupPress() {
     if (setupSubmitting) return;
-    if (!poly.signer) {
-      // Polymarket settles on Polygon and signs EIP-712 orders, so the
-      // requirement is EVM. The effect below resumes session setup once the
-      // signer resolves.
-      setSetupAfterConnect(true);
-      connectSheet.open('evm');
-      return;
-    }
-    void runPredictSetup();
+    setSetupAfterConnect(true);
+    void runPredictSetup().finally(() => setSetupAfterConnect(false));
   }
-
-  useEffect(() => {
-    if (!setupAfterConnect || !poly.signer || poly.isReady) return;
-    setSetupAfterConnect(false);
-    void runPredictSetup();
-  }, [setupAfterConnect, poly.signer, poly.isReady]);
 
   function tapOdd(side: 'yes' | 'no') {
     if (submitInFlightRef.current || submitting) return;
@@ -536,12 +533,13 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     try {
       // Ensure the Polymarket session is set up against the resolved EVM signer
       if (!poly.canSignLocally) {
-        await poly.enable();
+        if (!(await enablePolymarket())) return;
         setSubmitStatus('placing');
       }
 
-      if (!poly.polygonAddress) throw new Error('Wallet session not ready');
-      const signer = poly.signer;
+      const activePoly = polyRef.current;
+      if (!activePoly.polygonAddress) throw new Error('Wallet session not ready');
+      const signer = activePoly.signer;
       if (!signer) throw new Error('Wallet session not ready');
 
       const freshBook = await fetchOrderbook(tokenID).catch(() => null);
@@ -550,11 +548,11 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
         Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
         return;
       }
-      const polygonAddress = poly.polygonAddress;
+      const polygonAddress = activePoly.polygonAddress;
 
       const result = await placeBet(signer, {
         polygonAddress,
-        tradingAddress: poly.tradingAddress,
+        tradingAddress: activePoly.tradingAddress,
         tokenID,
         price: quote.limitPrice,
         size: quote.shares,
@@ -611,14 +609,15 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     setSubmitStatus(poly.canSignLocally ? 'placing' : 'wallet');
     try {
       if (!poly.canSignLocally) {
-        await poly.enable();
+        if (!(await enablePolymarket())) return;
         setSubmitStatus('placing');
       }
 
-      if (!poly.polygonAddress || !poly.signer) throw new Error('Wallet session not ready');
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const activePoly = polyRef.current;
+      if (!activePoly.polygonAddress || !activePoly.signer) throw new Error('Wallet session not ready');
+      const result = await placeBet(activePoly.signer, {
+        polygonAddress: activePoly.polygonAddress,
+        tradingAddress: activePoly.tradingAddress,
         tokenID: position.asset,
         price: limitPrice,
         size,
@@ -633,9 +632,9 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
       setActiveView('picks');
       await Promise.allSettled([
         loadPicks(),
-        fetchClobBalance(poly.polygonAddress).then((balance) => setCashBalance(balance?.balance ?? null)),
+        fetchClobBalance(activePoly.polygonAddress).then((balance) => setCashBalance(balance?.balance ?? null)),
       ]);
-      scheduleFollowUpReconcile(poly.polygonAddress);
+      scheduleFollowUpReconcile(activePoly.polygonAddress);
     } catch (err: any) {
       Alert.alert('Cash out failed', err.message || 'Unknown error');
     } finally {
@@ -888,16 +887,6 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
         onConfirm={confirmCashOut}
       />
 
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        onClose={() => {
-          // Cancelling the sheet abandons the pending session setup, so the
-          // resume effect must not fire if the user later connects elsewhere.
-          setSetupAfterConnect(false);
-          connectSheet.close();
-        }}
-      />
     </View>
   );
 }

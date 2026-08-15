@@ -1,7 +1,7 @@
 # Wallet Connectivity Model
 
 Status: living specification
-Last amended: 2026-07-26
+Last amended: 2026-08-15
 Owner: myboon Apps
 Scope: how applications inside myboon obtain a wallet capable of signing on the
 chain they need
@@ -18,9 +18,10 @@ Companion change plan:
 An application does not own a wallet connection. It declares the chain it needs
 to sign on, and the connectivity layer resolves that requirement against what
 the user already has. Wallets are held per chain, at the session level, and are
-shared by every application that needs the same chain. When a requirement cannot
-be satisfied, the layer presents one connection modal whose available options
-are filtered by what that chain actually supports.
+shared by every application that needs the same chain. Privy authentication is
+shared, but each embedded chain wallet is created only when that chain is
+explicitly requested. When a requirement cannot be satisfied, the layer opens
+the one app-wide wallet sheet with only the options that chain supports.
 
 ## Vocabulary
 
@@ -47,20 +48,26 @@ being provisioned.
 
 ## The two backends
 
-### Privy — universal
+### Privy — shared identity, deferred wallets
 
-One social or passkey login provisions wallets on every supported chain under a
-single user identity. A Privy user has no chain-specific connection step
-anywhere in the product. They log in once; Solana applications work, EVM
-applications work, and a chain added next year works without the user doing
-anything.
+Email or Google authentication establishes one Privy user identity. It does
+not provision every supported chain. The first explicit requirement for a
+chain creates that chain's embedded wallet and activates it; other chains stay
+dormant and uncreated. An authenticated user therefore does not repeat login,
+but still explicitly chooses **Use myboon wallet** or **Enable Polygon wallet**
+when activating a new chain.
 
 Privy exposes `useEmbeddedEthereumWallet()` and `useEmbeddedSolanaWallet()`,
 each with a `create()` method, and `createOnLogin` is configurable
 independently per chain in the provider config. This is what makes lazy
 per-chain provisioning possible — see Dormancy below.
 
-Privy embedded wallets are recoverable across devices and survive reinstall.
+The repository configures deferred creation. It does not configure or prove the
+wallet recovery method, which may instead be set in the Privy dashboard. Until
+that dashboard configuration is verified, the product must not promise iCloud,
+Google Drive, passcode, recovery-key, or any other method-specific recovery.
+When Privy records a wallet that cannot sign on the current device, show the
+neutral **Wallet unavailable on this device** state and a myboon support path.
 
 ### External wallets — Solana only, and permanently so
 
@@ -82,9 +89,10 @@ most of the asymmetry in this document.
 When an application needs a chain:
 
 ```text
-1. Chain is active            -> use the connected wallet, no prompt
-2. Chain is provisioned only  -> activate, then use it
-3. Neither                    -> present the connection modal
+1. Chain is active and usable -> return `satisfied`, no prompt
+2. Privy user is authenticated -> explicitly create/activate the requested chain
+3. Neither                    -> present the requested chain's connection options
+4. Wallet exists but cannot sign here -> show neutral recovery and support
 ```
 
 Resolution is per chain and session-scoped. Connect a Solana wallet once and
@@ -97,42 +105,63 @@ death, and app restart. Activation state is therefore persisted, not held in
 memory: a user who backgrounds the app and returns is not re-prompted for a
 chain they have already activated. Anything less makes stickiness meaningless.
 
-## The connection modal
+## The app-wide wallet sheet
 
-There is one connection modal in the product, not one per chain. It offers:
+There is exactly one mounted wallet sheet in the product. Screens never own a
+local instance. They open it with one of two intents:
+
+- **Manage** — list only active, usable wallets; copy addresses; disconnect;
+  or offer Solana-first onboarding when nothing is active.
+- **Requirement** — supply the required chain and venue label. Render only that
+  chain's actions, while reassuring the user that another active chain remains
+  unchanged.
+
+The available connection options are:
 
 - **Connect an external wallet** — available only when the required chain has an
   external path. Today that means Solana only.
-- **Continue with Privy** — always available, on every chain.
+- **Continue with email** — authenticates Privy, then creates only the requested
+  chain wallet.
+- **Continue with Google** — the same chain-specific behavior through Google
+  authentication.
 
 What varies per application is which options render, driven by the chain
 requirement:
 
-| Application needs | External wallet | Privy |
-|---|---|---|
-| Solana | offered | offered |
-| EVM | not offered — no mobile transport exists | offered |
+| Application needs | External wallet | Email | Google |
+|---|---|---|---|
+| Solana | offered | offered | offered |
+| Polygon / EVM | not offered — no mobile transport exists | offered | offered |
 
-An EVM application therefore shows a single-option modal. This is a filtering
-outcome, not a separate screen. The modal must be built as a list of available
-options rather than a Privy-branded screen, so that adding an external EVM
-transport later is a change to the availability rule and nothing else.
+An EVM application therefore omits the external-wallet row. This is a filtering
+outcome, not a separate screen. Adding an external EVM transport later is a
+change to the availability rule and nothing else.
+
+Requirement opening has a completion contract:
+
+```ts
+Promise<'satisfied' | 'cancelled'>
+```
+
+It resolves `satisfied` only after the requested chain is active and exposes a
+usable signer. Dismissing the sheet resolves `cancelled`. Technical failures
+reject. Application continuation is gated on `satisfied`; in particular,
+Polymarket may call its setup/enable path only after the Polygon requirement
+has returned that outcome.
 
 ## Dormancy
 
-A user who logs in through an EVM application gets Privy wallets. Privy can
-provision Solana at the same time. That user has expressed no intent toward
-Solana, does not know a Solana address exists, and has no mental model for it.
-Showing it would be presenting the user with an account they did not ask for —
-and if they funded it, real value would sit somewhere they do not understand.
+A user who logs in through an EVM application gets a Privy identity and a
+Polygon wallet only when Polygon is activated. That user has expressed no
+intent toward Solana, so no Solana wallet is created or shown.
 
 So: **only active chains are surfaced.** A chain becomes active when the user
 takes an action implying intent for it — connecting an external wallet on that
 chain, or entering an application that requires it.
 
-Activation is per chain, sticky, and one-way within a session lifecycle. It is
-not per application. Once Solana is active it stays active; entering a second
-Solana application does not re-prompt.
+Activation is per chain and sticky within a session. It is not per application.
+Once Solana is active it stays active until the user explicitly disconnects it;
+entering a second Solana application does not re-prompt.
 
 Because `createOnLogin` is configurable per chain and both wallet hooks expose
 `create()`, dormancy is implemented as **deferred creation, not hidden
@@ -148,20 +177,39 @@ creation has failed somewhere and that is a bug. Concealing a funded address
 would be a correctness failure, so the check stays even though it should be
 unreachable.
 
+## Solana wallet coexistence and signer selection
+
+An external Solana wallet may coexist with Privy-backed wallets, including a
+Privy Polygon wallet. The active Solana source is explicit session state, not a
+fallback preference hidden inside a transaction hook.
+
+Disconnecting an external Solana wallet deactivates Solana. It must not silently
+switch transactions to an embedded Solana wallet, even if one already exists.
+The user must explicitly choose **Use myboon wallet** before that signer becomes
+active. Every transaction therefore retains the signer the user selected until
+an explicit connection or disconnect action changes it.
+
+Signing out of Privy disconnects every Privy-backed chain because those wallets
+share authentication. A separately connected external Solana wallet remains
+active and unchanged.
+
 ## The Wallet surface
 
 Wallet is a top-level destination in the home screen, alongside Feed and
-Apps/Markets. It is the only place a user manages connections. Applications do
-not own connection UI; they trigger the shared modal when a requirement is
-unsatisfied.
+Apps/Markets. A visible global wallet control opens the manager in one tap from
+Home, Feed, and every major venue root. Venue profile controls remain separate:
+profile means application identity and positions; wallet means chain accounts
+and connection state. Applications do not own connection UI; they trigger the
+shared sheet when a requirement is unsatisfied.
 
 The surface has two states over the same screen, not two products:
 
 - **Nothing active** — it is a connection manager. It presents the connection
   modal and explains what connecting does.
-- **Something active** — it is a portfolio. Active chains, their addresses,
-  balances, and positions. Switching or disconnecting a wallet is an explicit
-  action taken here, never a per-application prompt.
+- **Something active** — it is a portfolio and manager. Active chains, their
+  addresses, balances, and positions. Switching or disconnecting a wallet is
+  an explicit action taken here, never a per-application prompt. Dormant chains
+  do not render as empty cards.
 
 Portfolio depth is a scope dial. The surface owns the job; how much of it ships
 first is a PRD question.
@@ -216,7 +264,7 @@ document.
   chain support.
 - **Seed-phrase-backed self-custody EVM as a user-facing product.** A social-auth
   user must retain full signing ability with no seed phrase and no external
-  wallet. Any design that asks a passkey or email user to record a seed phrase in
+  wallet. Any design that asks an email or Google user to record a seed phrase in
   order to use an application is out of scope.
 - **Bridging.** How value moves between chains is a separate concern.
 
