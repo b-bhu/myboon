@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
 import { AppTopBarLogo } from '@/components/AppTopBar';
-import { AvatarTrigger } from '@/components/AvatarTrigger';
+import { WalletTrigger } from '@/components/WalletTrigger';
 import { FeedCard } from '@/features/feed/components/FeedCard';
 import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
 import { StoryCarousel, StoryCarouselSkeleton } from '@/features/feed/components/StoryCarousel';
@@ -28,14 +28,13 @@ import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { WalletActivityTiles } from '@/features/wallet/WalletActivityTiles';
 import { WalletHero } from '@/features/wallet/WalletHero';
 import { ChainRow } from '@/features/wallet/components/ChainRow';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { DormantChainNotice } from '@/features/wallet/components/DormantChainNotice';
 import {
   findFundedDormantChains,
   observeChains,
   reportFundedDormantChains,
 } from '@/features/wallet/dormantBalance';
-import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import { useEvmBalance } from '@/features/wallet/useEvmBalance';
 import { useProtocolAccounts } from '@/features/wallet/useProtocolAccounts';
 import { useSectionVisibility } from '@/features/wallet/useSectionVisibility';
@@ -135,8 +134,8 @@ export default function HomeScreen() {
   const wallet = useWallet();
   const evm = usePrivyEvmWallet();
   const { balanceUsd: evmBalanceUsd } = useEvmBalance(evm.address);
-  const { activation, activate, deactivate } = useChainActivation();
-  const connectSheet = useConnectionSheet('solana');
+  const { activation, activate } = useChainActivation();
+  const { openManager } = useWalletSheet();
   const walletAddress = wallet.connected ? wallet.address : null;
   const { totals: walletTotals, sources: walletSources, notifyVisibility, refreshAll: refreshWallet, retrySource: retryWalletSource } = useProtocolAccounts(walletAddress);
   const { isVisible: walletSectionVisible, onSectionLayout, onViewportLayout, onScroll: onWalletScroll } = useSectionVisibility();
@@ -296,9 +295,9 @@ export default function HomeScreen() {
    * It deliberately does not use `Alert.alert`: that renders nothing on React
    * Native Web, so a confirm-then-act flow built on it silently never acts.
    */
-  const handleDisconnectChain = useCallback((chain: Chain) => {
-    connectSheet.open(chain);
-  }, [connectSheet]);
+  const handleDisconnectChain = useCallback((_chain: Chain) => {
+    openManager();
+  }, [openManager]);
 
   return (
     <View style={styles.screen}>
@@ -306,7 +305,7 @@ export default function HomeScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 4 }]}>
         <AppTopBarLogo />
         <View style={styles.headerSpacer} />
-        <AvatarTrigger />
+        <WalletTrigger />
       </View>
 
       <Animated.ScrollView
@@ -405,18 +404,13 @@ export default function HomeScreen() {
               onOpenPacifica={() => router.push('/markets/pacifica/profile')}
             />
           ) : (
-            <DisconnectedWalletState onConnect={() => connectSheet.open('solana')} />
+            <DisconnectedWalletState onConnect={openManager} />
           )}
         </View>
       </Animated.ScrollView>
 
       <NarrativeSheet item={sheetItem} onClose={() => setSheetItem(null)} />
       <StorySheet story={storySheet} onClose={() => setStorySheet(null)} />
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        onClose={connectSheet.close}
-      />
     </View>
   );
 }

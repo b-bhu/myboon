@@ -57,7 +57,6 @@ import {
 import { meteoraPositionActionsAdapter } from '@/features/meteora/meteora.position-actions';
 import { mintRef, tokenIconUrl, useTokenIdentities } from '@/lib/token-identity';
 import { useWallet } from '@/hooks/useWallet';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 
 const PREVIEW_DEBOUNCE_MS = 450;
@@ -111,7 +110,7 @@ export function MeteoraPoolPhaseTwoScreen({
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const wallet = useWallet();
-  const connectSheet = useConnectionSheet('solana');
+  const connectSheet = useConnectionSheet({ chain: 'solana', applicationLabel: 'Meteora' });
   const requestId = useRef(0);
   const walletRef = useRef(wallet);
   const recoveryAttemptRef = useRef<string | null>(null);
@@ -604,9 +603,15 @@ export function MeteoraPoolPhaseTwoScreen({
     if (!wallet.connected) {
       setOperationState('awaiting_wallet');
       setOperationMessage('Connect your Solana wallet, then review and press the action again.');
-      // The sheet surfaces its own connection errors on an error step, so there
-      // is no failure to catch and mirror into `operationMessage` here.
-      connectSheet.open('solana');
+      void connectSheet.open().then((outcome) => {
+        if (outcome === 'satisfied') {
+          setOperationState('editing');
+          setOperationMessage('Wallet connected. Review the transaction and press the action again.');
+        }
+      }).catch((error: unknown) => {
+        setOperationState('error');
+        setOperationMessage(error instanceof Error ? error.message : 'Could not connect the wallet.');
+      });
       return;
     }
     if (wallet.source === 'privy' || typeof wallet.signAndSendTransaction !== 'function') {
@@ -1012,11 +1017,6 @@ export function MeteoraPoolPhaseTwoScreen({
         </ScrollView>
       )}
 
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        onClose={connectSheet.close}
-      />
     </View>
   );
 }

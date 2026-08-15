@@ -24,8 +24,8 @@ import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import { continueAfterWalletRequirement } from '@/features/wallet/components/walletSheet.presentation';
 import { EmptyPortfolio } from '@/features/predict/profile/EmptyPortfolio';
 import { YourPicksSection } from '@/features/predict/profile/YourPicksSection';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
@@ -83,17 +83,14 @@ export default function PredictProfileScreen() {
   // connection state. Predict settles on Polygon, so `poly` is the source of truth.
   const { address: solanaAddress } = useWallet();
   const poly = usePolymarketWallet();
+  const polyRef = useRef(poly);
+  polyRef.current = poly;
   // Predict settles on Polygon, so its requirement is EVM.
-  const connectSheet = useConnectionSheet('evm');
+  const { open: openWalletRequirement } = useConnectionSheet({
+    chain: 'evm',
+    applicationLabel: 'Polymarket',
+  });
   const [busy, setBusy] = useState(false);
-  // Set when the connection sheet is opened to reach Polymarket setup, so the
-  // effect below can finish the job once a signer resolves. Without it a user
-  // who signs in here lands back on a screen with a wallet and no next step —
-  // the detail screens already do this; profile was the one that did not.
-  const [setupAfterConnect, setSetupAfterConnect] = useState(false);
-  // Set by the sheet's `onConnected` so the close handler can tell a successful
-  // connection from a cancellation — the sheet closes itself in both cases.
-  const connectedViaSheetRef = useRef(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
@@ -116,6 +113,14 @@ export default function PredictProfileScreen() {
   const [settingsView, setSettingsView] = useState<PredictSettingsView>('menu');
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
   const [cashOutSubmitting, setCashOutSubmitting] = useState(false);
+
+  const enablePolymarket = useCallback(
+    () => continueAfterWalletRequirement(
+      openWalletRequirement(),
+      () => polyRef.current.enable(),
+    ),
+    [openWalletRequirement],
+  );
 
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const portfolioRefreshInFlight = useRef(false);
@@ -302,7 +307,8 @@ export default function PredictProfileScreen() {
 
     if (!poly.canSignLocally) {
       try {
-        await poly.enable();
+        const outcome = await enablePolymarket();
+        if (outcome === 'cancelled') return;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Failed to enable Polymarket account';
         Alert.alert('Wallet', msg);
@@ -310,16 +316,17 @@ export default function PredictProfileScreen() {
       }
     }
 
-    if (!poly.polygonAddress || !poly.signer) {
+    const activePoly = polyRef.current;
+    if (!activePoly.polygonAddress || !activePoly.signer) {
       Alert.alert('Cash out failed', 'Wallet session not ready.');
       return;
     }
 
     setCashOutSubmitting(true);
     try {
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const result = await placeBet(activePoly.signer, {
+        polygonAddress: activePoly.polygonAddress,
+        tradingAddress: activePoly.tradingAddress,
         tokenID: position.asset,
         price: limitPrice,
         size,
@@ -337,7 +344,7 @@ export default function PredictProfileScreen() {
     } finally {
       setCashOutSubmitting(false);
     }
-  }, [cashOutPosition, cashOutSubmitting, loadPortfolio, poly]);
+  }, [cashOutPosition, cashOutSubmitting, enablePolymarket, loadPortfolio, poly.canSignLocally]);
 
   // Fetch portfolio when enabled
   useEffect(() => {
@@ -383,7 +390,8 @@ export default function PredictProfileScreen() {
   const connectPredictAccount = useCallback(async () => {
     setBusy(true);
     try {
-      await poly.enable();
+      const outcome = await enablePolymarket();
+      if (outcome === 'cancelled') return;
       setSessionExpired(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect Polymarket account';
@@ -391,47 +399,18 @@ export default function PredictProfileScreen() {
     } finally {
       setBusy(false);
     }
-  }, [poly]);
+  }, [enablePolymarket]);
 
   const handleConnectPredictAccount = useCallback(() => {
-    // Predict signs on Polygon, so the requirement is EVM. When the resolver
-    // has no signer yet, the shared connection sheet is the entry point and the
-    // effect below resumes setup once the signer lands — signing in and setting
-    // up Polymarket is one user action, not two.
-    if (!poly.signer) {
-      setSetupAfterConnect(true);
-      connectSheet.open('evm');
-      return;
-    }
-
     void connectPredictAccount();
-  }, [connectPredictAccount, connectSheet, poly.signer]);
-
-  // Resume setup after the connection sheet resolves a signer. Mirrors
-  // PredictMarketDetailScreen / PredictSportDetailScreen.
-  //
-  // `connectPredictAccount` is deliberately not a dependency: it closes over
-  // `poly`, which is a new object every render, so including it would re-run
-  // this effect continuously. The ref guard is what makes the resume fire once
-  // per connection rather than on every render while setup is in flight.
-  const setupResumeRef = useRef(false);
-  useEffect(() => {
-    if (!setupAfterConnect || !poly.signer || poly.isReady) return;
-    if (setupResumeRef.current) return;
-    setupResumeRef.current = true;
-    setSetupAfterConnect(false);
-    void connectPredictAccount().finally(() => {
-      setupResumeRef.current = false;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupAfterConnect, poly.signer, poly.isReady]);
+  }, [connectPredictAccount]);
 
   const handleReconnect = useCallback(async () => {
     // Re-auth needs the EVM signer that signs CLOB auth, not a Solana wallet.
-    if (!poly.signer) return;
     setBusy(true);
     try {
-      await poly.enable();
+      const outcome = await enablePolymarket();
+      if (outcome === 'cancelled') return;
       setSessionExpired(false);
       // Re-fetch after re-auth
       await loadPortfolio();
@@ -441,7 +420,7 @@ export default function PredictProfileScreen() {
     } finally {
       setBusy(false);
     }
-  }, [poly, loadPortfolio]);
+  }, [enablePolymarket, loadPortfolio]);
 
   const handleOpenMarket = useCallback((slug: string) => {
     router.push(getPredictMarketHref(slug));
@@ -832,20 +811,6 @@ export default function PredictProfileScreen() {
         </View>
       </Modal>
 
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        // A successful connect also closes the sheet, and `onConnected` fires
-        // first — so this flag distinguishes "connected, keep the pending setup"
-        // from "user cancelled, drop it". Without it, closing on success would
-        // clear `setupAfterConnect` and the resume would never run.
-        onConnected={() => { connectedViaSheetRef.current = true; }}
-        onClose={() => {
-          if (!connectedViaSheetRef.current) setSetupAfterConnect(false);
-          connectedViaSheetRef.current = false;
-          connectSheet.close();
-        }}
-      />
     </View>
   );
 }

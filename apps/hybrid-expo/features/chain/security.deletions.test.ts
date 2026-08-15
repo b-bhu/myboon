@@ -324,6 +324,30 @@ describe('TC-POLY-001 / TC-POLY-006: Polymarket routes through the signer layer'
     // so any surviving copy asking the user to re-sign is misleading.
     assert.deepEqual(appSourceHits('needs a fresh signature'), []);
   });
+
+  it('every Polymarket enable call is gated by a satisfied Polygon requirement', () => {
+    const files = [
+      'app/markets/polymarket/profile.tsx',
+      'features/predict/PredictMarketDetailScreen.tsx',
+      'features/predict/PredictSportDetailScreen.tsx',
+      'features/predict/profile/PositionDetailScreen.tsx',
+    ];
+    let enableCalls = 0;
+    for (const file of files) {
+      const source = readFileSync(path.join(APP_ROOT, file), 'utf8');
+      for (const match of source.matchAll(/polyRef\.current\.enable\(\)/g)) {
+        enableCalls += 1;
+        const precedingContract = source.slice(Math.max(0, (match.index ?? 0) - 180), match.index);
+        assert.match(
+          precedingContract,
+          /continueAfterWalletRequirement\(/,
+          `${file} enables Polymarket without awaiting the wallet requirement`,
+        );
+      }
+      assert.equal(/\bpoly\.enable\(\)/.test(source), false, `${file} bypasses the requirement contract`);
+    }
+    assert.equal(enableCalls, files.length, 'expected one gated enable helper per Polymarket surface');
+  });
 });
 
 describe('TC-MODAL-008: applications do not own connection UI', () => {
@@ -343,6 +367,14 @@ describe('TC-MODAL-008: applications do not own connection UI', () => {
       (hit) => !isTestFile(hitPath(hit)),
     );
     assert.equal(hits.length, 1, `expected one connection sheet, found: ${hits.join(', ')}`);
+  });
+
+  it('only the app-wide provider mounts the connection sheet (#273 regression)', () => {
+    const hits = gitGrep('<ConnectionSheet', 'apps/hybrid-expo').filter(
+      (hit) => !isTestFile(hitPath(hit)),
+    );
+    assert.equal(hits.length, 1, `local connection sheet owner survived: ${hits.join(', ')}`);
+    assert.match(hits[0] ?? '', /WalletSheetProvider\.tsx/);
   });
 });
 
@@ -384,4 +416,3 @@ describe('TC-SEC-002 / TC-SEC-003: no signature-derived key material anywhere', 
     assert.deepEqual(sourceFilesContaining('myboon:polymarket:enable'), []);
   });
 });
-

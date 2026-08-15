@@ -1,7 +1,6 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Haptics from 'expo-haptics';
 import { useWallet } from '@/hooks/useWallet';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -58,7 +57,7 @@ interface PacificaMarketDetailScreenProps {
 export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScreenProps) {
   const router = useRouter();
   const { connected, address, signMessage } = useWallet();
-  const connectSheet = useConnectionSheet('solana');
+  const connectSheet = useConnectionSheet({ chain: 'solana', applicationLabel: 'Pacifica' });
 
   // Market data
   const [market, setMarket] = useState<PerpsMarket | null>(null);
@@ -558,7 +557,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
                 <Text style={styles.disconnectedText}>
                   Connect your wallet to trade {symbol} perpetuals
                 </Text>
-                <Pressable style={styles.connectWalletBtn} onPress={() => connectSheet.open('solana')}>
+                <Pressable style={styles.connectWalletBtn} onPress={() => { void connectSheet.open().catch(() => {}); }}>
                   <Text style={styles.connectWalletText}>Connect wallet</Text>
                 </Pressable>
               </View>
@@ -953,14 +952,9 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
       <PacificaDepositModal
         visible={depositOpen}
         onClose={() => setDepositOpen(false)}
-        onRequestConnect={() => connectSheet.open('solana')}
+        onRequestConnect={() => { void connectSheet.open().catch(() => {}); }}
       />
 
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        onClose={connectSheet.close}
-      />
     </View>
   );
 }

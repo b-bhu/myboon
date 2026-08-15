@@ -14,8 +14,9 @@ import {
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppTopBar, AppTopBarLogo } from '@/components/AppTopBar';
+import { AppTopBar, AppTopBarActions, AppTopBarLogo } from '@/components/AppTopBar';
 import { AppProfileButton } from '@/components/AppProfileButton';
+import { WalletTrigger } from '@/components/WalletTrigger';
 import { useChainSigner } from '@/features/chain/useChainSigner';
 import { POLYMARKET_REQUIREMENT } from '@/features/chain/chain.contract';
 import { fetchFeaturedMarkets, fetchLivePrices } from '@/features/predict/predict.api';
@@ -642,12 +643,15 @@ export default function PredictScreen() {
       <AppTopBar
         left={<AppTopBarLogo />}
         right={
-          <AppProfileButton
-            onPress={() => router.push('/markets/polymarket/profile')}
-            connected={!!evmSigner}
-            label="Open Predict profile"
-            hint="View your Predict account, picks, and winnings"
-          />
+          <AppTopBarActions>
+            <WalletTrigger />
+            <AppProfileButton
+              onPress={() => router.push('/markets/polymarket/profile')}
+              connected={!!evmSigner}
+              label="Open Predict profile"
+              hint="View your Predict account, picks, and winnings"
+            />
+          </AppTopBarActions>
         }
       />
 

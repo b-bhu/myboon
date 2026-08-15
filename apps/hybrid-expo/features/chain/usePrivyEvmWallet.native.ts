@@ -178,10 +178,10 @@ export function usePrivyEvmWallet(): PrivyEvmWalletState {
     // Still nothing signable while Privy has one on file: entropy for this
     // wallet is not on this device. `create()` would be rejected as a
     // duplicate, so say what is actually wrong rather than surfacing Privy's
-    // "Wallet already exists" — which reads as a bug, not a recoverable state.
+    // "Wallet already exists" — which reads as a bug, not a device-availability state.
     if (recordedEvmAddressRef.current) {
       throw new Error(
-        'This account has a wallet that cannot be used on this device. Reconnect to restore it.',
+        'Wallet unavailable on this device. Contact myboon support.',
       );
     }
     if (inflightRef.current) return inflightRef.current;

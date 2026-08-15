@@ -245,6 +245,28 @@ describe('activation — the session boundary (TC-SESSION-007)', () => {
   });
 });
 
+describe('activation — connection reconciliation edges', () => {
+  it('does not resurrect activation from the stale external account render after disconnect', () => {
+    const activation = loadActivation();
+    assert.equal(activation.shouldReconcileConnectedChain({
+      isHydrated: true,
+      isConnected: true,
+      wasConnected: true,
+      isActive: false,
+    }), false);
+  });
+
+  it('does activate a genuinely new or restored live connection', () => {
+    const activation = loadActivation();
+    assert.equal(activation.shouldReconcileConnectedChain({
+      isHydrated: true,
+      isConnected: true,
+      wasConnected: false,
+      isActive: false,
+    }), true);
+  });
+});
+
 describe('activation — corrupt and hostile stored state', () => {
   it('treats unparseable JSON as nothing active rather than throwing', async () => {
     disk.set('chain_activation_v1', '{not valid json');

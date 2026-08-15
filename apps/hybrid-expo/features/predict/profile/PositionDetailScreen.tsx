@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -19,6 +19,8 @@ import { formatPredictTitle } from '@/features/predict/formatPredictTitle';
 import { buildPositionSellQuote, getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
+import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import { continueAfterWalletRequirement } from '@/features/wallet/components/walletSheet.presentation';
 import { semantic, tokens } from '@/theme';
 import { SellForm } from './SellForm';
 
@@ -48,6 +50,9 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const poly = usePolymarketWallet();
+  const polyRef = useRef(poly);
+  polyRef.current = poly;
+  const connectSheet = useConnectionSheet({ chain: 'evm', applicationLabel: 'Polymarket' });
   const { formatOdds } = useOddsFormat();
 
   const [position, setPosition] = useState<PortfolioPosition | null>(null);
@@ -57,6 +62,14 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
   const [submitting, setSubmitting] = useState(false);
   const [sellStatus, setSellStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [sellMessage, setSellMessage] = useState('');
+
+  async function enablePolymarket(): Promise<boolean> {
+    const outcome = await continueAfterWalletRequirement(
+      connectSheet.open(),
+      () => polyRef.current.enable(),
+    );
+    return outcome === 'satisfied';
+  }
 
   const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
 
@@ -99,7 +112,7 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
   }, [loadData]);
 
   async function handleSell(shares: number, price: number, mode: 'limit' | 'market') {
-    if (!position || !poly.polygonAddress || submitting) return;
+    if (!position || submitting) return;
 
     const tokenID = position.asset;
     if (!tokenID) {
@@ -111,7 +124,7 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
     // Ensure wallet can sign
     if (!poly.canSignLocally) {
       try {
-        await poly.enable();
+        if (!(await enablePolymarket())) return;
       } catch (err: any) {
         setSellStatus('error');
         setSellMessage(err.message || 'Failed to enable wallet');
@@ -123,6 +136,10 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
     setSellMessage('');
     setSubmitting(true);
     try {
+      const activePoly = polyRef.current;
+      if (!activePoly.polygonAddress || !activePoly.signer) {
+        throw new Error('Wallet session not ready');
+      }
       // Market sell uses the worst live bid reached by the requested size as slippage protection.
       // Limit sell uses the user's exact specified price.
       const marketQuote = mode === 'market'
@@ -133,10 +150,9 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
       }
       const orderPrice = mode === 'market' ? marketQuote!.limitPrice! : price;
 
-      if (!poly.signer) throw new Error('Wallet session not ready');
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const result = await placeBet(activePoly.signer, {
+        polygonAddress: activePoly.polygonAddress,
+        tradingAddress: activePoly.tradingAddress,
         tokenID,
         price: orderPrice,
         size: shares,

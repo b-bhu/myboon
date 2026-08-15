@@ -1,34 +1,33 @@
 /**
- * useConnectionSheet — open the shared connection sheet from any entry point.
+ * Requirement-scoped adapter over the one app-wide wallet sheet.
  *
- * Exists so a screen that needs a wallet writes `openConnect('solana')` instead
- * of hand-rolling visible/chain state, and so no call site is tempted back into
- * calling `wallet.connect()` directly (which skips email and passkey entirely).
- *
- * Model: docs/modules/wallet/specs/wallet_connectivity.md ("The connection modal")
+ * This hook owns no visibility or chain state and renders nothing. A screen
+ * declares its chain and venue once, then awaits a one-shot outcome.
  */
 
-import { useCallback, useState } from 'react';
-import type { Chain } from '@/features/chain/chain.contract';
+import { useCallback } from 'react';
 
-export interface ConnectionSheetController {
-  visible: boolean;
-  /** Chain the sheet is currently offering options for. */
+import type { Chain } from '@/features/chain/chain.contract';
+import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
+import type { WalletSheetOutcome } from '@/features/wallet/components/walletSheet.presentation';
+
+export interface ConnectionSheetRequirement {
   chain: Chain;
-  open: (chain: Chain) => void;
-  close: () => void;
+  applicationLabel: string;
 }
 
-export function useConnectionSheet(defaultChain: Chain = 'solana'): ConnectionSheetController {
-  const [visible, setVisible] = useState(false);
-  const [chain, setChain] = useState<Chain>(defaultChain);
+export interface ConnectionSheetController {
+  open: () => Promise<WalletSheetOutcome>;
+}
 
-  const open = useCallback((next: Chain) => {
-    setChain(next);
-    setVisible(true);
-  }, []);
-
-  const close = useCallback(() => setVisible(false), []);
-
-  return { visible, chain, open, close };
+export function useConnectionSheet(
+  requirement: ConnectionSheetRequirement,
+): ConnectionSheetController {
+  const { openForRequirement } = useWalletSheet();
+  const { chain, applicationLabel } = requirement;
+  const open = useCallback(
+    () => openForRequirement({ chain, applicationLabel }),
+    [applicationLabel, chain, openForRequirement],
+  );
+  return { open };
 }

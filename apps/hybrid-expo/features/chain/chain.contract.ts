@@ -39,8 +39,8 @@ export interface ChainRequirement {
 /**
  * What a resolved signer can do and how durable its key material is.
  *
- * `survivesReinstall` / `survivesDeviceLoss` exist so features decide whether to
- * warn before a user parks value, instead of hardcoding custody assumptions.
+ * Durability is nullable because repository configuration alone cannot prove
+ * dashboard-managed recovery. `null` means unverified, not false.
  */
 export interface SignerDescriptor {
   backend: WalletBackend;
@@ -51,8 +51,8 @@ export interface SignerDescriptor {
   canSignTypedData: boolean;
   canSendTransaction: boolean;
   canBroadcastTransaction: boolean;
-  survivesReinstall: boolean;
-  survivesDeviceLoss: boolean;
+  survivesReinstall: boolean | null;
+  survivesDeviceLoss: boolean | null;
 }
 
 export interface Signer {
@@ -102,8 +102,8 @@ export interface BackendCapabilities {
    * `eth_sendTransaction`, not raw-signed export.
    */
   canBroadcastTransaction: boolean;
-  survivesReinstall: boolean;
-  survivesDeviceLoss: boolean;
+  survivesReinstall: boolean | null;
+  survivesDeviceLoss: boolean | null;
 }
 
 export const BACKEND_CAPABILITIES: Record<
@@ -111,37 +111,36 @@ export const BACKEND_CAPABILITIES: Record<
   Partial<Record<Chain, BackendCapabilities>>
 > = {
   privy_embedded: {
-    // Privy embedded wallets are recoverable across devices and survive
-    // reinstall — key material is held by Privy under the user's identity, not
-    // bound to this device.
+    // Recovery is dashboard-managed and is not configured or verified in this
+    // repository. Never turn these unknowns into a method-specific promise.
     solana: {
       canSignMessage: true,
       canSignTypedData: false, // EIP-712 is an EVM concept
       canSendTransaction: true,
       canBroadcastTransaction: false, // no EIP-1193 sendTransaction on Solana
-      survivesReinstall: true,
-      survivesDeviceLoss: true,
+      survivesReinstall: null,
+      survivesDeviceLoss: null,
     },
     evm: {
       canSignMessage: true,
       canSignTypedData: true,
       canSendTransaction: true,
       canBroadcastTransaction: true,
-      survivesReinstall: true,
-      survivesDeviceLoss: true,
+      survivesReinstall: null,
+      survivesDeviceLoss: null,
     },
   },
   external_mwa: {
-    // The external wallet app owns the key. Whether it survives reinstall of
-    // *our* app is not ours to promise, but the account itself persists in the
-    // wallet app and is seed-phrase recoverable, so both flags hold.
+    // The external wallet app owns the key. Reinstalling myboon does not delete
+    // that wallet, but device-loss recovery remains the wallet provider's
+    // responsibility and is not verified here.
     solana: {
       canSignMessage: true,
       canSignTypedData: false,
       canSendTransaction: true,
       canBroadcastTransaction: false,
       survivesReinstall: true,
-      survivesDeviceLoss: true,
+      survivesDeviceLoss: null,
     },
     // No `evm` key: MWA cannot reach EVM. See doc comment above.
   },

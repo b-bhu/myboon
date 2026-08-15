@@ -1,7 +1,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { AvatarTrigger } from '@/components/AvatarTrigger';
+import { WalletTrigger } from '@/components/WalletTrigger';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 
 export function FeedHeader() {
@@ -18,7 +18,7 @@ export function FeedHeader() {
         <MaterialIcons name="arrow-back" size={19} color={FEED_COLORS.text} />
       </Pressable>
       <Text style={styles.title}>Feed</Text>
-      <AvatarTrigger />
+      <WalletTrigger />
     </View>
   );
 }

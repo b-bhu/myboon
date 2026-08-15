@@ -17,11 +17,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AvatarTrigger } from '@/components/AvatarTrigger';
+import { WalletTrigger } from '@/components/WalletTrigger';
 import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
 import { MeteoraPositionActionSheet } from '@/features/meteora/components/MeteoraPositionActionSheet';
 import { meteoraClient } from '@/features/meteora/meteora.client';
-import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { mintRef, useTokenIdentities } from '@/lib/token-identity';
 import { useWallet } from '@/hooks/useWallet';
@@ -40,7 +39,7 @@ export function MeteoraProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const wallet = useWallet();
-  const connectSheet = useConnectionSheet('solana');
+  const connectSheet = useConnectionSheet({ chain: 'solana', applicationLabel: 'Meteora' });
   const profileRequestId = useRef(0);
   const historyRequestId = useRef(0);
 
@@ -256,12 +255,12 @@ export function MeteoraProfileScreen() {
             </Text>
           </View>
         </View>
-        <AvatarTrigger />
+        <WalletTrigger />
       </View>
 
       {!wallet.connected ? (
         <DisconnectedState
-          onConnect={() => connectSheet.open('solana')}
+          onConnect={() => { void connectSheet.open().catch(() => {}); }}
           onBrowse={() => router.replace('/markets/meteora')}
         />
       ) : wallet.source !== 'mwa' ? (
@@ -329,11 +328,6 @@ export function MeteoraProfileScreen() {
         onChanged={handlePositionChanged}
       />
 
-      <ConnectionSheet
-        visible={connectSheet.visible}
-        chain={connectSheet.chain}
-        onClose={connectSheet.close}
-      />
     </View>
   );
 }

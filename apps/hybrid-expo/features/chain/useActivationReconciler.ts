@@ -22,8 +22,12 @@
  * Model: docs/modules/wallet/specs/wallet_connectivity.md ("Dormancy")
  */
 
-import { useEffect } from 'react';
-import { activateChain, useChainActivation } from '@/features/chain/activation';
+import { useEffect, useRef } from 'react';
+import {
+  activateChain,
+  shouldReconcileConnectedChain,
+  useChainActivation,
+} from '@/features/chain/activation';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { useWallet } from '@/hooks/useWallet';
 
@@ -34,13 +38,29 @@ export function useActivationReconciler(): void {
 
   const solanaConnected = solana.connected && !!solana.address;
   const evmConnected = evm.isProvisioned && !!evm.address;
+  const previousSolanaConnected = useRef(false);
+  const previousEvmConnected = useRef(false);
 
   useEffect(() => {
     // Waiting for hydration matters: acting on the pre-read `false` would write
     // an activation record for a chain the user may have deliberately
     // disconnected, resurrecting it on every launch.
     if (!isHydrated) return;
-    if (solanaConnected && !activation.solana) void activateChain('solana');
-    if (evmConnected && !activation.evm) void activateChain('evm');
+    const reconcileSolana = shouldReconcileConnectedChain({
+      isHydrated,
+      isConnected: solanaConnected,
+      wasConnected: previousSolanaConnected.current,
+      isActive: activation.solana,
+    });
+    const reconcileEvm = shouldReconcileConnectedChain({
+      isHydrated,
+      isConnected: evmConnected,
+      wasConnected: previousEvmConnected.current,
+      isActive: activation.evm,
+    });
+    previousSolanaConnected.current = solanaConnected;
+    previousEvmConnected.current = evmConnected;
+    if (reconcileSolana) void activateChain('solana');
+    if (reconcileEvm) void activateChain('evm');
   }, [isHydrated, solanaConnected, evmConnected, activation.solana, activation.evm]);
 }

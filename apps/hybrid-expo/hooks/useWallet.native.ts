@@ -1,10 +1,13 @@
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
+import { useChainActivation } from '@/features/chain/activation';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
+import { selectNativeSolanaSource } from '@/hooks/walletSourceSelection';
 
 export type WalletSource = 'privy' | 'mwa';
 
 export function useWallet() {
   const privy = usePrivyWallet();
+  const { activation, isHydrated: activationHydrated } = useChainActivation();
   const { account, connect, disconnect, signMessage, signAndSendTransaction, connection } =
     useMobileWallet();
 
@@ -27,6 +30,7 @@ export function useWallet() {
       walletOptions: [],
       source: 'mwa' as WalletSource,
       isPreparing: false,
+      needsRecovery: false,
       sessionKey: `mwa:${fakeAddress}`,
     };
   }
@@ -47,27 +51,40 @@ export function useWallet() {
   // session — so no cached MWA account is ever exposed during the hydration window, exactly
   // as before. Stale-vs-live is resolved the same way it is for MWA-only users: the first
   // signing call re-authorizes through `transact` and fails if the cache is dead.
-  const preferMwa = !!account && !privy.isPreparing;
+  const selection = selectNativeSolanaSource({
+    hasExternalAccount: !!account,
+    privyAuthenticated: privy.isPrivyUser,
+    privyPreparing: privy.isPreparing,
+    activationHydrated,
+    privySolanaActive: activation.solana,
+    privyConnected: privy.connected,
+  });
 
-  if (privy.isPrivyUser && !preferMwa) {
+  if (privy.isPrivyUser && selection !== 'mwa') {
+    // An embedded Solana wallet is not an automatic fallback for a disconnected
+    // external signer. It becomes usable only after the user explicitly
+    // activates "Use myboon wallet". This keeps every transaction on the
+    // address the user last chose and prevents a silent signer change.
+    const privyConnected = selection === 'privy';
     return {
-      connected: privy.connected,
-      address: privy.connected ? privy.address : null,
-      shortAddress: privy.connected ? privy.shortAddress : null,
+      connected: privyConnected,
+      address: privyConnected ? privy.address : null,
+      shortAddress: privyConnected ? privy.shortAddress : null,
       connect: async (_walletName?: string) => {
-        if (privy.connected) return;
+        if (privyConnected) return;
         await privy.waitForWallet();
       },
       disconnect: privy.disconnect,
-      signMessage: privy.connected ? privy.signMessage : null,
+      signMessage: privyConnected ? privy.signMessage : null,
       // Privy embedded wallets don't support signAndSendTransaction directly —
       // Polymarket orders are signed locally (EIP-712) and proxied via VPS
       signAndSendTransaction: null,
       connection: null,
       walletOptions: [],
       source: 'privy' as WalletSource,
-      isPreparing: privy.isPreparing,
-      sessionKey: privy.connected && privy.address ? `privy:${privy.address}` : 'privy:disconnected',
+      isPreparing: privy.isPreparing || !activationHydrated,
+      needsRecovery: privy.needsRecovery,
+      sessionKey: privyConnected && privy.address ? `privy:${privy.address}` : 'privy:disconnected',
     };
   }
 
@@ -86,6 +103,7 @@ export function useWallet() {
     walletOptions: [],
     source: 'mwa' as WalletSource,
     isPreparing: false,
+    needsRecovery: false,
     sessionKey: mwaAddress ? `mwa:${mwaAddress}` : 'mwa:disconnected',
   };
 }
