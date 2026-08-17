@@ -9,6 +9,8 @@ import {
   PolymarketCatalogConflictError,
   PolymarketCatalogValidationError,
 } from '../polymarket/catalog/contracts.js'
+import type { HydratedPolymarketCollection } from '../polymarket/catalog/hydrate.js'
+import { hydratePolymarketCatalogItemPreview } from '../polymarket/catalog/hydrate.js'
 import { resolvePolymarketCatalogItems, TAG_RULE_MAX_LIMIT } from '../polymarket/catalog/source.js'
 import { listSportsRuleOptions, SPORTS_TAG_OPTIONS } from '../polymarket/catalog/sports-rules.js'
 import type { SportsRuleOption } from '../polymarket/catalog/sports-rules.js'
@@ -19,6 +21,7 @@ interface InternalPolymarketCatalogRoutesConfig {
   store: PolymarketCatalogStore
   resolveItems?: (items: PolymarketCatalogItemInput[]) => Promise<PolymarketCatalogItemInput[]>
   listSportsOptions?: () => Promise<SportsRuleOption[]>
+  previewItem?: (item: PolymarketCatalogItemInput) => Promise<HydratedPolymarketCollection>
 }
 
 const MIN_INTERNAL_TOKEN_LENGTH = 32
@@ -33,6 +36,7 @@ export function createInternalPolymarketCatalogRoutes(
   const routes = new Hono()
   const resolveItems = config.resolveItems ?? resolvePolymarketCatalogItems
   const listSportsOptions = config.listSportsOptions ?? listSportsRuleOptions
+  const previewItem = config.previewItem ?? hydratePolymarketCatalogItemPreview
 
   routes.use('*', async (c, next) => {
     c.header('Cache-Control', 'private, no-store, max-age=0')
@@ -69,6 +73,30 @@ export function createInternalPolymarketCatalogRoutes(
     defaults: { windowDays: 14, limit: 60, marketType: 'moneyline' },
     maxLimit: TAG_RULE_MAX_LIMIT,
   }))
+
+  routes.get('/preview', async (c) => {
+    try {
+      const input = parsePreviewItem(c)
+      const [resolved] = await resolveItems([input])
+      if (!resolved) throw new PolymarketCatalogValidationError('Preview source could not be resolved.')
+      const preview = await previewItem(resolved)
+      return c.json({
+        source: {
+          sourceKind: resolved.sourceKind,
+          sourceSlug: resolved.sourceSlug,
+          title: resolved.title ?? resolved.sourceSlug,
+          category: resolved.category ?? null,
+          sport: resolved.sport ?? null,
+          ruleConfig: resolved.ruleConfig ?? null,
+        },
+        count: preview.items.length,
+        generatedAt: new Date().toISOString(),
+        ...preview,
+      })
+    } catch (error) {
+      return catalogError(c, error, 'GET /internal/polymarket/collections/preview')
+    }
+  })
 
   routes.get('/:key', async (c) => {
     const key = collectionKey(c)
@@ -116,6 +144,27 @@ export function createInternalPolymarketCatalogRoutes(
   })
 
   return routes
+}
+
+function parsePreviewItem(c: Context): PolymarketCatalogItemInput {
+  const sourceKind = c.req.query('sourceKind')
+  const isRuleKind = sourceKind === 'sports_rule' || sourceKind === 'sports_tag'
+  const raw = {
+    sourceKind,
+    sourceSlug: c.req.query('sourceSlug') ?? '',
+    category: c.req.query('category') ?? null,
+    sport: c.req.query('sport') ?? null,
+    ...(isRuleKind ? {
+      ruleConfig: {
+        windowDays: Number(c.req.query('windowDays')),
+        limit: Number(c.req.query('limit')),
+        marketType: 'moneyline',
+      },
+    } : {}),
+  }
+  const [item] = parseItems([raw])
+  if (!item) throw new PolymarketCatalogValidationError('Preview source is required.')
+  return item
 }
 
 async function readBody(c: Context): Promise<Record<string, unknown>> {

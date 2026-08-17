@@ -1,12 +1,14 @@
 'use client'
 
 import Link from 'next/link'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, Fragment, useEffect, useRef, useState } from 'react'
 import styles from './styles.module.css'
 import type {
   PolymarketCatalogCollectionResponse,
   PolymarketCatalogItem,
   PolymarketCatalogItemInput,
+  PolymarketCatalogPreviewItem,
+  PolymarketCatalogPreviewResponse,
   PolymarketCatalogSourceKind,
   PolymarketSportsRuleOption,
   PolymarketSportsRuleOptionsResponse,
@@ -17,6 +19,7 @@ import type {
 const COLLECTION_KEY = 'featured'
 const COLLECTION_ENDPOINT = `/internal/polymarket/api/collections/${COLLECTION_KEY}`
 const SPORTS_OPTIONS_ENDPOINT = '/internal/polymarket/api/options/sports'
+const PREVIEW_ENDPOINT = '/internal/polymarket/api/preview'
 const SAFE_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/
 // A whole-sport source expands one tag into every league beneath it, so it needs
 // a higher ceiling than a single-league rule — cricket alone runs ~55 fixtures
@@ -64,6 +67,10 @@ export function PolymarketCollectionEditor() {
   const [isConflict, setIsConflict] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [preview, setPreview] = useState<PolymarketCatalogPreviewResponse | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [isPreviewing, setIsPreviewing] = useState(false)
+  const previewRequestId = useRef(0)
 
   useEffect(() => {
     void loadCollection()
@@ -116,55 +123,71 @@ export function PolymarketCollectionEditor() {
     setError(null)
     setNotice(null)
 
-    const sourceSlug = form.sourceSlug.trim()
-    const category = form.category.trim()
-    const sport = form.sport.trim()
-    if (!SAFE_SLUG_RE.test(sourceSlug)) {
-      setError('Use a valid Polymarket slug containing letters, numbers, underscores, or hyphens.')
+    const parsed = sourceInputFromForm(form)
+    if (parsed.error || !parsed.input) {
+      setError(parsed.error ?? 'This source is incomplete.')
       return
     }
-    if (category.length > 64 || sport.length > 64) {
-      setError('Category and sport must each be 64 characters or fewer.')
-      return
-    }
-    if (form.sourceKind === 'event' && !sport) {
-      setError('A sport is required for individual event sources.')
-      return
-    }
-    const windowDays = Number(form.windowDays)
-    const ruleLimit = Number(form.limit)
-    if (form.sourceKind === 'sports_rule' && (
-      !Number.isSafeInteger(windowDays) || windowDays < 1 || windowDays > 30
-      || !Number.isSafeInteger(ruleLimit) || ruleLimit < 1 || ruleLimit > 50
-    )) {
-      setError('Automatic sources need a 1–30 day window and a 1–50 game limit.')
-      return
-    }
-    if (form.sourceKind === 'sports_tag' && (
-      !Number.isSafeInteger(windowDays) || windowDays < 1 || windowDays > 30
-      || !Number.isSafeInteger(ruleLimit) || ruleLimit < 1 || ruleLimit > TAG_MAX_LIMIT
-    )) {
-      setError(`Whole-sport sources need a 1–30 day window and a 1–${TAG_MAX_LIMIT} game limit.`)
-      return
-    }
-    if (items.some((item) => item.sourceKind === form.sourceKind && item.sourceSlug === sourceSlug)) {
-      setError(`The ${form.sourceKind} “${sourceSlug}” is already in this collection.`)
+    const input = parsed.input
+    if (items.some((item) => item.sourceKind === input.sourceKind && item.sourceSlug === input.sourceSlug)) {
+      setError(`The ${input.sourceKind} “${input.sourceSlug}” is already in this collection.`)
       return
     }
 
     setItems((current) => [...current, {
       clientId: createClientId(),
-      sourceKind: form.sourceKind,
-      sourceSlug,
-      title: sourceSlug,
-      category: isRuleKind(form.sourceKind) ? 'sports' : category || null,
-      sport: isRuleKind(form.sourceKind) ? null : sport || null,
-      ruleConfig: isRuleKind(form.sourceKind)
-        ? { windowDays, limit: ruleLimit, marketType: 'moneyline' }
-        : null,
+      ...input,
+      title: input.sourceSlug,
     }])
     setForm((current) => ({ ...EMPTY_FORM, sourceKind: current.sourceKind }))
     markDirty()
+    void previewSource(input)
+  }
+
+  function previewFormSource() {
+    const parsed = sourceInputFromForm(form)
+    if (parsed.error || !parsed.input) {
+      setPreview(null)
+      setPreviewError(parsed.error ?? 'This source is incomplete.')
+      return
+    }
+    void previewSource(parsed.input)
+  }
+
+  async function previewSource(input: PolymarketCatalogItemInput) {
+    const requestId = previewRequestId.current + 1
+    previewRequestId.current = requestId
+    setIsPreviewing(true)
+    setPreviewError(null)
+    setPreview(null)
+
+    const query = new URLSearchParams({
+      sourceKind: input.sourceKind,
+      sourceSlug: input.sourceSlug.trim(),
+    })
+    if (input.category) query.set('category', input.category)
+    if (input.sport) query.set('sport', input.sport)
+    if (isRuleKind(input.sourceKind) && input.ruleConfig) {
+      query.set('windowDays', String(input.ruleConfig.windowDays))
+      query.set('limit', String(input.ruleConfig.limit))
+    }
+
+    try {
+      const response = await fetch(`${PREVIEW_ENDPOINT}?${query.toString()}`, { cache: 'no-store' })
+      if (response.status === 401) {
+        window.location.reload()
+        return
+      }
+      if (!response.ok) throw new Error(await readableError(response))
+      const body = await response.json() as PolymarketCatalogPreviewResponse
+      if (requestId === previewRequestId.current) setPreview(body)
+    } catch (reason) {
+      if (requestId === previewRequestId.current) {
+        setPreviewError(reason instanceof Error ? reason.message : 'Unable to preview this source')
+      }
+    } finally {
+      if (requestId === previewRequestId.current) setIsPreviewing(false)
+    }
   }
 
   function updateItem(clientId: string, field: 'category' | 'sport', value: string) {
@@ -198,6 +221,8 @@ export function PolymarketCollectionEditor() {
         : { ...EMPTY_FORM, sourceKind: 'event' })
     setError(null)
     setNotice(null)
+    setPreview(null)
+    setPreviewError(null)
   }
 
   function moveItem(index: number, direction: -1 | 1) {
@@ -541,11 +566,28 @@ export function PolymarketCollectionEditor() {
                   </label>
                 </>
               )}
-              <button className={styles.addButton} type="submit">
-                <span className="material-symbols-outlined" aria-hidden="true">add</span>
-                Add source
-              </button>
+              <div className={styles.formActions}>
+                <button
+                  className={styles.previewButton}
+                  type="button"
+                  disabled={isPreviewing || !form.sourceSlug.trim()}
+                  onClick={previewFormSource}
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">visibility</span>
+                  {isPreviewing ? 'Loading…' : isRuleKind(form.sourceKind) ? 'Preview games' : 'Preview'}
+                </button>
+                <button className={styles.addButton} type="submit">
+                  <span className="material-symbols-outlined" aria-hidden="true">add</span>
+                  Add source
+                </button>
+              </div>
             </form>
+
+            <SourcePreview
+              preview={preview}
+              error={previewError}
+              isLoading={isPreviewing}
+            />
           </section>
 
           <section className={styles.panel}>
@@ -633,6 +675,16 @@ export function PolymarketCollectionEditor() {
                       </>
                     )}
                     <div className={styles.rowActions}>
+                      <button
+                        className={styles.previewRowButton}
+                        type="button"
+                        onClick={() => void previewSource(item)}
+                        disabled={isPreviewing}
+                        aria-label={`Preview ${item.sourceSlug}`}
+                        title="Preview what this source contributes"
+                      >
+                        <span className="material-symbols-outlined" aria-hidden="true">visibility</span>
+                      </button>
                       <button type="button" onClick={() => moveItem(index, -1)} disabled={index === 0} aria-label={`Move ${item.sourceSlug} up`}>
                         <span className="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
                       </button>
@@ -712,6 +764,158 @@ export function PolymarketCollectionEditor() {
   )
 }
 
+function SourcePreview({ preview, error, isLoading }: {
+  preview: PolymarketCatalogPreviewResponse | null
+  error: string | null
+  isLoading: boolean
+}) {
+  const windowDays = preview?.source.ruleConfig?.windowDays
+  const isGamesSource = preview ? isRuleKind(preview.source.sourceKind) : true
+
+  return (
+    <section className={styles.previewBoard} aria-live="polite" aria-busy={isLoading}>
+      <div className={styles.previewHeading}>
+        <div className={styles.previewTitleGroup}>
+          <span className="material-symbols-outlined" aria-hidden="true">stadium</span>
+          <div>
+            <span className={styles.previewEyebrow}>Source preview</span>
+            <strong>
+              {preview
+                ? `${preview.source.title} · ${preview.count} ${isGamesSource ? (preview.count === 1 ? 'game' : 'games') : (preview.count === 1 ? 'market' : 'markets')}`
+                : 'See what will enter the feed'}
+            </strong>
+          </div>
+        </div>
+        <span className={styles.previewSafety}>Preview only · nothing saved</span>
+      </div>
+
+      {isLoading ? (
+        <div className={styles.previewState}>
+          <span className={styles.spinner} aria-hidden="true" />
+          Asking Polymarket for the matching fixtures…
+        </div>
+      ) : error ? (
+        <div className={`${styles.previewState} ${styles.previewError}`} role="alert">
+          <span className="material-symbols-outlined" aria-hidden="true">error</span>
+          <div>
+            <strong>Preview unavailable</strong>
+            <span>{error}</span>
+          </div>
+        </div>
+      ) : preview && preview.items.length === 0 ? (
+        <div className={styles.previewState}>
+          <span className="material-symbols-outlined" aria-hidden="true">event_busy</span>
+          <div>
+            <strong>No matching {isGamesSource ? 'games' : 'markets'} right now</strong>
+            <span>
+              {windowDays
+                ? `Polymarket has no live or upcoming main games for this source in the next ${windowDays} days.`
+                : 'Polymarket did not return a market for this source.'}
+            </span>
+          </div>
+        </div>
+      ) : preview ? (
+        <>
+          <div className={styles.previewMeta}>
+            <span>{preview.source.sourceSlug.toUpperCase()}</span>
+            {windowDays ? <span>Next {windowDays} days</span> : null}
+            {preview.source.ruleConfig ? <span>Up to {preview.source.ruleConfig.limit} games</span> : null}
+            <span>Live Polymarket data</span>
+          </div>
+          <div className={styles.fixtureList}>
+            {preview.items.map((item) => <PreviewFixture key={`${item.type}:${item.slug}`} item={item} />)}
+          </div>
+        </>
+      ) : (
+        <div className={styles.previewState}>
+          <span className="material-symbols-outlined" aria-hidden="true">visibility</span>
+          <span>Choose a source and select <strong>Preview games</strong>. You can also use the eye button on a source already in the ledger.</span>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PreviewFixture({ item }: { item: PolymarketCatalogPreviewItem }) {
+  const title = item.title ?? item.question ?? item.slug
+  const time = item.gameStartTime ?? item.endDate ?? item.startDate ?? null
+  const outcomes = item.type === 'match'
+    ? item.outcomes ?? []
+    : [
+        { label: 'Yes', price: item.yesPrice ?? null },
+        { label: 'No', price: item.noPrice ?? null },
+      ]
+  const teamsWithCrests = [...(item.teams ?? [])]
+    .filter((team) => team.logo)
+    .sort((a, b) => previewTeamOrder(a.ordering) - previewTeamOrder(b.ordering))
+    .slice(0, 2)
+
+  return (
+    <article className={styles.fixtureRow}>
+      {teamsWithCrests.length > 0 ? (
+        <div
+          className={styles.fixtureCrests}
+          data-count={teamsWithCrests.length}
+          role="img"
+          aria-label={`${teamsWithCrests.map((team) => team.name).join(' versus ')} team crests`}
+        >
+          {teamsWithCrests.map((team, index) => (
+            <Fragment key={`${team.name}:${team.logo}`}>
+              {index === 1 ? <span aria-hidden="true">vs</span> : null}
+              <img
+                src={team.logo ?? undefined}
+                alt=""
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+            </Fragment>
+          ))}
+        </div>
+      ) : (
+        <div className={styles.fixtureImageSlot}>
+          {item.image ? (
+            <img
+              src={item.image}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+            />
+          ) : null}
+        </div>
+      )}
+      <div className={styles.fixtureTime}>
+        <span>{time ? formatPreviewDate(time).day : 'Date TBD'}</span>
+        <strong>{time ? formatPreviewDate(time).time : '—'}</strong>
+      </div>
+      <div className={styles.fixtureIdentity}>
+        <div>
+          <span className={styles.fixtureStatus} data-status={item.status ?? 'market'}>
+            {item.status === 'live' ? 'Live' : item.type === 'match' ? 'Upcoming' : 'Market'}
+          </span>
+          {item.sport ? <span className={styles.fixtureSport}>{item.sport.toUpperCase()}</span> : null}
+        </div>
+        <strong>{title}</strong>
+        <code>{item.slug}</code>
+      </div>
+      <div className={styles.fixtureOutcomes} aria-label="Current implied probabilities">
+        {outcomes.slice(0, 3).map((outcome, index) => (
+          <span key={`${outcome.label}:${index}`}>
+            <small>{shortPreviewLabel(outcome.label)}</small>
+            <strong>{formatPreviewProbability(outcome.price)}</strong>
+          </span>
+        ))}
+      </div>
+      <span className={styles.fixtureVolume}>{formatPreviewVolume(item.volume)} vol</span>
+    </article>
+  )
+}
+
+function previewTeamOrder(ordering: string | null): number {
+  if (ordering === 'home') return 0
+  if (ordering === 'away') return 2
+  return 1
+}
+
 function ReleaseBadge({ label, version, emptyLabel, tone }: {
   label: string
   version?: number
@@ -724,6 +928,87 @@ function ReleaseBadge({ label, version, emptyLabel, tone }: {
       <strong>{version ? `v${version}` : emptyLabel}</strong>
     </div>
   )
+}
+
+function sourceInputFromForm(form: AddItemForm): {
+  input: PolymarketCatalogItemInput | null
+  error: string | null
+} {
+  const sourceSlug = form.sourceSlug.trim()
+  const category = form.category.trim()
+  const sport = form.sport.trim()
+  if (!SAFE_SLUG_RE.test(sourceSlug)) {
+    return { input: null, error: 'Use a valid Polymarket slug containing letters, numbers, underscores, or hyphens.' }
+  }
+  if (category.length > 64 || sport.length > 64) {
+    return { input: null, error: 'Category and sport must each be 64 characters or fewer.' }
+  }
+  if (form.sourceKind === 'event' && !sport) {
+    return { input: null, error: 'A sport is required for individual event sources.' }
+  }
+
+  const windowDays = Number(form.windowDays)
+  const ruleLimit = Number(form.limit)
+  if (form.sourceKind === 'sports_rule' && (
+    !Number.isSafeInteger(windowDays) || windowDays < 1 || windowDays > 30
+    || !Number.isSafeInteger(ruleLimit) || ruleLimit < 1 || ruleLimit > 50
+  )) {
+    return { input: null, error: 'Automatic sources need a 1–30 day window and a 1–50 game limit.' }
+  }
+  if (form.sourceKind === 'sports_tag' && (
+    !Number.isSafeInteger(windowDays) || windowDays < 1 || windowDays > 30
+    || !Number.isSafeInteger(ruleLimit) || ruleLimit < 1 || ruleLimit > TAG_MAX_LIMIT
+  )) {
+    return { input: null, error: `Whole-sport sources need a 1–30 day window and a 1–${TAG_MAX_LIMIT} game limit.` }
+  }
+
+  return {
+    input: {
+      sourceKind: form.sourceKind,
+      sourceSlug: isRuleKind(form.sourceKind) ? sourceSlug.toLowerCase() : sourceSlug,
+      category: isRuleKind(form.sourceKind) ? 'sports' : category || null,
+      sport: isRuleKind(form.sourceKind) ? null : sport || null,
+      ruleConfig: isRuleKind(form.sourceKind)
+        ? { windowDays, limit: ruleLimit, marketType: 'moneyline' }
+        : null,
+    },
+    error: null,
+  }
+}
+
+function formatPreviewDate(value: string): { day: string; time: string } {
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return { day: 'Date TBD', time: '—' }
+  const date = new Date(timestamp)
+  return {
+    day: new Intl.DateTimeFormat('en-IN', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+    }).format(date),
+    time: new Intl.DateTimeFormat('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).format(date),
+  }
+}
+
+function formatPreviewProbability(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `${Math.round(value * 100)}%`
+}
+
+function formatPreviewVolume(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—'
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
+function shortPreviewLabel(value: string): string {
+  if (value.toLowerCase().startsWith('draw')) return 'Draw'
+  return value.length > 15 ? `${value.slice(0, 13)}…` : value
 }
 
 function toEditorItem(item: PolymarketCatalogItem): EditorItem {

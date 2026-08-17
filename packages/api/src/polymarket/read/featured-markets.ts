@@ -42,6 +42,7 @@ export interface FeaturedMarket {
   startDate?: string | null                 // Market creation date (not game start)
   active: boolean | null                    // Market accepting trades
   image: string | null                      // Market/event thumbnail URL
+  teams?: FeaturedMarketTeam[]              // Match only: Polymarket team metadata, including crest URLs
   clobTokenIds?: string[]                   // Binary only: [yesTokenId, noTokenId] for CLOB trades
   conditionId?: string | null               // Binary only: Polymarket condition ID for CLOB
   outcomes?: {                              // Match only: one entry per possible outcome
@@ -50,6 +51,15 @@ export interface FeaturedMarket {
     conditionId?: string | null             //   Condition ID for this outcome's market
     clobTokenIds: string[]                  //   Token IDs for placing trades
   }[]
+}
+
+export interface FeaturedMarketTeam {
+  name: string
+  logo: string | null
+  abbreviation: string | null
+  alias: string | null
+  color: string | null
+  ordering: string | null
 }
 
 /** Derive match status from multiple signals (Gamma's active/closed flags are buggy for sports).
@@ -140,6 +150,7 @@ export function mapGammaEventToFeaturedMarket(
   const umaStatus = (mainMarket.umaResolutionStatus as string) ?? null
   const sport = options.sport ?? 'cricket'
   const category = options.category ?? 'sports'
+  const teams = mapSportsTeams(e.teams)
 
   return {
     type: 'match' as const,
@@ -162,10 +173,31 @@ export function mapGammaEventToFeaturedMarket(
     startDate: (e.startDate as string) ?? null,
     endDate: (e.endDate as string) ?? null,
     image: (e.image as string) ?? null,
+    ...(teams.length > 0 ? { teams } : {}),
     active: isActive,
     volume: (e.volume24hr ?? e.volume ?? null) as number | null,
     outcomes,
   }
+}
+
+function mapSportsTeams(value: unknown): FeaturedMarketTeam[] {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((team) => {
+    if (!team || typeof team !== 'object') return []
+    const row = team as Record<string, unknown>
+    const name = parseNullableString(row.name)
+    if (!name) return []
+
+    return [{
+      name,
+      logo: parseNullableString(row.logo),
+      abbreviation: parseNullableString(row.abbreviation),
+      alias: parseNullableString(row.alias),
+      color: parseNullableString(row.color),
+      ordering: parseNullableString(row.ordering),
+    }]
+  })
 }
 
 export function getMainSportsMarkets(event: Record<string, unknown>): Record<string, unknown>[] {

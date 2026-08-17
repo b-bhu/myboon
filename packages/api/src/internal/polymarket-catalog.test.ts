@@ -5,6 +5,7 @@ import type {
   PolymarketCatalogItemInput,
   PolymarketCatalogStore,
 } from '../polymarket/catalog/contracts.js'
+import type { HydratedPolymarketCollection } from '../polymarket/catalog/hydrate.js'
 import { PolymarketCatalogConflictError } from '../polymarket/catalog/contracts.js'
 import { createInternalPolymarketCatalogRoutes } from './polymarket-catalog.js'
 
@@ -194,4 +195,95 @@ test('serves Polymarket-derived automatic sports options through read auth', asy
     }],
     defaults: { windowDays: 14, limit: 20, marketType: 'moneyline' },
   })
+})
+
+test('previews an automatic source through read auth without writing catalog state', async () => {
+  let previewed: PolymarketCatalogItemInput | null = null
+  const preview: HydratedPolymarketCollection = {
+    items: [{
+      type: 'match',
+      slug: 'epl-ars-che-2026-08-23',
+      title: 'Arsenal vs Chelsea',
+      category: 'sports',
+      tags: ['sports', 'epl'],
+      sport: 'epl',
+      status: 'upcoming',
+      gameStartTime: '2026-08-23T15:30:00.000Z',
+      volume: 12345,
+      endDate: null,
+      active: true,
+      image: null,
+      outcomes: [],
+    }],
+    categories: ['sports'],
+  }
+  const routes = createInternalPolymarketCatalogRoutes({
+    internalReadToken: readToken,
+    internalWriteToken: writeToken,
+    store: testStore({
+      async saveDraft() {
+        assert.fail('preview must not write a draft')
+      },
+    }),
+    resolveItems: async (items) => items.map((item) => ({
+      ...item,
+      sourceId: '10188',
+      title: 'English Premier League',
+      sport: 'epl',
+    })),
+    previewItem: async (item) => {
+      previewed = item
+      return preview
+    },
+  })
+
+  const query = new URLSearchParams({
+    sourceKind: 'sports_rule',
+    sourceSlug: 'EPL',
+    windowDays: '14',
+    limit: '5',
+  })
+  assert.equal((await routes.request(`/preview?${query}`)).status, 401)
+
+  const response = await routes.request(`/preview?${query}`, {
+    headers: { Authorization: `Bearer ${readToken}` },
+  })
+  assert.equal(response.status, 200)
+  assert.deepEqual(previewed?.ruleConfig, { windowDays: 14, limit: 5, marketType: 'moneyline' })
+  assert.equal(previewed?.sourceSlug, 'epl')
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(body.count, 1)
+  assert.deepEqual(body.items, preview.items)
+  assert.deepEqual(body.source, {
+    sourceKind: 'sports_rule',
+    sourceSlug: 'epl',
+    title: 'English Premier League',
+    category: 'sports',
+    sport: 'epl',
+    ruleConfig: { windowDays: 14, limit: 5, marketType: 'moneyline' },
+  })
+})
+
+test('rejects invalid preview windows before calling Polymarket', async () => {
+  let resolved = false
+  const routes = createInternalPolymarketCatalogRoutes({
+    internalReadToken: readToken,
+    internalWriteToken: writeToken,
+    store: testStore(),
+    resolveItems: async (items) => {
+      resolved = true
+      return items
+    },
+  })
+  const query = new URLSearchParams({
+    sourceKind: 'sports_rule',
+    sourceSlug: 'epl',
+    windowDays: '0',
+    limit: '20',
+  })
+  const response = await routes.request(`/preview?${query}`, {
+    headers: { Authorization: `Bearer ${readToken}` },
+  })
+  assert.equal(response.status, 400)
+  assert.equal(resolved, false)
 })

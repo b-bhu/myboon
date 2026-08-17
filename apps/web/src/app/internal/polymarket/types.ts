@@ -84,3 +84,54 @@ export interface SavePolymarketCatalogDraftRequest {
 export interface PublishPolymarketCatalogDraftRequest {
   expectedRevision: number
 }
+
+export interface PolymarketCatalogPreviewOutcome {
+  label: string
+  price: number | null
+  conditionId?: string | null
+  clobTokenIds: string[]
+}
+
+export interface PolymarketCatalogPreviewTeam {
+  name: string
+  logo: string | null
+  abbreviation: string | null
+  alias: string | null
+  color: string | null
+  ordering: string | null
+}
+
+export interface PolymarketCatalogPreviewItem {
+  type: 'binary' | 'match'
+  slug: string
+  question?: string
+  title?: string
+  category: string
+  sport?: string
+  status?: 'live' | 'upcoming' | 'ended'
+  gameStartTime?: string | null
+  startDate?: string | null
+  endDate: string | null
+  active: boolean | null
+  volume: number | null
+  image: string | null
+  teams?: PolymarketCatalogPreviewTeam[]
+  yesPrice?: number | null
+  noPrice?: number | null
+  outcomes?: PolymarketCatalogPreviewOutcome[]
+}
+
+export interface PolymarketCatalogPreviewResponse {
+  source: {
+    sourceKind: PolymarketCatalogSourceKind
+    sourceSlug: string
+    title: string
+    category: string | null
+    sport: string | null
+    ruleConfig: PolymarketSportsRuleConfig | null
+  }
+  count: number
+  generatedAt: string
+  items: PolymarketCatalogPreviewItem[]
+  categories: string[]
+}

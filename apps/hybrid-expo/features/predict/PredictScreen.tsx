@@ -19,6 +19,7 @@ import { AppProfileButton } from '@/components/AppProfileButton';
 import { useChainSigner } from '@/features/chain/useChainSigner';
 import { POLYMARKET_REQUIREMENT } from '@/features/chain/chain.contract';
 import { fetchFeaturedMarkets, fetchLivePrices } from '@/features/predict/predict.api';
+import { getInitialFeedRenderCount } from '@/features/predict/predict-feed';
 import type { FeedItem, FeedItemBinary, FeedItemMatch, FeedResponse } from '@/features/predict/predict.types';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { formatOdds as formatOddsForFormat, useOddsFormat } from '@/hooks/useOddsFormat';
@@ -520,6 +521,11 @@ export default function PredictScreen() {
     upcomingMatchGroups,
   ]);
 
+  const initialFeedRenderCount = useMemo(
+    () => getInitialFeedRenderCount(feedSections, process.env.EXPO_OS === 'web'),
+    [feedSections],
+  );
+
   const renderFeedItem = useCallback(({ item }: { item: FeedItem }) => {
     const currentLivePrices = livePricesRef.current;
     if (item.type === 'binary') {
@@ -654,6 +660,7 @@ export default function PredictScreen() {
       {/* feed list */}
       <SectionList
         sections={feedSections}
+        initialNumToRender={initialFeedRenderCount}
         keyExtractor={keyExtractor}
         renderItem={renderFeedItem}
         renderSectionHeader={renderSectionHeader}

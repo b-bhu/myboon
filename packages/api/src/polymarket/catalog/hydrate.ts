@@ -8,7 +8,11 @@ import {
   getLivePrice,
   registerTokenIds,
 } from '../read/market-read.js'
-import type { PolymarketCatalogRelease } from './contracts.js'
+import type {
+  PolymarketCatalogItem,
+  PolymarketCatalogItemInput,
+  PolymarketCatalogRelease,
+} from './contracts.js'
 import { discoverSportsRuleMarkets, discoverSportsTagMarkets } from './sports-rules.js'
 
 export interface HydratedPolymarketCollection {
@@ -16,12 +20,62 @@ export interface HydratedPolymarketCollection {
   categories: string[]
 }
 
-export async function hydratePolymarketCatalogRelease(
-  release: PolymarketCatalogRelease,
-  options: { limit?: number; now?: number } = {},
+const MAX_COLLECTION_OUTPUT = 200
+
+/**
+ * Hydrate one already-resolved source without saving it. The internal catalog
+ * preview uses this so its fixture list follows the exact same discovery,
+ * filtering, limits, deduping, and live-price path as a published release.
+ */
+export async function hydratePolymarketCatalogItemPreview(
+  input: PolymarketCatalogItemInput,
+  options: { now?: number } = {},
 ): Promise<HydratedPolymarketCollection> {
   const now = options.now ?? Date.now()
-  const limit = Math.max(1, Math.min(options.limit ?? 100, 100))
+  const item: PolymarketCatalogItem = {
+    id: 'catalog-preview-item',
+    sourceKind: input.sourceKind,
+    sourceSlug: input.sourceSlug,
+    sourceId: input.sourceId ?? null,
+    conditionId: input.conditionId ?? null,
+    title: input.title?.trim() || input.sourceSlug,
+    category: input.category ?? null,
+    sport: input.sport ?? null,
+    position: 0,
+    isEnabled: input.isEnabled ?? true,
+    activeFrom: input.activeFrom ?? null,
+    activeUntil: input.activeUntil ?? null,
+    displayOverrides: input.displayOverrides ?? {},
+    ruleConfig: input.ruleConfig ?? null,
+  }
+  const timestamp = new Date(now).toISOString()
+  const release: PolymarketCatalogRelease = {
+    id: 'catalog-preview-release',
+    version: 1,
+    revision: 1,
+    status: 'draft',
+    note: null,
+    createdBy: 'dashboard-preview',
+    publishedBy: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    publishedAt: null,
+    items: [item],
+  }
+
+  return hydratePolymarketCatalogRelease(release, {
+    limit: item.ruleConfig?.limit ?? 1,
+    now,
+    throwOnItemError: true,
+  })
+}
+
+export async function hydratePolymarketCatalogRelease(
+  release: PolymarketCatalogRelease,
+  options: { limit?: number; now?: number; throwOnItemError?: boolean } = {},
+): Promise<HydratedPolymarketCollection> {
+  const now = options.now ?? Date.now()
+  const limit = Math.max(1, Math.min(options.limit ?? MAX_COLLECTION_OUTPUT, MAX_COLLECTION_OUTPUT))
   const activeItems = release.items.filter((item) => (
     item.isEnabled
     && (!item.activeFrom || Date.parse(item.activeFrom) <= now)
@@ -51,6 +105,7 @@ export async function hydratePolymarketCatalogRelease(
           && addedForSource >= item.ruleConfig.limit) break
       }
     } catch (error) {
+      if (options.throwOnItemError) throw error
       console.error(
         `[api] Skipping Polymarket catalog item ${item.sourceSlug}:`,
         error,

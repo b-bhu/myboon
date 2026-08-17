@@ -433,12 +433,369 @@
   white-space: nowrap;
 }
 
+.formActions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.previewButton {
+  min-height: 37px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid rgba(119, 198, 216, 0.42);
+  border-radius: 6px;
+  background: rgba(17, 138, 178, 0.08);
+  color: #a9dce7;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.previewButton:hover:not(:disabled) {
+  border-color: #77c6d8;
+  background: rgba(17, 138, 178, 0.16);
+  color: #effafd;
+}
+
+.previewButton:disabled {
+  opacity: 0.42;
+}
+
 .addButton:hover {
   background: #1398c3;
 }
 
+.previewButton :global(.material-symbols-outlined),
 .addButton :global(.material-symbols-outlined) {
   font-size: 17px;
+}
+
+.previewBoard {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(119, 198, 216, 0.2);
+  border-radius: 7px;
+  background:
+    linear-gradient(90deg, rgba(17, 138, 178, 0.035) 1px, transparent 1px),
+    #08151b;
+  background-size: 28px 28px;
+}
+
+.previewHeading {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 13px;
+  border-bottom: 1px solid rgba(149, 176, 188, 0.13);
+  background: rgba(13, 30, 38, 0.78);
+}
+
+.previewTitleGroup {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.previewTitleGroup > :global(.material-symbols-outlined) {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(105, 215, 190, 0.24);
+  border-radius: 50%;
+  color: #69d7be;
+  font-size: 19px;
+}
+
+.previewTitleGroup > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.previewEyebrow {
+  color: #67838e;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.previewTitleGroup strong {
+  overflow: hidden;
+  color: #e7f3f6;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewSafety {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 209, 102, 0.18);
+  border-radius: 999px;
+  color: #c8a956;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.previewState {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  color: #718b95;
+  font-size: 11px;
+  text-align: center;
+}
+
+.previewState > :global(.material-symbols-outlined) {
+  color: #587784;
+  font-size: 22px;
+}
+
+.previewState > div {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.previewState strong {
+  color: #b8cbd1;
+}
+
+.previewState span:not(.spinner) {
+  line-height: 1.45;
+}
+
+.previewError {
+  color: #df8da0;
+}
+
+.previewError > :global(.material-symbols-outlined),
+.previewError strong {
+  color: #ff9db1;
+}
+
+.previewMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(149, 176, 188, 0.1);
+}
+
+.previewMeta span {
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(119, 198, 216, 0.08);
+  color: #789aa6;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.fixtureList {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.fixtureRow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 54px 96px minmax(220px, 1fr) minmax(190px, auto) 72px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-bottom: 1px solid rgba(149, 176, 188, 0.09);
+}
+
+.fixtureCrests {
+  width: 54px;
+  height: 42px;
+  display: grid;
+  grid-template-columns: 22px 10px 22px;
+  align-items: center;
+  justify-content: center;
+}
+
+.fixtureCrests[data-count="1"] {
+  grid-template-columns: 30px;
+}
+
+.fixtureCrests img {
+  width: 22px;
+  height: 30px;
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.34));
+}
+
+.fixtureCrests[data-count="1"] img {
+  width: 30px;
+  height: 34px;
+}
+
+.fixtureCrests span {
+  color: #4f6974;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 6px;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.fixtureRow:last-child {
+  border-bottom: 0;
+}
+
+.fixtureRow:hover {
+  background: rgba(17, 138, 178, 0.055);
+}
+
+.fixtureImageSlot {
+  width: 42px;
+  height: 42px;
+  justify-self: center;
+  overflow: hidden;
+  border: 1px solid rgba(149, 176, 188, 0.14);
+  border-radius: 6px;
+  background: rgba(15, 30, 38, 0.75);
+}
+
+.fixtureImageSlot:empty {
+  visibility: hidden;
+}
+
+.fixtureImageSlot img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.fixtureTime {
+  display: grid;
+  gap: 3px;
+}
+
+.fixtureTime span,
+.fixtureVolume {
+  color: #617c87;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.fixtureTime strong {
+  color: #c4d7dc;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 10px;
+}
+
+.fixtureIdentity {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.fixtureIdentity > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fixtureStatus,
+.fixtureSport {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fixtureStatus {
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(119, 198, 216, 0.1);
+  color: #77c6d8;
+}
+
+.fixtureStatus[data-status="live"] {
+  background: rgba(214, 64, 98, 0.14);
+  color: #ff8ca4;
+}
+
+.fixtureSport {
+  color: #607b86;
+}
+
+.fixtureIdentity > strong {
+  overflow: hidden;
+  color: #dbe9ed;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fixtureIdentity code {
+  overflow: hidden;
+  color: #4f6974;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fixtureOutcomes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.fixtureOutcomes > span {
+  min-width: 55px;
+  display: grid;
+  gap: 2px;
+  padding: 5px 7px;
+  border: 1px solid rgba(149, 176, 188, 0.13);
+  border-radius: 5px;
+  background: rgba(15, 30, 38, 0.8);
+  text-align: right;
+}
+
+.fixtureOutcomes small {
+  overflow: hidden;
+  color: #69838d;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fixtureOutcomes strong {
+  color: #9edbcf;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 10px;
+}
+
+.fixtureVolume {
+  text-align: right;
+  white-space: nowrap;
 }
 
 .itemList {
@@ -553,6 +910,11 @@
 .rowActions button:hover:not(:disabled) {
   border-color: #118ab2;
   color: #ecf8fa;
+}
+
+.rowActions .previewRowButton {
+  border-color: rgba(119, 198, 216, 0.26);
+  color: #77c6d8;
 }
 
 .rowActions button:disabled {
@@ -738,8 +1100,9 @@
     grid-template-columns: 130px minmax(180px, 1fr) 1fr 1fr;
   }
 
-  .addButton {
+  .formActions {
     grid-column: 1 / -1;
+    justify-content: flex-end;
   }
 
   .ruleForm {
@@ -753,6 +1116,14 @@
   .rowActions {
     grid-column: 2 / -1;
     justify-content: flex-end;
+  }
+
+  .fixtureRow {
+    grid-template-columns: 54px 90px minmax(200px, 1fr) minmax(170px, auto);
+  }
+
+  .fixtureVolume {
+    display: none;
   }
 }
 
@@ -824,6 +1195,53 @@
 
   .addButton {
     grid-column: auto;
+  }
+
+  .formActions {
+    grid-column: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .previewHeading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .previewSafety {
+    margin-left: 44px;
+  }
+
+  .fixtureRow {
+    grid-template-columns: 54px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .fixtureImageSlot {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .fixtureCrests {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .fixtureTime {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .fixtureIdentity {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .fixtureOutcomes {
+    grid-column: 2;
+    grid-row: 3;
+    justify-content: flex-start;
+    overflow-x: auto;
   }
 
   .itemRow {

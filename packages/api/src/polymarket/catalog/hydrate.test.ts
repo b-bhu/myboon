@@ -268,6 +268,52 @@ test('caps a sports tag at its configured game limit', async (context) => {
   assert.equal(hydrated.items.length, 3)
 })
 
+test('hydrates up to 200 games across multiple ordered sources', async (context) => {
+  const originalFetch = globalThis.fetch
+  const now = Date.parse('2026-08-02T12:00:00.000Z')
+  const tags = ['feed-cap-first', 'feed-cap-second']
+
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input))
+    const tagId = url.searchParams.get('tag_id')
+    if (url.pathname !== '/events' || !tagId || !tags.includes(tagId)) {
+      throw new Error(`Unexpected request ${url}`)
+    }
+    if (url.searchParams.get('offset') === '100') return Response.json([])
+
+    return Response.json(Array.from({ length: 100 }, (_, index) => leagueGame(
+      `${tagId}-game-${index}`,
+      `${tagId} game ${index}`,
+      '2026-08-03T10:00:00.000Z',
+      tagId,
+    )))
+  }
+  context.after(() => { globalThis.fetch = originalFetch })
+
+  const release: PolymarketCatalogRelease = {
+    id: 'release-200',
+    version: 1,
+    revision: 1,
+    status: 'published',
+    note: null,
+    createdBy: 'test',
+    publishedBy: 'test',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    publishedAt: '2026-08-02T00:00:00.000Z',
+    items: [
+      tagItem('first-sport', tags[0]!, 0, 100),
+      tagItem('second-sport', tags[1]!, 1, 100),
+    ],
+  }
+
+  const hydrated = await hydratePolymarketCatalogRelease(release, { now, limit: 200 })
+
+  assert.equal(hydrated.items.length, 200)
+  assert.equal(hydrated.items[0]?.slug, 'feed-cap-first-game-0')
+  assert.equal(hydrated.items[199]?.slug, 'feed-cap-second-game-99')
+})
+
 test('ends finished T20 fixtures while multi-day cricket keeps its long live window', () => {
   const start = '2026-07-29T07:00:00.000Z'
   // Two days after a 3-hour franchise T20: Gamma still says active, prices are
@@ -311,6 +357,51 @@ test('maps legacy grouped EPL event pins as home, draw, and away outcomes', () =
   const mapped = mapGammaEventToFeaturedMarket(legacy, { category: 'sports', sport: 'epl' })
   assert.deepEqual(mapped?.outcomes?.map((outcome) => outcome.label), ['Arsenal', 'Draw', 'Chelsea'])
   assert.deepEqual(mapped?.outcomes?.map((outcome) => outcome.price), [0.4, 0.25, 0.35])
+})
+
+test('maps Polymarket team crests and home-away metadata onto matches', () => {
+  const event = {
+    ...threeWayGame('epl-ars-cov-2026-08-21', 'Arsenal FC vs Coventry City FC', '2026-08-21T19:00:00.000Z'),
+    teams: [
+      {
+        name: 'Arsenal FC',
+        logo: 'https://polymarket.example/arsenal.png',
+        abbreviation: 'ars',
+        alias: 'Arsenal',
+        color: '#c02140',
+        ordering: 'home',
+      },
+      {
+        name: 'Coventry City FC',
+        logo: 'https://polymarket.example/coventry.png',
+        abbreviation: 'cov',
+        color: '#494239',
+        ordering: 'away',
+      },
+      { logo: 'https://polymarket.example/malformed.png' },
+    ],
+  }
+
+  const mapped = mapGammaEventToFeaturedMarket(event, { category: 'sports', sport: 'epl' })
+
+  assert.deepEqual(mapped?.teams, [
+    {
+      name: 'Arsenal FC',
+      logo: 'https://polymarket.example/arsenal.png',
+      abbreviation: 'ars',
+      alias: 'Arsenal',
+      color: '#c02140',
+      ordering: 'home',
+    },
+    {
+      name: 'Coventry City FC',
+      logo: 'https://polymarket.example/coventry.png',
+      abbreviation: 'cov',
+      alias: null,
+      color: '#494239',
+      ordering: 'away',
+    },
+  ])
 })
 
 function catalogItem(
