@@ -311,6 +311,226 @@ test('writeExtraction does not consolidate memories from non-Polymarket sources'
   assert.equal(store.memories.filter((memory) => memory.memory_type === 'market_signal').length, 2)
 })
 
+test('writeExtraction reconciles two publishers covering the same CLARITY Act story into one entity memory', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const firstPacket: ResearchPacket = {
+    ...packet,
+    id: 'news:clarity-lookonchain',
+    source: 'news',
+    sourceArea: 'news_feed:articles',
+    sourceType: 'article',
+    sourceResearchId: 'clarity-lookonchain',
+    sourceRefId: 'lookonchain-68528',
+    title: 'Galaxy Research Director lowers probability of CLARITY Act passing this year to 10%',
+    summary: 'Political divisions lowered the estimated chance of passage to 10%.',
+    body: 'The estimate cited political divisions as the main obstacle.',
+    url: 'https://lookonchain.com/feeds/68528',
+    observedAt: '2026-08-16T10:00:00.000Z',
+    context: {
+      image_url: 'https://assets.coingecko.com/articles/images/clarity-lookonchain.png',
+      provider_id: 'tokens_xyz',
+      upstream_source_name: 'Lookonchain',
+    },
+  }
+
+  await writeExtraction(store, firstPacket, provider({
+    primaryEntities: [{
+      name: 'CLARITY Act',
+      type: 'regulation',
+      slug: 'clarity-act',
+      aliases: ['Digital Asset Market Clarity Act'],
+    }],
+    memories: [{
+      entitySlug: 'clarity-act',
+      memoryType: 'news_event',
+      title: 'CLARITY Act passage estimate falls to 10%',
+      summary: 'Galaxy Research lowered its estimate of the CLARITY Act passing this year to 10%, citing political divisions.',
+      evidence: [{ url: firstPacket.url }],
+    }],
+  }))
+
+  const secondPacket: ResearchPacket = {
+    ...firstPacket,
+    id: 'news:clarity-blockchain-reporter',
+    sourceResearchId: 'clarity-blockchain-reporter',
+    sourceRefId: 'clarity-act-interim-fixes',
+    title: 'CLARITY Act Odds Decline as SEC and CFTC Build Interim Fixes',
+    summary: 'Passage odds declined while regulators explored interim measures.',
+    body: 'The article connected falling passage expectations with SEC and CFTC interim approaches.',
+    url: 'https://blockchainreporter.net/clarity-act-odds-decline-as-sec-and-cftc-build-interim-fixes',
+    observedAt: '2026-08-16T11:00:00.000Z',
+    context: {
+      provider_id: 'tokens_xyz',
+      upstream_source_name: 'Blockchain Reporter',
+    },
+  }
+  let recentMemoryId = ''
+  const second = await writeExtraction(store, secondPacket, {
+    async extract(_packet, canon) {
+      assert.equal(canon?.recentMemories?.length, 1)
+      assert.equal(canon?.recentMemories?.[0].entitySlug, 'clarity-act')
+      recentMemoryId = canon?.recentMemories?.[0].id ?? ''
+      return {
+        primaryEntities: [{ name: 'CLARITY Act', type: 'regulation', slug: 'clarity-act' }],
+        memories: [{
+          entitySlug: 'clarity-act',
+          memoryType: 'market_signal',
+          title: 'CLARITY Act odds decline amid interim regulatory fixes',
+          summary: 'CLARITY Act passage expectations remained weak while the SEC and CFTC developed interim regulatory approaches.',
+          body: secondPacket.body,
+          evidence: [{ url: secondPacket.url }],
+          reconciliation: {
+            action: 'update_existing_story',
+            existingMemoryId: recentMemoryId,
+            confidence: 0.94,
+            reason: 'Same CLARITY Act passage-odds development with material added context about interim fixes.',
+          },
+        }],
+      }
+    },
+  })
+
+  assert.equal(second.entitiesReused, 1)
+  assert.equal(second.memoriesConsolidated, 1)
+  assert.equal(store.memories.length, 1, 'the second publisher updates the existing story instead of creating a duplicate row')
+  assert.equal(store.memories[0].id, recentMemoryId)
+  assert.equal(
+    store.memories[0].summary,
+    'CLARITY Act passage expectations remained weak while the SEC and CFTC developed interim regulatory approaches.',
+  )
+  assert.deepEqual(store.memories[0].evidence, [
+    { url: firstPacket.url },
+    { url: secondPacket.url },
+  ])
+  assert.equal(store.memories[0].context.story_source_count, 2)
+  assert.equal(
+    store.memories[0].context.image_url,
+    'https://assets.coingecko.com/articles/images/clarity-lookonchain.png',
+    'a later update without media must not erase the existing usable story image',
+  )
+  assert.deepEqual(store.memories[0].context.story_source_research_ids, [
+    'clarity-lookonchain',
+    'clarity-blockchain-reporter',
+  ])
+  assert.equal(store.memories[0].context.last_story_reconciliation, 'update_existing_story')
+})
+
+test('writeExtraction fails open to a new row when a same-story decision is below the reconciliation threshold', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const newsPacket: ResearchPacket = {
+    ...packet,
+    source: 'news',
+    sourceArea: 'news_feed:articles',
+    sourceType: 'article',
+    sourceResearchId: 'bitcoin-story-1',
+    sourceRefId: 'bitcoin-story-1',
+    title: 'Bitcoin ETF flows rise',
+    summary: 'Bitcoin ETF flows rose.',
+    body: 'Bitcoin ETF flows rose.',
+    observedAt: '2026-08-16T10:00:00.000Z',
+  }
+  await writeExtraction(store, newsPacket, provider({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin', aliases: ['BTC'] }],
+    memories: [{ entitySlug: 'bitcoin', memoryType: 'news_event', title: 'ETF flows rise', summary: 'Bitcoin ETF flows rose.' }],
+  }))
+
+  const second = await writeExtraction(store, {
+    ...newsPacket,
+    sourceResearchId: 'bitcoin-story-2',
+    sourceRefId: 'bitcoin-story-2',
+    title: 'Bitcoin price rises',
+    summary: 'Bitcoin price rose.',
+    observedAt: '2026-08-16T11:00:00.000Z',
+  }, {
+    async extract(_packet, canon) {
+      return {
+        primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+        memories: [{
+          entitySlug: 'bitcoin',
+          memoryType: 'news_event',
+          title: 'Bitcoin price rises',
+          summary: 'Bitcoin price rose.',
+          reconciliation: {
+            action: 'duplicate_source',
+            existingMemoryId: canon?.recentMemories?.[0].id,
+            confidence: 0.62,
+            reason: 'Same entity but uncertain event match.',
+          },
+        }],
+      }
+    },
+  })
+
+  assert.equal(second.memoriesConsolidated, 0)
+  assert.equal(store.memories.length, 2)
+})
+
+test('writeExtraction durably attaches trusted news image metadata to every entity memory', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const newsPacket: ResearchPacket = {
+    ...packet,
+    source: 'news',
+    sourceArea: 'news_feed:social',
+    sourceType: 'social_post',
+    sourceResearchId: 'feed-post-1',
+    url: 'https://x.com/tokens/status/123',
+    context: {
+      image_url: 'https://pbs.twimg.com/profile_images/123/avatar_normal.jpg',
+      provider_id: 'tokens_xyz',
+      upstream_source_name: '@tokens',
+    },
+  }
+
+  await writeExtraction(store, newsPacket, provider({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+    memories: [{
+      entitySlug: 'bitcoin',
+      memoryType: 'social_signal',
+      title: 'Bitcoin update',
+      summary: 'A post reported a Bitcoin update.',
+      context: {
+        // Source media is authoritative; extraction cannot replace it.
+        image_url: 'https://example.com/hallucinated.jpg',
+      },
+    }],
+  }))
+
+  assert.equal(store.memories.length, 1)
+  assert.deepEqual(store.memories[0].context, {
+    image_url: 'https://pbs.twimg.com/profile_images/123/avatar_normal.jpg',
+    source_title: newsPacket.title,
+    source_url: newsPacket.url,
+    image_kind: 'source_avatar',
+    image_origin: 'tokens_xyz',
+    image_attribution: '@tokens',
+  })
+})
+
+test('writeExtraction stores a null image for news packets with an unsafe upstream URL', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const newsPacket: ResearchPacket = {
+    ...packet,
+    source: 'news',
+    sourceArea: 'news_feed:articles',
+    sourceType: 'article',
+    sourceResearchId: 'feed-article-1',
+    context: { image_url: 'javascript:alert(1)' },
+  }
+
+  await writeExtraction(store, newsPacket, provider({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+    memories: [{
+      entitySlug: 'bitcoin',
+      memoryType: 'news_event',
+      title: 'Bitcoin article',
+      summary: 'An article reported a Bitcoin update.',
+    }],
+  }))
+
+  assert.equal(store.memories[0].context.image_url, null)
+  assert.equal('image_kind' in store.memories[0].context, false)
+})
+
 test('writeExtraction stores a market signal under the durable entity instead of the market', async () => {
   const store = new InMemoryEntityMemoryStore()
   await writeExtraction(store, {

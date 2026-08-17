@@ -296,6 +296,9 @@ importers:
       '@myboon/collectors':
         specifier: workspace:*
         version: link:../collectors
+      '@myboon/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@polymarket/builder-relayer-client':
         specifier: ^0.0.9
         version: 0.0.9(bufferutil@4.1.0)(utf-8-validate@5.0.10)(zod@4.3.6)

@@ -6,6 +6,7 @@ import {
   shortlistForPacket,
   toCanonEntity,
   type CanonEntity,
+  type RecentEntityMemory,
 } from './canon'
 import { normalizeSlug } from './normalization'
 import type {
@@ -18,6 +19,7 @@ import type {
   PrimaryEntityCandidate,
   ResearchPacket,
   ResolvedEntity,
+  StoryReconciliationCandidate,
   WriteExtractionResult,
 } from './types'
 
@@ -44,6 +46,9 @@ const POLYMARKET_CONSOLIDATION_WINDOW_HOURS: Record<string, number> = {
   geopolitics: 12,
 }
 const POLYMARKET_DEFAULT_CONSOLIDATION_WINDOW_HOURS = 24
+const NEWS_STORY_RECONCILIATION_WINDOW_HOURS = 48
+const NEWS_STORY_RECONCILIATION_LIMIT = 30
+const NEWS_STORY_RECONCILIATION_MIN_CONFIDENCE = 0.8
 
 function polymarketConsolidationWindowHours(packet: ResearchPacket): number {
   const context = packet.context as { candidate?: { tag_slug?: string | null } } | undefined
@@ -100,6 +105,121 @@ function consolidatedMemoryPatch(previous: EntityMemoryRecord, incoming: EntityM
   }
 }
 
+function maximumConfidence(left: number | null, right: number | null): number | null {
+  if (left === null) return right
+  if (right === null) return left
+  return Math.max(left, right)
+}
+
+function storySource(
+  memory: EntityMemoryRecord | EntityMemoryInput,
+  action: 'original' | 'update_existing_story' | 'duplicate_source',
+): Record<string, unknown> {
+  const sourceTitle = typeof memory.context.source_title === 'string'
+    ? memory.context.source_title
+    : memory.title
+  const sourceUrl = typeof memory.context.source_url === 'string'
+    ? memory.context.source_url
+    : null
+  const imageUrl = typeof memory.context.image_url === 'string'
+    ? memory.context.image_url
+    : null
+  return {
+    source: memory.source,
+    source_area: memory.source_area,
+    source_type: memory.source_type,
+    source_ref_id: memory.source_ref_id,
+    source_research_id: memory.source_research_id,
+    title: sourceTitle,
+    url: sourceUrl,
+    image_url: imageUrl,
+    observed_at: memory.observed_at,
+    reconciliation_action: action,
+  }
+}
+
+function storyImageContext(
+  previous: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+  preferIncoming: boolean,
+): Record<string, unknown> {
+  const previousUrl = typeof previous.image_url === 'string' && previous.image_url
+    ? previous.image_url
+    : null
+  const incomingUrl = typeof incoming.image_url === 'string' && incoming.image_url
+    ? incoming.image_url
+    : null
+  const shouldUseIncoming = Boolean(incomingUrl && (
+    preferIncoming
+    || !previousUrl
+    || (previous.image_kind === 'source_avatar' && incoming.image_kind === 'content')
+  ))
+  const selected = shouldUseIncoming ? incoming : previous
+  const selectedUrl = shouldUseIncoming ? incomingUrl : previousUrl
+  if (!selectedUrl) return { image_url: null }
+  const output: Record<string, unknown> = { image_url: selectedUrl }
+  for (const key of ['image_kind', 'image_origin', 'image_attribution']) {
+    if (selected[key] !== undefined) output[key] = selected[key]
+  }
+  return output
+}
+
+function storyReconciliationPatch(
+  previous: EntityMemoryRecord,
+  incoming: EntityMemoryInput,
+  reconciliation: StoryReconciliationCandidate,
+) {
+  const action = reconciliation.action === 'update_existing_story'
+    ? 'update_existing_story'
+    : 'duplicate_source'
+  const previousSources = Array.isArray(previous.context.story_sources)
+    ? previous.context.story_sources
+    : [storySource(previous, 'original')]
+  const sources = mergeUnique(previousSources, [storySource(incoming, action)]).slice(-50)
+  const previousHistory = Array.isArray(previous.context.reconciliation_history)
+    ? previous.context.reconciliation_history
+    : []
+  const history = mergeUnique(previousHistory, [{
+    action,
+    source_research_id: incoming.source_research_id,
+    observed_at: incoming.observed_at,
+    confidence: reconciliation.confidence ?? null,
+    reason: reconciliation.reason?.trim() || null,
+  }]).slice(-50)
+  const isUpdate = action === 'update_existing_story'
+
+  return {
+    observed_at: incoming.observed_at,
+    event_at: isUpdate ? incoming.event_at ?? previous.event_at : previous.event_at,
+    summary: isUpdate ? incoming.summary : previous.summary,
+    body: isUpdate ? incoming.body ?? previous.body : previous.body,
+    confidence: maximumConfidence(previous.confidence, incoming.confidence),
+    evidence: mergeUnique(previous.evidence, incoming.evidence),
+    mentions: mergeUnique(previous.mentions, incoming.mentions).filter((item): item is string => typeof item === 'string'),
+    metrics: { ...previous.metrics, ...incoming.metrics },
+    context: {
+      ...previous.context,
+      ...(isUpdate ? incoming.context : {}),
+      // A later source with no image must not erase a usable earlier image.
+      // Updates may promote a new image; duplicates only promote one when the
+      // existing story has none (or only an avatar and the new source has
+      // content media). Every source image is still retained in story_sources.
+      ...storyImageContext(previous.context, incoming.context, isUpdate),
+      story_sources: sources,
+      story_source_count: sources.length,
+      story_source_research_ids: mergeUnique(
+        Array.isArray(previous.context.story_source_research_ids)
+          ? previous.context.story_source_research_ids
+          : [previous.source_research_id],
+        [incoming.source_research_id],
+      ).slice(-50),
+      last_story_reconciliation: action,
+      last_story_update_at: incoming.observed_at,
+      reconciliation_history: history,
+    },
+  }
+}
+
 function unique(values: string[]): string[] {
   const seen = new Set<string>()
   const output: string[] = []
@@ -136,6 +256,92 @@ function entityInput(candidate: PrimaryEntityCandidate): EntityInput {
       ...(candidate.metadata ?? {}),
       create_reason: candidate.createReason || undefined,
     },
+  }
+}
+
+function httpImageUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    const parsed = new URL(value.trim())
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed.toString()
+      : null
+  } catch {
+    return null
+  }
+}
+
+function packetImageContext(packet: ResearchPacket): Record<string, unknown> {
+  // Images are source facts, not extraction output. For news packets, copy the
+  // upstream URL into every entity-bound memory after extraction so Hermes
+  // cannot accidentally drop or replace it. The existing JSONB context keeps
+  // this durable without changing the entity_memories schema.
+  if (packet.source !== 'news') return {}
+
+  const imageUrl = httpImageUrl(packet.context.image_url)
+  if (!imageUrl) return { image_url: null }
+
+  const parsed = new URL(imageUrl)
+  const imageKind = parsed.pathname.includes('/profile_images/')
+    ? 'source_avatar'
+    : 'content'
+  const attribution = typeof packet.context.upstream_source_name === 'string'
+    && packet.context.upstream_source_name.trim()
+    ? packet.context.upstream_source_name.trim()
+    : null
+
+  return {
+    image_url: imageUrl,
+    image_kind: imageKind,
+    image_origin: typeof packet.context.provider_id === 'string' && packet.context.provider_id.trim()
+      ? packet.context.provider_id.trim()
+      : packet.sourceArea,
+    image_attribution: attribution,
+  }
+}
+
+function recentMemoryForPrompt(
+  memory: EntityMemoryRecord,
+  entity: CanonEntity,
+): RecentEntityMemory {
+  return {
+    id: memory.id,
+    entityId: entity.id,
+    entitySlug: entity.slug,
+    entityName: entity.name,
+    memoryType: memory.memory_type,
+    title: memory.title.slice(0, 240),
+    summary: memory.summary.slice(0, 700),
+    eventAt: memory.event_at,
+    observedAt: memory.observed_at,
+    source: memory.source,
+    sourceUrl: typeof memory.context.source_url === 'string'
+      ? memory.context.source_url.slice(0, 1_000)
+      : null,
+  }
+}
+
+async function loadRecentNewsMemories(
+  store: EntityMemoryStore,
+  packet: ResearchPacket,
+  shortlist: CanonEntity[],
+): Promise<EntityMemoryRecord[]> {
+  if (packet.source !== 'news' || shortlist.length === 0) return []
+  const until = Date.parse(packet.observedAt)
+  if (!Number.isFinite(until)) return []
+  const sinceIso = new Date(until - NEWS_STORY_RECONCILIATION_WINDOW_HOURS * 3_600_000).toISOString()
+  try {
+    return await store.listRecentMemories(
+      shortlist.map((entity) => entity.id),
+      sinceIso,
+      new Date(until).toISOString(),
+      NEWS_STORY_RECONCILIATION_LIMIT,
+      'news',
+    )
+  } catch {
+    // Recent memory improves filing, but a read failure must not block the
+    // existing news pipeline. Invalid/absent context simply means new_story.
+    return []
   }
 }
 
@@ -252,9 +458,10 @@ function memoryInput(packet: ResearchPacket, memory: EntityMemoryCandidate, enti
     mentions: unique(memory.mentions ?? []),
     metrics: { ...packet.metrics, ...(memory.metrics ?? {}) },
     context: {
+      ...(memory.context ?? {}),
       source_title: packet.title,
       source_url: packet.url ?? null,
-      ...(memory.context ?? {}),
+      ...packetImageContext(packet),
     },
   }
 }
@@ -295,6 +502,54 @@ async function consolidatePolymarketMarketSignals(
   return { remaining, consolidated }
 }
 
+interface PreparedMemory {
+  input: EntityMemoryInput
+  reconciliation?: StoryReconciliationCandidate
+}
+
+async function reconcileNewsStoryMemories(
+  store: EntityMemoryStore,
+  packet: ResearchPacket,
+  memories: PreparedMemory[],
+  recentMemories: EntityMemoryRecord[],
+): Promise<{ remaining: EntityMemoryInput[]; consolidated: number }> {
+  if (packet.source !== 'news' || recentMemories.length === 0) {
+    return { remaining: memories.map((memory) => memory.input), consolidated: 0 }
+  }
+
+  const recentById = new Map(recentMemories.map((memory) => [memory.id, memory]))
+  const remaining: EntityMemoryInput[] = []
+  let consolidated = 0
+
+  for (const memory of memories) {
+    const reconciliation = memory.reconciliation
+    const targetId = reconciliation?.existingMemoryId
+    const target = typeof targetId === 'string' ? recentById.get(targetId) : undefined
+    const actionCanMerge = reconciliation?.action === 'duplicate_source'
+      || reconciliation?.action === 'update_existing_story'
+    const isConfident = (reconciliation?.confidence ?? 0) >= NEWS_STORY_RECONCILIATION_MIN_CONFIDENCE
+    const isSameEntity = Boolean(target && target.entity_id === memory.input.entity_id)
+    const isSamePacket = Boolean(target
+      && target.source === memory.input.source
+      && target.source_area === memory.input.source_area
+      && target.source_research_id === memory.input.source_research_id)
+
+    if (!actionCanMerge || !isConfident || !isSameEntity || isSamePacket || !target || !reconciliation) {
+      remaining.push(memory.input)
+      continue
+    }
+
+    const updated = await store.updateMemory(
+      target.id,
+      storyReconciliationPatch(target, memory.input, reconciliation),
+    )
+    recentById.set(updated.id, updated)
+    consolidated += 1
+  }
+
+  return { remaining, consolidated }
+}
+
 export async function writeExtraction(
   store: EntityMemoryStore,
   packet: ResearchPacket,
@@ -312,13 +567,23 @@ export async function writeExtraction(
     catalog = []
   }
   const shortlist = shortlistForPacket(catalog, packet)
+  const recentMemories = await loadRecentNewsMemories(store, packet, shortlist)
+  const shortlistById = new Map(shortlist.map((entity) => [entity.id, entity]))
+  const recentMemoriesForPrompt = recentMemories.flatMap((memory) => {
+    const entity = memory.entity_id ? shortlistById.get(memory.entity_id) : undefined
+    return entity ? [recentMemoryForPrompt(memory, entity)] : []
+  })
 
-  const extraction = await extractionProvider.extract(packet, { shortlist, catalog })
+  const extraction = await extractionProvider.extract(packet, {
+    shortlist,
+    catalog,
+    recentMemories: recentMemoriesForPrompt,
+  })
   const resolvedEntities = await resolvePrimaryEntities(store, extraction.primaryEntities, catalog)
   const bySlug = new Map(resolvedEntities.map((resolved) => [entitySlug(resolved.candidate), resolved.entity.id]))
-  const memoryInputs = extraction.memories.flatMap((memory) => {
+  const preparedMemories = extraction.memories.flatMap((memory) => {
     const entityId = bySlug.get(memory.entitySlug)
-    return entityId ? [memoryInput(packet, memory, entityId)] : []
+    return entityId ? [{ input: memoryInput(packet, memory, entityId), reconciliation: memory.reconciliation }] : []
   })
   // No longer writes a `source_marker` "processed" marker into entity_memories:
   // that table now forbids memory_type = 'source_marker' entirely (a Supabase
@@ -328,7 +593,19 @@ export async function writeExtraction(
   // the Polymarket lane, and entity-manager/run-news.ts for news (which still
   // reads for this marker defensively; see the comment there).
 
-  const { remaining, consolidated } = await consolidatePolymarketMarketSignals(store, packet, memoryInputs)
+  const newsReconciliation = await reconcileNewsStoryMemories(
+    store,
+    packet,
+    preparedMemories,
+    recentMemories,
+  )
+  const polymarketConsolidation = await consolidatePolymarketMarketSignals(
+    store,
+    packet,
+    newsReconciliation.remaining,
+  )
+  const remaining = polymarketConsolidation.remaining
+  const consolidated = newsReconciliation.consolidated + polymarketConsolidation.consolidated
 
   const existing = await store.findMemories(remaining.map((memory) => ({
     source: memory.source,
@@ -387,5 +664,8 @@ export async function markExtractionFailed(
 }
 
 export const __testing = {
+  loadRecentNewsMemories,
+  reconcileNewsStoryMemories,
   resolvePrimaryEntities,
+  storyReconciliationPatch,
 }

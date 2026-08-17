@@ -1,27 +1,24 @@
 import { HermesWorkerClient } from './hermes-client'
-import { runNewsPipelineOnce } from './runner'
+import { runNewsResearchPipelineOnce } from './runner'
 import {
-  DEFAULT_NEWS_SCOUT_TIMEOUT_MS,
   newsResearchBatchSize,
   positiveInteger,
 } from './runtime-config'
 import { SqliteNewsStore } from './sqlite-store'
 
-const store = new SqliteNewsStore()
+const store = new SqliteNewsStore(process.env.NEWS_SQLITE_PATH)
+const hermes = new HermesWorkerClient()
+const options = {
+  batchSize: newsResearchBatchSize(),
+  researchTimeoutMs: positiveInteger(process.env.NEWS_RESEARCH_TIMEOUT_MS, 10 * 60_000),
+  staleWorkCutoffMs: positiveInteger(process.env.NEWS_STALE_WORK_CUTOFF_MS, 30 * 60_000),
+}
 
-runNewsPipelineOnce({
-  store,
-  hermes: new HermesWorkerClient(),
-  options: {
-    batchSize: newsResearchBatchSize(),
-    scoutTimeoutMs: positiveInteger(process.env.NEWS_SCOUT_TIMEOUT_MS, DEFAULT_NEWS_SCOUT_TIMEOUT_MS),
-    researchTimeoutMs: positiveInteger(process.env.NEWS_RESEARCH_TIMEOUT_MS, 10 * 60_000),
-    staleWorkCutoffMs: positiveInteger(process.env.NEWS_STALE_WORK_CUTOFF_MS, 30 * 60_000),
-  },
+const pipeline = runNewsResearchPipelineOnce({ store, hermes, options })
+
+pipeline.then((result) => {
+  console.log(JSON.stringify(result, null, 2))
 })
-  .then((result) => {
-    console.log(JSON.stringify(result, null, 2))
-  })
   .catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1

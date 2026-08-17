@@ -1,15 +1,15 @@
-import { fingerprintScoutCandidate } from './fingerprint'
+import { fingerprintNewsCandidate } from './fingerprint'
 import type {
   NewsCandidateDedupeDecision,
-  NewsScoutCandidate,
+  NewsCandidate,
   PriorNewsObservation,
 } from './types'
 
 export function classifyNewsCandidate(
   sourceId: string,
   urlId: string,
-  candidate: NewsScoutCandidate,
-  prior: PriorNewsObservation[]
+  candidate: NewsCandidate,
+  prior: PriorNewsObservation[],
 ): NewsCandidateDedupeDecision {
   if (typeof candidate.headline !== 'string' || !candidate.headline.trim()) {
     return {
@@ -38,7 +38,7 @@ export function classifyNewsCandidate(
 
   let fingerprint
   try {
-    fingerprint = fingerprintScoutCandidate(sourceId, urlId, candidate)
+    fingerprint = fingerprintNewsCandidate(sourceId, urlId, candidate)
   } catch {
     return {
       outcome: 'ignored_invalid_candidate',
@@ -62,31 +62,10 @@ export function classifyNewsCandidate(
     }
   }
 
-  if (matchingPrior.some((observation) => observation.observationDedupeKey === fingerprint.observationDedupeKey)) {
-    return {
-      outcome: 'known_unchanged',
-      candidate,
-      fingerprint,
-      reason: 'prior observation has the same article identity and observation key',
-    }
-  }
-
-  if (matchingPrior.some((observation) => (
-    observation.headlineHash === fingerprint.headlineHash
-    && observation.summaryHash === fingerprint.summaryHash
-  ))) {
-    return {
-      outcome: 'known_unchanged',
-      candidate,
-      fingerprint,
-      reason: 'prior observation has the same article identity and content hashes',
-    }
-  }
-
   return {
-    outcome: 'known_materially_changed',
+    outcome: 'known_unchanged',
     candidate,
     fingerprint,
-    reason: 'prior observation has the same article identity with different headline or summary hash',
+    reason: 'stable feed identity already has an observation for this canonical URL',
   }
 }

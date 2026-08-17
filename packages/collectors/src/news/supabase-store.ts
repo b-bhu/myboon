@@ -3,15 +3,12 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PriorNewsObservation } from './types'
 import {
   initialNewsResearchResultStatus,
-  type CreateNewsSourceRunInput,
-  type MarkNewsSourceRunInput,
   type NewsCandidateObservationInput,
   type NewsCandidateObservationRow,
   type NewsCandidateObservationStatus,
   type NewsResearchResultInput,
   type NewsResearchResultRow,
   type NewsResearchResultStatus,
-  type NewsSourceRunRow,
   type NewsStore,
   type PendingNewsResearchResult,
   type PersistedNewsDedupeOutcome,
@@ -19,34 +16,6 @@ import {
   type RecoverStaleNewsWorkInput,
   type RecoverStaleNewsWorkResult,
 } from './store'
-
-const SOURCE_RUN_SELECT = [
-  'id',
-  'job_id',
-  'source_id',
-  'source_name',
-  'source_type',
-  'url_id',
-  'url_label',
-  'source_url',
-  'task_type',
-  'status',
-  'observed_at',
-  'started_at',
-  'finished_at',
-  'candidates_found',
-  'candidates_new',
-  'candidates_unchanged',
-  'candidates_materially_changed',
-  'candidates_invalid',
-  'raw_response',
-  'validated_payload',
-  'error',
-  'attempt_count',
-  'next_retry_at',
-  'created_at',
-  'updated_at',
-].join(', ')
 
 const CANDIDATE_SELECT = [
   'id',
@@ -121,15 +90,6 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
-function numberValue(value: unknown): number {
-  const parsed = typeof value === 'number'
-    ? value
-    : typeof value === 'string'
-      ? Number(value)
-      : NaN
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
 function parseJsonIfString(value: unknown): unknown {
   if (typeof value !== 'string') return value
   try {
@@ -167,37 +127,6 @@ function isPersistedOutcome(value: string): value is PersistedNewsDedupeOutcome 
 function isUniqueViolation(error: { code?: string, message?: string } | null): boolean {
   if (!error) return false
   return error.code === '23505' || /duplicate key|unique/i.test(error.message ?? '')
-}
-
-function mapSourceRunRow(row: unknown): NewsSourceRunRow {
-  const record = row as Record<string, unknown>
-  return {
-    id: String(record.id),
-    jobId: String(record.job_id),
-    sourceId: String(record.source_id),
-    sourceName: String(record.source_name),
-    sourceType: 'curated_news',
-    urlId: String(record.url_id),
-    urlLabel: String(record.url_label),
-    sourceUrl: String(record.source_url),
-    taskType: 'source_scout',
-    status: String(record.status) as NewsSourceRunRow['status'],
-    observedAt: stringOrNull(record.observed_at),
-    startedAt: stringOrNull(record.started_at),
-    finishedAt: stringOrNull(record.finished_at),
-    candidatesFound: numberValue(record.candidates_found),
-    candidatesNew: numberValue(record.candidates_new),
-    candidatesUnchanged: numberValue(record.candidates_unchanged),
-    candidatesMateriallyChanged: numberValue(record.candidates_materially_changed),
-    candidatesInvalid: numberValue(record.candidates_invalid),
-    rawResponse: record.raw_response ?? null,
-    validatedPayload: record.validated_payload ?? null,
-    error: stringOrNull(record.error),
-    attemptCount: numberValue(record.attempt_count),
-    nextRetryAt: stringOrNull(record.next_retry_at),
-    createdAt: String(record.created_at),
-    updatedAt: String(record.updated_at),
-  }
 }
 
 function mapCandidateObservationRow(row: unknown): NewsCandidateObservationRow {
@@ -269,63 +198,6 @@ function mapResearchResultRow(row: unknown): NewsResearchResultRow {
 export class SupabaseNewsStore implements NewsStore {
   constructor(private readonly db: SupabaseClient) {}
 
-  async createSourceRun(input: CreateNewsSourceRunInput): Promise<NewsSourceRunRow> {
-    const id = randomUUID()
-    const { data, error } = await this.db
-      .from('news_source_runs')
-      .insert({
-        id,
-        job_id: input.jobId,
-        source_id: input.source.sourceId,
-        source_name: input.source.sourceName,
-        source_type: input.source.sourceType,
-        url_id: input.sourceUrl.urlId,
-        url_label: input.sourceUrl.label,
-        source_url: input.sourceUrl.url,
-        task_type: input.taskType ?? 'source_scout',
-        status: input.status ?? 'queued',
-        observed_at: input.observedAt ?? null,
-        started_at: input.startedAt ?? null,
-      })
-      .select(SOURCE_RUN_SELECT)
-      .single()
-
-    if (error) throw new Error(`news_source_runs create failed: ${error.message}`)
-    return mapSourceRunRow(data)
-  }
-
-  async markSourceRun(input: MarkNewsSourceRunInput): Promise<void> {
-    const payload: Record<string, unknown> = {
-      updated_at: nowIso(),
-    }
-    if (input.status !== undefined) payload.status = input.status
-    if (input.observedAt !== undefined) payload.observed_at = input.observedAt
-    if (input.startedAt !== undefined) payload.started_at = input.startedAt
-    if (input.finishedAt !== undefined) payload.finished_at = input.finishedAt
-    if (input.counters?.candidatesFound !== undefined) payload.candidates_found = input.counters.candidatesFound
-    if (input.counters?.candidatesNew !== undefined) payload.candidates_new = input.counters.candidatesNew
-    if (input.counters?.candidatesUnchanged !== undefined) payload.candidates_unchanged = input.counters.candidatesUnchanged
-    if (input.counters?.candidatesMateriallyChanged !== undefined) {
-      payload.candidates_materially_changed = input.counters.candidatesMateriallyChanged
-    }
-    if (input.counters?.candidatesInvalid !== undefined) payload.candidates_invalid = input.counters.candidatesInvalid
-    if (input.rawResponse !== undefined) payload.raw_response = input.rawResponse
-    if (input.validatedPayload !== undefined) payload.validated_payload = input.validatedPayload
-    if (input.error !== undefined) payload.error = boundedText(input.error, MAX_ERROR_LENGTH)
-    if (input.attemptCount !== undefined) payload.attempt_count = input.attemptCount
-    if (input.nextRetryAt !== undefined) payload.next_retry_at = input.nextRetryAt
-
-    const { data, error } = await this.db
-      .from('news_source_runs')
-      .update(payload)
-      .eq('id', input.id)
-      .select('id')
-      .maybeSingle()
-
-    if (error) throw new Error(`news_source_runs mark failed: ${error.message}`)
-    if (!data) throw new Error(`news_source_runs mark failed: source run ${input.id} not found`)
-  }
-
   async fetchPriorObservations(
     sourceId: string,
     canonicalArticleUrls: string[]
@@ -365,7 +237,7 @@ export class SupabaseNewsStore implements NewsStore {
 
     const payloads = persistedInputs.map((input) => ({
       id: randomUUID(),
-      source_run_id: input.sourceRunId ?? null,
+      source_run_id: null,
       source_id: input.source.sourceId,
       source_name: input.source.sourceName,
       url_id: input.sourceUrl.urlId,
@@ -461,11 +333,9 @@ export class SupabaseNewsStore implements NewsStore {
   }
 
   async recoverStaleWork(input: RecoverStaleNewsWorkInput): Promise<RecoverStaleNewsWorkResult> {
-    const [sourceRunsRecovered, candidatesRecovered] = await Promise.all([
-      this.recoverStaleSourceRuns(input.sourceRunCutoffIso),
-      this.recoverStaleCandidates(input.candidateCutoffIso),
-    ])
-    return { sourceRunsRecovered, candidatesRecovered }
+    return {
+      candidatesRecovered: await this.recoverStaleCandidates(input.candidateCutoffIso),
+    }
   }
 
   async insertResearchResult(input: NewsResearchResultInput): Promise<NewsResearchResultRow> {
@@ -664,31 +534,6 @@ export class SupabaseNewsStore implements NewsStore {
     return data ? mapResearchResultRow(data) : null
   }
 
-  private async recoverStaleSourceRuns(cutoffIso: string): Promise<number> {
-    const { data, error } = await this.db
-      .from('news_source_runs')
-      .select('id, error, finished_at')
-      .eq('status', 'running')
-      .lt('updated_at', cutoffIso)
-
-    if (error) throw new Error(`news stale source run recovery lookup failed: ${error.message}`)
-    const staleRows = data ?? []
-    await Promise.all(staleRows.map(async (row: unknown) => {
-      const record = row as Record<string, unknown>
-      const { error: updateError } = await this.db
-        .from('news_source_runs')
-        .update({
-          status: 'failed_transient',
-          finished_at: stringOrNull(record.finished_at) ?? nowIso(),
-          error: stringOrNull(record.error) ?? 'Recovered stale running source run after worker restart.',
-          updated_at: nowIso(),
-        })
-        .eq('id', String(record.id))
-      if (updateError) throw new Error(`news stale source run recovery update failed: ${updateError.message}`)
-    }))
-    return staleRows.length
-  }
-
   private async recoverStaleCandidates(cutoffIso: string): Promise<number> {
     const { data, error } = await this.db
       .from('news_candidate_observations')
@@ -717,5 +562,4 @@ export class SupabaseNewsStore implements NewsStore {
 export const __newsSupabaseTesting = {
   CANDIDATE_SELECT,
   RESEARCH_RESULT_SELECT,
-  SOURCE_RUN_SELECT,
 }

@@ -3,17 +3,17 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { DEFAULT_NEWS_SOURCES } from '../config'
-import { fingerprintScoutCandidate } from '../fingerprint'
+import { fingerprintNewsCandidate } from '../fingerprint'
 import { SqliteNewsStore, __newsSqliteTesting } from '../sqlite-store'
 import type { NewsCandidateObservationInput, NewsCandidateObservationRow } from '../store'
-import type { NewsDedupeOutcome, NewsResearchResponse, NewsScoutCandidate } from '../types'
+import type { NewsDedupeOutcome, NewsResearchResponse, NewsCandidate } from '../types'
+import { TEST_NEWS_SOURCE, TEST_NEWS_SOURCE_URL } from './fixtures'
 
-const source = DEFAULT_NEWS_SOURCES[0]
-const sourceUrl = source.urls[0]
+const source = TEST_NEWS_SOURCE
+const sourceUrl = TEST_NEWS_SOURCE_URL
 const observedAt = '2026-07-04T12:00:00.000Z'
 
-function candidate(overrides: Partial<NewsScoutCandidate> = {}): NewsScoutCandidate {
+function candidate(overrides: Partial<NewsCandidate> = {}): NewsCandidate {
   return {
     headline: 'CoinDesk observes BTC treasury flows',
     article_url: 'https://www.coindesk.com/markets/2026/07/04/btc-treasury-flows?utm_source=x',
@@ -27,8 +27,7 @@ function candidate(overrides: Partial<NewsScoutCandidate> = {}): NewsScoutCandid
 
 function observationInput(
   overrides: {
-    sourceRunId?: string | null
-    candidate?: NewsScoutCandidate
+    candidate?: NewsCandidate
     sourceId?: string
     outcome?: NewsDedupeOutcome
     urlId?: string
@@ -38,11 +37,10 @@ function observationInput(
   const inputSource = overrides.sourceId ? { ...source, sourceId: overrides.sourceId } : source
   const inputSourceUrl = overrides.urlId ? { ...sourceUrl, urlId: overrides.urlId } : sourceUrl
   return {
-    sourceRunId: overrides.sourceRunId ?? null,
     source: inputSource,
     sourceUrl: inputSourceUrl,
     candidate: inputCandidate,
-    fingerprint: fingerprintScoutCandidate(inputSource.sourceId, inputSourceUrl.urlId, inputCandidate),
+    fingerprint: fingerprintNewsCandidate(inputSource.sourceId, inputSourceUrl.urlId, inputCandidate),
     dedupeOutcome: overrides.outcome ?? 'new_candidate',
     observedAt,
   }
@@ -291,26 +289,17 @@ test('recordCandidateResearchFailure stores debug metadata for failed attempts',
   }
 })
 
-test('recoverStaleWork marks old running source runs failed and resets old researching candidates', async () => {
+test('recoverStaleWork resets stale researching candidates', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'news-sqlite-'))
   const path = join(dir, 'news.sqlite')
   const store = new SqliteNewsStore(path)
   try {
-    const sourceRun = await store.createSourceRun({
-      jobId: 'stale-source-run',
-      source,
-      sourceUrl,
-      status: 'running',
-      startedAt: '2026-07-04T10:00:00.000Z',
-    })
     const [storedCandidate] = await store.insertCandidateObservations([observationInput()])
     await store.markCandidateResearchStarted(storedCandidate.id, 'research-job-stale')
     store.close()
 
     const db = __newsSqliteTesting.openNewsSqlite(path)
     try {
-      db.prepare('UPDATE news_source_runs SET updated_at = ? WHERE id = ?')
-        .run('2026-07-04T10:00:00.000Z', sourceRun.id)
       db.prepare('UPDATE news_candidate_observations SET updated_at = ? WHERE id = ?')
         .run('2026-07-04T10:00:00.000Z', storedCandidate.id)
     } finally {
@@ -320,10 +309,8 @@ test('recoverStaleWork marks old running source runs failed and resets old resea
     const recoveringStore = new SqliteNewsStore(path)
     try {
       const recovered = await recoveringStore.recoverStaleWork({
-        sourceRunCutoffIso: '2026-07-04T11:00:00.000Z',
         candidateCutoffIso: '2026-07-04T11:00:00.000Z',
       })
-      assert.equal(recovered.sourceRunsRecovered, 1)
       assert.equal(recovered.candidatesRecovered, 1)
     } finally {
       recoveringStore.close()
@@ -331,12 +318,8 @@ test('recoverStaleWork marks old running source runs failed and resets old resea
 
     const inspected = __newsSqliteTesting.openNewsSqlite(path)
     try {
-      const runRow = inspected.prepare('SELECT * FROM news_source_runs WHERE id = ?')
-        .get(sourceRun.id) as Record<string, unknown>
       const candidateRow = inspected.prepare('SELECT * FROM news_candidate_observations WHERE id = ?')
         .get(storedCandidate.id) as Record<string, unknown>
-      assert.equal(runRow.status, 'failed_transient')
-      assert.match(String(runRow.error), /Recovered stale running source run/)
       assert.equal(candidateRow.status, 'pending_research')
       assert.match(String(candidateRow.research_error), /Recovered stale researching candidate/)
     } finally {
@@ -376,95 +359,14 @@ test('fetchResearchResult and markResearchResultStatus work for pending entity m
   })
 })
 
-test('createSourceRun creates a source URL run', async () => {
-  await withStore(async (store) => {
-    const run = await store.createSourceRun({
-      jobId: 'job-create-run',
-      source,
-      sourceUrl,
-      status: 'running',
-      startedAt: observedAt,
-    })
-
-    assert.equal(run.jobId, 'job-create-run')
-    assert.equal(run.sourceId, 'coindesk')
-    assert.equal(run.urlId, 'latest_crypto_news')
-    assert.equal(run.status, 'running')
-    assert.equal(run.startedAt, observedAt)
-  })
-})
-
-test('markSourceRun updates status, counters, and JSON payload fields', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'news-sqlite-'))
-  const path = join(dir, 'news.sqlite')
-  const store = new SqliteNewsStore(path)
-  try {
-    const run = await store.createSourceRun({
-      jobId: 'job-mark-run',
-      source,
-      sourceUrl,
-    })
-
-    await store.markSourceRun({
-      id: run.id,
-      status: 'candidates_classified',
-      observedAt,
-      finishedAt: observedAt,
-      counters: {
-        candidatesFound: 4,
-        candidatesNew: 1,
-        candidatesUnchanged: 1,
-        candidatesMateriallyChanged: 1,
-        candidatesInvalid: 1,
-      },
-      rawResponse: { raw: true },
-      validatedPayload: { schema_version: 'myboon.hermes.scout_response.v1', candidates: [] },
-    })
-
-    store.close()
-
-    const db = __newsSqliteTesting.openNewsSqlite(path)
-    try {
-      const row = db.prepare('SELECT * FROM news_source_runs WHERE id = ?').get(run.id) as Record<string, unknown>
-
-      assert.equal(row.status, 'candidates_classified')
-      assert.equal(row.candidates_found, 4)
-      assert.equal(row.candidates_new, 1)
-      assert.equal(row.candidates_unchanged, 1)
-      assert.equal(row.candidates_materially_changed, 1)
-      assert.equal(row.candidates_invalid, 1)
-      assert.deepEqual(JSON.parse(String(row.raw_response)), { raw: true })
-      assert.deepEqual(JSON.parse(String(row.validated_payload)), {
-        schema_version: 'myboon.hermes.scout_response.v1',
-        candidates: [],
-      })
-    } finally {
-      db.close()
-    }
-  } finally {
-    try {
-      store.close()
-    } catch {
-      // Store may already be closed for inspection.
-    }
-    await rm(dir, { recursive: true, force: true })
-  }
-})
-
 test('insertCandidateObservations inserts new_candidate rows', async () => {
   await withStore(async (store) => {
-    const run = await store.createSourceRun({
-      jobId: 'job-insert-new',
-      source,
-      sourceUrl,
-    })
-
     const rows = await store.insertCandidateObservations([
-      observationInput({ sourceRunId: run.id, outcome: 'new_candidate' }),
+      observationInput({ outcome: 'new_candidate' }),
     ])
 
     assert.equal(rows.length, 1)
-    assert.equal(rows[0].sourceRunId, run.id)
+    assert.equal(rows[0].sourceRunId, null)
     assert.equal(rows[0].dedupeOutcome, 'new_candidate')
     assert.equal(rows[0].rawCandidate.headline, 'CoinDesk observes BTC treasury flows')
   })
@@ -525,7 +427,7 @@ test('known_unchanged and ignored_invalid_candidate inputs are not inserted as c
     ])
     const prior = await store.fetchPriorObservations(source.sourceId, [
       observationInput().fingerprint.canonicalArticleUrl,
-      fingerprintScoutCandidate(source.sourceId, sourceUrl.urlId, candidate({
+      fingerprintNewsCandidate(source.sourceId, sourceUrl.urlId, candidate({
         article_url: 'https://www.coindesk.com/other-article',
       })).canonicalArticleUrl,
     ])

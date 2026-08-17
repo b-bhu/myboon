@@ -66,6 +66,9 @@ function parseStorySummary(value: unknown): StorySummary | null {
     latestDevelopment: value.latestDevelopment.trim(),
     eventCount: value.eventCount,
     updatedAt: value.updatedAt,
+    imageUrl: httpUrlOrNull(value.imageUrl),
+    imageKind: imageKindOrNull(value.imageKind),
+    imageAttribution: optionalString(value.imageAttribution),
   };
 }
 
@@ -82,7 +85,28 @@ function parseStoryEvent(value: unknown): StoryEvent | null {
   return {
     text: value.text.trim(),
     eventAt: value.eventAt,
+    imageUrl: httpUrlOrNull(value.imageUrl),
+    imageKind: imageKindOrNull(value.imageKind),
+    imageAttribution: optionalString(value.imageAttribution),
   };
+}
+
+function httpUrlOrNull(value: unknown): string | null {
+  if (!nonEmptyString(value)) return null;
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function imageKindOrNull(value: unknown): 'content' | 'source_avatar' | null {
+  return value === 'content' || value === 'source_avatar' ? value : null;
+}
+
+function optionalString(value: unknown): string | null {
+  return nonEmptyString(value) ? value.trim() : null;
 }
 
 function nonEmptyString(value: unknown): value is string {

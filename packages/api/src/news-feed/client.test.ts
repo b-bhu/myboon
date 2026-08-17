@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   NEWS_FEED_MAX_LIMIT,
-  TokensNewsFeedError,
+  NewsFeedError,
   fetchArticles,
+  fetchFeed,
   fetchPosts,
-} from './news-feed.js'
+} from './client.js'
 
 const API_KEY = 'test-key'
 
@@ -102,6 +103,37 @@ test('normalizes a post into our shape', async () => {
   })
 })
 
+test('fetches the blended feed and preserves article/post order', async () => {
+  let url = ''
+  const result = await fetchFeed({
+    apiKey: API_KEY,
+    fetchImpl: stubFetch(
+      feedResponse([POST_ITEM, ARTICLE_ITEM], {
+        source: 'all',
+        counts: { items: 2, coingecko_candidates: 1, x_candidates: 1 },
+      }),
+      (called) => { url = called },
+    ),
+  })
+
+  assert.match(url, /source=all/)
+  assert.deepEqual(result.items.map((item) => item.kind), ['post', 'article'])
+  assert.equal(result.meta.coingeckoCandidates, 1)
+  assert.equal(result.meta.xCandidates, 1)
+})
+
+test('the blended feed drops unknown feed sources instead of guessing a shape', async () => {
+  const result = await fetchFeed({
+    apiKey: API_KEY,
+    fetchImpl: stubFetch(feedResponse([
+      ARTICLE_ITEM,
+      { ...ARTICLE_ITEM, feed_source: 'something-new' },
+    ])),
+  })
+
+  assert.deepEqual(result.items.map((item) => item.kind), ['article'])
+})
+
 test('both halves normalize posted_at to the same ISO form', async () => {
   // CoinGecko sends '...Z', X sends '....000Z'. Downstream fingerprints must
   // not have to know which half an item came from.
@@ -172,6 +204,23 @@ test('sends source=news for articles and source=tweets for posts', async () => {
   let postUrl = ''
   await fetchPosts({ apiKey: API_KEY, fetchImpl: stubFetch(feedResponse([]), (url) => { postUrl = url }) })
   assert.match(postUrl, /source=tweets/)
+})
+
+test('NEWS_FEED_API_BASE accepts a base that already ends in /v1', async () => {
+  const previous = process.env.NEWS_FEED_API_BASE
+  process.env.NEWS_FEED_API_BASE = 'https://news-feed.test/v1/'
+  try {
+    let url = ''
+    await fetchFeed({
+      apiKey: API_KEY,
+      fetchImpl: stubFetch(feedResponse([]), (called) => { url = called }),
+    })
+    assert.match(url, /^https:\/\/news-feed\.test\/v1\/news\/feed\?/)
+    assert.doesNotMatch(url, /\/v1\/v1\//)
+  } finally {
+    if (previous == null) delete process.env.NEWS_FEED_API_BASE
+    else process.env.NEWS_FEED_API_BASE = previous
+  }
 })
 
 test('sends the api key as x-api-key', async () => {
@@ -255,15 +304,18 @@ test('surfaces upstream meta so an empty filter result is distinguishable', asyn
 })
 
 test('throws rather than returning an empty feed when the key is missing', async () => {
-  const previous = process.env.TOKENS_API_KEY
+  const previous = process.env.NEWS_FEED_API_KEY
+  const previousProviderKey = process.env.TOKENS_API_KEY
+  delete process.env.NEWS_FEED_API_KEY
   delete process.env.TOKENS_API_KEY
   try {
     await assert.rejects(
       () => fetchArticles({ fetchImpl: stubFetch(feedResponse([])) }),
-      (error: unknown) => error instanceof TokensNewsFeedError && /TOKENS_API_KEY/.test((error as Error).message),
+      (error: unknown) => error instanceof NewsFeedError && /NEWS_FEED_API_KEY/.test((error as Error).message),
     )
   } finally {
-    if (previous != null) process.env.TOKENS_API_KEY = previous
+    if (previous != null) process.env.NEWS_FEED_API_KEY = previous
+    if (previousProviderKey != null) process.env.TOKENS_API_KEY = previousProviderKey
   }
 })
 
@@ -271,7 +323,7 @@ test('does not retry a 4xx — it will fail identically every time', async () =>
   let calls = 0
   await assert.rejects(
     () => fetchArticles({ apiKey: API_KEY, fetchImpl: failingFetch(401, () => { calls += 1 }) }),
-    (error: unknown) => error instanceof TokensNewsFeedError && error.status === 401,
+    (error: unknown) => error instanceof NewsFeedError && error.status === 401,
   )
 
   assert.equal(calls, 1)
@@ -281,7 +333,7 @@ test('retries a 5xx and gives up with the status attached', async () => {
   let calls = 0
   await assert.rejects(
     () => fetchArticles({ apiKey: API_KEY, fetchImpl: failingFetch(503, () => { calls += 1 }) }),
-    (error: unknown) => error instanceof TokensNewsFeedError && error.status === 503,
+    (error: unknown) => error instanceof NewsFeedError && error.status === 503,
   )
 
   assert.equal(calls, 3) // one attempt plus two retries

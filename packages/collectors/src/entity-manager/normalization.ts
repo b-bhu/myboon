@@ -1,4 +1,12 @@
-import type { EntityMemoryCandidate, EntityMemoryExtraction, EntityMemoryType, PrimaryEntityCandidate, ResearchPacket } from './types'
+import type {
+  EntityMemoryCandidate,
+  EntityMemoryExtraction,
+  EntityMemoryType,
+  PrimaryEntityCandidate,
+  ResearchPacket,
+  StoryReconciliationAction,
+  StoryReconciliationCandidate,
+} from './types'
 
 const ALLOWED_MEMORY_TYPES = new Set<EntityMemoryType>([
   'research_note',
@@ -75,12 +83,36 @@ function normalizePrimaryEntity(value: unknown): PrimaryEntityCandidate | null {
 }
 
 function normalizeMemoryType(value: unknown, packet: ResearchPacket): EntityMemoryType {
+  // A social source must stay a social signal even if extraction returns an
+  // allowed but semantically wrong news_event value.
+  if (packet.sourceType === 'social_post') return 'social_signal'
   const text = compactString(value)
   if (ALLOWED_MEMORY_TYPES.has(text as EntityMemoryType)) return text as EntityMemoryType
   if (packet.sourceType === 'market_signal') return 'market_signal'
   if (packet.sourceType === 'article') return 'news_event'
-  if (packet.sourceType === 'social_post') return 'social_signal'
   return 'research_note'
+}
+
+const STORY_RECONCILIATION_ACTIONS = new Set<StoryReconciliationAction>([
+  'new_story',
+  'update_existing_story',
+  'duplicate_source',
+])
+
+function normalizeReconciliation(value: unknown): StoryReconciliationCandidate {
+  const record = recordOrEmpty(value)
+  const requestedAction = compactString(record.action)
+  const action = STORY_RECONCILIATION_ACTIONS.has(requestedAction as StoryReconciliationAction)
+    ? requestedAction as StoryReconciliationAction
+    : 'new_story'
+  return {
+    action,
+    existingMemoryId: action === 'new_story'
+      ? null
+      : compactString(record.existingMemoryId ?? record.existing_memory_id) || null,
+    confidence: numberOrNull(record.confidence) ?? undefined,
+    reason: compactString(record.reason),
+  }
 }
 
 function normalizeMemory(value: unknown, packet: ResearchPacket): EntityMemoryCandidate | null {
@@ -102,6 +134,7 @@ function normalizeMemory(value: unknown, packet: ResearchPacket): EntityMemoryCa
     mentions: uniqueStrings(arrayOrEmpty(record.mentions ?? record.related_mentions)),
     metrics: recordOrEmpty(record.metrics),
     context: recordOrEmpty(record.context),
+    reconciliation: normalizeReconciliation(record.reconciliation),
   }
 }
 

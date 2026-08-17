@@ -11,11 +11,11 @@
  *                              is the handle, the "title" is the whole post
  *                              body, and the URL is the status permalink.
  *
- * We split them at this boundary rather than downstream, because they are not
+ * We normalize them into separate types at this boundary because they are not
  * interchangeable: an article is third-party reporting, a post is one
- * company's timeline. `fetchArticles()` and `fetchPosts()` are separate entry
- * points so the two can be collected by separate processes on separate
- * cadences without either one having to filter the other out.
+ * company's timeline. `fetchFeed()` keeps both in upstream ranking order;
+ * `fetchArticles()` and `fetchPosts()` remain available when a caller needs
+ * only one half.
  *
  * WHAT THIS SERVICE DOES NOT DO
  * It does not cache, store, dedupe against history, or decide what is
@@ -35,15 +35,26 @@
  */
 
 import type {
-  TokensNewsArticle,
-  TokensNewsFeedResult,
-  TokensNewsPost,
-  TokensNewsFetchOptions,
+  NewsFeedArticle,
+  NewsFeedItem,
+  NewsFeedResult,
+  NewsFeedPost,
+  NewsFeedFetchOptions,
 } from './types.js'
 
-const NEWS_FEED_URL = process.env.TOKENS_API_BASE
-  ? `${process.env.TOKENS_API_BASE}/v1/news/feed`
-  : 'https://api.tokens.xyz/v1/news/feed'
+export type {
+  NewsFeedArticle,
+  NewsFeedItem,
+  NewsFeedMeta,
+  NewsFeedResult,
+  NewsFeedFetchOptions,
+  NewsFeedPost,
+} from './types.js'
+
+function newsFeedUrl(): string {
+  const base = (process.env.NEWS_FEED_API_BASE || process.env.TOKENS_API_BASE || 'https://api.tokens.xyz').replace(/\/+$/, '')
+  return base.endsWith('/v1') ? `${base}/news/feed` : `${base}/v1/news/feed`
+}
 
 /**
  * Upstream clamps `limit` to 1..50 rather than erroring, so asking for more is
@@ -100,12 +111,12 @@ interface UpstreamFeedResponse {
  * caller can tell "they rejected us" (401/403 — bad key or scope) from "they
  * are having a bad day" (5xx) without parsing message strings.
  */
-export class TokensNewsFeedError extends Error {
+export class NewsFeedError extends Error {
   readonly status: number | null
 
   constructor(message: string, status: number | null = null) {
     super(message)
-    this.name = 'TokensNewsFeedError'
+    this.name = 'NewsFeedError'
     this.status = status
   }
 }
@@ -117,10 +128,10 @@ export class TokensNewsFeedError extends Error {
  * collector would record "no news today" and move on.
  */
 function requireApiKey(explicit?: string): string {
-  const key = (explicit ?? process.env.TOKENS_API_KEY ?? '').trim()
+  const key = (explicit ?? process.env.NEWS_FEED_API_KEY ?? process.env.TOKENS_API_KEY ?? '').trim()
   if (!key) {
-    throw new TokensNewsFeedError(
-      'TOKENS_API_KEY is not set — refusing to call the tokens.xyz news feed ' +
+    throw new NewsFeedError(
+      'NEWS_FEED_API_KEY is not set — refusing to call the configured news feed ' +
         'without it (an unauthenticated call would look like an empty feed)',
     )
   }
@@ -146,8 +157,8 @@ function clampLimit(limit: number | undefined): number {
  * upstream; the rest filter the X half locally on their end.
  */
 function buildQuery(
-  source: 'news' | 'tweets',
-  options: TokensNewsFetchOptions,
+  source: 'all' | 'news' | 'tweets',
+  options: NewsFeedFetchOptions,
 ): URLSearchParams {
   const params = new URLSearchParams({
     source,
@@ -216,7 +227,7 @@ function normalizePostedAt(value: unknown): string | null {
   return new Date(ms).toISOString()
 }
 
-function normalizeArticle(item: UpstreamFeedItem): TokensNewsArticle {
+function normalizeArticle(item: UpstreamFeedItem): NewsFeedArticle {
   return {
     kind: 'article',
     title: readString(item.title),
@@ -229,7 +240,7 @@ function normalizeArticle(item: UpstreamFeedItem): TokensNewsArticle {
   }
 }
 
-function normalizePost(item: UpstreamFeedItem): TokensNewsPost {
+function normalizePost(item: UpstreamFeedItem): NewsFeedPost {
   const handle = readOptionalString(item.source_name)
   return {
     kind: 'post',
@@ -244,7 +255,7 @@ function normalizePost(item: UpstreamFeedItem): TokensNewsPost {
   }
 }
 
-function parseMeta(body: UpstreamFeedResponse): TokensNewsFeedResult<never>['meta'] {
+function parseMeta(body: UpstreamFeedResponse): NewsFeedResult<never>['meta'] {
   const meta = isRecord(body.meta) ? body.meta : {}
   const counts = isRecord(meta.counts) ? meta.counts : {}
   return {
@@ -270,11 +281,11 @@ function isRetryableStatus(status: number): boolean {
 }
 
 async function requestFeed(
-  source: 'news' | 'tweets',
-  options: TokensNewsFetchOptions,
+  source: 'all' | 'news' | 'tweets',
+  options: NewsFeedFetchOptions,
 ): Promise<UpstreamFeedResponse> {
   const apiKey = requireApiKey(options.apiKey)
-  const url = `${NEWS_FEED_URL}?${buildQuery(source, options).toString()}`
+  const url = `${newsFeedUrl()}?${buildQuery(source, options).toString()}`
   const fetchImpl = options.fetchImpl ?? fetch
 
   let lastError: unknown = null
@@ -292,7 +303,7 @@ async function requestFeed(
       })
 
       if (!response.ok) {
-        const error = new TokensNewsFeedError(
+        const error = new NewsFeedError(
           `tokens.xyz news feed responded ${response.status}`,
           response.status,
         )
@@ -303,13 +314,13 @@ async function requestFeed(
 
       const body = (await response.json()) as unknown
       if (!isRecord(body)) {
-        throw new TokensNewsFeedError('tokens.xyz news feed returned a non-object body')
+        throw new NewsFeedError('news feed returned a non-object body')
       }
       return body as UpstreamFeedResponse
     } catch (error) {
       // A non-retryable status was already decided above; rethrow it as-is
       // rather than spending the remaining attempts on a call that cannot work.
-      if (error instanceof TokensNewsFeedError && error.status != null && !isRetryableStatus(error.status)) {
+      if (error instanceof NewsFeedError && error.status != null && !isRetryableStatus(error.status)) {
         throw error
       }
       lastError = error
@@ -317,8 +328,8 @@ async function requestFeed(
   }
 
   const detail = lastError instanceof Error ? lastError.message : String(lastError)
-  const status = lastError instanceof TokensNewsFeedError ? lastError.status : null
-  throw new TokensNewsFeedError(
+  const status = lastError instanceof NewsFeedError ? lastError.status : null
+  throw new NewsFeedError(
     `tokens.xyz news feed failed after ${MAX_RETRIES + 1} attempts: ${detail}`,
     status,
   )
@@ -341,11 +352,11 @@ function readItems(body: UpstreamFeedResponse): UpstreamFeedItem[] {
  * start feeding tweets into an article collector.
  */
 export async function fetchArticles(
-  options: TokensNewsFetchOptions = {},
-): Promise<TokensNewsFeedResult<TokensNewsArticle>> {
+  options: NewsFeedFetchOptions = {},
+): Promise<NewsFeedResult<NewsFeedArticle>> {
   const body = await requestFeed('news', options)
   const items = readItems(body)
-    .filter((item) => readString(item.feed_source) !== 'x')
+    .filter((item) => readString(item.feed_source) === 'coingecko')
     .filter(hasUsableCore)
     .map(normalizeArticle)
 
@@ -359,18 +370,42 @@ export async function fetchArticles(
  * hardcodes the handle. Expect promotional content about their own listings
  * alongside genuine market news, and weight it accordingly downstream.
  *
- * Note `tweet_reserve` is deliberately not exposed: it only governs how many
- * tweet slots survive when articles and posts are blended in the upstream's
- * `source=all` mode. These fetchers never blend, so it would be a no-op knob.
+ * Note `tweet_reserve` is deliberately not exposed here: it only governs how
+ * many tweet slots survive in `source=all`. `fetchFeed()` uses the upstream's
+ * default blend, while this posts-only call has no use for that knob.
  */
 export async function fetchPosts(
-  options: TokensNewsFetchOptions = {},
-): Promise<TokensNewsFeedResult<TokensNewsPost>> {
+  options: NewsFeedFetchOptions = {},
+): Promise<NewsFeedResult<NewsFeedPost>> {
   const body = await requestFeed('tweets', options)
   const items = readItems(body)
-    .filter((item) => readString(item.feed_source) !== 'coingecko')
+    .filter((item) => readString(item.feed_source) === 'x')
     .filter(hasUsableCore)
     .map(normalizePost)
+
+  return { items, meta: parseMeta(body) }
+}
+
+/**
+ * The blended tokens.xyz feed (`source=all`).
+ *
+ * Items stay in the order ranked by the upstream. Each item is normalized to
+ * either an article or a post, so downstream code can branch on `kind`
+ * without inspecting tokens.xyz field names. Unknown feed sources are dropped
+ * rather than guessed into the wrong shape.
+ */
+export async function fetchFeed(
+  options: NewsFeedFetchOptions = {},
+): Promise<NewsFeedResult<NewsFeedItem>> {
+  const body = await requestFeed('all', options)
+  const items = readItems(body)
+    .filter(hasUsableCore)
+    .flatMap((item): NewsFeedItem[] => {
+      const source = readString(item.feed_source)
+      if (source === 'coingecko') return [normalizeArticle(item)]
+      if (source === 'x') return [normalizePost(item)]
+      return []
+    })
 
   return { items, meta: parseMeta(body) }
 }

@@ -52,8 +52,8 @@ function fakeSpawn(onSpawn?: (child: FakeChildProcess) => void): {
 
 const request = {
   jobId: 'job-1',
-  taskType: 'source_scout' as const,
-  prompt: 'Inspect this page.\nReturn raw findings only.',
+  taskType: 'source_aware_research' as const,
+  prompt: 'Research this source item and return the required JSON.',
   timeoutMs: 1000,
 }
 

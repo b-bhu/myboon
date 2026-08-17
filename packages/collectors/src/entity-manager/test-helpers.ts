@@ -106,6 +106,28 @@ export class InMemoryEntityMemoryStore implements EntityMemoryStore {
     return upserted
   }
 
+  async listRecentMemories(
+    entityIds: string[],
+    sinceIso: string,
+    untilIso: string,
+    limit: number,
+    source: string,
+  ): Promise<EntityMemoryRecord[]> {
+    const entityIdSet = new Set(entityIds)
+    const since = Date.parse(sinceIso)
+    const until = Date.parse(untilIso)
+    return this.memories
+      .filter((memory) => (
+        memory.entity_id !== null
+        && entityIdSet.has(memory.entity_id)
+        && memory.source === source
+        && Date.parse(memory.observed_at) >= since
+        && Date.parse(memory.observed_at) <= until
+      ))
+      .sort((a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at))
+      .slice(0, Math.max(0, limit))
+  }
+
   async findLatestMemorySince(
     entityId: string,
     memoryType: EntityMemoryType,
