@@ -467,6 +467,38 @@ test('SupabaseNewsStore supports candidate dedupe, research, and handoff status'
   assert.deepEqual(await store.fetchPendingResearchResults(10), [])
 })
 
+test('SupabaseNewsStore claims distinct pending candidates and reports the remaining backlog', async () => {
+  const { store } = fakeStore()
+  await store.insertCandidateObservations(Array.from({ length: 6 }, (_, index) => (
+    observationInput({
+      inputCandidate: candidate({
+        headline: `Article ${index + 1}`,
+        article_url: `https://www.coindesk.com/article-${index + 1}`,
+      }),
+    })
+  )))
+
+  assert.deepEqual(await store.readResearchBacklog(), {
+    pendingCandidates: 6,
+    oldestPendingObservedAt: observedAt,
+  })
+
+  const [firstLane, secondLane] = await Promise.all([
+    store.claimPendingCandidateObservations(3),
+    store.claimPendingCandidateObservations(3),
+  ])
+  const claimed = [...firstLane, ...secondLane]
+
+  assert.equal(firstLane.length, 3)
+  assert.equal(secondLane.length, 3)
+  assert.equal(new Set(claimed.map((row) => row.id)).size, 6)
+  assert.equal(claimed.every((row) => row.status === 'research_queued'), true)
+  assert.deepEqual(await store.readResearchBacklog(), {
+    pendingCandidates: 0,
+    oldestPendingObservedAt: null,
+  })
+})
+
 test('SupabaseNewsStore stores non-ready research without pending entity handoff', async () => {
   const { store } = fakeStore()
   const [needsFollowupCandidate, failedCandidate] = await store.insertCandidateObservations([
@@ -576,7 +608,8 @@ test('SupabaseNewsStore duplicate research inserts return the existing result', 
 test('SupabaseNewsStore recovers stale research work', async () => {
   const { fake, store } = fakeStore()
   const [storedCandidate] = await store.insertCandidateObservations([observationInput()])
-  await store.markCandidateResearchStarted(storedCandidate.id, 'research-job-stale')
+  const [claimed] = await store.claimPendingCandidateObservations(1)
+  assert.equal(claimed.id, storedCandidate.id)
 
   fake.tables.news_candidate_observations.find((row) => row.id === storedCandidate.id)!.updated_at = '2026-07-04T10:00:00.000Z'
 

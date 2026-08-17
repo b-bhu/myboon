@@ -89,6 +89,11 @@ export interface RecoverStaleNewsWorkResult {
   candidatesRecovered: number
 }
 
+export interface NewsResearchBacklog {
+  pendingCandidates: number
+  oldestPendingObservedAt: string | null
+}
+
 export interface NewsResearchResultInput {
   candidate: NewsCandidateObservationRow
   response: NewsResearchResponse
@@ -141,6 +146,13 @@ export interface NewsStore {
   ): Promise<NewsCandidateObservationRow[]>
   fetchCandidateObservation(id: string): Promise<NewsCandidateObservationRow | null>
   fetchPendingCandidateObservations(limit: number): Promise<NewsCandidateObservationRow[]>
+  /**
+   * Claims distinct oldest-first candidates before any Hermes work begins.
+   * Implementations must transition only rows that are still pending so
+   * multiple workers cannot research the same observation.
+   */
+  claimPendingCandidateObservations(limit: number): Promise<NewsCandidateObservationRow[]>
+  readResearchBacklog(): Promise<NewsResearchBacklog>
   markCandidateObservationStatus(id: string, status: NewsCandidateObservationStatus): Promise<void>
   markCandidateResearchStarted(id: string, jobId: string): Promise<void>
   recordCandidateResearchFailure(input: RecordNewsResearchFailureInput): Promise<void>

@@ -1,12 +1,21 @@
 import { buildResearchPrompt, buildResearchRequest, parseResearchResponse } from './research-contract'
-import { DEFAULT_NEWS_RESEARCH_BATCH_SIZE } from './runtime-config'
+import {
+  DEFAULT_NEWS_RESEARCH_BACKLOG_WARN_AGE_MS,
+  DEFAULT_NEWS_RESEARCH_BACKLOG_WARN_COUNT,
+  DEFAULT_NEWS_RESEARCH_BATCH_SIZE,
+  DEFAULT_NEWS_RESEARCH_CONCURRENCY,
+  MAX_NEWS_RESEARCH_CONCURRENCY,
+} from './runtime-config'
 import type { NewsStore, RecoverStaleNewsWorkResult } from './store'
 import type { HermesWorkerRequest, HermesWorkerResult } from './types'
 
 export interface NewsResearchRunnerOptions {
   researchTimeoutMs: number
   batchSize: number
+  concurrency: number
   staleWorkCutoffMs: number
+  backlogWarnCount: number
+  backlogWarnAgeMs: number
   now?: Date
 }
 
@@ -20,6 +29,7 @@ export interface NewsResearchFailure {
 
 export interface NewsResearchRunResult {
   researchCandidatesFetched: number
+  researchConcurrency: number
   researchProcessed: number
   researchSucceeded: number
   researchFailed: number
@@ -28,8 +38,17 @@ export interface NewsResearchRunResult {
   failures: NewsResearchFailure[]
 }
 
+export interface NewsResearchBacklogStatus {
+  pendingCandidates: number | null
+  oldestPendingObservedAt: string | null
+  oldestPendingAgeMs: number | null
+  warning: boolean
+  readError: string | null
+}
+
 export interface NewsResearchPipelineRunResult extends NewsResearchRunResult {
   recoveredStaleResearchCandidates: number
+  backlog: NewsResearchBacklogStatus
 }
 
 type HermesRunner = {
@@ -39,7 +58,10 @@ type HermesRunner = {
 const DEFAULT_NEWS_RESEARCH_OPTIONS: NewsResearchRunnerOptions = {
   researchTimeoutMs: 10 * 60_000,
   batchSize: DEFAULT_NEWS_RESEARCH_BATCH_SIZE,
+  concurrency: DEFAULT_NEWS_RESEARCH_CONCURRENCY,
   staleWorkCutoffMs: 30 * 60_000,
+  backlogWarnCount: DEFAULT_NEWS_RESEARCH_BACKLOG_WARN_COUNT,
+  backlogWarnAgeMs: DEFAULT_NEWS_RESEARCH_BACKLOG_WARN_AGE_MS,
 }
 
 export async function recoverStaleNewsWork(
@@ -59,9 +81,10 @@ export async function runPendingNewsResearch(input: {
   options?: Partial<NewsResearchRunnerOptions>
 }): Promise<NewsResearchRunResult> {
   const options = newsResearchRunnerOptions(input.options)
-  const candidates = await input.store.fetchPendingCandidateObservations(options.batchSize)
+  const candidates = await input.store.claimPendingCandidateObservations(options.batchSize)
   const result: NewsResearchRunResult = {
     researchCandidatesFetched: candidates.length,
+    researchConcurrency: candidates.length === 0 ? 0 : Math.min(options.concurrency, candidates.length),
     researchProcessed: 0,
     researchSucceeded: 0,
     researchFailed: 0,
@@ -70,12 +93,12 @@ export async function runPendingNewsResearch(input: {
     failures: [],
   }
 
-  for (const candidate of candidates) {
+  await runWithConcurrency(candidates, options.concurrency, async (candidate) => {
     result.researchProcessed += 1
     const request = buildResearchRequest(candidate, options.now)
-    await input.store.markCandidateResearchStarted(candidate.id, request.job_id)
     let worker: HermesWorkerResult | null = null
     try {
+      await input.store.markCandidateResearchStarted(candidate.id, request.job_id)
       worker = await input.hermes.run({
         jobId: request.job_id,
         taskType: 'source_aware_research',
@@ -119,9 +142,57 @@ export async function runPendingNewsResearch(input: {
         error: message,
       })
     }
-  }
+  })
 
   return result
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  run: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(1, concurrency), items.length)
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex
+      nextIndex += 1
+      await run(items[index])
+    }
+  }))
+}
+
+async function readResearchBacklogStatus(
+  store: NewsStore,
+  options: NewsResearchRunnerOptions,
+): Promise<NewsResearchBacklogStatus> {
+  try {
+    const backlog = await store.readResearchBacklog()
+    const oldestTime = backlog.oldestPendingObservedAt
+      ? Date.parse(backlog.oldestPendingObservedAt)
+      : NaN
+    const nowMs = (options.now ?? new Date()).getTime()
+    const oldestPendingAgeMs = Number.isFinite(oldestTime)
+      ? Math.max(0, nowMs - oldestTime)
+      : null
+    return {
+      pendingCandidates: backlog.pendingCandidates,
+      oldestPendingObservedAt: backlog.oldestPendingObservedAt,
+      oldestPendingAgeMs,
+      warning: backlog.pendingCandidates >= options.backlogWarnCount
+        || (oldestPendingAgeMs !== null && oldestPendingAgeMs >= options.backlogWarnAgeMs),
+      readError: null,
+    }
+  } catch (error) {
+    return {
+      pendingCandidates: null,
+      oldestPendingObservedAt: null,
+      oldestPendingAgeMs: null,
+      warning: true,
+      readError: errorMessage(error),
+    }
+  }
 }
 
 export async function runNewsResearchPipelineOnce(input: {
@@ -139,18 +210,27 @@ export async function runNewsResearchPipelineOnce(input: {
     hermes: input.hermes,
     options,
   })
+  const backlog = await readResearchBacklogStatus(input.store, options)
   return {
     recoveredStaleResearchCandidates: recovered.candidatesRecovered,
     ...research,
+    backlog,
   }
 }
 
 function newsResearchRunnerOptions(
   partial: Partial<NewsResearchRunnerOptions> = {},
 ): NewsResearchRunnerOptions {
-  return {
+  const options = {
     ...DEFAULT_NEWS_RESEARCH_OPTIONS,
     ...partial,
+  }
+  return {
+    ...options,
+    concurrency: Math.min(
+      Math.max(1, Math.trunc(options.concurrency)),
+      MAX_NEWS_RESEARCH_CONCURRENCY,
+    ),
   }
 }
 

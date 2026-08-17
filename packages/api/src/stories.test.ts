@@ -60,7 +60,13 @@ test('Story list selects and caps Entities, batch-loads memories, excludes marke
           memory_type: 'source_marker',
         }),
         memory(entityIds[0], 'First development', '2026-07-10T00:00:00.000Z'),
-        memory(entityIds[1], 'Only development', '2026-07-09T00:00:00.000Z'),
+        memory(entityIds[1], 'Only development', '2026-07-09T00:00:00.000Z', {
+          context: {
+            image_kind: 'content',
+            image_origin: 'hallucinated',
+            image_attribution: 'Fake Outlet',
+          },
+        }),
         memory(entityIds[5], 'Outside the five-Story cap', '2026-07-13T00:00:00.000Z'),
       ])
     }

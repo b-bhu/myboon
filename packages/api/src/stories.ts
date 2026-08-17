@@ -218,11 +218,12 @@ function storyImage(value: unknown): Pick<StoryMemory, 'imageUrl' | 'imageKind' 
   }
   const context = value as Record<string, unknown>
   const imageUrl = safeHttpUrl(context.image_url)
+  if (!imageUrl) {
+    return { imageUrl: null, imageKind: null, imageAttribution: null }
+  }
   const imageKind = context.image_kind === 'content' || context.image_kind === 'source_avatar'
     ? context.image_kind
-    : imageUrl
-      ? new URL(imageUrl).pathname.includes('/profile_images/') ? 'source_avatar' : 'content'
-      : null
+    : new URL(imageUrl).pathname.includes('/profile_images/') ? 'source_avatar' : 'content'
   const imageAttribution = typeof context.image_attribution === 'string' && context.image_attribution.trim()
     ? context.image_attribution.trim()
     : null

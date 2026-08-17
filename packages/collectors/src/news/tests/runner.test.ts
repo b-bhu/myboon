@@ -41,6 +41,22 @@ class FakeHermes {
   }
 }
 
+class TrackingHermes extends FakeHermes {
+  active = 0
+  maxActive = 0
+
+  override async run(request: HermesWorkerRequest): Promise<HermesWorkerResult> {
+    this.active += 1
+    this.maxActive = Math.max(this.maxActive, this.active)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return await super.run(request)
+    } finally {
+      this.active -= 1
+    }
+  }
+}
+
 function withStore(fn: (store: SqliteNewsStore) => Promise<void> | void): Promise<void> {
   const store = new SqliteNewsStore(':memory:')
   return Promise.resolve().then(() => fn(store)).finally(() => store.close())
@@ -185,21 +201,57 @@ test('stale research leases return to the pending queue', async () => {
   })
 })
 
-test('research runner uses the default five-item batch and has no discovery task type', async () => {
+test('research runner uses the default ten-item batch across two lanes and has no discovery task type', async () => {
   await withStore(async (store) => {
-    await store.insertCandidateObservations(Array.from({ length: 6 }, (_, index) => (
+    await store.insertCandidateObservations(Array.from({ length: 11 }, (_, index) => (
       observationInput(testNewsCandidate({
         headline: `Article ${index + 1}`,
         article_url: `https://example.com/article-${index + 1}`,
       }))
     )))
-    const hermes = new FakeHermes()
+    const hermes = new TrackingHermes()
 
     const result = await runNewsResearchPipelineOnce({ store, hermes, options: { now } })
 
-    assert.equal(result.researchCandidatesFetched, 5)
-    assert.equal(result.researchSucceeded, 5)
+    assert.equal(result.researchCandidatesFetched, 10)
+    assert.equal(result.researchConcurrency, 2)
+    assert.equal(result.researchSucceeded, 10)
+    assert.equal(hermes.maxActive, 2)
     assert.equal((await store.fetchPendingCandidateObservations(10)).length, 1)
+    assert.deepEqual(result.backlog, {
+      pendingCandidates: 1,
+      oldestPendingObservedAt: now.toISOString(),
+      oldestPendingAgeMs: 0,
+      warning: false,
+      readError: null,
+    })
     assert.deepEqual(new Set(hermes.calls.map((call) => call.taskType)), new Set(['source_aware_research']))
+  })
+})
+
+test('research pipeline warns when the oldest pending candidate exceeds the age threshold', async () => {
+  await withStore(async (store) => {
+    await store.insertCandidateObservations(Array.from({ length: 2 }, (_, index) => (
+      observationInput(testNewsCandidate({
+        headline: `Old article ${index + 1}`,
+        article_url: `https://example.com/old-article-${index + 1}`,
+        observed_at: '2026-07-04T09:00:00.000Z',
+      }))
+    )))
+
+    const result = await runNewsResearchPipelineOnce({
+      store,
+      hermes: new FakeHermes(),
+      options: {
+        now,
+        batchSize: 1,
+        backlogWarnCount: 20,
+        backlogWarnAgeMs: 60 * 60_000,
+      },
+    })
+
+    assert.equal(result.backlog.pendingCandidates, 1)
+    assert.equal(result.backlog.oldestPendingAgeMs, 3 * 60 * 60_000)
+    assert.equal(result.backlog.warning, true)
   })
 })

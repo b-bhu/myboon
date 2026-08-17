@@ -279,7 +279,14 @@ function packetImageContext(packet: ResearchPacket): Record<string, unknown> {
   if (packet.source !== 'news') return {}
 
   const imageUrl = httpImageUrl(packet.context.image_url)
-  if (!imageUrl) return { image_url: null }
+  if (!imageUrl) {
+    return {
+      image_url: null,
+      image_kind: null,
+      image_origin: null,
+      image_attribution: null,
+    }
+  }
 
   const parsed = new URL(imageUrl)
   const imageKind = parsed.pathname.includes('/profile_images/')

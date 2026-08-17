@@ -295,7 +295,8 @@ test('recoverStaleWork resets stale researching candidates', async () => {
   const store = new SqliteNewsStore(path)
   try {
     const [storedCandidate] = await store.insertCandidateObservations([observationInput()])
-    await store.markCandidateResearchStarted(storedCandidate.id, 'research-job-stale')
+    const [claimed] = await store.claimPendingCandidateObservations(1)
+    assert.equal(claimed.id, storedCandidate.id)
     store.close()
 
     const db = __newsSqliteTesting.openNewsSqlite(path)
@@ -321,7 +322,7 @@ test('recoverStaleWork resets stale researching candidates', async () => {
       const candidateRow = inspected.prepare('SELECT * FROM news_candidate_observations WHERE id = ?')
         .get(storedCandidate.id) as Record<string, unknown>
       assert.equal(candidateRow.status, 'pending_research')
-      assert.match(String(candidateRow.research_error), /Recovered stale researching candidate/)
+      assert.match(String(candidateRow.research_error), /Recovered stale queued\/researching candidate/)
     } finally {
       inspected.close()
     }
@@ -397,6 +398,39 @@ test('duplicate observation_dedupe_key inserts are idempotent', async () => {
     assert.equal(second.length, 1)
     assert.equal(second[0].id, first[0].id)
     assert.equal(second[0].observationDedupeKey, first[0].observationDedupeKey)
+  })
+})
+
+test('claimPendingCandidateObservations gives concurrent lanes distinct rows and reports backlog', async () => {
+  await withStore(async (store) => {
+    await store.insertCandidateObservations(Array.from({ length: 6 }, (_, index) => (
+      observationInput({
+        candidate: candidate({
+          headline: `Article ${index + 1}`,
+          article_url: `https://www.coindesk.com/article-${index + 1}`,
+        }),
+      })
+    )))
+
+    assert.deepEqual(await store.readResearchBacklog(), {
+      pendingCandidates: 6,
+      oldestPendingObservedAt: observedAt,
+    })
+
+    const [firstLane, secondLane] = await Promise.all([
+      store.claimPendingCandidateObservations(3),
+      store.claimPendingCandidateObservations(3),
+    ])
+    const claimedIds = [...firstLane, ...secondLane].map((row) => row.id)
+
+    assert.equal(firstLane.length, 3)
+    assert.equal(secondLane.length, 3)
+    assert.equal(new Set(claimedIds).size, 6)
+    assert.equal([...firstLane, ...secondLane].every((row) => row.status === 'research_queued'), true)
+    assert.deepEqual(await store.readResearchBacklog(), {
+      pendingCandidates: 0,
+      oldestPendingObservedAt: null,
+    })
   })
 })
 

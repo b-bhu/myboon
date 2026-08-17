@@ -6,6 +6,7 @@ import {
   type NewsCandidateObservationInput,
   type NewsCandidateObservationRow,
   type NewsCandidateObservationStatus,
+  type NewsResearchBacklog,
   type NewsResearchResultInput,
   type NewsResearchResultRow,
   type NewsResearchResultStatus,
@@ -286,6 +287,58 @@ export class SupabaseNewsStore implements NewsStore {
     return (data ?? []).map(mapCandidateObservationRow)
   }
 
+  async claimPendingCandidateObservations(limit: number): Promise<NewsCandidateObservationRow[]> {
+    const boundedLimit = Math.max(0, limit)
+    if (boundedLimit === 0) return []
+
+    // Read beyond the requested count so a second worker that loses the first
+    // few optimistic claims can continue onto other pending rows. Each update
+    // still includes status=pending_research, making the transition itself the
+    // atomic ownership decision without requiring a new RPC or schema change.
+    const candidatePoolLimit = Math.max(boundedLimit * 4, boundedLimit)
+    const candidates = await this.fetchPendingCandidateObservations(candidatePoolLimit)
+    const claimed: NewsCandidateObservationRow[] = []
+    for (const candidate of candidates) {
+      if (claimed.length >= boundedLimit) break
+      const { data, error } = await this.db
+        .from('news_candidate_observations')
+        .update({
+          status: 'research_queued',
+          updated_at: nowIso(),
+        })
+        .eq('id', candidate.id)
+        .eq('status', 'pending_research')
+        .select(CANDIDATE_SELECT)
+        .maybeSingle()
+
+      if (error) throw new Error(`news_candidate_observations claim failed: ${error.message}`)
+      if (data) claimed.push(mapCandidateObservationRow(data))
+    }
+    return claimed
+  }
+
+  async readResearchBacklog(): Promise<NewsResearchBacklog> {
+    const { error: countError, count } = await this.db
+      .from('news_candidate_observations')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending_research')
+
+    if (countError) throw new Error(`news research backlog count failed: ${countError.message}`)
+    const { data, error } = await this.db
+      .from('news_candidate_observations')
+      .select('observed_at')
+      .eq('status', 'pending_research')
+      .order('observed_at', { ascending: true })
+      .limit(1)
+
+    if (error) throw new Error(`news research backlog oldest read failed: ${error.message}`)
+    const first = Array.isArray(data) ? data[0] as Record<string, unknown> | undefined : undefined
+    return {
+      pendingCandidates: count ?? 0,
+      oldestPendingObservedAt: first ? stringOrNull(first.observed_at) : null,
+    }
+  }
+
   async markCandidateObservationStatus(id: string, status: NewsCandidateObservationStatus): Promise<void> {
     const { error } = await this.db
       .from('news_candidate_observations')
@@ -538,7 +591,7 @@ export class SupabaseNewsStore implements NewsStore {
     const { data, error } = await this.db
       .from('news_candidate_observations')
       .select('id, research_error')
-      .eq('status', 'researching')
+      .in('status', ['research_queued', 'researching'])
       .lt('updated_at', cutoffIso)
 
     if (error) throw new Error(`news stale candidate recovery lookup failed: ${error.message}`)
@@ -549,7 +602,7 @@ export class SupabaseNewsStore implements NewsStore {
         .from('news_candidate_observations')
         .update({
           status: 'pending_research',
-          research_error: stringOrNull(record.research_error) ?? 'Recovered stale researching candidate after worker restart.',
+          research_error: stringOrNull(record.research_error) ?? 'Recovered stale queued/researching candidate after worker restart.',
           updated_at: nowIso(),
         })
         .eq('id', String(record.id))

@@ -198,7 +198,8 @@ entity manager     -> entity resolution, story reconciliation, memory writes
 
 - the news-feed ingestor persists new observations through the existing
   `NewsStore`;
-- the news researcher performs stale-work recovery and pending research;
+- the news researcher performs stale-work recovery and bounded concurrent
+  pending research;
 - the news researcher can issue only `source_aware_research` work;
 - existing entity-manager entrypoints continue unchanged.
 
@@ -215,12 +216,32 @@ The collector starts immediately and uses the existing overlap-guarded interval
 runner. Collection is a separate process from research, so a slow Hermes
 research call cannot delay the next feed fetch.
 
-The research process is permanently research-only.
+The research process is permanently research-only. One PM2 process owns two
+internal Hermes lanes and claims at most ten candidates per cycle:
+
+```text
+NEWS_RESEARCHER_BATCH_SIZE=10
+NEWS_RESEARCHER_CONCURRENCY=2
+```
+
+Each candidate transitions from `pending_research` to `research_queued` only
+when an optimistic/transactional status check succeeds. Supabase uses a
+conditional update and SQLite uses an immediate transaction, so concurrent
+lanes or an accidental second process cannot research the same row. Queued and
+researching rows share the existing stale-work recovery path. Runtime
+concurrency is hard-capped at four even if the environment is misconfigured.
+
+Every completed cycle reports pending count and oldest pending age. PM2 emits a
+warning when either configured threshold is reached:
+
+```text
+NEWS_RESEARCH_BACKLOG_WARN_COUNT=20
+NEWS_RESEARCH_BACKLOG_WARN_AGE_MS=3600000
+```
 
 ## Research Contract
 
-The research system remains Hermes-based and otherwise unchanged. The request
-now explicitly carries:
+The research system remains Hermes-based. The request explicitly carries:
 
 ```text
 content_kind
@@ -261,10 +282,15 @@ cannot drop or replace it:
 
 ```text
 context.image_url          validated http(s) URL or null
-context.image_kind         content | source_avatar
-context.image_origin       technical provider provenance
-context.image_attribution  upstream outlet or handle
+context.image_kind         content | source_avatar | null
+context.image_origin       technical provider provenance or null
+context.image_attribution  upstream outlet or handle, or null
 ```
+
+When the upstream image is absent or unsafe, all four media fields are cleared
+after extraction. Public Story APIs also require a valid HTTP(S) image URL
+before exposing kind or attribution, providing a second deterministic guard
+against extraction-authored provenance.
 
 The editor and publisher already receive full entity-memory context. The Story
 and narrative Feed APIs expose the same media as `imageUrl`, `imageKind`, and
@@ -359,13 +385,22 @@ Automated coverage proves:
 - tracking parameters are removed by the existing canonicalizer;
 - feed ingestion makes no Hermes call;
 - news research makes only `source_aware_research` calls;
+- two research lanes never exceed configured concurrency and claim distinct
+  candidate rows;
+- stale queued work is recoverable and every cycle exposes backlog count, age,
+  and warning state;
 - articles remain `article`/`news_event` downstream;
 - posts remain `social_post`/`social_signal` downstream;
 - recent entity memories are supplied to the existing extraction call without
   adding another Hermes call;
 - the two-publisher CLARITY Act regression collapses to one entity-memory row
   while retaining both sources;
-- low-confidence or wrong-entity reconciliation attempts create a separate row;
+- exact-threshold reconciliation succeeds, while low-confidence, wrong-entity,
+  unlisted/stale-ID, and packet-replay attempts do not merge;
+- the exact 48-hour boundary is included, older memories are excluded, and a
+  recent-memory read failure fails open;
+- invalid or absent upstream media clears all extraction-authored provenance,
+  and public Story APIs expose no image metadata without a valid URL;
 - collectors and shared packages compile.
 
 Primary commands:
@@ -395,9 +430,13 @@ database, containing one social post and four articles. All five completed as
 failures. The entity-manager adapter retained content kind, image URL, provider
 provenance, upstream source name, evidence, and entity hints for every item. The
 sample averaged about 257 seconds per research item (about 21.4 minutes total),
-confirming that collection is lightweight while source-aware Hermes research is
-the expensive stage and must remain a separately scheduled process. The original
-soak database was not used for research and remained unchanged.
+while the soak averaged about 20.7 new candidates per hour. One sequential lane
+could therefore process at most about 14 items per hour and would accumulate a
+permanent backlog. Two bounded lanes processing ten candidates per cycle raise
+the measured-rate estimate to about 24 items per hour under the existing
+five-minute overlap-guarded schedule. Backlog count/age warnings remain required
+because real VPS latency and memory pressure can reduce that margin. The
+original soak database was not used for research and remained unchanged.
 
 ## Acceptance Criteria
 
@@ -426,7 +465,12 @@ soak database was not used for research and remained unchanged.
 15. No storage schema, migration, storage-location, or Polymarket behavior
     changes.
 16. Feed/API image fields come from durable entity-memory context, never from
-   LLM-authored media, and unsafe non-http(s) URLs are rejected.
+   LLM-authored media; unsafe or absent URLs clear URL, kind, origin, and
+   attribution, and public APIs expose no partial media metadata.
+17. Research claims are unique across concurrent workers, default concurrency
+   is two with ten candidates per cycle, and queued work is crash-recoverable.
+18. Every research cycle reports pending count and oldest age and emits a PM2
+   warning when the configured count or age threshold is reached.
 
 ## Cutover Checklist
 
@@ -443,7 +487,10 @@ soak database was not used for research and remained unchanged.
    same already-existing store implementation.
 8. Remove the former scout modules, preview command, source configuration,
    rollout modes, and deployment references.
+9. Confirm two Hermes lanes stay inside VPS CPU/memory limits and that backlog
+   count and oldest age decline over multiple production cycles.
 
 PM2 starts the Supabase-backed feed ingestor and research-only worker as separate
-processes. Both SQLite and Supabase entrypoints remain available so local and
-deployed storage choices do not change.
+processes. The one research process owns the bounded two-lane pool. Both SQLite
+and Supabase entrypoints remain available so local and deployed storage choices
+do not change.

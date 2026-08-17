@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { writeExtraction } from './resolver'
+import type { CanonEntity } from './canon'
+import { __testing, writeExtraction } from './resolver'
 import { InMemoryEntityMemoryStore } from './test-helpers'
-import type { EntityMemoryExtraction, ExtractionProvider, ResearchPacket } from './types'
+import type {
+  EntityMemoryExtraction,
+  EntityMemoryInput,
+  EntityMemoryRecord,
+  ExtractionProvider,
+  ResearchPacket,
+} from './types'
 
 const packet: ResearchPacket = {
   id: 'polymarket:markets:research-1',
@@ -26,6 +33,53 @@ function provider(extraction: EntityMemoryExtraction): ExtractionProvider {
     async extract() {
       return extraction
     },
+  }
+}
+
+function reconciliationMemory(overrides: Partial<EntityMemoryRecord> = {}): EntityMemoryRecord {
+  return {
+    id: 'memory-recent',
+    entity_id: 'entity-bitcoin',
+    source: 'news',
+    source_area: 'news_feed:articles',
+    source_type: 'article',
+    source_ref_id: 'source-1',
+    source_research_id: 'research-existing',
+    memory_type: 'news_event',
+    title: 'Existing story',
+    summary: 'Existing story summary.',
+    body: 'Existing story body.',
+    event_at: '2026-08-16T09:00:00.000Z',
+    observed_at: '2026-08-16T10:00:00.000Z',
+    confidence: 0.8,
+    evidence: [],
+    mentions: [],
+    metrics: {},
+    context: {},
+    ...overrides,
+  }
+}
+
+function incomingReconciliationMemory(overrides: Partial<EntityMemoryInput> = {}): EntityMemoryInput {
+  return {
+    entity_id: 'entity-bitcoin',
+    source: 'news',
+    source_area: 'news_feed:articles',
+    source_type: 'article',
+    source_ref_id: 'source-2',
+    source_research_id: 'research-incoming',
+    memory_type: 'news_event',
+    title: 'Incoming story',
+    summary: 'Incoming story summary.',
+    body: 'Incoming story body.',
+    event_at: '2026-08-16T10:30:00.000Z',
+    observed_at: '2026-08-16T11:00:00.000Z',
+    confidence: 0.9,
+    evidence: [],
+    mentions: [],
+    metrics: {},
+    context: {},
+    ...overrides,
   }
 }
 
@@ -465,6 +519,147 @@ test('writeExtraction fails open to a new row when a same-story decision is belo
   assert.equal(store.memories.length, 2)
 })
 
+test('news reconciliation accepts confidence exactly at the 0.8 threshold', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const recent = reconciliationMemory()
+  store.memories.push(recent)
+
+  const result = await __testing.reconcileNewsStoryMemories(store, {
+    ...packet,
+    source: 'news',
+  }, [{
+    input: incomingReconciliationMemory(),
+    reconciliation: {
+      action: 'update_existing_story',
+      existingMemoryId: recent.id,
+      confidence: 0.8,
+    },
+  }], [recent])
+
+  assert.equal(result.consolidated, 1)
+  assert.deepEqual(result.remaining, [])
+})
+
+test('news reconciliation rejects a recent memory owned by a different entity', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const recent = reconciliationMemory({ entity_id: 'entity-ethereum' })
+  store.memories.push(recent)
+  const incoming = incomingReconciliationMemory({ entity_id: 'entity-bitcoin' })
+
+  const result = await __testing.reconcileNewsStoryMemories(store, {
+    ...packet,
+    source: 'news',
+  }, [{
+    input: incoming,
+    reconciliation: {
+      action: 'duplicate_source',
+      existingMemoryId: recent.id,
+      confidence: 0.95,
+    },
+  }], [recent])
+
+  assert.equal(result.consolidated, 0)
+  assert.deepEqual(result.remaining, [incoming])
+})
+
+test('news reconciliation rejects an unlisted or stale memory ID', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const recent = reconciliationMemory()
+  store.memories.push(recent)
+  const incoming = incomingReconciliationMemory()
+
+  const result = await __testing.reconcileNewsStoryMemories(store, {
+    ...packet,
+    source: 'news',
+  }, [{
+    input: incoming,
+    reconciliation: {
+      action: 'duplicate_source',
+      existingMemoryId: 'memory-not-supplied-to-the-prompt',
+      confidence: 0.95,
+    },
+  }], [recent])
+
+  assert.equal(result.consolidated, 0)
+  assert.deepEqual(result.remaining, [incoming])
+})
+
+test('news reconciliation rejects a target created by the same packet replay', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const recent = reconciliationMemory({
+    source_research_id: 'research-incoming',
+  })
+  store.memories.push(recent)
+  const incoming = incomingReconciliationMemory()
+
+  const result = await __testing.reconcileNewsStoryMemories(store, {
+    ...packet,
+    source: 'news',
+  }, [{
+    input: incoming,
+    reconciliation: {
+      action: 'update_existing_story',
+      existingMemoryId: recent.id,
+      confidence: 0.95,
+    },
+  }], [recent])
+
+  assert.equal(result.consolidated, 0)
+  assert.deepEqual(result.remaining, [incoming])
+})
+
+test('recent news memory loading includes the exact 48-hour boundary and excludes older rows', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const boundary = reconciliationMemory({
+    id: 'memory-at-boundary',
+    observed_at: '2026-08-14T12:00:00.000Z',
+  })
+  const stale = reconciliationMemory({
+    id: 'memory-before-boundary',
+    observed_at: '2026-08-14T11:59:59.999Z',
+  })
+  store.memories.push(boundary, stale)
+  const shortlist: CanonEntity[] = [{
+    id: 'entity-bitcoin',
+    slug: 'bitcoin',
+    name: 'Bitcoin',
+    type: 'asset',
+    aliases: ['BTC'],
+    summary: null,
+  }]
+
+  const recent = await __testing.loadRecentNewsMemories(store, {
+    ...packet,
+    source: 'news',
+    observedAt: '2026-08-16T12:00:00.000Z',
+  }, shortlist)
+
+  assert.deepEqual(recent.map((memory) => memory.id), ['memory-at-boundary'])
+})
+
+test('recent news memory read failure fails open with no reconciliation context', async () => {
+  class FailingRecentMemoryStore extends InMemoryEntityMemoryStore {
+    override async listRecentMemories(): Promise<EntityMemoryRecord[]> {
+      throw new Error('database unavailable')
+    }
+  }
+  const shortlist: CanonEntity[] = [{
+    id: 'entity-bitcoin',
+    slug: 'bitcoin',
+    name: 'Bitcoin',
+    type: 'asset',
+    aliases: ['BTC'],
+    summary: null,
+  }]
+
+  const recent = await __testing.loadRecentNewsMemories(new FailingRecentMemoryStore(), {
+    ...packet,
+    source: 'news',
+  }, shortlist)
+
+  assert.deepEqual(recent, [])
+})
+
 test('writeExtraction durably attaches trusted news image metadata to every entity memory', async () => {
   const store = new InMemoryEntityMemoryStore()
   const newsPacket: ResearchPacket = {
@@ -524,11 +719,23 @@ test('writeExtraction stores a null image for news packets with an unsafe upstre
       memoryType: 'news_event',
       title: 'Bitcoin article',
       summary: 'An article reported a Bitcoin update.',
+      context: {
+        image_url: 'https://example.com/hallucinated.jpg',
+        image_kind: 'content',
+        image_origin: 'hallucinated',
+        image_attribution: 'Fake Outlet',
+      },
     }],
   }))
 
-  assert.equal(store.memories[0].context.image_url, null)
-  assert.equal('image_kind' in store.memories[0].context, false)
+  assert.deepEqual(store.memories[0].context, {
+    image_url: null,
+    image_kind: null,
+    image_origin: null,
+    image_attribution: null,
+    source_title: newsPacket.title,
+    source_url: null,
+  })
 })
 
 test('writeExtraction stores a market signal under the durable entity instead of the market', async () => {

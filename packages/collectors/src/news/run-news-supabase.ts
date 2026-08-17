@@ -5,7 +5,10 @@ import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { HermesWorkerClient } from './hermes-client'
 import { runNewsResearchPipelineOnce } from './runner'
 import {
+  newsResearchBacklogWarnAgeMs,
+  newsResearchBacklogWarnCount,
   newsResearchBatchSize,
+  newsResearchConcurrency,
   positiveInteger,
 } from './runtime-config'
 import { SupabaseNewsStore } from './supabase-store'
@@ -24,8 +27,11 @@ function createSupabase() {
 async function runOnce(): Promise<void> {
   const supabase = createSupabase()
   const batchSize = newsResearchBatchSize()
+  const concurrency = newsResearchConcurrency()
   const researchTimeoutMs = positiveInteger(process.env.NEWS_RESEARCH_TIMEOUT_MS, 10 * 60_000)
   const staleWorkCutoffMs = positiveInteger(process.env.NEWS_STALE_WORK_CUTOFF_MS, 30 * 60_000)
+  const backlogWarnCount = newsResearchBacklogWarnCount()
+  const backlogWarnAgeMs = newsResearchBacklogWarnAgeMs()
 
   const result = await withPipelineRun(
     new SupabasePipelineLedgerStore(supabase),
@@ -35,6 +41,7 @@ async function runOnce(): Promise<void> {
       stage: 'news.researcher',
       metadata: {
         batchSize,
+        concurrency,
         storage: 'supabase',
       },
     },
@@ -43,12 +50,19 @@ async function runOnce(): Promise<void> {
       const hermes = new HermesWorkerClient()
       const options = {
         batchSize,
+        concurrency,
         researchTimeoutMs,
         staleWorkCutoffMs,
+        backlogWarnCount,
+        backlogWarnAgeMs,
       }
       return runNewsResearchPipelineOnce({ store, hermes, options })
     }
   )
+
+  if (result.backlog.warning) {
+    console.warn('[news-researcher] backlog warning', JSON.stringify(result.backlog))
+  }
 
   console.log(JSON.stringify(result, null, 2))
 }

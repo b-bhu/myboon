@@ -8,6 +8,7 @@ import {
   type NewsCandidateObservationInput,
   type NewsCandidateObservationRow,
   type NewsCandidateObservationStatus,
+  type NewsResearchBacklog,
   type RecordNewsResearchFailureInput,
   type RecoverStaleNewsWorkInput,
   type RecoverStaleNewsWorkResult,
@@ -394,6 +395,69 @@ export class SqliteNewsStore implements NewsStore {
     }
   }
 
+  async claimPendingCandidateObservations(limit: number): Promise<NewsCandidateObservationRow[]> {
+    const boundedLimit = Math.max(0, limit)
+    if (boundedLimit === 0) return []
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE')
+      try {
+        const selected = this.db.prepare(`
+          SELECT id
+          FROM news_candidate_observations
+          WHERE status = 'pending_research'
+          ORDER BY observed_at ASC, created_at ASC
+          LIMIT ?
+        `).all(boundedLimit) as Array<Record<string, unknown>>
+        const ids = selected.map((row) => String(row.id))
+        if (ids.length === 0) {
+          this.db.exec('COMMIT')
+          return []
+        }
+
+        const placeholders = ids.map(() => '?').join(', ')
+        this.db.prepare(`
+          UPDATE news_candidate_observations
+          SET status = 'research_queued',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE status = 'pending_research'
+            AND id IN (${placeholders})
+        `).run(...ids)
+        const claimed = this.db.prepare(`
+          SELECT *
+          FROM news_candidate_observations
+          WHERE id IN (${placeholders})
+          ORDER BY observed_at ASC, created_at ASC
+        `).all(...ids) as Array<Record<string, unknown>>
+        this.db.exec('COMMIT')
+        return claimed.map(mapCandidateObservationRow)
+      } catch (error) {
+        this.db.exec('ROLLBACK')
+        throw error
+      }
+    } catch (error) {
+      throw new Error(`news_candidate_observations claim failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async readResearchBacklog(): Promise<NewsResearchBacklog> {
+    try {
+      const row = this.db.prepare(`
+        SELECT
+          COUNT(*) AS pending_count,
+          MIN(observed_at) AS oldest_pending_observed_at
+        FROM news_candidate_observations
+        WHERE status = 'pending_research'
+      `).get() as Record<string, unknown>
+      return {
+        pendingCandidates: numberValue(row.pending_count),
+        oldestPendingObservedAt: stringOrNull(row.oldest_pending_observed_at),
+      }
+    } catch (error) {
+      throw new Error(`news research backlog read failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   async markCandidateObservationStatus(id: string, status: NewsCandidateObservationStatus): Promise<void> {
     try {
       this.db.prepare(`
@@ -455,9 +519,9 @@ export class SqliteNewsStore implements NewsStore {
       const candidateResult = this.db.prepare(`
         UPDATE news_candidate_observations
         SET status = 'pending_research',
-            research_error = COALESCE(research_error, 'Recovered stale researching candidate after worker restart.'),
+            research_error = COALESCE(research_error, 'Recovered stale queued/researching candidate after worker restart.'),
             updated_at = CURRENT_TIMESTAMP
-        WHERE status = 'researching'
+        WHERE status IN ('research_queued', 'researching')
           AND updated_at < ?
       `).run(input.candidateCutoffIso) as { changes?: number }
 
