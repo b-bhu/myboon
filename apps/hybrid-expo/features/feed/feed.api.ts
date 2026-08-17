@@ -6,6 +6,9 @@ interface PublishedNarrativeListItem {
   title: string;
   summary: string;
   publishedAt: string;
+  imageUrl?: string | null;
+  imageKind?: 'content' | 'source_avatar' | null;
+  imageAttribution?: string | null;
 }
 
 export function getApiBaseUrl(): string {
@@ -46,6 +49,11 @@ function mapNarrativeToFeedItem(item: PublishedNarrativeListItem, index: number,
     description: item.summary,
     isTop: offset + index === 0,
     actions: [],
+    imageUrl: httpUrlOrNull(item.imageUrl),
+    imageKind: item.imageKind === 'content' || item.imageKind === 'source_avatar' ? item.imageKind : null,
+    imageAttribution: typeof item.imageAttribution === 'string' && item.imageAttribution.trim()
+      ? item.imageAttribution.trim()
+      : null,
   };
 }
 
@@ -74,6 +82,19 @@ export interface NarrativeDetail {
   summary: string;
   content: string;
   publishedAt: string;
+  imageUrl: string | null;
+  imageKind: 'content' | 'source_avatar' | null;
+  imageAttribution: string | null;
+}
+
+function httpUrlOrNull(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface SimpleExplanation {

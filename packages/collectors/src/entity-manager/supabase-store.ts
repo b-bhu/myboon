@@ -239,6 +239,28 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     return (data ?? []).map(normalizeMemory)
   }
 
+  async listRecentMemories(
+    entityIds: string[],
+    sinceIso: string,
+    untilIso: string,
+    limit: number,
+    source: string,
+  ): Promise<EntityMemoryRecord[]> {
+    const uniqueEntityIds = [...new Set(entityIds)]
+    if (uniqueEntityIds.length === 0 || limit <= 0) return []
+    const { data, error } = await this.db
+      .from('entity_memories')
+      .select(MEMORY_SELECT)
+      .in('entity_id', uniqueEntityIds)
+      .eq('source', source)
+      .gte('observed_at', sinceIso)
+      .lte('observed_at', untilIso)
+      .order('observed_at', { ascending: false })
+      .limit(limit) as unknown as EntityRowsResult
+    if (error) throw new Error(`recent entity memory list failed: ${error.message}`)
+    return (data ?? []).map(normalizeMemory)
+  }
+
   async findLatestMemorySince(
     entityId: string,
     memoryType: EntityMemoryType,

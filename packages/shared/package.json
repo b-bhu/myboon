@@ -10,6 +10,11 @@
       "default": "./src/index.ts",
       "types": "./src/index.ts"
     },
+    "./news-feed": {
+      "import": "./src/news-feed/client.ts",
+      "default": "./src/news-feed/client.ts",
+      "types": "./src/news-feed/client.ts"
+    },
     "./meteora": {
       "import": "./src/meteora/index.ts",
       "default": "./src/meteora/index.ts",
@@ -29,6 +34,13 @@
       "import": "./src/spot/data-api.ts",
       "default": "./src/spot/data-api.ts",
       "types": "./src/spot/data-api.ts"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "news-feed": [
+        "src/news-feed/client.ts"
+      ]
     }
   },
   "scripts": {

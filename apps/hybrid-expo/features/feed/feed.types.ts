@@ -22,6 +22,9 @@ export interface FeedItem {
   description: string;
   isTop?: boolean;
   actions: NarrativeAction[];
+  imageUrl?: string | null;
+  imageKind?: 'content' | 'source_avatar' | null;
+  imageAttribution?: string | null;
 }
 
 export interface StorySummary {
@@ -30,11 +33,17 @@ export interface StorySummary {
   latestDevelopment: string;
   eventCount: number;
   updatedAt: string;
+  imageUrl: string | null;
+  imageKind: 'content' | 'source_avatar' | null;
+  imageAttribution: string | null;
 }
 
 export interface StoryEvent {
   text: string;
   eventAt: string;
+  imageUrl: string | null;
+  imageKind: 'content' | 'source_avatar' | null;
+  imageAttribution: string | null;
 }
 
 export interface StoryDetail {

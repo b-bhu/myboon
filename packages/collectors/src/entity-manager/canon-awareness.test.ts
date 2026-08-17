@@ -82,6 +82,33 @@ test('extraction prompt without canon has no menu (legacy behavior preserved)', 
   assert.doesNotMatch(prompt, /KNOWN ENTITIES/)
 })
 
+test('extraction prompt includes recent story memory and conservative reconciliation rules', () => {
+  const canon = {
+    ...canonOf(FED),
+    recentMemories: [{
+      id: 'memory-1',
+      entityId: FED.id,
+      entitySlug: FED.slug,
+      entityName: FED.name,
+      memoryType: 'news_event',
+      title: 'FOMC holds rates',
+      summary: 'The Federal Reserve held rates steady in a 9-3 vote.',
+      eventAt: '2026-07-30T20:00:00.000Z',
+      observedAt: '2026-07-30T21:00:00.000Z',
+      source: 'news',
+      sourceUrl: 'https://example.com/fomc-hold',
+    }],
+  }
+  const prompt = __testing.buildPrompt(packet(), canon)
+
+  assert.match(prompt, /RECENT ENTITY MEMORIES from the last 48 hours/)
+  assert.match(prompt, /memory-1/)
+  assert.match(prompt, /duplicate_source/)
+  assert.match(prompt, /update_existing_story/)
+  assert.match(prompt, /Sharing only an entity, topic, theme, or market direction is NOT enough/)
+  assert.match(prompt, /confidence is at least 0\.8/)
+})
+
 // ------------------------------------------------------------- rehoming ---
 
 test('rehomeCandidate moves the candidate and its memories onto the existing entity, carrying aliases', () => {

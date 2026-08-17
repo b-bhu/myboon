@@ -127,6 +127,62 @@ const baseMemory: EntityMemoryRecord = {
   context: {},
 }
 
+test('listRecentMemories bounds news memories by shortlisted entities and time', async () => {
+  const db = {
+    from(table: string) {
+      assert.equal(table, 'entity_memories')
+      return {
+        select(columns: string) {
+          assert.equal(columns, __testing.MEMORY_SELECT)
+          return {
+            in(column: string, values: string[]) {
+              assert.equal(column, 'entity_id')
+              assert.deepEqual(values, ['entity-1', 'entity-2'])
+              return this
+            },
+            eq(column: string, value: string) {
+              assert.equal(column, 'source')
+              assert.equal(value, 'news')
+              return this
+            },
+            gte(column: string, value: string) {
+              assert.equal(column, 'observed_at')
+              assert.equal(value, '2026-06-29T00:00:00.000Z')
+              return this
+            },
+            lte(column: string, value: string) {
+              assert.equal(column, 'observed_at')
+              assert.equal(value, '2026-07-01T00:00:00.000Z')
+              return this
+            },
+            order(column: string, options: Record<string, unknown>) {
+              assert.equal(column, 'observed_at')
+              assert.deepEqual(options, { ascending: false })
+              return this
+            },
+            async limit(count: number) {
+              assert.equal(count, 30)
+              return { data: [baseMemory], error: null }
+            },
+          }
+        },
+      }
+    },
+  } as unknown as SupabaseClient
+
+  const store = new SupabaseEntityMemoryStore(db)
+  const memories = await store.listRecentMemories(
+    ['entity-1', 'entity-2', 'entity-1'],
+    '2026-06-29T00:00:00.000Z',
+    '2026-07-01T00:00:00.000Z',
+    30,
+    'news',
+  )
+
+  assert.equal(memories.length, 1)
+  assert.equal(memories[0].id, 'memory-1')
+})
+
 test('findLatestMemorySince filters by entity, memory type, and recency, ordered newest first', async () => {
   const db = {
     from(table: string) {

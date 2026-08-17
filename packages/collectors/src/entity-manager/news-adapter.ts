@@ -23,11 +23,14 @@ function dedupeEvidence(items: unknown[]): unknown[] {
 }
 
 function packetEvidence(row: NewsResearchResultRow, candidate: NewsCandidateObservationRow): unknown[] {
+  const sourceType = candidate.rawCandidate.content_kind === 'social_post'
+    ? 'social_post'
+    : 'article'
   const articleEvidence = [{
     evidence_id: 'article_canonical',
     title: candidate.headline,
     url: candidate.canonicalArticleUrl,
-    source_type: 'article',
+    source_type: sourceType,
     observed_at: candidate.observedAt,
   }]
   const originalArticleUrl = compactString(row.sourceSignal.article_url)
@@ -36,7 +39,7 @@ function packetEvidence(row: NewsResearchResultRow, candidate: NewsCandidateObse
       evidence_id: 'article_original',
       title: candidate.headline,
       url: originalArticleUrl,
-      source_type: 'article',
+      source_type: sourceType,
       observed_at: candidate.observedAt,
     })
   }
@@ -65,13 +68,16 @@ export function newsResearchToPacket(
   const summary = compactString(row.researchSummary.one_liner)
     || candidate.visibleSummary
     || candidate.headline
+  const sourceType = candidate.rawCandidate.content_kind === 'social_post'
+    ? 'social_post'
+    : 'article'
 
   return {
     id: `news:${row.sourceId}:${row.id}`,
     source: 'news',
     sourceArea: row.sourceId,
     sourceResearchId: row.id,
-    sourceType: 'article',
+    sourceType,
     sourceRefId: candidate.canonicalArticleUrl,
     title: candidate.headline,
     summary,
@@ -114,6 +120,11 @@ export function newsResearchToPacket(
       open_questions: row.openQuestions,
       limitations: row.limitations,
       errors: row.errors,
+      content_kind: sourceType,
+      provider_id: candidate.rawCandidate.provider_id ?? null,
+      upstream_source_name: candidate.rawCandidate.upstream_source_name ?? null,
+      image_url: candidate.rawCandidate.image_url ?? null,
+      untrusted_related_coin_ids: candidate.rawCandidate.related_coin_ids ?? [],
     },
   }
 }

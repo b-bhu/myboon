@@ -941,9 +941,9 @@ submitted” are different milestones.
 1. **Entity carousel and memory timeline foundation** — add the Entity carousel
    flag and make shared Entity memory summaries concise enough for direct
    chronological display.
-2. **Beta crypto news sources** — keep CoinDesk and add The Block, Decrypt
-   Editors' Picks, Unchained, and The Defiant to the existing Scout, Researcher,
-   and Entity Manager path without changing Editor or Publisher behavior.
+2. **Beta crypto news sources** — ingest the blended structured article/social
+   feed, then use the existing Researcher and Entity Manager path without
+   changing Editor or Publisher behavior.
 3. **Publisher and Feed APIs** — preserve the independent cron publishing model
    while serving the Entity carousel, memory timelines, and Feed Updates.
 4. **Home and full Feed experience** — build the up-to-five-Story carousel,

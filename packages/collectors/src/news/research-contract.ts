@@ -49,6 +49,8 @@ export function buildResearchRequest(
       url: candidate.sourceUrl,
     },
     article: {
+      content_kind: candidate.rawCandidate.content_kind ?? 'article',
+      ...(candidate.rawCandidate.provider_id ? { provider_id: candidate.rawCandidate.provider_id } : {}),
       canonical_article_url: candidate.canonicalArticleUrl,
       article_url: candidate.rawCandidate.article_url,
       headline: candidate.headline,
@@ -57,6 +59,13 @@ export function buildResearchRequest(
       observed_at: candidate.observedAt,
       ...(candidate.rawCandidate.author ? { author: candidate.rawCandidate.author } : {}),
       ...(candidate.rawCandidate.section ? { section: candidate.rawCandidate.section } : {}),
+      ...(candidate.rawCandidate.upstream_source_name
+        ? { upstream_source_name: candidate.rawCandidate.upstream_source_name }
+        : {}),
+      ...(candidate.rawCandidate.image_url ? { image_url: candidate.rawCandidate.image_url } : {}),
+      ...(candidate.rawCandidate.related_coin_ids?.length
+        ? { untrusted_related_coin_ids: [...candidate.rawCandidate.related_coin_ids] }
+        : {}),
     },
     prior_observation: {
       dedupe_outcome: candidate.dedupeOutcome,
@@ -89,11 +98,12 @@ export function buildResearchPrompt(request: NewsResearchRequest): string {
   return [
     'You are the myboon source-aware news researcher.',
     '',
-    'The article is a signal, not the source of truth.',
+    'The source item is a signal, not the source of truth. It may be an article or a social post; preserve that distinction.',
     '',
     'Task:',
-    'Inspect the article and gather external evidence only when it helps verify or contextualize the article claims.',
-    'Separate article claims from externally verified facts and unresolved or disputed claims.',
+    'Inspect the source item and gather external evidence only when it helps verify or contextualize its claims.',
+    'Separate source claims from externally verified facts and unresolved or disputed claims.',
+    'Treat untrusted_related_coin_ids only as weak search hints. Never use them as entity identity without independent evidence.',
     'Prefer primary sources, official records, direct article URLs, named analytics sources, on-chain data, filings, regulator pages, project/team statements, and other attributable sources when relevant.',
     'Preserve source context and provenance.',
     'If data is blocked, unavailable, paywalled, or inconclusive, return factual limitations and open questions.',

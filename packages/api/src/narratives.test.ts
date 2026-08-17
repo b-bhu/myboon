@@ -34,17 +34,23 @@ test('GET / applies public Feed gates, deterministic ordering, pagination, and a
       title: 'Bitcoin moves',
       summary: 'Short update',
       publishedAt: '2026-07-14T12:00:00.000Z',
+      imageUrl: null,
+      imageKind: null,
+      imageAttribution: null,
     },
     {
       updateKey: secondId,
       title: 'Ethereum moves',
       summary: 'Second summary',
       publishedAt: '2026-07-14T11:00:00.000Z',
+      imageUrl: null,
+      imageKind: null,
+      imageAttribution: null,
     },
   ])
 
   assert.equal(requestUrl?.pathname, '/rest/v1/published_narratives')
-  assert.equal(requestUrl?.searchParams.get('select'), 'id,title,content_small,published_at')
+  assert.equal(requestUrl?.searchParams.get('select'), 'id,title,content_small,published_at,source_memory_ids')
   assert.equal(requestUrl?.searchParams.get('status'), 'eq.published')
   assert.equal(requestUrl?.searchParams.get('entity_id'), 'not.is.null')
   assert.equal(requestUrl?.searchParams.get('title'), 'not.is.null')
@@ -88,6 +94,9 @@ test('GET / skips malformed publications without taking down valid Feed items', 
     title: 'Bitcoin moves',
     summary: 'Short update',
     publishedAt: '2026-07-14T12:00:00.000Z',
+    imageUrl: null,
+    imageKind: null,
+    imageAttribution: null,
   }])
 })
 
@@ -109,8 +118,11 @@ test('GET /:updateKey returns the full published Feed item and allowlists all ou
     summary: 'Short update',
     content: 'The complete published update.',
     publishedAt: '2026-07-14T12:00:00.000Z',
+    imageUrl: null,
+    imageKind: null,
+    imageAttribution: null,
   })
-  assert.equal(requestUrl?.searchParams.get('select'), 'id,title,content_small,content_full,published_at')
+  assert.equal(requestUrl?.searchParams.get('select'), 'id,title,content_small,content_full,published_at,source_memory_ids')
   assert.equal(requestUrl?.searchParams.get('id'), `eq.${firstId}`)
   assert.equal(requestUrl?.searchParams.get('status'), 'eq.published')
   assert.equal(requestUrl?.searchParams.get('entity_id'), 'not.is.null')
@@ -129,6 +141,52 @@ test('GET /:updateKey rejects an invalid UUID without contacting Supabase', asyn
   assert.equal(response.status, 400)
   assert.deepEqual(await response.json(), { error: 'Bad request' })
   assert.equal(fetchCalls, 0)
+})
+
+test('GET / enriches Feed items with the preferred source-memory image', async () => {
+  const contentMemoryId = '00000000-0000-4000-8000-000000000010'
+  const avatarMemoryId = '00000000-0000-4000-8000-000000000011'
+  const requests: URL[] = []
+  const app = createApp(async (input) => {
+    const url = new URL(String(input))
+    requests.push(url)
+    if (url.pathname.endsWith('/published_narratives')) {
+      return jsonResponse([{
+        ...narrativeRow(firstId, 'Bitcoin moves', 'Short update', 'Full update', '2026-07-14T12:00:00.000Z'),
+        source_memory_ids: [avatarMemoryId, contentMemoryId],
+      }])
+    }
+    assert.equal(url.pathname, '/rest/v1/entity_memories')
+    assert.equal(url.searchParams.get('select'), 'id,context')
+    return jsonResponse([{
+      id: avatarMemoryId,
+      context: {
+        image_url: 'https://pbs.twimg.com/profile_images/123/avatar.jpg',
+        image_kind: 'source_avatar',
+        image_attribution: '@tokens',
+      },
+    }, {
+      id: contentMemoryId,
+      context: {
+        image_url: 'https://pbs.twimg.com/media/story.jpg',
+        image_kind: 'content',
+        image_attribution: '@tokens',
+      },
+    }])
+  })
+
+  const response = await app.request('/')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), [{
+    updateKey: firstId,
+    title: 'Bitcoin moves',
+    summary: 'Short update',
+    publishedAt: '2026-07-14T12:00:00.000Z',
+    imageUrl: 'https://pbs.twimg.com/media/story.jpg',
+    imageKind: 'content',
+    imageAttribution: '@tokens',
+  }])
+  assert.equal(requests.length, 2)
 })
 
 test('GET /:updateKey hides missing, unlinked, and archived narratives behind 404', async (context) => {

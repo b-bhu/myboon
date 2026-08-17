@@ -158,7 +158,7 @@ function errorMessage(error: unknown): string {
 async function main(): Promise<void> {
   loadDotenvChain()
 
-  const newsStore = new SqliteNewsStore()
+  const newsStore = new SqliteNewsStore(process.env.NEWS_SQLITE_PATH)
   try {
     const supabase = createClient(
       requiredEnv('SUPABASE_URL'),

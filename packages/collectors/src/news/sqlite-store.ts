@@ -5,18 +5,16 @@ import { dirname, resolve } from 'node:path'
 import type { PriorNewsObservation } from './types'
 import {
   initialNewsResearchResultStatus,
-  type CreateNewsSourceRunInput,
-  type MarkNewsSourceRunInput,
   type NewsCandidateObservationInput,
   type NewsCandidateObservationRow,
   type NewsCandidateObservationStatus,
+  type NewsResearchBacklog,
   type RecordNewsResearchFailureInput,
   type RecoverStaleNewsWorkInput,
   type RecoverStaleNewsWorkResult,
   type NewsResearchResultInput,
   type NewsResearchResultRow,
   type NewsResearchResultStatus,
-  type NewsSourceRunRow,
   type NewsStore,
   type PendingNewsResearchResult,
   type PersistedNewsDedupeOutcome,
@@ -265,92 +263,6 @@ export class SqliteNewsStore implements NewsStore {
     this.db.close()
   }
 
-  async createSourceRun(input: CreateNewsSourceRunInput): Promise<NewsSourceRunRow> {
-    const id = randomUUID()
-    try {
-      this.db.prepare(`
-        INSERT INTO news_source_runs (
-          id,
-          job_id,
-          source_id,
-          source_name,
-          source_type,
-          url_id,
-          url_label,
-          source_url,
-          task_type,
-          status,
-          observed_at,
-          started_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        input.jobId,
-        input.source.sourceId,
-        input.source.sourceName,
-        input.source.sourceType,
-        input.sourceUrl.urlId,
-        input.sourceUrl.label,
-        input.sourceUrl.url,
-        input.taskType ?? 'source_scout',
-        input.status ?? 'queued',
-        input.observedAt ?? null,
-        input.startedAt ?? null
-      )
-
-      return this.sourceRunById(id)
-    } catch (error) {
-      throw new Error(`news_source_runs create failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
-  async markSourceRun(input: MarkNewsSourceRunInput): Promise<void> {
-    try {
-      const existing = this.db.prepare('SELECT id FROM news_source_runs WHERE id = ?').get(input.id)
-      if (!existing) throw new Error(`source run ${input.id} not found`)
-
-      this.db.prepare(`
-        UPDATE news_source_runs
-        SET
-          status = COALESCE(?, status),
-          observed_at = COALESCE(?, observed_at),
-          started_at = COALESCE(?, started_at),
-          finished_at = COALESCE(?, finished_at),
-          candidates_found = COALESCE(?, candidates_found),
-          candidates_new = COALESCE(?, candidates_new),
-          candidates_unchanged = COALESCE(?, candidates_unchanged),
-          candidates_materially_changed = COALESCE(?, candidates_materially_changed),
-          candidates_invalid = COALESCE(?, candidates_invalid),
-          raw_response = COALESCE(?, raw_response),
-          validated_payload = COALESCE(?, validated_payload),
-          error = COALESCE(?, error),
-          attempt_count = COALESCE(?, attempt_count),
-          next_retry_at = COALESCE(?, next_retry_at),
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(
-        input.status ?? null,
-        input.observedAt ?? null,
-        input.startedAt ?? null,
-        input.finishedAt ?? null,
-        input.counters?.candidatesFound ?? null,
-        input.counters?.candidatesNew ?? null,
-        input.counters?.candidatesUnchanged ?? null,
-        input.counters?.candidatesMateriallyChanged ?? null,
-        input.counters?.candidatesInvalid ?? null,
-        input.rawResponse === undefined ? null : json(input.rawResponse),
-        input.validatedPayload === undefined ? null : json(input.validatedPayload),
-        input.error ?? null,
-        input.attemptCount ?? null,
-        input.nextRetryAt ?? null,
-        input.id
-      )
-    } catch (error) {
-      throw new Error(`news_source_runs mark failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
   async fetchPriorObservations(
     sourceId: string,
     canonicalArticleUrls: string[]
@@ -427,7 +339,7 @@ export class SqliteNewsStore implements NewsStore {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             randomUUID(),
-            input.sourceRunId ?? null,
+            null,
             input.source.sourceId,
             input.source.sourceName,
             input.sourceUrl.urlId,
@@ -480,6 +392,69 @@ export class SqliteNewsStore implements NewsStore {
       return rows.map(mapCandidateObservationRow)
     } catch (error) {
       throw new Error(`news_candidate_observations pending fetch failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async claimPendingCandidateObservations(limit: number): Promise<NewsCandidateObservationRow[]> {
+    const boundedLimit = Math.max(0, limit)
+    if (boundedLimit === 0) return []
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE')
+      try {
+        const selected = this.db.prepare(`
+          SELECT id
+          FROM news_candidate_observations
+          WHERE status = 'pending_research'
+          ORDER BY observed_at ASC, created_at ASC
+          LIMIT ?
+        `).all(boundedLimit) as Array<Record<string, unknown>>
+        const ids = selected.map((row) => String(row.id))
+        if (ids.length === 0) {
+          this.db.exec('COMMIT')
+          return []
+        }
+
+        const placeholders = ids.map(() => '?').join(', ')
+        this.db.prepare(`
+          UPDATE news_candidate_observations
+          SET status = 'research_queued',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE status = 'pending_research'
+            AND id IN (${placeholders})
+        `).run(...ids)
+        const claimed = this.db.prepare(`
+          SELECT *
+          FROM news_candidate_observations
+          WHERE id IN (${placeholders})
+          ORDER BY observed_at ASC, created_at ASC
+        `).all(...ids) as Array<Record<string, unknown>>
+        this.db.exec('COMMIT')
+        return claimed.map(mapCandidateObservationRow)
+      } catch (error) {
+        this.db.exec('ROLLBACK')
+        throw error
+      }
+    } catch (error) {
+      throw new Error(`news_candidate_observations claim failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async readResearchBacklog(): Promise<NewsResearchBacklog> {
+    try {
+      const row = this.db.prepare(`
+        SELECT
+          COUNT(*) AS pending_count,
+          MIN(observed_at) AS oldest_pending_observed_at
+        FROM news_candidate_observations
+        WHERE status = 'pending_research'
+      `).get() as Record<string, unknown>
+      return {
+        pendingCandidates: numberValue(row.pending_count),
+        oldestPendingObservedAt: stringOrNull(row.oldest_pending_observed_at),
+      }
+    } catch (error) {
+      throw new Error(`news research backlog read failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -541,27 +516,16 @@ export class SqliteNewsStore implements NewsStore {
 
   async recoverStaleWork(input: RecoverStaleNewsWorkInput): Promise<RecoverStaleNewsWorkResult> {
     try {
-      const sourceRunResult = this.db.prepare(`
-        UPDATE news_source_runs
-        SET status = 'failed_transient',
-            finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP),
-            error = COALESCE(error, 'Recovered stale running source run after worker restart.'),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE status = 'running'
-          AND updated_at < ?
-      `).run(input.sourceRunCutoffIso) as { changes?: number }
-
       const candidateResult = this.db.prepare(`
         UPDATE news_candidate_observations
         SET status = 'pending_research',
-            research_error = COALESCE(research_error, 'Recovered stale researching candidate after worker restart.'),
+            research_error = COALESCE(research_error, 'Recovered stale queued/researching candidate after worker restart.'),
             updated_at = CURRENT_TIMESTAMP
-        WHERE status = 'researching'
+        WHERE status IN ('research_queued', 'researching')
           AND updated_at < ?
       `).run(input.candidateCutoffIso) as { changes?: number }
 
       return {
-        sourceRunsRecovered: numberValue(sourceRunResult.changes),
         candidatesRecovered: numberValue(candidateResult.changes),
       }
     } catch (error) {
@@ -728,12 +692,6 @@ export class SqliteNewsStore implements NewsStore {
     }
   }
 
-  private sourceRunById(id: string): NewsSourceRunRow {
-    const row = this.db.prepare('SELECT * FROM news_source_runs WHERE id = ?').get(id) as Record<string, unknown> | undefined
-    if (!row) throw new Error(`news_source_runs id lookup failed for ${id}`)
-    return mapSourceRunRow(row)
-  }
-
   private candidateRowsByDedupeKeys(keys: string[]): NewsCandidateObservationRow[] {
     const uniqueKeys = [...new Set(keys)]
     if (uniqueKeys.length === 0) return []
@@ -762,36 +720,6 @@ export class SqliteNewsStore implements NewsStore {
 
 function isPersistedOutcome(value: string): value is PersistedNewsDedupeOutcome {
   return value === 'new_candidate' || value === 'known_materially_changed'
-}
-
-function mapSourceRunRow(row: Record<string, unknown>): NewsSourceRunRow {
-  return {
-    id: String(row.id),
-    jobId: String(row.job_id),
-    sourceId: String(row.source_id),
-    sourceName: String(row.source_name),
-    sourceType: 'curated_news',
-    urlId: String(row.url_id),
-    urlLabel: String(row.url_label),
-    sourceUrl: String(row.source_url),
-    taskType: 'source_scout',
-    status: String(row.status) as NewsSourceRunRow['status'],
-    observedAt: stringOrNull(row.observed_at),
-    startedAt: stringOrNull(row.started_at),
-    finishedAt: stringOrNull(row.finished_at),
-    candidatesFound: numberValue(row.candidates_found),
-    candidatesNew: numberValue(row.candidates_new),
-    candidatesUnchanged: numberValue(row.candidates_unchanged),
-    candidatesMateriallyChanged: numberValue(row.candidates_materially_changed),
-    candidatesInvalid: numberValue(row.candidates_invalid),
-    rawResponse: parseJson(row.raw_response),
-    validatedPayload: parseJson(row.validated_payload),
-    error: stringOrNull(row.error),
-    attemptCount: numberValue(row.attempt_count),
-    nextRetryAt: stringOrNull(row.next_retry_at),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-  }
 }
 
 function mapCandidateObservationRow(row: Record<string, unknown>): NewsCandidateObservationRow {

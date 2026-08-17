@@ -3,15 +3,15 @@ import test from 'node:test'
 import { classifyNewsCandidate } from '../dedupe'
 import {
   canonicalArticleUrl,
-  fingerprintScoutCandidate,
+  fingerprintNewsCandidate,
   hashText,
 } from '../fingerprint'
-import type { NewsScoutCandidate, PriorNewsObservation } from '../types'
+import type { NewsCandidate, PriorNewsObservation } from '../types'
 
-const sourceId = 'coindesk'
-const urlId = 'latest_crypto_news'
+const sourceId = 'news_feed:articles'
+const urlId = 'feed'
 
-function candidate(overrides: Partial<NewsScoutCandidate> = {}): NewsScoutCandidate {
+function candidate(overrides: Partial<NewsCandidate> = {}): NewsCandidate {
   return {
     headline: 'Bitcoin ETF inflows rise again',
     article_url: 'https://www.coindesk.com/markets/2026/07/04/bitcoin-etf-inflows-rise/?utm_source=x&gclid=123',
@@ -21,10 +21,10 @@ function candidate(overrides: Partial<NewsScoutCandidate> = {}): NewsScoutCandid
 }
 
 function priorObservation(
-  input: NewsScoutCandidate,
+  input: NewsCandidate,
   overrides: Partial<PriorNewsObservation> = {}
 ): PriorNewsObservation {
-  const fingerprint = fingerprintScoutCandidate(sourceId, urlId, input)
+  const fingerprint = fingerprintNewsCandidate(sourceId, urlId, input)
   return {
     sourceId: fingerprint.sourceId,
     urlId: fingerprint.urlId,
@@ -64,23 +64,33 @@ test('same article URL, headline, and summary is known_unchanged', () => {
   assert.ok(decision.fingerprint)
 })
 
-test('same article URL with changed headline is known_materially_changed', () => {
+test('same article URL with changed headline is known_unchanged', () => {
   const prior = priorObservation(candidate())
   const decision = classifyNewsCandidate(sourceId, urlId, candidate({
     headline: 'Bitcoin ETF inflows accelerate',
   }), [prior])
 
-  assert.equal(decision.outcome, 'known_materially_changed')
+  assert.equal(decision.outcome, 'known_unchanged')
   assert.notEqual(decision.fingerprint?.observationDedupeKey, prior.observationDedupeKey)
 })
 
-test('same article URL with changed summary is known_materially_changed', () => {
+test('stable feed identity ignores cosmetic headline changes for the same canonical URL', () => {
+  const prior = priorObservation(candidate())
+  const decision = classifyNewsCandidate(sourceId, urlId, candidate({
+    headline: 'COINDESK: Bitcoin ETF inflows rise again',
+  }), [prior])
+
+  assert.equal(decision.outcome, 'known_unchanged')
+  assert.match(decision.reason, /stable feed identity/)
+})
+
+test('same article URL with changed summary is known_unchanged', () => {
   const prior = priorObservation(candidate())
   const decision = classifyNewsCandidate(sourceId, urlId, candidate({
     summary: 'Funds saw a larger day of net inflows.',
   }), [prior])
 
-  assert.equal(decision.outcome, 'known_materially_changed')
+  assert.equal(decision.outcome, 'known_unchanged')
   assert.notEqual(decision.fingerprint?.summaryHash, prior.summaryHash)
 })
 
@@ -136,8 +146,8 @@ test('missing headline is ignored_invalid_candidate', () => {
 
 test('same article on a different configured URL shares article identity but has a different observation key', () => {
   const input = candidate()
-  const latestFingerprint = fingerprintScoutCandidate(sourceId, 'latest_crypto_news', input)
-  const policyFingerprint = fingerprintScoutCandidate(sourceId, 'policy', input)
+  const latestFingerprint = fingerprintNewsCandidate(sourceId, 'latest_crypto_news', input)
+  const policyFingerprint = fingerprintNewsCandidate(sourceId, 'policy', input)
 
   assert.equal(policyFingerprint.articleIdentityKey, latestFingerprint.articleIdentityKey)
   assert.notEqual(policyFingerprint.observationDedupeKey, latestFingerprint.observationDedupeKey)
@@ -155,7 +165,7 @@ test('same article from a different source is not collapsed as a duplicate', () 
   const input = candidate()
   const prior = priorObservation(input, {
     sourceId: 'other_source',
-    articleIdentityKey: fingerprintScoutCandidate('other_source', urlId, input).articleIdentityKey,
+    articleIdentityKey: fingerprintNewsCandidate('other_source', urlId, input).articleIdentityKey,
   })
   const decision = classifyNewsCandidate(sourceId, urlId, input, [prior])
 

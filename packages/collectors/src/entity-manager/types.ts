@@ -38,6 +38,20 @@ export interface PrimaryEntityCandidate {
   metadata?: Record<string, unknown>
 }
 
+export type StoryReconciliationAction = 'new_story' | 'update_existing_story' | 'duplicate_source'
+
+export interface StoryReconciliationCandidate {
+  /**
+   * `new_story` writes a new row. The other actions may update only a recent
+   * memory ID that Entity Manager supplied to the extraction prompt.
+   */
+  action: StoryReconciliationAction
+  existingMemoryId?: string | null
+  /** Confidence that the two memories describe the same underlying event. */
+  confidence?: number
+  reason?: string
+}
+
 export interface EntityMemoryCandidate {
   entitySlug: string
   memoryType: EntityMemoryType
@@ -51,6 +65,7 @@ export interface EntityMemoryCandidate {
   mentions?: string[]
   metrics?: Record<string, unknown>
   context?: Record<string, unknown>
+  reconciliation?: StoryReconciliationCandidate
 }
 
 export interface EntityMemoryExtraction {
@@ -155,6 +170,18 @@ export interface EntityMemoryStore {
   findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]>
   upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]>
   /**
+   * Recent memories across the shortlisted entities, used by the existing
+   * extraction call to distinguish a new story from a cross-source duplicate
+   * or a material update. The result is bounded and newest-first.
+   */
+  listRecentMemories(
+    entityIds: string[],
+    sinceIso: string,
+    untilIso: string,
+    limit: number,
+    source: string,
+  ): Promise<EntityMemoryRecord[]>
+  /**
    * Most recent memory of `memoryType` for `entityId` at or after `sinceIso`,
    * using the existing `entity_memories_entity_time_idx` (entity_id,
    * observed_at DESC) partial index — no schema change required.
@@ -221,11 +248,11 @@ export interface WriteExtractionResult {
   entitiesReused: number
   memoriesWritten: number
   /**
-   * Market-signal memories folded into an existing recent memory for the
-   * same entity instead of inserting a new row (see
-   * POLYMARKET_CONSOLIDATION_WINDOW_HOURS in resolver.ts). Included in
-   * memoriesWritten's total for backward-compatible counters, but broken out
-   * separately so the actual bloat-prevention rate is visible.
+   * Memories folded into an existing recent memory instead of inserting a
+   * new row. This includes Polymarket same-window signal consolidation and
+   * Entity Manager news-story reconciliation. Included in memoriesWritten's
+   * total for backward-compatible counters, but broken out separately so the
+   * bloat-prevention rate remains visible.
    */
   memoriesConsolidated: number
   markerStatus: SourceProcessingStatus

@@ -3,7 +3,8 @@
 This local/VPS loop runs the news lane through entity manager only:
 
 ```sh
-pnpm --dir packages/collectors news:run
+NEWS_FEED_RUN_ONCE=1 pnpm --dir packages/collectors news:feed:ingest
+pnpm --dir packages/collectors news:research
 pnpm --dir packages/collectors entity-manager:news
 ```
 
@@ -23,7 +24,8 @@ Runtime knobs:
 
 ```sh
 NEWS_ENTITY_LOOP_INTERVAL_SECONDS=7200
-NEWS_RUNNER_BATCH_SIZE=5
+NEWS_RESEARCHER_BATCH_SIZE=10
+NEWS_RESEARCHER_CONCURRENCY=2
 ENTITY_MANAGER_NEWS_BATCH_SIZE=20
 ```
 
@@ -44,6 +46,5 @@ RestartSec=30
 WantedBy=default.target
 ```
 
-Local laptop runs stop when the machine sleeps.
-
-The Block, Decrypt, and The Defiant can present Cloudflare challenges to the Scout. For those three public listing URLs only, source configuration permits a last-resort `r.jina.ai` reader view after direct browser and web access is blocked. CoinDesk and Unchained do not use this fallback. This is an external operational dependency; failed access is recorded as a failed Scout run and can be retried on the next loop.
+Local laptop runs stop when the machine sleeps. Collection uses the structured
+news feed; Hermes is invoked only by the research and entity-manager commands.

@@ -30,6 +30,9 @@ echo "  - supabase/migrations/20260706_news_source_state.sql"
 echo "This repo does not include a Supabase CLI config, so migrations are applied outside this script."
 
 echo "Reloading PM2 processes..."
+# Removed by the structured-feed cutover. PM2 does not prune renamed apps from
+# its saved process list automatically.
+pm2 delete myboon-news-runner 2>/dev/null || true
 pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 save
 

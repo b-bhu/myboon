@@ -3,15 +3,17 @@ import { envFlag, loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { HermesWorkerClient } from './hermes-client'
-import { runNewsPipelineOnce } from './runner'
+import { runNewsResearchPipelineOnce } from './runner'
 import {
-  DEFAULT_NEWS_SCOUT_TIMEOUT_MS,
+  newsResearchBacklogWarnAgeMs,
+  newsResearchBacklogWarnCount,
   newsResearchBatchSize,
+  newsResearchConcurrency,
   positiveInteger,
 } from './runtime-config'
 import { SupabaseNewsStore } from './supabase-store'
 
-const DEFAULT_INTERVAL_MS = 60 * 60 * 1000
+const DEFAULT_INTERVAL_MS = 5 * 60 * 1000
 
 function createSupabase() {
   loadDotenvChain()
@@ -25,32 +27,42 @@ function createSupabase() {
 async function runOnce(): Promise<void> {
   const supabase = createSupabase()
   const batchSize = newsResearchBatchSize()
-  const scoutTimeoutMs = positiveInteger(process.env.NEWS_SCOUT_TIMEOUT_MS, DEFAULT_NEWS_SCOUT_TIMEOUT_MS)
+  const concurrency = newsResearchConcurrency()
   const researchTimeoutMs = positiveInteger(process.env.NEWS_RESEARCH_TIMEOUT_MS, 10 * 60_000)
   const staleWorkCutoffMs = positiveInteger(process.env.NEWS_STALE_WORK_CUTOFF_MS, 30 * 60_000)
+  const backlogWarnCount = newsResearchBacklogWarnCount()
+  const backlogWarnAgeMs = newsResearchBacklogWarnAgeMs()
 
   const result = await withPipelineRun(
     new SupabasePipelineLedgerStore(supabase),
     {
       source: 'news',
       sourceArea: 'curated_news',
-      stage: 'news.collector',
+      stage: 'news.researcher',
       metadata: {
         batchSize,
+        concurrency,
         storage: 'supabase',
       },
     },
-    () => runNewsPipelineOnce({
-      store: new SupabaseNewsStore(supabase),
-      hermes: new HermesWorkerClient(),
-      options: {
+    () => {
+      const store = new SupabaseNewsStore(supabase)
+      const hermes = new HermesWorkerClient()
+      const options = {
         batchSize,
-        scoutTimeoutMs,
+        concurrency,
         researchTimeoutMs,
         staleWorkCutoffMs,
-      },
-    })
+        backlogWarnCount,
+        backlogWarnAgeMs,
+      }
+      return runNewsResearchPipelineOnce({ store, hermes, options })
+    }
   )
+
+  if (result.backlog.warning) {
+    console.warn('[news-researcher] backlog warning', JSON.stringify(result.backlog))
+  }
 
   console.log(JSON.stringify(result, null, 2))
 }
@@ -58,11 +70,11 @@ async function runOnce(): Promise<void> {
 async function main(): Promise<void> {
   await runOnce()
 
-  if (envFlag(process.env.NEWS_RUNNER_RUN_ONCE)) return
+  if (envFlag(process.env.NEWS_RESEARCHER_RUN_ONCE)) return
 
-  const intervalMs = positiveInteger(process.env.NEWS_RUNNER_INTERVAL_MS, DEFAULT_INTERVAL_MS)
+  const intervalMs = positiveInteger(process.env.NEWS_RESEARCHER_INTERVAL_MS, DEFAULT_INTERVAL_MS)
   startIntervalRunner({
-    label: 'news-runner',
+    label: 'news-researcher',
     intervalMs,
     run: runOnce,
   })

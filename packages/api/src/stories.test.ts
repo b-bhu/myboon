@@ -40,7 +40,7 @@ test('Story list selects and caps Entities, batch-loads memories, excludes marke
     }
 
     if (url.pathname.endsWith('/entity_memories')) {
-      assert.equal(url.searchParams.get('select'), 'entity_id,memory_type,summary,event_at')
+      assert.equal(url.searchParams.get('select'), 'entity_id,memory_type,summary,event_at,context')
       assert.equal(url.searchParams.get('memory_type'), 'neq.source_marker')
       assert.equal(url.searchParams.get('order'), 'event_at.asc')
       assert.match(url.searchParams.get('entity_id') ?? '', /^in\.\(.+\)$/)
@@ -49,12 +49,24 @@ test('Story list selects and caps Entities, batch-loads memories, excludes marke
           source: 'private source',
           evidence: [{ private: true }],
           body: 'private body',
+          context: {
+            image_url: 'https://cdn.example.com/latest.jpg',
+            image_kind: 'content',
+            image_attribution: 'Example News',
+            private: true,
+          },
         }),
         memory(entityIds[0], 'Processing marker', '2026-07-11T12:00:00.000Z', {
           memory_type: 'source_marker',
         }),
         memory(entityIds[0], 'First development', '2026-07-10T00:00:00.000Z'),
-        memory(entityIds[1], 'Only development', '2026-07-09T00:00:00.000Z'),
+        memory(entityIds[1], 'Only development', '2026-07-09T00:00:00.000Z', {
+          context: {
+            image_kind: 'content',
+            image_origin: 'hallucinated',
+            image_attribution: 'Fake Outlet',
+          },
+        }),
         memory(entityIds[5], 'Outside the five-Story cap', '2026-07-13T00:00:00.000Z'),
       ])
     }
@@ -72,6 +84,9 @@ test('Story list selects and caps Entities, batch-loads memories, excludes marke
         latestDevelopment: 'Latest development',
         eventCount: 2,
         updatedAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: 'https://cdn.example.com/latest.jpg',
+        imageKind: 'content',
+        imageAttribution: 'Example News',
       },
       {
         storySlug: 'story-2',
@@ -79,6 +94,9 @@ test('Story list selects and caps Entities, batch-loads memories, excludes marke
         latestDevelopment: 'Only development',
         eventCount: 1,
         updatedAt: '2026-07-09T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
       },
     ],
   })
@@ -109,7 +127,14 @@ test('Story detail returns the selected Entity timeline oldest-to-newest with pu
     if (url.pathname.endsWith('/entity_memories')) {
       return jsonResponse([
         memory(entityIds[0], 'Third event', '2026-07-12T00:00:00.000Z', { metrics: { private: true } }),
-        memory(entityIds[0], 'First event', '2026-07-10T00:00:00.000Z', { context: { private: true } }),
+        memory(entityIds[0], 'First event', '2026-07-10T00:00:00.000Z', {
+          context: {
+            image_url: 'https://pbs.twimg.com/profile_images/123/avatar.jpg',
+            image_kind: 'source_avatar',
+            image_attribution: '@tokens',
+            private: true,
+          },
+        }),
         memory(entityIds[0], 'Marker', '2026-07-10T12:00:00.000Z', { memory_type: 'source_marker' }),
         memory(entityIds[0], 'Second event', '2026-07-11T00:00:00.000Z', { reasoning: 'private' }),
       ])
@@ -126,11 +151,32 @@ test('Story detail returns the selected Entity timeline oldest-to-newest with pu
       latestDevelopment: 'Third event',
       eventCount: 3,
       updatedAt: '2026-07-12T00:00:00.000Z',
+      imageUrl: null,
+      imageKind: null,
+      imageAttribution: null,
     },
     events: [
-      { text: 'First event', eventAt: '2026-07-10T00:00:00.000Z' },
-      { text: 'Second event', eventAt: '2026-07-11T00:00:00.000Z' },
-      { text: 'Third event', eventAt: '2026-07-12T00:00:00.000Z' },
+      {
+        text: 'First event',
+        eventAt: '2026-07-10T00:00:00.000Z',
+        imageUrl: 'https://pbs.twimg.com/profile_images/123/avatar.jpg',
+        imageKind: 'source_avatar',
+        imageAttribution: '@tokens',
+      },
+      {
+        text: 'Second event',
+        eventAt: '2026-07-11T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
+      },
+      {
+        text: 'Third event',
+        eventAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
+      },
     ],
   })
 })

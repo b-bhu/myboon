@@ -14,7 +14,8 @@ run_once() {
   fi
   trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' RETURN
 
-  pnpm --dir "$COLLECTORS_DIR" news:run
+  NEWS_FEED_RUN_ONCE=1 pnpm --dir "$COLLECTORS_DIR" news:feed:ingest
+  pnpm --dir "$COLLECTORS_DIR" news:research
   pnpm --dir "$COLLECTORS_DIR" entity-manager:news
 }
 

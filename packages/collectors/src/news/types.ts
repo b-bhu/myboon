@@ -1,24 +1,18 @@
 export type NewsSourceType = 'curated_news'
-export type NewsSourceStatus = 'active' | 'paused'
 
-export interface NewsSourceUrlConfig {
+export interface NewsSourceEndpoint {
   urlId: string
   label: string
   url: string
-  status: NewsSourceStatus
-  readerFallbackUrl?: string
-  discoveryInstructions?: string[]
 }
 
-export interface NewsSourceConfig {
+export interface NewsSourceDescriptor {
   sourceId: string
   sourceName: string
   sourceType: NewsSourceType
-  status: NewsSourceStatus
-  urls: NewsSourceUrlConfig[]
 }
 
-export type HermesWorkerTaskType = 'source_scout' | 'source_aware_research'
+export type HermesWorkerTaskType = 'source_aware_research'
 export type HermesWorkerStatus = 'succeeded' | 'failed' | 'timed_out'
 
 export interface HermesWorkerRequest {
@@ -46,35 +40,7 @@ export interface HermesWorkerClientOptions {
   toolsets: string[]
 }
 
-export interface NewsScoutRequest {
-  schema_version: 'myboon.hermes.scout_request.v1'
-  job_id: string
-  task: {
-    type: 'source_scout'
-  }
-  source: {
-    source_id: string
-    name: string
-    source_type: NewsSourceType
-    status: NewsSourceStatus
-  }
-  source_url: {
-    url_id: string
-    label: string
-    url: string
-    status: NewsSourceStatus
-    reader_fallback_url?: string
-    discovery_instructions?: string[]
-  }
-  requested_at: string
-  response_rules: {
-    return_json_only: true
-    do_not_publish: true
-    do_not_make_trade_recommendations: true
-  }
-}
-
-export interface NewsScoutCandidate {
+export interface NewsCandidate {
   headline: string
   article_url: string
   summary?: string
@@ -83,22 +49,15 @@ export interface NewsScoutCandidate {
   author?: string
   section?: string
   evidence?: string[]
-}
-
-export interface NewsScoutResponse {
-  schema_version: 'myboon.hermes.scout_response.v1'
-  job_id: string
-  source_id: string
-  url_id: string
-  status: 'success' | 'partial' | 'failed'
-  source_observed: {
-    url: string
-    observed_at: string
-    access_method?: string
-    access_status?: string
-  }
-  candidates: NewsScoutCandidate[]
-  errors: string[]
+  /** Logical source kind retained inside the existing raw_candidate JSON. */
+  content_kind?: 'article' | 'social_post'
+  /** Technical provenance for auditing; never used as the pipeline identity. */
+  provider_id?: string
+  /** Actual outlet or handle supplied by an aggregator. */
+  upstream_source_name?: string
+  image_url?: string
+  /** Untrusted upstream hints; research may inspect them but cannot assign entities from them. */
+  related_coin_ids?: string[]
 }
 
 export interface NewsCandidateFingerprint {
@@ -131,7 +90,7 @@ export interface PriorNewsObservation {
 
 export interface NewsCandidateDedupeDecision {
   outcome: NewsDedupeOutcome
-  candidate: NewsScoutCandidate
+  candidate: NewsCandidate
   fingerprint: NewsCandidateFingerprint | null
   reason: string
 }
@@ -155,6 +114,8 @@ export interface NewsResearchRequest {
     url: string
   }
   article: {
+    content_kind: 'article' | 'social_post'
+    provider_id?: string
     canonical_article_url: string
     article_url: string
     headline: string
@@ -163,6 +124,9 @@ export interface NewsResearchRequest {
     observed_at: string
     author?: string
     section?: string
+    upstream_source_name?: string
+    image_url?: string
+    untrusted_related_coin_ids?: string[]
   }
   prior_observation: {
     dedupe_outcome: 'new_candidate' | 'known_materially_changed'

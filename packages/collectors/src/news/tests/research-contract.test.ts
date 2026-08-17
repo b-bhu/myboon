@@ -6,9 +6,9 @@ import {
   parseResearchResponse,
 } from '../research-contract'
 import type { NewsCandidateObservationRow } from '../store'
-import type { NewsResearchResponse, NewsScoutCandidate } from '../types'
+import type { NewsResearchResponse, NewsCandidate } from '../types'
 
-const rawCandidate: NewsScoutCandidate = {
+const rawCandidate: NewsCandidate = {
   headline: 'CoinDesk reports a new stablecoin filing',
   article_url: 'https://www.coindesk.com/policy/2026/07/04/stablecoin-filing',
   summary: 'A firm filed paperwork related to a stablecoin product.',
@@ -122,6 +122,7 @@ test('buildResearchRequest uses a persisted candidate observation row', () => {
   assert.equal(request.candidate_id, candidate.id)
   assert.equal(request.source.source_id, 'coindesk')
   assert.equal(request.source_url.url_id, 'latest_crypto_news')
+  assert.equal(request.article.content_kind, 'article')
   assert.equal(request.article.article_url, rawCandidate.article_url)
   assert.equal(request.prior_observation.dedupe_outcome, 'new_candidate')
   assert.equal(request.response_rules.do_not_score_rank_or_filter, true)
@@ -131,8 +132,9 @@ test('buildResearchRequest uses a persisted candidate observation row', () => {
 test('buildResearchPrompt preserves research boundary rules', () => {
   const prompt = buildResearchPrompt(request)
 
-  assert.match(prompt, /article is a signal, not the source of truth/)
-  assert.match(prompt, /Separate article claims from externally verified facts/)
+  assert.match(prompt, /source item is a signal, not the source of truth/)
+  assert.match(prompt, /Separate source claims from externally verified facts/)
+  assert.match(prompt, /untrusted_related_coin_ids only as weak search hints/)
   assert.match(prompt, /limitations and open questions/)
   assert.match(prompt, /Do not score, rank, judge importance, judge evidence quality/)
   assert.match(prompt, /Do not make editor or publisher decisions/)

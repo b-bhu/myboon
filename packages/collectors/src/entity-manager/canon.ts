@@ -40,12 +40,29 @@ export interface CanonEntity {
   tags?: string[]
 }
 
+/** Compact story memory supplied to the extraction prompt for reconciliation. */
+export interface RecentEntityMemory {
+  id: string
+  entityId: string
+  entitySlug: string
+  entityName: string
+  memoryType: string
+  title: string
+  summary: string
+  eventAt: string | null
+  observedAt: string
+  source: string
+  sourceUrl: string | null
+}
+
 /** What the extraction provider receives alongside the packet. */
 export interface ExtractionCanon {
   /** Plausible homes for this packet - goes into the prompt as the menu. */
   shortlist: CanonEntity[]
   /** The full catalog - used for near-duplicate detection, never for the prompt. */
   catalog: CanonEntity[]
+  /** Recent memories for the shortlist; included only for news reconciliation. */
+  recentMemories?: RecentEntityMemory[]
 }
 
 /** Fixed entity-type vocabulary. Everything else normalizes into it. */
