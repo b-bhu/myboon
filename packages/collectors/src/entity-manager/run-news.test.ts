@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DEFAULT_NEWS_SOURCES } from '../news/config'
-import { fingerprintScoutCandidate } from '../news/fingerprint'
+import { fingerprintNewsCandidate } from '../news/fingerprint'
 import { SqliteNewsStore } from '../news/sqlite-store'
 import type { NewsCandidateObservationRow } from '../news/store'
-import type { NewsResearchResponse, NewsScoutCandidate } from '../news/types'
+import type { NewsResearchResponse, NewsCandidate } from '../news/types'
+import { TEST_NEWS_SOURCE, TEST_NEWS_SOURCE_URL } from '../news/tests/fixtures'
 import { InMemoryEntityMemoryStore } from './test-helpers'
 import { fetchUnprocessedNewsPackets, runNewsEntityManager } from './run-news'
 import type { EntityMemoryExtraction, ExtractionProvider, ResearchPacket } from './types'
 
-const source = DEFAULT_NEWS_SOURCES[0]
-const sourceUrl = source.urls[0]
+const source = TEST_NEWS_SOURCE
+const sourceUrl = TEST_NEWS_SOURCE_URL
 const observedAt = '2026-07-04T12:00:00.000Z'
 
 class CapturingExtractionProvider implements ExtractionProvider {
@@ -41,7 +41,7 @@ function withNewsStore(fn: (store: SqliteNewsStore) => Promise<void> | void): Pr
     .finally(() => store.close())
 }
 
-function candidate(overrides: Partial<NewsScoutCandidate> = {}): NewsScoutCandidate {
+function candidate(overrides: Partial<NewsCandidate> = {}): NewsCandidate {
   return {
     headline: 'Ethereum treasury article',
     article_url: 'https://www.coindesk.com/markets/2026/07/04/ethereum-treasury-article?utm_source=x',
@@ -61,7 +61,7 @@ async function insertResearchResult(
     source,
     sourceUrl,
     candidate: inputCandidate,
-    fingerprint: fingerprintScoutCandidate(source.sourceId, sourceUrl.urlId, inputCandidate),
+    fingerprint: fingerprintNewsCandidate(source.sourceId, sourceUrl.urlId, inputCandidate),
     dedupeOutcome: 'new_candidate',
     observedAt,
   }])
@@ -334,7 +334,7 @@ test('runNewsEntityManager rerun after processed marker does not duplicate memor
   })
 })
 
-test('runNewsEntityManager does not call downstream stages or Hermes scout/research code', async () => {
+test('runNewsEntityManager does not call collection, research, or publishing stages', async () => {
   await withNewsStore(async (newsStore) => {
     const entityStore = new InMemoryEntityMemoryStore()
     const provider = new CapturingExtractionProvider(extraction())

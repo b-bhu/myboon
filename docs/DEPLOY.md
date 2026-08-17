@@ -8,7 +8,8 @@
 | `myboon-polymarket-data-engineer` | `packages/collectors` | Polymarket markets Data Engineer |
 | `myboon-polymarket-researcher` | `packages/collectors` | Polymarket Researcher |
 | `myboon-polymarket-entity-manager` | `packages/collectors` | Polymarket ResearchPacket to Entity Memory |
-| `myboon-news-runner` | `packages/collectors` | Curated news source scout/research loop |
+| `myboon-news-feed-ingestor` | `packages/collectors` | Structured article/social collection every 10 minutes |
+| `myboon-news-researcher` | `packages/collectors` | Hermes source-aware research only |
 | `myboon-news-entity-manager` | `packages/collectors` | News ResearchPacket to Entity Memory |
 | `myboon-editor-draft` | `packages/collectors` | Entity Memory to Editor Draft |
 | `myboon-publisher` | `packages/collectors` | Generic Editor Draft Publisher |
@@ -23,8 +24,9 @@ production path is researcher → entity-manager → editor-draft → publisher.
 
 ## Hermes CLI prerequisite
 
-Five of the eight processes shell out to the `hermes` CLI (researcher, both
-entity-managers, editor-draft, news-runner). Before starting PM2 the box needs:
+Five processes shell out to the `hermes` CLI (both researchers, both
+entity-managers, and editor-draft). The structured news-feed ingestor does not
+use Hermes. Before starting PM2 the box needs:
 
 ```bash
 # hermes installed, on PATH, and authenticated
@@ -33,7 +35,7 @@ hermes --version
 # one-shot structured mode (gate, extractor, editor-draft)
 hermes --ignore-rules -z 'Return exactly this JSON: {"ok": true}'
 
-# chat/tool mode with page reading (news lane AND the research engine)
+# chat/tool mode with page reading (news research AND the research engine)
 hermes chat --profile myboonfeed --toolsets browser,web --quiet \
   --query 'Open https://example.com and return its <title> as JSON: {"title": "..."}'
 ```
@@ -106,6 +108,8 @@ git pull --ff-only && pnpm install --frozen-lockfile
 pnpm --filter @myboon/shared build
 pnpm --filter @myboon/tx-parser build
 pnpm --filter @myboon/collectors build
+# One-time structured-news cutover: remove the retired PM2 app name.
+pm2 delete myboon-news-runner 2>/dev/null || true
 pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 save
 
@@ -126,6 +130,9 @@ pm2 monit
 pm2 restart myboon-polymarket-data-engineer
 pm2 restart myboon-polymarket-researcher
 pm2 restart myboon-polymarket-entity-manager
+pm2 restart myboon-news-feed-ingestor
+pm2 restart myboon-news-researcher
+pm2 restart myboon-news-entity-manager
 pm2 restart myboon-editor-draft
 pm2 restart myboon-publisher
 
@@ -146,6 +153,7 @@ Each package loads its own `.env` via `dotenv/config`. PM2 sets `cwd` to the pac
 ```
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
+NEWS_FEED_API_KEY=
 INTERNAL_DASHBOARD_TOKEN=
 INTERNAL_ENTITY_WRITE_TOKEN=
 INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN=
@@ -199,6 +207,7 @@ pnpm dlx supabase db push
 ```
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
+NEWS_FEED_API_KEY=
 
 # --- Hermes (central service: src/hermes/) ---
 # HERMES_COMMAND=hermes            # override the CLI binary if not on PATH
@@ -217,9 +226,11 @@ POLYMARKET_RESEARCHER_RUN_ONCE=0
 ENTITY_MANAGER_POLYMARKET_RUN_ONCE=0
 ENTITY_MANAGER_POLYMARKET_INTERVAL_MS=300000
 ENTITY_MANAGER_POLYMARKET_BATCH_SIZE=20
-NEWS_RUNNER_RUN_ONCE=0
-NEWS_RUNNER_INTERVAL_MS=3600000
-NEWS_RUNNER_BATCH_SIZE=1
+NEWS_FEED_RUN_ONCE=0
+NEWS_FEED_INTERVAL_MS=600000
+NEWS_RESEARCHER_RUN_ONCE=0
+NEWS_RESEARCHER_INTERVAL_MS=300000
+NEWS_RESEARCHER_BATCH_SIZE=5
 ENTITY_MANAGER_NEWS_RUN_ONCE=0
 ENTITY_MANAGER_NEWS_INTERVAL_MS=300000
 ENTITY_MANAGER_NEWS_BATCH_SIZE=20

@@ -6,7 +6,7 @@ const REQUEST_TIMEOUT_MS = 10_000
 const SAFE_STORY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const ENTITY_SELECT = 'id,slug,name'
-const MEMORY_SELECT = 'entity_id,memory_type,summary,event_at'
+const MEMORY_SELECT = 'entity_id,memory_type,summary,event_at,context'
 
 interface EntityRow {
   id: unknown
@@ -19,6 +19,7 @@ interface MemoryRow {
   memory_type: unknown
   summary: unknown
   event_at: unknown
+  context: unknown
 }
 
 interface SelectedEntity {
@@ -31,7 +32,12 @@ interface StoryMemory {
   entityId: string
   summary: string
   eventAt: string
+  imageUrl: string | null
+  imageKind: StoryImageKind | null
+  imageAttribution: string | null
 }
+
+export type StoryImageKind = 'content' | 'source_avatar'
 
 export interface StorySummary {
   storySlug: string
@@ -39,11 +45,17 @@ export interface StorySummary {
   latestDevelopment: string
   eventCount: number
   updatedAt: string
+  imageUrl: string | null
+  imageKind: StoryImageKind | null
+  imageAttribution: string | null
 }
 
 export interface StoryEvent {
   text: string
   eventAt: string
+  imageUrl: string | null
+  imageKind: StoryImageKind | null
+  imageAttribution: string | null
 }
 
 export interface StoryRoutesConfig {
@@ -165,6 +177,9 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       const events: StoryEvent[] = memories.map((memory) => ({
         text: memory.summary,
         eventAt: memory.eventAt,
+        imageUrl: memory.imageUrl,
+        imageKind: memory.imageKind,
+        imageAttribution: memory.imageAttribution,
       }))
       return c.json({ story, events })
     } catch (error) {
@@ -188,10 +203,41 @@ function storyMemory(row: MemoryRow): StoryMemory | null {
   if (typeof row.summary !== 'string' || !row.summary.trim()) return null
   if (typeof row.event_at !== 'string' || !row.event_at.trim()) return null
   if (!Number.isFinite(Date.parse(row.event_at))) return null
+  const image = storyImage(row.context)
   return {
     entityId: row.entity_id,
     summary: row.summary.trim(),
     eventAt: row.event_at,
+    ...image,
+  }
+}
+
+function storyImage(value: unknown): Pick<StoryMemory, 'imageUrl' | 'imageKind' | 'imageAttribution'> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { imageUrl: null, imageKind: null, imageAttribution: null }
+  }
+  const context = value as Record<string, unknown>
+  const imageUrl = safeHttpUrl(context.image_url)
+  const imageKind = context.image_kind === 'content' || context.image_kind === 'source_avatar'
+    ? context.image_kind
+    : imageUrl
+      ? new URL(imageUrl).pathname.includes('/profile_images/') ? 'source_avatar' : 'content'
+      : null
+  const imageAttribution = typeof context.image_attribution === 'string' && context.image_attribution.trim()
+    ? context.image_attribution.trim()
+    : null
+  return { imageUrl, imageKind, imageAttribution }
+}
+
+function safeHttpUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    const parsed = new URL(value.trim())
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed.toString()
+      : null
+  } catch {
+    return null
   }
 }
 
@@ -204,6 +250,9 @@ function storySummary(entity: SelectedEntity, memories: StoryMemory[]): StorySum
     latestDevelopment: latest.summary,
     eventCount: memories.length,
     updatedAt: latest.eventAt,
+    imageUrl: latest.imageUrl,
+    imageKind: latest.imageKind,
+    imageAttribution: latest.imageAttribution,
   }
 }
 

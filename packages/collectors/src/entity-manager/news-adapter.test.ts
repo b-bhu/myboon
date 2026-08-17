@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeExtraction } from './normalization'
 import { newsResearchToPacket } from './news-adapter'
-import { newsSources } from '../news/config'
 import type { NewsCandidateObservationRow, NewsResearchResultRow } from '../news/store'
 
 const FORBIDDEN_KEYS = new Set([
@@ -30,11 +29,11 @@ function containsForbiddenKey(value: unknown): boolean {
 const candidate: NewsCandidateObservationRow = {
   id: 'candidate-1',
   sourceRunId: 'run-1',
-  sourceId: 'coindesk',
+  sourceId: 'news_feed:articles',
   sourceName: 'CoinDesk',
-  urlId: 'latest_crypto_news',
-  urlLabel: 'Latest Crypto News',
-  sourceUrl: 'https://www.coindesk.com/latest-crypto-news',
+  urlId: 'feed',
+  urlLabel: 'Structured News Feed',
+  sourceUrl: 'https://api.tokens.xyz/v1/news/feed',
   canonicalArticleUrl: 'https://www.coindesk.com/policy/2026/07/04/stablecoin-filing',
   headline: 'Stablecoin filing appears in public records',
   visibleSummary: 'A filing related to a stablecoin product appeared in public records.',
@@ -43,7 +42,7 @@ const candidate: NewsCandidateObservationRow = {
   headlineHash: 'headline-hash',
   summaryHash: 'summary-hash',
   contentHash: 'content-hash',
-  articleIdentityKey: 'coindesk:article:https://www.coindesk.com/policy/2026/07/04/stablecoin-filing',
+  articleIdentityKey: 'news_feed:articles:article:https://www.coindesk.com/policy/2026/07/04/stablecoin-filing',
   observationDedupeKey: 'dedupe-key',
   dedupeOutcome: 'new_candidate',
   status: 'researched',
@@ -127,7 +126,7 @@ const row: NewsResearchResultRow = {
 test('newsResearchToPacket maps news research rows to a source-agnostic ResearchPacket', () => {
   const packet = newsResearchToPacket(row, candidate)
 
-  assert.equal(packet.id, 'news:coindesk:research-1')
+  assert.equal(packet.id, 'news:news_feed:articles:research-1')
   assert.equal(packet.source, 'news')
   assert.equal(packet.sourceArea, row.sourceId)
   assert.equal(packet.sourceResearchId, row.id)
@@ -169,8 +168,8 @@ test('newsResearchToPacket maps news research rows to a source-agnostic Research
   ])
 
   assert.equal(packet.context.source, 'news_research_results')
-  assert.equal(packet.context.source_id, 'coindesk')
-  assert.equal(packet.context.url_id, 'latest_crypto_news')
+  assert.equal(packet.context.source_id, 'news_feed:articles')
+  assert.equal(packet.context.url_id, 'feed')
   assert.equal(packet.context.candidate_observation_id, candidate.id)
   assert.equal(packet.context.research_result_id, row.id)
   assert.equal(packet.context.research_job_id, row.researchJobId)
@@ -205,53 +204,38 @@ test('normalizeExtraction defaults article packet memories to news_event', () =>
   assert.equal(extraction.memories[0].memoryType, 'news_event')
 })
 
-test('configured source identity survives the research-to-Entity-Manager packet mapping', () => {
-  for (const source of newsSources()) {
-    const sourceUrl = source.urls[0]
-    const articleUrl = `${sourceUrl.url.replace(/\/$/, '')}/test-article`
-    const sourceCandidate: NewsCandidateObservationRow = {
-      ...candidate,
-      id: `candidate-${source.sourceId}`,
-      sourceId: source.sourceId,
-      sourceName: source.sourceName,
-      urlId: sourceUrl.urlId,
-      urlLabel: sourceUrl.label,
-      sourceUrl: sourceUrl.url,
-      canonicalArticleUrl: articleUrl,
-      articleIdentityKey: `${source.sourceId}:article:${articleUrl}`,
-      observationDedupeKey: `${source.sourceId}:${sourceUrl.urlId}:${articleUrl}:headline:summary`,
-      rawCandidate: {
-        ...candidate.rawCandidate,
-        article_url: articleUrl,
-      },
-    }
-    const sourceRow: NewsResearchResultRow = {
-      ...row,
-      id: `research-${source.sourceId}`,
-      candidateObservationId: sourceCandidate.id,
-      sourceId: source.sourceId,
-      sourceName: source.sourceName,
-      urlId: sourceUrl.urlId,
-      urlLabel: sourceUrl.label,
-      sourceUrl: sourceUrl.url,
-      canonicalArticleUrl: articleUrl,
-      articleIdentityKey: sourceCandidate.articleIdentityKey,
-      observationDedupeKey: sourceCandidate.observationDedupeKey,
-      sourceSignal: {
-        ...row.sourceSignal,
-        source_name: source.sourceName,
-        source_url: sourceUrl.url,
-        article_url: articleUrl,
-        canonical_article_url: articleUrl,
-      },
-    }
-
-    const packet = newsResearchToPacket(sourceRow, sourceCandidate)
-
-    assert.equal(packet.id, `news:${source.sourceId}:research-${source.sourceId}`)
-    assert.equal(packet.sourceArea, source.sourceId)
-    assert.equal(packet.context.source_id, source.sourceId)
-    assert.equal(packet.context.url_id, sourceUrl.urlId)
-    assert.equal(packet.context.source_url, sourceUrl.url)
+test('social-post candidates remain social signals through entity normalization', () => {
+  const socialCandidate: NewsCandidateObservationRow = {
+    ...candidate,
+    sourceId: 'news_feed:social',
+    sourceName: '@tokens',
+    rawCandidate: {
+      ...candidate.rawCandidate,
+      content_kind: 'social_post',
+      upstream_source_name: '@tokens',
+      related_coin_ids: ['bitcoin'],
+    },
   }
+  const socialRow: NewsResearchResultRow = {
+    ...row,
+    sourceId: 'news_feed:social',
+    sourceName: '@tokens',
+    candidateObservationId: socialCandidate.id,
+  }
+  const packet = newsResearchToPacket(socialRow, socialCandidate)
+  const extraction = normalizeExtraction({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+    memories: [{
+      entitySlug: 'bitcoin',
+      memoryType: 'news_event',
+      title: 'Bitcoin appeared in a public filing post',
+      summary: 'The post described a public filing that named Bitcoin.',
+    }],
+  }, packet)
+
+  assert.equal(packet.sourceType, 'social_post')
+  assert.equal(packet.context.content_kind, 'social_post')
+  assert.deepEqual(packet.context.untrusted_related_coin_ids, ['bitcoin'])
+  // The source kind wins even when extraction supplies another allowed type.
+  assert.equal(extraction.memories[0].memoryType, 'social_signal')
 })

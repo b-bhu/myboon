@@ -57,6 +57,37 @@ test('normalizeExtraction normalizes aliases, slugs, item types, and drops orpha
   assert.deepEqual(normalized.memories[0].metrics, { previous: 0.4, current: 0.6 })
   assert.deepEqual(normalized.memories[0].context, { source_title: packet.title })
   assert.deepEqual(normalized.memories[0].mentions, ['FOMC'])
+  assert.deepEqual(normalized.memories[0].reconciliation, {
+    action: 'new_story',
+    existingMemoryId: null,
+    confidence: undefined,
+    reason: '',
+  })
+})
+
+test('normalizeExtraction preserves a bounded story-reconciliation decision', () => {
+  const normalized = normalizeExtraction({
+    primaryEntities: [{ name: 'CLARITY Act', type: 'regulation', slug: 'clarity-act' }],
+    memories: [{
+      entitySlug: 'clarity-act',
+      memoryType: 'news_event',
+      title: 'CLARITY Act odds decline',
+      summary: 'Passage odds declined amid political divisions.',
+      reconciliation: {
+        action: 'update_existing_story',
+        existing_memory_id: 'memory-7',
+        confidence: 1.4,
+        reason: 'Same passage-odds development with added regulatory context.',
+      },
+    }],
+  }, { ...packet, source: 'news', sourceType: 'article' })
+
+  assert.deepEqual(normalized.memories[0].reconciliation, {
+    action: 'update_existing_story',
+    existingMemoryId: 'memory-7',
+    confidence: 1,
+    reason: 'Same passage-odds development with added regulatory context.',
+  })
 })
 
 test('shared extraction prompt requires neutral standalone summaries and keeps research detail separate', () => {

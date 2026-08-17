@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { NewsFeedItem } from '@myboon/shared/news-feed'
 import { InMemoryEntityMemoryStore } from '../../entity-manager/test-helpers'
 import { runNewsEntityManager } from '../../entity-manager/run-news'
 import type { EntityMemoryExtraction, ExtractionProvider, ResearchPacket } from '../../entity-manager/types'
-import { DEFAULT_NEWS_SOURCES } from '../config'
-import { fingerprintScoutCandidate } from '../fingerprint'
+import { fingerprintNewsCandidate } from '../fingerprint'
 import { SupabaseNewsStore } from '../supabase-store'
+import { runNewsFeedIngestionOnce } from '../news-feed-ingestor'
 import type { NewsCandidateObservationInput, NewsCandidateObservationRow } from '../store'
-import type { NewsDedupeOutcome, NewsResearchResponse, NewsScoutCandidate } from '../types'
+import type { NewsDedupeOutcome, NewsResearchResponse, NewsCandidate } from '../types'
+import { TEST_NEWS_SOURCE, TEST_NEWS_SOURCE_URL } from './fixtures'
 
-const source = DEFAULT_NEWS_SOURCES[0]
-const sourceUrl = source.urls[0]
+const source = TEST_NEWS_SOURCE
+const sourceUrl = TEST_NEWS_SOURCE_URL
 const observedAt = '2026-07-04T12:00:00.000Z'
 
 type FakeTableName = 'news_source_runs' | 'news_candidate_observations' | 'news_research_results'
@@ -321,7 +323,7 @@ function fakeStore(): { fake: FakeSupabaseClient, store: SupabaseNewsStore } {
   }
 }
 
-function candidate(overrides: Partial<NewsScoutCandidate> = {}): NewsScoutCandidate {
+function candidate(overrides: Partial<NewsCandidate> = {}): NewsCandidate {
   return {
     headline: 'CoinDesk observes BTC treasury flows',
     article_url: 'https://www.coindesk.com/markets/2026/07/04/btc-treasury-flows?utm_source=x',
@@ -335,8 +337,7 @@ function candidate(overrides: Partial<NewsScoutCandidate> = {}): NewsScoutCandid
 
 function observationInput(
   overrides: {
-    sourceRunId?: string | null
-    inputCandidate?: NewsScoutCandidate
+    inputCandidate?: NewsCandidate
     sourceId?: string
     outcome?: NewsDedupeOutcome
     urlId?: string
@@ -346,11 +347,10 @@ function observationInput(
   const inputSource = overrides.sourceId ? { ...source, sourceId: overrides.sourceId } : source
   const inputSourceUrl = overrides.urlId ? { ...sourceUrl, urlId: overrides.urlId } : sourceUrl
   return {
-    sourceRunId: overrides.sourceRunId ?? null,
     source: inputSource,
     sourceUrl: inputSourceUrl,
     candidate: inputCandidate,
-    fingerprint: fingerprintScoutCandidate(inputSource.sourceId, inputSourceUrl.urlId, inputCandidate),
+    fingerprint: fingerprintNewsCandidate(inputSource.sourceId, inputSourceUrl.urlId, inputCandidate),
     dedupeOutcome: overrides.outcome ?? 'new_candidate',
     observedAt,
   }
@@ -423,32 +423,9 @@ function extraction(): EntityMemoryExtraction {
   }
 }
 
-test('SupabaseNewsStore supports source runs, candidate dedupe, research, and handoff status', async () => {
+test('SupabaseNewsStore supports candidate dedupe, research, and handoff status', async () => {
   const { store } = fakeStore()
-  const run = await store.createSourceRun({
-    jobId: 'job-create-run',
-    source,
-    sourceUrl,
-    status: 'running',
-    startedAt: observedAt,
-  })
-
-  await store.markSourceRun({
-    id: run.id,
-    status: 'candidates_classified',
-    observedAt,
-    counters: {
-      candidatesFound: 2,
-      candidatesNew: 1,
-      candidatesUnchanged: 1,
-      candidatesMateriallyChanged: 0,
-      candidatesInvalid: 0,
-    },
-    rawResponse: { raw: true },
-    validatedPayload: { schema_version: 'myboon.hermes.scout_response.v1', candidates: [] },
-  })
-
-  const input = observationInput({ sourceRunId: run.id })
+  const input = observationInput()
   const ignoredInput = observationInput({
     outcome: 'known_unchanged',
     inputCandidate: candidate({ article_url: 'https://www.coindesk.com/unchanged' }),
@@ -459,7 +436,7 @@ test('SupabaseNewsStore supports source runs, candidate dedupe, research, and ha
   assert.equal(first.length, 1)
   assert.equal(duplicate.length, 1)
   assert.equal(duplicate[0].id, first[0].id)
-  assert.equal(first[0].sourceRunId, run.id)
+  assert.equal(first[0].sourceRunId, null)
   assert.equal(first[0].rawCandidate.headline, 'CoinDesk observes BTC treasury flows')
 
   const prior = await store.fetchPriorObservations(source.sourceId, [input.fingerprint.canonicalArticleUrl])
@@ -596,31 +573,20 @@ test('SupabaseNewsStore duplicate research inserts return the existing result', 
   assert.equal(second.researchJobId, first.researchJobId)
 })
 
-test('SupabaseNewsStore recovers stale source and research work', async () => {
+test('SupabaseNewsStore recovers stale research work', async () => {
   const { fake, store } = fakeStore()
-  const sourceRun = await store.createSourceRun({
-    jobId: 'stale-source-run',
-    source,
-    sourceUrl,
-    status: 'running',
-    startedAt: '2026-07-04T10:00:00.000Z',
-  })
   const [storedCandidate] = await store.insertCandidateObservations([observationInput()])
   await store.markCandidateResearchStarted(storedCandidate.id, 'research-job-stale')
 
-  fake.tables.news_source_runs.find((row) => row.id === sourceRun.id)!.updated_at = '2026-07-04T10:00:00.000Z'
   fake.tables.news_candidate_observations.find((row) => row.id === storedCandidate.id)!.updated_at = '2026-07-04T10:00:00.000Z'
 
   const recovered = await store.recoverStaleWork({
-    sourceRunCutoffIso: '2026-07-04T11:00:00.000Z',
     candidateCutoffIso: '2026-07-04T11:00:00.000Z',
   })
 
   assert.deepEqual(recovered, {
-    sourceRunsRecovered: 1,
     candidatesRecovered: 1,
   })
-  assert.equal(fake.tables.news_source_runs.find((row) => row.id === sourceRun.id)!.status, 'failed_transient')
   assert.equal(fake.tables.news_candidate_observations.find((row) => row.id === storedCandidate.id)!.status, 'pending_research')
 })
 
@@ -658,4 +624,56 @@ test('Supabase-backed News Entity Manager intake uses the shared resolver handof
   // the news lane's own local status (asserted above), not a persisted marker row.
   assert.equal(result.results[0].markerStatus, 'processed')
   assert.equal(entityStore.memories.some((item) => item.memory_type === 'source_marker'), false)
+})
+
+test('news feed active ingestion and replay use the existing SupabaseNewsStore contract', async () => {
+  const { fake, store } = fakeStore()
+  const items: NewsFeedItem[] = [{
+    kind: 'article',
+    title: 'Bitcoin filing appears in public records',
+    url: 'https://example.com/bitcoin-filing?utm_source=tokens',
+    publishedAt: '2026-08-15T11:00:00.000Z',
+    outlet: 'Example News',
+    author: null,
+    imageUrl: null,
+    relatedCoinIds: ['bitcoin'],
+  }, {
+    kind: 'post',
+    text: 'NEW: A public filing names Bitcoin as a treasury asset.',
+    url: 'https://x.com/tokens/status/789',
+    postedAt: '2026-08-15T11:30:00.000Z',
+    handle: '@tokens',
+    imageUrl: null,
+    relatedCoinIds: ['bitcoin'],
+  }]
+  const fetcher = async () => ({
+    items,
+    meta: {
+      mode: 'global' as const,
+      terms: [],
+      limit: 50,
+      coingeckoCandidates: 1,
+      xCandidates: 1,
+    },
+  })
+
+  const first = await runNewsFeedIngestionOnce({
+    store,
+    now: new Date('2026-08-15T12:00:00.000Z'),
+    fetcher,
+  })
+  const replay = await runNewsFeedIngestionOnce({
+    store,
+    now: new Date('2026-08-15T12:10:00.000Z'),
+    fetcher,
+  })
+
+  assert.equal(first.candidateObservationsInserted, 2)
+  assert.equal(replay.candidatesUnchanged, 2)
+  assert.equal(replay.candidateObservationsInserted, 0)
+  assert.equal(fake.tables.news_candidate_observations.length, 2)
+  assert.deepEqual(
+    new Set(fake.tables.news_candidate_observations.map((row) => row.source_id)),
+    new Set(['news_feed:articles', 'news_feed:social']),
+  )
 })

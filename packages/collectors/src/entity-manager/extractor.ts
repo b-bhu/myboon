@@ -72,6 +72,25 @@ function shortlistSection(shortlist: CanonEntity[]): string[] {
   ]
 }
 
+function recentMemorySection(canon?: ExtractionCanon): string[] {
+  const recentMemories = canon?.recentMemories ?? []
+  if (recentMemories.length === 0) return []
+  return [
+    '',
+    'RECENT ENTITY MEMORIES from the last 48 hours. Reconcile each proposed memory against these before filing:',
+    JSON.stringify(recentMemories, null, 2),
+    '',
+    'Story reconciliation rules:',
+    '- Compare the concrete underlying event, claim, actors, and timing—not headline wording or publisher.',
+    '- duplicate_source: the same underlying event/claim from another source with no material new development.',
+    '- update_existing_story: the same evolving event with material new facts, figures, decisions, or context.',
+    '- new_story: a distinct event. Sharing only an entity, topic, theme, or market direction is NOT enough to merge.',
+    '- For duplicate_source or update_existing_story, existingMemoryId MUST exactly match an ID in RECENT ENTITY MEMORIES for the same entitySlug.',
+    '- Reconciliation confidence measures confidence in the same-story match, not confidence in the article claims.',
+    '- Use duplicate_source or update_existing_story only when reconciliation confidence is at least 0.8; otherwise use new_story.',
+  ]
+}
+
 function buildPrompt(packet: ResearchPacket, canon?: ExtractionCanon): string {
   const compactPacket = packetForPrompt(packet)
   return [
@@ -79,6 +98,7 @@ function buildPrompt(packet: ResearchPacket, canon?: ExtractionCanon): string {
     '',
     'Assign the research packet to durable primary entities and create memory entries for their research record.',
     ...shortlistSection(canon?.shortlist ?? []),
+    ...recentMemorySection(canon),
     'Do not write to a database. Do not make editor, publisher, or feed decisions.',
     'Do not judge evidence quality, importance, causality, sentiment, or whether the item is publishable.',
     'Do not use verdict language such as weak, strong, reject, accept, blocked, noise, likely, plausibly, no signal, or needs more research.',
@@ -90,6 +110,7 @@ function buildPrompt(packet: ResearchPacket, canon?: ExtractionCanon): string {
     'For every memory, write summary as a concise, neutral, standalone one- or two-line description of the concrete event, signal, or change.',
     'Write the summary for a reader who cannot see the research packet. Name the subject and state what happened without source/pipeline framing such as "research packet observed" or "the source reported".',
     'Do not add editorial interpretation, recommendations, importance claims, or facts that are not present in the packet. Keep research detail in body, evidence, metrics, and context.',
+    'When Research packet sourceType is social_post, every memoryType must be social_signal.',
     '',
     'Return strict JSON only with this shape:',
     JSON.stringify({
@@ -115,6 +136,12 @@ function buildPrompt(packet: ResearchPacket, canon?: ExtractionCanon): string {
         mentions: ['Ethereum Foundation', 'Polymarket'],
         metrics: { current_yes: 0.29, previous_yes: 0.185 },
         context: { source_market_title: 'Will Ethereum reach $3,000 by December 31, 2026?' },
+        reconciliation: {
+          action: 'new_story',
+          existingMemoryId: null,
+          confidence: 1,
+          reason: 'No supplied recent memory describes this concrete event.',
+        },
         observedAt: packet.observedAt,
       }],
     }, null, 2),

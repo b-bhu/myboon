@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { NewsCandidateFingerprint, NewsScoutCandidate } from './types'
+import type { NewsCandidateFingerprint, NewsCandidate } from './types'
 
 const TRACKING_PARAMS = new Set(['fbclid', 'gclid'])
 
@@ -37,10 +37,10 @@ export function hashText(value: string): string {
     .digest('hex')
 }
 
-export function fingerprintScoutCandidate(
+export function fingerprintNewsCandidate(
   sourceId: string,
   urlId: string,
-  candidate: NewsScoutCandidate
+  candidate: NewsCandidate
 ): NewsCandidateFingerprint {
   const canonicalUrl = canonicalArticleUrl(candidate.article_url)
   const headlineHash = hashText(candidate.headline)
