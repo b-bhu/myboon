@@ -59,8 +59,8 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
 
 - These files are the pipelines' queues and working memory. Deleting either loses
   in-flight work. It is not in git and is not reproducible from Supabase.
-- Backlog / per-stage status: `pnpm --filter @myboon/collectors pipeline-store:status`
-- Backup: `pnpm --filter @myboon/collectors pipeline-store:backup`
+- Backlog / per-stage status for both Polymarket and news: `pnpm --filter @myboon/collectors pipeline-store:status`
+- Verified online backups for both `pipeline.sqlite` and `news.sqlite`: `pnpm --filter @myboon/collectors pipeline-store:backup`
   (run it on a cron; it is cheap)
 - The three production news workers must all use the same `NEWS_SQLITE_PATH`.
 - News Entity Manager reads research packets from `news.sqlite` and writes only
