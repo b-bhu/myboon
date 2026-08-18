@@ -91,7 +91,7 @@ queries the already-existing `entity_memories` rows by entity and
 
 After the SQLite storage boundary was verified, the superseded remote working
 tables and their dead code paths were removed. Migration
-`20260818113845_drop_retired_pipeline_tables.sql` drops exactly:
+`20260818145731_drop_retired_pipeline_tables.sql` drops exactly:
 
 ```text
 news_research_results
