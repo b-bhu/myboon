@@ -54,7 +54,7 @@ test('retired Supabase news entrypoints and scripts stay removed', () => {
 test('retirement migration drops only the approved temporary pipeline tables', () => {
   const migrationsDir = resolve(repoRoot, 'supabase/migrations')
   const matches = readdirSync(migrationsDir).filter((name) => name.endsWith('_drop_retired_pipeline_tables.sql'))
-  assert.deepEqual(matches, ['20260818113845_drop_retired_pipeline_tables.sql'])
+  assert.deepEqual(matches, ['20260818145731_drop_retired_pipeline_tables.sql'])
 
   const migration = readFileSync(resolve(migrationsDir, matches[0]), 'utf8')
   const droppedTables = [...migration.matchAll(/drop table if exists public\.([a-z0-9_]+);/gi)].map(
