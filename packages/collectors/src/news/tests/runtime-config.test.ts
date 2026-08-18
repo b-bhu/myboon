@@ -7,10 +7,12 @@ import {
   DEFAULT_NEWS_RESEARCH_CONCURRENCY,
   MAX_NEWS_RESEARCH_CONCURRENCY,
   DEFAULT_NEWS_FEED_INTERVAL_MS,
+  DEFAULT_NEWS_RESEARCH_INTERVAL_MS,
   newsResearchBacklogWarnAgeMs,
   newsResearchBacklogWarnCount,
   newsResearchBatchSize,
   newsResearchConcurrency,
+  newsResearchIntervalMs,
   positiveInteger,
 } from '../runtime-config'
 
@@ -44,4 +46,10 @@ test('invalid batch and timeout values use their fallback', () => {
 
 test('news feed ingestion defaults to a ten-minute interval', () => {
   assert.equal(DEFAULT_NEWS_FEED_INTERVAL_MS, 10 * 60_000)
+})
+
+test('news research defaults to five-minute intervals and accepts an override', () => {
+  assert.equal(DEFAULT_NEWS_RESEARCH_INTERVAL_MS, 5 * 60_000)
+  assert.equal(newsResearchIntervalMs(undefined), 5 * 60_000)
+  assert.equal(newsResearchIntervalMs('900000'), 900_000)
 })

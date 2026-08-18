@@ -4,6 +4,7 @@ loadDotenvChain()
 
 import { SqlitePipelineStore } from './sqlite-store'
 import { buildPipelineStatusReport } from './status'
+import { SqliteNewsStore } from '../news/sqlite-store'
 
 /**
  * CLI: `pnpm pipeline-store:status`
@@ -35,14 +36,21 @@ function parseAreas(raw: string | undefined): Array<{ source: string; area: stri
 
 async function main(): Promise<void> {
   const sqlitePath = process.env.PIPELINE_SQLITE_PATH
+  const newsSqlitePath = process.env.NEWS_SQLITE_PATH
   const areas = parseAreas(process.env.PIPELINE_STATUS_AREAS)
 
   const store = new SqlitePipelineStore(sqlitePath)
+  const newsStore = new SqliteNewsStore(newsSqlitePath)
   try {
-    const report = await buildPipelineStatusReport(store, areas)
-    console.log(JSON.stringify(report, null, 2))
+    const pipeline = await buildPipelineStatusReport(store, areas)
+    console.log(JSON.stringify({
+      generatedAt: pipeline.generatedAt,
+      pipeline: pipeline.areas,
+      news: newsStore.getOperationalStatus(),
+    }, null, 2))
   } finally {
     store.close()
+    newsStore.close()
   }
 }
 

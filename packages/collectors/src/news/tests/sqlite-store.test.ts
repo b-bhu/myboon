@@ -13,6 +13,26 @@ const source = TEST_NEWS_SOURCE
 const sourceUrl = TEST_NEWS_SOURCE_URL
 const observedAt = '2026-07-04T12:00:00.000Z'
 
+test('getOperationalStatus reports news queue counts by status', async () => {
+  const store = new SqliteNewsStore(':memory:')
+  try {
+    const [first, second] = await store.insertCandidateObservations([
+      observationInput(),
+      observationInput({ candidate: candidate({ article_url: 'https://example.com/second', headline: 'Second item' }) }),
+    ])
+    await store.markCandidateObservationStatus(second.id, 'failed_research')
+
+    assert.deepEqual(store.getOperationalStatus(), {
+      sourceRuns: {},
+      candidates: { failed_research: 1, pending_research: 1 },
+      researchResults: {},
+    })
+    assert.ok(first.id)
+  } finally {
+    store.close()
+  }
+})
+
 function candidate(overrides: Partial<NewsCandidate> = {}): NewsCandidate {
   return {
     headline: 'CoinDesk observes BTC treasury flows',

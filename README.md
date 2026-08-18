@@ -106,12 +106,12 @@ pm2 start ecosystem.config.cjs
 This production cut intentionally runs only:
 
 ```text
-Polymarket data collector -> polymarket_market_candidates
-Polymarket researcher     -> polymarket_market_candidate_research
+Polymarket data collector -> local pipeline.sqlite candidates
+Polymarket researcher     -> local pipeline.sqlite research
 ```
 
-Editor, publisher, and entity-memory workers are downstream and are not part of
-this collector/researcher rollout.
+Temporary pipeline rows stay on the VPS. Only durable entity and publishing
+records are written to Supabase.
 
 ---
 

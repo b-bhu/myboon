@@ -84,7 +84,7 @@ module.exports = {
     },
     {
       name: 'myboon-news-feed-ingestor',
-      script: 'src/news/run-news-feed-ingestor-supabase.ts',
+      script: 'src/news/run-news-feed-ingestor.ts',
       interpreter: TSX,
       cwd: `${ROOT}/packages/collectors`,
       watch: false,
@@ -93,13 +93,14 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        NEWS_SQLITE_PATH: '.data/news.sqlite',
         NEWS_FEED_RUN_ONCE: '0',
         NEWS_FEED_INTERVAL_MS: '600000',
       },
     },
     {
       name: 'myboon-news-researcher',
-      script: 'src/news/run-news-supabase.ts',
+      script: 'src/news/run-news.ts',
       interpreter: TSX,
       cwd: `${ROOT}/packages/collectors`,
       watch: false,
@@ -108,6 +109,7 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        NEWS_SQLITE_PATH: '.data/news.sqlite',
         NEWS_RESEARCHER_RUN_ONCE: '0',
         NEWS_RESEARCHER_INTERVAL_MS: '300000',
         NEWS_RESEARCHER_BATCH_SIZE: '10',
@@ -118,7 +120,7 @@ module.exports = {
     },
     {
       name: 'myboon-news-entity-manager',
-      script: 'src/entity-manager/run-news-supabase.ts',
+      script: 'src/entity-manager/run-news.ts',
       interpreter: TSX,
       cwd: `${ROOT}/packages/collectors`,
       watch: false,
@@ -127,9 +129,11 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        NEWS_SQLITE_PATH: '.data/news.sqlite',
         ENTITY_MANAGER_NEWS_RUN_ONCE: '0',
         ENTITY_MANAGER_NEWS_INTERVAL_MS: '300000',
         ENTITY_MANAGER_NEWS_BATCH_SIZE: '20',
+        ENTITY_MANAGER_HERMES_TIMEOUT_MS: '600000',
       },
     },
     {

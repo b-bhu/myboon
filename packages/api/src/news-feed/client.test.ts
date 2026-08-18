@@ -304,17 +304,14 @@ test('surfaces upstream meta so an empty filter result is distinguishable', asyn
 })
 
 test('throws rather than returning an empty feed when the key is missing', async () => {
-  const previous = process.env.NEWS_FEED_API_KEY
   const previousProviderKey = process.env.TOKENS_API_KEY
-  delete process.env.NEWS_FEED_API_KEY
   delete process.env.TOKENS_API_KEY
   try {
     await assert.rejects(
       () => fetchArticles({ fetchImpl: stubFetch(feedResponse([])) }),
-      (error: unknown) => error instanceof NewsFeedError && /NEWS_FEED_API_KEY/.test((error as Error).message),
+      (error: unknown) => error instanceof NewsFeedError && /TOKENS_API_KEY/.test((error as Error).message),
     )
   } finally {
-    if (previous != null) process.env.NEWS_FEED_API_KEY = previous
     if (previousProviderKey != null) process.env.TOKENS_API_KEY = previousProviderKey
   }
 })

@@ -5,12 +5,15 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  backupNewsStore,
   backupPipelineStore,
   pruneOldBackups,
   restorePipelineStore,
+  verifyNewsBackup,
   verifyPipelineBackup,
 } from './backup'
 import { SqlitePipelineStore } from './sqlite-store'
+import { SqliteNewsStore } from '../news/sqlite-store'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -194,6 +197,32 @@ test('backupPipelineStore: backup of a store with real data has tableCounts matc
 
     const fileStat = statSync(result.path)
     assert.equal(fileStat.size, result.sizeBytes)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('backupNewsStore: creates and verifies an independent news.sqlite backup', async () => {
+  const dir = makeTmpDir('news-backup-src-')
+  try {
+    const sourcePath = join(dir, 'news.sqlite')
+    const store = new SqliteNewsStore(sourcePath)
+    store.close()
+
+    const result = await backupNewsStore({
+      sourcePath,
+      backupDir: join(dir, 'backups'),
+      now: '2026-08-18T12:00:00.000Z',
+    })
+    const verification = await verifyNewsBackup(result.path, result.sourceTableCounts)
+
+    assert.match(result.path, /news-2026-08-18T12-00-00-000Z\.sqlite$/)
+    assert.deepEqual(result.tableCounts, {
+      news_source_runs: 0,
+      news_candidate_observations: 0,
+      news_research_results: 0,
+    })
+    assert.equal(verification.ok, true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

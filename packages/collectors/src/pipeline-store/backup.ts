@@ -70,6 +70,12 @@ const PIPELINE_TABLES = [
   'pipeline_runs',
 ] as const
 
+const NEWS_TABLES = [
+  'news_source_runs',
+  'news_candidate_observations',
+  'news_research_results',
+] as const
+
 const BACKUP_FILE_PREFIX = 'pipeline-'
 const BACKUP_FILE_SUFFIX = '.sqlite'
 
@@ -115,13 +121,56 @@ function openReadOnly(path: string): SqliteDatabase {
 }
 
 function readTableCounts(db: SqliteDatabase): Record<string, number> {
+  return readSelectedTableCounts(db, PIPELINE_TABLES)
+}
+
+function readSelectedTableCounts(db: SqliteDatabase, tables: readonly string[]): Record<string, number> {
   const counts: Record<string, number> = {}
-  for (const table of PIPELINE_TABLES) {
+  for (const table of tables) {
     const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as Record<string, unknown>
     const raw = row?.n
     counts[table] = typeof raw === 'bigint' ? Number(raw) : Number(raw ?? 0)
   }
   return counts
+}
+
+async function backupSqliteStore(options: {
+  sourcePath: string
+  backupDir: string
+  createdAt: string
+  prefix: string
+  tables: readonly string[]
+}): Promise<PipelineBackupResult> {
+  mkdirSync(options.backupDir, { recursive: true })
+  const backupPath = join(
+    options.backupDir,
+    `${options.prefix}${filenameSafeTimestamp(options.createdAt)}${BACKUP_FILE_SUFFIX}`
+  )
+
+  const source = openReadWrite(options.sourcePath)
+  let sourceTableCounts: Record<string, number>
+  try {
+    await sqliteBackup(source, backupPath)
+    sourceTableCounts = readSelectedTableCounts(source, options.tables)
+  } finally {
+    source.close()
+  }
+
+  const backupDb = openReadOnly(backupPath)
+  let tableCounts: Record<string, number>
+  try {
+    tableCounts = readSelectedTableCounts(backupDb, options.tables)
+  } finally {
+    backupDb.close()
+  }
+
+  return {
+    path: backupPath,
+    sizeBytes: fileSize(backupPath),
+    tableCounts,
+    sourceTableCounts,
+    createdAt: options.createdAt,
+  }
 }
 
 function readIntegrityCheck(db: SqliteDatabase): string {
@@ -151,41 +200,21 @@ export async function backupPipelineStore(options?: {
   const sourcePath = resolve(options?.sourcePath ?? DEFAULT_SOURCE_PATH)
   const backupDir = resolve(options?.backupDir ?? DEFAULT_BACKUP_DIR)
   const createdAt = options?.now ?? new Date().toISOString()
+  return backupSqliteStore({ sourcePath, backupDir, createdAt, prefix: BACKUP_FILE_PREFIX, tables: PIPELINE_TABLES })
+}
 
-  mkdirSync(backupDir, { recursive: true })
-
-  const fileName = `${BACKUP_FILE_PREFIX}${filenameSafeTimestamp(createdAt)}${BACKUP_FILE_SUFFIX}`
-  const backupPath = join(backupDir, fileName)
-
-  const source = openReadWrite(sourcePath)
-  let sourceTableCounts: Record<string, number>
-  try {
-    await sqliteBackup(source, backupPath)
-    // Read source counts on the SAME connection, immediately after the
-    // backup completed - the closest observable moment to the snapshot the
-    // online backup produced. A concurrent writer between backup completion
-    // and this read can still cause a benign mismatch, but that surfaces as
-    // a loud verification failure, never as a silently wrong "ok".
-    sourceTableCounts = readTableCounts(source)
-  } finally {
-    source.close()
-  }
-
-  const backupDb = openReadOnly(backupPath)
-  let tableCounts: Record<string, number>
-  try {
-    tableCounts = readTableCounts(backupDb)
-  } finally {
-    backupDb.close()
-  }
-
-  return {
-    path: backupPath,
-    sizeBytes: fileSize(backupPath),
-    tableCounts,
-    sourceTableCounts,
-    createdAt,
-  }
+export async function backupNewsStore(options?: {
+  sourcePath?: string
+  backupDir?: string
+  now?: string
+}): Promise<PipelineBackupResult> {
+  return backupSqliteStore({
+    sourcePath: resolve(options?.sourcePath ?? resolve(COLLECTORS_PACKAGE_DIR, '.data', 'news.sqlite')),
+    backupDir: resolve(options?.backupDir ?? DEFAULT_BACKUP_DIR),
+    createdAt: options?.now ?? new Date().toISOString(),
+    prefix: 'news-',
+    tables: NEWS_TABLES,
+  })
 }
 
 /**
@@ -197,6 +226,21 @@ export async function backupPipelineStore(options?: {
  */
 export async function verifyPipelineBackup(
   backupPath: string,
+  expected?: Record<string, number>
+): Promise<PipelineBackupVerification> {
+  return verifySqliteBackup(backupPath, PIPELINE_TABLES, expected)
+}
+
+export async function verifyNewsBackup(
+  backupPath: string,
+  expected?: Record<string, number>
+): Promise<PipelineBackupVerification> {
+  return verifySqliteBackup(backupPath, NEWS_TABLES, expected)
+}
+
+async function verifySqliteBackup(
+  backupPath: string,
+  tables: readonly string[],
   expected?: Record<string, number>
 ): Promise<PipelineBackupVerification> {
   let integrity: string
@@ -213,7 +257,7 @@ export async function verifyPipelineBackup(
     const db = openReadOnly(resolve(backupPath))
     try {
       integrity = readIntegrityCheck(db)
-      tableCounts = integrity === 'ok' ? readTableCounts(db) : {}
+      tableCounts = integrity === 'ok' ? readSelectedTableCounts(db, tables) : {}
     } finally {
       db.close()
     }
@@ -224,7 +268,7 @@ export async function verifyPipelineBackup(
 
   const mismatches: string[] = []
   if (expected) {
-    for (const table of PIPELINE_TABLES) {
+    for (const table of tables) {
       const expectedCount = expected[table] ?? 0
       const actualCount = tableCounts[table] ?? 0
       if (expectedCount !== actualCount) {
@@ -294,9 +338,9 @@ interface BackupFileInfo {
   timestamp: string
 }
 
-function parseBackupFileName(fileName: string): string | null {
-  if (!fileName.startsWith(BACKUP_FILE_PREFIX) || !fileName.endsWith(BACKUP_FILE_SUFFIX)) return null
-  return fileName.slice(BACKUP_FILE_PREFIX.length, fileName.length - BACKUP_FILE_SUFFIX.length)
+function parseBackupFileName(fileName: string, prefix: string): string | null {
+  if (!fileName.startsWith(prefix) || !fileName.endsWith(BACKUP_FILE_SUFFIX)) return null
+  return fileName.slice(prefix.length, fileName.length - BACKUP_FILE_SUFFIX.length)
 }
 
 /**
@@ -311,9 +355,11 @@ function parseBackupFileName(fileName: string): string | null {
 export async function pruneOldBackups(options?: {
   backupDir?: string
   keep?: number
+  prefix?: string
 }): Promise<string[]> {
   const backupDir = resolve(options?.backupDir ?? DEFAULT_BACKUP_DIR)
   const keep = options?.keep ?? 7
+  const prefix = options?.prefix ?? BACKUP_FILE_PREFIX
 
   let entries: string[]
   try {
@@ -324,7 +370,7 @@ export async function pruneOldBackups(options?: {
 
   const infos: BackupFileInfo[] = []
   for (const entry of entries) {
-    const timestamp = parseBackupFileName(basename(entry))
+    const timestamp = parseBackupFileName(basename(entry), prefix)
     if (timestamp === null) continue
     infos.push({ path: join(backupDir, entry), timestamp })
   }

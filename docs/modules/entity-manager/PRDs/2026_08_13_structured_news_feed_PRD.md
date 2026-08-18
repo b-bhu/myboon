@@ -2,7 +2,7 @@
 
 Status: implemented, legacy scout removed
 Created: 2026-08-13
-Updated: 2026-08-17
+Updated: 2026-08-18
 Owner: myboon pipeline
 Module: news / entity-manager
 Review branch: `codex/structured-news-feed`
@@ -10,8 +10,8 @@ Review branch: `codex/structured-news-feed`
 ## Purpose
 
 Replace the expensive Hermes browser-based news discovery step with a
-structured news feed, without changing how news working state or
-entity memory is stored.
+structured news feed, while keeping temporary news working state local and
+leaving durable entity-memory storage unchanged.
 
 The change is deliberately narrow:
 
@@ -29,10 +29,11 @@ still required.
 
 ## Locked Decisions
 
-- This is a logic-only integration.
-- No SQLite schema changes or storage-location changes.
-- No Supabase schema, table, column, credential, or storage-location changes.
-- No migration of working state between SQLite and Supabase.
+- The feed integration itself is logic-only.
+- No SQLite schema changes or local storage-location changes.
+- No Supabase entity/publishing schema, credential, or storage-location changes.
+- Disposable working rows are not migrated between SQLite and Supabase. The
+  obsolete Supabase copies are removed after the local cutover.
 - No entity-memory schema changes; source media and story provenance are
   retained in the existing memory `context` JSON.
 - No Polymarket changes.
@@ -49,8 +50,8 @@ still required.
 
 ## Out of Scope
 
-- New database tables, columns, statuses, migrations, or retention policies.
-- Moving the current news store from one backend to another.
+- New durable database tables, columns, statuses, or retention policies.
+- Moving final entity or publishing data out of Supabase.
 - Embedding-based, cross-entity, or unbounded historical story clustering.
 - New language or promotional-content filters.
 - A new research budget or ranking system.
@@ -66,7 +67,9 @@ bundled into this integration.
 ## Existing Storage Contract
 
 The `NewsStore` interface remains the persistence boundary used by the
-news-feed ingestor, researcher, and entity-manager adapter.
+news-feed ingestor, researcher, and entity-manager adapter. Production uses its
+local `SqliteNewsStore` implementation; the retired Supabase implementation and
+its alternate worker entrypoints are removed.
 
 Neither news working-store schema changed:
 
@@ -77,12 +80,38 @@ Neither news working-store schema changed:
   JSON, not in new columns.
 
 The news-feed ingestor does not create source-run rows. Feed observations keep
-the already-supported nullable `sourceRunId` field as `null`; the historical
-table and column remain intact so existing data requires no migration.
+the already-supported nullable `sourceRunId` field as `null`; the local SQLite
+table and column remain intact.
 
 The entity-memory store adds one bounded read operation for recent memories. It
 queries the already-existing `entity_memories` rows by entity and
 `observed_at`; it does not add or alter persistence structures.
+
+### Retired Supabase scaffolding
+
+After the SQLite storage boundary was verified, the superseded remote working
+tables and their dead code paths were removed. Migration
+`20260818113845_drop_retired_pipeline_tables.sql` drops exactly:
+
+```text
+news_research_results
+news_candidate_observations
+news_source_runs
+polymarket_market_editor_decisions
+polymarket_market_candidate_research
+polymarket_market_candidates
+polymarket_market_watchlist
+editor_drafts
+```
+
+The migration deliberately does not use `CASCADE`: an unexpected dependency
+must fail and roll back the migration instead of deleting a kept object. It
+does not touch `entities`, `entity_memories`, `published_narratives`,
+`entity_published_history`, `pipeline_runs`, catalog tables, Hyperliquid tables,
+`pacific_tracked`, migration history, or unrelated application tables.
+
+The same logical news table names continue inside `news.sqlite`; deleting the
+obsolete Supabase tables does not delete or migrate local queued work.
 
 ## Service Client
 
@@ -105,8 +134,7 @@ shared implementation and types. The former provider-named module under
 - `fetchFeed()` sends `source=all`.
 - `fetchArticles()` sends `source=news`.
 - `fetchPosts()` sends `source=tweets`.
-- Requests use `x-api-key: NEWS_FEED_API_KEY`, with the existing provider key
-  accepted as a compatibility fallback.
+- Requests use `x-api-key: TOKENS_API_KEY`.
 - The limit is clamped to the upstream range of 1–50.
 - The collector explicitly requests `limit=50`.
 - Missing API keys fail loudly.
@@ -225,11 +253,11 @@ NEWS_RESEARCHER_CONCURRENCY=2
 ```
 
 Each candidate transitions from `pending_research` to `research_queued` only
-when an optimistic/transactional status check succeeds. Supabase uses a
-conditional update and SQLite uses an immediate transaction, so concurrent
-lanes or an accidental second process cannot research the same row. Queued and
-researching rows share the existing stale-work recovery path. Runtime
-concurrency is hard-capped at four even if the environment is misconfigured.
+when a transactional status check succeeds. SQLite uses an immediate
+transaction, so concurrent lanes or an accidental second process cannot
+research the same row. Queued and researching rows share the existing
+stale-work recovery path. Runtime concurrency is hard-capped at four even if
+the environment is misconfigured.
 
 Every completed cycle reports pending count and oldest pending age. PM2 emits a
 warning when either configured threshold is reached:
@@ -347,14 +375,6 @@ NEWS_FEED_RUN_ONCE=1 \
 pnpm --filter @myboon/collectors news:feed:ingest
 ```
 
-When the already-deployed news working store is Supabase, use the matching
-entrypoint instead of changing storage:
-
-```bash
-NEWS_FEED_RUN_ONCE=1 \
-pnpm --filter @myboon/collectors news:feed:ingest:supabase
-```
-
 Run the researcher:
 
 ```bash
@@ -367,8 +387,9 @@ Run the existing news entity-manager command:
 pnpm --filter @myboon/collectors entity-manager:news
 ```
 
-The root `.env` is loaded by the news-feed ingestor. `NEWS_FEED_API_KEY` is the
-logical credential name; the existing provider-specific key remains accepted.
+The dotenv chain is loaded by every news worker. `TOKENS_API_KEY` is the single
+canonical Tokens.xyz credential, and `NEWS_SQLITE_PATH` selects their shared
+working database (default: `packages/collectors/.data/news.sqlite`).
 
 ## Verification
 
@@ -462,8 +483,9 @@ original soak database was not used for research and remained unchanged.
     separate memory.
 14. Duplicate/update merges preserve every publisher URL, evidence item, source
     research ID, and available image in existing JSON context.
-15. No storage schema, migration, storage-location, or Polymarket behavior
-    changes.
+15. The SQLite queue schemas and durable Supabase entity/publishing schemas do
+    not change; the only Supabase schema change is the forward migration that
+    removes the eight explicitly retired temporary pipeline tables.
 16. Feed/API image fields come from durable entity-memory context, never from
    LLM-authored media; unsafe or absent URLs clear URL, kind, origin, and
    attribution, and public APIs expose no partial media metadata.
@@ -489,8 +511,11 @@ original soak database was not used for research and remained unchanged.
    rollout modes, and deployment references.
 9. Confirm two Hermes lanes stay inside VPS CPU/memory limits and that backlog
    count and oldest age decline over multiple production cycles.
+10. Apply the retirement migration only after all deployed news workers use the
+    same local `NEWS_SQLITE_PATH` and the Polymarket/editor workers use
+    `pipeline.sqlite`.
 
-PM2 starts the Supabase-backed feed ingestor and research-only worker as separate
-processes. The one research process owns the bounded two-lane pool. Both SQLite
-and Supabase entrypoints remain available so local and deployed storage choices
-do not change.
+PM2 starts the SQLite-backed feed ingestor and research-only worker as separate
+processes. The one research process owns the bounded two-lane pool. News
+candidates, deduplication, research, statuses, and queues remain in
+`news.sqlite`; only final entity records cross the Supabase boundary.

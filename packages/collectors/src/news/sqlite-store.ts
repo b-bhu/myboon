@@ -263,6 +263,25 @@ export class SqliteNewsStore implements NewsStore {
     this.db.close()
   }
 
+  getOperationalStatus(): {
+    sourceRuns: Record<string, number>
+    candidates: Record<string, number>
+    researchResults: Record<string, number>
+  } {
+    const groupedCounts = (table: string): Record<string, number> => {
+      const rows = this.db
+        .prepare(`SELECT status, COUNT(*) AS n FROM ${table} GROUP BY status ORDER BY status`)
+        .all() as Array<Record<string, unknown>>
+      return Object.fromEntries(rows.map((row) => [String(row.status), numberValue(row.n)]))
+    }
+
+    return {
+      sourceRuns: groupedCounts('news_source_runs'),
+      candidates: groupedCounts('news_candidate_observations'),
+      researchResults: groupedCounts('news_research_results'),
+    }
+  }
+
   async fetchPriorObservations(
     sourceId: string,
     canonicalArticleUrls: string[]
