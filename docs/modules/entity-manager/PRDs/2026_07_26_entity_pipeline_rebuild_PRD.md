@@ -68,21 +68,29 @@ growth is the designed behaviour, not a defect.
 
 Verified against the schema and every call site.
 
-**Keep (Supabase):**
+**Final keep boundary (Supabase, confirmed 2026-08-18):**
 
 - `entities`
 - `entity_memories`
 - `published_narratives`
 - `entity_published_history`
+- `pipeline_runs`
+- `polymarket_catalog_*`
+- Hyperliquid tables
+- `pacific_tracked`
+- migration history and unrelated application tables
 
-These are the only tables the API and app read. Everything else is pipeline
-scaffolding the product never touches.
+The first four are durable product data. The other retained tables are still
+active infrastructure or belong to a different collector and are explicitly
+outside this cleanup.
 
-**Drop (junk):** `polymarket_market_candidates`,
+**Final drop list:** `polymarket_market_candidates`,
 `polymarket_market_candidate_research`, `polymarket_market_editor_decisions`,
-`polymarket_market_watchlist`, `editor_drafts`, `pipeline_runs`,
-`news_candidate_observations`, `news_research_results`, `news_source_runs`,
-`hyperliquid_market_snapshots`, `hyperliquid_market_candidates`.
+`polymarket_market_watchlist`, `editor_drafts`,
+`news_candidate_observations`, `news_research_results`, and `news_source_runs`.
+
+This final boundary supersedes the broader draft drop list. In particular,
+`pipeline_runs` and Hyperliquid tables are kept.
 
 **Why the drop is safe:** `entity_memories.source_research_id` is a plain `text`
 column, not a foreign key. Deleting research rows orphans nothing and cascades
@@ -90,11 +98,12 @@ nowhere. The Polymarket adapter copies evidence links and summaries *into* the
 memory row at write time (`polymarket-adapter.ts:97-129`), so memories are
 self-contained.
 
-**One real dependency, needs a decision:**
-`published_narratives.editor_draft_id` IS a foreign key to `editor_drafts`, with
-`ON DELETE SET NULL`. Dropping drafts will not delete narratives — the link goes
-null. This is almost certainly acceptable, but it is a deliberate call, not a
-side effect. **Open question below.**
+**Resolved dependency:** migration
+`20260730_published_narratives_drop_editor_draft_fk.sql` already removed the
+foreign key from `published_narratives.editor_draft_id` to `editor_drafts`.
+The text column remains as cross-database provenance for locally stored drafts,
+so dropping the obsolete Supabase draft table neither nulls nor deletes durable
+narratives.
 
 **Pollution to clean:** the Polymarket entity-manager writes bookkeeping rows
 into `entity_memories` as `memory_type: 'source_marker'`, titled
@@ -128,7 +137,7 @@ the expensive station faster.
 many entities, how many memories, where they came from. Then taking a backup and
 *actually restoring it* to prove the backup works.
 
-**Why it matters:** The next issue deletes eleven tables permanently. If something
+**Why it matters:** The cleanup deletes eight tables permanently. If something
 goes wrong, these numbers are the only way to know. A backup nobody has tested is
 not a backup — it is a hope.
 
@@ -145,7 +154,7 @@ last issue in this sprint, so we want it in week one.
 
 ### #254 — Throw out the junk
 
-**What we are doing:** Deleting eleven database tables. All of it is scratch work
+**What we are doing:** Deleting eight database tables. All of it is scratch work
 — notes the pipeline made to itself while producing entities. The app has never
 read a single row of it.
 
@@ -366,9 +375,10 @@ timeout risk.
 
 - One local store on the VPS owns candidates, research, decisions, drafts, and
   run logs.
-- Follow the existing `NewsStore` interface pattern (`news/store.ts`,
-  `news/sqlite-store.ts`, `news/supabase-store.ts`) rather than inventing a new
-  abstraction. Polymarket currently calls Supabase directly from ~27 sites.
+- Follow the existing `NewsStore` interface pattern (`news/store.ts` and
+  `news/sqlite-store.ts`) rather than inventing a new abstraction. The retired
+  Supabase implementation was removed after the SQLite cutover. Polymarket
+  originally called Supabase directly from ~27 sites.
 - Supabase writes happen once per finished item, not continuously.
 - Backup routine for the local database. The VPS disk is not backed up and this
   is a real durability change from managed Postgres.
@@ -433,9 +443,8 @@ Strict ordering, green pipeline between each.
 
 ## Open questions
 
-1. **`editor_draft_id` nulling** — confirm that dropping `editor_drafts` and
-   nulling the link on existing `published_narratives` is acceptable. Default
-   assumption: yes, drafts are working state.
+1. **`editor_draft_id` provenance** — resolved by the 2026-07-30 migration:
+   keep the column but remove its cross-database foreign key.
 2. **Row counts and table sizes** — not yet measured. Sizes the Phase 1 truncate
    strategy and scopes Phase 2. If candidates and research dominate, a
    Polymarket-only migration captures most of the benefit and news/hyperliquid

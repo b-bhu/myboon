@@ -59,16 +59,19 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
 
 - These files are the pipelines' queues and working memory. Deleting either loses
   in-flight work. It is not in git and is not reproducible from Supabase.
-- Backlog / per-stage status for both Polymarket and news: `pnpm --filter @myboon/collectors pipeline-store:status`
-- Verified online backups for both `pipeline.sqlite` and `news.sqlite`: `pnpm --filter @myboon/collectors pipeline-store:backup`
+- Backlog / per-stage status for both Polymarket and news:
+  `pnpm --filter @myboon/collectors pipeline-store:status`
+- Verified online backups for both `pipeline.sqlite` and `news.sqlite`:
+  `pnpm --filter @myboon/collectors pipeline-store:backup`
   (run it on a cron; it is cheap)
 - The three production news workers must all use the same `NEWS_SQLITE_PATH`.
 - News Entity Manager reads research packets from `news.sqlite` and writes only
   final `entities` and `entity_memories` records to Supabase.
 - Supabase product tables remain available to the app/API, including `entities`,
   `entity_memories`, `published_narratives`, and `entity_published_history`.
-  The retired `news_candidate_observations` and `news_research_results` tables
-  are not production working stores and must receive no new news pipeline rows.
+- Migration `20260818113845_drop_retired_pipeline_tables.sql` removes the retired
+  Supabase news, Polymarket working-state, and editor-draft tables. It does not
+  touch either local SQLite file or any durable entity/publishing table.
 
 ---
 
@@ -101,6 +104,8 @@ pm2 startup   # run the printed command as root/sudo
 ```bash
 # Pull latest and reload (zero-downtime for API)
 # Apply pending Supabase migrations first when new migrations exist.
+# - supabase/migrations/20260818113845_drop_retired_pipeline_tables.sql
+#   (removes only retired temporary pipeline tables after the SQLite cutover)
 # Currently pending (entity pipeline rebuild):
 # - supabase/migrations/20260728_entity_memories_drop_source_marker.sql
 #   (safe to apply: every source_marker WRITE was removed in the rebuild;

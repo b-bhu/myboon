@@ -140,14 +140,24 @@ The goal is source diversity without source noise.
 
 ## Storage
 
-Implemented tables:
+Implemented local SQLite tables:
 
 ```text
-polymarket_market_watchlist
-polymarket_market_candidates
-polymarket_market_candidate_research
-polymarket_market_editor_decisions
+pipeline_watchlist
+pipeline_candidates
+pipeline_research
+pipeline_editor_decisions
+pipeline_editor_drafts
+pipeline_runs
+```
+
+Durable Supabase output:
+
+```text
+entities
+entity_memories
 published_narratives
+entity_published_history
 ```
 
 Watchlist:

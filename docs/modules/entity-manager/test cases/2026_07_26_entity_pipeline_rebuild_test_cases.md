@@ -5,6 +5,12 @@ Source PRD: [`2026_07_26_entity_pipeline_rebuild_PRD.md`](../PRDs/2026_07_26_ent
 Module: entity-manager
 Scope: the PRD's five phases, plus the destructive Phase 0/1 operations.
 
+Implementation note (2026-08-18): the final approved drop list is eight tables,
+not the eleven-table draft assumed by some historical pre-flight cases below.
+`pipeline_runs` and all Hyperliquid tables remain. The production news store is
+SQLite-only, and the old `published_narratives.editor_draft_id` foreign key was
+already removed without deleting or nulling the provenance column.
+
 This sprint produces **almost no user-visible behaviour change**. The app, the
 API, and the four kept tables keep their shape throughout. So this is deliberately
 **not** a conventional QA suite. The question is not "does this feature behave
@@ -22,7 +28,7 @@ That shapes the document in three ways:
    be reproduced by hand. That is where the current pipeline's two silent leaks
    live, and it is the only part of this sprint that earns a genuine test suite.
    The news lane's `recoverStaleWork` tests are the standard to match.
-3. **Destructive operations get their own gate.** Phase 1 drops eleven tables.
+3. **Destructive operations get their own gate.** The final cleanup drops eight tables.
    The `DROP` cases are pre-flight checks, not post-hoc verification — several
    must pass *before* the destructive command runs, and they are the only cases
    in this document that are ordered.
@@ -91,7 +97,7 @@ before any Phase 1 command executes.**
 **Priority:** P0 · **Type:** Data Safety · **Execution:** Query · **Status:** Not Run
 
 **Steps**
-1. Record row count and on-disk size for all eleven tables on the PRD's drop
+1. Record row count and on-disk size for all eight tables on the PRD's final drop
    list.
 
 **Expected**
@@ -152,22 +158,18 @@ before any Phase 1 command executes.**
   changed since the PRD was written, **stop** — dropping research rows would
   cascade into entity memories.
 
-### TC-DROP-003: Only `published_narratives.editor_draft_id` links kept tables to junk
+### TC-DROP-003: No kept table has a foreign key to a drop-list table
 
 **Priority:** P0 · **Type:** Data Safety · **Execution:** Query · **Status:** Not Run
 
 **Steps**
-1. Enumerate every foreign key on the four kept tables.
+1. Enumerate every foreign key on the kept tables.
 2. Identify any that reference a drop-list table.
 
 **Expected**
-- Exactly one such link: `published_narratives.editor_draft_id` →
-  `editor_drafts`, with `ON DELETE SET NULL`.
-- Any *additional* link is an unknown dependency and blocks the drop.
-
-**Assumes:** PRD open question 1 resolves as "acceptable to null the link." If it
-resolves the other way, `editor_drafts` moves off the drop list and this case
-changes.
+- Zero links. Migration `20260730_published_narratives_drop_editor_draft_fk.sql`
+  removed the former draft foreign key while retaining the provenance column.
+- Any link is an unknown dependency and blocks the drop.
 
 ### TC-DROP-004: `source_marker` rows removed from `entity_memories`
 
@@ -205,46 +207,44 @@ changes.
 **Priority:** P0 · **Type:** Data Safety · **Execution:** Query · **Status:** Not Run
 
 **Steps**
-1. Truncate all eleven drop-list tables using the strategy chosen from
+1. Truncate all eight drop-list tables using the strategy chosen from
    TC-SNAP-003.
 2. Re-run TC-SNAP-001's counts.
 
 **Expected**
-- All eleven junk tables at zero rows.
+- All eight retired tables at zero rows.
 - `entities`, `published_narratives`, `entity_published_history` counts
   **identical** to TC-SNAP-001.
 - `entity_memories` equals TC-SNAP-001 minus the `source_marker` count only.
 
-### TC-DROP-007: Published narratives survive with nulled draft links
+### TC-DROP-007: Published narratives and draft provenance survive
 
 **Priority:** P0 · **Type:** Data Safety · **Execution:** Query · **Status:** Not Run
 
 **Steps**
 1. After dropping `editor_drafts`, count `published_narratives`.
-2. Count rows where `editor_draft_id is null`.
+2. Compare `editor_draft_id` values with the pre-drop snapshot.
 
 **Expected**
 - `published_narratives` count unchanged from TC-SNAP-001 — nothing was deleted.
-- `editor_draft_id` is null on rows that previously had one. This is the expected
-  `ON DELETE SET NULL` behaviour, not data loss.
+- Existing `editor_draft_id` provenance values are unchanged because the foreign
+  key was removed before the obsolete Supabase table is dropped.
 
 ---
 
 ## 3. Local Store Parity (`MIGRATE`) — Phase 2
 
-### TC-MIGRATE-001: Local store satisfies the same interface as the Supabase store
+### TC-MIGRATE-001: Local news store satisfies the pipeline interface
 
 **Priority:** P0 · **Type:** Unit · **Execution:** Automatable · **Status:** Not Run
 
 **Steps**
-1. Run the store contract test suite against both the local implementation and
-   the existing Supabase implementation.
+1. Run the `NewsStore` contract test suite against the local implementation.
 
 **Expected**
-- Both pass identically.
-- Follows the existing `NewsStore` pattern (`news/store.ts`,
-  `news/sqlite-store.ts`, `news/supabase-store.ts`) rather than a new
-  abstraction.
+- The SQLite implementation passes the contract.
+- The production path uses `news/store.ts` and `news/sqlite-store.ts`; no
+  Supabase news-store implementation or alternate worker entrypoint remains.
 
 ### TC-MIGRATE-002: No Polymarket collector code writes pipeline state to Supabase
 
@@ -644,18 +644,14 @@ for a sprint whose main risk is **silent** loss, not loud failure.
 
 Carried from the PRD. Each names the cases that depend on it.
 
-1. **`editor_draft_id` nulling** (PRD open question 1) — TC-DROP-003 and
-   TC-DROP-007 assume dropping `editor_drafts` and nulling the link is
-   acceptable. If it resolves otherwise, `editor_drafts` leaves the drop list and
-   both cases change.
+1. **`editor_draft_id` provenance** — resolved. The foreign key is gone and the
+   text value stays unchanged when the obsolete remote table is dropped.
 2. **Row counts and sizes** (PRD open question 2) — TC-SNAP-003 produces this.
    It determines the TC-DROP-006 truncate strategy and the Phase 2 scope.
 3. **`source_marker` count** (PRD open question 3) — TC-SNAP-002 produces this.
    TC-DROP-004 and TC-INV-002 both depend on the exact number.
-4. **News and hyperliquid lanes** (PRD open question 4) — if they are not
-   migrated this sprint, TC-MIGRATE-002 and TC-RESTRUCT-004 apply to the
-   Polymarket lane only, and TC-INV-004 must account for unmigrated lanes
-   behaving differently.
+4. **News and Hyperliquid lanes** — resolved. News temporary state is local
+   SQLite; Hyperliquid tables are retained and outside this cleanup.
 5. **Blackout window** — the PRD says each phase leaves the pipeline green, but
    Phase 1 stops the collectors and they stay stopped until Phase 3 completes.
    TC-INV-003 and TC-INV-004 **cannot run during that window**. This needs an
