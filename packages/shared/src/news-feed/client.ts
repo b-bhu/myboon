@@ -128,10 +128,10 @@ export class NewsFeedError extends Error {
  * collector would record "no news today" and move on.
  */
 function requireApiKey(explicit?: string): string {
-  const key = (explicit ?? process.env.NEWS_FEED_API_KEY ?? process.env.TOKENS_API_KEY ?? '').trim()
+  const key = (explicit ?? process.env.TOKENS_API_KEY ?? '').trim()
   if (!key) {
     throw new NewsFeedError(
-      'NEWS_FEED_API_KEY is not set — refusing to call the configured news feed ' +
+      'TOKENS_API_KEY is not set — refusing to call the configured news feed ' +
         'without it (an unauthenticated call would look like an empty feed)',
     )
   }

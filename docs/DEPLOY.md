@@ -50,21 +50,25 @@ and the last30days script at
 
 ## Pipeline state lives in SQLite on this box
 
-Since the entity pipeline rebuild, all Polymarket pipeline state (candidates,
-research rows, editor decisions, leases, run ledger) lives in a local SQLite
-file, NOT in Supabase:
+Temporary pipeline state lives in local SQLite files, not Supabase:
 
 ```
-packages/collectors/.data/pipeline.sqlite
+packages/collectors/.data/pipeline.sqlite # Polymarket candidates/research/queues
+packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queues
 ```
 
-- This file is the pipeline's queue and memory. Deleting it loses all
+- These files are the pipelines' queues and working memory. Deleting either loses
   in-flight work. It is not in git and is not reproducible from Supabase.
 - Backlog / per-stage status: `pnpm --filter @myboon/collectors pipeline-store:status`
 - Backup: `pnpm --filter @myboon/collectors pipeline-store:backup`
   (run it on a cron; it is cheap)
-- Supabase keeps only the product tables the app/API read: `entities`,
-  `entity_memories`, `published_narratives`, `entity_published_history`.
+- The three production news workers must all use the same `NEWS_SQLITE_PATH`.
+- News Entity Manager reads research packets from `news.sqlite` and writes only
+  final `entities` and `entity_memories` records to Supabase.
+- Supabase product tables remain available to the app/API, including `entities`,
+  `entity_memories`, `published_narratives`, and `entity_published_history`.
+  The retired `news_candidate_observations` and `news_research_results` tables
+  are not production working stores and must receive no new news pipeline rows.
 
 ---
 
@@ -153,7 +157,7 @@ Each package loads its own `.env` via `dotenv/config`. PM2 sets `cwd` to the pac
 ```
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
-NEWS_FEED_API_KEY=
+TOKENS_API_KEY=
 INTERNAL_DASHBOARD_TOKEN=
 INTERNAL_ENTITY_WRITE_TOKEN=
 INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN=
@@ -207,7 +211,8 @@ pnpm dlx supabase db push
 ```
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
-NEWS_FEED_API_KEY=
+TOKENS_API_KEY=
+NEWS_SQLITE_PATH=.data/news.sqlite
 
 # --- Hermes (central service: src/hermes/) ---
 # HERMES_COMMAND=hermes            # override the CLI binary if not on PATH
@@ -237,6 +242,7 @@ NEWS_RESEARCH_BACKLOG_WARN_AGE_MS=3600000
 ENTITY_MANAGER_NEWS_RUN_ONCE=0
 ENTITY_MANAGER_NEWS_INTERVAL_MS=300000
 ENTITY_MANAGER_NEWS_BATCH_SIZE=20
+ENTITY_MANAGER_HERMES_TIMEOUT_MS=600000
 EDITOR_DRAFT_RUN_ONCE=0
 EDITOR_DRAFT_INTERVAL_MS=3600000
 EDITOR_DRAFT_BATCH_SIZE=2

@@ -105,8 +105,7 @@ shared implementation and types. The former provider-named module under
 - `fetchFeed()` sends `source=all`.
 - `fetchArticles()` sends `source=news`.
 - `fetchPosts()` sends `source=tweets`.
-- Requests use `x-api-key: NEWS_FEED_API_KEY`, with the existing provider key
-  accepted as a compatibility fallback.
+- Requests use `x-api-key: TOKENS_API_KEY`.
 - The limit is clamped to the upstream range of 1–50.
 - The collector explicitly requests `limit=50`.
 - Missing API keys fail loudly.
@@ -347,14 +346,6 @@ NEWS_FEED_RUN_ONCE=1 \
 pnpm --filter @myboon/collectors news:feed:ingest
 ```
 
-When the already-deployed news working store is Supabase, use the matching
-entrypoint instead of changing storage:
-
-```bash
-NEWS_FEED_RUN_ONCE=1 \
-pnpm --filter @myboon/collectors news:feed:ingest:supabase
-```
-
 Run the researcher:
 
 ```bash
@@ -367,8 +358,9 @@ Run the existing news entity-manager command:
 pnpm --filter @myboon/collectors entity-manager:news
 ```
 
-The root `.env` is loaded by the news-feed ingestor. `NEWS_FEED_API_KEY` is the
-logical credential name; the existing provider-specific key remains accepted.
+The dotenv chain is loaded by every news worker. `TOKENS_API_KEY` is the single
+canonical Tokens.xyz credential, and `NEWS_SQLITE_PATH` selects their shared
+working database (default: `packages/collectors/.data/news.sqlite`).
 
 ## Verification
 
@@ -490,7 +482,7 @@ original soak database was not used for research and remained unchanged.
 9. Confirm two Hermes lanes stay inside VPS CPU/memory limits and that backlog
    count and oldest age decline over multiple production cycles.
 
-PM2 starts the Supabase-backed feed ingestor and research-only worker as separate
-processes. The one research process owns the bounded two-lane pool. Both SQLite
-and Supabase entrypoints remain available so local and deployed storage choices
-do not change.
+PM2 starts the SQLite-backed feed ingestor and research-only worker as separate
+processes. The one research process owns the bounded two-lane pool. News
+candidates, deduplication, research, statuses, and queues remain in
+`news.sqlite`; only final entity records cross the Supabase boundary.

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
-import { loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
+import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
+import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { newsResearchToPacket } from './news-adapter'
 import { EntityService } from './entity-service'
 import { HermesEntityExtractionProvider } from './extractor'
@@ -18,6 +19,7 @@ import type {
 } from './types'
 
 const DEFAULT_BATCH_SIZE = 20
+const DEFAULT_INTERVAL_MS = 5 * 60_000
 
 export interface PendingNewsPacket {
   result: NewsResearchResultRow
@@ -155,9 +157,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function main(): Promise<void> {
-  loadDotenvChain()
-
+async function runOnce(): Promise<void> {
   const newsStore = new SqliteNewsStore(process.env.NEWS_SQLITE_PATH)
   try {
     const supabase = createClient(
@@ -167,7 +167,9 @@ async function main(): Promise<void> {
     const result = await runNewsEntityManager({
       newsStore,
       entityStore: new SupabaseEntityMemoryStore(supabase),
-      extractionProvider: new HermesEntityExtractionProvider(),
+      extractionProvider: new HermesEntityExtractionProvider({
+        timeoutMs: positiveInteger(process.env.ENTITY_MANAGER_HERMES_TIMEOUT_MS, 60_000),
+      }),
       batchSize: positiveInteger(process.env.ENTITY_MANAGER_NEWS_BATCH_SIZE, DEFAULT_BATCH_SIZE),
     })
     console.log(JSON.stringify(result, null, 2))
@@ -176,7 +178,21 @@ async function main(): Promise<void> {
   }
 }
 
-if (require.main === module) {
+async function main(): Promise<void> {
+  loadDotenvChain()
+  await runOnce()
+  if (envFlag(process.env.ENTITY_MANAGER_NEWS_RUN_ONCE)) return
+
+  startIntervalRunner({
+    label: 'entity-manager:news',
+    intervalMs: positiveInteger(process.env.ENTITY_MANAGER_NEWS_INTERVAL_MS, DEFAULT_INTERVAL_MS),
+    run: runOnce,
+  })
+}
+
+// Tests import this module for its pipeline functions; PM2 sets
+// NODE_APP_INSTANCE even though its wrapper makes require.main differ.
+if (require.main === module || process.env.NODE_APP_INSTANCE !== undefined) {
   main().catch((error) => {
     console.error(errorMessage(error))
     process.exit(1)

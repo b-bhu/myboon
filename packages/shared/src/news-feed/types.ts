@@ -53,7 +53,7 @@ export interface NewsFeedFetchOptions {
   name?: string
   assetId?: string
   terms?: string[]
-  /** Defaults to NEWS_FEED_API_KEY, with the provider-specific key as a compatibility fallback. */
+  /** Defaults to the canonical Tokens.xyz credential, TOKENS_API_KEY. */
   apiKey?: string
   /** Injection point for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch

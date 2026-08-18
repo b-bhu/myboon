@@ -6,6 +6,7 @@ export const MAX_NEWS_RESEARCH_CONCURRENCY = 4
 export const DEFAULT_NEWS_RESEARCH_BACKLOG_WARN_COUNT = 20
 export const DEFAULT_NEWS_RESEARCH_BACKLOG_WARN_AGE_MS = 60 * 60_000
 export const DEFAULT_NEWS_FEED_INTERVAL_MS = 10 * 60_000
+export const DEFAULT_NEWS_RESEARCH_INTERVAL_MS = 5 * 60_000
 
 // Re-exported so existing importers of `positiveInteger` from this module
 // keep working unchanged; the canonical definition now lives in
@@ -29,4 +30,8 @@ export function newsResearchBacklogWarnCount(value = process.env.NEWS_RESEARCH_B
 
 export function newsResearchBacklogWarnAgeMs(value = process.env.NEWS_RESEARCH_BACKLOG_WARN_AGE_MS): number {
   return positiveInteger(value, DEFAULT_NEWS_RESEARCH_BACKLOG_WARN_AGE_MS)
+}
+
+export function newsResearchIntervalMs(value = process.env.NEWS_RESEARCHER_INTERVAL_MS): number {
+  return positiveInteger(value, DEFAULT_NEWS_RESEARCH_INTERVAL_MS)
 }
