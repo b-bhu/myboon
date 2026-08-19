@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { promisify } from 'node:util'
 import { extractJson } from './json'
+import { HermesConcurrencyLimiter } from './limiter'
 
 /**
  * Central Hermes invocation service.
@@ -12,16 +13,20 @@ import { extractJson } from './json'
  * with its own execFile/spawn plumbing, its own copy of JSON extraction, and
  * no shared visibility into what was actually being spent on LLM calls.
  *
- * The CLI is invoked in exactly two shapes, and both are preserved verbatim:
+ * The CLI is invoked in two shapes:
  *
  *  - oneshot: `hermes [--ignore-rules] [-t <toolsets>] -z <prompt>` -
  *    buffered execFile, one prompt in, stdout out. Used by every structured
  *    (JSON-answer) call site.
- *  - chat: `hermes chat [--profile <p>] [--toolsets <a,b>] --quiet --query
- *    <prompt>` - streaming spawn with a caller-owned timeout, used where the
+ *  - chat: `hermes chat [--profile <p>] [--toolsets <a,b>] --source tool
+ *    --quiet --query <prompt>` - streaming spawn with a caller-owned timeout, used where the
  *    model runs tools (browser/web) and takes minutes, historically only by
  *    the news worker. The research engine uses this mode too: it is the
  *    "actually read pages" mode.
+ *
+ * Both modes share a cross-process concurrency budget. Chat runs are isolated
+ * tool sessions: successful exits report a session id which is deleted
+ * exactly, while timeout signals target the spawned Unix process group.
  *
  * Deliberate design decisions:
  *  - oneshot RETHROWS the underlying execFile error untouched. Call sites
@@ -83,6 +88,10 @@ export interface HermesServiceOptions {
   /** Test seams. Production uses node:child_process. */
   execFileImpl?: ExecFileImpl
   spawnImpl?: SpawnImpl
+  /** Shared limiter injection for deterministic tests. Production defaults
+   * to a cross-process lock-file semaphore. */
+  limiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
+  processGroupKillGraceMs?: number
 }
 
 export interface HermesOneshotRequest {
@@ -126,6 +135,10 @@ export interface HermesChatResult {
   startedAt: string
   finishedAt: string
   durationMs: number
+  /** Hermes tool session created for this isolated call, when reported. */
+  sessionId: string | null
+  /** True only when the exact session above was deleted successfully. */
+  sessionDeleted: boolean
 }
 
 function errorMessage(error: unknown): string {
@@ -137,17 +150,46 @@ function oneshotStatus(error: unknown): HermesCallStatus {
   return anyError && anyError.killed === true && typeof anyError.signal === 'string' ? 'timed_out' : 'failed'
 }
 
+const SESSION_ID_PATTERN = /(?:^|\n)session_id:\s*([A-Za-z0-9_-]+)\s*(?:\n|$)/i
+const SESSION_DELETE_TIMEOUT_MS = 30_000
+const PROCESS_GROUP_KILL_GRACE_MS = 2_000
+
+function sessionIdFromStderr(stderr: string): string | null {
+  return stderr.match(SESSION_ID_PATTERN)?.[1] ?? null
+}
+
+function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (process.platform !== 'win32' && typeof child.pid === 'number' && child.pid > 0) {
+    try {
+      process.kill(-child.pid, signal)
+      return
+    } catch {
+      // Fall through when the child exited between the check and the signal,
+      // or when a test/fallback spawn is not a process-group leader.
+    }
+  }
+  try {
+    child.kill(signal)
+  } catch {
+    // Timeout cleanup must not throw out of the timer callback.
+  }
+}
+
 export class HermesService {
   private readonly command: string
   private readonly observer: HermesCallObserver | null
   private readonly execFileImpl: ExecFileImpl
   private readonly spawnImpl: SpawnImpl
+  private readonly limiter: Pick<HermesConcurrencyLimiter, 'acquire'>
+  private readonly processGroupKillGraceMs: number
 
   constructor(options: HermesServiceOptions = {}) {
     this.command = options.command ?? process.env.HERMES_COMMAND ?? DEFAULT_COMMAND
     this.observer = options.observer ?? null
     this.execFileImpl = options.execFileImpl ?? (execFileAsync as unknown as ExecFileImpl)
     this.spawnImpl = options.spawnImpl ?? spawn
+    this.limiter = options.limiter ?? new HermesConcurrencyLimiter()
+    this.processGroupKillGraceMs = options.processGroupKillGraceMs ?? PROCESS_GROUP_KILL_GRACE_MS
   }
 
   private record(record: HermesCallRecord): void {
@@ -168,6 +210,7 @@ export class HermesService {
       request.prompt,
     ]
     const startedAtMs = Date.now()
+    const lease = await this.limiter.acquire(request.timeoutMs)
     try {
       const { stdout, stderr } = await this.execFileImpl(command, args, {
         timeout: request.timeoutMs,
@@ -207,6 +250,8 @@ export class HermesService {
         error: errorMessage(error).slice(0, 800),
       })
       throw error
+    } finally {
+      lease.release()
     }
   }
 
@@ -219,16 +264,64 @@ export class HermesService {
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0) {
       throw new Error(`Hermes chat timeoutMs must be positive for purpose ${request.purpose}`)
     }
+    return this.chatWithLease(request)
+  }
+
+  private async chatWithLease(request: HermesChatRequest): Promise<HermesChatResult> {
+    const waitingAtMs = Date.now()
+    let lease
+    try {
+      lease = await this.limiter.acquire(request.timeoutMs)
+    } catch (error) {
+      const finishedAtMs = Date.now()
+      const message = errorMessage(error)
+      const command = request.commandOverride ?? this.command
+      const result: HermesChatResult = {
+        status: 'timed_out',
+        stdout: '',
+        stderr: message,
+        exitCode: null,
+        startedAt: new Date(waitingAtMs).toISOString(),
+        finishedAt: new Date(finishedAtMs).toISOString(),
+        durationMs: finishedAtMs - waitingAtMs,
+        sessionId: null,
+        sessionDeleted: false,
+      }
+      this.record({
+        purpose: request.purpose,
+        mode: 'chat',
+        command,
+        status: result.status,
+        startedAt: result.startedAt,
+        finishedAt: result.finishedAt,
+        durationMs: result.durationMs,
+        promptChars: request.prompt.length,
+        stdoutChars: 0,
+        stderrChars: message.length,
+        exitCode: null,
+        error: message.slice(0, 800),
+      })
+      return result
+    }
+    try {
+      return await this.runChat(request)
+    } finally {
+      lease.release()
+    }
+  }
+
+  private runChat(request: HermesChatRequest): Promise<HermesChatResult> {
     const command = request.commandOverride ?? this.command
     const args = ['chat']
     if (request.profile) args.push('--profile', request.profile)
     if (request.toolsets && request.toolsets.length > 0) args.push('--toolsets', request.toolsets.join(','))
-    args.push('--quiet', '--query', request.prompt)
+    args.push('--source', 'tool', '--quiet', '--query', request.prompt)
 
     const startedAtMs = Date.now()
     const startedAt = new Date(startedAtMs).toISOString()
     const child = this.spawnImpl(command, args, {
       shell: false,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -236,6 +329,8 @@ export class HermesService {
     let stderr = ''
     let exitCode: number | null = null
     let settled = false
+    let timedOut = false
+    let forceKill: NodeJS.Timeout | null = null
 
     child.stdout?.on('data', (chunk) => {
       stdout += chunk.toString()
@@ -245,11 +340,16 @@ export class HermesService {
     })
 
     return new Promise((resolve) => {
-      const finish = (status: HermesCallStatus) => {
+      const finish = async (status: HermesCallStatus) => {
         if (settled) return
         settled = true
         clearTimeout(timeout)
+        if (forceKill) clearTimeout(forceKill)
         const finishedAtMs = Date.now()
+        const sessionId = sessionIdFromStderr(stderr)
+        const sessionDeleted = sessionId
+          ? await this.deleteToolSession(command, request.profile, sessionId)
+          : false
         const result: HermesChatResult = {
           status,
           stdout,
@@ -258,6 +358,8 @@ export class HermesService {
           startedAt,
           finishedAt: new Date(finishedAtMs).toISOString(),
           durationMs: finishedAtMs - startedAtMs,
+          sessionId,
+          sessionDeleted,
         }
         this.record({
           purpose: request.purpose,
@@ -277,21 +379,53 @@ export class HermesService {
       }
 
       const timeout = setTimeout(() => {
-        child.kill('SIGTERM')
+        timedOut = true
+        terminateProcessTree(child, 'SIGTERM')
         exitCode = null
-        finish('timed_out')
+        // Hold the shared slot during the grace window. If Hermes closes on
+        // SIGTERM, the close handler settles immediately; otherwise kill the
+        // whole group and settle after the grace period.
+        forceKill = setTimeout(() => {
+          terminateProcessTree(child, 'SIGKILL')
+          void finish('timed_out')
+        }, this.processGroupKillGraceMs)
       }, request.timeoutMs)
 
       child.once('error', (error) => {
         stderr += stderr ? `\n${error.message}` : error.message
         exitCode = null
-        finish('failed')
+        void finish('failed')
       })
 
       child.once('close', (code) => {
         exitCode = typeof code === 'number' ? code : null
-        finish(exitCode === 0 ? 'succeeded' : 'failed')
+        void finish(timedOut ? 'timed_out' : (exitCode === 0 ? 'succeeded' : 'failed'))
       })
     })
+  }
+
+  private async deleteToolSession(command: string, profile: string | undefined, sessionId: string): Promise<boolean> {
+    // Session IDs are generated by Hermes and constrained here before being
+    // passed back to the CLI. Never run a broad prune from a per-job cleanup.
+    if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) return false
+    const args = [
+      ...(profile ? ['--profile', profile] : []),
+      'sessions',
+      'delete',
+      sessionId,
+      '--yes',
+    ]
+    try {
+      await this.execFileImpl(command, args, {
+        timeout: SESSION_DELETE_TIMEOUT_MS,
+        maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
+        env: { ...process.env },
+      })
+      return true
+    } catch {
+      // A cleanup failure must not turn a successful research result into a
+      // failed one. Source-tagged leftovers are safe for scheduled pruning.
+      return false
+    }
   }
 }

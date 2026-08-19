@@ -11,6 +11,7 @@ class FakeChildProcess extends EventEmitter {
 
   kill(signal?: NodeJS.Signals | number): boolean {
     this.killedWith = signal == null ? 'SIGTERM' : String(signal)
+    queueMicrotask(() => this.close(null))
     return true
   }
 
@@ -82,11 +83,14 @@ test('HermesWorkerClient builds the expected command and returns succeeded outpu
     'myboon-worker-test',
     '--toolsets',
     'browser,web',
+    '--source',
+    'tool',
     '--quiet',
     '--query',
     request.prompt,
   ])
   assert.equal(fake.calls[0].options.shell, false)
+  assert.equal(fake.calls[0].options.detached, process.platform !== 'win32')
   assert.deepEqual(fake.calls[0].options.stdio, ['ignore', 'pipe', 'pipe'])
   assert.equal(result.status, 'succeeded')
   assert.equal(result.stdout, 'raw stdout')

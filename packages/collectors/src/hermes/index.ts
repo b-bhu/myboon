@@ -1,5 +1,10 @@
 export { extractJson } from './json'
 export {
+  HermesConcurrencyLimiter,
+  type HermesConcurrencyLease,
+  type HermesConcurrencyLimiterOptions,
+} from './limiter'
+export {
   HermesService,
   type HermesCallMode,
   type HermesCallObserver,

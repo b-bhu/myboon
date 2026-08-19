@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
-import type { ChildProcess } from 'node:child_process'
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { HermesService, type HermesCallRecord } from './service'
 
 interface RecordedExec {
@@ -31,10 +31,10 @@ class FakeChild extends EventEmitter {
 }
 
 function fakeSpawn(script?: (child: FakeChild) => void) {
-  const calls: Array<{ command: string, args: string[] }> = []
+  const calls: Array<{ command: string, args: string[], options?: SpawnOptions }> = []
   const children: FakeChild[] = []
-  const impl = (command: string, args: string[]) => {
-    calls.push({ command, args })
+  const impl = (command: string, args: string[], options?: SpawnOptions) => {
+    calls.push({ command, args, options })
     const child = new FakeChild()
     children.push(child)
     if (script) setImmediate(() => script(child))
@@ -180,7 +180,8 @@ test('chat builds the chat-mode argument list', async () => {
 
   await service.chat({ purpose: 'news.worker', prompt: 'QUERY', timeoutMs: 1000, profile: 'myboonfeed', toolsets: ['browser', 'web'] })
 
-  assert.deepEqual(calls[0].args, ['chat', '--profile', 'myboonfeed', '--toolsets', 'browser,web', '--quiet', '--query', 'QUERY'])
+  assert.deepEqual(calls[0].args, ['chat', '--profile', 'myboonfeed', '--toolsets', 'browser,web', '--source', 'tool', '--quiet', '--query', 'QUERY'])
+  assert.equal(calls[0].options?.detached, process.platform !== 'win32')
 })
 
 test('chat omits profile and toolsets when not provided', async () => {
@@ -189,7 +190,7 @@ test('chat omits profile and toolsets when not provided', async () => {
 
   await service.chat({ purpose: 'news.worker', prompt: 'Q', timeoutMs: 1000 })
 
-  assert.deepEqual(calls[0].args, ['chat', '--quiet', '--query', 'Q'])
+  assert.deepEqual(calls[0].args, ['chat', '--source', 'tool', '--quiet', '--query', 'Q'])
 })
 
 test('chat resolves succeeded with captured stdout on exit 0', async () => {
@@ -237,13 +238,55 @@ test('chat resolves failed and appends the message to stderr on spawn error', as
 
 test('chat kills the child and resolves timed_out when the timeout elapses', async () => {
   const { children, impl } = fakeSpawn() // child never closes
-  const service = new HermesService({ command: 'hermes', spawnImpl: impl })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, processGroupKillGraceMs: 5 })
 
   const result = await service.chat({ purpose: 'news.worker', prompt: 'Q', timeoutMs: 20 })
 
   assert.equal(result.status, 'timed_out')
-  assert.equal(children[0].killedWith, 'SIGTERM')
+  assert.equal(children[0].killedWith, 'SIGKILL')
   assert.equal(result.exitCode, null)
+})
+
+test('chat deletes only the exact source-tagged Hermes session reported by the completed call', async () => {
+  const { calls: execCalls, impl: execImpl } = fakeExec({ stdout: 'Deleted session' })
+  const { impl } = fakeSpawn((child) => {
+    child.stdout.emit('data', Buffer.from('{"ok":true}'))
+    child.stderr.emit('data', Buffer.from('\nsession_id: 20260819_063000_abcd1234\n'))
+    child.emit('close', 0)
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, execFileImpl: execImpl })
+
+  const result = await service.chat({
+    purpose: 'news.worker.research',
+    prompt: 'Q',
+    timeoutMs: 1000,
+    profile: 'myboonfeed',
+  })
+
+  assert.equal(result.sessionId, '20260819_063000_abcd1234')
+  assert.equal(result.sessionDeleted, true)
+  assert.deepEqual(execCalls[0].args, [
+    '--profile',
+    'myboonfeed',
+    'sessions',
+    'delete',
+    '20260819_063000_abcd1234',
+    '--yes',
+  ])
+})
+
+test('chat keeps a successful result when exact session cleanup fails', async () => {
+  const { impl: execImpl } = fakeExec({ error: new Error('session db busy') })
+  const { impl } = fakeSpawn((child) => {
+    child.stderr.emit('data', Buffer.from('\nsession_id: 20260819_063001_dcba4321\n'))
+    child.emit('close', 0)
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, execFileImpl: execImpl })
+
+  const result = await service.chat({ purpose: 'news.worker.research', prompt: 'Q', timeoutMs: 1000 })
+
+  assert.equal(result.status, 'succeeded')
+  assert.equal(result.sessionDeleted, false)
 })
 
 test('chat throws on a non-positive timeout', async () => {

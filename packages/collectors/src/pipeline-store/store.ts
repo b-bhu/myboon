@@ -316,6 +316,33 @@ export interface PipelineFetchResearchByStatusInput {
   offset?: number
 }
 
+export type PipelineEntityManagerResearchStatus =
+  | 'pending'
+  | 'processing'
+  | 'processed'
+  | 'failed'
+  | 'skipped'
+
+export interface PipelineClaimResearchForEntityManagerInput {
+  source: string
+  area: string
+  limit: number
+  leaseOwner: string
+  leaseExpiresAt: string
+  now: string
+  /** Optional freshness boundary. Older rows remain intact but are not
+   * handed to the expensive entity-extraction stage. */
+  observedAfter?: string | null
+}
+
+export interface PipelineFinishResearchForEntityManagerInput {
+  id: string
+  leaseOwner: string
+  status: Extract<PipelineEntityManagerResearchStatus, 'processed' | 'failed'>
+  observedAt: string
+  error?: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Editor decisions (E1-E3)
 // ---------------------------------------------------------------------------
@@ -621,6 +648,10 @@ export interface PipelineStore {
   upsertResearchRows(rows: PipelineResearchUpsertInput[]): Promise<string[]>
   fetchResearchByStatus(input: PipelineFetchResearchByStatusInput): Promise<PipelineResearchRow[]>
   setResearchStatus(ids: string[], status: PipelineResearchStatus, observedAt: string): Promise<void>
+  /** Independent entity-manager queue state. This must never mutate the
+   * editor-owned `pipeline_research.status` column. */
+  claimResearchForEntityManager(input: PipelineClaimResearchForEntityManagerInput): Promise<PipelineResearchRow[]>
+  finishResearchForEntityManager(input: PipelineFinishResearchForEntityManagerInput): Promise<void>
 
   // Editor decisions
   findEditorDecisions(input: PipelineFindEditorDecisionsInput): Promise<PipelineEditorDecisionRow[]>

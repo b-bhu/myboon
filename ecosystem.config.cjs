@@ -21,6 +21,10 @@
 const ROOT = __dirname
 const TSX = `${ROOT}/node_modules/.bin/tsx`
 const TSX_CLI = `${ROOT}/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/cli.mjs`
+const HERMES_ENV = {
+  HERMES_MAX_CONCURRENCY: '2',
+  HERMES_CONCURRENCY_LOCK_DIR: '/tmp/myboon-hermes-slots',
+}
 
 module.exports = {
   apps: [
@@ -71,6 +75,9 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
+        POLYMARKET_RESEARCHER_RUN_ONCE: '0',
+        POLYMARKET_RESEARCHER_INTERVAL_MS: '300000',
         // Pre-research entity gate and read-and-conclude research engine
         // (src/research-gate/, src/research-engine/). Both ON by default;
         // flip a switch to '1' to fall back to the previous behavior
@@ -109,6 +116,7 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         NEWS_RESEARCHER_RUN_ONCE: '0',
         NEWS_RESEARCHER_INTERVAL_MS: '300000',
@@ -129,6 +137,7 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         ENTITY_MANAGER_NEWS_RUN_ONCE: '0',
         ENTITY_MANAGER_NEWS_INTERVAL_MS: '300000',
@@ -148,9 +157,12 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         ENTITY_MANAGER_POLYMARKET_RUN_ONCE: '0',
         ENTITY_MANAGER_POLYMARKET_INTERVAL_MS: '300000',
         ENTITY_MANAGER_POLYMARKET_BATCH_SIZE: '20',
+        ENTITY_MANAGER_POLYMARKET_MAX_AGE_MS: '172800000',
+        ENTITY_MANAGER_POLYMARKET_LEASE_MS: '7200000',
       },
     },
     {
@@ -164,6 +176,7 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',

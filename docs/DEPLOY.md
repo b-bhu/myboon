@@ -46,6 +46,24 @@ falls back to the legacy retrieval path, which additionally needs `python3.12`
 and the last30days script at
 `/root/.agents/skills/last30days/scripts/last30days.py`).
 
+All programmatic chat calls go through `HermesService`. It tags them
+`--source tool`, admits at most `HERMES_MAX_CONCURRENCY` calls across all PM2
+workers, captures Hermes' exact `session_id`, and deletes that session after
+the call. On timeout it signals the complete Unix process group so browser
+descendants do not survive as orphan Chrome processes. Interactive Hermes
+sessions are not selected or pruned by this lifecycle.
+
+If a machine was interrupted before exact cleanup completed, inspect only the
+programmatic session lane first, then prune it explicitly:
+
+```bash
+hermes sessions prune --source tool --older-than 1h --dry-run
+hermes sessions prune --source tool --older-than 1h --yes
+```
+
+Repeat with `--profile myboonfeed` for the news profile. Never run an
+unfiltered session prune on the production host.
+
 ---
 
 ## Pipeline state lives in SQLite on this box
@@ -221,6 +239,8 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 
 # --- Hermes (central service: src/hermes/) ---
 # HERMES_COMMAND=hermes            # override the CLI binary if not on PATH
+# HERMES_MAX_CONCURRENCY=2         # global budget shared by every PM2 worker
+# HERMES_CONCURRENCY_LOCK_DIR=/tmp/myboon-hermes-slots
 # NEWS_HERMES_PROFILE=myboonfeed   # news worker chat profile
 # NEWS_HERMES_TOOLSETS=browser,web
 # EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
@@ -233,9 +253,12 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 
 POLYMARKET_MARKETS_RUN_ONCE=0
 POLYMARKET_RESEARCHER_RUN_ONCE=0
+POLYMARKET_RESEARCHER_INTERVAL_MS=300000
 ENTITY_MANAGER_POLYMARKET_RUN_ONCE=0
 ENTITY_MANAGER_POLYMARKET_INTERVAL_MS=300000
 ENTITY_MANAGER_POLYMARKET_BATCH_SIZE=20
+ENTITY_MANAGER_POLYMARKET_MAX_AGE_MS=172800000  # only the latest 48h reaches Hermes
+ENTITY_MANAGER_POLYMARKET_LEASE_MS=7200000
 NEWS_FEED_RUN_ONCE=0
 NEWS_FEED_INTERVAL_MS=600000
 NEWS_RESEARCHER_RUN_ONCE=0

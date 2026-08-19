@@ -1,4 +1,4 @@
-import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
+import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
@@ -11,7 +11,17 @@ import { ResearchEngine } from '../research-engine'
 import { SupabaseEntityMemoryReader } from '../research-gate'
 import { runPolymarketResearcher } from './researcher'
 
-const RESEARCHER_INTERVAL_MS = 5 * 60 * 1000
+const DEFAULT_RESEARCHER_INTERVAL_MS = 5 * 60 * 1000
+
+export function polymarketResearcherCliConfig(env: NodeJS.ProcessEnv = process.env): {
+  runOnce: boolean
+  intervalMs: number
+} {
+  return {
+    runOnce: envFlag(env.POLYMARKET_RESEARCHER_RUN_ONCE),
+    intervalMs: positiveInteger(env.POLYMARKET_RESEARCHER_INTERVAL_MS, DEFAULT_RESEARCHER_INTERVAL_MS),
+  }
+}
 
 async function runOnce(): Promise<void> {
   const supabase = createClient(
@@ -59,13 +69,13 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const config = polymarketResearcherCliConfig()
   await runOnce()
 
-  // One-shot mode for controlled runs and end-to-end tests. The flag has
-  // been listed in docs/DEPLOY.md's env reference since the PM2 era but the
-  // code never honored it - every sibling runner (data engineer,
-  // entity-manager, editor-draft, publisher) already supports its own.
-  if (process.env.POLYMARKET_RESEARCHER_RUN_ONCE === '1') return
+  // One-shot mode is only for controlled manual runs and end-to-end tests.
+  // The PM2 ecosystem explicitly forces this flag to 0: a clean one-shot
+  // exit combined with PM2 autorestart otherwise becomes a five-second loop.
+  if (config.runOnce) return
 
   // Overlap guard: a single deep_web candidate can take ~11 minutes and a
   // batch can contain several, so a run can plausibly exceed this 5-minute
@@ -73,12 +83,14 @@ async function main(): Promise<void> {
   // start a second concurrent researcher run against the same store.
   startIntervalRunner({
     label: 'polymarket-researcher',
-    intervalMs: RESEARCHER_INTERVAL_MS,
+    intervalMs: config.intervalMs,
     run: runOnce,
   })
 }
 
-main().catch((err) => {
-  console.error('[polymarket-researcher] fatal:', err)
-  process.exit(1)
-})
+if (require.main === module || process.env.NODE_APP_INSTANCE !== undefined) {
+  main().catch((err) => {
+    console.error('[polymarket-researcher] fatal:', err)
+    process.exit(1)
+  })
+}
