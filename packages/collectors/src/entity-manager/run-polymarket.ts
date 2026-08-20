@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
 import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
@@ -9,16 +10,28 @@ import { HermesEntityExtractionProvider } from './extractor'
 import { polymarketResearchToPacket, type PolymarketCandidateContext, type PolymarketResearchRow } from './polymarket-adapter'
 import { EntityService } from './entity-service'
 import { SupabaseEntityMemoryStore } from './supabase-store'
-import type { ExtractionProvider, ResearchPacket, WriteExtractionResult } from './types'
+import type { EntityMemoryStore, ExtractionProvider, ResearchPacket, WriteExtractionResult } from './types'
 
 const SOURCE = 'polymarket'
 const AREA = 'markets'
 const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000
+const DEFAULT_MAX_AGE_MS = 48 * 60 * 60 * 1000
+const DEFAULT_LEASE_MS = 2 * 60 * 60 * 1000
+const DEFAULT_MAX_ATTEMPTS = 3
+const DEFAULT_RETRY_BASE_MS = 5 * 60 * 1000
+const MAX_RETRY_BACKOFF_MS = 60 * 60 * 1000
 
 export interface RunPolymarketEntityManagerOptions {
   batchSize?: number
   extractionProvider?: ExtractionProvider
+  entityStore?: EntityMemoryStore
+  maxAgeMs?: number
+  leaseMs?: number
+  now?: Date
+  leaseOwner?: string
+  maxAttempts?: number
+  retryBaseMs?: number
 }
 
 export interface PolymarketEntityManagerCliConfig {
@@ -26,12 +39,18 @@ export interface PolymarketEntityManagerCliConfig {
   intervalMs: number
   runOnce: boolean
   hermesTimeoutMs: number
+  maxAgeMs: number
+  leaseMs: number
+  maxAttempts: number
+  retryBaseMs: number
 }
 
 export interface PolymarketEntityManagerResult {
   fetched: number
   processed: number
   failed: number
+  retried: number
+  terminalFailed: number
   results: WriteExtractionResult[]
   failures: Array<{ sourceResearchId: string, error: string }>
 }
@@ -60,6 +79,7 @@ function toPolymarketResearchRow(row: {
   recommendedEditorAction: string
   researchBackend: string
   researchModel: string | null
+  entityManagerAttemptCount: number
 }): PolymarketResearchRow {
   return {
     id: row.id,
@@ -85,6 +105,7 @@ function toPolymarketResearchRow(row: {
     recommended_editor_action: row.recommendedEditorAction,
     research_backend: row.researchBackend,
     research_model: row.researchModel,
+    entity_manager_attempt_count: row.entityManagerAttemptCount,
   }
 }
 
@@ -120,61 +141,46 @@ function toPolymarketCandidateContext(row: {
   }
 }
 
-/**
- * Finds the next batch of Polymarket research rows the entity manager has not
- * yet processed.
- *
- * This used to page through up to 50 pages of `polymarket_market_candidate_research`
- * via Supabase `.range()` and cross-check every row against `source_marker`
- * rows in `entity_memories` to find what was already handled - an O(pages)
- * fan-out of marker-lookup queries per run. `entity_memories.source_marker`
- * rows are gone (a Supabase migration now forbids them), so that cross-check
- * is no longer possible even in principle.
- *
- * KNOWN GAP (reported, not silently worked around): `PipelineStore` gives the
- * entity manager no cursor of its own over research rows. `PipelineResearchRow`
- * has exactly one status column, and it is owned end-to-end by the editor
- * stage (`pending_editor` -> `editing` -> `edited`/`rejected`/`needs_more_research`
- * -> `published`), which runs as an independent consumer of the SAME rows on
- * its own schedule. There is no second flag/timestamp/lease field the entity
- * manager could use to mark "I have already turned this into entity_memories"
- * without colliding with the editor's own claim. `claimWithLease` and friends
- * are candidate-only (see `pipeline_candidates.lease_owner` /
- * `lease_expires_at` / `attempt_count` in sqlite-store.ts) - there is no
- * research-row equivalent.
- *
- * Given that gap, this reads `status = 'pending_editor'` (the same "not yet
- * claimed" signal the editor uses) WITHOUT writing back to it, and leans on
- * `writeExtraction`'s existing idempotent-by-key dedup (see
- * entity-manager/resolver.ts) to make re-processing the same row safe. The
- * tradeoff: until the editor stage claims a row and moves it off
- * `pending_editor`, every entity-manager run re-fetches and re-attempts it,
- * doing a no-op write instead of skipping outright. That is wasted work, not
- * a correctness bug - `writeExtraction`'s memory dedup keys already prevent
- * duplicate memories, and the destructive alternative (writing a second
- * status onto the shared column) would risk starving the editor of its own
- * queue. Fixing the waste needs a real interface change (a second status/lease
- * column scoped to this stage), which is out of scope here and reported back
- * as a `PipelineStore` gap.
- */
 async function fetchUnprocessedPolymarketResearchRows(
   store: PipelineStore,
-  limit: number
+  input: {
+    limit: number
+    leaseOwner: string
+    now: Date
+    leaseMs: number
+    maxAgeMs: number
+  }
 ): Promise<PolymarketResearchRow[]> {
-  const rows = await store.fetchResearchByStatus({
+  const now = input.now.toISOString()
+  const rows = await store.claimResearchForEntityManager({
     source: SOURCE,
     area: AREA,
-    status: 'pending_editor',
-    limit,
+    limit: input.limit,
+    leaseOwner: input.leaseOwner,
+    now,
+    leaseExpiresAt: new Date(input.now.getTime() + input.leaseMs).toISOString(),
+    observedAfter: new Date(input.now.getTime() - input.maxAgeMs).toISOString(),
   })
   return rows.map(toPolymarketResearchRow)
 }
 
 export async function fetchUnprocessedPolymarketPackets(
   store: PipelineStore,
-  batchSize: number
+  batchSize: number,
+  options: {
+    leaseOwner?: string
+    now?: Date
+    leaseMs?: number
+    maxAgeMs?: number
+  } = {}
 ): Promise<ResearchPacket[]> {
-  const rows = await fetchUnprocessedPolymarketResearchRows(store, batchSize)
+  const rows = await fetchUnprocessedPolymarketResearchRows(store, {
+    limit: batchSize,
+    leaseOwner: options.leaseOwner ?? `${process.pid}:${randomUUID()}`,
+    now: options.now ?? new Date(),
+    leaseMs: options.leaseMs ?? DEFAULT_LEASE_MS,
+    maxAgeMs: options.maxAgeMs ?? DEFAULT_MAX_AGE_MS,
+  })
   if (rows.length === 0) return []
 
   const candidateIds = [...new Set(rows.map((row) => row.candidate_id))]
@@ -190,38 +196,97 @@ export async function runPolymarketEntityManager(
   options: RunPolymarketEntityManagerOptions = {}
 ): Promise<PolymarketEntityManagerResult> {
   const batchSize = options.batchSize ?? 20
+  const now = options.now ?? new Date()
+  const leaseOwner = options.leaseOwner ?? `${process.pid}:${randomUUID()}`
   const extractionProvider = options.extractionProvider ?? new HermesEntityExtractionProvider()
-  const entityStore = new SupabaseEntityMemoryStore(db)
+  const entityStore = options.entityStore ?? new SupabaseEntityMemoryStore(db)
   const entityService = new EntityService(entityStore)
-  const packets = await fetchUnprocessedPolymarketPackets(store, batchSize)
+  const packets = await fetchUnprocessedPolymarketPackets(store, batchSize, {
+    now,
+    leaseOwner,
+    leaseMs: options.leaseMs,
+    maxAgeMs: options.maxAgeMs,
+  })
   const results: WriteExtractionResult[] = []
   const failures: Array<{ sourceResearchId: string, error: string }> = []
+  let retried = 0
+  let terminalFailed = 0
+  const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
+  const retryBaseMs = Math.max(1, Math.trunc(options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS))
 
   for (const packet of packets) {
+    let result: WriteExtractionResult
     try {
-      results.push(await entityService.writeExtraction(packet, extractionProvider))
+      result = await entityService.writeExtraction(packet, extractionProvider)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       failures.push({ sourceResearchId: packet.sourceResearchId, error: message })
-      await entityService.markExtractionFailed(packet, message)
+      const attemptCount = positivePacketInteger(packet.context.entity_manager_attempt_count, 1)
+      const terminal = isPermanentEntityManagerError(error) || attemptCount >= maxAttempts
+      if (terminal) {
+        terminalFailed += 1
+        try {
+          await entityService.markExtractionFailed(packet, message)
+        } finally {
+          await store.finishResearchForEntityManager({
+            id: packet.sourceResearchId,
+            leaseOwner,
+            status: 'failed',
+            observedAt: now.toISOString(),
+            error: message,
+          })
+        }
+      } else {
+        retried += 1
+        await store.finishResearchForEntityManager({
+          id: packet.sourceResearchId,
+          leaseOwner,
+          status: 'pending',
+          observedAt: now.toISOString(),
+          error: message,
+          nextRetryAt: new Date(now.getTime() + retryDelayMs(attemptCount, retryBaseMs)).toISOString(),
+        })
+      }
+      continue
     }
+
+    // Keep the durable Supabase write and the local queue receipt separate:
+    // if this local status update fails, do not incorrectly write a failure
+    // memory for extraction work that already succeeded.
+    results.push(result)
+    await store.finishResearchForEntityManager({
+      id: packet.sourceResearchId,
+      leaseOwner,
+      status: 'processed',
+      observedAt: new Date().toISOString(),
+    })
   }
 
   return {
     fetched: packets.length,
     processed: results.length,
     failed: failures.length,
+    retried,
+    terminalFailed,
     results,
     failures,
   }
 }
 
 export function polymarketEntityManagerCliConfig(env: NodeJS.ProcessEnv = process.env): PolymarketEntityManagerCliConfig {
+  const hermesTimeoutMs = positiveInteger(env.ENTITY_MANAGER_HERMES_TIMEOUT_MS, 60_000)
   return {
     batchSize: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_BATCH_SIZE, DEFAULT_BATCH_SIZE),
     intervalMs: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_INTERVAL_MS, DEFAULT_INTERVAL_MS),
     runOnce: envFlag(env.ENTITY_MANAGER_POLYMARKET_RUN_ONCE),
-    hermesTimeoutMs: positiveInteger(env.ENTITY_MANAGER_HERMES_TIMEOUT_MS, 60_000),
+    hermesTimeoutMs,
+    maxAgeMs: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_MAX_AGE_MS, DEFAULT_MAX_AGE_MS),
+    leaseMs: positiveInteger(
+      env.ENTITY_MANAGER_POLYMARKET_LEASE_MS,
+      Math.max(DEFAULT_LEASE_MS, hermesTimeoutMs * positiveInteger(env.ENTITY_MANAGER_POLYMARKET_BATCH_SIZE, DEFAULT_BATCH_SIZE))
+    ),
+    maxAttempts: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_MAX_ATTEMPTS, DEFAULT_MAX_ATTEMPTS),
+    retryBaseMs: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_RETRY_BASE_MS, DEFAULT_RETRY_BASE_MS),
   }
 }
 
@@ -242,10 +307,30 @@ async function runAndLog(
     },
     () => runPolymarketEntityManager(store, db, {
       batchSize: config.batchSize,
+      maxAgeMs: config.maxAgeMs,
+      leaseMs: config.leaseMs,
+      maxAttempts: config.maxAttempts,
+      retryBaseMs: config.retryBaseMs,
       extractionProvider: new HermesEntityExtractionProvider({ timeoutMs: config.hermesTimeoutMs }),
     })
   )
   console.log(JSON.stringify(result, null, 2))
+}
+
+function retryDelayMs(attemptCount: number, baseMs: number): number {
+  return Math.min(MAX_RETRY_BACKOFF_MS, baseMs * (2 ** Math.max(0, attemptCount - 1)))
+}
+
+function positivePacketInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function isPermanentEntityManagerError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const classified = error as { retryable?: unknown, permanent?: unknown, code?: unknown }
+  if (classified.retryable === false || classified.permanent === true) return true
+  return classified.code === 'ENTITY_PACKET_INVALID' || classified.code === 'ENTITY_SOURCE_UNSUPPORTED'
 }
 
 async function main(): Promise<void> {

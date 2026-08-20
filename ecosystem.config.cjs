@@ -21,6 +21,14 @@
 const ROOT = __dirname
 const TSX = `${ROOT}/node_modules/.bin/tsx`
 const TSX_CLI = `${ROOT}/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/cli.mjs`
+const HERMES_ENV = {
+  // Browser sessions are long and expensive; structured calls are short.
+  // Separate pools prevent browser research from starving entity/editor work.
+  HERMES_BROWSER_MAX_CONCURRENCY: '2',
+  HERMES_BROWSER_CONCURRENCY_LOCK_DIR: '/tmp/myboon-hermes-slots',
+  HERMES_STRUCTURED_MAX_CONCURRENCY: '4',
+  HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR: '/tmp/myboon-hermes-structured-slots',
+}
 
 module.exports = {
   apps: [
@@ -71,6 +79,9 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
+        POLYMARKET_RESEARCHER_RUN_ONCE: '0',
+        POLYMARKET_RESEARCHER_INTERVAL_MS: '300000',
         // Pre-research entity gate and read-and-conclude research engine
         // (src/research-gate/, src/research-engine/). Both ON by default;
         // flip a switch to '1' to fall back to the previous behavior
@@ -109,6 +120,7 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         NEWS_RESEARCHER_RUN_ONCE: '0',
         NEWS_RESEARCHER_INTERVAL_MS: '300000',
@@ -116,6 +128,10 @@ module.exports = {
         NEWS_RESEARCHER_CONCURRENCY: '2',
         NEWS_RESEARCH_BACKLOG_WARN_COUNT: '20',
         NEWS_RESEARCH_BACKLOG_WARN_AGE_MS: '3600000',
+        NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED: '1',
+        NEWS_AGENT_BROWSER_READ_TIMEOUT_MS: '30000',
+        NEWS_AGENT_BROWSER_MAX_OUTPUT_CHARS: '40000',
+        NEWS_HERMES_BROWSER_FALLBACK_ENABLED: '1',
       },
     },
     {
@@ -129,6 +145,7 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         ENTITY_MANAGER_NEWS_RUN_ONCE: '0',
         ENTITY_MANAGER_NEWS_INTERVAL_MS: '300000',
@@ -148,9 +165,14 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         ENTITY_MANAGER_POLYMARKET_RUN_ONCE: '0',
         ENTITY_MANAGER_POLYMARKET_INTERVAL_MS: '300000',
         ENTITY_MANAGER_POLYMARKET_BATCH_SIZE: '20',
+        ENTITY_MANAGER_POLYMARKET_MAX_AGE_MS: '172800000',
+        ENTITY_MANAGER_POLYMARKET_LEASE_MS: '7200000',
+        ENTITY_MANAGER_POLYMARKET_MAX_ATTEMPTS: '3',
+        ENTITY_MANAGER_POLYMARKET_RETRY_BASE_MS: '300000',
       },
     },
     {
@@ -164,6 +186,7 @@ module.exports = {
       restart_delay: 5000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        ...HERMES_ENV,
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',

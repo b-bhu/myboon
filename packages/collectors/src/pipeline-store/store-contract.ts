@@ -620,6 +620,114 @@ export function runPipelineStoreContract(
     })
   })
 
+  test(`${label}: entity-manager research queue is independent, leased, fresh-only, and terminal`, async () => {
+    await withStore(async (store) => {
+      const candidateRows = await store.insertCandidates([
+        makeCandidate({ dedupeKey: 'dk-entity-queue-fresh' }),
+        makeCandidate({ dedupeKey: 'dk-entity-queue-stale', observedAt: T0_MINUS_10D }),
+        makeCandidate({ dedupeKey: 'dk-entity-queue-rejected' }),
+        makeCandidate({ dedupeKey: 'dk-entity-queue-recoverable' }),
+      ])
+      const candidatesByDedupe = new Map(candidateRows.map((row) => [row.dedupeKey, row]))
+      const freshCandidate = candidatesByDedupe.get('dk-entity-queue-fresh')!
+      const staleCandidate = candidatesByDedupe.get('dk-entity-queue-stale')!
+      const rejectedCandidate = candidatesByDedupe.get('dk-entity-queue-rejected')!
+      const recoverableCandidate = candidatesByDedupe.get('dk-entity-queue-recoverable')!
+      await store.upsertResearchRows([
+        makeResearchInput(freshCandidate.id, { researchedAt: T0, status: 'pending_editor' }),
+        makeResearchInput(staleCandidate.id, { researchedAt: T0_MINUS_10D, status: 'pending_editor' }),
+        makeResearchInput(rejectedCandidate.id, { researchedAt: T0, status: 'rejected' }),
+        makeResearchInput(recoverableCandidate.id, { researchedAt: T0_PLUS_1H, status: 'pending_editor' }),
+      ])
+
+      const firstClaim = await store.claimResearchForEntityManager({
+        source: 'polymarket',
+        area: 'crypto',
+        limit: 1,
+        leaseOwner: 'worker-a',
+        now: T0_PLUS_1H,
+        leaseExpiresAt: T0_PLUS_2H,
+        observedAfter: T0_MINUS_1D,
+      })
+      assert.equal(firstClaim.length, 1)
+      assert.ok([freshCandidate.id, recoverableCandidate.id].includes(firstClaim[0].candidateId))
+      const firstClaimedId = firstClaim[0].id
+
+      // The editor's queue status remains untouched by the second consumer.
+      assert.equal((await store.getResearchByIds([firstClaimedId]))[0].status, 'pending_editor')
+
+      await store.finishResearchForEntityManager({
+        id: firstClaimedId,
+        leaseOwner: 'worker-a',
+        status: 'processed',
+        observedAt: T0_PLUS_1H,
+      })
+
+      const recoverableClaim = await store.claimResearchForEntityManager({
+        source: 'polymarket',
+        area: 'crypto',
+        limit: 1,
+        leaseOwner: 'worker-a',
+        now: T0_PLUS_1H,
+        leaseExpiresAt: T0_PLUS_2H,
+        observedAfter: T0_MINUS_1D,
+      })
+      assert.equal(recoverableClaim.length, 1)
+      assert.ok([freshCandidate.id, recoverableCandidate.id].includes(recoverableClaim[0].candidateId))
+      assert.notEqual(recoverableClaim[0].candidateId, firstClaim[0].candidateId)
+      const secondClaimedId = recoverableClaim[0].id
+
+      await assert.rejects(() => store.finishResearchForEntityManager({
+        id: secondClaimedId,
+        leaseOwner: 'wrong-worker',
+        status: 'processed',
+        observedAt: T0_PLUS_1H,
+      }), /is not owned by wrong-worker/)
+
+      // A live lease cannot be claimed twice.
+      const liveLeaseClaim = await store.claimResearchForEntityManager({
+        source: 'polymarket',
+        area: 'crypto',
+        limit: 10,
+        leaseOwner: 'worker-b',
+        now: T0_PLUS_1H,
+        leaseExpiresAt: T0_PLUS_2H,
+        observedAfter: T0_MINUS_1D,
+      })
+      assert.deepEqual(liveLeaseClaim, [])
+
+      // Once the lease expires, a new owner recovers exactly that row.
+      const recovered = await store.claimResearchForEntityManager({
+        source: 'polymarket',
+        area: 'crypto',
+        limit: 10,
+        leaseOwner: 'worker-b',
+        now: T0_PLUS_1D,
+        leaseExpiresAt: '2026-07-02T02:00:00.000Z',
+        observedAfter: T0_MINUS_1D,
+      })
+      assert.deepEqual(recovered.map((row) => row.id), [secondClaimedId])
+      await store.finishResearchForEntityManager({
+        id: secondClaimedId,
+        leaseOwner: 'worker-b',
+        status: 'failed',
+        observedAt: T0_PLUS_1D,
+        error: 'test failure',
+      })
+
+      const terminalClaim = await store.claimResearchForEntityManager({
+        source: 'polymarket',
+        area: 'crypto',
+        limit: 10,
+        leaseOwner: 'worker-c',
+        now: T0_PLUS_1D,
+        leaseExpiresAt: '2026-07-02T02:00:00.000Z',
+        observedAfter: T0_MINUS_1D,
+      })
+      assert.deepEqual(terminalClaim, [])
+    })
+  })
+
   // -------------------------------------------------------------------------
   // Editor decisions (E1-E3)
   // -------------------------------------------------------------------------

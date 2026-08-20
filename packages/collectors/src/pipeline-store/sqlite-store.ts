@@ -9,6 +9,7 @@ import type {
   PipelineCandidateRow,
   PipelineCandidateThreadUpdate,
   PipelineClaimRetryableWithLeaseInput,
+  PipelineClaimResearchForEntityManagerInput,
   PipelineClaimWithLeaseInput,
   PipelineDraftAction,
   PipelineDraftRow,
@@ -25,6 +26,7 @@ import type {
   PipelineFetchEligibleDraftsInput,
   PipelineFetchPendingCandidatesInput,
   PipelineFetchResearchByStatusInput,
+  PipelineFinishResearchForEntityManagerInput,
   PipelineFindCandidatesForBacklogInput,
   PipelineFindEditorDecisionsInput,
   PipelineFindPriorResearchInput,
@@ -284,6 +286,16 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
       duplicate_of_research_id TEXT REFERENCES pipeline_research(id) ON DELETE SET NULL,
       research_backend TEXT NOT NULL DEFAULT 'hermes_cli',
       research_model TEXT,
+      entity_manager_status TEXT NOT NULL DEFAULT 'pending' CHECK (
+        entity_manager_status IN ('pending', 'processing', 'processed', 'failed', 'skipped')
+      ),
+      entity_manager_lease_owner TEXT,
+      entity_manager_lease_expires_at TEXT,
+      entity_manager_attempt_count INTEGER NOT NULL DEFAULT 0,
+      entity_manager_attempted_at TEXT,
+      entity_manager_next_retry_at TEXT,
+      entity_manager_processed_at TEXT,
+      entity_manager_error TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (candidate_id)
@@ -396,6 +408,30 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
 
     CREATE INDEX IF NOT EXISTS pipeline_runs_status_started_idx
       ON pipeline_runs (status, started_at DESC);
+  `)
+
+  // Additive local migration for VPS databases created before the entity
+  // manager got an independent queue cursor. No rows are deleted or reset.
+  const researchColumns = new Set(
+    (db.prepare('PRAGMA table_info(pipeline_research)').all() as Array<Record<string, unknown>>)
+      .map((row) => String(row.name))
+  )
+  const additions: Array<[string, string]> = [
+    ['entity_manager_status', "TEXT NOT NULL DEFAULT 'pending' CHECK (entity_manager_status IN ('pending', 'processing', 'processed', 'failed', 'skipped'))"],
+    ['entity_manager_lease_owner', 'TEXT'],
+    ['entity_manager_lease_expires_at', 'TEXT'],
+    ['entity_manager_attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+    ['entity_manager_attempted_at', 'TEXT'],
+    ['entity_manager_next_retry_at', 'TEXT'],
+    ['entity_manager_processed_at', 'TEXT'],
+    ['entity_manager_error', 'TEXT'],
+  ]
+  for (const [name, definition] of additions) {
+    if (!researchColumns.has(name)) db.exec(`ALTER TABLE pipeline_research ADD COLUMN ${name} ${definition}`)
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS pipeline_research_entity_manager_retry_queue_idx
+      ON pipeline_research (entity_manager_status, entity_manager_next_retry_at, entity_manager_lease_expires_at, researched_at);
   `)
 }
 
@@ -891,9 +927,10 @@ export class SqlitePipelineStore implements PipelineStore {
           related_context, uncertainty, editor_notes, status, researched_at,
           research_family_key, research_cluster_key, research_depth,
           evidence_quality, catalyst_found, recommended_editor_action,
-          duplicate_of_research_id, research_backend, research_model
+          duplicate_of_research_id, research_backend, research_model,
+          entity_manager_status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (candidate_id) DO UPDATE SET
           source = excluded.source,
           area = excluded.area,
@@ -919,6 +956,14 @@ export class SqlitePipelineStore implements PipelineStore {
           duplicate_of_research_id = excluded.duplicate_of_research_id,
           research_backend = excluded.research_backend,
           research_model = excluded.research_model,
+          entity_manager_status = excluded.entity_manager_status,
+          entity_manager_lease_owner = NULL,
+          entity_manager_lease_expires_at = NULL,
+          entity_manager_attempt_count = 0,
+          entity_manager_attempted_at = NULL,
+          entity_manager_next_retry_at = NULL,
+          entity_manager_processed_at = NULL,
+          entity_manager_error = NULL,
           updated_at = CURRENT_TIMESTAMP
       `)
       for (const row of rows) {
@@ -948,7 +993,8 @@ export class SqlitePipelineStore implements PipelineStore {
           row.recommendedEditorAction,
           row.duplicateOfResearchId ?? null,
           row.researchBackend,
-          row.researchModel ?? null
+          row.researchModel ?? null,
+          row.status === 'rejected' || row.status === 'needs_more_research' ? 'skipped' : 'pending'
         )
       }
     })
@@ -1003,6 +1049,100 @@ export class SqlitePipelineStore implements PipelineStore {
         `).run(status, observedAt, ...batch)
       }
     })
+  }
+
+  async claimResearchForEntityManager(
+    input: PipelineClaimResearchForEntityManagerInput
+  ): Promise<PipelineResearchRow[]> {
+    if (input.limit <= 0) return []
+
+    return this.tx(() => {
+      // A worker that died while holding a row must not strand it forever.
+      this.db.prepare(`
+        UPDATE pipeline_research
+        SET entity_manager_status = 'pending',
+            entity_manager_lease_owner = NULL,
+            entity_manager_lease_expires_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE entity_manager_status = 'processing'
+          AND entity_manager_lease_expires_at IS NOT NULL
+          AND entity_manager_lease_expires_at <= ?
+      `).run(input.now)
+
+      const freshnessClause = input.observedAfter ? ' AND c.observed_at >= ?' : ''
+      const params: unknown[] = [input.source, input.area, input.now]
+      if (input.observedAfter) params.push(input.observedAfter)
+      params.push(Math.max(0, input.limit))
+      const ids = (this.db.prepare(`
+        SELECT r.id
+        FROM pipeline_research r
+        JOIN pipeline_candidates c ON c.id = r.candidate_id
+        WHERE r.source = ?
+          AND r.area = ?
+          AND r.entity_manager_status = 'pending'
+          AND (r.entity_manager_next_retry_at IS NULL OR r.entity_manager_next_retry_at <= ?)
+          AND r.status NOT IN ('rejected', 'needs_more_research')${freshnessClause}
+        ORDER BY r.researched_at ASC, r.id ASC
+        LIMIT ?
+      `).all(...params) as Array<Record<string, unknown>>).map((row) => String(row.id))
+      if (ids.length === 0) return []
+
+      this.db.prepare(`
+        UPDATE pipeline_research
+        SET entity_manager_status = 'processing',
+            entity_manager_lease_owner = ?,
+            entity_manager_lease_expires_at = ?,
+            entity_manager_attempt_count = entity_manager_attempt_count + 1,
+            entity_manager_attempted_at = ?,
+            entity_manager_next_retry_at = NULL,
+            entity_manager_error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (${placeholders(ids.length)})
+          AND entity_manager_status = 'pending'
+      `).run(input.leaseOwner, input.leaseExpiresAt, input.now, ...ids)
+
+      const rows = this.db.prepare(`
+        SELECT r.*, c.source AS candidate_source, c.area AS candidate_area
+        FROM pipeline_research r
+        JOIN pipeline_candidates c ON c.id = r.candidate_id
+        WHERE r.id IN (${placeholders(ids.length)})
+          AND r.entity_manager_status = 'processing'
+          AND r.entity_manager_lease_owner = ?
+        ORDER BY r.researched_at ASC, r.id ASC
+      `).all(...ids, input.leaseOwner) as Array<Record<string, unknown>>
+      return rows.map(mapResearchRow)
+    })
+  }
+
+  async finishResearchForEntityManager(
+    input: PipelineFinishResearchForEntityManagerInput
+  ): Promise<void> {
+    const result = this.db.prepare(`
+      UPDATE pipeline_research
+      SET entity_manager_status = ?,
+          entity_manager_lease_owner = NULL,
+          entity_manager_lease_expires_at = NULL,
+          entity_manager_next_retry_at = ?,
+          entity_manager_processed_at = CASE WHEN ? IN ('processed', 'failed') THEN ? ELSE NULL END,
+          entity_manager_error = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND entity_manager_status = 'processing'
+        AND entity_manager_lease_owner = ?
+    `).run(
+      input.status,
+      input.nextRetryAt ?? null,
+      input.status,
+      input.observedAt,
+      input.error ?? null,
+      input.id,
+      input.leaseOwner,
+    ) as {
+      changes?: number | bigint
+    }
+    if (Number(result.changes ?? 0) !== 1) {
+      throw new Error(`Entity Manager lease ${input.id} is not owned by ${input.leaseOwner}`)
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1620,6 +1760,9 @@ function mapResearchRow(row: Record<string, unknown>): PipelineResearchRow {
     duplicateOfResearchId: stringOrNull(row.duplicate_of_research_id),
     researchBackend: String(row.research_backend),
     researchModel: stringOrNull(row.research_model),
+    entityManagerStatus: String(row.entity_manager_status ?? 'pending') as PipelineResearchRow['entityManagerStatus'],
+    entityManagerAttemptCount: numberValue(row.entity_manager_attempt_count),
+    entityManagerNextRetryAt: stringOrNull(row.entity_manager_next_retry_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   }

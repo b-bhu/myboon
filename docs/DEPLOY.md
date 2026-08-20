@@ -38,13 +38,56 @@ hermes --ignore-rules -z 'Return exactly this JSON: {"ok": true}'
 # chat/tool mode with page reading (news research AND the research engine)
 hermes chat --profile myboonfeed --toolsets browser,web --quiet \
   --query 'Open https://example.com and return its <title> as JSON: {"title": "..."}'
+
+# pinned agent-browser HTTP-only reader used by the news fast path
+pnpm --filter @myboon/collectors exec agent-browser --version
+pnpm --filter @myboon/collectors exec agent-browser --json --content-boundaries \
+  --max-output 2000 read https://example.com
 ```
 
-If the last command fails, the news lane and the research engine cannot work;
-fix hermes before starting, or set `RESEARCH_ENGINE_DISABLED=1` (researcher
-falls back to the legacy retrieval path, which additionally needs `python3.12`
-and the last30days script at
-`/root/.agents/skills/last30days/scripts/last30days.py`).
+If the Hermes chat command fails, news browser fallback and the Polymarket
+research engine cannot work; fix Hermes before starting, or set
+`RESEARCH_ENGINE_DISABLED=1` (the researcher then uses the legacy retrieval
+path, which additionally needs `python3.12` and the last30days script at
+`/root/.agents/skills/last30days/scripts/last30days.py`). If only the
+agent-browser smoke fails, news can still use Hermes browser fallback, but the
+lower-CPU fast path is unavailable. Version 0.34.0 requires Node.js 24 or newer.
+
+Known news article URLs are first retrieved by a public-only HTTP client that
+validates every redirect before requesting it and pins the validated DNS address
+through connection. The retrieved bytes are then exposed on a random, one-use
+loopback URL for pinned `agent-browser`'s HTTP-only `read` command; agent-browser
+never receives the external URL. A successful conversion must report
+`lifecycle.launched=false`; its bounded content is treated as untrusted evidence
+and passed to structured Hermes. A blocked, short, or timed-out conversion may
+fall back to Hermes browser/web chat only with agent-browser native domain
+containment set to the already-vetted redirect hosts. Contained source-URL
+fallback excludes the separate Hermes `web` tool because it does not inherit
+agent-browser network policy. Invalid, private, or
+incompletely vetted destinations fail closed and never reach that fallback.
+`NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED=0` is the fast
+kill switch, while `NEWS_HERMES_BROWSER_FALLBACK_ENABLED=0` disables fallback.
+
+All programmatic Hermes calls go through `HermesService`. Browser chat and
+structured one-shot work have independent cross-process budgets, controlled by
+`HERMES_BROWSER_MAX_CONCURRENCY` and `HERMES_STRUCTURED_MAX_CONCURRENCY`, so a
+long browser queue cannot starve entity/editor calls. Chat calls are tagged
+`--source tool`; the service captures Hermes' exact `session_id` and deletes
+that session after the call. On timeout it signals the complete Unix process
+group, keeps the concurrency lease through the SIGKILL grace period, and confirms
+group exit so browser descendants do not survive as orphan Chrome processes.
+Interactive Hermes sessions are not selected or pruned by this lifecycle.
+
+If a machine was interrupted before exact cleanup completed, inspect only the
+programmatic session lane first, then prune it explicitly:
+
+```bash
+hermes sessions prune --source tool --older-than 1h --dry-run
+hermes sessions prune --source tool --older-than 1h --yes
+```
+
+Repeat with `--profile myboonfeed` for the news profile. Never run an
+unfiltered session prune on the production host.
 
 ---
 
@@ -221,8 +264,17 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 
 # --- Hermes (central service: src/hermes/) ---
 # HERMES_COMMAND=hermes            # override the CLI binary if not on PATH
+# HERMES_BROWSER_MAX_CONCURRENCY=2
+# HERMES_BROWSER_CONCURRENCY_LOCK_DIR=/tmp/myboon-hermes-slots
+# HERMES_STRUCTURED_MAX_CONCURRENCY=4
+# HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR=/tmp/myboon-hermes-structured-slots
+# Legacy HERMES_MAX_CONCURRENCY/HERMES_CONCURRENCY_LOCK_DIR are browser fallbacks
 # NEWS_HERMES_PROFILE=myboonfeed   # news worker chat profile
 # NEWS_HERMES_TOOLSETS=browser,web
+# NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED=1
+# NEWS_AGENT_BROWSER_READ_TIMEOUT_MS=30000
+# NEWS_AGENT_BROWSER_MAX_OUTPUT_CHARS=40000
+# NEWS_HERMES_BROWSER_FALLBACK_ENABLED=1
 # EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
 
 # --- Research gate + engine (entity pipeline rebuild) ---
@@ -233,9 +285,14 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 
 POLYMARKET_MARKETS_RUN_ONCE=0
 POLYMARKET_RESEARCHER_RUN_ONCE=0
+POLYMARKET_RESEARCHER_INTERVAL_MS=300000
 ENTITY_MANAGER_POLYMARKET_RUN_ONCE=0
 ENTITY_MANAGER_POLYMARKET_INTERVAL_MS=300000
 ENTITY_MANAGER_POLYMARKET_BATCH_SIZE=20
+ENTITY_MANAGER_POLYMARKET_MAX_AGE_MS=172800000  # only the latest 48h reaches Hermes
+ENTITY_MANAGER_POLYMARKET_LEASE_MS=7200000
+ENTITY_MANAGER_POLYMARKET_MAX_ATTEMPTS=3         # transient extraction attempts
+ENTITY_MANAGER_POLYMARKET_RETRY_BASE_MS=300000   # exponential backoff, capped at 1h
 NEWS_FEED_RUN_ONCE=0
 NEWS_FEED_INTERVAL_MS=600000
 NEWS_RESEARCHER_RUN_ONCE=0

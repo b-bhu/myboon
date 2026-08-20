@@ -43,6 +43,7 @@
   "dependencies": {
     "@myboon/shared": "workspace:*",
     "@supabase/supabase-js": "^2.39.0",
+    "agent-browser": "0.34.0",
     "dotenv": "^16.4.1"
   },
   "devDependencies": {
