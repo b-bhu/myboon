@@ -43,6 +43,36 @@ function fakeSpawn(script?: (child: FakeChild) => void) {
   return { calls, children, impl }
 }
 
+test('oneshot and chat acquire independent structured and browser pools', async () => {
+  let structuredAcquires = 0
+  let browserAcquires = 0
+  const { impl: execImpl } = fakeExec({ stdout: 'ok' })
+  const { impl: spawnImpl } = fakeSpawn((child) => child.emit('close', 0))
+  const service = new HermesService({
+    command: 'hermes',
+    execFileImpl: execImpl,
+    spawnImpl,
+    structuredLimiter: {
+      acquire: async () => {
+        structuredAcquires += 1
+        return { release() {} }
+      },
+    },
+    browserLimiter: {
+      acquire: async () => {
+        browserAcquires += 1
+        return { release() {} }
+      },
+    },
+  })
+
+  await service.oneshot({ purpose: 'test.structured-pool', prompt: 'P', timeoutMs: 1000 })
+  await service.chat({ purpose: 'test.browser-pool', prompt: 'Q', timeoutMs: 1000 })
+
+  assert.equal(structuredAcquires, 1)
+  assert.equal(browserAcquires, 1)
+})
+
 // ---------------------------------------------------------------- oneshot ---
 
 test('oneshot builds --ignore-rules, -t and -z args in the legacy order', async () => {

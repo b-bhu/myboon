@@ -22,8 +22,12 @@ const ROOT = __dirname
 const TSX = `${ROOT}/node_modules/.bin/tsx`
 const TSX_CLI = `${ROOT}/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/cli.mjs`
 const HERMES_ENV = {
-  HERMES_MAX_CONCURRENCY: '2',
-  HERMES_CONCURRENCY_LOCK_DIR: '/tmp/myboon-hermes-slots',
+  // Browser sessions are long and expensive; structured calls are short.
+  // Separate pools prevent browser research from starving entity/editor work.
+  HERMES_BROWSER_MAX_CONCURRENCY: '2',
+  HERMES_BROWSER_CONCURRENCY_LOCK_DIR: '/tmp/myboon-hermes-slots',
+  HERMES_STRUCTURED_MAX_CONCURRENCY: '4',
+  HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR: '/tmp/myboon-hermes-structured-slots',
 }
 
 module.exports = {
@@ -124,6 +128,10 @@ module.exports = {
         NEWS_RESEARCHER_CONCURRENCY: '2',
         NEWS_RESEARCH_BACKLOG_WARN_COUNT: '20',
         NEWS_RESEARCH_BACKLOG_WARN_AGE_MS: '3600000',
+        NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED: '1',
+        NEWS_AGENT_BROWSER_READ_TIMEOUT_MS: '30000',
+        NEWS_AGENT_BROWSER_MAX_OUTPUT_CHARS: '40000',
+        NEWS_HERMES_BROWSER_FALLBACK_ENABLED: '1',
       },
     },
     {

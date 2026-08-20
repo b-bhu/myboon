@@ -35,6 +35,9 @@ export interface NewsResearchRunResult {
   researchFailed: number
   researchResultsInserted: number
   jsonValidationFailures: number
+  agentBrowserReadsSucceeded: number
+  agentBrowserReadsFailed: number
+  hermesBrowserFallbacks: number
   failures: NewsResearchFailure[]
 }
 
@@ -90,6 +93,9 @@ export async function runPendingNewsResearch(input: {
     researchFailed: 0,
     researchResultsInserted: 0,
     jsonValidationFailures: 0,
+    agentBrowserReadsSucceeded: 0,
+    agentBrowserReadsFailed: 0,
+    hermesBrowserFallbacks: 0,
     failures: [],
   }
 
@@ -104,7 +110,11 @@ export async function runPendingNewsResearch(input: {
         taskType: 'source_aware_research',
         prompt: buildResearchPrompt(request),
         timeoutMs: options.researchTimeoutMs,
+        sourceUrl: request.article.canonical_article_url,
       })
+      if (worker.sourceReadStatus === 'succeeded') result.agentBrowserReadsSucceeded += 1
+      if (worker.sourceReadStatus === 'failed' || worker.sourceReadStatus === 'timed_out') result.agentBrowserReadsFailed += 1
+      if (worker.executionMode === 'hermes_browser_fallback') result.hermesBrowserFallbacks += 1
       if (worker.status !== 'succeeded') {
         throw new Error(`Hermes research ${worker.status}: ${worker.stderr.slice(0, 500)}`)
       }

@@ -20,7 +20,12 @@ export interface HermesWorkerRequest {
   taskType: HermesWorkerTaskType
   prompt: string
   timeoutMs: number
+  /** Known article URL used by the HTTP-only agent-browser read fast path. */
+  sourceUrl?: string
 }
+
+export type NewsResearchExecutionMode = 'agent_browser_read' | 'hermes_browser_fallback'
+export type NewsSourceReadStatus = 'succeeded' | 'failed' | 'timed_out' | 'skipped'
 
 export interface HermesWorkerResult {
   jobId: string
@@ -32,6 +37,10 @@ export interface HermesWorkerResult {
   startedAt: string
   finishedAt: string
   durationMs: number
+  executionMode?: NewsResearchExecutionMode
+  sourceReadStatus?: NewsSourceReadStatus
+  sourceReadDurationMs?: number
+  sourceReadError?: string | null
 }
 
 export interface HermesWorkerClientOptions {

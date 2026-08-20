@@ -24,7 +24,8 @@ import { HermesConcurrencyLimiter } from './limiter'
  *    the news worker. The research engine uses this mode too: it is the
  *    "actually read pages" mode.
  *
- * Both modes share a cross-process concurrency budget. Chat runs are isolated
+ * The modes use separate cross-process concurrency budgets so long browser
+ * sessions cannot starve lightweight structured calls. Chat runs are isolated
  * tool sessions: successful exits report a session id which is deleted
  * exactly, while timeout signals target the spawned Unix process group.
  *
@@ -91,6 +92,10 @@ export interface HermesServiceOptions {
   /** Shared limiter injection for deterministic tests. Production defaults
    * to a cross-process lock-file semaphore. */
   limiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
+  /** Optional independent limiter injections. `limiter` remains a legacy
+   * shortcut that supplies both pools when these are omitted. */
+  structuredLimiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
+  browserLimiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
   processGroupKillGraceMs?: number
 }
 
@@ -154,6 +159,12 @@ const SESSION_ID_PATTERN = /(?:^|\n)session_id:\s*([A-Za-z0-9_-]+)\s*(?:\n|$)/i
 const SESSION_DELETE_TIMEOUT_MS = 30_000
 const PROCESS_GROUP_KILL_GRACE_MS = 2_000
 
+function positiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
 function sessionIdFromStderr(stderr: string): string | null {
   return stderr.match(SESSION_ID_PATTERN)?.[1] ?? null
 }
@@ -180,7 +191,8 @@ export class HermesService {
   private readonly observer: HermesCallObserver | null
   private readonly execFileImpl: ExecFileImpl
   private readonly spawnImpl: SpawnImpl
-  private readonly limiter: Pick<HermesConcurrencyLimiter, 'acquire'>
+  private readonly structuredLimiter: Pick<HermesConcurrencyLimiter, 'acquire'>
+  private readonly browserLimiter: Pick<HermesConcurrencyLimiter, 'acquire'>
   private readonly processGroupKillGraceMs: number
 
   constructor(options: HermesServiceOptions = {}) {
@@ -188,7 +200,23 @@ export class HermesService {
     this.observer = options.observer ?? null
     this.execFileImpl = options.execFileImpl ?? (execFileAsync as unknown as ExecFileImpl)
     this.spawnImpl = options.spawnImpl ?? spawn
-    this.limiter = options.limiter ?? new HermesConcurrencyLimiter()
+    this.structuredLimiter = options.structuredLimiter ?? options.limiter ?? new HermesConcurrencyLimiter({
+      maxConcurrency: positiveInteger(
+        process.env.HERMES_STRUCTURED_MAX_CONCURRENCY,
+        4,
+      ),
+      lockDir: process.env.HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR
+        ?? '/tmp/myboon-hermes-structured-slots',
+    })
+    this.browserLimiter = options.browserLimiter ?? options.limiter ?? new HermesConcurrencyLimiter({
+      maxConcurrency: positiveInteger(
+        process.env.HERMES_BROWSER_MAX_CONCURRENCY ?? process.env.HERMES_MAX_CONCURRENCY,
+        2,
+      ),
+      lockDir: process.env.HERMES_BROWSER_CONCURRENCY_LOCK_DIR
+        ?? process.env.HERMES_CONCURRENCY_LOCK_DIR
+        ?? '/tmp/myboon-hermes-slots',
+    })
     this.processGroupKillGraceMs = options.processGroupKillGraceMs ?? PROCESS_GROUP_KILL_GRACE_MS
   }
 
@@ -210,7 +238,7 @@ export class HermesService {
       request.prompt,
     ]
     const startedAtMs = Date.now()
-    const lease = await this.limiter.acquire(request.timeoutMs)
+    const lease = await this.structuredLimiter.acquire(request.timeoutMs)
     try {
       const { stdout, stderr } = await this.execFileImpl(command, args, {
         timeout: request.timeoutMs,
@@ -271,7 +299,7 @@ export class HermesService {
     const waitingAtMs = Date.now()
     let lease
     try {
-      lease = await this.limiter.acquire(request.timeoutMs)
+      lease = await this.browserLimiter.acquire(request.timeoutMs)
     } catch (error) {
       const finishedAtMs = Date.now()
       const message = errorMessage(error)
