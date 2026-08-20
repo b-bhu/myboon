@@ -1,7 +1,12 @@
 import { execFile } from 'node:child_process'
-import { lookup } from 'node:dns/promises'
-import { isIP } from 'node:net'
+import { createServer } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
+import {
+  fetchPublicDocument,
+  type ResolveHost,
+  type SafePublicDocument,
+} from './safe-public-http'
 
 const execFileAsync = promisify(execFile)
 
@@ -15,7 +20,7 @@ type ExecFileImpl = (
   options: { timeout: number, maxBuffer: number, env: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string, stderr: string }>
 
-type ResolveHost = (hostname: string) => Promise<string[]>
+type FetchDocumentImpl = (url: string) => Promise<SafePublicDocument>
 
 export type AgentBrowserReadStatus = 'succeeded' | 'failed' | 'timed_out'
 
@@ -28,8 +33,10 @@ export interface AgentBrowserReadResult {
   httpStatus: number | null
   truncated: boolean
   browserLaunched: boolean | null
-  /** False for invalid/private destinations that must not reach browser fallback. */
+  /** False when no complete public redirect chain was vetted. */
   fallbackAllowed: boolean
+  /** Native agent-browser containment applied to Hermes browser fallback. */
+  allowedFallbackDomains: string[]
   durationMs: number
   error: string | null
 }
@@ -41,16 +48,14 @@ export interface AgentBrowserReaderOptions {
   minContentChars?: number
   execFileImpl?: ExecFileImpl
   resolveHost?: ResolveHost
+  fetchDocumentImpl?: FetchDocumentImpl
 }
 
 interface AgentBrowserJsonEnvelope {
   success?: unknown
   data?: {
     content?: unknown
-    finalUrl?: unknown
-    contentType?: unknown
     source?: unknown
-    status?: unknown
     truncated?: unknown
     lifecycle?: { launched?: unknown }
   }
@@ -58,9 +63,10 @@ interface AgentBrowserJsonEnvelope {
 }
 
 /**
- * Fetches a known public article URL through agent-browser's HTTP-only `read`
- * command. Explicit URL reads must never launch Chrome; any reported browser
- * launch is treated as a failure and handed to the Hermes browser fallback.
+ * Fetches and validates every external redirect hop itself, then gives the
+ * already-retrieved bytes to agent-browser through a one-use loopback server.
+ * agent-browser never receives the untrusted external URL, so it cannot follow
+ * an unchecked redirect to a private service.
  */
 export class AgentBrowserReader {
   private readonly command: string
@@ -68,7 +74,7 @@ export class AgentBrowserReader {
   private readonly maxOutputChars: number
   private readonly minContentChars: number
   private readonly execFileImpl: ExecFileImpl
-  private readonly resolveHost: ResolveHost
+  private readonly fetchDocumentImpl: FetchDocumentImpl
 
   constructor(options: AgentBrowserReaderOptions = {}) {
     this.command = options.command
@@ -78,32 +84,43 @@ export class AgentBrowserReader {
     this.maxOutputChars = positiveInteger(options.maxOutputChars, DEFAULT_MAX_OUTPUT_CHARS)
     this.minContentChars = positiveInteger(options.minContentChars, DEFAULT_MIN_CONTENT_CHARS)
     this.execFileImpl = options.execFileImpl ?? (execFileAsync as unknown as ExecFileImpl)
-    this.resolveHost = options.resolveHost ?? resolvePublicAddresses
+    this.fetchDocumentImpl = options.fetchDocumentImpl ?? ((url) => fetchPublicDocument(url, {
+      timeoutMs: this.timeoutMs,
+      resolveHost: options.resolveHost,
+    }))
   }
 
   async read(rawUrl: string): Promise<AgentBrowserReadResult> {
     const startedAt = Date.now()
-    let url: URL
+    let document: SafePublicDocument
     try {
-      url = await validatePublicUrl(rawUrl, this.resolveHost)
+      document = await this.fetchDocumentImpl(rawUrl)
     } catch (error) {
       return failedResult(startedAt, safeError(error), null, false)
     }
 
+    const fallbackDomains = [...new Set(document.visitedHosts)]
     try {
-      const { stdout } = await this.execFileImpl(this.command, [
-        '--json',
-        '--content-boundaries',
-        '--max-output',
-        String(this.maxOutputChars),
-        'read',
-        url.toString(),
-        '--timeout',
-        String(this.timeoutMs),
-      ], {
-        timeout: this.timeoutMs + 2_000,
-        maxBuffer: Math.max(1_000_000, this.maxOutputChars * 2),
-        env: { ...process.env },
+      const stdout = await withLoopbackDocument(document, async (loopbackUrl) => {
+        const result = await this.execFileImpl(this.command, [
+          '--json',
+          '--content-boundaries',
+          '--max-output',
+          String(this.maxOutputChars),
+          'read',
+          loopbackUrl,
+          '--timeout',
+          String(this.timeoutMs),
+        ], {
+          timeout: this.timeoutMs + 2_000,
+          maxBuffer: Math.max(1_000_000, this.maxOutputChars * 2),
+          env: {
+            ...process.env,
+            NO_PROXY: '127.0.0.1,localhost',
+            no_proxy: '127.0.0.1,localhost',
+          },
+        })
+        return result.stdout
       })
 
       const parsed = JSON.parse(stdout) as AgentBrowserJsonEnvelope
@@ -113,95 +130,104 @@ export class AgentBrowserReader {
         ? data.lifecycle.launched
         : null
       if (parsed.success !== true) {
-        return failedResult(startedAt, envelopeError(parsed) ?? 'agent-browser read failed')
+        return failedResult(startedAt, envelopeError(parsed) ?? 'agent-browser read failed', browserLaunched, true, fallbackDomains)
       }
       if (browserLaunched !== false) {
-        return failedResult(startedAt, 'agent-browser explicit URL read did not confirm HTTP-only execution', browserLaunched)
-      }
-      const finalUrl = stringOrNull(data?.finalUrl) ?? url.toString()
-      try {
-        await validatePublicUrl(finalUrl, this.resolveHost)
-      } catch (error) {
-        return failedResult(startedAt, `Unsafe final article URL: ${safeError(error)}`, false, false)
+        return failedResult(startedAt, 'agent-browser explicit URL read did not confirm HTTP-only execution', browserLaunched, true, fallbackDomains)
       }
       if (content.length < this.minContentChars) {
-        return failedResult(startedAt, `agent-browser returned insufficient article content (${content.length} chars)`, false)
+        return failedResult(
+          startedAt,
+          `agent-browser returned insufficient article content (${content.length} chars)`,
+          false,
+          true,
+          fallbackDomains,
+        )
       }
 
       return {
         status: 'succeeded',
         content,
-        finalUrl,
-        contentType: stringOrNull(data?.contentType),
+        finalUrl: document.finalUrl,
+        contentType: document.contentType,
         source: stringOrNull(data?.source),
-        httpStatus: typeof data?.status === 'number' ? data.status : null,
+        httpStatus: document.status,
         truncated: data?.truncated === true,
         browserLaunched: false,
         fallbackAllowed: true,
+        allowedFallbackDomains: fallbackDomains,
         durationMs: Date.now() - startedAt,
         error: null,
       }
     } catch (error) {
       const status = isTimeoutError(error) ? 'timed_out' : 'failed'
       return {
-        ...failedResult(startedAt, safeError(error)),
+        ...failedResult(startedAt, safeError(error), null, true, fallbackDomains),
         status,
       }
     }
   }
+
+  /**
+   * Keeps the direct-read kill switch fail-safe: browser fallback is allowed
+   * only after the same redirect-by-redirect public fetch has vetted the URL.
+   */
+  async vetForBrowserFallback(rawUrl: string): Promise<AgentBrowserReadResult> {
+    const startedAt = Date.now()
+    try {
+      const document = await this.fetchDocumentImpl(rawUrl)
+      return {
+        ...failedResult(
+          startedAt,
+          'Direct article conversion is disabled; using contained browser fallback',
+          null,
+          true,
+          [...new Set(document.visitedHosts)],
+        ),
+        finalUrl: document.finalUrl,
+        contentType: document.contentType,
+        httpStatus: document.status,
+      }
+    } catch (error) {
+      return failedResult(startedAt, safeError(error), null, false)
+    }
+  }
 }
 
-async function validatePublicUrl(rawUrl: string, resolveHost: ResolveHost): Promise<URL> {
-  let url: URL
+async function withLoopbackDocument<T>(document: SafePublicDocument, run: (url: string) => Promise<T>): Promise<T> {
+  const token = randomUUID()
+  const path = `/document/${token}`
+  const server = createServer((request, response) => {
+    if ((request.method !== 'GET' && request.method !== 'HEAD') || request.url !== path) {
+      response.writeHead(404).end()
+      return
+    }
+    response.writeHead(200, {
+      'content-type': document.contentType ?? 'application/octet-stream',
+      'content-length': document.body.length,
+      'cache-control': 'no-store',
+    })
+    if (request.method === 'HEAD') response.end()
+    else response.end(document.body)
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    await closeServer(server)
+    throw new Error('Could not bind loopback document server')
+  }
   try {
-    url = new URL(rawUrl)
-  } catch {
-    throw new Error('Article URL is invalid')
+    return await run(`http://127.0.0.1:${address.port}${path}`)
+  } finally {
+    await closeServer(server)
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('Article URL must use http or https')
-  }
-  if (url.username || url.password) throw new Error('Article URL must not include credentials')
-  const hostname = url.hostname.toLowerCase()
-  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
-    throw new Error('Article URL host is not public')
-  }
-
-  const addresses = isIP(hostname) ? [hostname] : await resolveHost(hostname)
-  if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
-    throw new Error('Article URL resolved to a non-public address')
-  }
-  return url
 }
 
-async function resolvePublicAddresses(hostname: string): Promise<string[]> {
-  const records = await lookup(hostname, { all: true, verbatim: true })
-  return records.map((record) => record.address)
-}
-
-function isPublicAddress(address: string): boolean {
-  const version = isIP(address)
-  if (version === 4) {
-    const [a, b] = address.split('.').map(Number)
-    return !(a === 0
-      || a === 10
-      || a === 127
-      || (a === 100 && b >= 64 && b <= 127)
-      || (a === 169 && b === 254)
-      || (a === 172 && b >= 16 && b <= 31)
-      || (a === 192 && b === 168)
-      || (a === 198 && (b === 18 || b === 19))
-      || a >= 224)
-  }
-  if (version === 6) {
-    const normalized = address.toLowerCase()
-    if (normalized === '::' || normalized === '::1') return false
-    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return false
-    if (/^fe[89ab]/.test(normalized)) return false
-    const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1]
-    return mapped ? isPublicAddress(mapped) : true
-  }
-  return false
+function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()))
 }
 
 function failedResult(
@@ -209,6 +235,7 @@ function failedResult(
   error: string,
   browserLaunched: boolean | null = null,
   fallbackAllowed = true,
+  allowedFallbackDomains: string[] = [],
 ): AgentBrowserReadResult {
   return {
     status: 'failed',
@@ -220,6 +247,7 @@ function failedResult(
     truncated: false,
     browserLaunched,
     fallbackAllowed,
+    allowedFallbackDomains,
     durationMs: Date.now() - startedAt,
     error,
   }

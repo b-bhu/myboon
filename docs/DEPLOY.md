@@ -53,11 +53,18 @@ path, which additionally needs `python3.12` and the last30days script at
 agent-browser smoke fails, news can still use Hermes browser fallback, but the
 lower-CPU fast path is unavailable. Version 0.34.0 requires Node.js 24 or newer.
 
-Known news article URLs first use pinned `agent-browser`'s HTTP-only `read`
-command. A successful read must report `lifecycle.launched=false`; its bounded
-content is treated as untrusted evidence and passed to structured Hermes. A
-blocked, short, or timed-out read falls back to the existing Hermes browser/web
-chat. Invalid or private destinations fail closed and never reach that fallback.
+Known news article URLs are first retrieved by a public-only HTTP client that
+validates every redirect before requesting it and pins the validated DNS address
+through connection. The retrieved bytes are then exposed on a random, one-use
+loopback URL for pinned `agent-browser`'s HTTP-only `read` command; agent-browser
+never receives the external URL. A successful conversion must report
+`lifecycle.launched=false`; its bounded content is treated as untrusted evidence
+and passed to structured Hermes. A blocked, short, or timed-out conversion may
+fall back to Hermes browser/web chat only with agent-browser native domain
+containment set to the already-vetted redirect hosts. Contained source-URL
+fallback excludes the separate Hermes `web` tool because it does not inherit
+agent-browser network policy. Invalid, private, or
+incompletely vetted destinations fail closed and never reach that fallback.
 `NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED=0` is the fast
 kill switch, while `NEWS_HERMES_BROWSER_FALLBACK_ENABLED=0` disables fallback.
 
@@ -67,7 +74,8 @@ structured one-shot work have independent cross-process budgets, controlled by
 long browser queue cannot starve entity/editor calls. Chat calls are tagged
 `--source tool`; the service captures Hermes' exact `session_id` and deletes
 that session after the call. On timeout it signals the complete Unix process
-group so browser descendants do not survive as orphan Chrome processes.
+group, keeps the concurrency lease through the SIGKILL grace period, and confirms
+group exit so browser descendants do not survive as orphan Chrome processes.
 Interactive Hermes sessions are not selected or pruned by this lifecycle.
 
 If a machine was interrupted before exact cleanup completed, inspect only the
@@ -283,6 +291,8 @@ ENTITY_MANAGER_POLYMARKET_INTERVAL_MS=300000
 ENTITY_MANAGER_POLYMARKET_BATCH_SIZE=20
 ENTITY_MANAGER_POLYMARKET_MAX_AGE_MS=172800000  # only the latest 48h reaches Hermes
 ENTITY_MANAGER_POLYMARKET_LEASE_MS=7200000
+ENTITY_MANAGER_POLYMARKET_MAX_ATTEMPTS=3         # transient extraction attempts
+ENTITY_MANAGER_POLYMARKET_RETRY_BASE_MS=300000   # exponential backoff, capped at 1h
 NEWS_FEED_RUN_ONCE=0
 NEWS_FEED_INTERVAL_MS=600000
 NEWS_RESEARCHER_RUN_ONCE=0

@@ -262,6 +262,9 @@ export interface PipelineResearchRow {
   duplicateOfResearchId: string | null
   researchBackend: string
   researchModel: string | null
+  entityManagerStatus: PipelineEntityManagerResearchStatus
+  entityManagerAttemptCount: number
+  entityManagerNextRetryAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -338,9 +341,10 @@ export interface PipelineClaimResearchForEntityManagerInput {
 export interface PipelineFinishResearchForEntityManagerInput {
   id: string
   leaseOwner: string
-  status: Extract<PipelineEntityManagerResearchStatus, 'processed' | 'failed'>
+  status: Extract<PipelineEntityManagerResearchStatus, 'pending' | 'processed' | 'failed'>
   observedAt: string
   error?: string | null
+  nextRetryAt?: string | null
 }
 
 // ---------------------------------------------------------------------------

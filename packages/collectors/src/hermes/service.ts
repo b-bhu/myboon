@@ -130,6 +130,8 @@ export interface HermesChatRequest {
   profile?: string
   toolsets?: string[]
   commandOverride?: string
+  /** Narrow per-call environment additions, used for browser network containment. */
+  env?: NodeJS.ProcessEnv
 }
 
 export interface HermesChatResult {
@@ -158,6 +160,8 @@ function oneshotStatus(error: unknown): HermesCallStatus {
 const SESSION_ID_PATTERN = /(?:^|\n)session_id:\s*([A-Za-z0-9_-]+)\s*(?:\n|$)/i
 const SESSION_DELETE_TIMEOUT_MS = 30_000
 const PROCESS_GROUP_KILL_GRACE_MS = 2_000
+const PROCESS_GROUP_EXIT_CONFIRM_MS = 2_000
+const PROCESS_GROUP_EXIT_POLL_MS = 50
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (!value) return fallback
@@ -184,6 +188,29 @@ function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void
   } catch {
     // Timeout cleanup must not throw out of the timer callback.
   }
+}
+
+function processGroupIsAlive(child: ChildProcess): boolean {
+  if (process.platform === 'win32' || typeof child.pid !== 'number' || child.pid <= 0) return false
+  try {
+    process.kill(-child.pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+async function killAndConfirmProcessGroup(child: ChildProcess): Promise<void> {
+  const deadline = Date.now() + PROCESS_GROUP_EXIT_CONFIRM_MS
+  do {
+    terminateProcessTree(child, 'SIGKILL')
+    if (!processGroupIsAlive(child)) return
+    await new Promise((resolve) => setTimeout(resolve, PROCESS_GROUP_EXIT_POLL_MS))
+  } while (Date.now() < deadline)
+  // One final signal before releasing the concurrency lease. A process group
+  // that still appears here can only be an un-reaped zombie or kernel race;
+  // live descendants have received repeated uncatchable SIGKILL signals.
+  terminateProcessTree(child, 'SIGKILL')
 }
 
 export class HermesService {
@@ -351,6 +378,7 @@ export class HermesService {
       shell: false,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
+      ...(request.env ? { env: { ...process.env, ...request.env } } : {}),
     })
 
     let stdout = ''
@@ -410,24 +438,27 @@ export class HermesService {
         timedOut = true
         terminateProcessTree(child, 'SIGTERM')
         exitCode = null
-        // Hold the shared slot during the grace window. If Hermes closes on
-        // SIGTERM, the close handler settles immediately; otherwise kill the
-        // whole group and settle after the grace period.
+        // Hold the shared slot for the complete cleanup sequence even if the
+        // Hermes parent exits on SIGTERM while a descendant remains alive.
         forceKill = setTimeout(() => {
-          terminateProcessTree(child, 'SIGKILL')
-          void finish('timed_out')
+          void killAndConfirmProcessGroup(child).then(() => finish('timed_out'))
         }, this.processGroupKillGraceMs)
       }, request.timeoutMs)
 
       child.once('error', (error) => {
         stderr += stderr ? `\n${error.message}` : error.message
         exitCode = null
+        if (timedOut) return
         void finish('failed')
       })
 
       child.once('close', (code) => {
+        if (timedOut) {
+          exitCode = null
+          return
+        }
         exitCode = typeof code === 'number' ? code : null
-        void finish(timedOut ? 'timed_out' : (exitCode === 0 ? 'succeeded' : 'failed'))
+        void finish(exitCode === 0 ? 'succeeded' : 'failed')
       })
     })
   }

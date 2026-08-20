@@ -18,6 +18,9 @@ const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000
 const DEFAULT_MAX_AGE_MS = 48 * 60 * 60 * 1000
 const DEFAULT_LEASE_MS = 2 * 60 * 60 * 1000
+const DEFAULT_MAX_ATTEMPTS = 3
+const DEFAULT_RETRY_BASE_MS = 5 * 60 * 1000
+const MAX_RETRY_BACKOFF_MS = 60 * 60 * 1000
 
 export interface RunPolymarketEntityManagerOptions {
   batchSize?: number
@@ -27,6 +30,8 @@ export interface RunPolymarketEntityManagerOptions {
   leaseMs?: number
   now?: Date
   leaseOwner?: string
+  maxAttempts?: number
+  retryBaseMs?: number
 }
 
 export interface PolymarketEntityManagerCliConfig {
@@ -36,12 +41,16 @@ export interface PolymarketEntityManagerCliConfig {
   hermesTimeoutMs: number
   maxAgeMs: number
   leaseMs: number
+  maxAttempts: number
+  retryBaseMs: number
 }
 
 export interface PolymarketEntityManagerResult {
   fetched: number
   processed: number
   failed: number
+  retried: number
+  terminalFailed: number
   results: WriteExtractionResult[]
   failures: Array<{ sourceResearchId: string, error: string }>
 }
@@ -70,6 +79,7 @@ function toPolymarketResearchRow(row: {
   recommendedEditorAction: string
   researchBackend: string
   researchModel: string | null
+  entityManagerAttemptCount: number
 }): PolymarketResearchRow {
   return {
     id: row.id,
@@ -95,6 +105,7 @@ function toPolymarketResearchRow(row: {
     recommended_editor_action: row.recommendedEditorAction,
     research_backend: row.researchBackend,
     research_model: row.researchModel,
+    entity_manager_attempt_count: row.entityManagerAttemptCount,
   }
 }
 
@@ -198,6 +209,10 @@ export async function runPolymarketEntityManager(
   })
   const results: WriteExtractionResult[] = []
   const failures: Array<{ sourceResearchId: string, error: string }> = []
+  let retried = 0
+  let terminalFailed = 0
+  const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
+  const retryBaseMs = Math.max(1, Math.trunc(options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS))
 
   for (const packet of packets) {
     let result: WriteExtractionResult
@@ -206,15 +221,30 @@ export async function runPolymarketEntityManager(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       failures.push({ sourceResearchId: packet.sourceResearchId, error: message })
-      try {
-        await entityService.markExtractionFailed(packet, message)
-      } finally {
+      const attemptCount = positivePacketInteger(packet.context.entity_manager_attempt_count, 1)
+      const terminal = isPermanentEntityManagerError(error) || attemptCount >= maxAttempts
+      if (terminal) {
+        terminalFailed += 1
+        try {
+          await entityService.markExtractionFailed(packet, message)
+        } finally {
+          await store.finishResearchForEntityManager({
+            id: packet.sourceResearchId,
+            leaseOwner,
+            status: 'failed',
+            observedAt: now.toISOString(),
+            error: message,
+          })
+        }
+      } else {
+        retried += 1
         await store.finishResearchForEntityManager({
           id: packet.sourceResearchId,
           leaseOwner,
-          status: 'failed',
-          observedAt: new Date().toISOString(),
+          status: 'pending',
+          observedAt: now.toISOString(),
           error: message,
+          nextRetryAt: new Date(now.getTime() + retryDelayMs(attemptCount, retryBaseMs)).toISOString(),
         })
       }
       continue
@@ -236,6 +266,8 @@ export async function runPolymarketEntityManager(
     fetched: packets.length,
     processed: results.length,
     failed: failures.length,
+    retried,
+    terminalFailed,
     results,
     failures,
   }
@@ -253,6 +285,8 @@ export function polymarketEntityManagerCliConfig(env: NodeJS.ProcessEnv = proces
       env.ENTITY_MANAGER_POLYMARKET_LEASE_MS,
       Math.max(DEFAULT_LEASE_MS, hermesTimeoutMs * positiveInteger(env.ENTITY_MANAGER_POLYMARKET_BATCH_SIZE, DEFAULT_BATCH_SIZE))
     ),
+    maxAttempts: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_MAX_ATTEMPTS, DEFAULT_MAX_ATTEMPTS),
+    retryBaseMs: positiveInteger(env.ENTITY_MANAGER_POLYMARKET_RETRY_BASE_MS, DEFAULT_RETRY_BASE_MS),
   }
 }
 
@@ -275,10 +309,28 @@ async function runAndLog(
       batchSize: config.batchSize,
       maxAgeMs: config.maxAgeMs,
       leaseMs: config.leaseMs,
+      maxAttempts: config.maxAttempts,
+      retryBaseMs: config.retryBaseMs,
       extractionProvider: new HermesEntityExtractionProvider({ timeoutMs: config.hermesTimeoutMs }),
     })
   )
   console.log(JSON.stringify(result, null, 2))
+}
+
+function retryDelayMs(attemptCount: number, baseMs: number): number {
+  return Math.min(MAX_RETRY_BACKOFF_MS, baseMs * (2 ** Math.max(0, attemptCount - 1)))
+}
+
+function positivePacketInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function isPermanentEntityManagerError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const classified = error as { retryable?: unknown, permanent?: unknown, code?: unknown }
+  if (classified.retryable === false || classified.permanent === true) return true
+  return classified.code === 'ENTITY_PACKET_INVALID' || classified.code === 'ENTITY_SOURCE_UNSUPPORTED'
 }
 
 async function main(): Promise<void> {

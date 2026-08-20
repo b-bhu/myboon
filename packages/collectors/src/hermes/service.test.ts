@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
-import type { ChildProcess, SpawnOptions } from 'node:child_process'
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { HermesService, type HermesCallRecord } from './service'
 
 interface RecordedExec {
@@ -24,8 +24,10 @@ class FakeChild extends EventEmitter {
   stdout = new EventEmitter()
   stderr = new EventEmitter()
   killedWith: string | null = null
+  signals: string[] = []
   kill(signal?: string): boolean {
     this.killedWith = signal ?? 'SIGTERM'
+    this.signals.push(this.killedWith)
     return true
   }
 }
@@ -275,6 +277,58 @@ test('chat kills the child and resolves timed_out when the timeout elapses', asy
   assert.equal(result.status, 'timed_out')
   assert.equal(children[0].killedWith, 'SIGKILL')
   assert.equal(result.exitCode, null)
+})
+
+test('chat still sends group SIGKILL when the Hermes parent closes after SIGTERM', async () => {
+  const { children, impl } = fakeSpawn((child) => {
+    const kill = child.kill.bind(child)
+    child.kill = (signal?: string) => {
+      const result = kill(signal)
+      if ((signal ?? 'SIGTERM') === 'SIGTERM') queueMicrotask(() => child.emit('close', null))
+      return result
+    }
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, processGroupKillGraceMs: 5 })
+
+  const result = await service.chat({ purpose: 'news.worker', prompt: 'Q', timeoutMs: 20 })
+
+  assert.equal(result.status, 'timed_out')
+  assert.deepEqual(children[0].signals, ['SIGTERM', 'SIGKILL'])
+  assert.equal(result.exitCode, null)
+})
+
+test('chat timeout leaves no real process-group descendant after the parent exits on SIGTERM', {
+  skip: process.platform === 'win32',
+}, async () => {
+  let groupPid: number | null = null
+  const spawnImpl = (_command: string, _args: string[], options: SpawnOptions) => {
+    const child = spawn('/bin/bash', [
+      '-c',
+      "trap 'exit 0' TERM; (trap '' TERM; while :; do sleep 1; done) >/dev/null 2>&1 & wait",
+    ], options)
+    groupPid = child.pid ?? null
+    return child
+  }
+  const service = new HermesService({
+    command: 'ignored',
+    spawnImpl,
+    limiter: { acquire: async () => ({ release() {} }) },
+    processGroupKillGraceMs: 20,
+  })
+
+  const result = await service.chat({ purpose: 'test.real-group-cleanup', prompt: 'Q', timeoutMs: 30 })
+  let groupAlive = false
+  if (groupPid) {
+    try {
+      process.kill(-groupPid, 0)
+      groupAlive = true
+    } catch {
+      groupAlive = false
+    }
+  }
+
+  assert.equal(result.status, 'timed_out')
+  assert.equal(groupAlive, false)
 })
 
 test('chat deletes only the exact source-tagged Hermes session reported by the completed call', async () => {

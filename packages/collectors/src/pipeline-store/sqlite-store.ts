@@ -293,6 +293,7 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
       entity_manager_lease_expires_at TEXT,
       entity_manager_attempt_count INTEGER NOT NULL DEFAULT 0,
       entity_manager_attempted_at TEXT,
+      entity_manager_next_retry_at TEXT,
       entity_manager_processed_at TEXT,
       entity_manager_error TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -421,6 +422,7 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
     ['entity_manager_lease_expires_at', 'TEXT'],
     ['entity_manager_attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
     ['entity_manager_attempted_at', 'TEXT'],
+    ['entity_manager_next_retry_at', 'TEXT'],
     ['entity_manager_processed_at', 'TEXT'],
     ['entity_manager_error', 'TEXT'],
   ]
@@ -428,8 +430,8 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
     if (!researchColumns.has(name)) db.exec(`ALTER TABLE pipeline_research ADD COLUMN ${name} ${definition}`)
   }
   db.exec(`
-    CREATE INDEX IF NOT EXISTS pipeline_research_entity_manager_queue_idx
-      ON pipeline_research (entity_manager_status, entity_manager_lease_expires_at, researched_at);
+    CREATE INDEX IF NOT EXISTS pipeline_research_entity_manager_retry_queue_idx
+      ON pipeline_research (entity_manager_status, entity_manager_next_retry_at, entity_manager_lease_expires_at, researched_at);
   `)
 }
 
@@ -959,6 +961,7 @@ export class SqlitePipelineStore implements PipelineStore {
           entity_manager_lease_expires_at = NULL,
           entity_manager_attempt_count = 0,
           entity_manager_attempted_at = NULL,
+          entity_manager_next_retry_at = NULL,
           entity_manager_processed_at = NULL,
           entity_manager_error = NULL,
           updated_at = CURRENT_TIMESTAMP
@@ -1067,7 +1070,7 @@ export class SqlitePipelineStore implements PipelineStore {
       `).run(input.now)
 
       const freshnessClause = input.observedAfter ? ' AND c.observed_at >= ?' : ''
-      const params: unknown[] = [input.source, input.area]
+      const params: unknown[] = [input.source, input.area, input.now]
       if (input.observedAfter) params.push(input.observedAfter)
       params.push(Math.max(0, input.limit))
       const ids = (this.db.prepare(`
@@ -1077,6 +1080,7 @@ export class SqlitePipelineStore implements PipelineStore {
         WHERE r.source = ?
           AND r.area = ?
           AND r.entity_manager_status = 'pending'
+          AND (r.entity_manager_next_retry_at IS NULL OR r.entity_manager_next_retry_at <= ?)
           AND r.status NOT IN ('rejected', 'needs_more_research')${freshnessClause}
         ORDER BY r.researched_at ASC, r.id ASC
         LIMIT ?
@@ -1090,6 +1094,7 @@ export class SqlitePipelineStore implements PipelineStore {
             entity_manager_lease_expires_at = ?,
             entity_manager_attempt_count = entity_manager_attempt_count + 1,
             entity_manager_attempted_at = ?,
+            entity_manager_next_retry_at = NULL,
             entity_manager_error = NULL,
             updated_at = CURRENT_TIMESTAMP
         WHERE id IN (${placeholders(ids.length)})
@@ -1117,13 +1122,22 @@ export class SqlitePipelineStore implements PipelineStore {
       SET entity_manager_status = ?,
           entity_manager_lease_owner = NULL,
           entity_manager_lease_expires_at = NULL,
-          entity_manager_processed_at = ?,
+          entity_manager_next_retry_at = ?,
+          entity_manager_processed_at = CASE WHEN ? IN ('processed', 'failed') THEN ? ELSE NULL END,
           entity_manager_error = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
         AND entity_manager_status = 'processing'
         AND entity_manager_lease_owner = ?
-    `).run(input.status, input.observedAt, input.error ?? null, input.id, input.leaseOwner) as {
+    `).run(
+      input.status,
+      input.nextRetryAt ?? null,
+      input.status,
+      input.observedAt,
+      input.error ?? null,
+      input.id,
+      input.leaseOwner,
+    ) as {
       changes?: number | bigint
     }
     if (Number(result.changes ?? 0) !== 1) {
@@ -1746,6 +1760,9 @@ function mapResearchRow(row: Record<string, unknown>): PipelineResearchRow {
     duplicateOfResearchId: stringOrNull(row.duplicate_of_research_id),
     researchBackend: String(row.research_backend),
     researchModel: stringOrNull(row.research_model),
+    entityManagerStatus: String(row.entity_manager_status ?? 'pending') as PipelineResearchRow['entityManagerStatus'],
+    entityManagerAttemptCount: numberValue(row.entity_manager_attempt_count),
+    entityManagerNextRetryAt: stringOrNull(row.entity_manager_next_retry_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   }

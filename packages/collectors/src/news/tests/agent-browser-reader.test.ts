@@ -1,17 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AgentBrowserReader } from '../agent-browser-reader'
+import type { SafePublicDocument } from '../safe-public-http'
 
-const publicResolver = async () => ['93.184.216.34']
+function publicDocument(overrides: Partial<SafePublicDocument> = {}): SafePublicDocument {
+  return {
+    body: Buffer.from('<h1>A sufficiently detailed article body for testing.</h1>'),
+    finalUrl: 'https://news.example/article',
+    contentType: 'text/html',
+    status: 200,
+    visitedHosts: ['news.example'],
+    ...overrides,
+  }
+}
 
-test('AgentBrowserReader performs a bounded HTTP-only read and returns content', async () => {
+test('AgentBrowserReader gives only loopback content to agent-browser and returns external provenance', async () => {
   const calls: Array<{ command: string, args: string[] }> = []
   const reader = new AgentBrowserReader({
     command: 'agent-browser-test',
     timeoutMs: 1234,
     maxOutputChars: 4321,
     minContentChars: 10,
-    resolveHost: publicResolver,
+    fetchDocumentImpl: async () => publicDocument(),
     execFileImpl: async (command, args) => {
       calls.push({ command, args })
       return {
@@ -19,10 +29,7 @@ test('AgentBrowserReader performs a bounded HTTP-only read and returns content',
           success: true,
           data: {
             content: 'A sufficiently detailed article body.',
-            finalUrl: 'https://news.example/article',
-            contentType: 'text/html',
             source: 'html-fallback',
-            status: 200,
             truncated: false,
             lifecycle: { launched: false },
           },
@@ -37,15 +44,18 @@ test('AgentBrowserReader performs a bounded HTTP-only read and returns content',
 
   assert.equal(result.status, 'succeeded')
   assert.equal(result.browserLaunched, false)
-  assert.match(result.content, /article body/)
+  assert.equal(result.finalUrl, 'https://news.example/article')
+  assert.deepEqual(result.allowedFallbackDomains, ['news.example'])
   assert.equal(calls[0].command, 'agent-browser-test')
-  assert.deepEqual(calls[0].args, [
-    '--json', '--content-boundaries', '--max-output', '4321',
-    'read', 'https://news.example/article', '--timeout', '1234',
+  assert.deepEqual(calls[0].args.slice(0, 5), [
+    '--json', '--content-boundaries', '--max-output', '4321', 'read',
   ])
+  assert.match(calls[0].args[5], /^http:\/\/127\.0\.0\.1:\d+\/document\//)
+  assert.deepEqual(calls[0].args.slice(6), ['--timeout', '1234'])
+  assert.equal(calls[0].args.some((arg) => arg.includes('news.example')), false)
 })
 
-test('AgentBrowserReader rejects private destinations before execution', async () => {
+test('AgentBrowserReader rejects private destinations before agent-browser execution', async () => {
   let executed = false
   const reader = new AgentBrowserReader({
     command: 'agent-browser-test',
@@ -63,7 +73,7 @@ test('AgentBrowserReader rejects private destinations before execution', async (
   assert.equal(executed, false)
 })
 
-test('AgentBrowserReader rejects short content or an unexpected browser launch', async () => {
+test('AgentBrowserReader allows contained fallback after safe fetch but rejects short content or browser launch', async () => {
   for (const data of [
     { content: 'short', lifecycle: { launched: false } },
     { content: 'A long enough document for this test.', lifecycle: { launched: true } },
@@ -71,7 +81,7 @@ test('AgentBrowserReader rejects short content or an unexpected browser launch',
     const reader = new AgentBrowserReader({
       command: 'agent-browser-test',
       minContentChars: 20,
-      resolveHost: publicResolver,
+      fetchDocumentImpl: async () => publicDocument(),
       execFileImpl: async () => ({
         stdout: JSON.stringify({ success: true, data }),
         stderr: '',
@@ -79,39 +89,15 @@ test('AgentBrowserReader rejects short content or an unexpected browser launch',
     })
     const result = await reader.read('https://news.example/article')
     assert.equal(result.status, 'failed')
+    assert.equal(result.fallbackAllowed, true)
+    assert.deepEqual(result.allowedFallbackDomains, ['news.example'])
   }
 })
 
-test('AgentBrowserReader fails closed when a redirect resolves to a private destination', async () => {
-  let resolution = 0
+test('AgentBrowserReader classifies local conversion timeouts after a safe fetch', async () => {
   const reader = new AgentBrowserReader({
     command: 'agent-browser-test',
-    minContentChars: 10,
-    resolveHost: async () => (++resolution === 1 ? ['93.184.216.34'] : ['127.0.0.1']),
-    execFileImpl: async () => ({
-      stdout: JSON.stringify({
-        success: true,
-        data: {
-          content: 'A sufficiently detailed response body.',
-          finalUrl: 'http://redirect.example/private',
-          lifecycle: { launched: false },
-        },
-      }),
-      stderr: '',
-    }),
-  })
-
-  const result = await reader.read('https://news.example/article')
-
-  assert.equal(result.status, 'failed')
-  assert.equal(result.fallbackAllowed, false)
-  assert.match(result.error ?? '', /Unsafe final article URL/)
-})
-
-test('AgentBrowserReader classifies command timeouts', async () => {
-  const reader = new AgentBrowserReader({
-    command: 'agent-browser-test',
-    resolveHost: publicResolver,
+    fetchDocumentImpl: async () => publicDocument(),
     execFileImpl: async () => {
       throw Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' })
     },
@@ -121,5 +107,6 @@ test('AgentBrowserReader classifies command timeouts', async () => {
 
   assert.equal(result.status, 'timed_out')
   assert.equal(result.fallbackAllowed, true)
+  assert.deepEqual(result.allowedFallbackDomains, ['news.example'])
   assert.match(result.error ?? '', /timed out/)
 })

@@ -20,7 +20,7 @@ type SpawnHermesProcess = (
   options: SpawnOptions
 ) => ChildProcess
 
-type SourceReader = Pick<AgentBrowserReader, 'read'>
+type SourceReader = Pick<AgentBrowserReader, 'read'> & Partial<Pick<AgentBrowserReader, 'vetForBrowserFallback'>>
 
 export interface HermesWorkerClientConstructorOptions extends Partial<HermesWorkerClientOptions> {
   spawnProcess?: SpawnHermesProcess
@@ -89,9 +89,24 @@ export class HermesWorkerClient {
         return failedWithoutFallback(request, sourceRead, startedAtMs)
       }
     }
+    if (!this.directReadEnabled && request.sourceUrl && this.reader.vetForBrowserFallback) {
+      sourceRead = await this.reader.vetForBrowserFallback(request.sourceUrl)
+      if (!sourceRead.fallbackAllowed) {
+        return failedWithoutFallback(request, sourceRead, startedAtMs)
+      }
+    }
 
     if (!this.browserFallbackEnabled) {
       return failedWithoutFallback(request, sourceRead, startedAtMs)
+    }
+    if (request.sourceUrl && (!sourceRead || sourceRead.allowedFallbackDomains.length === 0)) {
+      return failedWithoutFallback(
+        request,
+        sourceRead,
+        startedAtMs,
+        'failed',
+        'Hermes browser fallback refused an unvetted source URL',
+      )
     }
 
     const remainingTimeoutMs = request.timeoutMs - (Date.now() - startedAtMs)
@@ -103,7 +118,12 @@ export class HermesWorkerClient {
       prompt: request.prompt,
       timeoutMs: remainingTimeoutMs,
       profile: this.profile,
-      toolsets: this.toolsets,
+      toolsets: sourceRead?.allowedFallbackDomains.length
+        ? ['browser']
+        : this.toolsets,
+      ...(sourceRead?.allowedFallbackDomains.length
+        ? { env: { AGENT_BROWSER_ALLOWED_DOMAINS: sourceRead.allowedFallbackDomains.join(',') } }
+        : {}),
     })
 
     return {
@@ -205,6 +225,7 @@ function failedWithoutFallback(
   sourceRead: AgentBrowserReadResult | null,
   startedAtMs: number,
   status: HermesWorkerStatus = 'failed',
+  errorOverride?: string,
 ): HermesWorkerResult {
   const finishedAtMs = Date.now()
   return {
@@ -212,7 +233,7 @@ function failedWithoutFallback(
     taskType: request.taskType,
     status,
     stdout: '',
-    stderr: sourceRead?.error ?? 'Direct source read was skipped and Hermes browser fallback is disabled',
+    stderr: errorOverride ?? sourceRead?.error ?? 'Direct source read was skipped and Hermes browser fallback is disabled',
     exitCode: null,
     startedAt: new Date(startedAtMs).toISOString(),
     finishedAt: new Date(finishedAtMs).toISOString(),

@@ -25,6 +25,7 @@ export interface PolymarketResearchRow {
   recommended_editor_action?: string | null
   research_backend?: string | null
   research_model?: string | null
+  entity_manager_attempt_count?: number
 }
 
 export interface PolymarketCandidateContext {
@@ -132,6 +133,7 @@ export function polymarketResearchToPacket(
       research_depth: row.research_depth ?? null,
       research_backend: row.research_backend ?? null,
       research_model: row.research_model ?? null,
+      entity_manager_attempt_count: row.entity_manager_attempt_count ?? 0,
       candidate: candidate ? {
         id: candidate.id,
         market_id: candidate.market_id ?? null,

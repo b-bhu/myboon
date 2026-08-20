@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto'
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const DEFAULT_MAX_CONCURRENCY = 2
 const DEFAULT_POLL_INTERVAL_MS = 250
 const DEFAULT_LOCK_DIR = '/tmp/myboon-hermes-slots'
+const DEFAULT_INVALID_LOCK_GRACE_MS = 1_000
 
 export interface HermesConcurrencyLimiterOptions {
   maxConcurrency?: number
   lockDir?: string
   pollIntervalMs?: number
+  invalidLockGraceMs?: number
 }
 
 export interface HermesConcurrencyLease {
@@ -65,12 +67,14 @@ export class HermesConcurrencyLimiter {
   private readonly maxConcurrency: number
   private readonly lockDir: string
   private readonly pollIntervalMs: number
+  private readonly invalidLockGraceMs: number
 
   constructor(options: HermesConcurrencyLimiterOptions = {}) {
     this.maxConcurrency = options.maxConcurrency
       ?? positiveInteger(process.env.HERMES_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY)
     this.lockDir = options.lockDir ?? process.env.HERMES_CONCURRENCY_LOCK_DIR ?? DEFAULT_LOCK_DIR
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
+    this.invalidLockGraceMs = options.invalidLockGraceMs ?? DEFAULT_INVALID_LOCK_GRACE_MS
   }
 
   async acquire(waitTimeoutMs: number): Promise<HermesConcurrencyLease> {
@@ -89,6 +93,22 @@ export class HermesConcurrencyLimiter {
             if (current?.pid === existing.pid && current.token === existing.token) unlinkSync(path)
           } catch {
             // Another waiter may already have reclaimed it.
+          }
+        }
+        if (!existing) {
+          // A crash between exclusive open and metadata write can leave an
+          // empty/malformed file. Give an active writer a short grace period,
+          // then reclaim the unchanged inode so it cannot consume capacity
+          // permanently.
+          try {
+            const observed = statSync(path)
+            if (Date.now() - observed.mtimeMs >= this.invalidLockGraceMs && readLock(path) === null) {
+              const current = statSync(path)
+              if (current.ino === observed.ino && current.mtimeMs === observed.mtimeMs) unlinkSync(path)
+            }
+          } catch {
+            // Missing/replaced paths are normal contention; acquisition below
+            // decides whether this waiter won the slot.
           }
         }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -48,6 +48,27 @@ test('cross-process limiter times out instead of allowing unbounded concurrency'
     const limiter = new HermesConcurrencyLimiter({ maxConcurrency: 1, lockDir, pollIntervalMs: 2 })
     const lease = await limiter.acquire(100)
     await assert.rejects(() => limiter.acquire(10), /Timed out waiting 10ms/)
+    lease.release()
+  } finally {
+    await rm(lockDir, { recursive: true, force: true })
+  }
+})
+
+test('cross-process limiter reclaims a malformed lock left by a partial write', async () => {
+  const lockDir = await mkdtemp(join(tmpdir(), 'hermes-limiter-partial-'))
+  try {
+    const path = join(lockDir, 'slot-0.lock')
+    await writeFile(path, '')
+    const old = new Date(Date.now() - 10_000)
+    await utimes(path, old, old)
+    const limiter = new HermesConcurrencyLimiter({
+      maxConcurrency: 1,
+      lockDir,
+      pollIntervalMs: 2,
+      invalidLockGraceMs: 5,
+    })
+
+    const lease = await limiter.acquire(100)
     lease.release()
   } finally {
     await rm(lockDir, { recursive: true, force: true })
