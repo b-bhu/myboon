@@ -4,85 +4,107 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeedHeader } from '@/features/feed/components/FeedHeader';
 import { FeedList } from '@/features/feed/components/FeedList';
 import { FeedSkeleton } from '@/features/feed/components/FeedSkeleton';
+import { MarketCalendarModal } from '@/features/feed/components/MarketCalendarModal';
 import { NarrativeSheet } from '@/features/feed/components/NarrativeSheet';
 import type { NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
+import { StoryCarousel } from '@/features/feed/components/StoryCarousel';
+import { StorySheet } from '@/features/feed/components/StorySheet';
 import { fetchFeedItems } from '@/features/feed/feed.api';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
-import type { FeedItem } from '@/features/feed/feed.types';
+import type { FeedItem, StorySummary } from '@/features/feed/feed.types';
+import { fetchStories } from '@/features/feed/stories.api';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 
 const PAGE_SIZE = 20;
-const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
-const TIMEAGO_TICK_MS = 60 * 1000; // 1 minute
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const TIMEAGO_TICK_MS = 60 * 1000;
+
+interface FirstPageOptions {
+  showLoading?: boolean;
+  surfaceErrors?: boolean;
+}
 
 export default function FeedScreen() {
   const [items, setItems] = useState<FeedItem[]>([]);
+  const [stories, setStories] = useState<StorySummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [feedError, setFeedError] = useState<string | null>(null);
+  const [storiesError, setStoriesError] = useState<string | null>(null);
   const [sheetItem, setSheetItem] = useState<NarrativeSheetItem | null>(null);
-  const [, setTick] = useState(0); // force re-render for live timeAgo
-
+  const [storySheet, setStorySheet] = useState<StorySummary | null>(null);
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [, setTick] = useState(0);
   const loadingMoreRef = useRef(false);
+  const insets = useSafeAreaInsets();
 
-  async function loadFeed(silent = false): Promise<void> {
-    if (!silent) setIsLoading(true);
-    setErrorMessage(null);
-
-    try {
-      const nextItems = await fetchFeedItems(PAGE_SIZE, 0);
-      setItems(nextItems);
-      setHasMore(nextItems.length >= PAGE_SIZE);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load feed';
-      if (!silent) setErrorMessage(message);
-    } finally {
-      if (!silent) setIsLoading(false);
+  const loadFirstPage = useCallback(async ({ showLoading = false, surfaceErrors = true }: FirstPageOptions = {}) => {
+    if (showLoading) setIsLoading(true);
+    if (surfaceErrors) {
+      setFeedError(null);
+      setStoriesError(null);
     }
-  }
+
+    const [storiesResult, feedResult] = await Promise.allSettled([
+      fetchStories(),
+      fetchFeedItems(PAGE_SIZE, 0),
+    ]);
+
+    if (storiesResult.status === 'fulfilled') {
+      setStories(storiesResult.value);
+      setStoriesError(null);
+    } else if (surfaceErrors) {
+      setStoriesError(storiesResult.reason instanceof Error ? storiesResult.reason.message : 'Unable to load Stories');
+    }
+
+    if (feedResult.status === 'fulfilled') {
+      setItems(feedResult.value);
+      setHasMore(feedResult.value.length >= PAGE_SIZE);
+      setFeedError(null);
+    } else if (surfaceErrors) {
+      setFeedError(feedResult.reason instanceof Error ? feedResult.reason.message : 'Unable to load Feed');
+    }
+
+    if (showLoading) setIsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadFirstPage({ showLoading: true });
+  }, [loadFirstPage]);
+
+  useFocusedAppStateInterval(
+    () => void loadFirstPage({ surfaceErrors: false }),
+    AUTO_REFRESH_MS,
+  );
+  useFocusedAppStateInterval(() => setTick((tick) => tick + 1), TIMEAGO_TICK_MS);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const nextItems = await fetchFeedItems(PAGE_SIZE, 0);
-      setItems(nextItems);
-      setHasMore(nextItems.length >= PAGE_SIZE);
-    } catch {
-      // silent fail on pull-to-refresh
+      await loadFirstPage({ surfaceErrors: false });
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [loadFirstPage]);
 
   const handleEndReached = useCallback(async () => {
-    if (loadingMoreRef.current || !hasMore) return;
+    if (loadingMoreRef.current || !hasMore || feedError !== null) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
 
     try {
       const moreItems = await fetchFeedItems(PAGE_SIZE, items.length);
       if (moreItems.length < PAGE_SIZE) setHasMore(false);
-      setItems((prev) => [...prev, ...moreItems]);
+      setItems((current) => [...current, ...moreItems]);
     } catch {
-      // silent fail on pagination
+      // The current page remains useful when loading an older page fails.
     } finally {
       setLoadingMore(false);
       loadingMoreRef.current = false;
     }
-  }, [hasMore, items.length]);
-
-  // Initial load
-  useEffect(() => {
-    void loadFeed();
-  }, []);
-
-  // Auto-refresh every 5 minutes while the feed is visible and the app is active.
-  useFocusedAppStateInterval(() => void loadFeed(true), AUTO_REFRESH_MS);
-
-  // Tick every minute to update timeAgo displays while the feed is visible.
-  useFocusedAppStateInterval(() => setTick((t) => t + 1), TIMEAGO_TICK_MS);
+  }, [feedError, hasMore, items.length]);
 
   const handleCardPress = useCallback((item: FeedItem) => {
     setSheetItem({
@@ -90,45 +112,52 @@ export default function FeedScreen() {
       title: item.headline,
       summary: item.description,
       createdAt: item.createdAt,
+      imageUrl: item.imageUrl,
+      imageKind: item.imageKind,
+      imageAttribution: item.imageAttribution,
     });
   }, []);
 
-  const handleSheetClose = useCallback(() => {
-    setSheetItem(null);
-  }, []);
+  const listHeader = (
+    <View style={styles.listHeader}>
+      <View style={styles.sectionHeading}>
+        <Text style={styles.sectionTitle}>Stories</Text>
+        <Text style={styles.sectionMeta}>{stories.length} selected</Text>
+      </View>
 
-  const insets = useSafeAreaInsets();
+      {stories.length > 0 ? (
+        <StoryCarousel stories={stories} onStoryPress={setStorySheet} variant="editorial" />
+      ) : null}
+      {stories.length === 0 ? (
+        <InlineState
+          title={storiesError ? 'Stories unavailable' : 'No selected Stories'}
+          text={storiesError ?? 'Selected entity timelines will appear here.'}
+        />
+      ) : null}
+
+      <View style={[styles.sectionHeading, styles.latestHeading]}>
+        <Text style={styles.sectionTitle}>Latest</Text>
+        <Text style={styles.sectionMeta}>Updated now</Text>
+      </View>
+    </View>
+  );
+
+  const empty = feedError ? (
+    <InlineState
+      title="Feed unavailable"
+      text={feedError}
+      actionLabel="Try again"
+      onAction={() => void loadFirstPage({ showLoading: true })}
+    />
+  ) : (
+    <InlineState title="No published updates yet" text="Publisher has not emitted new Feed items." />
+  );
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <FeedHeader />
+      <FeedHeader onCalendarPress={() => setCalendarVisible(true)} />
 
-      {isLoading ? (
-        <FeedSkeleton />
-      ) : null}
-
-      {!isLoading && errorMessage ? (
-        <View style={styles.bodyFill}>
-          <View style={styles.stateWrap}>
-            <Text style={styles.stateTitle}>Feed unavailable</Text>
-            <Text style={styles.stateText}>{errorMessage}</Text>
-            <Pressable onPress={() => void loadFeed()} style={styles.retryButton}>
-              <Text style={styles.retryButtonText}>Try Again</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
-      {!isLoading && !errorMessage && items.length === 0 ? (
-        <View style={styles.bodyFill}>
-          <View style={styles.stateWrap}>
-            <Text style={styles.stateTitle}>No narratives yet</Text>
-            <Text style={styles.stateText}>Publisher has not emitted new feed items.</Text>
-          </View>
-        </View>
-      ) : null}
-
-      {!isLoading && !errorMessage && items.length > 0 ? (
+      {isLoading ? <FeedSkeleton /> : (
         <FeedList
           items={items}
           onCardPress={handleCardPress}
@@ -136,10 +165,38 @@ export default function FeedScreen() {
           onRefresh={handleRefresh}
           onEndReached={handleEndReached}
           loadingMore={loadingMore}
+          header={listHeader}
+          empty={empty}
         />
-      ) : null}
+      )}
 
-      <NarrativeSheet item={sheetItem} onClose={handleSheetClose} />
+      <NarrativeSheet item={sheetItem} onClose={() => setSheetItem(null)} />
+      <StorySheet story={storySheet} onClose={() => setStorySheet(null)} />
+      <MarketCalendarModal visible={calendarVisible} onClose={() => setCalendarVisible(false)} />
+    </View>
+  );
+}
+
+function InlineState({
+  title,
+  text,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  text: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <View style={styles.stateWrap}>
+      <Text style={styles.stateTitle}>{title}</Text>
+      <Text style={styles.stateText}>{text}</Text>
+      {actionLabel && onAction ? (
+        <Pressable onPress={onAction} accessibilityRole="button" style={styles.retryButton}>
+          <Text style={styles.retryButtonText}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -149,24 +206,51 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: FEED_COLORS.screen,
   },
-  bodyFill: {
-    flex: 1,
+  listHeader: {
+    paddingBottom: 12,
+  },
+  sectionHeading: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingBottom: 8,
+  },
+  latestHeading: {
+    paddingTop: 26,
+  },
+  sectionTitle: {
+    color: FEED_COLORS.text,
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '900',
+    letterSpacing: -0.35,
+  },
+  sectionMeta: {
+    color: FEED_COLORS.textFaint,
+    fontFamily: 'monospace',
+    fontSize: 8,
+    lineHeight: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
   stateWrap: {
-    marginHorizontal: 16,
-    marginTop: 16,
     padding: 16,
     borderWidth: 1,
     borderColor: FEED_COLORS.border,
-    borderRadius: 7,
+    borderRadius: 8,
     backgroundColor: FEED_COLORS.card,
-    gap: 8,
+    gap: 7,
     alignItems: 'flex-start',
+    borderCurve: 'continuous',
   },
   stateTitle: {
     color: FEED_COLORS.text,
     fontSize: 15,
-    fontWeight: '800',
+    lineHeight: 20,
+    fontWeight: '900',
   },
   stateText: {
     color: FEED_COLORS.textDim,
@@ -174,16 +258,18 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   retryButton: {
-    marginTop: 4,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
     backgroundColor: FEED_COLORS.accent,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 4,
+    paddingHorizontal: 14,
+    marginTop: 3,
   },
   retryButtonText: {
     color: FEED_COLORS.cardDeep,
     fontSize: 11,
-    fontFamily: 'monospace',
-    fontWeight: '700',
+    lineHeight: 15,
+    fontWeight: '900',
   },
 });

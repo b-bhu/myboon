@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { FeedCard } from '@/features/feed/components/FeedCard';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
@@ -10,15 +11,27 @@ interface FeedListProps {
   onRefresh: () => void;
   onEndReached: () => void;
   loadingMore: boolean;
+  header?: ReactElement | null;
+  empty?: ReactElement | null;
 }
 
-export function FeedList({ items, onCardPress, refreshing, onRefresh, onEndReached, loadingMore }: FeedListProps) {
+export function FeedList({
+  items,
+  onCardPress,
+  refreshing,
+  onRefresh,
+  onEndReached,
+  loadingMore,
+  header = null,
+  empty = null,
+}: FeedListProps) {
   return (
     <FlatList
       data={items}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => <FeedCard item={item} onPress={onCardPress} />}
       showsVerticalScrollIndicator={false}
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
       ItemSeparatorComponent={() => <View style={styles.separator} />}
       refreshControl={
@@ -31,6 +44,8 @@ export function FeedList({ items, onCardPress, refreshing, onRefresh, onEndReach
       }
       onEndReached={onEndReached}
       onEndReachedThreshold={0.4}
+      ListHeaderComponent={header}
+      ListEmptyComponent={empty}
       ListFooterComponent={
         loadingMore ? (
           <View style={styles.footer}>

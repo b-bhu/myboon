@@ -1,4 +1,4 @@
-import type { StoryDetail, StoryEvent, StorySummary } from '@/features/feed/feed.types';
+import type { StoryDetail, StoryEvent, StoryPagination, StorySummary } from '@/features/feed/feed.types';
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
 
 interface StoriesResponse {
@@ -8,7 +8,10 @@ interface StoriesResponse {
 interface StoryDetailResponse {
   story: unknown;
   events: unknown;
+  pagination?: unknown;
 }
+
+const DEFAULT_STORY_EVENT_LIMIT = 20;
 
 export async function fetchStories(): Promise<StorySummary[]> {
   const response = await fetchWithTimeout(`${resolveApiBaseUrl()}/stories`);
@@ -25,9 +28,15 @@ export async function fetchStories(): Promise<StorySummary[]> {
   });
 }
 
-export async function fetchStoryDetail(storySlug: string): Promise<StoryDetail> {
+export async function fetchStoryDetail(
+  storySlug: string,
+  limit = DEFAULT_STORY_EVENT_LIMIT,
+  offset = 0,
+): Promise<StoryDetail> {
+  const safeLimit = Math.min(50, Math.max(1, Math.floor(limit)));
+  const safeOffset = Math.min(10_000, Math.max(0, Math.floor(offset)));
   const response = await fetchWithTimeout(
-    `${resolveApiBaseUrl()}/stories/${encodeURIComponent(storySlug)}`,
+    `${resolveApiBaseUrl()}/stories/${encodeURIComponent(storySlug)}?limit=${safeLimit}&offset=${safeOffset}`,
   );
   if (!response.ok) throw new Error(`Story request failed (${response.status})`);
 
@@ -41,8 +50,41 @@ export async function fetchStoryDetail(storySlug: string): Promise<StoryDetail> 
     const event = parseStoryEvent(value);
     return event ? [event] : [];
   });
+  const pagination = parseStoryPagination(payload.pagination, story, events.length, safeLimit, safeOffset);
 
-  return { story, events };
+  return { story, events, pagination };
+}
+
+function parseStoryPagination(
+  value: unknown,
+  story: StorySummary,
+  eventCount: number,
+  fallbackLimit: number,
+  fallbackOffset: number,
+): StoryPagination {
+  if (isRecord(value)) {
+    const limit = nonNegativeInteger(value.limit) && value.limit > 0 ? value.limit : fallbackLimit;
+    const offset = nonNegativeInteger(value.offset) ? value.offset : fallbackOffset;
+    const total = nonNegativeInteger(value.total) ? value.total : story.eventCount;
+    const nextOffset = nonNegativeInteger(value.nextOffset) ? value.nextOffset : null;
+    return {
+      limit,
+      offset,
+      total,
+      hasMore: value.hasMore === true && nextOffset !== null,
+      nextOffset,
+    };
+  }
+
+  const nextOffset = fallbackOffset + eventCount;
+  const hasMore = nextOffset < story.eventCount;
+  return {
+    limit: fallbackLimit,
+    offset: fallbackOffset,
+    total: story.eventCount,
+    hasMore,
+    nextOffset: hasMore ? nextOffset : null,
+  };
 }
 
 function parseStorySummary(value: unknown): StorySummary | null {
@@ -111,6 +153,10 @@ function optionalString(value: unknown): string | null {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

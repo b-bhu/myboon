@@ -49,6 +49,15 @@ export interface StoryEvent {
 export interface StoryDetail {
   story: StorySummary;
   events: StoryEvent[];
+  pagination: StoryPagination;
+}
+
+export interface StoryPagination {
+  limit: number;
+  offset: number;
+  total: number;
+  hasMore: boolean;
+  nextOffset: number | null;
 }
 
 export interface BottomNavItem {

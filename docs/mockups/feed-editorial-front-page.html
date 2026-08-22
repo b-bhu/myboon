@@ -1,0 +1,1648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>myboon Feed Prototype</title>
+  <style>
+    @font-face {
+      font-family: "Material Icons Mock";
+      src: url("assets/material-icons.ttf") format("truetype");
+      font-display: block;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --screen: #103D4C;
+      --background: #073B4C;
+      --ground: #063343;
+      --card: #033744;
+      --card-active: #053F4D;
+      --card-deep: #082D39;
+      --lift: #0A4A60;
+      --border: #185A70;
+      --border-soft: #2C6170;
+      --text: #F5FAFC;
+      --text-dim: #9CB8C2;
+      --text-faint: #84AAB5;
+      --primary: #118AB2;
+      --accent: #FFD166;
+      --positive: #06D6A0;
+      --phoenix: #FF8D2A;
+      --pacifica: #61D7EF;
+      --meteora: #6E45FF;
+      --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      --mono: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
+      --card-radius: 10px;
+      --control-radius: 999px;
+    }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at 20% 3%, rgba(255, 209, 102, 0.10), transparent 330px),
+        radial-gradient(circle at 82% 10%, rgba(17, 138, 178, 0.20), transparent 420px),
+        linear-gradient(180deg, var(--background) 0%, #031F2C 100%);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button { font: inherit; }
+
+    button:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .mi {
+      font-family: "Material Icons Mock";
+      font-weight: normal;
+      font-style: normal;
+      line-height: 1;
+      letter-spacing: normal;
+      text-transform: none;
+      white-space: nowrap;
+      word-wrap: normal;
+      direction: ltr;
+      -webkit-font-feature-settings: "liga";
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .prototype {
+      min-height: 100dvh;
+      width: min(1160px, 100%);
+      margin: 0 auto;
+      padding: 30px 22px 54px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 420px;
+      gap: 44px;
+      align-items: start;
+    }
+
+    .review-panel {
+      position: sticky;
+      top: 30px;
+      max-width: 600px;
+      padding-top: 28px;
+    }
+
+    .review-label {
+      color: var(--accent);
+      font: 800 11px/1 var(--mono);
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+    }
+
+    .review-panel h1 {
+      max-width: 600px;
+      margin: 15px 0 18px;
+      color: var(--text);
+      font-size: clamp(42px, 5vw, 68px);
+      line-height: 0.97;
+      letter-spacing: -2.6px;
+      font-weight: 880;
+    }
+
+    .review-panel > p {
+      max-width: 570px;
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 16px;
+      line-height: 1.58;
+    }
+
+    .structure-note {
+      margin-top: 30px;
+      overflow: hidden;
+      border: 1px solid rgba(44, 97, 112, 0.85);
+      border-radius: var(--card-radius);
+      background: rgba(3, 55, 68, 0.56);
+    }
+
+    .structure-row {
+      min-height: 74px;
+      padding: 13px 15px;
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 12px;
+      align-items: center;
+      border-bottom: 1px solid rgba(44, 97, 112, 0.58);
+    }
+
+    .structure-row:last-child { border-bottom: 0; }
+
+    .structure-number {
+      color: var(--accent);
+      font: 850 14px/1 var(--mono);
+    }
+
+    .structure-row strong {
+      display: block;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .structure-row span:last-child {
+      display: block;
+      margin-top: 4px;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .prototype-controls {
+      margin-top: 25px;
+      padding-top: 19px;
+      border-top: 1px solid rgba(44, 97, 112, 0.68);
+    }
+
+    .prototype-controls h2 {
+      margin: 0 0 11px;
+      font-size: 14px;
+      font-weight: 820;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .state-button {
+      border: 1px solid var(--border-soft);
+      border-radius: var(--control-radius);
+      padding: 8px 12px;
+      color: var(--text-dim);
+      background: rgba(3, 55, 68, 0.72);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 750;
+      transition: transform 150ms ease, background 150ms ease, color 150ms ease;
+    }
+
+    .state-button:hover,
+    .state-button.active {
+      color: var(--card-deep);
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+
+    .state-button:active { transform: scale(0.97); }
+
+    .hint {
+      margin: 12px 0 0;
+      color: var(--text-faint);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .device-column {
+      display: flex;
+      justify-content: center;
+    }
+
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 1px solid rgba(245, 250, 252, 0.13);
+      border-radius: 44px;
+      background: var(--screen);
+      box-shadow: 0 0 0 8px #02141B, 0 34px 90px rgba(0, 0, 0, 0.42);
+    }
+
+    .phone::before {
+      content: "";
+      position: absolute;
+      z-index: 30;
+      top: 0;
+      left: 50%;
+      width: 112px;
+      height: 29px;
+      transform: translateX(-50%);
+      border-radius: 0 0 20px 20px;
+      background: #02141B;
+      pointer-events: none;
+    }
+
+    .app {
+      position: relative;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background:
+        radial-gradient(circle at 95% -2%, rgba(17, 138, 178, 0.16), transparent 230px),
+        var(--screen);
+    }
+
+    .status-bar {
+      flex: 0 0 auto;
+      height: 42px;
+      padding: 13px 23px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text);
+      font: 800 11px/1 var(--mono);
+    }
+
+    .status-icons {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+    }
+
+    .app-header,
+    .calendar-header {
+      flex: 0 0 auto;
+      min-height: 52px;
+      padding: 4px 15px 7px;
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid rgba(24, 90, 112, 0.86);
+      background: rgba(16, 61, 76, 0.98);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .icon-button,
+    .profile-button,
+    .sheet-close,
+    .save-button {
+      border: 1px solid rgba(44, 97, 112, 0.9);
+      border-radius: var(--control-radius);
+      color: var(--text);
+      background: var(--card-deep);
+      cursor: pointer;
+      transition: transform 150ms ease, background 150ms ease;
+    }
+
+    .icon-button,
+    .profile-button {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+
+    .icon-button { font-size: 19px; }
+
+    .calendar-button {
+      color: var(--accent);
+      border-color: rgba(255, 209, 102, 0.30);
+    }
+
+    .profile-button {
+      color: var(--card-deep);
+      border-color: rgba(6, 214, 160, 0.58);
+      background: var(--positive);
+      font: 900 9px/1 var(--mono);
+    }
+
+    .icon-button:active,
+    .profile-button:active,
+    .sheet-close:active,
+    .save-button:active { transform: scale(0.94); }
+
+    .app-title {
+      margin: 0;
+      text-align: center;
+      color: var(--text);
+      font-size: 21px;
+      line-height: 1.2;
+      letter-spacing: -0.35px;
+      font-weight: 880;
+    }
+
+    .feed-scroll,
+    .calendar-scroll {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: none;
+    }
+
+    .feed-scroll::-webkit-scrollbar,
+    .calendar-scroll::-webkit-scrollbar,
+    .sheet-scroll::-webkit-scrollbar,
+    .story-rail::-webkit-scrollbar { display: none; }
+
+    .feed-content {
+      min-height: 100%;
+      padding: 12px 14px 46px;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 10px 1px 12px;
+    }
+
+    .section-heading.latest-heading { margin-top: 29px; }
+
+    .section-heading h2 {
+      margin: 0;
+      color: var(--text);
+      font-size: 23px;
+      line-height: 1.1;
+      letter-spacing: -0.45px;
+      font-weight: 880;
+    }
+
+    .section-count {
+      color: var(--text-faint);
+      font: 750 10px/1 var(--mono);
+    }
+
+    .story-rail {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 80%;
+      gap: 11px;
+      margin: 0 -14px;
+      padding: 0 14px 5px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none;
+    }
+
+    .story-card {
+      scroll-snap-align: start;
+      overflow: hidden;
+      min-height: 218px;
+      border: 1px solid rgba(44, 97, 112, 0.9);
+      border-radius: var(--card-radius);
+      background: var(--card-deep);
+      cursor: pointer;
+      transition: transform 150ms ease, background 150ms ease;
+    }
+
+    .story-card:active { transform: scale(0.985); }
+
+    .story-card img {
+      width: 100%;
+      height: 105px;
+      display: block;
+      object-fit: cover;
+      background: var(--card-active);
+    }
+
+    .story-card-copy { padding: 12px 13px 13px; }
+
+    .story-title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .story-card h3 {
+      margin: 0;
+      color: var(--text);
+      font-size: 18px;
+      line-height: 1.18;
+      letter-spacing: -0.2px;
+      font-weight: 850;
+    }
+
+    .story-date {
+      flex: 0 0 auto;
+      padding-top: 3px;
+      color: var(--text-faint);
+      font: 700 9px/1 var(--mono);
+    }
+
+    .story-development {
+      display: grid;
+      grid-template-columns: 12px 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .timeline-mini {
+      position: relative;
+      width: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3px 0;
+    }
+
+    .timeline-mini::before {
+      content: "";
+      position: absolute;
+      top: 6px;
+      bottom: 6px;
+      width: 1px;
+      background: var(--border-soft);
+    }
+
+    .timeline-mini i {
+      position: relative;
+      z-index: 1;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--border-soft);
+    }
+
+    .timeline-mini i:last-child {
+      width: 7px;
+      height: 7px;
+      background: var(--accent);
+    }
+
+    .story-development p {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .lead-story {
+      overflow: hidden;
+      border: 1px solid rgba(44, 97, 112, 0.92);
+      border-radius: var(--card-radius);
+      background: var(--card-deep);
+      cursor: pointer;
+      transition: transform 150ms ease;
+    }
+
+    .lead-story:active { transform: scale(0.993); }
+
+    .lead-image {
+      width: 100%;
+      height: 178px;
+      display: block;
+      object-fit: cover;
+      background: var(--card-active);
+    }
+
+    .lead-copy { padding: 14px 14px 15px; }
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .meta-label,
+    .meta-time,
+    .sheet-kicker,
+    .event-time {
+      font-family: var(--mono);
+      font-size: 10px;
+      line-height: 1.2;
+      letter-spacing: 0.72px;
+      text-transform: uppercase;
+    }
+
+    .meta-label,
+    .sheet-kicker,
+    .event-time { color: var(--accent); font-weight: 850; }
+    .meta-time { color: var(--text-faint); }
+
+    .lead-story h2 {
+      margin: 0;
+      color: var(--text);
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: -0.58px;
+      font-weight: 900;
+    }
+
+    .lead-summary {
+      margin: 9px 0 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.46;
+    }
+
+    .lead-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(44, 97, 112, 0.62);
+    }
+
+    .read-time {
+      color: var(--text-faint);
+      font: 700 10px/1 var(--mono);
+    }
+
+    .read-more {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .feed-stack {
+      margin-top: 10px;
+      overflow: hidden;
+      border-top: 1px solid rgba(44, 97, 112, 0.72);
+    }
+
+    .feed-item {
+      width: 100%;
+      padding: 15px 1px 16px;
+      border: 0;
+      border-bottom: 1px solid rgba(44, 97, 112, 0.62);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      color: inherit;
+      text-align: left;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .feed-item.with-image {
+      grid-template-columns: 1fr 108px;
+      align-items: start;
+      gap: 13px;
+    }
+
+    .feed-item h3 {
+      margin: 5px 0 0;
+      color: var(--text);
+      font-size: 17px;
+      line-height: 1.26;
+      letter-spacing: -0.15px;
+      font-weight: 820;
+    }
+
+    .feed-item p {
+      margin: 7px 0 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.44;
+    }
+
+    .feed-thumb {
+      width: 108px;
+      height: 93px;
+      border: 1px solid rgba(44, 97, 112, 0.75);
+      border-radius: 8px;
+      object-fit: cover;
+      background: var(--card-active);
+    }
+
+    .feed-item-apps {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding-top: 3px;
+    }
+
+    .apps-label {
+      color: var(--text-faint);
+      font: 750 9px/1 var(--mono);
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+    }
+
+    .app-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid rgba(44, 97, 112, 0.78);
+      border-radius: var(--control-radius);
+      padding: 5px 8px 5px 6px;
+      color: var(--text-dim);
+      background: rgba(8, 45, 57, 0.76);
+      font-size: 10px;
+      font-weight: 760;
+    }
+
+    .app-mark {
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #031F2C;
+      font: 900 8px/1 var(--mono);
+    }
+
+    .app-mark.pacifica { background: var(--pacifica); }
+    .app-mark.phoenix { background: var(--phoenix); }
+    .app-mark.meteora { color: var(--text); background: var(--meteora); }
+    .app-mark.poly { color: var(--text); background: var(--primary); }
+
+    .state-layer {
+      display: none;
+      min-height: 100%;
+      padding: 14px;
+      background: var(--screen);
+    }
+
+    .state-layer.active { display: block; }
+    .feed-content.hidden { display: none; }
+
+    .state-card {
+      margin-top: 20px;
+      padding: 18px;
+      border: 1px solid rgba(44, 97, 112, 0.9);
+      border-radius: var(--card-radius);
+      background: var(--card);
+    }
+
+    .state-card h2 { margin: 0; font-size: 19px; line-height: 1.2; }
+
+    .state-card p {
+      margin: 8px 0 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .retry-button {
+      margin-top: 14px;
+      border: 0;
+      border-radius: var(--control-radius);
+      padding: 9px 13px;
+      color: var(--card-deep);
+      background: var(--accent);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .skeleton-stack { display: grid; gap: 11px; }
+
+    .skeleton {
+      overflow: hidden;
+      border-radius: var(--card-radius);
+      background: var(--card);
+    }
+
+    .skeleton.stories { height: 218px; }
+    .skeleton.hero { height: 370px; }
+    .skeleton.row { height: 105px; }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .skeleton::after {
+        content: "";
+        display: block;
+        width: 70%;
+        height: 100%;
+        transform: translateX(-120%);
+        background: linear-gradient(90deg, transparent, rgba(245, 250, 252, 0.07), transparent);
+        animation: shimmer 1.45s ease-in-out infinite;
+      }
+      @keyframes shimmer { to { transform: translateX(220%); } }
+    }
+
+    .calendar-screen {
+      position: absolute;
+      z-index: 15;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--screen);
+      transform: translateX(102%);
+      transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .calendar-screen.open { transform: translateX(0); }
+
+    .calendar-header {
+      grid-template-columns: 34px 1fr 34px;
+    }
+
+    .calendar-body { padding: 14px 12px 34px; }
+
+    .month-nav {
+      display: grid;
+      grid-template-columns: 32px 1fr 32px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .month-nav button {
+      width: 30px;
+      height: 30px;
+      border: 0;
+      border-radius: var(--control-radius);
+      color: var(--text-dim);
+      background: transparent;
+      cursor: pointer;
+      font-size: 21px;
+    }
+
+    .month-nav h2 {
+      margin: 0;
+      text-align: center;
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.1;
+      font-weight: 880;
+      letter-spacing: -0.35px;
+    }
+
+    .calendar-weekdays,
+    .month-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+
+    .calendar-weekdays span {
+      padding: 5px 0 8px;
+      text-align: center;
+      color: var(--text-faint);
+      font: 750 8px/1 var(--mono);
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+
+    .month-grid {
+      overflow: hidden;
+      border-top: 1px solid rgba(44, 97, 112, 0.76);
+      border-left: 1px solid rgba(44, 97, 112, 0.76);
+      border-radius: 8px;
+    }
+
+    .calendar-day {
+      position: relative;
+      min-width: 0;
+      height: 58px;
+      padding: 6px 4px 4px;
+      border: 0;
+      border-right: 1px solid rgba(44, 97, 112, 0.76);
+      border-bottom: 1px solid rgba(44, 97, 112, 0.76);
+      color: var(--text-dim);
+      text-align: left;
+      background: rgba(3, 55, 68, 0.34);
+      cursor: pointer;
+    }
+
+    .calendar-day.outside {
+      color: rgba(132, 170, 181, 0.46);
+      background: rgba(8, 45, 57, 0.34);
+    }
+
+    .calendar-day.selected {
+      color: var(--text);
+      background: rgba(255, 209, 102, 0.10);
+      box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.64);
+    }
+
+    .day-number {
+      display: block;
+      font: 800 10px/1 var(--mono);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .day-event {
+      display: block;
+      max-width: 100%;
+      margin-top: 7px;
+      overflow: hidden;
+      color: var(--accent);
+      font: 850 8px/1 var(--mono);
+      letter-spacing: -0.15px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .calendar-selection {
+      margin-top: 14px;
+      padding: 13px;
+      border: 1px solid rgba(44, 97, 112, 0.88);
+      border-radius: var(--card-radius);
+      background: var(--card-deep);
+    }
+
+    .selected-date {
+      color: var(--text-faint);
+      font: 750 10px/1 var(--mono);
+      letter-spacing: 0.65px;
+      text-transform: uppercase;
+    }
+
+    .calendar-event-card {
+      width: 100%;
+      margin-top: 10px;
+      padding: 0;
+      border: 0;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 11px;
+      align-items: center;
+      color: inherit;
+      text-align: left;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .calendar-event-card h3 {
+      margin: 5px 0 0;
+      color: var(--text);
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .calendar-event-card p {
+      margin: 6px 0 0;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .event-arrow { color: var(--accent); font-size: 22px; }
+
+    .calendar-empty {
+      margin: 9px 0 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .scrim {
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      display: none;
+      border: 0;
+      background: rgba(2, 20, 27, 0.76);
+      opacity: 0;
+      transition: opacity 210ms ease;
+    }
+
+    .scrim.open { display: block; opacity: 1; }
+
+    .detail-sheet {
+      position: absolute;
+      z-index: 21;
+      left: 10px;
+      right: 10px;
+      bottom: 0;
+      height: 78%;
+      overflow: hidden;
+      border: 1px solid rgba(44, 97, 112, 0.98);
+      border-bottom: 0;
+      border-radius: 18px 18px 0 0;
+      background: var(--card);
+      transform: translateY(102%);
+      transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .detail-sheet.open { transform: translateY(0); }
+
+    .sheet-handle {
+      width: 54px;
+      height: 4px;
+      margin: 10px auto 5px;
+      border-radius: 3px;
+      background: var(--border-soft);
+    }
+
+    .sheet-bar {
+      min-height: 46px;
+      padding: 6px 13px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .sheet-close,
+    .save-button {
+      min-width: 32px;
+      height: 32px;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sheet-close { font-size: 18px; }
+    .save-button { color: var(--text-dim); font-size: 11px; font-weight: 800; }
+    .save-button.saved { color: var(--card-deep); border-color: var(--accent); background: var(--accent); }
+
+    .sheet-scroll {
+      height: calc(100% - 65px);
+      overflow-y: auto;
+      padding: 0 14px 38px;
+      scrollbar-width: none;
+    }
+
+    .sheet-image {
+      width: 100%;
+      height: 172px;
+      display: block;
+      border-radius: var(--card-radius);
+      object-fit: cover;
+    }
+
+    .sheet-kicker { margin-top: 10px; }
+
+    .sheet-scroll h2 {
+      margin: 10px 0 0;
+      color: var(--text);
+      font-size: 26px;
+      line-height: 1.08;
+      letter-spacing: -0.65px;
+      font-weight: 900;
+    }
+
+    .sheet-summary {
+      margin: 11px 0 0;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.52;
+    }
+
+    .sheet-section {
+      margin-top: 21px;
+      padding-top: 17px;
+      border-top: 1px solid rgba(44, 97, 112, 0.68);
+    }
+
+    .sheet-section h3 {
+      margin: 0 0 10px;
+      color: var(--text);
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .sheet-section p {
+      margin: 0 0 11px;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.54;
+    }
+
+    .sheet-apps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .sheet-app-button {
+      flex: 1 1 46%;
+      min-height: 48px;
+      padding: 8px 10px;
+      border: 1px solid rgba(44, 97, 112, 0.86);
+      border-radius: var(--card-radius);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--text);
+      text-align: left;
+      background: var(--card-deep);
+      cursor: pointer;
+    }
+
+    .sheet-app-button span:last-child {
+      display: block;
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .timeline {
+      margin-top: 4px;
+    }
+
+    .timeline-event {
+      min-height: 78px;
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 9px;
+    }
+
+    .timeline-marker {
+      position: relative;
+      display: flex;
+      justify-content: center;
+    }
+
+    .timeline-marker::after {
+      content: "";
+      position: absolute;
+      top: 12px;
+      bottom: -4px;
+      width: 1px;
+      background: var(--border-soft);
+    }
+
+    .timeline-event:last-child .timeline-marker::after { display: none; }
+
+    .timeline-marker i {
+      position: relative;
+      z-index: 1;
+      width: 7px;
+      height: 7px;
+      margin-top: 3px;
+      border: 2px solid var(--card);
+      border-radius: 50%;
+      background: var(--border-soft);
+      box-shadow: 0 0 0 1px var(--border-soft);
+    }
+
+    .timeline-event:first-child .timeline-marker i {
+      background: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+
+    .timeline-event time {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--text-faint);
+      font: 700 10px/1 var(--mono);
+    }
+
+    .timeline-event p {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.44;
+    }
+
+    .toast {
+      position: absolute;
+      z-index: 40;
+      left: 50%;
+      bottom: 22px;
+      width: max-content;
+      max-width: calc(100% - 40px);
+      padding: 10px 13px;
+      border: 1px solid rgba(255, 209, 102, 0.34);
+      border-radius: var(--control-radius);
+      color: var(--card-deep);
+      background: var(--accent);
+      font-size: 12px;
+      font-weight: 850;
+      opacity: 0;
+      transform: translate(-50%, 12px);
+      pointer-events: none;
+      transition: opacity 170ms ease, transform 170ms ease;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    @media (max-width: 900px) {
+      .prototype { grid-template-columns: 1fr; gap: 32px; }
+      .review-panel { position: static; margin: 0 auto; text-align: center; }
+      .review-panel > p { margin: 0 auto; }
+      .structure-note { text-align: left; }
+      .control-row { justify-content: center; }
+    }
+
+    @media (max-width: 520px) {
+      body { background: var(--screen); }
+      .prototype { display: block; padding: 0; }
+      .review-panel { display: none; }
+      .phone {
+        width: 100%;
+        height: 100dvh;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+      .phone::before { display: none; }
+      .status-bar {
+        height: calc(34px + env(safe-area-inset-top));
+        padding-top: max(12px, env(safe-area-inset-top));
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="prototype">
+    <section class="review-panel" aria-labelledby="prototype-title">
+      <div class="review-label">Feed revision</div>
+      <h1 id="prototype-title">Stories first.<br />Calendar when asked.</h1>
+      <p>
+        One continuous Feed, without content tabs. Stories introduce the durable timelines, Latest remains chronological, and a header action opens the actual market calendar.
+      </p>
+
+      <div class="structure-note">
+        <div class="structure-row">
+          <span class="structure-number">1</span>
+          <span><strong>Stories carousel</strong><span>Several curated entity timelines are visible immediately.</span></span>
+        </div>
+        <div class="structure-row">
+          <span class="structure-number">2</span>
+          <span><strong>Latest narratives</strong><span>The image cards and chronological stream stay together.</span></span>
+        </div>
+        <div class="structure-row">
+          <span class="structure-number">3</span>
+          <span><strong>Market calendar</strong><span>A real month grid opens from the header and places events on dates.</span></span>
+        </div>
+      </div>
+
+      <div class="prototype-controls">
+        <h2>Preview states</h2>
+        <div class="control-row" role="group" aria-label="Preview states">
+          <button class="state-button active" type="button" data-state="content">Content</button>
+          <button class="state-button" type="button" data-state="loading">Loading</button>
+          <button class="state-button" type="button" data-state="empty">Empty</button>
+          <button class="state-button" type="button" data-state="error">Error</button>
+        </div>
+        <p class="hint">Tap the yellow calendar icon, select dates, open Stories, and open narrative cards.</p>
+      </div>
+    </section>
+
+    <section class="device-column" aria-label="Interactive mobile prototype">
+      <div class="phone">
+        <div class="app">
+          <div class="status-bar" aria-hidden="true">
+            <span>9:41</span>
+            <span class="status-icons">▮▮▮ 5G ▰</span>
+          </div>
+
+          <header class="app-header">
+            <button class="icon-button mi" type="button" aria-label="Back to Home" data-toast="Back to Home">&#58820;</button>
+            <h1 class="app-title">Feed</h1>
+            <div class="header-actions">
+              <button class="icon-button calendar-button mi" id="calendar-open" type="button" aria-label="Open market calendar">&#60364;</button>
+              <button class="profile-button" type="button" aria-label="Open profile" data-toast="Profile opened">BB</button>
+            </div>
+          </header>
+
+          <div class="feed-scroll" id="feed-scroll">
+            <!-- Sample editorial content for visual review only. -->
+            <div class="feed-content" id="feed-content">
+              <div class="section-heading">
+                <h2>Stories</h2>
+                <span class="section-count">3 selected</span>
+              </div>
+
+              <div class="story-rail" aria-label="Curated Stories">
+                <article class="story-card" tabindex="0" role="button" data-open="iran">
+                  <img src="assets/feed-editorial-us-iran.png" alt="Cargo ships moving through a narrow gulf at dusk" />
+                  <div class="story-card-copy">
+                    <div class="story-title-row"><h3>US-Iran tensions</h3><span class="story-date">Today</span></div>
+                    <div class="story-development">
+                      <div class="timeline-mini" aria-hidden="true"><i></i><i></i><i></i></div>
+                      <p>Shipping risk is feeding into oil pricing and prediction markets.</p>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="story-card" tabindex="0" role="button" data-open="ai">
+                  <img src="assets/feed-editorial-ai-compute.png" alt="AI accelerator hardware in a data center" />
+                  <div class="story-card-copy">
+                    <div class="story-title-row"><h3>The AI capex cycle</h3><span class="story-date">3h</span></div>
+                    <div class="story-development">
+                      <div class="timeline-mini" aria-hidden="true"><i></i><i></i><i></i></div>
+                      <p>Chip demand stays strong ahead of the next guidance update.</p>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="story-card" tabindex="0" role="button" data-open="bitcoin-story">
+                  <img src="assets/feed-editorial-macro-lead.png" alt="A market desk lit in deep teal and amber" />
+                  <div class="story-card-copy">
+                    <div class="story-title-row"><h3>Bitcoin flows</h3><span class="story-date">5h</span></div>
+                    <div class="story-development">
+                      <div class="timeline-mini" aria-hidden="true"><i></i><i></i><i></i></div>
+                      <p>ETF demand and leverage point to a changing buyer mix.</p>
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <div class="section-heading latest-heading">
+                <h2>Latest</h2>
+                <span class="section-count">Updated now</span>
+              </div>
+
+              <article class="lead-story" tabindex="0" role="button" data-open="macro">
+                <img class="lead-image" src="assets/feed-editorial-macro-lead.png" alt="A market desk lit in deep teal and amber" />
+                <div class="lead-copy">
+                  <div class="meta-row"><span class="meta-label">Macro</span><span class="meta-time">18m ago</span></div>
+                  <h2>Cooler CPI shifts rate expectations, but crypto's first move fades.</h2>
+                  <p class="lead-summary">The release changed the rate path faster than positioning. Bitcoin gave back its initial move as traders waited for confirmation.</p>
+                  <div class="lead-footer"><span class="read-time">4 min read</span><span class="read-more">Read more ›</span></div>
+                </div>
+              </article>
+
+              <div class="feed-stack">
+                <button class="feed-item with-image" type="button" data-open="nvidia">
+                  <span>
+                    <span class="meta-label">Equities</span>
+                    <span class="meta-time">42m ago</span>
+                    <h3>AI demand remains strong ahead of NVIDIA's next guidance update.</h3>
+                    <p>Supplier and cloud spending memories point to a high bar for the quarter.</p>
+                  </span>
+                  <img class="feed-thumb" src="assets/feed-editorial-ai-compute.png" alt="AI accelerator hardware in a server rack" />
+                </button>
+
+                <button class="feed-item" type="button" data-open="bitcoin-feed">
+                  <span>
+                    <span class="meta-label">Crypto</span>
+                    <span class="meta-time">1h ago</span>
+                    <h3>Bitcoin funding cools while spot buyers absorb the pullback.</h3>
+                    <p>The move is less leveraged than yesterday, but conviction has not returned across venues.</p>
+                  </span>
+                </button>
+
+                <button class="feed-item" type="button" data-open="markets">
+                  <span>
+                    <span class="meta-label">Prediction markets</span>
+                    <span class="meta-time">2h ago</span>
+                    <h3>Rate-cut odds move after CPI, but traders still disagree on timing.</h3>
+                    <p>The repricing is visible across the September and year-end markets.</p>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <section class="state-layer" id="state-layer" aria-live="polite"></section>
+          </div>
+
+          <section class="calendar-screen" id="calendar-screen" aria-label="Market calendar" aria-hidden="true">
+            <header class="calendar-header">
+              <button class="icon-button mi" id="calendar-close" type="button" aria-label="Back to Feed">&#58820;</button>
+              <h1 class="app-title">Market calendar</h1>
+              <span aria-hidden="true"></span>
+            </header>
+
+            <div class="calendar-scroll">
+              <div class="calendar-body">
+                <div class="month-nav">
+                  <button type="button" aria-label="Previous month" data-toast="Previous month preview">‹</button>
+                  <h2>August 2026</h2>
+                  <button type="button" aria-label="Next month" data-toast="Next month preview">›</button>
+                </div>
+
+                <div class="calendar-weekdays" aria-hidden="true">
+                  <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                </div>
+
+                <div class="month-grid" role="grid" aria-label="August 2026 market events">
+                  <button class="calendar-day outside" type="button" data-date="Jul 26"><span class="day-number">26</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Jul 27"><span class="day-number">27</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Jul 28"><span class="day-number">28</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Jul 29"><span class="day-number">29</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Jul 30"><span class="day-number">30</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Jul 31"><span class="day-number">31</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 1"><span class="day-number">1</span></button>
+
+                  <button class="calendar-day" type="button" data-date="Aug 2"><span class="day-number">2</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 3"><span class="day-number">3</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 4"><span class="day-number">4</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 5"><span class="day-number">5</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 6"><span class="day-number">6</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 7"><span class="day-number">7</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 8"><span class="day-number">8</span></button>
+
+                  <button class="calendar-day" type="button" data-date="Aug 9"><span class="day-number">9</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 10"><span class="day-number">10</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 11"><span class="day-number">11</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 12"><span class="day-number">12</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 13"><span class="day-number">13</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 14"><span class="day-number">14</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 15"><span class="day-number">15</span></button>
+
+                  <button class="calendar-day" type="button" data-date="Aug 16"><span class="day-number">16</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 17"><span class="day-number">17</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 18"><span class="day-number">18</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 19"><span class="day-number">19</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 20"><span class="day-number">20</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 21" data-event="jobs"><span class="day-number">21</span><span class="day-event">Jobs</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 22"><span class="day-number">22</span></button>
+
+                  <button class="calendar-day" type="button" data-date="Aug 23"><span class="day-number">23</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 24" data-event="unlock"><span class="day-number">24</span><span class="day-event">SOL unlock</span></button>
+                  <button class="calendar-day selected" type="button" data-date="Aug 25" data-event="cpi"><span class="day-number">25</span><span class="day-event">US CPI</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 26" data-event="nvidia"><span class="day-number">26</span><span class="day-event">NVDA</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 27"><span class="day-number">27</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 28" data-event="fomc"><span class="day-number">28</span><span class="day-event">Fed</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 29"><span class="day-number">29</span></button>
+
+                  <button class="calendar-day" type="button" data-date="Aug 30"><span class="day-number">30</span></button>
+                  <button class="calendar-day" type="button" data-date="Aug 31"><span class="day-number">31</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Sep 1"><span class="day-number">1</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Sep 2"><span class="day-number">2</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Sep 3"><span class="day-number">3</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Sep 4"><span class="day-number">4</span></button>
+                  <button class="calendar-day outside" type="button" data-date="Sep 5"><span class="day-number">5</span></button>
+                </div>
+
+                <section class="calendar-selection" id="calendar-selection" aria-live="polite"></section>
+              </div>
+            </div>
+          </section>
+
+          <button class="scrim" id="scrim" type="button" aria-label="Close detail"></button>
+
+          <aside class="detail-sheet" id="detail-sheet" aria-modal="true" role="dialog" aria-label="Content detail">
+            <div class="sheet-handle"></div>
+            <div class="sheet-bar">
+              <button class="save-button" id="save-button" type="button">Save</button>
+              <button class="sheet-close mi" id="sheet-close" type="button" aria-label="Close">&#58829;</button>
+            </div>
+            <div class="sheet-scroll" id="sheet-content"></div>
+          </aside>
+
+          <div class="toast" id="toast" role="status" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <template id="detail-macro">
+    <img class="sheet-image" src="assets/feed-editorial-macro-lead.png" alt="A market desk lit in deep teal and amber" />
+    <div class="sheet-kicker">Macro · 18m ago</div>
+    <h2>Cooler CPI shifts rate expectations, but crypto's first move fades.</h2>
+    <p class="sheet-summary">The release changed the expected rate path immediately. Crypto's reaction was less decisive as traders waited for confirmation from bonds and the dollar.</p>
+    <section class="sheet-section">
+      <h3>The full picture</h3>
+      <p>The first move reflected a straightforward reading of cooler inflation. The reversal suggests positioning mattered as much as the release itself.</p>
+      <p>Rate-cut markets retained most of their repricing even after Bitcoin pulled back.</p>
+    </section>
+    <section class="sheet-section">
+      <h3>Take action</h3>
+      <div class="sheet-apps">
+        <button class="sheet-app-button" type="button" data-app="Pacifica"><span class="app-mark pacifica">P</span><span>Pacifica<br /><span>BTC perps</span></span></button>
+        <button class="sheet-app-button" type="button" data-app="Polymarket"><span class="app-mark poly">P</span><span>Polymarket<br /><span>Rate markets</span></span></button>
+      </div>
+    </section>
+  </template>
+
+  <template id="detail-iran">
+    <img class="sheet-image" src="assets/feed-editorial-us-iran.png" alt="Cargo ships moving through a narrow gulf at dusk" />
+    <div class="sheet-kicker">Story · Updated today</div>
+    <h2>US-Iran tensions</h2>
+    <p class="sheet-summary">A curated timeline connecting diplomacy, shipping risk, oil pricing and prediction markets.</p>
+    <section class="sheet-section">
+      <h3>Timeline</h3>
+      <div class="timeline">
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Today, 11:20</time><p>Oil risk premiums rise as shipping insurers reassess the route.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Today, 08:45</time><p>Prediction markets price a higher chance of direct escalation.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Yesterday</time><p>Diplomatic talks end without a public agreement.</p></div></article>
+      </div>
+    </section>
+  </template>
+
+  <template id="detail-ai">
+    <img class="sheet-image" src="assets/feed-editorial-ai-compute.png" alt="AI accelerator hardware in a data center" />
+    <div class="sheet-kicker">Story · Updated 3h ago</div>
+    <h2>The AI capex cycle</h2>
+    <p class="sheet-summary">One selected entity, followed through the memories added as compute demand, cloud spending and chip supply change.</p>
+    <section class="sheet-section">
+      <h3>Timeline</h3>
+      <div class="timeline">
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Today, 09:10</time><p>New cloud infrastructure commitments keep the demand picture strong ahead of the next earnings test.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Yesterday</time><p>Accelerator lead times improve, but networking capacity remains a constraint.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>August 18</time><p>Supplier guidance points to another quarter of elevated AI infrastructure spending.</p></div></article>
+      </div>
+    </section>
+  </template>
+
+  <template id="detail-bitcoin-story">
+    <img class="sheet-image" src="assets/feed-editorial-macro-lead.png" alt="A market desk lit in deep teal and amber" />
+    <div class="sheet-kicker">Story · Updated 5h ago</div>
+    <h2>Bitcoin flows</h2>
+    <p class="sheet-summary">One selected Bitcoin entity, followed through memories about ETF demand, leverage and the changing buyer mix.</p>
+    <section class="sheet-section">
+      <h3>Timeline</h3>
+      <div class="timeline">
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Today, 07:30</time><p>ETF demand and lower funding rates point to a changing buyer mix.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Yesterday</time><p>Spot buyers absorb the pullback while perpetual leverage resets across venues.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>August 18</time><p>Exchange balances fall as larger holders continue moving supply into custody.</p></div></article>
+      </div>
+    </section>
+  </template>
+
+  <template id="detail-bitcoin-feed">
+    <img class="sheet-image" src="assets/feed-editorial-macro-lead.png" alt="A market desk lit in deep teal and amber" />
+    <div class="sheet-kicker">Crypto · 1h ago</div>
+    <h2>Bitcoin funding cools while spot buyers absorb the pullback.</h2>
+    <p class="sheet-summary">Leverage has reset faster than price, leaving a cleaner but still uncertain market structure.</p>
+    <section class="sheet-section"><h3>Take action</h3><div class="sheet-apps"><button class="sheet-app-button" type="button" data-app="Pacifica"><span class="app-mark pacifica">P</span><span>Pacifica<br /><span>BTC perps</span></span></button><button class="sheet-app-button" type="button" data-app="Phoenix"><span class="app-mark phoenix">PH</span><span>Phoenix<br /><span>BTC perps</span></span></button></div></section>
+  </template>
+
+  <template id="detail-nvidia">
+    <img class="sheet-image" src="assets/feed-editorial-ai-compute.png" alt="AI accelerator hardware in a data center" />
+    <div class="sheet-kicker">Calendar · Aug 26</div>
+    <h2>NVIDIA earnings</h2>
+    <p class="sheet-summary">The event opens NVIDIA's existing memory: prior guidance, AI demand signals and supplier context.</p>
+    <section class="sheet-section"><h3>Context before the report</h3><p>Cloud spending remains supportive, while market expectations have risen with each infrastructure announcement.</p></section>
+  </template>
+
+  <template id="detail-cpi">
+    <img class="sheet-image" src="assets/feed-editorial-macro-lead.png" alt="A market desk lit in deep teal and amber" />
+    <div class="sheet-kicker">Calendar · Aug 25, 8:30 ET</div>
+    <h2>US CPI release</h2>
+    <p class="sheet-summary">This event opens the durable US CPI entity and the context already stored beneath it.</p>
+    <section class="sheet-section">
+      <h3>What myboon already knows</h3>
+      <div class="timeline">
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>2 days ago</time><p>Market expectations settle ahead of the release.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Previous release</time><p>Inflation slowed and rate-cut odds rose before the first market reaction faded.</p></div></article>
+        <article class="timeline-event"><div class="timeline-marker"><i></i></div><div><time>Earlier context</time><p>Fed commentary kept attention on services inflation and employment.</p></div></article>
+      </div>
+    </section>
+  </template>
+
+  <template id="detail-markets">
+    <div class="sheet-kicker">Prediction markets · 2h ago</div>
+    <h2>Rate-cut odds move after CPI, but traders still disagree on timing.</h2>
+    <p class="sheet-summary">The repricing is visible across multiple rate markets rather than one isolated contract.</p>
+    <section class="sheet-section"><h3>Take action</h3><div class="sheet-apps"><button class="sheet-app-button" type="button" data-app="Polymarket"><span class="app-mark poly">P</span><span>Polymarket<br /><span>Rate markets</span></span></button></div></section>
+  </template>
+
+  <template id="detail-fomc">
+    <div class="sheet-kicker">Calendar · Aug 28, 10:00 ET</div>
+    <h2>Fed Chair remarks</h2>
+    <p class="sheet-summary">The event connects to existing FOMC memories, recent CPI context and the market's current rate expectations.</p>
+  </template>
+
+  <template id="detail-jobs">
+    <div class="sheet-kicker">Calendar · Aug 21, 8:30 ET</div>
+    <h2>US employment update</h2>
+    <p class="sheet-summary">Open the employment entity for previous releases, labor-market context and related Fed commentary.</p>
+  </template>
+
+  <template id="detail-unlock">
+    <div class="sheet-kicker">Calendar · Aug 24</div>
+    <h2>SOL token unlock</h2>
+    <p class="sheet-summary">Review the unlock schedule, previous supply events and recent SOL market context.</p>
+    <section class="sheet-section"><h3>Take action</h3><div class="sheet-apps"><button class="sheet-app-button" type="button" data-app="Pacifica"><span class="app-mark pacifica">P</span><span>Pacifica<br /><span>SOL perps</span></span></button><button class="sheet-app-button" type="button" data-app="Meteora"><span class="app-mark meteora">M</span><span>Meteora<br /><span>SOL liquidity</span></span></button></div></section>
+  </template>
+
+  <script>
+    const feedScroll = document.getElementById('feed-scroll');
+    const feedContent = document.getElementById('feed-content');
+    const stateLayer = document.getElementById('state-layer');
+    const stateButtons = Array.from(document.querySelectorAll('.state-button'));
+    const calendarScreen = document.getElementById('calendar-screen');
+    const calendarOpen = document.getElementById('calendar-open');
+    const calendarClose = document.getElementById('calendar-close');
+    const calendarSelection = document.getElementById('calendar-selection');
+    const detailSheet = document.getElementById('detail-sheet');
+    const sheetContent = document.getElementById('sheet-content');
+    const sheetClose = document.getElementById('sheet-close');
+    const scrim = document.getElementById('scrim');
+    const saveButton = document.getElementById('save-button');
+    const toast = document.getElementById('toast');
+    let toastTimer;
+
+    const calendarEvents = {
+      jobs: { date: 'Friday, August 21', time: '8:30 ET', title: 'US employment update', copy: 'Previous releases and labor-market context', detail: 'jobs' },
+      unlock: { date: 'Monday, August 24', time: 'Scheduled', title: 'SOL token unlock', copy: 'Supply schedule and previous unlock context', detail: 'unlock' },
+      cpi: { date: 'Tuesday, August 25', time: '8:30 ET', title: 'US CPI release', copy: '8 memories from previous releases and expectations', detail: 'cpi' },
+      nvidia: { date: 'Wednesday, August 26', time: 'After market', title: 'NVIDIA earnings', copy: '6 memories on guidance and AI demand', detail: 'nvidia' },
+      fomc: { date: 'Friday, August 28', time: '10:00 ET', title: 'Fed Chair remarks', copy: 'Recent FOMC, CPI and rate-market context', detail: 'fomc' }
+    };
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1700);
+    }
+
+    function openCalendar() {
+      calendarScreen.classList.add('open');
+      calendarScreen.setAttribute('aria-hidden', 'false');
+      renderCalendarSelection('cpi', 'Aug 25');
+    }
+
+    function closeCalendar() {
+      calendarScreen.classList.remove('open');
+      calendarScreen.setAttribute('aria-hidden', 'true');
+    }
+
+    function renderCalendarSelection(eventKey, fallbackDate) {
+      const event = calendarEvents[eventKey];
+      if (!event) {
+        calendarSelection.innerHTML = `<div class="selected-date">${fallbackDate}</div><p class="calendar-empty">No scheduled market events on this date.</p>`;
+        return;
+      }
+
+      calendarSelection.innerHTML = `
+        <div class="selected-date">${event.date}</div>
+        <button class="calendar-event-card" type="button" data-open="${event.detail}">
+          <span><span class="event-time">${event.time}</span><h3>${event.title}</h3><p>${event.copy}</p></span>
+          <span class="event-arrow">›</span>
+        </button>`;
+    }
+
+    function openDetail(key) {
+      const template = document.getElementById(`detail-${key}`) || document.getElementById('detail-macro');
+      sheetContent.replaceChildren(template.content.cloneNode(true));
+      saveButton.classList.remove('saved');
+      saveButton.textContent = 'Save';
+      detailSheet.classList.add('open');
+      scrim.classList.add('open');
+      sheetContent.scrollTop = 0;
+    }
+
+    function closeDetail() {
+      detailSheet.classList.remove('open');
+      scrim.classList.remove('open');
+    }
+
+    function setPreviewState(state) {
+      stateButtons.forEach((button) => button.classList.toggle('active', button.dataset.state === state));
+      feedContent.classList.toggle('hidden', state !== 'content');
+      stateLayer.classList.toggle('active', state !== 'content');
+
+      if (state === 'loading') {
+        stateLayer.innerHTML = '<div class="skeleton-stack" aria-label="Loading Feed"><div class="skeleton stories"></div><div class="skeleton hero"></div><div class="skeleton row"></div><div class="skeleton row"></div></div>';
+      }
+      if (state === 'empty') {
+        stateLayer.innerHTML = '<div class="state-card"><h2>No published updates yet</h2><p>Selected Stories remain available while the chronological Feed is quiet.</p></div>';
+      }
+      if (state === 'error') {
+        stateLayer.innerHTML = '<div class="state-card"><h2>Feed unavailable</h2><p>We could not load the latest narratives. Try again in a moment.</p><button class="retry-button" type="button">Try again</button></div>';
+      }
+      if (state === 'content') stateLayer.innerHTML = '';
+      feedScroll.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    calendarOpen.addEventListener('click', openCalendar);
+    calendarClose.addEventListener('click', closeCalendar);
+    stateButtons.forEach((button) => button.addEventListener('click', () => setPreviewState(button.dataset.state)));
+
+    document.addEventListener('click', (event) => {
+      const openTarget = event.target.closest('[data-open]');
+      const toastTarget = event.target.closest('[data-toast]');
+      const appTarget = event.target.closest('[data-app]');
+      const retryTarget = event.target.closest('.retry-button');
+
+      if (openTarget) openDetail(openTarget.dataset.open);
+      if (toastTarget) showToast(toastTarget.dataset.toast);
+      if (appTarget) showToast(`${appTarget.dataset.app} handoff preview`);
+      if (retryTarget) setPreviewState('content');
+    });
+
+    document.querySelectorAll('.calendar-day').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.calendar-day').forEach((day) => day.classList.remove('selected'));
+        button.classList.add('selected');
+        renderCalendarSelection(button.dataset.event, button.dataset.date);
+      });
+    });
+
+    document.querySelectorAll('[data-open][tabindex="0"]').forEach((item) => {
+      item.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openDetail(item.dataset.open);
+        }
+      });
+    });
+
+    saveButton.addEventListener('click', () => {
+      const saved = saveButton.classList.toggle('saved');
+      saveButton.textContent = saved ? 'Saved' : 'Save';
+      showToast(saved ? 'Saved for later' : 'Removed from saved');
+    });
+
+    sheetClose.addEventListener('click', closeDetail);
+    scrim.addEventListener('click', closeDetail);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        if (detailSheet.classList.contains('open')) closeDetail();
+        else if (calendarScreen.classList.contains('open')) closeCalendar();
+      }
+    });
+
+    renderCalendarSelection('cpi', 'Aug 25');
+  </script>
+</body>
+</html>

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { TakeActionApps } from '@/features/feed/components/TakeActionApps';
 import { fetchStoryDetail } from '@/features/feed/stories.api';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 import { toShortDate } from '@/features/feed/feed.api';
 import type { StoryDetail, StorySummary } from '@/features/feed/feed.types';
 
-const SCREEN_HEIGHT = Dimensions.get('window').height;
-const SHEET_HEIGHT = Math.round(SCREEN_HEIGHT * 0.78);
+const STORY_PAGE_SIZE = 20;
 
 interface StorySheetProps {
   story: StorySummary | null;
@@ -14,32 +15,39 @@ interface StorySheetProps {
 }
 
 export function StorySheet({ story, onClose }: StorySheetProps) {
-  const translateY = useRef(new Animated.Value(SHEET_HEIGHT)).current;
+  const { height: screenHeight } = useWindowDimensions();
+  const sheetHeight = Math.round(screenHeight * 0.88);
+  const translateY = useRef(new Animated.Value(1000)).current;
   const [detail, setDetail] = useState<StoryDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const storySlug = story?.storySlug;
 
   useEffect(() => {
     Animated.timing(translateY, {
-      toValue: story ? 0 : SHEET_HEIGHT,
+      toValue: story ? 0 : sheetHeight,
       duration: story ? 260 : 220,
       useNativeDriver: true,
     }).start();
-  }, [story, translateY]);
+  }, [sheetHeight, story, translateY]);
 
   useEffect(() => {
     let cancelled = false;
     if (!storySlug) {
       setDetail(null);
       setError(false);
+      setLoadMoreError(false);
       return;
     }
 
     setLoading(true);
     setError(false);
+    setLoadingMore(false);
+    setLoadMoreError(false);
     setDetail(null);
-    fetchStoryDetail(storySlug)
+    fetchStoryDetail(storySlug, STORY_PAGE_SIZE, 0)
       .then((nextDetail) => {
         if (!cancelled) setDetail(nextDetail);
       })
@@ -55,6 +63,24 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
     };
   }, [storySlug]);
 
+  async function loadEarlierMemories() {
+    if (!storySlug || !detail?.pagination.hasMore || detail.pagination.nextOffset === null || loadingMore) return;
+    setLoadingMore(true);
+    setLoadMoreError(false);
+    try {
+      const nextDetail = await fetchStoryDetail(storySlug, STORY_PAGE_SIZE, detail.pagination.nextOffset);
+      setDetail((current) => current?.story.storySlug === storySlug ? {
+        story: nextDetail.story,
+        events: [...current.events, ...nextDetail.events],
+        pagination: nextDetail.pagination,
+      } : current);
+    } catch {
+      setLoadMoreError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   return (
     <Modal
       visible={story !== null}
@@ -64,7 +90,7 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
       statusBarTranslucent
     >
       <Pressable style={styles.scrim} onPress={onClose} accessibilityLabel="Close Story" />
-      <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]}>
+      <Animated.View style={[styles.sheet, { height: sheetHeight + 16, transform: [{ translateY }] }]}>
         <View style={styles.handle} />
         <View style={styles.sheetHeader}>
           <View style={styles.headerCopy}>
@@ -85,6 +111,15 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.content}
         >
+          {story?.imageUrl && story.imageKind === 'content' ? (
+            <Image
+              source={story.imageUrl}
+              style={styles.heroImage}
+              contentFit="cover"
+              transition={180}
+              accessibilityLabel={story.imageAttribution ? `${story.name}, ${story.imageAttribution}` : story.name}
+            />
+          ) : null}
           <Text style={styles.title}>{story?.name ?? ''}</Text>
 
           {loading ? <Text style={styles.stateText}>Loading Story…</Text> : null}
@@ -103,12 +138,15 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
               </View>
 
               <Text style={styles.timelineLabel}>TIMELINE</Text>
+              <Text style={styles.timelineCount}>
+                Showing {detail.events.length} of {detail.pagination.total} memories
+              </Text>
               <View style={styles.timeline}>
                 {detail.events.map((event, index) => (
                   <View key={`${event.eventAt}-${index}`} style={styles.eventRow}>
                     <View style={styles.markerColumn}>
                       {index < detail.events.length - 1 ? <View style={styles.eventLine} /> : null}
-                      <View style={[styles.eventDot, index === detail.events.length - 1 && styles.eventDotCurrent]} />
+                      <View style={[styles.eventDot, index === 0 && styles.eventDotCurrent]} />
                     </View>
                     <View style={styles.eventCopy}>
                       <Text style={styles.eventDate}>{toShortDate(event.eventAt)}</Text>
@@ -117,6 +155,19 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
                   </View>
                 ))}
               </View>
+              {loadMoreError ? <Text style={styles.loadMoreError}>Earlier memories could not be loaded.</Text> : null}
+              {detail.pagination.hasMore ? (
+                <Pressable
+                  onPress={() => void loadEarlierMemories()}
+                  disabled={loadingMore}
+                  accessibilityRole="button"
+                  accessibilityLabel="Load earlier Story memories"
+                  style={({ pressed }) => [styles.loadMoreButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.loadMoreText}>{loadingMore ? 'Loading…' : 'Load earlier'}</Text>
+                </Pressable>
+              ) : null}
+              <TakeActionApps onBeforeNavigate={onClose} />
             </>
           ) : null}
         </ScrollView>
@@ -135,13 +186,13 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     bottom: -16,
-    height: SHEET_HEIGHT + 16,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     borderWidth: 1,
     borderColor: FEED_COLORS.borderSoft,
     backgroundColor: FEED_COLORS.card,
     overflow: 'hidden',
+    borderCurve: 'continuous',
   },
   handle: {
     alignSelf: 'center',
@@ -191,6 +242,14 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 52,
   },
+  heroImage: {
+    width: '100%',
+    height: 210,
+    borderRadius: 10,
+    marginBottom: 20,
+    backgroundColor: FEED_COLORS.cardDeep,
+    borderCurve: 'continuous',
+  },
   title: {
     color: FEED_COLORS.text,
     fontSize: 28,
@@ -224,6 +283,13 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1.1,
+    marginBottom: 4,
+  },
+  timelineCount: {
+    color: FEED_COLORS.textFaint,
+    fontFamily: 'monospace',
+    fontSize: 9,
+    lineHeight: 13,
     marginBottom: 16,
   },
   timeline: {
@@ -288,6 +354,28 @@ const styles = StyleSheet.create({
     color: FEED_COLORS.textDim,
     fontSize: 13,
     lineHeight: 19,
+  },
+  loadMoreButton: {
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: FEED_COLORS.border,
+    backgroundColor: FEED_COLORS.cardDeep,
+    borderCurve: 'continuous',
+  },
+  loadMoreText: {
+    color: FEED_COLORS.accent,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+  },
+  loadMoreError: {
+    color: FEED_COLORS.textDim,
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 12,
   },
   pressed: {
     opacity: 0.72,

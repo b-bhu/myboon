@@ -2,6 +2,9 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 
 const MAX_STORIES = 5
+const DEFAULT_STORY_EVENT_LIMIT = 20
+const MAX_STORY_EVENT_LIMIT = 50
+const MAX_STORY_EVENT_OFFSET = 10_000
 const REQUEST_TIMEOUT_MS = 10_000
 const SAFE_STORY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -58,6 +61,14 @@ export interface StoryEvent {
   imageAttribution: string | null
 }
 
+export interface StoryPagination {
+  limit: number
+  offset: number
+  total: number
+  hasMore: boolean
+  nextOffset: number | null
+}
+
 export interface StoryRoutesConfig {
   supabaseUrl: string
   serviceRoleKey: string
@@ -90,6 +101,29 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     const body: unknown = await response.json()
     if (!Array.isArray(body)) throw new Error(`Supabase returned an invalid ${table} response`)
     return body as T[]
+  }
+
+  async function readRowsPage<T>(table: string, params: URLSearchParams): Promise<{ rows: T[], total: number | null }> {
+    const url = new URL(`${restBaseUrl}/${table}`)
+    params.forEach((value, key) => url.searchParams.append(key, value))
+    const response = await fetchImpl(url, {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`,
+        Accept: 'application/json',
+        Prefer: 'count=exact',
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!response.ok) {
+      throw new Error(`Supabase read failed for ${table}: ${response.status}`)
+    }
+    const body: unknown = await response.json()
+    if (!Array.isArray(body)) throw new Error(`Supabase returned an invalid ${table} response`)
+    return {
+      rows: body as T[],
+      total: contentRangeTotal(response.headers.get('content-range')),
+    }
   }
 
   async function selectedEntities(): Promise<SelectedEntity[]> {
@@ -145,6 +179,31 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     return grouped
   }
 
+  async function storyMemoryPage(entityId: string, limit: number, offset: number): Promise<{
+    memories: StoryMemory[]
+    total: number
+  }> {
+    if (!UUID_RE.test(entityId)) return { memories: [], total: 0 }
+    const params = new URLSearchParams({
+      select: MEMORY_SELECT,
+      entity_id: `eq.${entityId}`,
+      memory_type: 'neq.source_marker',
+      event_at: 'not.is.null',
+      order: 'event_at.desc',
+      limit: String(limit),
+      offset: String(offset),
+    })
+    const page = await readRowsPage<MemoryRow>('entity_memories', params)
+    const memories = page.rows
+      .map(storyMemory)
+      .filter((memory): memory is StoryMemory => memory?.entityId === entityId)
+      .sort((left, right) => Date.parse(right.eventAt) - Date.parse(left.eventAt))
+    return {
+      memories,
+      total: page.total ?? offset + memories.length,
+    }
+  }
+
   app.get('/', async (c) => {
     try {
       const entities = await selectedEntities()
@@ -170,18 +229,31 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       const entity = await selectedEntityBySlug(storySlug)
       if (!entity) return c.json({ error: 'Story not found' }, 404)
 
-      const memories = (await storyMemories([entity.id])).get(entity.id) ?? []
-      const story = storySummary(entity, memories)
+      const limit = boundedInteger(c.req.query('limit'), DEFAULT_STORY_EVENT_LIMIT, 1, MAX_STORY_EVENT_LIMIT)
+      const offset = boundedInteger(c.req.query('offset'), 0, 0, MAX_STORY_EVENT_OFFSET)
+      const pagePromise = storyMemoryPage(entity.id, limit, offset)
+      const [page, latestPage] = offset === 0
+        ? await pagePromise.then((value) => [value, value] as const)
+        : await Promise.all([pagePromise, storyMemoryPage(entity.id, 1, 0)])
+      const story = storySummary(entity, latestPage.memories, page.total)
       if (!story) return c.json({ error: 'Story not found' }, 404)
 
-      const events: StoryEvent[] = memories.map((memory) => ({
+      const events: StoryEvent[] = page.memories.map((memory) => ({
         text: memory.summary,
         eventAt: memory.eventAt,
         imageUrl: memory.imageUrl,
         imageKind: memory.imageKind,
         imageAttribution: memory.imageAttribution,
       }))
-      return c.json({ story, events })
+      const nextOffset = offset + events.length
+      const pagination: StoryPagination = {
+        limit,
+        offset,
+        total: page.total,
+        hasMore: nextOffset < page.total,
+        nextOffset: nextOffset < page.total ? nextOffset : null,
+      }
+      return c.json({ story, events, pagination })
     } catch (error) {
       return storyError(c, error, 'GET /stories/:storySlug')
     }
@@ -242,19 +314,36 @@ function safeHttpUrl(value: unknown): string | null {
   }
 }
 
-function storySummary(entity: SelectedEntity, memories: StoryMemory[]): StorySummary | null {
-  const latest = memories.at(-1)
+function storySummary(entity: SelectedEntity, memories: StoryMemory[], eventCount = memories.length): StorySummary | null {
+  const latest = memories.reduce<StoryMemory | null>((current, memory) => (
+    !current || Date.parse(memory.eventAt) > Date.parse(current.eventAt) ? memory : current
+  ), null)
   if (!latest) return null
   return {
     storySlug: entity.slug,
     name: entity.name,
     latestDevelopment: latest.summary,
-    eventCount: memories.length,
+    eventCount,
     updatedAt: latest.eventAt,
     imageUrl: latest.imageUrl,
     imageKind: latest.imageKind,
     imageAttribution: latest.imageAttribution,
   }
+}
+
+function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
+  if (raw === undefined || !/^\d+$/.test(raw)) return fallback
+  const parsed = Number(raw)
+  if (!Number.isSafeInteger(parsed)) return fallback
+  return Math.min(Math.max(parsed, min), max)
+}
+
+function contentRangeTotal(value: string | null): number | null {
+  if (!value) return null
+  const match = /\/(\d+)$/.exec(value.trim())
+  if (!match) return null
+  const total = Number(match[1])
+  return Number.isSafeInteger(total) && total >= 0 ? total : null
 }
 
 function storyError(c: Context, error: unknown, label: string) {

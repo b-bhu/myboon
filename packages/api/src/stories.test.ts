@@ -110,7 +110,7 @@ test('Story list selects and caps Entities, batch-loads memories, excludes marke
   })
 })
 
-test('Story detail returns the selected Entity timeline oldest-to-newest with public fields only', async () => {
+test('Story detail returns the selected Entity timeline newest-first with pagination and public fields only', async () => {
   const fetchImpl = async (input: RequestInfo | URL) => {
     const url = new URL(String(input))
     if (url.pathname.endsWith('/entities')) {
@@ -125,6 +125,9 @@ test('Story detail returns the selected Entity timeline oldest-to-newest with pu
       }])
     }
     if (url.pathname.endsWith('/entity_memories')) {
+      assert.equal(url.searchParams.get('order'), 'event_at.desc')
+      assert.equal(url.searchParams.get('limit'), '20')
+      assert.equal(url.searchParams.get('offset'), '0')
       return jsonResponse([
         memory(entityIds[0], 'Third event', '2026-07-12T00:00:00.000Z', { metrics: { private: true } }),
         memory(entityIds[0], 'First event', '2026-07-10T00:00:00.000Z', {
@@ -157,11 +160,11 @@ test('Story detail returns the selected Entity timeline oldest-to-newest with pu
     },
     events: [
       {
-        text: 'First event',
-        eventAt: '2026-07-10T00:00:00.000Z',
-        imageUrl: 'https://pbs.twimg.com/profile_images/123/avatar.jpg',
-        imageKind: 'source_avatar',
-        imageAttribution: '@tokens',
+        text: 'Third event',
+        eventAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
       },
       {
         text: 'Second event',
@@ -171,13 +174,57 @@ test('Story detail returns the selected Entity timeline oldest-to-newest with pu
         imageAttribution: null,
       },
       {
-        text: 'Third event',
-        eventAt: '2026-07-12T00:00:00.000Z',
-        imageUrl: null,
-        imageKind: null,
-        imageAttribution: null,
+        text: 'First event',
+        eventAt: '2026-07-10T00:00:00.000Z',
+        imageUrl: 'https://pbs.twimg.com/profile_images/123/avatar.jpg',
+        imageKind: 'source_avatar',
+        imageAttribution: '@tokens',
       },
     ],
+    pagination: {
+      limit: 20,
+      offset: 0,
+      total: 3,
+      hasMore: false,
+      nextOffset: null,
+    },
+  })
+})
+
+test('Story detail bounds pagination and keeps the Story summary anchored to the latest memory', async () => {
+  const fetchImpl = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/entities')) {
+      return jsonResponse([{ id: entityIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+    }
+    if (url.pathname.endsWith('/entity_memories')) {
+      const offset = url.searchParams.get('offset')
+      const limit = url.searchParams.get('limit')
+      if (offset === '0' && limit === '1') {
+        return jsonResponse([
+          memory(entityIds[0], 'Latest event', '2026-07-12T00:00:00.000Z'),
+        ], 5)
+      }
+      assert.equal(offset, '1')
+      assert.equal(limit, '2')
+      return jsonResponse([
+        memory(entityIds[0], 'Third event', '2026-07-10T00:00:00.000Z'),
+        memory(entityIds[0], 'Fourth event', '2026-07-09T00:00:00.000Z'),
+      ], 5)
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+
+  const response = await app(fetchImpl).request('/bitcoin?limit=2&offset=1')
+  assert.equal(response.status, 200)
+  const body = await response.json() as Record<string, unknown>
+  assert.equal((body.story as { latestDevelopment: string }).latestDevelopment, 'Latest event')
+  assert.deepEqual(body.pagination, {
+    limit: 2,
+    offset: 1,
+    total: 5,
+    hasMore: true,
+    nextOffset: 3,
   })
 })
 
@@ -251,8 +298,10 @@ function memory(
   }
 }
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, total?: number): Response {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (total !== undefined) headers['Content-Range'] = `0-0/${total}`
   return new Response(JSON.stringify(body), {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
   })
 }
