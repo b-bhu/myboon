@@ -4,8 +4,10 @@ import {
   fetchPacificaValueUsd,
   fetchPhoenixValueUsd,
   fetchSpotValueUsd,
+  invalidateSpotWalletSourceCache,
   type WalletFetchResult,
 } from '@/features/wallet/wallet.sources';
+import { subscribeWalletDataChanged } from '@/features/wallet/wallet.refresh';
 import {
   WALLET_PROTOCOL_IDS,
   type WalletProtocolId,
@@ -154,6 +156,12 @@ export function useProtocolAccounts(walletAddress: string | null): UseProtocolAc
   useEffect(() => () => {
     if (visibilityTimer.current) clearTimeout(visibilityTimer.current);
   }, []);
+
+  useEffect(() => subscribeWalletDataChanged(() => {
+    if (!walletAddress) return;
+    invalidateSpotWalletSourceCache();
+    fetchSource('spot', walletAddress);
+  }), [fetchSource, walletAddress]);
 
   const totals = useMemo<WalletTotals>(() => {
     // A source counts toward the total/mix whenever it holds a real,

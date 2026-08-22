@@ -23,6 +23,10 @@ import type {
 
 const spotClient = new SpotDataApiClient();
 
+export function invalidateSpotWalletSourceCache(): void {
+  spotClient.clearCache();
+}
+
 /** Number of Spot chips shown before the row switches to a "+N" overflow chip (PRD decision #17, TC-ROWS-003). */
 const SPOT_TOP_TOKEN_COUNT = 3;
 
@@ -45,12 +49,12 @@ export async function fetchSpotValueUsd(walletAddress: string): Promise<WalletFe
  * SOL — TC-ROWS-003) and splits them into the chips shown on the row plus an
  * overflow count for the "+N" chip.
  */
-function buildSpotRowDetail(tokens: Array<{
+function buildSpotRowDetail(tokens: {
   mint: string
   symbol: string | null
   iconUrl: string | null
   valueUsd: number | null
-}>): SpotRowDetail {
+}[]): SpotRowDetail {
   const ranked = tokens
     .filter((token) => token.valueUsd !== null && token.valueUsd > 0)
     .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
@@ -96,12 +100,12 @@ export async function fetchMeteoraValueUsd(walletAddress: string): Promise<Walle
  * fees are summed across pools for the row's signal line.
  */
 function buildMeteoraRowDetail(portfolio: {
-  pools: Array<{
+  pools: {
     poolAddress: string
     pair: string
     outOfRange: boolean | null
     unclaimedFeesUsd: string
-  }>
+  }[]
   totalUnclaimedFeesUsd: string | null
 }): MeteoraRowDetail {
   const pills = portfolio.pools.map((pool) => ({

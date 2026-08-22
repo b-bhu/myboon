@@ -5,7 +5,7 @@ export type WalletSource = 'privy' | 'mwa';
 
 export function useWallet() {
   const privy = usePrivyWallet();
-  const { account, connect, disconnect, signMessage, signAndSendTransaction, connection } =
+  const { account, connect, disconnect, signMessage, signTransaction, signAndSendTransaction, connection } =
     useMobileWallet();
 
   if (process.env.EXPO_PUBLIC_PREDICT_E2E === '1') {
@@ -22,6 +22,7 @@ export function useWallet() {
       connect: async () => {},
       disconnect: async () => {},
       signMessage: async () => new Uint8Array(64).fill(1),
+      signTransaction: async <T,>(transaction: T) => transaction,
       signAndSendTransaction: async () => 'e2e-signature',
       connection: null,
       walletOptions: [],
@@ -60,6 +61,7 @@ export function useWallet() {
       },
       disconnect: privy.disconnect,
       signMessage: privy.connected ? privy.signMessage : null,
+      signTransaction: privy.connected ? privy.signTransaction : null,
       // Privy embedded wallets don't support signAndSendTransaction directly —
       // Polymarket orders are signed locally (EIP-712) and proxied via VPS
       signAndSendTransaction: null,
@@ -81,6 +83,7 @@ export function useWallet() {
     connect: async (_walletName?: string) => connect(),
     disconnect,
     signMessage,
+    signTransaction,
     signAndSendTransaction,
     connection,
     walletOptions: [],

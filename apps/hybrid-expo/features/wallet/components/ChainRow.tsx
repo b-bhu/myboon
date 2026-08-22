@@ -17,6 +17,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import type { Chain } from '@/features/chain/chain.contract';
@@ -28,14 +29,25 @@ const CHAIN_LABEL: Record<Chain, string> = {
 };
 
 const CHAIN_COLOR: Record<Chain, string> = {
-  solana: tokens.walletBrand.spot,
+  solana: semantic.text.primary,
   evm: tokens.walletBrand.pacifica,
 };
 
 const CHAIN_TINT: Record<Chain, string> = {
-  solana: 'rgba(153,69,255,0.07)',
+  solana: 'rgba(6,51,67,0.45)',
   evm: 'rgba(97,215,239,0.07)',
 };
+
+function SolanaMark() {
+  return (
+    <Svg width={18} height={16} viewBox="0 0 26 23" accessibilityElementsHidden>
+      <Path
+        fill={semantic.text.primary}
+        d="m25.033 17.458-4.087 4.382a.95.95 0 0 1-.692.302H.879a.476.476 0 0 1-.348-.798l4.082-4.382a.95.95 0 0 1 .692-.302H24.68a.473.473 0 0 1 .353.798m-4.087-8.827a.96.96 0 0 0-.692-.302H.879a.475.475 0 0 0-.348.798l4.082 4.385a.96.96 0 0 0 .692.302H24.68a.476.476 0 0 0 .346-.798zM.879 5.483h19.375a.95.95 0 0 0 .692-.302L25.033.798a.475.475 0 0 0-.09-.724A.47.47 0 0 0 24.68 0H5.305a.95.95 0 0 0-.692.302L.531 4.685a.475.475 0 0 0 .348.798"
+      />
+    </Svg>
+  );
+}
 
 function truncateAddress(address: string): string {
   if (address.length <= 12) return address;
@@ -78,7 +90,10 @@ export function ChainRow({
   return (
     <View style={[styles.row, { backgroundColor: CHAIN_TINT[chain] }]}>
       <View style={styles.main}>
-        <Text style={[styles.name, { color: CHAIN_COLOR[chain] }]}>{CHAIN_LABEL[chain]}</Text>
+        <View style={styles.chainHeading}>
+          {chain === 'solana' ? <SolanaMark /> : null}
+          <Text style={[styles.name, { color: CHAIN_COLOR[chain] }]}>{CHAIN_LABEL[chain]}</Text>
+        </View>
         <Pressable
           onPress={handleCopy}
           hitSlop={8}
@@ -132,6 +147,12 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: tokens.spacing.xs,
+  },
+  chainHeading: {
+    minHeight: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
   },
   name: {
     fontSize: tokens.fontSize.md,

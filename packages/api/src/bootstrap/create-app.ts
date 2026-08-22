@@ -14,6 +14,7 @@ import { SupabasePolymarketCatalogStore } from '../polymarket/catalog/supabase-s
 import { spotRoutes } from '../spot.js'
 import { createStoryRoutes } from '../stories.js'
 import { createSwapRoutes } from '../swap.js'
+import { createSqliteSwapExecutionStore } from '../swap/store.js'
 import {
   iconSourceUrlForAssetId,
   iconSourceUrlForMint,
@@ -88,7 +89,15 @@ export function createApp(config: ApiConfig): Hono {
       warmMintIdentities,
     },
   }))
-  app.route('/swap', createSwapRoutes({ jupApiKey: config.jupApiKey }))
+  app.route('/swap', createSwapRoutes({
+    jupApiKey: config.jupApiKey,
+    jupApiBase: config.jupApiBase,
+    identity: { resolveRef, warmMintIdentities },
+    priorityFeeMaxLamports: config.swapPriorityFeeMaxLamports,
+    tradingEnabled: config.swapTradingEnabled,
+    store: createSqliteSwapExecutionStore(config.swapSqlitePath ?? '.data/swap.sqlite'),
+    observe: (event) => console.info('[swap:event]', JSON.stringify(event)),
+  }))
 
   app.get('/health', (c) => c.json({ status: 'ok' }))
 
