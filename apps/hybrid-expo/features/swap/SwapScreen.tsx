@@ -38,7 +38,11 @@ import {
   parseSlippagePercentToBps,
   parseUiAmountToAtomic,
 } from '@/features/swap/swap.math';
-import { createSwapPendingStore, isPendingSwapExpired } from '@/features/swap/swap.pending';
+import {
+  createSwapPendingStore,
+  isPendingSwapExpired,
+  shouldDiscardExpiredPendingSwap,
+} from '@/features/swap/swap.pending';
 import {
   finalizeWalletSignedSwapTransaction,
   simulateValidatedSwap,
@@ -364,7 +368,6 @@ export default function SwapScreen() {
   const [unknownRequestId, setUnknownRequestId] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const resumeReviewRef = useRef(false);
-  const openWalletAfterPreparationRef = useRef(false);
   const preparingReviewRef = useRef(false);
   const quoteSequence = useRef(0);
 
@@ -548,7 +551,7 @@ export default function SwapScreen() {
               : 'The previous swap is confirmed. Refresh Wallet to update balances.');
             setPhase('confirmed');
             break;
-          } else if (expired) {
+          } else if (shouldDiscardExpiredPendingSwap(item, currentBlockHeight, status !== null)) {
             await pendingStore.remove(item.requestId);
             continue;
           } else if (!cancelled) {
@@ -660,7 +663,6 @@ export default function SwapScreen() {
       setReviewOrder(order);
       setPhase('reviewing');
     } catch (error) {
-      openWalletAfterPreparationRef.current = false;
       setFailure(errorMessage(error));
       setPhase('failed');
     } finally {
@@ -806,13 +808,13 @@ export default function SwapScreen() {
   }
 
   useEffect(() => {
-    if (phase !== 'reviewing' || !reviewOrder || !openWalletAfterPreparationRef.current) return;
-    if (simulationWarning && !simulationWarningAccepted) return;
-    openWalletAfterPreparationRef.current = false;
-    void confirmTrade();
-    // confirmTrade intentionally reads the exact reviewed order from this render.
+    if (phase !== 'compose' || !quote || reviewOrder || !wallet.connected || !wallet.address) return;
+    void prepareReview();
+    // The swipe must only become available after the exact signable order has
+    // been validated and simulated. prepareReview intentionally reads this
+    // render's amount, tokens, slippage, wallet, and quote context.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, reviewOrder, simulationWarning, simulationWarningAccepted]);
+  }, [phase, quote, reviewOrder, wallet.connected, wallet.address]);
 
   function tradeInteractionBusy(): boolean {
     return phase === 'ordering'
@@ -825,7 +827,6 @@ export default function SwapScreen() {
 
   function invalidatePreparedTrade(): boolean {
     if (tradeInteractionBusy()) return false;
-    openWalletAfterPreparationRef.current = false;
     setReviewOrder(null);
     setSimulationWarning(null);
     setSimulationWarningAccepted(false);
@@ -925,7 +926,6 @@ export default function SwapScreen() {
 
   function retryInlineAction(): void {
     if (phase === 'unknown') return;
-    openWalletAfterPreparationRef.current = false;
     setReviewOrder(null);
     setSimulationWarning(null);
     setSimulationWarningAccepted(false);
@@ -987,7 +987,16 @@ export default function SwapScreen() {
           />
         );
       }
-      return <InlineSwapAction label="Opening your wallet…" tone="loading" />;
+      return (
+        <SwipeToConfirm
+          receiveAmount={receiveAtLeast}
+          outputToken={outputToken}
+          onComplete={() => {
+            Keyboard.dismiss();
+            void confirmTrade();
+          }}
+        />
+      );
     }
     if (!amountAtomic) return <InlineSwapAction label="Enter an amount" disabled />;
     if (inputToken.address === outputToken.address) return <InlineSwapAction label="Choose two different assets" tone="warning" disabled />;
@@ -1017,23 +1026,12 @@ export default function SwapScreen() {
           label="Connect wallet to swap"
           onPress={() => {
             Keyboard.dismiss();
-            openWalletAfterPreparationRef.current = true;
             void prepareReview();
           }}
         />
       );
     }
-    return (
-      <SwipeToConfirm
-        receiveAmount={receiveAtLeast}
-        outputToken={outputToken}
-        onComplete={() => {
-          Keyboard.dismiss();
-          openWalletAfterPreparationRef.current = true;
-          void prepareReview();
-        }}
-      />
-    );
+    return <InlineSwapAction label="Preparing the exact swap…" tone="loading" />;
   }
 
   function renderCompose() {

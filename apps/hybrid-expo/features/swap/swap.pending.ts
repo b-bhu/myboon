@@ -23,6 +23,21 @@ export function isPendingSwapExpired(
   return BigInt(currentBlockHeight) > BigInt(lastValid);
 }
 
+/**
+ * Blockhash expiry only proves that an unseen transaction can no longer land.
+ * Once Solana reports any signature status (including `processed`), the app
+ * must retain the record until that transaction reaches a terminal outcome.
+ */
+export function shouldDiscardExpiredPendingSwap(
+  value: Pick<PendingSwapExecution, 'lastValidBlockHeight'>,
+  currentBlockHeight: number | bigint | null,
+  observedOnChain: boolean,
+): boolean {
+  return currentBlockHeight !== null
+    && !observedOnChain
+    && isPendingSwapExpired(value, currentBlockHeight);
+}
+
 function isPending(value: unknown): value is PendingSwapExecution {
   if (!value || typeof value !== 'object') return false;
   const row = value as Partial<PendingSwapExecution>;

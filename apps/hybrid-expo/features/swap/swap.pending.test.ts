@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createMemorySwapPendingStorage, createSwapPendingStore, isPendingSwapExpired } from './swap.pending';
+import {
+  createMemorySwapPendingStorage,
+  createSwapPendingStore,
+  isPendingSwapExpired,
+  shouldDiscardExpiredPendingSwap,
+} from './swap.pending';
 import type { PendingSwapExecution } from './swap.types';
 
 function pending(requestId: string, walletAddress = 'wallet-a'): PendingSwapExecution {
@@ -37,4 +42,12 @@ test('pending swap expiry is strict and rejects malformed validity windows', () 
   assert.equal(isPendingSwapExpired({ lastValidBlockHeight: '100' }, 101), true);
   assert.equal(isPendingSwapExpired({ lastValidBlockHeight: null }, 101), false);
   assert.equal(isPendingSwapExpired({ lastValidBlockHeight: 'not-a-height' }, 101), false);
+});
+
+test('only discards an expired pending swap that Solana has never observed', () => {
+  const value = { lastValidBlockHeight: '100' };
+  assert.equal(shouldDiscardExpiredPendingSwap(value, 101, false), true);
+  assert.equal(shouldDiscardExpiredPendingSwap(value, 101, true), false);
+  assert.equal(shouldDiscardExpiredPendingSwap(value, 100, false), false);
+  assert.equal(shouldDiscardExpiredPendingSwap(value, null, false), false);
 });
