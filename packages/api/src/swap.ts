@@ -534,6 +534,13 @@ function normalizeOrder(
   if (kind === 'quote') {
     return { ...base, kind: 'quote', taker: null, transaction: null, lastValidBlockHeight: null }
   }
+  if (fees.gasless || base.router === 'jupiterz') {
+    throw new SwapGatewayError(
+      'UNSUPPORTED_SIGNER_LAYOUT',
+      'This route requires a signer layout that myboon does not support safely yet.',
+      422,
+    )
+  }
   if (!transaction) throw new SwapGatewayError('ORDER_PROVIDER_INVALID', 'Jupiter returned no signable transaction.', 502, true)
   const lastValid = boundedUint64(first(raw.lastValidBlockHeight, raw.lastValidBlockheight))
   if (!lastValid) throw new SwapGatewayError('ORDER_PROVIDER_INVALID', 'Jupiter returned no block-height expiry.', 502, true)
@@ -922,6 +929,7 @@ export function createSwapRoutes(config: CreateSwapRoutesConfig): Hono {
         // rejected before landing; it is safe to correct and retry. A 5xx or
         // malformed post-dispatch body remains deliberately unknown.
         if (provider.response.status >= 400 && provider.response.status < 500) {
+          store.deleteExecution(executionRequestId)
           throw new SwapGatewayError('EXECUTE_PROVIDER_REJECTED', 'Jupiter rejected the signed transaction before submission.', 502, true)
         }
         const unknown: SwapExecuteResponse = { outcome: 'unknown', signature: null, slot: null, code: null, message: 'Submission outcome is unknown. Check the transaction before trying again.', totalInputAmountAtomic: null, totalOutputAmountAtomic: null, inputAmountResultAtomic: null, outputAmountResultAtomic: null }

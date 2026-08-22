@@ -6,9 +6,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Keyboard,
   KeyboardAvoidingView,
-  Linking,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -16,7 +17,9 @@ import {
   Text,
   TextInput,
   View,
+  type LayoutChangeEvent,
 } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Connection, VersionedTransaction } from '@solana/web3.js';
 import { SpotDataApiClient } from '@myboon/shared/spot';
@@ -35,7 +38,7 @@ import {
   parseSlippagePercentToBps,
   parseUiAmountToAtomic,
 } from '@/features/swap/swap.math';
-import { createSwapPendingStore } from '@/features/swap/swap.pending';
+import { createSwapPendingStore, isPendingSwapExpired } from '@/features/swap/swap.pending';
 import {
   finalizeWalletSignedSwapTransaction,
   simulateValidatedSwap,
@@ -43,7 +46,6 @@ import {
 } from '@/features/swap/swap-transaction-validation';
 import type {
   PendingSwapExecution,
-  SimulatedBalanceChange,
   SwapEntryMode,
   SwapExecutionPhase,
   SwapOrderResponse,
@@ -71,6 +73,7 @@ const USDC: SwapToken = {
   decimals: 6,
   logoURI: `${resolveApiBaseUrl()}/tokens/icon/usdc`,
 };
+const SOL_FEE_RESERVE_LAMPORTS = 5_000_000n;
 
 const pendingStore = createSwapPendingStore({
   getItem: (key) => AsyncStorage.getItem(key),
@@ -85,22 +88,9 @@ function modeFrom(value: string | string[] | undefined): SwapEntryMode {
   return item === 'buy' || item === 'sell' ? item : 'swap';
 }
 
-function shortAddress(value: string): string {
-  return `${value.slice(0, 4)}···${value.slice(-4)}`;
-}
-
 function formatUsd(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return 'Unavailable';
   return value.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
-}
-
-function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return 'Unavailable';
-  return `${value.toFixed(Math.abs(value) < 0.1 ? 3 : 2)}%`;
-}
-
-function lamportsToSol(value: string | null): string {
-  return value ? `${formatAtomicAmount(value, 9, 9)} SOL` : 'Unavailable';
 }
 
 function sumAtomicStrings(...values: (string | null)[]): string {
@@ -130,16 +120,20 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'The trade could not be completed.';
 }
 
-function statusCopy(phase: SwapExecutionPhase): { title: string; detail: string } {
-  switch (phase) {
-    case 'quoting': return { title: 'Refreshing quote', detail: 'Getting current price, route, slippage, and fees.' };
-    case 'ordering': return { title: 'Building transaction', detail: 'Creating one fresh transaction for this review.' };
-    case 'validating': return { title: 'Checking transaction', detail: 'Verifying programs, accounts, assets, and wallet authority.' };
-    case 'simulating': return { title: 'Simulating changes', detail: 'Checking the exact result before your wallet opens.' };
-    case 'awaiting_signature': return { title: 'Approve in wallet', detail: 'Your selected wallet is reviewing this exact transaction.' };
-    case 'executing': return { title: 'Transaction submitted', detail: 'Waiting for Solana and Jupiter to confirm the result.' };
-    default: return { title: '', detail: '' };
-  }
+function inlineSwapError(message: string, inputSymbol: string): string {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('balance') && normalized.includes('lower')) return `Insufficient ${inputSymbol} balance`;
+  if (normalized.includes('network') && normalized.includes('cost')) return 'Not enough SOL for network fees';
+  if (normalized.includes('0.005 sol')) return 'Not enough SOL for network fees';
+  if (normalized.includes('cancel') || normalized.includes('reject') || normalized.includes('declin')) return 'Swap cancelled in wallet';
+  if (normalized.includes('rate') || normalized.includes('busy') || normalized.includes('refreshing')) return 'Prices are busy — try again';
+  if (normalized.includes('route')) return 'No swap route available';
+  if (normalized.includes('expired') || normalized.includes('expiry')) return 'Price expired — refresh and try again';
+  if (normalized.includes('slippage') || normalized.includes('price moved')) return 'Price moved — refresh and try again';
+  if (normalized.includes('different transaction') || normalized.includes('changed') || normalized.includes('unexpected mint')) return 'Swap changed — refresh price';
+  if (normalized.includes('wallet') && normalized.includes('cannot sign')) return 'Wallet unavailable on this device';
+  if (normalized.includes('connection') || normalized.includes('network request')) return 'Connection lost — try again';
+  return message.length <= 48 ? message : 'Swap could not continue — tap to retry';
 }
 
 async function reconcileSubmittedSignature(
@@ -161,19 +155,182 @@ async function reconcileSubmittedSignature(
   return 'unknown';
 }
 
+const SWIPE_THUMB_SIZE = 48;
+const SWIPE_INSET = 4;
+const SWIPE_THRESHOLD = 0.82;
+
+function SwapPairIcon() {
+  return (
+    <Svg width={17} height={17} viewBox="0 0 24 24">
+      <Path
+        d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"
+        fill="none"
+        stroke={tokens.colors.primary}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+function SwipeToConfirm({
+  receiveAmount,
+  outputToken,
+  onComplete,
+}: {
+  receiveAmount: string;
+  outputToken: SwapToken;
+  onComplete: () => void;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const maxTravelRef = useRef(0);
+  const completedRef = useRef(false);
+
+  const reset = useCallback(() => {
+    completedRef.current = false;
+    Animated.spring(translateX, {
+      toValue: 0,
+      speed: 28,
+      bounciness: 4,
+      useNativeDriver: false,
+    }).start();
+  }, [translateX]);
+
+  const complete = useCallback(() => {
+    if (completedRef.current || maxTravelRef.current <= 0) return;
+    completedRef.current = true;
+    Animated.timing(translateX, {
+      toValue: maxTravelRef.current,
+      duration: 150,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (!finished) return;
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => null);
+      onComplete();
+    });
+  }, [onComplete, translateX]);
+
+  const responder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => maxTravelRef.current > 0,
+    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 5 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, gesture) => {
+      if (completedRef.current) return;
+      translateX.setValue(Math.max(0, Math.min(maxTravelRef.current, gesture.dx)));
+    },
+    onPanResponderRelease: (_, gesture) => {
+      if (gesture.dx >= maxTravelRef.current * SWIPE_THRESHOLD) complete();
+      else reset();
+    },
+    onPanResponderTerminate: reset,
+  }), [complete, reset, translateX]);
+
+  useEffect(() => {
+    completedRef.current = false;
+    translateX.setValue(0);
+  }, [outputToken.address, receiveAmount, translateX]);
+
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    maxTravelRef.current = Math.max(0, event.nativeEvent.layout.width - SWIPE_THUMB_SIZE - SWIPE_INSET * 2);
+    completedRef.current = false;
+    translateX.setValue(0);
+  }, [translateX]);
+
+  return (
+    <View
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={`Do the swap to get ${receiveAmount} ${outputToken.symbol}`}
+      accessibilityHint="Swipe right to open your wallet"
+      accessibilityActions={[{ name: 'activate', label: 'Open wallet' }]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'activate') complete();
+      }}
+      onLayout={onLayout}
+      style={styles.swipeTrack}
+      {...responder.panHandlers}
+    >
+      <Animated.View style={[styles.swipeFill, { width: Animated.add(translateX, SWIPE_THUMB_SIZE + SWIPE_INSET * 2) }]} />
+      <View pointerEvents="none" style={styles.swipeCopy}>
+        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82} style={styles.swipeText}>
+          Do the swap to get <Text style={styles.swipeAmount}>{receiveAmount} {outputToken.symbol}</Text>
+        </Text>
+        <TokenAvatar token={outputToken} size={17} />
+      </View>
+      <Animated.View style={[styles.swipeThumb, { transform: [{ translateX }] }]}>
+        <MaterialIcons name="chevron-right" size={24} color={semantic.text.primary} />
+      </Animated.View>
+    </View>
+  );
+}
+
+type InlineActionTone = 'default' | 'loading' | 'error' | 'warning' | 'success';
+
+function InlineSwapAction({
+  label,
+  tone = 'default',
+  onPress,
+  disabled = false,
+  token,
+  accessibilityHint,
+}: {
+  label: string;
+  tone?: InlineActionTone;
+  onPress?: () => void;
+  disabled?: boolean;
+  token?: SwapToken;
+  accessibilityHint?: string;
+}) {
+  const loading = tone === 'loading';
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled: disabled || loading, busy: loading }}
+      disabled={disabled || loading || !onPress}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.inlineAction,
+        tone === 'error' && styles.inlineActionError,
+        tone === 'warning' && styles.inlineActionWarning,
+        tone === 'success' && styles.inlineActionSuccess,
+        (disabled || loading || !onPress) && styles.inlineActionStatic,
+        pressed && styles.inlineActionPressed,
+      ]}
+    >
+      {loading ? <ActivityIndicator size="small" color={tokens.colors.primary} /> : null}
+      <Text
+        selectable={tone === 'error' || tone === 'warning'}
+        numberOfLines={2}
+        adjustsFontSizeToFit
+        minimumFontScale={0.78}
+        style={[
+          styles.inlineActionText,
+          tone === 'error' && styles.inlineActionTextError,
+          tone === 'warning' && styles.inlineActionTextWarning,
+          tone === 'success' && styles.inlineActionTextSuccess,
+        ]}
+      >
+        {label}
+      </Text>
+      {token ? <TokenAvatar token={token} size={17} /> : null}
+    </Pressable>
+  );
+}
+
 export default function SwapScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     mode?: string;
     token?: string;
-    caller?: string;
   }>();
   const insets = useSafeAreaInsets();
   const wallet = useWallet();
   const walletSheet = useWalletSheet();
   const mode = modeFrom(params.mode);
   const requestedMint = Array.isArray(params.token) ? params.token[0] : params.token;
-  const caller = (Array.isArray(params.caller) ? params.caller[0] : params.caller) === 'spot' ? 'spot' : 'wallet';
   const rpc = useMemo(
     () => wallet.connection ?? new Connection(SOLANA_RPC, 'confirmed'),
     [wallet.connection],
@@ -195,18 +352,19 @@ export default function SwapScreen() {
   const [prices, setPrices] = useState<Record<string, number | null>>({});
   const [quote, setQuote] = useState<SwapOrderResponse | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteRefreshKey, setQuoteRefreshKey] = useState(0);
   const [reviewOrder, setReviewOrder] = useState<Extract<SwapOrderResponse, { kind: 'signable' }> | null>(null);
-  const [balanceChanges, setBalanceChanges] = useState<SimulatedBalanceChange[]>([]);
   const [simulationWarning, setSimulationWarning] = useState<string | null>(null);
   const [simulationWarningAccepted, setSimulationWarningAccepted] = useState(false);
   const [slippageMode, setSlippageMode] = useState<SlippageMode>('auto');
   const [customSlippage, setCustomSlippage] = useState('0.5');
   const [extremeConfirmation, setExtremeConfirmation] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
-  const [terminalSignature, setTerminalSignature] = useState<string | null>(null);
+  const [, setTerminalSignature] = useState<string | null>(null);
   const [unknownRequestId, setUnknownRequestId] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const resumeReviewRef = useRef(false);
+  const openWalletAfterPreparationRef = useRef(false);
   const preparingReviewRef = useRef(false);
   const quoteSequence = useRef(0);
 
@@ -341,7 +499,7 @@ export default function SwapScreen() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [amount, customSlippageState.error, inputToken.address, inputToken.decimals, outputToken.address, phase, slippageBps]);
+  }, [amount, customSlippageState.error, inputToken.address, inputToken.decimals, outputToken.address, phase, quoteRefreshKey, slippageBps]);
 
   useEffect(() => {
     if (!wallet.connected || !wallet.address || !resumeReviewRef.current) return;
@@ -355,9 +513,15 @@ export default function SwapScreen() {
     if (!wallet.address) return;
     let cancelled = false;
     void pendingStore.list(wallet.address).then(async (pending) => {
+      const currentBlockHeight = await rpc.getBlockHeight('confirmed').catch(() => null);
       for (const item of pending) {
         if (cancelled) continue;
+        const expired = currentBlockHeight !== null && isPendingSwapExpired(item, currentBlockHeight);
         if (!item.signature) {
+          if (expired) {
+            await pendingStore.remove(item.requestId);
+            continue;
+          }
           setUnknownRequestId(item.requestId);
           setTerminalSignature(null);
           setResultMessage('A previous swap may have been submitted. Do not submit it again while its status is unknown.');
@@ -384,6 +548,9 @@ export default function SwapScreen() {
               : 'The previous swap is confirmed. Refresh Wallet to update balances.');
             setPhase('confirmed');
             break;
+          } else if (expired) {
+            await pendingStore.remove(item.requestId);
+            continue;
           } else if (!cancelled) {
             setUnknownRequestId(item.requestId);
             setTerminalSignature(item.signature);
@@ -421,7 +588,6 @@ export default function SwapScreen() {
     setReviewOrder(null);
     setSimulationWarning(null);
     setSimulationWarningAccepted(false);
-    setBalanceChanges([]);
     if (customSlippageState.error) {
       setFailure(customSlippageState.error);
       preparingReviewRef.current = false;
@@ -450,8 +616,7 @@ export default function SwapScreen() {
         throw new Error(`Your ${inputToken.symbol} balance is lower than this amount.`);
       }
       if (inputToken.address === SOL.address) {
-        const reserveLamports = 5_000_000n;
-        if (BigInt(latestBalance ?? '0') - BigInt(amountAtomic) < reserveLamports) {
+        if (BigInt(latestBalance ?? '0') - BigInt(amountAtomic) < SOL_FEE_RESERVE_LAMPORTS) {
           throw new Error('Keep at least 0.005 SOL for network and account-creation costs.');
         }
       }
@@ -474,6 +639,7 @@ export default function SwapScreen() {
         outputMint: order.outputMint,
         inAmountAtomic: order.inAmountAtomic,
         minimumOutAmountAtomic: order.minimumOutAmountAtomic,
+        maximumNetworkCostLamports: maximumReviewedNetworkCost(order),
         connection: rpc,
       });
       setPhase('simulating');
@@ -490,27 +656,11 @@ export default function SwapScreen() {
         inputDecimals: inputToken.decimals,
         outputDecimals: outputToken.decimals,
       });
-      const simulatedChanges: SimulatedBalanceChange[] = simulation.balanceChanges.tokens
-        .filter((change) => change.mint === order.inputMint || change.mint === order.outputMint)
-        .map((change) => ({
-          mint: change.mint,
-          beforeAtomic: change.beforeAtomic,
-          afterAtomic: change.afterAtomic,
-          decimals: change.mint === order.inputMint ? inputToken.decimals : outputToken.decimals,
-        }));
-      if (order.inputMint === SOL.address || order.outputMint === SOL.address) {
-        simulatedChanges.push({
-          mint: SOL.address,
-          beforeAtomic: simulation.balanceChanges.nativeLamports.before,
-          afterAtomic: simulation.balanceChanges.nativeLamports.after,
-          decimals: 9,
-        });
-      }
-      setBalanceChanges(simulatedChanges.filter((change, index, rows) => rows.findIndex((row) => row.mint === change.mint) === index));
       setSimulationWarning(simulation.unavailableWarning ?? null);
       setReviewOrder(order);
       setPhase('reviewing');
     } catch (error) {
+      openWalletAfterPreparationRef.current = false;
       setFailure(errorMessage(error));
       setPhase('failed');
     } finally {
@@ -655,8 +805,41 @@ export default function SwapScreen() {
     }
   }
 
+  useEffect(() => {
+    if (phase !== 'reviewing' || !reviewOrder || !openWalletAfterPreparationRef.current) return;
+    if (simulationWarning && !simulationWarningAccepted) return;
+    openWalletAfterPreparationRef.current = false;
+    void confirmTrade();
+    // confirmTrade intentionally reads the exact reviewed order from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, reviewOrder, simulationWarning, simulationWarningAccepted]);
+
+  function tradeInteractionBusy(): boolean {
+    return phase === 'ordering'
+      || phase === 'validating'
+      || phase === 'simulating'
+      || phase === 'awaiting_signature'
+      || phase === 'executing'
+      || phase === 'unknown';
+  }
+
+  function invalidatePreparedTrade(): boolean {
+    if (tradeInteractionBusy()) return false;
+    openWalletAfterPreparationRef.current = false;
+    setReviewOrder(null);
+    setSimulationWarning(null);
+    setSimulationWarningAccepted(false);
+    setFailure(null);
+    setTerminalSignature(null);
+    setUnknownRequestId(null);
+    setResultMessage(null);
+    if (phase !== 'compose' && phase !== 'picker') setPhase('compose');
+    return true;
+  }
+
   function openPicker(side: SwapSide): void {
     if ((mode === 'sell' && side === 'input') || (mode === 'buy' && side === 'output')) return;
+    if (!invalidatePreparedTrade()) return;
     setPickerSide(side);
     setTokenQuery('');
     setPhase('picker');
@@ -691,21 +874,21 @@ export default function SwapScreen() {
     }
     setAmount('');
     setQuote(null);
-    setFailure(null);
+    invalidatePreparedTrade();
     setPhase('compose');
   }
 
   function reversePair(): void {
+    if (!invalidatePreparedTrade()) return;
     setInputToken(outputToken);
     setOutputToken(inputToken);
     setAmount('');
     setQuote(null);
-    setFailure(null);
   }
 
   function setManualAmount(value: string): void {
+    if (!invalidatePreparedTrade()) return;
     setAmount(value);
-    setFailure(null);
   }
 
   const amountAtomic = useMemo(() => {
@@ -723,26 +906,135 @@ export default function SwapScreen() {
     }
     if (
       inputToken.address === SOL.address
-      && BigInt(inputBalanceAtomic ?? '0') - BigInt(amountAtomic) < 5_000_000n
+      && BigInt(inputBalanceAtomic ?? '0') - BigInt(amountAtomic) < SOL_FEE_RESERVE_LAMPORTS
     ) {
       return 'Keep at least 0.005 SOL for network and account-creation costs.';
     }
     return null;
   }, [amountAtomic, balancesResolved, inputBalanceAtomic, inputToken.address, inputToken.symbol, wallet.connected]);
-  const balanceAllowsReview = !wallet.connected || (balancesResolved && !balanceError);
-  const canReview = !!amountAtomic && !!quote && balanceAllowsReview && !customSlippageState.error && inputToken.address !== outputToken.address && !isExtremeSlippage
-    ? true
-    : !!amountAtomic && !!quote && balanceAllowsReview && !customSlippageState.error && inputToken.address !== outputToken.address && extremeConfirmation.trim().toUpperCase() === 'CONFIRM';
+  const interactionBusy = tradeInteractionBusy();
+  const receiveAtLeast = reviewOrder
+    ? formatAtomicAmount(reviewOrder.minimumOutAmountAtomic, outputToken.decimals, 4)
+    : quote
+      ? formatAtomicAmount(quote.minimumOutAmountAtomic, outputToken.decimals, 4)
+      : '0';
 
   const content = phase === 'picker'
     ? renderPicker()
-    : phase === 'compose'
-      ? renderCompose()
-      : phase === 'reviewing'
-        ? renderReview()
-        : phase === 'confirmed' || phase === 'failed' || phase === 'unknown'
-          ? renderTerminal()
-          : renderProgress();
+    : renderCompose();
+
+  function retryInlineAction(): void {
+    if (phase === 'unknown') return;
+    openWalletAfterPreparationRef.current = false;
+    setReviewOrder(null);
+    setSimulationWarning(null);
+    setSimulationWarningAccepted(false);
+    setFailure(null);
+    setTerminalSignature(null);
+    setUnknownRequestId(null);
+    setResultMessage(null);
+    setQuote(null);
+    setQuoteError(null);
+    setPhase('compose');
+    setQuoteRefreshKey((value) => value + 1);
+  }
+
+  function renderInlineAction() {
+    if (phase === 'confirmed') {
+      return (
+        <InlineSwapAction
+          label={receiveAtLeast === '0' ? 'Swap confirmed' : `${receiveAtLeast} ${outputToken.symbol} received`}
+          tone="success"
+          token={receiveAtLeast === '0' ? undefined : outputToken}
+          onPress={close}
+          accessibilityHint={resultMessage ?? 'Close this swap'}
+        />
+      );
+    }
+    if (phase === 'unknown') {
+      return (
+        <InlineSwapAction
+          label="Checking transaction — don’t retry"
+          tone="loading"
+          accessibilityHint={resultMessage ?? (unknownRequestId ? `Pending request ${unknownRequestId}` : undefined)}
+        />
+      );
+    }
+    if (phase === 'failed') {
+      return (
+        <InlineSwapAction
+          label={inlineSwapError(failure ?? 'Swap could not continue.', inputToken.symbol)}
+          tone="error"
+          onPress={retryInlineAction}
+          accessibilityHint="Tap to refresh the quote and try again"
+        />
+      );
+    }
+    if (phase === 'quoting') return <InlineSwapAction label="Getting the latest price…" tone="loading" />;
+    if (phase === 'ordering') return <InlineSwapAction label="Building your swap…" tone="loading" />;
+    if (phase === 'validating') return <InlineSwapAction label={reviewOrder ? 'Checking wallet response…' : 'Checking the swap…'} tone="loading" />;
+    if (phase === 'simulating') return <InlineSwapAction label="Checking the expected result…" tone="loading" />;
+    if (phase === 'awaiting_signature') return <InlineSwapAction label="Approve the swap in your wallet" tone="loading" />;
+    if (phase === 'executing') return <InlineSwapAction label="Sending swap…" tone="loading" />;
+    if (phase === 'reviewing' && reviewOrder) {
+      if (simulationWarning && !simulationWarningAccepted) {
+        return (
+          <InlineSwapAction
+            label="Simulation unavailable — tap to continue"
+            tone="warning"
+            onPress={() => setSimulationWarningAccepted(true)}
+            accessibilityHint={simulationWarning}
+          />
+        );
+      }
+      return <InlineSwapAction label="Opening your wallet…" tone="loading" />;
+    }
+    if (!amountAtomic) return <InlineSwapAction label="Enter an amount" disabled />;
+    if (inputToken.address === outputToken.address) return <InlineSwapAction label="Choose two different assets" tone="warning" disabled />;
+    if (wallet.connected && !balancesResolved) return <InlineSwapAction label="Checking your balance…" tone="loading" />;
+    if (balanceError) return <InlineSwapAction label={inlineSwapError(balanceError, inputToken.symbol)} tone="error" disabled />;
+    if (customSlippageState.error) return <InlineSwapAction label={customSlippageState.error} tone="error" disabled />;
+    if (isExtremeSlippage && extremeConfirmation.trim().toUpperCase() !== 'CONFIRM') {
+      return <InlineSwapAction label="Type CONFIRM to continue" tone="warning" disabled />;
+    }
+    if (quoteError) {
+      return (
+        <InlineSwapAction
+          label={inlineSwapError(quoteError, inputToken.symbol)}
+          tone="error"
+          onPress={() => {
+            setQuoteError(null);
+            setQuoteRefreshKey((value) => value + 1);
+          }}
+          accessibilityHint="Tap to request a new price"
+        />
+      );
+    }
+    if (!quote) return <InlineSwapAction label="Getting the latest price…" tone="loading" />;
+    if (!wallet.connected) {
+      return (
+        <InlineSwapAction
+          label="Connect wallet to swap"
+          onPress={() => {
+            Keyboard.dismiss();
+            openWalletAfterPreparationRef.current = true;
+            void prepareReview();
+          }}
+        />
+      );
+    }
+    return (
+      <SwipeToConfirm
+        receiveAmount={receiveAtLeast}
+        outputToken={outputToken}
+        onComplete={() => {
+          Keyboard.dismiss();
+          openWalletAfterPreparationRef.current = true;
+          void prepareReview();
+        }}
+      />
+    );
+  }
 
   function renderCompose() {
     return (
@@ -762,19 +1054,26 @@ export default function SwapScreen() {
               usd={inputUsd}
               editable
               locked={mode === 'sell'}
+              disabled={interactionBusy}
               invalid={!!balanceError}
               onAmount={setManualAmount}
               onAsset={() => openPicker('input')}
-              onMax={() => {
+              onBalancePercent={(percent) => {
                 if (!inputBalanceAtomic) return;
-                setAmount(formatAtomicAmount(inputBalanceAtomic, inputToken.decimals, inputToken.decimals));
-                setFailure(null);
+                const balance = BigInt(inputBalanceAtomic);
+                const spendable = inputToken.address === SOL.address
+                  ? balance > SOL_FEE_RESERVE_LAMPORTS
+                    ? balance - SOL_FEE_RESERVE_LAMPORTS
+                    : 0n
+                  : balance;
+                const selected = spendable * BigInt(percent) / 100n;
+                setManualAmount(formatAtomicAmount(selected.toString(), inputToken.decimals, inputToken.decimals));
               }}
             />
             <View style={styles.seam}>
               {mode === 'swap' ? (
-                <Pressable onPress={reversePair} accessibilityRole="button" accessibilityLabel="Reverse pair" style={styles.reverseButton}>
-                  <MaterialIcons name="swap-vert" size={17} color={tokens.walletBrand.spot} />
+                <Pressable disabled={interactionBusy} onPress={reversePair} accessibilityRole="button" accessibilityLabel="Reverse pair" accessibilityState={{ disabled: interactionBusy }} style={styles.reverseButton}>
+                  <SwapPairIcon />
                 </Pressable>
               ) : null}
             </View>
@@ -786,6 +1085,7 @@ export default function SwapScreen() {
               usd={outputUsd}
               editable={false}
               locked={mode === 'buy'}
+              disabled={interactionBusy}
               onAmount={() => {}}
               onAsset={() => openPicker('output')}
             />
@@ -797,7 +1097,7 @@ export default function SwapScreen() {
               <Text style={styles.metricLabel}>Slippage</Text>
               <View style={styles.slippageOptions}>
                 {(['auto', 'fixed', 'custom'] as const).map((item) => (
-                  <Pressable key={item} onPress={() => { setSlippageMode(item); setExtremeConfirmation(''); setFailure(null); }} style={[styles.smallChoice, slippageMode === item && styles.smallChoiceActive]}>
+                  <Pressable key={item} disabled={interactionBusy} onPress={() => { if (!invalidatePreparedTrade()) return; setSlippageMode(item); setExtremeConfirmation(''); }} style={[styles.smallChoice, slippageMode === item && styles.smallChoiceActive]}>
                     <Text style={[styles.smallChoiceText, slippageMode === item && styles.smallChoiceTextActive]}>{item === 'fixed' ? '0.5%' : item}</Text>
                   </Pressable>
                 ))}
@@ -806,7 +1106,8 @@ export default function SwapScreen() {
             {slippageMode === 'custom' ? (
               <TextInput
                 value={customSlippage}
-                onChangeText={(value) => { setCustomSlippage(value.replace(/[^\d.]/g, '')); setExtremeConfirmation(''); setFailure(null); }}
+                editable={!interactionBusy}
+                onChangeText={(value) => { if (!invalidatePreparedTrade()) return; setCustomSlippage(value.replace(/[^\d.]/g, '')); setExtremeConfirmation(''); }}
                 keyboardType="decimal-pad"
                 placeholder="0–50%"
                 placeholderTextColor={semantic.text.faint}
@@ -820,27 +1121,15 @@ export default function SwapScreen() {
           {isExtremeSlippage ? (
             <TextInput
               value={extremeConfirmation}
-              onChangeText={(value) => { setExtremeConfirmation(value); setFailure(null); }}
+              editable={!interactionBusy}
+              onChangeText={(value) => { if (!invalidatePreparedTrade()) return; setExtremeConfirmation(value); }}
               autoCapitalize="characters"
               placeholder="Type CONFIRM for slippage above 15%"
               placeholderTextColor={semantic.text.faint}
               style={styles.confirmInput}
             />
           ) : null}
-          {quoteError ? <Text selectable style={styles.errorText}>{quoteError}</Text> : null}
-          {failure && failure !== balanceError ? <Text selectable style={styles.errorText}>{failure}</Text> : null}
-          <Pressable
-            disabled={!canReview}
-            onPress={() => {
-              Keyboard.dismiss();
-              void prepareReview();
-            }}
-            style={[styles.primaryButton, styles.reviewButton, !canReview && !balanceError && styles.primaryButtonDisabled]}
-          >
-            <Text style={[styles.primaryButtonText, balanceError && styles.primaryButtonErrorText]}>
-              {balanceError ? `Insufficient ${inputToken.symbol} balance` : wallet.connected ? `Review ${mode}` : 'Connect wallet to review'}
-            </Text>
-          </Pressable>
+          {renderInlineAction()}
       </ScrollView>
     );
   }
@@ -858,7 +1147,7 @@ export default function SwapScreen() {
             autoCorrect={false}
             style={styles.searchInput}
           />
-          {tokenLoading ? <ActivityIndicator color={tokens.walletBrand.spot} style={styles.loader} /> : null}
+          {tokenLoading ? <ActivityIndicator color={tokens.colors.primary} style={styles.loader} /> : null}
           {tokenError ? <Text selectable style={styles.errorText}>{tokenError}</Text> : null}
           <ScrollView keyboardShouldPersistTaps="handled" style={styles.tokenList} showsVerticalScrollIndicator={false}>
             {tokenResults.map((token) => (
@@ -876,129 +1165,11 @@ export default function SwapScreen() {
     );
   }
 
-  function renderReview() {
-    if (!reviewOrder || !wallet.address) return renderProgress();
-    const feeToken = reviewOrder.fees.providerFeeMint === inputToken.address
-      ? inputToken
-      : reviewOrder.fees.providerFeeMint === outputToken.address
-        ? outputToken
-        : null;
-    const providerFee = reviewOrder.fees.providerFeeAtomic && feeToken
-      ? `${formatAtomicAmount(reviewOrder.fees.providerFeeAtomic, feeToken.decimals, feeToken.decimals)} ${feeToken.symbol}`
-      : reviewOrder.fees.providerFeeAtomic
-        ? `${reviewOrder.fees.providerFeeAtomic} atomic units`
-        : reviewOrder.fees.providerFeeBps !== null
-          ? `${reviewOrder.fees.providerFeeBps} bps`
-          : 'Unavailable';
-    const route = reviewOrder.route.length > 0
-      ? reviewOrder.route.map((part) => part.label).join(' → ')
-      : reviewOrder.router === 'unknown' ? 'Jupiter' : reviewOrder.router;
-    return (
-      <ScrollView contentInsetAdjustmentBehavior="automatic" showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
-          <View style={styles.reviewHero}>
-            <Text style={styles.reviewLabel}>You send</Text>
-            <Text selectable style={styles.reviewAmount}>{formatAtomicAmount(maximumReviewedInput(reviewOrder), inputToken.decimals, inputToken.decimals)} {inputToken.symbol}</Text>
-            <MaterialIcons name="south" size={18} color={tokens.walletBrand.spot} />
-            <Text style={styles.reviewLabel}>You receive at least</Text>
-            <Text selectable style={styles.reviewReceive}>{formatAtomicAmount(reviewOrder.minimumOutAmountAtomic, outputToken.decimals, outputToken.decimals)} {outputToken.symbol}</Text>
-          </View>
-          <View style={styles.reviewCard}>
-            <MetricRow label="Wallet · Solana" value={`${shortAddress(wallet.address)} · ${wallet.source === 'privy' ? 'myboon' : 'External'}`} />
-            <View style={styles.metricGrid}>
-              <ReviewMetric label="Expected output" value={`${formatAtomicAmount(reviewOrder.outAmountAtomic, outputToken.decimals, outputToken.decimals)} ${outputToken.symbol}`} />
-              <ReviewMetric label="Price impact" value={formatPercent(reviewOrder.priceImpactPct)} />
-              <ReviewMetric label="Slippage" value={`${(reviewOrder.slippageBps / 100).toFixed(2)}%`} />
-              <ReviewMetric label="Route" value={route} />
-              <ReviewMetric label="Jupiter/router fee" value={providerFee} />
-              <ReviewMetric label="Network fee" value={lamportsToSol(reviewOrder.fees.signatureFeeLamports)} />
-              <ReviewMetric label="Priority fee" value={lamportsToSol(reviewOrder.fees.priorityFeeLamports)} />
-              <ReviewMetric label="Account rent" value={lamportsToSol(reviewOrder.fees.rentFeeLamports)} />
-              <ReviewMetric label="myboon fee" value="0" positive />
-            </View>
-          </View>
-          {balanceChanges.length ? (
-            <View style={styles.changeCard}>
-              {balanceChanges.map((change) => (
-                <MetricRow
-                  key={change.mint}
-                  label={`${change.mint === inputToken.address ? inputToken.symbol : outputToken.symbol} after simulation`}
-                  value={`${formatAtomicAmount(change.beforeAtomic, change.decimals, change.decimals)} → ${formatAtomicAmount(change.afterAtomic, change.decimals, change.decimals)}`}
-                />
-              ))}
-            </View>
-          ) : null}
-          {simulationWarning ? (
-            <Text selectable style={styles.warning}>{simulationWarning}{simulationWarningAccepted ? ' Confirm again to continue.' : ''}</Text>
-          ) : null}
-          <Text style={styles.reviewHint}>The next step opens your selected wallet to approve this exact transaction.</Text>
-          <Pressable onPress={() => void confirmTrade()} style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>{simulationWarning && !simulationWarningAccepted ? 'Acknowledge simulation warning' : `Confirm ${mode}`}</Text>
-          </Pressable>
-      </ScrollView>
-    );
-  }
-
-  function renderProgress() {
-    const copy = statusCopy(phase);
-    return (
-      <View style={styles.statusBody}>
-          <ActivityIndicator size="large" color={tokens.walletBrand.spot} />
-          <Text style={styles.statusTitle}>{copy.title}</Text>
-          <Text style={styles.statusDetail}>{copy.detail}</Text>
-          <Text selectable style={styles.statusPair}>{amount || '0'} {inputToken.symbol} → {outputToken.symbol}</Text>
-          {terminalSignature ? (
-            <Pressable onPress={() => void Linking.openURL(`https://solscan.io/tx/${encodeURIComponent(terminalSignature)}`)}>
-              <Text style={styles.explorerLink}>View submitted transaction</Text>
-            </Pressable>
-          ) : null}
-      </View>
-    );
-  }
-
-  function renderTerminal() {
-    const confirmed = phase === 'confirmed';
-    const unknown = phase === 'unknown';
-    const title = confirmed ? 'Swap confirmed' : unknown ? 'Outcome unknown' : 'Swap not completed';
-    const detail = confirmed
-      ? 'Balances have been refreshed.'
-      : unknown
-        ? 'This transaction may already have landed. Do not submit it again.'
-        : failure ?? 'Your pair and amount are preserved.';
-    return (
-      <View style={styles.statusBody}>
-          <View style={[styles.statusMark, confirmed && styles.statusMarkSuccess, unknown && styles.statusMarkUnknown]}>
-            <MaterialIcons name={confirmed ? 'check' : unknown ? 'schedule' : 'close'} size={28} color={confirmed ? semantic.sentiment.positive : unknown ? semantic.text.accentDim : semantic.sentiment.negative} />
-          </View>
-          <Text style={styles.statusTitle}>{title}</Text>
-          <Text selectable style={styles.statusDetail}>{resultMessage ?? detail}</Text>
-          {unknownRequestId ? <Text selectable style={styles.requestId}>Request {unknownRequestId.slice(0, 10)}…</Text> : null}
-          {terminalSignature ? (
-            <Pressable onPress={() => void Linking.openURL(`https://solscan.io/tx/${encodeURIComponent(terminalSignature)}`)}>
-              <Text style={styles.explorerLink}>View on Solscan</Text>
-            </Pressable>
-          ) : null}
-          {phase === 'failed' ? (
-            <Pressable onPress={() => { setReviewOrder(null); setPhase('compose'); }} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>Refresh quote and try again</Text>
-            </Pressable>
-          ) : unknown ? (
-            <Pressable onPress={close} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>Close · keep pending</Text>
-            </Pressable>
-          ) : (
-            <Pressable onPress={close} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>{caller === 'spot' ? 'Back to token' : 'Back to Wallet'}</Text>
-            </Pressable>
-          )}
-      </View>
-    );
-  }
-
   return (
     <KeyboardAvoidingView
       style={styles.overlay}
       behavior="padding"
-      enabled={phase === 'compose' || phase === 'picker'}
+      enabled={Platform.OS === 'ios'}
     >
       <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel="Close trade sheet" />
       <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>{content}</View>
@@ -1024,10 +1195,11 @@ function AssetAmount({
   usd,
   editable,
   locked,
+  disabled = false,
   invalid = false,
   onAmount,
   onAsset,
-  onMax,
+  onBalancePercent,
 }: {
   label: string;
   token: SwapToken;
@@ -1036,10 +1208,11 @@ function AssetAmount({
   usd: number | null;
   editable: boolean;
   locked: boolean;
+  disabled?: boolean;
   invalid?: boolean;
   onAmount: (value: string) => void;
   onAsset: () => void;
-  onMax?: () => void;
+  onBalancePercent?: (percent: number) => void;
 }) {
   return (
     <View style={styles.assetBlock}>
@@ -1047,11 +1220,30 @@ function AssetAmount({
         <Text style={styles.assetLabel}>{label}</Text>
         <View style={styles.balanceRow}>
           <Text style={styles.balanceText}>Balance {balanceAtomic ? formatAtomicAmount(balanceAtomic, token.decimals, 6) : '—'}</Text>
-          {onMax && balanceAtomic ? <Pressable onPress={onMax}><Text style={styles.maxText}>Max</Text></Pressable> : null}
+          {onBalancePercent && balanceAtomic ? (
+            <View style={styles.balanceActions}>
+              {[25, 50, 100].map((percent, index) => (
+                <View key={percent} style={styles.balanceActionGroup}>
+                  {index > 0 ? <Text style={styles.balanceActionSeparator}>·</Text> : null}
+                  <Pressable
+                    disabled={disabled}
+                    onPress={() => onBalancePercent(percent)}
+                    hitSlop={9}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Use ${percent} percent of available ${token.symbol} balance`}
+                    accessibilityState={{ disabled }}
+                    style={styles.balanceAction}
+                  >
+                    <Text style={styles.balanceActionText}>{percent}%</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
         </View>
       </View>
       <View style={styles.assetMain}>
-        <Pressable disabled={locked} onPress={onAsset} style={[styles.assetSelector, locked && styles.assetSelectorLocked]}>
+        <Pressable disabled={locked || disabled} onPress={onAsset} accessibilityState={{ disabled: locked || disabled }} style={[styles.assetSelector, (locked || disabled) && styles.assetSelectorLocked]}>
           <TokenAvatar token={token} size={26} />
           <Text style={styles.assetSymbol}>{token.symbol}</Text>
           {!locked ? <MaterialIcons name="expand-more" size={17} color={semantic.text.dim} /> : null}
@@ -1060,6 +1252,7 @@ function AssetAmount({
           {editable ? (
             <TextInput
               value={amount}
+              editable={!disabled}
               onChangeText={(value) => onAmount(value.replace(/[^\d.]/g, ''))}
               keyboardType="decimal-pad"
               returnKeyType="done"
@@ -1101,15 +1294,6 @@ function MetricRow({ label, value, positive = false }: { label: string; value: s
   );
 }
 
-function ReviewMetric({ label, value, positive = false }: { label: string; value: string; positive?: boolean }) {
-  return (
-    <View style={styles.reviewMetric}>
-      <Text style={styles.reviewMetricLabel}>{label}</Text>
-      <Text selectable style={[styles.reviewMetricValue, positive && styles.metricPositive]}>{value}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(1, 13, 19, 0.72)' },
@@ -1132,7 +1316,11 @@ const styles = StyleSheet.create({
   assetLabel: { color: semantic.text.dim, fontFamily: 'monospace', fontSize: 9, textTransform: 'uppercase', letterSpacing: 1 },
   balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   balanceText: { color: semantic.text.faint, fontFamily: 'monospace', fontSize: 8 },
-  maxText: { color: semantic.text.accentDim, fontFamily: 'monospace', fontSize: 8, fontWeight: '800' },
+  balanceActions: { flexDirection: 'row', alignItems: 'center' },
+  balanceActionGroup: { flexDirection: 'row', alignItems: 'center' },
+  balanceActionSeparator: { color: semantic.border.muted, fontFamily: 'monospace', fontSize: 11 },
+  balanceAction: { minHeight: 32, paddingHorizontal: 1, alignItems: 'center', justifyContent: 'center', marginVertical: -8 },
+  balanceActionText: { color: semantic.text.accentDim, fontFamily: 'monospace', fontSize: 10, fontWeight: '900', fontVariant: ['tabular-nums'] },
   assetMain: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   assetSelector: { minWidth: 112, minHeight: 42, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 9, borderCurve: 'continuous', backgroundColor: semantic.background.surfaceRaised },
   assetSelectorLocked: { borderColor: 'transparent', backgroundColor: semantic.background.surface },
@@ -1146,7 +1334,7 @@ const styles = StyleSheet.create({
   amountMuted: { color: semantic.text.faint },
   amountUsd: { color: semantic.text.faint, fontFamily: 'monospace', fontSize: 8, fontVariant: ['tabular-nums'] },
   seam: { height: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: semantic.border.muted, zIndex: 2 },
-  reverseButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: semantic.background.screen, backgroundColor: semantic.background.lift },
+  reverseButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: tokens.colors.walletCore },
   quoteCard: { borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 9, borderCurve: 'continuous', backgroundColor: semantic.background.surface, overflow: 'hidden' },
   metricRow: { minHeight: 34, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: semantic.border.muted },
   metricLabel: { color: semantic.text.dim, fontSize: 10 },
@@ -1155,19 +1343,30 @@ const styles = StyleSheet.create({
   slippageRow: { minHeight: 38, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   slippageOptions: { flexDirection: 'row', gap: 4 },
   smallChoice: { minHeight: 27, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: semantic.border.muted, borderRadius: tokens.radius.sm },
-  smallChoiceActive: { borderColor: tokens.walletBrand.spot, backgroundColor: 'rgba(153,69,255,0.12)' },
+  smallChoiceActive: { borderColor: tokens.colors.primary, backgroundColor: 'rgba(17,138,178,0.11)' },
   smallChoiceText: { color: semantic.text.dim, fontFamily: 'monospace', fontSize: 8, textTransform: 'capitalize' },
   smallChoiceTextActive: { color: semantic.text.primary },
   customInput: { minHeight: 38, paddingHorizontal: 10, color: semantic.text.primary, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, borderTopWidth: 1, borderTopColor: semantic.border.muted },
   warning: { color: semantic.text.accentDim, fontSize: 10, lineHeight: 15, textAlign: 'center' },
   confirmInput: { minHeight: 42, paddingHorizontal: 11, borderWidth: 1, borderColor: semantic.text.accentDim, borderRadius: 8, color: semantic.text.primary, fontFamily: 'monospace', fontSize: 10, textAlign: 'center' },
   errorText: { color: semantic.sentiment.negative, fontSize: 10, lineHeight: 15, textAlign: 'center' },
-  primaryButton: { minHeight: 48, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderCurve: 'continuous', backgroundColor: tokens.walletBrand.spot },
-  reviewButton: { backgroundColor: tokens.colors.walletCore },
-  primaryButtonDisabled: { opacity: 0.35 },
-  primaryButtonText: { color: semantic.text.primary, fontSize: 13, fontWeight: '900', letterSpacing: 0.4, textTransform: 'capitalize' },
-  primaryButtonErrorText: { color: semantic.sentiment.negative },
-  searchInput: { minHeight: 44, paddingHorizontal: 12, borderWidth: 1, borderColor: tokens.walletBrand.spot, borderRadius: 9, color: semantic.text.primary, fontSize: 13, backgroundColor: semantic.background.surface },
+  inlineAction: { minHeight: 56, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 10, borderCurve: 'continuous', backgroundColor: tokens.colors.walletCore },
+  inlineActionError: { borderColor: 'rgba(239,71,111,0.72)', backgroundColor: 'rgba(239,71,111,0.06)' },
+  inlineActionWarning: { borderColor: 'rgba(255,209,102,0.68)', backgroundColor: 'rgba(255,209,102,0.06)' },
+  inlineActionSuccess: { borderColor: 'rgba(6,214,160,0.72)', backgroundColor: 'rgba(6,214,160,0.07)' },
+  inlineActionStatic: { opacity: 1 },
+  inlineActionPressed: { opacity: 0.78 },
+  inlineActionText: { maxWidth: '88%', color: semantic.text.primary, fontSize: 13, lineHeight: 17, fontWeight: '900', textAlign: 'center' },
+  inlineActionTextError: { color: semantic.sentiment.negative },
+  inlineActionTextWarning: { color: semantic.text.accentDim },
+  inlineActionTextSuccess: { color: semantic.sentiment.positive },
+  swipeTrack: { position: 'relative', height: 58, overflow: 'hidden', borderWidth: 1, borderColor: tokens.colors.primary, borderRadius: 10, borderCurve: 'continuous', backgroundColor: tokens.colors.walletCore },
+  swipeFill: { position: 'absolute', top: 0, bottom: 0, left: 0, backgroundColor: 'rgba(17,138,178,0.24)' },
+  swipeCopy: { ...StyleSheet.absoluteFillObject, paddingLeft: 54, paddingRight: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  swipeText: { flexShrink: 1, color: semantic.text.dim, fontSize: 12, fontWeight: '800', textAlign: 'center' },
+  swipeAmount: { color: semantic.text.primary, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  swipeThumb: { position: 'absolute', top: SWIPE_INSET, left: SWIPE_INSET, width: SWIPE_THUMB_SIZE, height: SWIPE_THUMB_SIZE, alignItems: 'center', justifyContent: 'center', borderRadius: 8, borderCurve: 'continuous', backgroundColor: tokens.colors.primary, boxShadow: '0 5px 15px rgba(0,0,0,0.25)' },
+  searchInput: { minHeight: 44, paddingHorizontal: 12, borderWidth: 1, borderColor: tokens.colors.primary, borderRadius: 9, color: semantic.text.primary, fontSize: 13, backgroundColor: semantic.background.surface },
   loader: { paddingVertical: 12 },
   tokenList: { maxHeight: 390 },
   tokenResult: { minHeight: 54, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: semantic.border.muted },
@@ -1175,26 +1374,6 @@ const styles = StyleSheet.create({
   tokenSymbol: { color: semantic.text.primary, fontSize: 13, fontWeight: '800' },
   tokenName: { color: semantic.text.dim, fontSize: 10 },
   mintText: { color: semantic.text.faint, fontFamily: 'monospace', fontSize: 8 },
-  tokenFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.walletBrand.spot },
+  tokenFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.primary },
   tokenFallbackText: { color: semantic.text.primary, fontSize: 11, fontWeight: '900' },
-  reviewHero: { alignItems: 'center', gap: 4, paddingVertical: 4 },
-  reviewLabel: { color: semantic.text.faint, fontFamily: 'monospace', fontSize: 8, letterSpacing: 1, textTransform: 'uppercase' },
-  reviewAmount: { color: semantic.text.primary, fontSize: 25, fontWeight: '900', fontVariant: ['tabular-nums'] },
-  reviewReceive: { color: semantic.sentiment.positive, fontSize: 21, fontWeight: '900', fontVariant: ['tabular-nums'] },
-  reviewCard: { borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 9, borderCurve: 'continuous', overflow: 'hidden', backgroundColor: semantic.background.surface },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  reviewMetric: { width: '33.333%', minHeight: 50, padding: 8, justifyContent: 'center', gap: 4, borderRightWidth: StyleSheet.hairlineWidth, borderTopWidth: StyleSheet.hairlineWidth, borderColor: semantic.border.muted },
-  reviewMetricLabel: { color: semantic.text.faint, fontSize: 8 },
-  reviewMetricValue: { color: semantic.text.primary, fontFamily: 'monospace', fontSize: 9, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  changeCard: { borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 9, overflow: 'hidden', backgroundColor: semantic.background.surface },
-  reviewHint: { color: semantic.text.faint, fontSize: 9, lineHeight: 14, textAlign: 'center' },
-  statusBody: { minHeight: 250, padding: 20, alignItems: 'center', justifyContent: 'center', gap: 10 },
-  statusTitle: { color: semantic.text.primary, fontSize: 20, fontWeight: '900', textAlign: 'center' },
-  statusDetail: { maxWidth: 310, color: semantic.text.dim, fontSize: 11, lineHeight: 17, textAlign: 'center' },
-  statusPair: { color: semantic.text.primary, fontFamily: 'monospace', fontSize: 10, fontVariant: ['tabular-nums'] },
-  statusMark: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(239,71,111,0.5)', backgroundColor: 'rgba(239,71,111,0.08)' },
-  statusMarkSuccess: { borderColor: 'rgba(6,214,160,0.5)', backgroundColor: 'rgba(6,214,160,0.08)' },
-  statusMarkUnknown: { borderColor: 'rgba(255,209,102,0.5)', backgroundColor: 'rgba(255,209,102,0.08)' },
-  requestId: { color: semantic.text.faint, fontFamily: 'monospace', fontSize: 8 },
-  explorerLink: { color: semantic.text.accentDim, fontSize: 10, fontWeight: '800', textDecorationLine: 'underline' },
 });

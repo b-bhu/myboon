@@ -32,6 +32,7 @@ export interface SwapExecutionStore {
   saveOrder(order: SwapOrderRecord): void
   getExecution(requestId: string): SwapExecutionRecord | null
   saveExecution(execution: SwapExecutionRecord): void
+  deleteExecution(requestId: string): void
 }
 
 export function createMemorySwapExecutionStore(): SwapExecutionStore {
@@ -42,6 +43,7 @@ export function createMemorySwapExecutionStore(): SwapExecutionStore {
     saveOrder: (order) => orders.set(order.requestId, order),
     getExecution: (requestId) => executions.get(requestId) ?? null,
     saveExecution: (execution) => executions.set(execution.requestId, execution),
+    deleteExecution: (requestId) => { executions.delete(requestId) },
   }
 }
 
@@ -142,6 +144,7 @@ export function createSqliteSwapExecutionStore(path = '.data/swap.sqlite'): Swap
       output_amount_result_atomic = excluded.output_amount_result_atomic,
       updated_at = excluded.updated_at
   `)
+  const deleteExecution = db.prepare('DELETE FROM swap_executions WHERE request_id = ?')
   const writeEvent = db.prepare(`
     INSERT INTO swap_execution_events(request_id, outcome, signature, code, message, recorded_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -215,6 +218,9 @@ export function createSqliteSwapExecutionStore(path = '.data/swap.sqlite'): Swap
         execution.outputAmountResultAtomic,
         execution.updatedAt,
       )
+    },
+    deleteExecution(requestId) {
+      deleteExecution.run(requestId)
     },
   }
 }

@@ -13,6 +13,16 @@ export interface SwapPendingStore {
   remove(requestId: string): Promise<void>;
 }
 
+/** A transaction cannot land once Solana advances beyond its validity window. */
+export function isPendingSwapExpired(
+  value: Pick<PendingSwapExecution, 'lastValidBlockHeight'>,
+  currentBlockHeight: number | bigint,
+): boolean {
+  const lastValid = value.lastValidBlockHeight;
+  if (!lastValid || !/^(?:0|[1-9][0-9]*)$/.test(lastValid)) return false;
+  return BigInt(currentBlockHeight) > BigInt(lastValid);
+}
+
 function isPending(value: unknown): value is PendingSwapExecution {
   if (!value || typeof value !== 'object') return false;
   const row = value as Partial<PendingSwapExecution>;

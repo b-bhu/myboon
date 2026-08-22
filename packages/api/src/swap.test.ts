@@ -256,6 +256,30 @@ test('signable provider refusal maps stable codes and status', async () => {
   assert.deepEqual((await response.json() as any).error.code, 'TOKEN_ACCOUNT_REQUIRED')
 })
 
+test('signable orders refuse unsupported gasless and JupiterZ signer layouts at the gateway', async () => {
+  for (const unsupported of [{ gasless: true, router: 'metis' }, { gasless: false, router: 'jupiterz' }]) {
+    const fetchImpl = (async () => Response.json({
+      requestId: `unsupported-${unsupported.router}`,
+      inputMint: SOL,
+      outputMint: USDC,
+      taker: WALLET,
+      inAmount: '100',
+      outAmount: '200',
+      otherAmountThreshold: '190',
+      slippageBps: 25,
+      transaction: 'AA==',
+      lastValidBlockHeight: '123',
+      ...unsupported,
+    })) as typeof fetch
+    const response = await buildApp({ fetchImpl }).request('/swap/order', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ inputMint: SOL, outputMint: USDC, amountAtomic: '100', taker: WALLET }),
+    })
+    assert.equal(response.status, 422)
+    assert.equal((await response.json() as any).error.code, 'UNSUPPORTED_SIGNER_LAYOUT')
+  }
+})
+
 test('order rejects a zero minimum received instead of creating an unbounded trade', async () => {
   const fetchImpl = (async () => Response.json({
     inputMint: SOL,
@@ -326,6 +350,35 @@ test('unknown execute outcome is persisted and never auto-retried', async () => 
   assert.equal(executeCalls, 1)
 })
 
+test('provider pre-submission 4xx releases the durable execution claim for a corrected retry', async () => {
+  let executeCalls = 0
+  const store = createMemorySwapExecutionStore()
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    if (String(input).includes('/swap/v2/execute')) {
+      executeCalls += 1
+      return Response.json({ error: 'rejected before submission' }, { status: 400 })
+    }
+    return Response.json({
+      requestId: 'retryable-request', inputMint: SOL, outputMint: USDC, taker: WALLET,
+      inAmount: '1', outAmount: '2', otherAmountThreshold: '1', transaction: 'AA==',
+      lastValidBlockHeight: '99', slippageBps: 25, router: 'metis',
+    })
+  }) as typeof fetch
+  const app = buildApp({ fetchImpl, store })
+  await app.request('/swap/order', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ inputMint: SOL, outputMint: USDC, amountAtomic: '1', taker: WALLET }),
+  })
+  const request = () => app.request('/swap/execute', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ signedTransaction: 'AA==', requestId: 'retryable-request', lastValidBlockHeight: '99' }),
+  })
+  assert.equal((await request()).status, 502)
+  assert.equal(store.getExecution('retryable-request'), null)
+  assert.equal((await request()).status, 502)
+  assert.equal(executeCalls, 2)
+})
+
 test('invalid order and execute inputs are correction-safe 400s', async () => {
   const app = buildApp({ fetchImpl: (async () => Response.json({})) as typeof fetch })
   const invalidOrder = await app.request('/swap/order', {
@@ -382,6 +435,8 @@ test('SQLite execution metadata survives a store reopen without persisting trans
     const reopened = createSqliteSwapExecutionStore(path)
     assert.equal(reopened.getOrder('durable')?.lastValidBlockHeight, '123')
     assert.equal(reopened.getExecution('durable')?.outcome, 'unknown')
+    reopened.deleteExecution('durable')
+    assert.equal(reopened.getExecution('durable'), null)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

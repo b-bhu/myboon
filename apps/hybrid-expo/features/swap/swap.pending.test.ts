@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createMemorySwapPendingStorage, createSwapPendingStore } from './swap.pending';
+import { createMemorySwapPendingStorage, createSwapPendingStore, isPendingSwapExpired } from './swap.pending';
 import type { PendingSwapExecution } from './swap.types';
 
 function pending(requestId: string, walletAddress = 'wallet-a'): PendingSwapExecution {
@@ -30,4 +30,11 @@ test('persists, scopes, updates, and removes pending swaps', async () => {
   assert.equal((await store.list('wallet-a'))[0].outcome, 'unknown');
   await store.remove('one');
   assert.equal((await store.list('wallet-a')).length, 0);
+});
+
+test('pending swap expiry is strict and rejects malformed validity windows', () => {
+  assert.equal(isPendingSwapExpired({ lastValidBlockHeight: '100' }, 100), false);
+  assert.equal(isPendingSwapExpired({ lastValidBlockHeight: '100' }, 101), true);
+  assert.equal(isPendingSwapExpired({ lastValidBlockHeight: null }, 101), false);
+  assert.equal(isPendingSwapExpired({ lastValidBlockHeight: 'not-a-height' }, 101), false);
 });

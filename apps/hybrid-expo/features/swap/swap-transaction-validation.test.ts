@@ -60,6 +60,7 @@ function reviewed(overrides: Partial<{ inputMint: string; outputMint: string; in
     outputMint: outputMint.toBase58(),
     inputAmountAtomic: '100',
     minimumOutAmountAtomic: '90',
+    maximumNetworkCostLamports: '1000',
     ...overrides,
   };
 }
@@ -149,6 +150,22 @@ test('refuses an unexpected required signer', async () => {
   })]));
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.code, SWAP_VALIDATION_REFUSAL_CODES.UNEXPECTED_REQUIRED_SIGNER);
+});
+
+test('refuses a compute-budget priority fee above the reviewed network bound', async () => {
+  const transaction = tx([
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000_000 }),
+    jupiterInstruction(),
+  ]);
+  const result = await validateSwapTransaction({
+    serializedTransaction: encoded(transaction),
+    activeWallet: wallet.publicKey,
+    reviewed: { ...reviewed(), maximumNetworkCostLamports: '100' },
+    connection: new FakeConnection(),
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.code, SWAP_VALIDATION_REFUSAL_CODES.COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW);
 });
 
 test('simulation failure and insufficient output are deterministic', () => {
@@ -279,6 +296,33 @@ test('simulation bounds cover SOL-to-token and token-to-SOL reviews', () => {
   }, { activeWallet: wallet.publicKey, reviewed: { inputMint: inputMint.toBase58(), outputMint: sol, inputAmountAtomic: '100', maximumInputAmountAtomic: '100', maximumNetworkCostLamports: '20', minimumOutAmountAtomic: '90' } });
   assert.equal(overInput.ok, false);
   if (!overInput.ok) assert.equal(overInput.code, SWAP_VALIDATION_REFUSAL_CODES.SIMULATED_INPUT_OUTSIDE_BOUNDS);
+});
+
+test('simulation bounds native SOL loss for SPL-to-SPL swaps', () => {
+  const result = verifySwapSimulation({
+    value: {
+      err: null,
+      preBalances: [20_000_000_000],
+      postBalances: [10_000_000_000],
+      preTokenBalances: [
+        { accountIndex: 1, mint: inputMint.toBase58(), owner: wallet.publicKey.toBase58(), amount: '100' },
+        { accountIndex: 2, mint: outputMint.toBase58(), owner: wallet.publicKey.toBase58(), amount: '0' },
+      ],
+      postTokenBalances: [
+        { accountIndex: 1, mint: inputMint.toBase58(), owner: wallet.publicKey.toBase58(), amount: '0' },
+        { accountIndex: 2, mint: outputMint.toBase58(), owner: wallet.publicKey.toBase58(), amount: '100' },
+      ],
+    },
+  }, {
+    activeWallet: wallet.publicKey,
+    reviewed: {
+      ...reviewed(),
+      maximumInputAmountAtomic: '100',
+      maximumNetworkCostLamports: '5000',
+    },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.code, SWAP_VALIDATION_REFUSAL_CODES.SIMULATED_NETWORK_COST_OUTSIDE_BOUNDS);
 });
 
 test('fails closed when reviewed output ownership evidence is absent', async () => {

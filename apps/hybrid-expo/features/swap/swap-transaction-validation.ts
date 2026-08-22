@@ -36,6 +36,7 @@ export const SWAP_VALIDATION_REFUSAL_CODES = {
   INPUT_MINT_MISMATCH: 'INPUT_MINT_MISMATCH',
   OUTPUT_MINT_MISMATCH: 'OUTPUT_MINT_MISMATCH',
   INPUT_AMOUNT_MISMATCH: 'INPUT_AMOUNT_MISMATCH',
+  COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW: 'COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW',
   OUTPUT_ACCOUNT_NOT_OWNED: 'OUTPUT_ACCOUNT_NOT_OWNED',
   UNEXPECTED_WALLET_BALANCE_DECREASE: 'UNEXPECTED_WALLET_BALANCE_DECREASE',
   UNKNOWN_WRITABLE_ACCOUNT: 'UNKNOWN_WRITABLE_ACCOUNT',
@@ -43,6 +44,7 @@ export const SWAP_VALIDATION_REFUSAL_CODES = {
   SIMULATION_FAILED: 'SIMULATION_FAILED',
   SIMULATED_OUTPUT_BELOW_MINIMUM: 'SIMULATED_OUTPUT_BELOW_MINIMUM',
   SIMULATED_INPUT_OUTSIDE_BOUNDS: 'SIMULATED_INPUT_OUTSIDE_BOUNDS',
+  SIMULATED_NETWORK_COST_OUTSIDE_BOUNDS: 'SIMULATED_NETWORK_COST_OUTSIDE_BOUNDS',
   SIMULATION_DATA_UNAVAILABLE: 'SIMULATION_DATA_UNAVAILABLE',
 } as const;
 
@@ -207,6 +209,67 @@ function readU64(data: Uint8Array, offset: number): bigint | null {
   let result = 0n;
   for (let index = 0; index < 8; index += 1) result += BigInt(data[offset + index]) << BigInt(index * 8);
   return result;
+}
+
+function readU32(data: Uint8Array, offset: number): bigint | null {
+  if (data.length < offset + 4) return null;
+  let result = 0n;
+  for (let index = 0; index < 4; index += 1) result += BigInt(data[offset + index]) << BigInt(index * 8);
+  return result;
+}
+
+function computeBudgetPriorityFee(
+  transaction: VersionedTransaction,
+  tables: AddressLookupTableAccount[],
+): bigint {
+  let unitLimit: bigint | null = null;
+  let unitPriceMicroLamports: bigint | null = null;
+  let deprecatedAdditionalFee: bigint | null = null;
+
+  for (const instruction of transaction.message.compiledInstructions) {
+    const program = accountAt(transaction, tables, instruction.programIdIndex);
+    if (program?.toBase58() !== SWAP_PROGRAM_IDS.computeBudget) continue;
+    const data = Buffer.from(instruction.data);
+    const opcode = data[0];
+    if (opcode === 0) {
+      const units = readU32(data, 1);
+      const additionalFee = readU32(data, 5);
+      if (data.length !== 9 || units === null || additionalFee === null || deprecatedAdditionalFee !== null || unitLimit !== null || unitPriceMicroLamports !== null) {
+        throw new SwapValidationRefusal(SWAP_VALIDATION_REFUSAL_CODES.COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW, 'The transaction contains an unsupported compute-budget fee layout.');
+      }
+      unitLimit = units;
+      deprecatedAdditionalFee = additionalFee;
+      continue;
+    }
+    if (opcode === 1 || opcode === 4) {
+      if (data.length !== 5) {
+        throw new SwapValidationRefusal(SWAP_VALIDATION_REFUSAL_CODES.COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW, 'The transaction contains a malformed compute-budget instruction.');
+      }
+      continue;
+    }
+    if (opcode === 2) {
+      const units = readU32(data, 1);
+      if (data.length !== 5 || units === null || unitLimit !== null || deprecatedAdditionalFee !== null || units > 1_400_000n) {
+        throw new SwapValidationRefusal(SWAP_VALIDATION_REFUSAL_CODES.COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW, 'The transaction contains an unsafe compute-unit limit.');
+      }
+      unitLimit = units;
+      continue;
+    }
+    if (opcode === 3) {
+      const price = readU64(data, 1);
+      if (data.length !== 9 || price === null || unitPriceMicroLamports !== null || deprecatedAdditionalFee !== null) {
+        throw new SwapValidationRefusal(SWAP_VALIDATION_REFUSAL_CODES.COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW, 'The transaction contains an unsafe compute-unit price.');
+      }
+      unitPriceMicroLamports = price;
+      continue;
+    }
+    throw new SwapValidationRefusal(SWAP_VALIDATION_REFUSAL_CODES.COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW, 'The transaction contains an unknown compute-budget instruction.');
+  }
+
+  if (deprecatedAdditionalFee !== null) return deprecatedAdditionalFee;
+  if (unitPriceMicroLamports === null) return 0n;
+  const effectiveLimit = unitLimit ?? 1_400_000n;
+  return (effectiveLimit * unitPriceMicroLamports + 999_999n) / 1_000_000n;
 }
 
 interface TokenAccountEvidence {
@@ -440,6 +503,20 @@ async function inspectInstructions(
   connection: SwapValidationConnection,
 ): Promise<void> {
   const keys = allAccountKeys(transaction, tables);
+  if (reviewed.maximumNetworkCostLamports !== undefined) {
+    const maximumNetworkCost = amount(reviewed.maximumNetworkCostLamports);
+    if (maximumNetworkCost === null) {
+      throw new SwapValidationRefusal(SWAP_VALIDATION_REFUSAL_CODES.MALFORMED_TRANSACTION, 'The reviewed network-cost bound is invalid.');
+    }
+    const priorityFee = computeBudgetPriorityFee(transaction, tables);
+    if (priorityFee > maximumNetworkCost) {
+      throw new SwapValidationRefusal(
+        SWAP_VALIDATION_REFUSAL_CODES.COMPUTE_BUDGET_FEE_EXCEEDS_REVIEW,
+        'The transaction compute-budget fee exceeds the reviewed network cost.',
+        { priorityFeeLamports: priorityFee.toString(), maximumNetworkCostLamports: maximumNetworkCost.toString() },
+      );
+    }
+  }
   const staticSignerCount = transaction.message.header.numRequiredSignatures;
   for (let index = 0; index < staticSignerCount; index += 1) {
     const signer = keys[index];
@@ -559,6 +636,7 @@ export async function validateSwapTransactionForSigning(input: {
   outputMint: string;
   inAmountAtomic: string;
   minimumOutAmountAtomic: string;
+  maximumNetworkCostLamports?: string;
   /** Optional stricter caller policy; production derives evidence independently. */
   expectedWritableAccounts?: (string | PublicKey)[];
   connection: SwapValidationConnection;
@@ -575,6 +653,7 @@ export async function validateSwapTransactionForSigning(input: {
       outputMint: input.outputMint,
       inputAmountAtomic: input.inAmountAtomic,
       minimumOutAmountAtomic: input.minimumOutAmountAtomic,
+      maximumNetworkCostLamports: input.maximumNetworkCostLamports,
       allowedWritableAccounts: input.expectedWritableAccounts,
     },
     connection: input.connection,
@@ -590,6 +669,7 @@ export interface ValidateSwapTransactionForSigningInput {
   outputMint: string;
   inAmountAtomic: string;
   minimumOutAmountAtomic: string;
+  maximumNetworkCostLamports?: string;
   expectedWritableAccounts?: (string | PublicKey)[];
   connection: SwapValidationConnection;
 }
@@ -754,6 +834,15 @@ export function verifySwapSimulation(
       details: { inputSpentAtomic: (inputIsNative ? nativeInputSpent : inputSpent).toString(), inputAmountAtomic: reviewedInput.toString(), maximumInputAmountAtomic: maximumInput.toString(), maximumNetworkCostLamports: maximumNetworkCost.toString() },
     };
   }
+  const nativeNetworkLoss = nativeDelta < 0n ? -nativeDelta : 0n;
+  if (!inputIsNative && nativeNetworkLoss > maximumNetworkCost) {
+    return {
+      ok: false,
+      code: SWAP_VALIDATION_REFUSAL_CODES.SIMULATED_NETWORK_COST_OUTSIDE_BOUNDS,
+      message: 'Simulation network cost exceeds the reviewed bound.',
+      details: { nativeLossLamports: nativeNetworkLoss.toString(), maximumNetworkCostLamports: maximumNetworkCost.toString() },
+    };
+  }
   const outputWithinBounds = outputIsNative ? nativeDelta + maximumNetworkCost >= minimum : outputAmount >= minimum;
   if (!outputWithinBounds) {
     return {
@@ -883,6 +972,7 @@ export async function finalizeWalletSignedSwapTransaction(input: {
     outputMint: input.outputMint,
     inAmountAtomic: input.inputAmountAtomic,
     minimumOutAmountAtomic: input.minimumOutAmountAtomic,
+    maximumNetworkCostLamports: input.maximumNetworkCostLamports,
     connection: input.connection,
   });
   const simulation = await simulateAndVerifySwap(revalidated.transaction, input.connection, {
