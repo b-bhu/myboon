@@ -28,7 +28,16 @@ export default function RootLayout() {
           <Stack>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="feed" options={{ headerShown: false }} />
-            <Stack.Screen name="swap" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="swap"
+              options={{
+                headerShown: false,
+                presentation: 'transparentModal',
+                animation: 'slide_from_bottom',
+                contentStyle: { backgroundColor: 'transparent' },
+              }}
+            />
+            <Stack.Screen name="spot" options={{ headerShown: false }} />
             <Stack.Screen name="markets/polymarket" options={{ headerShown: false }} />
             <Stack.Screen name="markets/polymarket/profile" options={{ headerShown: false }} />
             <Stack.Screen name="markets/polymarket/market/[slug]" options={{ headerShown: false }} />

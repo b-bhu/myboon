@@ -15,6 +15,7 @@ import {
   useLoginWithOAuth,
   isConnected,
 } from '@privy-io/expo';
+import type { Transaction, VersionedTransaction } from '@solana/web3.js';
 
 import { clearActivation } from '@/features/chain/activation';
 
@@ -41,6 +42,8 @@ export interface PrivyWalletState {
   waitForWallet: () => Promise<void>;
   /** Sign a message with the embedded Solana wallet */
   signMessage: ((message: Uint8Array) => Promise<Uint8Array>) | null;
+  /** Sign a Solana transaction without broadcasting it. */
+  signTransaction: (<T extends Transaction | VersionedTransaction>(transaction: T) => Promise<T>) | null;
   /** Auth method the user used (email, google, wallet, or null) */
   authMethod: 'email' | 'google' | 'wallet' | null;
 }
@@ -152,6 +155,17 @@ export function usePrivyWallet(): PrivyWalletState {
       }
     : null;
 
+  const signTransaction = wallet
+    ? async <T extends Transaction | VersionedTransaction>(transaction: T): Promise<T> => {
+        const provider = await wallet.getProvider();
+        const result = await provider.request({
+          method: 'signTransaction',
+          params: { transaction },
+        });
+        return result.signedTransaction;
+      }
+    : null;
+
   // Determine auth method from linked accounts. Privy records a Google login as
   // a `google_oauth` account; older passkey accounts, if any survive, fall
   // through to 'wallet' since passkey is no longer an offered method.
@@ -189,6 +203,7 @@ export function usePrivyWallet(): PrivyWalletState {
     },
     waitForWallet: waitForEmbeddedWallet,
     signMessage,
+    signTransaction,
     authMethod,
   };
 }

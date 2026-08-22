@@ -3,6 +3,7 @@ export const tokens = {
     primary: '#118AB2',
     primaryDim: '#FFD166',
     backgroundDark: '#073B4C',
+    walletCore: '#031F2C',
     ground: '#063343',
     surface: '#083D50',
     lift: '#0A4A60',

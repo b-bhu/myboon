@@ -1,33 +1,15 @@
-import { Platform } from 'react-native';
-
-/** Local API host, accounting for the Android emulator's loopback alias. */
-function localApiBaseUrl(): string {
-  return Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
-}
-
 /**
  * Resolve the API base URL.
  *
- * `EXPO_PUBLIC_API_ENV` is the switch:
- *   local       -> always the local dev server, ignoring any configured URL
- *   production  -> EXPO_PUBLIC_API_BASE_URL (the deployed API)
- *   unset       -> EXPO_PUBLIC_API_BASE_URL if set, else local
- *
- * The explicit `local` mode exists because EXPO_PUBLIC_API_BASE_URL is normally
- * pinned to the deployed API in .env, which silently wins over the localhost
- * fallback — so pointing the app at a local server used to mean editing (and
- * remembering to restore) that value. Flip EXPO_PUBLIC_API_ENV instead.
- *
- * Single source of truth — replaces the 4 copies across the codebase.
+ * Local Expo starts load localhost from .env. EAS preview and production builds
+ * supply the hosted URL from their build profiles. On Android, the start script
+ * forwards the device's localhost:3000 to the development machine with ADB.
  */
 export function resolveApiBaseUrl(): string {
-  const mode = process.env.EXPO_PUBLIC_API_ENV?.trim().toLowerCase();
-  if (mode === 'local') return localApiBaseUrl();
-
   const fromEnv = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
   if (fromEnv) return fromEnv.replace(/\/$/, '');
 
-  return localApiBaseUrl();
+  return 'http://localhost:3000';
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;

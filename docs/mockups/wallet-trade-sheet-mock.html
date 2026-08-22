@@ -1,0 +1,1009 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>myboon · Wallet Trade Sheet</title>
+  <style>
+    /*
+      Visual source of truth:
+      - apps/hybrid-expo/theme/tokens.ts
+      - apps/hybrid-expo/theme/semantic.ts
+      - HomeScreen / WalletHero / WalletActivityTiles / WalletAccountRow
+
+      Signature: the purple exchange seam between the two asset fields encodes
+      the single From -> To operation. Everything else stays inside myboon's
+      existing quiet Wallet language.
+    */
+    :root {
+      --primary: #118AB2;
+      --accent: #FFD166;
+      --screen: #073B4C;
+      --wallet-core: #031F2C;
+      --ground: #063343;
+      --surface: #083D50;
+      --lift: #0A4A60;
+      --border: #185A70;
+      --bone: #F5FAFC;
+      --dim: #9CB8C2;
+      --faint: #6B95A1;
+      --positive: #06D6A0;
+      --negative: #EF476F;
+      --spot: #9945FF;
+      --meteora: #6E45FF;
+      --phoenix: #FF8D2A;
+      --pacifica: #61D7EF;
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 12px;
+      --space-lg: 16px;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --shadow: 0 28px 80px rgba(0, 0, 0, 0.46);
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #010B12; color: var(--bone); }
+    body { font-family: var(--sans); }
+    button, input { font: inherit; }
+    button { color: inherit; }
+
+    .studio {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(250px, 360px) minmax(390px, 1fr);
+      gap: 48px;
+      align-items: center;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 42px 28px;
+      background:
+        radial-gradient(circle at 78% 22%, rgba(17, 138, 178, 0.11), transparent 28%),
+        #010B12;
+    }
+
+    .notes { align-self: center; }
+    .eyebrow {
+      margin-bottom: 12px;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1.02; letter-spacing: -1.4px; }
+    .intro { margin: 18px 0 24px; color: var(--dim); font-size: 14px; line-height: 1.65; }
+    .mode-label { margin-bottom: 8px; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; }
+    .mode-switch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 22px; }
+    .mode-button {
+      min-height: 44px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--ground);
+      color: var(--dim);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+    .mode-button.active { border-color: var(--spot); background: rgba(153, 69, 255, 0.13); color: var(--bone); }
+    .mode-button:hover, .mode-button:focus-visible { border-color: var(--accent); outline: none; }
+    .state-preview { display: grid; gap: 7px; margin: -6px 0 20px; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; }
+    .state-preview select { min-height: 42px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); outline: 0; background: var(--ground); color: var(--bone); font: inherit; text-transform: none; }
+    .state-preview select:focus-visible { border-color: var(--accent); }
+    .principles { display: grid; gap: 10px; }
+    .principle { display: grid; grid-template-columns: 18px 1fr; gap: 8px; color: var(--dim); font-size: 12px; line-height: 1.55; }
+    .principle span:first-child { color: var(--spot); font-family: var(--mono); }
+    .hint { margin-top: 22px; padding-top: 16px; border-top: 1px solid rgba(24, 90, 112, 0.55); color: var(--faint); font-family: var(--mono); font-size: 9px; line-height: 1.6; }
+
+    .prototype { display: flex; justify-content: center; }
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 1px solid rgba(245, 250, 252, 0.2);
+      border-radius: 38px;
+      background: var(--wallet-core);
+      box-shadow: var(--shadow);
+    }
+
+    .phone::before {
+      content: "";
+      position: absolute;
+      z-index: 20;
+      top: 10px;
+      left: 50%;
+      width: 112px;
+      height: 27px;
+      transform: translateX(-50%);
+      border-radius: 999px;
+      background: #01070B;
+    }
+
+    .status-bar {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 45px;
+      padding: 0 24px;
+      color: var(--bone);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .status-icons { display: flex; gap: 5px; align-items: center; }
+    .status-icons i { display: block; width: 12px; height: 7px; border: 1px solid rgba(245,250,252,.82); border-radius: 2px; }
+    .status-icons i:last-child { width: 17px; background: rgba(245,250,252,.82); }
+
+    .wallet-screen {
+      position: absolute;
+      inset: 0;
+      padding: 45px 16px 32px;
+      background:
+        linear-gradient(180deg, rgba(17, 138, 178, 0.15), rgba(3, 31, 44, 0) 38%),
+        var(--wallet-core);
+    }
+    .topbar { display: flex; align-items: center; height: 46px; }
+    .wordmark { font-size: 20px; font-weight: 400; letter-spacing: -0.7px; }
+    .wordmark b { font-weight: 900; }
+    .top-spacer { flex: 1; }
+    .wallet-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 34px;
+      padding: 0 11px;
+      border: 1px solid rgba(24, 90, 112, 0.86);
+      border-radius: 17px;
+      background: rgba(6, 51, 67, 0.82);
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+    }
+    .wallet-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); }
+    .section-title { margin: 37px 0 18px; text-align: center; font-size: 48px; line-height: 1; font-weight: 800; }
+    .hero {
+      padding: 14px 16px 16px;
+      border: 1px solid rgba(24, 90, 112, 0.86);
+      border-radius: 8px;
+      background: rgba(8, 61, 80, 0.9);
+    }
+    .hero-meta { display: flex; justify-content: space-between; color: var(--faint); font-family: var(--mono); font-size: 8px; }
+    .hero-value { margin: 5px 0 14px; font-size: 39px; line-height: 42px; font-weight: 800; letter-spacing: -1.2px; }
+    .mix { display: flex; height: 6px; overflow: hidden; border-radius: 3px; }
+    .mix i:nth-child(1) { width: 35%; background: var(--spot); }
+    .mix i:nth-child(2) { width: 15%; background: var(--meteora); }
+    .mix i:nth-child(3) { width: 4%; background: var(--phoenix); }
+    .mix i:nth-child(4) { width: 46%; background: var(--pacifica); }
+    .wallet-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 20px; }
+    .wallet-action {
+      min-height: 52px;
+      display: grid;
+      place-items: center;
+      align-content: center;
+      gap: 5px;
+      border: 1px solid rgba(24, 90, 112, 0.78);
+      border-radius: 8px;
+      background: rgba(6, 51, 67, 0.78);
+      color: var(--dim);
+      cursor: pointer;
+    }
+    .wallet-action svg { width: 16px; height: 16px; }
+    .wallet-action span { font-family: var(--mono); font-size: 8px; font-weight: 900; letter-spacing: .6px; text-transform: uppercase; }
+    .wallet-action.swap { border-color: rgba(153, 69, 255, 0.62); background: rgba(153, 69, 255, 0.11); color: var(--bone); }
+    .wallet-action:hover, .wallet-action:focus-visible { border-color: var(--accent); outline: none; }
+    .accounts-label { margin-bottom: 8px; color: var(--faint); font-family: var(--mono); font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    .account-list { display: grid; gap: 8px; }
+    .account-row {
+      min-height: 72px;
+      padding: 12px;
+      border: 1px solid rgba(24, 90, 112, 0.65);
+      border-radius: 8px;
+      background: rgba(6, 51, 67, 0.72);
+    }
+    .account-row.spot { background: rgba(153, 69, 255, 0.07); }
+    .account-top { display: flex; justify-content: space-between; font-size: 13px; font-weight: 800; }
+    .account-name.spot { color: var(--spot); }
+    .account-name.meteora { color: var(--meteora); }
+    .account-name.phoenix { color: var(--phoenix); }
+    .token-stack { display: flex; margin-top: 10px; }
+    .token-mini { display: grid; place-items: center; width: 22px; height: 22px; margin-right: -4px; border: 2px solid var(--wallet-core); border-radius: 50%; background: var(--lift); font-family: var(--mono); font-size: 8px; font-weight: 900; }
+    .token-mini.sol { background: var(--spot); }
+    .token-mini.usdc { background: var(--primary); }
+    .token-mini.jup { background: var(--accent); color: var(--wallet-core); }
+
+    .scrim {
+      position: absolute;
+      z-index: 5;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.74);
+      opacity: 1;
+      transition: opacity 160ms ease;
+    }
+    .scrim.hidden { opacity: 0; pointer-events: none; }
+
+    .trade-sheet {
+      position: absolute;
+      z-index: 6;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      min-height: 0;
+      max-height: calc(100% - 72px);
+      overflow-x: hidden;
+      overflow-y: auto;
+      border-top: 1px solid var(--border);
+      border-radius: 20px 20px 0 0;
+      background: var(--ground);
+      transform: translateY(0);
+      transition: transform 200ms ease;
+      box-shadow: 0 -20px 52px rgba(0, 0, 0, .34);
+    }
+    .trade-sheet.hidden { transform: translateY(102%); }
+    .sheet-rail {
+      min-height: 28px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--lift);
+      color: var(--primary);
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 1.4px;
+    }
+    .sheet-header { display: flex; align-items: flex-start; gap: 10px; padding: 12px 16px 8px; }
+    .sheet-title-wrap { min-width: 0; flex: 1; }
+    .sheet-title { margin: 0; color: var(--bone); font-size: 20px; font-weight: 700; letter-spacing: -.3px; }
+    .sheet-subtitle { margin-top: 5px; color: var(--dim); font-size: 12px; line-height: 18px; }
+    .close-button, .back-button {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      margin-top: -8px;
+      margin-right: -10px;
+      border: 0;
+      background: transparent;
+      color: var(--dim);
+      cursor: pointer;
+      font-size: 22px;
+    }
+    .back-button { margin-right: 0; margin-left: -10px; }
+    .close-button:focus-visible, .back-button:focus-visible { outline: 1px solid var(--accent); border-radius: 50%; }
+    .sheet-body { padding: 0 16px 20px; }
+
+    .asset-stack { position: relative; display: grid; gap: 8px; }
+    .asset-card {
+      min-height: 104px;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+    .asset-card.to { background: rgba(10, 74, 96, 0.78); }
+    .asset-label-row { display: flex; align-items: center; justify-content: space-between; min-height: 20px; }
+    .asset-label { color: var(--faint); font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    .balance { color: var(--faint); font-family: var(--mono); font-size: 9px; }
+    .balance button { min-height: 28px; padding: 0 0 0 8px; border: 0; background: transparent; color: var(--accent); font-family: var(--mono); font-size: 9px; font-weight: 900; cursor: pointer; text-transform: uppercase; }
+    .asset-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; margin-top: 2px; }
+    .amount-input {
+      width: 100%;
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--bone);
+      font-size: 28px;
+      line-height: 34px;
+      font-weight: 800;
+      letter-spacing: -1px;
+    }
+    .amount-input[readonly] { cursor: default; }
+    .amount-input::placeholder { color: var(--faint); }
+    .asset-select {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--ground);
+      color: var(--bone);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .asset-select:hover, .asset-select:focus-visible { border-color: var(--accent); outline: none; }
+    .asset-select:disabled {
+      cursor: default;
+      border-color: rgba(24, 90, 112, 0.62);
+      color: var(--bone);
+      opacity: 1;
+    }
+    .coin {
+      width: 25px;
+      height: 25px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--lift);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 900;
+    }
+    .coin.SOL { background: var(--spot); }
+    .coin.USDC { background: var(--primary); }
+    .coin.JUP { background: var(--accent); color: var(--wallet-core); }
+    .usd-line { margin-top: 3px; color: var(--faint); font-family: var(--mono); font-size: 9px; }
+
+    .exchange-seam { position: relative; height: 0; z-index: 2; }
+    .exchange-seam::before {
+      content: "";
+      position: absolute;
+      top: -5px;
+      left: 18px;
+      right: 18px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(153,69,255,.85), transparent);
+    }
+    .reverse-button {
+      position: absolute;
+      top: -25px;
+      left: 50%;
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      transform: translateX(-50%);
+      border: 1px solid var(--spot);
+      border-radius: 50%;
+      background: var(--ground);
+      color: var(--bone);
+      cursor: pointer;
+      box-shadow: 0 0 0 5px var(--ground);
+    }
+    .reverse-button:hover, .reverse-button:focus-visible { background: rgba(153,69,255,.18); outline: none; }
+    .reverse-button svg { width: 17px; height: 17px; }
+
+    .presets { display: flex; gap: 6px; margin: 8px 0 0; }
+    .preset {
+      min-height: 40px;
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: rgba(10, 74, 96, 0.7);
+      color: var(--dim);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+    }
+    .preset.active, .preset:hover, .preset:focus-visible { border-color: var(--spot); color: var(--bone); outline: none; }
+
+    .quote-card {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid rgba(24, 90, 112, 0.78);
+      border-radius: var(--radius-md);
+      background: rgba(8, 61, 80, 0.58);
+    }
+    .quote-head { display: flex; justify-content: space-between; margin-bottom: 5px; color: var(--faint); font-family: var(--mono); font-size: 8px; letter-spacing: .5px; text-transform: uppercase; }
+    .quote-live { color: var(--positive); }
+    .quote-row { display: flex; justify-content: space-between; min-height: 17px; color: var(--dim); font-size: 10px; }
+    .quote-row strong { color: var(--bone); font-weight: 600; }
+    .quote-row .zero { color: var(--positive); }
+    .slippage-control { min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; padding-top: 5px; border-top: 1px solid rgba(24, 90, 112, .55); color: var(--dim); font-size: 10px; }
+    .slippage-options { display: flex; align-items: center; gap: 4px; }
+    .slippage-button { min-height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--ground); color: var(--dim); cursor: pointer; font-family: var(--mono); font-size: 8px; }
+    .slippage-button.active, .slippage-button:hover, .slippage-button:focus-visible { border-color: var(--spot); color: var(--bone); outline: none; }
+    .custom-slippage { width: 48px; min-height: 28px; padding: 0 6px; border: 1px solid var(--spot); border-radius: var(--radius-sm); outline: 0; background: var(--wallet-core); color: var(--bone); font-family: var(--mono); font-size: 9px; text-align: right; }
+
+    .primary-button {
+      width: 100%;
+      min-height: 48px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: var(--radius-md);
+      background: var(--positive);
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 750;
+    }
+    .primary-button:hover, .primary-button:focus-visible { filter: brightness(1.06); outline: 1px solid var(--accent); outline-offset: 2px; }
+    .primary-button:disabled { opacity: .42; cursor: default; }
+    .secondary-button {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 4px;
+      border: 0;
+      background: transparent;
+      color: var(--dim);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .secondary-button:hover, .secondary-button:focus-visible { color: var(--bone); outline: none; }
+
+    .picker-search {
+      width: 100%;
+      min-height: 48px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      outline: 0;
+      background: var(--lift);
+      color: var(--bone);
+      font-size: 14px;
+    }
+    .picker-search:focus { border-color: var(--accent); }
+    .picker-label { margin: 14px 0 7px; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; }
+    .token-list { display: grid; gap: 6px; }
+    .token-row {
+      min-height: 58px;
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      color: var(--bone);
+      cursor: pointer;
+      text-align: left;
+    }
+    .token-row:hover, .token-row:focus-visible { border-color: var(--border); outline: none; }
+    .token-row .coin { width: 30px; height: 30px; }
+    .token-name { font-size: 13px; font-weight: 750; }
+    .token-full { margin-top: 3px; color: var(--faint); font-size: 10px; }
+    .token-balance { color: var(--dim); font-family: var(--mono); font-size: 10px; text-align: right; }
+
+    .review-hero { display: grid; gap: 5px; padding: 2px 0 9px; text-align: center; }
+    .review-label { color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; }
+    .review-amount { font-size: 26px; font-weight: 850; letter-spacing: -1px; }
+    .review-arrow { color: var(--spot); font-size: 18px; line-height: 18px; }
+    .review-receive { color: var(--positive); font-size: 22px; font-weight: 800; }
+    .review-card { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+    .review-row { min-height: 36px; grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid rgba(24,90,112,.55); color: var(--dim); font-size: 11px; }
+    .review-row strong { color: var(--bone); font-weight: 650; }
+    .review-metric {
+      min-height: 48px;
+      grid-column: span 2;
+      display: grid;
+      align-content: center;
+      gap: 3px;
+      padding: 7px 10px;
+      border-right: 1px solid rgba(24,90,112,.55);
+      border-bottom: 1px solid rgba(24,90,112,.55);
+      color: var(--faint);
+      font-size: 9px;
+    }
+    .review-metric:nth-of-type(4), .review-metric:nth-of-type(7) { border-right: 0; }
+    .review-metric:nth-of-type(n+5) { border-bottom: 0; }
+    .review-metric:last-child { border-right: 0; }
+    .review-metric strong { color: var(--bone); font-size: 11px; font-weight: 650; }
+    .balance-changes { margin-top: 7px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(3, 31, 44, .42); }
+    .balance-change { min-height: 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--dim); font-size: 9px; }
+    .balance-change strong { color: var(--bone); font-family: var(--mono); font-size: 9px; }
+    .review-warning { margin-top: 7px; color: var(--faint); font-size: 10px; line-height: 15px; text-align: center; }
+
+    .success, .trade-status { min-height: 250px; display: grid; place-items: center; align-content: center; gap: 10px; padding: 20px 22px 24px; text-align: center; }
+    .success-mark { width: 58px; height: 58px; display: grid; place-items: center; border: 1px solid rgba(6,214,160,.45); border-radius: 50%; background: rgba(6,214,160,.1); color: var(--positive); font-size: 28px; }
+    .success h2, .trade-status h2 { margin: 3px 0 0; font-size: 21px; }
+    .success p, .trade-status p { max-width: 300px; margin: 0; color: var(--dim); font-size: 11px; line-height: 17px; }
+    .signature { color: var(--faint); font-family: var(--mono); font-size: 9px; }
+    .status-mark { width: 50px; height: 50px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--primary); font-family: var(--mono); font-size: 17px; font-weight: 900; }
+    .status-mark.failed { border-color: rgba(239, 71, 111, .5); background: rgba(239, 71, 111, .08); color: var(--negative); }
+    .status-mark.unknown { border-color: rgba(255, 209, 102, .5); background: rgba(255, 209, 102, .08); color: var(--accent); }
+    .status-pair { color: var(--bone); font-family: var(--mono); font-size: 10px; }
+    .status-actions { width: 100%; display: grid; gap: 4px; margin-top: 2px; }
+    .outline-button { width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-md); background: transparent; color: var(--bone); cursor: pointer; font-size: 12px; font-weight: 700; }
+    .outline-button:hover, .outline-button:focus-visible { border-color: var(--accent); outline: none; }
+
+    @media (max-width: 820px) {
+      .studio { grid-template-columns: 1fr; gap: 28px; padding: 26px 14px; }
+      .notes { max-width: 520px; margin: 0 auto; }
+      .phone { transform-origin: top center; }
+    }
+    @media (max-width: 430px) {
+      .prototype { margin: 0 -14px; overflow: hidden; }
+      .phone { width: min(390px, 100vw); border-radius: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; animation-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="studio">
+    <section class="notes" aria-labelledby="mock-title">
+      <div class="eyebrow">Wallet-native trade sheet</div>
+      <h1 id="mock-title">One sheet.<br />Three intentions.</h1>
+      <p class="intro">
+        Swap starts from Wallet with a free From/To pair. Buy and Sell open the
+        same sheet with the selected token prefilled. This mock deliberately
+        does not design the Spot discovery screen.
+      </p>
+
+      <div class="mode-label">Preview entry context</div>
+      <div class="mode-switch" role="group" aria-label="Trade sheet entry context">
+        <button class="mode-button active" data-mode="swap">Swap</button>
+        <button class="mode-button" data-mode="buy">Buy JUP</button>
+        <button class="mode-button" data-mode="sell">Sell JUP</button>
+      </div>
+
+      <label class="state-preview">Preview lifecycle
+        <select id="state-preview">
+          <option value="compose">Compose</option>
+          <option value="quoting">Quoting</option>
+          <option value="review">Review</option>
+          <option value="signing">Awaiting signature</option>
+          <option value="submitted">Submitted</option>
+          <option value="failed">Failed</option>
+          <option value="unknown">Unknown outcome</option>
+          <option value="success">Confirmed</option>
+        </select>
+      </label>
+
+      <div class="principles">
+        <div class="principle"><span>01</span><span>Swap never requires opening Spot first.</span></div>
+        <div class="principle"><span>02</span><span>Buy and Sell are prefilled configurations, not separate terminals.</span></div>
+        <div class="principle"><span>03</span><span>Asset selection replaces this sheet's body instead of stacking another sheet.</span></div>
+        <div class="principle"><span>04</span><span>Jupiter appears only in quote details as the route provider.</span></div>
+        <div class="principle"><span>05</span><span>Signing, submission, failure, and unknown outcomes stay inside the same compact sheet.</span></div>
+      </div>
+
+      <p class="hint">Try custom slippage, exact Sell presets, Review, or any lifecycle state. Values are illustrative; production uses normalized API DTOs and BigInt amounts.</p>
+    </section>
+
+    <section class="prototype" aria-label="Interactive mobile prototype">
+      <div class="phone">
+        <div class="wallet-screen" aria-hidden="true">
+          <div class="status-bar"><span>9:41</span><span class="status-icons"><i></i><i></i></span></div>
+          <div class="topbar">
+            <div class="wordmark">my<b>boon</b></div>
+            <div class="top-spacer"></div>
+            <div class="wallet-pill"><span class="wallet-dot"></span>Wallets</div>
+          </div>
+          <div class="section-title">Wallet</div>
+          <div class="hero">
+            <div class="hero-meta"><span>as of just now</span><span>↻</span></div>
+            <div class="hero-value">$6,240.18</div>
+            <div class="mix"><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div class="wallet-actions">
+            <button class="wallet-action" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg><span>Send</span>
+            </button>
+            <button class="wallet-action" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg><span>Receive</span>
+            </button>
+            <button class="wallet-action swap" id="wallet-swap" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3l4 4-4 4M3 7h18M7 21l-4-4 4-4M21 17H3"/></svg><span>Swap</span>
+            </button>
+          </div>
+          <div class="accounts-label">Accounts</div>
+          <div class="account-list">
+            <div class="account-row spot">
+              <div class="account-top"><span class="account-name spot">Spot</span><span>$2,180.40</span></div>
+              <div class="token-stack"><span class="token-mini sol">S</span><span class="token-mini usdc">$</span><span class="token-mini jup">J</span><span class="token-mini">+4</span></div>
+            </div>
+            <div class="account-row">
+              <div class="account-top"><span class="account-name meteora">Meteora</span><span>$920.00</span></div>
+            </div>
+            <div class="account-row">
+              <div class="account-top"><span class="account-name phoenix">Phoenix</span><span>$259.78</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="scrim" id="scrim"></div>
+        <section class="trade-sheet" id="trade-sheet" aria-label="Trade sheet">
+          <div class="sheet-rail" id="sheet-rail">WALLET · SWAP</div>
+          <div id="sheet-content"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const TOKENS = {
+      SOL: { symbol: 'SOL', name: 'Solana', price: 175.82, balance: 3.4208, balanceAtomic: '3420800000', decimals: 9 },
+      USDC: { symbol: 'USDC', name: 'USD Coin', price: 1, balance: 842.19, balanceAtomic: '842190000', decimals: 6 },
+      JUP: { symbol: 'JUP', name: 'Jupiter', price: 0.83, balance: 76.42, balanceAtomic: '76420000', decimals: 6 },
+    };
+
+    const modeDefaults = {
+      swap: { from: 'USDC', to: 'JUP', amount: '10', title: 'Swap', subtitle: 'Exchange one Solana asset for another.', rail: 'WALLET · SWAP' },
+      buy: { from: 'SOL', to: 'JUP', amount: '1', title: 'Buy JUP', subtitle: 'Choose how much SOL you want to spend.', rail: 'SPOT · BUY JUP' },
+      sell: { from: 'JUP', to: 'SOL', amount: '76.42', title: 'Sell JUP', subtitle: 'Choose how much of your JUP position to sell.', rail: 'SPOT · SELL JUP' },
+    };
+
+    const state = { mode: 'swap', step: 'compose', pickerFor: null, slippageMode: 'auto', customSlippage: '0.5', ...modeDefaults.swap };
+
+    const sheet = document.getElementById('trade-sheet');
+    const scrim = document.getElementById('scrim');
+    const content = document.getElementById('sheet-content');
+    const rail = document.getElementById('sheet-rail');
+
+    function money(value) {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value || 0);
+    }
+
+    function amountNumber() {
+      const parsed = Number.parseFloat(state.amount);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function formatAtomic(raw, decimals) {
+      const digits = raw.toString().padStart(decimals + 1, '0');
+      const whole = digits.slice(0, -decimals) || '0';
+      const fraction = digits.slice(-decimals).replace(/0+$/, '');
+      return fraction ? `${whole}.${fraction}` : whole;
+    }
+
+    function exactPercentAmount(token, percent) {
+      const raw = BigInt(token.balanceAtomic) * BigInt(percent) / 100n;
+      return formatAtomic(raw, token.decimals);
+    }
+
+    function balanceText(token) {
+      return formatAtomic(BigInt(token.balanceAtomic), token.decimals);
+    }
+
+    function slippageLabel() {
+      if (state.slippageMode === 'auto') return 'Auto';
+      if (state.slippageMode === 'fixed') return '0.5%';
+      return `${state.customSlippage || '0'}%`;
+    }
+
+    function outputNumber() {
+      if (state.from === state.to) return 0;
+      return amountNumber() * TOKENS[state.from].price / TOKENS[state.to].price * 0.997;
+    }
+
+    function outputText() {
+      const value = outputNumber();
+      if (value === 0) return '0';
+      return value >= 100 ? value.toFixed(2) : value >= 1 ? value.toFixed(3) : value.toFixed(4);
+    }
+
+    function minReceived() {
+      return (outputNumber() * 0.995).toFixed(outputNumber() >= 1 ? 3 : 4);
+    }
+
+    function compactTokenAmount(value) {
+      return new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 }).format(Math.max(0, value));
+    }
+
+    function tokenIcon(symbol) {
+      return `<span class="coin ${symbol}">${symbol === 'USDC' ? '$' : symbol[0]}</span>`;
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      state.step = 'compose';
+      state.pickerFor = null;
+      state.slippageMode = 'auto';
+      state.customSlippage = '0.5';
+      Object.assign(state, modeDefaults[mode]);
+      document.querySelectorAll('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
+      openSheet();
+      render();
+      document.getElementById('state-preview').value = 'compose';
+    }
+
+    function openSheet() {
+      sheet.classList.remove('hidden');
+      scrim.classList.remove('hidden');
+    }
+
+    function closeSheet() {
+      sheet.classList.add('hidden');
+      scrim.classList.add('hidden');
+    }
+
+    function renderHeader({ back = false, title = state.title, subtitle = state.subtitle } = {}) {
+      return `
+        <header class="sheet-header">
+          ${back ? '<button class="back-button" id="sheet-back" aria-label="Back">‹</button>' : ''}
+          <div class="sheet-title-wrap"><h2 class="sheet-title">${title}</h2><div class="sheet-subtitle">${subtitle}</div></div>
+          <button class="close-button" id="sheet-close" aria-label="Close">×</button>
+        </header>`;
+    }
+
+    function renderPresets() {
+      if (state.mode === 'buy') {
+        return `<div class="presets" aria-label="Quick buy amounts">${[0.5, 1, 2, 5].map((value) => `<button class="preset ${amountNumber() === value ? 'active' : ''}" data-amount="${value}">${value} SOL</button>`).join('')}</div>`;
+      }
+      if (state.mode === 'sell') {
+        return `<div class="presets" aria-label="Sell percentage">${[25, 50, 75, 100].map((value) => `<button class="preset ${state.amount === exactPercentAmount(TOKENS.JUP, value) ? 'active' : ''}" data-percent="${value}">${value}%</button>`).join('')}</div>`;
+      }
+      return '';
+    }
+
+    function renderCompose() {
+      const inputUsd = amountNumber() * TOKENS[state.from].price;
+      const outputUsd = outputNumber() * TOKENS[state.to].price;
+      const fromLocked = state.mode === 'sell';
+      const toLocked = state.mode === 'buy';
+      content.innerHTML = `
+        ${renderHeader()}
+        <div class="sheet-body">
+          <div class="asset-stack">
+            <div class="asset-card">
+              <div class="asset-label-row"><span class="asset-label">You pay</span><span class="balance">Balance ${balanceText(TOKENS[state.from])} <button id="max-button">Max</button></span></div>
+              <div class="asset-main">
+                <div><input class="amount-input" id="amount-input" inputmode="decimal" value="${state.amount}" aria-label="Amount to pay" /><div class="usd-line" id="input-usd">${money(inputUsd)}</div></div>
+                <button class="asset-select" data-picker="from" ${fromLocked ? 'disabled' : ''}>${tokenIcon(state.from)} ${state.from} ${fromLocked ? '' : '<span>⌄</span>'}</button>
+              </div>
+            </div>
+            <div class="exchange-seam">${state.mode === 'swap' ? '<button class="reverse-button" id="reverse-button" aria-label="Reverse pair"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3L4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></svg></button>' : ''}</div>
+            <div class="asset-card to">
+              <div class="asset-label-row"><span class="asset-label">You receive</span><span class="balance">Balance ${balanceText(TOKENS[state.to])}</span></div>
+              <div class="asset-main">
+                <div><input class="amount-input" id="output-input" value="${outputText()}" readonly aria-label="Estimated amount received" /><div class="usd-line" id="output-usd">${money(outputUsd)}</div></div>
+                <button class="asset-select" data-picker="to" ${toLocked ? 'disabled' : ''}>${tokenIcon(state.to)} ${state.to} ${toLocked ? '' : '<span>⌄</span>'}</button>
+              </div>
+            </div>
+          </div>
+          ${renderPresets()}
+          <div class="quote-card">
+            <div class="quote-head"><span>Quote · Jupiter route</span><span class="quote-live">Live · 18s</span></div>
+            <div class="quote-row"><span>Minimum received</span><strong id="minimum-received">${minReceived()} ${state.to}</strong></div>
+            <div class="quote-row"><span>Price impact</span><strong>0.08%</strong></div>
+            <div class="quote-row"><span>Network + priority fee</span><strong>≤ $0.04</strong></div>
+            <div class="quote-row"><span>myboon fee</span><strong class="zero">$0.00</strong></div>
+            <div class="slippage-control"><span>Slippage</span><div class="slippage-options">
+              <button class="slippage-button ${state.slippageMode === 'auto' ? 'active' : ''}" data-slippage="auto">Auto</button>
+              <button class="slippage-button ${state.slippageMode === 'fixed' ? 'active' : ''}" data-slippage="fixed">0.5%</button>
+              <button class="slippage-button ${state.slippageMode === 'custom' ? 'active' : ''}" data-slippage="custom">Custom</button>
+              ${state.slippageMode === 'custom' ? `<input class="custom-slippage" id="custom-slippage" inputmode="decimal" min="0" max="50" value="${state.customSlippage}" aria-label="Custom slippage percentage, maximum 50" />` : ''}
+            </div></div>
+          </div>
+          <button class="primary-button" id="review-button" ${amountNumber() <= 0 || state.from === state.to ? 'disabled' : ''}>Review ${state.mode}</button>
+        </div>`;
+      wireCommon();
+      document.getElementById('amount-input').addEventListener('input', (event) => {
+        const cleaned = event.target.value.replace(/[^0-9.]/g, '');
+        if (cleaned !== event.target.value) event.target.value = cleaned;
+        state.amount = cleaned;
+        updateComposeDerived();
+      });
+      document.getElementById('max-button').addEventListener('click', () => { state.amount = balanceText(TOKENS[state.from]); renderCompose(); });
+      const reverseButton = document.getElementById('reverse-button');
+      if (reverseButton) reverseButton.addEventListener('click', () => { const next = state.from; state.from = state.to; state.to = next; state.amount = ''; renderCompose(); });
+      document.querySelectorAll('[data-picker]:not(:disabled)').forEach((button) => button.addEventListener('click', () => { state.pickerFor = button.dataset.picker; state.step = 'picker'; render(); }));
+      document.querySelectorAll('[data-amount]').forEach((button) => button.addEventListener('click', () => { state.amount = button.dataset.amount; renderCompose(); }));
+      document.querySelectorAll('[data-percent]').forEach((button) => button.addEventListener('click', () => { state.amount = exactPercentAmount(TOKENS.JUP, Number(button.dataset.percent)); renderCompose(); }));
+      document.querySelectorAll('[data-slippage]').forEach((button) => button.addEventListener('click', () => { state.slippageMode = button.dataset.slippage; renderCompose(); }));
+      const customSlippage = document.getElementById('custom-slippage');
+      if (customSlippage) customSlippage.addEventListener('input', (event) => {
+        const cleaned = event.target.value.replace(/[^0-9.]/g, '');
+        const bounded = cleaned && Number(cleaned) > 50 ? '50' : cleaned;
+        state.customSlippage = bounded;
+        if (bounded !== event.target.value) event.target.value = bounded;
+      });
+      const reviewButton = document.getElementById('review-button');
+      reviewButton.addEventListener('click', () => {
+        if (amountNumber() <= 0 || state.from === state.to) return;
+        state.step = 'quoting';
+        render();
+        window.setTimeout(() => {
+          if (state.step !== 'quoting') return;
+          state.step = 'review';
+          render();
+        }, 550);
+      });
+    }
+
+    function updateComposeDerived() {
+      document.getElementById('input-usd').textContent = money(amountNumber() * TOKENS[state.from].price);
+      document.getElementById('output-input').value = outputText();
+      document.getElementById('output-usd').textContent = money(outputNumber() * TOKENS[state.to].price);
+      document.getElementById('minimum-received').textContent = `${minReceived()} ${state.to}`;
+      document.getElementById('review-button').disabled = amountNumber() <= 0 || state.from === state.to;
+    }
+
+    function renderPicker() {
+      const label = state.pickerFor === 'from' ? 'pay with' : 'receive';
+      content.innerHTML = `
+        ${renderHeader({ back: true, title: `Choose asset to ${label}`, subtitle: 'Search by token name, symbol, or mint address.' })}
+        <div class="sheet-body">
+          <input class="picker-search" id="picker-search" placeholder="Search tokens" autofocus />
+          <div class="picker-label">Your assets</div>
+          <div class="token-list" id="token-list">${Object.values(TOKENS).map((token) => `
+            <button class="token-row" data-token="${token.symbol}">
+              ${tokenIcon(token.symbol)}
+              <span><span class="token-name">${token.symbol}</span><span class="token-full">${token.name}</span></span>
+              <span class="token-balance">${token.balance}<br />${money(token.balance * token.price)}</span>
+            </button>`).join('')}</div>
+        </div>`;
+      wireCommon();
+      document.getElementById('sheet-back').addEventListener('click', () => { state.step = 'compose'; render(); });
+      document.getElementById('picker-search').addEventListener('input', (event) => {
+        const query = event.target.value.trim().toLowerCase();
+        document.querySelectorAll('.token-row').forEach((row) => {
+          const token = TOKENS[row.dataset.token];
+          row.hidden = !`${token.symbol} ${token.name}`.toLowerCase().includes(query);
+        });
+      });
+      document.querySelectorAll('.token-row').forEach((row) => row.addEventListener('click', () => {
+        const chosen = row.dataset.token;
+        if (state.pickerFor === 'from') state.from = chosen;
+        else state.to = chosen;
+        state.step = 'compose';
+        render();
+      }));
+    }
+
+    function renderReview() {
+      const fromBefore = TOKENS[state.from].balance;
+      const toBefore = TOKENS[state.to].balance;
+      const fromAfter = fromBefore - amountNumber();
+      const toAfter = toBefore + outputNumber();
+      content.innerHTML = `
+        ${renderHeader({ back: true, title: `Review ${state.mode}`, subtitle: 'Check the exact trade before opening your wallet.' })}
+        <div class="sheet-body">
+          <div class="review-hero">
+            <div class="review-label">You send</div>
+            <div class="review-amount">${state.amount} ${state.from}</div>
+            <div class="review-arrow">↓</div>
+            <div class="review-label">You receive at least</div>
+            <div class="review-receive">${minReceived()} ${state.to}</div>
+          </div>
+          <div class="review-card">
+            <div class="review-row"><span>Wallet · Solana</span><strong>7xKX···9pQm · External</strong></div>
+            <div class="review-metric"><span>Price impact</span><strong>0.08%</strong></div>
+            <div class="review-metric"><span>Slippage</span><strong>${slippageLabel()}</strong></div>
+            <div class="review-metric"><span>Network fee</span><strong>≈ $0.04</strong></div>
+            <div class="review-metric"><span>Route provider</span><strong>Jupiter</strong></div>
+            <div class="review-metric"><span>Priority fee cap</span><strong>0.00018 SOL</strong></div>
+            <div class="review-metric"><span>myboon fee</span><strong style="color:var(--positive)">$0.00</strong></div>
+          </div>
+          <div class="balance-changes" aria-label="Simulated balance changes">
+            <div class="balance-change"><span>${state.from} after simulation</span><strong>${compactTokenAmount(fromBefore)} → ${compactTokenAmount(fromAfter)}</strong></div>
+            <div class="balance-change"><span>${state.to} after simulation</span><strong>${compactTokenAmount(toBefore)} → ${compactTokenAmount(toAfter)}</strong></div>
+          </div>
+          <div class="review-warning">The next step opens your selected wallet to approve this exact transaction.</div>
+          <button class="primary-button" id="confirm-button">Confirm ${state.mode}</button>
+        </div>`;
+      wireCommon();
+      document.getElementById('sheet-back').addEventListener('click', () => { state.step = 'compose'; render(); });
+      document.getElementById('confirm-button').addEventListener('click', () => { state.step = 'signing'; render(); });
+    }
+
+    function renderQuoting() {
+      content.innerHTML = `
+        ${renderHeader({ title: 'Refreshing quote', subtitle: 'Getting current price, route, slippage, and fees.' })}
+        <div class="trade-status" role="status">
+          <div class="status-mark">···</div>
+          <h2>Getting a fresh quote</h2>
+          <div class="status-pair">${state.amount} ${state.from} → ${state.to}</div>
+          <p>The pair and amount stay unchanged while myboon requests a normalized Jupiter order.</p>
+        </div>`;
+      wireCommon();
+    }
+
+    function renderSigning() {
+      content.innerHTML = `
+        ${renderHeader({ title: 'Approve in wallet', subtitle: 'The validated transaction is waiting for your signature.' })}
+        <div class="trade-status">
+          <div class="status-mark">S</div>
+          <h2>Awaiting signature</h2>
+          <div class="status-pair">${state.amount} ${state.from} → at least ${minReceived()} ${state.to}</div>
+          <p>Signing happens on this device. Your private key never reaches myboon or Jupiter.</p>
+          <div class="status-actions">
+            <button class="primary-button" id="approve-preview">Simulate wallet approval</button>
+            <button class="secondary-button" id="cancel-signing">Cancel</button>
+          </div>
+        </div>`;
+      wireCommon();
+      document.getElementById('approve-preview').addEventListener('click', () => { state.step = 'submitted'; render(); });
+      document.getElementById('cancel-signing').addEventListener('click', () => { state.step = 'review'; render(); });
+    }
+
+    function renderSubmitted() {
+      content.innerHTML = `
+        ${renderHeader({ title: 'Transaction submitted', subtitle: 'Jupiter is landing the signed transaction.' })}
+        <div class="trade-status" role="status">
+          <div class="status-mark">↻</div>
+          <h2>Confirming on Solana</h2>
+          <div class="status-pair">5sFk···2Pq8</div>
+          <p>Keep this state until confirmation, a known failure, or an unknown outcome is established.</p>
+          <div class="status-actions"><button class="primary-button" id="confirm-preview">Simulate confirmation</button></div>
+        </div>`;
+      wireCommon();
+      document.getElementById('confirm-preview').addEventListener('click', () => { state.step = 'success'; render(); });
+    }
+
+    function renderFailed() {
+      content.innerHTML = `
+        ${renderHeader({ title: `${state.mode[0].toUpperCase()}${state.mode.slice(1)} failed`, subtitle: 'No balance change was confirmed.' })}
+        <div class="trade-status">
+          <div class="status-mark failed">!</div>
+          <h2>Price moved beyond slippage</h2>
+          <p>Your pair and amount are preserved. Refresh the quote and review again; slippage will not widen automatically.</p>
+          <div class="status-actions">
+            <button class="primary-button" id="retry-trade">Refresh quote</button>
+            <button class="secondary-button" id="back-to-review">Back to review</button>
+          </div>
+        </div>`;
+      wireCommon();
+      document.getElementById('retry-trade').addEventListener('click', () => { state.step = 'compose'; render(); });
+      document.getElementById('back-to-review').addEventListener('click', () => { state.step = 'review'; render(); });
+    }
+
+    function renderUnknown() {
+      content.innerHTML = `
+        ${renderHeader({ title: 'Status unknown', subtitle: 'The transaction may already have landed.' })}
+        <div class="trade-status">
+          <div class="status-mark unknown">?</div>
+          <h2>Do not submit again</h2>
+          <div class="status-pair">5sFk···2Pq8</div>
+          <p>myboon will preserve this transaction and reconcile it with chain history after reconnecting.</p>
+          <div class="status-actions">
+            <button class="outline-button" id="check-status">Check status again</button>
+            <button class="secondary-button" id="close-unknown">Close and keep pending</button>
+          </div>
+        </div>`;
+      wireCommon();
+      document.getElementById('check-status').addEventListener('click', () => { state.step = 'submitted'; render(); });
+      document.getElementById('close-unknown').addEventListener('click', closeSheet);
+    }
+
+    function renderSuccess() {
+      content.innerHTML = `
+        ${renderHeader({ title: `${state.mode[0].toUpperCase()}${state.mode.slice(1)} confirmed`, subtitle: 'Your balances will refresh automatically.' })}
+        <div class="success">
+          <div class="success-mark">✓</div>
+          <h2>${outputText()} ${state.to} received</h2>
+          <p>${state.amount} ${state.from} was exchanged on Solana.<br />This result returns to the context that opened it.</p>
+          <div class="signature">5sFk···2Pq8</div>
+          <button class="primary-button" id="done-button">Done</button>
+        </div>`;
+      wireCommon();
+      document.getElementById('done-button').addEventListener('click', closeSheet);
+    }
+
+    function wireCommon() {
+      rail.textContent = state.rail;
+      const statePreview = document.getElementById('state-preview');
+      if ([...statePreview.options].some(option => option.value === state.step)) statePreview.value = state.step;
+      const close = document.getElementById('sheet-close');
+      if (close) close.addEventListener('click', closeSheet);
+    }
+
+    function render() {
+      if (state.step === 'compose') renderCompose();
+      else if (state.step === 'picker') renderPicker();
+      else if (state.step === 'review') renderReview();
+      else if (state.step === 'quoting') renderQuoting();
+      else if (state.step === 'signing') renderSigning();
+      else if (state.step === 'submitted') renderSubmitted();
+      else if (state.step === 'failed') renderFailed();
+      else if (state.step === 'unknown') renderUnknown();
+      else renderSuccess();
+    }
+
+    document.querySelectorAll('.mode-button').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
+    document.getElementById('state-preview').addEventListener('change', (event) => { state.step = event.target.value; openSheet(); render(); });
+    document.getElementById('wallet-swap').addEventListener('click', () => setMode('swap'));
+    scrim.addEventListener('click', closeSheet);
+    render();
+  </script>
+</body>
+</html>
