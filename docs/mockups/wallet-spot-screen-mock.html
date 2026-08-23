@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>myboon · Spot Terminal</title>
+  <style>
+    /*
+      Visual source of truth:
+      - apps/hybrid-expo/theme/tokens.ts
+      - apps/hybrid-expo/theme/semantic.ts
+      - HomeScreen / WalletHero / WalletAccountRow
+
+      Signature: a token row unfolds into a compact trading strip. Discovery,
+      context, and action stay in one place instead of becoming three screens.
+    */
+    :root {
+      --primary: #118AB2;
+      --accent: #FFD166;
+      --screen: #073B4C;
+      --wallet-core: #031F2C;
+      --ground: #063343;
+      --surface: #083D50;
+      --lift: #0A4A60;
+      --border: #185A70;
+      --bone: #F5FAFC;
+      --dim: #9CB8C2;
+      --faint: #6B95A1;
+      --positive: #06D6A0;
+      --negative: #EF476F;
+      --spot: #9945FF;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; background: #010B12; color: var(--bone); }
+    body { font-family: var(--sans); }
+    button, input { font: inherit; }
+    button { color: inherit; }
+
+    .studio {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(250px, 360px) minmax(390px, 1fr);
+      gap: 48px;
+      align-items: center;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 42px 28px;
+      background:
+        radial-gradient(circle at 78% 23%, rgba(153, 69, 255, .12), transparent 27%),
+        #010B12;
+    }
+
+    .notes { align-self: center; }
+    .eyebrow {
+      margin-bottom: 12px;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1.02; letter-spacing: -1.5px; }
+    .intro { margin: 18px 0 24px; color: var(--dim); font-size: 14px; line-height: 1.65; }
+    .principle {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 3px;
+      margin: 12px 0;
+      color: var(--dim);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .principle b { color: var(--spot); font-family: var(--mono); font-size: 10px; }
+    .prototype-note {
+      margin-top: 24px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      line-height: 1.65;
+    }
+
+    .prototype { display: grid; place-items: center; }
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 1px solid #164D61;
+      border-radius: 38px;
+      background: var(--wallet-core);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .46);
+    }
+    .island {
+      position: absolute;
+      z-index: 20;
+      top: 11px;
+      left: 50%;
+      width: 112px;
+      height: 28px;
+      transform: translateX(-50%);
+      border-radius: 18px;
+      background: #020A10;
+    }
+    .status-bar {
+      height: 54px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      padding: 0 20px 8px;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .status-icons { display: flex; gap: 6px; align-items: center; }
+    .status-icons i { width: 13px; height: 7px; border: 1px solid var(--dim); border-radius: 2px; opacity: .7; }
+    .status-icons i:last-child { width: 17px; background: var(--dim); }
+
+    .app-shell { position: absolute; inset: 54px 0 0; display: flex; flex-direction: column; }
+    .topbar {
+      min-height: 64px;
+      display: grid;
+      grid-template-columns: 44px 1fr 76px;
+      align-items: center;
+      padding: 0 12px;
+      border-bottom: 1px solid rgba(24, 90, 112, .58);
+    }
+    .icon-button {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--dim);
+      cursor: pointer;
+      font-size: 23px;
+    }
+    .icon-button:hover, .icon-button:focus-visible { background: var(--surface); color: var(--bone); outline: 1px solid var(--border); }
+    .screen-title { text-align: center; }
+    .screen-title strong { display: block; font-size: 17px; letter-spacing: -.2px; }
+    .screen-title span { display: block; margin-top: 3px; color: var(--spot); font-family: var(--mono); font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    .wallet-pill {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(6, 51, 67, .7);
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 800;
+    }
+    .wallet-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); }
+
+    .screen-content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: none;
+      padding-bottom: 140px;
+    }
+    .screen-content::-webkit-scrollbar { display: none; }
+
+    .search-box {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(6, 51, 67, .96);
+      color: var(--faint);
+    }
+    .terminal-search {
+      position: absolute;
+      z-index: 12;
+      right: 12px;
+      bottom: 84px;
+      left: 12px;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, .28);
+      backdrop-filter: blur(14px);
+    }
+    .search-box svg { width: 16px; height: 16px; flex: 0 0 auto; }
+    .search-box input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--bone); font-size: 12px; }
+    .search-box input::placeholder { color: var(--faint); }
+
+    .list-head {
+      position: sticky;
+      z-index: 4;
+      top: 0;
+      min-height: 34px;
+      display: grid;
+      grid-template-columns: 1fr 82px 58px;
+      align-items: center;
+      padding: 0 16px;
+      border-bottom: 1px solid rgba(24, 90, 112, .58);
+      background: var(--wallet-core);
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: .7px;
+      text-transform: uppercase;
+    }
+    .list-head span:nth-child(n+2) { text-align: right; }
+    .token-list { border-top: 0; }
+    .token-item { border-bottom: 1px solid rgba(24, 90, 112, .58); }
+    .token-row {
+      width: 100%;
+      min-height: 64px;
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) 82px 58px;
+      gap: 9px;
+      align-items: center;
+      padding: 7px 16px;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+    .token-row:hover, .token-row:focus-visible { background: rgba(8, 61, 80, .65); outline: none; }
+    .token-item.expanded .token-row { background: rgba(10, 74, 96, .4); }
+    .token-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(245, 250, 252, .16);
+      border-radius: 50%;
+      background: var(--lift);
+      color: var(--bone);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 900;
+    }
+    .token-mark.JUP { background: var(--accent); color: var(--wallet-core); }
+    .token-mark.BONK { background: #EF8247; }
+    .token-mark.WIF { background: #7D6D61; }
+    .token-mark.PENGU { background: #55A6E8; }
+    .token-mark.POPCAT { background: #D98A70; }
+    .token-name { min-width: 0; }
+    .token-name strong { display: block; font-size: 13px; }
+    .token-name span { display: block; overflow: hidden; margin-top: 3px; color: var(--faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .token-price, .token-change { font-family: var(--mono); font-size: 10px; font-weight: 700; text-align: right; }
+    .token-price { color: var(--bone); }
+    .token-change.up { color: var(--positive); }
+    .token-change.down { color: var(--negative); }
+
+    .token-expand {
+      display: grid;
+      grid-template-rows: 0fr;
+      overflow: hidden;
+      background: linear-gradient(180deg, rgba(153, 69, 255, .1), rgba(8, 61, 80, .4));
+      transition: grid-template-rows 190ms ease;
+    }
+    .token-item.expanded .token-expand { grid-template-rows: 1fr; }
+    .token-expand-inner { min-height: 0; overflow: hidden; }
+    .decision-strip {
+      position: relative;
+      min-height: 176px;
+      display: grid;
+      grid-template-rows: 50px 34px 20px 44px;
+      gap: 4px;
+      padding: 7px 16px 11px;
+      border-top: 1px solid rgba(153, 69, 255, .65);
+    }
+    .momentum-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      overflow: hidden;
+      border: 1px solid rgba(24, 90, 112, .72);
+      border-radius: 6px;
+      background: rgba(3, 31, 44, .45);
+    }
+    .momentum-cell {
+      display: grid;
+      align-content: center;
+      gap: 3px;
+      padding: 4px 8px;
+      border-right: 1px solid rgba(24, 90, 112, .72);
+    }
+    .momentum-cell:last-child { border-right: 0; }
+    .momentum-window {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 7px;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+    }
+    .momentum-value {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .momentum-value.up { color: var(--positive); }
+    .momentum-value.down { color: var(--negative); }
+    .market-stats { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid rgba(24, 90, 112, .72); border-radius: 6px; background: rgba(3, 31, 44, .45); }
+    .market-stat { display: grid; align-content: center; gap: 2px; padding: 4px 8px; border-right: 1px solid rgba(24, 90, 112, .72); }
+    .market-stat:last-child { border-right: 0; }
+    .market-stat span { color: var(--faint); font-family: var(--mono); font-size: 7px; letter-spacing: .4px; text-transform: uppercase; }
+    .market-stat strong { font-family: var(--mono); font-size: 9px; }
+    .risk-summary { display: flex; align-items: center; gap: 7px; overflow: hidden; color: var(--dim); font-family: var(--mono); font-size: 8px; white-space: nowrap; }
+    .risk-summary span { padding-right: 7px; border-right: 1px solid var(--border); }
+    .risk-summary span:last-child { padding-right: 0; border-right: 0; }
+    .risk-summary .warning { color: #FF89A6; }
+    .trade-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .trade-action {
+      min-height: 44px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .trade-action.buy { background: var(--positive); color: #fff; }
+    .trade-action.sell { border-color: var(--negative); background: rgba(239, 71, 111, .09); color: #FF89A6; }
+    .trade-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+    .profile { padding: 16px; }
+    .profile-label { color: var(--spot); font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    .portfolio-card {
+      margin-top: 9px;
+      padding: 15px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .portfolio-card h2 { margin: 3px 0 4px; font-size: 31px; letter-spacing: -1.2px; }
+    .valuation-note { color: var(--dim); font-family: var(--mono); font-size: 9px; }
+    .profile-section-title { margin: 19px 0 8px; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .8px; text-transform: uppercase; }
+    .holding-row {
+      min-height: 62px;
+      display: grid;
+      grid-template-columns: 36px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 7px 10px;
+      border-bottom: 1px solid rgba(24, 90, 112, .58);
+    }
+    .holding-row:first-of-type { border-top: 1px solid rgba(24, 90, 112, .58); }
+    .holding-value { text-align: right; }
+    .holding-value strong { display: block; font-family: var(--mono); font-size: 10px; }
+    .holding-value span { display: block; margin-top: 3px; color: var(--faint); font-family: var(--mono); font-size: 8px; }
+
+    .bottom-tabs {
+      position: absolute;
+      z-index: 12;
+      right: 12px;
+      bottom: 10px;
+      left: 12px;
+      height: 68px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 6px;
+      border: 1px solid rgba(24, 90, 112, .9);
+      border-radius: 16px;
+      background: rgba(3, 31, 44, .94);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, .34);
+      backdrop-filter: blur(14px);
+    }
+    .bottom-tab {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 11px;
+      background: transparent;
+      color: var(--faint);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .7px;
+      text-transform: uppercase;
+    }
+    .bottom-tab svg { width: 18px; height: 18px; }
+    .bottom-tab.active { background: var(--lift); color: var(--bone); box-shadow: inset 0 0 0 1px var(--spot); }
+    .bottom-tab:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+    .toast {
+      position: absolute;
+      z-index: 30;
+      right: 20px;
+      bottom: 91px;
+      left: 20px;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      border: 1px solid var(--spot);
+      border-radius: 7px;
+      background: var(--ground);
+      color: var(--bone);
+      font-size: 11px;
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity 140ms ease, transform 140ms ease;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, .32);
+    }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+    @media (max-width: 820px) {
+      .studio { grid-template-columns: 1fr; gap: 28px; padding: 26px 14px; }
+      .notes { max-width: 520px; margin: 0 auto; }
+    }
+    @media (max-width: 430px) {
+      .prototype { margin: 0 -14px; overflow: hidden; }
+      .phone { width: min(390px, 100vw); border-radius: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="studio">
+    <section class="notes">
+      <div class="eyebrow">Wallet-native spot</div>
+      <h1>Browse first.<br />Trade in place.</h1>
+      <p class="intro">Spot opens as a token terminal, not an empty swap form. One tap expands the token just enough to understand it and act without losing the list.</p>
+      <div class="principle"><b>01</b><span>Terminal and Profile live at the bottom, inside the natural thumb zone.</span></div>
+      <div class="principle"><b>02</b><span>Only one token expands at a time; the list remains the navigation model.</span></div>
+      <div class="principle"><b>03</b><span>Four sourced momentum windows replace a historical chart in P0.</span></div>
+      <div class="principle"><b>04</b><span>Buy and Sell reuse the wallet trade sheet with the selected token prefilled.</span></div>
+      <div class="prototype-note">Try opening different tokens, using the search above the bottom tabs, and switching to Profile. Market values are illustrative prototype data.</div>
+    </section>
+
+    <section class="prototype" aria-label="Interactive Spot screen prototype">
+      <div class="phone">
+        <div class="island" aria-hidden="true"></div>
+        <div class="status-bar"><span>9:41</span><span class="status-icons"><i></i><i></i></span></div>
+        <div class="app-shell">
+          <header class="topbar">
+            <button class="icon-button" aria-label="Back">‹</button>
+            <div class="screen-title"><strong>Spot</strong><span>Solana</span></div>
+            <div class="wallet-pill"><i></i><span>7xKX···9pQm</span></div>
+          </header>
+
+          <div class="screen-content" id="screen-content">
+            <section id="terminal-view">
+              <div class="list-head"><span>Token</span><span>Price</span><span>24h</span></div>
+              <div class="token-list" id="token-list"></div>
+            </section>
+
+            <section class="profile" id="profile-view" hidden>
+              <div class="profile-label">Spot profile</div>
+              <div class="portfolio-card">
+                <span class="profile-label" style="color:var(--faint)">Current token value</span>
+                <h2>$1,824.71</h2>
+                <div class="valuation-note">5 priced tokens · Price V3 · just now</div>
+              </div>
+              <div class="profile-section-title">Your tokens</div>
+              <div class="holding-row"><span class="token-mark JUP">J</span><span class="token-name"><strong>JUP</strong><span>624.10 JUP</span></span><span class="holding-value"><strong>$542.97</strong><span>Current value</span></span></div>
+              <div class="holding-row"><span class="token-mark BONK">B</span><span class="token-name"><strong>BONK</strong><span>18,200,000 BONK</span></span><span class="holding-value"><strong>$389.48</strong><span>Current value</span></span></div>
+              <div class="holding-row"><span class="token-mark WIF">W</span><span class="token-name"><strong>WIF</strong><span>216.40 WIF</span></span><span class="holding-value"><strong>$264.01</strong><span>Current value</span></span></div>
+              <div class="profile-section-title">Valuation coverage</div>
+              <div class="market-stats">
+                <div class="market-stat"><span>Tokens</span><strong>6</strong></div>
+                <div class="market-stat"><span>Priced</span><strong>5</strong></div>
+                <div class="market-stat"><span>Unpriced</span><strong>1</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <label class="search-box terminal-search" id="terminal-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.7-3.7"></path></svg>
+            <input id="token-search" type="search" placeholder="Search token or symbol" autocomplete="off" />
+          </label>
+
+          <nav class="bottom-tabs" aria-label="Spot sections">
+            <button class="bottom-tab active" data-tab="terminal">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"></path></svg>
+              Terminal
+            </button>
+            <button class="bottom-tab" data-tab="profile">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c1.4-4 4-6 8-6s6.6 2 8 6"></path></svg>
+              Profile
+            </button>
+          </nav>
+        </div>
+        <div class="toast" id="toast" role="status"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const TOKENS = [
+      { symbol: 'JUP', name: 'Jupiter', price: '$0.870', change: 4.8, momentum: { m5: 0.3, h1: 1.1, h6: 3.2, h24: 4.8 }, cap: '$1.43B', volume: '$188M', liquidity: '$42.6M', risk: { verification: 'Verified', organic: 'High', suspicious: false } },
+      { symbol: 'BONK', name: 'Bonk', price: '$0.0000214', change: 6.2, momentum: { m5: -0.2, h1: 0.8, h6: 2.9, h24: 6.2 }, cap: '$1.66B', volume: '$264M', liquidity: '$31.8M', risk: { verification: 'Verified', organic: 'High', suspicious: false } },
+      { symbol: 'WIF', name: 'dogwifhat', price: '$1.220', change: 8.7, momentum: { m5: 0.6, h1: 1.7, h6: 5.4, h24: 8.7 }, cap: '$1.21B', volume: '$391M', liquidity: '$24.7M', risk: { verification: 'Verified', organic: 'Medium', suspicious: false } },
+      { symbol: 'PENGU', name: 'Pudgy Penguins', price: '$0.0130', change: 12.4, momentum: { m5: 1.2, h1: 3.1, h6: 7.8, h24: 12.4 }, cap: '$817M', volume: '$172M', liquidity: '$18.1M', risk: { verification: 'Verified', organic: 'High', suspicious: false } },
+      { symbol: 'POPCAT', name: 'Popcat', price: '$0.420', change: -1.8, momentum: { m5: 0.1, h1: -0.4, h6: -1.1, h24: -1.8 }, cap: '$412M', volume: '$76M', liquidity: '$11.4M', risk: { verification: 'Unknown', organic: 'Low', suspicious: true } }
+    ];
+
+    const state = { tab: 'terminal', query: '', expanded: null };
+    const list = document.getElementById('token-list');
+    const terminal = document.getElementById('terminal-view');
+    const profile = document.getElementById('profile-view');
+    const terminalSearch = document.getElementById('terminal-search');
+    const scroller = document.getElementById('screen-content');
+    const toast = document.getElementById('toast');
+    let toastTimer;
+
+    function formatMomentum(value) {
+      const sign = value >= 0 ? '+' : '';
+      const direction = value >= 0 ? 'up' : 'down';
+      return { text: `${sign}${value.toFixed(1)}%`, direction };
+    }
+
+    function momentumMarkup(token) {
+      const windows = [['5m', token.momentum.m5], ['1h', token.momentum.h1], ['6h', token.momentum.h6], ['24h', token.momentum.h24]];
+      return `<div class="momentum-strip" aria-label="${token.symbol} price change by window">${windows.map(([window, value]) => {
+        const change = formatMomentum(value);
+        return `<div class="momentum-cell"><span class="momentum-window">${window}</span><strong class="momentum-value ${change.direction}">${change.text}</strong></div>`;
+      }).join('')}</div>`;
+    }
+
+    function riskMarkup(token) {
+      return `<div class="risk-summary" aria-label="P0 token warning summary"><span>${token.risk.verification}</span><span>Organic: ${token.risk.organic}</span>${token.risk.suspicious ? '<span class="warning">Suspicious signal</span>' : ''}</div>`;
+    }
+
+    function tokenMarkup(token) {
+      const expanded = state.expanded === token.symbol;
+      const direction = token.change >= 0 ? 'up' : 'down';
+      const sign = token.change >= 0 ? '+' : '';
+      return `<article class="token-item ${expanded ? 'expanded' : ''}" data-symbol="${token.symbol}">
+        <button class="token-row" aria-expanded="${expanded}" aria-controls="detail-${token.symbol}">
+          <span class="token-mark ${token.symbol}">${token.symbol[0]}</span>
+          <span class="token-name"><strong>${token.symbol}</strong><span>${token.name}</span></span>
+          <span class="token-price">${token.price}</span>
+          <span class="token-change ${direction}">${sign}${token.change}%</span>
+        </button>
+        <div class="token-expand" id="detail-${token.symbol}">
+          <div class="token-expand-inner">
+            <div class="decision-strip">
+              ${momentumMarkup(token)}
+              <div class="market-stats">
+                <div class="market-stat"><span>Market cap</span><strong>${token.cap}</strong></div>
+                <div class="market-stat"><span>24h volume</span><strong>${token.volume}</strong></div>
+                <div class="market-stat"><span>Liquidity</span><strong>${token.liquidity}</strong></div>
+              </div>
+              ${riskMarkup(token)}
+              <div class="trade-actions">
+                <button class="trade-action buy" data-trade="Buy" data-token="${token.symbol}">Buy ${token.symbol}</button>
+                <button class="trade-action sell" data-trade="Sell" data-token="${token.symbol}">Sell ${token.symbol}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>`;
+    }
+
+    function renderTokens() {
+      const query = state.query.toLowerCase();
+      const visible = TOKENS
+        .filter(token => `${token.symbol} ${token.name}`.toLowerCase().includes(query));
+      list.innerHTML = visible.length
+        ? visible.map(tokenMarkup).join('')
+        : '<div style="padding:28px 16px;color:var(--dim);font-size:12px;text-align:center">No token found. Try another name or symbol.</div>';
+
+      list.querySelectorAll('.token-row').forEach(button => button.addEventListener('click', () => {
+        const symbol = button.closest('.token-item').dataset.symbol;
+        state.expanded = state.expanded === symbol ? null : symbol;
+        renderTokens();
+        if (state.expanded) {
+          requestAnimationFrame(() => document.querySelector(`[data-symbol="${symbol}"]`).scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+        }
+      }));
+      list.querySelectorAll('[data-trade]').forEach(button => button.addEventListener('click', event => {
+        event.stopPropagation();
+        showToast(`${button.dataset.trade} ${button.dataset.token} opens the wallet trade sheet prefilled.`);
+      }));
+    }
+
+    function showToast(message) {
+      clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add('visible');
+      toastTimer = setTimeout(() => toast.classList.remove('visible'), 1800);
+    }
+
+    function setTab(tab) {
+      state.tab = tab;
+      terminal.hidden = tab !== 'terminal';
+      profile.hidden = tab !== 'profile';
+      terminalSearch.hidden = tab !== 'terminal';
+      document.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
+      scroller.scrollTop = 0;
+    }
+
+    document.getElementById('token-search').addEventListener('input', event => {
+      state.query = event.target.value.trim();
+      state.expanded = null;
+      renderTokens();
+    });
+    document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
+
+    renderTokens();
+  </script>
+</body>
+</html>

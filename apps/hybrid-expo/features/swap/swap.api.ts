@@ -1,179 +1,132 @@
-import type { SwapQuotePreview, SwapToken } from '@/features/swap/swap.types';
+import type {
+  SpotPriceResponse,
+  SpotTokenSearchResponse,
+  SpotTokenSummary,
+  SwapApiErrorBody,
+  SwapExecuteRequest,
+  SwapExecuteResponse,
+  SwapOrderRequest,
+  SwapOrderResponse,
+  SwapToken,
+} from '@/features/swap/swap.types';
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
+import { apiClientSessionHeaders } from '@/lib/api-client-session';
 
-/**
- * Jupiter proxy mounted server-side at `${resolveApiBaseUrl()}/swap`. The
- * Jupiter API key used to live in the client bundle (EXPO_PUBLIC_JUP_API_KEY)
- * — that prefix inlines into the shipped JS, so the key was extractable from
- * any release build. It now lives behind this proxy instead; the client
- * never sees it. See docs/modules/wallet/PRDs/2026_08_11_token_identity_and_venue_adapters_PRD.md.
- */
-const jupProxyBase = () => `${resolveApiBaseUrl()}/swap`;
+const swapApiBase = () => `${resolveApiBaseUrl()}/swap`;
 
-/** Build a same-origin icon URL for a fallback token, per the frozen /tokens/icon contract. */
-function fallbackIconUrl(assetId: string): string {
-  return `${resolveApiBaseUrl()}/tokens/icon/${assetId}`;
+export class SwapApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+    readonly retryable: boolean,
+    readonly requestId: string | null,
+  ) {
+    super(message);
+    this.name = 'SwapApiError';
+  }
 }
 
-const FALLBACK_TOKENS: SwapToken[] = [
-  {
-    address: 'So11111111111111111111111111111111111111112',
-    symbol: 'SOL',
-    name: 'Solana',
-    decimals: 9,
-    logoURI: fallbackIconUrl('sol'),
-  },
-  {
-    address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-    symbol: 'USDC',
-    name: 'USD Coin',
-    decimals: 6,
-    logoURI: fallbackIconUrl('usdc'),
-  },
-  {
-    // Verified on-chain: this is the real Jupiter-verified USDT mint. The
-    // previous value here (Es9vMFrzaCER7xN4k3qfKxuxMxDPZWS9Vyuk3F7S3w7P) does
-    // not exist on mainnet — anything routed through the known-token check
-    // silently missed USDT. packages/tx-parser already has the correct mint.
-    address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-    symbol: 'USDT',
-    name: 'Tether USD',
-    decimals: 6,
-    logoURI: fallbackIconUrl('usdt'),
-  },
-  {
-    address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
-    symbol: 'JUP',
-    name: 'Jupiter',
-    decimals: 6,
-    logoURI: fallbackIconUrl('jup'),
-  },
-];
+function sameOriginIconUrl(iconUrl: string | null): string | undefined {
+  if (!iconUrl) return undefined;
+  if (iconUrl.startsWith('/')) return `${resolveApiBaseUrl()}${iconUrl}`;
+  try {
+    const icon = new URL(iconUrl);
+    const api = new URL(resolveApiBaseUrl());
+    return icon.origin === api.origin ? icon.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
-function toSwapToken(row: unknown): SwapToken | null {
-  if (!row || typeof row !== 'object') return null;
-  const record = row as Record<string, unknown>;
-  const address = typeof record.id === 'string' ? record.id : typeof record.address === 'string' ? record.address : null;
-  const symbol = typeof record.symbol === 'string' ? record.symbol : null;
-  const name = typeof record.name === 'string' ? record.name : symbol;
-  const decimals = typeof record.decimals === 'number' ? record.decimals : 6;
-  const logoURI = typeof record.icon === 'string' ? record.icon : typeof record.logoURI === 'string' ? record.logoURI : undefined;
-
-  if (!address || !symbol || !name) return null;
-
+function toSwapToken(row: SpotTokenSummary): SwapToken | null {
+  const { identity } = row;
+  if (!identity.mint || identity.decimals === null || identity.decimals < 0) return null;
   return {
-    address,
-    symbol: symbol.toUpperCase(),
-    name,
-    decimals,
-    logoURI,
+    address: identity.mint,
+    symbol: identity.symbol,
+    name: identity.name,
+    decimals: identity.decimals,
+    logoURI: sameOriginIconUrl(identity.iconUrl),
   };
 }
 
-export function getFallbackTokens(): SwapToken[] {
-  return FALLBACK_TOKENS;
+function isErrorBody(value: unknown): value is SwapApiErrorBody {
+  if (!value || typeof value !== 'object') return false;
+  const error = (value as { error?: unknown }).error;
+  return !!error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string';
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(`${swapApiBase()}${path}`, {
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...apiClientSessionHeaders(),
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error && error.name === 'AbortError'
+      ? 'The trading service took too long to respond.'
+      : 'The trading service is unreachable.';
+    throw new SwapApiError(message, 0, 'NETWORK_ERROR', true, null);
+  }
+
+  const payload = await response.json().catch(() => null) as unknown;
+  if (!response.ok) {
+    if (isErrorBody(payload)) {
+      throw new SwapApiError(
+        payload.error.message,
+        response.status,
+        payload.error.code,
+        payload.error.retryable,
+        payload.error.requestId,
+      );
+    }
+    throw new SwapApiError('The trading service returned an invalid response.', response.status, 'INVALID_RESPONSE', response.status >= 500, null);
+  }
+  return payload as T;
+}
+
+export async function fetchSwapTokens(limit = 30): Promise<SwapToken[]> {
+  const payload = await requestJson<{ items: SpotTokenSummary[] }>(`/tokens?limit=${encodeURIComponent(String(limit))}`);
+  return payload.items.map(toSwapToken).filter((token): token is SwapToken => token !== null);
 }
 
 export async function searchSwapTokens(query: string): Promise<SwapToken[]> {
   const normalized = query.trim();
-  if (!normalized) return FALLBACK_TOKENS;
-
-  const response = await fetchWithTimeout(
-    `${jupProxyBase()}/tokens/search?query=${encodeURIComponent(normalized)}`,
+  if (!normalized) return fetchSwapTokens(30);
+  const payload = await requestJson<SpotTokenSearchResponse>(
+    `/tokens/search?query=${encodeURIComponent(normalized)}`,
   );
-
-  if (!response.ok) {
-    throw new Error(`Token search failed (${response.status})`);
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (!Array.isArray(payload)) {
-    return FALLBACK_TOKENS;
-  }
-
-  const mapped = payload.map(toSwapToken).filter((token): token is SwapToken => token !== null);
-  return mapped.length > 0 ? mapped : FALLBACK_TOKENS;
+  return payload.items.map(toSwapToken).filter((token): token is SwapToken => token !== null);
 }
 
-export async function fetchTokenPrices(mints: string[]): Promise<Record<string, number>> {
-  if (mints.length === 0) return {};
-  const response = await fetchWithTimeout(
-    `${jupProxyBase()}/prices?ids=${encodeURIComponent(mints.join(','))}`,
-  );
-
-  if (!response.ok) {
-    throw new Error(`Price fetch failed (${response.status})`);
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (!payload || typeof payload !== 'object') return {};
-
-  const data = payload as Record<string, unknown>;
-  const result: Record<string, number> = {};
-  for (const mint of mints) {
-    const entry = data[mint];
-    if (entry && typeof entry === 'object') {
-      const usdPrice = (entry as Record<string, unknown>).usdPrice;
-      if (typeof usdPrice === 'number') {
-        result[mint] = usdPrice;
-      }
-    }
-  }
-
-  return result;
+export async function fetchTokenPrices(mints: string[]): Promise<SpotPriceResponse> {
+  const unique = [...new Set(mints.filter(Boolean))];
+  if (unique.length === 0) return { prices: [], asOf: new Date().toISOString() };
+  return requestJson<SpotPriceResponse>(`/prices?ids=${encodeURIComponent(unique.join(','))}`);
 }
 
-function toAtomicAmount(value: string, decimals: number): string {
-  const numeric = Number.parseFloat(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return '0';
-  const atomic = Math.floor(numeric * 10 ** decimals);
-  return String(Math.max(0, atomic));
+export function createSwapOrder(
+  request: SwapOrderRequest,
+  signal?: AbortSignal,
+): Promise<SwapOrderResponse> {
+  return requestJson<SwapOrderResponse>('/order', {
+    method: 'POST',
+    body: JSON.stringify(request),
+    signal,
+  });
 }
 
-function fromAtomicAmount(value: string | number, decimals: number): number {
-  const numeric = typeof value === 'number' ? value : Number.parseFloat(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return numeric / 10 ** decimals;
-}
-
-export async function fetchSwapQuotePreview(args: {
-  inputMint: string;
-  outputMint: string;
-  amountUi: string;
-  inputDecimals: number;
-  outputDecimals: number;
-  slippageBps: number;
-}): Promise<SwapQuotePreview> {
-  const amount = toAtomicAmount(args.amountUi, args.inputDecimals);
-  if (amount === '0') {
-    return { inAmount: 0, outAmount: 0, priceImpactPct: 0 };
-  }
-
-  const url =
-    `${jupProxyBase()}/quote` +
-    `?inputMint=${encodeURIComponent(args.inputMint)}` +
-    `&outputMint=${encodeURIComponent(args.outputMint)}` +
-    `&amount=${encodeURIComponent(amount)}` +
-    `&slippageBps=${encodeURIComponent(String(args.slippageBps))}`;
-
-  const response = await fetchWithTimeout(url);
-  if (!response.ok) {
-    throw new Error(`Quote preview failed (${response.status})`);
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (!payload || typeof payload !== 'object') {
-    throw new Error('Invalid quote response');
-  }
-
-  const quote = payload as Record<string, unknown>;
-  const inAmount = fromAtomicAmount((quote.inAmount as string | number) ?? amount, args.inputDecimals);
-  const outAmount = fromAtomicAmount((quote.outAmount as string | number) ?? 0, args.outputDecimals);
-  const priceImpactPct = Number.parseFloat(String(quote.priceImpactPct ?? 0));
-
-  return {
-    inAmount,
-    outAmount,
-    priceImpactPct: Number.isFinite(priceImpactPct) ? priceImpactPct : 0,
-  };
+export function executeSwap(request: SwapExecuteRequest): Promise<SwapExecuteResponse> {
+  return requestJson<SwapExecuteResponse>('/execute', {
+    method: 'POST',
+    body: JSON.stringify(request),
+    timeoutMs: 45_000,
+  } as RequestInit & { timeoutMs: number });
 }

@@ -13,14 +13,20 @@ export type ApiConfig = {
   tokenIdentityEnabled: boolean
   tokensApiKey?: string
   jupApiKey?: string
+  jupApiBase?: string
+  swapPriorityFeeMaxLamports?: string
+  swapSqlitePath?: string
+  swapTradingEnabled?: boolean
 }
 
 export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   const supabaseUrl = env.SUPABASE_URL
   const supabaseServiceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY
+  const jupApiKey = env.JUP_API_KEY
   const missing: string[] = []
   if (!supabaseUrl) missing.push('SUPABASE_URL')
   if (!supabaseServiceRoleKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
+  if (!jupApiKey) missing.push('JUP_API_KEY')
 
   if (missing.length > 0) {
     console.error(`[api] Missing required env vars: ${missing.join(', ')}`)
@@ -44,6 +50,16 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
 
   const tokenIdentityEnabled = env.TOKEN_IDENTITY_ENABLED === '1' || env.TOKEN_IDENTITY_ENABLED === 'true'
 
+  // Keep the server-owned fee ceiling bounded even when deployment config is
+  // incomplete. Invalid values fall back to a conservative one-million
+  // lamport cap rather than allowing an unbounded provider request.
+  const configuredPriorityFee = env.SWAP_PRIORITY_FEE_MAX_LAMPORTS
+  const priorityFee = configuredPriorityFee && /^[0-9]+$/.test(configuredPriorityFee)
+    && configuredPriorityFee.length <= 20
+    && BigInt(configuredPriorityFee) <= 18_446_744_073_709_551_615n
+    ? BigInt(configuredPriorityFee).toString()
+    : '1000000'
+
   return {
     supabaseUrl: supabaseUrl!,
     supabaseServiceRoleKey: supabaseServiceRoleKey!,
@@ -58,6 +74,10 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     aiExplanationModel,
     tokenIdentityEnabled,
     tokensApiKey: env.TOKENS_API_KEY,
-    jupApiKey: env.JUP_API_KEY,
+    jupApiKey,
+    jupApiBase: env.JUP_API_BASE,
+    swapPriorityFeeMaxLamports: priorityFee,
+    swapSqlitePath: env.SWAP_SQLITE_PATH?.trim() || '.data/swap.sqlite',
+    swapTradingEnabled: env.SWAP_TRADING_KILL_SWITCH !== '1' && env.SWAP_TRADING_KILL_SWITCH !== 'true',
   }
 }

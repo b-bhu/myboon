@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>myboon · Inline Swap Review</title>
+  <style>
+    :root {
+      /* myboon wallet palette — apps/hybrid-expo/theme/tokens.ts */
+      --screen: #073B4C;
+      --wallet-core: #031F2C;
+      --ground: #063343;
+      --surface: #083D50;
+      --lift: #0A4A60;
+      --border: #185A70;
+      --primary: #118AB2;
+      --positive: #06D6A0;
+      --negative: #EF476F;
+      --accent: #FFD166;
+      --bone: #F5FAFC;
+      --dim: #9CB8C2;
+      --faint: #6B95A1;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; background: #010B12; color: var(--bone); }
+    body { font-family: var(--sans); }
+    button, input { font: inherit; }
+
+    .studio {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(250px, 350px) minmax(390px, 1fr);
+      align-items: center;
+      gap: 54px;
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 40px 28px;
+      background:
+        radial-gradient(circle at 74% 22%, rgba(17,138,178,.13), transparent 31%),
+        #010B12;
+    }
+
+    .notes { max-width: 350px; }
+    .eyebrow {
+      margin-bottom: 12px;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.3px;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: 43px; line-height: 1.02; letter-spacing: -1.5px; }
+    .intro { margin: 18px 0 24px; color: var(--dim); font-size: 14px; line-height: 1.65; }
+    .principles { display: grid; gap: 12px; }
+    .principle { display: grid; grid-template-columns: 20px 1fr; gap: 8px; color: var(--dim); font-size: 12px; line-height: 1.5; }
+    .principle span:first-child { color: var(--primary); font-family: var(--mono); font-size: 10px; }
+    .hint { margin-top: 22px; padding-top: 16px; border-top: 1px solid rgba(24,90,112,.55); color: var(--faint); font-family: var(--mono); font-size: 9px; line-height: 1.65; }
+    .scenario-control { display: grid; gap: 8px; margin-top: 22px; }
+    .scenario-control label { color: var(--faint); font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    .scenario-control select { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: var(--ground); color: var(--bone); font-size: 12px; }
+    .scenario-control select:focus-visible { border-color: var(--accent); }
+
+    .prototype { display: flex; justify-content: center; }
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 1px solid rgba(245,250,252,.19);
+      border-radius: 38px;
+      background: var(--wallet-core);
+      box-shadow: 0 28px 80px rgba(0,0,0,.48);
+    }
+    .phone::before {
+      content: "";
+      position: absolute;
+      z-index: 20;
+      top: 10px;
+      left: 50%;
+      width: 112px;
+      height: 27px;
+      transform: translateX(-50%);
+      border-radius: 999px;
+      background: #01070B;
+    }
+    .status-bar {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 45px;
+      padding: 0 24px;
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .status-icons { display: flex; align-items: center; gap: 5px; }
+    .status-icons i { width: 12px; height: 7px; border: 1px solid rgba(245,250,252,.82); border-radius: 2px; }
+    .status-icons i:last-child { width: 18px; background: rgba(245,250,252,.82); }
+
+    .wallet-screen {
+      position: absolute;
+      inset: 0;
+      padding: 45px 16px 32px;
+      background: var(--wallet-core);
+    }
+    .topbar { display: flex; align-items: center; height: 46px; }
+    .wordmark { font-size: 20px; letter-spacing: -.7px; }
+    .wordmark b { font-weight: 900; }
+    .top-spacer { flex: 1; }
+    .avatar { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; color: var(--dim); font-family: var(--mono); font-size: 10px; }
+    .wallet-title { margin: 51px 0 47px; color: rgba(245,250,252,.56); text-align: center; font-size: 51px; font-weight: 850; }
+    .wallet-total { padding: 16px; border: 1px solid rgba(24,90,112,.75); border-radius: 8px; background: rgba(8,61,80,.5); }
+    .wallet-total small { color: var(--faint); font-family: var(--mono); font-size: 8px; }
+    .wallet-total strong { display: block; margin-top: 7px; color: rgba(245,250,252,.62); font-size: 38px; }
+    .wallet-mix { height: 5px; margin-top: 15px; border-radius: 5px; background: linear-gradient(90deg, var(--primary) 0 31%, var(--accent) 31% 100%); }
+    .wallet-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-top: 13px; }
+    .wallet-action { min-height: 54px; display: grid; place-items: center; border: 1px solid rgba(24,90,112,.65); border-radius: 8px; color: var(--faint); font-family: var(--mono); font-size: 8px; text-transform: uppercase; }
+
+    .scrim { position: absolute; z-index: 5; inset: 0; background: rgba(0,0,0,.70); }
+    .sheet {
+      position: absolute;
+      z-index: 6;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      padding: 22px 16px max(18px, env(safe-area-inset-bottom));
+      border-top: 1px solid var(--border);
+      border-radius: 20px 20px 0 0;
+      background: var(--ground);
+      box-shadow: 0 -20px 50px rgba(0,0,0,.34);
+    }
+    .asset-pair { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: rgba(8,61,80,.72); }
+    .asset-row { min-height: 112px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; padding: 12px; }
+    .asset-row + .asset-row { border-top: 1px solid var(--border); }
+    .asset-copy { min-width: 0; }
+    .asset-label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .asset-label, .balance { color: var(--dim); font-family: var(--mono); font-size: 9px; letter-spacing: .9px; text-transform: uppercase; }
+    .balance { color: var(--faint); letter-spacing: 0; text-transform: none; }
+    .balance-actions { display: inline-flex; align-items: center; margin-left: 5px; color: var(--border); }
+    .balance-action { min-width: 0; min-height: 30px; padding: 0 1px; border: 0; background: transparent; color: var(--primary); cursor: pointer; font-family: var(--mono); font-size: 9px; font-weight: 850; }
+    .asset-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+    .token-select { min-width: 122px; min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--ground); color: var(--bone); font-size: 16px; font-weight: 850; }
+    .token-select svg { flex: none; width: 27px; height: 27px; }
+    .token-select .chevron { margin-left: auto; color: var(--dim); font-size: 13px; }
+    .amount-wrap { min-width: 0; flex: 1; text-align: right; }
+    .amount {
+      width: 100%;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--bone);
+      font-size: 31px;
+      line-height: 34px;
+      font-weight: 850;
+      letter-spacing: -1px;
+      text-align: right;
+    }
+    .amount[readonly] { cursor: default; }
+    .usd { margin-top: 4px; color: var(--faint); font-family: var(--mono); font-size: 9px; }
+    .reverse {
+      position: absolute;
+      z-index: 2;
+      top: 50%;
+      left: 50%;
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      transform: translate(-50%,-50%);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: var(--ground);
+      color: var(--primary);
+      box-shadow: 0 0 0 5px var(--ground);
+    }
+    .reverse svg { width: 17px; height: 17px; }
+
+    .trade-options { margin-top: 10px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: rgba(3,31,44,.36); }
+    .option-row { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 12px; color: var(--dim); font-size: 12px; }
+    .option-row + .option-row { border-top: 1px solid rgba(24,90,112,.68); }
+    .option-row strong { color: var(--bone); font-family: var(--mono); font-size: 11px; }
+    .slippage { display: flex; align-items: center; gap: 5px; }
+    .chip { min-height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--dim); font-family: var(--mono); font-size: 9px; }
+    .chip.active { border-color: var(--primary); background: rgba(17,138,178,.11); color: var(--bone); }
+
+    .review-action { margin-top: 12px; }
+    .action-state { animation: reveal 180ms ease-out both; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(6px); } }
+
+    .swipe {
+      --travel: 0px;
+      position: relative;
+      height: 58px;
+      margin: 0 8px 8px;
+      overflow: hidden;
+      border: 1px solid rgba(17,138,178,.75);
+      border-radius: 10px;
+      background: var(--ground);
+      user-select: none;
+      touch-action: none;
+      cursor: grab;
+    }
+    .swipe:active { cursor: grabbing; }
+    .swipe-fill { position: absolute; inset: 0 auto 0 0; width: calc(var(--travel) + 54px); background: linear-gradient(90deg, rgba(17,138,178,.38), rgba(6,214,160,.18)); }
+    .swipe-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding-left: 38px; color: var(--dim); font-size: 12px; font-weight: 750; letter-spacing: .1px; }
+    .swipe-label strong { color: var(--bone); font-weight: 850; }
+    .label-solana { width: 14px; height: 13px; flex: none; }
+    .swipe-thumb {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      transform: translateX(var(--travel));
+      border: 1px solid rgba(245,250,252,.18);
+      border-radius: 8px;
+      background: var(--primary);
+      color: var(--bone);
+      box-shadow: 0 5px 15px rgba(0,0,0,.25);
+    }
+    .swipe-thumb svg { width: 20px; height: 20px; }
+    .swipe:not(.dragging) .swipe-thumb, .swipe:not(.dragging) .swipe-fill { transition: transform 180ms ease, width 180ms ease; }
+    .swipe.complete { border-color: rgba(6,214,160,.7); }
+    .swipe.complete .swipe-fill { width: 100%; background: rgba(6,214,160,.18); }
+    .swipe.complete .swipe-thumb { background: var(--positive); }
+    .swipe.complete .swipe-label { color: var(--bone); }
+    .swipe.static { cursor: default; }
+    .swipe.static .swipe-label { padding-left: 50px; padding-right: 10px; }
+    .swipe.static .swipe-fill { width: 54px; }
+    .swipe.error { border-color: rgba(239,71,111,.68); background: rgba(239,71,111,.06); }
+    .swipe.error .swipe-thumb { background: var(--negative); }
+    .swipe.warning { border-color: rgba(255,209,102,.66); background: rgba(255,209,102,.06); }
+    .swipe.warning .swipe-thumb { background: var(--accent); color: var(--wallet-core); }
+    .swipe.loading .swipe-thumb svg { animation: spin 900ms linear infinite; }
+    .swipe.success { border-color: rgba(6,214,160,.68); background: rgba(6,214,160,.07); }
+    .swipe.success .swipe-thumb { background: var(--positive); }
+    .swipe.success .swipe-label strong { color: var(--positive); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 820px) {
+      .studio { grid-template-columns: 1fr; gap: 26px; padding: 26px 14px; }
+      .notes { max-width: 520px; margin: 0 auto; }
+    }
+    @media (max-width: 430px) {
+      .notes { display: none; }
+      .studio { display: block; padding: 0; }
+      .phone { width: 100vw; height: 100dvh; min-height: 760px; border: 0; border-radius: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="studio">
+    <section class="notes" aria-labelledby="mock-title">
+      <div class="eyebrow">Inline review proposal</div>
+      <h1 id="mock-title">Keep the trade.<br />Drop the screen.</h1>
+      <p class="intro">
+        Review is only an action state—not a second destination and not another
+        information panel. The user already sees the trade above; the final
+        control repeats only what they will receive.
+      </p>
+      <div class="principles">
+        <div class="principle"><span>01</span><span>No separate review header, route grid, wallet row, fees panel, or simulated balances.</span></div>
+        <div class="principle"><span>02</span><span>The swipe says exactly what the user gets and includes the asset icon.</span></div>
+        <div class="principle"><span>03</span><span>The same footprint communicates every block, error, pending state, and confirmed outcome.</span></div>
+      </div>
+      <div class="scenario-control">
+        <label for="scenario">Preview action scenario</label>
+        <select id="scenario">
+          <optgroup label="Ready">
+            <option value="ready">Ready to swap</option>
+          </optgroup>
+          <optgroup label="Before quote">
+            <option value="amount">Amount missing</option>
+            <option value="same_asset">Same asset selected</option>
+            <option value="insufficient_balance">Insufficient token balance</option>
+            <option value="fee_reserve">Insufficient SOL for fees</option>
+            <option value="wallet_disconnected">Wallet not connected</option>
+            <option value="wallet_unavailable">Wallet unavailable</option>
+          </optgroup>
+          <optgroup label="Quote and routing">
+            <option value="quote_loading">Quote loading</option>
+            <option value="quote_expired">Quote expired</option>
+            <option value="no_route">No route available</option>
+            <option value="rate_limited">Provider busy / rate limited</option>
+            <option value="offline">Network connection lost</option>
+          </optgroup>
+          <optgroup label="Wallet and execution">
+            <option value="signing">Waiting for wallet approval</option>
+            <option value="rejected">User rejected in wallet</option>
+            <option value="transaction_changed">Transaction changed</option>
+            <option value="slippage">Price moved beyond slippage</option>
+            <option value="submitting">Submitting transaction</option>
+            <option value="unknown">Transaction status unknown</option>
+            <option value="success">Swap confirmed</option>
+          </optgroup>
+        </select>
+      </div>
+      <p class="hint">Choose any scenario above. Errors stay inside the action instead of adding another message above or opening another screen.</p>
+    </section>
+
+    <section class="prototype" aria-label="Interactive mobile prototype">
+      <div class="phone">
+        <div class="wallet-screen" aria-hidden="true">
+          <div class="status-bar"><span>7:12</span><span class="status-icons"><i></i><i></i></span></div>
+          <div class="topbar"><div class="wordmark">my<b>BOON</b></div><div class="top-spacer"></div><div class="avatar">7</div></div>
+          <div class="wallet-title">Wallet</div>
+          <div class="wallet-total"><small>as of just now</small><strong>$988.05</strong><div class="wallet-mix"></div></div>
+          <div class="wallet-actions"><div class="wallet-action">Swap</div><div class="wallet-action">Send</div><div class="wallet-action">Receive</div><div class="wallet-action">Transfer</div></div>
+        </div>
+
+        <div class="scrim"></div>
+        <section class="sheet" id="sheet" data-stage="review" aria-label="Swap USDC for SOL">
+          <div class="asset-pair">
+            <div class="asset-row">
+              <div class="asset-copy">
+                <div class="asset-label-row"><span class="asset-label">You pay</span></div>
+                <button class="token-select" type="button" aria-label="Choose pay token">
+                  <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#2775CA"/><circle cx="16" cy="16" r="10.2" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M19.5 12.4c-.8-1.2-1.8-1.7-3.6-1.7-2.1 0-3.6 1.1-3.6 2.8 0 1.6 1.1 2.3 3.8 2.8 1.7.3 2.3.7 2.3 1.5 0 .9-.8 1.5-2.2 1.5-1.7 0-2.7-.5-3.7-1.8M16 8.5v2.1m0 8.8v2.1" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>
+                  USDC <span class="chevron">⌄</span>
+                </button>
+              </div>
+              <div class="amount-wrap">
+                <div class="asset-label-row">
+                  <span class="balance">Balance 0.932416
+                    <span class="balance-actions">
+                      <button class="balance-action" type="button" data-percent="25">25%</button>·
+                      <button class="balance-action" type="button" data-percent="50">50%</button>·
+                      <button class="balance-action" type="button" data-percent="100">100%</button>
+                    </span>
+                  </span>
+                </div>
+                <input class="amount" id="pay-amount" inputmode="decimal" value="0.932416" aria-label="Amount of USDC to pay" />
+                <div class="usd">$0.93</div>
+              </div>
+            </div>
+
+            <button class="reverse" type="button" aria-label="Reverse swap pair">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></svg>
+            </button>
+
+            <div class="asset-row">
+              <div class="asset-copy">
+                <div class="asset-label-row"><span class="asset-label">You receive</span></div>
+                <button class="token-select" type="button" aria-label="Choose receive token">
+                  <svg viewBox="0 0 26 23" aria-hidden="true"><path fill="#F5FAFC" d="m25.033 17.458-4.087 4.382a.95.95 0 0 1-.692.302H.879a.476.476 0 0 1-.348-.798l4.082-4.382a.95.95 0 0 1 .692-.302H24.68a.473.473 0 0 1 .353.798m-4.087-8.827a.96.96 0 0 0-.692-.302H.879a.475.475 0 0 0-.348.798l4.082 4.385a.96.96 0 0 0 .692.302H24.68a.476.476 0 0 0 .346-.798zM.879 5.483h19.375a.95.95 0 0 0 .692-.302L25.033.798a.475.475 0 0 0-.09-.724A.47.47 0 0 0 24.68 0H5.305a.95.95 0 0 0-.692.302L.531 4.685a.475.475 0 0 0 .348.798"/></svg>
+                  SOL <span class="chevron">⌄</span>
+                </button>
+              </div>
+              <div class="amount-wrap">
+                <div class="asset-label-row"><span class="balance">Balance 0.081659</span></div>
+                <input class="amount" id="receive-amount" value="0.00995659" readonly aria-label="Estimated SOL received" />
+                <div class="usd">$0.93</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="trade-options">
+            <div class="option-row"><span>Minimum received</span><strong id="minimum">0.00994165 SOL</strong></div>
+            <div class="option-row"><span>Slippage</span><span class="slippage"><button class="chip active">Auto</button><button class="chip">0.5%</button><button class="chip">Custom</button></span></div>
+          </div>
+
+          <div class="review-action">
+            <div class="action-state" id="action-state">
+              <div class="swipe" id="swipe" role="button" tabindex="0" aria-label="Swipe right to open wallet">
+                <div class="swipe-fill"></div>
+                <div class="swipe-label" id="swipe-label"></div>
+                <div class="swipe-thumb" id="swipe-thumb">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const payAmount = document.getElementById('pay-amount');
+    const receiveAmount = document.getElementById('receive-amount');
+    const minimum = document.getElementById('minimum');
+    const swipe = document.getElementById('swipe');
+    const swipeLabel = document.getElementById('swipe-label');
+    const swipeThumb = document.getElementById('swipe-thumb');
+    const scenario = document.getElementById('scenario');
+
+    const SOLANA_MARK = `<svg class="label-solana" viewBox="0 0 26 23" aria-hidden="true"><path fill="currentColor" d="m25.033 17.458-4.087 4.382a.95.95 0 0 1-.692.302H.879a.476.476 0 0 1-.348-.798l4.082-4.382a.95.95 0 0 1 .692-.302H24.68a.473.473 0 0 1 .353.798m-4.087-8.827a.96.96 0 0 0-.692-.302H.879a.475.475 0 0 0-.348.798l4.082 4.385a.96.96 0 0 0 .692.302H24.68a.476.476 0 0 0 .346-.798zM.879 5.483h19.375a.95.95 0 0 0 .692-.302L25.033.798a.475.475 0 0 0-.09-.724A.47.47 0 0 0 24.68 0H5.305a.95.95 0 0 0-.692.302L.531 4.685a.475.475 0 0 0 .348.798"/></svg>`;
+    const ICONS = {
+      arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>',
+      alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5m0 3h.01"/><circle cx="12" cy="12" r="9"/></svg>',
+      refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 6.5L4 11m16 2-2 4.5A7 7 0 0 1 5.5 15"/></svg>',
+      wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h16v13H3zM3 9h18v7h-5a3 3 0 0 1 0-6h5"/></svg>',
+      check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg>',
+      pending: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8" stroke-dasharray="23 13"/></svg>',
+    };
+
+    const SCENARIOS = {
+      amount: { kind: 'warning', icon: 'alert', label: 'Enter an amount' },
+      same_asset: { kind: 'warning', icon: 'alert', label: 'Choose two different assets' },
+      insufficient_balance: { kind: 'error', icon: 'alert', label: 'Insufficient USDC balance' },
+      fee_reserve: { kind: 'error', icon: 'alert', label: 'Not enough SOL for network fees' },
+      wallet_disconnected: { kind: 'warning', icon: 'wallet', label: 'Connect a Solana wallet' },
+      wallet_unavailable: { kind: 'error', icon: 'wallet', label: 'Wallet unavailable on this device' },
+      quote_loading: { kind: 'loading', icon: 'pending', label: 'Getting the latest price…' },
+      quote_expired: { kind: 'warning', icon: 'refresh', label: 'Price expired — tap to refresh' },
+      no_route: { kind: 'error', icon: 'alert', label: 'No swap route available' },
+      rate_limited: { kind: 'warning', icon: 'refresh', label: 'Prices are busy — try again' },
+      offline: { kind: 'error', icon: 'refresh', label: 'Connection lost — try again' },
+      signing: { kind: 'loading', icon: 'wallet', label: 'Approve the swap in your wallet' },
+      rejected: { kind: 'warning', icon: 'wallet', label: 'Swap cancelled in wallet' },
+      transaction_changed: { kind: 'error', icon: 'refresh', label: 'Swap changed — refresh price' },
+      slippage: { kind: 'warning', icon: 'refresh', label: 'Price moved — refresh and try again' },
+      submitting: { kind: 'loading', icon: 'pending', label: 'Sending swap…' },
+      unknown: { kind: 'loading', icon: 'pending', label: 'Checking transaction — don’t retry' },
+      success: { kind: 'success', icon: 'check', dynamic: 'success' },
+    };
+
+    let pointerId = null;
+    let startX = 0;
+    let travel = 0;
+    let maxTravel = 0;
+    let complete = false;
+
+    function quoteFromInput() {
+      const input = Number.parseFloat(payAmount.value) || 0;
+      const output = input * 0.0106798;
+      const minOutput = output * 0.9985;
+      receiveAmount.value = output ? output.toFixed(8) : '0';
+      const copy = `${minOutput ? minOutput.toFixed(8) : '0'} SOL`;
+      minimum.textContent = copy;
+      renderScenario(scenario.value);
+    }
+
+    function measureSwipe() {
+      maxTravel = Math.max(0, swipe.clientWidth - 58);
+    }
+
+    function paintSwipe(nextTravel) {
+      travel = Math.max(0, Math.min(maxTravel, nextTravel));
+      swipe.style.setProperty('--travel', `${travel}px`);
+    }
+
+    function resetSwipe() {
+      complete = false;
+      swipe.classList.remove('complete', 'dragging');
+      measureSwipe();
+      paintSwipe(0);
+    }
+
+    function compactReceive() {
+      const value = Number.parseFloat(minimum.textContent) || 0;
+      return value ? value.toFixed(4) : '0';
+    }
+
+    function renderScenario(name) {
+      resetSwipe();
+      swipe.className = 'swipe';
+      if (name === 'ready') {
+        swipeLabel.innerHTML = `Do the swap to get <strong>${compactReceive()} SOL</strong> ${SOLANA_MARK}`;
+        swipeThumb.innerHTML = ICONS.arrow;
+        swipe.setAttribute('aria-label', `Do the swap to get ${compactReceive()} SOL`);
+        return;
+      }
+      const state = SCENARIOS[name] ?? SCENARIOS.quote_loading;
+      swipe.classList.add('static', state.kind);
+      swipeThumb.innerHTML = ICONS[state.icon];
+      const label = state.dynamic === 'success' ? `<strong>${compactReceive()} SOL received</strong> ${SOLANA_MARK}` : state.label;
+      swipeLabel.innerHTML = label;
+      swipe.setAttribute('aria-label', swipeLabel.textContent.trim());
+    }
+
+    function finishSwipe() {
+      complete = true;
+      paintSwipe(maxTravel);
+      swipe.classList.remove('dragging');
+      swipe.classList.add('complete');
+      swipeThumb.innerHTML = ICONS.wallet;
+      swipeLabel.textContent = 'Opening wallet…';
+      window.setTimeout(() => {
+        scenario.value = 'signing';
+        renderScenario('signing');
+      }, 650);
+    }
+
+    payAmount.addEventListener('input', quoteFromInput);
+    document.querySelectorAll('[data-percent]').forEach((button) => {
+      button.addEventListener('click', () => {
+        payAmount.value = (0.932416 * Number(button.dataset.percent) / 100).toFixed(6);
+        quoteFromInput();
+      });
+    });
+    scenario.addEventListener('change', () => renderScenario(scenario.value));
+    window.addEventListener('resize', () => renderScenario(scenario.value));
+
+    swipe.addEventListener('pointerdown', (event) => {
+      if (complete || scenario.value !== 'ready') return;
+      measureSwipe();
+      pointerId = event.pointerId;
+      startX = event.clientX - travel;
+      swipe.setPointerCapture(pointerId);
+      swipe.classList.add('dragging');
+    });
+    swipe.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== pointerId || complete || scenario.value !== 'ready') return;
+      paintSwipe(event.clientX - startX);
+    });
+    swipe.addEventListener('pointerup', (event) => {
+      if (event.pointerId !== pointerId || complete || scenario.value !== 'ready') return;
+      pointerId = null;
+      if (travel >= maxTravel * .82) finishSwipe();
+      else resetSwipe();
+    });
+    swipe.addEventListener('pointercancel', resetSwipe);
+    swipe.addEventListener('keydown', (event) => {
+      if ((event.key === 'Enter' || event.key === ' ') && !complete && scenario.value === 'ready') {
+        event.preventDefault();
+        finishSwipe();
+      }
+    });
+
+    quoteFromInput();
+    renderScenario('ready');
+  </script>
+</body>
+</html>

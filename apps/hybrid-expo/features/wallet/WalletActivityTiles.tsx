@@ -16,9 +16,10 @@ import { semantic, tokens } from '@/theme';
  * by tapping anywhere else on screen or after a ~1.8s auto-timeout.
  */
 
-type ActivityId = 'send' | 'receive' | 'transfer';
+type ActivityId = 'send' | 'receive' | 'transfer' | 'swap';
 
-const ACTIVITIES: { id: ActivityId; label: string; icon: 'arrow-upward' | 'arrow-downward' | 'swap-horiz' }[] = [
+const ACTIVITIES: { id: ActivityId; label: string; icon: 'arrow-upward' | 'arrow-downward' | 'swap-horiz' | 'currency-exchange' }[] = [
+  { id: 'swap', label: 'Swap', icon: 'currency-exchange' },
   { id: 'send', label: 'Send', icon: 'arrow-upward' },
   { id: 'receive', label: 'Receive', icon: 'arrow-downward' },
   { id: 'transfer', label: 'Transfer', icon: 'swap-horiz' },
@@ -27,10 +28,10 @@ const ACTIVITIES: { id: ActivityId; label: string; icon: 'arrow-upward' | 'arrow
 const TOOLTIP_AUTO_DISMISS_MS = 1800;
 const TOOLTIP_WIDTH = 104;
 
-export function WalletActivityTiles() {
+export function WalletActivityTiles({ onSwap }: { onSwap?: () => void }) {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; w: number } | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tileRefs = useRef<Record<ActivityId, View | null>>({ send: null, receive: null, transfer: null });
+  const tileRefs = useRef<Record<ActivityId, View | null>>({ send: null, receive: null, transfer: null, swap: null });
   const isMounted = useRef(true);
 
   useEffect(() => () => {
@@ -76,10 +77,10 @@ export function WalletActivityTiles() {
         <Pressable
           key={activity.id}
           ref={(node) => { tileRefs.current[activity.id] = node; }}
-          onPress={() => handleTilePress(activity.id)}
+          onPress={() => activity.id === 'swap' && onSwap ? onSwap() : handleTilePress(activity.id)}
           accessibilityRole="button"
           accessibilityLabel={activity.label}
-          accessibilityHint="Coming soon"
+          accessibilityHint={activity.id === 'swap' ? 'Open Swap' : 'Coming soon'}
           style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
         >
           <MaterialIcons name={activity.icon} size={15} color={semantic.text.dim} />

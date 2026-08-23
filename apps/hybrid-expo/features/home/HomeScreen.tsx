@@ -55,7 +55,6 @@ const FEED_PREVIEW_LIMIT = 3;
 const HEADER_SCROLL_DISTANCE = 920;
 const WALLET_SECTION_MIN_HEIGHT = 450;
 const MOCKUP_FEED_SOFT = '#28A9C9';
-const HOME_WALLET_CORE = '#031F2C';
 
 type MarketAppIcon = {
   xml: string;
@@ -153,7 +152,7 @@ export default function HomeScreen() {
 
   const backgroundColor = scrollY.interpolate({
     inputRange: [0, HEADER_SCROLL_DISTANCE],
-    outputRange: [mixHex(tokens.colors.backgroundDark, MOCKUP_FEED_SOFT, 0.32), HOME_WALLET_CORE],
+    outputRange: [mixHex(tokens.colors.backgroundDark, MOCKUP_FEED_SOFT, 0.32), tokens.colors.walletCore],
     extrapolate: 'clamp',
   });
 
@@ -403,6 +402,8 @@ export default function HomeScreen() {
               onOpenMeteora={() => router.push('/markets/meteora/profile')}
               onOpenPhoenix={() => router.push('/markets/phoenix/profile')}
               onOpenPacifica={() => router.push('/markets/pacifica/profile')}
+              onOpenSpot={() => router.push('/spot' as never)}
+              onOpenSwap={() => router.push('/swap')}
             />
           ) : (
             <DisconnectedWalletState onConnect={() => connectSheet.open('solana')} />
@@ -552,6 +553,8 @@ function WalletPreview({
   onOpenMeteora,
   onOpenPhoenix,
   onOpenPacifica,
+  onOpenSpot,
+  onOpenSwap,
 }: {
   chains: readonly Chain[];
   chainAddress: (chain: Chain) => string | null;
@@ -568,6 +571,8 @@ function WalletPreview({
   onOpenMeteora: () => void;
   onOpenPhoenix: () => void;
   onOpenPacifica: () => void;
+  onOpenSpot: () => void;
+  onOpenSwap: () => void;
 }) {
   // The Solana protocol rows below are driven by `useProtocolAccounts`, which is
   // keyed on the Solana address. They render only when Solana is connected — an
@@ -584,7 +589,7 @@ function WalletPreview({
             isRefreshing={walletRefreshing}
             onRefresh={onWalletRefresh}
           />
-          <WalletActivityTiles />
+          <WalletActivityTiles onSwap={onOpenSwap} />
         </>
       ) : null}
 
@@ -609,7 +614,7 @@ function WalletPreview({
 
       {showSolanaProtocolRows ? (
         <View style={styles.accountsList}>
-          <WalletAccountRow protocol="spot" source={walletSources.spot} onRetry={onRetrySource} />
+          <WalletAccountRow protocol="spot" source={walletSources.spot} onRetry={onRetrySource} onPress={onOpenSpot} />
           <WalletAccountRow
             protocol="meteora"
             source={walletSources.meteora}
