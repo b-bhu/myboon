@@ -346,9 +346,13 @@ quick-amount configurability in settings (hardcode defaults).
 ## Open questions (blocking ones marked)
 
 1. **[BLOCKS ONE TAP]** Where do One Tap rounds come from — mapped Polymarket crypto
-   series or self-run round clock?
-2. Does the composer need a balance-aware wrap step (pUSD ↔ USDC.e), or is wrap
-   transparent today via the combo-approve path?
+   series or self-run round clock? *(Spike started: hourly "Bitcoin Up or Down" events
+   confirmed live on Gamma with clean slug/start/end fields — mapping looks viable;
+   recurrence-pattern probe pending.)*
+2. ~~Does the composer need a balance-aware wrap step?~~ **Answered: no.**
+   `fetchClobBalance` (`predict.api.ts:689`) already auto-wraps via
+   `wrapPolymarketCash`/`/clob/wrap` when a signature is required; the composer just
+   displays the resulting balance.
 3. Odds format: spec says American; `useOddsFormat.ts` implements "points". Which is
    the real v1 set?
 4. Featured/curation: `catalog/featured-markets.ts` is pinned to one cricket match
@@ -357,3 +361,16 @@ quick-amount configurability in settings (hardcode defaults).
    (CTO review flagged; owner: product.)
 6. Crest/flag assets: budget a real asset pipeline for Discover's league rail, or
    ship league wordmarks in v1?
+
+## Data findings from the pre-build checks (2026-08-23)
+
+- **Traded volume:** absent from all catalog files (`catalog/*` has zero volume
+  fields). Discover's movers need one additive Gamma→catalog mapping before layout
+  locks. No restructuring.
+- **Resolution rules:** catalog items carry no rules field, but market descriptions
+  (which do flow through existing detail reads) contain the full resolution criteria
+  text — e.g. hourly BTC rounds describe their exact candle rule inline. The
+  Event Detail rules sheet renders this description; dedicated `resolutionSource`
+  fields are usually empty upstream, so the sheet should not promise a named external
+  source beyond what the description states.
+- **Wrap/pUSD:** automatic today (see Open Question #2); composer needs no wrap UI.
