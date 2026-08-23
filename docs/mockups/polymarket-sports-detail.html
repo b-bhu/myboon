@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#073B4C">
+  <title>MyBoon Predict — Live Match</title>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: dark;
+      --screen: #073B4C;
+      --wallet: #031F2C;
+      --ground: #063343;
+      --surface: #083D50;
+      --lift: #0A4A60;
+      --border: #185A70;
+      --bone: #F5FAFC;
+      --dim: #9CB8C2;
+      --faint: #6B95A1;
+      --primary: #118AB2;
+      --positive: #06D6A0;
+      --negative: #EF476F;
+      --accent: #FFD166;
+      --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", "Roboto Mono", ui-monospace, monospace;
+    }
+
+    html { min-height: 100%; background: var(--ground); overscroll-behavior: none; }
+    body { min-height: 100dvh; margin: 0; color: var(--bone); background: var(--ground); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+    button { border: 0; color: inherit; font: inherit; }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .hidden { display: none !important; }
+
+    .stage { min-height: 100dvh; display: grid; place-items: center; }
+    .phone { position: relative; width: min(430px, 100%); height: min(900px, 100dvh); min-height: 700px; overflow: hidden; background: var(--screen); }
+
+    .topbar {
+      position: absolute;
+      z-index: 20;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: calc(58px + env(safe-area-inset-top));
+      padding: env(safe-area-inset-top) 13px 0;
+      display: grid;
+      grid-template-columns: 38px 1fr auto;
+      align-items: center;
+      gap: 9px;
+      border-bottom: 1px solid rgba(24, 90, 112, 0.65);
+      background: rgba(7, 59, 76, 0.97);
+    }
+
+    .back-button, .cash-pill {
+      height: 36px;
+      border: 1px solid var(--border);
+      background: var(--ground);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .back-button { width: 36px; padding: 0; display: grid; place-items: center; border-radius: 12px; color: var(--dim); font-size: 17px; }
+    .title-lockup { min-width: 0; }
+    .title-lockup strong { display: block; overflow: hidden; font-size: 12px; font-weight: 900; white-space: nowrap; text-overflow: ellipsis; }
+    .title-lockup span { display: block; margin-top: 3px; color: var(--faint); font: 800 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .cash-pill { padding: 0 10px; border-radius: 11px; color: var(--bone); font: 900 10px/1 var(--mono); }
+
+    .detail-scroll {
+      position: absolute;
+      inset: calc(58px + env(safe-area-inset-top)) 0 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 6px 14px calc(24px + env(safe-area-inset-bottom));
+      scrollbar-width: none;
+    }
+
+    .detail-scroll::-webkit-scrollbar { display: none; }
+
+    .context-row { height: 32px; padding: 0 2px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .context-label { display: flex; align-items: center; gap: 6px; color: var(--dim); font: 850 9px/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; }
+    .context-label .flag { font-size: 15px; }
+    .live-label { display: flex; align-items: center; gap: 6px; color: var(--negative); font: 900 9px/1 var(--mono); text-transform: uppercase; }
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--negative); box-shadow: 0 0 0 4px rgba(239, 71, 111, 0.12); animation: livePulse 1.8s ease-in-out infinite; }
+    @keyframes livePulse { 50% { opacity: 0.42; box-shadow: 0 0 0 7px rgba(239, 71, 111, 0); } }
+
+    .market-card {
+      overflow: hidden;
+      border: 1px solid rgba(245, 250, 252, 0.13);
+      border-radius: 28px;
+      background: var(--surface);
+      box-shadow: 0 20px 44px rgba(3, 31, 44, 0.42), inset 0 1px 0 rgba(245, 250, 252, 0.08);
+    }
+
+    .card-top {
+      min-height: 48px;
+      padding: 0 12px 0 15px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid rgba(24, 90, 112, 0.64);
+    }
+
+    .market-kind { color: var(--accent); font: 900 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .position-button { height: 34px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border: 1px solid rgba(6, 214, 160, 0.28); border-radius: 11px; color: var(--positive); background: var(--ground); font: 900 10px/1 var(--mono); cursor: pointer; }
+    .position-button i { font-size: 14px; }
+
+    .scoreboard {
+      min-height: 164px;
+      padding: 18px 16px 16px;
+      display: grid;
+      grid-template-columns: 1fr 72px 1fr;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .score-team { min-width: 0; text-align: center; }
+    .score-team img { width: 68px; height: 68px; display: block; margin: 0 auto; object-fit: contain; }
+    .score-team strong { display: block; margin-top: 10px; overflow: hidden; font-size: 15px; font-weight: 900; white-space: nowrap; text-overflow: ellipsis; }
+    .score-center { text-align: center; }
+    .score-center strong { display: block; color: var(--dim); font: 950 23px/1 var(--mono); letter-spacing: 0.08em; }
+    .fixture-note { margin-top: 7px; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+
+    .market-panel { min-height: 288px; position: relative; border-top: 1px solid rgba(24, 90, 112, 0.64); border-bottom: 1px solid rgba(24, 90, 112, 0.64); background: var(--ground); }
+    .panel-head { height: 56px; padding: 0 13px 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+    .panel-copy strong { display: block; font-size: 13px; font-weight: 900; }
+    .panel-copy span { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; }
+
+    .view-switch { height: 38px; padding: 3px; display: flex; gap: 3px; border: 1px solid var(--border); border-radius: 12px; background: var(--wallet); }
+    .view-button { min-width: 72px; padding: 0 9px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 9px; color: var(--faint); background: transparent; font: 850 10px/1 var(--mono); cursor: pointer; }
+    .view-button.active { color: var(--bone); background: var(--lift); }
+    .view-button.active i { color: var(--accent); }
+
+    .chart-panel { height: 232px; position: relative; padding: 0 14px 14px; }
+    .chart-legend { position: absolute; z-index: 3; top: 2px; left: 15px; display: flex; gap: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 4px; color: var(--faint); font: 800 9px/1 var(--mono); }
+    .legend-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); }
+    .legend-item.draw .legend-dot { background: var(--accent); }
+    .legend-item.city .legend-dot { background: var(--negative); }
+    .chart-panel svg { position: absolute; inset: 22px 9px 23px 9px; width: calc(100% - 18px); height: calc(100% - 45px); overflow: visible; }
+    .grid-line { stroke: rgba(24, 90, 112, 0.55); stroke-width: 1; }
+    .now-line { stroke: rgba(245, 250, 252, 0.19); stroke-width: 1; stroke-dasharray: 3 4; }
+    .chance-line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 310; stroke-dashoffset: 310; animation: drawLine 1.15s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+    .chance-line.arsenal { stroke: var(--positive); }
+    .chance-line.draw { stroke: var(--accent); animation-delay: 100ms; }
+    .chance-line.city { stroke: var(--negative); animation-delay: 180ms; }
+    @keyframes drawLine { to { stroke-dashoffset: 0; } }
+    .chart-axis { position: absolute; right: 13px; bottom: 7px; left: 13px; display: flex; justify-content: space-between; color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; }
+    .chance-badge { position: absolute; z-index: 4; right: 11px; min-width: 40px; padding: 3px 5px; border-radius: 6px; color: var(--screen); font: 950 10px/1 var(--mono); text-align: center; }
+    .chance-badge.arsenal { top: 42px; background: var(--positive); }
+    .chance-badge.draw { top: 148px; background: var(--accent); }
+    .chance-badge.city { top: 182px; color: var(--bone); background: var(--negative); }
+
+    .book-panel { min-height: 232px; padding: 0 14px 14px; }
+    .book-outcomes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    .book-outcome { height: 36px; overflow: hidden; border-radius: 8px; color: var(--faint); background: var(--surface); font: 850 10px/1 var(--mono); white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+    .book-outcome.active { color: var(--screen); background: var(--accent); }
+    .book-head, .book-row { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; }
+    .book-head { height: 27px; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .book-head span:nth-child(2), .book-head span:last-child, .book-row span:nth-child(2), .book-row span:last-child { text-align: right; }
+    .book-row { position: relative; height: 32px; padding: 0 6px; overflow: hidden; font: 800 11px/1 var(--mono); }
+    .book-row::before { content: ""; position: absolute; z-index: 0; top: 1px; right: 0; bottom: 1px; width: var(--depth); border-radius: 4px; background: var(--row-color); opacity: 0.11; }
+    .book-row span { position: relative; z-index: 1; }
+    .book-row.ask span:first-child { color: var(--negative); }
+    .book-row.bid span:first-child { color: var(--positive); }
+    .spread-row { height: 28px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .spread-row strong { color: var(--accent); }
+
+    .moneyline { padding: 15px 14px 15px; }
+    .moneyline-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .moneyline-head strong { font-size: 13px; font-weight: 900; }
+    .moneyline-head span { color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; }
+    .outcomes { margin-top: 11px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .outcome-button { min-width: 0; height: 66px; padding: 9px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; border: 1px solid var(--border); border-radius: 14px; color: var(--dim); background: var(--ground); cursor: pointer; }
+    .outcome-button span { max-width: 100%; overflow: hidden; font-size: 10px; font-weight: 850; white-space: nowrap; text-overflow: ellipsis; }
+    .outcome-button strong { font: 950 18px/1 var(--mono); }
+    .outcome-button.arsenal strong { color: var(--positive); }
+    .outcome-button.draw strong { color: var(--accent); }
+    .outcome-button.city strong { color: var(--negative); }
+    .outcome-button.selected { border-color: var(--accent); background: var(--lift); box-shadow: inset 0 -3px 0 var(--accent); }
+
+    .order-hint { margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 7px; color: var(--faint); font: 800 10px/1 var(--mono); text-transform: uppercase; }
+    .order-hint i { color: var(--accent); font-size: 12px; }
+
+    .trade-zone { padding: 12px 13px 13px; border-top: 1px solid rgba(24, 90, 112, 0.64); background: var(--surface); }
+    .trade-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .selected-copy { color: var(--accent); }
+    .trade-grid { margin-top: 8px; display: grid; grid-template-columns: 112px 1fr; gap: 7px; }
+    .quick-amounts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    .quick-amount { min-width: 0; height: 42px; padding: 0; border: 1px solid var(--border); border-radius: 10px; color: var(--dim); background: var(--ground); font: 900 9px/1 var(--mono); cursor: pointer; }
+    .quick-amount.active { color: var(--screen); border-color: var(--accent); background: var(--accent); }
+    .trade-button { min-width: 0; height: 42px; padding: 0 11px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-radius: 11px; color: var(--screen); background: var(--positive); cursor: pointer; }
+    .trade-button.draw { background: var(--accent); }
+    .trade-button.city { color: var(--bone); background: var(--negative); }
+    .trade-button strong { overflow: hidden; font-size: 9px; white-space: nowrap; text-overflow: ellipsis; }
+    .trade-button span { font: 800 9px/1.2 var(--mono); text-align: right; white-space: nowrap; }
+
+    .sheet-backdrop { position: absolute; z-index: 50; inset: 0; display: flex; align-items: flex-end; visibility: hidden; background: rgba(3, 31, 44, 0); transition: visibility 260ms, background 260ms ease; }
+    .sheet-backdrop.open { visibility: visible; background: rgba(3, 31, 44, 0.78); }
+    .position-sheet { width: 100%; padding: 10px 16px calc(20px + env(safe-area-inset-bottom)); border: 1px solid var(--border); border-bottom: 0; border-radius: 28px 28px 0 0; background: var(--ground); transform: translateY(104%); transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1); }
+    .sheet-backdrop.open .position-sheet { transform: translateY(0); }
+    .grabber { width: 36px; height: 4px; margin: 0 auto 16px; border-radius: 4px; background: var(--border); }
+    .sheet-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .sheet-top h2 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: -0.04em; }
+    .sheet-close { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--dim); background: var(--surface); cursor: pointer; }
+    .position-hero { margin-top: 18px; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+    .position-hero span { color: var(--positive); font: 900 9px/1 var(--mono); text-transform: uppercase; }
+    .position-hero h3 { margin: 7px 0 0; font-size: 20px; font-weight: 900; }
+    .position-pnl { color: var(--positive); font: 950 31px/1 var(--mono); letter-spacing: -0.08em; }
+    .position-grid { margin-top: 19px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+    .position-stat { min-width: 0; min-height: 58px; padding: 9px 7px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+    .position-stat span { display: block; overflow: hidden; color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; white-space: nowrap; text-overflow: ellipsis; }
+    .position-stat strong { display: block; margin-top: 8px; font: 900 11px/1 var(--mono); }
+    .position-actions { margin-top: 10px; display: grid; grid-template-columns: 1fr 1.35fr; gap: 7px; }
+    .position-action { height: 44px; border: 1px solid var(--border); border-radius: 12px; color: var(--bone); background: var(--surface); font-size: 10px; font-weight: 900; cursor: pointer; }
+    .position-action.primary { color: var(--screen); border-color: var(--positive); background: var(--positive); }
+
+    .order-composer { width: 100%; max-height: 88%; overflow-y: auto; padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); border: 1px solid var(--border); border-bottom: 0; border-radius: 28px 28px 0 0; background: var(--ground); scrollbar-width: none; transform: translateY(104%); transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1); }
+    .order-composer::-webkit-scrollbar { display: none; }
+    .sheet-backdrop.open .order-composer { transform: translateY(0); }
+    .composer-bar { display: grid; grid-template-columns: 36px 1fr 36px; align-items: center; gap: 8px; }
+    .composer-bar .grabber { grid-column: 2; margin: 0 auto; }
+    .composer-close { grid-column: 3; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--dim); background: var(--surface); cursor: pointer; }
+    .order-type-tabs { margin-top: 4px; padding: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border: 1px solid var(--border); border-radius: 13px; background: var(--wallet); }
+    .order-type { height: 36px; border-radius: 9px; color: var(--faint); background: transparent; font: 900 9px/1 var(--mono); cursor: pointer; }
+    .order-type.active { color: var(--bone); background: var(--lift); }
+    .order-context { padding: 13px 2px 7px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .order-context span { display: block; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .order-context strong { display: block; margin-top: 4px; font-size: 13px; font-weight: 900; }
+    .order-context > div:last-child { text-align: right; }
+    .limit-controls { min-height: 48px; padding: 7px 9px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+    .limit-copy span { display: block; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .limit-copy strong { display: block; margin-top: 5px; font: 900 10px/1 var(--mono); }
+    .price-stepper { display: grid; grid-template-columns: 34px 48px 34px; align-items: center; }
+    .price-stepper button { height: 32px; border-radius: 9px; color: var(--bone); background: var(--lift); font-size: 17px; cursor: pointer; }
+    .price-stepper strong { text-align: center; font: 900 12px/1 var(--mono); }
+    .composer-amount { padding: 9px 0 7px; text-align: center; }
+    .composer-amount span { display: block; color: var(--faint); font: 850 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+    .composer-amount strong { display: block; margin-top: 2px; font: 950 36px/1 var(--mono); letter-spacing: -0.08em; }
+    .composer-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+    .composer-quick button { height: 38px; border-radius: 9px; color: var(--dim); background: var(--surface); font: 900 10px/1 var(--mono); cursor: pointer; }
+    .numpad-grid { margin-top: 7px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+    .numpad-key { height: 42px; border-radius: 11px; color: var(--bone); background: var(--surface); font: 800 18px/1 var(--mono); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .numpad-key:active { background: var(--lift); transform: scale(0.97); }
+    .numpad-key.delete { color: var(--dim); font-size: 15px; }
+    .order-summary { min-height: 38px; padding: 8px 2px 6px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .order-summary span { color: var(--faint); font: 800 9px/1 var(--mono); }
+    .order-summary strong { color: var(--positive); font: 900 11px/1 var(--mono); }
+    .order-review { margin-top: 6px; padding: 2px 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+    .review-row { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .review-row + .review-row { border-top: 1px solid rgba(24, 90, 112, 0.55); }
+    .review-row span { color: var(--dim); font-size: 11px; }
+    .review-row strong { color: var(--bone); font-family: var(--mono); font-size: 13px; font-weight: 900; }
+    .review-row.highlight span, .review-row.highlight strong { color: var(--positive); }
+    .shares-note { padding: 7px 2px 2px; color: var(--faint); font-family: var(--mono); font-size: 10px; }
+    .order-confirm { width: 100%; height: 46px; border-radius: 13px; color: var(--screen); background: var(--positive); font-size: 11px; font-weight: 900; cursor: pointer; }
+    .order-confirm.draw { background: var(--accent); }
+    .order-confirm.city { color: var(--bone); background: var(--negative); }
+
+    .toast { position: absolute; z-index: 80; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom)); left: 16px; min-height: 45px; padding: 0 13px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--border); border-radius: 13px; color: var(--bone); background: var(--lift); box-shadow: 0 12px 28px rgba(3, 31, 44, 0.5); font-size: 10px; font-weight: 750; opacity: 0; pointer-events: none; transform: translateY(12px); transition: opacity 180ms ease, transform 220ms ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast i { color: var(--accent); font-size: 16px; }
+
+    @media (min-width: 500px) {
+      .stage { padding: 28px; }
+      .phone { border: 1px solid rgba(245, 250, 252, 0.12); border-radius: 38px; box-shadow: 0 38px 90px rgba(3, 31, 44, 0.65); }
+    }
+
+    @media (max-height: 790px) {
+      .scoreboard { min-height: 142px; }
+      .score-team img { width: 58px; height: 58px; }
+      .market-panel { min-height: 258px; }
+      .chart-panel, .book-panel { height: 202px; min-height: 202px; }
+      .chance-badge.arsenal { top: 36px; }
+      .chance-badge.draw { top: 128px; }
+      .chance-badge.city { top: 158px; }
+      .order-composer { max-height: 92%; }
+      .numpad-key { height: 38px; }
+      .composer-amount strong { font-size: 32px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="phone" aria-label="MyBoon live sports moneyline detail mockup">
+      <header class="topbar">
+        <button class="back-button" id="back-button" aria-label="Back to Discover"><i class="ph-bold ph-arrow-left"></i></button>
+        <div class="title-lockup"><strong>Arsenal vs Manchester City</strong><span>Sports · Moneyline</span></div>
+        <button class="cash-pill" aria-label="Prediction cash balance">$248.20</button>
+      </header>
+
+      <div class="detail-scroll">
+        <article class="market-card">
+          <header class="card-top">
+            <span class="market-kind">Match result · Moneyline</span>
+            <button class="position-button" id="position-button"><i class="ph-fill ph-user-circle-check"></i><span>Your pick</span><strong>+$2.35</strong></button>
+          </header>
+
+          <section class="scoreboard" aria-label="Arsenal versus Manchester City">
+            <div class="score-team">
+              <img src="https://upload.wikimedia.org/wikipedia/en/5/53/Arsenal_FC.svg" alt="Arsenal crest">
+              <strong>Arsenal</strong>
+            </div>
+            <div class="score-center">
+              <strong>VS</strong>
+              <div class="fixture-note">Moneyline</div>
+            </div>
+            <div class="score-team">
+              <img src="https://upload.wikimedia.org/wikipedia/en/e/eb/Manchester_City_FC_badge.svg" alt="Manchester City crest">
+              <strong>Man City</strong>
+            </div>
+          </section>
+
+          <section class="market-panel">
+            <div class="panel-head">
+              <div class="panel-copy"><strong>Market movement</strong><span>Price history</span></div>
+              <div class="view-switch" role="tablist" aria-label="Switch market view">
+                <button class="view-button active" data-view="chart" role="tab" aria-selected="true"><i class="ph ph-chart-line-up"></i><span>Chart</span></button>
+                <button class="view-button" data-view="book" role="tab" aria-selected="false"><i class="ph ph-stack"></i><span>Book</span></button>
+              </div>
+            </div>
+
+            <div class="chart-panel" id="chart-panel">
+              <div class="chart-legend" aria-hidden="true">
+                <span class="legend-item"><span class="legend-dot"></span>Arsenal</span>
+                <span class="legend-item draw"><span class="legend-dot"></span>Draw</span>
+                <span class="legend-item city"><span class="legend-dot"></span>City</span>
+              </div>
+              <svg viewBox="0 0 350 130" preserveAspectRatio="none" aria-label="Moneyline price history chart">
+                <path class="grid-line" d="M5 28 H343 M5 66 H343 M5 104 H343"></path>
+                <path class="now-line" d="M325 5 V121"></path>
+                <path class="chance-line arsenal" d="M5 75 C22 73,33 78,51 75 S78 70,95 72 S122 66,140 67 S162 61,179 64 S201 54,218 55 S237 49,252 50 S269 41,284 43 S302 30,325 27"></path>
+                <path class="chance-line draw" d="M5 71 C23 72,35 70,52 71 S78 73,96 72 S122 75,140 74 S161 77,180 76 S201 82,219 80 S238 85,254 84 S274 92,289 91 S306 96,325 97"></path>
+                <path class="chance-line city" d="M5 47 C22 50,35 45,52 48 S79 51,96 50 S122 55,141 54 S162 60,180 58 S200 68,219 67 S238 73,254 72 S274 82,289 80 S306 92,325 94"></path>
+              </svg>
+              <span class="chance-badge arsenal">76%</span>
+              <span class="chance-badge draw">12%</span>
+              <span class="chance-badge city">12%</span>
+              <div class="chart-axis"><span>Earlier</span><span>Mid-market</span><span>Now</span></div>
+            </div>
+
+            <div class="book-panel hidden" id="book-panel">
+              <div class="book-outcomes" role="tablist" aria-label="Choose order book outcome">
+                <button class="book-outcome active" data-outcome="arsenal">Arsenal</button>
+                <button class="book-outcome" data-outcome="draw">Draw</button>
+                <button class="book-outcome" data-outcome="city">Man City</button>
+              </div>
+              <div class="book-head"><span id="book-side-label">Arsenal orders</span><span>Price</span><span>Available</span></div>
+              <div class="book-row ask" style="--depth:75%;--row-color:var(--negative)"><span>Sell</span><span>78¢</span><span>$520</span></div>
+              <div class="book-row ask" style="--depth:48%;--row-color:var(--negative)"><span>Sell</span><span>77¢</span><span>$284</span></div>
+              <div class="spread-row"><span>Last 76¢</span><strong>1¢ spread</strong></div>
+              <div class="book-row bid" style="--depth:82%;--row-color:var(--positive)"><span>Buy</span><span>76¢</span><span>$640</span></div>
+              <div class="book-row bid" style="--depth:58%;--row-color:var(--positive)"><span>Buy</span><span>75¢</span><span>$318</span></div>
+              <div class="book-row bid" style="--depth:36%;--row-color:var(--positive)"><span>Buy</span><span>74¢</span><span>$164</span></div>
+            </div>
+          </section>
+
+          <section class="moneyline">
+            <div class="moneyline-head"><strong>Who wins?</strong><span>Live price</span></div>
+            <div class="outcomes" aria-label="Choose match result">
+              <button class="outcome-button arsenal selected" data-outcome="arsenal" aria-pressed="true"><span>Arsenal</span><strong>76¢</strong></button>
+              <button class="outcome-button draw" data-outcome="draw" aria-pressed="false"><span>Draw</span><strong>12¢</strong></button>
+              <button class="outcome-button city" data-outcome="city" aria-pressed="false"><span>Man City</span><strong>12¢</strong></button>
+            </div>
+            <div class="order-hint"><i class="ph-bold ph-hand-tap"></i><span>Tap a result to place an order</span></div>
+          </section>
+        </article>
+      </div>
+
+      <div class="sheet-backdrop" id="order-sheet" aria-hidden="true">
+        <section class="order-composer" role="dialog" aria-modal="true" aria-labelledby="order-title">
+          <div class="composer-bar"><div class="grabber"></div><button class="composer-close" id="order-close" aria-label="Close order entry"><i class="ph-bold ph-x"></i></button></div>
+          <div class="order-type-tabs" role="tablist" aria-label="Order type">
+            <button class="order-type active" data-order-type="market" role="tab" aria-selected="true">Market</button>
+            <button class="order-type" data-order-type="limit" role="tab" aria-selected="false">Limit</button>
+          </div>
+          <div class="order-context">
+            <div><span id="order-title">You picked</span><strong id="composer-pick">Arsenal</strong></div>
+            <div><span id="composer-price-label">Best available</span><strong id="composer-price">76¢</strong></div>
+          </div>
+          <div class="limit-controls hidden" id="limit-controls">
+            <div class="limit-copy"><span>Limit price · cancels at kickoff</span><strong>Buy only here or better</strong></div>
+            <div class="price-stepper"><button id="limit-minus" aria-label="Decrease limit price">−</button><strong id="limit-price">76¢</strong><button id="limit-plus" aria-label="Increase limit price">+</button></div>
+          </div>
+          <div class="composer-amount"><span>pUSD amount</span><strong id="composer-amount">10</strong></div>
+          <div class="composer-quick" aria-label="Quick amounts">
+            <button data-composer-amount="5">$5</button><button data-composer-amount="10">$10</button><button data-composer-amount="20">$20</button><button data-composer-amount="max">Max</button>
+          </div>
+          <div class="numpad-grid" aria-label="Amount keypad">
+            <button class="numpad-key" data-key="1">1</button><button class="numpad-key" data-key="2">2</button><button class="numpad-key" data-key="3">3</button>
+            <button class="numpad-key" data-key="4">4</button><button class="numpad-key" data-key="5">5</button><button class="numpad-key" data-key="6">6</button>
+            <button class="numpad-key" data-key="7">7</button><button class="numpad-key" data-key="8">8</button><button class="numpad-key" data-key="9">9</button>
+            <button class="numpad-key" data-key=".">.</button><button class="numpad-key" data-key="0">0</button><button class="numpad-key delete" data-key="delete" aria-label="Delete digit">⌫</button>
+          </div>
+          <div class="order-review">
+            <div class="review-row"><span>You pay</span><strong id="review-pay">$10.00</strong></div>
+            <div class="review-row"><span>Average price</span><strong id="review-price">76¢</strong></div>
+            <div class="review-row highlight"><span>If you're right</span><strong id="review-payout">$13.16</strong></div>
+            <div class="review-row"><span>Maximum loss</span><strong id="review-loss">$10.00</strong></div>
+          </div>
+          <div class="shares-note">≈ <span id="review-shares">13.16</span> shares · each pays $1.00 if right</div>
+          <button class="order-confirm" id="order-confirm">Buy Arsenal · $10</button>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="position-sheet" aria-hidden="true">
+        <section class="position-sheet" role="dialog" aria-modal="true" aria-labelledby="position-title">
+          <div class="grabber"></div>
+          <div class="sheet-top"><h2 id="position-title">Your live pick</h2><button class="sheet-close" id="sheet-close" aria-label="Close position"><i class="ph-bold ph-x"></i></button></div>
+          <div class="position-hero">
+            <div><span>Arsenal to win</span><h3>Match result</h3></div>
+            <div class="position-pnl">+$2.35</div>
+          </div>
+          <div class="position-grid">
+            <div class="position-stat"><span>Put in</span><strong>$20.00</strong></div>
+            <div class="position-stat"><span>Entry</span><strong>68¢</strong></div>
+            <div class="position-stat"><span>Now</span><strong>76¢</strong></div>
+            <div class="position-stat"><span>Value</span><strong>$22.35</strong></div>
+          </div>
+          <div class="position-actions"><button class="position-action" id="add-pick">Add to pick</button><button class="position-action primary" id="cash-out">Cash out $22.35</button></div>
+        </section>
+      </div>
+
+      <div class="toast" id="toast" role="status"><i class="ph-fill ph-sparkle"></i><span id="toast-copy"></span></div>
+    </section>
+  </main>
+
+  <script>
+    const outcomes = {
+      arsenal: { label: 'Arsenal', price: 0.76, tone: '' },
+      draw: { label: 'Draw', price: 0.12, tone: 'draw' },
+      city: { label: 'Man City', price: 0.12, tone: 'city' },
+    };
+    let selectedOutcome = 'arsenal';
+    let orderAmount = '10';
+    let orderType = 'market';
+    let limitPrice = 76;
+    let toastTimer;
+
+    const chartPanel = document.getElementById('chart-panel');
+    const bookPanel = document.getElementById('book-panel');
+    const toast = document.getElementById('toast');
+
+    function updateComposer() {
+      const outcome = outcomes[selectedOutcome];
+      const amount = Number(orderAmount) || 0;
+      const price = orderType === 'market' ? outcome.price : limitPrice / 100;
+      const shares = price > 0 ? amount / price : 0;
+      document.getElementById('composer-pick').textContent = outcome.label;
+      document.getElementById('composer-price-label').textContent = orderType === 'market' ? 'Best available' : 'Your limit';
+      document.getElementById('composer-price').textContent = `${Math.round(price * 100)}¢`;
+      document.getElementById('limit-price').textContent = `${limitPrice}¢`;
+      document.getElementById('composer-amount').textContent = orderAmount;
+      document.getElementById('review-pay').textContent = `$${amount.toFixed(2)}`;
+      document.getElementById('review-price').textContent = `${Math.round(price * 100)}¢`;
+      document.getElementById('review-payout').textContent = `$${shares.toFixed(2)}`;
+      document.getElementById('review-shares').textContent = shares.toFixed(2);
+      document.getElementById('review-loss').textContent = `$${amount.toFixed(2)}`;
+      const confirm = document.getElementById('order-confirm');
+      confirm.textContent = orderType === 'market' ? `Buy ${outcome.label} · $${orderAmount}` : `Place ${outcome.label} limit · $${orderAmount}`;
+      confirm.className = `order-confirm ${outcome.tone}`.trim();
+    }
+
+    function selectOutcome(key) {
+      selectedOutcome = key;
+      document.querySelectorAll('.outcome-button').forEach((button) => {
+        const active = button.dataset.outcome === key;
+        button.classList.toggle('selected', active);
+        button.setAttribute('aria-pressed', String(active));
+      });
+      limitPrice = Math.round(outcomes[key].price * 100);
+      updateComposer();
+    }
+
+    function toggleOrder(open) {
+      const sheet = document.getElementById('order-sheet');
+      sheet.classList.toggle('open', open);
+      sheet.setAttribute('aria-hidden', String(!open));
+    }
+
+    function openOrder(key) {
+      selectOutcome(key);
+      toggleOrder(true);
+    }
+
+    function setOrderType(type) {
+      orderType = type;
+      document.querySelectorAll('.order-type').forEach((button) => {
+        const active = button.dataset.orderType === type;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+      });
+      document.getElementById('limit-controls').classList.toggle('hidden', type !== 'limit');
+      updateComposer();
+    }
+
+    function setOrderAmount(value) {
+      orderAmount = value === 'max' ? '248.20' : String(value);
+      updateComposer();
+    }
+
+    function pressNumpad(key) {
+      if (key === 'delete') orderAmount = orderAmount.length > 1 ? orderAmount.slice(0, -1) : '0';
+      else if (key === '.' && orderAmount.includes('.')) return;
+      else if (orderAmount.includes('.') && orderAmount.split('.')[1].length >= 2) return;
+      else if (orderAmount.length >= 7) return;
+      else orderAmount = orderAmount === '0' && key !== '.' ? key : orderAmount + key;
+      updateComposer();
+    }
+
+    function switchView(view) {
+      document.querySelectorAll('.view-button').forEach((button) => {
+        const active = button.dataset.view === view;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+      });
+      chartPanel.classList.toggle('hidden', view !== 'chart');
+      bookPanel.classList.toggle('hidden', view !== 'book');
+    }
+
+    function selectBookOutcome(key) {
+      document.querySelectorAll('.book-outcome').forEach((button) => button.classList.toggle('active', button.dataset.outcome === key));
+      document.getElementById('book-side-label').textContent = `${outcomes[key].label} orders`;
+    }
+
+    function showToast(message) {
+      document.getElementById('toast-copy').textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    function togglePosition(open) {
+      const sheet = document.getElementById('position-sheet');
+      sheet.classList.toggle('open', open);
+      sheet.setAttribute('aria-hidden', String(!open));
+    }
+
+    document.querySelectorAll('.view-button').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
+    document.querySelectorAll('.outcome-button').forEach((button) => button.addEventListener('click', () => openOrder(button.dataset.outcome)));
+    document.querySelectorAll('.book-outcome').forEach((button) => button.addEventListener('click', () => selectBookOutcome(button.dataset.outcome)));
+    document.querySelectorAll('.order-type').forEach((button) => button.addEventListener('click', () => setOrderType(button.dataset.orderType)));
+    document.querySelectorAll('[data-composer-amount]').forEach((button) => button.addEventListener('click', () => setOrderAmount(button.dataset.composerAmount)));
+    document.querySelectorAll('.numpad-key').forEach((button) => button.addEventListener('click', () => pressNumpad(button.dataset.key)));
+    document.getElementById('limit-minus').addEventListener('click', () => { limitPrice = Math.max(1, limitPrice - 1); updateComposer(); });
+    document.getElementById('limit-plus').addEventListener('click', () => { limitPrice = Math.min(99, limitPrice + 1); updateComposer(); });
+    document.getElementById('order-close').addEventListener('click', () => toggleOrder(false));
+    document.getElementById('order-sheet').addEventListener('click', (event) => { if (event.target.id === 'order-sheet') toggleOrder(false); });
+    document.getElementById('order-confirm').addEventListener('click', () => {
+      toggleOrder(false);
+      showToast(orderType === 'market' ? `${outcomes[selectedOutcome].label} market order ready` : `${outcomes[selectedOutcome].label} limit order placed at ${limitPrice}¢`);
+    });
+    document.getElementById('position-button').addEventListener('click', () => togglePosition(true));
+    document.getElementById('sheet-close').addEventListener('click', () => togglePosition(false));
+    document.getElementById('position-sheet').addEventListener('click', (event) => { if (event.target.id === 'position-sheet') togglePosition(false); });
+    document.getElementById('add-pick').addEventListener('click', () => { togglePosition(false); openOrder('arsenal'); });
+    document.getElementById('cash-out').addEventListener('click', () => { togglePosition(false); showToast('Cash out preview opened'); });
+    document.getElementById('back-button').addEventListener('click', () => {
+      if (history.length > 1) history.back();
+      else window.location.href = 'polymarket-discover.html';
+    });
+
+    updateComposer();
+  </script>
+</body>
+</html>

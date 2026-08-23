@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#073B4C">
+  <title>MyBoon Predict — Profile</title>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <link rel="stylesheet" href="polymarket-detail-system.css">
+  <style>
+    .topbar { grid-template-columns: 38px 1fr 38px; }
+    .profile-scroll { position: absolute; inset: calc(58px + env(safe-area-inset-top)) 0 0; overflow-x: hidden; overflow-y: auto; padding: 9px 14px calc(25px + env(safe-area-inset-bottom)); scrollbar-width: none; }
+    .profile-scroll::-webkit-scrollbar, .profile-sheet::-webkit-scrollbar { display: none; }
+
+    .account-card { width: 100%; min-height: 76px; padding: 11px 12px; display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 11px; border: 1px solid rgba(245,250,252,.12); border-radius: 20px; color: var(--bone); background: var(--surface); text-align: left; cursor: pointer; box-shadow: inset 0 1px 0 rgba(245,250,252,.06); }
+    .account-avatar { position: relative; width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid rgba(255,209,102,.45); border-radius: 16px; color: var(--screen); background: var(--accent); font-size: 20px; font-weight: 950; }
+    .account-avatar::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px; border: 3px solid var(--surface); border-radius: 50%; background: var(--positive); }
+    .account-copy { min-width: 0; }
+    .account-name { display: block; overflow: hidden; font-size: 15px; font-weight: 950; white-space: nowrap; text-overflow: ellipsis; }
+    .account-login { display: block; margin-top: 4px; overflow: hidden; color: var(--dim); font: 750 9px/1 var(--mono); white-space: nowrap; text-overflow: ellipsis; }
+    .account-state { margin-top: 6px; display: flex; align-items: center; gap: 5px; color: var(--positive); font: 800 9px/1 var(--mono); }
+    .account-state i { font-size: 10px; }
+    .account-card > i { color: var(--faint); font-size: 15px; }
+
+    .capital-card { position: relative; margin-top: 9px; padding: 15px; overflow: hidden; border: 1px solid rgba(245,250,252,.14); border-radius: 25px; background: var(--wallet); box-shadow: 0 17px 36px rgba(3,31,44,.3), inset 0 1px 0 rgba(245,250,252,.06); }
+    .capital-card::before { content: ""; position: absolute; top: -73px; right: -52px; width: 154px; height: 154px; border: 30px solid rgba(17,138,178,.12); border-radius: 50%; pointer-events: none; }
+    .capital-top { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .capital-kicker { color: var(--accent); font: 900 9px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+    .currency-chip { height: 29px; padding: 0 9px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 9px; color: var(--dim); background: var(--ground); font: 850 9px/1 var(--mono); cursor: pointer; }
+    .currency-chip i { color: var(--faint); font-size: 10px; }
+    .capital-value { position: relative; margin: 13px 0 0; font: 950 35px/1 var(--mono); letter-spacing: -.08em; }
+    .capital-value span { margin-left: 6px; color: var(--faint); font: 750 9px/1 var(--mono); letter-spacing: 0; }
+    .capital-caption { position: relative; margin: 6px 0 0; color: var(--dim); font: 750 9px/1 var(--mono); }
+
+    .money-map { position: relative; margin-top: 15px; }
+    .money-track { height: 12px; padding: 2px; display: flex; gap: 2px; overflow: hidden; border: 1px solid var(--border); border-radius: 999px; background: var(--ground); }
+    .money-segment { min-width: 7px; height: 100%; border-radius: 999px; }
+    .money-segment.cash { width: 75.4%; background: var(--positive); }
+    .money-segment.play { width: 18.9%; background: var(--primary); }
+    .money-segment.ready { width: 5.7%; background: var(--accent); }
+    .money-legend { margin-top: 9px; display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 7px; }
+    .money-stat { min-width: 0; }
+    .money-label { display: flex; align-items: center; gap: 5px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .money-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); }
+    .money-stat.play .money-dot { background: var(--primary); }
+    .money-stat.ready .money-dot { background: var(--accent); }
+    .money-stat strong { display: block; margin-top: 5px; font: 900 10px/1 var(--mono); }
+    .money-stat.ready strong { color: var(--accent); }
+    .capital-actions { position: relative; margin-top: 14px; display: grid; grid-template-columns: 1.2fr 1fr; gap: 7px; }
+    .capital-action { height: 42px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--border); border-radius: 12px; color: var(--bone); background: var(--surface); font-size: 10px; font-weight: 900; cursor: pointer; }
+    .capital-action.primary { color: var(--screen); border-color: var(--positive); background: var(--positive); }
+    .capital-action i { font-size: 13px; }
+
+    .profile-tabs { position: sticky; z-index: 8; top: -9px; margin: 9px -1px 0; padding: 5px; display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; border: 1px solid var(--border); border-radius: 14px; background: rgba(3,31,44,.96); }
+    .profile-tab { height: 38px; padding: 0 7px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 10px; color: var(--faint); background: transparent; font: 850 9px/1 var(--mono); cursor: pointer; }
+    .profile-tab.active { color: var(--bone); background: var(--lift); }
+    .profile-tab.active i { color: var(--accent); }
+    .tab-count { min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center; border-radius: 999px; color: var(--screen); background: var(--accent); font: 950 9px/1 var(--mono); }
+
+    .profile-view { padding-top: 10px; }
+    .section-head { min-height: 30px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .section-head strong { display: block; font-size: 12px; font-weight: 950; }
+    .section-head span { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .section-head > span { margin-top: 2px; color: var(--dim); text-transform: uppercase; }
+
+    .ready-card { min-height: 70px; padding: 11px 11px 11px 13px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; border: 1px solid rgba(255,209,102,.42); border-radius: 16px; background: rgba(255,209,102,.08); }
+    .ready-copy span { color: var(--accent); font: 850 9px/1 var(--mono); text-transform: uppercase; }
+    .ready-copy strong { display: block; margin-top: 6px; font-size: 11px; font-weight: 950; }
+    .ready-copy small { display: block; margin-top: 4px; color: var(--dim); font: 750 9px/1 var(--mono); }
+    .collect-button { min-width: 91px; height: 40px; border-radius: 11px; color: var(--screen); background: var(--accent); font-size: 9px; font-weight: 950; cursor: pointer; }
+
+    .pick-list, .order-list, .activity-list { margin-top: 7px; display: grid; gap: 7px; }
+    .pick-card, .order-card { padding: 12px; border: 1px solid rgba(245,250,252,.11); border-radius: 17px; background: var(--surface); }
+    .pick-top, .order-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .pick-kind, .order-kind { color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .pick-kind i, .order-kind i { margin-right: 4px; color: var(--primary); font-size: 10px; }
+    .pick-pnl { color: var(--positive); font: 950 11px/1 var(--mono); }
+    .pick-title, .order-title { margin: 9px 0 0; overflow: hidden; font-size: 12px; font-weight: 950; white-space: nowrap; text-overflow: ellipsis; }
+    .pick-outcome, .order-outcome { margin-top: 5px; color: var(--positive); font: 850 9px/1 var(--mono); }
+    .pick-stats { margin-top: 11px; padding-top: 10px; display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; border-top: 1px solid rgba(24,90,112,.55); }
+    .pick-stat span { display: block; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .pick-stat strong { display: block; margin-top: 5px; font: 900 9px/1 var(--mono); }
+    .pick-stat:last-child { text-align: right; }
+
+    .order-status { padding: 5px 7px; border-radius: 7px; color: var(--accent); background: rgba(255,209,102,.09); font: 850 9px/1 var(--mono); }
+    .order-meta { margin-top: 11px; display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+    .order-price { color: var(--dim); font: 800 9px/1.35 var(--mono); }
+    .order-price strong { color: var(--bone); }
+    .cancel-order { height: 32px; padding: 0 10px; border: 1px solid rgba(239,71,111,.35); border-radius: 9px; color: var(--negative); background: var(--ground); font: 850 9px/1 var(--mono); cursor: pointer; }
+    .orders-summary { min-height: 48px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--border); border-radius: 14px; background: var(--wallet); }
+    .orders-summary span { color: var(--dim); font-size: 9px; font-weight: 850; }
+    .orders-summary strong { color: var(--accent); font: 950 11px/1 var(--mono); }
+
+    .activity-item { min-height: 61px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; }
+    .activity-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; color: var(--primary); background: var(--surface); font-size: 15px; }
+    .activity-icon.positive { color: var(--positive); }
+    .activity-icon.accent { color: var(--accent); }
+    .activity-copy strong { display: block; font-size: 10px; font-weight: 900; }
+    .activity-copy span { display: block; margin-top: 5px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .activity-value { text-align: right; font: 900 9px/1 var(--mono); }
+    .activity-value.positive { color: var(--positive); }
+    .activity-value span { display: block; margin-top: 5px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .privacy-note { margin-top: 12px; padding: 10px 12px; display: flex; align-items: flex-start; gap: 8px; border-radius: 13px; color: var(--faint); background: rgba(3,31,44,.5); font: 750 9px/1.45 var(--mono); }
+    .privacy-note i { flex: 0 0 auto; color: var(--positive); font-size: 13px; }
+
+    .profile-sheet { width: 100%; max-height: 88%; overflow-y: auto; padding: 10px 16px calc(20px + env(safe-area-inset-bottom)); border: 1px solid var(--border); border-bottom: 0; border-radius: 28px 28px 0 0; background: var(--ground); scrollbar-width: none; transform: translateY(104%); transition: transform 340ms cubic-bezier(.16,1,.3,1); }
+    .sheet-backdrop.open .profile-sheet { transform: translateY(0); }
+    .sheet-heading { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1.35 var(--mono); }
+    .sheet-section-label { display: block; margin: 18px 0 7px; color: var(--accent); font: 850 9px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .settings-list { overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+    .settings-row { width: 100%; min-height: 55px; padding: 0 12px; display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 10px; border-bottom: 1px solid rgba(24,90,112,.55); color: var(--bone); background: transparent; text-align: left; cursor: pointer; }
+    .settings-row:last-child { border-bottom: 0; }
+    .settings-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; color: var(--primary); background: var(--ground); font-size: 14px; }
+    .settings-icon.secure { color: var(--positive); }
+    .settings-copy strong { display: block; font-size: 10px; font-weight: 900; }
+    .settings-copy span { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .settings-value { display: flex; align-items: center; gap: 4px; color: var(--dim); font: 800 9px/1 var(--mono); }
+    .settings-value i { color: var(--faint); font-size: 12px; }
+    .sign-out { width: 100%; height: 44px; margin-top: 14px; border: 1px solid rgba(239,71,111,.35); border-radius: 12px; color: var(--negative); background: var(--surface); font-size: 10px; font-weight: 900; cursor: pointer; }
+    .switch { width: 38px; height: 23px; padding: 3px; display: flex; justify-content: flex-end; border-radius: 999px; background: var(--positive); }
+    .switch::after { content: ""; width: 17px; height: 17px; border-radius: 50%; background: var(--screen); }
+    .confirm-card { padding: 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); }
+    .confirm-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: var(--negative); background: rgba(239,71,111,.1); font-size: 19px; }
+    .confirm-card h3 { margin: 14px 0 0; font-size: 19px; font-weight: 950; letter-spacing: -.03em; }
+    .confirm-card p { margin: 8px 0 0; color: var(--dim); font-size: 10px; font-weight: 700; line-height: 1.45; }
+    .confirm-actions { margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .confirm-action { height: 43px; border: 1px solid var(--border); border-radius: 12px; color: var(--bone); background: var(--ground); font-size: 10px; font-weight: 900; cursor: pointer; }
+    .confirm-action.danger { color: var(--bone); border-color: var(--negative); background: var(--negative); }
+
+    @media (max-height: 760px) {
+      .account-card { min-height: 68px; }
+      .capital-card { padding: 13px; }
+      .capital-value { font-size: 31px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="phone" aria-label="MyBoon Predict profile mockup">
+      <header class="topbar">
+        <button class="back-button" id="back-button" aria-label="Back to Discover"><i class="ph-bold ph-arrow-left"></i></button>
+        <div class="title-lockup"><strong>Profile</strong><span>Account · Predict</span></div>
+        <button class="back-button" id="settings-button" aria-label="Open Predict settings"><i class="ph-bold ph-gear-six"></i></button>
+      </header>
+
+      <div class="profile-scroll">
+        <button class="account-card" id="account-button" aria-label="Open account and security">
+          <span class="account-avatar">B</span>
+          <span class="account-copy"><strong class="account-name">Bibhu</strong><span class="account-login">bi•••@gmail.com · Google</span><span class="account-state"><i class="ph-fill ph-shield-check"></i> Account protected</span></span>
+          <i class="ph-bold ph-caret-right"></i>
+        </button>
+
+        <section class="capital-card" aria-label="Predict value">
+          <div class="capital-top"><span class="capital-kicker">Your Predict value</span><button class="currency-chip" id="currency-button">INR display <i class="ph-bold ph-caret-down"></i></button></div>
+          <h1 class="capital-value">$329.12 <span>pUSD value</span></h1>
+          <p class="capital-caption">Approximately ₹27,481 across your Predict account</p>
+          <div class="money-map" aria-label="Money allocation">
+            <div class="money-track"><span class="money-segment cash"></span><span class="money-segment play"></span><span class="money-segment ready"></span></div>
+            <div class="money-legend">
+              <div class="money-stat"><span class="money-label"><i class="money-dot"></i>Available</span><strong>$248.20</strong></div>
+              <div class="money-stat play"><span class="money-label"><i class="money-dot"></i>In picks</span><strong>$62.40</strong></div>
+              <div class="money-stat ready"><span class="money-label"><i class="money-dot"></i>Ready</span><strong>$18.52</strong></div>
+            </div>
+          </div>
+          <div class="capital-actions"><button class="capital-action primary" id="deposit-button"><i class="ph-bold ph-plus"></i>Deposit</button><button class="capital-action" id="withdraw-button"><i class="ph-bold ph-arrow-up-right"></i>Withdraw</button></div>
+        </section>
+
+        <nav class="profile-tabs" role="tablist" aria-label="Profile activity">
+          <button class="profile-tab active" data-tab="positions" role="tab" aria-selected="true"><i class="ph-bold ph-chart-pie-slice"></i>Positions</button>
+          <button class="profile-tab" data-tab="orders" role="tab" aria-selected="false"><i class="ph-bold ph-clock-countdown"></i>Orders <span class="tab-count">2</span></button>
+          <button class="profile-tab" data-tab="activity" role="tab" aria-selected="false"><i class="ph-bold ph-receipt"></i>Activity</button>
+        </nav>
+
+        <section class="profile-view" id="positions-view" data-view="positions">
+          <div class="section-head"><div><strong>Your positions</strong><span>What is open and ready now</span></div><span>2 active</span></div>
+          <article class="ready-card" id="ready-card"><div class="ready-copy"><span>Ready to collect</span><strong>Fed decision · No change</strong><small>Your winning position settled</small></div><button class="collect-button" id="collect-button">Collect $18.52</button></article>
+          <div class="pick-list">
+            <article class="pick-card"><div class="pick-top"><span class="pick-kind"><i class="ph-fill ph-bank"></i>Economy · Event</span><strong class="pick-pnl">+$1.84</strong></div><h2 class="pick-title">What will the Fed do next?</h2><div class="pick-outcome">Your pick · No change</div><div class="pick-stats"><div class="pick-stat"><span>You paid</span><strong>$20.00</strong></div><div class="pick-stat"><span>Current value</span><strong>$21.84</strong></div><div class="pick-stat"><span>Chance now</span><strong>54%</strong></div></div></article>
+            <article class="pick-card"><div class="pick-top"><span class="pick-kind"><i class="ph-fill ph-soccer-ball"></i>Football · Moneyline</span><strong class="pick-pnl">+$0.83</strong></div><h2 class="pick-title">Arsenal vs Manchester City</h2><div class="pick-outcome">Your pick · Arsenal</div><div class="pick-stats"><div class="pick-stat"><span>You paid</span><strong>$15.00</strong></div><div class="pick-stat"><span>Current value</span><strong>$15.83</strong></div><div class="pick-stat"><span>Chance now</span><strong>42%</strong></div></div></article>
+          </div>
+        </section>
+
+        <section class="profile-view hidden" id="orders-view" data-view="orders">
+          <div class="section-head"><div><strong>Open orders</strong><span>Waiting to match at your price</span></div><span>2 open</span></div>
+          <div class="orders-summary"><span>Reserved for these orders</span><strong>$15.00 pUSD</strong></div>
+          <div class="order-list">
+            <article class="order-card"><div class="order-top"><span class="order-kind"><i class="ph-fill ph-bank"></i>Fed decision</span><span class="order-status">Waiting</span></div><h2 class="order-title">25 bps rate cut</h2><div class="order-outcome">Limit buy</div><div class="order-meta"><div class="order-price"><strong>29¢</strong> limit · $10.00 reserved</div><button class="cancel-order">Cancel</button></div></article>
+            <article class="order-card"><div class="order-top"><span class="order-kind"><i class="ph-fill ph-currency-btc"></i>BTC · 1 hour</span><span class="order-status">Waiting</span></div><h2 class="order-title">Bitcoin higher or lower</h2><div class="order-outcome">Your pick · Higher</div><div class="order-meta"><div class="order-price"><strong>47¢</strong> limit · $5.00 reserved</div><button class="cancel-order">Cancel</button></div></article>
+          </div>
+        </section>
+
+        <section class="profile-view hidden" id="activity-view" data-view="activity">
+          <div class="section-head"><div><strong>Recent activity</strong><span>Orders, payouts and cash movement</span></div><span>All</span></div>
+          <div class="activity-list">
+            <article class="activity-item"><span class="activity-icon positive"><i class="ph-bold ph-trophy"></i></span><span class="activity-copy"><strong>Position won</strong><span>Fed decision · No change</span></span><strong class="activity-value positive">+$18.52<span>Today</span></strong></article>
+            <article class="activity-item"><span class="activity-icon"><i class="ph-bold ph-check"></i></span><span class="activity-copy"><strong>Limit order filled</strong><span>Arsenal · 41¢</span></span><strong class="activity-value">−$15.00<span>Yesterday</span></strong></article>
+            <article class="activity-item"><span class="activity-icon accent"><i class="ph-bold ph-arrow-down"></i></span><span class="activity-copy"><strong>Deposit</strong><span>Polygon · pUSD</span></span><strong class="activity-value positive">+$100.00<span>Aug 20</span></strong></article>
+            <article class="activity-item"><span class="activity-icon"><i class="ph-bold ph-x"></i></span><span class="activity-copy"><strong>Order cancelled</strong><span>Bitcoin Up · 45¢</span></span><strong class="activity-value">$5.00 freed<span>Aug 19</span></strong></article>
+          </div>
+        </section>
+
+        <div class="privacy-note"><i class="ph-fill ph-lock-key"></i><span>Login and wallet details stay separate from your picks and history. Sensitive changes require confirmation.</span></div>
+      </div>
+
+      <div class="sheet-backdrop" id="account-sheet" aria-hidden="true">
+        <section class="profile-sheet" role="dialog" aria-modal="true" aria-labelledby="account-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="sheet-top"><div><h2 id="account-title">Account &amp; security</h2><span class="sheet-heading">Manage how you sign in and where funds can move.</span></div><button class="sheet-close" data-close="account-sheet" aria-label="Close account and security"><i class="ph-bold ph-x"></i></button></div>
+          <span class="sheet-section-label">Login</span>
+          <div class="settings-list">
+            <button class="settings-row" data-action="login"><span class="settings-icon"><i class="ph-bold ph-envelope-simple"></i></span><span class="settings-copy"><strong>Email</strong><span>bi•••@gmail.com</span></span><span class="settings-value">Google <i class="ph-bold ph-caret-right"></i></span></button>
+            <button class="settings-row" data-action="passkey"><span class="settings-icon secure"><i class="ph-bold ph-fingerprint"></i></span><span class="settings-copy"><strong>Passkey</strong><span>Faster, protected sign-in</span></span><span class="settings-value">Add <i class="ph-bold ph-caret-right"></i></span></button>
+          </div>
+          <span class="sheet-section-label">Connected wallets</span>
+          <div class="settings-list">
+            <button class="settings-row" data-action="predict-wallet"><span class="settings-icon secure"><i class="ph-bold ph-wallet"></i></span><span class="settings-copy"><strong>Predict wallet</strong><span>0x71•••A92C · Connected</span></span><span class="settings-value"><i class="ph-bold ph-caret-right"></i></span></button>
+            <button class="settings-row" data-action="withdrawal-wallet"><span class="settings-icon"><i class="ph-bold ph-arrow-square-out"></i></span><span class="settings-copy"><strong>Withdrawal wallet</strong><span>0x89•••4F2C · Polygon</span></span><span class="settings-value"><i class="ph-bold ph-caret-right"></i></span></button>
+          </div>
+          <button class="sign-out" id="sign-out-button">Sign out of MyBoon</button>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="settings-sheet" aria-hidden="true">
+        <section class="profile-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="sheet-top"><div><h2 id="settings-title">Predict settings</h2><span class="sheet-heading">Preferences follow you across every market.</span></div><button class="sheet-close" data-close="settings-sheet" aria-label="Close Predict settings"><i class="ph-bold ph-x"></i></button></div>
+          <span class="sheet-section-label">Trading display</span>
+          <div class="settings-list">
+            <button class="settings-row" data-action="odds"><span class="settings-icon"><i class="ph-bold ph-percent"></i></span><span class="settings-copy"><strong>Odds format</strong><span>How outcomes are displayed</span></span><span class="settings-value">Probability <i class="ph-bold ph-caret-right"></i></span></button>
+            <button class="settings-row" data-action="currency"><span class="settings-icon"><i class="ph-bold ph-currency-circle-dollar"></i></span><span class="settings-copy"><strong>Display currency</strong><span>Orders still use pUSD</span></span><span class="settings-value">INR <i class="ph-bold ph-caret-right"></i></span></button>
+            <button class="settings-row" data-action="amounts"><span class="settings-icon"><i class="ph-bold ph-calculator"></i></span><span class="settings-copy"><strong>Quick amounts</strong><span>$5 · $10 · $20</span></span><span class="settings-value"><i class="ph-bold ph-caret-right"></i></span></button>
+          </div>
+          <span class="sheet-section-label">Safety</span>
+          <div class="settings-list">
+            <button class="settings-row" data-action="confirmation"><span class="settings-icon secure"><i class="ph-bold ph-shield-check"></i></span><span class="settings-copy"><strong>Order review</strong><span>Show payout and maximum loss</span></span><span class="switch" aria-label="Order review on"></span></button>
+            <button class="settings-row" data-action="notifications"><span class="settings-icon"><i class="ph-bold ph-bell"></i></span><span class="settings-copy"><strong>Notifications</strong><span>Fills, results and payouts</span></span><span class="settings-value">On <i class="ph-bold ph-caret-right"></i></span></button>
+          </div>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="signout-sheet" aria-hidden="true">
+        <section class="profile-sheet" role="dialog" aria-modal="true" aria-labelledby="signout-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="confirm-card"><span class="confirm-icon"><i class="ph-bold ph-sign-out"></i></span><h3 id="signout-title">Sign out of MyBoon?</h3><p>Your Predict positions and pUSD stay in your account. You will need to sign in again to trade, withdraw, or change security settings.</p><div class="confirm-actions"><button class="confirm-action" data-close="signout-sheet">Stay signed in</button><button class="confirm-action danger" id="confirm-signout">Sign out</button></div></div>
+        </section>
+      </div>
+
+      <div class="toast" id="toast" role="status"><i class="ph-fill ph-sparkle"></i><span id="toast-copy"></span></div>
+    </section>
+  </main>
+
+  <script>
+    let toastTimer;
+
+    function setSheet(id, open) {
+      document.querySelectorAll('.sheet-backdrop').forEach(sheet => {
+        const shouldOpen = open && sheet.id === id;
+        sheet.classList.toggle('open', shouldOpen);
+        sheet.setAttribute('aria-hidden', String(!shouldOpen));
+      });
+    }
+
+    function showToast(message) {
+      document.getElementById('toast-copy').textContent = message;
+      const toast = document.getElementById('toast');
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1900);
+    }
+
+    function setTab(tab) {
+      document.querySelectorAll('.profile-tab').forEach(button => {
+        const active = button.dataset.tab === tab;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+      });
+      document.querySelectorAll('[data-view]').forEach(view => view.classList.toggle('hidden', view.dataset.view !== tab));
+    }
+
+    document.querySelectorAll('.profile-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
+    document.getElementById('account-button').addEventListener('click', () => setSheet('account-sheet', true));
+    document.getElementById('settings-button').addEventListener('click', () => setSheet('settings-sheet', true));
+    document.getElementById('currency-button').addEventListener('click', () => setSheet('settings-sheet', true));
+    document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => setSheet(button.dataset.close, false)));
+    document.querySelectorAll('.sheet-backdrop').forEach(sheet => sheet.addEventListener('click', event => { if (event.target === sheet) setSheet(sheet.id, false); }));
+    document.getElementById('deposit-button').addEventListener('click', () => showToast('Deposit flow opened'));
+    document.getElementById('withdraw-button').addEventListener('click', () => showToast('Withdrawal review opened'));
+    document.getElementById('collect-button').addEventListener('click', event => { event.currentTarget.textContent = 'Collecting…'; showToast('$18.52 collection started'); });
+    document.querySelectorAll('.cancel-order').forEach(button => button.addEventListener('click', event => { event.currentTarget.textContent = 'Requested'; event.currentTarget.disabled = true; showToast('Cancel request sent'); }));
+    document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => showToast(`${button.querySelector('strong').textContent} opened`)));
+    document.getElementById('sign-out-button').addEventListener('click', () => setSheet('signout-sheet', true));
+    document.getElementById('confirm-signout').addEventListener('click', () => { setSheet('signout-sheet', false); showToast('Signed out safely'); });
+    document.getElementById('back-button').addEventListener('click', () => { if (history.length > 1) history.back(); else location.href = 'polymarket-discover.html'; });
+  </script>
+</body>
+</html>

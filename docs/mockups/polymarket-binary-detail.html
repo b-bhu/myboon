@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#073B4C">
+  <title>MyBoon Predict — Binary Market</title>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <link rel="stylesheet" href="polymarket-detail-system.css">
+  <style>
+    .binary-hero { min-height: 196px; padding: 20px 17px 18px; display: flex; flex-direction: column; justify-content: space-between; }
+    .binary-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--faint); font: 850 9px/1 var(--mono); text-transform: uppercase; }
+    .binary-meta span:first-child { color: var(--accent); }
+    .binary-question { max-width: 340px; margin: 13px 0 17px; font-size: 29px; line-height: .98; font-weight: 950; letter-spacing: -.058em; }
+    .consensus { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; }
+    .consensus-side { min-width: 45px; }
+    .consensus-side:last-child { text-align: right; }
+    .consensus-side strong { display: block; font: 950 17px/1 var(--mono); }
+    .consensus-side span { display: block; margin-top: 4px; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .consensus-side.yes strong { color: var(--positive); }
+    .consensus-side.no strong { color: var(--negative); }
+    .consensus-track { height: 10px; overflow: hidden; border-radius: 10px; background: var(--negative); }
+    .consensus-fill { width: 57%; height: 100%; border-radius: 10px 0 0 10px; background: var(--positive); }
+    .binary-panel { min-height: 288px; }
+    .binary-chart .price-badge.primary { top: 63px; }
+    .binary-chart .price-badge.secondary { top: 145px; }
+    .binary-picks { padding: 15px 14px 16px; }
+    .binary-picks-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .binary-picks-head strong { font-size: 13px; font-weight: 900; }
+    .binary-picks-head span { color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; }
+    .binary-buttons { margin-top: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .binary-button { height: 72px; padding: 11px 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; border: 1px solid var(--border); border-radius: 15px; color: var(--dim); background: var(--ground); cursor: pointer; }
+    .binary-button span { font-size: 11px; font-weight: 900; }
+    .binary-button strong { font: 950 20px/1 var(--mono); }
+    .binary-button.yes strong { color: var(--positive); }
+    .binary-button.no strong { color: var(--negative); }
+    .binary-button.selected { border-color: var(--accent); background: var(--lift); box-shadow: inset 0 -4px 0 var(--accent); }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="phone" aria-label="MyBoon binary prediction detail mockup">
+      <header class="topbar">
+        <button class="back-button" id="back-button" aria-label="Back to Discover"><i class="ph-bold ph-arrow-left"></i></button>
+        <div class="title-lockup"><strong>Digital assets bill</strong><span>Politics · Binary</span></div>
+        <button class="cash-pill" aria-label="Prediction cash balance">$248.20</button>
+      </header>
+
+      <div class="detail-scroll">
+        <article class="market-card">
+          <header class="card-top">
+            <span class="market-kind">Yes or no</span>
+            <button class="position-button" id="position-button"><i class="ph-fill ph-user-circle-check"></i><span>Your pick</span><strong>+$3.12</strong></button>
+          </header>
+
+          <section class="binary-hero">
+            <div class="binary-meta"><span>Policy</span><span>Resolves Aug 31 · $8.4m traded</span></div>
+            <h1 class="binary-question">Will the digital assets bill pass this month?</h1>
+            <div class="consensus" aria-label="Yes 57 percent, No 43 percent">
+              <div class="consensus-side yes"><strong>57¢</strong><span>Yes</span></div>
+              <div class="consensus-track"><div class="consensus-fill"></div></div>
+              <div class="consensus-side no"><strong>43¢</strong><span>No</span></div>
+            </div>
+          </section>
+
+          <section class="panel binary-panel">
+            <div class="panel-head">
+              <div class="panel-copy"><strong>Market movement</strong><span>Price history</span></div>
+              <div class="view-switch" role="tablist" aria-label="Switch market view">
+                <button class="view-button active" data-view="chart" role="tab" aria-selected="true"><i class="ph ph-chart-line-up"></i><span>Chart</span></button>
+                <button class="view-button" data-view="book" role="tab" aria-selected="false"><i class="ph ph-stack"></i><span>Book</span></button>
+              </div>
+            </div>
+
+            <div class="chart binary-chart" id="chart-panel">
+              <div class="chart-legend" aria-hidden="true"><span class="legend-item"><span class="legend-dot"></span>Yes</span><span class="legend-item alt"><span class="legend-dot"></span>No</span></div>
+              <svg viewBox="0 0 350 130" preserveAspectRatio="none" aria-label="Yes and No price history">
+                <path class="grid-line" d="M5 28 H343 M5 66 H343 M5 104 H343"></path>
+                <path class="now-line" d="M325 5 V121"></path>
+                <path class="prob-line primary" d="M5 76 C25 75,39 79,58 74 S90 69,108 71 S141 65,159 67 S190 59,210 60 S241 54,260 55 S293 46,325 43"></path>
+                <path class="prob-line secondary" d="M5 48 C25 49,40 45,58 50 S90 55,108 53 S141 59,159 57 S190 65,210 64 S241 70,260 69 S293 78,325 81"></path>
+              </svg>
+              <span class="price-badge primary">57¢</span><span class="price-badge alt secondary">43¢</span>
+              <div class="chart-axis"><span>Earlier</span><span>Mid-market</span><span>Now</span></div>
+            </div>
+
+            <div class="book hidden" id="book-panel">
+              <div class="book-tabs" role="tablist" aria-label="Choose order book side"><button class="book-tab active" data-side="yes">Yes</button><button class="book-tab" data-side="no">No</button></div>
+              <div class="book-head"><span id="book-label">Yes orders</span><span>Price</span><span>Available</span></div>
+              <div class="book-row ask" style="--depth:74%;--row-color:var(--negative)"><span>Sell</span><span>59¢</span><span>$720</span></div>
+              <div class="book-row ask" style="--depth:49%;--row-color:var(--negative)"><span>Sell</span><span>58¢</span><span>$388</span></div>
+              <div class="spread-row"><span>Last 57¢</span><strong>1¢ spread</strong></div>
+              <div class="book-row bid" style="--depth:86%;--row-color:var(--positive)"><span>Buy</span><span>57¢</span><span>$980</span></div>
+              <div class="book-row bid" style="--depth:61%;--row-color:var(--positive)"><span>Buy</span><span>56¢</span><span>$574</span></div>
+              <div class="book-row bid" style="--depth:37%;--row-color:var(--positive)"><span>Buy</span><span>55¢</span><span>$216</span></div>
+            </div>
+          </section>
+
+          <section class="binary-picks">
+            <div class="binary-picks-head"><strong>What’s your pick?</strong><span>Current price</span></div>
+            <div class="binary-buttons">
+              <button class="binary-button yes selected" data-side="yes" aria-pressed="true"><span>Yes, it will</span><strong>57¢</strong></button>
+              <button class="binary-button no" data-side="no" aria-pressed="false"><span>No, it won’t</span><strong>43¢</strong></button>
+            </div>
+            <div class="order-hint"><i class="ph-bold ph-hand-tap"></i><span>Tap a side to place an order</span></div>
+          </section>
+        </article>
+      </div>
+
+      <div class="sheet-backdrop" id="order-sheet" aria-hidden="true">
+        <section class="order-composer" role="dialog" aria-modal="true" aria-labelledby="order-title">
+          <div class="composer-bar"><div class="grabber"></div><button class="composer-close" id="order-close" aria-label="Close order entry"><i class="ph-bold ph-x"></i></button></div>
+          <div class="order-type-tabs" role="tablist" aria-label="Order type"><button class="order-type active" data-order-type="market" role="tab" aria-selected="true">Market</button><button class="order-type" data-order-type="limit" role="tab" aria-selected="false">Limit</button></div>
+          <div class="order-context"><div><span id="order-title">You picked</span><strong id="composer-pick">Yes</strong></div><div><span id="composer-price-label">Best available</span><strong id="composer-price">57¢</strong></div></div>
+          <div class="limit-controls hidden" id="limit-controls"><div class="limit-copy"><span>Limit price · cancels at deadline</span><strong>Buy only here or better</strong></div><div class="price-stepper"><button id="limit-minus" aria-label="Decrease limit price">−</button><strong id="limit-price">57¢</strong><button id="limit-plus" aria-label="Increase limit price">+</button></div></div>
+          <div class="composer-amount"><span>pUSD amount</span><strong id="composer-amount">10</strong></div>
+          <div class="composer-quick"><button data-amount="5">$5</button><button data-amount="10">$10</button><button data-amount="20">$20</button><button data-amount="max">Max</button></div>
+          <div class="numpad-grid" aria-label="Amount keypad">
+            <button class="numpad-key" data-key="1">1</button><button class="numpad-key" data-key="2">2</button><button class="numpad-key" data-key="3">3</button>
+            <button class="numpad-key" data-key="4">4</button><button class="numpad-key" data-key="5">5</button><button class="numpad-key" data-key="6">6</button>
+            <button class="numpad-key" data-key="7">7</button><button class="numpad-key" data-key="8">8</button><button class="numpad-key" data-key="9">9</button>
+            <button class="numpad-key" data-key=".">.</button><button class="numpad-key" data-key="0">0</button><button class="numpad-key delete" data-key="delete" aria-label="Delete digit">⌫</button>
+          </div>
+          <div class="order-review">
+            <div class="review-row"><span>You pay</span><strong id="review-pay">$10.00</strong></div>
+            <div class="review-row"><span>Average price</span><strong id="review-price">57¢</strong></div>
+            <div class="review-row highlight"><span>If you're right</span><strong id="review-payout">$17.54</strong></div>
+            <div class="review-row"><span>Maximum loss</span><strong id="review-loss">$10.00</strong></div>
+          </div>
+          <div class="shares-note">≈ <span id="review-shares">17.54</span> shares · each pays $1.00 if right</div>
+          <button class="order-confirm" id="order-confirm">Buy Yes · $10</button>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="position-sheet" aria-hidden="true">
+        <section class="position-sheet" role="dialog" aria-modal="true" aria-labelledby="position-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="sheet-top"><h2 id="position-title">Your prediction</h2><button class="sheet-close" id="position-close" aria-label="Close position"><i class="ph-bold ph-x"></i></button></div>
+          <div class="position-hero"><div><span>Yes</span><h3>Digital assets bill</h3></div><div class="position-pnl">+$3.12</div></div>
+          <div class="position-grid"><div class="position-stat"><span>Put in</span><strong>$25.00</strong></div><div class="position-stat"><span>Entry</span><strong>50¢</strong></div><div class="position-stat"><span>Now</span><strong>57¢</strong></div><div class="position-stat"><span>Value</span><strong>$28.12</strong></div></div>
+          <div class="position-actions"><button class="position-action" id="add-pick">Add to pick</button><button class="position-action primary" id="cash-out">Cash out $28.12</button></div>
+        </section>
+      </div>
+
+      <div class="toast" id="toast" role="status"><i class="ph-fill ph-sparkle"></i><span id="toast-copy"></span></div>
+    </section>
+  </main>
+
+  <script>
+    const sides = { yes: { label: 'Yes', price: .57, tone: '' }, no: { label: 'No', price: .43, tone: 'negative' } };
+    let selected = 'yes';
+    let orderType = 'market';
+    let amount = '10';
+    let limitPrice = 57;
+    let toastTimer;
+
+    function toggleSheet(id, open) { const sheet = document.getElementById(id); sheet.classList.toggle('open', open); sheet.setAttribute('aria-hidden', String(!open)); }
+    function updateComposer() {
+      const side = sides[selected];
+      const numericAmount = Number(amount) || 0;
+      const price = orderType === 'market' ? side.price : limitPrice / 100;
+      const shares = price > 0 ? numericAmount / price : 0;
+      document.getElementById('composer-pick').textContent = side.label;
+      document.getElementById('composer-price-label').textContent = orderType === 'market' ? 'Best available' : 'Your limit';
+      document.getElementById('composer-price').textContent = `${Math.round(price * 100)}¢`;
+      document.getElementById('limit-price').textContent = `${limitPrice}¢`;
+      document.getElementById('composer-amount').textContent = amount;
+      document.getElementById('review-pay').textContent = `$${numericAmount.toFixed(2)}`;
+      document.getElementById('review-price').textContent = `${Math.round(price * 100)}¢`;
+      document.getElementById('review-payout').textContent = `$${shares.toFixed(2)}`;
+      document.getElementById('review-shares').textContent = shares.toFixed(2);
+      document.getElementById('review-loss').textContent = `$${numericAmount.toFixed(2)}`;
+      const confirm = document.getElementById('order-confirm');
+      confirm.textContent = orderType === 'market' ? `Buy ${side.label} · $${amount}` : `Place ${side.label} limit · $${amount}`;
+      confirm.className = `order-confirm ${side.tone}`.trim();
+    }
+    function selectSide(key, openOrder = true) {
+      selected = key;
+      limitPrice = Math.round(sides[key].price * 100);
+      document.querySelectorAll('.binary-button').forEach(button => { const active = button.dataset.side === key; button.classList.toggle('selected', active); button.setAttribute('aria-pressed', String(active)); });
+      updateComposer();
+      if (openOrder) toggleSheet('order-sheet', true);
+    }
+    function setOrderType(type) {
+      orderType = type;
+      document.querySelectorAll('.order-type').forEach(button => { const active = button.dataset.orderType === type; button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)); });
+      document.getElementById('limit-controls').classList.toggle('hidden', type !== 'limit');
+      updateComposer();
+    }
+    function pressKey(key) {
+      if (key === 'delete') amount = amount.length > 1 ? amount.slice(0, -1) : '0';
+      else if (key === '.' && amount.includes('.')) return;
+      else if (amount.includes('.') && amount.split('.')[1].length >= 2) return;
+      else if (amount.length >= 7) return;
+      else amount = amount === '0' && key !== '.' ? key : amount + key;
+      updateComposer();
+    }
+    function showToast(message) { document.getElementById('toast-copy').textContent = message; const toast = document.getElementById('toast'); toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 1800); }
+
+    document.querySelectorAll('.view-button').forEach(button => button.addEventListener('click', () => { const view = button.dataset.view; document.querySelectorAll('.view-button').forEach(item => { const active = item === button; item.classList.toggle('active', active); item.setAttribute('aria-selected', String(active)); }); document.getElementById('chart-panel').classList.toggle('hidden', view !== 'chart'); document.getElementById('book-panel').classList.toggle('hidden', view !== 'book'); }));
+    document.querySelectorAll('.binary-button').forEach(button => button.addEventListener('click', () => selectSide(button.dataset.side)));
+    document.querySelectorAll('.book-tab').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.book-tab').forEach(item => item.classList.toggle('active', item === button)); document.getElementById('book-label').textContent = `${sides[button.dataset.side].label} orders`; }));
+    document.querySelectorAll('.order-type').forEach(button => button.addEventListener('click', () => setOrderType(button.dataset.orderType)));
+    document.querySelectorAll('[data-amount]').forEach(button => button.addEventListener('click', () => { amount = button.dataset.amount === 'max' ? '248.20' : button.dataset.amount; updateComposer(); }));
+    document.querySelectorAll('.numpad-key').forEach(button => button.addEventListener('click', () => pressKey(button.dataset.key)));
+    document.getElementById('limit-minus').addEventListener('click', () => { limitPrice = Math.max(1, limitPrice - 1); updateComposer(); });
+    document.getElementById('limit-plus').addEventListener('click', () => { limitPrice = Math.min(99, limitPrice + 1); updateComposer(); });
+    document.getElementById('order-close').addEventListener('click', () => toggleSheet('order-sheet', false));
+    document.getElementById('order-sheet').addEventListener('click', event => { if (event.target.id === 'order-sheet') toggleSheet('order-sheet', false); });
+    document.getElementById('order-confirm').addEventListener('click', () => { toggleSheet('order-sheet', false); showToast(orderType === 'market' ? `${sides[selected].label} market order ready` : `${sides[selected].label} limit order placed at ${limitPrice}¢`); });
+    document.getElementById('position-button').addEventListener('click', () => toggleSheet('position-sheet', true));
+    document.getElementById('position-close').addEventListener('click', () => toggleSheet('position-sheet', false));
+    document.getElementById('position-sheet').addEventListener('click', event => { if (event.target.id === 'position-sheet') toggleSheet('position-sheet', false); });
+    document.getElementById('add-pick').addEventListener('click', () => { toggleSheet('position-sheet', false); selectSide('yes'); });
+    document.getElementById('cash-out').addEventListener('click', () => { toggleSheet('position-sheet', false); showToast('Cash out preview opened'); });
+    document.getElementById('back-button').addEventListener('click', () => { if (history.length > 1) history.back(); else location.href = 'polymarket-discover.html'; });
+    updateComposer();
+  </script>
+</body>
+</html>

@@ -1,0 +1,2357 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MyBoon Fast Market Card</title>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    :root {
+      color-scheme: dark;
+      --screen: #073b4c;
+      --ground: #063343;
+      --surface: #083d50;
+      --lift: #0a4a60;
+      --border: #185a70;
+      --bone: #f5fafc;
+      --dim: #9cb8c2;
+      --faint: #6b95a1;
+      --blue: #118ab2;
+      --gold: #ffd166;
+      --up: #06d6a0;
+      --down: #ef476f;
+      --line-light: rgba(245, 250, 252, 0.12);
+      --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", "Roboto Mono", ui-monospace, monospace;
+      --card-radius: 28px;
+      --control-radius: 14px;
+    }
+
+    html {
+      min-height: 100%;
+      background: var(--ground);
+    }
+
+    body {
+      min-height: 100dvh;
+      margin: 0;
+      overflow-x: hidden;
+      color: var(--bone);
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at 50% 8%, rgba(17, 138, 178, 0.22), transparent 34rem),
+        var(--ground);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      box-shadow: inset 0 0 120px rgba(6, 51, 67, 0.42);
+    }
+
+    button {
+      border: 0;
+      font: inherit;
+    }
+
+    button:focus-visible {
+      outline: 3px solid var(--gold);
+      outline-offset: 3px;
+    }
+
+    .page-stage {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+    }
+
+    .app-shell {
+      width: min(430px, 100%);
+      min-height: 840px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(245, 250, 252, 0.13);
+      border-radius: 38px;
+      background: var(--screen);
+      box-shadow:
+        0 38px 90px rgba(1, 22, 29, 0.62),
+        inset 0 1px 0 rgba(245, 250, 252, 0.08);
+    }
+
+    .app-header {
+      min-height: 62px;
+      padding: 11px 16px 9px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line-light);
+    }
+
+    .brand-lockup {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-mark {
+      width: 72px;
+      height: 38px;
+      object-fit: contain;
+      object-position: left center;
+    }
+
+    .brand-section {
+      padding-left: 10px;
+      border-left: 1px solid var(--line-light);
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cash-button,
+    .profile-button {
+      height: 34px;
+      color: var(--bone);
+      border: 1px solid var(--border);
+      background: var(--ground);
+    }
+
+    .cash-button {
+      padding: 0 11px;
+      border-radius: 12px;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .profile-button {
+      width: 34px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      font-size: 16px;
+    }
+
+    .feed-head {
+      height: 46px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .feed-title {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .feed-live {
+      color: var(--gold);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .deck {
+      width: calc(100% - 28px);
+      height: 706px;
+      margin: 0 auto 24px;
+      position: relative;
+    }
+
+    .market-card {
+      position: absolute;
+      inset: 0;
+      border-radius: var(--card-radius);
+      transform-style: preserve-3d;
+      transition: transform 620ms cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: transform;
+    }
+
+    .market-card.is-flipped {
+      transform: rotateY(180deg);
+    }
+
+    .card-face {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      display: grid;
+      border-radius: var(--card-radius);
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      box-shadow:
+        0 22px 44px rgba(1, 22, 29, 0.38),
+        inset 0 1px 0 rgba(245, 250, 252, 0.45);
+    }
+
+    .card-front {
+      grid-template-rows: 58px 166px 220px 94px 168px;
+      color: var(--bone);
+      background: var(--surface);
+    }
+
+    .card-back {
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      color: var(--bone);
+      background: var(--ground);
+      border: 1px solid rgba(255, 209, 102, 0.24);
+      transform: rotateY(180deg);
+    }
+
+    .card-top {
+      padding: 0 12px 0 16px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--line-light);
+    }
+
+    .asset-tabs {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      align-self: stretch;
+    }
+
+    .asset-tab {
+      min-width: 0;
+      padding: 0;
+      position: relative;
+      color: var(--faint);
+      background: transparent;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: color 180ms ease, transform 180ms ease;
+    }
+
+    .asset-tab::after {
+      content: "";
+      position: absolute;
+      right: 13px;
+      bottom: -1px;
+      left: 13px;
+      height: 4px;
+      border-radius: 4px 4px 0 0;
+      background: transparent;
+      transition: background 180ms ease, transform 180ms ease;
+      transform: scaleX(0.35);
+    }
+
+    .asset-tab.active {
+      color: var(--bone);
+      font-size: 12px;
+    }
+
+    .asset-tab.active::after {
+      background: var(--gold);
+      transform: scaleX(1);
+    }
+
+    .depth-button,
+    .back-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+
+    .depth-button {
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 12px;
+      color: var(--bone);
+      background: var(--lift);
+      font-size: 18px;
+    }
+
+    .hero-copy {
+      padding: 18px 18px 12px;
+      position: relative;
+    }
+
+    .asset-name {
+      margin-bottom: 7px;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .question {
+      max-width: 285px;
+      margin: 0;
+      font-size: 34px;
+      line-height: 0.92;
+      letter-spacing: -0.065em;
+      text-transform: uppercase;
+      color: var(--bone);
+    }
+
+    .question .ticker-word {
+      font-weight: 900;
+    }
+
+    .question .motion-word {
+      display: inline-block;
+      padding-bottom: 3px;
+      font-style: italic;
+      font-weight: 420;
+      line-height: 1.1;
+    }
+
+    .target-sentence {
+      margin: 8px 0 0;
+      color: var(--dim);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .target-number {
+      color: var(--gold);
+      box-shadow: none;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .clock-button {
+      --progress: 258deg;
+      width: 91px;
+      height: 91px;
+      padding: 9px;
+      position: absolute;
+      top: 20px;
+      right: 16px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: var(--bone);
+      background: conic-gradient(var(--gold) var(--progress), rgba(245, 250, 252, 0.12) 0);
+      cursor: pointer;
+      transition: transform 180ms ease;
+    }
+
+    .clock-button::before {
+      content: "";
+      position: absolute;
+      inset: 6px;
+      border-radius: 50%;
+      background: var(--surface);
+    }
+
+    .clock-content {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      gap: 2px;
+    }
+
+    .clock-duration,
+    .clock-hint {
+      font-family: var(--mono);
+      text-transform: uppercase;
+    }
+
+    .clock-duration {
+      color: var(--bone);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .clock-time {
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.04em;
+    }
+
+    .clock-hint {
+      color: var(--dim);
+      font-size: 9px;
+      letter-spacing: 0.06em;
+    }
+
+    .chart-stage {
+      min-height: 0;
+      position: relative;
+      overflow: hidden;
+      touch-action: pan-y;
+      color: var(--bone);
+      background: var(--ground);
+      border-radius: 24px 24px 0 0;
+    }
+
+    .chart-stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      box-shadow: inset 0 1px 0 rgba(245, 250, 252, 0.08);
+    }
+
+    .live-price-block {
+      position: absolute;
+      top: 14px;
+      left: 16px;
+      z-index: 2;
+    }
+
+    .chart-panel,
+    .compact-book {
+      position: absolute;
+      inset: 0;
+      transition: opacity 180ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .chart-panel.is-hidden,
+    .compact-book.is-hidden {
+      visibility: hidden;
+      opacity: 0;
+      transform: translateX(12px);
+      pointer-events: none;
+    }
+
+    .view-switch {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 5;
+      padding: 3px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 2px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--surface);
+    }
+
+    .view-button {
+      min-width: 56px;
+      height: 34px;
+      padding: 0 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      border-radius: 8px;
+      color: var(--faint);
+      background: transparent;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 850;
+      cursor: pointer;
+    }
+
+    .view-button.active {
+      color: var(--screen);
+      background: var(--gold);
+    }
+
+    .micro-label {
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .live-price {
+      margin-top: 3px;
+      color: var(--bone);
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.055em;
+    }
+
+    .move-block {
+      position: absolute;
+      right: 14px;
+      bottom: 13px;
+      z-index: 2;
+      text-align: right;
+    }
+
+    .move-word {
+      color: var(--up);
+      font-size: 27px;
+      line-height: 0.9;
+      font-weight: 900;
+      letter-spacing: -0.055em;
+      text-transform: uppercase;
+    }
+
+    .move-word.down {
+      color: var(--down);
+    }
+
+    .move-value {
+      margin-top: 5px;
+      color: var(--bone);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #price-chart {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .round-divider {
+      position: absolute;
+      top: 58px;
+      bottom: 12px;
+      left: 20%;
+      z-index: 2;
+      width: 1px;
+      background: rgba(245, 250, 252, 0.16);
+      pointer-events: none;
+    }
+
+    .round-divider::before {
+      content: "CURRENT ROUND";
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: 0.1em;
+    }
+
+    .round-edge-label {
+      position: absolute;
+      top: 69px;
+      z-index: 2;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .round-close-marker {
+      position: absolute;
+      left: 20%;
+      z-index: 3;
+      width: 9px;
+      height: 9px;
+      border: 2px solid var(--gold);
+      border-radius: 50%;
+      background: var(--ground);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .round-close-marker span {
+      position: absolute;
+      top: 10px;
+      left: 8px;
+      width: 100px;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+      line-height: 1.45;
+      text-transform: uppercase;
+    }
+
+    .round-edge-label.last {
+      left: 9px;
+    }
+
+    .round-edge-label.end {
+      right: 13px;
+    }
+
+    .last-round-button {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      z-index: 4;
+      max-width: 150px;
+      min-height: 36px;
+      padding: 0 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--dim);
+      background: rgba(8, 61, 80, 0.88);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .last-round-button .result-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--up);
+    }
+
+    .last-round-button.is-history .result-dot {
+      background: var(--gold);
+    }
+
+    .settle-flash {
+      position: absolute;
+      inset: 0;
+      z-index: 7;
+      display: grid;
+      place-items: center;
+      color: var(--screen);
+      background: var(--gold);
+      font-size: 34px;
+      font-weight: 950;
+      letter-spacing: -0.055em;
+      text-transform: uppercase;
+      opacity: 0;
+      transform: translateY(100%);
+      pointer-events: none;
+    }
+
+    .chart-stage.settling .settle-flash {
+      animation: settle-roll 760ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .chart-stage.history-mode .round-divider,
+    .chart-stage.history-mode .round-edge-label,
+    .chart-stage.history-mode .round-close-marker {
+      display: none;
+    }
+
+    @keyframes settle-roll {
+      0% { opacity: 0; transform: translateY(100%) }
+      32%, 66% { opacity: 1; transform: translateY(0) }
+      100% { opacity: 0; transform: translateY(-100%) }
+    }
+
+    .compact-book {
+      padding: 54px 12px 10px;
+      background: var(--ground);
+    }
+
+    .compact-book-head {
+      margin-bottom: 8px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .compact-book-head strong {
+      font-size: 16px;
+      letter-spacing: -0.035em;
+      text-transform: uppercase;
+    }
+
+    .compact-book-head span {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      text-transform: uppercase;
+    }
+
+    .compact-book-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .compact-book-side {
+      min-width: 0;
+      padding: 9px;
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      background: var(--surface);
+    }
+
+    .compact-book-side h3 {
+      margin: 0 0 7px;
+      color: var(--up);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .compact-book-side.lower h3 {
+      color: var(--down);
+    }
+
+    .mini-book-row {
+      min-height: 30px;
+      padding: 0 5px;
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+      overflow: hidden;
+      border-radius: 7px;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .mini-book-row::after {
+      content: "";
+      position: absolute;
+      inset: 0 0 0 auto;
+      width: var(--depth);
+      background: var(--book-color);
+      opacity: 0.12;
+    }
+
+    .mini-book-row span {
+      position: relative;
+      z-index: 1;
+    }
+
+    .mini-book-row span:last-child {
+      text-align: right;
+    }
+
+    .target-flag {
+      position: absolute;
+      right: 14px;
+      z-index: 2;
+      padding: 4px 7px;
+      border: 1px solid rgba(255, 209, 102, 0.48);
+      border-radius: 8px;
+      color: var(--gold);
+      background: rgba(6, 51, 67, 0.86);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      transform: translateY(-50%);
+      transition: top 360ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .target-flag.avoid-status {
+      right: auto;
+      left: 52%;
+    }
+
+    .choices {
+      padding: 10px 12px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      background: var(--surface);
+    }
+
+    .choice-button {
+      min-width: 0;
+      padding: 9px 11px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--control-radius);
+      color: var(--bone);
+      background: var(--ground);
+      text-align: left;
+      cursor: pointer;
+      transition: transform 150ms ease, background 180ms ease, border-color 180ms ease, color 180ms ease;
+    }
+
+    .choice-name {
+      display: block;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+    }
+
+    .choice-help {
+      display: block;
+      margin-top: 3px;
+      color: var(--dim);
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .choice-price {
+      font-family: var(--mono);
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .choice-button.higher.selected {
+      color: var(--screen);
+      border-color: var(--up);
+      background: var(--up);
+    }
+
+    .choice-button.lower.selected {
+      color: var(--bone);
+      border-color: var(--down);
+      background: var(--down);
+    }
+
+    .choice-button.selected .choice-help {
+      color: currentColor;
+      opacity: 0.72;
+    }
+
+    .quick-stake {
+      padding: 10px 12px 12px;
+      display: grid;
+      grid-template-rows: 24px 40px 1fr;
+      gap: 8px;
+      background: var(--surface);
+      border-top: 1px solid var(--line-light);
+    }
+
+    .quick-stake-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .configure-amounts {
+      padding: 4px 0 4px 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--gold);
+      background: transparent;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .quick-amounts {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+    }
+
+    .quick-amount {
+      min-width: 0;
+      height: 40px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: var(--dim);
+      background: var(--ground);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .quick-amount.active {
+      color: var(--screen);
+      border-color: var(--gold);
+      background: var(--gold);
+    }
+
+    .back-action {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-radius: var(--control-radius);
+      color: var(--screen);
+      background: var(--up);
+      text-align: left;
+      cursor: pointer;
+      transition: transform 150ms ease, background 180ms ease;
+    }
+
+    .back-action.lower {
+      color: var(--bone);
+      background: var(--down);
+    }
+
+    .back-action strong {
+      overflow: hidden;
+      font-size: 10px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .return-copy {
+      color: rgba(7, 59, 76, 0.72);
+      font-family: var(--mono);
+      font-size: 10px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .back-action.lower .return-copy {
+      color: rgba(245, 250, 252, 0.8);
+    }
+
+    .back-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .back-market {
+      color: var(--gold);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .back-button {
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 12px;
+      color: var(--bone);
+      background: var(--surface);
+      font-size: 17px;
+    }
+
+    .position-hero {
+      margin-top: 35px;
+    }
+
+    .position-kicker {
+      color: var(--up);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .position-kicker.lower {
+      color: var(--down);
+    }
+
+    .position-pnl {
+      margin-top: 8px;
+      color: var(--up);
+      font-family: var(--mono);
+      font-size: 62px;
+      line-height: 0.95;
+      font-weight: 950;
+      letter-spacing: -0.075em;
+    }
+
+    .position-pnl.lower {
+      color: var(--down);
+    }
+
+    .position-summary {
+      max-width: 32ch;
+      margin: 10px 0 0;
+      color: var(--dim);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .position-meter {
+      height: 9px;
+      margin-top: 25px;
+      overflow: hidden;
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .position-meter-fill {
+      width: 68%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--up);
+      transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms ease;
+    }
+
+    .position-meter-labels {
+      margin-top: 7px;
+      display: flex;
+      justify-content: space-between;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      text-transform: uppercase;
+    }
+
+    .position-grid {
+      margin-top: 25px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .position-stat {
+      min-height: 76px;
+      padding: 13px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border: 1px solid var(--border);
+      border-radius: var(--control-radius);
+      background: var(--surface);
+    }
+
+    .position-stat span {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .position-stat strong {
+      font-family: var(--mono);
+      font-size: 16px;
+    }
+
+    .position-actions {
+      margin-top: auto;
+      display: grid;
+      grid-template-columns: 0.8fr 1.2fr;
+      gap: 8px;
+    }
+
+    .position-action {
+      min-height: 52px;
+      border-radius: var(--control-radius);
+      color: var(--bone);
+      background: var(--surface);
+      font-size: 10px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .position-action.primary {
+      color: var(--screen);
+      background: var(--gold);
+    }
+
+    .duration-sheet,
+    .amount-sheet {
+      position: absolute;
+      inset: 0;
+      z-index: 8;
+      visibility: hidden;
+      display: flex;
+      align-items: flex-end;
+      border-radius: var(--card-radius);
+      background: rgba(6, 51, 67, 0.82);
+      opacity: 0;
+      backdrop-filter: blur(8px);
+      transition: opacity 220ms ease, visibility 220ms ease;
+    }
+
+    .duration-sheet.open,
+    .amount-sheet.open {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .duration-panel,
+    .amount-panel {
+      width: 100%;
+      padding: 20px 16px 18px;
+      color: var(--bone);
+      border-radius: 26px 26px var(--card-radius) var(--card-radius);
+      background: var(--surface);
+      transform: translateY(26px);
+      transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .duration-sheet.open .duration-panel,
+    .amount-sheet.open .amount-panel {
+      transform: translateY(0);
+    }
+
+    .duration-panel-head,
+    .amount-panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .duration-panel h2,
+    .amount-panel h2 {
+      margin: 0;
+      font-size: 27px;
+      line-height: 1;
+      letter-spacing: -0.05em;
+      text-transform: uppercase;
+    }
+
+    .duration-panel p,
+    .amount-panel p {
+      margin: 7px 0 0;
+      color: var(--dim);
+      font-size: 10px;
+    }
+
+    .sheet-close {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: var(--bone);
+      background: var(--lift);
+      cursor: pointer;
+      font-size: 17px;
+    }
+
+    .duration-grid {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .duration-option {
+      min-height: 56px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--control-radius);
+      color: var(--bone);
+      background: var(--ground);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .duration-option strong {
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    .duration-option span {
+      color: var(--dim);
+      font-size: 9px;
+    }
+
+    .duration-option.active {
+      border-color: var(--gold);
+      background: var(--gold);
+      color: var(--screen);
+    }
+
+    .duration-option.active span {
+      color: var(--screen);
+    }
+
+    .amount-fields {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .amount-field {
+      min-width: 0;
+      min-height: 58px;
+      padding: 8px;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 3px;
+      border: 1px solid var(--border);
+      border-radius: var(--control-radius);
+      color: var(--gold);
+      background: var(--ground);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .amount-field input {
+      min-width: 0;
+      width: 100%;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      color: var(--bone);
+      background: transparent;
+      font: inherit;
+      appearance: textfield;
+    }
+
+    .amount-save {
+      width: 100%;
+      min-height: 50px;
+      margin-top: 10px;
+      border-radius: var(--control-radius);
+      color: var(--screen);
+      background: var(--gold);
+      font-size: 10px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .order-sheet {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      visibility: hidden;
+      display: flex;
+      align-items: flex-end;
+      border-radius: var(--card-radius);
+      background: rgba(3, 31, 44, 0);
+      opacity: 0;
+      backdrop-filter: blur(8px);
+      transition: opacity 220ms ease, visibility 220ms ease, background 220ms ease;
+    }
+
+    .order-sheet.open { visibility: visible; opacity: 1; background: rgba(3, 31, 44, 0.84); }
+
+    .order-panel {
+      width: 100%;
+      max-height: 96%;
+      overflow-y: auto;
+      padding: 8px 16px 14px;
+      border: 1px solid var(--border);
+      border-bottom: 0;
+      border-radius: 26px 26px var(--card-radius) var(--card-radius);
+      color: var(--bone);
+      background: var(--ground);
+      scrollbar-width: none;
+      transform: translateY(104%);
+      transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .order-panel::-webkit-scrollbar { display: none; }
+    .order-sheet.open .order-panel { transform: translateY(0); }
+    .order-panel-bar { display: grid; grid-template-columns: 36px 1fr 36px; align-items: center; }
+    .order-grabber { grid-column: 2; width: 36px; height: 4px; margin: 0 auto; border-radius: 4px; background: var(--border); }
+    .order-close { grid-column: 3; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--dim); background: var(--surface); cursor: pointer; }
+    .order-type-tabs { margin-top: 4px; padding: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border: 1px solid var(--border); border-radius: 13px; background: #031f2c; }
+    .order-type { height: 36px; border-radius: 9px; color: var(--faint); background: transparent; font: 900 9px/1 var(--mono); cursor: pointer; }
+    .order-type.active { color: var(--bone); background: var(--lift); }
+    .order-context { padding: 13px 2px 7px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .order-context span { display: block; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .order-context strong { display: block; margin-top: 4px; font-size: 13px; font-weight: 900; }
+    .order-context > div:last-child { text-align: right; }
+    .order-limit { min-height: 48px; padding: 7px 9px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+    .order-limit.is-hidden { display: none; }
+    .order-limit-copy span { display: block; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .order-limit-copy strong { display: block; margin-top: 5px; font: 900 10px/1 var(--mono); }
+    .order-price-stepper { display: grid; grid-template-columns: 34px 48px 34px; align-items: center; }
+    .order-price-stepper button { height: 32px; border-radius: 9px; color: var(--bone); background: var(--lift); font-size: 17px; cursor: pointer; }
+    .order-price-stepper strong { text-align: center; font: 900 12px/1 var(--mono); }
+    .order-amount-display { padding: 9px 0 7px; text-align: center; }
+    .order-amount-display span { display: block; color: var(--faint); font: 850 9px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+    .order-amount-display strong { display: block; margin-top: 2px; font: 950 36px/1 var(--mono); letter-spacing: -0.08em; }
+    .order-quick-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+    .order-quick-row button { height: 34px; border-radius: 9px; color: var(--dim); background: var(--surface); font: 900 9px/1 var(--mono); cursor: pointer; }
+    .order-numpad { margin-top: 7px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+    .order-numpad-key { height: 42px; border-radius: 11px; color: var(--bone); background: var(--surface); font: 800 18px/1 var(--mono); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .order-numpad-key:active { background: var(--lift); transform: scale(0.97); }
+    .order-numpad-key.delete { color: var(--dim); font-size: 15px; }
+    .order-review { margin-top: 6px; padding: 2px 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+    .review-row { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .review-row + .review-row { border-top: 1px solid rgba(24, 90, 112, 0.55); }
+    .review-row span { color: var(--dim); font-size: 11px; }
+    .review-row strong { color: var(--bone); font-family: var(--mono); font-size: 13px; font-weight: 900; }
+    .review-row.highlight span, .review-row.highlight strong { color: var(--up); }
+    .shares-note { padding: 7px 2px 2px; color: var(--faint); font-family: var(--mono); font-size: 10px; }
+    .order-confirm { width: 100%; height: 46px; border-radius: 13px; color: var(--screen); background: var(--up); font-size: 11px; font-weight: 900; cursor: pointer; }
+    .order-confirm.lower { color: var(--bone); background: var(--down); }
+
+    .toast {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      left: 14px;
+      z-index: 12;
+      min-height: 48px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-radius: var(--control-radius);
+      color: var(--bone);
+      background: var(--lift);
+      box-shadow: 0 14px 32px rgba(1, 22, 29, 0.32);
+      font-size: 10px;
+      font-weight: 750;
+      opacity: 0;
+      transform: translateY(14px);
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .toast i {
+      color: var(--gold);
+      font-size: 18px;
+    }
+
+    .card-front.asset-pop .hero-copy,
+    .card-front.asset-pop .chart-stage {
+      animation: asset-pop 420ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes asset-pop {
+      0% { opacity: 0.35; transform: translateY(6px) }
+      100% { opacity: 1; transform: translateY(0) }
+    }
+
+    .clock-button:active,
+    .choice-button:active,
+    .back-action:active,
+    .quick-amount:active,
+    .configure-amounts:active,
+    .depth-button:active,
+    .view-button:active,
+    .last-round-button:active,
+    .duration-option:active,
+    .sheet-close:active,
+    .amount-save:active,
+    .position-action:active,
+    .back-button:active {
+      transform: scale(0.97);
+    }
+
+    @media (max-width: 520px) {
+      body {
+        background: var(--screen);
+      }
+
+      body::after {
+        display: none;
+      }
+
+      .page-stage {
+        display: block;
+        padding: 0;
+      }
+
+      .app-shell {
+        width: 100%;
+        min-height: 100dvh;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .app-header {
+        padding-top: max(11px, env(safe-area-inset-top));
+      }
+
+      .deck {
+        width: calc(100% - 24px);
+      }
+
+    }
+
+    @media (max-width: 365px) {
+      .question {
+        font-size: 30px;
+      }
+
+      .clock-button {
+        width: 83px;
+        height: 83px;
+      }
+
+      .card-front {
+        grid-template-rows: 58px 166px 220px 94px 168px;
+      }
+
+      .brand-section {
+        display: none;
+      }
+
+      .cash-button {
+        padding-inline: 8px;
+      }
+    }
+
+    @media (min-width: 366px) and (max-width: 400px) {
+      .question {
+        max-width: 260px;
+        font-size: 32px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+      .duration-sheet,
+      .amount-sheet,
+      .order-sheet {
+        background: rgba(7, 59, 76, 0.95);
+        backdrop-filter: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page-stage">
+    <section class="app-shell" aria-label="MyBoon fast markets screen concept">
+      <header class="app-header">
+        <div class="brand-lockup">
+          <img class="brand-mark" src="../../apps/hybrid-expo/assets/branding/myboon-wordmark-header.png" alt="MyBoon">
+          <span class="brand-section">Predict</span>
+        </div>
+        <div class="header-actions">
+          <button class="cash-button" type="button" aria-label="Prediction cash balance">$248.20</button>
+          <button class="profile-button" type="button" aria-label="Open prediction profile"><i class="ph ph-user"></i></button>
+        </div>
+      </header>
+
+      <div class="feed-head">
+        <span class="feed-title">One-tap markets</span>
+        <span class="feed-live">4 live now</span>
+      </div>
+
+      <div class="deck" id="deck">
+        <article class="market-card" id="market-card">
+          <section class="card-face card-front" id="card-front">
+            <header class="card-top">
+              <div class="asset-tabs" role="tablist" aria-label="Choose an asset">
+                <button class="asset-tab active" type="button" role="tab" aria-selected="true" data-asset="BTC">BTC</button>
+                <button class="asset-tab" type="button" role="tab" aria-selected="false" data-asset="ETH">ETH</button>
+                <button class="asset-tab" type="button" role="tab" aria-selected="false" data-asset="SOL">SOL</button>
+                <button class="asset-tab" type="button" role="tab" aria-selected="false" data-asset="XRP">XRP</button>
+              </div>
+              <button class="depth-button" id="position-button" type="button" aria-label="Flip card to see your position"><i class="ph ph-user-circle-check"></i></button>
+            </header>
+
+            <div class="hero-copy">
+              <div class="asset-name" id="asset-name">Bitcoin fast market</div>
+              <h1 class="question">Will <span class="ticker-word" id="ticker-word">BTC</span><br><span class="motion-word">finish higher?</span></h1>
+              <p class="target-sentence">Beat <span class="target-number" id="target-number">$63,793.65</span> when the clock hits zero.</p>
+
+              <button class="clock-button" id="clock-button" type="button" aria-label="Change market duration">
+                <span class="clock-content">
+                  <span class="clock-duration" id="clock-duration">1 hour</span>
+                  <strong class="clock-time" id="clock-time">35:35</strong>
+                  <span class="clock-hint">tap to change</span>
+                </span>
+              </button>
+            </div>
+
+            <div class="chart-stage" id="chart-stage">
+              <div class="view-switch" role="tablist" aria-label="Switch market view">
+                <button class="view-button active" id="chart-view-button" type="button" role="tab" aria-selected="true" data-view="chart"><i class="ph ph-chart-line-up"></i><span>Chart</span></button>
+                <button class="view-button" id="book-view-button" type="button" role="tab" aria-selected="false" data-view="book"><i class="ph ph-stack"></i><span>Book</span></button>
+              </div>
+
+              <div class="chart-panel" id="chart-panel">
+                <div class="live-price-block">
+                  <div class="micro-label" id="price-label">Right now</div>
+                  <div class="live-price" id="live-price">$63,821.47</div>
+                </div>
+                <canvas id="price-chart" aria-label="The previous round tail and live price movement toward settlement"></canvas>
+                <div class="round-divider" id="round-divider"></div>
+                <div class="round-close-marker" id="round-close-marker"><span id="round-close-copy">Last close</span></div>
+                <span class="round-edge-label last">Previous</span>
+                <span class="round-edge-label end">Settles</span>
+                <div class="target-flag" id="target-flag">Beat $63,793.65</div>
+                <button class="last-round-button" id="last-round-button" type="button" aria-label="Swipe or tap to see the previous round"><span class="result-dot"></span><span id="last-round-copy">Last: Higher won</span><i class="ph ph-caret-right"></i></button>
+                <div class="move-block">
+                  <div class="move-word" id="move-word">Above</div>
+                  <div class="move-value" id="move-value">+$27.82 from target</div>
+                </div>
+              </div>
+
+              <div class="compact-book is-hidden" id="compact-book" aria-hidden="true">
+                <div class="compact-book-head"><strong>Live orders</strong><span>Price / available</span></div>
+                <div class="compact-book-grid">
+                  <section class="compact-book-side" aria-label="Higher orders">
+                    <h3>Higher</h3>
+                    <div class="mini-book-row" style="--depth: 82%; --book-color: var(--up)"><span>63¢</span><span>$404</span></div>
+                    <div class="mini-book-row" style="--depth: 55%; --book-color: var(--up)"><span>62¢</span><span>$278</span></div>
+                    <div class="mini-book-row" style="--depth: 34%; --book-color: var(--up)"><span>61¢</span><span>$132</span></div>
+                  </section>
+                  <section class="compact-book-side lower" aria-label="Lower orders">
+                    <h3>Lower</h3>
+                    <div class="mini-book-row" style="--depth: 61%; --book-color: var(--down)"><span>38¢</span><span>$149</span></div>
+                    <div class="mini-book-row" style="--depth: 47%; --book-color: var(--down)"><span>37¢</span><span>$113</span></div>
+                    <div class="mini-book-row" style="--depth: 28%; --book-color: var(--down)"><span>36¢</span><span>$68</span></div>
+                  </section>
+                </div>
+              </div>
+
+              <div class="settle-flash" id="settle-flash">Round closed</div>
+            </div>
+
+            <div class="choices" aria-label="Choose higher or lower">
+              <button class="choice-button higher selected" type="button" data-side="higher" aria-pressed="true">
+                <span><span class="choice-name">Higher</span><span class="choice-help">wins above target</span></span>
+                <strong class="choice-price" id="higher-price">63¢</strong>
+              </button>
+              <button class="choice-button lower" type="button" data-side="lower" aria-pressed="false">
+                <span><span class="choice-name">Lower</span><span class="choice-help">wins below target</span></span>
+                <strong class="choice-price" id="lower-price">38¢</strong>
+              </button>
+            </div>
+
+            <div class="quick-stake">
+              <div class="quick-stake-head">
+                <span>Quick amount</span>
+                <button class="configure-amounts" id="configure-amounts" type="button"><i class="ph ph-sliders-horizontal"></i><span>Edit</span></button>
+              </div>
+              <div class="quick-amounts" id="quick-amounts" aria-label="Choose a quick prediction amount">
+                <button class="quick-amount" type="button" data-amount-index="0">$5</button>
+                <button class="quick-amount active" type="button" data-amount-index="1">$10</button>
+                <button class="quick-amount" type="button" data-amount-index="2">$20</button>
+              </div>
+              <button class="back-action" id="back-action" type="button">
+                <strong id="back-label">Back Higher for $10</strong>
+                <span class="return-copy" id="return-copy">Get $15.87 if right</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="card-face card-back" id="position-card" aria-label="Your live position">
+            <div class="back-top">
+              <span class="back-market" id="back-market">BTC / 1 hour</span>
+              <button class="back-button" id="back-button" type="button" aria-label="Flip back to prediction"><i class="ph ph-arrow-bend-up-left"></i></button>
+            </div>
+
+            <div class="position-hero">
+              <div class="position-kicker" id="position-kicker">Your Higher pick</div>
+              <div class="position-pnl" id="position-pnl">+$3.27</div>
+              <p class="position-summary" id="position-summary">BTC is above your target. If the round ended now, this pick would win.</p>
+            </div>
+
+            <div class="position-meter" aria-hidden="true"><div class="position-meter-fill" id="position-meter-fill"></div></div>
+            <div class="position-meter-labels"><span>Entry</span><span id="position-clock">35:35 left</span><span>Win</span></div>
+
+            <div class="position-grid">
+              <div class="position-stat"><span>Entry price</span><strong id="position-entry">61¢</strong></div>
+              <div class="position-stat"><span>Now</span><strong id="position-now">69¢</strong></div>
+              <div class="position-stat"><span>Shares</span><strong id="position-shares">16.39</strong></div>
+              <div class="position-stat"><span>Current value</span><strong id="position-value">$11.31</strong></div>
+            </div>
+
+            <div class="position-actions">
+              <button class="position-action" id="add-position" type="button">Add to pick</button>
+              <button class="position-action primary" id="cash-position" type="button">Cash out $11.31</button>
+            </div>
+          </section>
+        </article>
+
+        <div class="duration-sheet" id="duration-sheet" aria-hidden="true">
+          <div class="duration-panel" role="dialog" aria-modal="true" aria-labelledby="duration-title">
+            <div class="duration-panel-head">
+              <div>
+                <h2 id="duration-title">How fast?</h2>
+                <p>Short rounds move quicker. Long rounds breathe.</p>
+              </div>
+              <button class="sheet-close" id="sheet-close" type="button" aria-label="Close duration picker"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="duration-grid">
+              <button class="duration-option active" type="button" data-duration="1h"><strong>1 hour</strong><span>one episode</span></button>
+              <button class="duration-option" type="button" data-duration="1d"><strong>1 day</strong><span>sleep on it</span></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="amount-sheet" id="amount-sheet" aria-hidden="true">
+          <div class="amount-panel" role="dialog" aria-modal="true" aria-labelledby="amount-title">
+            <div class="amount-panel-head">
+              <div>
+                <h2 id="amount-title">Your quick picks</h2>
+                <p>Set the three amounts you want one tap away.</p>
+              </div>
+              <button class="sheet-close" id="amount-sheet-close" type="button" aria-label="Close amount settings"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="amount-fields">
+              <label class="amount-field">$<input class="amount-input" type="number" min="1" max="999" inputmode="numeric" value="5" aria-label="First quick amount"></label>
+              <label class="amount-field">$<input class="amount-input" type="number" min="1" max="999" inputmode="numeric" value="10" aria-label="Second quick amount"></label>
+              <label class="amount-field">$<input class="amount-input" type="number" min="1" max="999" inputmode="numeric" value="20" aria-label="Third quick amount"></label>
+            </div>
+            <button class="amount-save" id="amount-save" type="button">Save quick amounts</button>
+          </div>
+        </div>
+
+        <div class="order-sheet" id="order-sheet" aria-hidden="true">
+          <section class="order-panel" role="dialog" aria-modal="true" aria-labelledby="order-title">
+            <div class="order-panel-bar"><div class="order-grabber"></div><button class="order-close" id="order-close" type="button" aria-label="Close order entry"><i class="ph ph-x"></i></button></div>
+            <div class="order-type-tabs" role="tablist" aria-label="Order type">
+              <button class="order-type active" type="button" data-order-type="market" role="tab" aria-selected="true">Market</button>
+              <button class="order-type" type="button" data-order-type="limit" role="tab" aria-selected="false">Limit</button>
+            </div>
+            <div class="order-context">
+              <div><span id="order-title">You picked</span><strong id="order-side">Higher</strong></div>
+              <div><span id="order-price-label">Best available</span><strong id="order-live-price">63¢</strong></div>
+            </div>
+            <div class="order-limit is-hidden" id="order-limit">
+              <div class="order-limit-copy"><span>Limit price · cancels at deadline</span><strong>Buy only here or better</strong></div>
+              <div class="order-price-stepper"><button id="order-limit-minus" type="button" aria-label="Decrease limit price">−</button><strong id="order-limit-price">63¢</strong><button id="order-limit-plus" type="button" aria-label="Increase limit price">+</button></div>
+            </div>
+            <div class="order-amount-display"><span>pUSD amount</span><strong id="order-amount">10</strong></div>
+            <div class="order-quick-row" aria-label="Quick amounts">
+              <button type="button" data-order-amount="5">$5</button><button type="button" data-order-amount="10">$10</button><button type="button" data-order-amount="20">$20</button><button type="button" data-order-amount="max">Max</button>
+            </div>
+            <div class="order-numpad" aria-label="Amount keypad">
+              <button class="order-numpad-key" type="button" data-order-key="1">1</button><button class="order-numpad-key" type="button" data-order-key="2">2</button><button class="order-numpad-key" type="button" data-order-key="3">3</button>
+              <button class="order-numpad-key" type="button" data-order-key="4">4</button><button class="order-numpad-key" type="button" data-order-key="5">5</button><button class="order-numpad-key" type="button" data-order-key="6">6</button>
+              <button class="order-numpad-key" type="button" data-order-key="7">7</button><button class="order-numpad-key" type="button" data-order-key="8">8</button><button class="order-numpad-key" type="button" data-order-key="9">9</button>
+              <button class="order-numpad-key" type="button" data-order-key=".">.</button><button class="order-numpad-key" type="button" data-order-key="0">0</button><button class="order-numpad-key delete" type="button" data-order-key="delete" aria-label="Delete digit">⌫</button>
+            </div>
+            <div class="order-review">
+              <div class="review-row"><span>You pay</span><strong id="review-pay">$10.00</strong></div>
+              <div class="review-row"><span>Average price</span><strong id="review-price">63¢</strong></div>
+              <div class="review-row highlight"><span>If you're right</span><strong id="review-payout">$15.87</strong></div>
+              <div class="review-row"><span>Maximum loss</span><strong id="review-loss">$10.00</strong></div>
+            </div>
+            <div class="shares-note">≈ <span id="review-shares">15.87</span> shares · each pays $1.00 if right</div>
+            <button class="order-confirm" id="order-confirm" type="button">Buy Higher · $10</button>
+          </section>
+        </div>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"><span id="toast-copy">Higher pick ready for review</span><i class="ph-fill ph-check-circle"></i></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const ASSETS = {
+      BTC: { name: "Bitcoin", ticker: "BTC", target: 63793.65, current: 63821.47, decimals: 2 },
+      ETH: { name: "Ethereum", ticker: "ETH", target: 4319.72, current: 4314.18, decimals: 2 },
+      SOL: { name: "Solana", ticker: "SOL", target: 195.91, current: 196.84, decimals: 2 },
+      XRP: { name: "XRP", ticker: "XRP", target: 3.1728, current: 3.1864, decimals: 4 }
+    };
+
+    const DURATIONS = {
+      "1h": { label: "1 hour", total: 3600, remaining: 2135, points: 48 },
+      "1d": { label: "1 day", total: 86400, remaining: 44720, points: 56 }
+    };
+
+    const QUICK_AMOUNTS = [5, 10, 20];
+    const state = {
+      asset: "BTC",
+      duration: "1h",
+      side: "higher",
+      amountIndex: 1,
+      remaining: DURATIONS["1h"].remaining,
+      points: [],
+      previousPoints: [],
+      previousTarget: 0,
+      previousClose: 0,
+      previousResult: "higher",
+      historyMode: false,
+      chartView: "chart",
+      orderAmount: "10",
+      orderType: "market",
+      limitPrice: 63,
+      settling: false,
+      swipeStartX: null,
+      toastTimer: null
+    };
+
+    const card = document.getElementById("market-card");
+    const front = document.getElementById("card-front");
+    const positionCard = document.getElementById("position-card");
+    const chartStage = document.getElementById("chart-stage");
+    const chartPanel = document.getElementById("chart-panel");
+    const compactBook = document.getElementById("compact-book");
+    const chart = document.getElementById("price-chart");
+    const ctx = chart.getContext("2d");
+    const durationSheet = document.getElementById("duration-sheet");
+    const amountSheet = document.getElementById("amount-sheet");
+    const orderSheet = document.getElementById("order-sheet");
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    function money(value, decimals) {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      }).format(value);
+    }
+
+    function compactMoney(value, decimals) {
+      if (value >= 10000) return `$${Math.round(value).toLocaleString("en-US")}`;
+      return money(value, decimals);
+    }
+
+    function currentAsset() {
+      return ASSETS[state.asset];
+    }
+
+    function currentDuration() {
+      return DURATIONS[state.duration];
+    }
+
+    function buildSeries(start, finish, count, scale) {
+      const points = [start];
+      let value = start;
+      for (let index = 1; index < count; index += 1) {
+        const progress = index / Math.max(1, count - 1);
+        const pull = (finish - value) * (0.08 + progress * 0.08);
+        const wave = Math.sin(index * 0.82) * scale * 0.42;
+        const noise = (Math.random() - 0.5) * scale * 0.46;
+        value += pull + wave + noise;
+        points.push(value);
+      }
+      points[points.length - 1] = finish;
+      return points;
+    }
+
+    function makeCurrentSeries() {
+      const asset = currentAsset();
+      const duration = currentDuration();
+      const scale = Math.max(asset.target * 0.00013, 0.0018);
+      const elapsedRatio = Math.max(0.035, Math.min(1, 1 - state.remaining / duration.total));
+      const visiblePointCount = Math.max(3, Math.round(duration.points * elapsedRatio));
+      state.points = buildSeries(state.previousClose, asset.current, visiblePointCount, scale);
+    }
+
+    function makeSeries() {
+      const asset = currentAsset();
+      const scale = Math.max(asset.target * 0.00013, 0.0018);
+      const previousDirection = state.asset === "ETH" ? -1 : 1;
+      state.previousTarget = asset.target - previousDirection * scale * 0.48;
+      state.previousClose = state.previousTarget + previousDirection * scale * 1.15;
+      state.previousResult = previousDirection > 0 ? "higher" : "lower";
+      state.previousPoints = buildSeries(
+        state.previousTarget - previousDirection * scale * 0.78,
+        state.previousClose,
+        26,
+        scale
+      );
+      makeCurrentSeries();
+    }
+
+    function chartBounds() {
+      const asset = currentAsset();
+      const values = state.historyMode
+        ? [...state.previousPoints, state.previousTarget]
+        : [...state.previousPoints.slice(-Math.max(8, Math.round(currentDuration().points * 0.25))), ...state.points, asset.target];
+      const low = Math.min(...values);
+      const high = Math.max(...values);
+      const padding = Math.max((high - low) * 0.25, asset.target * 0.000045);
+      return { low: low - padding, high: high + padding };
+    }
+
+    function yFor(value, height, bounds) {
+      return 12 + (bounds.high - value) / (bounds.high - bounds.low) * (height - 24);
+    }
+
+    function resizeCanvas() {
+      const rect = chart.getBoundingClientRect();
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      chart.width = Math.max(1, Math.round(rect.width * ratio));
+      chart.height = Math.max(1, Math.round(rect.height * ratio));
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      drawChart();
+    }
+
+    function traceSeries(points, startX, endX, height, bounds) {
+      ctx.beginPath();
+      points.forEach((point, index) => {
+        const x = startX + index / Math.max(1, points.length - 1) * (endX - startX);
+        const y = yFor(point, height, bounds);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+    }
+
+    function drawChart() {
+      if (!state.points.length || !state.previousPoints.length) return;
+      const rect = chart.getBoundingClientRect();
+      const width = rect.width;
+      const height = rect.height;
+      if (!width || !height) return;
+
+      const asset = currentAsset();
+      const bounds = chartBounds();
+      const previousBoundary = width * 0.2;
+      const rightEdge = width - 14;
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.strokeStyle = "rgba(245,250,252,0.07)";
+      ctx.lineWidth = 1;
+      [0.28, 0.52, 0.76].forEach((fraction) => {
+        const y = Math.round(height * fraction) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      });
+
+      if (state.historyMode) {
+        const isHigher = state.previousClose >= state.previousTarget;
+        const accent = isHigher ? "#06d6a0" : "#ef476f";
+        const targetY = yFor(state.previousTarget, height, bounds);
+
+        ctx.save();
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = "rgba(255,209,102,0.78)";
+        ctx.beginPath();
+        ctx.moveTo(0, targetY);
+        ctx.lineTo(width, targetY);
+        ctx.stroke();
+        ctx.restore();
+
+        traceSeries(state.previousPoints, 0, rightEdge, height, bounds);
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+
+        const endY = yFor(state.previousClose, height, bounds);
+        ctx.beginPath();
+        ctx.arc(rightEdge, endY, 5, 0, Math.PI * 2);
+        ctx.fillStyle = accent;
+        ctx.fill();
+        const historyTargetFlag = document.getElementById("target-flag");
+        historyTargetFlag.style.top = `${Math.max(20, Math.min(height - 20, targetY))}px`;
+        historyTargetFlag.classList.toggle("avoid-status", targetY > height - 78);
+        return;
+      }
+
+      const current = state.points[state.points.length - 1];
+      const isAbove = current >= asset.target;
+      const accent = isAbove ? "#06d6a0" : "#ef476f";
+      const targetY = yFor(asset.target, height, bounds);
+      const previousTargetY = yFor(state.previousTarget, height, bounds);
+      const progress = Math.max(0.035, Math.min(1, 1 - state.remaining / currentDuration().total));
+      const currentEnd = previousBoundary + progress * (rightEdge - previousBoundary);
+      const previousTailCount = Math.max(8, Math.round(currentDuration().points * 0.25));
+      const previousTail = state.previousPoints.slice(-previousTailCount);
+      const previousCloseY = yFor(state.previousClose, height, bounds);
+
+      ctx.save();
+      ctx.setLineDash([3, 4]);
+      ctx.strokeStyle = "rgba(156,184,194,0.34)";
+      ctx.beginPath();
+      ctx.moveTo(0, previousTargetY);
+      ctx.lineTo(previousBoundary, previousTargetY);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = "rgba(255,209,102,0.78)";
+      ctx.beginPath();
+      ctx.moveTo(previousBoundary, targetY);
+      ctx.lineTo(width, targetY);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.beginPath();
+      previousTail.forEach((point, index) => {
+        const x = index / Math.max(1, previousTail.length - 1) * previousBoundary;
+        const y = yFor(point, height, bounds);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      state.points.slice(1).forEach((point, index, points) => {
+        const x = previousBoundary + (index + 1) / Math.max(1, points.length) * (currentEnd - previousBoundary);
+        ctx.lineTo(x, yFor(point, height, bounds));
+      });
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke();
+
+      const closeMarker = document.getElementById("round-close-marker");
+      closeMarker.style.top = `${Math.max(86, Math.min(height - 44, previousCloseY))}px`;
+
+      const endY = yFor(current, height, bounds);
+      ctx.beginPath();
+      ctx.arc(currentEnd, endY, 5, 0, Math.PI * 2);
+      ctx.fillStyle = accent;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(currentEnd, endY, 10, 0, Math.PI * 2);
+      ctx.strokeStyle = isAbove ? "rgba(6,214,160,0.24)" : "rgba(239,71,111,0.24)";
+      ctx.lineWidth = 5;
+      ctx.stroke();
+
+      const targetFlag = document.getElementById("target-flag");
+      targetFlag.style.top = `${Math.max(20, Math.min(height - 20, targetY))}px`;
+      targetFlag.classList.toggle("avoid-status", targetY > height - 78);
+    }
+
+    function priceProbability() {
+      const asset = currentAsset();
+      const current = state.points[state.points.length - 1] ?? asset.current;
+      const delta = current - asset.target;
+      return Math.max(37, Math.min(72, 50 + delta / Math.max(asset.target * 0.00028, 0.0025) * 12));
+    }
+
+    function updateReadout() {
+      const asset = currentAsset();
+      const current = state.historyMode ? state.previousClose : (state.points[state.points.length - 1] ?? asset.current);
+      const target = state.historyMode ? state.previousTarget : asset.target;
+      const delta = current - target;
+      const isAbove = delta >= 0;
+      const higher = Math.round(priceProbability());
+      const lower = 101 - higher;
+      const lastRoundButton = document.getElementById("last-round-button");
+
+      document.getElementById("asset-name").textContent = `${asset.name} fast market`;
+      document.getElementById("ticker-word").textContent = asset.ticker;
+      document.getElementById("target-number").textContent = money(asset.target, asset.decimals);
+      document.getElementById("target-flag").textContent = `${state.historyMode ? "Target" : "Beat"} ${money(target, asset.decimals)}`;
+      document.getElementById("price-label").textContent = state.historyMode ? "Previous close" : "Right now";
+      document.getElementById("live-price").textContent = compactMoney(current, asset.decimals);
+      document.getElementById("move-word").textContent = state.historyMode ? `${isAbove ? "Higher" : "Lower"} won` : (isAbove ? "Above" : "Below");
+      document.getElementById("move-word").classList.toggle("down", !isAbove);
+      document.getElementById("move-value").textContent = `${isAbove ? "+" : "-"}${money(Math.abs(delta), asset.decimals)} ${state.historyMode ? "at close" : "from target"}`;
+      document.getElementById("higher-price").textContent = `${higher}¢`;
+      document.getElementById("lower-price").textContent = `${lower}¢`;
+      document.getElementById("back-market").textContent = `${state.asset} / ${currentDuration().label}`;
+      document.getElementById("last-round-copy").textContent = state.historyMode ? "Back to live" : `Last: ${state.previousResult === "higher" ? "Higher" : "Lower"} won`;
+      document.getElementById("round-close-copy").textContent = `Last close ${compactMoney(state.previousClose, asset.decimals)}`;
+      lastRoundButton.classList.toggle("is-history", state.historyMode);
+      lastRoundButton.querySelector("i").className = state.historyMode ? "ph ph-caret-left" : "ph ph-caret-right";
+      chartStage.classList.toggle("history-mode", state.historyMode);
+      updateTradeCopy();
+    }
+
+    function formatCountdown(seconds) {
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      if (days > 0) return `${days}d ${hours}h`;
+      if (hours > 0) return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+      return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    }
+
+    function updateClock() {
+      const duration = currentDuration();
+      const ratio = Math.max(0, Math.min(1, state.remaining / duration.total));
+      document.getElementById("clock-duration").textContent = duration.label;
+      document.getElementById("clock-time").textContent = formatCountdown(state.remaining);
+      document.getElementById("clock-button").style.setProperty("--progress", `${Math.round(ratio * 360)}deg`);
+      document.getElementById("back-market").textContent = `${state.asset} / ${duration.label}`;
+      document.getElementById("position-clock").textContent = `${formatCountdown(state.remaining)} left`;
+    }
+
+    function updateTradeCopy() {
+      const amount = QUICK_AMOUNTS[state.amountIndex];
+      const higher = Math.round(priceProbability());
+      const price = state.side === "higher" ? higher : 101 - higher;
+      const payout = amount / (price / 100);
+      const sideLabel = state.side === "higher" ? "Higher" : "Lower";
+      const action = document.getElementById("back-action");
+
+      document.querySelectorAll(".quick-amount").forEach((button, index) => {
+        button.textContent = `$${QUICK_AMOUNTS[index]}`;
+        button.classList.toggle("active", index === state.amountIndex);
+      });
+      document.getElementById("back-label").textContent = `Back ${sideLabel} for $${amount}`;
+      document.getElementById("return-copy").textContent = `Get $${payout.toFixed(2)} if right`;
+      action.classList.toggle("lower", state.side === "lower");
+      updatePosition();
+      updateOrderComposer();
+    }
+
+    function updatePosition() {
+      const asset = currentAsset();
+      const amount = QUICK_AMOUNTS[state.amountIndex];
+      const higher = Math.round(priceProbability());
+      const nowPrice = state.side === "higher" ? higher : 101 - higher;
+      const entryPrice = Math.max(18, nowPrice - 8);
+      const shares = amount / (entryPrice / 100);
+      const value = shares * (nowPrice / 100);
+      const pnl = value - amount;
+      const sideLabel = state.side === "higher" ? "Higher" : "Lower";
+      const current = state.points[state.points.length - 1] ?? asset.current;
+      const winning = state.side === "higher" ? current >= asset.target : current < asset.target;
+      const isLower = state.side === "lower";
+
+      document.getElementById("position-kicker").textContent = `Your ${sideLabel} pick`;
+      document.getElementById("position-kicker").classList.toggle("lower", isLower);
+      document.getElementById("position-pnl").textContent = `${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(2)}`;
+      document.getElementById("position-pnl").classList.toggle("lower", isLower);
+      document.getElementById("position-summary").textContent = `${state.asset} is ${winning ? "on the winning side of" : "still chasing"} your target. ${winning ? "If the round ended now, this pick would win." : "There is still time for the market to move."}`;
+      document.getElementById("position-entry").textContent = `${entryPrice}¢`;
+      document.getElementById("position-now").textContent = `${nowPrice}¢`;
+      document.getElementById("position-shares").textContent = shares.toFixed(2);
+      document.getElementById("position-value").textContent = `$${value.toFixed(2)}`;
+      document.getElementById("cash-position").textContent = `Cash out $${value.toFixed(2)}`;
+      const meter = document.getElementById("position-meter-fill");
+      meter.style.width = `${Math.max(8, Math.min(100, nowPrice))}%`;
+      meter.style.background = isLower ? "var(--down)" : "var(--up)";
+    }
+
+    function selectAsset(assetKey) {
+      state.asset = assetKey;
+      state.historyMode = false;
+      document.querySelectorAll(".asset-tab").forEach((button) => {
+        const active = button.dataset.asset === assetKey;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+      });
+      makeSeries();
+      updateReadout();
+      drawChart();
+      front.classList.remove("asset-pop");
+      void front.offsetWidth;
+      front.classList.add("asset-pop");
+    }
+
+    function selectDuration(durationKey) {
+      state.duration = durationKey;
+      state.remaining = DURATIONS[durationKey].remaining;
+      state.historyMode = false;
+      document.querySelectorAll(".duration-option").forEach((button) => {
+        button.classList.toggle("active", button.dataset.duration === durationKey);
+      });
+      makeSeries();
+      updateClock();
+      updateReadout();
+      drawChart();
+      closeDurationSheet();
+    }
+
+    function selectSide(side) {
+      state.side = side;
+      document.querySelectorAll(".choice-button").forEach((button) => {
+        const active = button.dataset.side === side;
+        button.classList.toggle("selected", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      updateTradeCopy();
+    }
+
+    function currentSidePrice() {
+      const higher = Math.round(priceProbability());
+      return state.side === "higher" ? higher : 101 - higher;
+    }
+
+    function updateOrderComposer() {
+      const sideLabel = state.side === "higher" ? "Higher" : "Lower";
+      const amount = Number(state.orderAmount) || 0;
+      const price = state.orderType === "market" ? currentSidePrice() : state.limitPrice;
+      const shares = price > 0 ? amount / (price / 100) : 0;
+      document.getElementById("order-side").textContent = sideLabel;
+      document.getElementById("order-price-label").textContent = state.orderType === "market" ? "Best available" : "Your limit";
+      document.getElementById("order-live-price").textContent = `${price}¢`;
+      document.getElementById("order-limit-price").textContent = `${state.limitPrice}¢`;
+      document.getElementById("order-amount").textContent = state.orderAmount;
+      document.getElementById("review-price").textContent = `${price}¢`;
+      document.getElementById("review-payout").textContent = `$${shares.toFixed(2)}`;
+      document.getElementById("review-shares").textContent = shares.toFixed(2);
+      document.getElementById("review-pay").textContent = `$${amount.toFixed(2)}`;
+      document.getElementById("review-loss").textContent = `$${amount.toFixed(2)}`;
+      const confirm = document.getElementById("order-confirm");
+      confirm.textContent = state.orderType === "market" ? `Buy ${sideLabel} · $${state.orderAmount}` : `Place ${sideLabel} limit · $${state.orderAmount}`;
+      confirm.classList.toggle("lower", state.side === "lower");
+    }
+
+    function openOrderSheet(side = state.side) {
+      selectSide(side);
+      state.orderAmount = String(QUICK_AMOUNTS[state.amountIndex]);
+      state.limitPrice = currentSidePrice();
+      updateOrderComposer();
+      orderSheet.classList.add("open");
+      orderSheet.setAttribute("aria-hidden", "false");
+    }
+
+    function closeOrderSheet() {
+      orderSheet.classList.remove("open");
+      orderSheet.setAttribute("aria-hidden", "true");
+    }
+
+    function setOrderType(type) {
+      state.orderType = type;
+      document.querySelectorAll(".order-type").forEach((button) => {
+        const active = button.dataset.orderType === type;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+      });
+      document.getElementById("order-limit").classList.toggle("is-hidden", type !== "limit");
+      updateOrderComposer();
+    }
+
+    function setOrderAmount(value) {
+      state.orderAmount = value === "max" ? "248.20" : String(value);
+      updateOrderComposer();
+    }
+
+    function pressOrderKey(key) {
+      if (key === "delete") state.orderAmount = state.orderAmount.length > 1 ? state.orderAmount.slice(0, -1) : "0";
+      else if (key === "." && state.orderAmount.includes(".")) return;
+      else if (state.orderAmount.includes(".") && state.orderAmount.split(".")[1].length >= 2) return;
+      else if (state.orderAmount.length >= 7) return;
+      else state.orderAmount = state.orderAmount === "0" && key !== "." ? key : state.orderAmount + key;
+      updateOrderComposer();
+    }
+
+    function switchView(view) {
+      state.chartView = view;
+      document.querySelectorAll(".view-button").forEach((button) => {
+        const active = button.dataset.view === view;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+      });
+      chartPanel.classList.toggle("is-hidden", view !== "chart");
+      compactBook.classList.toggle("is-hidden", view !== "book");
+      compactBook.setAttribute("aria-hidden", String(view !== "book"));
+      if (view === "chart") window.requestAnimationFrame(resizeCanvas);
+    }
+
+    function setHistoryMode(showHistory) {
+      state.historyMode = showHistory;
+      updateReadout();
+      drawChart();
+    }
+
+    function openDurationSheet() {
+      durationSheet.classList.add("open");
+      durationSheet.setAttribute("aria-hidden", "false");
+    }
+
+    function closeDurationSheet() {
+      durationSheet.classList.remove("open");
+      durationSheet.setAttribute("aria-hidden", "true");
+    }
+
+    function openAmountSheet() {
+      document.querySelectorAll(".amount-input").forEach((input, index) => {
+        input.value = QUICK_AMOUNTS[index];
+      });
+      amountSheet.classList.add("open");
+      amountSheet.setAttribute("aria-hidden", "false");
+    }
+
+    function closeAmountSheet() {
+      amountSheet.classList.remove("open");
+      amountSheet.setAttribute("aria-hidden", "true");
+    }
+
+    function saveQuickAmounts() {
+      document.querySelectorAll(".amount-input").forEach((input, index) => {
+        QUICK_AMOUNTS[index] = Math.max(1, Math.min(999, Number(input.value) || QUICK_AMOUNTS[index]));
+      });
+      closeAmountSheet();
+      updateTradeCopy();
+      showToast("Quick amounts saved");
+    }
+
+    function flipCard(showBack) {
+      card.classList.toggle("is-flipped", showBack);
+      front.inert = showBack;
+      positionCard.inert = !showBack;
+    }
+
+    function showToast(message) {
+      const amount = QUICK_AMOUNTS[state.amountIndex];
+      const sideLabel = state.side === "higher" ? "Higher" : "Lower";
+      const toast = document.getElementById("toast");
+      document.getElementById("toast-copy").textContent = message || `${sideLabel} for $${amount} is ready to review`;
+      toast.classList.add("show");
+      window.clearTimeout(state.toastTimer);
+      state.toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    function settleRound() {
+      if (state.settling) return;
+      state.settling = true;
+      const asset = currentAsset();
+      const close = state.points[state.points.length - 1];
+      const result = close >= asset.target ? "higher" : "lower";
+      document.getElementById("settle-flash").textContent = "Round closed";
+      chartStage.classList.add("settling");
+
+      window.setTimeout(() => {
+        state.previousPoints = [...state.points];
+        state.previousTarget = asset.target;
+        state.previousClose = close;
+        state.previousResult = result;
+        asset.target = close;
+        const scale = Math.max(asset.target * 0.00013, 0.0018);
+        asset.current = close + (Math.random() > 0.5 ? 1 : -1) * scale * 1.4;
+        state.remaining = currentDuration().total;
+        state.historyMode = false;
+        makeCurrentSeries();
+        updateClock();
+        updateReadout();
+        drawChart();
+        chartStage.classList.remove("settling");
+        state.settling = false;
+        showToast("Round settled. New round is live.");
+      }, reduceMotion ? 20 : 760);
+    }
+
+    function nudgePrice() {
+      if (reduceMotion || state.settling || card.classList.contains("is-flipped") || durationSheet.classList.contains("open") || amountSheet.classList.contains("open") || orderSheet.classList.contains("open")) return;
+      const asset = currentAsset();
+      const prior = state.points[state.points.length - 1];
+      const step = Math.max(asset.target * 0.000035, 0.0006);
+      const pull = (asset.current - prior) * 0.07;
+      const next = prior + pull + (Math.random() - 0.49) * step;
+      const duration = currentDuration();
+      const elapsedRatio = Math.max(0.035, Math.min(1, 1 - state.remaining / duration.total));
+      const desiredPointCount = Math.max(3, Math.round(duration.points * elapsedRatio));
+      if (state.points.length < desiredPointCount) state.points.push(next);
+      else state.points[state.points.length - 1] = next;
+      updateReadout();
+      drawChart();
+    }
+
+    document.querySelectorAll(".asset-tab").forEach((button) => {
+      button.addEventListener("click", () => selectAsset(button.dataset.asset));
+    });
+
+    document.querySelectorAll(".choice-button").forEach((button) => {
+      button.addEventListener("click", () => openOrderSheet(button.dataset.side));
+    });
+
+    document.querySelectorAll(".duration-option").forEach((button) => {
+      button.addEventListener("click", () => selectDuration(button.dataset.duration));
+    });
+
+    document.querySelectorAll(".view-button").forEach((button) => {
+      button.addEventListener("click", () => switchView(button.dataset.view));
+    });
+
+    document.querySelectorAll(".quick-amount").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.amountIndex = Number(button.dataset.amountIndex);
+        updateTradeCopy();
+      });
+    });
+
+    document.getElementById("clock-button").addEventListener("click", openDurationSheet);
+    document.getElementById("sheet-close").addEventListener("click", closeDurationSheet);
+    durationSheet.addEventListener("click", (event) => {
+      if (event.target === durationSheet) closeDurationSheet();
+    });
+
+    document.getElementById("configure-amounts").addEventListener("click", openAmountSheet);
+    document.getElementById("amount-sheet-close").addEventListener("click", closeAmountSheet);
+    document.getElementById("amount-save").addEventListener("click", saveQuickAmounts);
+    amountSheet.addEventListener("click", (event) => {
+      if (event.target === amountSheet) closeAmountSheet();
+    });
+
+    document.getElementById("position-button").addEventListener("click", () => flipCard(true));
+    document.getElementById("back-button").addEventListener("click", () => flipCard(false));
+    document.getElementById("back-action").addEventListener("click", () => openOrderSheet());
+    document.getElementById("add-position").addEventListener("click", () => { flipCard(false); openOrderSheet(); });
+    document.getElementById("cash-position").addEventListener("click", () => showToast("Cash out preview opened"));
+    document.getElementById("last-round-button").addEventListener("click", () => setHistoryMode(!state.historyMode));
+
+    document.querySelectorAll(".order-type").forEach((button) => button.addEventListener("click", () => setOrderType(button.dataset.orderType)));
+    document.querySelectorAll("[data-order-amount]").forEach((button) => button.addEventListener("click", () => setOrderAmount(button.dataset.orderAmount)));
+    document.querySelectorAll(".order-numpad-key").forEach((button) => button.addEventListener("click", () => pressOrderKey(button.dataset.orderKey)));
+    document.getElementById("order-limit-minus").addEventListener("click", () => { state.limitPrice = Math.max(1, state.limitPrice - 1); updateOrderComposer(); });
+    document.getElementById("order-limit-plus").addEventListener("click", () => { state.limitPrice = Math.min(99, state.limitPrice + 1); updateOrderComposer(); });
+    document.getElementById("order-close").addEventListener("click", closeOrderSheet);
+    orderSheet.addEventListener("click", (event) => { if (event.target === orderSheet) closeOrderSheet(); });
+    document.getElementById("order-confirm").addEventListener("click", () => {
+      const sideLabel = state.side === "higher" ? "Higher" : "Lower";
+      const message = state.orderType === "market" ? `${sideLabel} market order ready` : `${sideLabel} limit order placed at ${state.limitPrice}¢`;
+      closeOrderSheet();
+      showToast(message);
+    });
+
+    chartStage.addEventListener("pointerdown", (event) => {
+      if (state.chartView !== "chart" || event.target.closest("button")) return;
+      state.swipeStartX = event.clientX;
+    });
+
+    chartStage.addEventListener("pointerup", (event) => {
+      if (state.swipeStartX === null) return;
+      const travel = event.clientX - state.swipeStartX;
+      state.swipeStartX = null;
+      if (travel > 42) setHistoryMode(true);
+      if (travel < -42) setHistoryMode(false);
+    });
+
+    makeSeries();
+    updateClock();
+    updateReadout();
+    resizeCanvas();
+    positionCard.inert = true;
+
+    window.addEventListener("resize", resizeCanvas);
+    window.setInterval(() => {
+      if (state.remaining > 0) {
+        state.remaining -= 1;
+        updateClock();
+        if (state.chartView === "chart") drawChart();
+      } else {
+        settleRound();
+      }
+    }, 1000);
+    window.setInterval(nudgePrice, 1800);
+  </script>
+</body>
+</html>

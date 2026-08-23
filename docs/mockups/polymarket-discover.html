@@ -1,0 +1,1379 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#073B4C">
+  <title>MyBoon Predict — Discover</title>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: dark;
+      --screen: #073B4C;
+      --wallet: #031F2C;
+      --ground: #063343;
+      --surface: #083D50;
+      --lift: #0A4A60;
+      --border: #185A70;
+      --bone: #F5FAFC;
+      --dim: #9CB8C2;
+      --faint: #6B95A1;
+      --primary: #118AB2;
+      --positive: #06D6A0;
+      --negative: #EF476F;
+      --accent: #FFD166;
+      --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      --mono: "SFMono-Regular", "SF Mono", "Roboto Mono", ui-monospace, monospace;
+    }
+
+    html {
+      min-height: 100%;
+      background: var(--ground);
+      overscroll-behavior: none;
+    }
+
+    body {
+      min-height: 100dvh;
+      margin: 0;
+      color: var(--bone);
+      background: var(--ground);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; }
+    button { border: 0; color: inherit; }
+    button:focus-visible, [role="button"]:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .stage {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+    }
+
+    .phone {
+      position: relative;
+      width: min(430px, 100%);
+      height: min(900px, 100dvh);
+      min-height: 680px;
+      overflow: hidden;
+      background: var(--screen);
+    }
+
+    .topbar {
+      position: absolute;
+      z-index: 20;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: calc(58px + env(safe-area-inset-top));
+      padding: env(safe-area-inset-top) 15px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(24, 90, 112, 0.62);
+      background: rgba(7, 59, 76, 0.97);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .brand img {
+      width: 78px;
+      height: 38px;
+      object-fit: contain;
+      object-position: left center;
+    }
+
+    .brand-section {
+      height: 26px;
+      padding-left: 9px;
+      display: flex;
+      align-items: center;
+      border-left: 1px solid var(--border);
+      color: var(--dim);
+      font: 800 9px/1 var(--mono);
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .top-actions { display: flex; gap: 7px; }
+
+    .icon-button, .avatar {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--ground);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .icon-button { color: var(--dim); font-size: 17px; }
+    .avatar {
+      border-radius: 50%;
+      color: var(--screen);
+      background: var(--accent);
+      font: 950 10px/1 var(--mono);
+    }
+
+    .scroll {
+      position: absolute;
+      inset: calc(58px + env(safe-area-inset-top)) 0 calc(62px + env(safe-area-inset-bottom));
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior-y: contain;
+      scrollbar-width: none;
+    }
+
+    .scroll::-webkit-scrollbar,
+    .rail::-webkit-scrollbar,
+    .category-rail::-webkit-scrollbar,
+    .league-rail::-webkit-scrollbar,
+    .live-rail::-webkit-scrollbar,
+    .story-rail::-webkit-scrollbar { display: none; }
+
+    .intro {
+      padding: 20px 16px 14px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .intro h1 {
+      margin: 0;
+      font-size: 31px;
+      line-height: 0.98;
+      font-weight: 900;
+      letter-spacing: -0.055em;
+    }
+
+    .intro p {
+      width: 144px;
+      margin: 0 0 1px;
+      color: var(--dim);
+      font-size: 10px;
+      line-height: 1.35;
+      text-align: right;
+    }
+
+    .section-head {
+      padding: 0 16px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--dim);
+      font: 850 9px/1 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .live-pulse {
+      position: relative;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--negative);
+    }
+
+    .live-pulse::after {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border: 1px solid var(--negative);
+      border-radius: inherit;
+      animation: pulse 1.8s ease-out infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.7; transform: scale(0.65); }
+      70%, 100% { opacity: 0; transform: scale(1.35); }
+    }
+
+    .section-action {
+      padding: 7px 0 7px 10px;
+      color: var(--accent);
+      background: transparent;
+      font: 800 9px/1 var(--mono);
+      cursor: pointer;
+    }
+
+    .fast-wrap { padding: 14px 0 17px; }
+
+    .featured-rail {
+      padding: 0 16px;
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none;
+    }
+
+    .featured-rail::-webkit-scrollbar { display: none; }
+
+    .rail {
+      padding: 0 16px;
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none;
+    }
+
+    .fast-card {
+      position: relative;
+      width: 100%;
+      max-width: none;
+      height: 220px;
+      overflow: hidden;
+      padding: 13px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 8px;
+      border: 1px solid rgba(255, 209, 102, 0.32);
+      border-radius: 26px;
+      background: var(--surface);
+      box-shadow: 0 18px 38px rgba(3, 31, 44, 0.35), inset 0 1px 0 rgba(245, 250, 252, 0.08);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .featured-rail > .fast-card,
+    .featured-slide {
+      flex: 0 0 calc(min(430px, 100vw) - 48px);
+      width: auto;
+      scroll-snap-align: center;
+    }
+
+    .fast-card::after {
+      content: "";
+      position: absolute;
+      width: 180px;
+      height: 180px;
+      top: -105px;
+      right: -70px;
+      border: 34px solid rgba(17, 138, 178, 0.2);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .fast-card:active { transform: scale(0.988); }
+    .fast-card[data-asset="SOL"] { border-color: rgba(6, 214, 160, 0.3); }
+    .fast-card[data-asset="ETH"] { border-color: rgba(17, 138, 178, 0.55); }
+
+    .fast-top, .asset-lockup, .countdown, .fast-bottom, .sides {
+      display: flex;
+      align-items: center;
+    }
+
+    .fast-top { position: relative; z-index: 1; justify-content: space-between; }
+    .asset-lockup { gap: 9px; }
+
+    .coin {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      color: var(--screen);
+      background: var(--accent);
+      font: 950 14px/1 var(--mono);
+    }
+
+    [data-asset="SOL"] .coin { background: var(--positive); }
+    [data-asset="ETH"] .coin { color: var(--bone); background: var(--primary); }
+
+    .asset-name { font-size: 14px; font-weight: 900; letter-spacing: -0.02em; }
+    .asset-question { margin-top: 2px; color: var(--dim); font-size: 9px; }
+
+    .one-tap-mark {
+      margin-right: 5px;
+      color: var(--accent);
+      font: 900 9px/1 var(--mono);
+      letter-spacing: 0.07em;
+    }
+
+    .duration-chip {
+      height: 31px;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--bone);
+      background: var(--ground);
+      font: 900 9px/1 var(--mono);
+    }
+
+    .duration-chip i { color: var(--accent); font-size: 12px; }
+
+    .price-line {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+    }
+
+    .price-label {
+      color: var(--faint);
+      font: 800 9px/1 var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .current-price {
+      margin-top: 5px;
+      font: 900 22px/1 var(--mono);
+      letter-spacing: -0.06em;
+    }
+
+    .target-copy { text-align: right; }
+    .target-price { margin-top: 5px; color: var(--accent); font: 900 14px/1 var(--mono); }
+
+    .chart-box {
+      min-height: 48px;
+      position: relative;
+      border-top: 1px solid rgba(24, 90, 112, 0.6);
+      border-bottom: 1px solid rgba(24, 90, 112, 0.6);
+    }
+
+    .chart-box svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .target-rule { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 5; opacity: 0.54; }
+    .price-path {
+      fill: none;
+      stroke: var(--positive);
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 230;
+      stroke-dashoffset: 230;
+      animation: draw 1.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    }
+
+    [data-asset="ETH"] .price-path { stroke: var(--primary); }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+
+    .target-tag {
+      position: absolute;
+      top: 41%;
+      right: 0;
+      padding: 3px 5px;
+      color: var(--screen);
+      border-radius: 5px 0 0 5px;
+      background: var(--accent);
+      font: 900 9px/1 var(--mono);
+      transform: translateY(-50%);
+    }
+
+    .endpoint {
+      position: absolute;
+      top: 26%;
+      right: 3px;
+      width: 7px;
+      height: 7px;
+      border: 2px solid var(--surface);
+      border-radius: 50%;
+      background: var(--positive);
+      box-shadow: 0 0 0 4px rgba(6, 214, 160, 0.14);
+    }
+
+    .fast-bottom { justify-content: space-between; gap: 10px; }
+    .countdown { gap: 7px; }
+    .countdown i { color: var(--negative); font-size: 14px; }
+    .countdown strong { font: 950 16px/1 var(--mono); letter-spacing: -0.05em; }
+    .countdown span { color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+
+    .sides { gap: 5px; }
+    .side-pill {
+      height: 30px;
+      min-width: 70px;
+      padding: 0 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 5px;
+      border-radius: 9px;
+      background: var(--ground);
+      font-size: 9px;
+      font-weight: 850;
+    }
+
+    .side-pill strong { font: 950 11px/1 var(--mono); }
+    .side-pill.up { color: var(--positive); }
+    .side-pill.down { color: var(--negative); }
+
+    .card-hint {
+      position: absolute;
+      z-index: 2;
+      right: 15px;
+      bottom: -1px;
+      padding: 4px 9px;
+      border-radius: 7px 7px 0 0;
+      color: var(--screen);
+      background: var(--accent);
+      font: 900 9px/1 var(--mono);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .featured-slide {
+      position: relative;
+      height: 220px;
+      overflow: hidden;
+      padding: 14px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+      border: 1px solid var(--border);
+      border-radius: 26px;
+      background: var(--surface);
+      box-shadow: 0 18px 38px rgba(3, 31, 44, 0.35), inset 0 1px 0 rgba(245, 250, 252, 0.08);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .featured-slide:active { transform: scale(0.988); }
+    .featured-slide::after {
+      content: "";
+      position: absolute;
+      z-index: 0;
+      width: 148px;
+      height: 148px;
+      top: -92px;
+      right: -55px;
+      border: 28px solid rgba(17, 138, 178, 0.16);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .featured-slide.live-feature { border-color: rgba(239, 71, 111, 0.38); }
+    .featured-slide.politics-feature { border-color: rgba(17, 138, 178, 0.55); }
+    .featured-slide.cricket-feature { border-color: rgba(6, 214, 160, 0.34); }
+
+    .feature-top,
+    .feature-footer,
+    .feature-team,
+    .feature-probability-row {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+    }
+
+    .feature-top { justify-content: space-between; gap: 10px; }
+    .feature-kicker { color: var(--accent); font: 900 9px/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; }
+    .live-feature .feature-kicker { color: var(--negative); }
+    .politics-feature .feature-kicker { color: var(--primary); }
+    .cricket-feature .feature-kicker { color: var(--positive); }
+    .feature-status { color: var(--faint); font: 800 9px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+    .feature-status.live { color: var(--negative); }
+
+    .feature-matchup {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 58px 1fr;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .feature-team { min-width: 0; gap: 8px; }
+    .feature-team.right { flex-direction: row-reverse; text-align: right; }
+    .feature-team .crest { flex: 0 0 auto; width: 38px; height: 38px; }
+    .feature-team-name { overflow: hidden; font-size: 12px; line-height: 1.15; font-weight: 900; white-space: nowrap; text-overflow: ellipsis; }
+    .feature-score { text-align: center; }
+    .feature-score strong { display: block; font: 950 24px/1 var(--mono); letter-spacing: -0.08em; }
+    .feature-score span { display: block; margin-top: 5px; color: var(--negative); font: 900 9px/1 var(--mono); }
+
+    .feature-footer { justify-content: space-between; gap: 8px; }
+    .feature-footer-copy { color: var(--faint); font: 750 9px/1.3 var(--mono); }
+    .feature-open { display: flex; align-items: center; gap: 5px; color: var(--accent); font: 900 9px/1 var(--mono); text-transform: uppercase; }
+
+    .feature-question {
+      position: relative;
+      z-index: 1;
+      max-width: 290px;
+      margin: 4px 0 0;
+      font-size: 20px;
+      line-height: 1.08;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+    }
+
+    .feature-probability-row { justify-content: space-between; gap: 14px; }
+    .feature-probability strong { display: block; color: var(--positive); font: 950 27px/1 var(--mono); letter-spacing: -0.07em; }
+    .feature-probability span { display: block; margin-top: 4px; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .feature-split { width: 138px; }
+    .feature-split-track { height: 7px; overflow: hidden; border-radius: 7px; background: var(--negative); }
+    .feature-split-fill { width: var(--split); height: 100%; border-radius: inherit; background: var(--positive); }
+    .feature-split-labels { margin-top: 6px; display: flex; justify-content: space-between; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+
+    .feature-date {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .feature-date-team { text-align: center; }
+    .feature-date-team .crest { width: 42px; height: 42px; margin: 0 auto; }
+    .feature-date-team strong { display: block; margin-top: 7px; font-size: 12px; }
+    .feature-date-center { text-align: center; }
+    .feature-date-center strong { display: block; color: var(--accent); font: 950 14px/1 var(--mono); }
+    .feature-date-center span { display: block; margin-top: 5px; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+
+    .featured-dots {
+      height: 21px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .featured-dot { width: 5px; height: 5px; border-radius: 999px; background: var(--border); transition: width 180ms ease, background 180ms ease; }
+    .featured-dot.active { width: 17px; background: var(--accent); }
+
+    .rail-dots {
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .rail-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--border);
+      transition: width 180ms ease, background 180ms ease;
+    }
+
+    .rail-dot.active { width: 18px; background: var(--accent); }
+
+    .category-stick {
+      position: sticky;
+      z-index: 15;
+      top: 0;
+      padding: 8px 0;
+      border-top: 1px solid rgba(24, 90, 112, 0.56);
+      border-bottom: 1px solid rgba(24, 90, 112, 0.56);
+      background: rgba(7, 59, 76, 0.96);
+    }
+
+    .category-rail {
+      padding: 0 12px;
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .category {
+      position: relative;
+      flex: 0 0 auto;
+      height: 35px;
+      padding: 0 12px;
+      border-radius: 11px;
+      color: var(--faint);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .category.active { color: var(--bone); background: var(--lift); }
+    .category.active::after {
+      content: "";
+      position: absolute;
+      right: 12px;
+      bottom: 4px;
+      left: 12px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--accent);
+    }
+
+    .content { padding-top: 18px; }
+    .shelf { padding-bottom: 25px; }
+    .shelf + .shelf { border-top: 1px solid rgba(24, 90, 112, 0.42); padding-top: 20px; }
+
+    .live-rail, .league-rail, .story-rail {
+      padding: 0 16px;
+      display: flex;
+      gap: 9px;
+      overflow-x: auto;
+      scroll-snap-type: x proximity;
+      scrollbar-width: none;
+    }
+
+    .match-card {
+      flex: 0 0 264px;
+      min-height: 164px;
+      padding: 13px;
+      scroll-snap-align: start;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--surface);
+      cursor: pointer;
+    }
+
+    .match-card:active, .binary-card:active, .league:active { opacity: 0.86; }
+
+    .match-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--faint);
+      font: 800 9px/1 var(--mono);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .league-identity { min-width: 0; display: flex; align-items: center; gap: 6px; }
+    .league-identity > span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .country-flag {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      font-size: 15px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .match-live { color: var(--negative); }
+    .match-time { color: var(--accent); }
+    .matchup { margin-top: 9px; display: grid; grid-template-columns: 1fr 47px 1fr; align-items: center; }
+    .team { min-width: 0; }
+    .team.right { text-align: right; }
+    .crest {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      color: var(--accent);
+      background: var(--ground);
+      font: 900 9px/1 var(--mono);
+    }
+
+    .flag-mark {
+      width: 51px;
+      height: 51px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .feature-date-team .flag-mark { width: 63px; height: 63px; margin: 0 auto; font-size: 37px; }
+
+    .club-crest {
+      width: 42px;
+      height: 42px;
+      flex: 0 0 auto;
+      display: block;
+      object-fit: contain;
+    }
+
+    .feature-team .club-crest { width: 48px; height: 48px; }
+    .team.right .club-crest { margin-left: auto; }
+
+    .team.right .crest, .team.right .flag-mark { margin-left: auto; color: var(--positive); }
+    .team-name { margin-top: 5px; overflow: hidden; font-size: 11px; font-weight: 850; white-space: nowrap; text-overflow: ellipsis; }
+    .versus { color: var(--faint); text-align: center; }
+    .versus strong { display: block; color: var(--bone); font: 950 15px/1 var(--mono); letter-spacing: -0.06em; }
+    .versus span { display: block; margin-top: 5px; color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .versus.live span { color: var(--negative); }
+
+    .match-odds {
+      margin-top: 9px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .match-odds.three { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+
+    .odd {
+      height: 30px;
+      padding: 0 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-radius: 8px;
+      color: var(--dim);
+      background: var(--ground);
+      font-size: 9px;
+    }
+
+    .match-odds.three .odd { padding: 0 6px; }
+
+    .odd strong { color: var(--bone); font: 900 10px/1 var(--mono); }
+
+    .story-card {
+      flex: 0 0 214px;
+      min-height: 128px;
+      padding: 13px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      scroll-snap-align: start;
+      border: 1px solid var(--border);
+      border-radius: 17px;
+      background: var(--surface);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .story-card:active { opacity: 0.86; }
+    .story-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .story-category { color: var(--accent); font: 900 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .story-card:nth-child(2) .story-category { color: var(--primary); }
+    .story-card:nth-child(3) .story-category { color: var(--positive); }
+    .story-time { color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; }
+    .story-question { margin: 10px 0 0; font-size: 12px; line-height: 1.25; font-weight: 850; letter-spacing: -0.015em; }
+    .story-result { margin-top: 12px; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+    .story-result strong { color: var(--positive); font: 950 19px/1 var(--mono); letter-spacing: -0.06em; }
+    .story-result span { color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; }
+
+    .league {
+      flex: 0 0 102px;
+      min-height: 111px;
+      padding: 11px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border: 1px solid var(--border);
+      border-radius: 17px;
+      background: var(--surface);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .league-mark {
+      width: 35px;
+      height: 35px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      color: var(--screen);
+      background: var(--primary);
+      font: 950 10px/1 var(--mono);
+    }
+
+    .league-mark.flag-tile {
+      border: 0;
+      color: inherit !important;
+      background: transparent !important;
+      font-size: 23px;
+      line-height: 1;
+    }
+
+    .league:nth-child(2) .league-mark { background: var(--accent); }
+    .league:nth-child(3) .league-mark { background: var(--positive); }
+    .league:nth-child(4) .league-mark { color: var(--bone); background: var(--negative); }
+    .league-name { margin-top: 11px; font-size: 10px; line-height: 1.2; font-weight: 850; }
+    .league-count { margin-top: 4px; color: var(--faint); font: 750 9px/1 var(--mono); text-transform: uppercase; }
+
+    .binary-list { padding: 0 16px; display: grid; gap: 8px; }
+
+    .binary-card {
+      min-height: 116px;
+      padding: 13px;
+      display: grid;
+      grid-template-columns: 1fr 76px;
+      gap: 14px;
+      border: 1px solid var(--border);
+      border-radius: 17px;
+      background: var(--surface);
+      cursor: pointer;
+    }
+
+    .binary-kicker { color: var(--accent); font: 850 9px/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; }
+    .binary-question { margin: 7px 0 0; font-size: 13px; line-height: 1.26; font-weight: 820; letter-spacing: -0.012em; }
+    .binary-meta { margin-top: 9px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .probability { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; }
+    .probability strong { color: var(--positive); font: 950 25px/1 var(--mono); letter-spacing: -0.08em; }
+    .probability span { margin-top: 4px; color: var(--dim); font: 850 9px/1 var(--mono); text-transform: uppercase; }
+    .prob-track { width: 68px; height: 4px; margin-top: 12px; overflow: hidden; border-radius: 4px; background: var(--lift); }
+    .prob-fill { width: var(--prob); height: 100%; border-radius: inherit; background: var(--positive); }
+
+    .soft-end {
+      padding: 6px 20px 27px;
+      color: var(--faint);
+      font-size: 9px;
+      line-height: 1.45;
+      text-align: center;
+    }
+
+    .bottom-search {
+      position: absolute;
+      z-index: 25;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: calc(62px + env(safe-area-inset-bottom));
+      padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+      border-top: 1px solid rgba(24, 90, 112, 0.72);
+      background: rgba(3, 31, 44, 0.97);
+    }
+
+    .bottom-search-button {
+      width: 100%;
+      height: 45px;
+      padding: 0 11px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      color: var(--dim);
+      background: var(--surface);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .bottom-search-icon {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--accent);
+      background: var(--ground);
+      font-size: 16px;
+    }
+
+    .bottom-search-copy { min-width: 0; flex: 1; }
+    .bottom-search-copy strong { display: block; color: var(--bone); font-size: 11px; }
+    .bottom-search-copy span { display: block; margin-top: 2px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .bottom-search-button > i { color: var(--faint); font-size: 15px; }
+
+    .sheet-backdrop {
+      position: absolute;
+      z-index: 50;
+      inset: 0;
+      display: flex;
+      align-items: flex-end;
+      visibility: hidden;
+      background: rgba(3, 31, 44, 0);
+      transition: visibility 260ms, background 260ms ease;
+    }
+
+    .sheet-backdrop.open { visibility: visible; background: rgba(3, 31, 44, 0.76); }
+
+    .sheet {
+      width: 100%;
+      max-height: 76%;
+      padding: 10px 16px calc(20px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-bottom: 0;
+      border-radius: 28px 28px 0 0;
+      background: var(--ground);
+      transform: translateY(104%);
+      transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .sheet-backdrop.open .sheet { transform: translateY(0); }
+    .grabber { width: 36px; height: 4px; margin: 0 auto 16px; border-radius: 4px; background: var(--border); }
+    .sheet-title-row { display: flex; align-items: center; justify-content: space-between; }
+    .sheet h2 { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -0.045em; }
+    .sheet-close { width: 36px; height: 36px; border-radius: 50%; color: var(--dim); background: var(--surface); font-size: 17px; }
+
+    .search-field {
+      height: 44px;
+      margin-top: 15px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      color: var(--faint);
+      background: var(--surface);
+    }
+
+    .search-field input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--bone); background: transparent; font-size: 12px; }
+    .search-field input::placeholder { color: var(--faint); }
+    .sheet-label { margin: 19px 0 8px; color: var(--faint); font: 850 9px/1 var(--mono); letter-spacing: 0.11em; text-transform: uppercase; }
+    .sheet-league { width: 100%; min-height: 55px; padding: 0; display: flex; align-items: center; gap: 11px; border-top: 1px solid rgba(24, 90, 112, 0.55); background: transparent; text-align: left; }
+    .sheet-league .league-mark { width: 32px; height: 32px; flex: 0 0 auto; }
+    .sheet-league-copy { min-width: 0; flex: 1; }
+    .sheet-league-copy strong { display: block; font-size: 11px; }
+    .sheet-league-copy span { color: var(--faint); font: 750 9px/1.4 var(--mono); }
+    .sheet-league > i { color: var(--faint); }
+    .sheet-league[hidden] { display: none; }
+
+    .toast {
+      position: absolute;
+      z-index: 80;
+      right: 16px;
+      bottom: calc(68px + env(safe-area-inset-bottom));
+      left: 16px;
+      min-height: 45px;
+      padding: 0 13px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      color: var(--bone);
+      background: var(--lift);
+      box-shadow: 0 12px 28px rgba(3, 31, 44, 0.5);
+      font-size: 10px;
+      font-weight: 750;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(12px);
+      transition: opacity 180ms ease, transform 220ms ease;
+    }
+
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast i { color: var(--accent); font-size: 16px; }
+
+    @media (min-width: 500px) {
+      body { background: var(--ground); }
+      .stage { padding: 28px; }
+      .phone {
+        border: 1px solid rgba(245, 250, 252, 0.12);
+        border-radius: 38px;
+        box-shadow: 0 38px 90px rgba(3, 31, 44, 0.65);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 1ms !important; transition-duration: 1ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="phone" aria-label="MyBoon Predict Discover mobile mockup">
+      <header class="topbar">
+        <div class="brand">
+          <img src="../../apps/hybrid-expo/assets/branding/myboon-wordmark-header.png" alt="MyBoon">
+          <span class="brand-section">Predict</span>
+        </div>
+        <div class="top-actions">
+          <button class="avatar" id="profile-button" aria-label="Open profile">BK</button>
+        </div>
+      </header>
+
+      <div class="scroll" id="main-scroll">
+        <nav class="category-stick" aria-label="Prediction categories">
+          <div class="category-rail">
+            <button class="category active" data-category="Discover">Discover</button>
+            <button class="category" data-category="Sports">Sports</button>
+            <button class="category" data-category="Crypto">Crypto</button>
+            <button class="category" data-category="Politics">Politics</button>
+            <button class="category" data-category="World">World</button>
+          </div>
+        </nav>
+
+        <section class="fast-wrap" aria-labelledby="featured-title">
+          <div class="section-head">
+            <div class="section-title" id="featured-title"><i class="ph-fill ph-star-four" style="color:var(--accent)"></i> Featured</div>
+            <span class="section-action">Swipe</span>
+          </div>
+
+          <div class="featured-rail" id="featured-rail">
+            <article class="fast-card" tabindex="0" role="button" data-asset="BTC" aria-label="Open Bitcoin hourly fast market">
+              <div class="fast-top">
+                <div class="asset-lockup">
+                  <span class="coin">₿</span>
+                  <div>
+                    <div class="asset-name">Bitcoin</div>
+                    <div class="asset-question"><span class="one-tap-mark">ONE TAP</span>Higher or lower when the clock ends?</div>
+                  </div>
+                </div>
+                <span class="duration-chip"><i class="ph-fill ph-timer"></i> 1 hour</span>
+              </div>
+              <div class="price-line">
+                <div>
+                  <div class="price-label">Right now</div>
+                  <div class="current-price">$63,821.47</div>
+                </div>
+                <div class="target-copy">
+                  <div class="price-label">Price to beat</div>
+                  <div class="target-price">$63,793.65</div>
+                </div>
+              </div>
+              <div class="chart-box" aria-hidden="true">
+                <svg viewBox="0 0 312 70" preserveAspectRatio="none">
+                  <path class="target-rule" d="M0 39 H312"></path>
+                  <path class="price-path" d="M0 51 C18 53,28 48,44 50 S71 52,88 47 S119 44,135 46 S158 42,174 44 S197 38,213 39 S232 33,246 35 S262 26,275 29 S292 20,309 22"></path>
+                </svg>
+                <span class="target-tag">TARGET</span>
+                <span class="endpoint"></span>
+              </div>
+              <div class="fast-bottom">
+                <div class="countdown"><i class="ph-fill ph-circle"></i><strong class="clock">35:35</strong><span>left</span></div>
+                <div class="sides">
+                  <span class="side-pill up">Higher <strong>91%</strong></span>
+                  <span class="side-pill down">Lower <strong>9%</strong></span>
+                </div>
+              </div>
+              <span class="card-hint">Open fast markets</span>
+            </article>
+
+            <article class="featured-slide live-feature sports-detail-link" tabindex="0" aria-label="Open Arsenal versus Manchester City live market">
+              <div class="feature-top">
+                <span class="league-identity"><span class="country-flag">🇬🇧</span><span class="feature-kicker">Premier League</span></span>
+                <span class="feature-status live"><i class="ph-fill ph-circle"></i> Market open</span>
+              </div>
+              <div class="feature-matchup">
+                <div class="feature-team"><img class="club-crest" src="https://upload.wikimedia.org/wikipedia/en/5/53/Arsenal_FC.svg" alt="Arsenal crest"><span class="feature-team-name">Arsenal</span></div>
+                <div class="feature-score"><strong>VS</strong><span>Moneyline</span></div>
+                <div class="feature-team right"><img class="club-crest" src="https://upload.wikimedia.org/wikipedia/en/e/eb/Manchester_City_FC_badge.svg" alt="Manchester City crest"><span class="feature-team-name">Man City</span></div>
+              </div>
+              <div class="feature-footer">
+                <span class="feature-footer-copy">Arsenal 76% · Draw 12% · City 12%</span>
+                <span class="feature-open">View match <i class="ph-bold ph-arrow-right"></i></span>
+              </div>
+            </article>
+
+            <article class="featured-slide politics-feature binary-detail-link" tabindex="0" aria-label="Open digital assets bill market">
+              <div class="feature-top">
+                <span class="feature-kicker">Politics · Important</span>
+                <span class="feature-status">Ends this month</span>
+              </div>
+              <h2 class="feature-question">Will the digital assets bill pass this month?</h2>
+              <div class="feature-probability-row">
+                <div class="feature-probability"><strong>57%</strong><span>say yes · $8.4m traded</span></div>
+                <div class="feature-split">
+                  <div class="feature-split-track"><div class="feature-split-fill" style="--split:57%"></div></div>
+                  <div class="feature-split-labels"><span>Yes</span><span>No</span></div>
+                </div>
+              </div>
+            </article>
+
+            <article class="featured-slide cricket-feature show-toast" tabindex="0" data-message="India vs England opened">
+              <div class="feature-top">
+                <span class="feature-kicker">T20 cricket</span>
+                <span class="feature-status">Tomorrow</span>
+              </div>
+              <div class="feature-date">
+                <div class="feature-date-team"><span class="flag-mark">🇮🇳</span><strong>India</strong></div>
+                <div class="feature-date-center"><strong>7:00 PM</strong><span>Starts in 22h</span></div>
+                <div class="feature-date-team"><span class="flag-mark">🇬🇧</span><strong>England</strong></div>
+              </div>
+              <div class="feature-footer">
+                <span class="feature-footer-copy">India 61% · England 39%</span>
+                <span class="feature-open">View market <i class="ph-bold ph-arrow-right"></i></span>
+              </div>
+            </article>
+          </div>
+          <div class="featured-dots" aria-hidden="true"><span class="featured-dot active"></span><span class="featured-dot"></span><span class="featured-dot"></span><span class="featured-dot"></span></div>
+        </section>
+
+        <div class="content">
+          <section class="shelf">
+            <div class="section-head">
+              <div class="section-title"><span class="live-pulse"></span> Live now</div>
+              <button class="section-action show-toast" data-message="Live markets view opened">See all</button>
+            </div>
+            <div class="live-rail">
+              <article class="match-card sports-detail-link" tabindex="0" aria-label="Open Arsenal versus Manchester City live market">
+                <div class="match-meta"><span class="league-identity"><span class="country-flag">🇬🇧</span><span>Premier League</span></span><span class="match-live">Market open</span></div>
+                <div class="matchup">
+                  <div class="team"><img class="club-crest" src="https://upload.wikimedia.org/wikipedia/en/5/53/Arsenal_FC.svg" alt="Arsenal crest"><div class="team-name">Arsenal</div></div>
+                  <span class="versus live"><strong>VS</strong><span>Moneyline</span></span>
+                  <div class="team right"><img class="club-crest" src="https://upload.wikimedia.org/wikipedia/en/e/eb/Manchester_City_FC_badge.svg" alt="Manchester City crest"><div class="team-name">Man City</div></div>
+                </div>
+                <div class="match-odds three"><span class="odd">Arsenal <strong>76%</strong></span><span class="odd">Draw <strong>12%</strong></span><span class="odd">City <strong>12%</strong></span></div>
+              </article>
+              <article class="match-card show-toast" tabindex="0" data-message="India vs Australia opened">
+                <div class="match-meta"><span class="league-identity"><span class="country-flag">🌍</span><span>Test cricket</span></span><span class="match-live">Market open</span></div>
+                <div class="matchup">
+                  <div class="team"><span class="flag-mark">🇮🇳</span><div class="team-name">India</div></div>
+                  <span class="versus live"><strong>VS</strong><span>Moneyline</span></span>
+                  <div class="team right"><span class="flag-mark">🇦🇺</span><div class="team-name">Australia</div></div>
+                </div>
+                <div class="match-odds"><span class="odd">India <strong>58%</strong></span><span class="odd">Australia <strong>29%</strong></span></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="shelf">
+            <div class="section-head">
+              <div class="section-title">Coming up</div>
+              <button class="section-action show-toast" data-message="Upcoming games view opened">See all</button>
+            </div>
+            <div class="live-rail">
+              <article class="match-card show-toast" tabindex="0" data-message="Chelsea vs Liverpool opened">
+                <div class="match-meta"><span class="league-identity"><span class="country-flag">🇬🇧</span><span>Premier League</span></span><span class="match-time">Tonight · 8:30</span></div>
+                <div class="matchup">
+                  <div class="team"><span class="crest">CHE</span><div class="team-name">Chelsea</div></div>
+                  <span class="versus"><strong>VS</strong><span>8:30 PM</span></span>
+                  <div class="team right"><span class="crest">LIV</span><div class="team-name">Liverpool</div></div>
+                </div>
+                <div class="match-odds three"><span class="odd">Chelsea <strong>38%</strong></span><span class="odd">Draw <strong>18%</strong></span><span class="odd">Liverpool <strong>44%</strong></span></div>
+              </article>
+              <article class="match-card show-toast" tabindex="0" data-message="India vs England opened">
+                <div class="match-meta"><span class="league-identity"><span class="country-flag">🌍</span><span>T20 cricket</span></span><span class="match-time">Tomorrow · 7:00</span></div>
+                <div class="matchup">
+                  <div class="team"><span class="flag-mark">🇮🇳</span><div class="team-name">India</div></div>
+                  <span class="versus"><strong>VS</strong><span>7:00 PM</span></span>
+                  <div class="team right"><span class="flag-mark">🇬🇧</span><div class="team-name">England</div></div>
+                </div>
+                <div class="match-odds"><span class="odd">India <strong>61%</strong></span><span class="odd">England <strong>39%</strong></span></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="shelf">
+            <div class="section-head">
+              <div class="section-title">Browse by league</div>
+              <button class="section-action open-leagues">All leagues</button>
+            </div>
+            <div class="league-rail">
+              <button class="league show-toast" data-message="Premier League opened"><span class="league-mark flag-tile">🇬🇧</span><span><span class="league-name">Premier League</span><span class="league-count">12 markets</span></span></button>
+              <button class="league show-toast" data-message="IPL opened"><span class="league-mark flag-tile">🇮🇳</span><span><span class="league-name">IPL</span><span class="league-count">8 markets</span></span></button>
+              <button class="league show-toast" data-message="Champions League opened"><span class="league-mark flag-tile">🇪🇺</span><span><span class="league-name">Champions League</span><span class="league-count">16 markets</span></span></button>
+              <button class="league show-toast" data-message="Formula 1 opened"><span class="league-mark flag-tile">🏁</span><span><span class="league-name">Formula 1</span><span class="league-count">6 markets</span></span></button>
+            </div>
+          </section>
+
+          <section class="shelf">
+            <div class="section-head">
+              <div class="section-title">What’s moving</div>
+              <button class="section-action show-toast" data-message="Trending markets view opened">See all</button>
+            </div>
+            <div class="binary-list">
+              <article class="binary-card event-detail-link" tabindex="0" aria-label="Open Fed decision event">
+                <div><div class="binary-kicker">Finance · 4 markets</div><h3 class="binary-question">What will the Fed do at its next meeting?</h3><div class="binary-meta">$14.2m traded · four outcomes</div></div>
+                <div class="probability"><strong>54%</strong><span>no change</span><div class="prob-track"><div class="prob-fill" style="--prob:54%"></div></div></div>
+              </article>
+              <article class="binary-card show-toast" tabindex="0" data-message="SpaceX market opened">
+                <div><div class="binary-kicker">Tech · Popular</div><h3 class="binary-question">Will SpaceX launch Starship again before October?</h3><div class="binary-meta">$860k traded</div></div>
+                <div class="probability"><strong>84%</strong><span>say yes</span><div class="prob-track"><div class="prob-fill" style="--prob:84%"></div></div></div>
+              </article>
+              <article class="binary-card show-toast" tabindex="0" data-message="Election market opened">
+                <div><div class="binary-kicker">Politics · This week</div><h3 class="binary-question">Will the approval rating finish above 45%?</h3><div class="binary-meta">$510k traded</div></div>
+                <div class="probability"><strong>46%</strong><span>say yes</span><div class="prob-track"><div class="prob-fill" style="--prob:46%"></div></div></div>
+              </article>
+            </div>
+          </section>
+          <p class="soft-end">Prices are the crowd’s live estimate, not a guarantee. Choose only when the question is clear to you.<br><br>Prices run from 1¢ to 99¢ — a price is also the chance of that outcome, and each share pays $1.00 if you’re right.</p>
+        </div>
+      </div>
+
+      <div class="bottom-search">
+        <button class="bottom-search-button" id="search-button" aria-label="Search markets, teams, and leagues">
+          <span class="bottom-search-icon"><i class="ph-bold ph-magnifying-glass"></i></span>
+          <span class="bottom-search-copy"><strong>Search Predict</strong><span>Markets, teams, leagues…</span></span>
+          <i class="ph-bold ph-caret-up"></i>
+        </button>
+      </div>
+
+      <div class="sheet-backdrop" id="league-sheet" aria-hidden="true">
+        <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="league-sheet-title">
+          <div class="grabber"></div>
+          <div class="sheet-title-row"><h2 id="league-sheet-title">Find a league</h2><button class="sheet-close" id="league-close" aria-label="Close"><i class="ph-bold ph-x"></i></button></div>
+          <label class="search-field"><i class="ph ph-magnifying-glass"></i><input id="league-search" type="search" placeholder="Search football, cricket, F1…"></label>
+          <div class="sheet-label">Football</div>
+          <button class="sheet-league" data-name="Premier League"><span class="league-mark flag-tile">🇬🇧</span><span class="sheet-league-copy"><strong>Premier League</strong><span>12 live and upcoming markets</span></span><i class="ph-bold ph-caret-right"></i></button>
+          <button class="sheet-league" data-name="UEFA Champions League"><span class="league-mark flag-tile">🇪🇺</span><span class="sheet-league-copy"><strong>UEFA Champions League</strong><span>16 upcoming markets</span></span><i class="ph-bold ph-caret-right"></i></button>
+          <button class="sheet-league" data-name="La Liga"><span class="league-mark flag-tile">🇪🇸</span><span class="sheet-league-copy"><strong>La Liga</strong><span>10 upcoming markets</span></span><i class="ph-bold ph-caret-right"></i></button>
+          <div class="sheet-label">Cricket</div>
+          <button class="sheet-league" data-name="Indian Premier League"><span class="league-mark flag-tile">🇮🇳</span><span class="sheet-league-copy"><strong>Indian Premier League</strong><span>8 upcoming markets</span></span><i class="ph-bold ph-caret-right"></i></button>
+          <button class="sheet-league" data-name="International Tests"><span class="league-mark flag-tile">🌍</span><span class="sheet-league-copy"><strong>International Tests</strong><span>3 live markets</span></span><i class="ph-bold ph-caret-right"></i></button>
+          <div class="sheet-label">Motorsport</div>
+          <button class="sheet-league" data-name="Formula 1"><span class="league-mark flag-tile">🏁</span><span class="sheet-league-copy"><strong>Formula 1</strong><span>6 markets this weekend</span></span><i class="ph-bold ph-caret-right"></i></button>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="search-sheet" aria-hidden="true">
+        <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="search-sheet-title">
+          <div class="grabber"></div>
+          <div class="sheet-title-row"><h2 id="search-sheet-title">Search Predict</h2><button class="sheet-close" id="search-close" aria-label="Close"><i class="ph-bold ph-x"></i></button></div>
+          <label class="search-field"><i class="ph ph-magnifying-glass"></i><input id="market-search" type="search" placeholder="Team, coin, person, or question…"></label>
+          <div class="sheet-label">Try searching</div>
+          <button class="sheet-league show-toast" data-message="Bitcoin markets opened"><span class="league-mark">₿</span><span class="sheet-league-copy"><strong>Bitcoin</strong><span>Fast markets and predictions</span></span><i class="ph-bold ph-caret-right"></i></button>
+          <button class="sheet-league show-toast" data-message="Premier League opened"><span class="league-mark">PL</span><span class="sheet-league-copy"><strong>Premier League</strong><span>Live matches and season predictions</span></span><i class="ph-bold ph-caret-right"></i></button>
+          <button class="sheet-league show-toast" data-message="India markets opened"><span class="league-mark">IN</span><span class="sheet-league-copy"><strong>India</strong><span>Cricket, politics, and economy</span></span><i class="ph-bold ph-caret-right"></i></button>
+        </section>
+      </div>
+
+      <div class="toast" id="toast" role="status"><i class="ph-fill ph-sparkle"></i><span id="toast-copy"></span></div>
+    </section>
+  </main>
+
+  <script>
+    const toast = document.getElementById('toast');
+    const toastCopy = document.getElementById('toast-copy');
+    const featuredRail = document.getElementById('featured-rail');
+    const featuredDots = [...document.querySelectorAll('.featured-dot')];
+    let toastTimer;
+
+    function showToast(message) {
+      toastCopy.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    function openSheet(sheet) {
+      sheet.classList.add('open');
+      sheet.setAttribute('aria-hidden', 'false');
+      const input = sheet.querySelector('input');
+      if (input) setTimeout(() => input.focus(), 360);
+    }
+
+    function closeSheet(sheet) {
+      sheet.classList.remove('open');
+      sheet.setAttribute('aria-hidden', 'true');
+    }
+
+    function openFastMarket() {
+      window.location.href = 'polymarket-updown-card.html';
+    }
+
+    document.querySelectorAll('.fast-card').forEach((card) => {
+      card.addEventListener('click', openFastMarket);
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openFastMarket();
+        }
+      });
+    });
+
+    let featuredTicking = false;
+    featuredRail.addEventListener('scroll', () => {
+      if (featuredTicking) return;
+      featuredTicking = true;
+      requestAnimationFrame(() => {
+        const slides = [...featuredRail.children];
+        const center = featuredRail.scrollLeft + featuredRail.clientWidth / 2;
+        let active = 0;
+        let nearest = Infinity;
+        slides.forEach((slide, index) => {
+          const slideCenter = slide.offsetLeft + slide.offsetWidth / 2;
+          const distance = Math.abs(center - slideCenter);
+          if (distance < nearest) { nearest = distance; active = index; }
+        });
+        featuredDots.forEach((dot, index) => dot.classList.toggle('active', index === active));
+        featuredTicking = false;
+      });
+    });
+
+    document.querySelectorAll('.category').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.category').forEach((item) => item.classList.toggle('active', item === button));
+        if (button.dataset.category !== 'Discover') showToast(`${button.dataset.category} browse view selected`);
+      });
+    });
+
+    document.querySelectorAll('.show-toast').forEach((item) => {
+      item.addEventListener('click', () => showToast(item.dataset.message || 'Opened'));
+      item.addEventListener('keydown', (event) => {
+        if ((event.key === 'Enter' || event.key === ' ') && item.matches('[tabindex]')) showToast(item.dataset.message || 'Opened');
+      });
+    });
+
+    document.querySelectorAll('.sports-detail-link').forEach((item) => {
+      const openSportsDetail = () => { window.location.href = 'polymarket-sports-detail.html'; };
+      item.addEventListener('click', openSportsDetail);
+      item.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openSportsDetail();
+        }
+      });
+    });
+
+    document.querySelectorAll('.binary-detail-link').forEach((item) => {
+      const openBinaryDetail = () => { window.location.href = 'polymarket-binary-detail.html'; };
+      item.addEventListener('click', openBinaryDetail);
+      item.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openBinaryDetail();
+        }
+      });
+    });
+
+    document.querySelectorAll('.event-detail-link').forEach((item) => {
+      const openEventDetail = () => { window.location.href = 'polymarket-event-detail.html'; };
+      item.addEventListener('click', openEventDetail);
+      item.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openEventDetail();
+        }
+      });
+    });
+
+    document.getElementById('profile-button').addEventListener('click', () => showToast('Predict profile opened'));
+
+    const leagueSheet = document.getElementById('league-sheet');
+    const searchSheet = document.getElementById('search-sheet');
+    document.querySelectorAll('.open-leagues').forEach((button) => button.addEventListener('click', () => openSheet(leagueSheet)));
+    document.getElementById('league-close').addEventListener('click', () => closeSheet(leagueSheet));
+    document.getElementById('search-button').addEventListener('click', () => openSheet(searchSheet));
+    document.getElementById('search-close').addEventListener('click', () => closeSheet(searchSheet));
+
+    [leagueSheet, searchSheet].forEach((sheet) => {
+      sheet.addEventListener('click', (event) => { if (event.target === sheet) closeSheet(sheet); });
+    });
+
+    document.querySelectorAll('.sheet-league').forEach((button) => {
+      button.addEventListener('click', () => {
+        const name = button.dataset.name || button.querySelector('strong')?.textContent || 'Market';
+        closeSheet(button.closest('.sheet-backdrop'));
+        showToast(`${name} opened`);
+      });
+    });
+
+    document.getElementById('league-search').addEventListener('input', (event) => {
+      const query = event.target.value.trim().toLowerCase();
+      leagueSheet.querySelectorAll('.sheet-league').forEach((item) => {
+        item.hidden = Boolean(query) && !item.dataset.name.toLowerCase().includes(query);
+      });
+    });
+
+    let seconds = 215;
+    setInterval(() => {
+      seconds = seconds > 0 ? seconds - 1 : 300;
+      const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
+      const remainder = (seconds % 60).toString().padStart(2, '0');
+      document.querySelector('.clock').textContent = `${minutes}:${remainder}`;
+    }, 1000);
+  </script>
+</body>
+</html>

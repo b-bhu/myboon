@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#073B4C">
+  <title>MyBoon Predict — Multi-market Event</title>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <link rel="stylesheet" href="polymarket-detail-system.css">
+  <style>
+    .event-hero { min-height: 166px; padding: 21px 17px 19px; display: flex; flex-direction: column; justify-content: space-between; }
+    .event-eyebrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--faint); font: 850 9px/1 var(--mono); text-transform: uppercase; }
+    .event-eyebrow span:first-child { color: var(--accent); }
+    .event-question { max-width: 330px; margin: 13px 0 16px; font-size: 28px; line-height: .98; font-weight: 950; letter-spacing: -.055em; }
+    .event-summary { display: flex; align-items: center; gap: 9px; color: var(--dim); font-size: 10px; font-weight: 800; }
+    .leader-mark { padding: 7px 9px; border-radius: 9px; color: var(--screen); background: var(--positive); font: 950 10px/1 var(--mono); }
+    .event-panel { min-height: 288px; }
+    .event-chart .price-badge.primary { top: 49px; }
+    .event-chart .price-badge.secondary { top: 116px; }
+    .event-chart .price-badge.third { top: 166px; }
+    .event-chart .price-badge.fourth { top: 195px; }
+    .contracts { padding: 15px 14px 16px; }
+    .contracts-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .contracts-head strong { font-size: 13px; font-weight: 900; }
+    .odds-button { height: 30px; padding: 0 9px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 9px; color: var(--dim); background: var(--ground); font: 800 9px/1 var(--mono); cursor: pointer; }
+    .odds-button strong { color: var(--accent); font: 950 9px/1 var(--mono); }
+    .odds-button i { color: var(--faint); font-size: 11px; }
+    .contract-list { margin-top: 11px; display: grid; gap: 6px; }
+    .contract { position: relative; min-height: 54px; padding: 0 12px; overflow: hidden; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 13px; color: var(--dim); background: var(--ground); text-align: left; cursor: pointer; }
+    .contract::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--chance); background: linear-gradient(90deg, rgba(6,214,160,.16), rgba(6,214,160,.025)); }
+    .contract > * { position: relative; z-index: 1; }
+    .contract-copy { min-width: 0; }
+    .contract-copy > span { display: block; overflow: hidden; font-size: 11px; font-weight: 900; white-space: nowrap; text-overflow: ellipsis; }
+    .contract-copy small { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .contract-odds { color: var(--positive); font: 950 17px/1 var(--mono); }
+    .contract.selected { border-color: var(--accent); background: var(--lift); box-shadow: inset 4px 0 0 var(--accent); }
+    .contract.low::before { background: linear-gradient(90deg, rgba(255,209,102,.14), rgba(255,209,102,.02)); }
+    .contract.low .contract-odds { color: var(--accent); }
+    .contract.tail::before { background: linear-gradient(90deg, rgba(239,71,111,.13), rgba(239,71,111,.02)); }
+    .contract.tail .contract-odds { color: var(--negative); }
+    .cash-pill { display: flex; align-items: center; gap: 5px; }
+    .cash-pill i { color: var(--positive); font-size: 11px; }
+    .rules-entry { width: 100%; min-height: 58px; margin-top: 8px; padding: 0 14px; display: grid; grid-template-columns: 32px 1fr 18px; align-items: center; gap: 10px; border: 1px solid rgba(245,250,252,.11); border-radius: 17px; color: var(--bone); background: var(--surface); text-align: left; cursor: pointer; }
+    .rules-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; color: var(--accent); background: var(--ground); font-size: 15px; }
+    .rules-copy strong { display: block; font-size: 10px; font-weight: 900; }
+    .rules-copy span { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1.25 var(--mono); }
+    .rules-entry > i { color: var(--faint); font-size: 13px; }
+    .composer-amount { padding-bottom: 4px; }
+    .composer-local { margin-top: 4px; color: var(--faint); font: 750 9px/1 var(--mono); letter-spacing: 0; text-transform: none; }
+    .order-review { min-height: 48px; margin: 7px 0 6px; padding: 7px 9px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px; border: 1px solid var(--border); border-radius: 11px; background: var(--wallet); }
+    .review-item { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+    .review-item span { overflow: hidden; color: var(--faint); font: 750 9px/1 var(--mono); white-space: nowrap; text-overflow: ellipsis; }
+    .review-item strong { color: var(--bone); font: 900 9px/1 var(--mono); }
+    .review-item.payout strong { color: var(--positive); }
+    .preference-sheet { width: 100%; max-height: 88%; overflow-y: auto; padding: 10px 16px calc(20px + env(safe-area-inset-bottom)); border: 1px solid var(--border); border-bottom: 0; border-radius: 28px 28px 0 0; background: var(--ground); scrollbar-width: none; transform: translateY(104%); transition: transform 340ms cubic-bezier(.16,1,.3,1); }
+    .sheet-backdrop.open .preference-sheet { transform: translateY(0); }
+    .sheet-kicker { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1.35 var(--mono); }
+    .option-list { margin-top: 16px; display: grid; gap: 7px; }
+    .option-row { min-height: 54px; padding: 0 12px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 13px; color: var(--dim); background: var(--surface); text-align: left; cursor: pointer; }
+    .option-sample { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: var(--bone); background: var(--wallet); font: 900 9px/1 var(--mono); }
+    .option-copy strong { display: block; font-size: 10px; font-weight: 900; }
+    .option-copy span { display: block; margin-top: 4px; color: var(--faint); font: 750 9px/1 var(--mono); }
+    .option-row > i { color: transparent; font-size: 17px; }
+    .option-row.selected { border-color: var(--positive); background: var(--lift); }
+    .option-row.selected > i { color: var(--positive); }
+    .sheet-note { margin: 12px 0 0; color: var(--faint); font: 750 9px/1.45 var(--mono); }
+    .balance-hero { margin-top: 17px; padding: 16px; border: 1px solid var(--border); border-radius: 18px; background: var(--wallet); }
+    .balance-hero span { color: var(--faint); font: 800 9px/1 var(--mono); text-transform: uppercase; }
+    .balance-hero h3 { margin: 6px 0 0; font: 950 32px/1 var(--mono); letter-spacing: -.07em; }
+    .balance-hero p { margin: 7px 0 0; color: var(--dim); font: 750 9px/1.35 var(--mono); }
+    .balance-actions { margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .balance-action { height: 43px; border: 1px solid var(--border); border-radius: 12px; color: var(--bone); background: var(--surface); font-size: 10px; font-weight: 900; cursor: pointer; }
+    .balance-action.primary { color: var(--screen); border-color: var(--positive); background: var(--positive); }
+    .section-label { display: block; margin-top: 17px; color: var(--faint); font: 850 9px/1 var(--mono); text-transform: uppercase; }
+    .currency-grid { margin-top: 8px; display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; }
+    .currency-option { height: 41px; border: 1px solid var(--border); border-radius: 11px; color: var(--dim); background: var(--surface); font: 900 9px/1 var(--mono); cursor: pointer; }
+    .currency-option.selected { color: var(--screen); border-color: var(--accent); background: var(--accent); }
+    .rules-body { margin-top: 16px; display: grid; gap: 10px; }
+    .rule-block { padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+    .rule-block span { display: block; color: var(--accent); font: 850 9px/1 var(--mono); text-transform: uppercase; }
+    .rule-block p { margin: 7px 0 0; color: var(--dim); font-size: 10px; font-weight: 700; line-height: 1.45; }
+    .rule-source { display: flex; align-items: center; gap: 7px; color: var(--positive) !important; font: 800 9px/1 var(--mono) !important; }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="phone" aria-label="MyBoon multi-market event detail mockup">
+      <header class="topbar">
+        <button class="back-button" id="back-button" aria-label="Back to Discover"><i class="ph-bold ph-arrow-left"></i></button>
+        <div class="title-lockup"><strong>Fed decision</strong><span>Economy · Event</span></div>
+        <button class="cash-pill" id="cash-pill" aria-label="Open prediction cash balance"><i class="ph-fill ph-wallet"></i><span id="cash-pill-value">$248.20</span></button>
+      </header>
+
+      <div class="detail-scroll">
+        <article class="market-card">
+          <header class="card-top">
+            <span class="market-kind">Event · 4 markets</span>
+            <button class="position-button" id="position-button"><i class="ph-fill ph-user-circle-check"></i><span>Your pick</span><strong>+$1.84</strong></button>
+          </header>
+
+          <section class="event-hero">
+            <div class="event-eyebrow"><span>Rates</span><span>$14.2m traded</span></div>
+            <h1 class="event-question">What will the Fed do at its next meeting?</h1>
+            <div class="event-summary"><span class="leader-mark">54¢</span><span>The market currently leans toward no change.</span></div>
+          </section>
+
+          <section class="panel event-panel">
+            <div class="panel-head">
+              <div class="panel-copy"><strong>Event movement</strong><span id="panel-subtitle">All four markets</span></div>
+              <div class="view-switch" role="tablist" aria-label="Switch market view">
+                <button class="view-button active" data-view="chart" role="tab" aria-selected="true"><i class="ph ph-chart-line-up"></i><span>Chart</span></button>
+                <button class="view-button" data-view="book" role="tab" aria-selected="false"><i class="ph ph-stack"></i><span>Book</span></button>
+              </div>
+            </div>
+
+            <div class="chart event-chart" id="chart-panel">
+              <div class="chart-legend" aria-hidden="true">
+                <span class="legend-item"><span class="legend-dot"></span>No change</span>
+                <span class="legend-item alt"><span class="legend-dot"></span>25bp cut</span>
+                <span class="legend-item third"><span class="legend-dot"></span>50bp+</span>
+                <span class="legend-item fourth"><span class="legend-dot"></span>Hike</span>
+              </div>
+              <svg viewBox="0 0 350 130" preserveAspectRatio="none" aria-label="Related market price history">
+                <path class="grid-line" d="M5 28 H343 M5 66 H343 M5 104 H343"></path>
+                <path class="now-line" d="M325 5 V121"></path>
+                <path class="prob-line primary" d="M5 66 C30 64,44 67,65 61 S102 57,124 58 S158 51,181 52 S217 47,238 43 S278 40,325 35"></path>
+                <path class="prob-line secondary" d="M5 44 C29 46,45 42,65 46 S101 49,124 48 S158 55,181 54 S216 61,239 60 S278 67,325 70"></path>
+                <path class="prob-line third" d="M5 89 C30 87,44 91,65 88 S101 91,124 90 S158 94,181 92 S217 98,239 97 S280 101,325 103"></path>
+                <path class="prob-line fourth" d="M5 101 C30 103,45 100,65 102 S101 104,124 103 S158 106,181 105 S216 109,239 108 S279 111,325 112"></path>
+              </svg>
+              <span class="price-badge primary">54%</span>
+              <span class="price-badge alt secondary">32%</span>
+              <span class="price-badge third">8%</span>
+              <span class="price-badge fourth">6%</span>
+              <div class="chart-axis"><span>Earlier</span><span>Mid-market</span><span>Now</span></div>
+            </div>
+
+            <div class="book hidden" id="book-panel">
+              <div class="book-tabs" style="--book-columns:4" role="tablist" aria-label="Choose contract order book">
+                <button class="book-tab active" data-contract="unchanged">No change</button>
+                <button class="book-tab" data-contract="cut25">25bp cut</button>
+                <button class="book-tab" data-contract="cut50">50bp+</button>
+                <button class="book-tab" data-contract="hike">Hike</button>
+              </div>
+              <div class="book-head"><span id="book-label">No change orders</span><span>Price</span><span>Available</span></div>
+              <div class="book-row ask" style="--depth:72%;--row-color:var(--negative)"><span>Sell</span><span>56¢</span><span>$880</span></div>
+              <div class="book-row ask" style="--depth:46%;--row-color:var(--negative)"><span>Sell</span><span>55¢</span><span>$412</span></div>
+              <div class="spread-row"><span>Last 54¢</span><strong>1¢ spread</strong></div>
+              <div class="book-row bid" style="--depth:84%;--row-color:var(--positive)"><span>Buy</span><span>54¢</span><span>$1.2k</span></div>
+              <div class="book-row bid" style="--depth:58%;--row-color:var(--positive)"><span>Buy</span><span>53¢</span><span>$628</span></div>
+              <div class="book-row bid" style="--depth:34%;--row-color:var(--positive)"><span>Buy</span><span>52¢</span><span>$244</span></div>
+            </div>
+          </section>
+
+          <section class="contracts">
+            <div class="contracts-head"><strong>Choose an outcome</strong><button class="odds-button" id="odds-button"><span>Odds</span><strong id="odds-short">%</strong><i class="ph-bold ph-caret-down"></i></button></div>
+            <div class="contract-list">
+              <button class="contract selected" style="--chance:54%" data-contract="unchanged"><span class="contract-copy"><span>No change</span><small>54¢ contract</small></span><strong class="contract-odds" data-price=".54">54%</strong></button>
+              <button class="contract" style="--chance:32%" data-contract="cut25"><span class="contract-copy"><span>25 bps rate cut</span><small>32¢ contract</small></span><strong class="contract-odds" data-price=".32">32%</strong></button>
+              <button class="contract low" style="--chance:8%" data-contract="cut50"><span class="contract-copy"><span>50+ bps rate cut</span><small>8¢ contract</small></span><strong class="contract-odds" data-price=".08">8%</strong></button>
+              <button class="contract tail" style="--chance:6%" data-contract="hike"><span class="contract-copy"><span>Rate hike</span><small>6¢ contract</small></span><strong class="contract-odds" data-price=".06">6%</strong></button>
+            </div>
+            <div class="order-hint"><i class="ph-bold ph-hand-tap"></i><span>Tap an outcome to place an order</span></div>
+          </section>
+        </article>
+
+        <button class="rules-entry" id="rules-button">
+          <span class="rules-icon"><i class="ph-fill ph-seal-question"></i></span>
+          <span class="rules-copy"><strong>How is this decided?</strong><span>Outcome definitions, source and resolution</span></span>
+          <i class="ph-bold ph-caret-right"></i>
+        </button>
+      </div>
+
+      <div class="sheet-backdrop" id="order-sheet" aria-hidden="true">
+        <section class="order-composer" role="dialog" aria-modal="true" aria-labelledby="order-title">
+          <div class="composer-bar"><div class="grabber"></div><button class="composer-close" id="order-close" aria-label="Close order entry"><i class="ph-bold ph-x"></i></button></div>
+          <div class="order-type-tabs" role="tablist" aria-label="Order type">
+            <button class="order-type active" data-order-type="market" role="tab" aria-selected="true">Market</button>
+            <button class="order-type" data-order-type="limit" role="tab" aria-selected="false">Limit</button>
+          </div>
+          <div class="order-context">
+            <div><span id="order-title">You picked</span><strong id="composer-pick">No change</strong></div>
+            <div><span id="composer-price-label">Best available</span><strong id="composer-price">54¢</strong></div>
+          </div>
+          <div class="limit-controls hidden" id="limit-controls">
+            <div class="limit-copy"><span>Limit price · cancels at resolution</span><strong>Buy only here or better</strong></div>
+            <div class="price-stepper"><button id="limit-minus" aria-label="Decrease limit price">−</button><strong id="limit-price">54¢</strong><button id="limit-plus" aria-label="Increase limit price">+</button></div>
+          </div>
+          <div class="composer-amount"><span>pUSD amount</span><strong id="composer-amount">10</strong><div class="composer-local" id="composer-local">Paid with pUSD</div></div>
+          <div class="composer-quick"><button data-amount="5">$5</button><button data-amount="10">$10</button><button data-amount="20">$20</button><button data-amount="max">Max</button></div>
+          <div class="numpad-grid" aria-label="Amount keypad">
+            <button class="numpad-key" data-key="1">1</button><button class="numpad-key" data-key="2">2</button><button class="numpad-key" data-key="3">3</button>
+            <button class="numpad-key" data-key="4">4</button><button class="numpad-key" data-key="5">5</button><button class="numpad-key" data-key="6">6</button>
+            <button class="numpad-key" data-key="7">7</button><button class="numpad-key" data-key="8">8</button><button class="numpad-key" data-key="9">9</button>
+            <button class="numpad-key" data-key=".">.</button><button class="numpad-key" data-key="0">0</button><button class="numpad-key delete" data-key="delete" aria-label="Delete digit">⌫</button>
+          </div>
+          <div class="order-review" aria-label="Order review">
+            <div class="review-item"><span>You pay</span><strong id="review-pay">$10.00</strong></div>
+            <div class="review-item"><span>Average price</span><strong id="review-price">54¢</strong></div>
+            <div class="review-item payout"><span>If you're right</span><strong id="review-payout">$18.52</strong></div>
+            <div class="review-item"><span>Maximum loss</span><strong id="review-loss">$10.00</strong></div>
+          </div>
+          <button class="order-confirm" id="order-confirm">Buy No change · $10</button>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="position-sheet" aria-hidden="true">
+        <section class="position-sheet" role="dialog" aria-modal="true" aria-labelledby="position-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="sheet-top"><h2 id="position-title">Your event pick</h2><button class="sheet-close" id="position-close" aria-label="Close position"><i class="ph-bold ph-x"></i></button></div>
+          <div class="position-hero"><div><span>No change</span><h3>Fed decision</h3></div><div class="position-pnl">+$1.84</div></div>
+          <div class="position-grid"><div class="position-stat"><span>Put in</span><strong>$20.00</strong></div><div class="position-stat"><span>Entry</span><strong>48¢</strong></div><div class="position-stat"><span>Now</span><strong>54¢</strong></div><div class="position-stat"><span>Value</span><strong>$21.84</strong></div></div>
+          <div class="position-actions"><button class="position-action" id="add-pick">Add to pick</button><button class="position-action primary" id="cash-out">Cash out $21.84</button></div>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="odds-sheet" aria-hidden="true">
+        <section class="preference-sheet" role="dialog" aria-modal="true" aria-labelledby="odds-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="sheet-top"><div><h2 id="odds-title">Odds display</h2><span class="sheet-kicker">Choose the language that feels natural to you.</span></div><button class="sheet-close" id="odds-close" aria-label="Close odds display"><i class="ph-bold ph-x"></i></button></div>
+          <div class="option-list">
+            <button class="option-row selected" data-odds="probability"><span class="option-sample">54%</span><span class="option-copy"><strong>Probability</strong><span>Easy to read at a glance</span></span><i class="ph-fill ph-check-circle"></i></button>
+            <button class="option-row" data-odds="decimal"><span class="option-sample">1.85</span><span class="option-copy"><strong>Decimal</strong><span>Total return for every $1</span></span><i class="ph-fill ph-check-circle"></i></button>
+            <button class="option-row" data-odds="american"><span class="option-sample">−117</span><span class="option-copy"><strong>American</strong><span>US sportsbook format</span></span><i class="ph-fill ph-check-circle"></i></button>
+          </div>
+          <p class="sheet-note">This changes display only. The chart stays probability-based, while order-book and Limit prices stay in contract cents.</p>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="balance-sheet" aria-hidden="true">
+        <section class="preference-sheet" role="dialog" aria-modal="true" aria-labelledby="balance-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="sheet-top"><div><h2 id="balance-title">Predict cash</h2><span class="sheet-kicker">Your funds and display preference.</span></div><button class="sheet-close" id="balance-close" aria-label="Close predict cash"><i class="ph-bold ph-x"></i></button></div>
+          <div class="balance-hero"><span>Available to trade</span><h3>$248.20</h3><p id="balance-local">248.20 pUSD · displayed in USD</p></div>
+          <div class="balance-actions"><button class="balance-action" id="withdraw-button">Withdraw</button><button class="balance-action primary" id="deposit-button">Deposit</button></div>
+          <span class="section-label">Display currency</span>
+          <div class="currency-grid"><button class="currency-option selected" data-currency="USD">USD</button><button class="currency-option" data-currency="INR">INR</button><button class="currency-option" data-currency="EUR">EUR</button><button class="currency-option" data-currency="GBP">GBP</button></div>
+          <p class="sheet-note">Local currency is an approximate display. Orders are entered and settled in pUSD.</p>
+        </section>
+      </div>
+
+      <div class="sheet-backdrop" id="rules-sheet" aria-hidden="true">
+        <section class="preference-sheet" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+          <div class="grabber" style="margin-bottom:16px"></div>
+          <div class="sheet-top"><div><h2 id="rules-title">How this resolves</h2><span class="sheet-kicker">Fed decision · one outcome can win.</span></div><button class="sheet-close" id="rules-close" aria-label="Close resolution rules"><i class="ph-bold ph-x"></i></button></div>
+          <div class="rules-body">
+            <div class="rule-block"><span>Decision</span><p>The market resolves from the announced change to the Federal Reserve target range at its next scheduled meeting.</p></div>
+            <div class="rule-block"><span>Outcome definitions</span><p>No change means 0 bps. A 25 bps cut means exactly −25 bps. A 50+ bps cut means −50 bps or lower. Rate hike means any increase.</p></div>
+            <div class="rule-block"><span>Primary source</span><p class="rule-source"><i class="ph-fill ph-bank"></i> Federal Reserve press release</p></div>
+          </div>
+          <p class="sheet-note">Resolution decides the winning outcome. It is separate from how your Market or Limit order executes.</p>
+        </section>
+      </div>
+
+      <div class="toast" id="toast" role="status"><i class="ph-fill ph-sparkle"></i><span id="toast-copy"></span></div>
+    </section>
+  </main>
+
+  <script>
+    const contracts = {
+      unchanged: { label: 'No change', price: .54, tone: '' },
+      cut25: { label: '25 bps cut', price: .32, tone: '' },
+      cut50: { label: '50+ bps cut', price: .08, tone: 'accent' },
+      hike: { label: 'Rate hike', price: .06, tone: 'negative' },
+    };
+    let selected = 'unchanged';
+    let orderType = 'market';
+    let amount = '10';
+    let limitPrice = 54;
+    let oddsFormat = 'probability';
+    let displayCurrency = 'USD';
+    let toastTimer;
+    const cashBalance = 248.20;
+    const fx = { USD: 1, INR: 83.5, EUR: .92, GBP: .79 };
+    const currencyMeta = {
+      USD: { symbol: '$', decimals: 2 },
+      INR: { symbol: '₹', decimals: 0 },
+      EUR: { symbol: '€', decimals: 2 },
+      GBP: { symbol: '£', decimals: 2 },
+    };
+
+    function toggleSheet(id, open) {
+      const sheet = document.getElementById(id);
+      sheet.classList.toggle('open', open);
+      sheet.setAttribute('aria-hidden', String(!open));
+    }
+
+    function formatOdds(price) {
+      if (oddsFormat === 'decimal') return (1 / price).toFixed(2);
+      if (oddsFormat === 'american') return price >= .5 ? `−${Math.round(100 * price / (1 - price))}` : `+${Math.round(100 * (1 - price) / price)}`;
+      return `${Math.round(price * 100)}%`;
+    }
+
+    function formatLocal(usd, currency = displayCurrency) {
+      const meta = currencyMeta[currency];
+      return `${meta.symbol}${(usd * fx[currency]).toLocaleString('en-US', { minimumFractionDigits: meta.decimals, maximumFractionDigits: meta.decimals })}`;
+    }
+
+    function updateOddsDisplay() {
+      document.querySelectorAll('.contract-odds').forEach(node => { node.textContent = formatOdds(Number(node.dataset.price)); });
+      document.getElementById('odds-short').textContent = { probability: '%', decimal: 'DEC', american: 'US' }[oddsFormat];
+      document.querySelectorAll('[data-odds]').forEach(button => button.classList.toggle('selected', button.dataset.odds === oddsFormat));
+      updateComposer();
+    }
+
+    function updateCurrencyDisplay() {
+      document.getElementById('cash-pill-value').textContent = formatLocal(cashBalance);
+      document.getElementById('balance-local').textContent = displayCurrency === 'USD' ? '248.20 pUSD · displayed in USD' : `248.20 pUSD · approximately ${formatLocal(cashBalance)}`;
+      document.querySelectorAll('[data-currency]').forEach(button => button.classList.toggle('selected', button.dataset.currency === displayCurrency));
+      updateComposer();
+    }
+
+    function updateComposer() {
+      const contract = contracts[selected];
+      const numericAmount = Number(amount) || 0;
+      const price = orderType === 'market' ? contract.price : limitPrice / 100;
+      const shares = price > 0 ? numericAmount / price : 0;
+      document.getElementById('composer-pick').textContent = contract.label;
+      document.getElementById('composer-price-label').textContent = orderType === 'market' ? 'Best available' : 'Your limit';
+      document.getElementById('composer-price').textContent = oddsFormat === 'probability' ? `${Math.round(price * 100)}¢` : `${Math.round(price * 100)}¢ · ${formatOdds(price)}`;
+      document.getElementById('limit-price').textContent = `${limitPrice}¢`;
+      document.getElementById('composer-amount').textContent = amount;
+      document.getElementById('composer-local').textContent = displayCurrency === 'USD' ? 'Paid with pUSD' : `≈ ${formatLocal(numericAmount)} · paid with pUSD`;
+      document.getElementById('review-pay').textContent = `$${numericAmount.toFixed(2)}`;
+      document.getElementById('review-price').textContent = `${Math.round(price * 100)}¢`;
+      document.getElementById('review-payout').textContent = `$${shares.toFixed(2)}`;
+      document.getElementById('review-loss').textContent = `$${numericAmount.toFixed(2)}`;
+      const confirm = document.getElementById('order-confirm');
+      confirm.textContent = orderType === 'market' ? `Buy ${contract.label} · $${amount}` : `Place ${contract.label} limit · $${amount}`;
+      confirm.className = `order-confirm ${contract.tone}`.trim();
+    }
+
+    function selectContract(key, openOrder = true) {
+      selected = key;
+      limitPrice = Math.round(contracts[key].price * 100);
+      document.querySelectorAll('.contract').forEach(button => button.classList.toggle('selected', button.dataset.contract === key));
+      updateComposer();
+      if (openOrder) toggleSheet('order-sheet', true);
+    }
+
+    function setOrderType(type) {
+      orderType = type;
+      document.querySelectorAll('.order-type').forEach(button => {
+        const active = button.dataset.orderType === type;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+      });
+      document.getElementById('limit-controls').classList.toggle('hidden', type !== 'limit');
+      updateComposer();
+    }
+
+    function pressKey(key) {
+      if (key === 'delete') amount = amount.length > 1 ? amount.slice(0, -1) : '0';
+      else if (key === '.' && amount.includes('.')) return;
+      else if (amount.includes('.') && amount.split('.')[1].length >= 2) return;
+      else if (amount.length >= 7) return;
+      else amount = amount === '0' && key !== '.' ? key : amount + key;
+      updateComposer();
+    }
+
+    function showToast(message) {
+      document.getElementById('toast-copy').textContent = message;
+      const toast = document.getElementById('toast');
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    document.querySelectorAll('.view-button').forEach(button => button.addEventListener('click', () => {
+      const view = button.dataset.view;
+      document.querySelectorAll('.view-button').forEach(item => { const active = item === button; item.classList.toggle('active', active); item.setAttribute('aria-selected', String(active)); });
+      document.getElementById('chart-panel').classList.toggle('hidden', view !== 'chart');
+      document.getElementById('book-panel').classList.toggle('hidden', view !== 'book');
+    }));
+    document.querySelectorAll('.contract').forEach(button => button.addEventListener('click', () => selectContract(button.dataset.contract)));
+    document.querySelectorAll('.book-tab').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.book-tab').forEach(item => item.classList.toggle('active', item === button));
+      document.getElementById('book-label').textContent = `${contracts[button.dataset.contract].label} orders`;
+    }));
+    document.querySelectorAll('.order-type').forEach(button => button.addEventListener('click', () => setOrderType(button.dataset.orderType)));
+    document.querySelectorAll('[data-amount]').forEach(button => button.addEventListener('click', () => { amount = button.dataset.amount === 'max' ? '248.20' : button.dataset.amount; updateComposer(); }));
+    document.querySelectorAll('.numpad-key').forEach(button => button.addEventListener('click', () => pressKey(button.dataset.key)));
+    document.getElementById('limit-minus').addEventListener('click', () => { limitPrice = Math.max(1, limitPrice - 1); updateComposer(); });
+    document.getElementById('limit-plus').addEventListener('click', () => { limitPrice = Math.min(99, limitPrice + 1); updateComposer(); });
+    document.getElementById('order-close').addEventListener('click', () => toggleSheet('order-sheet', false));
+    document.getElementById('order-sheet').addEventListener('click', event => { if (event.target.id === 'order-sheet') toggleSheet('order-sheet', false); });
+    document.getElementById('order-confirm').addEventListener('click', () => { toggleSheet('order-sheet', false); showToast(orderType === 'market' ? `${contracts[selected].label} market order ready` : `${contracts[selected].label} limit order placed at ${limitPrice}¢`); });
+    document.getElementById('position-button').addEventListener('click', () => toggleSheet('position-sheet', true));
+    document.getElementById('position-close').addEventListener('click', () => toggleSheet('position-sheet', false));
+    document.getElementById('position-sheet').addEventListener('click', event => { if (event.target.id === 'position-sheet') toggleSheet('position-sheet', false); });
+    document.getElementById('add-pick').addEventListener('click', () => { toggleSheet('position-sheet', false); selectContract('unchanged'); });
+    document.getElementById('cash-out').addEventListener('click', () => { toggleSheet('position-sheet', false); showToast('Cash out preview opened'); });
+    document.getElementById('odds-button').addEventListener('click', () => toggleSheet('odds-sheet', true));
+    document.getElementById('odds-close').addEventListener('click', () => toggleSheet('odds-sheet', false));
+    document.getElementById('odds-sheet').addEventListener('click', event => { if (event.target.id === 'odds-sheet') toggleSheet('odds-sheet', false); });
+    document.querySelectorAll('[data-odds]').forEach(button => button.addEventListener('click', () => {
+      oddsFormat = button.dataset.odds;
+      updateOddsDisplay();
+      toggleSheet('odds-sheet', false);
+      showToast(`${button.querySelector('strong').textContent} odds selected`);
+    }));
+    document.getElementById('cash-pill').addEventListener('click', () => toggleSheet('balance-sheet', true));
+    document.getElementById('balance-close').addEventListener('click', () => toggleSheet('balance-sheet', false));
+    document.getElementById('balance-sheet').addEventListener('click', event => { if (event.target.id === 'balance-sheet') toggleSheet('balance-sheet', false); });
+    document.querySelectorAll('[data-currency]').forEach(button => button.addEventListener('click', () => {
+      displayCurrency = button.dataset.currency;
+      updateCurrencyDisplay();
+      showToast(`${displayCurrency} display selected`);
+    }));
+    document.getElementById('deposit-button').addEventListener('click', () => showToast('Deposit flow opened'));
+    document.getElementById('withdraw-button').addEventListener('click', () => showToast('Withdraw flow opened'));
+    document.getElementById('rules-button').addEventListener('click', () => toggleSheet('rules-sheet', true));
+    document.getElementById('rules-close').addEventListener('click', () => toggleSheet('rules-sheet', false));
+    document.getElementById('rules-sheet').addEventListener('click', event => { if (event.target.id === 'rules-sheet') toggleSheet('rules-sheet', false); });
+    document.getElementById('back-button').addEventListener('click', () => { if (history.length > 1) history.back(); else location.href = 'polymarket-discover.html'; });
+    updateOddsDisplay();
+    updateCurrencyDisplay();
+  </script>
+</body>
+</html>
