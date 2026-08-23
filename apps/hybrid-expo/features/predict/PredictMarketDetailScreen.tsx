@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +30,8 @@ import { OddsFormatToggle } from '@/features/predict/components/OddsFormatToggle
 import { MultiLineChart } from '@/features/predict/components/MultiLineChart';
 import { OrderbookView } from '@/features/predict/components/OrderbookView';
 import { InlineNumpad } from '@/features/predict/components/InlineNumpad';
+import { OrderComposerSheet } from '@/features/predict/components/OrderComposerSheet';
+import type { ComposerMode } from '@/features/predict/components/OrderComposerSheet';
 import { DetailPicksPanel } from '@/features/predict/components/DetailPicksPanel';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
@@ -48,6 +51,11 @@ type SubmitStatus = 'idle' | 'wallet' | 'placing' | 'syncing';
 
 const SOFT_COLLAPSED = 230; // handle + stats + odds
 const SOFT_EXPANDED = 680;  // + numpad
+
+// Composer v2 pilot flag (Predict redesign PRD §6). Default OFF: the original
+// InlineNumpad flow is untouched. Flip to true (or pass ?composer=v2 on web)
+// to route the Yes/No amount flow through the shared OrderComposerSheet.
+const COMPOSER_V2_DEFAULT = false;
 
 function formatDeadline(endDate: string | null, active: boolean | null): string {
   if (!endDate) return active === false ? 'Closed' : 'Open';
@@ -81,6 +89,9 @@ function DisplayTab({
 }
 
 export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenProps) {
+  // Composer v2 can be force-enabled for QA via ?composer=v2 on web.
+  const urlParams = useLocalSearchParams<{ composer?: string }>();
+  const COMPOSER_V2 = COMPOSER_V2_DEFAULT || urlParams.composer === 'v2';
   const router = useRouter();
   const poly = usePolymarketWallet();
   const connectSheet = useConnectionSheet('evm');
@@ -144,6 +155,9 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const [setupSubmitting, setSetupSubmitting] = useState(false);
   const [setupAfterConnect, setSetupAfterConnect] = useState(false);
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
+  // Composer v2 pilot state (Predict redesign PRD §6). Flag-gated; see COMPOSER_V2.
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerParams, setComposerParams] = useState<{ mode: ComposerMode; limitPriceCents: number } | null>(null);
 
   // Soft zone animation
   const softZoneAnim = useRef(new Animated.Value(SOFT_COLLAPSED)).current;
@@ -489,12 +503,16 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     setSelectedQuotePrice(side === 'yes' ? (yesPrice ?? detail?.outcomePrices[0] ?? null) : (noPrice ?? detail?.outcomePrices[1] ?? null));
     setNumpadAmount('50');
     setNumpadOpen(true);
+    if (COMPOSER_V2) {
+      setComposerOpen(true);
+    }
   }
 
   function collapseNumpad() {
     setNumpadOpen(false);
     setSelectedSide(null);
     setSelectedQuotePrice(null);
+    setComposerOpen(false);
   }
 
   async function submitOrder() {
@@ -546,6 +564,49 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
 
       const freshBook = await fetchOrderbook(tokenID).catch(() => null);
       const quote = buildExecutableBuyQuote(freshBook, amount);
+      // Composer v2 limit mode: rest at the user's chosen price instead of
+      // executing at the book average. Size = spend / chosen price.
+      const effectiveLimitCents =
+        composerParams?.mode === 'limit' && composerParams.limitPriceCents > 0
+          ? composerParams.limitPriceCents
+          : null;
+      if (effectiveLimitCents !== null && Math.round(price * 100) !== effectiveLimitCents) {
+        // GTC resting order at the user's price (client-side GTD is a flagged follow-up).
+        const limitPrice = effectiveLimitCents / 100;
+        const limitShares = amount / limitPrice;
+        const polygonAddressEarly = poly.polygonAddress;
+        const resultLimit = await placeBet(signer, {
+          polygonAddress: polygonAddressEarly,
+          tradingAddress: poly.tradingAddress,
+          tokenID,
+          price: limitPrice,
+          size: limitShares,
+          side: 'BUY',
+          negRisk: !!detail.negRisk,
+          orderType: 'GTC',
+        });
+        if (!resultLimit.success) throw new Error(resultLimit.error || 'Order failed');
+        const pendingLimit = makePendingOpenOrder({
+          id: resultLimit.orderID ?? resultLimit.operationId,
+          slug,
+          tokenID,
+          price: limitPrice,
+          size: limitShares,
+          outcome: selectedSide === 'no' ? 'No' : 'Yes',
+        });
+        setPendingOpenOrders((prev) => [pendingLimit, ...prev.filter((o) => o.id !== pendingLimit.id)]);
+        setCashBalance((prev) => (prev === null ? prev : Math.max(prev - amount, 0)));
+        collapseNumpad();
+        setActiveView('picks');
+        setPickScope('market');
+        await Promise.allSettled([
+          loadPicks(),
+          fetchClobBalance(polygonAddressEarly).then((b) => setCashBalance(b?.balance ?? null)),
+          activeView === 'orderbook' ? loadOrderbook() : Promise.resolve(),
+        ]);
+        scheduleFollowUpReconcile(polygonAddressEarly);
+        return;
+      }
       if (!quote.executable || quote.limitPrice === null || quote.shares <= 0) {
         Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
         return;
@@ -886,6 +947,38 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
         quoteError={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.error ?? null : null}
         onClose={() => setCashOutPosition(null)}
         onConfirm={confirmCashOut}
+      />
+
+      {/* Composer v2 pilot — shared sheet from the Predict redesign (PRD §6) */}
+      <OrderComposerSheet
+        visible={COMPOSER_V2 && composerOpen && selectedSide !== null}
+        side={selectedSide ?? 'yes'}
+        pickLabel={selectedSide === 'no' ? 'NO' : 'YES'}
+        question={detail?.question ?? null}
+        currentPrice={selectedQuotePrice}
+        amount={numpadAmount}
+        onAmountChange={setNumpadAmount}
+        executableAvgPrice={
+          marketClosed
+            ? null
+            : (() => {
+                const q = selectedExecutableQuote;
+                return q.executable && q.averagePrice !== null ? q.averagePrice : null;
+              })()
+        }
+        availableCash={cashBalance}
+        guardrail={orderGuardrail}
+        submitting={submitting}
+        submittingLabel={submitLabel}
+        disabled={!poly.isReady}
+        onClose={() => {
+          setComposerParams(null);
+          collapseNumpad();
+        }}
+        onConfirm={(params) => {
+          setComposerParams(params);
+          void submitOrder();
+        }}
       />
 
       <ConnectionSheet
