@@ -24,6 +24,7 @@ import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
+import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { EmptyPortfolio } from '@/features/predict/profile/EmptyPortfolio';
@@ -82,6 +83,7 @@ export default function PredictProfileScreen() {
   // Solana is read only as a withdrawal destination — never as this screen's
   // connection state. Predict settles on Polygon, so `poly` is the source of truth.
   const { address: solanaAddress } = useWallet();
+  const privyAuthMethod = usePrivyWallet().authMethod;
   const poly = usePolymarketWallet();
   // Predict settles on Polygon, so its requirement is EVM.
   const connectSheet = useConnectionSheet('evm');
@@ -547,12 +549,21 @@ export default function PredictProfileScreen() {
             <Text style={styles.handle}>
               {portfolio?.profile?.name ?? (walletAddress ? truncate(walletAddress) : '—')}
             </Text>
-            {walletAddress && (
-              <View style={styles.connectedChip}>
-                <View style={styles.connectedDot} />
-                <Text style={styles.connectedText}>Connected</Text>
-              </View>
-            )}
+            <View style={styles.identityMetaRow}>
+              <Text style={styles.identityMeta}>
+                {privyAuthMethod !== null
+                  ? `Signed in with ${privyAuthMethod === 'google' ? 'Google' : privyAuthMethod === 'email' ? 'email' : 'wallet'}`
+                  : walletAddress
+                    ? truncate(walletAddress, 4, 4)
+                    : 'Not signed in'}
+              </Text>
+              {walletAddress && (
+                <View style={styles.connectedChip}>
+                  <View style={styles.connectedDot} />
+                  <Text style={styles.connectedText}>Protected</Text>
+                </View>
+              )}
+            </View>
           </View>
 
           {!isEnabled && !poly.isLoading && !walletAddress && (
@@ -608,48 +619,74 @@ export default function PredictProfileScreen() {
             {/* Performance strip */}
             {/* <PerfStrip positions={positions} /> */}
 
-            {/* Equity card */}
-            <View style={styles.equityCard}>
-              <View style={styles.equityRow}>
-                <View style={styles.eqItem}>
-                  <Text style={styles.eqLabel}>Polymarket value</Text>
-                  <Text style={styles.eqVal}>
-                    {formatProfileMoney(predictValue)}
-                  </Text>
-                </View>
-                <View style={[styles.eqItem, styles.eqItemCenter]}>
-                  <Text style={styles.eqLabel}>Cash</Text>
-                  <Text style={styles.eqVal}>
+            {/* Money map — PRD §7: total Predict value split into Available /
+                In picks / Ready to collect, with Deposit + Withdraw inside the
+                card. Dark walletCore is this card's reserved token. */}
+            <View style={styles.moneyCard}>
+              <Text style={styles.moneyEyebrow}>Predict value</Text>
+              <Text style={styles.moneyTotal}>
+                {predictValue !== null ? formatProfileMoney(predictValue) : '--'}
+              </Text>
+              <View style={styles.moneyBar}>
+                {cashBalance !== null && cashBalance > 0 && (
+                  <View style={[styles.moneyBarSeg, styles.moneyBarAvailable, { flex: Math.max(cashBalance, 0.01) }]} />
+                )}
+                {activePicksValue !== null && activePicksValue > 0 && (
+                  <View style={[styles.moneyBarSeg, styles.moneyBarInPicks, { flex: Math.max(activePicksValue, 0.01) }]} />
+                )}
+                {readyToCollect > 0 && (
+                  <View style={[styles.moneyBarSeg, styles.moneyBarReady, { flex: Math.max(readyToCollect, 0.01) }]} />
+                )}
+                {((cashBalance ?? 0) <= 0 && (activePicksValue ?? 0) <= 0 && readyToCollect <= 0) && (
+                  <View style={[styles.moneyBarSeg, styles.moneyBarEmpty]} />
+                )}
+              </View>
+              <View style={styles.moneyLegend}>
+                <View style={styles.moneyLegendItem}>
+                  <View style={[styles.moneyLegendDot, styles.moneyBarAvailable]} />
+                  <Text style={styles.moneyLegendLabel}>Available</Text>
+                  <Text style={styles.moneyLegendValue}>
                     {cashBalance !== null ? formatProfileMoney(cashBalance) : '--'}
                   </Text>
                 </View>
-                <View style={[styles.eqItem, styles.eqItemRight]}>
-                  <Text style={styles.eqLabel}>
-                    {!hasActiveOrReadyPicks ? 'Profit' : readyToCollect > 0 ? 'Ready' : 'Active picks'}
+                <View style={styles.moneyLegendItem}>
+                  <View style={[styles.moneyLegendDot, styles.moneyBarInPicks]} />
+                  <Text style={styles.moneyLegendLabel}>In picks</Text>
+                  <Text style={styles.moneyLegendValue}>
+                    {activePicksValue !== null ? formatProfileMoney(activePicksValue) : '--'}
                   </Text>
-                  <Text style={[styles.eqVal, readyToCollect > 0 && styles.posText]}>
-                    {!hasActiveOrReadyPicks
-                      ? collectedDisplay
-                      : readyToCollect > 0
-                        ? formatProfileMoney(readyToCollect)
-                        : formatProfileMoney(activePicksValue)}
+                </View>
+                <View style={styles.moneyLegendItem}>
+                  <View style={[styles.moneyLegendDot, styles.moneyBarReady]} />
+                  <Text style={styles.moneyLegendLabel}>Ready to collect</Text>
+                  <Text style={[styles.moneyLegendValue, readyToCollect > 0 && styles.moneyPositive]}>
+                    {formatProfileMoney(readyToCollect)}
                   </Text>
                 </View>
               </View>
+              <View style={styles.moneyActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Deposit into Predict"
+                  style={styles.moneyActionBtn}
+                  onPress={() => setDepositOpen(true)}>
+                  <MaterialIcons name="arrow-downward" size={13} color={semantic.text.primary} />
+                  <Text style={styles.moneyActionText}>Deposit</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Withdraw from Predict"
+                  style={styles.moneyActionBtn}
+                  onPress={() => setWithdrawOpen(true)}>
+                  <MaterialIcons name="arrow-upward" size={13} color={semantic.text.primary} />
+                  <Text style={styles.moneyActionText}>Withdraw</Text>
+                </Pressable>
+              </View>
               {hasActiveOrReadyPicks && (
-                <View style={[styles.equityRow, styles.equityRowSecond]}>
-                  <View style={styles.eqItem}>
-                    <Text style={styles.eqLabel}>Cash out now</Text>
-                    <Text style={styles.eqVal}>{formatProfileMoney(cashOutNow)}</Text>
-                  </View>
-                  <View style={[styles.eqItem, styles.eqItemCenter]}>
-                    <Text style={styles.eqLabel}>Active picks</Text>
-                    <Text style={styles.eqVal}>{activePickCount}</Text>
-                  </View>
-                  <View style={[styles.eqItem, styles.eqItemRight]}>
-                    <Text style={styles.eqLabel}>Profit</Text>
-                    <Text style={styles.eqVal}>{collectedDisplay}</Text>
-                  </View>
+                <View style={styles.moneyStatsRow}>
+                  <Text style={styles.moneyStat}>Cash out now {cashOutNow !== null ? formatProfileMoney(cashOutNow) : '--'}</Text>
+                  <Text style={styles.moneyStat}>{activePickCount} active {activePickCount === 1 ? 'pick' : 'picks'}</Text>
+                  <Text style={styles.moneyStat}>Profit {collectedDisplay}</Text>
                 </View>
               )}
             </View>
@@ -1083,6 +1120,17 @@ const styles = StyleSheet.create({
     color: semantic.text.primary,
     marginBottom: 3,
   },
+  identityMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  identityMeta: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.faint,
+  },
   connectedChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1172,7 +1220,107 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  // Equity card
+  // Money map card (PRD §7) — walletCore is this card's reserved dark token
+  moneyCard: {
+    marginHorizontal: tokens.spacing.lg,
+    marginTop: 12,
+    backgroundColor: tokens.colors.walletCore,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    borderRadius: 22,
+    padding: 16,
+    gap: 10,
+  },
+  moneyEyebrow: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: semantic.text.faint,
+  },
+  moneyTotal: {
+    fontFamily: 'monospace',
+    fontSize: 28,
+    fontWeight: '800',
+    color: semantic.text.primary,
+    letterSpacing: -0.5,
+  },
+  moneyBar: {
+    flexDirection: 'row',
+    height: 10,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(245,250,252,0.08)',
+  },
+  moneyBarSeg: {},
+  moneyBarAvailable: { backgroundColor: tokens.colors.viridian },
+  moneyBarInPicks: { backgroundColor: tokens.colors.primary },
+  moneyBarReady: { backgroundColor: tokens.colors.accent },
+  moneyBarEmpty: { flex: 1, backgroundColor: 'rgba(245,250,252,0.08)' },
+  moneyLegend: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  moneyLegendItem: {
+    flex: 1,
+    gap: 2,
+  },
+  moneyLegendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginBottom: 1,
+  },
+  moneyLegendLabel: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.faint,
+  },
+  moneyLegendValue: {
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  moneyPositive: {
+    color: tokens.colors.viridian,
+  },
+  moneyActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 2,
+  },
+  moneyActionBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: 'rgba(245,250,252,0.06)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  moneyActionText: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  moneyStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  moneyStat: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.dim,
+  },
+
+  // Equity card (legacy, unused)
   equityCard: {
     marginHorizontal: tokens.spacing.lg,
     marginTop: 12,
