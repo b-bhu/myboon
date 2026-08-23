@@ -345,10 +345,13 @@ quick-amount configurability in settings (hardcode defaults).
 
 ## Open questions (blocking ones marked)
 
-1. **[BLOCKS ONE TAP]** Where do One Tap rounds come from — mapped Polymarket crypto
-   series or self-run round clock? *(Spike started: hourly "Bitcoin Up or Down" events
-   confirmed live on Gamma with clean slug/start/end fields — mapping looks viable;
-   recurrence-pattern probe pending.)*
+1. ~~[BLOCKS ONE TAP] Where do One Tap rounds come from?~~ **Answered: map Polymarket's
+   existing series — no custom round clock.** Spike (2026-08-23) confirmed hourly
+   *and* daily BTC/ETH up/down events on Gamma with a deterministic slug pattern
+   (`{asset}-up-or-down-{month}-{day}[-{hour}am/pm-et]`), start/end dates, Binance
+   BTC/USDT as the named resolution source, and per-event volume. The One Tap read
+   service composes round-shaped responses from these events; asset + 1h/1d switchers
+   map directly.
 2. ~~Does the composer need a balance-aware wrap step?~~ **Answered: no.**
    `fetchClobBalance` (`predict.api.ts:689`) already auto-wraps via
    `wrapPolymarketCash`/`/clob/wrap` when a signature is required; the composer just
