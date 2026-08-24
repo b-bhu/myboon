@@ -25,10 +25,12 @@ import { getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
+import { useOddsFormat } from '@/hooks/useOddsFormat';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { EmptyPortfolio } from '@/features/predict/profile/EmptyPortfolio';
 import { YourPicksSection } from '@/features/predict/profile/YourPicksSection';
+import { ProfilePortfolioTabs } from '@/features/predict/profile/ProfilePortfolioTabs';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import type { PredictDataFreshness } from '@/features/predict/predictActivityState';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
@@ -42,7 +44,7 @@ const PREDICT_PROFILE_FALLBACK_USD_TO_INR = 95.67;
 const USD_INR_RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const PREDICT_PROFILE_CURRENCY_KEY = 'predict-profile-currency-format';
 type PredictProfileCurrency = 'USD' | 'INR';
-type PredictSettingsView = 'menu' | 'currency' | 'wallet' | 'security';
+type PredictSettingsView = 'menu' | 'currency' | 'wallet' | 'security' | 'odds';
 const EMPTY_PORTFOLIO_POSITIONS: PortfolioPosition[] = [];
 
 function formatProfileCurrency(
@@ -86,6 +88,7 @@ export default function PredictProfileScreen() {
   const privyAuthMethod = usePrivyWallet().authMethod;
   const privyDisconnect = usePrivyWallet().disconnect;
   const poly = usePolymarketWallet();
+  const { format: oddsFormat, setFormat: setOddsFormat } = useOddsFormat();
   // Predict settles on Polygon, so its requirement is EVM.
   const connectSheet = useConnectionSheet('evm');
   const [busy, setBusy] = useState(false);
@@ -692,20 +695,18 @@ export default function PredictProfileScreen() {
               )}
             </View>
 
-            <YourPicksSection
+            <ProfilePortfolioTabs
               positions={positions}
               openOrders={openOrders}
+              activity={portfolio?.activity ?? []}
               redeemablePositions={redeemablePositions}
               closedPositions={closedPositions}
+              sellQuotes={sellQuotes}
               polygonAddress={poly.polygonAddress}
-              signer={poly.signer}
               cancellingOrderId={cancellingId}
               freshness={{ ...activityFreshness, loading: portfolioLoading || refreshing }}
-              sellQuotes={sellQuotes}
-              onCashOutPress={handleCashOut}
               onMarketPress={handleOpenMarket}
               onCancelOrder={(orderId) => void handleCancel(orderId)}
-              onRedeemed={() => void loadPortfolio()}
               formatMoney={formatProfileMoney}
             />
 
@@ -796,6 +797,23 @@ export default function PredictProfileScreen() {
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
+                  accessibilityLabel="Open odds format settings"
+                  style={styles.settingsOption}
+                  onPress={() => setSettingsView('odds')}
+                >
+                  <View style={styles.settingsOptionIcon}>
+                    <MaterialIcons name="percent" size={15} color={tokens.colors.accent} />
+                  </View>
+                  <View style={styles.settingsOptionCopy}>
+                    <Text style={styles.settingsOptionTitle}>Odds format</Text>
+                    <Text style={styles.settingsOptionSub}>
+                      {oddsFormat === 'probability' ? 'Probability' : oddsFormat === 'decimal' ? 'Decimal' : 'Points'} selected
+                    </Text>
+                  </View>
+                  <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel="Open Polymarket wallet settings"
                   style={styles.settingsOption}
                   onPress={() => setSettingsView('wallet')}
@@ -856,6 +874,40 @@ export default function PredictProfileScreen() {
                   <MaterialIcons name="logout" size={15} color={tokens.colors.vermillion} />
                   <Text style={styles.signOutText}>Sign out</Text>
                 </Pressable>
+              </>
+            )}
+
+            {settingsView === 'odds' && (
+              <>
+                <Text style={styles.settingsTitle}>Odds format</Text>
+                <Text style={styles.settingsCopy}>How prices show across Predict. Books and limit prices always stay in cents.</Text>
+                {([
+                  { key: 'probability', title: 'Probability', sub: '57% — the chance' },
+                  { key: 'decimal', title: 'Decimal', sub: '1.75 — total return per $1' },
+                  { key: 'points', title: 'Points', sub: '+75 — profit per $1' },
+                ] as const).map((option) => {
+                  const selected = oddsFormat === option.key;
+                  return (
+                    <Pressable
+                      key={option.key}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Show odds in ${option.title} format`}
+                      accessibilityState={{ selected }}
+                      style={[styles.currencyOption, selected && styles.currencyOptionSelected]}
+                      onPress={() => {
+                        setOddsFormat(option.key);
+                        setSettingsOpen(false);
+                        setSettingsView('menu');
+                      }}
+                    >
+                      <View>
+                        <Text style={styles.currencyOptionTitle}>{option.title}</Text>
+                        <Text style={styles.currencyOptionSub}>{option.sub}</Text>
+                      </View>
+                      {selected && <MaterialIcons name="check-circle" size={20} color={tokens.colors.primary} />}
+                    </Pressable>
+                  );
+                })}
               </>
             )}
 
