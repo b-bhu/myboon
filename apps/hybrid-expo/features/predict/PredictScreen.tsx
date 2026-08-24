@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -21,6 +22,7 @@ import { POLYMARKET_REQUIREMENT } from '@/features/chain/chain.contract';
 import { fetchFeaturedMarkets, fetchLivePrices } from '@/features/predict/predict.api';
 import { getInitialFeedRenderCount } from '@/features/predict/predict-feed';
 import type { FeedItem, FeedItemBinary, FeedItemMatch, FeedResponse } from '@/features/predict/predict.types';
+import { FeaturedCarousel, LeagueRail } from '@/features/predict/components/DiscoverFeatured';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { formatOdds as formatOddsForFormat, useOddsFormat } from '@/hooks/useOddsFormat';
 import { semantic, tokens } from '@/theme';
@@ -55,6 +57,15 @@ function formatChipLabel(label: string): string {
   if (label === 'All') return label;
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
+
+// League rail labels (PRD §1) — wordmarks in v1, crest pipeline doesn't exist.
+const SPORT_LEAGUE_LABELS: Record<string, string> = {
+  epl: 'Premier League',
+  ucl: 'Champions League',
+  ipl: 'Indian Premier League',
+  fifwc: 'FIFA World Cup',
+  cricket: 'Cricket',
+};
 
 // ─── category badge colors ───────────────────────────────────────────────────
 
@@ -358,6 +369,7 @@ export default function PredictScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeCategory, setActiveCategory] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
   const livePricesRef = useRef(livePrices);
   livePricesRef.current = livePrices;
 
@@ -397,11 +409,18 @@ export default function PredictScreen() {
   // Filtered items based on selected category
   const filteredItems = useMemo<FeedItem[]>(() => {
     if (!feedData) return [];
-    if (activeCategory === 'All') return feedData.items;
-    return feedData.items.filter((item) =>
-      item.category.toLowerCase() === activeCategory.toLowerCase(),
-    );
-  }, [feedData, activeCategory]);
+    const q = searchQuery.trim().toLowerCase();
+    let base = feedData.items;
+    if (q) {
+      base = base.filter((item) =>
+        item.title.toLowerCase().includes(q)
+        || item.category.toLowerCase().includes(q)
+        || item.tags.some((tag) => tag.toLowerCase().includes(q)),
+      );
+    }
+    if (activeCategory === 'All') return base;
+    return base.filter((item) => item.category.toLowerCase() === activeCategory.toLowerCase());
+  }, [feedData, activeCategory, searchQuery]);
 
   // Derived sections (only used when "All" is selected)
   const liveItems = useMemo(
@@ -481,9 +500,66 @@ export default function PredictScreen() {
     router.push({ pathname: '/markets/polymarket/sport/[sport]/[slug]', params: { sport, slug } });
   }, [router]);
 
+  const navigateUpdown = useCallback(() => {
+    router.push('/markets/polymarket/updown');
+  }, [router]);
+
   const showSports = useCallback(() => {
     setActiveCategory('sports');
   }, []);
+
+  // ─── Discover surfaces (Predict redesign PRD §1) ───
+  // Featured carousel: the One Tap entry (single card per PRD) + highest-volume
+  // upcoming matches. Movers: biggest 24h volume — a real API field, replacing
+  // the cut fabricated pick counts.
+  const carouselItems = useMemo(() => {
+    if (!feedData) return [];
+    const items: { slug: string; eyebrow: string; title: string; metaLine: string | null; kind: 'updown' | 'market' }[] = [];
+    items.push({
+      slug: 'updown',
+      eyebrow: 'One Tap',
+      title: 'Bitcoin Up or Down',
+      metaLine: 'Hourly & daily rounds · pick Higher or Lower',
+      kind: 'updown',
+    });
+    for (const match of upcomingMatches.slice(0, 4)) {
+      const kickoff = match.gameStartTime ?? match.startDate;
+      items.push({
+        slug: `${match.sport}:${match.slug}`,
+        eyebrow: match.sport.toUpperCase(),
+        title: match.title,
+        metaLine: kickoff ? formatGameTime(kickoff) : null,
+        kind: 'market',
+      });
+    }
+    return items;
+  }, [feedData, upcomingMatches]);
+
+  const onPressCarouselItem = useCallback((key: string) => {
+    if (key === 'updown') {
+      navigateUpdown();
+      return;
+    }
+    const sep = key.indexOf(':');
+    if (sep > 0) navigateMatch(key.slice(0, sep), key.slice(sep + 1));
+  }, [navigateMatch, navigateUpdown]);
+
+  const movers = useMemo(() => {
+    if (!feedData) return [];
+    return [...feedData.items]
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, 5);
+  }, [feedData]);
+
+  const leagues = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const item of feedData?.items ?? []) {
+      if (item.type !== 'match') continue;
+      const label = SPORT_LEAGUE_LABELS[item.sport] ?? item.sport.toUpperCase();
+      if (!seen.has(item.sport)) seen.set(item.sport, label);
+    }
+    return [...seen.entries()].map(([key, label]) => ({ key, label }));
+  }, [feedData]);
 
   const feedSections = useMemo<PredictFeedSection[]>(() => {
     if (loading || errorMessage) return [];
@@ -592,7 +668,65 @@ export default function PredictScreen() {
       ) : null}
 
       {!loading && !errorMessage ? (
-        <View style={styles.filterStripShell}>
+        <>
+          <FeaturedCarousel items={carouselItems.map(({ slug, eyebrow, title, metaLine }) => ({ slug, eyebrow, title, metaLine }))} onPressItem={onPressCarouselItem} />
+
+          {/* Movers — ranked by traded volume (real API field) */}
+          {movers.length > 0 ? (
+            <View style={styles.moversSection}>
+              <Text style={styles.railTitle}>Movers</Text>
+              {movers.map((item) => {
+                const price = item.type === 'binary' ? getBinaryDisplayPrice(item, livePricesRef.current) : item.outcomes[0]?.price ?? null;
+                return (
+                  <Pressable
+                    key={item.slug}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${item.title}, ${formatUsdCompact(item.volume)} volume`}
+                    style={styles.moverRow}
+                    onPress={() => {
+                      if (item.type === 'match') navigateMatch(item.sport, item.slug);
+                      else navigateBinary(item.slug);
+                    }}>
+                    <Text style={styles.moverTitle} numberOfLines={1}>{item.title}</Text>
+                    <View style={styles.moverRight}>
+                      <Text style={styles.moverPrice}>{price !== null ? formatOdds(price) : '--'}</Text>
+                      <Text style={styles.moverVol}>{formatUsdCompact(item.volume)} vol</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+
+          <LeagueRail leagues={leagues} onPressLeague={showSports} />
+
+          {/* Unit explainer (PRD fix-pass): prices are chances */}
+          <Text style={styles.unitExplainer}>Prices run 1¢–99¢. A price is also the chance — 65¢ means the market says 65% likely.</Text>
+
+          <View style={styles.searchShell}>
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search markets"
+              placeholderTextColor={semantic.text.faint}
+              accessibilityLabel="Search Predict markets"
+              autoCorrect={false}
+              style={styles.searchInput}
+            />
+            {searchQuery.length > 0 && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+                onPress={() => setSearchQuery('')}
+                style={styles.searchClear}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+                  <Path d="M18 6L6 18M6 6l12 12" stroke={semantic.text.faint} strokeWidth={2.5} strokeLinecap="round" />
+                </Svg>
+              </Pressable>
+            )}
+          </View>
+
+          <View style={styles.filterStripShell}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -616,9 +750,10 @@ export default function PredictScreen() {
             })}
           </ScrollView>
         </View>
+        </>
       ) : null}
     </>
-  ), [activeCategory, chips, errorMessage, loadFeed, loading]);
+  ), [activeCategory, chips, errorMessage, loadFeed, loading, carouselItems, movers, leagues, onPressCarouselItem, navigateMatch, navigateBinary, formatOdds, searchQuery]);
 
   const renderListFooter = useCallback(() => {
     if (loading || errorMessage) return null;
@@ -689,6 +824,84 @@ const styles = StyleSheet.create({
   // ─── filter strip ───
   filterStripShell: {
     marginBottom: tokens.spacing.sm,
+  },
+  // ─── Discover surfaces (PRD §1) ───
+  moversSection: {
+    gap: 6,
+    marginTop: 4,
+  },
+  railTitle: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    fontWeight: '600',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: semantic.text.faint,
+    marginBottom: 4,
+  },
+  moverRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: tokens.colors.surface,
+    paddingHorizontal: 12,
+  },
+  moverTitle: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: semantic.text.primary,
+  },
+  moverRight: {
+    alignItems: 'flex-end',
+    gap: 1,
+  },
+  moverPrice: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  moverVol: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.faint,
+  },
+  unitExplainer: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    lineHeight: 13,
+    color: semantic.text.faint,
+    marginHorizontal: 2,
+  },
+  searchShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: 'rgba(8, 8, 6, 0.36)',
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontFamily: 'monospace',
+    fontSize: 12,
+    color: semantic.text.primary,
+    paddingVertical: 10,
+  },
+  searchClear: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   filterStrip: {
     gap: 6,
