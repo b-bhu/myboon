@@ -5,6 +5,7 @@ import type {
   FeedItemBinary,
   FeedItemMatch,
   FeedItemStatus,
+  FeedTeam,
   FeedOutcome,
   FeedResponse,
   GeopoliticsMarket,
@@ -354,9 +355,9 @@ function mapSportMarketDetail(row: unknown): SportMarketDetail | null {
   };
 }
 
-async function getJson(path: string): Promise<unknown> {
+async function getJson(path: string, signal?: AbortSignal): Promise<unknown> {
   const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}${path}`);
+  const response = await fetchWithTimeout(`${baseUrl}${path}`, { signal });
   if (!response.ok) {
     throw new Error(`Request failed (${response.status})`);
   }
@@ -411,6 +412,21 @@ function mapFeedOutcome(raw: unknown): FeedOutcome | null {
   };
 }
 
+function mapFeedTeam(raw: unknown): FeedTeam | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const team = raw as Record<string, unknown>;
+  const name = typeof team.name === 'string' ? team.name : null;
+  if (!name) return null;
+  return {
+    name,
+    logo: typeof team.logo === 'string' ? team.logo : null,
+    abbreviation: typeof team.abbreviation === 'string' ? team.abbreviation : null,
+    alias: typeof team.alias === 'string' ? team.alias : null,
+    color: typeof team.color === 'string' ? team.color : null,
+    ordering: typeof team.ordering === 'string' ? team.ordering : null,
+  };
+}
+
 function mapFeedItem(raw: unknown): FeedItem | null {
   if (!raw || typeof raw !== 'object') return null;
   const item = raw as Record<string, unknown>;
@@ -434,6 +450,8 @@ function mapFeedItem(raw: unknown): FeedItem | null {
 
   const outcomesRaw = Array.isArray(item.outcomes) ? item.outcomes : [];
   const outcomes = outcomesRaw.map(mapFeedOutcome).filter((o): o is FeedOutcome => o !== null);
+  const teamsRaw = Array.isArray(item.teams) ? item.teams : [];
+  const teams = teamsRaw.map(mapFeedTeam).filter((team): team is FeedTeam => team !== null);
 
   if (type === 'match') {
     const sport = typeof item.sport === 'string' ? item.sport : null;
@@ -452,6 +470,7 @@ function mapFeedItem(raw: unknown): FeedItem | null {
       image,
       active,
       volume,
+      teams,
       outcomes,
     };
     return result;
@@ -515,6 +534,25 @@ export interface UpDownRound {
   downPrice: number | null;
   clobTokenIds: string[];
   conditionId: string | null;
+  resolutionSource: string | null;
+  rules: string | null;
+  priceToBeat: number | null;
+  priceToBeatSource: {
+    value: number;
+    source: string;
+    symbol: string;
+    interval: string;
+    valueType: string;
+    boundaryTime: string;
+    observedAt: string;
+  } | null;
+  currentPrice: number | null;
+  currentPriceSource: {
+    value: number;
+    source: string;
+    symbol: string;
+    observedAt: string;
+  } | null;
 }
 
 export interface UpDownRounds {
@@ -531,6 +569,142 @@ export async function fetchUpDownRounds(): Promise<UpDownRounds> {
     return { hourly: (r.hourly as UpDownRound | null) ?? null, daily: (r.daily as UpDownRound | null) ?? null };
   }
   return { btc: bucket(p.btc), eth: bucket(p.eth) };
+}
+
+export interface UpDownHistoryPoint {
+  t: number;
+  p: number;
+}
+
+export interface UpDownHistory {
+  source: string;
+  symbol: string;
+  interval: string;
+  points: UpDownHistoryPoint[];
+  asset: 'btc' | 'eth';
+  duration: 'hourly' | 'daily';
+  slug: string;
+  startDate: string;
+  endDate: string;
+  priceToBeat: number | null;
+  currentPrice: number | null;
+}
+
+export async function fetchUpDownHistory(
+  asset: UpDownRound['asset'],
+  duration: UpDownRound['duration'],
+): Promise<UpDownHistory> {
+  const payload = await getJson(`/polymarket/updown/${asset}/${duration}/history`);
+  if (!payload || typeof payload !== 'object') throw new Error('Invalid updown history response');
+  const p = payload as Record<string, unknown>;
+  const points = Array.isArray(p.points)
+    ? p.points.flatMap((row): UpDownHistoryPoint[] => {
+        if (!row || typeof row !== 'object') return [];
+        const point = row as Record<string, unknown>;
+        const t = toNumber(point.t);
+        const price = toNumber(point.p);
+        return t !== null && price !== null ? [{ t, p: price }] : [];
+      })
+    : [];
+  return {
+    source: typeof p.source === 'string' ? p.source : '',
+    symbol: typeof p.symbol === 'string' ? p.symbol : '',
+    interval: typeof p.interval === 'string' ? p.interval : '',
+    points,
+    asset,
+    duration,
+    slug: typeof p.slug === 'string' ? p.slug : '',
+    startDate: typeof p.startDate === 'string' ? p.startDate : '',
+    endDate: typeof p.endDate === 'string' ? p.endDate : '',
+    priceToBeat: toNumber(p.priceToBeat),
+    currentPrice: toNumber(p.currentPrice),
+  };
+}
+
+export interface PredictSearchEvent {
+  id: string;
+  slug: string;
+  detailSlug: string;
+  title: string;
+  image: string | null;
+  active: boolean | null;
+  endDate: string | null;
+  volume24h: number | null;
+  marketCount: number;
+  kind: 'sports' | 'prediction';
+  outcomes: Array<{ label: string; price: number | null }>;
+}
+
+export interface PredictSearchTag {
+  id: string;
+  slug: string;
+  label: string;
+}
+
+export interface PredictSearchTeam {
+  id: string;
+  name: string;
+  league: string | null;
+  logo: string | null;
+  abbreviation: string | null;
+  alias: string | null;
+}
+
+export interface PredictSearchResponse {
+  query: string;
+  page: number;
+  hasMore: boolean;
+  events: PredictSearchEvent[];
+  tags: PredictSearchTag[];
+  teams: PredictSearchTeam[];
+}
+
+export async function fetchPredictSearch(
+  query: string,
+  signal?: AbortSignal,
+): Promise<PredictSearchResponse> {
+  const payload = await getJson(`/polymarket/search?q=${encodeURIComponent(query)}`, signal);
+  if (!payload || typeof payload !== 'object') throw new Error('Invalid search response');
+  const p = payload as PredictSearchResponse;
+  const events = Array.isArray(p.events)
+    ? p.events.flatMap((raw): PredictSearchEvent[] => {
+        if (!raw || typeof raw !== 'object') return [];
+        const event = raw as unknown as Record<string, unknown>;
+        const id = typeof event.id === 'string' ? event.id : null;
+        const slug = typeof event.slug === 'string' ? event.slug : null;
+        const title = typeof event.title === 'string' ? event.title : null;
+        if (!id || !slug || !title) return [];
+        return [{
+          id,
+          slug,
+          detailSlug: typeof event.detailSlug === 'string' && event.detailSlug ? event.detailSlug : slug,
+          title,
+          image: typeof event.image === 'string' ? event.image : null,
+          active: typeof event.active === 'boolean' ? event.active : null,
+          endDate: typeof event.endDate === 'string' ? event.endDate : null,
+          volume24h: toNumber(event.volume24h),
+          marketCount: toNumber(event.marketCount) ?? 0,
+          kind: event.kind === 'sports' ? 'sports' : 'prediction',
+          outcomes: Array.isArray(event.outcomes)
+            ? event.outcomes.flatMap((rawOutcome): Array<{ label: string; price: number | null }> => {
+                if (!rawOutcome || typeof rawOutcome !== 'object') return [];
+                const outcome = rawOutcome as Record<string, unknown>;
+                return typeof outcome.label === 'string'
+                  ? [{ label: outcome.label, price: toNumber(outcome.price) }]
+                  : [];
+              })
+            : [],
+        }];
+      })
+    : [];
+  return {
+    query: typeof p.query === 'string' ? p.query : query,
+    page: typeof p.page === 'number' ? p.page : 1,
+    hasMore: p.hasMore === true,
+    events,
+    tags: Array.isArray(p.tags) ? p.tags : [],
+    teams: Array.isArray(p.teams) ? p.teams : [],
+  };
 }
 
 export async function fetchCuratedMarketDetail(slug: string): Promise<GeopoliticsMarketDetail> {
@@ -614,7 +788,9 @@ export interface PlaceBetParams {
   amount?: number;
   side: 'BUY' | 'SELL';
   negRisk?: boolean;
-  orderType?: 'GTC' | 'FOK' | 'FAK';
+  orderType?: 'GTC' | 'GTD' | 'FOK' | 'FAK';
+  /** Unix seconds. Required by the CLOB when orderType is GTD. */
+  expiration?: number;
 }
 
 export interface PlaceBetResult extends PredictOperationMeta {

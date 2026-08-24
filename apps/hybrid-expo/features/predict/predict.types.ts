@@ -12,6 +12,15 @@ export interface FeedOutcome {
   clobTokenIds?: string[];
 }
 
+export interface FeedTeam {
+  name: string;
+  logo: string | null;
+  abbreviation: string | null;
+  alias: string | null;
+  color: string | null;
+  ordering: string | null;
+}
+
 /** A multi-outcome match market (sports events with 2–3 outcomes). */
 export interface FeedItemMatch {
   type: 'match';
@@ -27,6 +36,7 @@ export interface FeedItemMatch {
   image: string | null;
   active: boolean;
   volume: number;
+  teams: FeedTeam[];
   outcomes: FeedOutcome[];
 }
 

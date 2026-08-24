@@ -11,6 +11,11 @@ import { pacificaRoutes } from '../pacifica.js'
 import { phoenixRoutes } from '../phoenix.js'
 import { createPolymarketReadRoutes } from '../polymarket/routes/index.js'
 import { SupabasePolymarketCatalogStore } from '../polymarket/catalog/supabase-store.js'
+import { PolymarketUpDownService } from '../polymarket/read/updown.js'
+import {
+  SupabaseUpDownReferencePriceStore,
+  UpDownPriceService,
+} from '../polymarket/read/updown-prices.js'
 import { spotRoutes } from '../spot.js'
 import { createStoryRoutes } from '../stories.js'
 import { createSwapRoutes } from '../swap.js'
@@ -31,6 +36,13 @@ export function createApp(config: ApiConfig): Hono {
     config.supabaseUrl,
     config.supabaseServiceRoleKey,
   )
+  const upDownReferenceStore = new SupabaseUpDownReferencePriceStore(
+    config.supabaseUrl,
+    config.supabaseServiceRoleKey,
+  )
+  const upDownService = new PolymarketUpDownService({
+    priceService: new UpDownPriceService(upDownReferenceStore),
+  })
 
   const publicCors = cors()
   app.use('*', async (c, next) => {
@@ -110,7 +122,10 @@ export function createApp(config: ApiConfig): Hono {
     model: config.aiExplanationModel,
   }))
 
-  app.route('/polymarket', createPolymarketReadRoutes({ catalogStore: polymarketCatalogStore }))
+  app.route('/polymarket', createPolymarketReadRoutes({
+    catalogStore: polymarketCatalogStore,
+    upDownService,
+  }))
 
   return app
 }

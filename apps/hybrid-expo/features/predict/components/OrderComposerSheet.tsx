@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   buildComposerReview,
@@ -6,6 +6,7 @@ import {
 } from '@/features/predict/components/orderComposerMath';
 import type { PredictOrderGuardrail } from '@/features/predict/predictActivityState';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
+import { usePredictQuickAmounts } from '@/features/predict/usePredictQuickAmounts';
 import { semantic, tokens } from '@/theme';
 
 /**
@@ -35,12 +36,15 @@ export interface OrderComposerSheetProps {
   submitting?: boolean;
   submittingLabel?: string;
   disabled?: boolean;
+  quickAmounts?: readonly number[];
+  /** Plain-language lifecycle copy for resting limit orders. */
+  limitOrderNote?: string;
   onClose: () => void;
   /** Called with the final order parameters once the user confirms. */
   onConfirm: (params: { mode: ComposerMode; limitPriceCents: number }) => void;
 }
 
-const QUICK_AMOUNTS = ['10', '25', '50'] as const;
+const DEFAULT_QUICK_AMOUNTS = [5, 10, 20] as const;
 
 function formatUsd(value: number): string {
   if (!Number.isFinite(value)) return '--';
@@ -81,15 +85,23 @@ export function OrderComposerSheet({
   submitting = false,
   submittingLabel = 'Placing order...',
   disabled = false,
+  quickAmounts: quickAmountsOverride,
+  limitOrderNote = 'Rests until it matches. You can cancel it in Open orders.',
   onClose,
   onConfirm,
 }: OrderComposerSheetProps) {
+  const { quickAmounts: savedQuickAmounts } = usePredictQuickAmounts();
+  const quickAmounts = quickAmountsOverride ?? savedQuickAmounts ?? DEFAULT_QUICK_AMOUNTS;
   const [mode, setMode] = useState<ComposerMode>('market');
   const defaultLimitCents = useMemo(
     () => clampLimitPrice((currentPrice ?? 0.5) * 100),
     [currentPrice],
   );
   const [limitCents, setLimitCents] = useState<number>(defaultLimitCents);
+
+  useEffect(() => {
+    if (visible) setLimitCents(defaultLimitCents);
+  }, [defaultLimitCents, side, visible]);
 
   const amountNum = parseFloat(amount) || 0;
   const executionPrice = mode === 'market' ? executableAvgPrice : limitCents / 100;
@@ -113,7 +125,7 @@ export function OrderComposerSheet({
       ? guardrail.title
       : exceedsCash
         ? 'Not enough cash'
-        : `Buy ${outcomeLabel} — ${formatUsd(review.youPay ?? 0)}`;
+        : `Buy ${outcomeLabel} · ${formatUsd(review.youPay ?? 0)}`;
 
   function adjustLimit(deltaCents: number) {
     setLimitCents((prev) => clampLimitPrice(prev + deltaCents));
@@ -206,14 +218,14 @@ export function OrderComposerSheet({
 
           {/* Quick amounts */}
           <View style={styles.quickRow}>
-            {QUICK_AMOUNTS.map((q) => (
+            {quickAmounts.map((q) => (
               <Pressable
                 key={q}
                 accessibilityRole="button"
                 accessibilityLabel={`Set amount to ${q} dollars`}
                 disabled={inputDisabled}
                 style={[styles.quickBtn, inputDisabled && styles.disabled]}
-                onPress={() => onAmountChange(q)}>
+                onPress={() => onAmountChange(formatAmountInput(q))}>
                 <Text style={styles.quickBtnText}>${q}</Text>
               </Pressable>
             ))}
@@ -277,7 +289,7 @@ export function OrderComposerSheet({
           {/* Feedback line */}
           {(guardrail || exceedsCash) && (
             <Text style={[styles.feedback, (exceedsCash || guardrail?.blocking) && styles.errorText]}>
-              {guardrail?.message ?? `Not enough cash · ${truncateUsd(availableCash)}`}
+              {guardrail?.message ?? `Not enough cash. ${truncateUsd(availableCash)} available.`}
             </Text>
           )}
 
@@ -307,7 +319,7 @@ export function OrderComposerSheet({
           </View>
 
           {mode === 'limit' ? (
-            <Text style={styles.limitNote}>Rests until it matches — cancel anytime in Open orders.</Text>
+            <Text style={styles.limitNote}>{limitOrderNote}</Text>
           ) : null}
         </View>
       </View>

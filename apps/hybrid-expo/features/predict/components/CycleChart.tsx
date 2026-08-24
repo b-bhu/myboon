@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
+import { StyleSheet, View } from 'react-native';
+import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 import { semantic, tokens } from '@/theme';
 
 /**
@@ -10,8 +10,8 @@ import { semantic, tokens } from '@/theme';
  * (open) price line, and the current round progressing toward its deadline.
  * Pure render: data shaping happens in the round lifecycle hook.
  *
- * Honesty rule: the chart never renders a result. Settlement display lives
- * outside this component ("Round closed" state while resolving).
+ * Honesty rule: this component only renders observed price data and the
+ * configured target. Settlement status is owned by the parent screen.
  */
 
 export interface CyclePoint {
@@ -32,18 +32,18 @@ export interface CycleChartProps {
   roundStart: number;
   /** Round deadline epoch ms. */
   roundEnd: number;
-  /** Now, epoch ms (passed in so the chart stays pure). */
-  now: number;
   width?: number;
   height?: number;
   /** 'up' highlights the current price vs target in viridian, 'down' in vermillion, null neutral. */
   direction?: 'up' | 'down' | null;
+  /** Formats the target marker. Defaults to cents for probability charts. */
+  formatPrice?: (price: number) => string;
 }
 
-const PAD_L = 8;
-const PAD_R = 8;
-const PAD_T = 10;
-const PAD_B = 18;
+const PAD_L = 4;
+const PAD_R = 4;
+const PAD_T = 28;
+const PAD_B = 8;
 
 function nicePriceRange(min: number, max: number): { lo: number; hi: number } {
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { lo: 0, hi: 1 };
@@ -58,10 +58,10 @@ export function CycleChart({
   targetPrice,
   roundStart,
   roundEnd,
-  now,
   width = 343,
   height = 170,
   direction = null,
+  formatPrice = (price) => `${Math.round(price * 100)}¢`,
 }: CycleChartProps) {
   const all = useMemo(() => [...previous, ...current], [previous, current]);
   const range = useMemo(() => {
@@ -109,29 +109,74 @@ export function CycleChart({
   const [lastX, lastY] = last ? toXY(last) : [PAD_L, targetY];
   const dirColor =
     direction === 'up' ? tokens.colors.viridian : direction === 'down' ? tokens.colors.vermillion : tokens.colors.primary;
-  const progress = Math.min(1, Math.max(0, (now - roundStart) / Math.max(roundEnd - roundStart, 1)));
+  const targetLabel = `Target ${formatPrice(targetPrice)}`;
+  const targetLabelWidth = Math.min(154, Math.max(104, targetLabel.length * 6.1));
+  const targetLabelX = width - PAD_R - targetLabelWidth;
+  const targetLabelY = Math.min(height - PAD_B - 25, Math.max(PAD_T + 3, targetY - 12));
 
   return (
     <View style={styles.wrap} accessibilityLabel="Round price chart">
       <Svg width={width} height={height}>
-        {/* previous round region (dimmed zone) */}
-        <Rect x={PAD_L} y={PAD_T} width={Math.max(boundaryX - PAD_L, 0)} height={plotH} fill="rgba(245,250,252,0.03)" />
-        {/* current round region */}
-        <Rect x={boundaryX} y={PAD_T} width={Math.max(width - PAD_R - boundaryX, 0)} height={plotH} fill="rgba(17,138,178,0.05)" />
+        <Rect x={PAD_L} y={PAD_T} width={Math.max(boundaryX - PAD_L, 0)} height={plotH} fill="rgba(3,31,44,0.13)" />
 
-        {/* target (open) price line */}
+        {[0.34, 0.68].map((ratio) => (
+          <Line
+            key={ratio}
+            x1={PAD_L}
+            y1={PAD_T + plotH * ratio}
+            x2={width - PAD_R}
+            y2={PAD_T + plotH * ratio}
+            stroke={tokens.colors.borderMuted}
+            strokeWidth={1}
+            opacity={0.6}
+          />
+        ))}
+
+        <SvgText x={PAD_L + 10} y={17} fill={semantic.text.faint} fontFamily="monospace" fontSize={9} fontWeight="700">
+          PREVIOUS
+        </SvgText>
+        <SvgText x={boundaryX + 8} y={13} fill={semantic.text.faint} fontFamily="monospace" fontSize={8} fontWeight="700">
+          CURRENT
+        </SvgText>
+        <SvgText x={boundaryX + 8} y={22} fill={semantic.text.faint} fontFamily="monospace" fontSize={8} fontWeight="700">
+          ROUND
+        </SvgText>
+        <SvgText x={width - PAD_R - 48} y={17} fill={semantic.text.faint} fontFamily="monospace" fontSize={9} fontWeight="700">
+          SETTLES
+        </SvgText>
+
         <Line
           x1={PAD_L}
           y1={targetY}
           x2={width - PAD_R}
           y2={targetY}
           stroke={tokens.colors.accent}
-          strokeWidth={1}
-          strokeDasharray="4 4"
-          opacity={0.8}
+          strokeWidth={1.25}
+          strokeDasharray="6 5"
+          opacity={0.9}
         />
 
-        {/* round boundary */}
+        <Rect
+          x={targetLabelX}
+          y={targetLabelY}
+          width={targetLabelWidth}
+          height={24}
+          rx={8}
+          fill={tokens.colors.ground}
+          stroke={tokens.colors.accent}
+          strokeWidth={1}
+        />
+        <SvgText
+          x={targetLabelX + 8}
+          y={targetLabelY + 16}
+          fill={tokens.colors.accent}
+          fontFamily="monospace"
+          fontSize={9}
+          fontWeight="800"
+        >
+          {targetLabel}
+        </SvgText>
+
         <Line
           x1={boundaryX}
           y1={PAD_T}
@@ -139,17 +184,15 @@ export function CycleChart({
           y2={PAD_T + plotH}
           stroke={semantic.text.faint}
           strokeWidth={1}
-          opacity={0.6}
+          opacity={0.72}
         />
 
-        {/* previous tail */}
-        {prevPath ? <Path d={prevPath} stroke={semantic.text.faint} strokeWidth={1.5} fill="none" opacity={0.55} /> : null}
-        {/* current line */}
-        {curPath ? <Path d={curPath} stroke={dirColor} strokeWidth={2} fill="none" /> : null}
-        {/* live price dot */}
-        {last ? <Circle cx={lastX} cy={lastY} r={4} fill={dirColor} /> : null}
+        {prevPath ? <Path d={prevPath} stroke={tokens.colors.viridian} strokeWidth={2.5} fill="none" opacity={0.58} /> : null}
+        {curPath ? <Path d={curPath} stroke={dirColor} strokeWidth={3.5} strokeLinejoin="round" strokeLinecap="round" fill="none" /> : null}
+        {last ? <Circle cx={lastX} cy={lastY} r={10} fill={dirColor} opacity={0.18} /> : null}
+        {last ? <Circle cx={lastX} cy={lastY} r={6} fill={tokens.colors.ground} stroke={dirColor} strokeWidth={2.5} /> : null}
+        {last ? <Circle cx={lastX} cy={lastY} r={3} fill={dirColor} /> : null}
 
-        {/* deadline tick */}
         <Line
           x1={width - PAD_R}
           y1={PAD_T}
@@ -157,21 +200,9 @@ export function CycleChart({
           y2={PAD_T + plotH}
           stroke={semantic.text.faint}
           strokeWidth={1}
-          opacity={0.35}
+          opacity={0.5}
         />
       </Svg>
-
-      {/* Labels overlay */}
-      <View style={styles.labelRow} pointerEvents="none">
-        <Text style={styles.labelFaint}>previous</Text>
-        <Text style={styles.labelTarget}>target {Math.round(targetPrice * 100)}¢</Text>
-        <Text style={styles.labelFaint}>closes</Text>
-      </View>
-      {/* Progress bar toward deadline */}
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { flex: Math.max(progress, 0.001) }]} />
-        <View style={[styles.progressRest, { flex: Math.max(1 - progress, 0.001) }]} />
-      </View>
     </View>
   );
 }
@@ -179,38 +210,5 @@ export function CycleChart({
 const styles = StyleSheet.create({
   wrap: {
     alignItems: 'center',
-  },
-  labelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignSelf: 'stretch',
-    paddingHorizontal: PAD_L + 4,
-    marginTop: -14,
-    marginBottom: 2,
-  },
-  labelFaint: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.faint,
-  },
-  labelTarget: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: tokens.colors.accent,
-  },
-  progressTrack: {
-    flexDirection: 'row',
-    alignSelf: 'stretch',
-    height: 3,
-    borderRadius: 999,
-    overflow: 'hidden',
-    marginHorizontal: PAD_L + 4,
-    backgroundColor: 'rgba(245,250,252,0.08)',
-  },
-  progressFill: {
-    backgroundColor: tokens.colors.primary,
-  },
-  progressRest: {
-    backgroundColor: 'transparent',
   },
 });

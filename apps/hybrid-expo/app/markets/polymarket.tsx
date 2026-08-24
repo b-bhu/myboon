@@ -1,1 +1,1 @@
-export { default } from '@/features/predict/PredictScreen';
+export { default } from '@/features/predict/PredictDiscoverScreen';

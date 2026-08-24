@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server'
 import { startMarketReadPolling } from '../polymarket/read/market-read.js'
+import { upDownLivePriceFeed } from '../polymarket/read/updown-prices.js'
 import { loadApiConfig } from './config.js'
 import { createApp } from './create-app.js'
 
@@ -7,6 +8,7 @@ export function startApiServer(): void {
   const config = loadApiConfig()
   const app = createApp(config)
   startMarketReadPolling()
+  upDownLivePriceFeed.start()
 
   // No token identity refresh loop: there is no snapshot table. Identity comes
   // from the checked-in seed (loaded at module init) for perps and majors, and

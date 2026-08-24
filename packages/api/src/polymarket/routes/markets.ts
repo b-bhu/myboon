@@ -28,7 +28,6 @@ import {
   FEATURED_MARKET_SLUG,
   mapSingleMatchGammaEventToFeaturedMarket,
 } from '../read/featured-markets.js'
-import { fetchUpDownRounds } from '../read/updown.js'
 
 export function createPolymarketMarketRoutes(): Hono {
   const routes = new Hono()
@@ -261,21 +260,6 @@ export function createPolymarketMarketRoutes(): Hono {
         return c.json({ error: 'Not found' }, 404)
       }
       console.error(`[api] Unexpected error in GET /polymarket/markets/${slug}:`, err)
-      return c.json({ error: 'Internal server error' }, 500)
-    }
-  })
-
-  // GET /polymarket/updown — One Tap round supply (PRD §2)
-  // Composes the current hourly/daily BTC/ETH up-or-down rounds from Gamma.
-  // Buckets without an open upstream round come back null — the client shows
-  // "unavailable" rather than inventing a round.
-  routes.get('/updown', async (c) => {
-    try {
-      const rounds = await fetchUpDownRounds()
-      c.header('Cache-Control', 'public, max-age=10, stale-while-revalidate=30')
-      return c.json(rounds)
-    } catch (err) {
-      console.error('[api] GET /polymarket/updown failed:', err instanceof Error ? err.message : err)
       return c.json({ error: 'Internal server error' }, 500)
     }
   })

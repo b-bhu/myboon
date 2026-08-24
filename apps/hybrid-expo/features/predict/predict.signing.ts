@@ -788,6 +788,8 @@ export async function createSignedPredictOrder(
     ? OrderType.FAK
     : params.orderType === 'FOK'
       ? OrderType.FOK
+      : params.orderType === 'GTD'
+        ? OrderType.GTD
       : params.orderType === 'GTC'
         ? OrderType.GTC
         : OrderType.GTC;
@@ -813,12 +815,16 @@ export async function createSignedPredictOrder(
   }
 
   if (typeof params.size !== 'number') throw new Error('Missing order size');
+  if (orderType === OrderType.GTD && (!params.expiration || params.expiration <= 0)) {
+    throw new Error('Missing GTD order expiration');
+  }
   return client.createOrder(
     {
       tokenID: params.tokenID,
       price: params.price,
       size: params.size,
       side,
+      ...(orderType === OrderType.GTD ? { expiration: params.expiration } : {}),
       builderCode: BUILDER_CODE,
     },
     { tickSize: '0.01', negRisk: !!params.negRisk },
