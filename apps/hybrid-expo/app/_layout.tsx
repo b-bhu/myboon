@@ -41,6 +41,7 @@ export default function RootLayout() {
             <Stack.Screen name="markets/polymarket" options={{ headerShown: false }} />
             <Stack.Screen name="markets/polymarket/profile" options={{ headerShown: false }} />
             <Stack.Screen name="markets/polymarket/market/[slug]" options={{ headerShown: false }} />
+            <Stack.Screen name="markets/polymarket/updown" options={{ headerShown: false }} />
             <Stack.Screen name="markets/polymarket/sport/[sport]/[slug]" options={{ headerShown: false }} />
             <Stack.Screen name="markets/polymarket/position/[conditionId]" options={{ headerShown: false }} />
             <Stack.Screen name="markets/pacifica" options={{ headerShown: false }} />

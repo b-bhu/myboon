@@ -499,6 +499,40 @@ export async function fetchFeaturedMarkets(): Promise<FeedResponse> {
   return { items, categories };
 }
 
+// --- One Tap Up/Down (Predict redesign PRD §2) ---
+
+export interface UpDownRound {
+  slug: string;
+  asset: 'btc' | 'eth';
+  duration: 'hourly' | 'daily';
+  question: string;
+  startDate: string | null;
+  endDate: string | null;
+  active: boolean | null;
+  closed: boolean;
+  volume24h: number | null;
+  upPrice: number | null;
+  downPrice: number | null;
+  clobTokenIds: string[];
+  conditionId: string | null;
+}
+
+export interface UpDownRounds {
+  btc: { hourly: UpDownRound | null; daily: UpDownRound | null };
+  eth: { hourly: UpDownRound | null; daily: UpDownRound | null };
+}
+
+export async function fetchUpDownRounds(): Promise<UpDownRounds> {
+  const payload = await getJson('/polymarket/updown');
+  if (!payload || typeof payload !== 'object') throw new Error('Invalid updown response');
+  const p = payload as Record<string, unknown>;
+  function bucket(row: unknown): UpDownRounds['btc'] {
+    const r = (row ?? {}) as Record<string, unknown>;
+    return { hourly: (r.hourly as UpDownRound | null) ?? null, daily: (r.daily as UpDownRound | null) ?? null };
+  }
+  return { btc: bucket(p.btc), eth: bucket(p.eth) };
+}
+
 export async function fetchCuratedMarketDetail(slug: string): Promise<GeopoliticsMarketDetail> {
   const payload = await getJson(`/polymarket/markets/${encodeURIComponent(slug)}`);
   const detail = mapGeopoliticsMarketDetail(payload);
