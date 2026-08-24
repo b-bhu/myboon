@@ -160,5 +160,9 @@ export interface NewsStore {
   insertResearchResult(input: NewsResearchResultInput): Promise<NewsResearchResultRow>
   fetchResearchResult(id: string): Promise<NewsResearchResultRow | null>
   fetchPendingResearchResults(limit: number): Promise<PendingNewsResearchResult[]>
-  markResearchResultStatus(id: string, status: NewsResearchResultStatus): Promise<void>
+  markResearchResultStatus(
+    id: string,
+    status: NewsResearchResultStatus,
+    failure?: { error: string; category?: string | null }
+  ): Promise<void>
 }

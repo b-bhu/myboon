@@ -85,7 +85,10 @@ export async function runNewsEntityManager(input: RunNewsEntityManagerInput): Pr
       failures.push({ sourceResearchId: item.result.id, stage: 'entity_extraction', error: message })
       extractionFailures += 1
       try {
-        await input.newsStore.markResearchResultStatus(item.result.id, 'failed_entity_memory')
+        await input.newsStore.markResearchResultStatus(item.result.id, 'failed_entity_memory', {
+          error: message,
+          category: entityManagerFailureCategory(message),
+        })
       } catch (statusError) {
         failures.push({
           sourceResearchId: item.result.id,
@@ -155,6 +158,16 @@ async function fetchNewsPackets(input: {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function entityManagerFailureCategory(message: string): string {
+  const normalized = message.toLowerCase()
+  if (/no usable credentials|api[_ -]?key|unauthorized|\b401\b|\b403\b/.test(normalized)) return 'authentication'
+  if (/\b429\b|rate.?limit|quota|credit/.test(normalized)) return 'rate_limit'
+  if (/timed?[ _-]?out|timeout|sigterm|sigkill/.test(normalized)) return 'timeout'
+  if (/econn|enotfound|connection|socket|network/.test(normalized)) return 'connection'
+  if (/json|schema|malformed|parse/.test(normalized)) return 'malformed_output'
+  return 'other'
 }
 
 async function runOnce(): Promise<void> {

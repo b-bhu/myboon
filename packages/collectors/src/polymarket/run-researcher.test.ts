@@ -9,6 +9,7 @@ test('polymarket researcher CLI config separates one-shot and daemon interval se
   }), {
     runOnce: true,
     intervalMs: 45_000,
+    researchPlannerHermesToolsets: 'browser',
   })
 
   assert.deepEqual(polymarketResearcherCliConfig({
@@ -17,5 +18,12 @@ test('polymarket researcher CLI config separates one-shot and daemon interval se
   }), {
     runOnce: false,
     intervalMs: 300_000,
+    researchPlannerHermesToolsets: 'browser',
   })
+})
+
+test('polymarket researcher CLI config pins and trims planner toolsets', () => {
+  assert.equal(polymarketResearcherCliConfig({
+    POLYMARKET_RESEARCH_PLANNER_HERMES_TOOLSETS: ' browser, custom ',
+  }).researchPlannerHermesToolsets, 'browser,custom')
 })

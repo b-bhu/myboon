@@ -223,6 +223,9 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
       research_retry_count INTEGER NOT NULL DEFAULT 0,
       research_next_retry_at TEXT,
       research_last_error_kind TEXT,
+      research_failure_status TEXT CHECK (
+        research_failure_status IS NULL OR research_failure_status IN ('failed', 'dead_letter')
+      ),
       research_family_key TEXT,
       research_cluster_key TEXT,
       research_depth TEXT CHECK (
@@ -296,6 +299,9 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
       entity_manager_next_retry_at TEXT,
       entity_manager_processed_at TEXT,
       entity_manager_error TEXT,
+      entity_manager_failure_status TEXT CHECK (
+        entity_manager_failure_status IS NULL OR entity_manager_failure_status IN ('failed', 'dead_letter')
+      ),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (candidate_id)
@@ -410,6 +416,14 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
       ON pipeline_runs (status, started_at DESC);
   `)
 
+  const candidateColumns = new Set(
+    (db.prepare('PRAGMA table_info(pipeline_candidates)').all() as Array<Record<string, unknown>>)
+      .map((row) => String(row.name))
+  )
+  if (!candidateColumns.has('research_failure_status')) {
+    db.exec("ALTER TABLE pipeline_candidates ADD COLUMN research_failure_status TEXT CHECK (research_failure_status IS NULL OR research_failure_status IN ('failed', 'dead_letter'))")
+  }
+
   // Additive local migration for VPS databases created before the entity
   // manager got an independent queue cursor. No rows are deleted or reset.
   const researchColumns = new Set(
@@ -425,6 +439,7 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
     ['entity_manager_next_retry_at', 'TEXT'],
     ['entity_manager_processed_at', 'TEXT'],
     ['entity_manager_error', 'TEXT'],
+    ['entity_manager_failure_status', "TEXT CHECK (entity_manager_failure_status IS NULL OR entity_manager_failure_status IN ('failed', 'dead_letter'))"],
   ]
   for (const [name, definition] of additions) {
     if (!researchColumns.has(name)) db.exec(`ALTER TABLE pipeline_research ADD COLUMN ${name} ${definition}`)
@@ -783,9 +798,10 @@ export class SqlitePipelineStore implements PipelineStore {
           'status = ?',
           'observed_at = ?',
           'research_error = ?',
+          "research_failure_status = CASE WHEN ? = 'research_failed' THEN 'failed' ELSE NULL END",
           'updated_at = CURRENT_TIMESTAMP',
         ]
-        const params: unknown[] = [input.status, input.observedAt, input.researchError ?? null]
+        const params: unknown[] = [input.status, input.observedAt, input.researchError ?? null, input.status]
 
         if (input.extra?.researchRetryCount !== undefined) {
           fields.push('research_retry_count = ?')
@@ -957,6 +973,7 @@ export class SqlitePipelineStore implements PipelineStore {
           research_backend = excluded.research_backend,
           research_model = excluded.research_model,
           entity_manager_status = excluded.entity_manager_status,
+          entity_manager_failure_status = NULL,
           entity_manager_lease_owner = NULL,
           entity_manager_lease_expires_at = NULL,
           entity_manager_attempt_count = 0,
@@ -1090,6 +1107,7 @@ export class SqlitePipelineStore implements PipelineStore {
       this.db.prepare(`
         UPDATE pipeline_research
         SET entity_manager_status = 'processing',
+            entity_manager_failure_status = NULL,
             entity_manager_lease_owner = ?,
             entity_manager_lease_expires_at = ?,
             entity_manager_attempt_count = entity_manager_attempt_count + 1,
@@ -1120,6 +1138,7 @@ export class SqlitePipelineStore implements PipelineStore {
     const result = this.db.prepare(`
       UPDATE pipeline_research
       SET entity_manager_status = ?,
+          entity_manager_failure_status = CASE WHEN ? = 'failed' THEN 'failed' ELSE NULL END,
           entity_manager_lease_owner = NULL,
           entity_manager_lease_expires_at = NULL,
           entity_manager_next_retry_at = ?,
@@ -1130,6 +1149,7 @@ export class SqlitePipelineStore implements PipelineStore {
         AND entity_manager_status = 'processing'
         AND entity_manager_lease_owner = ?
     `).run(
+      input.status,
       input.status,
       input.nextRetryAt ?? null,
       input.status,
@@ -1473,6 +1493,7 @@ export class SqlitePipelineStore implements PipelineStore {
         this.db.prepare(`
           UPDATE pipeline_candidates
           SET status = 'researching',
+              research_failure_status = NULL,
               lease_owner = ?,
               lease_expires_at = ?,
               attempt_count = attempt_count + 1,
@@ -1504,6 +1525,7 @@ export class SqlitePipelineStore implements PipelineStore {
         SELECT id FROM pipeline_candidates
         WHERE source = ? AND area = ?
           AND status = 'research_failed'
+          AND COALESCE(research_failure_status, 'failed') = 'failed'
           AND attempt_count < ?
           AND (research_next_retry_at IS NULL OR research_next_retry_at <= ?)
         ORDER BY observed_at ASC
@@ -1525,6 +1547,7 @@ export class SqlitePipelineStore implements PipelineStore {
         this.db.prepare(`
           UPDATE pipeline_candidates
           SET status = 'researching',
+              research_failure_status = NULL,
               lease_owner = ?,
               lease_expires_at = ?,
               attempt_count = attempt_count + 1,

@@ -5,6 +5,9 @@ export {
   type HermesConcurrencyLimiterOptions,
 } from './limiter'
 export {
+  HERMES_PROVIDER_CIRCUIT_OPEN_CODE,
+  HermesProviderCircuitBreaker,
+  HermesProviderCircuitOpenError,
   HermesService,
   type HermesCallMode,
   type HermesCallObserver,
@@ -14,6 +17,7 @@ export {
   type HermesChatResult,
   type HermesOneshotRequest,
   type HermesOneshotResult,
+  type HermesProviderCircuitBreakerOptions,
   type HermesServiceOptions,
   type HermesStructuredResult,
 } from './service'

@@ -16,14 +16,17 @@ const DEFAULT_RESEARCHER_INTERVAL_MS = 5 * 60 * 1000
 export function polymarketResearcherCliConfig(env: NodeJS.ProcessEnv = process.env): {
   runOnce: boolean
   intervalMs: number
+  researchPlannerHermesToolsets: string
 } {
   return {
     runOnce: envFlag(env.POLYMARKET_RESEARCHER_RUN_ONCE),
     intervalMs: positiveInteger(env.POLYMARKET_RESEARCHER_INTERVAL_MS, DEFAULT_RESEARCHER_INTERVAL_MS),
+    researchPlannerHermesToolsets: env.POLYMARKET_RESEARCH_PLANNER_HERMES_TOOLSETS
+      ?.split(',').map((item) => item.trim()).filter(Boolean).join(',') || 'browser',
   }
 }
 
-async function runOnce(): Promise<void> {
+async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>): Promise<void> {
   const supabase = createClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
@@ -53,6 +56,7 @@ async function runOnce(): Promise<void> {
         const hermes = new HermesService()
         return runPolymarketResearcher(store, supabase, {
           hermes,
+          researchPlannerHermesToolsets: config.researchPlannerHermesToolsets,
           ...(process.env.RESEARCH_GATE_DISABLED === '1'
             ? {}
             : { gate: { reader: new SupabaseEntityMemoryReader(supabase) } }),
@@ -70,7 +74,7 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   const config = polymarketResearcherCliConfig()
-  await runOnce()
+  await runOnce(config)
 
   // One-shot mode is only for controlled manual runs and end-to-end tests.
   // The PM2 ecosystem explicitly forces this flag to 0: a clean one-shot
@@ -84,7 +88,7 @@ async function main(): Promise<void> {
   startIntervalRunner({
     label: 'polymarket-researcher',
     intervalMs: config.intervalMs,
-    run: runOnce,
+    run: () => runOnce(config),
   })
 }
 

@@ -33,6 +33,8 @@ const DEFAULT_THIN_LIQUIDITY_MAX = 1_000
 const DEFAULT_HERMES_COMMAND = 'hermes'
 const DEFAULT_RESEARCH_MODEL = 'hermes_cli'
 const DEFAULT_HERMES_TIMEOUT_MS = 60_000
+const DEFAULT_RESEARCH_PLANNER_HERMES_TOOLSETS = 'browser'
+const BROWSER_ONLY_TOOL_POLICY = 'Tool policy: use browser_* tools only. Never call web_search, web_extract, or any Firecrawl-backed tool.'
 const DEFAULT_LAST30DAYS_PYTHON = 'python3.12'
 const DEFAULT_LAST30DAYS_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_LAST30DAYS_WEB_BACKEND = 'auto'
@@ -93,7 +95,7 @@ export interface PolymarketResearcherOptions {
   /**
    * Read-and-conclude research engine (see src/research-engine/). When
    * configured, deep_web candidates run one engine task - an agent with
-   * browser/web tools that actually reads sources and is allowed to conclude
+   * browser tools that actually reads sources and is allowed to conclude
    * 'nothing_found' - instead of the legacy planner->last30days->reflection
    * retrieval pipeline. null (the default) keeps the legacy path. Structural
    * contract (just `research(task)`) so tests can inject a stub.
@@ -372,6 +374,11 @@ function selectedBackend(partial?: ResearchBackend): ResearchBackend {
   return backend
 }
 
+function selectedPlannerToolsets(value?: string): string {
+  return value?.split(',').map((item) => item.trim()).filter(Boolean).join(',')
+    || DEFAULT_RESEARCH_PLANNER_HERMES_TOOLSETS
+}
+
 export function defaultLast30DaysScriptPath(home = process.env.HOME ?? ''): string {
   return home === '/root'
     ? VPS_LAST30DAYS_SCRIPT
@@ -390,8 +397,8 @@ function selectedOptions(partial: PolymarketResearcherOptions): Required<Polymar
     thinLiquidityMax: partial.thinLiquidityMax ?? DEFAULT_THIN_LIQUIDITY_MAX,
     backend: selectedBackend(partial.backend),
     researchModel: partial.researchModel ?? DEFAULT_RESEARCH_MODEL,
-    hermesCommand: partial.hermesCommand ?? DEFAULT_HERMES_COMMAND,
-    researchPlannerHermesToolsets: partial.researchPlannerHermesToolsets ?? '',
+    hermesCommand: partial.hermesCommand ?? process.env.HERMES_COMMAND ?? DEFAULT_HERMES_COMMAND,
+    researchPlannerHermesToolsets: selectedPlannerToolsets(partial.researchPlannerHermesToolsets),
     researchPlannerHermesIgnoreRules: partial.researchPlannerHermesIgnoreRules ?? true,
     researchPlannerHermesTimeoutMs: partial.researchPlannerHermesTimeoutMs ?? DEFAULT_HERMES_TIMEOUT_MS,
     last30DaysPython: partial.last30DaysPython ?? DEFAULT_LAST30DAYS_PYTHON,
@@ -401,7 +408,9 @@ function selectedOptions(partial: PolymarketResearcherOptions): Required<Polymar
     maxCandidateAgeHours: partial.maxCandidateAgeHours ?? DEFAULT_MAX_CANDIDATE_AGE_HOURS,
     leaseOwner: partial.leaseOwner ?? `researcher:${hostname()}:${process.pid}:${randomUUID()}`,
     leaseSeconds: partial.leaseSeconds ?? DEFAULT_LEASE_SECONDS,
-    hermes: partial.hermes ?? new HermesService({ command: partial.hermesCommand ?? DEFAULT_HERMES_COMMAND }),
+    hermes: partial.hermes ?? new HermesService({
+      command: partial.hermesCommand ?? process.env.HERMES_COMMAND ?? DEFAULT_HERMES_COMMAND,
+    }),
     gate: partial.gate ?? null,
     engine: partial.engine ?? null,
   }
@@ -1288,13 +1297,13 @@ async function runHermesPlanner(
   options: Required<PolymarketResearcherOptions>,
   entityContext?: GateEntityContext
 ): Promise<PlannerResult> {
-  const prompt = buildPlannerPrompt(context, candidate, entityContext)
+  const prompt = `${BROWSER_ONLY_TOOL_POLICY}\n\n${buildPlannerPrompt(context, candidate, entityContext)}`
   try {
     const { value, stdout } = await options.hermes.structured<Partial<ResearchReflectionPlan>>({
       purpose: 'polymarket.researcher.planner',
       prompt,
       timeoutMs: options.researchPlannerHermesTimeoutMs,
-      toolsets: options.researchPlannerHermesToolsets || undefined,
+      toolsets: options.researchPlannerHermesToolsets,
       ignoreRules: options.researchPlannerHermesIgnoreRules,
       commandOverride: options.hermesCommand,
     })
@@ -1480,13 +1489,13 @@ async function runHermesRetrievalReflection(
   stderr: string,
   options: Required<PolymarketResearcherOptions>
 ): Promise<RetrievalReflection> {
-  const prompt = buildRetrievalReflectionPrompt(context, candidate, brief, report, stderr)
+  const prompt = `${BROWSER_ONLY_TOOL_POLICY}\n\n${buildRetrievalReflectionPrompt(context, candidate, brief, report, stderr)}`
   try {
     const { value } = await options.hermes.structured<Partial<RetrievalReflection>>({
       purpose: 'polymarket.researcher.reflection',
       prompt,
       timeoutMs: options.researchPlannerHermesTimeoutMs,
-      toolsets: options.researchPlannerHermesToolsets || undefined,
+      toolsets: options.researchPlannerHermesToolsets,
       ignoreRules: options.researchPlannerHermesIgnoreRules,
       commandOverride: options.hermesCommand,
     })
