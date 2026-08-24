@@ -80,17 +80,22 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        HERMES_COMMAND: '/root/.local/bin/myboonresearch',
+        RESEARCH_ENGINE_HERMES_PROFILE: 'myboonresearch',
         POLYMARKET_RESEARCHER_RUN_ONCE: '0',
         POLYMARKET_RESEARCHER_INTERVAL_MS: '300000',
         // Pre-research entity gate and read-and-conclude research engine
         // (src/research-gate/, src/research-engine/). Both ON by default;
         // flip a switch to '1' to fall back to the previous behavior
         // without a code change. The engine runs
-        // `hermes chat --toolsets browser,web` - the hermes CLI must be
+        // `hermes chat --toolsets browser` - the web toolset is deliberately
+        // excluded so research cannot route through Firecrawl. The hermes CLI must be
         // installed and authenticated on this box (see docs/DEPLOY.md,
         // "Hermes CLI prerequisite").
         RESEARCH_GATE_DISABLED: '0',
         RESEARCH_ENGINE_DISABLED: '0',
+        RESEARCH_ENGINE_TOOLSETS: 'browser',
+        POLYMARKET_RESEARCH_PLANNER_HERMES_TOOLSETS: 'browser',
       },
     },
     {
@@ -121,6 +126,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        HERMES_COMMAND: '/root/.local/bin/myboonnews',
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         NEWS_RESEARCHER_RUN_ONCE: '0',
         NEWS_RESEARCHER_INTERVAL_MS: '300000',
@@ -132,6 +138,8 @@ module.exports = {
         NEWS_AGENT_BROWSER_READ_TIMEOUT_MS: '30000',
         NEWS_AGENT_BROWSER_MAX_OUTPUT_CHARS: '40000',
         NEWS_HERMES_BROWSER_FALLBACK_ENABLED: '1',
+        NEWS_HERMES_PROFILE: 'myboonnews',
+        NEWS_HERMES_TOOLSETS: 'browser',
       },
     },
     {
@@ -146,6 +154,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        HERMES_COMMAND: '/root/.local/bin/myboonnewsentity',
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         ENTITY_MANAGER_NEWS_RUN_ONCE: '0',
         ENTITY_MANAGER_NEWS_INTERVAL_MS: '300000',
@@ -166,6 +175,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        HERMES_COMMAND: '/root/.local/bin/myboonpolyentity',
         ENTITY_MANAGER_POLYMARKET_RUN_ONCE: '0',
         ENTITY_MANAGER_POLYMARKET_INTERVAL_MS: '300000',
         ENTITY_MANAGER_POLYMARKET_BATCH_SIZE: '20',
@@ -187,6 +197,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        HERMES_COMMAND: '/root/.local/bin/mybooneditor',
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',
@@ -211,6 +222,23 @@ module.exports = {
         PUBLISHER_INTERVAL_MS: '300000',
         PUBLISHER_BATCH_SIZE: '10',
         PUBLISHER_PREVIEW_ONLY: '0',
+      },
+    },
+    {
+      name: 'myboon-hermes-orphan-sweeper',
+      script: 'src/hermes/run-orphan-sweeper.ts',
+      interpreter: TSX,
+      cwd: `${ROOT}/packages/collectors`,
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env: {
+        HERMES_ORPHAN_SWEEP_INTERVAL_MS: '300000',
+        HERMES_ORPHAN_MAX_AGE_MS: '900000',
+        HERMES_ORPHAN_KILL_GRACE_MS: '5000',
+        HERMES_ORPHAN_WORKSPACE_ROOT: ROOT,
       },
     },
   ],

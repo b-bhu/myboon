@@ -38,7 +38,8 @@ import { HermesConcurrencyLimiter } from './limiter'
  *  - chat NEVER rejects for process-level failures; it resolves a status
  *    envelope ('succeeded' | 'failed' | 'timed_out') exactly like the news
  *    HermesWorkerClient contract it absorbed. It throws only on caller
- *    programming errors (non-positive timeout).
+ *    programming errors (non-positive timeout) or before spawning when the
+ *    provider circuit is open.
  *  - every call - success or failure, either mode - emits one
  *    HermesCallRecord to the observer. This is the instrumentation seed the
  *    sprint's cost-measurement work (issue #260's baseline) hangs off:
@@ -50,6 +51,10 @@ const execFileAsync = promisify(execFile)
 
 const DEFAULT_COMMAND = 'hermes'
 const DEFAULT_MAX_BUFFER_BYTES = 10 * 1024 * 1024
+const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 5
+const DEFAULT_CIRCUIT_COOLDOWN_MS = 10 * 60_000
+
+export const HERMES_PROVIDER_CIRCUIT_OPEN_CODE = 'HERMES_PROVIDER_CIRCUIT_OPEN'
 
 export type HermesCallMode = 'oneshot' | 'chat'
 export type HermesCallStatus = 'succeeded' | 'failed' | 'timed_out'
@@ -72,6 +77,120 @@ export interface HermesCallRecord {
 
 export type HermesCallObserver = (record: HermesCallRecord) => void
 
+export class HermesProviderCircuitOpenError extends Error {
+  readonly code = HERMES_PROVIDER_CIRCUIT_OPEN_CODE
+  readonly retryable = true
+  readonly retryAfterMs: number
+
+  constructor(retryAfterMs: number) {
+    super(`Hermes provider circuit open; retry after ${Math.max(0, Math.ceil(retryAfterMs / 1000))}s`)
+    this.name = 'HermesProviderCircuitOpenError'
+    this.retryAfterMs = Math.max(0, retryAfterMs)
+  }
+}
+
+interface HermesCircuitPermit {
+  probe: boolean
+}
+
+export interface HermesProviderCircuitBreakerOptions {
+  failureThreshold?: number
+  cooldownMs?: number
+  now?: () => number
+  logger?: (message: string) => void
+}
+
+/**
+ * Process-local provider circuit shared by every HermesService instance.
+ * It deliberately tracks only transport/provider availability failures;
+ * malformed model output is a caller-level error and proves the provider was
+ * reachable, so it must not open the circuit.
+ */
+export class HermesProviderCircuitBreaker {
+  private readonly failureThreshold: number
+  private readonly cooldownMs: number
+  private readonly now: () => number
+  private readonly logger: (message: string) => void
+  private state: 'closed' | 'open' | 'half_open' = 'closed'
+  private consecutiveRetryableFailures = 0
+  private nextProbeAtMs = 0
+
+  constructor(options: HermesProviderCircuitBreakerOptions = {}) {
+    this.failureThreshold = options.failureThreshold ?? DEFAULT_CIRCUIT_FAILURE_THRESHOLD
+    this.cooldownMs = options.cooldownMs ?? DEFAULT_CIRCUIT_COOLDOWN_MS
+    this.now = options.now ?? Date.now
+    this.logger = options.logger ?? ((message) => console.warn(message))
+    if (!Number.isInteger(this.failureThreshold) || this.failureThreshold <= 0) {
+      throw new Error('Hermes circuit failureThreshold must be a positive integer')
+    }
+    if (!Number.isFinite(this.cooldownMs) || this.cooldownMs <= 0) {
+      throw new Error('Hermes circuit cooldownMs must be positive')
+    }
+  }
+
+  beforeCall(): HermesCircuitPermit {
+    if (this.state === 'closed') return { probe: false }
+
+    const now = this.now()
+    if (this.state === 'open' && now >= this.nextProbeAtMs) {
+      this.state = 'half_open'
+      this.logger('[hermes] provider circuit probe')
+      return { probe: true }
+    }
+
+    throw new HermesProviderCircuitOpenError(
+      this.state === 'open' ? this.nextProbeAtMs - now : this.cooldownMs,
+    )
+  }
+
+  abort(permit: HermesCircuitPermit): void {
+    if (!permit.probe || this.state !== 'half_open') return
+    // The provider was never called (for example, the local concurrency lease
+    // timed out), so let the next caller become the recovery probe immediately.
+    this.state = 'open'
+  }
+
+  succeeded(): void {
+    const wasRecovering = this.state !== 'closed'
+    this.state = 'closed'
+    this.consecutiveRetryableFailures = 0
+    this.nextProbeAtMs = 0
+    if (wasRecovering) this.logger('[hermes] provider circuit closed')
+  }
+
+  failed(permit: HermesCircuitPermit, retryable: boolean): void {
+    if (!retryable) {
+      // A non-provider failure (such as malformed output) proves a real call
+      // reached the provider. It breaks the consecutive availability-failure
+      // sequence and closes a half-open probe.
+      this.succeeded()
+      return
+    }
+
+    if (permit.probe || this.state === 'half_open') {
+      this.open()
+      return
+    }
+    // Calls already in flight when another call opened the circuit must not
+    // repeatedly extend the cooldown or duplicate transition logs.
+    if (this.state !== 'closed') return
+
+    this.consecutiveRetryableFailures += 1
+    if (this.consecutiveRetryableFailures >= this.failureThreshold) this.open()
+  }
+
+  private open(): void {
+    this.state = 'open'
+    this.consecutiveRetryableFailures = this.failureThreshold
+    this.nextProbeAtMs = this.now() + this.cooldownMs
+    this.logger(
+      `[hermes] provider circuit open; next probe in ${Math.ceil(this.cooldownMs / 1000)}s`,
+    )
+  }
+}
+
+const processProviderCircuitBreaker = new HermesProviderCircuitBreaker()
+
 type ExecFileImpl = (
   command: string,
   args: string[],
@@ -79,6 +198,14 @@ type ExecFileImpl = (
 ) => Promise<{ stdout: string, stderr: string }>
 
 type SpawnImpl = (command: string, args: string[], options: SpawnOptions) => ChildProcess
+
+type SpawnedOneshotError = Error & {
+  stdout?: string
+  stderr?: string
+  code?: string | number | null
+  killed?: boolean
+  signal?: string
+}
 
 export interface HermesServiceOptions {
   /** CLI command, default 'hermes' (or HERMES_COMMAND). Per-stage env vars
@@ -97,6 +224,8 @@ export interface HermesServiceOptions {
   structuredLimiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
   browserLimiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
   processGroupKillGraceMs?: number
+  /** Test seam. Production shares one in-memory breaker per Node process. */
+  circuitBreaker?: HermesProviderCircuitBreaker
 }
 
 export interface HermesOneshotRequest {
@@ -157,9 +286,56 @@ function oneshotStatus(error: unknown): HermesCallStatus {
   return anyError && anyError.killed === true && typeof anyError.signal === 'string' ? 'timed_out' : 'failed'
 }
 
+const RETRYABLE_CONNECTION_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET',
+])
+
+function retryableProviderFailure(error: unknown): boolean {
+  const value = error as {
+    killed?: unknown
+    signal?: unknown
+    code?: unknown
+    status?: unknown
+    statusCode?: unknown
+    stderr?: unknown
+    stdout?: unknown
+  }
+  if (value?.killed === true || value?.signal === 'SIGTERM') return true
+  if (value?.status === 429 || value?.statusCode === 429) return true
+  if (typeof value?.code === 'string' && RETRYABLE_CONNECTION_CODES.has(value.code.toUpperCase())) return true
+
+  const text = [
+    errorMessage(error),
+    typeof value?.stderr === 'string' ? value.stderr : '',
+    typeof value?.stdout === 'string' ? value.stdout : '',
+  ].filter(Boolean).join('\n')
+  return /(?:\bHTTP(?:\/\d(?:\.\d)?)?\s*429\b|\b(?:error|status)(?: code)?\s*[:=]?\s*429\b|["']status["']\s*:\s*429\b|\brate[ _-]?limit(?:ed|ing)?\b|\btoo many requests\b|\b(?:ECONNABORTED|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETDOWN|ENETUNREACH|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET)\b|\bconnection (?:error|refused|reset|timed? ?out)\b|\bsocket hang up\b|\bnetwork (?:error|unreachable)\b|\bfetch failed\b)/i.test(text)
+}
+
+function retryableChatResult(result: HermesChatResult): boolean {
+  if (result.status === 'timed_out') return true
+  if (result.status === 'succeeded') return false
+  return retryableProviderFailure(Object.assign(
+    new Error([result.stderr, result.stdout].filter(Boolean).join('\n')),
+    { status: result.exitCode },
+  ))
+}
+
 const SESSION_ID_PATTERN = /(?:^|\n)session_id:\s*([A-Za-z0-9_-]+)\s*(?:\n|$)/i
 const SESSION_DELETE_TIMEOUT_MS = 30_000
-const PROCESS_GROUP_KILL_GRACE_MS = 2_000
+const PROCESS_GROUP_KILL_GRACE_MS = 5_000
 const PROCESS_GROUP_EXIT_CONFIRM_MS = 2_000
 const PROCESS_GROUP_EXIT_POLL_MS = 50
 
@@ -217,15 +393,18 @@ export class HermesService {
   private readonly command: string
   private readonly observer: HermesCallObserver | null
   private readonly execFileImpl: ExecFileImpl
+  private readonly oneshotExecOverride: ExecFileImpl | null
   private readonly spawnImpl: SpawnImpl
   private readonly structuredLimiter: Pick<HermesConcurrencyLimiter, 'acquire'>
   private readonly browserLimiter: Pick<HermesConcurrencyLimiter, 'acquire'>
   private readonly processGroupKillGraceMs: number
+  private readonly circuitBreaker: HermesProviderCircuitBreaker
 
   constructor(options: HermesServiceOptions = {}) {
     this.command = options.command ?? process.env.HERMES_COMMAND ?? DEFAULT_COMMAND
     this.observer = options.observer ?? null
     this.execFileImpl = options.execFileImpl ?? (execFileAsync as unknown as ExecFileImpl)
+    this.oneshotExecOverride = options.execFileImpl ?? null
     this.spawnImpl = options.spawnImpl ?? spawn
     this.structuredLimiter = options.structuredLimiter ?? options.limiter ?? new HermesConcurrencyLimiter({
       maxConcurrency: positiveInteger(
@@ -245,6 +424,7 @@ export class HermesService {
         ?? '/tmp/myboon-hermes-slots',
     })
     this.processGroupKillGraceMs = options.processGroupKillGraceMs ?? PROCESS_GROUP_KILL_GRACE_MS
+    this.circuitBreaker = options.circuitBreaker ?? processProviderCircuitBreaker
   }
 
   private record(record: HermesCallRecord): void {
@@ -265,13 +445,23 @@ export class HermesService {
       request.prompt,
     ]
     const startedAtMs = Date.now()
-    const lease = await this.structuredLimiter.acquire(request.timeoutMs)
+    const permit = this.circuitBreaker.beforeCall()
+    let lease: { release(): void }
     try {
-      const { stdout, stderr } = await this.execFileImpl(command, args, {
-        timeout: request.timeoutMs,
-        maxBuffer: request.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES,
-        env: { ...process.env },
-      })
+      lease = await this.structuredLimiter.acquire(request.timeoutMs)
+    } catch (error) {
+      this.circuitBreaker.abort(permit)
+      throw error
+    }
+    try {
+      const { stdout, stderr } = this.oneshotExecOverride
+        ? await this.oneshotExecOverride(command, args, {
+          timeout: request.timeoutMs,
+          maxBuffer: request.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES,
+          env: { ...process.env },
+        })
+        : await this.runSpawnedOneshot(command, args, request)
+      this.circuitBreaker.succeeded()
       const finishedAtMs = Date.now()
       this.record({
         purpose: request.purpose,
@@ -289,6 +479,7 @@ export class HermesService {
       })
       return { stdout, stderr }
     } catch (error) {
+      this.circuitBreaker.failed(permit, retryableProviderFailure(error))
       const finishedAtMs = Date.now()
       this.record({
         purpose: request.purpose,
@@ -315,19 +506,107 @@ export class HermesService {
     return { value: extractJson<T>(stdout), stdout, stderr }
   }
 
+  private runSpawnedOneshot(
+    command: string,
+    args: string[],
+    request: HermesOneshotRequest,
+  ): Promise<HermesOneshotResult> {
+    const child = this.spawnImpl(command, args, {
+      shell: false,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    })
+    const maxBufferBytes = request.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timedOut = false
+    let forceKill: NodeJS.Timeout | null = null
+
+    return new Promise((resolve, reject) => {
+      const finish = (error?: SpawnedOneshotError) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        if (forceKill) clearTimeout(forceKill)
+        if (error) reject(error)
+        else resolve({ stdout, stderr })
+      }
+      const failAfterCleanup = async (error: SpawnedOneshotError) => {
+        await killAndConfirmProcessGroup(child)
+        finish(error)
+      }
+      const append = (target: 'stdout' | 'stderr', chunk: unknown) => {
+        if (settled) return
+        const text = Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk)
+        if (target === 'stdout') stdout += text
+        else stderr += text
+        if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) <= maxBufferBytes) return
+        timedOut = true
+        clearTimeout(timeout)
+        terminateProcessTree(child, 'SIGTERM')
+        const error = Object.assign(new Error(`Hermes output exceeded maxBuffer ${maxBufferBytes}`), {
+          code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+          stdout,
+          stderr,
+        })
+        forceKill = setTimeout(() => { void failAfterCleanup(error) }, this.processGroupKillGraceMs)
+      }
+
+      child.stdout?.on('data', (chunk) => append('stdout', chunk))
+      child.stderr?.on('data', (chunk) => append('stderr', chunk))
+
+      const timeout = setTimeout(() => {
+        timedOut = true
+        terminateProcessTree(child, 'SIGTERM')
+        const error = Object.assign(new Error(`Hermes timed out after ${request.timeoutMs}ms`), {
+          killed: true,
+          signal: 'SIGTERM',
+          code: 'ETIMEDOUT',
+          stdout,
+          stderr,
+        })
+        // SIGTERM gives Hermes a bounded chance to run its own browser-session
+        // cleanup. The group remains owned until the grace timer confirms that
+        // every descendant is gone, escalating to SIGKILL where necessary.
+        forceKill = setTimeout(() => { void failAfterCleanup(error) }, this.processGroupKillGraceMs)
+      }, request.timeoutMs)
+
+      child.once('error', (error) => {
+        if (timedOut) return
+        finish(Object.assign(error, { stdout, stderr }))
+      })
+      child.once('close', (code) => {
+        if (timedOut) return
+        if (code === 0) {
+          finish()
+          return
+        }
+        finish(Object.assign(new Error(`Hermes exited with code ${code ?? 'none'}`), {
+          code,
+          stdout,
+          stderr,
+        }))
+      })
+    })
+  }
+
   chat(request: HermesChatRequest): Promise<HermesChatResult> {
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0) {
       throw new Error(`Hermes chat timeoutMs must be positive for purpose ${request.purpose}`)
     }
-    return this.chatWithLease(request)
+    const permit = this.circuitBreaker.beforeCall()
+    return this.chatWithLease(request, permit)
   }
 
-  private async chatWithLease(request: HermesChatRequest): Promise<HermesChatResult> {
+  private async chatWithLease(request: HermesChatRequest, permit: HermesCircuitPermit): Promise<HermesChatResult> {
     const waitingAtMs = Date.now()
-    let lease
+    let lease: { release(): void }
     try {
       lease = await this.browserLimiter.acquire(request.timeoutMs)
     } catch (error) {
+      this.circuitBreaker.abort(permit)
       const finishedAtMs = Date.now()
       const message = errorMessage(error)
       const command = request.commandOverride ?? this.command
@@ -359,7 +638,13 @@ export class HermesService {
       return result
     }
     try {
-      return await this.runChat(request)
+      const result = await this.runChat(request)
+      if (result.status === 'succeeded') this.circuitBreaker.succeeded()
+      else this.circuitBreaker.failed(permit, retryableChatResult(result))
+      return result
+    } catch (error) {
+      this.circuitBreaker.failed(permit, retryableProviderFailure(error))
+      throw error
     } finally {
       lease.release()
     }

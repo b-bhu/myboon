@@ -10,6 +10,7 @@
 | `myboon-polymarket-entity-manager` | `packages/collectors` | Polymarket ResearchPacket to Entity Memory |
 | `myboon-news-feed-ingestor` | `packages/collectors` | Structured article/social collection every 10 minutes |
 | `myboon-news-researcher` | `packages/collectors` | Hermes source-aware research only |
+| `myboon-hermes-orphan-sweeper` | `packages/collectors` | Reaps aged, unowned Hermes/browser process groups |
 | `myboon-news-entity-manager` | `packages/collectors` | News ResearchPacket to Entity Memory |
 | `myboon-editor-draft` | `packages/collectors` | Entity Memory to Editor Draft |
 | `myboon-publisher` | `packages/collectors` | Generic Editor Draft Publisher |
@@ -36,7 +37,7 @@ hermes --version
 hermes --ignore-rules -z 'Return exactly this JSON: {"ok": true}'
 
 # chat/tool mode with page reading (news research AND the research engine)
-hermes chat --profile myboonfeed --toolsets browser,web --quiet \
+hermes chat --profile myboonfeed --toolsets browser --quiet \
   --query 'Open https://example.com and return its <title> as JSON: {"title": "..."}'
 
 # pinned agent-browser HTTP-only reader used by the news fast path
@@ -44,6 +45,25 @@ pnpm --filter @myboon/collectors exec agent-browser --version
 pnpm --filter @myboon/collectors exec agent-browser --json --content-boundaries \
   --max-output 2000 read https://example.com
 ```
+
+Create the five isolated production profiles once, cloning provider credentials
+and model configuration but not history from the authenticated default profile:
+
+```bash
+hermes profile create myboonresearch --clone-from default
+hermes profile create myboonnews --clone-from default
+hermes profile create myboonnewsentity --clone-from default
+hermes profile create myboonpolyentity --clone-from default
+hermes profile create mybooneditor --clone-from default
+```
+
+The ecosystem pins each LLM-heavy worker to its own profile wrapper. This keeps
+Hermes state databases isolated per worker and prevents concurrent pipeline
+processes from writing the default profile's SQLite database. Do not delete or
+repair an existing profile database during deployment; quarantine a damaged
+profile and create a fresh clone instead. PM2 uses the wrappers' absolute paths
+under `/root/.local/bin`, because its startup environment does not include that
+directory in `PATH`.
 
 If the Hermes chat command fails, news browser fallback and the Polymarket
 research engine cannot work; fix Hermes before starting, or set
@@ -60,7 +80,7 @@ loopback URL for pinned `agent-browser`'s HTTP-only `read` command; agent-browse
 never receives the external URL. A successful conversion must report
 `lifecycle.launched=false`; its bounded content is treated as untrusted evidence
 and passed to structured Hermes. A blocked, short, or timed-out conversion may
-fall back to Hermes browser/web chat only with agent-browser native domain
+fall back to Hermes browser-only chat with agent-browser native domain
 containment set to the already-vetted redirect hosts. Contained source-URL
 fallback excludes the separate Hermes `web` tool because it does not inherit
 agent-browser network policy. Invalid, private, or
@@ -77,6 +97,10 @@ that session after the call. On timeout it signals the complete Unix process
 group, keeps the concurrency lease through the SIGKILL grace period, and confirms
 group exit so browser descendants do not survive as orphan Chrome processes.
 Interactive Hermes sessions are not selected or pruned by this lifecycle.
+`myboon-hermes-orphan-sweeper` is a second line of defense: every five minutes
+it gracefully closes browser sessions and reaps only process groups older than
+15 minutes with no live pipeline owner. It skips browser cleanup whenever a
+legitimate research call is active, and escalates survivors to `SIGKILL`.
 
 If a machine was interrupted before exact cleanup completed, inspect only the
 programmatic session lane first, then prune it explicitly:
@@ -107,6 +131,22 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
 - Verified online backups for both `pipeline.sqlite` and `news.sqlite`:
   `pnpm --filter @myboon/collectors pipeline-store:backup`
   (run it on a cron; it is cheap)
+- Failed-work recovery is dry-run first and stage-specific. Examples:
+  ```bash
+  pnpm --filter @myboon/collectors pipeline-store:recover-research -- \
+    --source news --since 2026-08-23T00:00:00Z --until 2026-08-24T00:00:00Z
+  pnpm --filter @myboon/collectors pipeline-store:recover-entity-manager -- \
+    --source polymarket --since 2026-08-23T00:00:00Z --failure-category provider_outage
+  ```
+  Add `--apply` only after reviewing every audit row. Apply requires a time
+  boundary or exact `--candidate-id`, limits each invocation to 100 rows by
+  default (maximum 500), and backs up and verifies both SQLite files before
+  writing. Research replay never reruns candidates that already have a local
+  result; it reconciles their candidate cursor directly to `researched`.
+  Use `--mark-dead-letter --apply` for terminal failures that should remain
+  visible but never be reclaimed.
+- Dead-letter depth and oldest stuck row for all four queues:
+  `pnpm --filter @myboon/collectors pipeline-store:dead-letters`
 - The three production news workers must all use the same `NEWS_SQLITE_PATH`.
 - News Entity Manager reads research packets from `news.sqlite` and writes only
   final `entities` and `entity_memories` records to Supabase.
@@ -269,8 +309,11 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 # HERMES_STRUCTURED_MAX_CONCURRENCY=4
 # HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR=/tmp/myboon-hermes-structured-slots
 # Legacy HERMES_MAX_CONCURRENCY/HERMES_CONCURRENCY_LOCK_DIR are browser fallbacks
-# NEWS_HERMES_PROFILE=myboonfeed   # news worker chat profile
-# NEWS_HERMES_TOOLSETS=browser,web
+# HERMES_ORPHAN_SWEEP_INTERVAL_MS=300000
+# HERMES_ORPHAN_MAX_AGE_MS=900000
+# HERMES_ORPHAN_KILL_GRACE_MS=5000
+# NEWS_HERMES_PROFILE=myboonnews   # news worker chat profile
+# NEWS_HERMES_TOOLSETS=browser
 # NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED=1
 # NEWS_AGENT_BROWSER_READ_TIMEOUT_MS=30000
 # NEWS_AGENT_BROWSER_MAX_OUTPUT_CHARS=40000
@@ -281,7 +324,9 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 # Both ON by default. Kill switches, '1' disables:
 # RESEARCH_GATE_DISABLED=0         # skip the pre-research entity-memory check
 # RESEARCH_ENGINE_DISABLED=0       # fall back to legacy planner/last30days path
-# RESEARCH_ENGINE_HERMES_PROFILE=  # optional chat profile for engine runs
+# RESEARCH_ENGINE_HERMES_PROFILE=myboonresearch
+# RESEARCH_ENGINE_TOOLSETS=browser # browser-only; excludes Firecrawl-backed web tools
+# POLYMARKET_RESEARCH_PLANNER_HERMES_TOOLSETS=browser
 
 POLYMARKET_MARKETS_RUN_ONCE=0
 POLYMARKET_RESEARCHER_RUN_ONCE=0

@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import { HermesService, type HermesCallRecord } from './service'
+import {
+  HermesProviderCircuitBreaker,
+  HermesProviderCircuitOpenError,
+  HermesService,
+  type HermesCallRecord,
+} from './service'
 
 interface RecordedExec {
   command: string
@@ -95,6 +100,78 @@ test('oneshot omits optional flags when not requested', async () => {
   await service.oneshot({ purpose: 'test.bare', prompt: 'P', timeoutMs: 500 })
 
   assert.deepEqual(calls[0].args, ['-z', 'P'])
+})
+
+test('production oneshot uses a dedicated process group and captures output', async () => {
+  const { calls, impl } = fakeSpawn((child) => {
+    child.stdout.emit('data', Buffer.from('{"ok":true}'))
+    child.stderr.emit('data', Buffer.from('warning'))
+    child.emit('close', 0)
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl })
+
+  const result = await service.oneshot({
+    purpose: 'test.oneshot-process-group',
+    prompt: 'P',
+    timeoutMs: 1000,
+  })
+
+  assert.deepEqual(calls[0].args, ['-z', 'P'])
+  assert.equal(calls[0].options?.detached, process.platform !== 'win32')
+  assert.deepEqual(result, { stdout: '{"ok":true}', stderr: 'warning' })
+})
+
+test('production oneshot timeout gives Hermes grace then kills the process group', async () => {
+  const { children, impl } = fakeSpawn()
+  const service = new HermesService({
+    command: 'hermes',
+    spawnImpl: impl,
+    processGroupKillGraceMs: 5,
+  })
+
+  await assert.rejects(
+    service.oneshot({ purpose: 'test.oneshot-timeout', prompt: 'P', timeoutMs: 20 }),
+    (error: Error & { killed?: boolean, signal?: string }) => {
+      assert.equal(error.killed, true)
+      assert.equal(error.signal, 'SIGTERM')
+      return true
+    },
+  )
+  assert.deepEqual(children[0].signals, ['SIGTERM', 'SIGKILL'])
+})
+
+test('production oneshot timeout leaves no real process-group descendant', {
+  skip: process.platform === 'win32',
+}, async () => {
+  let groupPid: number | null = null
+  const spawnImpl = (_command: string, _args: string[], options: SpawnOptions) => {
+    const child = spawn('/bin/bash', [
+      '-c',
+      "trap 'exit 0' TERM; (trap '' TERM; while :; do sleep 1; done) >/dev/null 2>&1 & wait",
+    ], options)
+    groupPid = child.pid ?? null
+    return child
+  }
+  const service = new HermesService({
+    command: 'ignored',
+    spawnImpl,
+    limiter: { acquire: async () => ({ release() {} }) },
+    processGroupKillGraceMs: 20,
+  })
+
+  await assert.rejects(
+    service.oneshot({ purpose: 'test.oneshot-real-group-cleanup', prompt: 'P', timeoutMs: 30 }),
+  )
+  let groupAlive = false
+  if (groupPid) {
+    try {
+      process.kill(-groupPid, 0)
+      groupAlive = true
+    } catch {
+      groupAlive = false
+    }
+  }
+  assert.equal(groupAlive, false)
 })
 
 test('oneshot returns stdout and stderr on success', async () => {
@@ -394,4 +471,225 @@ test('chat notifies the observer with mode chat and duration fields', async () =
   assert.equal(records[0].purpose, 'news.worker.research')
   assert.equal(records[0].stdoutChars, 3)
   assert.ok(records[0].durationMs >= 0)
+})
+
+// -------------------------------------------------------- provider circuit ---
+
+test('chat circuit trips after the configured number of retryable failures and then fails fast', async () => {
+  const transitions: string[] = []
+  const circuitBreaker = new HermesProviderCircuitBreaker({
+    failureThreshold: 3,
+    cooldownMs: 1000,
+    logger: (message) => transitions.push(message),
+  })
+  const { calls, impl } = fakeSpawn((child) => {
+    child.stderr.emit('data', Buffer.from('HTTP 429: too many requests'))
+    child.emit('close', 1)
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, circuitBreaker })
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await service.chat({ purpose: 'test.circuit.trip', prompt: 'Q', timeoutMs: 1000 })
+    assert.equal(result.status, 'failed')
+  }
+
+  assert.equal(calls.length, 3)
+  assert.throws(
+    () => service.chat({ purpose: 'test.circuit.open', prompt: 'Q', timeoutMs: 1000 }),
+    HermesProviderCircuitOpenError,
+  )
+  assert.equal(calls.length, 3)
+  assert.deepEqual(transitions, ['[hermes] provider circuit open; next probe in 1s'])
+})
+
+test('a successful chat resets the consecutive retryable-failure count', async () => {
+  const circuitBreaker = new HermesProviderCircuitBreaker({
+    failureThreshold: 3,
+    cooldownMs: 1000,
+    logger: () => {},
+  })
+  let invocation = 0
+  const { calls, impl } = fakeSpawn((child) => {
+    invocation += 1
+    if (invocation === 3) {
+      child.emit('close', 0)
+      return
+    }
+    child.stderr.emit('data', Buffer.from('connection reset by peer'))
+    child.emit('close', 1)
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, circuitBreaker })
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await service.chat({ purpose: 'test.circuit.reset', prompt: 'Q', timeoutMs: 1000 })
+  }
+
+  assert.equal(calls.length, 6)
+  assert.throws(
+    () => service.chat({ purpose: 'test.circuit.reset-open', prompt: 'Q', timeoutMs: 1000 }),
+    HermesProviderCircuitOpenError,
+  )
+})
+
+test('chat counts connection errors and timeouts as retryable provider failures', async () => {
+  let invocation = 0
+  const circuitBreaker = new HermesProviderCircuitBreaker({
+    failureThreshold: 2,
+    cooldownMs: 1000,
+    logger: () => {},
+  })
+  const { impl } = fakeSpawn((child) => {
+    invocation += 1
+    if (invocation === 1) child.emit('error', new Error('connect ECONNRESET'))
+    // The second child deliberately remains open until the timeout path kills it.
+  })
+  const service = new HermesService({
+    command: 'hermes',
+    spawnImpl: impl,
+    circuitBreaker,
+    processGroupKillGraceMs: 1,
+  })
+
+  assert.equal(
+    (await service.chat({ purpose: 'test.circuit.connection', prompt: 'Q', timeoutMs: 20 })).status,
+    'failed',
+  )
+  assert.equal(
+    (await service.chat({ purpose: 'test.circuit.timeout', prompt: 'Q', timeoutMs: 20 })).status,
+    'timed_out',
+  )
+  assert.throws(
+    () => service.chat({ purpose: 'test.circuit.connection-timeout-open', prompt: 'Q', timeoutMs: 20 }),
+    HermesProviderCircuitOpenError,
+  )
+})
+
+test('after cooldown exactly one recovery probe runs and success closes the circuit', async () => {
+  let now = 0
+  const transitions: string[] = []
+  const circuitBreaker = new HermesProviderCircuitBreaker({
+    failureThreshold: 1,
+    cooldownMs: 100,
+    now: () => now,
+    logger: (message) => transitions.push(message),
+  })
+  const { calls, children, impl } = fakeSpawn((child) => {
+    if (calls.length === 1) {
+      child.stderr.emit('data', Buffer.from('HTTP 429'))
+      child.emit('close', 1)
+    }
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, circuitBreaker })
+
+  await service.chat({ purpose: 'test.circuit.initial-failure', prompt: 'Q', timeoutMs: 1000 })
+  now = 100
+  const probe = service.chat({ purpose: 'test.circuit.probe', prompt: 'Q', timeoutMs: 1000 })
+  assert.throws(
+    () => service.chat({ purpose: 'test.circuit.concurrent-probe', prompt: 'Q', timeoutMs: 1000 }),
+    HermesProviderCircuitOpenError,
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(calls.length, 2)
+  children[1].emit('close', 0)
+  assert.equal((await probe).status, 'succeeded')
+
+  const afterRecovery = service.chat({ purpose: 'test.circuit.after-recovery', prompt: 'Q', timeoutMs: 1000 })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  children[2].emit('close', 0)
+  assert.equal((await afterRecovery).status, 'succeeded')
+  assert.deepEqual(transitions, [
+    '[hermes] provider circuit open; next probe in 1s',
+    '[hermes] provider circuit probe',
+    '[hermes] provider circuit closed',
+  ])
+})
+
+test('a failed half-open probe reopens the circuit and extends the cooldown', async () => {
+  let now = 0
+  const transitions: string[] = []
+  let invocation = 0
+  const circuitBreaker = new HermesProviderCircuitBreaker({
+    failureThreshold: 1,
+    cooldownMs: 100,
+    now: () => now,
+    logger: (message) => transitions.push(message),
+  })
+  const { impl } = fakeSpawn((child) => {
+    invocation += 1
+    if (invocation <= 2) {
+      child.stderr.emit('data', Buffer.from('socket hang up'))
+      child.emit('close', 1)
+      return
+    }
+    child.emit('close', 0)
+  })
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl, circuitBreaker })
+
+  await service.chat({ purpose: 'test.circuit.open-first', prompt: 'Q', timeoutMs: 1000 })
+  now = 100
+  await service.chat({ purpose: 'test.circuit.failed-probe', prompt: 'Q', timeoutMs: 1000 })
+  now = 199
+  assert.throws(
+    () => service.chat({ purpose: 'test.circuit.cooldown-extended', prompt: 'Q', timeoutMs: 1000 }),
+    HermesProviderCircuitOpenError,
+  )
+  now = 200
+  assert.equal(
+    (await service.chat({ purpose: 'test.circuit.second-probe', prompt: 'Q', timeoutMs: 1000 })).status,
+    'succeeded',
+  )
+  assert.deepEqual(transitions, [
+    '[hermes] provider circuit open; next probe in 1s',
+    '[hermes] provider circuit probe',
+    '[hermes] provider circuit open; next probe in 1s',
+    '[hermes] provider circuit probe',
+    '[hermes] provider circuit closed',
+  ])
+})
+
+test('malformed structured output does not increment the provider circuit', async () => {
+  let invocation = 0
+  const calls: RecordedExec[] = []
+  const execFileImpl = async (command: string, args: string[], options: { timeout?: number, maxBuffer?: number }) => {
+    invocation += 1
+    calls.push({ command, args, options })
+    if (invocation === 1 || invocation === 3) {
+      throw Object.assign(new Error('HTTP 429'), { statusCode: 429 })
+    }
+    return { stdout: invocation === 2 ? 'not-json' : '{"ok":true}', stderr: '' }
+  }
+  const circuitBreaker = new HermesProviderCircuitBreaker({
+    failureThreshold: 2,
+    cooldownMs: 1000,
+    logger: () => {},
+  })
+  const service = new HermesService({ command: 'hermes', execFileImpl, circuitBreaker })
+
+  await assert.rejects(service.oneshot({ purpose: 'test.circuit.structured-429-1', prompt: 'Q', timeoutMs: 1000 }))
+  const malformed = await service.structured({ purpose: 'test.circuit.malformed', prompt: 'Q', timeoutMs: 1000 })
+  assert.equal(malformed.value, null)
+  await assert.rejects(service.oneshot({ purpose: 'test.circuit.structured-429-2', prompt: 'Q', timeoutMs: 1000 }))
+  const success = await service.structured<{ ok: boolean }>({ purpose: 'test.circuit.still-closed', prompt: 'Q', timeoutMs: 1000 })
+
+  assert.deepEqual(success.value, { ok: true })
+  assert.equal(calls.length, 4)
+})
+
+test('oneshot and chat share the same provider circuit', async () => {
+  const retryable = Object.assign(new Error('Error code: 429'), { statusCode: 429 })
+  const { impl: execFileImpl } = fakeExec({ error: retryable })
+  const { calls: spawnCalls, impl: spawnImpl } = fakeSpawn((child) => child.emit('close', 0))
+  const circuitBreaker = new HermesProviderCircuitBreaker({
+    failureThreshold: 1,
+    cooldownMs: 1000,
+    logger: () => {},
+  })
+  const service = new HermesService({ command: 'hermes', execFileImpl, spawnImpl, circuitBreaker })
+
+  await assert.rejects(service.oneshot({ purpose: 'test.circuit.oneshot-trip', prompt: 'Q', timeoutMs: 1000 }))
+  assert.throws(
+    () => service.chat({ purpose: 'test.circuit.chat-fast-fail', prompt: 'Q', timeoutMs: 1000 }),
+    HermesProviderCircuitOpenError,
+  )
+  assert.equal(spawnCalls.length, 0)
 })
