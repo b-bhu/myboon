@@ -1,4 +1,6 @@
 import type {
+  EventContext,
+  EventOutcomeMarket,
   FeedItem,
   FeedItemBinary,
   FeedItemMatch,
@@ -199,6 +201,47 @@ function mapSportMarket(row: unknown): SportMarket | null {
   };
 }
 
+function mapEventOutcome(row: unknown): EventOutcomeMarket | null {
+  if (!row || typeof row !== 'object') return null;
+  const o = row as Record<string, unknown>;
+  const id = typeof o.id === 'string' ? o.id : null;
+  const label = typeof o.label === 'string' ? o.label : null;
+  if (!id || !label) return null;
+  return {
+    id,
+    slug: typeof o.slug === 'string' ? o.slug : '',
+    label,
+    price: toNumber(o.price),
+    conditionId: typeof o.conditionId === 'string' ? o.conditionId : null,
+    clobTokenIds: toStringArray(o.clobTokenIds),
+    active: typeof o.active === 'boolean' ? o.active : null,
+    closed: o.closed === true,
+    volume24h: toNumber(o.volume24h),
+  };
+}
+
+function mapEventContext(row: unknown): EventContext | null {
+  if (!row || typeof row !== 'object') return null;
+  const ev = row as Record<string, unknown>;
+  const slug = typeof ev.slug === 'string' ? ev.slug : null;
+  const title = typeof ev.title === 'string' ? ev.title : null;
+  if (!slug || !title) return null;
+  const outcomesRaw = Array.isArray(ev.outcomes) ? ev.outcomes : [];
+  const outcomes = outcomesRaw.map(mapEventOutcome).filter((o): o is EventOutcomeMarket => o !== null);
+  // Fewer than 2 real outcomes means this is not actually a multi-outcome event.
+  if (outcomes.length < 2) return null;
+  return {
+    slug,
+    title,
+    description: typeof ev.description === 'string' ? ev.description : null,
+    endDate: typeof ev.endDate === 'string' ? ev.endDate : null,
+    active: typeof ev.active === 'boolean' ? ev.active : null,
+    negRisk: ev.negRisk === true,
+    volume24h: toNumber(ev.volume24h),
+    outcomes,
+  };
+}
+
 function mapGeopoliticsMarketDetail(row: unknown): GeopoliticsMarketDetail | null {
   if (!row || typeof row !== 'object') return null;
   const market = row as Record<string, unknown>;
@@ -250,6 +293,7 @@ function mapGeopoliticsMarketDetail(row: unknown): GeopoliticsMarketDetail | nul
     clobTokenIds: toStringArray(market.clobTokenIds),
     image: typeof market.image === 'string' ? market.image : null,
     negRisk: market.negRisk === true,
+    event: mapEventContext(market.event),
   };
 }
 

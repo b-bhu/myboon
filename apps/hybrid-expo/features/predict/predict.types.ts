@@ -133,6 +133,8 @@ export interface GeopoliticsMarketDetail {
   clobTokenIds: string[];
   image: string | null;
   negRisk: boolean;
+  /** Present when this market is one leg of a multi-outcome parent event. */
+  event: EventContext | null;
 }
 
 export interface SportOutcomeDetail extends SportOutcome {
@@ -170,4 +172,32 @@ export interface Orderbook {
   asks: OrderbookLevel[];
   lastPrice: number | null;
   spread: number | null;
+}
+
+// --- Multi-outcome event context (Predict redesign PRD §5) ---
+
+/** One sub-market of a multi-outcome parent event. */
+export interface EventOutcomeMarket {
+  id: string;
+  slug: string;
+  label: string;
+  /** Gamma's cached YES price (0–1), null when unknown — live prices overlay at render. */
+  price: number | null;
+  conditionId: string | null;
+  clobTokenIds: string[];
+  active: boolean | null;
+  closed: boolean;
+  volume24h: number | null;
+}
+
+/** Parent-event block returned by the detail endpoint when the market is one leg of an event. */
+export interface EventContext {
+  slug: string;
+  title: string;
+  description: string | null;
+  endDate: string | null;
+  active: boolean | null;
+  negRisk: boolean;
+  volume24h: number | null;
+  outcomes: EventOutcomeMarket[];
 }

@@ -18,6 +18,7 @@ import {
   getLivePrice,
   normalizeTokenIds,
   parseNullableNumber,
+  parseNullableString,
   parseStringArray,
   registerTokenIds,
   withDomeFallback,
@@ -196,6 +197,60 @@ export function createPolymarketMarketRoutes(): Hono {
           if (liveYes !== null) mkt.bestBid = liveYes
           if (liveNo !== null) mkt.bestAsk = liveNo
         }
+      }
+
+      // Event context (Predict redesign PRD §5, additive): when this market
+      // belongs to a parent event with sibling sub-markets, return the event
+      // question plus one entry per sub-market so the client can render the
+      // multi-outcome ladder. Absent (undefined) for plain binary markets —
+      // clients must treat a missing block as "not an event".
+      try {
+        // Resolve via Gamma: find the parent event for this market slug.
+        const evRes = await gammaFetch(`events?slug=${encodeURIComponent(slug)}`)
+        if (evRes.ok) {
+          const events = await evRes.json() as unknown[]
+          const ev = Array.isArray(events) ? events.find((e) => e && typeof e === 'object') as Record<string, unknown> | undefined : undefined
+          if (ev) {
+            const subMarketsRaw = Array.isArray(ev.markets) ? ev.markets.filter((m) => m && typeof m === 'object') as Record<string, unknown>[] : []
+            if (subMarketsRaw.length > 2 || ev.slug !== slug) {
+              const outcomes = subMarketsRaw.map((sm) => {
+                const labels = parseStringArray(sm.outcomes)
+                const prices = parseStringArray(sm.outcomePrices)
+                const tokens = parseStringArray(sm.clobTokenIds)
+                const yesIdx = Math.max(0, labels.findIndex((l) => l.toLowerCase() === 'yes'))
+                const label = parseNullableString(sm.groupItemTitle) ?? labels[yesIdx] ?? sm.slug as string
+                return {
+                  id: parseNullableString(sm.conditionId ?? sm.condition_id) ?? String(sm.slug ?? ''),
+                  slug: parseNullableString(sm.slug) ?? '',
+                  label,
+                  price: parseNullableNumber(prices[yesIdx]),
+                  conditionId: parseNullableString(sm.conditionId ?? sm.condition_id),
+                  clobTokenIds: tokens,
+                  active: typeof sm.active === 'boolean' ? sm.active : null,
+                  closed: sm.closed === true,
+                  volume24h: parseNullableNumber(sm.volume24hr),
+                }
+              })
+              // Only expose it as an event when there are real sibling markets.
+              if (outcomes.length > 1) {
+                mkt.event = {
+                  slug: parseNullableString(ev.slug) ?? slug,
+                  title: parseNullableString(ev.title) ?? slug,
+                  description: parseNullableString(ev.description),
+                  endDate: parseNullableString(ev.endDate),
+                  active: typeof ev.active === 'boolean' ? ev.active : null,
+                  negRisk: ev.negRisk === true,
+                  volume24h: parseNullableNumber(ev.volume24hr),
+                  outcomes,
+                }
+              }
+            }
+          }
+        }
+      } catch (eventErr) {
+        // Event context is best-effort decoration — a failure here must never
+        // fail the detail read itself.
+        console.warn(`[api] event context lookup failed for ${slug}:`, eventErr instanceof Error ? eventErr.message : eventErr)
       }
 
       return c.json(data)
