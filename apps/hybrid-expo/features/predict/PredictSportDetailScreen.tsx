@@ -28,7 +28,8 @@ import { useOddsFormat } from '@/hooks/useOddsFormat';
 import { OddsFormatToggle } from '@/features/predict/components/OddsFormatToggle';
 import { MultiLineChart } from '@/features/predict/components/MultiLineChart';
 import { OrderbookView } from '@/features/predict/components/OrderbookView';
-import { InlineNumpad } from '@/features/predict/components/InlineNumpad';
+import { OrderComposerSheet } from '@/features/predict/components/OrderComposerSheet';
+import type { ComposerMode } from '@/features/predict/components/OrderComposerSheet';
 import { SportsMatchupHeader } from '@/features/predict/components/SportsMatchupHeader';
 import { DetailPicksPanel } from '@/features/predict/components/DetailPicksPanel';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
@@ -175,6 +176,10 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const [setupSubmitting, setSetupSubmitting] = useState(false);
   const [setupAfterConnect, setSetupAfterConnect] = useState(false);
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
+  // Shared composer state (PRD §6) — the sports flow routes through the same
+  // OrderComposerSheet as Yes/No; the InlineNumpad path is retired here.
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerParams, setComposerParams] = useState<{ mode: ComposerMode; limitPriceCents: number } | null>(null);
 
   // Soft zone animation
   const softZoneAnim = useRef(new Animated.Value(SOFT_COLLAPSED)).current;
@@ -515,6 +520,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     setSelectedQuotePrice(sortedOutcomes[outcomeIdx]?.price ?? null);
     setNumpadAmount('50');
     setNumpadOpen(true);
+    setComposerOpen(true);
   }
 
   function backMorePosition(position: PortfolioPosition) {
@@ -537,6 +543,8 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     setNumpadOpen(false);
     setSelectedOutcomeIdx(null);
     setSelectedQuotePrice(null);
+    setComposerOpen(false);
+    setComposerParams(null);
   }
 
   async function submitOrder() {
@@ -588,6 +596,48 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
 
       const freshBook = await fetchOrderbook(tokenID).catch(() => null);
       const quote = buildExecutableBuyQuote(freshBook, amount);
+      // Limit mode: rest a GTC order at the user's chosen price instead of
+      // executing at the book average. Size = spend / chosen price. Client-side
+      // GTD (auto-cancel at kickoff) is a flagged follow-up in the PRD.
+      const effectiveLimitCents =
+        composerParams?.mode === 'limit' && composerParams.limitPriceCents > 0
+          ? composerParams.limitPriceCents
+          : null;
+      if (effectiveLimitCents !== null && Math.round(price * 100) !== effectiveLimitCents) {
+        const limitPrice = effectiveLimitCents / 100;
+        const limitShares = amount / limitPrice;
+        const resultLimit = await placeBet(signer, {
+          polygonAddress: poly.polygonAddress,
+          tradingAddress: poly.tradingAddress,
+          tokenID,
+          price: limitPrice,
+          size: limitShares,
+          side: 'BUY',
+          negRisk: !!detail.negRisk,
+          orderType: 'GTC',
+        });
+        if (!resultLimit.success) throw new Error(resultLimit.error || 'Order failed');
+        const pendingLimit = makePendingOpenOrder({
+          id: resultLimit.orderID ?? resultLimit.operationId,
+          slug,
+          tokenID,
+          price: limitPrice,
+          size: limitShares,
+          outcome: sportOutcomeLabel(outcome),
+        });
+        setPendingOpenOrders((prev) => [pendingLimit, ...prev.filter((o) => o.id !== pendingLimit.id)]);
+        setCashBalance((prev) => (prev === null ? prev : Math.max(prev - amount, 0)));
+        collapseNumpad();
+        setActiveView('picks');
+        setPickScope('market');
+        await Promise.allSettled([
+          loadPicks(),
+          fetchClobBalance(poly.polygonAddress).then((b) => setCashBalance(b?.balance ?? null)),
+          activeView === 'orderbook' ? loadOrderbook(obOutcomeIdx) : Promise.resolve(),
+        ]);
+        scheduleFollowUpReconcile(poly.polygonAddress);
+        return;
+      }
       if (!quote.executable || quote.limitPrice === null || quote.shares <= 0) {
         Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
         return;
@@ -988,23 +1038,39 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
               })}
             </View>
 
-            {/* Inline numpad */}
-            <InlineNumpad
-              visible={numpadOpen}
+            {/* Shared order composer (PRD §6) — replaces the inline numpad */}
+            <OrderComposerSheet
+              visible={composerOpen && selectedOutcomeIdx !== null}
               side="yes"
               pickLabel={selectedOutcomeLabel}
-              price={numpadPrice}
+              question={detail?.title ?? null}
+              currentPrice={selectedQuotePrice}
               amount={numpadAmount}
-              availableCash={cashBalance}
               onAmountChange={setNumpadAmount}
-              onConfirm={() => { void submitOrder(); }}
+              executableAvgPrice={
+                marketClosed
+                  ? null
+                  : (() => {
+                      if (selectedOutcomeIdx === null) return null;
+                      const outcome = sortedOutcomes[selectedOutcomeIdx];
+                      const tokenId = outcome?.clobTokenIds[0];
+                      const q = buildExecutableBuyQuote(tokenId ? buyBooks[tokenId] ?? null : null, amountNum);
+                      return q.executable && q.averagePrice !== null ? q.averagePrice : null;
+                    })()
+              }
+              availableCash={cashBalance}
+              guardrail={orderGuardrail}
               submitting={submitting}
               submittingLabel={submitLabel}
               disabled={!poly.isReady}
-              guardrail={orderGuardrail}
-              setupRequired={!poly.isReady}
-              onSetupPress={() => { void handlePredictSetupPress(); }}
-              setupSubmitting={setupSubmitting || setupAfterConnect || poly.isLoading}
+              onClose={() => {
+                setComposerParams(null);
+                collapseNumpad();
+              }}
+              onConfirm={(params) => {
+                setComposerParams(params);
+                void submitOrder();
+              }}
             />
           </Animated.View>
         </View>
