@@ -32,6 +32,7 @@ import { OrderbookView } from '@/features/predict/components/OrderbookView';
 import { InlineNumpad } from '@/features/predict/components/InlineNumpad';
 import { OrderComposerSheet } from '@/features/predict/components/OrderComposerSheet';
 import type { ComposerMode } from '@/features/predict/components/OrderComposerSheet';
+import { ResolutionRulesSheet } from '@/features/predict/components/EventOutcomeLadder';
 import { DetailPicksPanel } from '@/features/predict/components/DetailPicksPanel';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
@@ -108,6 +109,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
 
   // Chart data
   const [interval, setInterval] = useState<Interval>('1h');
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [yesHistory, setYesHistory] = useState<PricePoint[]>([]);
   const [noHistory, setNoHistory] = useState<PricePoint[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -845,6 +847,13 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
                     <View style={styles.statsCard}><Text style={styles.statsLabel}>No chance</Text><Text style={styles.statsValue}>{noPrice !== null ? `${Math.round(noPrice * 100)}%` : '--'}</Text></View>
                     <View style={styles.statsCard}><Text style={styles.statsLabel}>Resolves</Text><Text style={styles.statsValue}>{formatDeadline(detail.endDate, detail.active)}</Text></View>
                   </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="How this market resolves"
+                    style={styles.rulesLink}
+                    onPress={() => setRulesOpen(true)}>
+                    <Text style={styles.rulesLinkText}>How this resolves</Text>
+                  </Pressable>
                 </View>
               ) : activeView === 'chart' ? (
                 historyLoading ? (
@@ -950,6 +959,11 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
       />
 
       {/* Composer v2 pilot — shared sheet from the Predict redesign (PRD §6) */}
+      <ResolutionRulesSheet
+        visible={rulesOpen}
+        description={detail?.description ?? null}
+        onClose={() => setRulesOpen(false)}
+      />
       <OrderComposerSheet
         visible={COMPOSER_V2 && composerOpen && selectedSide !== null}
         side={selectedSide ?? 'yes'}
@@ -1113,6 +1127,22 @@ const styles = StyleSheet.create({
   },
   toggleBtnActive: {
     backgroundColor: tokens.colors.surface,
+  },
+  rulesLink: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: tokens.colors.surface,
+  },
+  rulesLinkText: {
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: '700',
+    color: semantic.text.accent,
   },
   viewContainer: {
     flex: 1,
