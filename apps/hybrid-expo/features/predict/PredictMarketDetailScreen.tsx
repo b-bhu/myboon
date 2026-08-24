@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { AppTopBar, AppTopBarCashPill, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { cancelOrder, fetchClobBalance, fetchCuratedMarketDetail, fetchLivePrices, fetchMarketPositions, fetchOpenOrders, fetchOrderbook, fetchPortfolio, fetchPriceHistory, placeBet } from '@/features/predict/predict.api';
 import type { ActivityItem, ClosedPortfolioPosition, OpenOrder, PortfolioPosition } from '@/features/predict/predict.api';
@@ -53,10 +54,9 @@ type SubmitStatus = 'idle' | 'wallet' | 'placing' | 'syncing';
 const SOFT_COLLAPSED = 230; // handle + stats + odds
 const SOFT_EXPANDED = 680;  // + numpad
 
-// Composer v2 pilot flag (Predict redesign PRD §6). Default OFF: the original
-// InlineNumpad flow is untouched. Flip to true (or pass ?composer=v2 on web)
-// to route the Yes/No amount flow through the shared OrderComposerSheet.
-const COMPOSER_V2_DEFAULT = false;
+// Composer v2 is the normal Yes/No flow as of the Predict redesign (PRD §6).
+// ?composer=legacy on web restores the old InlineNumpad flow for QA comparison.
+const COMPOSER_V2_DEFAULT = true;
 
 function formatDeadline(endDate: string | null, active: boolean | null): string {
   if (!endDate) return active === false ? 'Closed' : 'Open';
@@ -90,9 +90,9 @@ function DisplayTab({
 }
 
 export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenProps) {
-  // Composer v2 can be force-enabled for QA via ?composer=v2 on web.
+  // Composer v2 can be force-disabled for QA via ?composer=legacy on web.
   const urlParams = useLocalSearchParams<{ composer?: string }>();
-  const COMPOSER_V2 = COMPOSER_V2_DEFAULT || urlParams.composer === 'v2';
+  const COMPOSER_V2 = COMPOSER_V2_DEFAULT && urlParams.composer !== 'legacy';
   const router = useRouter();
   const poly = usePolymarketWallet();
   const connectSheet = useConnectionSheet('evm');
@@ -778,6 +778,25 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
                 tintColor={semantic.text.accent}
               />
             }>
+            {/* Question + resolution context first (PRD §4). The description
+                doubles as the rules source — dedicated upstream fields are
+                usually empty, so no named external source is promised. */}
+            <View style={styles.questionHeader}>
+              <Text style={styles.questionTitle} numberOfLines={3}>{detail.question}</Text>
+              <View style={styles.questionMetaRow}>
+                {detail.category ? <Text style={styles.questionCategory}>{detail.category.toUpperCase()}</Text> : null}
+                <Text style={styles.questionDeadline}>{formatDeadline(detail.endDate, detail.active)}</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="How this market resolves"
+                style={styles.questionRulesBtn}
+                onPress={() => setRulesOpen(true)}>
+                <MaterialIcons name="info-outline" size={13} color={semantic.text.accent} />
+                <Text style={styles.questionRulesText}>How this resolves</Text>
+              </Pressable>
+            </View>
+
             <View style={styles.displayRow}>
               <View style={styles.displayTabGroup}>
                 <DisplayTab label="Your Picks" active={activeView === 'picks'} onPress={() => setActiveView('picks')} />
@@ -1040,6 +1059,57 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     textTransform: 'uppercase',
     fontWeight: '700',
+  },
+
+  // ── Question header (PRD §4) ──
+  questionHeader: {
+    paddingTop: 6,
+    paddingBottom: 10,
+  },
+  questionTitle: {
+    fontFamily: 'monospace',
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '800',
+    color: semantic.text.primary,
+  },
+  questionMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+  },
+  questionCategory: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    letterSpacing: 1.2,
+    color: semantic.text.faint,
+    textTransform: 'uppercase',
+  },
+  questionDeadline: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.dim,
+    textTransform: 'uppercase',
+  },
+  questionRulesBtn: {
+    marginTop: 8,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: tokens.colors.surface,
+  },
+  questionRulesText: {
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: '700',
+    color: semantic.text.accent,
   },
 
   // ── Body ──
