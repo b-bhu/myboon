@@ -29,6 +29,7 @@ import { OddsFormatToggle } from '@/features/predict/components/OddsFormatToggle
 import { MultiLineChart } from '@/features/predict/components/MultiLineChart';
 import { OrderbookView } from '@/features/predict/components/OrderbookView';
 import { InlineNumpad } from '@/features/predict/components/InlineNumpad';
+import { SportsMatchupHeader } from '@/features/predict/components/SportsMatchupHeader';
 import { DetailPicksPanel } from '@/features/predict/components/DetailPicksPanel';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import { formatPredictTitle } from '@/features/predict/formatPredictTitle';
@@ -835,6 +836,18 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
                 <DisplayTab label="Book" active={activeView === 'orderbook'} onPress={() => setActiveView('orderbook')} />
               </View>
             </View>
+
+            {/* Matchup identity — PRD §3: crests/wordmarks carry the screen.
+                No scores or live clocks (API provides none). */}
+            {detail ? (
+              <SportsMatchupHeader
+                homeTeam={sortedOutcomes[0] ? sportOutcomeLabel(sortedOutcomes[0]) : detail.title}
+                awayTeam={sortedOutcomes.length > 2 ? sportOutcomeLabel(sortedOutcomes[sortedOutcomes.length - 1]) : ''}
+                league={detail.sport ? detail.sport.toUpperCase() : null}
+                startsAt={detail.endDate ?? detail.startDate ?? null}
+                active={detail.active}
+              />
+            ) : null}
 
             {/* Chart or Orderbook */}
             <View style={styles.viewContainer}>
