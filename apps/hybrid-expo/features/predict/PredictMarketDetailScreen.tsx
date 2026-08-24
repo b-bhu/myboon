@@ -33,7 +33,8 @@ import { OrderbookView } from '@/features/predict/components/OrderbookView';
 import { InlineNumpad } from '@/features/predict/components/InlineNumpad';
 import { OrderComposerSheet } from '@/features/predict/components/OrderComposerSheet';
 import type { ComposerMode } from '@/features/predict/components/OrderComposerSheet';
-import { ResolutionRulesSheet } from '@/features/predict/components/EventOutcomeLadder';
+import { ResolutionRulesSheet, EventOutcomeLadder, formatEventOdds } from '@/features/predict/components/EventOutcomeLadder';
+import type { EventOddsFormat } from '@/features/predict/components/EventOutcomeLadder';
 import { DetailPicksPanel } from '@/features/predict/components/DetailPicksPanel';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
@@ -160,6 +161,11 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   // Composer v2 pilot state (Predict redesign PRD §6). Flag-gated; see COMPOSER_V2.
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerParams, setComposerParams] = useState<{ mode: ComposerMode; limitPriceCents: number } | null>(null);
+  // Multi-outcome event state (PRD §5). Selected rung in the outcome ladder;
+  // odds format for the ladder; which event outcome's book the Book view shows.
+  const [eventOutcomeId, setEventOutcomeId] = useState<string | null>(null);
+  const [eventOddsFormat, setEventOddsFormat] = useState<EventOddsFormat>('probability');
+  const [eventBookIdx, setEventBookIdx] = useState(0);
 
   // Soft zone animation
   const softZoneAnim = useRef(new Animated.Value(SOFT_COLLAPSED)).current;
@@ -218,8 +224,10 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   }
 
   async function loadOrderbook() {
-    if (!detail) return;
-    const tokenId = detail.clobTokenIds[0];
+    // Event mode: book follows the ladder tab selection; binary mode: Yes book.
+    const tokenId = isEventMode
+      ? (event?.outcomes[eventBookIdx]?.clobTokenIds[0] ?? null)
+      : (detail?.clobTokenIds[0] ?? null);
     if (!tokenId) return;
     setOrderbookLoading(true);
     try {
@@ -419,10 +427,10 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     resetKey: liveTokenKey,
   });
 
-  // Load orderbook when switching to orderbook view
+  // Load orderbook when switching to orderbook view (or ladder tab in event mode)
   useEffect(() => {
     if (activeView === 'orderbook' && detail) void loadOrderbook();
-  }, [activeView, detail]);
+  }, [activeView, detail, eventBookIdx]);
 
   useEffect(() => {
     if (activeView === 'picks') void loadPicks();
@@ -459,6 +467,34 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const yesPrice = getBestAsk(yesBook) ?? (yesTokenId ? liveTokenPrices[yesTokenId] : null) ?? (detail?.outcomePrices[0] ?? null);
   const noPrice = getBestAsk(noBook) ?? (noTokenId ? liveTokenPrices[noTokenId] : null) ?? (detail?.outcomePrices[1] ?? null);
   const visibleOpenOrders = mergeOpenOrders(pendingOpenOrders, openOrders);
+
+  // ── Multi-outcome event mode (PRD §5) — derived data ──
+  // The detail endpoint attaches an `event` block when this market is one leg
+  // of a parent event. Its ladder replaces the Yes/No buttons; every outcome's
+  // tokens join the live-price/book polling so rung prices stay current.
+  const event = detail?.event ?? null;
+  const isEventMode = event !== null;
+  const eventOutcomePrices = useMemo(() => {
+    if (!event) return {} as Record<string, number | null>;
+    const map: Record<string, number | null> = {};
+    for (const outcome of event.outcomes) {
+      const tokenId = outcome.clobTokenIds[0];
+      map[outcome.id] = (tokenId ? getBestAsk(buyBooks[tokenId] ?? null) : null)
+        ?? (tokenId ? liveTokenPrices[tokenId] ?? null : null)
+        ?? outcome.price;
+    }
+    return map;
+  }, [event, buyBooks, liveTokenPrices]);
+  const selectedEventOutcome = useMemo(
+    () => (event && eventOutcomeId ? event.outcomes.find((o) => o.id === eventOutcomeId) ?? null : null),
+    [event, eventOutcomeId],
+  );
+  const selectedEventPrice = selectedEventOutcome
+    ? eventOutcomePrices[selectedEventOutcome.id] ?? null
+    : null;
+  const selectedEventBook = selectedEventOutcome?.clobTokenIds[0]
+    ? buyBooks[selectedEventOutcome.clobTokenIds[0]] ?? null
+    : null;
 
   async function runPredictSetup() {
     if (setupSubmitting) return;
@@ -510,29 +546,60 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     }
   }
 
+  /** Event mode: open the composer for one ladder rung (PRD §5). */
+  function tapEventOutcome(outcomeId: string) {
+    if (submitInFlightRef.current || submitting) return;
+    if (!event) return;
+    const outcome = event.outcomes.find((o) => o.id === outcomeId);
+    if (!outcome || outcome.closed || marketClosed) return;
+    if (composerOpen && eventOutcomeId === outcomeId && numpadOpen) {
+      collapseNumpad();
+      return;
+    }
+    setSelectedSide(null);
+    setEventOutcomeId(outcomeId);
+    setSelectedQuotePrice(eventOutcomePrices[outcomeId] ?? outcome.price ?? null);
+    setNumpadAmount('50');
+    setNumpadOpen(true);
+    if (COMPOSER_V2) {
+      setComposerOpen(true);
+    }
+  }
+
   function collapseNumpad() {
     setNumpadOpen(false);
     setSelectedSide(null);
     setSelectedQuotePrice(null);
     setComposerOpen(false);
+    setEventOutcomeId(null);
   }
 
   async function submitOrder() {
-    if (!detail || !selectedSide || submitting || submitInFlightRef.current) return;
+    if (!detail || submitting || submitInFlightRef.current) return;
+    if (!selectedSide && !selectedEventOutcome) return;
     const amount = parseFloat(numpadAmount);
     if (!amount || amount <= 0) return;
 
-    // Resolve token ID: yes = clobTokenIds[0], no = clobTokenIds[1]
-    const tokenID = selectedSide === 'yes' ? detail.clobTokenIds[0] : detail.clobTokenIds[1];
+    // Event mode: the selected ladder rung owns the token and price. Binary
+    // mode: yes = clobTokenIds[0], no = clobTokenIds[1].
+    let tokenID: string | undefined;
+    let price: number | null;
+    let outcomeLabel: string;
+    if (isEventMode && selectedEventOutcome) {
+      tokenID = selectedEventOutcome.clobTokenIds[0];
+      price = selectedEventPrice ?? selectedEventOutcome.price;
+      outcomeLabel = selectedEventOutcome.label;
+    } else {
+      tokenID = selectedSide === 'yes' ? detail.clobTokenIds[0] : detail.clobTokenIds[1];
+      price = selectedSide === 'yes'
+        ? (yesPrice ?? detail.outcomePrices[0])
+        : (noPrice ?? detail.outcomePrices[1]);
+      outcomeLabel = selectedSide === 'no' ? 'No' : 'Yes';
+    }
     if (!tokenID) {
       Alert.alert('Error', 'No token ID for this outcome');
       return;
     }
-
-    // Price: what the user is buying at
-    const price = selectedSide === 'yes'
-      ? (yesPrice ?? detail.outcomePrices[0])
-      : (noPrice ?? detail.outcomePrices[1]);
     if (!price || price <= 0 || price >= 1) {
       Alert.alert('Error', 'Invalid price');
       return;
@@ -594,7 +661,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
           tokenID,
           price: limitPrice,
           size: limitShares,
-          outcome: selectedSide === 'no' ? 'No' : 'Yes',
+          outcome: outcomeLabel,
         });
         setPendingOpenOrders((prev) => [pendingLimit, ...prev.filter((o) => o.id !== pendingLimit.id)]);
         setCashBalance((prev) => (prev === null ? prev : Math.max(prev - amount, 0)));
@@ -635,7 +702,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
         tokenID,
         price: quote.limitPrice,
         size: quote.shares,
-        outcome: selectedSide === 'no' ? 'No' : 'Yes',
+        outcome: outcomeLabel,
       });
       setPendingOpenOrders((prev) => [pendingOrder, ...prev.filter((order) => order.id !== pendingOrder.id)]);
       setCashBalance((prev) => prev === null ? prev : Math.max(prev - amount, 0));
@@ -714,13 +781,20 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const latestSelectedPrice = selectedSide === 'no' ? noPrice : yesPrice;
   const selectedBook = selectedSide === 'no' ? noBook : yesBook;
   const selectedExecutableQuote = buildExecutableBuyQuote(selectedBook, amountNum);
-  const selectedNumpadPrice = selectedExecutableQuote.averagePrice ?? latestSelectedPrice ?? 0.5;
-  const orderGuardrail = selectedSide
+  // Event mode quotes off the selected rung's book instead of the Yes/No books.
+  const selectedEventQuote = selectedEventBook
+    ? buildExecutableBuyQuote(selectedEventBook, amountNum)
+    : { executable: false, averagePrice: null, shares: 0, limitPrice: null, unfilledAmount: null };
+  const activeExecutableQuote = isEventMode ? selectedEventQuote : selectedExecutableQuote;
+  const selectedNumpadPrice = activeExecutableQuote.averagePrice
+    ?? (isEventMode ? selectedEventPrice ?? latestSelectedPrice : latestSelectedPrice)
+    ?? 0.5;
+  const orderGuardrail = (selectedSide || selectedEventOutcome)
     ? getPredictOrderGuardrail({
         amount: amountNum,
         availableCash: cashBalance,
         selectedPrice: selectedQuotePrice,
-        latestPrice: latestSelectedPrice,
+        latestPrice: isEventMode ? selectedEventPrice ?? latestSelectedPrice : latestSelectedPrice,
         marketActive: detail?.active ?? null,
         submitting,
       })
@@ -889,6 +963,28 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
                     height={chartHeight}
                   />
                 )
+              ) : isEventMode && event ? (
+                <View style={styles.obWrap}>
+                  {/* One book per outcome (PRD §5) */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.obTabs}>
+                    {event.outcomes.map((o, i) => (
+                      <Pressable
+                        key={o.id}
+                        accessibilityRole="tab"
+                        accessibilityLabel={`Show ${o.label} order book`}
+                        accessibilityState={{ selected: eventBookIdx === i }}
+                        style={[styles.obTab, eventBookIdx === i && styles.obTabActive]}
+                        onPress={() => setEventBookIdx(i)}>
+                        <Text
+                          numberOfLines={1}
+                          style={[styles.obTabText, eventBookIdx === i && styles.obTabTextActive]}>
+                          {o.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                  <OrderbookView book={orderbook} loading={orderbookLoading} />
+                </View>
               ) : (
                 <OrderbookView book={orderbook} loading={orderbookLoading} />
               )}
@@ -919,30 +1015,65 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
               {marketClosed && (
                 <Text style={styles.marketClosedText}>This market is closed and no longer accepting new picks.</Text>
               )}
-              <View style={styles.binaryBtns}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Back YES at ${yesPrice !== null ? formatOdds(yesPrice) : 'unavailable'}`}
-                  accessibilityState={{ selected: selectedSide === 'yes', disabled: marketClosed || submitting }}
-                  accessibilityHint="Open order entry for YES"
-                  style={[styles.bnBtn, styles.bnBtnYes, selectedSide === 'yes' && styles.bnBtnYesSelected]}
-                  disabled={marketClosed || submitting}
-                  onPress={() => tapOdd('yes')}>
-                  <Text style={styles.bnBtnYesPrice}>{yesPrice !== null ? formatOdds(yesPrice) : '--'}</Text>
-                  <Text style={styles.bnBtnYesLabel}>Back YES</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Back NO at ${noPrice !== null ? formatOdds(noPrice) : 'unavailable'}`}
-                  accessibilityState={{ selected: selectedSide === 'no', disabled: marketClosed || submitting }}
-                  accessibilityHint="Open order entry for NO"
-                  style={[styles.bnBtn, styles.bnBtnNo, selectedSide === 'no' && styles.bnBtnNoSelected]}
-                  disabled={marketClosed || submitting}
-                  onPress={() => tapOdd('no')}>
-                  <Text style={styles.bnBtnNoPrice}>{noPrice !== null ? formatOdds(noPrice) : '--'}</Text>
-                  <Text style={styles.bnBtnNoLabel}>Back NO</Text>
-                </Pressable>
-              </View>
+              {isEventMode && event ? (
+                /* Multi-outcome ladder (PRD §5) — one rung per sub-market,
+                   odds toggle Probability/Decimal/American, prices in cents. */
+                <View>
+                  <View style={styles.ladderToggleRow}>
+                    {(['probability', 'decimal', 'american'] as EventOddsFormat[]).map((f) => (
+                      <Pressable
+                        key={f}
+                        accessibilityRole="tab"
+                        accessibilityLabel={`${f} odds`}
+                        accessibilityState={{ selected: eventOddsFormat === f }}
+                        style={[styles.ladderToggle, eventOddsFormat === f && styles.ladderToggleActive]}
+                        onPress={() => setEventOddsFormat(f)}>
+                        <Text style={[
+                          styles.ladderToggleText,
+                          eventOddsFormat === f && styles.ladderToggleTextActive,
+                        ]}>
+                          {f === 'probability' ? '%' : f === 'decimal' ? 'DEC' : 'AM'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <EventOutcomeLadder
+                    outcomes={event.outcomes.map((o) => ({
+                      id: o.id,
+                      label: o.label,
+                      price: eventOutcomePrices[o.id] ?? o.price ?? 0,
+                    }))}
+                    selectedId={eventOutcomeId}
+                    onSelect={tapEventOutcome}
+                    oddsFormat={eventOddsFormat}
+                  />
+                </View>
+              ) : (
+                <View style={styles.binaryBtns}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Back YES at ${yesPrice !== null ? formatOdds(yesPrice) : 'unavailable'}`}
+                    accessibilityState={{ selected: selectedSide === 'yes', disabled: marketClosed || submitting }}
+                    accessibilityHint="Open order entry for YES"
+                    style={[styles.bnBtn, styles.bnBtnYes, selectedSide === 'yes' && styles.bnBtnYesSelected]}
+                    disabled={marketClosed || submitting}
+                    onPress={() => tapOdd('yes')}>
+                    <Text style={styles.bnBtnYesPrice}>{yesPrice !== null ? formatOdds(yesPrice) : '--'}</Text>
+                    <Text style={styles.bnBtnYesLabel}>Back YES</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Back NO at ${noPrice !== null ? formatOdds(noPrice) : 'unavailable'}`}
+                    accessibilityState={{ selected: selectedSide === 'no', disabled: marketClosed || submitting }}
+                    accessibilityHint="Open order entry for NO"
+                    style={[styles.bnBtn, styles.bnBtnNo, selectedSide === 'no' && styles.bnBtnNoSelected]}
+                    disabled={marketClosed || submitting}
+                    onPress={() => tapOdd('no')}>
+                    <Text style={styles.bnBtnNoPrice}>{noPrice !== null ? formatOdds(noPrice) : '--'}</Text>
+                    <Text style={styles.bnBtnNoLabel}>Back NO</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
 
             {/* Inline numpad */}
@@ -977,17 +1108,22 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
         onConfirm={confirmCashOut}
       />
 
-      {/* Composer v2 pilot — shared sheet from the Predict redesign (PRD §6) */}
+      {/* Composer v2 — shared sheet from the Predict redesign (PRD §6).
+          Event mode: the selected ladder rung drives side/label/price. */}
       <ResolutionRulesSheet
         visible={rulesOpen}
-        description={detail?.description ?? null}
+        description={(event?.description ?? detail?.description) ?? null}
         onClose={() => setRulesOpen(false)}
       />
       <OrderComposerSheet
-        visible={COMPOSER_V2 && composerOpen && selectedSide !== null}
-        side={selectedSide ?? 'yes'}
-        pickLabel={selectedSide === 'no' ? 'NO' : 'YES'}
-        question={detail?.question ?? null}
+        visible={COMPOSER_V2 && composerOpen && (selectedSide !== null || selectedEventOutcome !== null)}
+        side={isEventMode ? 'yes' : selectedSide ?? 'yes'}
+        pickLabel={
+          isEventMode
+            ? (selectedEventOutcome?.label ?? undefined)
+            : (selectedSide === 'no' ? 'NO' : 'YES')
+        }
+        question={(event?.title ?? detail?.question) ?? null}
         currentPrice={selectedQuotePrice}
         amount={numpadAmount}
         onAmountChange={setNumpadAmount}
@@ -995,7 +1131,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
           marketClosed
             ? null
             : (() => {
-                const q = selectedExecutableQuote;
+                const q = activeExecutableQuote;
                 return q.executable && q.averagePrice !== null ? q.averagePrice : null;
               })()
         }
@@ -1350,6 +1486,68 @@ const styles = StyleSheet.create({
   binaryBtns: {
     flexDirection: 'row',
     gap: 8,
+  },
+  // ── Event ladder odds toggle (PRD §5) ──
+  ladderToggleRow: {
+    flexDirection: 'row',
+    gap: 4,
+    marginBottom: 8,
+  },
+  ladderToggle: {
+    minHeight: 32,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.colors.lift,
+  },
+  ladderToggleActive: {
+    backgroundColor: tokens.colors.surface,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+  },
+  ladderToggleText: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    color: semantic.text.faint,
+  },
+  ladderToggleTextActive: {
+    color: semantic.text.primary,
+  },
+  // ── Event Book tabs (PRD §5) ──
+  obWrap: {
+    flex: 1,
+  },
+  obTabs: {
+    flexDirection: 'row',
+    gap: 4,
+    paddingBottom: 8,
+  },
+  obTab: {
+    minHeight: 36,
+    maxWidth: 140,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.colors.lift,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  obTabActive: {
+    backgroundColor: tokens.colors.surface,
+    borderColor: semantic.border.muted,
+  },
+  obTabText: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    fontWeight: '700',
+    color: semantic.text.faint,
+  },
+  obTabTextActive: {
+    color: semantic.text.primary,
   },
   bnBtn: {
     flex: 1,
