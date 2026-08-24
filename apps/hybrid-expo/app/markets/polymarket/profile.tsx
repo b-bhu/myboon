@@ -42,7 +42,7 @@ const PREDICT_PROFILE_FALLBACK_USD_TO_INR = 95.67;
 const USD_INR_RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const PREDICT_PROFILE_CURRENCY_KEY = 'predict-profile-currency-format';
 type PredictProfileCurrency = 'USD' | 'INR';
-type PredictSettingsView = 'menu' | 'currency' | 'wallet';
+type PredictSettingsView = 'menu' | 'currency' | 'wallet' | 'security';
 const EMPTY_PORTFOLIO_POSITIONS: PortfolioPosition[] = [];
 
 function formatProfileCurrency(
@@ -84,6 +84,7 @@ export default function PredictProfileScreen() {
   // connection state. Predict settles on Polygon, so `poly` is the source of truth.
   const { address: solanaAddress } = useWallet();
   const privyAuthMethod = usePrivyWallet().authMethod;
+  const privyDisconnect = usePrivyWallet().disconnect;
   const poly = usePolymarketWallet();
   // Predict settles on Polygon, so its requirement is EVM.
   const connectSheet = useConnectionSheet('evm');
@@ -803,10 +804,57 @@ export default function PredictProfileScreen() {
                     <MaterialIcons name="vpn-key" size={15} color={tokens.colors.viridian} />
                   </View>
                   <View style={styles.settingsOptionCopy}>
-                    <Text style={styles.settingsOptionTitle}>Polymarket wallet</Text>
-                    <Text style={styles.settingsOptionSub}>{poly.polygonAddress ? truncate(poly.polygonAddress) : 'Not connected'}</Text>
+                    <Text style={styles.settingsOptionTitle}>Account &amp; Security</Text>
+                    <Text style={styles.settingsOptionSub}>{privyAuthMethod ? `Signed in with ${privyAuthMethod === 'google' ? 'Google' : privyAuthMethod === 'email' ? 'email' : 'wallet'}` : 'Not signed in'}</Text>
                   </View>
                   <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
+                </Pressable>
+              </>
+            )}
+
+            {settingsView === 'security' && (
+              <>
+                <Text style={styles.settingsTitle}>Account &amp; Security</Text>
+                <Text style={styles.settingsCopy}>Login, wallet, and session controls for Predict.</Text>
+                <View style={styles.walletInfoBox}>
+                  <View style={styles.walletInfoRow}>
+                    <Text style={styles.walletInfoLabel}>Sign-in</Text>
+                    <Text style={styles.walletInfoValue}>{privyAuthMethod === 'google' ? 'Google' : privyAuthMethod === 'email' ? 'Email' : privyAuthMethod === 'wallet' ? 'Wallet' : '—'}</Text>
+                  </View>
+                  <View style={styles.walletInfoRow}>
+                    <Text style={styles.walletInfoLabel}>Solana</Text>
+                    <Text style={styles.walletInfoValue}>{solanaAddress ? truncate(solanaAddress) : '--'}</Text>
+                  </View>
+                  <View style={styles.walletInfoRow}>
+                    <Text style={styles.walletInfoLabel}>Owner EOA</Text>
+                    <Text style={styles.walletInfoValue}>{poly.polygonAddress ? truncate(poly.polygonAddress) : '--'}</Text>
+                  </View>
+                  <View style={styles.walletInfoRow}>
+                    <Text style={styles.walletInfoLabel}>Deposit wallet</Text>
+                    <Text style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
+                  </View>
+                </View>
+                <Text style={styles.settingsFinePrint}>
+                  Your Polymarket wallet is an embedded wallet managed by Privy. There
+                  is no key to export from this screen.
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign out of MyBoon"
+                  style={styles.signOutBtn}
+                  onPress={() => {
+                    setSettingsOpen(false);
+                    Alert.alert(
+                      'Sign out of MyBoon?',
+                      'Your Predict positions and pUSD stay in your account. You will need to sign in again to trade, withdraw, or change security settings.',
+                      [
+                        { text: 'Stay signed in', style: 'cancel' },
+                        { text: 'Sign out', style: 'destructive', onPress: () => { void privyDisconnect(); } },
+                      ],
+                    );
+                  }}>
+                  <MaterialIcons name="logout" size={15} color={tokens.colors.vermillion} />
+                  <Text style={styles.signOutText}>Sign out</Text>
                 </Pressable>
               </>
             )}
@@ -1318,6 +1366,24 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 9,
     color: semantic.text.dim,
+  },
+  signOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(239,71,111,0.35)',
+    backgroundColor: 'rgba(239,71,111,0.08)',
+    marginTop: 4,
+  },
+  signOutText: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    fontWeight: '700',
+    color: tokens.colors.vermillion,
   },
 
   // Equity card (legacy, unused)
