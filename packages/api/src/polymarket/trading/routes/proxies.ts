@@ -131,7 +131,10 @@ export function registerProxyRoutes(routes: Hono) {
       if (body) headers['Content-Type'] = c.req.header('content-type') ?? 'application/json'
     }
 
-    const authorization = materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)
+    // ServiceClient keeps query parameters in `request.params` and Builder
+    // authorization signs `request.path` only. Verify the same canonical value
+    // the SDK signed; the query is still forwarded unchanged to the fixed host.
+    const authorization = materializeBuilderPassphrase(headers, method, path, body)
     const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
     if (!authorization.ok) {
       logPredictRequest('warn', {
@@ -206,7 +209,10 @@ export function registerProxyRoutes(routes: Hono) {
       body = await c.req.text()
     }
 
-    const authorization = materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)
+    // `@polymarket/client` signs the pathname, not URLSearchParams. Including
+    // `url.search` here rejects every valid parameterized relayer request (the
+    // first one is GET /deployed?address=...&type=WALLET).
+    const authorization = materializeBuilderPassphrase(headers, method, path, body)
     const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
     if (!authorization.ok) {
       logPredictRequest('warn', {

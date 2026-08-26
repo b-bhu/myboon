@@ -101,6 +101,32 @@ describe('CLOB auth relay header forwarding', () => {
     assert.equal(res.headers.get('x-predict-request-id'), 'test-request-id')
   })
 
+  test('verifies the SDK pathname while forwarding query parameters unchanged', async () => {
+    const timestamp = `${Math.floor(Date.now() / 1000)}`
+    const method = 'GET'
+    const path = '/auth/derive-api-key'
+    const signature = createHmac('sha256', Buffer.from(BUILDER_SECRET, 'base64'))
+      .update(`${timestamp}${method}${path}`)
+      .digest('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+
+    const res = await app.request(`/clob/proxy${path}?nonce=0`, {
+      method,
+      headers: {
+        ...L1_HEADERS,
+        POLY_BUILDER_API_KEY: 'test-key',
+        POLY_BUILDER_SIGNATURE: signature,
+        POLY_BUILDER_TIMESTAMP: timestamp,
+        POLY_BUILDER_PASSPHRASE: 'myboon-server-injected:test-request-id',
+      },
+    })
+
+    assert.equal(res.status, 200)
+    assert.equal(receivedUrl, `${path}?nonce=0`)
+    assert.equal(received['poly_builder_passphrase'], 'test-passphrase')
+  })
+
   test('refuses a forged server-injection marker', async () => {
     const res = await app.request('/clob/proxy/auth/api-key', {
       method: 'POST',
