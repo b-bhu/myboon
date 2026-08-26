@@ -68,13 +68,39 @@ const PIPELINE_TABLES = [
   'pipeline_editor_decisions',
   'pipeline_editor_drafts',
   'pipeline_runs',
+  'signal_platform_signals',
+  'signal_platform_triage_decisions',
+  'signal_platform_research_work',
+  'signal_platform_evidence',
+  'signal_platform_research_packets',
+  'signal_platform_recovery_events',
+  'signal_execution_events',
 ] as const
 
 const NEWS_TABLES = [
   'news_source_runs',
   'news_candidate_observations',
   'news_research_results',
+  'signal_platform_signals',
+  'signal_platform_triage_decisions',
+  'signal_platform_research_work',
+  'signal_platform_evidence',
+  'signal_platform_research_packets',
+  'signal_platform_recovery_events',
+  'signal_execution_events',
 ] as const
+
+// The shared signal ledger is additive and may live in either legacy DB. Old
+// databases remain valid until a SqliteExecutionLedger first opens them.
+const OPTIONAL_TABLES = new Set<string>([
+  'signal_platform_signals',
+  'signal_platform_triage_decisions',
+  'signal_platform_research_work',
+  'signal_platform_evidence',
+  'signal_platform_research_packets',
+  'signal_platform_recovery_events',
+  'signal_execution_events',
+])
 
 const BACKUP_FILE_PREFIX = 'pipeline-'
 const BACKUP_FILE_SUFFIX = '.sqlite'
@@ -127,6 +153,12 @@ function readTableCounts(db: SqliteDatabase): Record<string, number> {
 function readSelectedTableCounts(db: SqliteDatabase, tables: readonly string[]): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const table of tables) {
+    if (OPTIONAL_TABLES.has(table)) {
+      const exists = db.prepare(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?"
+      ).get(table) as Record<string, unknown> | undefined
+      if (!exists) continue
+    }
     const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as Record<string, unknown>
     const raw = row?.n
     counts[table] = typeof raw === 'bigint' ? Number(raw) : Number(raw ?? 0)

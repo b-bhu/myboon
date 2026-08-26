@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   EntityInput,
@@ -14,7 +15,7 @@ import type {
 
 const ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, show_in_carousel, metadata, created_at, updated_at'
 const LEGACY_ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, metadata, created_at, updated_at'
-const MEMORY_SELECT = 'id, entity_id, source, source_area, source_type, source_ref_id, source_research_id, memory_type, title, summary, body, event_at, observed_at, confidence, evidence, mentions, metrics, context, created_at, updated_at'
+const MEMORY_SELECT = 'id, memory_identity_key, entity_id, source, source_area, source_type, source_ref_id, source_research_id, memory_type, title, summary, body, event_at, observed_at, confidence, evidence, mentions, metrics, context, created_at, updated_at'
 const MANUAL_COMMAND_LOG_SELECT = 'request_id, command_hash, actor, entity_id, applied_at'
 
 interface EntityRowsResult {
@@ -50,6 +51,7 @@ function normalizeMemory(row: unknown): EntityMemoryRecord {
   const record = row as Record<string, unknown>
   return {
     id: String(record.id),
+    memory_identity_key: typeof record.memory_identity_key === 'string' ? record.memory_identity_key : undefined,
     entity_id: typeof record.entity_id === 'string' ? record.entity_id : null,
     source: String(record.source),
     source_area: String(record.source_area),
@@ -196,43 +198,40 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
   }
 
   async findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]> {
-    const byKey = new Map<string, MemoryLookupKey>()
-    for (const key of keys) {
-      byKey.set([
-        key.source,
-        key.sourceArea,
-        key.sourceResearchId,
-        key.entityId ?? '',
-        key.memoryType,
-        key.title,
-      ].join('|'), key)
-    }
-    const sourceResearchIds = [...new Set([...byKey.values()].map((key) => key.sourceResearchId))]
-    if (sourceResearchIds.length === 0) return []
+    const identities = [...new Set(keys.map((key) => key.memoryIdentityKey
+      ? explicitMemoryIdentity(key.memoryIdentityKey)
+      : legacyMemoryIdentity({
+        source: key.source,
+        source_area: key.sourceArea,
+        source_research_id: key.sourceResearchId,
+        entity_id: key.entityId,
+        memory_type: key.memoryType,
+        title: key.title,
+      })))]
+    if (identities.length === 0) return []
     const { data, error } = await this.db
       .from('entity_memories')
       .select(MEMORY_SELECT)
-      .in('source_research_id', sourceResearchIds)
+      .in('memory_identity_key', identities)
     if (error) throw new Error(`entity memory lookup failed: ${error.message}`)
-    const wanted = new Set(byKey.keys())
-    return (data ?? [])
-      .map(normalizeMemory)
-      .filter((memory) => wanted.has([
-        memory.source,
-        memory.source_area,
-        memory.source_research_id,
-        memory.entity_id ?? '',
-        memory.memory_type,
-        memory.title,
-      ].join('|')))
+    const wanted = new Set(identities)
+    return (data ?? []).map(normalizeMemory).filter((memory) => (
+      typeof memory.memory_identity_key === 'string' && wanted.has(memory.memory_identity_key)
+    ))
   }
 
   async upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]> {
     if (memories.length === 0) return []
+    const identified = memories.map((memory) => ({
+      ...memory,
+      memory_identity_key: memory.memory_identity_key
+        ? explicitMemoryIdentity(memory.memory_identity_key)
+        : legacyMemoryIdentity(memory),
+    }))
     const { data, error } = await this.db
       .from('entity_memories')
-      .upsert(memories, {
-        onConflict: 'source,source_area,source_research_id,entity_id,memory_type,title',
+      .upsert(identified, {
+        onConflict: 'memory_identity_key',
       })
       .select(MEMORY_SELECT)
     if (error) throw new Error(`entity memory upsert failed: ${error.message}`)
@@ -343,10 +342,38 @@ function carouselMigrationError(): Error {
   return new Error('Entity carousel selection requires the pending entity_carousel_flag migration.')
 }
 
+const EXPLICIT_MEMORY_IDENTITY_PATTERN = /^myboon\.memory_identity\.v1:[0-9a-f]{64}$/
+const LEGACY_MEMORY_IDENTITY_SEPARATOR = '\u001f'
+
+function explicitMemoryIdentity(value: string): string {
+  if (!EXPLICIT_MEMORY_IDENTITY_PATTERN.test(value)) {
+    throw new TypeError('memory_identity_key must be a myboon.memory_identity.v1 SHA-256 key')
+  }
+  return value
+}
+
+function legacyMemoryIdentity(memory: Pick<
+  EntityMemoryInput,
+  'source' | 'source_area' | 'source_research_id' | 'entity_id' | 'memory_type' | 'title'
+>): string {
+  const canonical = [
+    memory.source,
+    memory.source_area,
+    memory.source_research_id,
+    memory.entity_id ?? '',
+    memory.memory_type,
+    memory.title,
+  ].join(LEGACY_MEMORY_IDENTITY_SEPARATOR)
+  return `myboon.memory_identity.v1:legacy:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`
+}
+
 export const __testing = {
   ENTITY_SELECT,
   LEGACY_ENTITY_SELECT,
   MEMORY_SELECT,
   normalizeEntity,
+  normalizeMemory,
+  explicitMemoryIdentity,
+  legacyMemoryIdentity,
   isMissingCarouselColumn,
 }

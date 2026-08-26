@@ -8,6 +8,11 @@
       "types": "./src/entity-manager/public.ts",
       "import": "./src/entity-manager/public.ts",
       "default": "./src/entity-manager/public.ts"
+    },
+    "./signal-platform": {
+      "types": "./src/signal-platform/public.ts",
+      "import": "./src/signal-platform/public.ts",
+      "default": "./src/signal-platform/public.ts"
     }
   },
   "scripts": {
@@ -42,7 +47,13 @@
     "test:hyperliquid": "tsx --test src/hyperliquid/*.test.ts",
     "test:entity-manager": "tsx --test src/entity-manager/*.test.ts",
     "test:editor-draft": "tsx --test src/editor-draft/*.test.ts",
-    "test:publisher": "tsx --test src/publisher/*.test.ts"
+    "test:publisher": "tsx --test src/publisher/*.test.ts",
+    "test:inference-gateway": "tsx --test src/inference-gateway/*.test.ts",
+    "test:signal-platform": "tsx --test src/signal-platform/*.test.ts src/signal-platform/adapters/*.test.ts",
+    "test:signal-platform:operators": "tsx --test src/signal-platform/operator-*.test.ts",
+    "feed-v3:status": "tsx src/signal-platform/run-status.ts",
+    "feed-v3:recover": "tsx src/signal-platform/run-recovery.ts",
+    "feed-v3:trace": "tsx src/signal-platform/run-trace.ts"
   },
   "dependencies": {
     "@myboon/shared": "workspace:*",

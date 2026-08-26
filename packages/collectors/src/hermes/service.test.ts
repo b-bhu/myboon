@@ -102,6 +102,46 @@ test('oneshot omits optional flags when not requested', async () => {
   assert.deepEqual(calls[0].args, ['-z', 'P'])
 })
 
+test('oneshot routes profile, provider, and model before the prompt and records requested metadata', async () => {
+  const records: HermesCallRecord[] = []
+  const { calls, impl } = fakeExec({ stdout: 'ok' })
+  const service = new HermesService({ command: 'hermes', execFileImpl: impl, observer: (record) => records.push(record) })
+
+  await service.oneshot({
+    purpose: 'test.routed',
+    prompt: 'PROMPT',
+    timeoutMs: 500,
+    ignoreRules: true,
+    profile: 'structured',
+    provider: 'openrouter',
+    model: 'provider/model-v1',
+  })
+
+  assert.deepEqual(calls[0].args, [
+    '--ignore-rules',
+    '-p', 'structured',
+    '--provider', 'openrouter',
+    '-m', 'provider/model-v1',
+    '-z', 'PROMPT',
+  ])
+  assert.equal(records[0].requestedProfile, 'structured')
+  assert.equal(records[0].requestedProvider, 'openrouter')
+  assert.equal(records[0].requestedModel, 'provider/model-v1')
+  assert.equal(JSON.stringify(records[0]).includes('PROMPT'), false)
+})
+
+test('oneshot rejects empty, untrimmed, control-bearing, and oversized route values', async () => {
+  const { calls, impl } = fakeExec({ stdout: 'unused' })
+  const service = new HermesService({ command: 'hermes', execFileImpl: impl })
+  const base = { purpose: 'test.invalid-route', prompt: 'P', timeoutMs: 500 }
+
+  await assert.rejects(service.oneshot({ ...base, provider: '' }), /provider must be a non-empty trimmed value/)
+  await assert.rejects(service.oneshot({ ...base, model: ' leading' }), /model must be a non-empty trimmed value/)
+  await assert.rejects(service.oneshot({ ...base, profile: 'bad\nprofile' }), /profile must not contain control characters/)
+  await assert.rejects(service.oneshot({ ...base, model: 'm'.repeat(201) }), /model must be at most 200 characters/)
+  assert.equal(calls.length, 0)
+})
+
 test('production oneshot uses a dedicated process group and captures output', async () => {
   const { calls, impl } = fakeSpawn((child) => {
     child.stdout.emit('data', Buffer.from('{"ok":true}'))
@@ -692,4 +732,39 @@ test('oneshot and chat share the same provider circuit', async () => {
     HermesProviderCircuitOpenError,
   )
   assert.equal(spawnCalls.length, 0)
+})
+
+test('production structured circuits isolate provider-model targets and success resets only its target', async () => {
+  const suffix = `${process.pid}-${Date.now()}`
+  const openProvider = `open-${suffix}`
+  const resetProvider = `reset-${suffix}`
+  const model = `model-${suffix}`
+  const invocations = new Map<string, number>()
+  const execFileImpl = async (_command: string, args: string[]) => {
+    const provider = args[args.indexOf('--provider') + 1]
+    const count = (invocations.get(provider) ?? 0) + 1
+    invocations.set(provider, count)
+    if (provider === openProvider) throw Object.assign(new Error('HTTP 429'), { statusCode: 429 })
+    if (provider === resetProvider && (count <= 4 || (count >= 6 && count <= 9))) {
+      throw Object.assign(new Error('HTTP 429'), { statusCode: 429 })
+    }
+    return { stdout: '{"ok":true}', stderr: '' }
+  }
+  const service = new HermesService({ command: 'hermes', execFileImpl })
+  const call = (provider: string) => service.oneshot({
+    purpose: 'test.target-circuit', prompt: 'P', timeoutMs: 500, provider, model,
+  })
+
+  for (let index = 0; index < 5; index += 1) await assert.rejects(call(openProvider))
+  await assert.rejects(call(openProvider), HermesProviderCircuitOpenError)
+
+  for (let index = 0; index < 4; index += 1) await assert.rejects(call(resetProvider))
+  await call(resetProvider)
+  for (let index = 0; index < 4; index += 1) await assert.rejects(call(resetProvider))
+  await call(resetProvider)
+
+  // Success on resetProvider neither probes nor closes openProvider.
+  await assert.rejects(call(openProvider), HermesProviderCircuitOpenError)
+  assert.equal(invocations.get(openProvider), 5)
+  assert.equal(invocations.get(resetProvider), 10)
 })

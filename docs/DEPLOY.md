@@ -156,6 +156,67 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
   Supabase news, Polymarket working-state, and editor-draft tables. It does not
   touch either local SQLite file or any durable entity/publishing table.
 
+### Feed V3 shadow controls (not yet a production cutover)
+
+Feed V3 adds canonical Signals, durable triage decisions, shared research work,
+immutable evidence/packets, and execution events as additive tables inside the
+same two SQLite databases. The legacy PM2 lanes remain the only claimers until a
+separately reviewed source-by-source cutover. All Feed V3 modes are safe-off by
+default:
+
+```dotenv
+FEED_V3_INTAKE_MODE=off
+FEED_V3_RESEARCH_MODE=off
+FEED_V3_ENTITY_MODE=off
+FEED_V3_ACTIVE_SOURCES=
+FEED_V3_SHADOW_SOURCES=
+FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=
+FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=
+FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
+FEED_V3_DEEP_RESEARCH_ENABLED=0
+```
+
+The runtime refuses an active source when its corresponding legacy claimer has
+not been explicitly disabled. Do not add Feed V3 workers to PM2 or set any mode
+to `active` until the shadow evaluation and cutover gates in the PRD pass.
+
+Read-only status and trace commands:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:status
+pnpm --filter @myboon/collectors feed-v3:trace -- --work-id work_...
+```
+
+Canonical recovery is also dry-run by default and accepts `--source`,
+`--stage`, `--failure-category`, `--work-id`, `--since`, `--until`, and a
+bounded `--batch` (maximum 500):
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:recover -- \
+  --source news --stage synthesis --since 2026-08-26T00:00:00Z --batch 25
+
+# Only after reviewing the dry-run rows:
+pnpm --filter @myboon/collectors feed-v3:recover -- \
+  --source news --stage synthesis --since 2026-08-26T00:00:00Z --batch 25 --apply
+```
+
+`--apply` takes and verifies the affected online SQLite backup before any row is
+changed, performs compare-and-swap recovery, and writes an immutable audit event
+for every recovered row. It never deletes signals, evidence, packets, execution
+events, or attempt history.
+
+The committed migration
+`20260826175053_add_entity_memory_identity_key.sql` introduces the stable,
+title-independent identity used by canonical Entity Memory writes. Apply it only
+as part of the reviewed Entity Manager cutover; this branch does not apply or
+link Supabase. The migration backfills existing rows one-for-one and retains the
+legacy unique index for rolling compatibility.
+
+Deep research remains disabled until the transient-systemd-service checks in
+[`2026_08_26_deep_research_transient_systemd_service.md`](modules/entity-manager/ADRs/2026_08_26_deep_research_transient_systemd_service.md)
+are completed on the target VPS. No local test result is evidence that the VPS
+cgroup, timeout, descendant-kill, or temporary-profile requirements have passed.
+
 ---
 
 ## First-time VPS setup

@@ -108,6 +108,7 @@ test('updateEntity persists carousel selection changes', async () => {
 
 const baseMemory: EntityMemoryRecord = {
   id: 'memory-1',
+  memory_identity_key: 'myboon.memory_identity.v1:legacy:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   entity_id: 'entity-1',
   source: 'polymarket',
   source_area: 'markets',
@@ -294,4 +295,131 @@ test('updateMemory patches the row by id and stamps updated_at', async () => {
   })
 
   assert.equal(updated.summary, 'Second, later observation.')
+})
+
+test('legacy compatibility identity matches the former tuple and remains title-sensitive', () => {
+  const first = __testing.legacyMemoryIdentity({
+    source: baseMemory.source,
+    source_area: baseMemory.source_area,
+    source_research_id: baseMemory.source_research_id,
+    entity_id: baseMemory.entity_id,
+    memory_type: baseMemory.memory_type,
+    title: baseMemory.title,
+  })
+  const replay = __testing.legacyMemoryIdentity({
+    source: baseMemory.source,
+    source_area: baseMemory.source_area,
+    source_research_id: baseMemory.source_research_id,
+    entity_id: baseMemory.entity_id,
+    memory_type: baseMemory.memory_type,
+    title: baseMemory.title,
+  })
+  const renamed = __testing.legacyMemoryIdentity({
+    source: baseMemory.source,
+    source_area: baseMemory.source_area,
+    source_research_id: baseMemory.source_research_id,
+    entity_id: baseMemory.entity_id,
+    memory_type: baseMemory.memory_type,
+    title: 'Changed legacy title',
+  })
+
+  assert.equal(first, replay)
+  assert.notEqual(first, renamed)
+  assert.match(first, /^myboon\.memory_identity\.v1:legacy:[0-9a-f]{64}$/)
+})
+
+test('explicit stable identity upserts changed title onto the same memory row', async () => {
+  const identity = `myboon.memory_identity.v1:${'b'.repeat(64)}`
+  const rows = new Map<string, EntityMemoryRecord>()
+  const payloads: Array<Record<string, unknown>> = []
+  const db = {
+    from(table: string) {
+      assert.equal(table, 'entity_memories')
+      return {
+        upsert(payload: Array<Record<string, unknown>>, options: Record<string, unknown>) {
+          assert.deepEqual(options, { onConflict: 'memory_identity_key' })
+          payloads.push(...payload)
+          for (const item of payload) {
+            const key = String(item.memory_identity_key)
+            const existing = rows.get(key)
+            rows.set(key, {
+              ...baseMemory,
+              ...item,
+              id: existing?.id ?? 'stable-memory-id',
+            } as EntityMemoryRecord)
+          }
+          return {
+            async select(columns: string) {
+              assert.equal(columns, __testing.MEMORY_SELECT)
+              return { data: payload.map((item) => rows.get(String(item.memory_identity_key))), error: null }
+            },
+          }
+        },
+      }
+    },
+  } as unknown as SupabaseClient
+  const store = new SupabaseEntityMemoryStore(db)
+  const input = {
+    ...baseMemory,
+    id: undefined,
+    created_at: undefined,
+    updated_at: undefined,
+    memory_identity_key: identity,
+  }
+
+  const first = await store.upsertMemories([{ ...input, title: 'First model wording' }])
+  const replay = await store.upsertMemories([{ ...input, title: 'Changed model wording' }])
+
+  assert.equal(first[0].id, 'stable-memory-id')
+  assert.equal(replay[0].id, 'stable-memory-id')
+  assert.equal(replay[0].title, 'Changed model wording')
+  assert.equal(payloads[0].memory_identity_key, identity)
+  assert.equal(payloads[1].memory_identity_key, identity)
+  assert.equal(rows.size, 1)
+})
+
+test('findMemories uses explicit identity without depending on title', async () => {
+  const identity = `myboon.memory_identity.v1:${'c'.repeat(64)}`
+  const db = {
+    from(table: string) {
+      assert.equal(table, 'entity_memories')
+      return {
+        select(columns: string) {
+          assert.equal(columns, __testing.MEMORY_SELECT)
+          return {
+            async in(column: string, values: string[]) {
+              assert.equal(column, 'memory_identity_key')
+              assert.deepEqual(values, [identity])
+              return { data: [{ ...baseMemory, memory_identity_key: identity }], error: null }
+            },
+          }
+        },
+      }
+    },
+  } as unknown as SupabaseClient
+  const store = new SupabaseEntityMemoryStore(db)
+  const found = await store.findMemories([{
+    memoryIdentityKey: identity,
+    source: 'ignored-for-explicit-identity',
+    sourceArea: 'ignored',
+    sourceResearchId: 'ignored',
+    entityId: 'ignored',
+    memoryType: 'news_event',
+    title: 'Changed title does not participate',
+  }])
+
+  assert.equal(found[0].id, baseMemory.id)
+  assert.equal(found[0].memory_identity_key, identity)
+})
+
+test('malformed explicit identity fails before issuing a Supabase query', async () => {
+  let queried = false
+  const db = { from() { queried = true; return {} } } as unknown as SupabaseClient
+  const store = new SupabaseEntityMemoryStore(db)
+
+  await assert.rejects(store.upsertMemories([{
+    ...baseMemory,
+    memory_identity_key: 'model-authored-key',
+  }]), /myboon\.memory_identity\.v1 SHA-256 key/)
+  assert.equal(queried, false)
 })

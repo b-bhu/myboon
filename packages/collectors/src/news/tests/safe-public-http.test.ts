@@ -47,3 +47,21 @@ test('safe public fetch validates and pins every public redirect hop', async () 
   assert.deepEqual(document.visitedHosts, ['one.example', 'two.example'])
   assert.equal(document.finalUrl, 'https://two.example/final')
 })
+
+test('safe public fetch blocks a public redirect outside the approved domains before contact', async () => {
+  const requestedHosts: string[] = []
+
+  await assert.rejects(() => fetchPublicDocument('https://news.example/article', {
+    timeoutMs: 1_000,
+    allowedDomains: ['news.example'],
+    resolveHost: async () => ['93.184.216.34'],
+    requestImpl: async (url) => {
+      requestedHosts.push(url.hostname)
+      return url.hostname === 'news.example'
+        ? { status: 302, contentType: null, body: Buffer.alloc(0), redirectUrl: 'https://tracker.example/final' }
+        : { status: 200, contentType: 'text/html', body: Buffer.from('should not be contacted'), redirectUrl: null }
+    },
+  }), /outside the approved domain policy/)
+
+  assert.deepEqual(requestedHosts, ['news.example'])
+})

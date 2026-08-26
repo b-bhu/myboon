@@ -116,6 +116,8 @@ export interface EntityTimelineItem {
 
 export interface EntityMemoryRecord {
   id: string
+  /** Stable replay identity. Optional only for pre-migration test/legacy rows. */
+  memory_identity_key?: string
   entity_id: string | null
   source: string
   source_area: string
@@ -138,6 +140,12 @@ export interface EntityMemoryRecord {
 }
 
 export interface EntityMemoryInput {
+  /**
+   * Canonical Feed V3 callers provide a myboon.memory_identity.v1 SHA-256
+   * key. Legacy callers may omit it; the Supabase store derives a deterministic
+   * compatibility key matching the former unique tuple.
+   */
+  memory_identity_key?: string
   entity_id: string | null
   source: string
   source_area: string
@@ -228,6 +236,7 @@ export interface EntityMemoryConsolidationPatch {
 }
 
 export interface MemoryLookupKey {
+  memoryIdentityKey?: string
   source: string
   sourceArea: string
   sourceResearchId: string

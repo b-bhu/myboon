@@ -1,0 +1,72 @@
+export { DeepResearchError, type DeepResearchErrorOptions } from './errors'
+export {
+  DeepResearchExecutor,
+  InMemoryDeepResearchExecutionRegistry,
+  buildDeepResearchUnitName,
+  buildSystemdRunArgs,
+  validateDeepResearchJob,
+} from './executor'
+export type {
+  DeepResearchExecuteOptions,
+  DeepResearchExecutionRegistry,
+  DeepResearchExecutorOptions,
+  DeepResearchFileSystem,
+  DeepResearchWorkerCommand,
+} from './executor'
+export { DeepResearchGatewayPort } from './gateway-port'
+export {
+  NodeSystemdController,
+} from './systemd-controller'
+export type {
+  DeepResearchProcess,
+  DeepResearchSpawnOptions,
+  DeepResearchSystemdController,
+  NodeSystemdControllerOptions,
+} from './systemd-controller'
+export {
+  DEEP_RESEARCH_JOB_SCHEMA_VERSION,
+  DEEP_RESEARCH_RESULT_SCHEMA_VERSION,
+  DEEP_RESEARCH_USAGE_SCHEMA_VERSION,
+} from './types'
+export type {
+  DeepResearchBudget,
+  DeepResearchCapability,
+  DeepResearchErrorCategory,
+  DeepResearchEscalation,
+  DeepResearchExecutionMetadata,
+  DeepResearchJob,
+  DeepResearchMeasuredUsage,
+  DeepResearchResult,
+} from './types'
+export {
+  DEEP_RESEARCH_OUTPUT_SCHEMA_VERSION,
+  assembleDeepResearchPacket,
+  deterministicDeepPacketId,
+  parseDeepResearchOutput,
+} from './packet-output'
+export type {
+  DeepResearchApprovedResult,
+  DeepResearchOutputBody,
+  DeepResearchOutputClaim,
+  DeepResearchOutputEntityHint,
+  DeepResearchOutputUnresolvedClaim,
+  DeepResearchOutputVerifiedFact,
+  DeepResearchPacketPolicyMetadata,
+} from './packet-output'
+export {
+  DeepResearchSideQueueWorker,
+  DeepResearchWorkerConfigurationError,
+  buildDeepResearchJob,
+  deterministicDeepJobId,
+} from './worker'
+export type {
+  ContainedDeepResearchExecutionPort,
+  DeepResearchJobPolicy,
+  DeepResearchPreflightPort,
+  DeepResearchPreflightReason,
+  DeepResearchSchedulerPort,
+  DeepResearchSideQueueWorkerOptions,
+  DeepResearchWorkStore,
+  DeepResearchWorkerClock,
+  DeepResearchWorkerOutcome,
+} from './worker'
