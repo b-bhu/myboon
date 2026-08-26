@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { ClosedPortfolioPosition, OpenOrder, PortfolioPosition } from '@/features/predict/predict.api';
 import { redeemPosition } from '@/features/predict/predict.api';
-import type { Signer } from '@/features/chain/chain.contract';
+import type { SecureClient } from '@polymarket/client';
 import { PredictActivityDetailModal } from '@/features/predict/components/PredictActivityDetailModal';
 import { PredictActivityRow } from '@/features/predict/components/PredictActivityRow';
 import { formatRedeemError, logRedeemError } from '@/features/predict/redeemErrors';
@@ -21,8 +21,7 @@ interface YourPicksSectionProps {
   openOrders: OpenOrder[];
   redeemablePositions: PortfolioPosition[];
   closedPositions: ClosedPortfolioPosition[];
-  polygonAddress: string | null;
-  signer: Signer | null;
+  client: SecureClient | null;
   cancellingOrderId: string | null;
   freshness: PredictDataFreshness;
   sellQuotes?: PositionSellQuoteMap;
@@ -38,8 +37,7 @@ export function YourPicksSection({
   openOrders,
   redeemablePositions,
   closedPositions,
-  polygonAddress,
-  signer,
+  client,
   cancellingOrderId,
   freshness,
   sellQuotes,
@@ -86,15 +84,12 @@ export function YourPicksSection({
   const countLabel = `${activeCount} active${readyCount > 0 ? ` · ${readyCount} ready` : ''}${closedCount > 0 ? ` · ${closedCount} history` : ''}`;
 
   async function handleRedeem(item: PredictActivityItem) {
-    if (!polygonAddress || !signer || !item.rawPosition || redeemingId) return;
+    if (!client || !item.rawPosition || redeemingId) return;
     setRedeemingId(item.id);
     setRedeemError(null);
     try {
-      const result = await redeemPosition(signer, polygonAddress, {
+      const result = await redeemPosition(client, {
         conditionId: item.rawPosition.conditionId,
-        asset: item.rawPosition.asset,
-        outcomeIndex: item.rawPosition.outcomeIndex,
-        negativeRisk: item.rawPosition.negativeRisk,
       });
       if (!result.ok) throw new Error(result.error || 'Redeem failed');
       setRedeemError(null);

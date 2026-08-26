@@ -1,4 +1,4 @@
-import type { OpenOrder, PortfolioPosition } from '@/features/predict/predict.api';
+import type { OpenOrder, PortfolioPosition, RecentAccountTrade } from '@/features/predict/predict.api';
 import type { PredictActivityItem } from '@/features/predict/predictActivityState';
 
 interface PendingOpenOrderParams {
@@ -30,9 +30,11 @@ export function prunePendingOpenOrders(
   pending: OpenOrder[],
   fetchedOrders: OpenOrder[],
   positions: PortfolioPosition[],
+  recentTrades: RecentAccountTrade[] = [],
 ): OpenOrder[] {
   const pendingIds = new Set(pending.map((order) => order.id).filter(Boolean));
   const fetchedOrderIds = new Set(fetchedOrders.map((order) => order.id).filter(Boolean));
+  const tradedOrderIds = new Set(recentTrades.flatMap((trade) => [trade.takerOrderId, ...trade.makerOrderIds]));
   const remoteAssetCounts = new Map<string, number>();
 
   for (const order of fetchedOrders) {
@@ -49,6 +51,7 @@ export function prunePendingOpenOrders(
     const assetId = order.asset_id?.toLowerCase();
     if (!assetId) return false;
     if (fetchedOrderIds.has(order.id)) return false;
+    if (tradedOrderIds.has(order.id)) return false;
 
     const remoteCount = remoteAssetCounts.get(assetId) ?? 0;
     if (remoteCount > 0) {

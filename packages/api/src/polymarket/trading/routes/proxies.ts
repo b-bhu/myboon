@@ -1,5 +1,10 @@
 import type { Hono } from 'hono'
 import { CLOB_HOST, RELAYER_URL } from '../contracts.js'
+import {
+  logPredictRequest,
+  materializeBuilderPassphrase,
+  normalizedObservedPath,
+} from './builder-sign.js'
 
 export function registerProxyRoutes(routes: Hono) {
   routes.get('/book', async (c) => {
@@ -86,22 +91,11 @@ export function registerProxyRoutes(routes: Hono) {
     }
   })
 
-  /**
-   * CLOB L1 auth relay — `/auth/derive-api-key` and `/auth/api-key`.
-   *
-   * The device cannot reach `clob.polymarket.com` directly on some networks, so
-   * these two calls fail where every other Polymarket read already succeeds
-   * through the proxies above. This closes that gap: the phone points its
-   * `ClobClient` at this host and the request is relayed unchanged.
-   *
-   * The EIP-712 signature is still produced on the device and travels in the
-   * `POLY_SIGNATURE` header. This server relays those headers verbatim and never
-   * sees key material — the spec's trust boundary is unaffected. Only the L1
-   * auth headers are forwarded, so nothing else about the caller leaks upstream.
-   */
-  // Signed with the user's key (L1) or their CLOB session secret (L2). Relayed
-  // verbatim — the signature covers the method and path, so altering either
-  // would invalidate it.
+  // The unified SecureClient owns L1/L2 auth on the phone. This proxy relays
+  // only `POLY_*` headers and never logs their values or signed order bodies.
+  // The one intentional transformation is the non-secret Builder passphrase
+  // marker: after validating the Builder HMAC against this exact request, the
+  // API injects the real passphrase only into the upstream request.
   //
   // The `POLY_BUILDER_*` four are a second, independent credential on the same
   // request: `@polymarket/client` calls `resolveClobHeaders()` before a
@@ -110,19 +104,6 @@ export function registerProxyRoutes(routes: Hono) {
   // with the L1 set — upstream wants both, and dropping them makes an otherwise
   // valid request fail as "Invalid L1 Request headers", which reads like a
   // signature problem on the device rather than a header the proxy discarded.
-  const POLY_AUTH_HEADERS = [
-    'POLY_ADDRESS',
-    'POLY_SIGNATURE',
-    'POLY_TIMESTAMP',
-    'POLY_NONCE',
-    'POLY_API_KEY',
-    'POLY_PASSPHRASE',
-    'POLY_BUILDER_API_KEY',
-    'POLY_BUILDER_SIGNATURE',
-    'POLY_BUILDER_TIMESTAMP',
-    'POLY_BUILDER_PASSPHRASE',
-  ]
-
   /**
    * Catch-all relay for the CLOB client.
    *
@@ -133,15 +114,14 @@ export function registerProxyRoutes(routes: Hono) {
    * forwarded as-is.
    */
   async function relayToClob(c: any) {
+    const startedAt = Date.now()
     const url = new URL(c.req.url)
-    // `/clob` is this router's mount prefix; upstream expects the path without it.
-    const path = url.pathname.replace(/^\/clob/, '') || '/'
+    const path = url.pathname.replace(/^\/clob\/proxy/, '') || '/'
     const target = `${CLOB_HOST}${path}${url.search}`
 
     const headers: Record<string, string> = { Accept: 'application/json' }
-    for (const name of POLY_AUTH_HEADERS) {
-      const value = c.req.header(name) ?? c.req.header(name.toLowerCase())
-      if (value) headers[name] = value
+    for (const [name, value] of Object.entries(c.req.header())) {
+      if (name.toLowerCase().startsWith('poly_')) headers[name] = value as string
     }
 
     const method = c.req.method
@@ -151,42 +131,45 @@ export function registerProxyRoutes(routes: Hono) {
       if (body) headers['Content-Type'] = c.req.header('content-type') ?? 'application/json'
     }
 
+    const authorization = materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)
+    const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
+    if (!authorization.ok) {
+      logPredictRequest('warn', {
+        event: 'clob-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'refused', status: 401, durationMs: Date.now() - startedAt,
+        errorCategory: 'invalid_builder_authorization',
+      })
+      return c.json({ error: 'Invalid Builder authorization' }, 401)
+    }
+
     try {
       const res = await fetch(target, { method, headers, body })
       const text = await res.text()
-      // Log what upstream actually said on a rejection.
-      //
-      // Without this the only evidence of a failed auth is a bare status code,
-      // and every distinct upstream cause — bad signature, unknown signer,
-      // missing builder credential, nonce mismatch — looks identical from here.
-      // Reconstructing the reason from status codes alone cost several rounds of
-      // wrong guesses; the body says it outright. Header *names* only: their
-      // values are signatures and credentials, which must not reach the log.
-      if (!res.ok) {
-        console.warn(
-          `[clob-relay] ${method} ${path} → ${res.status} `
-          + `sent=[${Object.keys(headers).join(',')}] `
-          + `upstream=${text.slice(0, 400)}`,
-        )
-      }
+      logPredictRequest(res.ok ? 'info' : 'warn', {
+        event: 'clob-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'forwarded', status: res.status, durationMs: Date.now() - startedAt,
+        ...(res.ok ? {} : { errorCategory: 'upstream_rejection' }),
+      })
       // Upstream status passes through untouched: a 401 is a real auth failure
       // the client must act on, not a proxy error to flatten into a 502.
       return new Response(text, {
         status: res.status,
-        headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/json' },
+        headers: {
+          'Content-Type': res.headers.get('content-type') ?? 'application/json',
+          ...(requestId ? { 'X-Predict-Request-ID': requestId } : {}),
+        },
       })
-    } catch (err: any) {
-      return c.json({ error: 'CLOB proxy failed', detail: err.message, path }, 502)
+    } catch {
+      logPredictRequest('error', {
+        event: 'clob-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'failed', status: 502, durationMs: Date.now() - startedAt,
+        errorCategory: 'transport',
+      })
+      return c.json({ error: 'CLOB proxy failed' }, 502)
     }
   }
 
-  routes.all('/auth/*', relayToClob)
-  routes.get('/tick-size', relayToClob)
-  routes.get('/neg-risk', relayToClob)
-  routes.get('/fee-rate', relayToClob)
-  routes.get('/price', relayToClob)
-  routes.get('/spread', relayToClob)
-  routes.get('/time', relayToClob)
+  routes.all('/proxy/*', relayToClob)
 
   /**
    * Relayer proxy — `@polymarket/client`'s `SecureClient` calls
@@ -197,17 +180,15 @@ export function registerProxyRoutes(routes: Hono) {
    * relay above exists — the new SDK just talks to a second Polymarket host
    * the old one never did.
    *
-   * Same trust shape as `relayToClob`: whatever headers/body the SDK sends
-   * are forwarded verbatim, upstream status passes through untouched, and no
-   * key material crosses this boundary — Builder-authorized calls carry
-   * `POLY_BUILDER_*` headers computed on the server side already
-   * (`relayerBuilderConfig` in `wallet.ts`), and this route does not
-   * generate or need those; it only relays whatever the caller already
-   * built. Path-agnostic for the same reason as the CLOB relay: enumerating
+   * Same trust shape as `relayToClob`: upstream status passes through untouched,
+   * auth values and transaction bodies are never logged, and the real Builder
+   * passphrase is materialized only after the request HMAC is verified.
+   * Path-agnostic for the same reason as the CLOB relay: enumerating
    * the SDK's relayer endpoints here would leave the next one (e.g. `/nonce`,
    * `/submit`) to fail in production exactly like `/deployed` just did.
    */
   async function relayToRelayer(c: any) {
+    const startedAt = Date.now()
     const url = new URL(c.req.url)
     const path = url.pathname.replace(/^\/clob\/relayer-proxy/, '') || '/'
     const target = `${RELAYER_URL}${path}${url.search}`
@@ -225,19 +206,42 @@ export function registerProxyRoutes(routes: Hono) {
       body = await c.req.text()
     }
 
+    const authorization = materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)
+    const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
+    if (!authorization.ok) {
+      logPredictRequest('warn', {
+        event: 'relayer-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'refused', status: 401, durationMs: Date.now() - startedAt,
+        errorCategory: 'invalid_builder_authorization',
+      })
+      return c.json({ error: 'Invalid Builder authorization' }, 401)
+    }
+
     try {
       const res = await fetch(target, { method, headers, body })
       const text = await res.text()
       // Status and path only. Request headers carry `POLY_BUILDER_*`
       // signature material and bodies carry transaction payloads, so neither
       // belongs in a log sink.
-      if (!res.ok) console.warn(`[relayer-proxy] ${method} ${path} -> ${res.status}`)
+      logPredictRequest(res.ok ? 'info' : 'warn', {
+        event: 'relayer-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'forwarded', status: res.status, durationMs: Date.now() - startedAt,
+        ...(res.ok ? {} : { errorCategory: 'upstream_rejection' }),
+      })
       return new Response(text, {
         status: res.status,
-        headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/json' },
+        headers: {
+          'Content-Type': res.headers.get('content-type') ?? 'application/json',
+          ...(requestId ? { 'X-Predict-Request-ID': requestId } : {}),
+        },
       })
-    } catch (err: any) {
-      return c.json({ error: 'Relayer proxy failed', detail: err.message, path }, 502)
+    } catch {
+      logPredictRequest('error', {
+        event: 'relayer-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'failed', status: 502, durationMs: Date.now() - startedAt,
+        errorCategory: 'transport',
+      })
+      return c.json({ error: 'Relayer proxy failed' }, 502)
     }
   }
 

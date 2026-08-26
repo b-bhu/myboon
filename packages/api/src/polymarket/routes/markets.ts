@@ -264,7 +264,7 @@ export function createPolymarketMarketRoutes(): Hono {
     }
   })
 
-  // V1 /polymarket/order and /polymarket/orders routes removed — use /clob/order and /clob/positions instead
+  // Authenticated order operations are owned by the mobile unified SDK.
 
   // GET /polymarket/history/:tokenId
   // tokenId = Yes token ID from clobTokenIds[0] (pass the Yes token for Yes price history)

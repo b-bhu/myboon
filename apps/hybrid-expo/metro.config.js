@@ -28,8 +28,7 @@ const resolveRequestWithPackageExports = (context, moduleName, platform) => {
     return context.resolveRequest(context, moduleName.slice(0, -3), platform);
   }
 
-  // Node 'crypto' has no RN equivalent — alias to the native quick-crypto polyfill
-  // (needed by @polymarket/clob-client-v2's HMAC signing, which imports 'crypto' directly).
+  // Node 'crypto' has no RN equivalent — alias to the native quick-crypto polyfill.
   // Native only: react-native-quick-crypto is a JSI/native module with no web build —
   // on web, Metro's default resolver already maps 'crypto' to Node's crypto/browserify shim.
   if (moduleName === 'crypto' && (platform === 'ios' || platform === 'android')) {

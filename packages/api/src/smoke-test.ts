@@ -1,10 +1,6 @@
 /**
  * Smoke test — run on VPS to verify the API is working.
  * Usage: API_BASE=http://localhost:3000 npx tsx src/smoke-test.ts
- *
- * TODO (auth required, skipped for now):
- *   - POST /clob/order
- *   - GET  /clob/positions
  */
 
 const BASE = process.env.API_BASE ?? 'http://localhost:3000'
@@ -82,9 +78,6 @@ async function run() {
     }
     return null
   }))
-
-  // TODO: POST /clob/order — requires signed order payload (wallet auth)
-  // TODO: GET /clob/positions — requires a valid CLOB session
 
   const passed = results.filter(r => r.ok).length
   const failed = results.filter(r => !r.ok).length

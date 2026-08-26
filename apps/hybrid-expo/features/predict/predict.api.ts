@@ -20,30 +20,12 @@ import type {
   SportOutcomeDetail,
   TrendingMarket,
 } from '@/features/predict/predict.types';
+import { OrderSide, OrderType } from '@polymarket/client';
+import { fetchBalanceAllowance, fetchTransaction } from '@polymarket/client/actions';
+import type { SecureClient, TransactionHandle } from '@polymarket/client';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
-import type { Signer } from '@/features/chain/chain.contract';
-import {
-  createSignedPredictOrder,
-  signDepositWalletBatch,
-  type DepositWalletSignatureRequest,
-} from './predict.signing';
-
-// --- CLOB session expiry signal ---
-// The server keeps CLOB sessions in-memory (packages/api/src/clob.ts), so a
-// restart/redeploy silently invalidates every active session. Callers below
-// detect the resulting 401 and emit here so usePolymarketWallet can surface
-// a "reconnect" prompt instead of the UI quietly polling a dead session.
-type ClobSessionExpiredListener = () => void;
-const clobSessionExpiredListeners = new Set<ClobSessionExpiredListener>();
-
-export function onClobSessionExpired(listener: ClobSessionExpiredListener): () => void {
-  clobSessionExpiredListeners.add(listener);
-  return () => clobSessionExpiredListeners.delete(listener);
-}
-
-function notifyClobSessionExpired(): void {
-  clobSessionExpiredListeners.forEach((listener) => listener());
-}
+import { normalizePredictError } from './predict.errors';
+import { POLYMARKET_BUILDER_CODE } from './predict.signing';
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -76,65 +58,13 @@ export type PredictOperationStatus =
   | 'bridging'
   | 'completed'
   | 'needs_signature'
-  | 'failed'
-  | 'session_expired';
+  | 'failed';
 
 export interface PredictOperationMeta {
   operationId?: string;
   status?: PredictOperationStatus;
   userMessage?: string;
   code?: string;
-  isSessionExpired?: boolean;
-}
-
-function parseOperationMeta(data: Record<string, unknown>): PredictOperationMeta {
-  const status = typeof data.status === 'string' ? data.status : undefined;
-  const lifecycleError = data.lifecycleError && typeof data.lifecycleError === 'object'
-    ? data.lifecycleError as Record<string, unknown>
-    : null;
-  const code = typeof lifecycleError?.code === 'string'
-    ? lifecycleError.code
-    : typeof data.code === 'string'
-      ? data.code
-      : undefined;
-  return {
-    operationId: typeof data.operationId === 'string' ? data.operationId : undefined,
-    status: status === 'submitted'
-      || status === 'waiting_to_match'
-      || status === 'filled'
-      || status === 'not_filled'
-      || status === 'cancel_requested'
-      || status === 'cancelled'
-      || status === 'collecting'
-      || status === 'bridging'
-      || status === 'completed'
-      || status === 'needs_signature'
-      || status === 'failed'
-      || status === 'session_expired'
-      ? status
-      : undefined,
-    userMessage: typeof data.userMessage === 'string' ? data.userMessage : undefined,
-    code,
-    isSessionExpired: status === 'session_expired' || code === 'PREDICT_SESSION_EXPIRED',
-  };
-}
-
-function getSignatureRequest(data: Record<string, unknown>): DepositWalletSignatureRequest | null {
-  const request = data.signatureRequest;
-  if (!request || typeof request !== 'object') return null;
-  const r = request as Record<string, unknown>;
-  if (
-    r.kind !== 'deposit_wallet_batch'
-    || typeof r.ownerAddress !== 'string'
-    || typeof r.depositWalletAddress !== 'string'
-    || typeof r.chainId !== 'number'
-    || typeof r.nonce !== 'string'
-    || typeof r.deadline !== 'string'
-    || !Array.isArray(r.calls)
-  ) {
-    return null;
-  }
-  return r as unknown as DepositWalletSignatureRequest;
 }
 
 function mapGeopoliticsMarket(row: unknown): GeopoliticsMarket | null {
@@ -780,8 +710,6 @@ export async function fetchLivePrices(tokenIds: string[]): Promise<Record<string
 }
 
 export interface PlaceBetParams {
-  polygonAddress: string;
-  tradingAddress?: string | null;
   tokenID: string;
   price: number;
   size?: number;
@@ -797,75 +725,135 @@ export interface PlaceBetResult extends PredictOperationMeta {
   orderID?: string;
   success: boolean;
   error?: string;
+  estimatedPrice?: number;
+  executionPrice?: number;
+  shares?: number;
+  amount?: number;
+  expectedPayout?: number;
+  tradeIds?: string[];
 }
 
-function formatOrderMinimum(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '$5';
-  return `$${value.toFixed(2).replace(/\.00$/u, '').replace(/(\.\d)0$/u, '$1')}`;
-}
+export async function placeBet(client: SecureClient, params: PlaceBetParams): Promise<PlaceBetResult> {
+  try {
+    const isMarket = params.orderType === 'FOK' || params.orderType === 'FAK';
+    let estimatedPrice: number | undefined;
+    if (isMarket) {
+      estimatedPrice = await client.estimateMarketPrice(params.side === 'BUY'
+        ? {
+            tokenId: params.tokenID,
+            side: OrderSide.BUY,
+            amount: params.amount ?? (params.size ?? 0) * params.price,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+          }
+        : {
+            tokenId: params.tokenID,
+            side: OrderSide.SELL,
+            shares: params.size ?? 0,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+          });
+      const outsideProtection = params.side === 'BUY'
+        ? estimatedPrice > params.price
+        : estimatedPrice < params.price;
+      if (outsideProtection) {
+        return {
+          success: false,
+          status: 'not_filled',
+          code: 'PRICE_PROTECTION',
+          error: 'Not filled. The executable SDK price moved outside your reviewed limit.',
+          estimatedPrice,
+        };
+      }
+    }
+    const response = isMarket
+      ? await client.placeMarketOrder(params.side === 'BUY'
+        ? {
+            tokenId: params.tokenID,
+            side: OrderSide.BUY,
+            amount: params.amount ?? (params.size ?? 0) * params.price,
+            maxPrice: estimatedPrice ?? params.price,
+            maxSpend: params.amount,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+            builderCode: POLYMARKET_BUILDER_CODE,
+          }
+        : {
+            tokenId: params.tokenID,
+            side: OrderSide.SELL,
+            shares: params.size ?? 0,
+            minPrice: estimatedPrice ?? params.price,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+            builderCode: POLYMARKET_BUILDER_CODE,
+          })
+      : await client.placeLimitOrder({
+          tokenId: params.tokenID,
+          side: params.side === 'BUY' ? OrderSide.BUY : OrderSide.SELL,
+          size: params.size ?? 0,
+          price: params.price,
+          builderCode: POLYMARKET_BUILDER_CODE,
+          ...(params.orderType === 'GTD' && params.expiration ? { expiration: params.expiration } : {}),
+        });
 
-function friendlyPlaceBetError(detail: string): string {
-  if (/FOK_ORDER_NOT_FILLED|not filled|fill[- ]?or[- ]?kill|couldn'?t be fully filled/iu.test(detail)) {
-    return 'Not filled. Price or liquidity changed. Try a smaller amount or refresh the market.';
+    if (!response.ok) {
+      const normalized = normalizePredictError({ code: response.code, message: response.message });
+      return {
+        success: false,
+        status: normalized.kind === 'liquidity' ? 'not_filled' : 'failed',
+        code: normalized.code,
+        error: normalized.message,
+        estimatedPrice,
+      };
+    }
+
+    const makingAmount = toNumber(response.makingAmount) ?? 0;
+    const takingAmount = toNumber(response.takingAmount) ?? 0;
+    let actualShares = params.side === 'BUY' ? takingAmount : makingAmount;
+    let actualAmount = params.side === 'BUY' ? makingAmount : takingAmount;
+    let executionPrice = actualShares > 0 ? actualAmount / actualShares : undefined;
+
+    // Resting/delayed orders have zero immediate fill amounts. Read back the
+    // authoritative SDK order rather than presenting the local preview as the
+    // accepted order size/price.
+    if (response.status !== 'matched') {
+      try {
+        const order = await client.fetchOrder({ orderId: response.orderId });
+        actualShares = toNumber(order.originalSize) ?? 0;
+        executionPrice = toNumber(order.price) ?? undefined;
+        actualAmount = actualShares * (executionPrice ?? 0);
+      } catch {
+        // The placement result remains authoritative; reconciliation will
+        // fetch the order again after the upstream index catches up.
+      }
+    }
+
+    const resultMeta = {
+      orderID: response.orderId,
+      estimatedPrice,
+      ...(executionPrice !== undefined ? { executionPrice } : {}),
+      ...(actualShares > 0 ? { shares: actualShares, expectedPayout: actualShares } : {}),
+      ...(actualAmount > 0 ? { amount: actualAmount } : {}),
+      tradeIds: response.tradeIds,
+    };
+    if (isMarket && response.status === 'matched') {
+      try {
+        await client.waitForOrderFillSettlement(response);
+      } catch (error) {
+        const normalized = normalizePredictError(error, 'Order settlement failed.');
+        if (normalized.kind === 'order_waiting') {
+          return {
+            success: true,
+            ...resultMeta,
+            status: 'submitted',
+            userMessage: 'Order matched. Settlement is still processing.',
+          };
+        }
+        throw error;
+      }
+    }
+    const status: PredictOperationStatus = response.status === 'matched' ? 'filled' : 'waiting_to_match';
+    return { success: true, ...resultMeta, status };
+  } catch (error) {
+    const normalized = normalizePredictError(error, 'Order failed.');
+    return { success: false, status: 'failed', code: normalized.code, error: normalized.message };
   }
-
-  if (/not enough liquidity|insufficient liquidity/iu.test(detail)) {
-    return 'Not enough liquidity at the current price. Try a smaller amount.';
-  }
-
-  if (/min option validation/iu.test(detail)) {
-    return 'Select at least one option to continue.';
-  }
-
-  const minimumMatch =
-    detail.match(/lower than the minimum:\s*([0-9]+(?:\.[0-9]+)?)/iu)
-    ?? detail.match(/minimum(?: order)? size[^0-9]*([0-9]+(?:\.[0-9]+)?)/iu);
-  if (minimumMatch) {
-    const minimum = Number.parseFloat(minimumMatch[1]);
-    return `Minimum order size is ${formatOrderMinimum(minimum)}. Increase your amount to continue.`;
-  }
-
-  return detail;
-}
-
-/**
- * Place bet through the server-side deposit-wallet order path.
- */
-export async function placeBet(signer: Signer, params: PlaceBetParams): Promise<PlaceBetResult> {
-  const baseUrl = resolveApiBaseUrl();
-  const signedOrder = await createSignedPredictOrder(signer, params);
-
-  const response = await fetchWithTimeout(`${baseUrl}/clob/order`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...params, signedOrder }),
-  });
-
-  const data = await response.json() as Record<string, unknown>;
-  const operationMeta = parseOperationMeta(data);
-
-  if (!response.ok) {
-    const detail = typeof data.userMessage === 'string'
-      ? data.userMessage
-      : typeof data.detail === 'string'
-        ? data.detail
-        : typeof data.error === 'string'
-          ? data.error
-          : 'Order failed';
-    return { success: false, error: friendlyPlaceBetError(detail), ...operationMeta };
-  }
-
-  return {
-    success: true,
-    orderID: typeof data.orderID === 'string'
-      ? data.orderID
-      : typeof data.orderId === 'string'
-        ? data.orderId
-        : typeof data.id === 'string'
-          ? data.id
-          : undefined,
-    ...operationMeta,
-  };
 }
 
 // --- CLOB Open Orders ---
@@ -882,43 +870,56 @@ export interface OpenOrder {
   outcome: string;
   created_at: number;
   order_type: string;
+  /** SDK trade IDs already reflected in size_matched (used for idempotent stream updates). */
+  associate_trades?: string[];
 }
 
-export async function fetchOpenOrders(polygonAddress: string): Promise<OpenOrder[]> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/positions/${encodeURIComponent(polygonAddress)}`);
-  if (!response.ok) {
-    // 401 = no active CLOB session (server restart / TTL expired) — not a crash
-    if (response.status === 401) notifyClobSessionExpired();
-    return [];
+type SdkOpenOrder = Awaited<ReturnType<SecureClient['fetchOrder']>>;
+
+function mapOpenOrder(order: SdkOpenOrder): OpenOrder {
+  return {
+    id: order.id,
+    status: order.status,
+    market: order.conditionId,
+    asset_id: order.tokenId,
+    side: order.side,
+    original_size: order.originalSize,
+    size_matched: order.sizeMatched,
+    price: order.price,
+    outcome: order.outcome,
+    created_at: Date.parse(order.createdAt),
+    order_type: order.orderType,
+    associate_trades: order.associateTrades,
+  };
+}
+
+export async function fetchOpenOrders(client: SecureClient): Promise<OpenOrder[]> {
+  const orders: OpenOrder[] = [];
+  for await (const page of client.listOpenOrders()) {
+    orders.push(...page.items.map(mapOpenOrder));
   }
-  const data = await response.json() as Record<string, unknown>;
-  return Array.isArray(data.orders) ? data.orders as OpenOrder[] : [];
+  return orders;
+}
+
+export async function fetchOpenOrder(client: SecureClient, orderId: string): Promise<OpenOrder> {
+  const typedOrderId = orderId as Parameters<SecureClient['fetchOrder']>[0]['orderId'];
+  return mapOpenOrder(await client.fetchOrder({ orderId: typedOrderId }));
 }
 
 export async function cancelOrder(
-  polygonAddress: string,
+  client: SecureClient,
   orderId: string,
 ): Promise<{ ok: boolean; error?: string } & PredictOperationMeta> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(
-    `${baseUrl}/clob/order/${encodeURIComponent(orderId)}?address=${encodeURIComponent(polygonAddress)}`,
-    { method: 'DELETE' },
-  );
-  const data = await response.json() as Record<string, unknown>;
-  const operationMeta = parseOperationMeta(data);
-  if (!response.ok) {
-    return {
-      ok: false,
-      error: typeof data.userMessage === 'string'
-        ? data.userMessage
-        : typeof data.detail === 'string'
-          ? data.detail
-          : 'Cancel failed',
-      ...operationMeta,
-    };
+  try {
+    const typedOrderId = orderId as Parameters<SecureClient['cancelOrder']>[0]['orderId'];
+    const result = await client.cancelOrder({ orderId: typedOrderId });
+    if (result.canceled.some((id) => id === orderId)) return { ok: true, status: 'cancelled' };
+    const reason = Object.entries(result.notCanceled).find(([id]) => id === orderId)?.[1];
+    return { ok: false, status: 'failed', error: reason || 'Polymarket did not cancel this order.' };
+  } catch (error) {
+    const normalized = normalizePredictError(error, 'Cancel failed.');
+    return { ok: false, status: 'failed', code: normalized.code, error: normalized.message };
   }
-  return { ok: true, ...operationMeta };
 }
 
 // --- CLOB Balance ---
@@ -926,75 +927,23 @@ export async function cancelOrder(
 export interface ClobBalance {
   balance: number;
   allowance: number;
-  wrap?: {
-    attempted: boolean;
-    wrapped: boolean;
-    amount: number;
-    txHash: string | null;
-    error: string | null;
-    signatureRequired?: boolean;
-  };
 }
 
-/**
- * Auto-wrap needs a signature, so it only runs when the caller supplied a
- * signer. Balance reads themselves are unauthenticated and work without one.
- */
-export async function fetchClobBalance(
-  polygonAddress: string,
-  wrapSigner: Signer | null = null,
-): Promise<ClobBalance | null> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/balance/${encodeURIComponent(polygonAddress)}`);
-  if (!response.ok) {
-    // 401 = no active CLOB session (server restart / TTL expired) — not a crash
-    if (response.status === 401) notifyClobSessionExpired();
+export async function fetchClobBalance(client: SecureClient): Promise<ClobBalance | null> {
+  try {
+    const assetType = 'COLLATERAL' as Parameters<typeof fetchBalanceAllowance>[1]['assetType'];
+    const result = await fetchBalanceAllowance(client, { assetType });
+    const allowanceValues = Object.values(result.allowances).map((value) => BigInt(value));
+    const allowance = allowanceValues.length > 0
+      ? allowanceValues.reduce((minimum, value) => value < minimum ? value : minimum)
+      : 0n;
+    return {
+      balance: Number(BigInt(result.balance)) / 1e6,
+      allowance: Number(allowance) / 1e6,
+    };
+  } catch {
     return null;
   }
-  const data = await response.json() as Record<string, unknown>;
-  const wrap = data.wrap && typeof data.wrap === 'object'
-    ? data.wrap as ClobBalance['wrap']
-    : undefined;
-  if (wrapSigner && wrap?.signatureRequired) {
-    await wrapPolymarketCash(wrapSigner, polygonAddress).catch(() => null);
-    return fetchClobBalance(polygonAddress, null);
-  }
-  return {
-    balance: typeof data.balance === 'number' ? data.balance : 0,
-    allowance: typeof data.allowance === 'number' ? data.allowance : 0,
-    wrap,
-  };
-}
-
-export async function wrapPolymarketCash(
-  signer: Signer,
-  polygonAddress: string,
-): Promise<PredictOperationMeta & { ok: boolean; error?: string }> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/wrap`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ polygonAddress }),
-  });
-  const data = await response.json() as Record<string, unknown>;
-  const signatureRequest = getSignatureRequest(data);
-  if (signatureRequest) {
-    const batch = await signDepositWalletBatch(signer, signatureRequest, { operation: 'wrap' });
-    const signedResponse = await fetchWithTimeout(`${baseUrl}/clob/wrap`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ polygonAddress, batch }),
-    });
-    const signedData = await signedResponse.json() as Record<string, unknown>;
-    if (!signedResponse.ok) {
-      return { ok: false, error: typeof signedData.userMessage === 'string' ? signedData.userMessage : 'Wrap failed', ...parseOperationMeta(signedData) };
-    }
-    return { ok: true, ...parseOperationMeta(signedData) };
-  }
-  if (!response.ok) {
-    return { ok: false, error: typeof data.userMessage === 'string' ? data.userMessage : 'Wrap failed', ...parseOperationMeta(data) };
-  }
-  return { ok: true, ...parseOperationMeta(data) };
 }
 
 // --- Deposit Status ---
@@ -1018,6 +967,185 @@ export interface DepositBridgeTransaction {
   createdTimeMs?: number;
 }
 
+export interface BridgeSupportedAsset {
+  chainId: string;
+  chainName: string;
+  token: {
+    name: string;
+    symbol: string;
+    address: string;
+    decimals: number;
+  };
+  minCheckoutUsd: number;
+}
+
+export interface BridgeDepositAddresses {
+  evm?: string;
+  svm?: string;
+  [key: string]: string | undefined;
+}
+
+export interface BridgeQuoteFeeBreakdown {
+  appFeePercent: number | null;
+  appFeeUsd: number | null;
+  fillCostPercent: number | null;
+  fillCostUsd: number | null;
+  gasUsd: number | null;
+  maxSlippage: number | null;
+  minReceived: number | null;
+  swapImpact: number | null;
+  totalImpact: number | null;
+  totalImpactUsd: number | null;
+}
+
+export interface BridgeQuote {
+  quoteId: string;
+  estCheckoutTimeMs: number;
+  estInputUsd: number;
+  estOutputUsd: number;
+  estToTokenBaseUnit: string;
+  estFeeBreakdown: BridgeQuoteFeeBreakdown;
+}
+
+export interface BridgeQuoteRequest {
+  fromAmountBaseUnit: string;
+  fromChainId: string;
+  fromTokenAddress: string;
+  recipientAddress: string;
+  toChainId: string;
+  toTokenAddress: string;
+}
+
+export const POLYGON_CHAIN_ID = '137';
+export const SOLANA_CHAIN_ID = '1151111081099710';
+export const POLYGON_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+export const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+export const POLYMARKET_PUSD = '0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb';
+export const MAX_WITHDRAW_BRIDGE_IMPACT_PERCENT = 0.1; // 10 basis points
+
+async function bridgeJson(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
+  const response = await fetchWithTimeout(`${resolveApiBaseUrl()}${path}`, init);
+  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    const detail = typeof data.error === 'string' ? data.error : `Bridge request failed (${response.status})`;
+    throw Object.assign(new Error(detail), { status: response.status });
+  }
+  return data;
+}
+
+function mapBridgeAsset(value: unknown): BridgeSupportedAsset | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const token = row.token && typeof row.token === 'object'
+    ? row.token as Record<string, unknown>
+    : null;
+  const minCheckoutUsd = toNumber(row.minCheckoutUsd);
+  if (
+    typeof row.chainId !== 'string'
+    || typeof row.chainName !== 'string'
+    || !token
+    || typeof token.name !== 'string'
+    || typeof token.symbol !== 'string'
+    || typeof token.address !== 'string'
+    || typeof token.decimals !== 'number'
+    || minCheckoutUsd === null
+  ) return null;
+  return {
+    chainId: row.chainId,
+    chainName: row.chainName,
+    token: {
+      name: token.name,
+      symbol: token.symbol,
+      address: token.address,
+      decimals: token.decimals,
+    },
+    minCheckoutUsd,
+  };
+}
+
+export async function fetchBridgeSupportedAssets(): Promise<BridgeSupportedAsset[]> {
+  const data = await bridgeJson('/clob/bridge/supported-assets');
+  const rows = Array.isArray(data.supportedAssets) ? data.supportedAssets : [];
+  return rows.map(mapBridgeAsset).filter((asset): asset is BridgeSupportedAsset => asset !== null);
+}
+
+/** Deliberately narrow product support: exact native USDC on Polygon/Solana. */
+export function selectSupportedDepositAssets(assets: BridgeSupportedAsset[]): BridgeSupportedAsset[] {
+  const accepted = new Map([
+    [`${POLYGON_CHAIN_ID}:${POLYGON_USDC.toLowerCase()}`, 0],
+    [`${SOLANA_CHAIN_ID}:${SOLANA_USDC_MINT.toLowerCase()}`, 1],
+  ]);
+  return assets
+    .filter((asset) => accepted.has(`${asset.chainId}:${asset.token.address.toLowerCase()}`))
+    .sort((a, b) => (
+      accepted.get(`${a.chainId}:${a.token.address.toLowerCase()}`)!
+      - accepted.get(`${b.chainId}:${b.token.address.toLowerCase()}`)!
+    ));
+}
+
+export async function fetchDepositAddresses(walletAddress: string): Promise<BridgeDepositAddresses> {
+  const data = await bridgeJson(`/clob/deposit/${encodeURIComponent(walletAddress)}`);
+  const raw = data.address && typeof data.address === 'object'
+    ? data.address as Record<string, unknown>
+    : data;
+  return Object.fromEntries(
+    Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+}
+
+function bridgeFeeNumber(raw: Record<string, unknown>, field: string): number | null {
+  return toNumber(raw[field]);
+}
+
+export async function fetchBridgeQuote(request: BridgeQuoteRequest): Promise<BridgeQuote> {
+  const data = await bridgeJson('/clob/bridge/quote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const fees = data.estFeeBreakdown && typeof data.estFeeBreakdown === 'object'
+    ? data.estFeeBreakdown as Record<string, unknown>
+    : {};
+  const quoteId = typeof data.quoteId === 'string' ? data.quoteId : null;
+  const estCheckoutTimeMs = toNumber(data.estCheckoutTimeMs);
+  const estInputUsd = toNumber(data.estInputUsd);
+  const estOutputUsd = toNumber(data.estOutputUsd);
+  const estToTokenBaseUnit = typeof data.estToTokenBaseUnit === 'string'
+    ? data.estToTokenBaseUnit
+    : null;
+  if (!quoteId || estCheckoutTimeMs === null || estInputUsd === null || estOutputUsd === null || !estToTokenBaseUnit) {
+    throw new Error('Bridge returned an incomplete quote. Try again.');
+  }
+  return {
+    quoteId,
+    estCheckoutTimeMs,
+    estInputUsd,
+    estOutputUsd,
+    estToTokenBaseUnit,
+    estFeeBreakdown: {
+      appFeePercent: bridgeFeeNumber(fees, 'appFeePercent'),
+      appFeeUsd: bridgeFeeNumber(fees, 'appFeeUsd'),
+      fillCostPercent: bridgeFeeNumber(fees, 'fillCostPercent'),
+      fillCostUsd: bridgeFeeNumber(fees, 'fillCostUsd'),
+      gasUsd: bridgeFeeNumber(fees, 'gasUsd'),
+      maxSlippage: bridgeFeeNumber(fees, 'maxSlippage'),
+      minReceived: bridgeFeeNumber(fees, 'minReceived'),
+      swapImpact: bridgeFeeNumber(fees, 'swapImpact'),
+      totalImpact: bridgeFeeNumber(fees, 'totalImpact'),
+      totalImpactUsd: bridgeFeeNumber(fees, 'totalImpactUsd'),
+    },
+  };
+}
+
+export function decimalAmountToBaseUnits(amount: number, decimals: number): string {
+  if (!Number.isFinite(amount) || amount < 0 || !Number.isInteger(decimals) || decimals < 0) {
+    throw new Error('Invalid token amount.');
+  }
+  const fixed = amount.toFixed(decimals);
+  const [whole, fraction = ''] = fixed.split('.');
+  return `${whole}${fraction.padEnd(decimals, '0')}`.replace(/^0+(?=\d)/u, '');
+}
+
 export async function fetchDepositStatus(depositAddress: string): Promise<DepositBridgeTransaction[]> {
   const baseUrl = resolveApiBaseUrl();
   const response = await fetchWithTimeout(`${baseUrl}/clob/deposit-status/${encodeURIComponent(depositAddress)}`);
@@ -1028,7 +1156,7 @@ export async function fetchDepositStatus(depositAddress: string): Promise<Deposi
     : [];
 }
 
-// --- Portfolio & Positions (Gamma data-api, proxied through VPS) ---
+// --- Account data (authoritative SecureClient account.wallet) ---
 
 export interface PortfolioPosition {
   proxyWallet: string;
@@ -1079,6 +1207,7 @@ export interface PortfolioData {
   redeemablePositions: PortfolioPosition[];
   closedPositions: ClosedPortfolioPosition[];
   activity: ActivityItem[];
+  recentTrades: RecentAccountTrade[];
   profile: {
     name: string | null;
     bio: string | null;
@@ -1100,24 +1229,6 @@ export interface PortfolioData {
   };
 }
 
-export async function fetchPortfolio(polygonAddress: string): Promise<PortfolioData> {
-  const payload = await getJson(`/polymarket/portfolio/${encodeURIComponent(polygonAddress)}`);
-  if (!payload || typeof payload !== 'object') throw new Error('Invalid portfolio response');
-  const p = payload as Record<string, unknown>;
-  return {
-    address: typeof p.address === 'string' ? p.address : polygonAddress,
-    portfolioValue: toNumber(p.portfolioValue),
-    positions: Array.isArray(p.positions) ? (p.positions as PortfolioPosition[]) : [],
-    redeemablePositions: Array.isArray(p.redeemablePositions)
-      ? (p.redeemablePositions as PortfolioPosition[]).filter((position) => (position.currentValue ?? 0) >= 0.01)
-      : [],
-    closedPositions: Array.isArray(p.closedPositions) ? (p.closedPositions as ClosedPortfolioPosition[]) : [],
-    activity: Array.isArray(p.activity) ? (p.activity as ActivityItem[]) : [],
-    profile: p.profile as PortfolioData['profile'] ?? null,
-    summary: (p.summary as PortfolioData['summary']) ?? { openPositions: 0, totalPnl: 0, totalCollected: 0 },
-  };
-}
-
 export interface ActivityItem {
   timestamp: number;
   type: string;
@@ -1134,36 +1245,198 @@ export interface ActivityItem {
   outcome: string;
 }
 
-export async function fetchActivity(polygonAddress: string): Promise<ActivityItem[]> {
-  const payload = await getJson(`/polymarket/activity/${encodeURIComponent(polygonAddress)}`);
-  if (!Array.isArray(payload)) return [];
-  return payload as ActivityItem[];
+export interface RecentAccountTrade {
+  id: string;
+  conditionId: string;
+  tokenId: string;
+  takerOrderId: string;
+  makerOrderIds: string[];
+  side: string;
+  price: number;
+  size: number;
+  status: string;
+  matchedAt: number;
 }
 
-export async function fetchMarketPositions(polygonAddress: string, slug: string): Promise<PortfolioPosition[]> {
-  const payload = await getJson(`/polymarket/positions/${encodeURIComponent(polygonAddress)}/market/${encodeURIComponent(slug)}`);
-  if (!Array.isArray(payload)) return [];
-  return payload as PortfolioPosition[];
+export async function fetchRecentAccountTrades(client: SecureClient): Promise<RecentAccountTrade[]> {
+  const page = await client.listAccountTrades().firstPage();
+  return page.items.map((trade) => ({
+    id: trade.id,
+    conditionId: trade.conditionId,
+    tokenId: trade.tokenId,
+    takerOrderId: trade.takerOrderId,
+    makerOrderIds: trade.makerOrders.map((order) => order.orderId),
+    side: trade.side,
+    price: numberOrZero(trade.price),
+    size: numberOrZero(trade.size),
+    status: trade.status,
+    matchedAt: Date.parse(trade.matchedAt),
+  }));
+}
+
+async function collectSdkPages<T>(paginator: AsyncIterable<{ items: T[] }>): Promise<T[]> {
+  const items: T[] = [];
+  for await (const page of paginator) items.push(...page.items);
+  return items;
+}
+
+function numberOrZero(value: unknown): number {
+  return toNumber(value) ?? 0;
+}
+
+function mapSdkPosition(value: unknown): PortfolioPosition {
+  const position = value as Record<string, unknown>;
+  return {
+    proxyWallet: typeof position.wallet === 'string' ? position.wallet : '',
+    asset: typeof position.tokenId === 'string' ? position.tokenId : '',
+    conditionId: typeof position.conditionId === 'string' ? position.conditionId : '',
+    size: numberOrZero(position.size),
+    avgPrice: numberOrZero(position.avgPrice),
+    currentValue: numberOrZero(position.currentValue),
+    cashPnl: numberOrZero(position.cashPnl),
+    percentPnl: numberOrZero(position.percentPnl),
+    curPrice: numberOrZero(position.curPrice),
+    title: typeof position.title === 'string' ? position.title : '',
+    slug: typeof position.slug === 'string' ? position.slug : '',
+    eventSlug: typeof position.eventSlug === 'string' ? position.eventSlug : '',
+    outcome: typeof position.outcome === 'string' ? position.outcome : '',
+    outcomeIndex: numberOrZero(position.outcomeIndex),
+    icon: typeof position.icon === 'string' ? position.icon : null,
+    endDate: typeof position.endDate === 'string' ? position.endDate : null,
+    negativeRisk: position.negativeRisk === true,
+  };
+}
+
+function mapSdkClosedPosition(value: unknown): ClosedPortfolioPosition {
+  const position = value as Record<string, unknown>;
+  return {
+    proxyWallet: typeof position.wallet === 'string' ? position.wallet : '',
+    asset: typeof position.tokenId === 'string' ? position.tokenId : '',
+    conditionId: typeof position.conditionId === 'string' ? position.conditionId : '',
+    avgPrice: numberOrZero(position.avgPrice),
+    totalBought: numberOrZero(position.totalBought),
+    realizedPnl: numberOrZero(position.realizedPnl),
+    curPrice: numberOrZero(position.curPrice),
+    timestamp: numberOrZero(position.timestamp),
+    title: typeof position.title === 'string' ? position.title : '',
+    slug: typeof position.slug === 'string' ? position.slug : '',
+    icon: typeof position.icon === 'string' ? position.icon : null,
+    eventSlug: typeof position.eventSlug === 'string' ? position.eventSlug : '',
+    outcome: typeof position.outcome === 'string' ? position.outcome : '',
+    outcomeIndex: numberOrZero(position.outcomeIndex),
+    oppositeOutcome: typeof position.oppositeOutcome === 'string' ? position.oppositeOutcome : '',
+    oppositeAsset: typeof position.oppositeTokenId === 'string' ? position.oppositeTokenId : '',
+    endDate: typeof position.endDate === 'string' ? position.endDate : null,
+  };
+}
+
+function mapSdkActivity(value: unknown): ActivityItem {
+  const activity = value as Record<string, unknown>;
+  const isTrade = activity.type === 'TRADE' && activity.isCombo !== true;
+  return {
+    timestamp: numberOrZero(activity.timestamp),
+    type: typeof activity.type === 'string' ? activity.type : 'UNKNOWN',
+    side: isTrade && typeof activity.side === 'string' ? activity.side : '',
+    size: isTrade ? numberOrZero(activity.shares) : 0,
+    usdcSize: numberOrZero(activity.amount),
+    price: isTrade ? numberOrZero(activity.price) : 0,
+    asset: isTrade && typeof activity.tokenId === 'string' ? activity.tokenId : undefined,
+    conditionId: typeof activity.conditionId === 'string' ? activity.conditionId : undefined,
+    eventSlug: typeof activity.eventSlug === 'string' ? activity.eventSlug : undefined,
+    outcomeIndex: isTrade ? numberOrZero(activity.outcomeIndex) : undefined,
+    title: typeof activity.title === 'string' ? activity.title : 'Account activity',
+    slug: typeof activity.slug === 'string' ? activity.slug : '',
+    outcome: isTrade && typeof activity.outcome === 'string' ? activity.outcome : '',
+  };
+}
+
+export async function fetchActivity(client: SecureClient): Promise<ActivityItem[]> {
+  const activities = await collectSdkPages(client.listActivity());
+  return activities.map(mapSdkActivity);
+}
+
+export async function fetchPortfolio(client: SecureClient): Promise<PortfolioData> {
+  const [sdkPositions, sdkClosed, values, activities, profile, recentTrades] = await Promise.all([
+    collectSdkPages(client.listPositions()),
+    collectSdkPages(client.listClosedPositions()),
+    client.fetchPortfolioValue(),
+    collectSdkPages(client.listActivity()),
+    client.fetchPublicProfile({ address: client.account.wallet }),
+    fetchRecentAccountTrades(client),
+  ]);
+  const positions = sdkPositions.map(mapSdkPosition);
+  const redeemablePositions = sdkPositions
+    .filter((position) => (position as unknown as Record<string, unknown>).redeemable === true)
+    .map(mapSdkPosition)
+    .filter((position) => position.currentValue >= 0.01);
+  const closedPositions = sdkClosed.map(mapSdkClosedPosition);
+  const activity = activities.map(mapSdkActivity);
+  const totalPnl = positions.reduce((sum, position) => sum + position.cashPnl, 0);
+  const cashOutNow = positions.reduce((sum, position) => sum + position.currentValue, 0);
+  const readyToCollect = redeemablePositions.reduce((sum, position) => sum + position.currentValue, 0);
+  const totalRealizedPnl = closedPositions.reduce((sum, position) => sum + position.realizedPnl, 0);
+  const totalCollected = activity
+    .filter((entry) => entry.type === 'REDEEM')
+    .reduce((sum, entry) => sum + entry.usdcSize, 0);
+
+  return {
+    address: client.account.wallet,
+    portfolioValue: values.reduce((sum, value) => sum + numberOrZero(value.value), 0),
+    positions,
+    redeemablePositions,
+    closedPositions,
+    activity,
+    recentTrades,
+    profile: profile ? {
+      name: profile.name ?? profile.pseudonym ?? null,
+      bio: profile.bio ?? null,
+      profileImage: profile.profileImage ?? null,
+      xUsername: profile.xUsername ?? null,
+    } : null,
+    summary: {
+      openPositions: positions.length,
+      totalPnl,
+      cashOutNow,
+      readyToCollect,
+      activePickCount: positions.length,
+      closedPickCount: closedPositions.length,
+      activityCount: activity.length,
+      hasActivity: activity.length > 0,
+      hasAnyPicks: positions.length + closedPositions.length > 0,
+      totalCollected,
+      totalRealizedPnl,
+    },
+  };
+}
+
+export async function fetchMarketPositions(client: SecureClient, slug: string): Promise<PortfolioPosition[]> {
+  const positions = await collectSdkPages(client.listPositions());
+  return positions.map(mapSdkPosition).filter((position) => (
+    position.slug === slug || position.eventSlug === slug
+  ));
 }
 
 // --- Withdraw ---
 
 export interface WithdrawParams {
-  polygonAddress: string;
-  tradingAddress: string;
   amount: number;
   solanaAddress: string;
 }
 
-export interface WithdrawResult extends PredictOperationMeta {
-  ok: boolean;
-  amount?: number;
-  txHash?: string | null;
-  error?: string;
+export interface PreparedWithdrawal {
+  amount: number;
+  solanaAddress: string;
+  bridgeAddress: string;
+  asset: BridgeSupportedAsset;
+  quote: BridgeQuote;
 }
 
-const SOLANA_CHAIN_ID = '1151111081099710';
-const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+export interface WithdrawalTransferStatus {
+  state: string;
+  transactionId: string;
+  transactionHash: string | null;
+  errorMessage: string | null;
+}
 
 function bridgeAddressFromPayload(data: Record<string, unknown>): string | null {
   const address = data.address;
@@ -1176,88 +1449,95 @@ function bridgeAddressFromPayload(data: Record<string, unknown>): string | null 
   return null;
 }
 
-async function fetchExpectedWithdrawBridgeAddress(params: WithdrawParams): Promise<string> {
-  const response = await fetchWithTimeout('https://bridge.polymarket.com/withdraw', {
+async function fetchExpectedWithdrawBridgeAddress(
+  client: SecureClient,
+  params: WithdrawParams,
+  destinationAsset: BridgeSupportedAsset,
+): Promise<string> {
+  const response = await fetchWithTimeout(`${resolveApiBaseUrl()}/clob/bridge/withdraw`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      address: params.tradingAddress,
-      toChainId: SOLANA_CHAIN_ID,
-      toTokenAddress: SOLANA_USDC_MINT,
+      address: client.account.wallet,
+      toChainId: destinationAsset.chainId,
+      toTokenAddress: destinationAsset.token.address,
       recipientAddr: params.solanaAddress,
     }),
   });
   const data = await response.json().catch(() => ({})) as Record<string, unknown>;
   const bridgeAddress = bridgeAddressFromPayload(data);
-  if (!response.ok || !bridgeAddress) {
+  if (!response.ok || !bridgeAddress || !/^0x[0-9a-fA-F]{40}$/u.test(bridgeAddress)) {
     throw new Error('Could not verify withdrawal route. Try again.');
   }
   return bridgeAddress;
 }
 
-export async function withdrawFromPolymarket(
-  signer: Signer,
-  params: WithdrawParams,
-): Promise<WithdrawResult> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/withdraw`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
+export async function fetchWithdrawalQuote(
+  amount: number,
+  solanaAddress: string,
+): Promise<{ asset: BridgeSupportedAsset; quote: BridgeQuote }> {
+  const assets = selectSupportedDepositAssets(await fetchBridgeSupportedAssets());
+  const asset = assets.find((entry) => entry.chainId === SOLANA_CHAIN_ID);
+  if (!asset) throw new Error('Solana USDC withdrawals are unavailable right now.');
+  if (!Number.isFinite(amount) || amount < asset.minCheckoutUsd) {
+    throw new Error(`Minimum withdrawal is $${asset.minCheckoutUsd.toFixed(2)} USDC.`);
+  }
+  const quote = await fetchBridgeQuote({
+    fromAmountBaseUnit: decimalAmountToBaseUnits(amount, 6),
+    fromChainId: POLYGON_CHAIN_ID,
+    fromTokenAddress: POLYMARKET_PUSD,
+    recipientAddress: solanaAddress,
+    toChainId: asset.chainId,
+    toTokenAddress: asset.token.address,
   });
-
-  const data = await response.json() as Record<string, unknown>;
-  const operationMeta = parseOperationMeta(data);
-  const signatureRequest = getSignatureRequest(data);
-  if (signatureRequest) {
-    const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(params);
-    const batch = await signDepositWalletBatch(signer, signatureRequest, {
-      operation: 'withdraw',
-      amount: params.amount,
-      bridgeAddress,
-    });
-    const signedResponse = await fetchWithTimeout(`${baseUrl}/clob/withdraw`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...params, batch }),
-    });
-    const signedData = await signedResponse.json() as Record<string, unknown>;
-    const signedMeta = parseOperationMeta(signedData);
-    if (!signedResponse.ok) {
-      return {
-        ok: false,
-        error: typeof signedData.userMessage === 'string'
-          ? signedData.userMessage
-          : typeof signedData.detail === 'string'
-            ? signedData.detail
-            : 'Withdraw failed',
-        ...signedMeta,
-      };
-    }
-    return {
-      ok: true,
-      amount: typeof signedData.amount === 'number' ? signedData.amount : undefined,
-      txHash: typeof signedData.txHash === 'string' ? signedData.txHash : null,
-      ...signedMeta,
-    };
+  // The documented <10bp offramp rule applies to the pUSD -> native USDC
+  // swap, not total bridge cost (which also includes fixed fill/gas costs).
+  const impact = quote.estFeeBreakdown.swapImpact;
+  if (impact === null) throw new Error('Bridge quote did not include swap impact.');
+  if (impact >= MAX_WITHDRAW_BRIDGE_IMPACT_PERCENT) {
+    throw new Error(
+      `Bridge swap impact is ${impact.toFixed(3)}%; it must stay below ${MAX_WITHDRAW_BRIDGE_IMPACT_PERCENT.toFixed(2)}%.`,
+    );
   }
+  return { asset, quote };
+}
 
-  if (!response.ok) {
-    const detail = typeof data.userMessage === 'string'
-      ? data.userMessage
-      : typeof data.detail === 'string'
-        ? data.detail
-        : typeof data.error === 'string'
-          ? data.error
-          : 'Withdraw failed';
-    return { ok: false, error: detail, ...operationMeta };
+export async function preparePolymarketWithdrawal(
+  client: SecureClient,
+  params: WithdrawParams,
+): Promise<PreparedWithdrawal> {
+  if (!Number.isFinite(params.amount) || params.amount <= 0) {
+    throw new Error('Enter a valid withdrawal amount.');
   }
+  // Re-quote at submission time. The modal's quote is only for review.
+  const { asset, quote } = await fetchWithdrawalQuote(params.amount, params.solanaAddress);
+  const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(client, params, asset);
+  return { ...params, bridgeAddress, asset, quote };
+}
 
+/** Submit without waiting so the caller can durably save the handle first. */
+export function submitPreparedWithdrawal(
+  client: SecureClient,
+  prepared: PreparedWithdrawal,
+): Promise<TransactionHandle> {
+  return client.transferErc20({
+    tokenAddress: POLYMARKET_PUSD,
+    recipientAddress: prepared.bridgeAddress,
+    amount: BigInt(decimalAmountToBaseUnits(prepared.amount, 6)),
+    metadata: `Withdraw pUSD to Solana ${prepared.solanaAddress}`,
+  });
+}
+
+export async function fetchWithdrawalTransferStatus(
+  client: SecureClient,
+  transactionId: string,
+): Promise<WithdrawalTransferStatus> {
+  const transaction = await fetchTransaction(client, { transactionId });
   return {
-    ok: true,
-    amount: typeof data.amount === 'number' ? data.amount : undefined,
-    txHash: typeof data.txHash === 'string' ? data.txHash : null,
-    ...operationMeta,
+    state: transaction.state,
+    transactionId: transaction.transactionId,
+    transactionHash: transaction.transactionHash,
+    errorMessage: transaction.errorMsg,
   };
 }
 
@@ -1271,102 +1551,33 @@ export interface RedeemResult extends PredictOperationMeta {
 
 export interface RedeemPositionInput {
   conditionId: string;
-  asset?: string;
-  outcomeIndex?: number;
-  negativeRisk?: boolean;
+  marketId?: string;
+  positionId?: string;
 }
 
 export async function redeemPosition(
-  signer: Signer,
-  polygonAddress: string,
+  client: SecureClient,
   position: RedeemPositionInput,
 ): Promise<RedeemResult> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/redeem`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      polygonAddress,
-      conditionId: position.conditionId,
-      asset: position.asset,
-      outcomeIndex: position.outcomeIndex,
-      negativeRisk: position.negativeRisk,
-    }),
-  });
-
-  const text = await response.text();
-  let data: Record<string, unknown> = {};
-  if (text) {
-    try {
-      data = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      data = { error: text };
-    }
-  }
-
-  const signatureRequest = getSignatureRequest(data);
-  if (signatureRequest) {
-    const batch = await signDepositWalletBatch(signer, signatureRequest, {
-      operation: 'redeem',
-      conditionId: position.conditionId,
-      negativeRisk: position.negativeRisk,
-    });
-    const signedResponse = await fetchWithTimeout(`${baseUrl}/clob/redeem`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        polygonAddress,
-        conditionId: position.conditionId,
-        asset: position.asset,
-        outcomeIndex: position.outcomeIndex,
-        negativeRisk: position.negativeRisk,
-        batch,
-      }),
-    });
-    const signedText = await signedResponse.text();
-    let signedData: Record<string, unknown> = {};
-    if (signedText) {
-      try {
-        signedData = JSON.parse(signedText) as Record<string, unknown>;
-      } catch {
-        signedData = { error: signedText };
-      }
-    }
-    if (!signedResponse.ok) {
-      const detail =
-        typeof signedData.userMessage === 'string'
-          ? signedData.userMessage
-          : typeof signedData.detail === 'string'
-          ? signedData.detail
-          : typeof signedData.error === 'string'
-            ? signedData.error
-            : `Redeem failed (${signedResponse.status})`;
-      return { ok: false, error: detail, ...parseOperationMeta(signedData) };
-    }
+  try {
+    const handle = await client.redeemPositions(
+      position.positionId
+        ? { positionId: position.positionId }
+        : position.marketId
+          ? { marketId: position.marketId }
+          : { conditionId: position.conditionId },
+    );
+    const outcome = await handle.wait();
     return {
       ok: true,
-      txHash: typeof signedData.txHash === 'string' ? signedData.txHash : null,
-      ...parseOperationMeta(signedData),
+      txHash: outcome.transactionHash,
+      status: 'completed',
+      userMessage: 'Position redeemed.',
     };
+  } catch (error) {
+    const normalized = normalizePredictError(error, 'Redeem failed.');
+    return { ok: false, status: 'failed', code: normalized.code, error: normalized.message };
   }
-
-  if (!response.ok) {
-    const detail =
-      typeof data.userMessage === 'string'
-        ? data.userMessage
-        : typeof data.detail === 'string'
-        ? data.detail
-        : typeof data.error === 'string'
-          ? data.error
-          : `Redeem failed (${response.status})`;
-    return { ok: false, error: detail, ...parseOperationMeta(data) };
-  }
-
-  return {
-    ok: true,
-    txHash: typeof data.txHash === 'string' ? data.txHash : null,
-    ...parseOperationMeta(data),
-  };
 }
 
 export async function fetchPriceHistory(tokenId: string, interval: '5m' | '1h' | '1d' = '1h'): Promise<PriceHistory> {

@@ -34,6 +34,11 @@ import { ProfilePortfolioTabs } from '@/features/predict/profile/ProfilePortfoli
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import type { PredictDataFreshness } from '@/features/predict/predictActivityState';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
+import {
+  applyPredictUserEvent,
+  isPredictTradeEvent,
+  usePolymarketUserStream,
+} from '@/features/predict/usePolymarketUserStream';
 import { semantic, tokens } from '@/theme';
 
 function truncate(addr: string, start = 6, end = 4): string {
@@ -109,7 +114,7 @@ export default function PredictProfileScreen() {
   const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [sessionExpired, setSessionExpired] = useState(false);
+  const [predictUnavailable, setPredictUnavailable] = useState(false);
   const [activityFreshness, setActivityFreshness] = useState<PredictDataFreshness>({
     lastUpdatedAt: null,
     loading: false,
@@ -131,8 +136,8 @@ export default function PredictProfileScreen() {
   // Two different questions, and the screen must not confuse them:
   //   walletAddress      — the EVM wallet exists and can sign. Local, from Privy,
   //                        available at app load. This is "connected".
-  //   poly.polygonAddress — the Polymarket CLOB session is live. Server-side,
-  //                        set only by enable(). This is "account set up".
+  //   poly.polygonAddress — the mobile SecureClient is authenticated and its
+  //                        SDK-resolved account is ready.
   // Gating connection UI on polygonAddress showed "Connect wallet" to a user who
   // already had a working wallet, with no control that advanced them.
   const walletAddress = poly.signer?.descriptor.address ?? null;
@@ -181,12 +186,43 @@ export default function PredictProfileScreen() {
     setPortfolio(null);
     setCashBalance(null);
     setOpenOrders([]);
-    setSessionExpired(false);
+    setPredictUnavailable(false);
     setActivityFreshness({ lastUpdatedAt: null, loading: false, stale: false, error: null });
     setCashOutPosition(null);
     portfolioRefreshInFlight.current = false;
     ordersRefreshInFlight.current = false;
   }, []);
+
+  const handleDisconnectPredict = useCallback(() => {
+    Alert.alert(
+      'Disconnect Predict?',
+      'This revokes the Polymarket API key on the server and removes its encrypted device copy. Your wallet and funds are unchanged.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            setBusy(true);
+            poly.disable()
+              .then(() => {
+                closeSettings();
+                resetWalletScopedState();
+              })
+              .catch((error: unknown) => {
+                Alert.alert(
+                  'Predict was not disconnected',
+                  error instanceof Error
+                    ? error.message
+                    : 'The API key could not be revoked. Your local Predict credentials were preserved.',
+                );
+              })
+              .finally(() => setBusy(false));
+          },
+        },
+      ],
+    );
+  }, [closeSettings, poly, resetWalletScopedState]);
 
   useEffect(() => {
     if (walletScopedKeyRef.current === walletScopedKey) return;
@@ -195,15 +231,15 @@ export default function PredictProfileScreen() {
   }, [walletScopedKey, resetWalletScopedState]);
 
   const handleCancel = useCallback(async (orderId: string) => {
-    if (!poly.polygonAddress) return;
+    if (!poly.client) return;
     setCancellingId(orderId);
     try {
-      const result = await cancelOrder(poly.polygonAddress, orderId);
+      const result = await cancelOrder(poly.client, orderId);
       if (result.ok) {
         setOpenOrders((prev) => prev.map((order) =>
           order.id === orderId ? { ...order, status: 'cancel_requested' } : order
         ));
-        void fetchOpenOrders(poly.polygonAddress).then(setOpenOrders).catch(() => {});
+        void fetchOpenOrders(poly.client).then(setOpenOrders).catch(() => {});
       } else {
         Alert.alert('Cancel failed', result.error ?? 'Unknown error');
       }
@@ -212,19 +248,16 @@ export default function PredictProfileScreen() {
     } finally {
       setCancellingId(null);
     }
-  }, [poly.polygonAddress]);
+  }, [poly.client]);
 
   const loadPortfolio = useCallback(async () => {
-    if (!poly.polygonAddress) return;
+    if (!poly.polygonAddress || !poly.client) return;
     const requestKey = walletScopedKeyRef.current;
-    // Gamma data-api tracks by trading wallet address (where funds/positions live)
-    // CLOB operations use EOA (polygonAddress) for session auth
     setActivityFreshness((prev) => ({ ...prev, loading: true, error: null }));
-    const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
     const [portfolioResult, balanceResult, ordersResult] = await Promise.allSettled([
-      fetchPortfolio(gammaAddr),
-      fetchClobBalance(poly.polygonAddress),
-      fetchOpenOrders(poly.polygonAddress),
+      fetchPortfolio(poly.client),
+      fetchClobBalance(poly.client),
+      fetchOpenOrders(poly.client),
     ]);
     const portfolioData = portfolioResult.status === 'fulfilled' ? portfolioResult.value : null;
     const balanceData = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
@@ -234,10 +267,10 @@ export default function PredictProfileScreen() {
     if (ordersData) setOpenOrders(ordersData);
     if (balanceData) {
       setCashBalance(balanceData.balance);
-      setSessionExpired(false);
+      setPredictUnavailable(false);
     } else {
       setCashBalance(null);
-      setSessionExpired(true);
+      setPredictUnavailable(true);
     }
     const failed = portfolioResult.status === 'rejected' || balanceResult.status === 'rejected' || ordersResult.status === 'rejected';
     setActivityFreshness({
@@ -246,18 +279,17 @@ export default function PredictProfileScreen() {
       stale: failed,
       error: failed ? 'Could not refresh' : null,
     });
-  }, [poly.polygonAddress, poly.tradingAddress]);
+  }, [poly.client, poly.polygonAddress]);
 
   const refreshPortfolioQuietly = useCallback(async () => {
-    if (!poly.polygonAddress) return;
+    if (!poly.polygonAddress || !poly.client) return;
     const requestKey = walletScopedKeyRef.current;
     if (portfolioRefreshInFlight.current) return;
     portfolioRefreshInFlight.current = true;
     try {
-      const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
       const [portfolioResult, balanceResult] = await Promise.allSettled([
-        fetchPortfolio(gammaAddr),
-        fetchClobBalance(poly.polygonAddress),
+        fetchPortfolio(poly.client),
+        fetchClobBalance(poly.client),
       ]);
       const portfolioData = portfolioResult.status === 'fulfilled' ? portfolioResult.value : null;
       const balanceData = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
@@ -266,7 +298,7 @@ export default function PredictProfileScreen() {
       if (portfolioData) setPortfolio(portfolioData);
       if (balanceData) {
         setCashBalance(balanceData.balance);
-        setSessionExpired(false);
+        setPredictUnavailable(false);
       }
 
       const failed = portfolioResult.status === 'rejected' || balanceResult.status === 'rejected';
@@ -279,15 +311,15 @@ export default function PredictProfileScreen() {
     } finally {
       portfolioRefreshInFlight.current = false;
     }
-  }, [poly.polygonAddress, poly.tradingAddress]);
+  }, [poly.client, poly.polygonAddress]);
 
   const refreshOpenOrdersQuietly = useCallback(async () => {
-    if (!poly.polygonAddress) return;
+    if (!poly.client) return;
     const requestKey = walletScopedKeyRef.current;
     if (ordersRefreshInFlight.current) return;
     ordersRefreshInFlight.current = true;
     try {
-      const orders = await fetchOpenOrders(poly.polygonAddress);
+      const orders = await fetchOpenOrders(poly.client);
       if (walletScopedKeyRef.current !== requestKey) return;
       setOpenOrders(orders);
     } catch {
@@ -295,7 +327,16 @@ export default function PredictProfileScreen() {
     } finally {
       ordersRefreshInFlight.current = false;
     }
-  }, [poly.polygonAddress]);
+  }, [poly.client]);
+
+  const realtimeStatus = usePolymarketUserStream(
+    isEnabled ? poly.client : null,
+    (event) => {
+      setOpenOrders((orders) => applyPredictUserEvent(orders, event));
+      if (isPredictTradeEvent(event)) void refreshPortfolioQuietly();
+    },
+    loadPortfolio,
+  );
 
   const handleConfirmCashOut = useCallback(async (size: number, limitPrice: number) => {
     const position = cashOutPosition;
@@ -316,21 +357,18 @@ export default function PredictProfileScreen() {
       }
     }
 
-    if (!poly.polygonAddress || !poly.signer) {
-      Alert.alert('Cash out failed', 'Wallet session not ready.');
+    if (!poly.client) {
+      Alert.alert('Cash out failed', 'Predict account not ready.');
       return;
     }
 
     setCashOutSubmitting(true);
     try {
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const result = await placeBet(poly.client, {
         tokenID: position.asset,
         price: limitPrice,
         size,
         side: 'SELL',
-        negRisk: !!position.negativeRisk,
         orderType: 'FOK',
       });
       if (!result.success) throw new Error(result.error || 'Cash out failed');
@@ -390,7 +428,7 @@ export default function PredictProfileScreen() {
     setBusy(true);
     try {
       await poly.enable();
-      setSessionExpired(false);
+      setPredictUnavailable(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect Polymarket account';
       Alert.alert('Error', msg);
@@ -433,21 +471,16 @@ export default function PredictProfileScreen() {
   }, [setupAfterConnect, poly.signer, poly.isReady]);
 
   const handleReconnect = useCallback(async () => {
-    // Re-auth needs the EVM signer that signs CLOB auth, not a Solana wallet.
-    if (!poly.signer) return;
     setBusy(true);
     try {
-      await poly.enable();
-      setSessionExpired(false);
-      // Re-fetch after re-auth
       await loadPortfolio();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Reconnect failed';
+      const msg = err instanceof Error ? err.message : 'Refresh failed';
       Alert.alert('Error', msg);
     } finally {
       setBusy(false);
     }
-  }, [poly, loadPortfolio]);
+  }, [loadPortfolio]);
 
   const handleOpenMarket = useCallback((slug: string) => {
     router.push(getPredictMarketHref(slug));
@@ -593,11 +626,11 @@ export default function PredictProfileScreen() {
           </View>
         )}
 
-        {sessionExpired && isEnabled && !portfolioLoading && (
+        {predictUnavailable && isEnabled && !portfolioLoading && (
           <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
             <MaterialIcons name="refresh" size={14} color={tokens.colors.primary} />
             <Text style={styles.reconnectText}>
-              {busy ? 'Reconnecting…' : 'Session expired — tap to reconnect'}
+              {busy ? 'Retrying…' : 'Could not refresh Predict — tap to retry'}
             </Text>
           </Pressable>
         )}
@@ -606,8 +639,8 @@ export default function PredictProfileScreen() {
           <View style={styles.positionsSection}>
             <EmptyPortfolio
               mode="no-account"
-              // Gated on the EVM wallet, not the CLOB session: a user with a
-              // resolved signer and no session needs "Set up Polymarket", not a
+              // Gated on the EVM wallet, not the SecureClient: a user with a
+              // resolved signer and no client needs "Set up Polymarket", not a
               // connection sheet that shows an already-connected wallet and
               // offers nothing. Both paths run the same handler, which opens the
               // sheet only when there is genuinely no signer.
@@ -701,12 +734,21 @@ export default function PredictProfileScreen() {
               activity={portfolio?.activity ?? []}
               redeemablePositions={redeemablePositions}
               closedPositions={closedPositions}
-              sellQuotes={sellQuotes}
-              polygonAddress={poly.polygonAddress}
+              client={poly.client}
               cancellingOrderId={cancellingId}
-              freshness={{ ...activityFreshness, loading: portfolioLoading || refreshing }}
+              freshness={{
+                ...activityFreshness,
+                loading: portfolioLoading || refreshing,
+                stale: activityFreshness.stale || realtimeStatus === 'degraded',
+                error: activityFreshness.error
+                  ?? (realtimeStatus === 'degraded' ? 'Live updates delayed; using periodic refresh' : null),
+              }}
+              sellQuotes={sellQuotes}
+              onCashOutPress={handleCashOut}
               onMarketPress={handleOpenMarket}
               onCancelOrder={(orderId) => void handleCancel(orderId)}
+              onRedeemed={() => void loadPortfolio()}
+              onBrowseMarkets={() => router.push('/markets/polymarket')}
               formatMoney={formatProfileMoney}
             />
 
@@ -724,24 +766,23 @@ export default function PredictProfileScreen() {
         )}
       </ScrollView>
 
-      {poly.polygonAddress && (
+      {poly.polygonAddress && poly.client && (
         <DepositModal
           isOpen={depositOpen}
           onClose={() => setDepositOpen(false)}
           polygonAddress={poly.polygonAddress}
+          client={poly.client}
           depositWalletAddress={poly.tradingAddress ?? poly.polygonAddress}
           onFundsAvailable={loadPortfolio}
         />
       )}
 
-      {poly.polygonAddress && solanaAddress && (
+      {poly.polygonAddress && poly.client && solanaAddress && (
         <WithdrawModal
           isOpen={withdrawOpen}
           onClose={() => setWithdrawOpen(false)}
-          polygonAddress={poly.polygonAddress}
-          tradingAddress={poly.tradingAddress ?? poly.polygonAddress}
+          client={poly.client}
           solanaAddress={solanaAddress}
-          signer={poly.signer}
           cashBalance={cashBalance}
           onSuccess={loadPortfolio}
         />
@@ -943,7 +984,7 @@ export default function PredictProfileScreen() {
               <>
                 <Text style={styles.settingsTitle}>Polymarket wallet</Text>
                 <Text style={styles.settingsCopy}>
-                  Export the Polygon owner key that controls your Polymarket deposit wallet. Your Solana wallet signs once so the key can be derived locally.
+                  The active mobile SDK account owns authentication, approvals, orders, transfers, and redemption for this deposit wallet.
                 </Text>
                 <View style={styles.walletInfoBox}>
                   <View style={styles.walletInfoRow}>
@@ -963,6 +1004,19 @@ export default function PredictProfileScreen() {
                   Your Polymarket wallet is an embedded wallet managed by Privy. There
                   is no key to export from this screen.
                 </Text>
+                {poly.isReady && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Disconnect Predict"
+                    disabled={busy}
+                    onPress={handleDisconnectPredict}
+                    style={[styles.settingsDisconnectBtn, busy && { opacity: 0.5 }]}
+                  >
+                    <Text style={styles.settingsDisconnectText}>
+                      {busy ? 'Disconnecting…' : 'Disconnect Predict'}
+                    </Text>
+                  </Pressable>
+                )}
               </>
             )}
           </View>
@@ -1029,6 +1083,21 @@ const styles = StyleSheet.create({
     color: semantic.text.dim,
     lineHeight: 15,
     marginBottom: 4,
+  },
+  settingsDisconnectBtn: {
+    marginTop: 8,
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.colors.vermillion,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsDisconnectText: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    fontWeight: '800',
+    color: tokens.colors.vermillion,
   },
   settingsBackRow: {
     alignSelf: 'flex-start',

@@ -2,15 +2,14 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { PortfolioPosition } from '@/features/predict/predict.api';
 import { redeemPosition } from '@/features/predict/predict.api';
-import type { Signer } from '@/features/chain/chain.contract';
+import type { SecureClient } from '@polymarket/client';
 import { formatPredictTitle } from '@/features/predict/formatPredictTitle';
 import { formatRedeemError, logRedeemError } from '@/features/predict/redeemErrors';
 import { semantic, tokens } from '@/theme';
 
 interface RedeemableSectionProps {
   positions: PortfolioPosition[];
-  polygonAddress: string | null;
-  signer: Signer | null;
+  client: SecureClient | null;
   onRedeemed?: () => void;
 }
 
@@ -18,7 +17,7 @@ function redeemablePositionKey(position: PortfolioPosition): string {
   return `${position.conditionId}-${position.outcomeIndex ?? 'outcome'}-${position.asset ?? 'asset'}`;
 }
 
-export function RedeemableSection({ positions, polygonAddress, signer, onRedeemed }: RedeemableSectionProps) {
+export function RedeemableSection({ positions, client, onRedeemed }: RedeemableSectionProps) {
   const [, setCollectingKeys] = useState<Set<string>>(() => new Set());
   const visiblePositions = positions.filter((position) =>
     (position.currentValue ?? 0) >= 0.01
@@ -38,8 +37,7 @@ export function RedeemableSection({ positions, polygonAddress, signer, onRedeeme
         <RedeemRow
           key={`${p.conditionId}-${p.outcomeIndex}-${i}`}
           position={p}
-          polygonAddress={polygonAddress}
-          signer={signer}
+          client={client}
           onRedeemed={() => {
             setCollectingKeys((current) => {
               const next = new Set(current);
@@ -56,13 +54,11 @@ export function RedeemableSection({ positions, polygonAddress, signer, onRedeeme
 
 function RedeemRow({
   position: p,
-  polygonAddress,
-  signer,
+  client,
   onRedeemed,
 }: {
   position: PortfolioPosition;
-  polygonAddress: string | null;
-  signer: Signer | null;
+  client: SecureClient | null;
   onRedeemed?: () => void;
 }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -70,17 +66,14 @@ function RedeemRow({
   const value = p.currentValue ?? 0;
 
   async function handleRedeem() {
-    if (!polygonAddress || !signer || status === 'loading' || status === 'success') return;
+    if (!client || status === 'loading' || status === 'success') return;
 
     setStatus('loading');
     setErrorMsg('');
 
     try {
-      const result = await redeemPosition(signer, polygonAddress, {
+      const result = await redeemPosition(client, {
         conditionId: p.conditionId,
-        asset: p.asset,
-        outcomeIndex: p.outcomeIndex,
-        negativeRisk: p.negativeRisk,
       });
       if (result.ok) {
         setStatus('success');

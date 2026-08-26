@@ -5,63 +5,53 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { SecureClient } from '@polymarket/client';
 import { semantic, tokens } from '@/theme';
-import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
-import { fetchClobBalance, fetchDepositStatus } from '@/features/predict/predict.api';
-import type { DepositBridgeTransaction } from '@/features/predict/predict.api';
-
-const API_BASE = resolveApiBaseUrl();
+import {
+  fetchBridgeSupportedAssets,
+  fetchClobBalance,
+  fetchDepositAddresses,
+  fetchDepositStatus,
+  POLYGON_CHAIN_ID,
+  POLYMARKET_PUSD,
+  selectSupportedDepositAssets,
+} from '@/features/predict/predict.api';
+import type {
+  BridgeDepositAddresses,
+  BridgeSupportedAsset,
+  DepositBridgeTransaction,
+} from '@/features/predict/predict.api';
+import {
+  canCompleteTrackedDeposit,
+  depositTransactionKey,
+  latestDepositTransaction,
+  matchingDepositTransactions,
+} from '@/features/predict/depositTracking';
 
 interface DepositModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** EOA/session address. Required for balance polling and auto-wrap. */
+  /** Public EOA used only to scope local deposit tracking state. */
   polygonAddress: string;
+  client: SecureClient;
   /** Trading/deposit wallet address used to create bridge deposit addresses. */
   depositWalletAddress: string;
   onFundsAvailable?: () => void | Promise<void>;
 }
 
-interface DepositAddresses {
-  svm?: string;
-  evm?: string;
-  /**
-   * The bridge returns additional chains beyond these two. They are typed as
-   * possible but never rendered — see `SUPPORTED_CHAINS`.
-   */
-  [key: string]: string | undefined;
+function addressTypeFor(asset: BridgeSupportedAsset): 'evm' | 'svm' {
+  return asset.chainId === '1151111081099710' ? 'svm' : 'evm';
 }
 
-/**
- * The chains this app offers, in render order.
- *
- * An allowlist rather than a filter on the response: the bridge also returns
- * native-asset routes with different minimums and slower, less predictable
- * settlement, which widen the support surface for no benefit. Any chain the
- * bridge adds later is ignored until it is added here deliberately.
- *
- * This also fixes row order, which was previously whatever
- * `Object.entries()` happened to yield from the response.
- */
-const SUPPORTED_CHAINS = ['evm', 'svm'] as const;
-
-type SupportedChain = (typeof SUPPORTED_CHAINS)[number];
-
-/**
- * Keyed by `SupportedChain` but indexable by any string: a *tracked* deposit
- * persisted before a chain was dropped can still reference one that is no
- * longer offered, and that lookup falls back rather than crashing.
- */
-const CHAIN_META: Partial<Record<string, { label: string; color: string; note: string; min: string }>>
-  & Record<SupportedChain, { label: string; color: string; note: string; min: string }> = {
-  evm: { label: 'Ethereum / Polygon / Base', color: '#627eea', note: 'Send USDC from any EVM chain', min: 'Min: $1 USDC' },
-  svm: { label: 'Solana', color: '#9945ff', note: 'Send USDC on Solana', min: 'Min: $1 USDC' },
-};
+function chainColor(asset: BridgeSupportedAsset): string {
+  return addressTypeFor(asset) === 'svm' ? '#9945ff' : '#8247e5';
+}
 
 function truncateAddress(addr: string): string {
   if (addr.length <= 16) return addr;
@@ -72,6 +62,14 @@ type DepositStatusTone = 'waiting' | 'active' | 'success' | 'error';
 
 interface TrackedDeposit {
   chain: string;
+  chainName?: string;
+  chainId?: string;
+  tokenAddress?: string;
+  tokenSymbol?: string;
+  tokenDecimals?: number;
+  destinationChainId?: string;
+  destinationTokenAddress?: string;
+  intendedAmount?: number;
   address: string;
   baselineBalance: number | null;
   baselineKnown: boolean;
@@ -88,44 +86,7 @@ interface DepositStatusView {
 
 const DEPOSIT_POLL_MS = 10_000;
 const DELAYED_AFTER_MS = 5 * 60_000;
-const TRANSACTION_TIME_TOLERANCE_MS = 30_000;
 const DEPOSIT_TRACKING_STORAGE_PREFIX = 'predict.deposit.tracking.v1';
-
-function transactionKey(transaction: DepositBridgeTransaction): string {
-  return [
-    transaction.fromChainId ?? '',
-    transaction.fromTokenAddress ?? '',
-    transaction.fromAmountBaseUnit ?? '',
-    transaction.toChainId ?? '',
-    transaction.toTokenAddress ?? '',
-    transaction.status ?? '',
-    transaction.txHash ?? '',
-    transaction.createdTimeMs ?? '',
-  ].join(':');
-}
-
-function trackingTransactions(
-  transactions: DepositBridgeTransaction[],
-  trackedDeposit: TrackedDeposit,
-): DepositBridgeTransaction[] {
-  const baselineKeys = new Set(trackedDeposit.baselineTransactionKeys);
-  return transactions.filter((transaction) => {
-    if (baselineKeys.has(transactionKey(transaction))) return false;
-    if (typeof transaction.createdTimeMs === 'number') {
-      return transaction.createdTimeMs >= trackedDeposit.startedAt - TRANSACTION_TIME_TOLERANCE_MS;
-    }
-    return trackedDeposit.hasStatusSnapshot;
-  });
-}
-
-function latestTransaction(transactions: DepositBridgeTransaction[]): DepositBridgeTransaction | null {
-  if (transactions.length === 0) return null;
-  return [...transactions].sort((a, b) => {
-    const aTime = a.createdTimeMs ?? Number.MAX_SAFE_INTEGER;
-    const bTime = b.createdTimeMs ?? Number.MAX_SAFE_INTEGER;
-    return bTime - aTime;
-  })[0] ?? null;
-}
 
 function statusFromTransaction(transaction: DepositBridgeTransaction | null, startedAt: number): DepositStatusView {
   if (!transaction?.status) {
@@ -183,10 +144,13 @@ export function DepositModal({
   isOpen,
   onClose,
   polygonAddress,
+  client,
   depositWalletAddress,
   onFundsAvailable,
 }: DepositModalProps) {
-  const [addresses, setAddresses] = useState<DepositAddresses | null>(null);
+  const [addresses, setAddresses] = useState<BridgeDepositAddresses | null>(null);
+  const [supportedAssets, setSupportedAssets] = useState<BridgeSupportedAsset[]>([]);
+  const [intendedAmount, setIntendedAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -205,17 +169,16 @@ export function DepositModal({
     setLoading(true);
     setError(null);
 
-    fetchWithTimeout(`${API_BASE}/clob/deposit/${encodeURIComponent(depositWalletAddress)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch deposit addresses');
-        return res.json();
-      })
-      .then((data) => {
-        const addrs = data.address ?? data;
+    Promise.all([
+      fetchDepositAddresses(depositWalletAddress),
+      fetchBridgeSupportedAssets(),
+    ])
+      .then(([addrs, assets]) => {
         setAddresses(addrs);
+        setSupportedAssets(selectSupportedDepositAssets(assets));
       })
-      .catch((err) => {
-        setError(err.message);
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Failed to load Bridge routes.');
       })
       .finally(() => setLoading(false));
   }, [isOpen, depositWalletAddress]);
@@ -255,9 +218,17 @@ export function DepositModal({
           trackedDeposit?: TrackedDeposit | null;
           statusView?: DepositStatusView | null;
         };
-        setTrackedDeposit(saved.trackedDeposit ?? null);
+        const restored = saved.trackedDeposit
+          ? {
+              ...saved.trackedDeposit,
+              tokenDecimals: saved.trackedDeposit.tokenDecimals ?? 6,
+              destinationChainId: saved.trackedDeposit.destinationChainId ?? POLYGON_CHAIN_ID,
+              destinationTokenAddress: saved.trackedDeposit.destinationTokenAddress ?? POLYMARKET_PUSD,
+            }
+          : null;
+        setTrackedDeposit(restored);
         setStatusView(saved.statusView ?? null);
-        setTrackingStorageKey(saved.trackedDeposit ? storageKey : null);
+        setTrackingStorageKey(restored ? storageKey : null);
       })
       .catch(() => {
         if (!cancelled) {
@@ -285,15 +256,18 @@ export function DepositModal({
     try {
       const [transactions, balance] = await Promise.all([
         fetchDepositStatus(trackedDeposit.address).catch(() => []),
-        fetchClobBalance(polygonAddress).catch(() => null),
+        fetchClobBalance(client).catch(() => null),
       ]);
 
       const baseline = trackedDeposit.baselineBalance ?? 0;
       const balanceReady = trackedDeposit.baselineKnown && balance
         ? balance.balance > baseline + 0.000001
         : false;
+      const bridgeTransaction = latestDepositTransaction(
+        matchingDepositTransactions(transactions, trackedDeposit),
+      );
 
-      if (balanceReady) {
+      if (canCompleteTrackedDeposit(balanceReady, bridgeTransaction)) {
         setStatusView({
           label: 'Funds available',
           detail: `Cash balance is now $${balance!.balance.toFixed(2)}.`,
@@ -313,24 +287,15 @@ export function DepositModal({
           : prev);
       }
 
-      if (balance?.wrap?.error) {
-        setStatusView({
-          label: 'Deposit delayed',
-          detail: 'Funds may have arrived, but wrapping needs another refresh.',
-          tone: 'error',
-        });
-        return;
-      }
-
       const bridgeView = statusFromTransaction(
-        latestTransaction(trackingTransactions(transactions, trackedDeposit)),
+        bridgeTransaction,
         trackedDeposit.startedAt,
       );
       setStatusView(bridgeView);
     } finally {
       setStatusLoading(false);
     }
-  }, [onFundsAvailable, polygonAddress, storageKey, trackedDeposit, trackingStorageKey]);
+  }, [client, onFundsAvailable, polygonAddress, storageKey, trackedDeposit, trackingStorageKey]);
 
   useEffect(() => {
     if (!isOpen || !trackedDeposit) return;
@@ -344,7 +309,10 @@ export function DepositModal({
     return () => clearInterval(interval);
   }, [isOpen, refreshDepositStatus, storageKey, trackedDeposit, trackingStorageKey]);
 
-  const handleCopy = async (chain: string, address: string) => {
+  const handleCopy = async (asset: BridgeSupportedAsset, address: string) => {
+    const plannedAmount = Number.parseFloat(intendedAmount);
+    if (!Number.isFinite(plannedAmount) || plannedAmount < asset.minCheckoutUsd) return;
+    const chain = addressTypeFor(asset);
     await Clipboard.setStringAsync(address);
     setCopied(chain);
     const startedAt = Date.now();
@@ -357,7 +325,7 @@ export function DepositModal({
     fundsNotifiedRef.current = false;
 
     const [baseline, existingTransactions] = await Promise.all([
-      polygonAddress ? fetchClobBalance(polygonAddress).catch(() => null) : Promise.resolve(null),
+      fetchClobBalance(client).catch(() => null),
       fetchDepositStatus(address).then(
         (transactions) => ({ transactions, ok: true }),
         () => ({ transactions: [] as DepositBridgeTransaction[], ok: false }),
@@ -366,10 +334,18 @@ export function DepositModal({
 
     setTrackedDeposit({
       chain,
+      chainName: asset.chainName,
+      chainId: asset.chainId,
+      tokenAddress: asset.token.address,
+      tokenSymbol: asset.token.symbol,
+      tokenDecimals: asset.token.decimals,
+      destinationChainId: POLYGON_CHAIN_ID,
+      destinationTokenAddress: POLYMARKET_PUSD,
+      intendedAmount: plannedAmount,
       address,
       baselineBalance: baseline?.balance ?? null,
       baselineKnown: !!baseline,
-      baselineTransactionKeys: existingTransactions.transactions.map(transactionKey),
+      baselineTransactionKeys: existingTransactions.transactions.map(depositTransactionKey),
       hasStatusSnapshot: existingTransactions.ok,
       startedAt,
     });
@@ -383,10 +359,11 @@ export function DepositModal({
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const chains = SUPPORTED_CHAINS.flatMap((chain) => {
-    const address = addresses?.[chain];
+  const chains = supportedAssets.flatMap((asset) => {
+    const addressType = addressTypeFor(asset);
+    const address = addresses?.[addressType];
     return typeof address === 'string' && address.length > 0
-      ? [[chain, address] as const]
+      ? [[asset, addressType, address] as const]
       : [];
   });
 
@@ -403,7 +380,7 @@ export function DepositModal({
           </View>
 
           <Text style={styles.subtitle}>
-            Send funds to any address below.{'\n'}Auto-bridges to your Polymarket account.
+            Choose an exact network/token route. The official Bridge delivers pUSD to your Deposit Wallet.
           </Text>
 
           {/* Content */}
@@ -422,22 +399,34 @@ export function DepositModal({
           )}
 
           {!loading && !error && chains.length > 0 && (
-            <View style={styles.list}>
-              {chains.map(([chain, address]) => {
-                // Total, because `chain` comes from `SUPPORTED_CHAINS` — the
-                // previous unknown-chain fallback is unreachable now.
-                const meta = CHAIN_META[chain];
+            <>
+              <View style={styles.amountWrap}>
+                <Text style={styles.amountLabel}>Amount you plan to send (USDC)</Text>
+                <TextInput
+                  value={intendedAmount}
+                  onChangeText={setIntendedAmount}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor={semantic.text.faint}
+                  style={styles.amountInput}
+                />
+              </View>
+              <View style={styles.list}>
+              {chains.map(([asset, chain, address]) => {
                 const isCopied = copied === chain;
+                const amountNumber = Number.parseFloat(intendedAmount);
+                const amountValid = Number.isFinite(amountNumber) && amountNumber >= asset.minCheckoutUsd;
 
                 return (
                   <Pressable
-                    key={chain}
-                    onPress={() => handleCopy(chain, address)}
-                    style={styles.chainCard}
+                    key={`${asset.chainId}:${asset.token.address}`}
+                    disabled={!amountValid}
+                    onPress={() => handleCopy(asset, address)}
+                    style={[styles.chainCard, !amountValid && styles.chainCardDisabled]}
                   >
                     <View style={styles.chainHeader}>
-                      <View style={[styles.chainDot, { backgroundColor: meta.color }]} />
-                      <Text style={styles.chainLabel}>{meta.label}</Text>
+                      <View style={[styles.chainDot, { backgroundColor: chainColor(asset) }]} />
+                      <Text style={styles.chainLabel}>{asset.chainName} · {asset.token.symbol}</Text>
                       <View style={[styles.copyChip, isCopied && styles.copyChipActive]}>
                         <MaterialIcons
                           name={isCopied ? 'check' : 'content-copy'}
@@ -445,7 +434,7 @@ export function DepositModal({
                           color={isCopied ? '#fff' : tokens.colors.primary}
                         />
                         <Text style={[styles.copyText, isCopied && styles.copiedText]}>
-                          {isCopied ? 'Copied!' : 'Tap to copy'}
+                          {isCopied ? 'Copied!' : amountValid ? 'Tap to copy' : 'Enter amount'}
                         </Text>
                       </View>
                     </View>
@@ -453,13 +442,14 @@ export function DepositModal({
                       {address}
                     </Text>
                     <View style={styles.noteRow}>
-                      <Text style={styles.noteText}>{meta.note}</Text>
-                      {meta.min ? <Text style={styles.minText}>{meta.min}</Text> : null}
+                      <Text style={styles.noteText}>Send only {asset.token.symbol} on {asset.chainName}</Text>
+                      <Text style={styles.minText}>Live min ${asset.minCheckoutUsd.toFixed(2)}</Text>
                     </View>
                   </Pressable>
                 );
               })}
-            </View>
+              </View>
+            </>
           )}
 
           {/*
@@ -516,7 +506,8 @@ export function DepositModal({
                 )}
               </View>
               <Text style={styles.trackedText}>
-                Tracking {CHAIN_META[trackedDeposit.chain]?.label ?? trackedDeposit.chain.toUpperCase()} {truncateAddress(trackedDeposit.address)}
+                Tracking {trackedDeposit.chainName ?? trackedDeposit.chain.toUpperCase()}
+                {trackedDeposit.tokenSymbol ? ` · ${trackedDeposit.tokenSymbol}` : ''} {truncateAddress(trackedDeposit.address)}
               </Text>
               {statusView.tone === 'success' && (
                 <Pressable onPress={onClose} style={styles.doneBtn}>
@@ -602,6 +593,27 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: tokens.colors.vermillion,
   },
+  amountWrap: {
+    marginBottom: 10,
+    gap: 5,
+  },
+  amountLabel: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    color: semantic.text.dim,
+  },
+  amountInput: {
+    minHeight: 40,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    borderRadius: 8,
+    backgroundColor: semantic.background.lift,
+    paddingHorizontal: 12,
+    fontFamily: 'monospace',
+    fontSize: 16,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
   list: {
     gap: 6,
   },
@@ -613,6 +625,9 @@ const styles = StyleSheet.create({
     padding: 11,
     marginBottom: 6,
     gap: 4,
+  },
+  chainCardDisabled: {
+    opacity: 0.48,
   },
   chainHeader: {
     flexDirection: 'row',

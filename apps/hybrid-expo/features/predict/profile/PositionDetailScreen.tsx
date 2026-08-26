@@ -20,6 +20,7 @@ import { buildPositionSellQuote, getPositionSellQuote, usePositionSellQuotes } f
 import { useOddsFormat } from '@/hooks/useOddsFormat';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { semantic, tokens } from '@/theme';
+import { isPredictTradeEvent, usePolymarketUserStream } from '@/features/predict/usePolymarketUserStream';
 import { SellForm } from './SellForm';
 
 interface PositionDetailScreenProps {
@@ -58,14 +59,12 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
   const [sellStatus, setSellStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [sellMessage, setSellMessage] = useState('');
 
-  const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
-
   const loadData = useCallback(async () => {
-    if (!gammaAddr) return;
+    if (!poly.client) return;
     try {
       const [positions, allActivity] = await Promise.all([
-        fetchMarketPositions(gammaAddr, slug),
-        fetchActivity(gammaAddr),
+        fetchMarketPositions(poly.client, slug),
+        fetchActivity(poly.client),
       ]);
       // Find the specific position by conditionId + outcomeIndex
       const match = positions.find(
@@ -78,7 +77,15 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
       setPosition(null);
       setActivity([]);
     }
-  }, [gammaAddr, slug, conditionId, outcomeIndex]);
+  }, [poly.client, slug, conditionId, outcomeIndex]);
+
+  usePolymarketUserStream(
+    poly.client,
+    (event) => {
+      if (isPredictTradeEvent(event)) void loadData();
+    },
+    loadData,
+  );
 
   useEffect(() => {
     setLoading(true);
@@ -133,15 +140,12 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
       }
       const orderPrice = mode === 'market' ? marketQuote!.limitPrice! : price;
 
-      if (!poly.signer) throw new Error('Wallet session not ready');
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      if (!poly.client) throw new Error('Wallet session not ready');
+      const result = await placeBet(poly.client, {
         tokenID,
         price: orderPrice,
         size: shares,
         side: 'SELL',
-        negRisk: !!position.negativeRisk,
         orderType: mode === 'market' ? 'FOK' : 'GTC',
       });
       if (!result.success) throw new Error(result.error || 'Order failed');

@@ -38,6 +38,11 @@ import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { buildExecutableBuyQuote, getBestAsk } from '@/features/predict/orderbookQuote';
 import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { makePendingOpenOrder, mergeOpenOrders, prunePendingOpenOrders } from '@/features/predict/pendingOpenOrders';
+import {
+  applyPredictUserEvent,
+  isPredictTradeEvent,
+  usePolymarketUserStream,
+} from '@/features/predict/usePolymarketUserStream';
 import { getPredictOrderGuardrail, type PredictDataFreshness } from '@/features/predict/predictActivityState';
 import { getPredictMarketHref } from '@/features/predict/predict.navigation';
 
@@ -270,19 +275,18 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
 
   async function loadCashBalance() {
     const requestKey = walletScopedKeyRef.current;
-    if (!poly.polygonAddress) {
+    if (!poly.client) {
       setCashBalance(null);
       return;
     }
-    const balance = await fetchClobBalance(poly.polygonAddress).catch(() => null);
+    const balance = await fetchClobBalance(poly.client).catch(() => null);
     if (walletScopedKeyRef.current !== requestKey) return;
     setCashBalance(balance?.balance ?? null);
   }
 
   async function loadPicks() {
     const requestKey = walletScopedKeyRef.current;
-    const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
-    if (!gammaAddr) {
+    if (!poly.client) {
       setMarketPositions([]);
       setAllPositions([]);
       setRedeemablePositions([]);
@@ -297,9 +301,9 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     setPicksFreshness((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const [marketResult, portfolioResult, ordersResult] = await Promise.allSettled([
-        fetchMarketPositions(gammaAddr, slug),
-        fetchPortfolio(gammaAddr),
-        poly.polygonAddress ? fetchOpenOrders(poly.polygonAddress) : Promise.resolve([]),
+        fetchMarketPositions(poly.client, slug),
+        fetchPortfolio(poly.client),
+        fetchOpenOrders(poly.client),
       ]);
       if (walletScopedKeyRef.current !== requestKey) return;
       const now = Date.now();
@@ -320,7 +324,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
           ...(market ?? marketPositions),
           ...(portfolio?.positions ?? allPositions),
           ...(portfolio?.redeemablePositions ?? redeemablePositions),
-        ])
+        ], portfolio?.recentTrades ?? [])
       );
       const failed = marketResult.status === 'rejected' || portfolioResult.status === 'rejected' || ordersResult.status === 'rejected';
       setPicksFreshness({
@@ -336,6 +340,15 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     }
   }
 
+  const realtimeStatus = usePolymarketUserStream(
+    poly.client,
+    (event) => {
+      setOpenOrders((orders) => applyPredictUserEvent(orders, event));
+      if (isPredictTradeEvent(event)) void loadPicks();
+    },
+    loadPicks,
+  );
+
   useEffect(() => {
     if (activeView !== 'picks' || pendingOpenOrders.length === 0) return;
     const timer = globalThis.setInterval(() => { void loadPicks(); }, 5_000);
@@ -343,10 +356,10 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   }, [activeView, pendingOpenOrders.length, slug, poly.polygonAddress, poly.tradingAddress]);
 
   async function handleCancelOrder(orderId: string) {
-    if (!poly.polygonAddress || cancellingOrderId) return;
+    if (!poly.client || cancellingOrderId) return;
     setCancellingOrderId(orderId);
     try {
-      const result = await cancelOrder(poly.polygonAddress, orderId);
+      const result = await cancelOrder(poly.client, orderId);
       if (result.ok) {
         setOpenOrders((prev) => prev.map((order) =>
           order.id === orderId ? { ...order, status: 'cancel_requested' } : order
@@ -376,13 +389,15 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     }
   }
 
-  function scheduleFollowUpReconcile(polygonAddress: string) {
+  function scheduleFollowUpReconcile() {
+    const secureClient = poly.client;
+    if (!secureClient) return;
     const requestKey = walletScopedKeyRef.current;
     const timeout = setTimeout(() => {
       reconcileTimeouts.current = reconcileTimeouts.current.filter((item) => item !== timeout);
       void Promise.allSettled([
         loadPicks(),
-        fetchClobBalance(polygonAddress).then((balance) => {
+        fetchClobBalance(secureClient).then((balance) => {
           if (walletScopedKeyRef.current === requestKey) setCashBalance(balance?.balance ?? null);
         }),
       ]);
@@ -465,17 +480,17 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   useEffect(() => {
     let cancelled = false;
     async function run() {
-      if (!poly.polygonAddress) {
+      if (!poly.client) {
         setCashBalance(null);
         return;
       }
       const requestKey = walletScopedKeyRef.current;
-      const balance = await fetchClobBalance(poly.polygonAddress).catch(() => null);
+      const balance = await fetchClobBalance(poly.client).catch(() => null);
       if (!cancelled && walletScopedKeyRef.current === requestKey) setCashBalance(balance?.balance ?? null);
     }
     void run();
     return () => { cancelled = true; };
-  }, [poly.polygonAddress]);
+  }, [poly.client]);
 
   // LIVE pulse
   useEffect(() => {
@@ -590,9 +605,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         setSubmitStatus('placing');
       }
 
-      if (!poly.polygonAddress) throw new Error('Wallet session not ready');
-      const signer = poly.signer;
-      if (!signer) throw new Error('Wallet session not ready');
+      if (!poly.client) throw new Error('Wallet session not ready');
 
       const freshBook = await fetchOrderbook(tokenID).catch(() => null);
       const quote = buildExecutableBuyQuote(freshBook, amount);
@@ -642,17 +655,12 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
         return;
       }
-      const polygonAddress = poly.polygonAddress;
-
-      const result = await placeBet(signer, {
-        polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const result = await placeBet(poly.client, {
         tokenID,
         price: quote.limitPrice,
         size: quote.shares,
         amount,
         side: 'BUY',
-        negRisk: !!detail.negRisk,
         orderType: 'FOK',
       });
       if (!result.success) throw new Error(result.error || 'Order failed');
@@ -662,8 +670,8 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         id: result.orderID ?? result.operationId,
         slug,
         tokenID,
-        price: quote.limitPrice,
-        size: quote.shares,
+        price: result.executionPrice ?? result.estimatedPrice ?? quote.limitPrice,
+        size: result.shares ?? quote.shares,
         outcome: sportOutcomeLabel(outcome),
       });
       setPendingOpenOrders((prev) => [pendingOrder, ...prev.filter((order) => order.id !== pendingOrder.id)]);
@@ -673,10 +681,10 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
       setPickScope('market');
       await Promise.allSettled([
         loadPicks(),
-        fetchClobBalance(polygonAddress).then((balance) => setCashBalance(balance?.balance ?? null)),
+        fetchClobBalance(poly.client).then((balance) => setCashBalance(balance?.balance ?? null)),
         activeView === 'orderbook' ? loadOrderbook(obOutcomeIdx) : Promise.resolve(),
       ]);
-      scheduleFollowUpReconcile(polygonAddress);
+      scheduleFollowUpReconcile();
     } catch (err: any) {
       Alert.alert('Order failed', err.message || 'Unknown error');
     } finally {
@@ -707,15 +715,12 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         setSubmitStatus('placing');
       }
 
-      if (!poly.polygonAddress || !poly.signer) throw new Error('Wallet session not ready');
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      if (!poly.client) throw new Error('Wallet session not ready');
+      const result = await placeBet(poly.client, {
         tokenID: position.asset,
         price: limitPrice,
         size,
         side: 'SELL',
-        negRisk: !!position.negativeRisk,
         orderType: 'FOK',
       });
       if (!result.success) throw new Error(result.error || 'Cash out failed');
@@ -725,9 +730,9 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
       setActiveView('picks');
       await Promise.allSettled([
         loadPicks(),
-        fetchClobBalance(poly.polygonAddress).then((balance) => setCashBalance(balance?.balance ?? null)),
+        fetchClobBalance(poly.client).then((balance) => setCashBalance(balance?.balance ?? null)),
       ]);
-      scheduleFollowUpReconcile(poly.polygonAddress);
+      scheduleFollowUpReconcile();
     } catch (err: any) {
       Alert.alert('Cash out failed', err.message || 'Unknown error');
     } finally {
@@ -908,7 +913,14 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
                   marketTokenIds={marketTokenIds}
                   marketConditionIds={marketConditionIds}
                   loading={picksLoading}
-                  freshness={{ ...picksFreshness, loading: picksLoading, syncing: pendingOpenOrders.length > 0 }}
+                  freshness={{
+                    ...picksFreshness,
+                    loading: picksLoading,
+                    syncing: pendingOpenOrders.length > 0,
+                    stale: picksFreshness.stale || realtimeStatus === 'degraded',
+                    error: picksFreshness.error
+                      ?? (realtimeStatus === 'degraded' ? 'Live updates delayed; using periodic refresh' : null),
+                  }}
                   marketPositions={marketPositions}
                   allPositions={allPositions}
                   redeemablePositions={redeemablePositions}
@@ -917,8 +929,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
                   activityItems={activityItems}
                   sellQuotes={sellQuotes}
                   cancellingOrderId={cancellingOrderId}
-                  polygonAddress={poly.polygonAddress}
-                  signer={poly.signer}
+                  client={poly.client}
                   onScopeChange={setPickScope}
                   onCashOut={handleCashOut}
                   onBackMore={backMorePosition}
