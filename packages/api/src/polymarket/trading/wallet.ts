@@ -7,7 +7,6 @@ import {
   CHAIN_ID,
   CONTRACTS,
   DEPOSIT_WALLET_BATCH_DEADLINE_SECONDS,
-  ERC1155_SET_APPROVAL_ABI,
   ERC20_APPROVE_ABI,
   polygonProvider,
   RELAYER_URL,
@@ -37,35 +36,6 @@ export async function getUsdceBalance(walletAddress: string): Promise<bigint> {
   })
   const res = await polygonProvider.call({ to: CONTRACTS.USDC_E, data: balanceData })
   return BigInt(res)
-}
-
-export function buildApprovalTxs() {
-  const spenders = [
-    CONTRACTS.CTF_EXCHANGE_V2,
-    CONTRACTS.NEG_RISK_CTF_EXCHANGE_V2,
-    CONTRACTS.NEG_RISK_ADAPTER,
-    CONTRACTS.CTF_COLLATERAL_ADAPTER,
-    CONTRACTS.NEG_RISK_CTF_COLLATERAL_ADAPTER,
-  ]
-  const pusdApprovals = spenders.map((spender) => ({
-    to: CONTRACTS.PUSD,
-    data: encodeFunctionData({
-      abi: ERC20_APPROVE_ABI,
-      functionName: 'approve',
-      args: [spender as `0x${string}`, maxUint256],
-    }),
-    value: '0',
-  }))
-  const ctfApprovals = spenders.map((spender) => ({
-    to: CONTRACTS.CTF,
-    data: encodeFunctionData({
-      abi: ERC1155_SET_APPROVAL_ABI,
-      functionName: 'setApprovalForAll',
-      args: [spender as `0x${string}`, true],
-    }),
-    value: '0',
-  }))
-  return [...pusdApprovals, ...ctfApprovals]
 }
 
 export function buildComboApprovalTxs() {

@@ -284,7 +284,7 @@ export function usePolymarketWallet(): PolymarketWallet {
 
       // Grants the ERC-20/ERC-1155 approvals the CTF exchanges need before an
       // order can fill — the SDK's replacement for the old server-relayed
-      // approval batch (`buildApprovalTxs` + `/wallet-batch`). Called on every
+      // approval flow. Called on every
       // enable() rather than gated on "first time only": the SDK's type
       // comments don't state whether it's a no-op when approvals already
       // exist, so this needs confirming on-device (does a second call cost
@@ -296,11 +296,9 @@ export function usePolymarketWallet(): PolymarketWallet {
 
       // The server still holds the CLOB session for order placement, wrap,
       // withdraw, and redeem — those haven't migrated to call the SDK
-      // directly yet (PRD step 4, still open). Register this correct address
-      // and these credentials with it rather than letting the server derive
-      // anything itself: passed as `knownDepositWalletAddress`, the server's
-      // existing on-chain `owner()` verification accepts it immediately and
-      // never reaches its own (wrong) CREATE2 derivation or blind-deploy path.
+      // directly yet (PRD step 4, still open). The API binds this SDK-resolved
+      // address to the signed EOA using the current beacon derivation and only
+      // registers a session after confirming the wallet is deployed.
       logChainEvent('polymarket.enable', '4/4 signing session proof and registering with server');
       const authProof = await createPredictSessionProof(activeSigner, eoaAddress);
 
@@ -330,10 +328,8 @@ export function usePolymarketWallet(): PolymarketWallet {
         walletMode: data.walletMode,
       });
       // The server is expected to echo back exactly the address the SDK
-      // derived, since it was handed as a verified hint — anything else means
-      // the server's verification rejected it (wrong signer, no code at that
-      // address) and fell through to its own derivation, which is the bug
-      // this migration exists to avoid resurfacing silently.
+      // derived. Anything else means the client and API disagree on the active
+      // Deposit Wallet contract and setup must not continue.
       if (!data.depositWalletAddress || data.depositWalletAddress.toLowerCase() !== depositWalletAddress.toLowerCase()) {
         throw new Error('Server reported a different deposit wallet than the SDK derived — reconnect and try again.');
       }
