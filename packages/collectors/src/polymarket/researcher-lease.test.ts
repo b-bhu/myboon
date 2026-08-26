@@ -51,7 +51,7 @@ function fullOptions(overrides: Partial<PolymarketResearcherOptions> = {}): Requ
     backend: 'hermes_cli',
     researchModel: 'hermes_cli',
     hermesCommand: 'hermes',
-    researchPlannerHermesToolsets: '',
+    researchPlannerHermesToolsets: 'browser',
     researchPlannerHermesIgnoreRules: false,
     researchPlannerHermesTimeoutMs: 60_000,
     last30DaysPython: 'python3.12',

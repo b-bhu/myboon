@@ -12,8 +12,8 @@ import type { GateEntityContext } from '../research-gate'
  *
  * The engine's contract is different in three deliberate ways:
  *
- *  1. It READS. It runs in the hermes chat mode with browser/web toolsets -
- *     the same tooling the news lane already used - and is instructed that a
+ *  1. It READS. It runs in the hermes chat mode with the browser toolset -
+ *     the same sanctioned path the news lane uses - and is instructed that a
  *     search-result snippet is not verification; facts must come from pages
  *     it actually opened, each carrying evidence URLs.
  *

@@ -10,7 +10,8 @@ import type {
 } from './types'
 
 const DEFAULT_HERMES_PROFILE = 'myboonfeed'
-const DEFAULT_HERMES_TOOLSETS = ['browser', 'web']
+const DEFAULT_HERMES_TOOLSETS = ['browser']
+const BROWSER_ONLY_TOOL_POLICY = 'Tool policy: use browser_* tools only. Never call web_search, web_extract, or any Firecrawl-backed tool.'
 const DEFAULT_AGENT_BROWSER_READ_TIMEOUT_MS = 30_000
 const DEFAULT_AGENT_BROWSER_MAX_OUTPUT_CHARS = 40_000
 
@@ -40,7 +41,7 @@ export interface HermesWorkerClientConstructorOptions extends Partial<HermesWork
  * Hybrid news researcher:
  *  1. Read the known article URL with agent-browser's HTTP-only read command.
  *  2. Give that bounded, untrusted document to lightweight Hermes oneshot.
- *  3. Fall back to the existing Hermes browser/web chat only when the direct
+ *  3. Fall back to Hermes browser-only chat when the direct
  *     source read is unavailable, blocked, too short, or times out.
  */
 export class HermesWorkerClient {
@@ -54,7 +55,9 @@ export class HermesWorkerClient {
   constructor(options: HermesWorkerClientConstructorOptions = {}) {
     const command = options.command ?? process.env.NEWS_HERMES_COMMAND
     this.profile = options.profile ?? process.env.NEWS_HERMES_PROFILE ?? DEFAULT_HERMES_PROFILE
-    this.toolsets = options.toolsets ?? toolsetsFromEnv(process.env.NEWS_HERMES_TOOLSETS) ?? DEFAULT_HERMES_TOOLSETS
+    this.toolsets = normalizedToolsets(options.toolsets)
+      ?? toolsetsFromEnv(process.env.NEWS_HERMES_TOOLSETS)
+      ?? DEFAULT_HERMES_TOOLSETS
     this.service = options.service ?? new HermesService({
       command,
       spawnImpl: options.spawnProcess,
@@ -115,7 +118,7 @@ export class HermesWorkerClient {
     }
     const result = await this.service.chat({
       purpose: `news.worker.${request.taskType}.browser_fallback`,
-      prompt: request.prompt,
+      prompt: `${BROWSER_ONLY_TOOL_POLICY}\n\n${request.prompt}`,
       timeoutMs: remainingTimeoutMs,
       profile: this.profile,
       toolsets: sourceRead?.allowedFallbackDomains.length
@@ -247,7 +250,14 @@ function failedWithoutFallback(
 
 function toolsetsFromEnv(value: string | undefined): string[] | undefined {
   if (value == null) return undefined
-  return value.split(',').map((item) => item.trim()).filter(Boolean)
+  const toolsets = value.split(',').map((item) => item.trim()).filter(Boolean)
+  return toolsets.length > 0 ? toolsets : undefined
+}
+
+function normalizedToolsets(value: string[] | undefined): string[] | undefined {
+  if (!value) return undefined
+  const toolsets = value.map((item) => item.trim()).filter(Boolean)
+  return toolsets.length > 0 ? toolsets : undefined
 }
 
 function enabledFromEnv(value: string | undefined, fallback: boolean): boolean {

@@ -168,6 +168,9 @@ function ensureNewsSqliteSchema(db: SqliteDatabase): void {
       research_error TEXT,
       research_raw_response TEXT,
       research_stderr TEXT,
+      research_failure_status TEXT CHECK (
+        research_failure_status IS NULL OR research_failure_status IN ('failed', 'dead_letter')
+      ),
       raw_candidate TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -216,6 +219,11 @@ function ensureNewsSqliteSchema(db: SqliteDatabase): void {
       limitations TEXT NOT NULL,
       errors TEXT NOT NULL,
       raw_response TEXT NOT NULL,
+      entity_manager_error TEXT,
+      entity_manager_error_category TEXT,
+      entity_manager_failure_status TEXT CHECK (
+        entity_manager_failure_status IS NULL OR entity_manager_failure_status IN ('failed', 'dead_letter')
+      ),
       researched_at TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -243,11 +251,23 @@ function ensureNewsSqliteMigrations(db: SqliteDatabase): void {
     ['research_error', 'TEXT'],
     ['research_raw_response', 'TEXT'],
     ['research_stderr', 'TEXT'],
+    ['research_failure_status', "TEXT CHECK (research_failure_status IS NULL OR research_failure_status IN ('failed', 'dead_letter'))"],
   ]
   for (const [name, definition] of additions) {
     if (!columns.has(name)) {
       db.exec(`ALTER TABLE news_candidate_observations ADD COLUMN ${name} ${definition};`)
     }
+  }
+
+  const researchColumns = new Set((db.prepare('PRAGMA table_info(news_research_results)').all() as Array<Record<string, unknown>>)
+    .map((row) => String(row.name)))
+  const researchAdditions: Array<[string, string]> = [
+    ['entity_manager_error', 'TEXT'],
+    ['entity_manager_error_category', 'TEXT'],
+    ['entity_manager_failure_status', "TEXT CHECK (entity_manager_failure_status IS NULL OR entity_manager_failure_status IN ('failed', 'dead_letter'))"],
+  ]
+  for (const [name, definition] of researchAdditions) {
+    if (!researchColumns.has(name)) db.exec(`ALTER TABLE news_research_results ADD COLUMN ${name} ${definition};`)
   }
 }
 
@@ -500,6 +520,7 @@ export class SqliteNewsStore implements NewsStore {
             research_error = NULL,
             research_raw_response = NULL,
             research_stderr = NULL,
+            research_failure_status = NULL,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(jobId, id)
@@ -518,6 +539,7 @@ export class SqliteNewsStore implements NewsStore {
             research_error = ?,
             research_raw_response = ?,
             research_stderr = ?,
+            research_failure_status = 'failed',
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
@@ -679,15 +701,28 @@ export class SqliteNewsStore implements NewsStore {
     }
   }
 
-  async markResearchResultStatus(id: string, status: NewsResearchResultStatus): Promise<void> {
+  async markResearchResultStatus(
+    id: string,
+    status: NewsResearchResultStatus,
+    failure?: { error: string; category?: string | null }
+  ): Promise<void> {
     try {
       this.db.exec('BEGIN')
       this.db.prepare(`
         UPDATE news_research_results
         SET status = ?,
+            entity_manager_error = ?,
+            entity_manager_error_category = ?,
+            entity_manager_failure_status = CASE WHEN ? = 'failed_entity_memory' THEN 'failed' ELSE NULL END,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(status, id)
+      `).run(
+        status,
+        status === 'failed_entity_memory' ? failure?.error ?? null : null,
+        status === 'failed_entity_memory' ? failure?.category ?? null : null,
+        status,
+        id
+      )
       if (status === 'handed_to_entity_memory') {
         this.db.prepare(`
           UPDATE news_candidate_observations

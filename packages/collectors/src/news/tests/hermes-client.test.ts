@@ -72,7 +72,7 @@ test('HermesWorkerClient builds the expected command and returns succeeded outpu
   const client = new HermesWorkerClient({
     command: 'fake-hermes',
     profile: 'myboon-worker-test',
-    toolsets: ['browser', 'web'],
+    toolsets: ['browser'],
     spawnProcess: fake.spawnProcess,
     limiter: immediateLimiter,
   })
@@ -86,12 +86,12 @@ test('HermesWorkerClient builds the expected command and returns succeeded outpu
     '--profile',
     'myboon-worker-test',
     '--toolsets',
-    'browser,web',
+    'browser',
     '--source',
     'tool',
     '--quiet',
     '--query',
-    request.prompt,
+    'Tool policy: use browser_* tools only. Never call web_search, web_extract, or any Firecrawl-backed tool.\n\n' + request.prompt,
   ])
   assert.equal(fake.calls[0].options.shell, false)
   assert.equal(fake.calls[0].options.detached, process.platform !== 'win32')
@@ -138,8 +138,35 @@ test('HermesWorkerClient returns failed for a non-zero exit code', async () => {
     '--profile',
     'myboonfeed',
     '--toolsets',
-    'browser,web',
+    'browser',
   ])
+})
+
+test('NEWS_HERMES_TOOLSETS overrides and blank values retain the browser-only default', async () => {
+  const previous = process.env.NEWS_HERMES_TOOLSETS
+  const fake = fakeSpawn((child) => queueMicrotask(() => child.close(0)))
+  try {
+    process.env.NEWS_HERMES_TOOLSETS = ' browser, custom '
+    await new HermesWorkerClient({
+      command: 'fake-hermes',
+      toolsets: [],
+      spawnProcess: fake.spawnProcess,
+      limiter: immediateLimiter,
+    }).run(request)
+
+    process.env.NEWS_HERMES_TOOLSETS = '  '
+    await new HermesWorkerClient({
+      command: 'fake-hermes',
+      spawnProcess: fake.spawnProcess,
+      limiter: immediateLimiter,
+    }).run(request)
+
+    assert.deepEqual(fake.calls[0].args.slice(3, 5), ['--toolsets', 'browser,custom'])
+    assert.deepEqual(fake.calls[1].args.slice(3, 5), ['--toolsets', 'browser'])
+  } finally {
+    if (previous == null) delete process.env.NEWS_HERMES_TOOLSETS
+    else process.env.NEWS_HERMES_TOOLSETS = previous
+  }
 })
 
 test('HermesWorkerClient kills the process and returns timed_out on timeout', async () => {

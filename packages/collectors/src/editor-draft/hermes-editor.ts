@@ -86,7 +86,10 @@ export class HermesEditorDraftProvider implements EditorDraftProvider {
     const envTimeout = Number(process.env.EDITOR_DRAFT_HERMES_TIMEOUT_MS)
     this.timeoutMs = options.timeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : DEFAULT_TIMEOUT_MS)
     this.service = options.service ?? new HermesService({
-      command: options.command ?? process.env.EDITOR_DRAFT_HERMES_COMMAND ?? 'hermes',
+      command: options.command
+        ?? process.env.EDITOR_DRAFT_HERMES_COMMAND
+        ?? process.env.HERMES_COMMAND
+        ?? 'hermes',
     })
   }
 

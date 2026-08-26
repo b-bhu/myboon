@@ -237,7 +237,12 @@ export class HermesEntityExtractionProvider implements ExtractionProvider {
     this.timeoutMs = options.timeoutMs ?? 60_000
     this.toolsets = options.toolsets ?? ''
     this.ignoreRules = options.ignoreRules ?? true
-    this.service = options.service ?? new HermesService({ command: options.command ?? 'hermes' })
+    this.service = options.service ?? new HermesService({
+      command: options.command
+        ?? process.env.ENTITY_MANAGER_HERMES_COMMAND
+        ?? process.env.HERMES_COMMAND
+        ?? 'hermes',
+    })
   }
 
   async extract(packet: ResearchPacket, canon?: ExtractionCanon): Promise<EntityMemoryExtraction> {

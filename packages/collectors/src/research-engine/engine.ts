@@ -8,13 +8,14 @@ import type {
 } from './types'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
-const DEFAULT_TOOLSETS = ['browser', 'web']
+const DEFAULT_TOOLSETS = ['browser']
+const BROWSER_ONLY_TOOL_POLICY = 'Tool policy: use browser_* tools only. Never call web_search, web_extract, or any Firecrawl-backed tool.'
 
 export interface ResearchEngineOptions {
   hermes: HermesService
   /** hermes chat profile; default RESEARCH_ENGINE_HERMES_PROFILE when set. */
   profile?: string
-  /** Toolsets the agent runs with. Default browser+web - the read-pages mode. */
+  /** Toolsets the agent runs with. Default browser-only; RESEARCH_ENGINE_TOOLSETS may override it. */
   toolsets?: string[]
   timeoutMs?: number
 }
@@ -37,6 +38,18 @@ function asString(value: unknown, fallback = ''): string {
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+}
+
+function toolsetsFromEnv(value: string | undefined): string[] | undefined {
+  if (value == null) return undefined
+  const toolsets = value.split(',').map((item) => item.trim()).filter(Boolean)
+  return toolsets.length > 0 ? toolsets : undefined
+}
+
+function normalizedToolsets(value: string[] | undefined): string[] | undefined {
+  if (!value) return undefined
+  const toolsets = value.map((item) => item.trim()).filter(Boolean)
+  return toolsets.length > 0 ? toolsets : undefined
 }
 
 function asEvidence(value: unknown): ResearchEvidence[] {
@@ -81,7 +94,8 @@ function buildResearchPrompt(task: ResearchTask): string {
 
   return [
     'You are the myboon Research Engine.',
-    'You have browser and web tools. Your job is to actually READ sources - open pages, verify claims - and answer ONE focused question.',
+    'You have browser tools. Your job is to actually READ sources - open pages, verify claims - and answer ONE focused question.',
+    BROWSER_ONLY_TOOL_POLICY,
     'You are updating an entity\'s knowledge timeline, not writing a story and not collecting links.',
     '',
     'THE QUESTION',
@@ -151,7 +165,9 @@ export class ResearchEngine {
   constructor(options: ResearchEngineOptions) {
     this.hermes = options.hermes
     this.profile = options.profile ?? process.env.RESEARCH_ENGINE_HERMES_PROFILE ?? undefined
-    this.toolsets = options.toolsets ?? DEFAULT_TOOLSETS
+    this.toolsets = normalizedToolsets(options.toolsets)
+      ?? toolsetsFromEnv(process.env.RESEARCH_ENGINE_TOOLSETS)
+      ?? DEFAULT_TOOLSETS
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
@@ -218,4 +234,6 @@ export class ResearchEngine {
 
 export const __testing = {
   buildResearchPrompt,
+  normalizedToolsets,
+  toolsetsFromEnv,
 }

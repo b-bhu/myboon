@@ -37,7 +37,7 @@ class FakeChild extends EventEmitter {
   kill(): boolean { return true }
 }
 
-function engineWith(stdout: string, exitCode = 0): { engine: ResearchEngine, calls: Array<{ command: string, args: string[] }> } {
+function engineWith(stdout: string, exitCode = 0, toolsets?: string[]): { engine: ResearchEngine, calls: Array<{ command: string, args: string[] }> } {
   const calls: Array<{ command: string, args: string[] }> = []
   const service = new HermesService({
     command: 'hermes',
@@ -51,7 +51,10 @@ function engineWith(stdout: string, exitCode = 0): { engine: ResearchEngine, cal
       return child as unknown as ChildProcess
     },
   })
-  return { engine: new ResearchEngine({ hermes: service }), calls }
+  return {
+    engine: new ResearchEngine({ hermes: service, ...(toolsets !== undefined ? { toolsets } : {}) }),
+    calls,
+  }
 }
 
 const ANSWERED = JSON.stringify({
@@ -68,15 +71,29 @@ const ANSWERED = JSON.stringify({
   evidence_links: [{ url: 'https://example.com/fed', title: 'Fed press conference transcript', note: 'primary source' }],
 })
 
-test('runs in chat mode with browser/web toolsets so the model can actually read pages', async () => {
-  const { engine, calls } = engineWith(ANSWERED)
+test('runs in chat mode with browser-only toolsets so the model can read pages without Firecrawl', async () => {
+  const { engine, calls } = engineWith(ANSWERED, 0, [])
   await engine.research(TASK)
 
   assert.equal(calls.length, 1)
   assert.equal(calls[0].args[0], 'chat')
   const toolsetsIndex = calls[0].args.indexOf('--toolsets')
   assert.ok(toolsetsIndex > 0)
-  assert.equal(calls[0].args[toolsetsIndex + 1], 'browser,web')
+  assert.equal(calls[0].args[toolsetsIndex + 1], 'browser')
+})
+
+test('RESEARCH_ENGINE_TOOLSETS overrides the browser-only default', async () => {
+  const previous = process.env.RESEARCH_ENGINE_TOOLSETS
+  process.env.RESEARCH_ENGINE_TOOLSETS = ' browser, custom '
+  try {
+    const { engine, calls } = engineWith(ANSWERED)
+    await engine.research(TASK)
+    const toolsetsIndex = calls[0].args.indexOf('--toolsets')
+    assert.equal(calls[0].args[toolsetsIndex + 1], 'browser,custom')
+  } finally {
+    if (previous == null) delete process.env.RESEARCH_ENGINE_TOOLSETS
+    else process.env.RESEARCH_ENGINE_TOOLSETS = previous
+  }
 })
 
 test('the prompt carries the question, the timeline, the answer spec, and permission to conclude nothing', async () => {
@@ -89,6 +106,7 @@ test('the prompt carries the question, the timeline, the answer spec, and permis
   assert.match(prompt, /concrete, dated, verifiable catalyst/, 'answer spec inlined')
   assert.match(prompt, /GOOD outcome to conclude nothing happened/i, 'nothing_found is legitimized')
   assert.match(prompt, /read the page/i, 'snippet-is-not-verification rule')
+  assert.match(prompt, /Never call web_search, web_extract, or any Firecrawl-backed tool/, 'browser-only tool policy')
 })
 
 test('parses an answered conclusion with verified facts and evidence', async () => {
