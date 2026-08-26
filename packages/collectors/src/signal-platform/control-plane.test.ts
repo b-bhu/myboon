@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   CONTROL_PLANE_STATUS_SCHEMA_VERSION,
   SignalPlatformControlPlane,
+  parseControlPlaneAlertPolicy,
   type ExecutionObservabilityReadPort,
   type WorkObservabilityReadPort,
 } from './control-plane'
@@ -72,6 +73,8 @@ function executionRow(overrides: Partial<ExecutionAggregateRow> = {}): Execution
     toolCalls: 0,
     budgetExceededCount: 0,
     totalWallTimeMs: 800,
+    measuredCostEventCount: 0,
+    totalCostUsdMicros: 0,
     ...overrides,
   }
 }
@@ -82,6 +85,18 @@ function executionReader(rows: ExecutionAggregateRow[]): ExecutionObservabilityR
       totalEvents: rows.reduce((sum, row) => sum + row.eventCount, 0),
       activeEvents: rows.filter((row) => row.status === 'started').reduce((sum, row) => sum + row.eventCount, 0),
       rows,
+      providerPerformance: rows.flatMap((row) => row.provider ? [{
+        sourceType: row.sourceType, stage: row.stage, provider: row.provider, model: row.model,
+        terminalEventCount: row.eventCount,
+        succeededEventCount: row.status === 'succeeded' ? row.eventCount : 0,
+        failedEventCount: row.status === 'failed' ? row.eventCount : 0,
+        successRate: row.status === 'succeeded' ? 1 : 0,
+        latency: { sampleCount: row.eventCount, p50Ms: row.totalWallTimeMs / row.eventCount,
+          p95Ms: row.totalWallTimeMs / row.eventCount, p99Ms: row.totalWallTimeMs / row.eventCount },
+      }] : []),
+      completionUsage: {
+        completedPackets: 0, inputTokens: 0, outputTokens: 0, measuredCostPackets: 0, totalCostUsdMicros: 0,
+      },
     }),
   }
 }
@@ -107,7 +122,7 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
     ],
     workReaders: [
       workReader('news', {
-        signalCount: 9, triageDecisionCount: 8,
+        signalCount: 9, observationCount: 12, deduplicatedObservationCount: 3, triageDecisionCount: 8,
         triageOutcomes: { standard: 3, defer: 5 },
         researchPacketCount: 2, entityMemoryHandoffCount: 1,
         endToEndLatency: { sampleCount: 1, p50Ms: 1_000, p95Ms: 1_000, p99Ms: 1_000 },
@@ -126,7 +141,7 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
         recentFailures: [{ category: 'provider_timeout', count: 2, lastOccurredAt: '2026-08-26T12:55:00.000Z' }],
       }),
       workReader('polymarket', {
-        signalCount: 6, triageDecisionCount: 5,
+        signalCount: 6, observationCount: 8, deduplicatedObservationCount: 2, triageDecisionCount: 5,
         triageOutcomes: { light: 4, archive: 1 },
         researchPacketCount: 1, entityMemoryHandoffCount: 0,
         endToEndLatency: { sampleCount: 0, p50Ms: null, p95Ms: null, p99Ms: null },
@@ -145,11 +160,18 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
         providerCalls: 2, repairCalls: 1, budgetExceededCount: 1, totalWallTimeMs: 1200,
       }),
     ]),
+    alertPolicy: {
+      queueAgeSloMs: { news: { P0: 30 * 60_000 } },
+      providerErrorRateThreshold: 0.1,
+      deadLetterCountThreshold: 0,
+    },
   })
   const status = await controlPlane.readStatus({ now: '2026-08-26T13:00:00.000Z' })
   assert.equal(status.schemaVersion, CONTROL_PLANE_STATUS_SCHEMA_VERSION)
   assert.equal(status.availability, 'available')
   assert.equal(status.totals.signals, 15)
+  assert.equal(status.totals.observations, 20)
+  assert.equal(status.totals.deduplicatedObservations, 5)
   assert.equal(status.totals.triageDecisions, 13)
   assert.equal(status.totals.admittedWorkItems, 10)
   assert.equal(status.totals.workItems, 10)
@@ -180,6 +202,14 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
   assert.equal(status.execution.bySource.polymarket?.byStage.retrieval?.byStatus.failed, 1)
   assert.equal(status.execution.providerUsage.find((row) => row.sourceType === 'polymarket')?.fallbackUsed, true)
   assert.equal(status.execution.providerUsage.find((row) => row.sourceType === 'polymarket')?.budgetExceededCount, 1)
+  assert.equal(status.execution.providerPerformance.find((row) => row.provider === 'primary-provider')?.successRate, 0)
+  assert.equal(status.execution.perCompletedPacket.canonicalPackets, 3)
+  assert.equal(status.execution.perCompletedPacket.telemetryCoverageRate, 0)
+  assert.equal(status.sources.news?.intake.deduplicationRate, 0.25)
+  assert.equal(status.sources.news?.sqliteWriteErrors.availability, 'unavailable')
+  assert.equal(status.sqliteWriteErrors.availability, 'unavailable')
+  assert.ok(status.alerts.items.some((alert) => alert.code === 'QUEUE_AGE_SLO_EXCEEDED'))
+  assert.ok(status.alerts.items.some((alert) => alert.code === 'PROVIDER_ERROR_RATE'))
   assert.equal(status.recentFailures.find((failure) => failure.category === 'provider_timeout')?.count, 3)
 })
 
@@ -209,6 +239,7 @@ test('empty registered state returns a complete zero snapshot', async () => {
   assert.equal(status.availability, 'available')
   assert.deepEqual(status.totals, {
     signals: null, triageDecisions: null, admittedWorkItems: 0,
+    observations: null, deduplicatedObservations: null,
     workItems: 0, ready: 0, retry: 0, deadLetter: 0,
     expired: 0, leased: 0, unfinished: 0, attempts: null,
     arrivalsInWindow: null, admissionsInWindow: null, completionsInWindow: null,
@@ -257,4 +288,18 @@ test('CLI formatter removes sensitive keys and redacts credential-shaped values'
   assert.equal(formatted.includes('abc.def'), false)
   assert.equal(formatted.includes('raw-secret'), false)
   assert.equal(formatted.includes('"safe": "keep"'), true)
+})
+
+test('alert policy parsing is explicit and rejects invented or malformed thresholds', () => {
+  const policy = parseControlPlaneAlertPolicy({
+    queueAgeSloMs: { news: { P0: 1_000, P1: 2_000 } },
+    providerErrorRateThreshold: 0.1, deadLetterCountThreshold: 2,
+  })
+  assert.equal(policy.queueAgeSloMs.news?.P0, 1_000)
+  assert.throws(() => parseControlPlaneAlertPolicy({
+    queueAgeSloMs: { news: { P2: 1 } }, providerErrorRateThreshold: 0.1, deadLetterCountThreshold: 1,
+  }), /priority/)
+  assert.throws(() => parseControlPlaneAlertPolicy({
+    queueAgeSloMs: {}, providerErrorRateThreshold: 2, deadLetterCountThreshold: 1,
+  }), /between 0 and 1/)
 })

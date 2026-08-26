@@ -161,6 +161,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
     let executionLedger: SharedEntityWorkerOptions['executionLedger']
     let activePreflight: (() => Promise<void>) | undefined
     let circuitSnapshot: (() => InferenceCircuitStatusSnapshot) | undefined
+    let inferenceClaimsReady = () => true
 
     if (runtime.entityMode === 'active') {
       const supabase = (options.supabaseFactory ?? createClient)(
@@ -176,6 +177,8 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
         ? options.gatewayFactory(env, observeInference)
         : createConfiguredInferenceGateway({ env, observer: observeInference }).gateway
       circuitSnapshot = () => gateway.circuitStatusSnapshot()
+      inferenceClaimsReady = () => typeof gateway.checkReadiness === 'function'
+        && gateway.checkReadiness('entity.extract').ready
       processor = new EntityServiceCanonicalPacketProcessor({
         store: entityStore,
         planner: new GatewayCanonicalEntityPlanner({ gateway }),
@@ -229,7 +232,9 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       workerId: safeWorkerId(env.FEED_V3_ENTITY_WORKER_ID),
       activeLimitPerSource: positiveInteger(env.FEED_V3_ENTITY_BATCH_SIZE, 10),
       executionLedger,
-      claimsEnabled: runtime.entityMode === 'active' ? () => entityClaimControl(runtimeControl).enabled : undefined,
+      claimsEnabled: runtime.entityMode === 'active'
+        ? () => entityClaimControl(runtimeControl).enabled && inferenceClaimsReady()
+        : undefined,
     })
     return managedRuntime(runtime.entityMode, worker, closables, activePreflight, runtimeControl, {
       writer: healthWriter,

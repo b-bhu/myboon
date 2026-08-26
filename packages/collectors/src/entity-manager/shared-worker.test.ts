@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
+import type { InferenceTelemetry } from '../inference-gateway/types'
 import type { ExecutionTraceEvent, ResearchPacketV1, ResearchWorkItem, Signal } from '../signal-platform/contracts'
 import { ExecutionEventConflictError, type ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
 import { PlatformFailure } from '../signal-platform/failures'
@@ -12,7 +16,9 @@ import type {
   WorkLease,
 } from '../signal-platform/store-adapter'
 import { validateExecutionTraceEvent } from '../signal-platform/validation'
+import { SqliteExecutionLedger } from '../signal-platform/sqlite-execution-ledger'
 import { sharedEntityWorkerConfig, type EntityWorkerSourceType } from './shared-worker-config'
+import { CanonicalEntityTelemetryFailure } from './canonical-processor'
 import {
   SharedEntityWorker,
   __sharedEntityWorkerTesting,
@@ -93,6 +99,20 @@ function packet(item: ResearchWorkItem, completion: ResearchPacketV1['completion
       traceId: item.traceId, attempt: 0,
     },
     researchContractVersion: 'myboon.research_packet.v1', createdAt: NOW,
+  }
+}
+
+function entityTelemetry(overrides: Partial<InferenceTelemetry> = {}): InferenceTelemetry {
+  return {
+    workload: 'entity.extract', purpose: 'entity planning', mode: 'generateStructured',
+    promptVersion: 'entity-prompt-v1', policyVersion: 'entity-policy-v1',
+    configuredPrimaryProvider: 'primary', configuredPrimaryModel: 'primary-model',
+    actualProvider: 'fallback', actualModel: 'fallback-model', fallbackInvoked: true,
+    fallbackReason: 'provider_timeout', schemaValid: true, providerCalls: 2, repairCalls: 1,
+    inputTokens: 30, outputTokens: 12, toolCalls: 0, costUsdMicros: 23,
+    configuredReasoningEffort: 'high', actualReasoningEffort: 'medium',
+    durationMs: 44, budgetExceeded: false, failureCategory: null, calls: [],
+    ...overrides,
   }
 }
 
@@ -283,11 +303,18 @@ test('successful processing appends immutable entity and memory execution events
   const port = new FakePort('news', [queued])
   const result = await fixture({
     ports: [port], ownership: { news: 'shared' }, executionLedger: ledger,
+    processor: { async process() { return { entityTelemetry: entityTelemetry() } } },
   }).worker.runActiveCycle()
 
   assert.equal(result.completed, 1)
-  assert.equal(ledger.events.size, 2)
-  const events = [...ledger.events.values()].sort((left, right) => left.stage.localeCompare(right.stage))
+  assert.equal(ledger.events.size, 3)
+  const started = [...ledger.events.values()].find((event) => event.status === 'started')!
+  assert.equal(started.stage, 'entity_manager')
+  assert.equal(started.finishedAt, null)
+  assert.equal(started.providerCalls, 0)
+  const events = [...ledger.events.values()]
+    .filter((event) => event.status !== 'started')
+    .sort((left, right) => left.stage.localeCompare(right.stage))
   assert.deepEqual(events.map((event) => event.stage), ['entity_manager', 'memory_write'])
   for (const event of events) {
     assert.equal(event.status, 'succeeded')
@@ -295,15 +322,7 @@ test('successful processing appends immutable entity and memory execution events
     assert.equal(event.workId, 'news-work-1')
     assert.equal(event.packetId, 'news-work-1-packet')
     assert.equal(event.attempt, 1)
-    assert.equal(event.provider, null)
-    assert.equal(event.model, null)
-    assert.equal(event.promptVersion, 'prompt-v1')
-    assert.equal(event.policyVersion, 'policy-v1')
     assert.equal(event.researchContractVersion, 'myboon.research_packet.v1')
-    assert.equal(event.providerCalls, 0)
-    assert.equal(event.repairCalls, 0)
-    assert.equal(event.inputTokens, 0)
-    assert.equal(event.outputTokens, 0)
     assert.equal(event.toolCalls, 0)
     assert.equal(event.budgetExceeded, false)
     assert.equal(event.queueWaitMs >= 0, true)
@@ -311,6 +330,34 @@ test('successful processing appends immutable entity and memory execution events
     assert.equal(Object.isFrozen(event), true)
     assert.equal(validateExecutionTraceEvent(event), event)
   }
+  const entityEvent = events.find((event) => event.stage === 'entity_manager')!
+  assert.equal(entityEvent.provider, 'fallback')
+  assert.equal(entityEvent.model, 'fallback-model')
+  assert.equal(entityEvent.fallbackProvider, 'fallback')
+  assert.equal(entityEvent.fallbackModel, 'fallback-model')
+  assert.equal(entityEvent.fallbackUsed, true)
+  assert.equal(entityEvent.configuredPrimaryProvider, 'primary')
+  assert.equal(entityEvent.configuredPrimaryModel, 'primary-model')
+  assert.equal(entityEvent.outputSchemaValid, true)
+  assert.equal(entityEvent.promptVersion, 'entity-prompt-v1')
+  assert.equal(entityEvent.policyVersion, 'entity-policy-v1')
+  assert.equal(entityEvent.providerCalls, 2)
+  assert.equal(entityEvent.repairCalls, 1)
+  assert.equal(entityEvent.inputTokens, 30)
+  assert.equal(entityEvent.outputTokens, 12)
+  assert.equal(entityEvent.costUsdMicros, 23)
+  assert.equal((entityEvent as ExecutionTraceEvent & { configuredReasoningEffort?: string | null }).configuredReasoningEffort, 'high')
+  assert.equal((entityEvent as ExecutionTraceEvent & { actualReasoningEffort?: string | null }).actualReasoningEffort, 'medium')
+  const memoryEvent = events.find((event) => event.stage === 'memory_write')!
+  assert.equal(memoryEvent.provider, null)
+  assert.equal(memoryEvent.model, null)
+  assert.equal(memoryEvent.promptVersion, null)
+  assert.equal(memoryEvent.policyVersion, null)
+  assert.equal(memoryEvent.providerCalls, 0)
+  assert.equal(memoryEvent.inputTokens, 0)
+  assert.equal(memoryEvent.costUsdMicros, null)
+  assert.equal((memoryEvent as ExecutionTraceEvent & { configuredReasoningEffort?: string | null }).configuredReasoningEffort, null)
+  assert.equal((memoryEvent as ExecutionTraceEvent & { actualReasoningEffort?: string | null }).actualReasoningEffort, null)
   assert.equal(events.find((event) => event.stage === 'entity_manager')?.queueWaitMs, 60_000)
   assert.equal(events.find((event) => event.stage === 'memory_write')?.queueWaitMs, 0)
 })
@@ -325,13 +372,43 @@ test('execution event appends are replay-idempotent and conflicts cannot corrupt
   const replay = fixture({ ports: [port], ownership: { news: 'shared' }, executionLedger: ledger })
   assert.equal((await replay.worker.runActiveCycle()).completed, 1)
   assert.deepEqual([...ledger.events.keys()].sort(), firstIds)
-  assert.equal(ledger.appendCalls, 4)
+  assert.equal(ledger.appendCalls, 6)
 
   ledger.conflictIds.add(firstIds[0])
   const conflictReplay = fixture({ ports: [port], ownership: { news: 'shared' }, executionLedger: ledger })
   assert.equal((await conflictReplay.worker.runActiveCycle()).completed, 1)
   assert.equal(port.transitions.at(-1)?.nextStatus, 'complete')
-  assert.equal(ledger.events.size, 2)
+  assert.equal(ledger.events.size, 3)
+})
+
+test('Entity provider execution contributes one active event until its terminal event lands', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-active-event-'))
+  const ledger = new SqliteExecutionLedger(join(directory, 'pipeline.sqlite'))
+  let release!: () => void
+  let started!: () => void
+  const processing = new Promise<void>((resolve) => { release = resolve })
+  const began = new Promise<void>((resolve) => { started = resolve })
+  const processor: CanonicalPacketProcessor = {
+    async process() {
+      started()
+      await processing
+      return { entityTelemetry: entityTelemetry() }
+    },
+  }
+  try {
+    const port = new FakePort('news', [work('news')])
+    const cycle = fixture({
+      ports: [port], ownership: { news: 'shared' }, processor, executionLedger: ledger,
+    }).worker.runActiveCycle()
+    await began
+    assert.equal(ledger.readAggregateStatus().activeEvents, 1)
+    release()
+    assert.equal((await cycle).completed, 1)
+    assert.equal(ledger.readAggregateStatus().activeEvents, 0)
+  } finally {
+    ledger.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test('ledger-disabled execution preserves the original active-cycle behavior', async () => {
@@ -424,20 +501,38 @@ test('failure events and durable transition details redact raw provider errors a
   })
   const ledger = new FakeExecutionLedger()
   const port = new FakePort('news', [work('news')])
-  const processor: CanonicalPacketProcessor = { async process() { throw failure } }
+  const processor: CanonicalPacketProcessor = {
+    async process() {
+      throw new CanonicalEntityTelemetryFailure(failure, entityTelemetry({
+        schemaValid: false,
+        failureCategory: 'provider_timeout',
+      }))
+    },
+  }
 
   const result = await fixture({
     ports: [port], ownership: { news: 'shared' }, processor, executionLedger: ledger,
   }).worker.runActiveCycle()
 
   assert.equal(result.retryWait, 1)
-  assert.equal(ledger.events.size, 2)
-  for (const event of ledger.events.values()) {
+  assert.equal(ledger.events.size, 3)
+  for (const event of [...ledger.events.values()].filter((item) => item.status !== 'started')) {
     assert.equal(event.status, 'retry_wait')
     assert.equal(event.failureCategory, 'provider_timeout')
     assert.equal((event.failureDetail?.length ?? 0) <= 160, true)
     assert.doesNotMatch(event.failureDetail ?? '', /sk-live|Bearer|full prompt|Authorization/i)
   }
+  const entityEvent = [...ledger.events.values()].find((event) => (
+    event.stage === 'entity_manager' && event.status === 'retry_wait'
+  ))!
+  assert.equal(entityEvent.provider, 'fallback')
+  assert.equal(entityEvent.providerCalls, 2)
+  assert.equal(entityEvent.outputSchemaValid, false)
+  assert.equal(entityEvent.costUsdMicros, 23)
+  const memoryEvent = [...ledger.events.values()].find((event) => event.stage === 'memory_write')!
+  assert.equal(memoryEvent.provider, null)
+  assert.equal(memoryEvent.providerCalls, 0)
+  assert.equal(memoryEvent.costUsdMicros, null)
   assert.doesNotMatch(port.transitions[0].failureDetail ?? '', /sk-live|Bearer|full prompt|Authorization/i)
 })
 
@@ -500,9 +595,11 @@ test('heartbeat lease loss aborts long processing and fences completion', async 
   const result = await cycle
   assert.equal(result.staleLeases, 1)
   assert.equal(port.calls.transition, 0)
-  assert.equal(ledger.events.size, 2)
+  assert.equal(ledger.events.size, 3)
   assert.equal([...ledger.events.values()].some((event) => event.status === 'succeeded'), false)
-  assert.equal([...ledger.events.values()].every((event) => event.failureCategory === 'storage_transient'), true)
+  assert.equal([...ledger.events.values()]
+    .filter((event) => event.status !== 'started')
+    .every((event) => event.failureCategory === 'storage_transient'), true)
 })
 
 test('stop prevents new claims, abort option signals active work, and drain awaits completion', async () => {

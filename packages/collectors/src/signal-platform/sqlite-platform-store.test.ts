@@ -250,6 +250,28 @@ test('immutable canonical artifacts are idempotent, collision-safe, linked, and 
   }
 })
 
+test('Signal and observation append atomically, replay idempotently, and roll back on observation collision', () => {
+  const temp = fixture('atomic-observation')
+  const first = new SqliteSignalPlatformStore(temp.path, 'news')
+  const second = new SqliteSignalPlatformStore(temp.path, 'news')
+  try {
+    const observation = {
+      observationId: 'observation-1', signalId: 'signal-1', sourceType: 'news' as const,
+      observedAt: signal().observedAt, deduplicated: false,
+    }
+    assert.equal(first.appendSignalObservation(signal(), observation).signal.inserted, true)
+    assert.equal(second.appendSignalObservation(structuredClone(signal()), { ...observation }).observation.inserted, false)
+
+    const colliding = signal({ signalId: 'signal-2', idempotencyKey: 'source-key-2' })
+    assert.throws(() => first.appendSignalObservation(colliding, {
+      ...observation, signalId: colliding.signalId,
+    }), ImmutableRecordConflictError)
+    assert.equal(first.getSignal(colliding.signalId), null, 'Signal insert must roll back with observation collision')
+  } finally {
+    second.close(); first.close(); rmSync(temp.dir, { recursive: true, force: true })
+  }
+})
+
 test('two independent connections cannot double claim and stale completion is fenced', async () => {
   const temp = fixture('cas')
   const first = new SqliteSignalPlatformStore(temp.path, 'news')

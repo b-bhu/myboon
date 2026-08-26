@@ -1,13 +1,10 @@
-import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 
 import { loadDotenvChain } from '../pipeline-store/cli-env'
-import { SignalPlatformControlPlane } from './control-plane'
 import { formatControlPlaneStatusJson } from './control-plane-format'
-import type { ExecutionAggregateQuery, ExecutionAggregateStatus } from './execution-ledger'
+import { parseControlPlaneAlertPolicy } from './control-plane'
 import { readFeedV3RuntimeStatusAvailability } from './runtime-status'
-import { SqliteExecutionLedger } from './sqlite-execution-ledger'
-import { SqliteSignalPlatformStore } from './sqlite-platform-store'
+import { readSqliteControlPlaneStatus } from './status-sqlite-composition'
 
 loadDotenvChain()
 
@@ -39,46 +36,18 @@ async function main(): Promise<void> {
     60_000,
     'FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS',
   )
-  for (const [name, path] of [['news', newsPath], ['pipeline', pipelinePath]] as const) {
-    if (!existsSync(path)) throw new Error(`${name} SQLite database does not exist at configured path`)
-  }
-
-  const stores = [
-    new SqliteSignalPlatformStore(newsPath, 'news', { readOnly: true }),
-    new SqliteSignalPlatformStore(pipelinePath, 'polymarket', { readOnly: true }),
-    new SqliteSignalPlatformStore(pipelinePath, 'market_calendar', { readOnly: true }),
-    new SqliteSignalPlatformStore(pipelinePath, 'x', { readOnly: true }),
-  ]
-  const newsEvents = new SqliteExecutionLedger(newsPath, { readOnly: true })
-  const pipelineEvents = new SqliteExecutionLedger(pipelinePath, { readOnly: true })
-  try {
-    const executionReader = {
-      readAggregateStatus(query?: ExecutionAggregateQuery): ExecutionAggregateStatus {
-        const reports = [newsEvents.readAggregateStatus(query), pipelineEvents.readAggregateStatus(query)]
-        return {
-          totalEvents: reports.reduce((sum, report) => sum + report.totalEvents, 0),
-          activeEvents: reports.reduce((sum, report) => sum + report.activeEvents, 0),
-          rows: reports.flatMap((report) => report.rows),
-        }
-      },
-    }
-    const status = await new SignalPlatformControlPlane({
-      stores,
-      workReaders: stores,
-      executionReader,
-    }).readStatus({ now: new Date().toISOString() })
-    const { researchRuntime, entityRuntime } = await readFeedV3RuntimeStatusAvailability({
-      researchPath: runtimeStatusPath,
-      researchStaleAfterMs: runtimeStaleAfterMs,
-      entityPath: entityRuntimeStatusPath,
-      entityStaleAfterMs: entityRuntimeStaleAfterMs,
-    })
-    process.stdout.write(`${formatControlPlaneStatusJson({ ...status, researchRuntime, entityRuntime })}\n`)
-  } finally {
-    newsEvents.close()
-    pipelineEvents.close()
-    for (const store of stores) store.close()
-  }
+  const now = new Date().toISOString()
+  const alertPolicy = process.env.FEED_V3_STATUS_ALERT_POLICY_JSON?.trim()
+    ? parseControlPlaneAlertPolicy(JSON.parse(process.env.FEED_V3_STATUS_ALERT_POLICY_JSON))
+    : null
+  const status = await readSqliteControlPlaneStatus({ newsPath, pipelinePath, now, alertPolicy })
+  const { researchRuntime, entityRuntime } = await readFeedV3RuntimeStatusAvailability({
+    researchPath: runtimeStatusPath,
+    researchStaleAfterMs: runtimeStaleAfterMs,
+    entityPath: entityRuntimeStatusPath,
+    entityStaleAfterMs: entityRuntimeStaleAfterMs,
+  })
+  process.stdout.write(`${formatControlPlaneStatusJson({ ...status, researchRuntime, entityRuntime })}\n`)
 }
 
 function positiveInteger(raw: string | undefined, fallback: number, name: string): number {

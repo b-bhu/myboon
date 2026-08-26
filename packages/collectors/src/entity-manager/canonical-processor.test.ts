@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import type { InferenceTelemetry } from '../inference-gateway/types'
 import type { ResearchPacketV1, ResearchWorkItem } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { adaptCanonicalResearchPacket } from './canonical-packet-adapter'
@@ -176,6 +177,19 @@ function plan(
   return { schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION, decision, memories }
 }
 
+function entityTelemetry(): InferenceTelemetry {
+  return {
+    workload: 'entity.extract', purpose: 'entity plan', mode: 'generateStructured',
+    promptVersion: 'entity-prompt-v1', policyVersion: 'entity-policy-v1',
+    configuredPrimaryProvider: 'primary', configuredPrimaryModel: 'primary-model',
+    actualProvider: 'fallback', actualModel: 'fallback-model', fallbackInvoked: true,
+    fallbackReason: 'provider_timeout', schemaValid: true, providerCalls: 2, repairCalls: 0,
+    inputTokens: 10, outputTokens: 5, toolCalls: 0, costUsdMicros: 7,
+    configuredReasoningEffort: 'high', actualReasoningEffort: 'medium',
+    durationMs: 20, budgetExceeded: false, failureCategory: null, calls: [],
+  }
+}
+
 function input(canonical = packet(), item = work()) {
   const validAdapted = adaptCanonicalResearchPacket(packet())
   return {
@@ -305,12 +319,12 @@ test('selects only an admitted existing Entity and preserves canonical traceabil
   const subject = processor(store, {
     async plan({ admission }) {
       sawShortlist = admission.canonicalEntityShortlist.some((item) => item.entityId === 'entity-fed')
-      return plan({
+      return { plan: plan({
         action: 'select_existing',
         entityId: 'entity-fed',
         supportingClaimIds: ['claim-1'],
         supportingEvidenceIds: ['evidence-1'],
-      })
+      }), telemetry: entityTelemetry() }
     },
   })
 
@@ -330,6 +344,15 @@ test('selects only an admitted existing Entity and preserves canonical traceabil
   assert.equal(store.memories[0].context.priority_class, 'P1')
   assert.equal(store.memories[0].context.research_depth, 'standard')
   assert.equal(store.memories[0].context.freshness_deadline, '2026-08-26T13:00:00.000Z')
+  assert.equal(store.memories[0].context.entity_execution_attempt, 1)
+  assert.equal(store.memories[0].context.entity_prompt_version, 'entity-prompt-v1')
+  assert.equal(store.memories[0].context.entity_policy_version, 'entity-policy-v1')
+  assert.equal(store.memories[0].context.entity_provider, 'fallback')
+  assert.equal(store.memories[0].context.entity_model, 'fallback-model')
+  assert.equal(store.memories[0].context.entity_fallback_used, true)
+  assert.equal(store.memories[0].context.entity_cost_usd_micros, 7)
+  assert.equal(store.memories[0].context.entity_configured_reasoning_effort, 'high')
+  assert.equal(store.memories[0].context.entity_actual_reasoning_effort, 'medium')
   assert.deepEqual(store.memories[0].evidence, packet().evidence)
 })
 
@@ -569,4 +592,24 @@ test('provider, circuit, and storage outages retain structural failure categorie
     && error.retryable)
   assert.equal(storageStore.entityWrites, 0)
   assert.equal(storageStore.memoryWrites, 0)
+})
+
+test('planner result rejects malformed telemetry before any Entity or memory write', async () => {
+  const store = new FakeStore([entity()])
+  const subject = processor(store, {
+    async plan() {
+      return {
+        plan: plan({ action: 'select_existing', entityId: 'entity-fed' }),
+        telemetry: { providerCalls: 1, secret: 'must-not-cross-boundary' },
+      }
+    },
+  })
+
+  await assert.rejects(subject.process(input()), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'invalid_structured_output'
+    && /telemetry/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
 })

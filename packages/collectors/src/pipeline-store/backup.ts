@@ -70,6 +70,7 @@ const PIPELINE_TABLES = [
   'pipeline_editor_drafts',
   'pipeline_runs',
   'signal_platform_signals',
+  'signal_platform_signal_observations',
   'signal_platform_triage_decisions',
   'signal_platform_research_work',
   'signal_platform_evidence',
@@ -86,6 +87,7 @@ const NEWS_TABLES = [
   'news_candidate_observations',
   'news_research_results',
   'signal_platform_signals',
+  'signal_platform_signal_observations',
   'signal_platform_triage_decisions',
   'signal_platform_research_work',
   'signal_platform_evidence',
@@ -101,6 +103,7 @@ const NEWS_TABLES = [
 // databases remain valid until a SqliteExecutionLedger first opens them.
 const OPTIONAL_TABLES = new Set<string>([
   'signal_platform_signals',
+  'signal_platform_signal_observations',
   'signal_platform_triage_decisions',
   'signal_platform_research_work',
   'signal_platform_evidence',

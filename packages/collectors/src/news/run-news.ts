@@ -1,5 +1,6 @@
 import { envFlag, loadDotenvChain } from '../pipeline-store/cli-env'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { legacyResearchOwnership, runLegacyResearchWhenOwned } from '../research-engine/legacy-ownership-guard'
 import { HermesWorkerClient } from './hermes-client'
 import { runNewsResearchPipelineOnce } from './runner'
 import {
@@ -38,7 +39,13 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   loadDotenvChain()
-  await runOnce()
+  const { ownership } = await runLegacyResearchWhenOwned({ sourceType: 'news', run: runOnce })
+  if (ownership.owner === 'shared') {
+    console.log('[news-researcher] shared Research owns news; legacy runner is inert')
+    if (envFlag(process.env.NEWS_RESEARCHER_RUN_ONCE)) return
+    await waitForShutdownSignal()
+    return
+  }
   if (envFlag(process.env.NEWS_RESEARCHER_RUN_ONCE)) return
 
   startIntervalRunner({
@@ -48,7 +55,28 @@ async function main(): Promise<void> {
   })
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error))
-  process.exit(1)
-})
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise((resolve) => {
+    const stop = () => {
+      process.removeListener('SIGTERM', stop)
+      process.removeListener('SIGINT', stop)
+      resolve()
+    }
+    process.once('SIGTERM', stop)
+    process.once('SIGINT', stop)
+  })
+}
+
+export function newsResearchRunnerOwnership(
+  env: Readonly<Record<string, string | undefined>>,
+  now?: Date,
+) {
+  return legacyResearchOwnership('news', env, now)
+}
+
+if (require.main === module || process.env.NODE_APP_INSTANCE !== undefined) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exit(1)
+  })
+}

@@ -29,6 +29,67 @@ const HERMES_ENV = {
   HERMES_STRUCTURED_MAX_CONCURRENCY: '4',
   HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR: '/tmp/myboon-hermes-structured-slots',
 }
+// One declaration is injected into both legacy Entity runners and the shared
+// worker. Source ownership therefore cannot diverge between PM2 processes.
+const ENTITY_OWNERSHIP_KEYS = [
+  'FEED_V3_ENTITY_MODE',
+  'FEED_V3_ENTITY_ACTIVE_SOURCES',
+  'FEED_V3_ENTITY_SHADOW_SOURCES',
+  'FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES',
+  'FEED_V3_CUTOVER_RECEIPT_PATH',
+  'FEED_V3_SHADOW_SAMPLE_BASIS_POINTS',
+]
+const ENTITY_OWNERSHIP_ENV = Object.fromEntries(
+  ENTITY_OWNERSHIP_KEYS
+    .filter((key) => process.env[key] !== undefined)
+    .map((key) => [key, process.env[key]]),
+)
+const RESEARCH_OWNERSHIP_KEYS = [
+  'FEED_V3_RESEARCH_MODE',
+  'FEED_V3_RESEARCH_ACTIVE_SOURCES',
+  'FEED_V3_RESEARCH_SHADOW_SOURCES',
+  'FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES',
+  'FEED_V3_CUTOVER_RECEIPT_PATH',
+  'FEED_V3_SHADOW_SAMPLE_BASIS_POINTS',
+]
+const RESEARCH_OWNERSHIP_ENV = Object.fromEntries(
+  RESEARCH_OWNERSHIP_KEYS
+    .filter((key) => process.env[key] !== undefined)
+    .map((key) => [key, process.env[key]]),
+)
+const RESEARCH_RUNTIME_KEYS = [
+  ...RESEARCH_OWNERSHIP_KEYS,
+  'FEED_V3_DEEP_RESEARCH_ENABLED',
+  'FEED_V3_DEEP_RESEARCH_WORKER_EXECUTABLE',
+  'FEED_V3_DEEP_RESEARCH_WORKER_CONTRACT_VERSION',
+  'FEED_V3_DEEP_RESEARCH_WORKER_ARGS_JSON',
+  'FEED_V3_DEEP_RESEARCH_APPROVED_DOMAINS',
+  'FEED_V3_DEEP_RESEARCH_CAPABILITIES',
+  'FEED_V3_DEEP_RESEARCH_PROVIDER',
+  'FEED_V3_DEEP_RESEARCH_MODEL',
+  'FEED_V3_DEEP_RESEARCH_PROMPT_VERSION',
+  'FEED_V3_DEEP_RESEARCH_MAX_BROWSER_NAVIGATIONS',
+  'FEED_V3_DEEP_RESEARCH_MAX_SEARCH_QUERIES',
+  'FEED_V3_DEEP_RESEARCH_MAX_HTTP_FETCHES',
+  'FEED_V3_DEEP_RESEARCH_MAX_OUTPUT_BYTES',
+  'FEED_V3_DEEP_RESEARCH_CPU_QUOTA_PERCENT',
+  'FEED_V3_DEEP_RESEARCH_MEMORY_MAX_BYTES',
+  'FEED_V3_DEEP_RESEARCH_TASKS_MAX',
+  'FEED_V3_DEEP_RESEARCH_REASONING_EFFORT',
+  'FEED_V3_DEEP_RESEARCH_MAX_CONCURRENCY',
+  'FEED_V3_DEEP_RESEARCH_RATE_MAX_CALLS',
+  'FEED_V3_DEEP_RESEARCH_RATE_WINDOW_MS',
+  'FEED_V3_DEEP_RESEARCH_AUDIT_TEMP_ROOTS',
+  'FEED_V3_DEEP_RESEARCH_AUDIT_PROFILE_ROOTS',
+  'FEED_V3_DEEP_RESEARCH_AUDIT_LIMIT',
+  'FEED_V3_DEEP_RESEARCH_AUDIT_INTERVAL_MS',
+  'FEED_V3_DEEP_RESEARCH_RUNTIME_STATUS_PATH',
+]
+const RESEARCH_RUNTIME_ENV = Object.fromEntries(
+  RESEARCH_RUNTIME_KEYS
+    .filter((key) => process.env[key] !== undefined)
+    .map((key) => [key, process.env[key]]),
+)
 
 module.exports = {
   apps: [
@@ -80,6 +141,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        ...RESEARCH_OWNERSHIP_ENV,
         HERMES_COMMAND: '/root/.local/bin/myboonresearch',
         RESEARCH_ENGINE_HERMES_PROFILE: 'myboonresearch',
         POLYMARKET_RESEARCHER_RUN_ONCE: '0',
@@ -126,6 +188,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        ...RESEARCH_OWNERSHIP_ENV,
         HERMES_COMMAND: '/root/.local/bin/myboonnews',
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         NEWS_RESEARCHER_RUN_ONCE: '0',
@@ -154,6 +217,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        ...ENTITY_OWNERSHIP_ENV,
         HERMES_COMMAND: '/root/.local/bin/myboonnewsentity',
         NEWS_SQLITE_PATH: '.data/news.sqlite',
         ENTITY_MANAGER_NEWS_RUN_ONCE: '0',
@@ -175,6 +239,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
+        ...ENTITY_OWNERSHIP_ENV,
         HERMES_COMMAND: '/root/.local/bin/myboonpolyentity',
         ENTITY_MANAGER_POLYMARKET_RUN_ONCE: '0',
         ENTITY_MANAGER_POLYMARKET_INTERVAL_MS: '300000',
@@ -259,12 +324,10 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
-        FEED_V3_RESEARCH_MODE: 'off',
-        FEED_V3_RESEARCH_ACTIVE_SOURCES: '',
-        FEED_V3_RESEARCH_SHADOW_SOURCES: '',
-        FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: '',
-        FEED_V3_CUTOVER_RECEIPT_PATH: '',
-        FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '0',
+        // Ownership/deep values come from the invoking shell when explicitly
+        // supplied; otherwise the runner loads collectors/.env. Code defaults
+        // remain safe-off when neither source defines them.
+        ...RESEARCH_RUNTIME_ENV,
         FEED_V3_RESEARCH_RUN_ONCE: '0',
         FEED_V3_RESEARCH_INTERVAL_MS: '5000',
         FEED_V3_RESEARCH_BATCH_SIZE: '10',
@@ -277,22 +340,6 @@ module.exports = {
         FEED_V3_RESEARCH_RUNTIME_STATUS_PATH: '.data/feed-v3-research-runtime-status.json',
         FEED_V3_RESEARCH_RUNTIME_STATUS_STALE_MS: '60000',
         FEED_V3_RUNTIME_CONTROL_PATH: '.data/feed-v3-runtime-control.json',
-        FEED_V3_DEEP_RESEARCH_ENABLED: '0',
-        FEED_V3_DEEP_RESEARCH_WORKER_EXECUTABLE: '',
-        FEED_V3_DEEP_RESEARCH_WORKER_CONTRACT_VERSION: 'myboon.deep_worker.v1',
-        FEED_V3_DEEP_RESEARCH_WORKER_ARGS_JSON: '[]',
-        FEED_V3_DEEP_RESEARCH_APPROVED_DOMAINS: '',
-        FEED_V3_DEEP_RESEARCH_CAPABILITIES: 'browser_navigation,registered_search,http_fetch',
-        FEED_V3_DEEP_RESEARCH_PROVIDER: '',
-        FEED_V3_DEEP_RESEARCH_MODEL: '',
-        FEED_V3_DEEP_RESEARCH_PROMPT_VERSION: 'research.deep.prompt.v1',
-        FEED_V3_DEEP_RESEARCH_MAX_BROWSER_NAVIGATIONS: '3',
-        FEED_V3_DEEP_RESEARCH_MAX_SEARCH_QUERIES: '3',
-        FEED_V3_DEEP_RESEARCH_MAX_HTTP_FETCHES: '4',
-        FEED_V3_DEEP_RESEARCH_MAX_OUTPUT_BYTES: '100000',
-        FEED_V3_DEEP_RESEARCH_CPU_QUOTA_PERCENT: '50',
-        FEED_V3_DEEP_RESEARCH_MEMORY_MAX_BYTES: '536870912',
-        FEED_V3_DEEP_RESEARCH_TASKS_MAX: '64',
       },
     },
     {
@@ -309,13 +356,8 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
-        FEED_V3_ENTITY_MODE: 'off',
-        FEED_V3_ENTITY_ACTIVE_SOURCES: '',
-        FEED_V3_ENTITY_SHADOW_SOURCES: '',
-        FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: '',
-        FEED_V3_CUTOVER_RECEIPT_PATH: '',
+        ...ENTITY_OWNERSHIP_ENV,
         FEED_V3_RUNTIME_CONTROL_PATH: '.data/feed-v3-runtime-control.json',
-        FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '0',
         FEED_V3_ENTITY_RUN_ONCE: '0',
         FEED_V3_ENTITY_INTERVAL_MS: '30000',
         FEED_V3_ENTITY_BATCH_SIZE: '10',

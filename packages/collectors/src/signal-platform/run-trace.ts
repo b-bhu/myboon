@@ -1,14 +1,11 @@
-import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import {
-  CanonicalTraceInspector,
   formatTraceInspectionJson,
   type TraceInspectionQuery,
 } from './operator-trace'
-import { SqliteBoundedExecutionTraceReader } from './operator-trace-sqlite'
-import { SqliteSignalPlatformStore } from './sqlite-platform-store'
+import { inspectSqliteTrace } from './trace-sqlite-composition'
 
 loadDotenvChain()
 
@@ -23,25 +20,10 @@ async function main(): Promise<void> {
   const query = parseQuery(process.argv.slice(2))
   const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
   const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
-  for (const [source, path] of [['news', newsPath], ['polymarket', pipelinePath]] as const) {
-    if (!existsSync(path)) throw new Error(`${source} SQLite database does not exist at configured path`)
-  }
-  const stores = [
-    new SqliteSignalPlatformStore(newsPath, 'news', { readOnly: true }),
-    new SqliteSignalPlatformStore(pipelinePath, 'polymarket', { readOnly: true }),
-  ]
-  const readers = [
-    new SqliteBoundedExecutionTraceReader(newsPath, 'news'),
-    new SqliteBoundedExecutionTraceReader(pipelinePath, 'polymarket'),
-  ]
-  try {
-    const result = await new CanonicalTraceInspector({ stores, executionReaders: readers })
-      .inspect(query, { now: new Date().toISOString() })
-    process.stdout.write(`${formatTraceInspectionJson(result)}\n`)
-  } finally {
-    for (const reader of readers) reader.close()
-    for (const store of stores) store.close()
-  }
+  const result = await inspectSqliteTrace({
+    newsPath, pipelinePath, query, now: new Date().toISOString(),
+  })
+  process.stdout.write(`${formatTraceInspectionJson(result)}\n`)
 }
 
 function parseQuery(args: string[]): TraceInspectionQuery {

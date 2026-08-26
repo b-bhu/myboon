@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
-import type { ExecutionTraceEvent } from './contracts'
+import type { ExecutionTraceEvent, Signal } from './contracts'
 import { canonicalJson } from './canonical-json'
 import {
   ExecutionEventConflictError,
@@ -172,7 +172,11 @@ export class SqliteExecutionLedger implements ExecutionLedger {
         SUM(output_tokens) AS output_tokens,
         SUM(tool_calls) AS tool_calls,
         SUM(budget_exceeded) AS budget_exceeded_count,
-        SUM(wall_time_ms) AS total_wall_time_ms
+        SUM(wall_time_ms) AS total_wall_time_ms,
+        SUM(CASE WHEN json_type(event_json, '$.costUsdMicros') = 'integer' THEN 1 ELSE 0 END)
+          AS measured_cost_event_count,
+        COALESCE(SUM(CASE WHEN json_type(event_json, '$.costUsdMicros') = 'integer'
+          THEN CAST(json_extract(event_json, '$.costUsdMicros') AS INTEGER) ELSE 0 END), 0) AS total_cost_usd_micros
       FROM ${EXECUTION_LEDGER_TABLE} ${where}
       GROUP BY event_schema_version, source_type, stage, status, failure_category,
         provider, model, fallback_provider, fallback_model, fallback_used,
@@ -209,6 +213,8 @@ export class SqliteExecutionLedger implements ExecutionLedger {
       toolCalls: Number(row.tool_calls),
       budgetExceededCount: Number(row.budget_exceeded_count),
       totalWallTimeMs: Number(row.total_wall_time_ms),
+      measuredCostEventCount: Number(row.measured_cost_event_count),
+      totalCostUsdMicros: Number(row.total_cost_usd_micros),
     }))
     const activeClauses = ['s.status = ?']
     const activeParams: unknown[] = ['started']
@@ -233,10 +239,81 @@ export class SqliteExecutionLedger implements ExecutionLedger {
         GROUP BY s.trace_id, s.work_id, s.source_type, s.stage, s.attempt
       )
     `).get(...activeParams) as Record<string, unknown> | undefined
+    const performanceRows = this.readProviderPerformance(where, params)
+    const completionUsage = this.readCompletionUsage(where, params)
     return {
       totalEvents: rows.reduce((sum, row) => sum + row.eventCount, 0),
       activeEvents: Number(active?.active_count ?? 0),
       rows,
+      providerPerformance: performanceRows,
+      completionUsage,
+    }
+  }
+
+  private readProviderPerformance(where: string, params: unknown[]): ExecutionAggregateStatus['providerPerformance'] {
+    const providerWhere = where
+      ? `${where} AND provider IS NOT NULL AND status IN ('succeeded', 'failed', 'dead_letter', 'expired')`
+      : `WHERE provider IS NOT NULL AND status IN ('succeeded', 'failed', 'dead_letter', 'expired')`
+    const rows = this.db.prepare(`
+      WITH terminal AS (
+        SELECT source_type, stage, provider, model, status, wall_time_ms,
+          ROW_NUMBER() OVER (
+            PARTITION BY source_type, stage, provider, model ORDER BY wall_time_ms, event_id
+          ) AS rank,
+          COUNT(*) OVER (PARTITION BY source_type, stage, provider, model) AS sample_count
+        FROM ${EXECUTION_LEDGER_TABLE} ${providerWhere}
+      )
+      SELECT source_type, stage, provider, model, MAX(sample_count) AS terminal_count,
+        SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_count,
+        SUM(CASE WHEN status IN ('failed', 'dead_letter', 'expired') THEN 1 ELSE 0 END) AS failed_count,
+        MAX(CASE WHEN rank = CAST((sample_count * 50 + 99) / 100 AS INTEGER) THEN wall_time_ms END) AS p50_ms,
+        MAX(CASE WHEN rank = CAST((sample_count * 95 + 99) / 100 AS INTEGER) THEN wall_time_ms END) AS p95_ms,
+        MAX(CASE WHEN rank = CAST((sample_count * 99 + 99) / 100 AS INTEGER) THEN wall_time_ms END) AS p99_ms
+      FROM terminal GROUP BY source_type, stage, provider, model
+      ORDER BY source_type, stage, provider, model
+    `).all(...params) as Array<Record<string, unknown>>
+    return rows.map((row) => {
+      const terminalEventCount = Number(row.terminal_count ?? 0)
+      const succeededEventCount = Number(row.succeeded_count ?? 0)
+      return {
+        sourceType: row.source_type as Signal['sourceType'],
+        stage: row.stage as ExecutionAggregateRow['stage'],
+        provider: String(row.provider),
+        model: row.model === null ? null : String(row.model),
+        terminalEventCount,
+        succeededEventCount,
+        failedEventCount: Number(row.failed_count ?? 0),
+        successRate: terminalEventCount === 0 ? 0 : succeededEventCount / terminalEventCount,
+        latency: {
+          sampleCount: terminalEventCount,
+          p50Ms: nullableNumber(row.p50_ms),
+          p95Ms: nullableNumber(row.p95_ms),
+          p99Ms: nullableNumber(row.p99_ms),
+        },
+      }
+    })
+  }
+
+  private readCompletionUsage(where: string, params: unknown[]): ExecutionAggregateStatus['completionUsage'] {
+    const completionWhere = where
+      ? `${where} AND stage = 'synthesis' AND status = 'succeeded' AND packet_id IS NOT NULL`
+      : `WHERE stage = 'synthesis' AND status = 'succeeded' AND packet_id IS NOT NULL`
+    const row = this.db.prepare(`
+      SELECT COUNT(DISTINCT packet_id) AS completed_packets,
+        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COUNT(DISTINCT CASE WHEN json_type(event_json, '$.costUsdMicros') = 'integer'
+          THEN packet_id END) AS measured_cost_packets,
+        COALESCE(SUM(CASE WHEN json_type(event_json, '$.costUsdMicros') = 'integer'
+          THEN CAST(json_extract(event_json, '$.costUsdMicros') AS INTEGER) ELSE 0 END), 0) AS total_cost_usd_micros
+      FROM ${EXECUTION_LEDGER_TABLE} ${completionWhere}
+    `).get(...params) as Record<string, unknown> | undefined
+    return {
+      completedPackets: Number(row?.completed_packets ?? 0),
+      inputTokens: Number(row?.input_tokens ?? 0),
+      outputTokens: Number(row?.output_tokens ?? 0),
+      measuredCostPackets: Number(row?.measured_cost_packets ?? 0),
+      totalCostUsdMicros: Number(row?.total_cost_usd_micros ?? 0),
     }
   }
 
@@ -248,4 +325,10 @@ export class SqliteExecutionLedger implements ExecutionLedger {
 function parseEvent(value: unknown): ExecutionTraceEvent {
   if (typeof value !== 'string') throw new Error('Execution ledger contains a non-string event_json')
   return validateExecutionTraceEvent(JSON.parse(value))
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }

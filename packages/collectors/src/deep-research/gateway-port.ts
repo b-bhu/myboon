@@ -1,4 +1,4 @@
-import type { ContainedInvestigationPort, InvestigateRequest } from '../inference-gateway'
+import type { ContainedInvestigationPort, InvestigateRequest, InferenceProviderTarget } from '../inference-gateway'
 import { DeepResearchError } from './errors'
 import { DeepResearchExecutor } from './executor'
 import type { DeepResearchJob, DeepResearchResult } from './types'
@@ -7,7 +7,10 @@ import type { DeepResearchJob, DeepResearchResult } from './types'
 export class DeepResearchGatewayPort implements ContainedInvestigationPort {
   constructor(private readonly executor: Pick<DeepResearchExecutor, 'execute'>) {}
 
-  async execute(request: InvestigateRequest): Promise<DeepResearchResult> {
+  async execute(request: InvestigateRequest & {
+    target?: InferenceProviderTarget
+    reasoningEffort?: 'low' | 'medium' | 'high'
+  }) {
     if (!request.job || typeof request.job !== 'object') {
       throw new DeepResearchError('Investigate request requires a canonical deep-research job', {
         category: 'invalid_job', retryable: false,
@@ -33,6 +36,13 @@ export class DeepResearchGatewayPort implements ContainedInvestigationPort {
         category: 'invalid_job', retryable: false,
       })
     }
+    if (!request.target) throw new DeepResearchError('Gateway target is required', { category: 'invalid_job', retryable: false })
+    if (job.inference.provider !== request.target.provider || job.inference.model !== request.target.model
+      || job.inference.reasoningEffort !== request.reasoningEffort) {
+      throw new DeepResearchError('Gateway route policy must exactly match the contained job', {
+        category: 'invalid_job', retryable: false,
+      })
+    }
     if (request.budget.maxRepairCalls !== 0
       || request.budget.maxProviderCalls !== job.budget.maxProviderCalls
       || request.budget.maxInputTokens !== job.budget.maxInputTokens
@@ -43,6 +53,20 @@ export class DeepResearchGatewayPort implements ContainedInvestigationPort {
         category: 'invalid_job', retryable: false,
       })
     }
-    return this.executor.execute(job, { signal: request.signal })
+    const result = await this.executor.execute(job, {
+      signal: request.signal, onExecutionStarted: request.onExecutionStarted,
+    })
+    return {
+      value: result,
+      actualProvider: request.target.provider,
+      actualModel: request.target.model,
+      usage: {
+        providerCalls: result.budgetUsed.providerCalls,
+        inputTokens: result.budgetUsed.inputTokens,
+        outputTokens: result.budgetUsed.outputTokens,
+        toolCalls: result.budgetUsed.toolCalls,
+        wallTimeMs: result.budgetUsed.wallTimeMs,
+      },
+    }
   }
 }

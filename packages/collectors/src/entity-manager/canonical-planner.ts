@@ -9,8 +9,10 @@ import { PlatformFailure } from '../signal-platform/failures'
 import {
   CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
   type CanonicalEntityPlan,
+  type CanonicalEntityPlanningResult,
   type CanonicalEntityPlanningInput,
   type CanonicalEntityPlanningPort,
+  withCanonicalEntityTelemetry,
 } from './canonical-processor'
 
 export const CANONICAL_ENTITY_PROMPT_VERSION = 'myboon.entity_planner_prompt.v1' as const
@@ -59,7 +61,7 @@ export class GatewayCanonicalEntityPlanner implements CanonicalEntityPlanningPor
     }
   }
 
-  async plan(input: CanonicalEntityPlanningInput): Promise<CanonicalEntityPlan> {
+  async plan(input: CanonicalEntityPlanningInput): Promise<CanonicalEntityPlanningResult> {
     const prompt = entityPlanningPrompt(input)
     if (prompt.length > MAX_PROMPT_CHARS) {
       throw new PlatformFailure({
@@ -78,7 +80,7 @@ export class GatewayCanonicalEntityPlanner implements CanonicalEntityPlanningPor
         budget: this.budget,
         validate: validatePlanEnvelope,
       })
-      return result.value
+      return { plan: result.value, telemetry: result.telemetry }
     } catch (error) {
       throw planningFailure(error)
     }
@@ -137,7 +139,7 @@ function planningFailure(error: unknown): PlatformFailure {
   if (error instanceof PlatformFailure) return error
   if (error instanceof InferenceGatewayError) {
     const noProviderCall = (error.telemetry?.providerCalls ?? 0) === 0
-    return new PlatformFailure({
+    const failure = new PlatformFailure({
       category: error.category,
       message: error.message,
       retryable: error.retryable,
@@ -146,6 +148,7 @@ function planningFailure(error: unknown): PlatformFailure {
         ? false
         : !(error.category === 'provider_unavailable' && noProviderCall),
     })
+    return withCanonicalEntityTelemetry(failure, error.telemetry ?? null) as PlatformFailure
   }
   return new PlatformFailure({
     category: 'provider_unavailable',

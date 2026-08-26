@@ -1,4 +1,5 @@
 import type { ResearchPacketV1, ResearchWorkItem } from '../signal-platform/contracts'
+import type { InferenceTelemetry } from '../inference-gateway/types'
 import { PlatformFailure } from '../signal-platform/failures'
 import {
   buildEntityAdmissionInput,
@@ -16,7 +17,11 @@ import { adaptCanonicalResearchPacket } from './canonical-packet-adapter'
 import { EntityService } from './entity-service'
 import { deriveMemoryIdentityKey } from './memory-identity'
 import { normalizeSlug } from './normalization'
-import type { CanonicalPacketProcessor, CanonicalPacketProcessorInput } from './shared-worker'
+import type {
+  CanonicalPacketProcessor,
+  CanonicalPacketProcessorInput,
+  CanonicalPacketProcessorResult,
+} from './shared-worker'
 import type {
   EntityInput,
   EntityIdentityLookupInput,
@@ -83,7 +88,12 @@ export interface CanonicalEntityPlanningInput {
 export interface CanonicalEntityPlanningPort {
   /** Availability/circuit check only; it must not perform a durable write. */
   preflight?(input: Pick<CanonicalEntityPlanningInput, 'work' | 'signal'> & { packet: ResearchPacketV1 }): Promise<void>
-  plan(input: CanonicalEntityPlanningInput): Promise<CanonicalEntityPlan | unknown>
+  plan(input: CanonicalEntityPlanningInput): Promise<CanonicalEntityPlan | CanonicalEntityPlanningResult | unknown>
+}
+
+export interface CanonicalEntityPlanningResult {
+  plan: CanonicalEntityPlan | unknown
+  telemetry: InferenceTelemetry | null
 }
 
 export interface EntityCanonLookupQuery {
@@ -128,6 +138,33 @@ export class CanonicalEntityProcessorValidationError extends PlatformFailure {
   }
 }
 
+export class CanonicalEntityTelemetryFailure extends PlatformFailure {
+  readonly entityTelemetry: InferenceTelemetry
+
+  constructor(failure: PlatformFailure, telemetry: InferenceTelemetry) {
+    super({
+      category: failure.category,
+      message: failure.message,
+      retryable: failure.retryable,
+      retryAfterMs: failure.retryAfterMs,
+      incrementsAttempt: failure.incrementsAttempt,
+    })
+    this.name = 'CanonicalEntityTelemetryFailure'
+    this.entityTelemetry = telemetry
+  }
+}
+
+export function withCanonicalEntityTelemetry(error: unknown, telemetry: InferenceTelemetry | null): unknown {
+  if (!telemetry) return error
+  if (error instanceof CanonicalEntityTelemetryFailure) return error
+  if (error instanceof PlatformFailure) return new CanonicalEntityTelemetryFailure(error, telemetry)
+  return new CanonicalEntityTelemetryFailure(new PlatformFailure({
+    category: 'provider_unavailable',
+    message: error instanceof Error ? error.message : 'Canonical Entity processing failed.',
+    retryable: true,
+  }), telemetry)
+}
+
 /**
  * Canonical Feed V3 composition over the same EntityMemoryStore boundary used
  * by EntityService and SupabaseEntityMemoryStore. It does no direct SQL,
@@ -151,7 +188,7 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
     }))
   }
 
-  async process(input: CanonicalPacketProcessorInput): Promise<void> {
+  async process(input: CanonicalPacketProcessorInput): Promise<CanonicalPacketProcessorResult> {
     const canonicalPacket = validateProcessorInput(input)
     ensureNotAborted(input.signal)
     const adaptedPacket = adaptCanonicalResearchPacket(canonicalPacket)
@@ -182,38 +219,98 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
       canonAvailability,
     })
 
-    const rawPlan = await providerCall('Entity planning', () => this.options.planner.plan({
+    const rawPlanningResult = await providerCall('Entity planning', () => this.options.planner.plan({
       admission,
       packet,
       work: input.work,
       signal: input.signal,
     }))
-    ensureNotAborted(input.signal)
-    const plan = normalizePlan(rawPlan, canonicalPacket)
-    const resolved = await resolveAdmissionDecision(admission, plan.decision, this.canonLookup)
-    const processingCatalog = uniqueEntities([...catalog, ...resolved.collisionEntities])
-    const extraction = extractionFor(resolved.decision, plan.memories, canonicalPacket, input.work, processingCatalog)
+    const planningResult = planningResultFrom(rawPlanningResult)
+    try {
+      ensureNotAborted(input.signal)
+      const plan = normalizePlan(planningResult.plan, canonicalPacket)
+      const resolved = await resolveAdmissionDecision(admission, plan.decision, this.canonLookup)
+      const processingCatalog = uniqueEntities([...catalog, ...resolved.collisionEntities])
+      const extraction = extractionFor(
+        resolved.decision,
+        plan.memories,
+        canonicalPacket,
+        input.work,
+        processingCatalog,
+        planningResult.telemetry,
+      )
 
     // The scoped adapter serves the exact canon used for admission and injects
     // stable identities at the final store boundary. EntityService therefore
     // retains its resolver behavior without title-based replay identity.
-    const scopedStore = new CanonicalIdentityStore(
-      this.options.store,
-      processingCatalog,
-      canonicalPacket,
-      plan.memories,
-      resolved.decision.action === 'select_existing' ? resolved.decision.entityId : null,
-    )
-    const service = new EntityService(scopedStore)
-    try {
+      const scopedStore = new CanonicalIdentityStore(
+        this.options.store,
+        processingCatalog,
+        canonicalPacket,
+        plan.memories,
+        resolved.decision.action === 'select_existing' ? resolved.decision.entityId : null,
+      )
+      const service = new EntityService(scopedStore)
       await service.writeExtraction(packet, { async extract() { return extraction } })
+      return { entityTelemetry: planningResult.telemetry }
     } catch (error) {
-      if (error instanceof PlatformFailure) throw error
-      throw new CanonicalEntityProcessorValidationError(
+      const failure = error instanceof PlatformFailure ? error : new CanonicalEntityProcessorValidationError(
         error instanceof Error ? error.message : 'Canonical EntityService processing failed.',
       )
+      throw withCanonicalEntityTelemetry(failure, planningResult.telemetry)
     }
   }
+}
+
+function planningResultFrom(value: unknown): CanonicalEntityPlanningResult {
+  if (isRecord(value) && 'plan' in value && 'telemetry' in value) {
+    return { plan: value.plan, telemetry: validatedEntityTelemetry(value.telemetry) }
+  }
+  return { plan: value, telemetry: null }
+}
+
+function validatedEntityTelemetry(value: unknown): InferenceTelemetry | null {
+  if (value === null) return null
+  if (!isRecord(value)) throw new CanonicalEntityProcessorValidationError('Entity planner telemetry must be an object or null.')
+  const strings = ['workload', 'purpose', 'mode', 'promptVersion', 'policyVersion', 'configuredPrimaryProvider', 'configuredPrimaryModel']
+  if (strings.some((key) => typeof value[key] !== 'string' || (value[key] as string).length === 0)) {
+    throw new CanonicalEntityProcessorValidationError('Entity planner telemetry is missing required route provenance.')
+  }
+  if (value.workload !== 'entity.extract' || value.mode !== 'generateStructured') {
+    throw new CanonicalEntityProcessorValidationError('Entity planner telemetry must describe entity.extract structured inference.')
+  }
+  for (const key of ['actualProvider', 'actualModel', 'fallbackReason', 'failureCategory']) {
+    if (value[key] !== null && typeof value[key] !== 'string') {
+      throw new CanonicalEntityProcessorValidationError(`Entity planner telemetry ${key} must be a string or null.`)
+    }
+  }
+  for (const key of ['configuredReasoningEffort', 'actualReasoningEffort']) {
+    if (value[key] !== undefined && value[key] !== null && !['low', 'medium', 'high'].includes(value[key] as string)) {
+      throw new CanonicalEntityProcessorValidationError(`Entity planner telemetry ${key} has an invalid value.`)
+    }
+  }
+  if ((value.actualProvider === null) !== (value.actualModel === null)) {
+    throw new CanonicalEntityProcessorValidationError('Entity planner actual provider and model coverage must match.')
+  }
+  for (const key of ['fallbackInvoked', 'budgetExceeded']) {
+    if (typeof value[key] !== 'boolean') {
+      throw new CanonicalEntityProcessorValidationError(`Entity planner telemetry ${key} must be boolean.`)
+    }
+  }
+  if (value.schemaValid !== null && typeof value.schemaValid !== 'boolean') {
+    throw new CanonicalEntityProcessorValidationError('Entity planner telemetry schemaValid must be boolean or null.')
+  }
+  for (const key of ['providerCalls', 'repairCalls', 'inputTokens', 'outputTokens', 'toolCalls', 'durationMs']) {
+    if (!Number.isSafeInteger(value[key]) || (value[key] as number) < 0) {
+      throw new CanonicalEntityProcessorValidationError(`Entity planner telemetry ${key} must be a non-negative integer.`)
+    }
+  }
+  if (value.costUsdMicros !== undefined && value.costUsdMicros !== null
+    && (!Number.isSafeInteger(value.costUsdMicros) || (value.costUsdMicros as number) < 0)) {
+    throw new CanonicalEntityProcessorValidationError('Entity planner telemetry cost must be measured non-negative micros or null.')
+  }
+  if (!Array.isArray(value.calls)) throw new CanonicalEntityProcessorValidationError('Entity planner telemetry calls must be an array.')
+  return value as unknown as InferenceTelemetry
 }
 
 interface NormalizedMemoryDraft extends CanonicalEntityMemoryDraft {
@@ -413,6 +510,7 @@ function extractionFor(
   packet: ResearchPacketV1,
   work: ResearchWorkItem,
   catalog: readonly EntityRecord[],
+  telemetry: InferenceTelemetry | null,
 ): EntityMemoryExtraction {
   const existing = decision.action === 'select_existing'
     ? catalog.find((entity) => entity.id === decision.entityId)
@@ -442,7 +540,7 @@ function extractionFor(
         summary: entity!.summary ?? undefined,
         createIfMissing: true,
         createReason: 'canonical_entity_admission',
-        metadata: traceContext(packet, work, decision.supportingClaimIds, decision.supportingEvidenceIds),
+        metadata: traceContext(packet, work, decision.supportingClaimIds, decision.supportingEvidenceIds, telemetry),
       }],
     memories: memories.map((memory): EntityMemoryCandidate => ({
       entitySlug,
@@ -463,7 +561,7 @@ function extractionFor(
       },
       context: {
         ...memory.context,
-        ...traceContext(packet, work, memory.representedClaimIds, representedEvidenceIds(packet, memory)),
+        ...traceContext(packet, work, memory.representedClaimIds, representedEvidenceIds(packet, memory), telemetry),
         canonical_memory_role: memory.memoryRole,
       },
     })),
@@ -649,6 +747,7 @@ function traceContext(
   work: ResearchWorkItem,
   claimIds: readonly string[],
   evidenceIds: readonly string[],
+  telemetry: InferenceTelemetry | null,
 ): Record<string, unknown> {
   return {
     canonical_packet_id: packet.packetId,
@@ -666,6 +765,17 @@ function traceContext(
     priority_class: work.priorityClass,
     research_depth: work.researchDepth,
     freshness_deadline: work.freshnessDeadline,
+    entity_execution_attempt: work.attemptCount + 1,
+    entity_prompt_version: telemetry?.promptVersion ?? null,
+    entity_policy_version: telemetry?.policyVersion ?? null,
+    entity_provider: telemetry?.actualProvider ?? null,
+    entity_model: telemetry?.actualModel ?? null,
+    entity_fallback_used: telemetry?.fallbackInvoked ?? false,
+    entity_fallback_reason: telemetry?.fallbackReason ?? null,
+    entity_output_schema_valid: telemetry?.schemaValid ?? null,
+    entity_cost_usd_micros: telemetry?.costUsdMicros ?? null,
+    entity_configured_reasoning_effort: telemetry?.configuredReasoningEffort ?? null,
+    entity_actual_reasoning_effort: telemetry?.actualReasoningEffort ?? null,
   }
 }
 

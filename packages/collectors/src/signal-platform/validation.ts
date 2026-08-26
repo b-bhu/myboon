@@ -312,6 +312,12 @@ export function validateExecutionTraceEvent(value: unknown): ExecutionTraceEvent
     boolean(record.outputSchemaValid, 'event.outputSchemaValid')
   }
   boolean(record.budgetExceeded, 'event.budgetExceeded')
+  if (record.costUsdMicros !== undefined && record.costUsdMicros !== null) {
+    if (typeof record.costUsdMicros !== 'number'
+      || !Number.isSafeInteger(record.costUsdMicros) || record.costUsdMicros < 0) {
+      throw new ContractValidationError('event.costUsdMicros', 'must be a non-negative safe integer or null')
+    }
+  }
   timestamp(record.createdAt, 'event.createdAt')
   if (record.status !== 'started' && record.finishedAt === null) {
     throw new ContractValidationError('event.finishedAt', 'is required for a finished event')
@@ -322,13 +328,14 @@ export function validateExecutionTraceEvent(value: unknown): ExecutionTraceEvent
   if (record.configuredPrimaryProvider === undefined
     || record.configuredPrimaryModel === undefined
     || record.fallbackReason === undefined
-    || record.outputSchemaValid === undefined) {
+    || record.outputSchemaValid === undefined || record.costUsdMicros === undefined) {
     return {
       ...record,
       configuredPrimaryProvider: record.configuredPrimaryProvider ?? null,
       configuredPrimaryModel: record.configuredPrimaryModel ?? null,
       fallbackReason: record.fallbackReason ?? null,
       outputSchemaValid: record.outputSchemaValid ?? null,
+      costUsdMicros: record.costUsdMicros ?? null,
     } as unknown as ExecutionTraceEvent
   }
   return value as ExecutionTraceEvent

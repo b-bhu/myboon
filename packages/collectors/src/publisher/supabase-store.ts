@@ -19,6 +19,7 @@ import type {
 
 const ENTITY_SELECT = 'id, slug, name, type, metadata'
 const NARRATIVE_SELECT = 'id, editor_draft_id, created_at, published_at'
+const MAX_MEMORY_HYDRATION_REQUESTS = 10
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -133,6 +134,9 @@ export class SupabasePublisherStore implements PublisherStore {
   async fetchMemories(memoryIds: string[]): Promise<PublisherMemoryRecord[]> {
     if (memoryIds.length === 0) return []
     const uniqueIds = [...new Set(memoryIds)]
+    if (Math.ceil(uniqueIds.length / ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) > MAX_MEMORY_HYDRATION_REQUESTS) {
+      throw new Error(`publisher memory fetch exceeds ${MAX_MEMORY_HYDRATION_REQUESTS} bounded knowledge requests`)
+    }
     const hydrated: EntityKnowledgeMemoryV1[] = []
     try {
       for (let offset = 0; offset < uniqueIds.length; offset += ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) {

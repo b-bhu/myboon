@@ -97,3 +97,16 @@ test('publisher preserves its typed read failure boundary when knowledge hydrati
       && error.cause === cause,
   )
 })
+
+test('publisher fails closed before an extreme aggregate knowledge hydration drain', async () => {
+  let calls = 0
+  const store = new SupabasePublisherStore(
+    {} as SupabaseClient,
+    {} as PipelineStore,
+    { async getEntityMemoriesByIds() { calls += 1; return [] } },
+  )
+  const memoryIds = Array.from({ length: 1_001 }, (_, index) => id(index + 1))
+
+  await assert.rejects(store.fetchMemories(memoryIds), /exceeds 10 bounded knowledge requests/)
+  assert.equal(calls, 0)
+})

@@ -147,6 +147,7 @@ function result(job: DeepResearchJob, stdout = output()): DeepResearchResult {
 
 const POLICY: DeepResearchJobPolicy = {
   promptVersion: 'deep-prompt.v1', provider: 'contained-provider', model: 'contained-model',
+  reasoningEffort: 'low',
   capabilities: ['browser_navigation', 'registered_search', 'http_fetch'],
   maxBrowserNavigations: 1, maxSearchQueries: 1, maxHttpFetches: 1,
   maxOutputBytes: 50_000, cpuQuotaPercent: 50, memoryMaxBytes: 256 * 1024 * 1024, tasksMax: 32,
@@ -167,9 +168,19 @@ function options(
   executor: ContainedDeepResearchExecutionPort,
   overrides: Record<string, unknown> = {},
 ) {
+  const starts = overrides.executionStarts !== false
+  const wrapped: ContainedDeepResearchExecutionPort = {
+    async execute(job, executeOptions) {
+      if (starts && executeOptions?.onExecutionStarted && !await executeOptions.onExecutionStarted()) {
+        throw new DeepResearchError('lease lost', { category: 'cancelled', retryable: true })
+      }
+      return executor.execute(job, executeOptions)
+    },
+  }
+  const { executionStarts: _executionStarts, ...rest } = overrides
   return {
-    workerId: 'deep-worker-1', stores: [store], executor, policy: POLICY,
-    preflight: { check: async () => ({ ready: true as const }) }, clock: new FixedClock(), ...overrides,
+    workerId: 'deep-worker-1', stores: [store], executor: wrapped, policy: POLICY,
+    preflight: { check: async () => ({ ready: true as const }) }, clock: new FixedClock(), ...rest,
   }
 }
 
@@ -201,7 +212,7 @@ test('contained success assembles code-owned packet and promotes the fenced work
       outputTokens: packet.budgetUsed.outputTokens,
       toolCalls: packet.budgetUsed.toolCalls,
     }, { providerCalls: 2, inputTokens: 1_200, outputTokens: 300, toolCalls: 2 })
-    const event = [...ledger.events.values()][0]!
+    const event = [...ledger.events.values()].find((item) => item.status === 'succeeded')!
     assert.equal(event.stage, 'deep_research')
     assert.equal(event.status, 'succeeded')
     assert.equal(event.packetId, packet.packetId)
@@ -238,7 +249,7 @@ test('malformed or policy-escaping stdout is terminal and writes no packet', asy
       assert.equal(outcome.kind, 'dead_letter')
       assert.equal(outcome.kind === 'dead_letter' ? outcome.category : null, 'invalid_structured_output')
       assert.equal(fx.store.listResearchPacketsByWork('work-deep', 10).length, 0)
-      const event = [...ledger.events.values()][0]!
+      const event = [...ledger.events.values()].find((item) => item.status === 'dead_letter')!
       assert.equal(event.failureDetail, 'contained structured output rejected; details redacted')
       assert.equal(JSON.stringify(event).includes(stdout), false)
     } finally { fx.close() }
@@ -263,6 +274,19 @@ test('contained timeout retries after spending one execution attempt', async () 
     assert.equal(event.outputTokens, 0)
     assert.equal(event.toolCalls, 0)
     assert.equal(event.usageObserved, false)
+  } finally { fx.close() }
+})
+
+test('pre-spawn failure spends zero attempts and emits no started execution event', async () => {
+  const fx = fixture()
+  try {
+    const ledger = new FakeExecutionLedger()
+    const worker = new DeepResearchSideQueueWorker(options(fx.store, {
+      execute: async () => { throw new DeepResearchError('spawn failed', { category: 'systemd_unavailable', retryable: true }) },
+    }, { executionLedger: ledger, executionStarts: false }))
+    assert.equal((await worker.runOnce()).kind, 'retry_wait')
+    assert.equal(fx.store.getResearchWork('work-deep')?.attemptCount, 0)
+    assert.equal([...ledger.events.values()].some((event) => event.status === 'started'), false)
   } finally { fx.close() }
 })
 
@@ -430,10 +454,10 @@ test('completion replay reuses the immutable packet and does not execute twice',
     assert.equal(executions, 1)
     assert.equal(fx.store.listResearchPacketsByWork('work-deep', 10).length, 1)
     assert.equal(fx.store.getResearchWork('work-deep')?.attemptCount, 1)
-    assert.equal(ledger.events.size, 1)
-    assert.equal(ledger.appendAttempts, 2)
+    assert.equal(ledger.events.size, 2)
+    assert.equal(ledger.appendAttempts, 3)
     assert.equal(ledger.conflicts, 0)
-    assert.equal([...ledger.events.values()][0]?.providerCalls, 2)
+    assert.equal([...ledger.events.values()].find((item) => item.status === 'succeeded')?.providerCalls, 2)
   } finally { fx.close() }
 })
 
@@ -455,6 +479,44 @@ test('source linkage mismatch fails closed before contained execution', async ()
     assert.equal((await worker.runOnce()).kind, 'dead_letter')
     assert.equal(calls, 0)
     assert.equal(fx.store.getResearchWork('work-deep')?.attemptCount, 0)
+  } finally { fx.close() }
+})
+
+test('a malformed deep head is terminally fenced and does not starve the next schedulable item', async () => {
+  const fx = fixture()
+  try {
+    const secondSignal: NewsSignal = {
+      ...signal(), signalId: 'signal-news-2', sourceId: 'news:2', idempotencyKey: 'news:key:2',
+    }
+    const secondWork = work({
+      workId: 'work-deep-2', signalId: secondSignal.signalId, priorityClass: 'P1', priorityScore: 0.8,
+      traceId: 'trace-deep-2',
+    })
+    fx.store.appendSignal(secondSignal)
+    fx.store.admitResearchWork(secondWork)
+    fx.store.appendEvidence({
+      ...evidence(), evidenceId: 'evidence-source-2', workId: secondWork.workId,
+      authorityId: secondSignal.signalId,
+    })
+    let executions = 0
+    const badSignal = { ...signal(), sourceType: 'x' as const } as unknown as NewsSignal
+    const port = new Proxy(fx.store, {
+      get(target, property, receiver) {
+        if (property === 'getSignal') return (signalId: string) => signalId === 'signal-news' ? badSignal : target.getSignal(signalId)
+        const value = Reflect.get(target, property, receiver) as unknown
+        return typeof value === 'function' ? (value as Function).bind(target) : value
+      },
+    }) as DeepResearchWorkStore
+    const worker = new DeepResearchSideQueueWorker(options(port, {
+      execute: async (job) => { executions += 1; return result(job, output({
+        claims: [{ claim: 'Second source claim.', attributedTo: 'Example', evidenceRefs: ['evidence-source-2'] }],
+      })) },
+    }))
+    assert.equal((await worker.runOnce()).kind, 'dead_letter')
+    assert.equal((await worker.runOnce()).kind, 'succeeded')
+    assert.equal(executions, 1)
+    assert.equal(fx.store.getResearchWork('work-deep')?.status, 'dead_letter')
+    assert.equal(fx.store.getResearchWork('work-deep-2')?.status, 'entity_pending')
   } finally { fx.close() }
 })
 

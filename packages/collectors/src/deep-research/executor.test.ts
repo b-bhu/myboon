@@ -120,6 +120,7 @@ function job(overrides: Partial<DeepResearchJob> = {}): DeepResearchJob {
     },
     approvedDomains: ['source.example', 'corroboration.example'],
     capabilities: ['browser_navigation', 'registered_search', 'http_fetch'],
+    inference: { provider: 'primary', model: 'deep', reasoningEffort: 'low' },
     budget: {
       maxProviderCalls: 5,
       maxInputTokens: 20_000,
@@ -448,6 +449,19 @@ test('abort cancels the whole unit through TERM then KILL', async () => {
   assert.deepEqual(systemd.kills.map((kill) => kill.signal), ['TERM', 'KILL'])
 })
 
+test('a lost attempt fence after spawn terminates and verifies the new unit before returning', async () => {
+  const systemd = new FakeSystemd()
+  const context = executor(systemd)
+  await assert.rejects(context.value.execute(job(), { onExecutionStarted: async () => false }), (error: unknown) => {
+    assert.ok(error instanceof DeepResearchError)
+    assert.equal(error.category, 'cancelled')
+    return true
+  })
+  assert.equal(systemd.spawnCalls.length, 1)
+  assert.deepEqual(systemd.kills.map((kill) => kill.signal), ['TERM', 'KILL'])
+  assert.equal(await systemd.isUnitActive(), false)
+})
+
 test('fails closed when disabled, unsupported, or systemd is unavailable', async () => {
   const systemd = new FakeSystemd()
   await assert.rejects(new DeepResearchExecutor({
@@ -472,6 +486,7 @@ test('gateway investigate delegates only to the contained port and never resolve
         schemaVersion: 'myboon.deep_research_result.v1',
         jobId: input.jobId,
         workId: input.workItem.workId,
+        budgetUsed: { providerCalls: 1, inputTokens: 10, outputTokens: 5, toolCalls: 0, wallTimeMs: 1 },
       } as never
     },
   })
@@ -485,6 +500,7 @@ test('gateway investigate delegates only to the contained port and never resolve
       'research.deep': {
         primary: { provider: 'primary', model: 'deep' },
         fallback: { provider: 'fallback', model: 'must-not-run' },
+        reasoningEffort: 'low',
       },
     },
     investigationPort: contained,

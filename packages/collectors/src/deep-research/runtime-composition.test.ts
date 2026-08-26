@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync } from 'node:fs'
 import test from 'node:test'
 import {
   DEEP_RESEARCH_RUNTIME_ENV,
@@ -8,6 +9,11 @@ import {
 } from './runtime-composition'
 import type { DeepResearchExecutionMetadata } from './types'
 import type { DeepResearchWorkStore } from './worker'
+import { InferenceGateway } from '../inference-gateway'
+
+const auditRoot = mkdtempSync('/var/tmp/myboon-deep-runtime-test-')
+const nestedAuditRoot = `${auditRoot}/myboon-deep-nested`
+mkdirSync(nestedAuditRoot)
 
 function validEnv(): Record<string, string> {
   return {
@@ -26,6 +32,14 @@ function validEnv(): Record<string, string> {
     [DEEP_RESEARCH_RUNTIME_ENV.cpuQuotaPercent]: '50',
     [DEEP_RESEARCH_RUNTIME_ENV.memoryMaxBytes]: '536870912',
     [DEEP_RESEARCH_RUNTIME_ENV.tasksMax]: '64',
+    [DEEP_RESEARCH_RUNTIME_ENV.reasoningEffort]: 'low',
+    [DEEP_RESEARCH_RUNTIME_ENV.maxConcurrency]: '4',
+    [DEEP_RESEARCH_RUNTIME_ENV.rateMaxCalls]: '60',
+    [DEEP_RESEARCH_RUNTIME_ENV.rateWindowMs]: '60000',
+    [DEEP_RESEARCH_RUNTIME_ENV.auditTempRoots]: auditRoot,
+    [DEEP_RESEARCH_RUNTIME_ENV.auditProfileRoots]: auditRoot,
+    [DEEP_RESEARCH_RUNTIME_ENV.auditLimit]: '100',
+    [DEEP_RESEARCH_RUNTIME_ENV.runtimeStatusPath]: '/tmp/deep-status.json',
   }
 }
 
@@ -51,8 +65,24 @@ test('deep production configuration rejects missing contract, unsafe tools, wild
   }
 })
 
+test('deep audit roots require dedicated existing non-overlapping locations while allowing one shared root', () => {
+  assert.deepEqual(loadDeepResearchRuntimeConfiguration(validEnv()).audit.tempRoots, [auditRoot])
+  for (const [name, value] of [
+    [DEEP_RESEARCH_RUNTIME_ENV.auditTempRoots, ''],
+    [DEEP_RESEARCH_RUNTIME_ENV.auditTempRoots, '/'],
+    [DEEP_RESEARCH_RUNTIME_ENV.auditTempRoots, '/tmp'],
+    [DEEP_RESEARCH_RUNTIME_ENV.auditTempRoots, '/var/tmp/myboon-deep-does-not-exist'],
+    [DEEP_RESEARCH_RUNTIME_ENV.auditTempRoots, `${auditRoot},${nestedAuditRoot}`],
+  ] as const) {
+    const env = validEnv()
+    env[name] = value
+    assert.throws(() => loadDeepResearchRuntimeConfiguration(env))
+  }
+})
+
 test('production deep runtime checks Linux systemd readiness before any queue claim', async () => {
   let claims = 0
+  let auditScans = 0
   let registryClosed = false
   const store = new Proxy({ sourceType: 'news', peekSchedulable: async () => [] }, {
     get(target, property, receiver) {
@@ -66,6 +96,10 @@ test('production deep runtime checks Linux systemd readiness before any queue cl
     list: () => [],
     close: () => { registryClosed = true },
   }
+  const gateway = new InferenceGateway({
+    adapter: { generate: async () => ({ value: {} }) },
+    routes: { 'research.deep': { primary: { provider: 'ollama-cloud', model: 'deepseek-v4-flash' }, reasoningEffort: 'low', maxConcurrency: 4, rateLimit: { maxCalls: 60, windowMs: 60_000 } } },
+  })
   const runtime = createProductionDeepResearchRuntime({
     env: validEnv(), stores: [store], platform: 'linux',
     systemd: {
@@ -75,9 +109,18 @@ test('production deep runtime checks Linux systemd readiness before any queue cl
       isUnitActive: async () => false,
     },
     executionRegistries: [{ sourceType: 'news', registry }],
+    gateway,
+    orphanInspector: {
+      listTransientUnits: async () => { auditScans += 1; return [] },
+      listRootEntries: async () => [], listSandboxExecutors: async () => [],
+    },
+    statusWriter: { write: async () => undefined },
   })
   assert.deepEqual(await runtime.runCycle(), [{ kind: 'idle' }])
+  assert.deepEqual(await runtime.runCycle(), [{ kind: 'idle' }])
   assert.equal(claims, 0)
+  assert.equal(auditScans, 1)
+  assert.equal(gateway.investigationEnabled, true)
   runtime.close()
   assert.equal(registryClosed, true)
 })

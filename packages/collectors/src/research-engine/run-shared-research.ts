@@ -6,6 +6,8 @@ import {
   SqliteDeepResearchExecutionRegistry,
   type DeepResearchWorkerOutcome,
   type ProductionDeepResearchRuntime,
+  deepResearchRuntimeSnapshot,
+  type DeepResearchRuntimeSnapshotV1,
 } from '../deep-research'
 import {
   InferenceGatewayStageReadiness,
@@ -123,6 +125,7 @@ export interface SharedResearchRuntimeStatus {
     failureCategory: InferenceTelemetry['failureCategory']
   }
   deepEnabled: boolean
+  deep?: DeepResearchRuntimeSnapshotV1
 }
 
 export interface SharedResearchRunnerRuntime {
@@ -166,6 +169,7 @@ export interface CreateLiveSharedResearchRuntimeOptions {
       sourceType: Signal['sourceType']
       registry: SqliteDeepResearchExecutionRegistry
     }>
+    gateway: ReturnType<typeof createConfiguredInferenceGateway>['gateway']
   }) => ProductionDeepResearchRuntime
 }
 
@@ -355,6 +359,7 @@ export function createLiveSharedResearchRuntime(
   const synthesizer = new StructuredResearchSynthesizer({ gateway: gatewayRuntime.gateway, promptVersion: config.promptVersion })
   const supportedDepths: ResearchWorkItem['researchDepth'][] = standardSearch ? ['light', 'standard'] : ['light']
   if (config.deepEnabled) supportedDepths.push('deep')
+  let deepRuntime: ProductionDeepResearchRuntime | undefined
   const runtimeStatus = (): SharedResearchRuntimeStatus => {
     const circuits = gatewayRuntime.gateway.circuitStatusSnapshot()
     const capturedAtMs = Date.parse(circuits.capturedAt)
@@ -376,6 +381,7 @@ export function createLiveSharedResearchRuntime(
       }))),
       providerObservation: providerObservation.snapshot(),
       deepEnabled: config.deepEnabled,
+      deep: deepRuntime?.status ?? deepResearchRuntimeSnapshot({ enabled: false }),
     })
   }
   if (config.mode === 'shadow') {
@@ -416,7 +422,6 @@ export function createLiveSharedResearchRuntime(
   }
 
   const ledgers: Array<{ source: SupportedResearchSource, ledger: SqliteExecutionLedger }> = []
-  let deepRuntime: ProductionDeepResearchRuntime | undefined
   const deepRegistries = new Map<string, SqliteDeepResearchExecutionRegistry>()
   try {
     for (const source of config.sources) ledgers.push({ source, ledger: new SqliteExecutionLedger(paths.get(source)!) })
@@ -432,7 +437,7 @@ export function createLiveSharedResearchRuntime(
         return { sourceType, registry }
       })
       deepRuntime = (options.createDeepRuntime ?? ((input) => createProductionDeepResearchRuntime(input)))({
-        stores, executionLedger, env: config.env, executionRegistries,
+        stores, executionLedger, env: config.env, executionRegistries, gateway: gatewayRuntime.gateway,
       })
     }
     const scheduler = new ResearchDepthFilteredScheduler(stores, supportedDepths, claimsEnabled)

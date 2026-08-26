@@ -44,7 +44,8 @@ test('OpenRouter fallback is enabled only by an explicit approved model value', 
     [INFERENCE_GATEWAY_ENV.openRouterFallbackModel]: 'openai/gpt-5-mini',
   })
   for (const route of Object.values(explicit.routes)) {
-    assert.deepEqual(route.fallback, { provider: 'openrouter', model: 'openai/gpt-5-mini' })
+    if (route === explicit.routes['research.deep']) assert.equal(route.fallback, undefined)
+    else assert.deepEqual(route.fallback, { provider: 'openrouter', model: 'openai/gpt-5-mini' })
   }
   assert.equal(explicit.hermesProfile, 'myboon-structured')
 
@@ -83,7 +84,7 @@ test('status snapshot is route-only, redacted, and marks investigate disabled wi
 
   assert.equal(status.hermesProfileConfigured, true)
   assert.deepEqual(status.investigate, { enabled: false, fallbackEnabled: false })
-  assert.equal(status.routes.length, 4)
+  assert.equal(status.routes.length, 5)
   assert.equal(serialized.includes(secret), false)
   assert.equal(serialized.includes('private-profile-name'), false)
   assert.equal(serialized.includes('API_KEY'), false)
@@ -169,4 +170,28 @@ test('configured gateway rejects unknown workloads and investigate remains fail-
     allowedCapabilities: ['browser'],
   }), (error: unknown) => error instanceof InferenceGatewayError && error.retryable === false)
   assert.equal(calls, 0)
+})
+
+test('configured status derives investigate availability from the live gateway', () => {
+  const runtime = createConfiguredInferenceGateway({ env: {}, adapterFactory: () => ({ generate: async () => ({ value: {} }) }), serviceFactory: () => ({ oneshot: async () => ({ stdout: '{}', stderr: '' }) }) })
+  assert.equal(runtime.status.investigate.enabled, false)
+  runtime.gateway.attachInvestigationPort({ execute: async () => ({
+    value: {}, usage: { providerCalls: 0, inputTokens: 0, outputTokens: 0, toolCalls: 0, wallTimeMs: 0 },
+  }) })
+  assert.equal(runtime.status.investigate.enabled, true)
+})
+
+test('configuration validates explicit workload reasoning, concurrency, and rate policy', () => {
+  const validPolicy = JSON.stringify({
+    'research.synthesis': { reasoningEffort: 'high', maxConcurrency: 2, rateLimit: { maxCalls: 3, windowMs: 1_000 } },
+  })
+  const configured = loadInferenceGatewayConfiguration({ [INFERENCE_GATEWAY_ENV.workloadPoliciesJson]: validPolicy })
+  assert.equal(configured.routes['research.synthesis'].reasoningEffort, 'high')
+  for (const policy of [
+    { reasoningEffort: 'extreme', maxConcurrency: 2, rateLimit: { maxCalls: 3, windowMs: 1_000 } },
+    { reasoningEffort: 'low', maxConcurrency: 0, rateLimit: { maxCalls: 3, windowMs: 1_000 } },
+    { reasoningEffort: 'low', maxConcurrency: 2, rateLimit: { maxCalls: 0, windowMs: 1_000 } },
+  ]) assert.throws(() => loadInferenceGatewayConfiguration({
+    [INFERENCE_GATEWAY_ENV.workloadPoliciesJson]: JSON.stringify({ 'research.synthesis': policy }),
+  }), InferenceGatewayError)
 })

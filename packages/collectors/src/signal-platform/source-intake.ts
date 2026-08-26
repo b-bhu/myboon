@@ -9,6 +9,7 @@ import {
 import type { RulesFirstTriageInput, TriageDecisionV1 } from './triage-contracts'
 import type { ResearchWorkCreationPolicy } from './triage-engine'
 import { validateSignal } from './validation'
+import { stableContractId } from './adapters/identity'
 
 export type SourceIntakeMode = 'off' | 'observe' | 'active'
 
@@ -78,6 +79,7 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
 
   async ingest(input: Signal): Promise<SourceSignalIntakeResult> {
     let signal = validateSignal(input)
+    const deliveredSignal = signal
     if (signal.sourceType !== this.options.store.sourceType) {
       throw new Error(`Source intake store ${this.options.store.sourceType} cannot process ${signal.sourceType}`)
     }
@@ -86,15 +88,14 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
     const duplicateObservation = existing !== null && equivalentSourceObservation(existing, signal)
     if (existing !== null && duplicateObservation) signal = existing
     if (this.mode === 'observe' && !this.evaluates) {
-      if (duplicateObservation) return outcome(this.mode, signal.signalId)
-      const appended = this.options.store.appendSignal(signal)
+      const appended = this.persistObservation(signal, deliveredSignal, duplicateObservation)
       return { ...outcome(this.mode, signal.signalId), signalInserted: appended.inserted }
     }
 
     // The durable observation boundary is deliberately before capacity reads,
     // classifiers, or policy evaluation. A failure in any of those components
     // can prevent admission, but can never erase the observed Signal.
-    const appended = this.options.store.appendSignal(signal)
+    const appended = this.persistObservation(signal, deliveredSignal, duplicateObservation)
     const triageInput = await this.options.buildTriageInput!(signal)
     const configuredPolicy = this.options.retrievalPolicy!
     const retrievalPolicy = typeof configuredPolicy === 'function'
@@ -108,6 +109,30 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
     })
     const result = await coordinator.process({ ...triageInput, signal })
     return fromCoordinator(result, this.mode, appended.inserted)
+  }
+
+  private persistObservation(
+    canonical: Signal,
+    delivered: Signal,
+    deduplicated: boolean,
+  ): { inserted: boolean; value: Signal } {
+    const observation = {
+      observationId: stableContractId(
+        'signal_observation', delivered.sourceType, delivered.signalId, delivered.observedAt,
+      ),
+      signalId: canonical.signalId,
+      sourceType: delivered.sourceType,
+      observedAt: delivered.observedAt,
+      deduplicated,
+    }
+    if (this.options.store.appendSignalObservation) {
+      return this.options.store.appendSignalObservation(canonical, observation).signal
+    }
+    const appended = deduplicated
+      ? { inserted: false, value: canonical }
+      : this.options.store.appendSignal(canonical)
+    this.options.store.recordSignalObservation?.(observation)
+    return appended
   }
 
   async preview(input: Signal): Promise<TriageDecisionV1> {

@@ -371,5 +371,7 @@ export interface ExecutionTraceEvent extends ExtensibleContract {
   outputTokens: number
   toolCalls: number
   budgetExceeded: boolean
+  /** Monetary cost reported by the provider/gateway. Null means unmeasured; never inferred from tokens. */
+  costUsdMicros?: number | null
   createdAt: string
 }

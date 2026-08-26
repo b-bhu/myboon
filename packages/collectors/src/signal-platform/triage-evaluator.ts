@@ -20,12 +20,30 @@ export interface TriageEvaluationCostObservation {
   toolCalls: number
 }
 
+export const BLIND_PACKET_REVIEW_SCHEMA_VERSION = 'myboon.blind_packet_review.v1' as const
+
+/** Numeric-only review record: reviewers must not see provider usage/cost or variant identity. */
+export interface BlindPacketReviewV1 {
+  schemaVersion: typeof BLIND_PACKET_REVIEW_SCHEMA_VERSION
+  reviewId: string
+  blindAssignmentId: string
+  reviewerIdSha256: string
+  blindingProtocolVersion: string
+  providerModelUsageAndCostHidden: true
+  reviewedAt: string
+  productQualityScore: number
+  evidenceQualityScore: number
+  attributionQualityScore: number
+  productAcceptable: boolean
+}
+
 export interface TriageEvaluationRecord {
   recordId: string
   signal: Signal
   decision: TriageDecisionV1
   label: TriageEvaluationLabel
   observedCost?: TriageEvaluationCostObservation | null
+  blindReview?: BlindPacketReviewV1 | null
   arrivalWeight?: number
 }
 
@@ -34,6 +52,7 @@ export interface TriageShadowCase {
   input: RulesFirstTriageInput
   label: TriageEvaluationLabel
   observedCost?: TriageEvaluationCostObservation | null
+  blindReview?: BlindPacketReviewV1 | null
   arrivalWeight?: number
 }
 
@@ -89,6 +108,14 @@ export interface TriageEvaluationReport {
     outputTokens: number
     toolCalls: number
   }
+  blindReview: {
+    sampleCount: number
+    coverageRate: number
+    acceptableRate: number | null
+    averageProductQualityScore: number | null
+    averageEvidenceQualityScore: number | null
+    averageAttributionQualityScore: number | null
+  }
   perSource: Partial<Record<Signal['sourceType'], OutcomeBreakdown>>
   perPriority: Record<PriorityClass, OutcomeBreakdown>
 }
@@ -105,6 +132,7 @@ export async function runTriageShadowEvaluation(
       decision: await engine.decide(item.input),
       label: item.label,
       observedCost: item.observedCost,
+      blindReview: item.blindReview,
       arrivalWeight: item.arrivalWeight,
     })
   }
@@ -121,6 +149,7 @@ export function evaluateTriageRecords(records: TriageEvaluationRecord[]): Triage
     decision: validateTriageDecision(record.decision),
     label: validateLabel(record.label),
     observedCost: validateObservedCost(record.observedCost),
+    blindReview: validateBlindReview(record.blindReview),
     weight: validateWeight(record.arrivalWeight),
   }))
   for (const record of normalized) {
@@ -131,6 +160,17 @@ export function evaluateTriageRecords(records: TriageEvaluationRecord[]): Triage
     if (record.observedCost && !isDepth(record.decision.outcome)) {
       throw new Error(`Evaluation record ${record.recordId} meters a non-admitted decision`)
     }
+  }
+  const reviewIds = new Set<string>()
+  const assignmentIds = new Set<string>()
+  for (const record of normalized) {
+    if (!record.blindReview) continue
+    if (reviewIds.has(record.blindReview.reviewId)) throw new Error(`Duplicate blind reviewId: ${record.blindReview.reviewId}`)
+    if (assignmentIds.has(record.blindReview.blindAssignmentId)) {
+      throw new Error(`Duplicate blind assignment: ${record.blindReview.blindAssignmentId}`)
+    }
+    reviewIds.add(record.blindReview.reviewId)
+    assignmentIds.add(record.blindReview.blindAssignmentId)
   }
   const totalWeight = sum(normalized.map((record) => record.weight))
   const distribution = breakdown(normalized)
@@ -148,6 +188,7 @@ export function evaluateTriageRecords(records: TriageEvaluationRecord[]): Triage
   const relevantCount = normalized.filter((record) => record.label.productRelevant).length
   const admitted = normalized.filter((record) => isDepth(record.decision.outcome))
   const observed = normalized.flatMap((record) => record.observedCost ? [record.observedCost] : [])
+  const reviews = normalized.flatMap((record) => record.blindReview ? [record.blindReview] : [])
   const latencies = observed.map((item) => item.latencyMs).sort((a, b) => a - b)
   const sources = new Set(normalized.map((record) => record.signal.sourceType))
   const perSource: TriageEvaluationReport['perSource'] = {}
@@ -190,6 +231,15 @@ export function evaluateTriageRecords(records: TriageEvaluationRecord[]): Triage
       inputTokens: sum(observed.map((item) => item.inputTokens)),
       outputTokens: sum(observed.map((item) => item.outputTokens)),
       toolCalls: sum(observed.map((item) => item.toolCalls)),
+    },
+    blindReview: {
+      sampleCount: reviews.length,
+      coverageRate: normalized.length === 0 ? 0 : reviews.length / normalized.length,
+      acceptableRate: reviews.length === 0 ? null
+        : reviews.filter((review) => review.productAcceptable).length / reviews.length,
+      averageProductQualityScore: average(reviews.map((review) => review.productQualityScore)),
+      averageEvidenceQualityScore: average(reviews.map((review) => review.evidenceQualityScore)),
+      averageAttributionQualityScore: average(reviews.map((review) => review.attributionQualityScore)),
     },
     perSource,
     perPriority,
@@ -271,6 +321,29 @@ function validateObservedCost(
   return { ...value }
 }
 
+function validateBlindReview(value: BlindPacketReviewV1 | null | undefined): BlindPacketReviewV1 | null | undefined {
+  if (value === null || value === undefined) return value
+  if (value.schemaVersion !== BLIND_PACKET_REVIEW_SCHEMA_VERSION) throw new Error('blindReview schemaVersion is invalid')
+  for (const field of ['reviewId', 'blindAssignmentId'] as const) {
+    if (typeof value[field] !== 'string' || !value[field].trim()) throw new Error(`blindReview.${field} is required`)
+  }
+  if (!/^[a-f0-9]{64}$/.test(value.reviewerIdSha256)) throw new Error('blindReview.reviewerIdSha256 must be SHA-256')
+  if (typeof value.blindingProtocolVersion !== 'string' || !value.blindingProtocolVersion.trim()) {
+    throw new Error('blindReview.blindingProtocolVersion is required')
+  }
+  if (value.providerModelUsageAndCostHidden !== true) {
+    throw new Error('blindReview must attest provider/model/usage/cost were hidden')
+  }
+  if (!Number.isFinite(Date.parse(value.reviewedAt))) throw new Error('blindReview.reviewedAt must be a timestamp')
+  for (const field of ['productQualityScore', 'evidenceQualityScore', 'attributionQualityScore'] as const) {
+    if (!Number.isInteger(value[field]) || value[field] < 0 || value[field] > 4) {
+      throw new Error(`blindReview.${field} must be an integer from 0 to 4`)
+    }
+  }
+  if (typeof value.productAcceptable !== 'boolean') throw new Error('blindReview.productAcceptable must be boolean')
+  return { ...value }
+}
+
 function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0)
 }
@@ -278,4 +351,8 @@ function sum(values: number[]): number {
 function percentile(sorted: number[], value: number): number | null {
   if (sorted.length === 0) return null
   return sorted[Math.ceil(sorted.length * value) - 1] ?? null
+}
+
+function average(values: number[]): number | null {
+  return values.length === 0 ? null : sum(values) / values.length
 }

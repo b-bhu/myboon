@@ -7,6 +7,7 @@ import {
   type ResearchWorkItem,
 } from '../signal-platform/contracts'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
+import type { InferenceTelemetry } from '../inference-gateway/types'
 import { PlatformFailure } from '../signal-platform/failures'
 import type {
   HeartbeatCommand,
@@ -40,7 +41,12 @@ export interface CanonicalPacketProcessor {
   /** Availability/circuit checks only. Must not perform durable processing. */
   preflight?(input: CanonicalPacketProcessorInput): Promise<void>
   /** Later composition may invoke EntityService and its Supabase write port. */
-  process(input: CanonicalPacketProcessorInput): Promise<void>
+  process(input: CanonicalPacketProcessorInput): Promise<CanonicalPacketProcessorResult | void>
+}
+
+export interface CanonicalPacketProcessorResult {
+  /** Measured Entity-stage inference only. Never upstream Research usage. */
+  entityTelemetry: InferenceTelemetry | null
 }
 
 export interface ShadowEntityObservation {
@@ -111,6 +117,7 @@ interface LeaseEventOutcome {
   memoryStartedAt: string | null
   processingStarted: boolean
   stableSkipped?: boolean
+  entityTelemetry?: InferenceTelemetry | null
 }
 
 const defaultHeartbeatScheduler: HeartbeatScheduler = {
@@ -306,6 +313,7 @@ export class SharedEntityWorker {
     let leaseLost = false
     let processingStarted = false
     let canonicalPacket: ResearchPacketV1 | null = null
+    let entityTelemetry: InferenceTelemetry | null = null
     const entityStartedAt = this.now()
     let memoryStartedAt: string | null = null
     const stopHeartbeat = (this.options.heartbeatScheduler ?? defaultHeartbeatScheduler).schedule(() => {
@@ -337,11 +345,13 @@ export class SharedEntityWorker {
       }
       processingStarted = true
       memoryStartedAt = this.now()
-      await this.options.processor.process(input)
+      this.recordExecutionStarted(lease, canonicalPacket, memoryStartedAt)
+      const processorResult = await this.options.processor.process(input)
+      entityTelemetry = processorResult?.entityTelemetry ?? null
       if (leaseLost) {
         return this.finishLease('staleLeases', lease, canonicalPacket, {
           entityStatus: 'failed', memoryStatus: 'failed', failure: leaseFailure(),
-          entityStartedAt, memoryStartedAt, processingStarted,
+          entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
         })
       }
       if (controller.signal.aborted) {
@@ -349,7 +359,7 @@ export class SharedEntityWorker {
         return this.finishLease(outcome, lease, canonicalPacket, {
           entityStatus: outcome === 'released' ? 'skipped' : 'failed',
           memoryStatus: outcome === 'released' ? 'skipped' : 'failed',
-          failure: abortedFailure(), entityStartedAt, memoryStartedAt, processingStarted,
+          failure: abortedFailure(), entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
         })
       }
       const completed = await port.transitionLeased({
@@ -362,18 +372,19 @@ export class SharedEntityWorker {
       if (!completed) {
         return this.finishLease('staleLeases', lease, canonicalPacket, {
           entityStatus: 'failed', memoryStatus: 'failed', failure: leaseFailure(),
-          entityStartedAt, memoryStartedAt, processingStarted,
+          entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
         })
       }
       return this.finishLease('completed', lease, canonicalPacket, {
         entityStatus: 'succeeded', memoryStatus: 'succeeded', failure: null,
-        entityStartedAt, memoryStartedAt, processingStarted,
+        entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
       })
     } catch (error) {
+      entityTelemetry = entityTelemetryFrom(error) ?? entityTelemetry
       if (leaseLost) {
         return this.finishLease('staleLeases', lease, canonicalPacket, {
           entityStatus: 'failed', memoryStatus: processingStarted ? 'failed' : 'skipped', failure: leaseFailure(),
-          entityStartedAt, memoryStartedAt, processingStarted,
+          entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
         })
       }
       if (controller.signal.aborted) {
@@ -381,7 +392,7 @@ export class SharedEntityWorker {
         return this.finishLease(outcome, lease, canonicalPacket, {
           entityStatus: outcome === 'released' ? 'skipped' : 'failed',
           memoryStatus: outcome === 'released' ? 'skipped' : 'failed',
-          failure: abortedFailure(), entityStartedAt, memoryStartedAt, processingStarted,
+          failure: abortedFailure(), entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
         })
       }
       const typed = typedFailure(error)
@@ -393,7 +404,7 @@ export class SharedEntityWorker {
         return this.finishLease(outcome, lease, canonicalPacket, {
           entityStatus: outcome === 'released' ? 'skipped' : 'failed',
           memoryStatus: outcome === 'released' ? 'skipped' : 'failed',
-          failure: typed, entityStartedAt, memoryStartedAt, processingStarted,
+          failure: typed, entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
           stableSkipped: outcome === 'released',
         })
       }
@@ -411,14 +422,14 @@ export class SharedEntityWorker {
       if (!transitioned) {
         return this.finishLease('staleLeases', lease, canonicalPacket, {
           entityStatus: 'failed', memoryStatus: processingStarted ? 'failed' : 'skipped', failure: leaseFailure(),
-          entityStartedAt, memoryStartedAt, processingStarted,
+          entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
         })
       }
       const outcome = retryable ? 'retryWait' : 'deadLettered'
       return this.finishLease(outcome, lease, canonicalPacket, {
         entityStatus: retryable ? 'retry_wait' : 'dead_letter',
         memoryStatus: processingStarted ? (retryable ? 'retry_wait' : 'dead_letter') : 'skipped',
-        failure: typed, entityStartedAt, memoryStartedAt, processingStarted,
+        failure: typed, entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
       })
     } finally {
       stopHeartbeat()
@@ -445,6 +456,7 @@ export class SharedEntityWorker {
       const event = executionEvent({
         mode: 'active', work, packet, stage, status, failure: input.failure,
         attempt, startedAt, finishedAt, queueEnteredAt: lease.queuedAt,
+        entityTelemetry: stage === 'entity_manager' ? input.entityTelemetry ?? null : null,
       })
       try {
         this.options.executionLedger.append(event)
@@ -454,6 +466,20 @@ export class SharedEntityWorker {
       }
     }
     return outcome
+  }
+
+  private recordExecutionStarted(lease: WorkLease, packet: ResearchPacketV1, startedAt: string): void {
+    if (!this.options.executionLedger) return
+    const event = executionEvent({
+      mode: 'active', work: lease.work, packet, stage: 'entity_manager', status: 'started',
+      failure: null, attempt: lease.work.attemptCount + 1, startedAt, finishedAt: null,
+      queueEnteredAt: lease.queuedAt, entityTelemetry: null,
+    })
+    try {
+      this.options.executionLedger.append(event)
+    } catch {
+      // Best-effort measurement cannot affect queue or processor execution.
+    }
   }
 
   private query(limit: number): SchedulerQuery {
@@ -516,16 +542,17 @@ interface ExecutionEventInput {
   failure: PlatformFailure | null
   attempt: number
   startedAt: string
-  finishedAt: string
+  finishedAt: string | null
   queueEnteredAt: string
+  entityTelemetry?: InferenceTelemetry | null
 }
 
 function executionEvent(input: ExecutionEventInput): ExecutionTraceEvent {
-  const execution = input.packet?.execution
+  const telemetry = input.stage === 'entity_manager' ? input.entityTelemetry ?? null : null
   const event = validateExecutionTraceEvent({
     schemaVersion: EXECUTION_EVENT_SCHEMA_VERSION,
     eventId: executionEventId(input),
-    traceId: execution?.traceId ?? input.work.traceId,
+    traceId: input.packet?.execution.traceId ?? input.work.traceId,
     signalId: input.work.signalId,
     workId: input.work.workId,
     packetId: input.packet?.packetId ?? null,
@@ -538,30 +565,44 @@ function executionEvent(input: ExecutionEventInput): ExecutionTraceEvent {
     failureCategory: input.failure?.category ?? null,
     failureDetail: safeFailureDetail(input.failure),
     queueWaitMs: input.stage === 'entity_manager' ? elapsedMs(input.queueEnteredAt, input.startedAt) : 0,
-    wallTimeMs: elapsedMs(input.startedAt, input.finishedAt),
-    // CanonicalPacketProcessor currently returns no stage-local inference
-    // telemetry. Research Packet provider/model/budget describe the upstream
-    // research stage and must not be charged again to Entity stages.
-    provider: null,
-    model: null,
-    fallbackProvider: null,
-    fallbackModel: null,
-    fallbackUsed: false,
-    promptVersion: execution?.promptVersion ?? null,
-    policyVersion: execution?.policyVersion ?? input.work.policyVersion,
+    wallTimeMs: input.finishedAt === null ? 0 : elapsedMs(input.startedAt, input.finishedAt),
+    // Only the processor's measured Entity inference is attributed here.
+    // memory_write and absent coverage stay null/zero; Research is never copied.
+    provider: telemetry?.actualProvider ?? null,
+    model: telemetry?.actualModel ?? null,
+    fallbackProvider: telemetry?.fallbackInvoked ? telemetry.actualProvider : null,
+    fallbackModel: telemetry?.fallbackInvoked ? telemetry.actualModel : null,
+    fallbackUsed: telemetry?.fallbackInvoked ?? false,
+    configuredPrimaryProvider: telemetry?.configuredPrimaryProvider ?? null,
+    configuredPrimaryModel: telemetry?.configuredPrimaryModel ?? null,
+    fallbackReason: telemetry?.fallbackReason ?? null,
+    outputSchemaValid: telemetry?.schemaValid ?? null,
+    promptVersion: telemetry?.promptVersion ?? null,
+    policyVersion: telemetry?.policyVersion ?? null,
     researchContractVersion: input.packet?.researchContractVersion ?? input.work.researchContractVersion,
-    providerCalls: 0,
-    repairCalls: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    toolCalls: 0,
-    budgetExceeded: false,
-    createdAt: input.finishedAt,
+    providerCalls: telemetry?.providerCalls ?? 0,
+    repairCalls: telemetry?.repairCalls ?? 0,
+    inputTokens: telemetry?.inputTokens ?? 0,
+    outputTokens: telemetry?.outputTokens ?? 0,
+    toolCalls: telemetry?.toolCalls ?? 0,
+    budgetExceeded: telemetry?.budgetExceeded ?? false,
+    costUsdMicros: telemetry?.costUsdMicros ?? null,
+    configuredReasoningEffort: telemetry?.configuredReasoningEffort ?? null,
+    actualReasoningEffort: telemetry?.actualReasoningEffort ?? null,
+    createdAt: input.finishedAt ?? input.startedAt,
   })
   return Object.freeze(event)
 }
 
-function executionEventId(input: Pick<ExecutionEventInput, 'mode' | 'work' | 'packet' | 'stage' | 'attempt'>): string {
+function entityTelemetryFrom(error: unknown): InferenceTelemetry | null {
+  if (!error || typeof error !== 'object') return null
+  const value = (error as { entityTelemetry?: unknown }).entityTelemetry
+  return value && typeof value === 'object' ? value as InferenceTelemetry : null
+}
+
+function executionEventId(
+  input: Pick<ExecutionEventInput, 'mode' | 'work' | 'packet' | 'stage' | 'attempt' | 'status'>,
+): string {
   const canonical = [
     EXECUTION_EVENT_SCHEMA_VERSION,
     'shared_entity_worker',
@@ -570,6 +611,7 @@ function executionEventId(input: Pick<ExecutionEventInput, 'mode' | 'work' | 'pa
     input.packet?.packetId ?? '',
     input.stage,
     String(input.attempt),
+    input.status === 'started' ? 'started' : 'terminal',
   ].join('\u001f')
   return `entity-execution:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`
 }

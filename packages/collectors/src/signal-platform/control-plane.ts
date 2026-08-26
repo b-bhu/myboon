@@ -12,6 +12,7 @@ import type {
   ExecutionAggregateRow,
   ExecutionAggregateStatus,
   ExecutionLedger,
+  ExecutionProviderPerformance,
 } from './execution-ledger'
 import type { ResearchWorkStoreAdapter, SchedulerAggregateStatus } from './store-adapter'
 
@@ -25,6 +26,7 @@ export interface ControlPlaneComponentError {
     | 'STORE_STATUS_UNAVAILABLE'
     | 'WORK_DETAIL_UNAVAILABLE'
     | 'EXECUTION_READER_UNAVAILABLE'
+    | 'EXECUTION_READER_PARTIAL'
     | 'EXECUTION_READER_NOT_CONFIGURED'
   component: string
   message: string
@@ -77,12 +79,16 @@ export interface WorkObservabilityReadPort {
     failureLimit: number
   }): Promise<{
     signalCount: number
+    observationCount?: number
+    deduplicatedObservationCount?: number
     triageDecisionCount: number
     triageOutcomes?: Partial<Record<TriageOutcome, number>>
     researchPacketCount?: number
     entityMemoryHandoffCount?: number
     endToEndLatency?: LatencyPercentiles
     sqliteSize?: SqliteSizeAggregate
+    sqliteStoreId?: string
+    sqliteWriteErrors?: MetricCoverage<number>
     totalAttempts: number
     attemptedItems: number
     maxAttemptCount: number
@@ -124,6 +130,9 @@ export interface SourceControlPlaneStatus {
   intake: {
     availability: ControlPlaneAvailability
     signals: number | null
+    observations: number | null
+    deduplicatedObservations: number | null
+    deduplicationRate: number | null
     triageDecisions: number | null
     admittedWorkItems: number | null
     triageOutcomes: Partial<Record<TriageOutcome, number>>
@@ -149,6 +158,15 @@ export interface SourceControlPlaneStatus {
   }
   endToEndLatency: LatencyPercentiles | null
   sqliteSize: SqliteSizeAggregate | null
+  sqliteStoreId: string | null
+  sqliteWriteErrors: MetricCoverage<number>
+}
+
+export interface MetricCoverage<T> {
+  availability: 'available' | 'partial' | 'unavailable'
+  value: T | null
+  measuredCount: number
+  reason: string | null
 }
 
 export interface ExecutionStageStatus {
@@ -184,6 +202,65 @@ export interface ExecutionControlPlaneStatus {
   }>>
   recentFailures: WorkFailureAggregate[]
   providerUsage: ProviderUsageAggregate[]
+  providerPerformance: ExecutionProviderPerformance[]
+  perCompletedPacket: {
+    executionTelemetryPackets: number
+    canonicalPackets: number | null
+    telemetryCoverageRate: number | null
+    inputTokens: number | null
+    outputTokens: number | null
+    costUsdMicros: MetricCoverage<number>
+  }
+}
+
+export interface ControlPlaneAlert {
+  code: 'QUEUE_AGE_SLO_EXCEEDED' | 'PROVIDER_ERROR_RATE' | 'DEAD_LETTER_THRESHOLD'
+  sourceType: Signal['sourceType']
+  stage: WorkControlPlaneStage | ExecutionStage
+  provider: string | null
+  queueAgeMs: number | null
+  message: string
+  suggestedCommand: string
+}
+
+export interface ControlPlaneAlertPolicy {
+  queueAgeSloMs: Partial<Record<Signal['sourceType'], Partial<Record<'P0' | 'P1', number>>>>
+  providerErrorRateThreshold: number
+  deadLetterCountThreshold: number
+}
+
+export function parseControlPlaneAlertPolicy(value: unknown): ControlPlaneAlertPolicy {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('alert policy must be an object')
+  const record = value as Record<string, unknown>
+  const queueRaw = record.queueAgeSloMs
+  if (!queueRaw || typeof queueRaw !== 'object' || Array.isArray(queueRaw)) {
+    throw new Error('alert policy queueAgeSloMs must be an object')
+  }
+  const queueAgeSloMs: ControlPlaneAlertPolicy['queueAgeSloMs'] = {}
+  const knownSources = new Set<Signal['sourceType']>(['news', 'polymarket', 'market_calendar', 'x'])
+  for (const [sourceKey, thresholds] of Object.entries(queueRaw as Record<string, unknown>)) {
+    if (!knownSources.has(sourceKey as Signal['sourceType']) || !thresholds
+      || typeof thresholds !== 'object' || Array.isArray(thresholds)) {
+      throw new Error(`alert policy queue source ${sourceKey} is invalid`)
+    }
+    const row = thresholds as Record<string, unknown>
+    for (const key of Object.keys(row)) if (key !== 'P0' && key !== 'P1') throw new Error(`alert policy priority ${key} is invalid`)
+    queueAgeSloMs[sourceKey as Signal['sourceType']] = {
+      ...(row.P0 === undefined ? {} : { P0: boundedInteger(Number(row.P0), `${sourceKey}.P0`, 1, 30 * 24 * 60 * 60_000) }),
+      ...(row.P1 === undefined ? {} : { P1: boundedInteger(Number(row.P1), `${sourceKey}.P1`, 1, 30 * 24 * 60 * 60_000) }),
+    }
+  }
+  const providerErrorRateThreshold = Number(record.providerErrorRateThreshold)
+  if (!Number.isFinite(providerErrorRateThreshold) || providerErrorRateThreshold < 0 || providerErrorRateThreshold > 1) {
+    throw new Error('alert policy providerErrorRateThreshold must be between 0 and 1')
+  }
+  return {
+    queueAgeSloMs,
+    providerErrorRateThreshold,
+    deadLetterCountThreshold: boundedInteger(
+      Number(record.deadLetterCountThreshold), 'deadLetterCountThreshold', 0, 1_000_000,
+    ),
+  }
 }
 
 export interface SignalPlatformControlPlaneStatus {
@@ -193,6 +270,8 @@ export interface SignalPlatformControlPlaneStatus {
   errors: ControlPlaneComponentError[]
   totals: {
     signals: number | null
+    observations: number | null
+    deduplicatedObservations: number | null
     triageDecisions: number | null
     admittedWorkItems: number
     workItems: number
@@ -212,7 +291,13 @@ export interface SignalPlatformControlPlaneStatus {
   }
   sources: Partial<Record<Signal['sourceType'], SourceControlPlaneStatus>>
   execution: ExecutionControlPlaneStatus
+  sqliteWriteErrors: MetricCoverage<number>
   recentFailures: WorkFailureAggregate[]
+  alerts: {
+    availability: 'available' | 'unavailable'
+    reason: string | null
+    items: ControlPlaneAlert[]
+  }
 }
 
 export interface SignalPlatformControlPlaneOptions {
@@ -221,6 +306,7 @@ export interface SignalPlatformControlPlaneOptions {
   executionReader?: ExecutionObservabilityReadPort | null
   recentFailureWindowMs?: number
   recentFailureLimit?: number
+  alertPolicy?: ControlPlaneAlertPolicy | null
 }
 
 export class SignalPlatformControlPlane {
@@ -229,6 +315,7 @@ export class SignalPlatformControlPlane {
   private readonly executionReader: ExecutionObservabilityReadPort | null
   private readonly recentFailureWindowMs: number
   private readonly recentFailureLimit: number
+  private readonly alertPolicy: ControlPlaneAlertPolicy | null
 
   constructor(options: SignalPlatformControlPlaneOptions) {
     assertUniqueSources(options.stores, 'store')
@@ -237,10 +324,11 @@ export class SignalPlatformControlPlane {
     this.workReaders = new Map((options.workReaders ?? []).map((reader) => [reader.sourceType, reader]))
     this.executionReader = options.executionReader ?? null
     this.recentFailureWindowMs = boundedInteger(
-      options.recentFailureWindowMs ?? 60 * 60_000,
+      options.recentFailureWindowMs ?? 5 * 60_000,
       'recentFailureWindowMs', 1, 30 * 24 * 60 * 60_000,
     )
     this.recentFailureLimit = boundedInteger(options.recentFailureLimit ?? 25, 'recentFailureLimit', 1, 250)
+    this.alertPolicy = options.alertPolicy ?? null
   }
 
   async readStatus(input: { now: string }): Promise<SignalPlatformControlPlaneStatus> {
@@ -277,6 +365,10 @@ export class SignalPlatformControlPlane {
     const triageDecisions = availableSources.every((source) => source.intake.triageDecisions !== null)
       ? sum(availableSources.map((source) => source.intake.triageDecisions ?? 0))
       : null
+    const observationTotal = (field: 'observations' | 'deduplicatedObservations'): number | null =>
+      availableSources.every((source) => source.intake[field] !== null)
+        ? sum(availableSources.map((source) => source.intake[field] ?? 0))
+        : null
     const activityTotal = (field: 'arrivals' | 'admissions' | 'completions'): number | null =>
       availableSources.every((source) => source.activity[field] !== null)
         ? sum(availableSources.map((source) => source.activity[field] ?? 0))
@@ -291,6 +383,20 @@ export class SignalPlatformControlPlane {
       execution.availability,
       errors.length,
     )
+    const sqliteWriteErrors = aggregateCoverage(
+      availableSources.map((source) => source.sqliteWriteErrors),
+      'no source has a durable SQLite write-error collector',
+    )
+    const sqliteBytes = aggregatePhysicalStoreBytes(availableSources)
+    const researchPackets = detailTotal((source) => source.artifacts.researchPackets)
+    const executionWithPacketCoverage = applyCanonicalPacketCoverage(execution, researchPackets)
+    const alerts = this.alertPolicy
+      ? { availability: 'available' as const, reason: null, items: evaluateAlerts(sources, execution, this.alertPolicy) }
+      : {
+          availability: 'unavailable' as const,
+          reason: 'reviewed alert thresholds are not configured',
+          items: [],
+        }
     return {
       schemaVersion: CONTROL_PLANE_STATUS_SCHEMA_VERSION,
       generatedAt: input.now,
@@ -298,6 +404,8 @@ export class SignalPlatformControlPlane {
       errors,
       totals: {
         signals,
+        observations: observationTotal('observations'),
+        deduplicatedObservations: observationTotal('deduplicatedObservations'),
         triageDecisions,
         admittedWorkItems: sum(availableSources.map((source) => source.total ?? 0)),
         workItems: sum(availableSources.map((source) => source.total ?? 0)),
@@ -311,13 +419,15 @@ export class SignalPlatformControlPlane {
         arrivalsInWindow: activityTotal('arrivals'),
         admissionsInWindow: activityTotal('admissions'),
         completionsInWindow: activityTotal('completions'),
-        researchPackets: detailTotal((source) => source.artifacts.researchPackets),
+        researchPackets,
         entityMemoryHandoffs: detailTotal((source) => source.artifacts.entityMemoryHandoffs),
-        sqliteBytes: detailTotal((source) => source.sqliteSize?.totalBytes ?? null),
+        sqliteBytes,
       },
       sources,
-      execution,
+      execution: executionWithPacketCoverage,
+      sqliteWriteErrors,
       recentFailures: allFailures,
+      alerts,
     }
   }
 
@@ -382,6 +492,11 @@ function sourceStatus(
     intake: {
       availability: hasConfiguredDetail ? availability : 'unavailable',
       signals: detail?.signalCount ?? null,
+      observations: detail?.observationCount ?? null,
+      deduplicatedObservations: detail?.deduplicatedObservationCount ?? null,
+      deduplicationRate: detail?.observationCount
+        ? (detail.deduplicatedObservationCount ?? 0) / detail.observationCount
+        : detail?.observationCount === 0 ? 0 : null,
       triageDecisions: detail?.triageDecisionCount ?? null,
       admittedWorkItems: status.total,
       triageOutcomes: { ...(detail?.triageOutcomes ?? {}) },
@@ -415,6 +530,11 @@ function sourceStatus(
     },
     endToEndLatency: detail?.endToEndLatency ?? null,
     sqliteSize: detail?.sqliteSize ?? null,
+    sqliteStoreId: detail?.sqliteStoreId ?? null,
+    sqliteWriteErrors: detail?.sqliteWriteErrors ?? {
+      availability: 'unavailable', value: null, measuredCount: 0,
+      reason: 'SQLite does not expose historical write-error counts; no durable external write-error collector is configured',
+    },
   }
 }
 
@@ -432,7 +552,8 @@ function unavailableSource(sourceType: Signal['sourceType'], windowStart: string
     oldestLeaseExpiresAt: null,
     oldestLeaseExpiresInMs: null,
     intake: {
-      availability: 'unavailable', signals: null, triageDecisions: null, admittedWorkItems: null,
+      availability: 'unavailable', signals: null, observations: null, deduplicatedObservations: null,
+      deduplicationRate: null, triageDecisions: null, admittedWorkItems: null,
       triageOutcomes: {},
     },
     attempts: {
@@ -445,6 +566,11 @@ function unavailableSource(sourceType: Signal['sourceType'], windowStart: string
     artifacts: { researchPackets: null, entityMemoryHandoffs: null },
     endToEndLatency: null,
     sqliteSize: null,
+    sqliteStoreId: null,
+    sqliteWriteErrors: {
+      availability: 'unavailable', value: null, measuredCount: 0,
+      reason: 'source store is unavailable',
+    },
   }
 }
 
@@ -460,8 +586,14 @@ function executionStatus(aggregate: ExecutionAggregateStatus, limit: number): Ex
     bySource[row.sourceType] = source
   }
   return {
-    availability: 'available',
-    error: null,
+    availability: aggregate.unavailableSources?.length ? 'partial' : 'available',
+    error: aggregate.unavailableSources?.length
+      ? componentError(
+          'EXECUTION_READER_PARTIAL',
+          'execution',
+          `execution aggregates unavailable for: ${aggregate.unavailableSources.join(', ')}`,
+        )
+      : null,
     totalEvents: aggregate.totalEvents,
     activeEvents: aggregate.activeEvents,
     bySource,
@@ -469,14 +601,139 @@ function executionStatus(aggregate: ExecutionAggregateStatus, limit: number): Ex
       ? [{ category: row.failureCategory, count: row.eventCount, lastOccurredAt: null }]
       : []), limit),
     providerUsage: mergeProviderUsage(aggregate.rows),
+    providerPerformance: aggregate.providerPerformance,
+    perCompletedPacket: completionUsage(aggregate),
   }
 }
 
 function emptyExecution(error: ControlPlaneComponentError): ExecutionControlPlaneStatus {
   return {
     availability: 'unavailable', error, totalEvents: null, activeEvents: null,
-    bySource: {}, recentFailures: [], providerUsage: [],
+    bySource: {}, recentFailures: [], providerUsage: [], providerPerformance: [],
+    perCompletedPacket: {
+      executionTelemetryPackets: 0, canonicalPackets: null, telemetryCoverageRate: null,
+      inputTokens: null, outputTokens: null,
+      costUsdMicros: { availability: 'unavailable', value: null, measuredCount: 0, reason: error.message },
+    },
   }
+}
+
+function completionUsage(aggregate: ExecutionAggregateStatus): ExecutionControlPlaneStatus['perCompletedPacket'] {
+  const usage = aggregate.completionUsage
+  if (usage.completedPackets === 0) return {
+    executionTelemetryPackets: 0, canonicalPackets: null, telemetryCoverageRate: null,
+    inputTokens: null,
+    outputTokens: null,
+    costUsdMicros: { availability: 'unavailable', value: null, measuredCount: 0, reason: 'no completed packet events' },
+  }
+  const costAvailability = usage.measuredCostPackets === 0 ? 'unavailable'
+    : usage.measuredCostPackets === usage.completedPackets ? 'available' : 'partial'
+  return {
+    executionTelemetryPackets: usage.completedPackets,
+    canonicalPackets: null,
+    telemetryCoverageRate: null,
+    inputTokens: usage.inputTokens / usage.completedPackets,
+    outputTokens: usage.outputTokens / usage.completedPackets,
+    costUsdMicros: {
+      availability: costAvailability,
+      value: usage.measuredCostPackets === 0 ? null : usage.totalCostUsdMicros / usage.measuredCostPackets,
+      measuredCount: usage.measuredCostPackets,
+      reason: usage.measuredCostPackets === usage.completedPackets
+        ? null : 'costUsdMicros is reported only for explicitly metered completed packet events; missing cost is not inferred',
+    },
+  }
+}
+
+function applyCanonicalPacketCoverage(
+  execution: ExecutionControlPlaneStatus,
+  canonicalPackets: number | null,
+): ExecutionControlPlaneStatus {
+  const measured = execution.perCompletedPacket.executionTelemetryPackets
+  const telemetryCoverageRate = canonicalPackets === null ? null
+    : canonicalPackets === 0 ? (measured === 0 ? 1 : null) : Math.min(1, measured / canonicalPackets)
+  const cost = execution.perCompletedPacket.costUsdMicros
+  const incompleteTelemetry = canonicalPackets !== null && measured < canonicalPackets
+  return {
+    ...execution,
+    perCompletedPacket: {
+      ...execution.perCompletedPacket,
+      canonicalPackets,
+      telemetryCoverageRate,
+      costUsdMicros: incompleteTelemetry && cost.availability === 'available'
+        ? {
+            ...cost, availability: 'partial',
+            reason: 'some canonical packets have no completed synthesis execution telemetry',
+          }
+        : cost,
+    },
+  }
+}
+
+function aggregateCoverage(
+  metrics: MetricCoverage<number>[],
+  unavailableReason: string,
+): MetricCoverage<number> {
+  const measured = metrics.filter((metric) => metric.value !== null)
+  if (measured.length === 0) return {
+    availability: 'unavailable', value: null, measuredCount: 0, reason: unavailableReason,
+  }
+  return {
+    availability: measured.length === metrics.length
+      && measured.every((metric) => metric.availability === 'available') ? 'available' : 'partial',
+    value: sum(measured.map((metric) => metric.value ?? 0)),
+    measuredCount: sum(measured.map((metric) => metric.measuredCount)),
+    reason: measured.length === metrics.length ? null : 'some source write-error measurements are unavailable',
+  }
+}
+
+function aggregatePhysicalStoreBytes(sources: SourceControlPlaneStatus[]): number | null {
+  if (sources.some((source) => source.sqliteSize === null)) return null
+  const stores = new Map<string, number>()
+  for (const source of sources) {
+    const identity = source.sqliteStoreId ?? `source:${source.sourceType}`
+    const bytes = source.sqliteSize?.totalBytes ?? 0
+    const prior = stores.get(identity)
+    if (prior !== undefined && prior !== bytes) return null
+    stores.set(identity, bytes)
+  }
+  return sum([...stores.values()])
+}
+
+function evaluateAlerts(
+  sources: SignalPlatformControlPlaneStatus['sources'],
+  execution: ExecutionControlPlaneStatus,
+  policy: ControlPlaneAlertPolicy,
+): ControlPlaneAlert[] {
+  const alerts: ControlPlaneAlert[] = []
+  for (const source of Object.values(sources)) {
+    if (!source) continue
+    for (const row of source.queueAge) {
+      if (row.priorityClass !== 'P0' && row.priorityClass !== 'P1') continue
+      const slo = policy.queueAgeSloMs[source.sourceType]?.[row.priorityClass]
+      if (slo !== undefined && row.oldestAgeMs > slo) alerts.push({
+        code: 'QUEUE_AGE_SLO_EXCEEDED', sourceType: source.sourceType,
+        stage: stageForWorkStatus(row.status), provider: null, queueAgeMs: row.oldestAgeMs,
+        message: `${row.priorityClass} queue age exceeds configured SLO`,
+        suggestedCommand: `pnpm feed-v3:trace -- --work-id <work-id>`,
+      })
+    }
+    if (source.deadLetters.total > policy.deadLetterCountThreshold) alerts.push({
+      code: 'DEAD_LETTER_THRESHOLD', sourceType: source.sourceType, stage: 'unassigned',
+      provider: null, queueAgeMs: source.deadLetters.oldestAgeMs,
+      message: 'Dead-letter count exceeds configured threshold',
+      suggestedCommand: `pnpm feed-v3:recover -- --source ${source.sourceType}`,
+    })
+  }
+  for (const row of execution.providerPerformance) {
+    if (row.terminalEventCount > 0 && 1 - row.successRate > policy.providerErrorRateThreshold) alerts.push({
+      code: 'PROVIDER_ERROR_RATE', sourceType: row.sourceType, stage: row.stage,
+      provider: row.provider, queueAgeMs: null,
+      message: 'Provider terminal error rate exceeds configured threshold',
+      suggestedCommand: `pnpm feed-v3:status`,
+    })
+  }
+  return alerts.sort((a, b) => a.sourceType.localeCompare(b.sourceType)
+    || a.code.localeCompare(b.code) || (a.provider ?? '').localeCompare(b.provider ?? ''))
 }
 
 function mergeProviderUsage(rows: ExecutionAggregateRow[]): ProviderUsageAggregate[] {

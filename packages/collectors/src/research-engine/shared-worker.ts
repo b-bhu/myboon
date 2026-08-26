@@ -335,6 +335,7 @@ export class SharedResearchWorker {
     const heartbeat = this.startHeartbeat(store, lease)
     try {
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
+      this.recordExecutionStarted(lease, stage, timing, lease.work.attemptCount + 1)
       if (lease.work.researchDepth === 'standard') {
         const discovery = await this.standardSearch!.discover({
           signal: signal!, work: lease.work, queries: buildStandardSearchQueries(signal!),
@@ -437,6 +438,7 @@ export class SharedResearchWorker {
     const heartbeat = this.startHeartbeat(store, lease)
     try {
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
+      this.recordExecutionStarted(lease, stage, timing, lease.work.attemptCount + 1)
       const packet = await this.synthesizer.synthesize({
         signal,
         workItem: lease.work,
@@ -618,10 +620,17 @@ export class SharedResearchWorker {
         lease, stage, timing, finishedAt,
         status: input.status, attempt: input.attempt,
         failureCategory: input.failureCategory ?? null,
-        discriminator: input.discriminator ?? `attempt:${input.attempt}`,
+        discriminator: input.discriminator ?? `attempt:${input.attempt}:terminal`,
       }),
       ...input.provenance,
     })
+  }
+
+  private recordExecutionStarted(lease: WorkLease, stage: ResearchWorkerStage, timing: StageTiming, attempt: number): void {
+    this.appendExecutionEvent(baseExecutionEvent({
+      lease, stage, timing, finishedAt: null, status: 'started', attempt,
+      failureCategory: null, discriminator: `attempt:${attempt}:started`,
+    }))
   }
 
   private recordSynthesisSuccess(lease: WorkLease, packet: ResearchPacketV1, timing: StageTiming): void {
@@ -770,6 +779,7 @@ type ExecutionProvenance = Pick<ExecutionTraceEvent,
   | 'toolCalls'
   | 'wallTimeMs'
   | 'budgetExceeded'
+  | 'costUsdMicros'
 >
 
 function telemetryExecutionProvenance(telemetry: InferenceTelemetry): ExecutionProvenance {
@@ -792,6 +802,7 @@ function telemetryExecutionProvenance(telemetry: InferenceTelemetry): ExecutionP
     toolCalls: telemetry.toolCalls,
     wallTimeMs: telemetry.durationMs,
     budgetExceeded: telemetry.budgetExceeded,
+    costUsdMicros: telemetry.costUsdMicros,
   }
 }
 
@@ -811,7 +822,7 @@ function baseExecutionEvent(input: {
   lease: WorkLease
   stage: ResearchWorkerStage
   timing: StageTiming
-  finishedAt: string
+  finishedAt: string | null
   status: ExecutionEventStatus
   attempt: number
   failureCategory: FailureCategory | null
@@ -837,7 +848,7 @@ function baseExecutionEvent(input: {
     // evidence, credentials, or other prose and never belong in this ledger.
     failureDetail: input.failureCategory ? `failure:${input.failureCategory}` : null,
     queueWaitMs: input.timing.queueWaitMs,
-    wallTimeMs: elapsedMs(input.timing.startedAt, input.finishedAt),
+    wallTimeMs: input.finishedAt === null ? 0 : elapsedMs(input.timing.startedAt, input.finishedAt),
     provider: null,
     model: null,
     fallbackProvider: null,
@@ -856,7 +867,8 @@ function baseExecutionEvent(input: {
     outputTokens: 0,
     toolCalls: 0,
     budgetExceeded: input.failureCategory === 'budget_exceeded',
-    createdAt: input.finishedAt,
+    costUsdMicros: null,
+    createdAt: input.finishedAt ?? input.timing.startedAt,
   }
 }
 

@@ -44,12 +44,37 @@ export interface ExecutionAggregateRow {
   toolCalls: number
   budgetExceededCount: number
   totalWallTimeMs: number
+  measuredCostEventCount: number
+  totalCostUsdMicros: number
+}
+
+export interface ExecutionProviderPerformance {
+  sourceType: Signal['sourceType']
+  stage: ExecutionStage
+  provider: string
+  model: string | null
+  terminalEventCount: number
+  succeededEventCount: number
+  failedEventCount: number
+  successRate: number
+  latency: { sampleCount: number; p50Ms: number | null; p95Ms: number | null; p99Ms: number | null }
+}
+
+export interface ExecutionCompletionUsage {
+  completedPackets: number
+  inputTokens: number
+  outputTokens: number
+  measuredCostPackets: number
+  totalCostUsdMicros: number
 }
 
 export interface ExecutionAggregateStatus {
   totalEvents: number
   activeEvents: number
   rows: ExecutionAggregateRow[]
+  providerPerformance: ExecutionProviderPerformance[]
+  completionUsage: ExecutionCompletionUsage
+  unavailableSources?: Signal['sourceType'][]
 }
 
 export interface ExecutionLedger {

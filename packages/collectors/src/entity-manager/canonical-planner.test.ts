@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { InferenceGatewayError } from '../inference-gateway/errors'
-import type { GenerateStructuredRequest, InferenceResult } from '../inference-gateway/types'
+import type { GenerateStructuredRequest, InferenceResult, InferenceTelemetry } from '../inference-gateway/types'
 import { operatorPacket, operatorWork } from '../signal-platform/operator-fixtures.test-support'
 import { PlatformFailure } from '../signal-platform/failures'
 import { buildEntityAdmissionInput } from './admission'
@@ -62,13 +62,13 @@ test('gateway planner sends a bounded tool-less Entity request and returns its v
       captured.push(request as unknown as GenerateStructuredRequest<CanonicalEntityPlan>)
       const value = plan()
       assert.deepEqual(request.validate(value), { valid: true, value })
-      return { value: value as T, telemetry: {} } as InferenceResult<T>
+      return { value: value as T, telemetry: telemetry() } as InferenceResult<T>
     },
   }
   const planner = new GatewayCanonicalEntityPlanner({ gateway })
 
   await planner.preflight()
-  assert.deepEqual(await planner.plan(planningInput()), plan())
+  assert.deepEqual(await planner.plan(planningInput()), { plan: plan(), telemetry: telemetry() })
   const request = captured[0]
   assert.ok(request)
   assert.equal(request.promptVersion, CANONICAL_ENTITY_PROMPT_VERSION)
@@ -79,6 +79,19 @@ test('gateway planner sends a bounded tool-less Entity request and returns its v
   assert.equal('toolsets' in request, false)
 })
 
+function telemetry(): InferenceTelemetry {
+  return {
+    workload: 'entity.extract', purpose: 'entity.canonical-admission-and-memory-plan', mode: 'generateStructured',
+    promptVersion: CANONICAL_ENTITY_PROMPT_VERSION, policyVersion: 'myboon.entity_shortlist.v1',
+    configuredPrimaryProvider: 'primary', configuredPrimaryModel: 'primary-model',
+    actualProvider: 'fallback', actualModel: 'fallback-model', fallbackInvoked: true,
+    fallbackReason: 'provider_timeout', schemaValid: true, providerCalls: 2, repairCalls: 0,
+    inputTokens: 40, outputTokens: 20, toolCalls: 0, costUsdMicros: 17,
+    configuredReasoningEffort: 'high', actualReasoningEffort: 'medium',
+    durationMs: 42, budgetExceeded: false, failureCategory: null, calls: [],
+  }
+}
+
 test('gateway circuit and zero-call unavailability preserve typed zero-attempt semantics', async () => {
   for (const category of ['circuit_open', 'provider_unavailable'] as const) {
     const planner = new GatewayCanonicalEntityPlanner({
@@ -86,7 +99,7 @@ test('gateway circuit and zero-call unavailability preserve typed zero-attempt s
         async generateStructured() {
           throw new InferenceGatewayError('unavailable', {
             category, retryable: true,
-            telemetry: { providerCalls: 0 } as never,
+            telemetry: entityFailureTelemetry(category),
           })
         },
       },
@@ -96,9 +109,18 @@ test('gateway circuit and zero-call unavailability preserve typed zero-attempt s
       && error.category === category
       && error.retryable
       && error.incrementsAttempt === false
+      && (error as PlatformFailure & { entityTelemetry?: InferenceTelemetry }).entityTelemetry?.providerCalls === 0
     ))
   }
 })
+
+function entityFailureTelemetry(category: 'circuit_open' | 'provider_unavailable'): InferenceTelemetry {
+  return {
+    ...telemetry(), actualProvider: null, actualModel: null, fallbackInvoked: false,
+    fallbackReason: null, schemaValid: null, providerCalls: 0, inputTokens: 0, outputTokens: 0,
+    costUsdMicros: null, durationMs: 0, failureCategory: category,
+  }
+}
 
 test('planner rejects tool-bearing or oversized stage budgets at construction', () => {
   const gateway = { async generateStructured() { throw new Error('not used') } }

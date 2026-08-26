@@ -216,7 +216,7 @@ test('retrieval and structured synthesis complete fenced happy stages and entity
     assert.equal(fx.store.getResearchWork('work-news')?.status, 'entity_pending')
     assert.equal(fx.store.getResearchWork('work-news')?.attemptCount, 2)
     assert.equal(fx.store.listResearchPacketsByWork('work-news', 10).length, 1)
-    const events = [...ledger.events.values()].sort((left, right) => left.stage.localeCompare(right.stage))
+    const events = [...ledger.events.values()].filter((event) => event.status !== 'started').sort((left, right) => left.stage.localeCompare(right.stage))
     const retrievalEvent = events.find((event) => event.stage === 'retrieval')!
     const synthesisEvent = events.find((event) => event.stage === 'synthesis')!
     assert.equal(events.length, 2)
@@ -538,7 +538,7 @@ test('failed execution records only typed redacted failure data', async () => {
       stages: ['synthesis'], synthesizer: failing, executionLedger: ledger,
     }))
     assert.equal((await worker.runOnce()).kind, 'retry_wait')
-    const event = [...ledger.events.values()][0]!
+    const event = [...ledger.events.values()].find((item) => item.status === 'retry_wait')!
     assert.equal(event.status, 'retry_wait')
     assert.equal(event.failureCategory, 'provider_timeout')
     assert.equal(event.failureDetail, 'failure:provider_timeout')

@@ -5,6 +5,7 @@ import { newsResearchToPacket } from './news-adapter'
 import { EntityService } from './entity-service'
 import { HermesEntityExtractionProvider } from './extractor'
 import { SupabaseEntityMemoryStore } from './supabase-store'
+import { legacyEntityOwnership, runLegacyEntityWhenOwned } from './legacy-ownership-guard'
 import { SqliteNewsStore } from '../news/sqlite-store'
 import type {
   NewsCandidateObservationRow,
@@ -193,7 +194,13 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   loadDotenvChain()
-  await runOnce()
+  const { ownership } = await runLegacyEntityWhenOwned({ sourceType: 'news', run: runOnce })
+  if (ownership.owner === 'shared') {
+    console.log('[entity-manager:news] shared Entity owns news; legacy runner is inert')
+    if (envFlag(process.env.ENTITY_MANAGER_NEWS_RUN_ONCE)) return
+    await waitForShutdownSignal()
+    return
+  }
   if (envFlag(process.env.ENTITY_MANAGER_NEWS_RUN_ONCE)) return
 
   startIntervalRunner({
@@ -201,6 +208,25 @@ async function main(): Promise<void> {
     intervalMs: positiveInteger(process.env.ENTITY_MANAGER_NEWS_INTERVAL_MS, DEFAULT_INTERVAL_MS),
     run: runOnce,
   })
+}
+
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise((resolve) => {
+    const stop = () => {
+      process.removeListener('SIGTERM', stop)
+      process.removeListener('SIGINT', stop)
+      resolve()
+    }
+    process.once('SIGTERM', stop)
+    process.once('SIGINT', stop)
+  })
+}
+
+export function newsEntityRunnerOwnership(
+  env: Readonly<Record<string, string | undefined>>,
+  now?: Date,
+) {
+  return legacyEntityOwnership('news', env, now)
 }
 
 // Tests import this module for its pipeline functions; PM2 sets

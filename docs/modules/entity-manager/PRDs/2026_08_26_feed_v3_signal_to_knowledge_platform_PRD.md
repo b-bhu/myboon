@@ -1424,10 +1424,10 @@ phase-specific rollback.
 ## Acceptance Criteria
 
 Checked items below have repository-level evidence from the 2026-08-26
-verification run: Signal Platform 123/123, Inference/Research/Hermes/Deep
-213/213, Entity Manager 169/169, News 86/86, Polymarket markets 16/16, legacy
-Polymarket researcher 14/14, pipeline store 82/82, Publisher 11/11, Editor
-10/10, API Feed 27/27, and API internal routes 15/15. Shared, tx-parser, and
+verification run: Signal Platform 133/133, Inference/Research/Hermes/Deep
+231/231, Entity Manager 179/179, News 86/86, Polymarket markets 16/16, legacy
+Polymarket researcher 14/14, pipeline store 82/82, Publisher 12/12, Editor
+13/13, API Feed 28/28, and API internal routes 15/15. Shared, tx-parser, and
 collectors builds passed. Unchecked items require historical, VPS, Supabase
 rehearsal, live load, cutover, or soak evidence and must not be inferred from
 unit tests or from the deterministic queue harness.
@@ -1467,7 +1467,7 @@ unit tests or from the deterministic queue harness.
       no claims, cursor transitions, or durable memory writes.
 - [x] Replay creates no duplicate research result for the same version and no
       duplicate durable entity memory.
-- [x] Aggregate status reports arrival, admission, completion, queue age,
+- [ ] Aggregate status reports arrival, admission, completion, queue age,
       failures, provider health, budget use, and entity-memory handoff.
 - [x] Immutable execution events carry a schema version and distinguish primary
       routing, fallback use, schema validity, and downstream acceptance.

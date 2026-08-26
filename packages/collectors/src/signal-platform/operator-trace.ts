@@ -154,9 +154,14 @@ export class CanonicalTraceInspector {
       for (const traceId of traceIds) {
         const remaining = this.limits.events - executionEvents.length
         if (remaining <= 0) { eventsTruncated = true; break }
-        const rows = await executionReader.listTraceBounded(traceId, remaining + 1)
-        eventsTruncated ||= rows.length > remaining
-        executionEvents.push(...rows.slice(0, remaining))
+        try {
+          const rows = await executionReader.listTraceBounded(traceId, remaining + 1)
+          eventsTruncated ||= rows.length > remaining
+          executionEvents.push(...rows.slice(0, remaining))
+        } catch {
+          if (!unavailableSources.includes(root.store.sourceType)) unavailableSources.push(root.store.sourceType)
+          break
+        }
       }
     }
 

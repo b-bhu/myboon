@@ -53,6 +53,7 @@ interface NarrativeImage {
 
 const LIST_SELECT = 'id,title,content_small,published_at,source_memory_ids'
 const DETAIL_SELECT = 'id,title,content_small,content_full,published_at,source_memory_ids'
+const MAX_MEMORY_HYDRATION_REQUESTS = 10
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 50
@@ -150,6 +151,9 @@ export function createNarrativeRoutes(config: NarrativeRoutesConfig): Hono {
     const allowedMemoryIds = new Set(memoryIds)
     const images = new Map<string, NarrativeImage>()
     if (memoryIds.length === 0) return images
+    if (Math.ceil(memoryIds.length / ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) > MAX_MEMORY_HYDRATION_REQUESTS) {
+      throw new Error(`narrative memory hydration exceeds ${MAX_MEMORY_HYDRATION_REQUESTS} bounded knowledge requests`)
+    }
 
     for (let offset = 0; offset < memoryIds.length; offset += ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) {
       const chunk = memoryIds.slice(offset, offset + ENTITY_KNOWLEDGE_MAX_PAGE_SIZE)

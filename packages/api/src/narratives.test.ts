@@ -224,6 +224,24 @@ test('GET / keeps optional media enrichment fail-open', async () => {
   }])
 })
 
+test('GET / fails closed before an extreme aggregate memory hydration drain', async () => {
+  const memoryIds = Array.from({ length: 1_001 }, (_, index) => (
+    `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`
+  ))
+  let calls = 0
+  const app = createApp(async () => jsonResponse([{
+    ...narrativeRow(firstId, 'Bitcoin moves', 'Short update', 'Full update', '2026-07-14T12:00:00.000Z'),
+    source_memory_ids: memoryIds,
+  }]), {
+    async getEntityMemoriesByIds() { calls += 1; return [] },
+  })
+
+  const response = await app.request('/')
+  assert.equal(response.status, 500)
+  assert.deepEqual(await response.json(), { error: 'Internal server error' })
+  assert.equal(calls, 0)
+})
+
 test('GET /:updateKey hides missing, unlinked, and archived narratives behind 404', async (context) => {
   await context.test('missing', async () => assertHidden(firstId))
   await context.test('unlinked', async () => assertHidden(firstId))

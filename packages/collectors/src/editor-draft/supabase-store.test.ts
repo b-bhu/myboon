@@ -235,3 +235,55 @@ test('Editor cursor-drains large configured windows with strict per-call bounds'
   assert.equal(bundles[0]?.memoryLane.length, 101)
   assert.equal(bundles[0]?.newMemories.length, 6)
 })
+
+test('Editor fails closed at the aggregate knowledge request ceiling', async () => {
+  let recentCalls = 0
+  const reader: Pick<EntityKnowledgeReader, 'getRecentEntityMemories' | 'getEntityMemories'> = {
+    async getRecentEntityMemories() {
+      recentCalls += 1
+      return {
+        schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION,
+        items: [knowledgeMemory(`extreme-${recentCalls}`)],
+        nextCursor: `cursor-${recentCalls}`,
+        hasMore: true,
+      }
+    },
+    async getEntityMemories() { throw new Error('lane must not be reached') },
+  }
+  const store = new SupabaseEditorDraftStore(database([]), pipelineStore(), reader)
+
+  await assert.rejects(store.fetchBundles({
+    batchSize: 101,
+    recentMemoryLimit: 101,
+    laneMemoryLimit: 1,
+    priorDraftLimit: 1,
+    publishedHistoryLimit: 0,
+  }), /exceeds 100 bounded requests/)
+  assert.equal(recentCalls, 100)
+})
+
+test('Editor fails closed when a knowledge cursor repeats', async () => {
+  let recentCalls = 0
+  const reader: Pick<EntityKnowledgeReader, 'getRecentEntityMemories' | 'getEntityMemories'> = {
+    async getRecentEntityMemories() {
+      recentCalls += 1
+      return {
+        schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION,
+        items: [knowledgeMemory(`repeat-${recentCalls}`)],
+        nextCursor: 'same-cursor',
+        hasMore: true,
+      }
+    },
+    async getEntityMemories() { throw new Error('lane must not be reached') },
+  }
+  const store = new SupabaseEditorDraftStore(database([]), pipelineStore(), reader)
+
+  await assert.rejects(store.fetchBundles({
+    batchSize: 2,
+    recentMemoryLimit: 2,
+    laneMemoryLimit: 1,
+    priorDraftLimit: 1,
+    publishedHistoryLimit: 0,
+  }), /cursor repeated/)
+  assert.equal(recentCalls, 2)
+})

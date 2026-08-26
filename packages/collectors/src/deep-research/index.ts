@@ -63,6 +63,22 @@ export {
   deterministicDeepJobId,
 } from './worker'
 export {
+  NodeDeepResearchOrphanInspector,
+  discoverDeepResearchOrphans,
+} from './orphan-discovery'
+export type {
+  DeepResearchDiscoverySnapshot,
+  DeepResearchOrphanInspectionPort,
+  DeepResearchUnregisteredArtifact,
+  DeepResearchUnregisteredArtifactKind,
+} from './orphan-discovery'
+export {
+  DEEP_RESEARCH_RUNTIME_SNAPSHOT_VERSION,
+  AtomicDeepResearchRuntimeStatusFile,
+  deepResearchRuntimeSnapshot,
+} from './runtime-status'
+export type { DeepResearchRuntimeSnapshotV1 } from './runtime-status'
+export {
   DEEP_RESEARCH_RUNTIME_ENV,
   SourceRoutedDeepResearchExecutionRegistry,
   createProductionDeepResearchRuntime,

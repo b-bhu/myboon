@@ -101,6 +101,8 @@ export interface DeepResearchExecutorOptions {
 
 export interface DeepResearchExecuteOptions {
   signal?: AbortSignal
+  /** Called only after the transient service has successfully spawned. */
+  onExecutionStarted?: () => boolean | Promise<boolean>
 }
 
 interface ProcessCompletion {
@@ -234,6 +236,10 @@ export class DeepResearchExecutor {
     } catch (error) {
       await this.cleanupInactive(metadata)
       throw deepError('execution_failed', 'Failed to start transient deep-research service', true, metadata, error)
+    }
+    if (options.onExecutionStarted && !await options.onExecutionStarted()) {
+      await this.terminateAndVerify(metadata)
+      throw deepError('cancelled', 'Lease fence was lost after contained execution start', true, metadata)
     }
 
     const stdout: Buffer[] = []
@@ -617,6 +623,10 @@ export function validateDeepResearchJob(job: DeepResearchJob): void {
     throw deepError('invalid_job', 'Deep-research job contains an unsupported schema version', false)
   }
   if (!safeIdentifier(job.jobId)) throw deepError('invalid_job', 'jobId is invalid', false)
+  if (!job.inference || !safeRouteValue(job.inference.provider) || !safeRouteValue(job.inference.model)
+    || !['low', 'medium', 'high'].includes(job.inference.reasoningEffort)) {
+    throw deepError('invalid_job', 'Deep-research inference route policy is invalid', false)
+  }
   if (job.workItem.researchDepth !== 'deep' || job.workItem.deepReason === null) {
     throw deepError('invalid_job', 'Deep-research work must have depth deep and an escalation reason', false)
   }
@@ -724,6 +734,11 @@ function minimalEnvironment(): NodeJS.ProcessEnv {
 function safeIdentifier(value: string): boolean {
   return typeof value === 'string' && value.length > 0 && value.length <= 200
     && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+}
+
+function safeRouteValue(value: string): boolean {
+  return typeof value === 'string' && value.length > 0 && value.length <= 200
+    && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)
 }
 
 function positiveInteger(value: number, name: string): number {

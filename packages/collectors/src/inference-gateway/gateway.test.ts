@@ -268,6 +268,7 @@ test('Hermes adapter routes its target through oneshot without chat, sessions, o
   assert.deepEqual(result.value, { answer: 'ok' })
   assert.equal(result.actualProvider, PRIMARY.provider)
   assert.equal(result.actualModel, PRIMARY.model)
+  assert.equal(result.actualReasoningEffort, undefined)
   assert.equal(calls.length, 1)
   assert.deepEqual(calls[0], {
     purpose: 'x',
@@ -526,4 +527,80 @@ test('repair after fallback remains on fallback and never bounces to primary', a
   ])
   assert.equal(result.telemetry.providerCalls, 2)
   assert.equal(result.telemetry.repairCalls, 1)
+})
+
+test('structured admission enforces concurrency and a windowed request rate', async () => {
+  let releaseFirst!: () => void
+  const entered = new Promise<void>((resolve) => { releaseFirst = resolve })
+  let calls = 0
+  const inference = new InferenceGateway({
+    adapter: {
+      async generate() {
+        calls += 1
+        if (calls === 1) await entered
+        return { value: { answer: 'ok' } }
+      },
+    },
+    routes: { 'research.standard': { primary: PRIMARY, maxConcurrency: 1, rateLimit: { maxCalls: 2, windowMs: 100 } } },
+    estimateTokens: () => 1,
+  })
+  const first = inference.generateStructured(request())
+  await new Promise((resolve) => setImmediate(resolve))
+  await assert.rejects(inference.generateStructured(request()), (error: unknown) =>
+    error instanceof InferenceGatewayError && error.category === 'provider_rate_limited')
+  releaseFirst()
+  await first
+  assert.equal(calls, 1)
+
+  let now = 1_000
+  const rateLimited = new InferenceGateway({
+    adapter: { generate: async () => ({ value: { answer: 'ok' } }) },
+    routes: { 'research.standard': { primary: PRIMARY, rateLimit: { maxCalls: 1, windowMs: 100 } } },
+    estimateTokens: () => 1, now: () => now,
+  })
+  await rateLimited.generateStructured(request())
+  await assert.rejects(rateLimited.generateStructured(request()), (error: unknown) =>
+    error instanceof InferenceGatewayError && error.category === 'provider_rate_limited')
+  now += 101
+  await rateLimited.generateStructured(request())
+})
+
+test('reasoning policy reaches the adapter while Hermes-compatible actual reasoning remains unmeasured', async () => {
+  let observed: StructuredProviderRequest | undefined
+  const inference = new InferenceGateway({
+    adapter: { generate: async (call) => { observed = call; return { value: { answer: 'ok' } } } },
+    routes: { 'research.standard': { primary: PRIMARY, reasoningEffort: 'low' } },
+    estimateTokens: () => 1,
+  })
+  const result = await inference.generateStructured(request())
+  assert.equal(observed?.reasoningEffort, 'low')
+  assert.equal(result.telemetry.configuredReasoningEffort, 'low')
+  assert.equal(result.telemetry.actualReasoningEffort, null)
+})
+
+test('monetary budget requires measured cost and never guesses it', async () => {
+  const measured = new InferenceGateway({
+    adapter: { generate: async () => ({ value: { answer: 'ok' }, costUsdMicros: 7 }) },
+    routes: { 'research.standard': { primary: PRIMARY } }, estimateTokens: () => 1,
+  })
+  const success = await measured.generateStructured(request({ budget: { ...DEFAULT_BUDGET, maxCostUsdMicros: 7 } }))
+  assert.equal(success.telemetry.costUsdMicros, 7)
+
+  for (const costUsdMicros of [undefined, 8]) {
+    const inference = new InferenceGateway({
+      adapter: { generate: async () => ({ value: { answer: 'ok' }, ...(costUsdMicros === undefined ? {} : { costUsdMicros }) }) },
+      routes: { 'research.standard': { primary: PRIMARY } }, estimateTokens: () => 1,
+    })
+    await assert.rejects(inference.generateStructured(request({ budget: { ...DEFAULT_BUDGET, maxCostUsdMicros: 7 } })),
+      (error: unknown) => error instanceof InferenceGatewayError && error.category === 'budget_exceeded')
+  }
+})
+
+test('contained investigation attachment is composition-only before the first admission', () => {
+  const inference = new InferenceGateway({ adapter: new QueueAdapter([]), routes: { 'research.deep': { primary: PRIMARY } } })
+  inference.checkReadiness('research.deep')
+  assert.throws(() => inference.attachInvestigationPort({ execute: async () => ({
+    value: {}, usage: { providerCalls: 0, inputTokens: 0, outputTokens: 0, toolCalls: 0, wallTimeMs: 0 },
+  }) }), (error: unknown) => error instanceof InferenceGatewayError && error.retryable === false)
+  assert.equal(inference.investigationEnabled, false)
 })

@@ -143,3 +143,30 @@ test('trace lookup isolates a failed store and validates identity and bounds', a
     /exactly one/,
   )
 })
+
+test('trace inspection resolves Calendar and X from source-scoped stores sharing pipeline SQLite', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'signal-trace-registered-'))
+  const path = join(dir, 'pipeline.sqlite')
+  const stores = [
+    new SqliteSignalPlatformStore(path, 'market_calendar'),
+    new SqliteSignalPlatformStore(path, 'x'),
+  ]
+  try {
+    for (const [index, sourceType] of (['market_calendar', 'x'] as const).entries()) {
+      const id = `registered-${index}`
+      stores[index]!.appendSignal(operatorSignal(sourceType, id))
+      stores[index]!.admitResearchWork(operatorWork(sourceType, id))
+    }
+    const inspector = new CanonicalTraceInspector({ stores })
+    for (const [index, sourceType] of (['market_calendar', 'x'] as const).entries()) {
+      const result = await inspector.inspect(
+        { workId: `work-registered-${index}` }, { now: '2026-08-26T13:00:00.000Z' },
+      )
+      assert.equal(result.found, true)
+      assert.equal(result.sourceType, sourceType)
+    }
+  } finally {
+    for (const store of stores) store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

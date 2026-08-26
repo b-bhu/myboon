@@ -6,12 +6,20 @@ import type { NewsCandidateObservationRow } from '../news/store'
 import type { NewsResearchResponse, NewsCandidate } from '../news/types'
 import { TEST_NEWS_SOURCE, TEST_NEWS_SOURCE_URL } from '../news/tests/fixtures'
 import { InMemoryEntityMemoryStore } from './test-helpers'
-import { fetchUnprocessedNewsPackets, runNewsEntityManager } from './run-news'
+import { fetchUnprocessedNewsPackets, newsEntityRunnerOwnership, runNewsEntityManager } from './run-news'
 import type { EntityMemoryExtraction, ExtractionProvider, ResearchPacket } from './types'
 
 const source = TEST_NEWS_SOURCE
 const sourceUrl = TEST_NEWS_SOURCE_URL
 const observedAt = '2026-07-04T12:00:00.000Z'
+
+test('News legacy Entity runner defaults to legacy and fails closed on an unowned disable declaration', () => {
+  assert.equal(newsEntityRunnerOwnership({}).owner, 'legacy')
+  assert.throws(
+    () => newsEntityRunnerOwnership({ FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news' }),
+    /disabled without active shared ownership/,
+  )
+})
 
 class CapturingExtractionProvider implements ExtractionProvider {
   packets: ResearchPacket[] = []

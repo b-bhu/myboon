@@ -225,6 +225,9 @@ test('active composition requires explicit legacy cutover and wires scoped owner
         inferenceObserver = observer
         return {
           async generateStructured() { throw new Error('not invoked during composition') },
+          checkReadiness() {
+            return { ready: false, category: 'circuit_open', retryAfterMs: 30_000, blockedTargets: [] }
+          },
           circuitStatusSnapshot() {
             return {
               schemaVersion: 'myboon.inference_circuit_status.v1',
@@ -251,6 +254,7 @@ test('active composition requires explicit legacy cutover and wires scoped owner
     assert.equal(captured!.config.ownership.polymarket, 'legacy')
     assert.deepEqual(captured!.ports.map((port) => port.sourceType), ['news'])
     assert.ok(captured!.executionLedger)
+    assert.equal(captured!.claimsEnabled?.(), false)
     inferenceObserver!(entityTelemetry())
     assert.equal((await runtime.runCycle()).mode, 'active')
     const activeHealth = healthSnapshots[0] as {
@@ -279,6 +283,7 @@ function entityTelemetry(): InferenceTelemetry {
     actualProvider: 'provider', actualModel: 'model', fallbackInvoked: false, fallbackReason: null,
     schemaValid: true, providerCalls: 1, repairCalls: 0, inputTokens: 10, outputTokens: 5,
     toolCalls: 0, durationMs: 42, budgetExceeded: false, failureCategory: null,
+    costUsdMicros: null, configuredReasoningEffort: null, actualReasoningEffort: null,
     calls: [],
   }
 }
@@ -339,7 +344,10 @@ test('active migration preflight fails before the worker can claim', async () =>
         } as never
       },
       gatewayFactory() {
-        return { async generateStructured() { throw new Error('must not run') } } as never
+        return {
+          checkReadiness() { return { ready: true } },
+          async generateStructured() { throw new Error('must not run') },
+        } as never
       },
       healthWriter: noOpHealthWriter,
       workerFactory: (options) => ({
@@ -408,7 +416,10 @@ test('durable Entity drain control prevents claims while resident and resume re-
         } as never
       },
       gatewayFactory() {
-        return { async generateStructured() { throw new Error('must not run') } } as never
+        return {
+          checkReadiness() { return { ready: true } },
+          async generateStructured() { throw new Error('must not run') },
+        } as never
       },
       healthWriter: noOpHealthWriter,
       workerFactory: (workerOptions) => {

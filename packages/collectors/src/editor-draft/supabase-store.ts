@@ -22,6 +22,19 @@ import type {
 
 const ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, show_in_carousel, metadata, created_at, updated_at'
 const ENTITY_PUBLISHED_HISTORY_TABLE = 'entity_published_history'
+const MAX_KNOWLEDGE_REQUESTS_PER_BUNDLE_FETCH = 100
+
+interface KnowledgeRequestBudget {
+  used: number
+  readonly limit: number
+}
+
+function consumeKnowledgeRequest(budget: KnowledgeRequestBudget): void {
+  if (budget.used >= budget.limit) {
+    throw new Error(`editor draft knowledge drain exceeds ${budget.limit} bounded requests`)
+  }
+  budget.used += 1
+}
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -101,18 +114,23 @@ function isMissingPublishedHistoryTable(error: { code?: string, message?: string
 
 async function fetchRecentMemories(
   reader: Pick<EntityKnowledgeReader, 'getRecentEntityMemories'>,
-  limit: number
+  limit: number,
+  budget: KnowledgeRequestBudget,
 ): Promise<EntityMemoryRecord[]> {
   try {
     const memories: EntityKnowledgeMemoryV1[] = []
     let cursor: string | undefined
+    const seenCursors = new Set<string>()
     while (memories.length < limit) {
+      consumeKnowledgeRequest(budget)
       const page = await reader.getRecentEntityMemories({
         limit: Math.min(limit - memories.length, ENTITY_KNOWLEDGE_MAX_PAGE_SIZE),
         ...(cursor ? { cursor } : {}),
       })
       memories.push(...page.items)
       if (!page.hasMore || !page.nextCursor || page.items.length === 0) break
+      if (seenCursors.has(page.nextCursor)) throw new Error('editor draft recent memory cursor repeated')
+      seenCursors.add(page.nextCursor)
       cursor = page.nextCursor
     }
     return memories
@@ -137,13 +155,16 @@ async function fetchEntities(db: SupabaseClient, entityIds: string[]): Promise<E
 async function fetchMemoriesForEntities(
   reader: Pick<EntityKnowledgeReader, 'getEntityMemories'>,
   entityIds: string[],
-  limit: number
+  limit: number,
+  budget: KnowledgeRequestBudget,
 ): Promise<EntityMemoryRecord[]> {
   const rows = await Promise.all(entityIds.map(async (entityId) => {
     try {
       const memories: EntityKnowledgeMemoryV1[] = []
       let cursor: string | undefined
+      const seenCursors = new Set<string>()
       while (memories.length < limit) {
+        consumeKnowledgeRequest(budget)
         const page = await reader.getEntityMemories({
           entityId,
           limit: Math.min(limit - memories.length, ENTITY_KNOWLEDGE_MAX_PAGE_SIZE),
@@ -151,6 +172,8 @@ async function fetchMemoriesForEntities(
         })
         memories.push(...page.items)
         if (!page.hasMore || !page.nextCursor || page.items.length === 0) break
+        if (seenCursors.has(page.nextCursor)) throw new Error('editor draft lane memory cursor repeated')
+        seenCursors.add(page.nextCursor)
         cursor = page.nextCursor
       }
       return memories
@@ -352,8 +375,12 @@ export class SupabaseEditorDraftStore implements EditorDraftStore {
   ) {}
 
   async fetchBundles(options: FetchEditorDraftBundlesOptions): Promise<EntityDraftBundle[]> {
+    const knowledgeBudget: KnowledgeRequestBudget = {
+      used: 0,
+      limit: MAX_KNOWLEDGE_REQUESTS_PER_BUNDLE_FETCH,
+    }
     const recentFetchLimit = Math.max(options.batchSize * options.recentMemoryLimit * 10, options.batchSize)
-    const recentMemories = await fetchRecentMemories(this.knowledgeReader, recentFetchLimit)
+    const recentMemories = await fetchRecentMemories(this.knowledgeReader, recentFetchLimit, knowledgeBudget)
     const recentReviewed = await this.store.findReviewedMemoryIds(recentMemories.map((memory) => memory.id))
     const eligibleEntityIds = unique(
       recentMemories
@@ -365,7 +392,7 @@ export class SupabaseEditorDraftStore implements EditorDraftStore {
 
     const [entities, laneMemories, priorDraftsByEntity, publishedHistory] = await Promise.all([
       fetchEntities(this.db, eligibleEntityIds),
-      fetchMemoriesForEntities(this.knowledgeReader, eligibleEntityIds, options.laneMemoryLimit),
+      fetchMemoriesForEntities(this.knowledgeReader, eligibleEntityIds, options.laneMemoryLimit, knowledgeBudget),
       this.store.fetchPriorDraftsByEntity(eligibleEntityIds, options.priorDraftLimit),
       fetchPublishedHistory(this.db, eligibleEntityIds, options.publishedHistoryLimit),
     ])

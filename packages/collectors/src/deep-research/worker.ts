@@ -18,6 +18,7 @@ import {
 } from '../signal-platform/shared-scheduler'
 import type { WorkLease } from '../signal-platform/store-adapter'
 import { validateExecutionTraceEvent } from '../signal-platform/validation'
+import { InferenceGatewayError } from '../inference-gateway'
 import { DeepResearchError } from './errors'
 import { validateDeepResearchJob } from './executor'
 import {
@@ -44,7 +45,10 @@ export interface DeepResearchSchedulerPort {
 
 /** Calling execute is the contained process-start boundary for attempt accounting. */
 export interface ContainedDeepResearchExecutionPort {
-  execute(job: DeepResearchJob, options?: { signal?: AbortSignal }): Promise<DeepResearchResult>
+  execute(job: DeepResearchJob, options?: {
+    signal?: AbortSignal
+    onExecutionStarted?: () => boolean | Promise<boolean>
+  }): Promise<DeepResearchResult>
 }
 
 export type DeepResearchPreflightReason =
@@ -52,6 +56,7 @@ export type DeepResearchPreflightReason =
   | 'containment_disabled'
   | 'unsupported_platform'
   | 'systemd_unavailable'
+  | 'invalid_job_policy'
 
 export interface DeepResearchPreflightPort {
   /** Process-wide containment/configuration gate. Runs before any deep lease is acquired. */
@@ -69,6 +74,7 @@ export interface DeepResearchJobPolicy {
   promptVersion: string
   provider: string
   model: string
+  reasoningEffort: 'low' | 'medium' | 'high'
   capabilities: readonly DeepResearchCapability[]
   maxBrowserNavigations: number
   maxSearchQueries: number
@@ -203,22 +209,8 @@ export class DeepResearchSideQueueWorker {
    * outages because it does not start a contained unit.
    */
   private async preclaimReady(): Promise<boolean> {
-    const now = this.nowIso()
-    const [work] = await this.scheduler.peekGlobal({ now, limit: 1, stages: ['deep'] })
-    if (!work) return false
-    const store = this.stores.get(work.sourceType)
-    if (!store) return false
-    const packetId = deterministicDeepPacketId(work.workId, work.researchContractVersion)
-    if (store.getResearchPacket(packetId) !== null) return true
-    const signal = store.getSignal(work.signalId)
-    const evidence = store.listEvidenceByWork(work.workId, this.evidenceReadLimit)
-    if (signal === null || validateLinkage(store, work, signal, evidence) !== null) return false
-    let job: DeepResearchJob
-    try { job = buildDeepResearchJob({ workItem: work, signal, evidence, policy: this.policy }) } catch { return false }
     const stageReadiness = await this.preflight.checkStage!()
-    if (!stageReadiness.ready) return false
-    const jobReadiness = await this.preflight.check(job)
-    return jobReadiness.ready
+    return stageReadiness.ready
   }
 
   private async process(store: DeepResearchWorkStore, lease: WorkLease): Promise<DeepResearchWorkerOutcome> {
@@ -252,6 +244,11 @@ export class DeepResearchSideQueueWorker {
     }
     const readiness = await this.preflight.check(job)
     if (!readiness.ready) {
+      if (readiness.reason === 'invalid_job_policy') {
+        return this.transitionFailure(
+          store, lease, 'permanent_source_error', 'Deep job violates configured policy', false, false,
+        )
+      }
       const released = await store.releaseLease({
         ...fence(lease), expectedStatus: 'deep_leased', targetStatus: 'deep_pending', now: this.nowIso(),
       })
@@ -271,22 +268,31 @@ export class DeepResearchSideQueueWorker {
       return outcome
     }
 
-    const began = await store.beginAttempt({
-      ...fence(lease), expectedStatus: 'deep_leased', now: this.nowIso(),
-    })
-    if (!began) {
-      this.recordLeaseLostEvent(lease, false)
-      return leaseLost(lease.work)
-    }
-    const logicalStartedAt = this.nowIso()
+    let attemptBegan = false
+    let leaseFenceLost = false
+    let logicalStartedAt = this.nowIso()
     const heartbeat = this.startHeartbeat(store, lease)
     let containedResult: DeepResearchResult | null = null
     try {
       if (!await heartbeat.check()) {
-        this.recordLeaseLostEvent(lease, true, logicalStartedAt)
+        this.recordLeaseLostEvent(lease, false, logicalStartedAt)
         return leaseLost(lease.work)
       }
-      const result = await this.executor.execute(job)
+      const result = await this.executor.execute(job, {
+        onExecutionStarted: async () => {
+          logicalStartedAt = this.nowIso()
+          attemptBegan = await store.beginAttempt({
+            ...fence(lease), expectedStatus: 'deep_leased', now: logicalStartedAt,
+          })
+          if (!attemptBegan) { leaseFenceLost = true; return false }
+          this.recordEvent({
+            work: lease.work, status: 'started', attempt: lease.work.attemptCount + 1,
+            failureCategory: null, startedAt: logicalStartedAt, finishedAt: null,
+            queueWaitMs: elapsedMs(lease.queuedAt, logicalStartedAt), providerInvoked: false,
+          })
+          return true
+        },
+      })
       containedResult = result
       if (!await heartbeat.check()) {
         this.recordLeaseLostEvent(lease, true, logicalStartedAt, result)
@@ -312,10 +318,14 @@ export class DeepResearchSideQueueWorker {
       this.recordPacketEvent(lease.work, packet)
       return outcome
     } catch (error) {
+      if (leaseFenceLost) {
+        this.recordLeaseLostEvent(lease, false, logicalStartedAt)
+        return leaseLost(lease.work)
+      }
       const mapped = mapExecutionFailure(error)
       return this.transitionFailure(
-        store, lease, mapped.category, message(error), mapped.retryable, true,
-        { startedAt: logicalStartedAt, result: containedResult, providerInvoked: true },
+        store, lease, mapped.category, message(error), mapped.retryable, attemptBegan,
+        { startedAt: logicalStartedAt, result: containedResult, providerInvoked: attemptBegan },
       )
     } finally {
       heartbeat.stop()
@@ -502,6 +512,7 @@ export function buildDeepResearchJob(input: {
     },
     approvedDomains: [...workItem.retrievalPlan.allowedDomains],
     capabilities: [...policy.capabilities],
+    inference: { provider: policy.provider, model: policy.model, reasoningEffort: policy.reasoningEffort },
     budget,
   }
   validateDeepResearchJob(job)
@@ -517,6 +528,9 @@ function validatePolicy(policy: DeepResearchJobPolicy): DeepResearchJobPolicy {
     ['promptVersion', policy.promptVersion], ['provider', policy.provider], ['model', policy.model],
   ] as const) {
     if (!value.trim() || value.length > 500) throw new DeepResearchWorkerConfigurationError(`${name} is required and bounded`)
+  }
+  if (!['low', 'medium', 'high'].includes(policy.reasoningEffort)) {
+    throw new DeepResearchWorkerConfigurationError('reasoningEffort must be low, medium, or high')
   }
   const capabilities = [...new Set(policy.capabilities)]
   if (capabilities.length === 0 || capabilities.length !== policy.capabilities.length
@@ -546,6 +560,7 @@ function validateLinkage(
 }
 
 function mapExecutionFailure(error: unknown): { category: FailureCategory, retryable: boolean } {
+  if (error instanceof InferenceGatewayError) return { category: error.category, retryable: error.retryable }
   if (!(error instanceof DeepResearchError)) return { category: 'provider_unavailable', retryable: false }
   const mapping: Record<DeepResearchErrorCategory, FailureCategory> = {
     containment_disabled: 'provider_unavailable',
@@ -605,7 +620,7 @@ interface DeepExecutionEventInput {
   attempt: number
   failureCategory: FailureCategory | null
   startedAt: string
-  finishedAt: string
+  finishedAt: string | null
   queueWaitMs?: number
   wallTimeMs?: number
   providerInvoked: boolean
@@ -634,7 +649,7 @@ function deepExecutionEvent(input: DeepExecutionEventInput, policy: DeepResearch
     failureCategory: input.failureCategory,
     failureDetail: redactedFailure(input.failureCategory),
     queueWaitMs: input.queueWaitMs ?? elapsedMs(input.work.updatedAt, input.startedAt),
-    wallTimeMs: input.wallTimeMs ?? elapsedMs(input.startedAt, input.finishedAt),
+    wallTimeMs: input.wallTimeMs ?? (input.finishedAt === null ? 0 : elapsedMs(input.startedAt, input.finishedAt)),
     provider: input.providerInvoked ? execution?.provider ?? policy.provider : null,
     model: input.providerInvoked ? execution?.model ?? policy.model : null,
     fallbackProvider: null,
@@ -650,7 +665,8 @@ function deepExecutionEvent(input: DeepExecutionEventInput, policy: DeepResearch
     toolCalls: measuredUsage?.toolCalls ?? 0,
     budgetExceeded: budget?.budgetExceeded ?? input.budgetExceeded ?? false,
     usageObserved: measuredUsage !== undefined,
-    createdAt: input.finishedAt,
+    costUsdMicros: null,
+    createdAt: input.finishedAt ?? input.startedAt,
   })
   return Object.freeze(event)
 }

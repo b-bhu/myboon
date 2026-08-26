@@ -222,6 +222,7 @@ function syntheticTimeoutJob(): DeepResearchJob {
     jobId: 'containment-verification-job', signal, workItem, evidence: [evidence],
     escalation: { reason: 'manual_analyst_request', unresolvedQuestion: 'Verify timeout containment.', supportingEvidenceRefs: [evidence.evidenceId] },
     approvedDomains: ['example.com'], capabilities: ['http_fetch'],
+    inference: { provider: 'synthetic-verifier', model: 'no-provider-call', reasoningEffort: 'low' },
     budget: {
       maxProviderCalls: 1, maxInputTokens: 1, maxOutputTokens: 1, maxToolCalls: 1,
       maxBrowserNavigations: 0, maxSearchQueries: 0, maxHttpFetches: 1, maxWallTimeMs: 500,

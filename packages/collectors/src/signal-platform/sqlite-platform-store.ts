@@ -1,4 +1,5 @@
 import { mkdirSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { canonicalJson } from './canonical-json'
@@ -17,6 +18,8 @@ import {
   ImmutableRecordConflictError,
   type CanonicalPlatformStore,
   type ImmutableAppendResult,
+  type SignalObservationRecord,
+  type SignalObservationAppendResult,
 } from './platform-store'
 import {
   assertLeasedTransition,
@@ -61,6 +64,7 @@ export interface SqliteSignalPlatformStoreOptions { readOnly?: boolean }
 
 export const SIGNAL_PLATFORM_TABLES = [
   'signal_platform_signals',
+  'signal_platform_signal_observations',
   'signal_platform_triage_decisions',
   'signal_platform_research_work',
   'signal_platform_evidence',
@@ -112,6 +116,17 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       );
       CREATE INDEX IF NOT EXISTS idx_signal_platform_signals_source_observed
         ON signal_platform_signals(source_type, observed_at DESC, signal_id);
+
+      CREATE TABLE IF NOT EXISTS signal_platform_signal_observations (
+        observation_id TEXT PRIMARY KEY,
+        signal_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        deduplicated INTEGER NOT NULL CHECK(deduplicated IN (0, 1)),
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_observations_source_time
+        ON signal_platform_signal_observations(source_type, observed_at, observation_id);
 
       CREATE TABLE IF NOT EXISTS signal_platform_triage_decisions (
         decision_id TEXT PRIMARY KEY,
@@ -215,27 +230,35 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     const signal = validateSignal(input)
     this.assertSource(signal.sourceType)
     const json = canonicalJson(signal)
+    return this.inImmediateTransaction(() => this.appendSignalInTransaction(signal, json))
+  }
+
+  appendSignalObservation(
+    input: Signal,
+    observation: SignalObservationRecord,
+  ): SignalObservationAppendResult {
+    this.assertOpen()
+    const signal = validateSignal(input)
+    this.assertSource(signal.sourceType)
+    this.validateObservation(observation, signal.signalId)
+    return this.inImmediateTransaction(() => ({
+      signal: this.appendSignalInTransaction(signal, canonicalJson(signal)),
+      observation: this.appendObservationInTransaction(observation),
+    }))
+  }
+
+  recordSignalObservation(input: SignalObservationRecord): ImmutableAppendResult<SignalObservationRecord> {
+    this.assertOpen()
+    this.assertSource(input.sourceType)
+    if (!input.observationId.trim() || !input.signalId.trim() || !Number.isFinite(Date.parse(input.observedAt))) {
+      throw new Error('Signal observation requires identities and a valid observedAt timestamp')
+    }
     return this.inImmediateTransaction(() => {
-      const matches = this.db.prepare(`
-        SELECT signal_id, canonical_json FROM signal_platform_signals
-        WHERE signal_id = ? OR (source_type = ? AND idempotency_key = ?)
-      `).all(signal.signalId, signal.sourceType, signal.idempotencyKey) as Array<Record<string, unknown>>
-      if (matches.length > 0) {
-        if (matches.length !== 1 || matches[0]?.canonical_json !== json) {
-          throw new ImmutableRecordConflictError('signal', `${signal.signalId}/${signal.idempotencyKey}`)
-        }
-        return { inserted: false, value: signal }
-      }
-      this.db.prepare(`
-        INSERT INTO signal_platform_signals (
-          signal_id, schema_version, source_type, source_id, idempotency_key,
-          observed_at, canonical_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        signal.signalId, signal.schemaVersion, signal.sourceType, signal.sourceId,
-        signal.idempotencyKey, signal.observedAt, json, signal.observedAt,
-      )
-      return { inserted: true, value: signal }
+      const signal = this.db.prepare(
+        `SELECT 1 AS found FROM signal_platform_signals WHERE signal_id = ? AND source_type = ?`,
+      ).get(input.signalId, input.sourceType)
+      if (!signal) throw new Error(`Signal observation references unknown signal ${input.signalId}`)
+      return this.appendObservationInTransaction(input)
     })
   }
 
@@ -665,8 +688,11 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     const intake = this.db.prepare(`
       SELECT
         (SELECT COUNT(*) FROM signal_platform_signals WHERE source_type = ?) AS signal_count,
-        (SELECT COUNT(*) FROM signal_platform_triage_decisions WHERE source_type = ?) AS triage_decision_count
-    `).get(this.sourceType, this.sourceType) as Record<string, unknown> | undefined
+        (SELECT COUNT(*) FROM signal_platform_triage_decisions WHERE source_type = ?) AS triage_decision_count,
+        (SELECT COUNT(*) FROM signal_platform_signal_observations WHERE source_type = ?) AS observation_count,
+        (SELECT COUNT(*) FROM signal_platform_signal_observations
+          WHERE source_type = ? AND deduplicated = 1) AS deduplicated_count
+    `).get(this.sourceType, this.sourceType, this.sourceType, this.sourceType) as Record<string, unknown> | undefined
     const triageOutcomes = this.db.prepare(`
       SELECT outcome, COUNT(*) AS count
       FROM signal_platform_triage_decisions WHERE source_type = ?
@@ -695,7 +721,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     ) as Array<Record<string, unknown>>
     const activity = this.db.prepare(`
       SELECT
-        (SELECT COUNT(*) FROM signal_platform_signals
+        (SELECT COUNT(*) FROM signal_platform_signal_observations
           WHERE source_type = ? AND observed_at >= ? AND observed_at <= ?) AS arrivals,
         (SELECT COUNT(*) FROM signal_platform_research_work
           WHERE source_type = ? AND created_at >= ? AND created_at <= ?) AS admissions,
@@ -755,6 +781,8 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     `).all(this.sourceType) as Array<Record<string, unknown>>
     return Promise.resolve({
       signalCount: Number(intake?.signal_count ?? 0),
+      observationCount: Number(intake?.observation_count ?? 0),
+      deduplicatedObservationCount: Number(intake?.deduplicated_count ?? 0),
       triageDecisionCount: Number(intake?.triage_decision_count ?? 0),
       triageOutcomes: Object.fromEntries(
         triageOutcomes.map((row) => [String(row.outcome), Number(row.count ?? 0)]),
@@ -768,6 +796,13 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         p99Ms: nullableNumber(endToEnd?.p99_ms),
       },
       sqliteSize: sqliteSize(this.databasePath),
+      sqliteStoreId: createHash('sha256').update(this.databasePath, 'utf8').digest('hex'),
+      sqliteWriteErrors: {
+        availability: 'unavailable' as const,
+        value: null,
+        measuredCount: 0,
+        reason: 'SQLite does not expose historical write-error counts; configure an external durable collector',
+      },
       totalAttempts: Number(attempt?.total_attempts ?? 0),
       attemptedItems: Number(attempt?.attempted_items ?? 0),
       maxAttemptCount: Number(attempt?.max_attempt_count ?? 0),
@@ -914,6 +949,66 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
        WHERE source_type = ? AND ${predicate} ORDER BY created_at, packet_id LIMIT ?`,
       [this.sourceType, ...params, boundedLimit(limit)], validateResearchPacket,
     )
+  }
+
+  private appendSignalInTransaction(signal: Signal, json: string): ImmutableAppendResult<Signal> {
+    const matches = this.db.prepare(`
+      SELECT signal_id, canonical_json FROM signal_platform_signals
+      WHERE signal_id = ? OR (source_type = ? AND idempotency_key = ?)
+    `).all(signal.signalId, signal.sourceType, signal.idempotencyKey) as Array<Record<string, unknown>>
+    if (matches.length > 0) {
+      if (matches.length !== 1 || matches[0]?.canonical_json !== json) {
+        throw new ImmutableRecordConflictError('signal', `${signal.signalId}/${signal.idempotencyKey}`)
+      }
+      return { inserted: false, value: signal }
+    }
+    this.db.prepare(`
+      INSERT INTO signal_platform_signals (
+        signal_id, schema_version, source_type, source_id, idempotency_key,
+        observed_at, canonical_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      signal.signalId, signal.schemaVersion, signal.sourceType, signal.sourceId,
+      signal.idempotencyKey, signal.observedAt, json, signal.observedAt,
+    )
+    return { inserted: true, value: signal }
+  }
+
+  private appendObservationInTransaction(
+    input: SignalObservationRecord,
+  ): ImmutableAppendResult<SignalObservationRecord> {
+    const row = this.db.prepare(`
+      SELECT signal_id, source_type, observed_at, deduplicated
+      FROM signal_platform_signal_observations WHERE observation_id = ?
+    `).get(input.observationId) as Record<string, unknown> | undefined
+    if (row) {
+      const same = row.signal_id === input.signalId && row.source_type === input.sourceType
+        && row.observed_at === input.observedAt
+      if (!same) throw new ImmutableRecordConflictError('signal', input.observationId)
+      return {
+        inserted: false,
+        value: { ...input, deduplicated: Number(row.deduplicated) === 1 },
+      }
+    }
+    this.db.prepare(`
+      INSERT INTO signal_platform_signal_observations (
+        observation_id, signal_id, source_type, observed_at, deduplicated, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      input.observationId, input.signalId, input.sourceType, input.observedAt,
+      input.deduplicated ? 1 : 0, input.observedAt,
+    )
+    return { inserted: true, value: input }
+  }
+
+  private validateObservation(input: SignalObservationRecord, expectedSignalId?: string): void {
+    this.assertSource(input.sourceType)
+    if (!input.observationId.trim() || !input.signalId.trim() || !Number.isFinite(Date.parse(input.observedAt))) {
+      throw new Error('Signal observation requires identities and a valid observedAt timestamp')
+    }
+    if (expectedSignalId && input.signalId !== expectedSignalId) {
+      throw new Error('Signal observation must reference the atomically appended Signal')
+    }
   }
 
   private appendImmutable<T>(

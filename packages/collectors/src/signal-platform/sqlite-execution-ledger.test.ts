@@ -83,7 +83,7 @@ test('SQLite ledger aggregates status, provider, fallback, schema and budget usa
   const dir = mkdtempSync(join(tmpdir(), 'signal-ledger-'))
   try {
     const ledger = new SqliteExecutionLedger(join(dir, 'pipeline.sqlite'))
-    ledger.append(event())
+    ledger.append(event({ packetId: 'packet-1', costUsdMicros: 1250 }))
     ledger.append(event({
       eventId: 'event-2', sourceType: 'polymarket', status: 'failed',
       failureCategory: 'budget_exceeded', provider: 'fallback', fallbackProvider: 'fallback',
@@ -103,6 +103,13 @@ test('SQLite ledger aggregates status, provider, fallback, schema and budget usa
     assert.equal(failed?.failureCategory, 'budget_exceeded')
     assert.equal(failed?.budgetExceededCount, 1)
     assert.equal(failed?.providerCalls, 2)
+    assert.equal(aggregate.providerPerformance.find((row) => row.provider === 'primary')?.successRate, 1)
+    assert.equal(aggregate.providerPerformance.find((row) => row.provider === 'fallback')?.successRate, 0)
+    assert.equal(aggregate.providerPerformance.find((row) => row.provider === 'primary')?.latency.p95Ms, 1000)
+    assert.deepEqual(aggregate.completionUsage, {
+      completedPackets: 1, inputTokens: 100, outputTokens: 50,
+      measuredCostPackets: 1, totalCostUsdMicros: 1250,
+    })
     ledger.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })

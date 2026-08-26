@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { GenerateStructuredRequest } from '../inference-gateway/types'
+import type { GenerateStructuredRequest, InferenceTelemetry } from '../inference-gateway/types'
 import {
   operatorPacket,
   operatorSignal,
@@ -22,6 +22,7 @@ import { GatewayCanonicalEntityPlanner } from './canonical-planner'
 import { createSharedEntityRuntime } from './run-shared'
 import { SupabaseEntityMemoryStore, __testing as storeTesting } from './supabase-store'
 import type { EntityMemoryRecord, EntityRecord } from './types'
+import type { Signal } from '../signal-platform/contracts'
 
 const NOW = '2026-08-26T12:00:00.000Z'
 
@@ -36,6 +37,8 @@ class FakeCanonicalSupabase {
   readonly entities = [
     entity('entity-news', 'news-entity', 'News Entity'),
     entity('entity-poly', 'polymarket-entity', 'Polymarket Entity'),
+    entity('entity-calendar', 'calendar-entity', 'Calendar Entity'),
+    entity('entity-x', 'x-entity', 'X Entity'),
   ]
   readonly memories = new Map<string, EntityMemoryRecord>()
   createCalls = 0
@@ -187,8 +190,17 @@ function migrationReport() {
   }
 }
 
-function packet(source: 'news' | 'polymarket', id: string, observedAt = '2026-08-26T10:00:00.000Z') {
-  const label = source === 'news' ? 'News Entity' : 'Polymarket Entity'
+type CanonicalSource = Signal['sourceType']
+
+const SOURCE_ENTITY = {
+  news: { label: 'News Entity', id: 'entity-news', memoryType: 'news_event' },
+  polymarket: { label: 'Polymarket Entity', id: 'entity-poly', memoryType: 'market_signal' },
+  market_calendar: { label: 'Calendar Entity', id: 'entity-calendar', memoryType: 'timeline_event' },
+  x: { label: 'X Entity', id: 'entity-x', memoryType: 'social_signal' },
+} as const
+
+function packet(source: CanonicalSource, id: string, observedAt = '2026-08-26T10:00:00.000Z') {
+  const label = SOURCE_ENTITY[source].label
   return operatorPacket(source, id, {
     observedAt,
     entityHints: [{
@@ -198,23 +210,25 @@ function packet(source: 'news' | 'polymarket', id: string, observedAt = '2026-08
   })
 }
 
-function plannerGateway(titles: Record<'news' | 'polymarket', string>) {
+function plannerGateway(titles: Record<CanonicalSource, string>) {
   return {
     resolveRoute() {},
+    checkReadiness() { return { ready: true as const } },
     async generateStructured<T>(request: GenerateStructuredRequest<T>) {
-      const source = request.prompt.includes('"sourceType":"news"') ? 'news' : 'polymarket'
+      const source = request.prompt.match(/"sourceType":"(news|polymarket|market_calendar|x)"/)?.[1] as CanonicalSource
+      assert.ok(source)
       const id = request.prompt.match(/"packetId":"packet-([^"]+)"/)?.[1]
       assert.ok(id)
       const value: CanonicalEntityPlan = {
         schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
         decision: {
           action: 'select_existing',
-          entityId: source === 'news' ? 'entity-news' : 'entity-poly',
+          entityId: SOURCE_ENTITY[source].id,
           supportingClaimIds: [`claim-${id}`],
           supportingEvidenceIds: [`evidence-${id}`],
         },
         memories: [{
-          memoryType: source === 'news' ? 'news_event' : 'market_signal',
+          memoryType: SOURCE_ENTITY[source].memoryType,
           memoryRole: 'primary_event',
           title: titles[source],
           summary: `${source} canonical summary for ${id}`,
@@ -224,14 +238,27 @@ function plannerGateway(titles: Record<'news' | 'polymarket', string>) {
       }
       const validated = request.validate(value)
       assert.equal(validated.valid, true)
-      return { value: value as T, telemetry: {} } as never
+      return { value: value as T, telemetry: plannerTelemetry(request) } as never
     },
+  }
+}
+
+function plannerTelemetry<T>(request: GenerateStructuredRequest<T>): InferenceTelemetry {
+  return {
+    workload: request.workload, purpose: request.purpose, mode: 'generateStructured',
+    promptVersion: request.promptVersion, policyVersion: request.policyVersion,
+    configuredPrimaryProvider: 'fixture-provider', configuredPrimaryModel: 'fixture-model',
+    actualProvider: 'fixture-provider', actualModel: 'fixture-model', fallbackInvoked: false,
+    fallbackReason: null, schemaValid: true, providerCalls: 1, repairCalls: 0,
+    inputTokens: 10, outputTokens: 5, toolCalls: 0, costUsdMicros: null,
+    configuredReasoningEffort: null, actualReasoningEffort: null,
+    durationMs: 1, budgetExceeded: false, failureCategory: null, calls: [],
   }
 }
 
 function seed(
   path: string,
-  source: 'news' | 'polymarket',
+  source: CanonicalSource,
   id: string,
   observedAt = '2026-08-26T10:00:00.000Z',
 ) {
@@ -252,7 +279,10 @@ test('source-local News/Polymarket flow isolates canon outages, replays stably, 
   const news = seed(newsPath, 'news', 'news-source')
   seed(pipelinePath, 'polymarket', 'poly-source')
   const database = new FakeCanonicalSupabase()
-  const titles = { news: 'First generated News title', polymarket: 'Market odds moved' }
+  const titles: Record<CanonicalSource, string> = {
+    news: 'First generated News title', polymarket: 'Market odds moved',
+    market_calendar: 'Calendar event', x: 'Social update',
+  }
   const receiptPath = join(directory, 'cutover-receipts.json')
   const receipts = (['news', 'polymarket'] as const).map((sourceType) => {
     const shadowName = `${sourceType}-shadow.json`
@@ -345,6 +375,59 @@ test('source-local News/Polymarket flow isolates canon outages, replays stably, 
     const marketRows = [...database.memories.values()].filter((memory) => memory.source === 'polymarket')
     assert.equal(marketRows.length, 1)
     assert.equal(marketRows[0].summary, 'polymarket canonical summary for poly-second')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('Market Calendar and X canonical packets share the registered pipeline store and replay stably', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-calendar-x-e2e-'))
+  const pipelinePath = join(directory, 'pipeline.sqlite')
+  const calendar = seed(pipelinePath, 'market_calendar', 'calendar-source')
+  const social = seed(pipelinePath, 'x', 'x-source')
+  const database = new FakeCanonicalSupabase()
+  database.failNewsCanon = false
+  const titles: Record<CanonicalSource, string> = {
+    news: 'News title', polymarket: 'Market title',
+    market_calendar: 'Scheduled decision', x: 'Protocol social update',
+  }
+  const processor = new EntityServiceCanonicalPacketProcessor({
+    store: new SupabaseEntityMemoryStore(database.client, () => new Date(NOW)),
+    planner: new GatewayCanonicalEntityPlanner({ gateway: plannerGateway(titles) }),
+  })
+  try {
+    for (const item of [calendar, social]) {
+      const sourceStore = new SqliteSignalPlatformStore(pipelinePath, item.work.sourceType)
+      const canonicalPacket = sourceStore.getResearchPacket(item.packet.packetId)
+      sourceStore.close()
+      assert.ok(canonicalPacket)
+      await processor.process({
+        work: { ...item.work, status: 'entity_leased' },
+        canonicalPacket,
+        packet: adaptCanonicalResearchPacket(canonicalPacket),
+        signal: new AbortController().signal,
+      })
+    }
+
+    const calendarRows = [...database.memories.values()].filter((memory) => memory.source === 'market_calendar')
+    const socialRows = [...database.memories.values()].filter((memory) => memory.source === 'x')
+    assert.equal(calendarRows.length, 1)
+    assert.equal(calendarRows[0].memory_type, 'timeline_event')
+    assert.equal(socialRows.length, 1)
+    assert.equal(socialRows[0].memory_type, 'social_signal')
+
+    const firstSocialId = socialRows[0].id
+    titles.x = 'Changed presentation wording'
+    await processor.process({
+      work: { ...social.work, status: 'entity_leased' },
+      canonicalPacket: social.packet,
+      packet: adaptCanonicalResearchPacket(social.packet),
+      signal: new AbortController().signal,
+    })
+    const replayedSocial = [...database.memories.values()].filter((memory) => memory.source === 'x')
+    assert.equal(replayedSocial.length, 1)
+    assert.equal(replayedSocial[0].id, firstSocialId)
+    assert.equal(replayedSocial[0].title, 'Changed presentation wording')
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

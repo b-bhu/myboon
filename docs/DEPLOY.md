@@ -212,6 +212,14 @@ FEED_V3_RESEARCH_RUNTIME_STATUS_STALE_MS=60000
 FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS=60000
 ```
 
+Structured inference routes are configured once through the Inference Gateway.
+`INFERENCE_GATEWAY_WORKLOAD_POLICIES_JSON` may override a reviewed workload's
+`reasoningEffort`, process-local `maxConcurrency`, and windowed `rateLimit`;
+omitted workloads retain code-owned defaults. The Hermes structured semaphore
+remains the cross-process capacity ceiling. Requested reasoning effort is not
+observed provider behavior: Hermes one-shot does not expose an actual-effort
+measurement.
+
 Use the stage-specific source sets for new deployments; the two global source
 sets are compatibility fallbacks only. Unsupported research depths are
 persisted as typed `defer` decisions and are never silently downgraded. Standard
@@ -235,6 +243,34 @@ Read-only status and trace commands:
 pnpm --filter @myboon/collectors feed-v3:status
 pnpm --filter @myboon/collectors feed-v3:trace -- --work-id work_...
 ```
+
+Status reports durable source-observation and dedup counts when the additive
+observation ledger is present. Monetary cost is reported only from measured
+`costUsdMicros` execution telemetry, with explicit coverage; missing prices are
+never inferred from token counts. SQLite historical write-error counts remain
+explicitly unavailable unless a durable external collector is registered.
+Missing or corrupt News/Pipeline stores produce typed partial status/trace
+output instead of hiding healthy sources.
+
+Alerts remain explicitly unavailable until reviewed thresholds are supplied as
+credential-free `FEED_V3_STATUS_ALERT_POLICY_JSON` with `queueAgeSloMs` P0/P1
+thresholds by source, `providerErrorRateThreshold`, and
+`deadLetterCountThreshold`. The status output records whether alert evaluation
+was available; it never substitutes default SLOs.
+
+Externally produced rollback-rehearsal and live-soak evidence can be validated
+and redacted without asserting that the evidence exists:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
+  --kind rollback --input /absolute/path/rollback.json
+pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
+  --kind live-soak --input /absolute/path/live-soak.json
+```
+
+The validator rejects a claimed pass when measured duration, rollback bounds,
+SQLite errors, dead-letter threshold, ownership restoration, queue integrity,
+or orphan results contradict it. It does not generate production evidence.
 
 `feed-v3:status` reports Research and Entity runtime snapshot availability as
 `current`, `stale`, `missing`, or `invalid`. The Entity snapshot contains only
@@ -359,14 +395,23 @@ pnpm --filter @myboon/collectors feed-v3:evaluate-triage -- \
   --max-input-tokens-per-completion 5000 \
   --max-output-tokens-per-completion 1000 \
   --max-p95-latency-ms 90000 \
+  --min-blind-review-rate 1 \
+  --min-blind-acceptance-rate 0.95 \
+  --min-blind-product-quality 3 \
+  --min-blind-evidence-quality 3 \
+  --min-blind-attribution-quality 3 \
   > /absolute/path/feed-v3-evaluation-artifact.json
 ```
 
 The artifact records the input SHA-256 digest, thresholds, aggregate metrics,
-source, stage, exact sample size, and pass/fail reasons. It contains no Signal
-title, summary, prompt, evidence, or credential. Run the evaluation separately
-for every source being approved; a mixed-source artifact cannot authorize a
-source-specific cutover.
+source, stage, exact sample size, and pass/fail reasons. Blind review rows must
+attest that provider, model, usage, and cost were hidden and contain only a
+versioned protocol, reviewer hash, numeric product/evidence/attribution scores,
+and acceptance. Record and Signal identities are hashed in the artifact; it
+contains no Signal title, summary, prompt, evidence, or credential. The 1,000
+row minimum is enforced for every included source. Run the evaluation
+separately for every source being approved; a mixed-source artifact cannot
+authorize a source-specific cutover.
 
 Active Research and Entity startup requires a manifest at
 `FEED_V3_CUTOVER_RECEIPT_PATH`. Each source/stage receipt is an explicit manual
@@ -408,6 +453,110 @@ Minimal manifest shape (digests shown are placeholders):
   }]
 }
 ```
+
+#### Research source ownership cutover and rollback
+
+The News legacy researcher, Polymarket legacy researcher, and shared Research
+worker consume the same `FEED_V3_RESEARCH_*`,
+`FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES`, sample, and receipt values. PM2
+copies those keys into all three apps only when they are explicitly present in
+the invoking shell; otherwise every process loads the common
+`packages/collectors/.env`, whose code defaults remain safe-off.
+
+Cut over one reviewed source in this order: make the source's legacy researcher
+resident/inert, verify it has stopped claiming, and only then start shared
+claims. The exact receipt must contain `stage: "research"`. Example for News
+(use `myboon-polymarket-researcher` and `polymarket` for that lane):
+
+```bash
+export FEED_V3_RESEARCH_MODE=active
+export FEED_V3_RESEARCH_ACTIVE_SOURCES=news
+export FEED_V3_RESEARCH_SHADOW_SOURCES=
+export FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=news
+export FEED_V3_CUTOVER_RECEIPT_PATH=/absolute/path/cutover-receipts.json
+export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
+
+pm2 startOrReload ecosystem.config.cjs --only myboon-news-researcher --update-env
+# Verify the inert log line and zero new legacy claims before shared ownership.
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
+pm2 save
+```
+
+Rollback reverses ownership without overlap. Drain shared Research, wait for
+status to report no active Research execution, then make shared safe-off before
+restoring the legacy claimer:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
+  --stage research --action drain --apply
+
+export FEED_V3_RESEARCH_MODE=off
+export FEED_V3_RESEARCH_ACTIVE_SOURCES=
+export FEED_V3_RESEARCH_SHADOW_SOURCES=
+export FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=
+export FEED_V3_CUTOVER_RECEIPT_PATH=
+export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
+
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-news-researcher --update-env
+pm2 save
+```
+
+#### Entity source ownership cutover and rollback
+
+The News legacy Entity runner, Polymarket legacy Entity runner, and shared
+Entity worker consume the same `FEED_V3_ENTITY_*`,
+`FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES`, sample, and receipt values. The PM2
+ecosystem copies those keys into all three apps only when they are explicitly
+present in the shell invoking PM2; otherwise every process loads the common
+`packages/collectors/.env`, whose code defaults remain safe-off. Do not put a
+different ownership declaration in a per-app PM2 override.
+
+Cut over one reviewed source in this order. First make its legacy runner inert,
+then start shared claims. The exact receipt must contain `stage: "entity"` for
+the source. Example for News (use the Polymarket app name/source to cut that
+lane):
+
+```bash
+export FEED_V3_ENTITY_MODE=active
+export FEED_V3_ENTITY_ACTIVE_SOURCES=news
+export FEED_V3_ENTITY_SHADOW_SOURCES=
+export FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=news
+export FEED_V3_CUTOVER_RECEIPT_PATH=/absolute/path/cutover-receipts.json
+export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
+
+# Step 1: the receipt-bound guard makes the legacy process resident/inert.
+pm2 startOrReload ecosystem.config.cjs --only myboon-news-entity-manager --update-env
+# Verify its single inert log line and zero new legacy claims before step 2.
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
+pm2 save
+```
+
+Rollback reverses ownership without an overlap. Drain shared Entity and wait
+for status to report no active Entity execution, then make shared safe-off
+before re-enabling legacy:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
+  --stage entity --action drain --apply
+
+export FEED_V3_ENTITY_MODE=off
+export FEED_V3_ENTITY_ACTIVE_SOURCES=
+export FEED_V3_ENTITY_SHADOW_SOURCES=
+export FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=
+export FEED_V3_CUTOVER_RECEIPT_PATH=
+export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
+
+# Step 1: stop shared ownership. Step 2: restore the legacy claimer.
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-news-entity-manager --update-env
+pm2 save
+```
+
+Removing a legacy-disabled source without first making shared mode `off` is
+rejected by runtime configuration. Declaring a legacy source disabled without
+matching active shared ownership and a valid receipt is also fail-closed before
+database, provider, or claim I/O.
 
 ```bash
 pnpm --filter @myboon/collectors feed-v3:backfill -- \
@@ -507,6 +656,17 @@ registry storage have all been reviewed. The shared Research runner validates
 those settings and systemd readiness before acquiring a deep lease. Successful
 contained output still fails closed unless the trusted usage sidecar and
 fetched-evidence manifest are present and within the canonical work budget.
+Exact-domain job and output validation is not proof of OS-enforced destination
+egress; the target-host review must separately prove the approved network
+policy before Deep can be enabled.
+The configured audit roots must already exist as dedicated `myboon-deep*`
+directories outside the checkout and operator home; `/` and broad roots such as
+`/tmp` are rejected. Discovery runs at startup and on a bounded five-minute
+cadence, with forced refresh after timeout or cleanup failure. The gateway sends
+the configured reasoning policy to its adapter, but Hermes one-shot currently
+has no per-call reasoning flag, so actual reasoning effort remains unmeasured.
+Verify the selected Hermes profile/provider capability before cutover; runtime
+status must not be treated as evidence that reasoning effort was enforced.
 
 ---
 

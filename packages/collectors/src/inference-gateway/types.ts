@@ -29,13 +29,18 @@ export interface InferenceProviderTarget {
 export interface InferenceWorkloadRoute {
   primary: InferenceProviderTarget
   fallback?: InferenceProviderTarget
+  /** Explicit code-owned reasoning policy; omitted routes retain legacy provider defaults. */
+  reasoningEffort?: 'low' | 'medium' | 'high'
+  /** Optional process-local admission controls. Omitted values preserve legacy behavior. */
+  maxConcurrency?: number
+  rateLimit?: { maxCalls: number, windowMs: number }
 }
 
 export type InferenceRouteReadiness =
   | { ready: true }
   | {
     ready: false
-    category: 'circuit_open'
+    category: 'circuit_open' | 'provider_rate_limited'
     retryAfterMs: number
     blockedTargets: readonly InferenceProviderTarget[]
   }
@@ -68,6 +73,8 @@ export interface InferenceBudget {
   maxOutputTokens: number
   maxWallTimeMs: number
   maxToolCalls: 0
+  /** Enforced only against provider-measured cost. Missing measurements fail closed when set. */
+  maxCostUsdMicros?: number
 }
 
 export interface InferenceUsage {
@@ -84,6 +91,7 @@ export interface StructuredProviderRequest {
   timeoutMs: number
   maxOutputTokens: number
   signal: AbortSignal
+  reasoningEffort?: 'low' | 'medium' | 'high'
 }
 
 export interface StructuredProviderResult {
@@ -93,6 +101,9 @@ export interface StructuredProviderResult {
   /** Providers which know the actual route may override configured metadata. */
   actualProvider?: string
   actualModel?: string
+  actualReasoningEffort?: 'low' | 'medium' | 'high'
+  /** Provider-measured cost only. The gateway never estimates monetary cost. */
+  costUsdMicros?: number
 }
 
 export interface StructuredProviderAdapter {
@@ -144,10 +155,27 @@ export interface InvestigateRequest {
   /** Opaque to the gateway; a configured contained port owns validation. */
   job?: unknown
   signal?: AbortSignal
+  /** Internal contained-executor handshake; never model/provider controlled. */
+  onExecutionStarted?: () => boolean | Promise<boolean>
+}
+
+export interface ContainedInvestigationResult<T = unknown> {
+  value: T
+  actualProvider?: string
+  actualModel?: string
+  actualReasoningEffort?: 'low' | 'medium' | 'high'
+  usage: {
+    providerCalls: number
+    inputTokens: number
+    outputTokens: number
+    toolCalls: number
+    wallTimeMs: number
+    costUsdMicros?: number
+  }
 }
 
 export interface ContainedInvestigationPort {
-  execute(request: InvestigateRequest): Promise<unknown>
+  execute(request: InvestigateRequest & { target?: InferenceProviderTarget, reasoningEffort?: 'low' | 'medium' | 'high' }): Promise<ContainedInvestigationResult>
 }
 
 export interface InferenceRequestByMode<T = unknown> {
@@ -158,7 +186,7 @@ export interface InferenceRequestByMode<T = unknown> {
 }
 
 export interface InferenceCallRecord {
-  mode: 'classify' | 'generateStructured' | 'repairStructured'
+  mode: InferenceMode
   provider: string
   model: string
   durationMs: number
@@ -167,12 +195,13 @@ export interface InferenceCallRecord {
   schemaValid: boolean | null
   inputTokens: number
   outputTokens: number
+  costUsdMicros?: number | null
 }
 
 export interface InferenceTelemetry {
   workload: string
   purpose: string
-  mode: 'classify' | 'generateStructured' | 'repairStructured'
+  mode: InferenceMode
   promptVersion: string
   policyVersion: string
   configuredPrimaryProvider: string
@@ -186,7 +215,11 @@ export interface InferenceTelemetry {
   repairCalls: number
   inputTokens: number
   outputTokens: number
-  toolCalls: 0
+  toolCalls: number
+  /** Null means the provider/contained runtime did not report measured cost. */
+  costUsdMicros?: number | null
+  configuredReasoningEffort?: 'low' | 'medium' | 'high' | null
+  actualReasoningEffort?: 'low' | 'medium' | 'high' | null
   durationMs: number
   budgetExceeded: boolean
   failureCategory: InferenceFailureCategory | null

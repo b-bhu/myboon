@@ -13,6 +13,7 @@ export const CONFIGURED_INFERENCE_WORKLOADS = [
   'research.synthesis',
   'entity.extract',
   'editor.draft',
+  'research.deep',
 ] as const
 
 export type ConfiguredInferenceWorkload = typeof CONFIGURED_INFERENCE_WORKLOADS[number]
@@ -22,6 +23,9 @@ export const INFERENCE_GATEWAY_ENV = Object.freeze({
   primaryProvider: 'INFERENCE_GATEWAY_PRIMARY_PROVIDER',
   primaryModel: 'INFERENCE_GATEWAY_PRIMARY_MODEL',
   openRouterFallbackModel: 'INFERENCE_GATEWAY_OPENROUTER_FALLBACK_MODEL',
+  workloadPoliciesJson: 'INFERENCE_GATEWAY_WORKLOAD_POLICIES_JSON',
+  deepProvider: 'FEED_V3_DEEP_RESEARCH_PROVIDER',
+  deepModel: 'FEED_V3_DEEP_RESEARCH_MODEL',
 } as const)
 
 const DEFAULT_PRIMARY_PROVIDER = 'ollama-cloud'
@@ -38,12 +42,15 @@ export interface InferenceGatewayRouteStatus {
   workload: ConfiguredInferenceWorkload
   primary: Readonly<{ provider: string, model: string }>
   fallback: Readonly<{ provider: string, model: string }> | null
+  reasoningEffort: 'low' | 'medium' | 'high'
+  maxConcurrency: number
+  rateLimit: Readonly<{ maxCalls: number, windowMs: number }>
 }
 
 export interface InferenceGatewayStatusSnapshot {
   schemaVersion: 'myboon.inference_gateway_status.v1'
   hermesProfileConfigured: boolean
-  investigate: Readonly<{ enabled: false, fallbackEnabled: false }>
+  investigate: Readonly<{ enabled: boolean, fallbackEnabled: false }>
   routes: readonly InferenceGatewayRouteStatus[]
 }
 
@@ -65,7 +72,7 @@ export interface CreateConfiguredInferenceGatewayOptions {
 export interface ConfiguredInferenceGatewayRuntime {
   gateway: InferenceGateway
   configuration: InferenceGatewayConfiguration
-  status: InferenceGatewayStatusSnapshot
+  readonly status: InferenceGatewayStatusSnapshot
 }
 
 export function loadInferenceGatewayConfiguration(
@@ -101,9 +108,15 @@ export function loadInferenceGatewayConfiguration(
     throw configurationError('Primary and fallback provider/model routes must differ')
   }
 
+  const policies = workloadPolicies(env[INFERENCE_GATEWAY_ENV.workloadPoliciesJson])
+  const deepProvider = env[INFERENCE_GATEWAY_ENV.deepProvider]?.trim() || undefined
+  const deepModel = env[INFERENCE_GATEWAY_ENV.deepModel]?.trim() || undefined
+  if ((deepProvider === undefined) !== (deepModel === undefined)) throw configurationError('Deep provider and model must be configured together')
+  const deepPrimary = deepProvider && deepModel
+    ? Object.freeze({ provider: safeValue('deep provider', deepProvider), model: safeValue('deep model', deepModel) }) : primary
   const routes = Object.fromEntries(CONFIGURED_INFERENCE_WORKLOADS.map((workload) => [
     workload,
-    Object.freeze({ primary, ...(fallback ? { fallback } : {}) }),
+    Object.freeze({ primary: workload === 'research.deep' ? deepPrimary : primary, ...(fallback && workload !== 'research.deep' ? { fallback } : {}), ...policies[workload] }),
   ])) as unknown as Record<ConfiguredInferenceWorkload, InferenceWorkloadRoute>
 
   return Object.freeze({
@@ -114,17 +127,21 @@ export function loadInferenceGatewayConfiguration(
 
 export function inferenceGatewayStatus(
   configuration: InferenceGatewayConfiguration,
+  investigateEnabled = false,
 ): InferenceGatewayStatusSnapshot {
   return Object.freeze({
     schemaVersion: 'myboon.inference_gateway_status.v1',
     hermesProfileConfigured: configuration.hermesProfile !== undefined,
-    investigate: Object.freeze({ enabled: false, fallbackEnabled: false }),
+    investigate: Object.freeze({ enabled: investigateEnabled, fallbackEnabled: false }),
     routes: Object.freeze(CONFIGURED_INFERENCE_WORKLOADS.map((workload) => {
       const route = configuration.routes[workload]
       return Object.freeze({
         workload,
         primary: Object.freeze({ ...route.primary }),
-        fallback: route.fallback ? Object.freeze({ ...route.fallback }) : null,
+        fallback: workload !== 'research.deep' && route.fallback ? Object.freeze({ ...route.fallback }) : null,
+        reasoningEffort: route.reasoningEffort!,
+        maxConcurrency: route.maxConcurrency!,
+        rateLimit: Object.freeze({ ...route.rateLimit! }),
       })
     })),
   })
@@ -159,10 +176,10 @@ export function createConfiguredInferenceGateway(
   options: CreateConfiguredInferenceGatewayOptions = {},
 ): ConfiguredInferenceGatewayRuntime {
   const configuration = loadInferenceGatewayConfiguration(options.env)
+  const gateway = createInferenceGatewayFromConfiguration(configuration, options)
   return Object.freeze({
-    gateway: createInferenceGatewayFromConfiguration(configuration, options),
-    configuration,
-    status: inferenceGatewayStatus(configuration),
+    gateway, configuration,
+    get status() { return inferenceGatewayStatus(configuration, gateway.investigationEnabled) },
   })
 }
 
@@ -189,6 +206,42 @@ function validateConfiguration(configuration: InferenceGatewayConfiguration): vo
       && route.primary.model === route.fallback.model) {
       throw configurationError(`Primary and fallback routes must differ for workload ${workload}`)
     }
+  }
+  for (const workload of CONFIGURED_INFERENCE_WORKLOADS) validatePolicy(workload, configuration.routes[workload])
+}
+
+function workloadPolicies(raw: string | undefined): Record<ConfiguredInferenceWorkload, Pick<InferenceWorkloadRoute, 'reasoningEffort' | 'maxConcurrency' | 'rateLimit'>> {
+  const defaults = Object.fromEntries(CONFIGURED_INFERENCE_WORKLOADS.map((workload) => [workload, {
+    reasoningEffort: 'low' as const, maxConcurrency: 4, rateLimit: { maxCalls: 60, windowMs: 60_000 },
+  }])) as Record<ConfiguredInferenceWorkload, Pick<InferenceWorkloadRoute, 'reasoningEffort' | 'maxConcurrency' | 'rateLimit'>>
+  if (raw === undefined) return defaults
+  let parsed: unknown
+  try { parsed = JSON.parse(raw) } catch { throw configurationError('Workload policies must be valid JSON') }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw configurationError('Workload policies must be an object')
+  for (const [workload, policy] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!(CONFIGURED_INFERENCE_WORKLOADS as readonly string[]).includes(workload)) throw configurationError(`Unknown workload policy ${workload}`)
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw configurationError(`Invalid workload policy ${workload}`)
+    const value = policy as Record<string, unknown>
+    const keys = Object.keys(value).sort()
+    if (keys.join(',') !== 'maxConcurrency,rateLimit,reasoningEffort') throw configurationError(`Invalid workload policy keys for ${workload}`)
+    const rate = value.rateLimit as Record<string, unknown>
+    const route = {
+      reasoningEffort: value.reasoningEffort as InferenceWorkloadRoute['reasoningEffort'],
+      maxConcurrency: value.maxConcurrency as number,
+      rateLimit: rate as unknown as { maxCalls: number, windowMs: number },
+    }
+    validatePolicy(workload, route)
+    defaults[workload as ConfiguredInferenceWorkload] = route
+  }
+  return defaults
+}
+
+function validatePolicy(workload: string, route: Pick<InferenceWorkloadRoute, 'reasoningEffort' | 'maxConcurrency' | 'rateLimit'>): void {
+  if (!route.reasoningEffort || !['low', 'medium', 'high'].includes(route.reasoningEffort)) throw configurationError(`Invalid reasoning effort for ${workload}`)
+  if (!Number.isInteger(route.maxConcurrency) || route.maxConcurrency! <= 0 || route.maxConcurrency! > 1_000) throw configurationError(`Invalid maxConcurrency for ${workload}`)
+  if (!route.rateLimit || !Number.isInteger(route.rateLimit.maxCalls) || route.rateLimit.maxCalls <= 0 || route.rateLimit.maxCalls > 1_000_000
+    || !Number.isInteger(route.rateLimit.windowMs) || route.rateLimit.windowMs <= 0 || route.rateLimit.windowMs > 86_400_000) {
+    throw configurationError(`Invalid rateLimit for ${workload}`)
   }
 }
 

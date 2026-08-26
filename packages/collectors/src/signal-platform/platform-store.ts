@@ -12,6 +12,19 @@ export interface ImmutableAppendResult<T> {
   value: T
 }
 
+export interface SignalObservationRecord {
+  observationId: string
+  signalId: string
+  sourceType: Signal['sourceType']
+  observedAt: string
+  deduplicated: boolean
+}
+
+export interface SignalObservationAppendResult {
+  signal: ImmutableAppendResult<Signal>
+  observation: ImmutableAppendResult<SignalObservationRecord>
+}
+
 export class ImmutableRecordConflictError extends Error {
   readonly code = 'IMMUTABLE_RECORD_CONFLICT'
 
@@ -23,6 +36,16 @@ export class ImmutableRecordConflictError extends Error {
 
 export interface CanonicalPlatformStore extends ResearchWorkStoreAdapter {
   appendSignal(signal: Signal): ImmutableAppendResult<Signal>
+  appendSignalObservation?(
+    signal: Signal,
+    observation: SignalObservationRecord,
+  ): SignalObservationAppendResult
+  /**
+   * Durable source-delivery accounting. The identity must be stable for an
+   * exact replay of the same source observation, while a later poll may use a
+   * new identity even when it deduplicates to an existing canonical Signal.
+   */
+  recordSignalObservation?(observation: SignalObservationRecord): ImmutableAppendResult<SignalObservationRecord>
   getSignal(signalId: string): Signal | null
   findSignalByIdempotencyKey(idempotencyKey: string): Signal | null
   /** Bounded retry source for Signals retained before a failed triage step. */

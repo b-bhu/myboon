@@ -12,7 +12,7 @@ import {
 } from './contracts'
 
 export function operatorSignal(
-  sourceType: 'news' | 'polymarket',
+  sourceType: Signal['sourceType'],
   id: string,
   extras: Record<string, unknown> = {},
 ): Signal {
@@ -31,17 +31,26 @@ export function operatorSignal(
     idempotencyKey: `key-${id}`,
     ...extras,
   }
-  return sourceType === 'news' ? {
+  if (sourceType === 'news') return {
     ...base, sourceType: 'news', contentKind: 'article',
     content: { schemaVersion: 'myboon.signal_content.article.v1' },
-  } : {
+  }
+  if (sourceType === 'polymarket') return {
     ...base, sourceType: 'polymarket', contentKind: 'market_event',
     content: { schemaVersion: 'myboon.signal_content.market_event.v1' },
+  }
+  if (sourceType === 'market_calendar') return {
+    ...base, sourceType: 'market_calendar', contentKind: 'calendar_event',
+    content: { schemaVersion: 'myboon.signal_content.calendar_event.v1' },
+  }
+  return {
+    ...base, sourceType: 'x', contentKind: 'social_thread',
+    content: { schemaVersion: 'myboon.signal_content.social_thread.v1' },
   }
 }
 
 export function operatorWork(
-  sourceType: 'news' | 'polymarket',
+  sourceType: Signal['sourceType'],
   id: string,
   overrides: Partial<ResearchWorkItem> = {},
 ): ResearchWorkItem {
@@ -101,7 +110,7 @@ export function operatorEvidence(id: string, overrides: Partial<RetrievedEvidenc
 }
 
 export function operatorPacket(
-  sourceType: 'news' | 'polymarket',
+  sourceType: Signal['sourceType'],
   id: string,
   overrides: Partial<ResearchPacketV1> = {},
 ): ResearchPacketV1 {
@@ -143,7 +152,7 @@ export function operatorPacket(
 }
 
 export function operatorExecutionEvent(
-  sourceType: 'news' | 'polymarket',
+  sourceType: Signal['sourceType'],
   id: string,
   overrides: Partial<ExecutionTraceEvent> = {},
 ): ExecutionTraceEvent {

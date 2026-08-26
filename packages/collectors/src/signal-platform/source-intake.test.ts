@@ -55,6 +55,14 @@ test('observe mode appends a Signal idempotently and cannot create queue work', 
       insertedDecisions: 0, admittedWorkItems: 0, failures: [],
     })
     assert.equal((await store.getSchedulerStatus({ now: NOW })).total, 0)
+    const laterPoll = { ...signal(), observedAt: '2026-08-26T12:01:00.000Z' }
+    const later = await intake.ingest(laterPoll)
+    assert.equal(later.signalInserted, false)
+    const status = await store.readWorkObservability({
+      now: '2026-08-26T13:00:00.000Z', recentFailureSince: NOW, failureLimit: 10,
+    })
+    assert.equal(status.observationCount, 2)
+    assert.equal(status.deduplicatedObservationCount, 1)
   } finally {
     store.close(); rmSync(dir, { recursive: true, force: true })
   }

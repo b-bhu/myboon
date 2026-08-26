@@ -26,6 +26,7 @@ export { InferenceGatewayStageReadiness } from './readiness'
 export type {
   ClassifyRequest,
   ContainedInvestigationPort,
+  ContainedInvestigationResult,
   GenerateStructuredRequest,
   InferenceBudget,
   InferenceCallRecord,

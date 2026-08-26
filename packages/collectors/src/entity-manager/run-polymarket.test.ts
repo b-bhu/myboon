@@ -4,7 +4,19 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { InMemoryEntityMemoryStore } from './test-helpers'
 import type { ExtractionProvider } from './types'
-import { polymarketEntityManagerCliConfig, runPolymarketEntityManager } from './run-polymarket'
+import {
+  polymarketEntityManagerCliConfig,
+  polymarketEntityRunnerOwnership,
+  runPolymarketEntityManager,
+} from './run-polymarket'
+
+test('Polymarket legacy Entity runner defaults to legacy and fails closed on an unowned disable declaration', () => {
+  assert.equal(polymarketEntityRunnerOwnership({}).owner, 'legacy')
+  assert.throws(
+    () => polymarketEntityRunnerOwnership({ FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'polymarket' }),
+    /disabled without active shared ownership/,
+  )
+})
 
 test('polymarketEntityManagerCliConfig reads batch, interval, and run-once env', () => {
   const config = polymarketEntityManagerCliConfig({

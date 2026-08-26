@@ -13,6 +13,11 @@ export interface TriageEvaluationThresholds {
   maxInputTokensPerObservedCompletion: number
   maxOutputTokensPerObservedCompletion: number
   maxP95LatencyMs: number
+  minimumBlindReviewRate: number
+  minimumBlindAcceptanceRate: number
+  minimumBlindProductQualityScore: number
+  minimumBlindEvidenceQualityScore: number
+  minimumBlindAttributionQualityScore: number
 }
 
 export interface TriageEvaluationArtifact {
@@ -49,6 +54,8 @@ export function parseTriageEvaluationArgs(argv: string[]): TriageEvaluationComma
     '--min-metered-completion-rate',
     '--max-provider-calls-per-completion', '--max-input-tokens-per-completion',
     '--max-output-tokens-per-completion', '--max-p95-latency-ms',
+    '--min-blind-review-rate', '--min-blind-acceptance-rate',
+    '--min-blind-product-quality', '--min-blind-evidence-quality', '--min-blind-attribution-quality',
   ])
   for (const flag of values.keys()) if (!allowed.has(flag)) throw new Error(`Unknown argument: ${flag}`)
   const inputPath = required(values, '--input')
@@ -70,6 +77,19 @@ export function parseTriageEvaluationArgs(argv: string[]): TriageEvaluationComma
         required(values, '--max-output-tokens-per-completion'), '--max-output-tokens-per-completion',
       ),
       maxP95LatencyMs: positiveInteger(required(values, '--max-p95-latency-ms'), '--max-p95-latency-ms'),
+      minimumBlindReviewRate: unitNumber(required(values, '--min-blind-review-rate'), '--min-blind-review-rate'),
+      minimumBlindAcceptanceRate: unitNumber(
+        required(values, '--min-blind-acceptance-rate'), '--min-blind-acceptance-rate',
+      ),
+      minimumBlindProductQualityScore: qualityScore(
+        required(values, '--min-blind-product-quality'), '--min-blind-product-quality',
+      ),
+      minimumBlindEvidenceQualityScore: qualityScore(
+        required(values, '--min-blind-evidence-quality'), '--min-blind-evidence-quality',
+      ),
+      minimumBlindAttributionQualityScore: qualityScore(
+        required(values, '--min-blind-attribution-quality'), '--min-blind-attribution-quality',
+      ),
     },
   }
 }
@@ -94,6 +114,11 @@ export function evaluateTriageDataset(input: {
   if (report.totalRecords < input.thresholds.minimumRecords) {
     failures.push(`records ${report.totalRecords} < ${input.thresholds.minimumRecords}`)
   }
+  for (const [source, breakdown] of Object.entries(report.perSource)) {
+    if (breakdown && breakdown.total < input.thresholds.minimumRecords) {
+      failures.push(`${source}_records ${breakdown.total} < ${input.thresholds.minimumRecords}`)
+    }
+  }
   if (report.falseNegativeRate > input.thresholds.maxFalseNegativeRate) {
     failures.push(`false_negative_rate ${report.falseNegativeRate} > ${input.thresholds.maxFalseNegativeRate}`)
   }
@@ -116,6 +141,21 @@ export function evaluateTriageDataset(input: {
   if (observed.p95LatencyMs !== null && observed.p95LatencyMs > input.thresholds.maxP95LatencyMs) {
     failures.push(`p95_latency_ms ${observed.p95LatencyMs} > ${input.thresholds.maxP95LatencyMs}`)
   }
+  const blind = report.blindReview
+  if (blind.coverageRate < input.thresholds.minimumBlindReviewRate) {
+    failures.push(`blind_review_rate ${blind.coverageRate} < ${input.thresholds.minimumBlindReviewRate}`)
+  }
+  if ((blind.acceptableRate ?? 0) < input.thresholds.minimumBlindAcceptanceRate) {
+    failures.push(`blind_acceptance_rate ${blind.acceptableRate ?? 0} < ${input.thresholds.minimumBlindAcceptanceRate}`)
+  }
+  const blindScores = [
+    ['product', blind.averageProductQualityScore, input.thresholds.minimumBlindProductQualityScore],
+    ['evidence', blind.averageEvidenceQualityScore, input.thresholds.minimumBlindEvidenceQualityScore],
+    ['attribution', blind.averageAttributionQualityScore, input.thresholds.minimumBlindAttributionQualityScore],
+  ] as const
+  for (const [name, measured, minimum] of blindScores) {
+    if ((measured ?? 0) < minimum) failures.push(`blind_${name}_quality ${measured ?? 0} < ${minimum}`)
+  }
   return {
     schemaVersion: TRIAGE_EVALUATION_ARTIFACT_VERSION,
     sourceType: sourceTypes.length === 1 ? sourceTypes[0]! : 'mixed',
@@ -126,7 +166,18 @@ export function evaluateTriageDataset(input: {
     thresholds: input.thresholds,
     passed: failures.length === 0,
     failures,
-    report,
+    report: redactEvaluationReport(report),
+  }
+}
+
+function redactEvaluationReport(report: TriageEvaluationReport): TriageEvaluationReport {
+  return {
+    ...report,
+    falseNegatives: report.falseNegatives.map((item) => ({
+      ...item,
+      recordId: createHash('sha256').update(item.recordId, 'utf8').digest('hex'),
+      signalId: createHash('sha256').update(item.signalId, 'utf8').digest('hex'),
+    })),
   }
 }
 
@@ -162,5 +213,11 @@ function unitNumber(raw: string, flag: string): number {
 function nonNegativeNumber(raw: string, flag: string): number {
   const value = Number(raw)
   if (!Number.isFinite(value) || value < 0) throw new Error(`${flag} must be a non-negative number`)
+  return value
+}
+
+function qualityScore(raw: string, flag: string): number {
+  const value = nonNegativeNumber(raw, flag)
+  if (value > 4) throw new Error(`${flag} must be between 0 and 4`)
   return value
 }

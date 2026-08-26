@@ -45,6 +45,12 @@ export interface DeepResearchJob {
   escalation: DeepResearchEscalation
   approvedDomains: string[]
   capabilities: DeepResearchCapability[]
+  /** Code-owned gateway route policy; the contained worker may not override it. */
+  inference: {
+    provider: string
+    model: string
+    reasoningEffort: 'low' | 'medium' | 'high'
+  }
   budget: DeepResearchBudget
 }
 
