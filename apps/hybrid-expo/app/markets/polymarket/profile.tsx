@@ -103,7 +103,7 @@ export default function PredictProfileScreen() {
   const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [sessionExpired, setSessionExpired] = useState(false);
+  const [predictUnavailable, setPredictUnavailable] = useState(false);
   const [activityFreshness, setActivityFreshness] = useState<PredictDataFreshness>({
     lastUpdatedAt: null,
     loading: false,
@@ -125,8 +125,8 @@ export default function PredictProfileScreen() {
   // Two different questions, and the screen must not confuse them:
   //   walletAddress      — the EVM wallet exists and can sign. Local, from Privy,
   //                        available at app load. This is "connected".
-  //   poly.polygonAddress — the Polymarket CLOB session is live. Server-side,
-  //                        set only by enable(). This is "account set up".
+  //   poly.polygonAddress — the mobile SecureClient is authenticated and its
+  //                        SDK-resolved account is ready.
   // Gating connection UI on polygonAddress showed "Connect wallet" to a user who
   // already had a working wallet, with no control that advanced them.
   const walletAddress = poly.signer?.descriptor.address ?? null;
@@ -175,7 +175,7 @@ export default function PredictProfileScreen() {
     setPortfolio(null);
     setCashBalance(null);
     setOpenOrders([]);
-    setSessionExpired(false);
+    setPredictUnavailable(false);
     setActivityFreshness({ lastUpdatedAt: null, loading: false, stale: false, error: null });
     setCashOutPosition(null);
     portfolioRefreshInFlight.current = false;
@@ -189,15 +189,15 @@ export default function PredictProfileScreen() {
   }, [walletScopedKey, resetWalletScopedState]);
 
   const handleCancel = useCallback(async (orderId: string) => {
-    if (!poly.polygonAddress) return;
+    if (!poly.client) return;
     setCancellingId(orderId);
     try {
-      const result = await cancelOrder(poly.polygonAddress, orderId);
+      const result = await cancelOrder(poly.client, orderId);
       if (result.ok) {
         setOpenOrders((prev) => prev.map((order) =>
           order.id === orderId ? { ...order, status: 'cancel_requested' } : order
         ));
-        void fetchOpenOrders(poly.polygonAddress).then(setOpenOrders).catch(() => {});
+        void fetchOpenOrders(poly.client).then(setOpenOrders).catch(() => {});
       } else {
         Alert.alert('Cancel failed', result.error ?? 'Unknown error');
       }
@@ -206,19 +206,19 @@ export default function PredictProfileScreen() {
     } finally {
       setCancellingId(null);
     }
-  }, [poly.polygonAddress]);
+  }, [poly.client]);
 
   const loadPortfolio = useCallback(async () => {
-    if (!poly.polygonAddress) return;
+    if (!poly.polygonAddress || !poly.client) return;
     const requestKey = walletScopedKeyRef.current;
     // Gamma data-api tracks by trading wallet address (where funds/positions live)
-    // CLOB operations use EOA (polygonAddress) for session auth
+    // Authenticated CLOB operations use the active mobile SecureClient.
     setActivityFreshness((prev) => ({ ...prev, loading: true, error: null }));
     const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
     const [portfolioResult, balanceResult, ordersResult] = await Promise.allSettled([
       fetchPortfolio(gammaAddr),
-      fetchClobBalance(poly.polygonAddress),
-      fetchOpenOrders(poly.polygonAddress),
+      fetchClobBalance(poly.client),
+      fetchOpenOrders(poly.client),
     ]);
     const portfolioData = portfolioResult.status === 'fulfilled' ? portfolioResult.value : null;
     const balanceData = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
@@ -228,10 +228,10 @@ export default function PredictProfileScreen() {
     if (ordersData) setOpenOrders(ordersData);
     if (balanceData) {
       setCashBalance(balanceData.balance);
-      setSessionExpired(false);
+      setPredictUnavailable(false);
     } else {
       setCashBalance(null);
-      setSessionExpired(true);
+      setPredictUnavailable(true);
     }
     const failed = portfolioResult.status === 'rejected' || balanceResult.status === 'rejected' || ordersResult.status === 'rejected';
     setActivityFreshness({
@@ -240,10 +240,10 @@ export default function PredictProfileScreen() {
       stale: failed,
       error: failed ? 'Could not refresh' : null,
     });
-  }, [poly.polygonAddress, poly.tradingAddress]);
+  }, [poly.client, poly.polygonAddress, poly.tradingAddress]);
 
   const refreshPortfolioQuietly = useCallback(async () => {
-    if (!poly.polygonAddress) return;
+    if (!poly.polygonAddress || !poly.client) return;
     const requestKey = walletScopedKeyRef.current;
     if (portfolioRefreshInFlight.current) return;
     portfolioRefreshInFlight.current = true;
@@ -251,7 +251,7 @@ export default function PredictProfileScreen() {
       const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
       const [portfolioResult, balanceResult] = await Promise.allSettled([
         fetchPortfolio(gammaAddr),
-        fetchClobBalance(poly.polygonAddress),
+        fetchClobBalance(poly.client),
       ]);
       const portfolioData = portfolioResult.status === 'fulfilled' ? portfolioResult.value : null;
       const balanceData = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
@@ -260,7 +260,7 @@ export default function PredictProfileScreen() {
       if (portfolioData) setPortfolio(portfolioData);
       if (balanceData) {
         setCashBalance(balanceData.balance);
-        setSessionExpired(false);
+        setPredictUnavailable(false);
       }
 
       const failed = portfolioResult.status === 'rejected' || balanceResult.status === 'rejected';
@@ -273,15 +273,15 @@ export default function PredictProfileScreen() {
     } finally {
       portfolioRefreshInFlight.current = false;
     }
-  }, [poly.polygonAddress, poly.tradingAddress]);
+  }, [poly.client, poly.polygonAddress, poly.tradingAddress]);
 
   const refreshOpenOrdersQuietly = useCallback(async () => {
-    if (!poly.polygonAddress) return;
+    if (!poly.client) return;
     const requestKey = walletScopedKeyRef.current;
     if (ordersRefreshInFlight.current) return;
     ordersRefreshInFlight.current = true;
     try {
-      const orders = await fetchOpenOrders(poly.polygonAddress);
+      const orders = await fetchOpenOrders(poly.client);
       if (walletScopedKeyRef.current !== requestKey) return;
       setOpenOrders(orders);
     } catch {
@@ -289,7 +289,7 @@ export default function PredictProfileScreen() {
     } finally {
       ordersRefreshInFlight.current = false;
     }
-  }, [poly.polygonAddress]);
+  }, [poly.client]);
 
   const handleConfirmCashOut = useCallback(async (size: number, limitPrice: number) => {
     const position = cashOutPosition;
@@ -310,21 +310,18 @@ export default function PredictProfileScreen() {
       }
     }
 
-    if (!poly.polygonAddress || !poly.signer) {
-      Alert.alert('Cash out failed', 'Wallet session not ready.');
+    if (!poly.client) {
+      Alert.alert('Cash out failed', 'Predict account not ready.');
       return;
     }
 
     setCashOutSubmitting(true);
     try {
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const result = await placeBet(poly.client, {
         tokenID: position.asset,
         price: limitPrice,
         size,
         side: 'SELL',
-        negRisk: !!position.negativeRisk,
         orderType: 'FOK',
       });
       if (!result.success) throw new Error(result.error || 'Cash out failed');
@@ -384,7 +381,7 @@ export default function PredictProfileScreen() {
     setBusy(true);
     try {
       await poly.enable();
-      setSessionExpired(false);
+      setPredictUnavailable(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect Polymarket account';
       Alert.alert('Error', msg);
@@ -427,21 +424,16 @@ export default function PredictProfileScreen() {
   }, [setupAfterConnect, poly.signer, poly.isReady]);
 
   const handleReconnect = useCallback(async () => {
-    // Re-auth needs the EVM signer that signs CLOB auth, not a Solana wallet.
-    if (!poly.signer) return;
     setBusy(true);
     try {
-      await poly.enable();
-      setSessionExpired(false);
-      // Re-fetch after re-auth
       await loadPortfolio();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Reconnect failed';
+      const msg = err instanceof Error ? err.message : 'Refresh failed';
       Alert.alert('Error', msg);
     } finally {
       setBusy(false);
     }
-  }, [poly, loadPortfolio]);
+  }, [loadPortfolio]);
 
   const handleOpenMarket = useCallback((slug: string) => {
     router.push(getPredictMarketHref(slug));
@@ -578,11 +570,11 @@ export default function PredictProfileScreen() {
           </View>
         )}
 
-        {sessionExpired && isEnabled && !portfolioLoading && (
+        {predictUnavailable && isEnabled && !portfolioLoading && (
           <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
             <MaterialIcons name="refresh" size={14} color={tokens.colors.primary} />
             <Text style={styles.reconnectText}>
-              {busy ? 'Reconnecting…' : 'Session expired — tap to reconnect'}
+              {busy ? 'Retrying…' : 'Could not refresh Predict — tap to retry'}
             </Text>
           </Pressable>
         )}
@@ -591,8 +583,8 @@ export default function PredictProfileScreen() {
           <View style={styles.positionsSection}>
             <EmptyPortfolio
               mode="no-account"
-              // Gated on the EVM wallet, not the CLOB session: a user with a
-              // resolved signer and no session needs "Set up Polymarket", not a
+              // Gated on the EVM wallet, not the SecureClient: a user with a
+              // resolved signer and no client needs "Set up Polymarket", not a
               // connection sheet that shows an already-connected wallet and
               // offers nothing. Both paths run the same handler, which opens the
               // sheet only when there is genuinely no signer.
@@ -659,8 +651,7 @@ export default function PredictProfileScreen() {
               openOrders={openOrders}
               redeemablePositions={redeemablePositions}
               closedPositions={closedPositions}
-              polygonAddress={poly.polygonAddress}
-              signer={poly.signer}
+              client={poly.client}
               cancellingOrderId={cancellingId}
               freshness={{ ...activityFreshness, loading: portfolioLoading || refreshing }}
               sellQuotes={sellQuotes}
@@ -685,24 +676,23 @@ export default function PredictProfileScreen() {
         )}
       </ScrollView>
 
-      {poly.polygonAddress && (
+      {poly.polygonAddress && poly.client && (
         <DepositModal
           isOpen={depositOpen}
           onClose={() => setDepositOpen(false)}
           polygonAddress={poly.polygonAddress}
+          client={poly.client}
           depositWalletAddress={poly.tradingAddress ?? poly.polygonAddress}
           onFundsAvailable={loadPortfolio}
         />
       )}
 
-      {poly.polygonAddress && solanaAddress && (
+      {poly.polygonAddress && poly.client && solanaAddress && (
         <WithdrawModal
           isOpen={withdrawOpen}
           onClose={() => setWithdrawOpen(false)}
-          polygonAddress={poly.polygonAddress}
-          tradingAddress={poly.tradingAddress ?? poly.polygonAddress}
+          client={poly.client}
           solanaAddress={solanaAddress}
-          signer={poly.signer}
           cashBalance={cashBalance}
           onSuccess={loadPortfolio}
         />

@@ -9,20 +9,12 @@
 import { Hono } from 'hono'
 import { registerBuilderSignRoutes } from './polymarket/trading/routes/builder-sign.js'
 import { registerFundRoutes } from './polymarket/trading/routes/funds.js'
-import { registerOperationRoutes } from './polymarket/trading/routes/operations.js'
-import { registerOrderRoutes } from './polymarket/trading/routes/orders.js'
 import { registerProxyRoutes } from './polymarket/trading/routes/proxies.js'
-import { registerRedeemRoutes } from './polymarket/trading/routes/redeem.js'
-import { registerSessionRoutes } from './polymarket/trading/routes/session.js'
 
 export const clobRoutes = new Hono()
 
-registerOperationRoutes(clobRoutes)
-registerSessionRoutes(clobRoutes)
-registerOrderRoutes(clobRoutes)
 registerFundRoutes(clobRoutes)
-registerRedeemRoutes(clobRoutes)
 registerProxyRoutes(clobRoutes)
 registerBuilderSignRoutes(clobRoutes)
 
-console.log('[clob] Routes loaded: /auth, /order, /positions/:polygonAddress, /balance/:polygonAddress, /redeem')
+console.log('[clob] Routes loaded: transparent CLOB/Relayer proxies, Builder signing, stateless Bridge proxies')

@@ -9,19 +9,16 @@ import {
   View,
 } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { withdrawFromPolymarket } from '@/features/predict/predict.api';
-import type { Signer } from '@/features/chain/chain.contract';
+import type { SecureClient } from '@polymarket/client';
+import { fetchDepositStatus, withdrawFromPolymarket } from '@/features/predict/predict.api';
 import { semantic, tokens } from '@/theme';
 
 interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
-  polygonAddress: string;
-  tradingAddress: string;
+  client: SecureClient;
   /** Withdrawal destination on Solana — the bridge recipient, not a signer. */
   solanaAddress: string;
-  /** EVM signer for the deposit-wallet transfer. */
-  signer: Signer | null;
   cashBalance: number | null;
   onSuccess?: () => void;
 }
@@ -31,16 +28,16 @@ type WithdrawState = 'input' | 'confirming' | 'submitting' | 'success' | 'error'
 export function WithdrawModal({
   isOpen,
   onClose,
-  polygonAddress,
-  tradingAddress,
+  client,
   solanaAddress,
-  signer,
   cashBalance,
   onSuccess,
 }: WithdrawModalProps) {
   const [amount, setAmount] = useState('');
   const [state, setState] = useState<WithdrawState>('input');
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [bridgeAddress, setBridgeAddress] = useState<string | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState('Bridge processing');
   const [error, setError] = useState<string | null>(null);
   const [recipientAddress, setRecipientAddress] = useState(solanaAddress);
 
@@ -65,6 +62,8 @@ export function WithdrawModal({
     setAmount('');
     setState('input');
     setTxHash(null);
+    setBridgeAddress(null);
+    setBridgeStatus('Bridge processing');
     setError(null);
     setRecipientAddress(solanaAddress);
     onClose();
@@ -76,22 +75,16 @@ export function WithdrawModal({
   };
 
   const handleSubmit = async () => {
-    if (!signer) {
-      setError('Wallet session not ready');
-      setState('error');
-      return;
-    }
     setState('submitting');
     setError(null);
     try {
-      const result = await withdrawFromPolymarket(signer, {
-        polygonAddress,
-        tradingAddress,
+      const result = await withdrawFromPolymarket(client, {
         amount: parsedAmount,
         solanaAddress: trimmedRecipientAddress,
       });
       if (result.ok) {
         setTxHash(result.txHash ?? null);
+        setBridgeAddress(result.bridgeAddress ?? null);
         setState('success');
         onSuccess?.();
       } else {
@@ -103,6 +96,25 @@ export function WithdrawModal({
       setState('error');
     }
   };
+
+  useEffect(() => {
+    if (state !== 'success' || !bridgeAddress) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const transactions = await fetchDepositStatus(bridgeAddress).catch(() => []);
+      if (cancelled || transactions.length === 0) return;
+      const latest = [...transactions].sort((a, b) => (b.createdTimeMs ?? 0) - (a.createdTimeMs ?? 0))[0];
+      if (latest?.status === 'COMPLETED') setBridgeStatus('Bridge completed');
+      else if (latest?.status === 'FAILED') setBridgeStatus('Bridge reported a failure');
+      else setBridgeStatus('Bridge processing');
+    };
+    void refresh();
+    const interval = setInterval(() => void refresh(), 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [bridgeAddress, state]);
 
   const handleMax = () => {
     if (cashBalance !== null && cashBalance > 0) {
@@ -199,7 +211,7 @@ export function WithdrawModal({
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>From</Text>
-                  <Text style={styles.confirmValue}>Polymarket Safe</Text>
+                  <Text style={styles.confirmValue}>Polymarket Deposit Wallet</Text>
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>To</Text>
@@ -238,7 +250,7 @@ export function WithdrawModal({
               <Text style={styles.statusText}>Withdraw submitted!</Text>
               <Text style={styles.statusSubtext}>
                 ${parsedAmount.toFixed(2)} USDC bridging to {trimmedRecipientAddress.slice(0, 8)}...{trimmedRecipientAddress.slice(-6)}.{'\n'}
-                May take a few minutes to arrive.
+                {bridgeStatus}. It may take a few minutes to arrive.
               </Text>
               {txHash && (
                 <Text style={styles.txHash}>tx: {txHash.slice(0, 10)}...{txHash.slice(-8)}</Text>

@@ -1,10 +1,9 @@
 /**
  * useEvmBalance — USDC collateral held at a Polygon address.
  *
- * Reads the same backend endpoint the Polymarket profile uses. The read is
- * unauthenticated: `fetchClobBalance` only needs a signer for its auto-wrap
- * step, which is skipped when none is passed. So this works for an EVM chain
- * the user has activated but never enabled Polymarket on.
+ * Reads through the active mobile-owned Polymarket SecureClient. When Predict
+ * has not been restored in this process there is deliberately no server-side
+ * session fallback, so the value remains unknown.
  *
  * Returns `null` while loading and on failure — never `0`. A zero we did not
  * measure is a lie about the user's money, which is the trust rule the wallet
@@ -14,9 +13,11 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import type { SecureClient } from '@polymarket/client';
 import { fetchClobBalance } from '@/features/predict/predict.api';
+import { getActivePolymarketClient } from '@/features/predict/predict.client';
 
-export function useEvmBalance(address: string | null): {
+export function useEvmBalance(address: string | null, secureClient: SecureClient | null = null): {
   balanceUsd: number | null;
   refresh: () => void;
 } {
@@ -36,7 +37,13 @@ export function useEvmBalance(address: string | null): {
     // shown against the current one.
     setBalanceUsd(null);
 
-    fetchClobBalance(address, null)
+    const client = secureClient ?? getActivePolymarketClient(address);
+    if (!client) {
+      setBalanceUsd(null);
+      return;
+    }
+
+    fetchClobBalance(client)
       .then((result) => {
         if (cancelled) return;
         setBalanceUsd(result ? result.balance : null);
@@ -48,7 +55,7 @@ export function useEvmBalance(address: string | null): {
     return () => {
       cancelled = true;
     };
-  }, [address, nonce]);
+  }, [address, nonce, secureClient]);
 
   return { balanceUsd, refresh };
 }

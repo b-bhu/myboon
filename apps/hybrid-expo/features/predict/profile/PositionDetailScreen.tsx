@@ -133,15 +133,12 @@ export function PositionDetailScreen({ conditionId, slug, outcomeIndex }: Positi
       }
       const orderPrice = mode === 'market' ? marketQuote!.limitPrice! : price;
 
-      if (!poly.signer) throw new Error('Wallet session not ready');
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      if (!poly.client) throw new Error('Wallet session not ready');
+      const result = await placeBet(poly.client, {
         tokenID,
         price: orderPrice,
         size: shares,
         side: 'SELL',
-        negRisk: !!position.negativeRisk,
         orderType: mode === 'market' ? 'FOK' : 'GTC',
       });
       if (!result.success) throw new Error(result.error || 'Order failed');

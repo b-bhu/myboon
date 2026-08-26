@@ -22,7 +22,7 @@ const wallet = Wallet.createRandom()
 
 function proofMessage(address: string, timestamp: number): string {
   return [
-    'myboon:predict:server-session',
+    'myboon:predict:builder-auth',
     `address:${address.toLowerCase()}`,
     `timestamp:${timestamp}`,
   ].join('\n')
@@ -93,12 +93,13 @@ describe('/builder/sign authentication', () => {
     assert.equal(res.status, 401)
   })
 
-  test('accepts a valid proof and returns all four builder headers', async () => {
+  test('accepts a valid proof without returning the Builder passphrase', async () => {
     const res = await post(await signedHeaders(), DEPLOYED)
     assert.equal(res.status, 200)
     const json = await res.json() as Record<string, string>
     assert.equal(json.POLY_BUILDER_API_KEY, 'test-key')
-    assert.equal(json.POLY_BUILDER_PASSPHRASE, 'test-passphrase')
+    assert.equal(json.POLY_BUILDER_PASSPHRASE, 'myboon-server-injected')
+    assert.notEqual(json.POLY_BUILDER_PASSPHRASE, process.env.POLYMARKET_BUILDER_PASSPHRASE)
     assert.ok(json.POLY_BUILDER_SIGNATURE?.length > 0)
     assert.ok(json.POLY_BUILDER_TIMESTAMP?.length > 0)
     // base64url — a raw base64 '+' or '/' would be rejected upstream.
@@ -122,6 +123,7 @@ describe('/builder/sign path allowlist', () => {
     const credentialCalls = [
       { method: 'POST', path: '/auth/api-key', body: '{}' },
       { method: 'GET', path: '/auth/derive-api-key' },
+      { method: 'GET', path: '/auth/api-keys' },
     ]
     for (const req of credentialCalls) {
       const res = await post(await signedHeaders(), req)
@@ -149,6 +151,25 @@ describe('/builder/sign path allowlist', () => {
     const res = await post(await signedHeaders(), { method: 'POST', path: '/submit', body: { a: 1 } })
     assert.equal(res.status, 400)
   })
+
+  test('requires a relayer submission signer to match the proof EOA', async () => {
+    const res = await post(await signedHeaders(), {
+      method: 'POST',
+      path: '/submit',
+      body: JSON.stringify({ from: Wallet.createRandom().address }),
+    })
+    assert.equal(res.status, 403)
+  })
+
+  test('permits the SDK gasless preparation and polling paths', async () => {
+    for (const req of [
+      { method: 'GET', path: `/v1/account/transactions/params?address=${wallet.address}&type=WALLET` },
+      { method: 'GET', path: '/v1/account/transactions/transaction-id' },
+    ]) {
+      const res = await post(await signedHeaders(), req)
+      assert.equal(res.status, 200)
+    }
+  })
 })
 
 describe('/builder/sign rate limiting', () => {
@@ -156,7 +177,7 @@ describe('/builder/sign rate limiting', () => {
     const heavy = Wallet.createRandom()
     let limited = 0
     for (let i = 0; i < 25; i++) {
-      const res = await post(await signedHeaders(heavy), DEPLOYED)
+      const res = await post(await signedHeaders(heavy), { method: 'POST', path: '/submit', body: '{}' })
       if (res.status === 429) limited++
     }
     assert.ok(limited > 0, 'expected the address to be rate limited within 25 requests')

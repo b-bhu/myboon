@@ -24,7 +24,7 @@ For the mocked UI suite, the deposit-wallet address falls back to the derived Po
 PREDICT_E2E_DEPOSIT_WALLET_ADDRESS=
 ```
 
-The real deposit-wallet address is created/returned by the `/clob/auth` relay flow; it is not a pure Solana-key derivation.
+The Deposit Wallet address comes from the mobile unified SDK's authenticated `SecureClient.account`; the API does not derive or store it.
 
 ## Get started
 

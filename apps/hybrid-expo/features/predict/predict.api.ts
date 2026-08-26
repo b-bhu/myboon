@@ -17,30 +17,12 @@ import type {
   SportOutcomeDetail,
   TrendingMarket,
 } from '@/features/predict/predict.types';
+import { OrderSide, OrderType } from '@polymarket/client';
+import { fetchBalanceAllowance } from '@polymarket/client/actions';
+import type { SecureClient } from '@polymarket/client';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
-import type { Signer } from '@/features/chain/chain.contract';
-import {
-  createSignedPredictOrder,
-  signDepositWalletBatch,
-  type DepositWalletSignatureRequest,
-} from './predict.signing';
-
-// --- CLOB session expiry signal ---
-// The server keeps CLOB sessions in-memory (packages/api/src/clob.ts), so a
-// restart/redeploy silently invalidates every active session. Callers below
-// detect the resulting 401 and emit here so usePolymarketWallet can surface
-// a "reconnect" prompt instead of the UI quietly polling a dead session.
-type ClobSessionExpiredListener = () => void;
-const clobSessionExpiredListeners = new Set<ClobSessionExpiredListener>();
-
-export function onClobSessionExpired(listener: ClobSessionExpiredListener): () => void {
-  clobSessionExpiredListeners.add(listener);
-  return () => clobSessionExpiredListeners.delete(listener);
-}
-
-function notifyClobSessionExpired(): void {
-  clobSessionExpiredListeners.forEach((listener) => listener());
-}
+import { normalizePredictError } from './predict.errors';
+import { POLYMARKET_BUILDER_CODE } from './predict.signing';
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -73,65 +55,13 @@ export type PredictOperationStatus =
   | 'bridging'
   | 'completed'
   | 'needs_signature'
-  | 'failed'
-  | 'session_expired';
+  | 'failed';
 
 export interface PredictOperationMeta {
   operationId?: string;
   status?: PredictOperationStatus;
   userMessage?: string;
   code?: string;
-  isSessionExpired?: boolean;
-}
-
-function parseOperationMeta(data: Record<string, unknown>): PredictOperationMeta {
-  const status = typeof data.status === 'string' ? data.status : undefined;
-  const lifecycleError = data.lifecycleError && typeof data.lifecycleError === 'object'
-    ? data.lifecycleError as Record<string, unknown>
-    : null;
-  const code = typeof lifecycleError?.code === 'string'
-    ? lifecycleError.code
-    : typeof data.code === 'string'
-      ? data.code
-      : undefined;
-  return {
-    operationId: typeof data.operationId === 'string' ? data.operationId : undefined,
-    status: status === 'submitted'
-      || status === 'waiting_to_match'
-      || status === 'filled'
-      || status === 'not_filled'
-      || status === 'cancel_requested'
-      || status === 'cancelled'
-      || status === 'collecting'
-      || status === 'bridging'
-      || status === 'completed'
-      || status === 'needs_signature'
-      || status === 'failed'
-      || status === 'session_expired'
-      ? status
-      : undefined,
-    userMessage: typeof data.userMessage === 'string' ? data.userMessage : undefined,
-    code,
-    isSessionExpired: status === 'session_expired' || code === 'PREDICT_SESSION_EXPIRED',
-  };
-}
-
-function getSignatureRequest(data: Record<string, unknown>): DepositWalletSignatureRequest | null {
-  const request = data.signatureRequest;
-  if (!request || typeof request !== 'object') return null;
-  const r = request as Record<string, unknown>;
-  if (
-    r.kind !== 'deposit_wallet_batch'
-    || typeof r.ownerAddress !== 'string'
-    || typeof r.depositWalletAddress !== 'string'
-    || typeof r.chainId !== 'number'
-    || typeof r.nonce !== 'string'
-    || typeof r.deadline !== 'string'
-    || !Array.isArray(r.calls)
-  ) {
-    return null;
-  }
-  return r as unknown as DepositWalletSignatureRequest;
 }
 
 function mapGeopoliticsMarket(row: unknown): GeopoliticsMarket | null {
@@ -528,15 +458,13 @@ export async function fetchLivePrices(tokenIds: string[]): Promise<Record<string
 }
 
 export interface PlaceBetParams {
-  polygonAddress: string;
-  tradingAddress?: string | null;
   tokenID: string;
   price: number;
   size?: number;
   amount?: number;
   side: 'BUY' | 'SELL';
-  negRisk?: boolean;
-  orderType?: 'GTC' | 'FOK' | 'FAK';
+  orderType?: 'GTC' | 'GTD' | 'FOK' | 'FAK';
+  expiration?: number;
 }
 
 export interface PlaceBetResult extends PredictOperationMeta {
@@ -545,73 +473,68 @@ export interface PlaceBetResult extends PredictOperationMeta {
   error?: string;
 }
 
-function formatOrderMinimum(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '$5';
-  return `$${value.toFixed(2).replace(/\.00$/u, '').replace(/(\.\d)0$/u, '$1')}`;
-}
+export async function placeBet(client: SecureClient, params: PlaceBetParams): Promise<PlaceBetResult> {
+  try {
+    const isMarket = params.orderType === 'FOK' || params.orderType === 'FAK';
+    const response = isMarket
+      ? await client.placeMarketOrder(params.side === 'BUY'
+        ? {
+            tokenId: params.tokenID,
+            side: OrderSide.BUY,
+            amount: params.amount ?? (params.size ?? 0) * params.price,
+            maxPrice: params.price,
+            maxSpend: params.amount,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+            builderCode: POLYMARKET_BUILDER_CODE,
+          }
+        : {
+            tokenId: params.tokenID,
+            side: OrderSide.SELL,
+            shares: params.size ?? 0,
+            minPrice: params.price,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+            builderCode: POLYMARKET_BUILDER_CODE,
+          })
+      : await client.placeLimitOrder({
+          tokenId: params.tokenID,
+          side: params.side === 'BUY' ? OrderSide.BUY : OrderSide.SELL,
+          size: params.size ?? 0,
+          price: params.price,
+          builderCode: POLYMARKET_BUILDER_CODE,
+          ...(params.orderType === 'GTD' && params.expiration ? { expiration: params.expiration } : {}),
+        });
 
-function friendlyPlaceBetError(detail: string): string {
-  if (/FOK_ORDER_NOT_FILLED|not filled|fill[- ]?or[- ]?kill|couldn'?t be fully filled/iu.test(detail)) {
-    return 'Not filled. Price or liquidity changed. Try a smaller amount or refresh the market.';
+    if (!response.ok) {
+      const normalized = normalizePredictError({ code: response.code, message: response.message });
+      return {
+        success: false,
+        status: normalized.kind === 'liquidity' ? 'not_filled' : 'failed',
+        code: normalized.code,
+        error: normalized.message,
+      };
+    }
+    if (isMarket && response.status === 'matched') {
+      try {
+        await client.waitForOrderFillSettlement(response);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/timed?\s*out|timeout/iu.test(message)) {
+          return {
+            success: true,
+            orderID: response.orderId,
+            status: 'submitted',
+            userMessage: 'Order matched. Settlement is still processing.',
+          };
+        }
+        throw error;
+      }
+    }
+    const status: PredictOperationStatus = response.status === 'matched' ? 'filled' : 'waiting_to_match';
+    return { success: true, orderID: response.orderId, status };
+  } catch (error) {
+    const normalized = normalizePredictError(error, 'Order failed.');
+    return { success: false, status: 'failed', code: normalized.code, error: normalized.message };
   }
-
-  if (/not enough liquidity|insufficient liquidity/iu.test(detail)) {
-    return 'Not enough liquidity at the current price. Try a smaller amount.';
-  }
-
-  if (/min option validation/iu.test(detail)) {
-    return 'Select at least one option to continue.';
-  }
-
-  const minimumMatch =
-    detail.match(/lower than the minimum:\s*([0-9]+(?:\.[0-9]+)?)/iu)
-    ?? detail.match(/minimum(?: order)? size[^0-9]*([0-9]+(?:\.[0-9]+)?)/iu);
-  if (minimumMatch) {
-    const minimum = Number.parseFloat(minimumMatch[1]);
-    return `Minimum order size is ${formatOrderMinimum(minimum)}. Increase your amount to continue.`;
-  }
-
-  return detail;
-}
-
-/**
- * Place bet through the server-side deposit-wallet order path.
- */
-export async function placeBet(signer: Signer, params: PlaceBetParams): Promise<PlaceBetResult> {
-  const baseUrl = resolveApiBaseUrl();
-  const signedOrder = await createSignedPredictOrder(signer, params);
-
-  const response = await fetchWithTimeout(`${baseUrl}/clob/order`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...params, signedOrder }),
-  });
-
-  const data = await response.json() as Record<string, unknown>;
-  const operationMeta = parseOperationMeta(data);
-
-  if (!response.ok) {
-    const detail = typeof data.userMessage === 'string'
-      ? data.userMessage
-      : typeof data.detail === 'string'
-        ? data.detail
-        : typeof data.error === 'string'
-          ? data.error
-          : 'Order failed';
-    return { success: false, error: friendlyPlaceBetError(detail), ...operationMeta };
-  }
-
-  return {
-    success: true,
-    orderID: typeof data.orderID === 'string'
-      ? data.orderID
-      : typeof data.orderId === 'string'
-        ? data.orderId
-        : typeof data.id === 'string'
-          ? data.id
-          : undefined,
-    ...operationMeta,
-  };
 }
 
 // --- CLOB Open Orders ---
@@ -630,41 +553,51 @@ export interface OpenOrder {
   order_type: string;
 }
 
-export async function fetchOpenOrders(polygonAddress: string): Promise<OpenOrder[]> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/positions/${encodeURIComponent(polygonAddress)}`);
-  if (!response.ok) {
-    // 401 = no active CLOB session (server restart / TTL expired) — not a crash
-    if (response.status === 401) notifyClobSessionExpired();
-    return [];
+type SdkOpenOrder = Awaited<ReturnType<SecureClient['fetchOrder']>>;
+
+function mapOpenOrder(order: SdkOpenOrder): OpenOrder {
+  return {
+    id: order.id,
+    status: order.status,
+    market: order.conditionId,
+    asset_id: order.tokenId,
+    side: order.side,
+    original_size: order.originalSize,
+    size_matched: order.sizeMatched,
+    price: order.price,
+    outcome: order.outcome,
+    created_at: Date.parse(order.createdAt),
+    order_type: order.orderType,
+  };
+}
+
+export async function fetchOpenOrders(client: SecureClient): Promise<OpenOrder[]> {
+  const orders: OpenOrder[] = [];
+  for await (const page of client.listOpenOrders()) {
+    orders.push(...page.items.map(mapOpenOrder));
   }
-  const data = await response.json() as Record<string, unknown>;
-  return Array.isArray(data.orders) ? data.orders as OpenOrder[] : [];
+  return orders;
+}
+
+export async function fetchOpenOrder(client: SecureClient, orderId: string): Promise<OpenOrder> {
+  const typedOrderId = orderId as Parameters<SecureClient['fetchOrder']>[0]['orderId'];
+  return mapOpenOrder(await client.fetchOrder({ orderId: typedOrderId }));
 }
 
 export async function cancelOrder(
-  polygonAddress: string,
+  client: SecureClient,
   orderId: string,
 ): Promise<{ ok: boolean; error?: string } & PredictOperationMeta> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(
-    `${baseUrl}/clob/order/${encodeURIComponent(orderId)}?address=${encodeURIComponent(polygonAddress)}`,
-    { method: 'DELETE' },
-  );
-  const data = await response.json() as Record<string, unknown>;
-  const operationMeta = parseOperationMeta(data);
-  if (!response.ok) {
-    return {
-      ok: false,
-      error: typeof data.userMessage === 'string'
-        ? data.userMessage
-        : typeof data.detail === 'string'
-          ? data.detail
-          : 'Cancel failed',
-      ...operationMeta,
-    };
+  try {
+    const typedOrderId = orderId as Parameters<SecureClient['cancelOrder']>[0]['orderId'];
+    const result = await client.cancelOrder({ orderId: typedOrderId });
+    if (result.canceled.some((id) => id === orderId)) return { ok: true, status: 'cancelled' };
+    const reason = Object.entries(result.notCanceled).find(([id]) => id === orderId)?.[1];
+    return { ok: false, status: 'failed', error: reason || 'Polymarket did not cancel this order.' };
+  } catch (error) {
+    const normalized = normalizePredictError(error, 'Cancel failed.');
+    return { ok: false, status: 'failed', code: normalized.code, error: normalized.message };
   }
-  return { ok: true, ...operationMeta };
 }
 
 // --- CLOB Balance ---
@@ -672,75 +605,23 @@ export async function cancelOrder(
 export interface ClobBalance {
   balance: number;
   allowance: number;
-  wrap?: {
-    attempted: boolean;
-    wrapped: boolean;
-    amount: number;
-    txHash: string | null;
-    error: string | null;
-    signatureRequired?: boolean;
-  };
 }
 
-/**
- * Auto-wrap needs a signature, so it only runs when the caller supplied a
- * signer. Balance reads themselves are unauthenticated and work without one.
- */
-export async function fetchClobBalance(
-  polygonAddress: string,
-  wrapSigner: Signer | null = null,
-): Promise<ClobBalance | null> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/balance/${encodeURIComponent(polygonAddress)}`);
-  if (!response.ok) {
-    // 401 = no active CLOB session (server restart / TTL expired) — not a crash
-    if (response.status === 401) notifyClobSessionExpired();
+export async function fetchClobBalance(client: SecureClient): Promise<ClobBalance | null> {
+  try {
+    const assetType = 'COLLATERAL' as Parameters<typeof fetchBalanceAllowance>[1]['assetType'];
+    const result = await fetchBalanceAllowance(client, { assetType });
+    const allowanceValues = Object.values(result.allowances).map((value) => BigInt(value));
+    const allowance = allowanceValues.length > 0
+      ? allowanceValues.reduce((minimum, value) => value < minimum ? value : minimum)
+      : 0n;
+    return {
+      balance: Number(BigInt(result.balance)) / 1e6,
+      allowance: Number(allowance) / 1e6,
+    };
+  } catch {
     return null;
   }
-  const data = await response.json() as Record<string, unknown>;
-  const wrap = data.wrap && typeof data.wrap === 'object'
-    ? data.wrap as ClobBalance['wrap']
-    : undefined;
-  if (wrapSigner && wrap?.signatureRequired) {
-    await wrapPolymarketCash(wrapSigner, polygonAddress).catch(() => null);
-    return fetchClobBalance(polygonAddress, null);
-  }
-  return {
-    balance: typeof data.balance === 'number' ? data.balance : 0,
-    allowance: typeof data.allowance === 'number' ? data.allowance : 0,
-    wrap,
-  };
-}
-
-export async function wrapPolymarketCash(
-  signer: Signer,
-  polygonAddress: string,
-): Promise<PredictOperationMeta & { ok: boolean; error?: string }> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/wrap`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ polygonAddress }),
-  });
-  const data = await response.json() as Record<string, unknown>;
-  const signatureRequest = getSignatureRequest(data);
-  if (signatureRequest) {
-    const batch = await signDepositWalletBatch(signer, signatureRequest, { operation: 'wrap' });
-    const signedResponse = await fetchWithTimeout(`${baseUrl}/clob/wrap`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ polygonAddress, batch }),
-    });
-    const signedData = await signedResponse.json() as Record<string, unknown>;
-    if (!signedResponse.ok) {
-      return { ok: false, error: typeof signedData.userMessage === 'string' ? signedData.userMessage : 'Wrap failed', ...parseOperationMeta(signedData) };
-    }
-    return { ok: true, ...parseOperationMeta(signedData) };
-  }
-  if (!response.ok) {
-    return { ok: false, error: typeof data.userMessage === 'string' ? data.userMessage : 'Wrap failed', ...parseOperationMeta(data) };
-  }
-  return { ok: true, ...parseOperationMeta(data) };
 }
 
 // --- Deposit Status ---
@@ -895,8 +776,6 @@ export async function fetchMarketPositions(polygonAddress: string, slug: string)
 // --- Withdraw ---
 
 export interface WithdrawParams {
-  polygonAddress: string;
-  tradingAddress: string;
   amount: number;
   solanaAddress: string;
 }
@@ -905,11 +784,13 @@ export interface WithdrawResult extends PredictOperationMeta {
   ok: boolean;
   amount?: number;
   txHash?: string | null;
+  bridgeAddress?: string;
   error?: string;
 }
 
 const SOLANA_CHAIN_ID = '1151111081099710';
 const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const POLYMARKET_PUSD = '0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb';
 
 function bridgeAddressFromPayload(data: Record<string, unknown>): string | null {
   const address = data.address;
@@ -922,12 +803,15 @@ function bridgeAddressFromPayload(data: Record<string, unknown>): string | null 
   return null;
 }
 
-async function fetchExpectedWithdrawBridgeAddress(params: WithdrawParams): Promise<string> {
-  const response = await fetchWithTimeout('https://bridge.polymarket.com/withdraw', {
+async function fetchExpectedWithdrawBridgeAddress(
+  client: SecureClient,
+  params: WithdrawParams,
+): Promise<string> {
+  const response = await fetchWithTimeout(`${resolveApiBaseUrl()}/clob/bridge/withdraw`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      address: params.tradingAddress,
+      address: client.account.wallet,
       toChainId: SOLANA_CHAIN_ID,
       toTokenAddress: SOLANA_USDC_MINT,
       recipientAddr: params.solanaAddress,
@@ -935,76 +819,41 @@ async function fetchExpectedWithdrawBridgeAddress(params: WithdrawParams): Promi
   });
   const data = await response.json().catch(() => ({})) as Record<string, unknown>;
   const bridgeAddress = bridgeAddressFromPayload(data);
-  if (!response.ok || !bridgeAddress) {
+  if (!response.ok || !bridgeAddress || !/^0x[0-9a-fA-F]{40}$/u.test(bridgeAddress)) {
     throw new Error('Could not verify withdrawal route. Try again.');
   }
   return bridgeAddress;
 }
 
 export async function withdrawFromPolymarket(
-  signer: Signer,
+  client: SecureClient,
   params: WithdrawParams,
 ): Promise<WithdrawResult> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/withdraw`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-
-  const data = await response.json() as Record<string, unknown>;
-  const operationMeta = parseOperationMeta(data);
-  const signatureRequest = getSignatureRequest(data);
-  if (signatureRequest) {
-    const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(params);
-    const batch = await signDepositWalletBatch(signer, signatureRequest, {
-      operation: 'withdraw',
-      amount: params.amount,
-      bridgeAddress,
-    });
-    const signedResponse = await fetchWithTimeout(`${baseUrl}/clob/withdraw`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...params, batch }),
-    });
-    const signedData = await signedResponse.json() as Record<string, unknown>;
-    const signedMeta = parseOperationMeta(signedData);
-    if (!signedResponse.ok) {
-      return {
-        ok: false,
-        error: typeof signedData.userMessage === 'string'
-          ? signedData.userMessage
-          : typeof signedData.detail === 'string'
-            ? signedData.detail
-            : 'Withdraw failed',
-        ...signedMeta,
-      };
+  try {
+    if (!Number.isFinite(params.amount) || params.amount <= 0) {
+      return { ok: false, status: 'failed', error: 'Enter a valid withdrawal amount.' };
     }
+    const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(client, params);
+    const amount = BigInt(params.amount.toFixed(6).replace('.', ''));
+    const handle = await client.transferErc20({
+      tokenAddress: POLYMARKET_PUSD,
+      recipientAddress: bridgeAddress,
+      amount,
+      metadata: `Withdraw pUSD to Solana ${params.solanaAddress}`,
+    });
+    const outcome = await handle.wait();
     return {
       ok: true,
-      amount: typeof signedData.amount === 'number' ? signedData.amount : undefined,
-      txHash: typeof signedData.txHash === 'string' ? signedData.txHash : null,
-      ...signedMeta,
+      amount: params.amount,
+      txHash: outcome.transactionHash,
+      bridgeAddress,
+      status: 'bridging',
+      userMessage: 'Withdraw submitted. Bridge confirmation can take a few minutes.',
     };
+  } catch (error) {
+    const normalized = normalizePredictError(error, 'Withdraw failed.');
+    return { ok: false, status: 'failed', code: normalized.code, error: normalized.message };
   }
-
-  if (!response.ok) {
-    const detail = typeof data.userMessage === 'string'
-      ? data.userMessage
-      : typeof data.detail === 'string'
-        ? data.detail
-        : typeof data.error === 'string'
-          ? data.error
-          : 'Withdraw failed';
-    return { ok: false, error: detail, ...operationMeta };
-  }
-
-  return {
-    ok: true,
-    amount: typeof data.amount === 'number' ? data.amount : undefined,
-    txHash: typeof data.txHash === 'string' ? data.txHash : null,
-    ...operationMeta,
-  };
 }
 
 // --- Redeem ---
@@ -1017,102 +866,33 @@ export interface RedeemResult extends PredictOperationMeta {
 
 export interface RedeemPositionInput {
   conditionId: string;
-  asset?: string;
-  outcomeIndex?: number;
-  negativeRisk?: boolean;
+  marketId?: string;
+  positionId?: string;
 }
 
 export async function redeemPosition(
-  signer: Signer,
-  polygonAddress: string,
+  client: SecureClient,
   position: RedeemPositionInput,
 ): Promise<RedeemResult> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/clob/redeem`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      polygonAddress,
-      conditionId: position.conditionId,
-      asset: position.asset,
-      outcomeIndex: position.outcomeIndex,
-      negativeRisk: position.negativeRisk,
-    }),
-  });
-
-  const text = await response.text();
-  let data: Record<string, unknown> = {};
-  if (text) {
-    try {
-      data = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      data = { error: text };
-    }
-  }
-
-  const signatureRequest = getSignatureRequest(data);
-  if (signatureRequest) {
-    const batch = await signDepositWalletBatch(signer, signatureRequest, {
-      operation: 'redeem',
-      conditionId: position.conditionId,
-      negativeRisk: position.negativeRisk,
-    });
-    const signedResponse = await fetchWithTimeout(`${baseUrl}/clob/redeem`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        polygonAddress,
-        conditionId: position.conditionId,
-        asset: position.asset,
-        outcomeIndex: position.outcomeIndex,
-        negativeRisk: position.negativeRisk,
-        batch,
-      }),
-    });
-    const signedText = await signedResponse.text();
-    let signedData: Record<string, unknown> = {};
-    if (signedText) {
-      try {
-        signedData = JSON.parse(signedText) as Record<string, unknown>;
-      } catch {
-        signedData = { error: signedText };
-      }
-    }
-    if (!signedResponse.ok) {
-      const detail =
-        typeof signedData.userMessage === 'string'
-          ? signedData.userMessage
-          : typeof signedData.detail === 'string'
-          ? signedData.detail
-          : typeof signedData.error === 'string'
-            ? signedData.error
-            : `Redeem failed (${signedResponse.status})`;
-      return { ok: false, error: detail, ...parseOperationMeta(signedData) };
-    }
+  try {
+    const handle = await client.redeemPositions(
+      position.positionId
+        ? { positionId: position.positionId }
+        : position.marketId
+          ? { marketId: position.marketId }
+          : { conditionId: position.conditionId },
+    );
+    const outcome = await handle.wait();
     return {
       ok: true,
-      txHash: typeof signedData.txHash === 'string' ? signedData.txHash : null,
-      ...parseOperationMeta(signedData),
+      txHash: outcome.transactionHash,
+      status: 'completed',
+      userMessage: 'Position redeemed.',
     };
+  } catch (error) {
+    const normalized = normalizePredictError(error, 'Redeem failed.');
+    return { ok: false, status: 'failed', code: normalized.code, error: normalized.message };
   }
-
-  if (!response.ok) {
-    const detail =
-      typeof data.userMessage === 'string'
-        ? data.userMessage
-        : typeof data.detail === 'string'
-        ? data.detail
-        : typeof data.error === 'string'
-          ? data.error
-          : `Redeem failed (${response.status})`;
-    return { ok: false, error: detail, ...parseOperationMeta(data) };
-  }
-
-  return {
-    ok: true,
-    txHash: typeof data.txHash === 'string' ? data.txHash : null,
-    ...parseOperationMeta(data),
-  };
 }
 
 export async function fetchPriceHistory(tokenId: string, interval: '5m' | '1h' | '1d' = '1h'): Promise<PriceHistory> {

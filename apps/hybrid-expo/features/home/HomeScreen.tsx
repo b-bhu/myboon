@@ -39,6 +39,7 @@ import { useConnectionSheet } from '@/features/wallet/components/useConnectionSh
 import { useEvmBalance } from '@/features/wallet/useEvmBalance';
 import { useProtocolAccounts } from '@/features/wallet/useProtocolAccounts';
 import { useSectionVisibility } from '@/features/wallet/useSectionVisibility';
+import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { activeChains, useChainActivation } from '@/features/chain/activation';
 import type { Chain } from '@/features/chain/chain.contract';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
@@ -133,7 +134,10 @@ export default function HomeScreen() {
   const scrollY = useRef(new Animated.Value(0)).current;
   const wallet = useWallet();
   const evm = usePrivyEvmWallet();
-  const { balanceUsd: evmBalanceUsd } = useEvmBalance(evm.address);
+  // Restores the single mobile-owned SecureClient for previously enabled
+  // accounts, so app restarts do not depend on an API-held trading session.
+  const polymarket = usePolymarketWallet();
+  const { balanceUsd: evmBalanceUsd } = useEvmBalance(evm.address, polymarket.client);
   const { activation, activate, deactivate } = useChainActivation();
   const connectSheet = useConnectionSheet('solana');
   const walletAddress = wallet.connected ? wallet.address : null;

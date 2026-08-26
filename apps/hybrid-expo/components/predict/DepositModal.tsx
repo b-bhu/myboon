@@ -10,6 +10,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { SecureClient } from '@polymarket/client';
 import { semantic, tokens } from '@/theme';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import { fetchClobBalance, fetchDepositStatus } from '@/features/predict/predict.api';
@@ -20,8 +21,9 @@ const API_BASE = resolveApiBaseUrl();
 interface DepositModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** EOA/session address. Required for balance polling and auto-wrap. */
+  /** Public EOA used only to scope local deposit tracking state. */
   polygonAddress: string;
+  client: SecureClient;
   /** Trading/deposit wallet address used to create bridge deposit addresses. */
   depositWalletAddress: string;
   onFundsAvailable?: () => void | Promise<void>;
@@ -183,6 +185,7 @@ export function DepositModal({
   isOpen,
   onClose,
   polygonAddress,
+  client,
   depositWalletAddress,
   onFundsAvailable,
 }: DepositModalProps) {
@@ -285,7 +288,7 @@ export function DepositModal({
     try {
       const [transactions, balance] = await Promise.all([
         fetchDepositStatus(trackedDeposit.address).catch(() => []),
-        fetchClobBalance(polygonAddress).catch(() => null),
+        fetchClobBalance(client).catch(() => null),
       ]);
 
       const baseline = trackedDeposit.baselineBalance ?? 0;
@@ -313,15 +316,6 @@ export function DepositModal({
           : prev);
       }
 
-      if (balance?.wrap?.error) {
-        setStatusView({
-          label: 'Deposit delayed',
-          detail: 'Funds may have arrived, but wrapping needs another refresh.',
-          tone: 'error',
-        });
-        return;
-      }
-
       const bridgeView = statusFromTransaction(
         latestTransaction(trackingTransactions(transactions, trackedDeposit)),
         trackedDeposit.startedAt,
@@ -330,7 +324,7 @@ export function DepositModal({
     } finally {
       setStatusLoading(false);
     }
-  }, [onFundsAvailable, polygonAddress, storageKey, trackedDeposit, trackingStorageKey]);
+  }, [client, onFundsAvailable, polygonAddress, storageKey, trackedDeposit, trackingStorageKey]);
 
   useEffect(() => {
     if (!isOpen || !trackedDeposit) return;
@@ -357,7 +351,7 @@ export function DepositModal({
     fundsNotifiedRef.current = false;
 
     const [baseline, existingTransactions] = await Promise.all([
-      polygonAddress ? fetchClobBalance(polygonAddress).catch(() => null) : Promise.resolve(null),
+      fetchClobBalance(client).catch(() => null),
       fetchDepositStatus(address).then(
         (transactions) => ({ transactions, ok: true }),
         () => ({ transactions: [] as DepositBridgeTransaction[], ok: false }),
@@ -403,7 +397,7 @@ export function DepositModal({
           </View>
 
           <Text style={styles.subtitle}>
-            Send funds to any address below.{'\n'}Auto-bridges to your Polymarket account.
+            Send funds only to an address below.{'\n'}The official bridge delivers pUSD; direct USDC.e wallet transfers are not supported.
           </Text>
 
           {/* Content */}
