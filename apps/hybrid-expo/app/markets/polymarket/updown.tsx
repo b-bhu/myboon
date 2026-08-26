@@ -286,22 +286,22 @@ export default function PredictUpDownScreen() {
 
   const loadWalletData = useCallback(async () => {
     const gammaAddress = poly.tradingAddress ?? poly.polygonAddress;
-    if (!poly.polygonAddress || !gammaAddress || !round?.slug) {
+    if (!poly.client || !gammaAddress || !round?.slug) {
       setCashBalance(null);
       setPositions([]);
       return;
     }
     setPositionsLoading(true);
     const [balanceResult, positionResult] = await Promise.allSettled([
-      fetchClobBalance(poly.polygonAddress),
-      fetchMarketPositions(gammaAddress, round.slug),
+      fetchClobBalance(poly.client),
+      fetchMarketPositions(poly.client, round.slug),
     ]);
     if (balanceResult.status === 'fulfilled') setCashBalance(balanceResult.value?.balance ?? null);
     if (positionResult.status === 'fulfilled') {
       setPositions(positionResult.value.filter((position) => position.size > 0.0001));
     }
     setPositionsLoading(false);
-  }, [poly.polygonAddress, poly.tradingAddress, round?.slug]);
+  }, [poly.client, poly.polygonAddress, poly.tradingAddress, round?.slug]);
 
   const refreshSnapshot = useCallback(async () => {
     if (snapshotInFlightRef.current) return;
@@ -428,7 +428,7 @@ export default function PredictUpDownScreen() {
   }
 
   async function submitRoundOrder(params: { mode: ComposerMode; limitPriceCents: number }) {
-    if (!round || !poly.signer || !poly.polygonAddress || submitting || submitInFlightRef.current) return;
+    if (!round || !poly.client || submitting || submitInFlightRef.current) return;
     const spend = Number.parseFloat(amount);
     const tokenId = selectedSide === 'down' ? downTokenId : upTokenId;
     if (!tokenId || !Number.isFinite(spend) || spend <= 0) return;
@@ -436,8 +436,7 @@ export default function PredictUpDownScreen() {
     submitInFlightRef.current = true;
     setSubmitting(true);
     try {
-      if (!poly.canSignLocally) await poly.enable();
-      if (!poly.polygonAddress || !poly.signer) throw new Error('Wallet session not ready');
+      if (!poly.client) throw new Error('Wallet session not ready');
 
       const freshBook = await fetchOrderbook(tokenId).catch(() => null);
       const quote = buildExecutableBuyQuote(freshBook, spend);
@@ -471,15 +470,12 @@ export default function PredictUpDownScreen() {
         throw new Error('This round is no longer accepting limit orders.');
       }
 
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const result = await placeBet(poly.client, {
         tokenID: tokenId,
         price,
         size,
         amount: spend,
         side: 'BUY',
-        negRisk: false,
         orderType: isLimit ? 'GTD' : 'FOK',
         ...(isLimit ? { expiration } : {}),
       });
@@ -505,19 +501,15 @@ export default function PredictUpDownScreen() {
 
   async function confirmCashOut(size: number, limitPrice: number) {
     const position = cashOutPosition;
-    if (!position || !poly.signer || !poly.polygonAddress || submitting || submitInFlightRef.current) return;
+    if (!position || !poly.client || submitting || submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     setSubmitting(true);
     try {
-      if (!poly.canSignLocally) await poly.enable();
-      const result = await placeBet(poly.signer, {
-        polygonAddress: poly.polygonAddress,
-        tradingAddress: poly.tradingAddress,
+      const result = await placeBet(poly.client, {
         tokenID: position.asset,
         price: limitPrice,
         size,
         side: 'SELL',
-        negRisk: position.negativeRisk,
         orderType: 'FOK',
       });
       if (!result.success) throw new Error(result.error || 'Cash out failed');
