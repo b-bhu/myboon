@@ -31,10 +31,15 @@ const matching: DepositBridgeTransaction = {
   txHash: 'matching',
 };
 
-test('balance increase alone never completes deposit tracking', () => {
-  assert.equal(canCompleteTrackedDeposit(true, null), false);
-  assert.equal(canCompleteTrackedDeposit(true, { ...matching, status: 'FAILED' }), false);
-  assert.equal(canCompleteTrackedDeposit(true, { ...matching, status: 'PROCESSING' }), false);
+test('matching spendable balance credit completes even while Bridge status lags', () => {
+  assert.equal(canCompleteTrackedDeposit(25, 25, null), true);
+  assert.equal(canCompleteTrackedDeposit(24.6, 25, { ...matching, status: 'FAILED' }), true);
+  assert.equal(canCompleteTrackedDeposit(25, 25, { ...matching, status: 'PROCESSING' }), true);
+});
+
+test('an unrelated small balance increase does not complete deposit tracking', () => {
+  assert.equal(canCompleteTrackedDeposit(1, 25, null), false);
+  assert.equal(canCompleteTrackedDeposit(1, 25, { ...matching, status: 'PROCESSING' }), false);
 });
 
 test('deposit evidence must match chain, token, amount, and tracking window', () => {
@@ -49,17 +54,16 @@ test('deposit evidence must match chain, token, amount, and tracking window', ()
   assert.deepEqual(matchingDepositTransactions(transactions, tracked), [matching]);
 });
 
-test('matching accepted Bridge evidence and balance are both required', () => {
+test('matching completed Bridge evidence completes when balance polling is unavailable', () => {
   const transaction = latestDepositTransaction(matchingDepositTransactions([{
     ...matching,
     status: 'COMPLETED',
   }], tracked));
-  assert.equal(canCompleteTrackedDeposit(false, transaction), false);
-  assert.equal(canCompleteTrackedDeposit(true, transaction), true);
+  assert.equal(canCompleteTrackedDeposit(null, 25, transaction), true);
 });
 
 test('matching PROCESSING deposit plus unrelated balance increase does not complete', () => {
   const transaction = latestDepositTransaction(matchingDepositTransactions([matching], tracked));
   assert.equal(transaction?.status, 'PROCESSING');
-  assert.equal(canCompleteTrackedDeposit(true, transaction), false);
+  assert.equal(canCompleteTrackedDeposit(1, 25, transaction), false);
 });

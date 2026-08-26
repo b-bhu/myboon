@@ -19,14 +19,13 @@ import {
   AppTopBar,
   AppTopBarCashPill,
   AppTopBarIconButton,
-  AppTopBarLogo,
-  AppTopBarTitle,
 } from '@/components/AppTopBar';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import { CycleChart, type CyclePoint } from '@/features/predict/components/CycleChart';
 import { OrderComposerSheet, type ComposerMode } from '@/features/predict/components/OrderComposerSheet';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { buildExecutableBuyQuote, getBestAsk } from '@/features/predict/orderbookQuote';
+import { getMinimumOrderGuardrail } from '@/features/predict/minimumOrderSize';
 import { makePendingOpenOrder } from '@/features/predict/pendingOpenOrders';
 import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import {
@@ -457,6 +456,16 @@ export default function PredictUpDownScreen() {
         size = quote.shares;
       }
 
+      const minimumGuardrail = getMinimumOrderGuardrail({
+        orderSize: size,
+        minimumOrderSize: freshBook?.minOrderSize,
+        executionPrice: isLimit ? price : quote.averagePrice,
+      });
+      if (minimumGuardrail) {
+        Alert.alert(minimumGuardrail.title, minimumGuardrail.message);
+        return;
+      }
+
       const expiration = Math.floor(Date.parse(round.endDate ?? '') / 1_000);
       if (isLimit && (!Number.isFinite(expiration) || expiration <= Math.floor(Date.now() / 1_000))) {
         throw new Error('This round is no longer accepting limit orders.');
@@ -525,8 +534,7 @@ export default function PredictUpDownScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <AppTopBar
-        left={<AppTopBarLogo />}
-        center={<AppTopBarTitle tone="primary">Predict</AppTopBarTitle>}
+        left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
         right={(
           <View style={styles.topActions}>
             <AppTopBarCashPill value={truncateUsd(cashBalance)} />
@@ -847,6 +855,7 @@ export default function PredictUpDownScreen() {
         amount={amount}
         onAmountChange={setAmount}
         executableAvgPrice={executableQuote.executable ? executableQuote.averagePrice : null}
+        minimumOrderSize={selectedBook?.minOrderSize ?? null}
         availableCash={cashBalance}
         quickAmounts={quickAmounts}
         limitOrderNote="Rests until it matches. Any unmatched amount cancels at this round's deadline."

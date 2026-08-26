@@ -2,23 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
+import { AppTopBar, AppTopBarIconButton } from '@/components/AppTopBar';
 import { DepositModal } from '@/components/predict/DepositModal';
 import { WithdrawModal } from '@/components/predict/WithdrawModal';
 import { fetchPortfolio, fetchClobBalance, fetchOpenOrders, cancelOrder, placeBet } from '@/features/predict/predict.api';
-import type { OpenOrder, PortfolioData, PortfolioPosition } from '@/features/predict/predict.api';
+import type { OpenOrder, PortfolioPosition } from '@/features/predict/predict.api';
 import { getPredictMarketHref } from '@/features/predict/predict.navigation';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
@@ -28,28 +31,40 @@ import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
-import { EmptyPortfolio } from '@/features/predict/profile/EmptyPortfolio';
-import { YourPicksSection } from '@/features/predict/profile/YourPicksSection';
 import { ProfilePortfolioTabs } from '@/features/predict/profile/ProfilePortfolioTabs';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
-import type { PredictDataFreshness } from '@/features/predict/predictActivityState';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import {
   applyPredictUserEvent,
   isPredictTradeEvent,
   usePolymarketUserStream,
 } from '@/features/predict/usePolymarketUserStream';
+import { usePredictQuickAmounts } from '@/features/predict/usePredictQuickAmounts';
+import {
+  getPredictProfileAccountState,
+  getPredictProfileSetupCopy,
+} from '@/features/predict/profile/profile-state';
+import { remainingOrderCost } from '@/features/predict/profile/profile-portfolio-state';
+import { usePredictProfileStore } from '@/features/predict/profile/profile-store';
 import { semantic, tokens } from '@/theme';
 
 function truncate(addr: string, start = 6, end = 4): string {
   return `${addr.slice(0, start)}···${addr.slice(-end)}`;
 }
 
+function maskEmail(email: string | null): string | null {
+  if (!email) return null;
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return null;
+  return `${local.slice(0, Math.min(2, local.length))}•••@${domain}`;
+}
+
 const PREDICT_PROFILE_FALLBACK_USD_TO_INR = 95.67;
 const USD_INR_RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const PREDICT_PROFILE_CURRENCY_KEY = 'predict-profile-currency-format';
 type PredictProfileCurrency = 'USD' | 'INR';
-type PredictSettingsView = 'menu' | 'currency' | 'wallet' | 'security' | 'odds';
+type PredictSettingsView = 'menu' | 'currency' | 'wallet' | 'security' | 'odds' | 'amounts' | 'signout';
+type ConnectionIntent = 'predict' | 'withdrawal' | null;
 const EMPTY_PORTFOLIO_POSITIONS: PortfolioPosition[] = [];
 
 function formatProfileCurrency(
@@ -79,9 +94,7 @@ async function fetchUsdToInrRate(): Promise<number | null> {
 }
 
 function getOrderCost(order: OpenOrder): number {
-  const size = Number.parseFloat(order.original_size) || 0;
-  const price = Number.parseFloat(order.price) || 0;
-  return size * price;
+  return remainingOrderCost(order) ?? 0;
 }
 
 export default function PredictProfileScreen() {
@@ -90,12 +103,18 @@ export default function PredictProfileScreen() {
   // Solana is read only as a withdrawal destination — never as this screen's
   // connection state. Predict settles on Polygon, so `poly` is the source of truth.
   const { address: solanaAddress } = useWallet();
-  const privyAuthMethod = usePrivyWallet().authMethod;
-  const privyDisconnect = usePrivyWallet().disconnect;
+  const privy = usePrivyWallet();
+  const privyAuthMethod = privy.authMethod;
+  const privyDisconnect = privy.disconnect;
   const poly = usePolymarketWallet();
+  const walletAddress = poly.signer?.descriptor.address ?? null;
+  const walletScopedKey = poly.signer
+    ? `${poly.signer.descriptor.address.toLowerCase()}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}`
+    : 'disconnected';
   const { format: oddsFormat, setFormat: setOddsFormat } = useOddsFormat();
   // Predict settles on Polygon, so its requirement is EVM.
   const connectSheet = useConnectionSheet('evm');
+  const [connectionIntent, setConnectionIntent] = useState<ConnectionIntent>(null);
   const [busy, setBusy] = useState(false);
   // Set when the connection sheet is opened to reach Polymarket setup, so the
   // effect below can finish the job once a signer resolves. Without it a user
@@ -108,23 +127,37 @@ export default function PredictProfileScreen() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
-  // Portfolio data
-  const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
-  const [cashBalance, setCashBalance] = useState<number | null>(null);
-  const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
-  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  // Account data belongs to the Predict profile domain, not this route
+  // instance. The shared wallet-scoped store survives navigation while still
+  // resetting whenever the active signer/deposit wallet changes.
+  const {
+    portfolio,
+    cashBalance,
+    openOrders,
+    portfolioLoading,
+    predictUnavailable,
+    activityFreshness,
+    hasLoaded: profileHasLoaded,
+    setPortfolio,
+    setCashBalance,
+    setOpenOrders,
+    setPortfolioLoading,
+    setPredictUnavailable,
+    setActivityFreshness,
+    markLoaded: markProfileLoaded,
+    reset: resetProfileStore,
+  } = usePredictProfileStore(walletScopedKey);
   const [refreshing, setRefreshing] = useState(false);
-  const [predictUnavailable, setPredictUnavailable] = useState(false);
-  const [activityFreshness, setActivityFreshness] = useState<PredictDataFreshness>({
-    lastUpdatedAt: null,
-    loading: false,
-    stale: false,
-    error: null,
-  });
   const [usdToInrRate, setUsdToInrRate] = useState(PREDICT_PROFILE_FALLBACK_USD_TO_INR);
   const [currencyFormat, setCurrencyFormat] = useState<PredictProfileCurrency>('INR');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<PredictSettingsView>('menu');
+  const { quickAmounts, setQuickAmounts } = usePredictQuickAmounts();
+  const [quickAmountDraft, setQuickAmountDraft] = useState(() => quickAmounts.map(String));
+  const [quickAmountError, setQuickAmountError] = useState<string | null>(null);
+  const [quickAmountSaving, setQuickAmountSaving] = useState(false);
+  const [signOutBusy, setSignOutBusy] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
   const [cashOutSubmitting, setCashOutSubmitting] = useState(false);
 
@@ -132,7 +165,7 @@ export default function PredictProfileScreen() {
   const portfolioRefreshInFlight = useRef(false);
   const ordersRefreshInFlight = useRef(false);
 
-  const isEnabled = poly.isReady && poly.polygonAddress;
+  const isEnabled = Boolean(poly.isReady && poly.polygonAddress);
   // Two different questions, and the screen must not confuse them:
   //   walletAddress      — the EVM wallet exists and can sign. Local, from Privy,
   //                        available at app load. This is "connected".
@@ -140,8 +173,31 @@ export default function PredictProfileScreen() {
   //                        SDK-resolved account is ready.
   // Gating connection UI on polygonAddress showed "Connect wallet" to a user who
   // already had a working wallet, with no control that advanced them.
-  const walletAddress = poly.signer?.descriptor.address ?? null;
-  const walletScopedKey = poly.signer ? `${poly.signer.descriptor.address.toLowerCase()}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}` : 'disconnected';
+  const accountState = getPredictProfileAccountState({
+    signerStatus: poly.signerStatus,
+    isPrivyUser: privy.isPrivyUser,
+    hasSigner: walletAddress !== null,
+    predictReady: isEnabled,
+    predictLoading: poly.isLoading || busy,
+    sessionExpired: poly.sessionExpired,
+  });
+  const setupCopy = getPredictProfileSetupCopy(accountState);
+  const displayName = privy.identityName ?? portfolio?.profile?.name ?? (walletAddress ? truncate(walletAddress) : 'MyBoon account');
+  const maskedIdentity = maskEmail(privy.identityEmail);
+  const authLabel = privyAuthMethod === 'google'
+    ? 'Google'
+    : privyAuthMethod === 'email'
+      ? 'Email'
+      : privyAuthMethod === 'wallet'
+        ? 'Wallet'
+        : null;
+  const identitySubtitle = maskedIdentity
+    ? `${maskedIdentity}${authLabel ? ` · ${authLabel}` : ''}`
+    : authLabel
+      ? `Signed in with ${authLabel}`
+      : walletAddress
+        ? truncate(walletAddress, 4, 4)
+        : 'Not connected';
   const walletScopedKeyRef = useRef(walletScopedKey);
   const formatProfileMoney = useCallback(
     (value: number | null | undefined) => formatProfileCurrency(value, currencyFormat, usdToInrRate),
@@ -166,7 +222,43 @@ export default function PredictProfileScreen() {
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
     setSettingsView('menu');
+    setQuickAmountError(null);
+    setSignOutError(null);
   }, []);
+
+  const handleSignOut = useCallback(async () => {
+    if (signOutBusy) return;
+    setSignOutBusy(true);
+    setSignOutError(null);
+    try {
+      await privyDisconnect();
+      closeSettings();
+    } catch (error) {
+      setSignOutError(error instanceof Error ? error.message : 'Could not sign out. Try again.');
+    } finally {
+      setSignOutBusy(false);
+    }
+  }, [closeSettings, privyDisconnect, signOutBusy]);
+
+  useEffect(() => {
+    if (settingsOpen && settingsView === 'amounts') {
+      setQuickAmountDraft(quickAmounts.map(String));
+      setQuickAmountError(null);
+    }
+  }, [quickAmounts, settingsOpen, settingsView]);
+
+  const saveQuickAmounts = useCallback(async () => {
+    setQuickAmountSaving(true);
+    setQuickAmountError(null);
+    try {
+      await setQuickAmounts(quickAmountDraft.map((value) => Number.parseFloat(value)));
+      setSettingsView('menu');
+    } catch (error) {
+      setQuickAmountError(error instanceof Error ? error.message : 'Could not save quick amounts.');
+    } finally {
+      setQuickAmountSaving(false);
+    }
+  }, [quickAmountDraft, setQuickAmounts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,15 +275,11 @@ export default function PredictProfileScreen() {
   }, []);
 
   const resetWalletScopedState = useCallback(() => {
-    setPortfolio(null);
-    setCashBalance(null);
-    setOpenOrders([]);
-    setPredictUnavailable(false);
-    setActivityFreshness({ lastUpdatedAt: null, loading: false, stale: false, error: null });
+    resetProfileStore();
     setCashOutPosition(null);
     portfolioRefreshInFlight.current = false;
     ordersRefreshInFlight.current = false;
-  }, []);
+  }, [resetProfileStore]);
 
   const handleDisconnectPredict = useCallback(() => {
     Alert.alert(
@@ -239,7 +327,15 @@ export default function PredictProfileScreen() {
         setOpenOrders((prev) => prev.map((order) =>
           order.id === orderId ? { ...order, status: 'cancel_requested' } : order
         ));
-        void fetchOpenOrders(poly.client).then(setOpenOrders).catch(() => {});
+        void fetchOpenOrders(poly.client)
+          .then(setOpenOrders)
+          .catch(() => {
+            setActivityFreshness((previous) => ({
+              ...previous,
+              stale: true,
+              error: 'Could not refresh',
+            }));
+          });
       } else {
         Alert.alert('Cancel failed', result.error ?? 'Unknown error');
       }
@@ -248,7 +344,7 @@ export default function PredictProfileScreen() {
     } finally {
       setCancellingId(null);
     }
-  }, [poly.client]);
+  }, [poly.client, setActivityFreshness, setOpenOrders]);
 
   const loadPortfolio = useCallback(async () => {
     if (!poly.polygonAddress || !poly.client) return;
@@ -264,7 +360,10 @@ export default function PredictProfileScreen() {
     const ordersData = ordersResult.status === 'fulfilled' ? ordersResult.value : null;
     if (walletScopedKeyRef.current !== requestKey) return;
     if (portfolioData) setPortfolio(portfolioData);
-    if (ordersData) setOpenOrders(ordersData);
+    // A missing balance is the only failure signal exposed by this CLOB read.
+    // Preserve the last known orders with it: a 401 or transient CLOB failure
+    // must not make positions appear to have vanished while reconnecting.
+    if (ordersData && balanceData) setOpenOrders(ordersData);
     if (balanceData) {
       setCashBalance(balanceData.balance);
       setPredictUnavailable(false);
@@ -272,14 +371,27 @@ export default function PredictProfileScreen() {
       setCashBalance(null);
       setPredictUnavailable(true);
     }
-    const failed = portfolioResult.status === 'rejected' || balanceResult.status === 'rejected' || ordersResult.status === 'rejected';
-    setActivityFreshness({
-      lastUpdatedAt: Date.now(),
+    const failed = portfolioResult.status === 'rejected'
+      || balanceResult.status === 'rejected'
+      || balanceData === null
+      || ordersResult.status === 'rejected';
+    setActivityFreshness((previous) => ({
+      lastUpdatedAt: failed ? previous.lastUpdatedAt : Date.now(),
       loading: false,
       stale: failed,
       error: failed ? 'Could not refresh' : null,
-    });
-  }, [poly.client, poly.polygonAddress]);
+    }));
+    markProfileLoaded();
+  }, [
+    markProfileLoaded,
+    poly.client,
+    poly.polygonAddress,
+    setActivityFreshness,
+    setCashBalance,
+    setOpenOrders,
+    setPortfolio,
+    setPredictUnavailable,
+  ]);
 
   const refreshPortfolioQuietly = useCallback(async () => {
     if (!poly.polygonAddress || !poly.client) return;
@@ -301,7 +413,9 @@ export default function PredictProfileScreen() {
         setPredictUnavailable(false);
       }
 
-      const failed = portfolioResult.status === 'rejected' || balanceResult.status === 'rejected';
+      const failed = portfolioResult.status === 'rejected'
+        || balanceResult.status === 'rejected'
+        || balanceData === null;
       setActivityFreshness((prev) => ({
         lastUpdatedAt: failed ? prev.lastUpdatedAt : Date.now(),
         loading: false,
@@ -311,7 +425,14 @@ export default function PredictProfileScreen() {
     } finally {
       portfolioRefreshInFlight.current = false;
     }
-  }, [poly.client, poly.polygonAddress]);
+  }, [
+    poly.client,
+    poly.polygonAddress,
+    setActivityFreshness,
+    setCashBalance,
+    setPortfolio,
+    setPredictUnavailable,
+  ]);
 
   const refreshOpenOrdersQuietly = useCallback(async () => {
     if (!poly.client) return;
@@ -327,7 +448,7 @@ export default function PredictProfileScreen() {
     } finally {
       ordersRefreshInFlight.current = false;
     }
-  }, [poly.client]);
+  }, [poly.client, setActivityFreshness, setOpenOrders]);
 
   const realtimeStatus = usePolymarketUserStream(
     isEnabled ? poly.client : null,
@@ -391,11 +512,23 @@ export default function PredictProfileScreen() {
       setPortfolioLoading(false);
       return;
     }
-    setPortfolioLoading(true);
+    // Keep a previously loaded wallet snapshot visible while its fresh data is
+    // requested. Full-page loading is reserved for the first load only.
+    if (!profileHasLoaded) setPortfolioLoading(true);
     loadPortfolio().finally(() => {
       if (walletScopedKeyRef.current === requestKey) setPortfolioLoading(false);
     });
-  }, [isEnabled, poly.polygonAddress, loadPortfolio, resetWalletScopedState]);
+    // `profileHasLoaded` is intentionally a point-in-time decision for this
+    // wallet activation. Adding it below would trigger a duplicate request when
+    // the first load marks the shared snapshot ready.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isEnabled,
+    loadPortfolio,
+    poly.polygonAddress,
+    resetWalletScopedState,
+    setPortfolioLoading,
+  ]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -435,7 +568,7 @@ export default function PredictProfileScreen() {
     } finally {
       setBusy(false);
     }
-  }, [poly]);
+  }, [poly, setPredictUnavailable]);
 
   const handleConnectPredictAccount = useCallback(() => {
     // Predict signs on Polygon, so the requirement is EVM. When the resolver
@@ -443,6 +576,7 @@ export default function PredictProfileScreen() {
     // effect below resumes setup once the signer lands — signing in and setting
     // up Polymarket is one user action, not two.
     if (!poly.signer) {
+      setConnectionIntent('predict');
       setSetupAfterConnect(true);
       connectSheet.open('evm');
       return;
@@ -450,6 +584,23 @@ export default function PredictProfileScreen() {
 
     void connectPredictAccount();
   }, [connectPredictAccount, connectSheet, poly.signer]);
+
+  const handleWithdrawPress = useCallback(() => {
+    if (accountState !== 'ready') return;
+    setSettingsOpen(false);
+    if (!solanaAddress) {
+      setConnectionIntent('withdrawal');
+      connectSheet.open('solana');
+      return;
+    }
+    setWithdrawOpen(true);
+  }, [accountState, connectSheet, solanaAddress]);
+
+  useEffect(() => {
+    if (connectionIntent !== 'withdrawal' || !solanaAddress) return;
+    setConnectionIntent(null);
+    setWithdrawOpen(true);
+  }, [connectionIntent, solanaAddress]);
 
   // Resume setup after the connection sheet resolves a signer. Mirrors
   // PredictMarketDetailScreen / PredictSportDetailScreen.
@@ -473,6 +624,8 @@ export default function PredictProfileScreen() {
   const handleReconnect = useCallback(async () => {
     setBusy(true);
     try {
+      await poly.enable();
+      // Re-fetch after re-auth
       await loadPortfolio();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Refresh failed';
@@ -480,7 +633,7 @@ export default function PredictProfileScreen() {
     } finally {
       setBusy(false);
     }
-  }, [loadPortfolio]);
+  }, [loadPortfolio, poly]);
 
   const handleOpenMarket = useCallback((slug: string) => {
     router.push(getPredictMarketHref(slug));
@@ -509,51 +662,41 @@ export default function PredictProfileScreen() {
   }, [positions, sellQuotes]);
   const readyToCollect = portfolio?.summary.readyToCollect ?? redeemablePositions.reduce((sum, p) => sum + (p.currentValue ?? 0), 0);
   const waitingPickValue = openOrders.reduce((sum, order) => sum + getOrderCost(order), 0);
-  const activePickCount = positions.length + openOrders.length;
-  const hasAnyPicks = activePickCount + redeemablePositions.length + closedPositions.length > 0;
-  const hasActiveOrReadyPicks = activePickCount + redeemablePositions.length > 0;
   const activePicksValue = cashOutNow === null ? null : cashOutNow + waitingPickValue;
   const predictValue = cashBalance === null || activePicksValue === null
     ? null
     : cashBalance + activePicksValue + readyToCollect;
-  const collectedValue = portfolio?.summary.totalRealizedPnl ?? closedPositions.reduce((sum, position) => {
-    const realized = Number.isFinite(position.realizedPnl) ? position.realizedPnl : 0;
-    return sum + realized;
-  }, 0);
-  const collectedDisplay = hasAnyPicks || (cashBalance ?? 0) > 0 ? formatProfileMoney(collectedValue) : '--';
+  const portfolioVisible = accountState === 'ready' || accountState === 'session_expired';
+  const accountStateLabel = accountState === 'ready'
+    ? 'Account protected'
+    : accountState === 'session_expired'
+      ? 'Reconnect needed'
+      : accountState === 'preparing'
+        ? 'Checking account'
+        : accountState === 'signed_out'
+          ? 'Not connected'
+          : accountState === 'unsupported'
+            ? 'Wallet unsupported'
+            : 'Setup needed';
+  const accountStatePositive = accountState === 'ready';
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <AppTopBar
         left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
-        center={<AppTopBarTitle align="left">Profile</AppTopBarTitle>}
-        right={(
-          <View style={styles.headerActions}>
-            {isEnabled && (
-              <>
-                <Pressable onPress={() => setDepositOpen(true)} style={styles.headerActionBtn}>
-                  <MaterialIcons name="arrow-downward" size={12} color={tokens.colors.viridian} />
-                  <Text style={styles.headerActionText}>Deposit</Text>
-                </Pressable>
-                <Pressable onPress={() => setWithdrawOpen(true)} style={styles.headerActionBtn}>
-                  <MaterialIcons name="arrow-upward" size={12} color={tokens.colors.primary} />
-                  <Text style={[styles.headerActionText, { color: tokens.colors.primary }]}>Withdraw</Text>
-                </Pressable>
-              </>
-            )}
-            <AppTopBarIconButton
-              icon="settings"
-              onPress={() => setSettingsOpen(true)}
-              accessibilityLabel="Open Polymarket profile currency settings"
-              color={semantic.text.dim}
-            />
+        center={(
+          <View style={styles.titleLockup}>
+            <Text style={styles.topTitle}>Profile</Text>
+            <Text style={styles.topSubtitle}>Account · Predict</Text>
           </View>
         )}
+        right={<AppTopBarIconButton icon="settings" onPress={() => { setSettingsView('menu'); setSettingsOpen(true); }} accessibilityLabel="Open Predict settings" />}
       />
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: tokens.spacing.md }}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.profileContent, { paddingBottom: Math.max(insets.bottom, 18) + 20 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           isEnabled ? (
@@ -566,103 +709,109 @@ export default function PredictProfileScreen() {
           ) : undefined
         }
       >
-        {/* ── Identity ── */}
-        <View style={styles.identity}>
-          <View style={styles.avatarRing}>
-            <View style={styles.avatarInner}>
-              <Text style={styles.avatarText}>
-                {(portfolio?.profile?.name ?? 'U').charAt(0).toUpperCase()}
-              </Text>
-            </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open account and security"
+          style={styles.identity}
+          onPress={() => {
+            if (accountState === 'signed_out') {
+              handleConnectPredictAccount();
+              return;
+            }
+            setSettingsView('security');
+            setSettingsOpen(true);
+          }}>
+          <View style={styles.avatarInner}>
+            <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
+            <View style={[styles.avatarStatus, !accountStatePositive && styles.avatarStatusMuted]} />
           </View>
           <View style={styles.identityInfo}>
-            {/*
-              Polymarket settles on Polygon, so this header reports the EVM
-              wallet — the signer's address, which exists as soon as the user is
-              signed in. Reading `polygonAddress` here showed "—" to a user with
-              a perfectly good wallet, because that field only lands after CLOB
-              auth has run.
-            */}
-            <Text style={styles.handle}>
-              {portfolio?.profile?.name ?? (walletAddress ? truncate(walletAddress) : '—')}
-            </Text>
-            <View style={styles.identityMetaRow}>
-              <Text style={styles.identityMeta}>
-                {privyAuthMethod !== null
-                  ? `Signed in with ${privyAuthMethod === 'google' ? 'Google' : privyAuthMethod === 'email' ? 'email' : 'wallet'}`
-                  : walletAddress
-                    ? truncate(walletAddress, 4, 4)
-                    : 'Not signed in'}
-              </Text>
-              {walletAddress && (
-                <View style={styles.connectedChip}>
-                  <View style={styles.connectedDot} />
-                  <Text style={styles.connectedText}>Protected</Text>
-                </View>
-              )}
+            <Text style={styles.handle} numberOfLines={1}>{displayName}</Text>
+            <Text style={styles.identityMeta} numberOfLines={1}>{identitySubtitle}</Text>
+            <View style={styles.identityStateRow}>
+              <MaterialIcons
+                name={accountStatePositive ? 'verified-user' : accountState === 'session_expired' ? 'sync-problem' : 'shield'}
+                size={11}
+                color={accountStatePositive ? tokens.colors.viridian : tokens.colors.accent}
+              />
+              <Text style={[styles.identityStateText, !accountStatePositive && styles.identityStateAttention]}>{accountStateLabel}</Text>
             </View>
           </View>
+          <MaterialIcons name="chevron-right" size={20} color={semantic.text.faint} />
+        </Pressable>
 
-          {!isEnabled && !poly.isLoading && !walletAddress && (
-            <Pressable
-              onPress={handleConnectPredictAccount}
-              style={styles.passkeyCta}
-            >
-              <MaterialIcons name="login" size={14} color={tokens.colors.backgroundDark} />
-              <Text style={styles.passkeyCtaText}>Connect wallet</Text>
-            </Pressable>
-          )}
-          {isEnabled && (
-            <View style={styles.accountActiveBadge}>
-              <View style={styles.connectedDot} />
-              <Text style={styles.accountActiveText}>Active</Text>
-            </View>
-          )}
-        </View>
-
-        {(poly.isLoading || portfolioLoading) && (
-          <View style={styles.loadingWrap}>
+        {accountState === 'preparing' ? (
+          <View style={styles.loadingCard}>
             <ActivityIndicator color={tokens.colors.primary} size="small" />
+            <View style={styles.loadingCopy}>
+              <Text style={styles.loadingTitle}>Preparing Predict</Text>
+              <Text style={styles.loadingText}>Checking your account and wallet setup.</Text>
+            </View>
           </View>
-        )}
+        ) : !portfolioVisible ? (
+          <View style={styles.setupCard}>
+            <View style={styles.setupIcon}>
+              <MaterialIcons name={accountState === 'unsupported' ? 'error-outline' : 'account-balance-wallet'} size={23} color={accountState === 'unsupported' ? tokens.colors.vermillion : tokens.colors.viridian} />
+            </View>
+            <Text style={styles.setupTitle}>{setupCopy.title}</Text>
+            <Text style={styles.setupDescription}>{setupCopy.description}</Text>
+            {setupCopy.action ? (
+              <Pressable style={styles.setupAction} onPress={handleConnectPredictAccount} disabled={busy}>
+                <Text style={styles.setupActionText}>{busy ? 'Working…' : setupCopy.action}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
 
-        {predictUnavailable && isEnabled && !portfolioLoading && (
+        {accountState === 'session_expired' ? (
+          <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
+            <MaterialIcons name="refresh" size={15} color={tokens.colors.accent} />
+            <View style={styles.reconnectCopy}>
+              <Text style={styles.reconnectTitle}>{setupCopy.title}</Text>
+              <Text style={styles.reconnectText}>{busy ? 'Reconnecting…' : setupCopy.description}</Text>
+            </View>
+          </Pressable>
+        ) : predictUnavailable && isEnabled && !portfolioLoading ? (
           <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
             <MaterialIcons name="refresh" size={14} color={tokens.colors.primary} />
             <Text style={styles.reconnectText}>
               {busy ? 'Retrying…' : 'Could not refresh Predict — tap to retry'}
             </Text>
           </Pressable>
-        )}
+        ) : null}
 
-        {!isEnabled && !poly.isLoading && (
-          <View style={styles.positionsSection}>
-            <EmptyPortfolio
-              mode="no-account"
-              // Gated on the EVM wallet, not the SecureClient: a user with a
-              // resolved signer and no client needs "Set up Polymarket", not a
-              // connection sheet that shows an already-connected wallet and
-              // offers nothing. Both paths run the same handler, which opens the
-              // sheet only when there is genuinely no signer.
-              onPrimaryAction={handleConnectPredictAccount}
-              primaryLabel={!walletAddress ? 'Connect wallet' : 'Set up Polymarket'}
-            />
+        {portfolioVisible && portfolioLoading ? (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator color={tokens.colors.primary} size="small" />
+            <View style={styles.loadingCopy}>
+              <Text style={styles.loadingTitle}>Loading your Predict account</Text>
+              <Text style={styles.loadingText}>Balances, positions and orders are updating.</Text>
+            </View>
           </View>
-        )}
+        ) : null}
 
         {/* ── Enabled: real portfolio ── */}
-        {isEnabled && !portfolioLoading && (
+        {portfolioVisible && !portfolioLoading && (
           <>
-            {/* Performance strip */}
-            {/* <PerfStrip positions={positions} /> */}
-
-            {/* Money map — PRD §7: total Predict value split into Available /
-                In picks / Ready to collect, with Deposit + Withdraw inside the
-                card. Dark walletCore is this card's reserved token. */}
             <View style={styles.moneyCard}>
-              <Text style={styles.moneyEyebrow}>Predict value</Text>
-              <Text style={styles.moneyTotal}>
-                {predictValue !== null ? formatProfileMoney(predictValue) : '--'}
+              <View pointerEvents="none" style={styles.moneyOrb} />
+              <View style={styles.moneyTop}>
+                <Text style={styles.moneyEyebrow}>Your Predict value</Text>
+                <Pressable style={styles.currencyChip} onPress={() => { setSettingsView('currency'); setSettingsOpen(true); }}>
+                  <Text style={styles.currencyChipText}>{currencyFormat} display</Text>
+                  <MaterialIcons name="keyboard-arrow-down" size={13} color={semantic.text.faint} />
+                </Pressable>
+              </View>
+              <View style={styles.moneyValueRow}>
+                <Text style={styles.moneyTotal}>{truncateUsd(predictValue)}</Text>
+                <Text style={styles.moneyUnit}>pUSD value</Text>
+              </View>
+              <Text style={styles.moneyCaption}>
+                {predictValue === null
+                  ? 'Waiting for current balance and position quotes'
+                  : currencyFormat === 'INR'
+                    ? `Approximately ${formatProfileCurrency(predictValue, 'INR', usdToInrRate)} across your Predict account`
+                    : 'Available cash, positions and ready payouts'}
               </Text>
               <View style={styles.moneyBar}>
                 {cashBalance !== null && cashBalance > 0 && (
@@ -679,25 +828,27 @@ export default function PredictProfileScreen() {
                 )}
               </View>
               <View style={styles.moneyLegend}>
-                <View style={styles.moneyLegendItem}>
-                  <View style={[styles.moneyLegendDot, styles.moneyBarAvailable]} />
-                  <Text style={styles.moneyLegendLabel}>Available</Text>
-                  <Text style={styles.moneyLegendValue}>
-                    {cashBalance !== null ? formatProfileMoney(cashBalance) : '--'}
-                  </Text>
+                <View style={[styles.moneyLegendItem, styles.moneyLegendAvailable]}>
+                  <View style={styles.moneyLegendHeading}>
+                    <View style={[styles.moneyLegendDot, styles.moneyBarAvailable]} />
+                    <Text style={styles.moneyLegendLabel}>Available</Text>
+                  </View>
+                  <Text style={styles.moneyLegendValue}>{truncateUsd(cashBalance)}</Text>
                 </View>
                 <View style={styles.moneyLegendItem}>
-                  <View style={[styles.moneyLegendDot, styles.moneyBarInPicks]} />
-                  <Text style={styles.moneyLegendLabel}>In picks</Text>
-                  <Text style={styles.moneyLegendValue}>
-                    {activePicksValue !== null ? formatProfileMoney(activePicksValue) : '--'}
-                  </Text>
+                  <View style={styles.moneyLegendHeading}>
+                    <View style={[styles.moneyLegendDot, styles.moneyBarInPicks]} />
+                    <Text style={styles.moneyLegendLabel}>In picks</Text>
+                  </View>
+                  <Text style={styles.moneyLegendValue}>{truncateUsd(activePicksValue)}</Text>
                 </View>
                 <View style={styles.moneyLegendItem}>
-                  <View style={[styles.moneyLegendDot, styles.moneyBarReady]} />
-                  <Text style={styles.moneyLegendLabel}>Ready to collect</Text>
-                  <Text style={[styles.moneyLegendValue, readyToCollect > 0 && styles.moneyPositive]}>
-                    {formatProfileMoney(readyToCollect)}
+                  <View style={styles.moneyLegendHeading}>
+                    <View style={[styles.moneyLegendDot, styles.moneyBarReady]} />
+                    <Text style={styles.moneyLegendLabel}>Ready</Text>
+                  </View>
+                  <Text style={[styles.moneyLegendValue, readyToCollect > 0 && styles.moneyReadyValue]}>
+                    {truncateUsd(readyToCollect)}
                   </Text>
                 </View>
               </View>
@@ -705,27 +856,22 @@ export default function PredictProfileScreen() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Deposit into Predict"
-                  style={styles.moneyActionBtn}
+                  style={[styles.moneyActionBtn, styles.moneyActionPrimary, accountState !== 'ready' && styles.btnDisabled]}
+                  disabled={accountState !== 'ready'}
                   onPress={() => setDepositOpen(true)}>
-                  <MaterialIcons name="arrow-downward" size={13} color={semantic.text.primary} />
-                  <Text style={styles.moneyActionText}>Deposit</Text>
+                  <MaterialIcons name="add" size={15} color={tokens.colors.backgroundDark} />
+                  <Text style={[styles.moneyActionText, styles.moneyActionPrimaryText]}>Deposit</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Withdraw from Predict"
-                  style={styles.moneyActionBtn}
-                  onPress={() => setWithdrawOpen(true)}>
-                  <MaterialIcons name="arrow-upward" size={13} color={semantic.text.primary} />
+                  style={[styles.moneyActionBtn, accountState !== 'ready' && styles.btnDisabled]}
+                  disabled={accountState !== 'ready'}
+                  onPress={handleWithdrawPress}>
+                  <MaterialIcons name="north-east" size={14} color={semantic.text.primary} />
                   <Text style={styles.moneyActionText}>Withdraw</Text>
                 </Pressable>
               </View>
-              {hasActiveOrReadyPicks && (
-                <View style={styles.moneyStatsRow}>
-                  <Text style={styles.moneyStat}>Cash out now {cashOutNow !== null ? formatProfileMoney(cashOutNow) : '--'}</Text>
-                  <Text style={styles.moneyStat}>{activePickCount} active {activePickCount === 1 ? 'pick' : 'picks'}</Text>
-                  <Text style={styles.moneyStat}>Profit {collectedDisplay}</Text>
-                </View>
-              )}
             </View>
 
             <ProfilePortfolioTabs
@@ -736,6 +882,7 @@ export default function PredictProfileScreen() {
               closedPositions={closedPositions}
               client={poly.client}
               cancellingOrderId={cancellingId}
+              actionsDisabled={accountState !== 'ready'}
               freshness={{
                 ...activityFreshness,
                 loading: portfolioLoading || refreshing,
@@ -747,21 +894,14 @@ export default function PredictProfileScreen() {
               onCashOutPress={handleCashOut}
               onMarketPress={handleOpenMarket}
               onCancelOrder={(orderId) => void handleCancel(orderId)}
-              onRedeemed={() => void loadPortfolio()}
-              onBrowseMarkets={() => router.push('/markets/polymarket')}
-              formatMoney={formatProfileMoney}
+              onRedeemed={loadPortfolio}
+              onBrowseMarkets={() => router.replace('/markets/polymarket')}
+              formatMoney={truncateUsd}
             />
-
-            {positions.length === 0 && openOrders.length === 0 && redeemablePositions.length === 0 && closedPositions.length === 0 && (
-              <View style={styles.positionsSection}>
-                <EmptyPortfolio
-                  mode={(cashBalance ?? 0) > 0 ? 'no-picks' : 'no-balance'}
-                  onPrimaryAction={(cashBalance ?? 0) > 0 ? () => router.push('/markets/polymarket') : () => setDepositOpen(true)}
-                  primaryLabel={(cashBalance ?? 0) > 0 ? 'Browse Markets' : 'Deposit'}
-                />
-              </View>
-            )}
-
+            <View style={styles.privacyNote}>
+              <MaterialIcons name="lock" size={14} color={tokens.colors.viridian} />
+              <Text style={styles.privacyText}>Login and wallet details stay separate from your picks and history. Sensitive changes require confirmation.</Text>
+            </View>
           </>
         )}
       </ScrollView>
@@ -800,16 +940,30 @@ export default function PredictProfileScreen() {
         formatMoney={formatProfileMoney}
       />
 
-      <Modal visible={settingsOpen} transparent animationType="fade" onRequestClose={closeSettings}>
-        <View style={styles.settingsBackdrop}>
+      <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={closeSettings}>
+        <KeyboardAvoidingView
+          style={styles.settingsBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Close Polymarket profile settings"
             style={StyleSheet.absoluteFill}
             onPress={closeSettings}
           />
-          <View style={styles.settingsCard} accessibilityViewIsModal>
-            <Text style={styles.settingsEyebrow}>Polymarket settings</Text>
+          <ScrollView
+            style={styles.settingsCard}
+            contentContainerStyle={[styles.settingsCardContent, { paddingBottom: Math.max(insets.bottom, 20) + 8 }]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            accessibilityViewIsModal
+            accessibilityLabel="Predict settings dialog">
+            <View style={styles.sheetGrabber} />
+            <View style={styles.sheetTop}>
+              <Text style={styles.settingsEyebrow}>{settingsView === 'security' ? 'Account & security' : 'Predict settings'}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close settings" style={styles.sheetClose} onPress={closeSettings}>
+                <MaterialIcons name="close" size={18} color={semantic.text.dim} />
+              </Pressable>
+            </View>
             {settingsView !== 'menu' && (
               <Pressable style={styles.settingsBackRow} onPress={() => setSettingsView('menu')} accessibilityRole="button" accessibilityLabel="Back to Polymarket settings">
                 <MaterialIcons name="chevron-left" size={16} color={semantic.text.dim} />
@@ -819,8 +973,9 @@ export default function PredictProfileScreen() {
 
             {settingsView === 'menu' && (
               <>
-                <Text style={styles.settingsTitle}>Settings</Text>
-                <Text style={styles.settingsCopy}>Manage display and wallet controls for Predict.</Text>
+                <Text style={styles.settingsTitle}>Predict settings</Text>
+                <Text style={styles.settingsCopy}>Preferences follow you across every market.</Text>
+                <Text style={styles.sheetSectionLabel}>Trading display</Text>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Open currency display settings"
@@ -855,9 +1010,25 @@ export default function PredictProfileScreen() {
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Open Polymarket wallet settings"
+                  accessibilityLabel="Edit quick amounts"
                   style={styles.settingsOption}
-                  onPress={() => setSettingsView('wallet')}
+                  onPress={() => setSettingsView('amounts')}
+                >
+                  <View style={styles.settingsOptionIcon}>
+                    <MaterialIcons name="calculate" size={15} color={tokens.colors.primary} />
+                  </View>
+                  <View style={styles.settingsOptionCopy}>
+                    <Text style={styles.settingsOptionTitle}>Quick amounts</Text>
+                    <Text style={styles.settingsOptionSub}>{quickAmounts.map((amount) => `$${amount}`).join(' · ')}</Text>
+                  </View>
+                  <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
+                </Pressable>
+                <Text style={styles.sheetSectionLabel}>Account</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open account and security"
+                  style={styles.settingsOption}
+                  onPress={() => setSettingsView('security')}
                 >
                   <View style={styles.settingsOptionIcon}>
                     <MaterialIcons name="vpn-key" size={15} color={tokens.colors.viridian} />
@@ -868,50 +1039,61 @@ export default function PredictProfileScreen() {
                   </View>
                   <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
                 </Pressable>
+                <Text style={styles.sheetSectionLabel}>Safety</Text>
+                <View style={styles.settingsOption}>
+                  <View style={styles.settingsOptionIcon}>
+                    <MaterialIcons name="verified-user" size={15} color={tokens.colors.viridian} />
+                  </View>
+                  <View style={styles.settingsOptionCopy}>
+                    <Text style={styles.settingsOptionTitle}>Order review</Text>
+                    <Text style={styles.settingsOptionSub}>Payout and maximum loss are always shown</Text>
+                  </View>
+                  <Text style={styles.alwaysOnText}>Always on</Text>
+                </View>
               </>
             )}
 
             {settingsView === 'security' && (
               <>
                 <Text style={styles.settingsTitle}>Account &amp; Security</Text>
-                <Text style={styles.settingsCopy}>Login, wallet, and session controls for Predict.</Text>
-                <View style={styles.walletInfoBox}>
-                  <View style={styles.walletInfoRow}>
-                    <Text style={styles.walletInfoLabel}>Sign-in</Text>
-                    <Text style={styles.walletInfoValue}>{privyAuthMethod === 'google' ? 'Google' : privyAuthMethod === 'email' ? 'Email' : privyAuthMethod === 'wallet' ? 'Wallet' : '—'}</Text>
+                <Text style={styles.settingsCopy}>Manage how you sign in and where funds can move.</Text>
+                <Text style={styles.sheetSectionLabel}>Login</Text>
+                <View style={styles.settingsOption}>
+                  <View style={styles.settingsOptionIcon}>
+                    <MaterialIcons name={privyAuthMethod === 'google' ? 'account-circle' : 'email'} size={15} color={tokens.colors.primary} />
                   </View>
-                  <View style={styles.walletInfoRow}>
-                    <Text style={styles.walletInfoLabel}>Solana</Text>
-                    <Text style={styles.walletInfoValue}>{solanaAddress ? truncate(solanaAddress) : '--'}</Text>
+                  <View style={styles.settingsOptionCopy}>
+                    <Text style={styles.settingsOptionTitle}>{authLabel ?? 'MyBoon login'}</Text>
+                    <Text style={styles.settingsOptionSub}>{maskedIdentity ?? (walletAddress ? truncate(walletAddress) : 'Not connected')}</Text>
                   </View>
-                  <View style={styles.walletInfoRow}>
-                    <Text style={styles.walletInfoLabel}>Owner EOA</Text>
-                    <Text style={styles.walletInfoValue}>{poly.polygonAddress ? truncate(poly.polygonAddress) : '--'}</Text>
-                  </View>
-                  <View style={styles.walletInfoRow}>
-                    <Text style={styles.walletInfoLabel}>Deposit wallet</Text>
-                    <Text style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
-                  </View>
+                  <Text style={styles.settingsValue}>{authLabel ?? '—'}</Text>
                 </View>
-                <Text style={styles.settingsFinePrint}>
-                  Your Polymarket wallet is an embedded wallet managed by Privy. There
-                  is no key to export from this screen.
-                </Text>
+                <Text style={styles.sheetSectionLabel}>Connected wallets</Text>
+                <Pressable style={styles.settingsOption} onPress={() => setSettingsView('wallet')} accessibilityRole="button" accessibilityLabel="View Predict wallet">
+                  <View style={styles.settingsOptionIcon}>
+                    <MaterialIcons name="account-balance-wallet" size={15} color={tokens.colors.viridian} />
+                  </View>
+                  <View style={styles.settingsOptionCopy}>
+                    <Text style={styles.settingsOptionTitle}>Predict wallet</Text>
+                    <Text style={styles.settingsOptionSub}>{walletAddress ? `${truncate(walletAddress)} · ${isEnabled ? 'Connected' : 'Setup needed'}` : 'Not created'}</Text>
+                  </View>
+                  <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
+                </Pressable>
+                <Pressable style={styles.settingsOption} onPress={handleWithdrawPress} accessibilityRole="button" accessibilityLabel="Manage Solana withdrawal destination">
+                  <View style={styles.settingsOptionIcon}>
+                    <MaterialIcons name="north-east" size={15} color={tokens.colors.primary} />
+                  </View>
+                  <View style={styles.settingsOptionCopy}>
+                    <Text style={styles.settingsOptionTitle}>Withdrawal destination</Text>
+                    <Text style={styles.settingsOptionSub}>{solanaAddress ? `${truncate(solanaAddress)} · Solana` : 'Connect a Solana wallet'}</Text>
+                  </View>
+                  <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
+                </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Sign out of MyBoon"
                   style={styles.signOutBtn}
-                  onPress={() => {
-                    setSettingsOpen(false);
-                    Alert.alert(
-                      'Sign out of MyBoon?',
-                      'Your Predict positions and pUSD stay in your account. You will need to sign in again to trade, withdraw, or change security settings.',
-                      [
-                        { text: 'Stay signed in', style: 'cancel' },
-                        { text: 'Sign out', style: 'destructive', onPress: () => { void privyDisconnect(); } },
-                      ],
-                    );
-                  }}>
+                  onPress={() => setSettingsView('signout')}>
                   <MaterialIcons name="logout" size={15} color={tokens.colors.vermillion} />
                   <Text style={styles.signOutText}>Sign out</Text>
                 </Pressable>
@@ -982,27 +1164,26 @@ export default function PredictProfileScreen() {
 
             {settingsView === 'wallet' && (
               <>
-                <Text style={styles.settingsTitle}>Polymarket wallet</Text>
+                <Text style={styles.settingsTitle}>Predict wallet</Text>
                 <Text style={styles.settingsCopy}>
                   The active mobile SDK account owns authentication, approvals, orders, transfers, and redemption for this deposit wallet.
                 </Text>
                 <View style={styles.walletInfoBox}>
                   <View style={styles.walletInfoRow}>
-                    <Text style={styles.walletInfoLabel}>Solana</Text>
-                    <Text style={styles.walletInfoValue}>{solanaAddress ? truncate(solanaAddress) : '--'}</Text>
-                  </View>
-                  <View style={styles.walletInfoRow}>
-                    <Text style={styles.walletInfoLabel}>Owner EOA</Text>
-                    <Text style={styles.walletInfoValue}>{poly.polygonAddress ? truncate(poly.polygonAddress) : '--'}</Text>
+                    <Text style={styles.walletInfoLabel}>Predict signer</Text>
+                    <Text selectable style={styles.walletInfoValue}>{walletAddress ? truncate(walletAddress) : '--'}</Text>
                   </View>
                   <View style={styles.walletInfoRow}>
                     <Text style={styles.walletInfoLabel}>Deposit wallet</Text>
-                    <Text style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
+                    <Text selectable style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
+                  </View>
+                  <View style={styles.walletInfoRow}>
+                    <Text style={styles.walletInfoLabel}>Network</Text>
+                    <Text style={styles.walletInfoValue}>Polygon</Text>
                   </View>
                 </View>
                 <Text style={styles.settingsFinePrint}>
-                  Your Polymarket wallet is an embedded wallet managed by Privy. There
-                  is no key to export from this screen.
+                  Your Predict wallet is managed through your MyBoon login. Private keys are never displayed here.
                 </Text>
                 {poly.isReady && (
                   <Pressable
@@ -1019,8 +1200,54 @@ export default function PredictProfileScreen() {
                 )}
               </>
             )}
-          </View>
-        </View>
+
+            {settingsView === 'amounts' && (
+              <>
+                <Text style={styles.settingsTitle}>Quick amounts</Text>
+                <Text style={styles.settingsCopy}>Choose the three shortcuts shown in the order composer.</Text>
+                <View style={styles.quickAmountRow}>
+                  {quickAmountDraft.map((value, index) => (
+                    <View key={`quick-${index}`} style={styles.quickAmountInputWrap}>
+                      <Text style={styles.quickAmountCurrency}>$</Text>
+                      <TextInput
+                        value={value}
+                        onChangeText={(next) => setQuickAmountDraft((current) => current.map((entry, entryIndex) => entryIndex === index ? next : entry))}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={semantic.text.faint}
+                        style={styles.quickAmountInput}
+                        accessibilityLabel={`Quick amount ${index + 1}`}
+                      />
+                    </View>
+                  ))}
+                </View>
+                {quickAmountError ? <Text selectable style={styles.quickAmountError}>{quickAmountError}</Text> : null}
+                <Pressable style={[styles.saveSettingsBtn, quickAmountSaving && styles.btnDisabled]} disabled={quickAmountSaving} onPress={() => void saveQuickAmounts()}>
+                  <Text style={styles.saveSettingsText}>{quickAmountSaving ? 'Saving…' : 'Save amounts'}</Text>
+                </Pressable>
+              </>
+            )}
+
+            {settingsView === 'signout' && (
+              <View style={styles.signOutConfirm}>
+                <View style={styles.signOutConfirmIcon}>
+                  <MaterialIcons name="logout" size={22} color={tokens.colors.vermillion} />
+                </View>
+                <Text style={styles.settingsTitle}>Sign out of MyBoon?</Text>
+                <Text style={styles.settingsCopy}>Your Predict positions and pUSD stay with your account. Sign in again to trade, withdraw, or collect.</Text>
+                {signOutError ? <Text selectable style={styles.quickAmountError}>{signOutError}</Text> : null}
+                <View style={styles.signOutActions}>
+                  <Pressable style={[styles.staySignedInBtn, signOutBusy && styles.btnDisabled]} disabled={signOutBusy} onPress={() => setSettingsView('security')}>
+                    <Text style={styles.staySignedInText}>Stay signed in</Text>
+                  </Pressable>
+                  <Pressable style={[styles.confirmSignOutBtn, signOutBusy && styles.btnDisabled]} disabled={signOutBusy} onPress={() => void handleSignOut()}>
+                    <Text style={styles.confirmSignOutText}>{signOutBusy ? 'Signing out…' : 'Sign out'}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
 
       <ConnectionSheet
@@ -1032,8 +1259,14 @@ export default function PredictProfileScreen() {
         // clear `setupAfterConnect` and the resume would never run.
         onConnected={() => { connectedViaSheetRef.current = true; }}
         onClose={() => {
-          if (!connectedViaSheetRef.current) setSetupAfterConnect(false);
+          const completed = connectedViaSheetRef.current;
           connectedViaSheetRef.current = false;
+          if (!completed) {
+            setSetupAfterConnect(false);
+            setConnectionIntent(null);
+          } else if (connectionIntent === 'predict') {
+            setConnectionIntent(null);
+          }
           connectSheet.close();
         }}
       />
@@ -1045,24 +1278,39 @@ export default function PredictProfileScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: semantic.background.screen },
+  titleLockup: { flex: 1, paddingHorizontal: 7 },
+  topTitle: { fontSize: 13, lineHeight: 16, fontWeight: '900', color: semantic.text.primary },
+  topSubtitle: { paddingTop: 2, fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  profileContent: { paddingHorizontal: 14, paddingTop: 9, gap: 9 },
 
   settingsBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.62)',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 22,
+    justifyContent: 'flex-end',
   },
   settingsCard: {
     width: '100%',
-    maxWidth: 340,
-    borderRadius: 18,
+    maxWidth: 520,
+    maxHeight: '88%',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderCurve: 'continuous',
     borderWidth: 1,
+    borderBottomWidth: 0,
     borderColor: semantic.border.muted,
     backgroundColor: tokens.colors.ground,
-    padding: 18,
+  },
+  settingsCardContent: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 28,
     gap: 10,
   },
+  sheetGrabber: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: semantic.border.muted, marginBottom: 3 },
+  sheetTop: { minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sheetClose: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: semantic.background.lift },
+  sheetSectionLabel: { paddingTop: 6, fontFamily: 'monospace', fontSize: 9, fontWeight: '900', letterSpacing: 0.8, textTransform: 'uppercase', color: tokens.colors.accent },
   settingsEyebrow: {
     fontFamily: 'monospace',
     fontSize: 8,
@@ -1147,6 +1395,8 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: semantic.text.faint,
   },
+  settingsValue: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.dim },
+  alwaysOnText: { fontFamily: 'monospace', fontSize: 8, fontWeight: '900', color: tokens.colors.viridian },
   walletInfoBox: {
     borderWidth: 1,
     borderColor: semantic.border.muted,
@@ -1210,7 +1460,7 @@ const styles = StyleSheet.create({
   },
   currencyOptionSelected: {
     borderColor: tokens.colors.primary,
-    backgroundColor: 'rgba(255, 214, 10, 0.08)',
+    backgroundColor: 'rgba(17,138,178,0.08)',
   },
   currencyOptionTitle: {
     fontFamily: 'monospace',
@@ -1224,6 +1474,20 @@ const styles = StyleSheet.create({
     color: semantic.text.faint,
     marginTop: 3,
   },
+  quickAmountRow: { flexDirection: 'row', gap: 8 },
+  quickAmountInputWrap: { flex: 1, minHeight: 48, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: semantic.background.surface },
+  quickAmountCurrency: { fontFamily: 'monospace', fontSize: 13, fontWeight: '900', color: semantic.text.dim },
+  quickAmountInput: { flex: 1, minWidth: 0, paddingHorizontal: 4, fontFamily: 'monospace', fontSize: 15, fontWeight: '900', color: semantic.text.primary, textAlign: 'center' },
+  quickAmountError: { fontSize: 10, lineHeight: 14, color: tokens.colors.vermillion },
+  saveSettingsBtn: { minHeight: 44, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.viridian },
+  saveSettingsText: { fontSize: 11, fontWeight: '900', color: tokens.colors.backgroundDark },
+  signOutConfirm: { gap: 10, paddingTop: 4 },
+  signOutConfirmIcon: { width: 42, height: 42, borderRadius: 13, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(239,71,111,0.10)' },
+  signOutActions: { flexDirection: 'row', gap: 8, paddingTop: 5 },
+  staySignedInBtn: { flex: 1, minHeight: 44, borderRadius: 12, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, alignItems: 'center', justifyContent: 'center', backgroundColor: semantic.background.surface },
+  staySignedInText: { fontSize: 10, fontWeight: '900', color: semantic.text.primary },
+  confirmSignOutBtn: { flex: 1, minHeight: 44, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.vermillion },
+  confirmSignOutText: { fontSize: 10, fontWeight: '900', color: semantic.text.primary },
 
   headerActions: {
     flexDirection: 'row',
@@ -1251,13 +1515,18 @@ const styles = StyleSheet.create({
 
   // Identity
   identity: {
-    paddingHorizontal: tokens.spacing.lg,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: semantic.border.muted,
+    minHeight: 76,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    borderRadius: 20,
+    borderCurve: 'continuous',
+    backgroundColor: tokens.colors.surface,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 11,
+    boxShadow: 'inset 0 1px 0 rgba(245,250,252,0.06)',
   },
   avatarRing: {
     width: 48,
@@ -1268,26 +1537,29 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   avatarInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: semantic.background.lift,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    borderColor: 'rgba(255,209,102,0.45)',
+    backgroundColor: tokens.colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarText: {
-    fontFamily: 'monospace',
-    fontSize: 14,
-    fontWeight: '700',
-    color: tokens.colors.primary,
+    fontSize: 20,
+    fontWeight: '900',
+    color: tokens.colors.backgroundDark,
   },
+  avatarStatus: { position: 'absolute', right: -2, bottom: -2, width: 14, height: 14, borderRadius: 7, borderWidth: 3, borderColor: tokens.colors.surface, backgroundColor: tokens.colors.viridian },
+  avatarStatusMuted: { backgroundColor: tokens.colors.accent },
   identityInfo: { flex: 1 },
   handle: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '900',
     color: semantic.text.primary,
-    marginBottom: 3,
+    marginBottom: 4,
   },
   identityMetaRow: {
     flexDirection: 'row',
@@ -1298,8 +1570,11 @@ const styles = StyleSheet.create({
   identityMeta: {
     fontFamily: 'monospace',
     fontSize: 9,
-    color: semantic.text.faint,
+    color: semantic.text.dim,
   },
+  identityStateRow: { paddingTop: 6, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  identityStateText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: tokens.colors.viridian },
+  identityStateAttention: { color: tokens.colors.accent },
   connectedChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1365,62 +1640,80 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { opacity: 0.5 },
 
-  loadingWrap: {
-    paddingVertical: 40,
-    alignItems: 'center',
-  },
+  loadingCard: { minHeight: 76, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 18, borderCurve: 'continuous', backgroundColor: tokens.colors.surface },
+  loadingCopy: { flex: 1, gap: 4 },
+  loadingTitle: { fontSize: 12, fontWeight: '900', color: semantic.text.primary },
+  loadingText: { fontFamily: 'monospace', fontSize: 9, lineHeight: 14, color: semantic.text.faint },
+  setupCard: { paddingHorizontal: 20, paddingVertical: 24, alignItems: 'center', gap: 9, borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 22, borderCurve: 'continuous', backgroundColor: tokens.colors.surface },
+  setupIcon: { width: 48, height: 48, borderRadius: 16, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(6,214,160,0.10)' },
+  setupTitle: { fontSize: 17, lineHeight: 22, fontWeight: '900', color: semantic.text.primary, textAlign: 'center' },
+  setupDescription: { maxWidth: 300, fontFamily: 'monospace', fontSize: 9, lineHeight: 15, color: semantic.text.dim, textAlign: 'center' },
+  setupAction: { minWidth: 174, minHeight: 44, marginTop: 4, paddingHorizontal: 18, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.viridian },
+  setupActionText: { fontSize: 11, fontWeight: '900', color: tokens.colors.backgroundDark },
   reconnectBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginHorizontal: tokens.spacing.lg,
-    marginTop: 10,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(0,194,255,0.08)',
+    gap: 10,
+    padding: 12,
+    backgroundColor: 'rgba(255,209,102,0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(0,194,255,0.20)',
-    borderRadius: 8,
+    borderColor: 'rgba(255,209,102,0.35)',
+    borderRadius: 14,
+    borderCurve: 'continuous',
   },
+  reconnectCopy: { flex: 1, gap: 3 },
+  reconnectTitle: { fontSize: 11, fontWeight: '900', color: semantic.text.primary },
   reconnectText: {
     fontFamily: 'monospace',
     fontSize: 9,
-    color: tokens.colors.primary,
-    letterSpacing: 0.3,
+    lineHeight: 13,
+    color: semantic.text.dim,
   },
 
   // Money map card (PRD §7) — walletCore is this card's reserved dark token
   moneyCard: {
-    marginHorizontal: tokens.spacing.lg,
-    marginTop: 12,
     backgroundColor: tokens.colors.walletCore,
     borderWidth: 1,
     borderColor: semantic.border.muted,
-    borderRadius: 22,
-    padding: 16,
-    gap: 10,
+    borderRadius: 25,
+    borderCurve: 'continuous',
+    padding: 15,
+    overflow: 'hidden',
+    boxShadow: '0 17px 36px rgba(3,31,44,0.30), inset 0 1px 0 rgba(245,250,252,0.06)',
   },
+  moneyOrb: { position: 'absolute', top: -73, right: -52, width: 154, height: 154, borderWidth: 30, borderColor: 'rgba(17,138,178,0.12)', borderRadius: 77 },
+  moneyTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   moneyEyebrow: {
     fontFamily: 'monospace',
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
-    color: semantic.text.faint,
+    color: tokens.colors.accent,
   },
+  currencyChip: { minHeight: 30, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 9, backgroundColor: tokens.colors.ground },
+  currencyChipText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.dim },
+  moneyValueRow: { paddingTop: 13, flexDirection: 'row', alignItems: 'baseline', gap: 7 },
   moneyTotal: {
     fontFamily: 'monospace',
-    fontSize: 28,
-    fontWeight: '800',
+    fontSize: 34,
+    fontWeight: '900',
     color: semantic.text.primary,
-    letterSpacing: -0.5,
+    letterSpacing: -1.5,
   },
+  moneyUnit: { fontFamily: 'monospace', fontSize: 9, color: semantic.text.faint },
+  moneyCaption: { paddingTop: 6, fontFamily: 'monospace', fontSize: 9, lineHeight: 13, color: semantic.text.dim },
   moneyBar: {
     flexDirection: 'row',
-    height: 10,
+    height: 12,
+    padding: 2,
+    gap: 2,
     borderRadius: 999,
     overflow: 'hidden',
-    backgroundColor: 'rgba(245,250,252,0.08)',
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: tokens.colors.ground,
+    marginTop: 15,
   },
   moneyBarSeg: {},
   moneyBarAvailable: { backgroundColor: tokens.colors.viridian },
@@ -1429,17 +1722,20 @@ const styles = StyleSheet.create({
   moneyBarEmpty: { flex: 1, backgroundColor: 'rgba(245,250,252,0.08)' },
   moneyLegend: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 7,
+    marginTop: 9,
   },
   moneyLegendItem: {
     flex: 1,
-    gap: 2,
+    minWidth: 0,
+    gap: 5,
   },
+  moneyLegendAvailable: { flex: 1.2 },
+  moneyLegendHeading: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   moneyLegendDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    marginBottom: 1,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   moneyLegendLabel: {
     fontFamily: 'monospace',
@@ -1452,13 +1748,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: semantic.text.primary,
   },
-  moneyPositive: {
-    color: tokens.colors.viridian,
-  },
+  moneyReadyValue: { color: tokens.colors.accent },
   moneyActions: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 2,
+    marginTop: 14,
   },
   moneyActionBtn: {
     flex: 1,
@@ -1473,11 +1767,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   moneyActionText: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '900',
     color: semantic.text.primary,
   },
+  moneyActionPrimary: { flex: 1.2, borderColor: tokens.colors.viridian, backgroundColor: tokens.colors.viridian },
+  moneyActionPrimaryText: { color: tokens.colors.backgroundDark },
+  privacyNote: { padding: 11, flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderRadius: 13, borderCurve: 'continuous', backgroundColor: 'rgba(3,31,44,0.50)' },
+  privacyText: { flex: 1, fontFamily: 'monospace', fontSize: 9, lineHeight: 14, color: semantic.text.faint },
   moneyStatsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

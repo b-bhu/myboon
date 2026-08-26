@@ -46,6 +46,9 @@ export interface PrivyWalletState {
   signTransaction: (<T extends Transaction | VersionedTransaction>(transaction: T) => Promise<T>) | null;
   /** Auth method the user used (email, google, wallet, or null) */
   authMethod: 'email' | 'google' | 'wallet' | null;
+  /** Login identity fields from Privy. Display-only; never used for wallet authority. */
+  identityEmail: string | null;
+  identityName: string | null;
 }
 
 export function usePrivyWallet(): PrivyWalletState {
@@ -177,6 +180,21 @@ export function usePrivyWallet(): PrivyWalletState {
     return 'wallet';
   })();
 
+  const linkedAccounts = (user?.linked_accounts ?? []) as unknown as Record<string, unknown>[];
+  const googleAccount = linkedAccounts.find((account) => account.type === 'google_oauth');
+  const emailAccount = linkedAccounts.find((account) => account.type === 'email');
+  const identityEmail = (() => {
+    const value = googleAccount?.email ?? emailAccount?.address ?? emailAccount?.email;
+    return typeof value === 'string' && value.includes('@') ? value : null;
+  })();
+  const identityName = (() => {
+    const direct = googleAccount?.name;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    const first = typeof googleAccount?.first_name === 'string' ? googleAccount.first_name.trim() : '';
+    const last = typeof googleAccount?.last_name === 'string' ? googleAccount.last_name.trim() : '';
+    return `${first} ${last}`.trim() || null;
+  })();
+
   return {
     connected: authenticated && !!wallet,
     isPrivyUser: authenticated,
@@ -205,5 +223,7 @@ export function usePrivyWallet(): PrivyWalletState {
     signMessage,
     signTransaction,
     authMethod,
+    identityEmail,
+    identityName,
   };
 }

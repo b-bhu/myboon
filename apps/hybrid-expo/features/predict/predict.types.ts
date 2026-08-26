@@ -162,6 +162,7 @@ export interface SportMarketDetail {
   description: string | null;
   sport: string;
   status: FeedItemStatus;
+  gameStartTime: string | null;
   startDate: string | null;
   endDate: string | null;
   image: string | null;
@@ -169,6 +170,7 @@ export interface SportMarketDetail {
   negRisk: boolean;
   volume24h: number | null;
   liquidity: number | null;
+  teams: FeedTeam[];
   outcomes: SportOutcomeDetail[];
 }
 
@@ -180,6 +182,8 @@ export interface OrderbookLevel {
 export interface Orderbook {
   bids: OrderbookLevel[];
   asks: OrderbookLevel[];
+  /** Polymarket's minimum outcome-share quantity for this market. */
+  minOrderSize: number | null;
   lastPrice: number | null;
   spread: number | null;
 }

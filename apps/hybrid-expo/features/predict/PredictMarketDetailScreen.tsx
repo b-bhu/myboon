@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'expo-router';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
@@ -27,18 +26,19 @@ import { useConnectionSheet } from '@/features/wallet/components/useConnectionSh
 import { semantic, tokens } from '@/theme';
 import { formatUsdCompact } from '@/lib/format';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
-import { OddsFormatToggle } from '@/features/predict/components/OddsFormatToggle';
 import { MultiLineChart } from '@/features/predict/components/MultiLineChart';
 import { OrderbookView } from '@/features/predict/components/OrderbookView';
 import { InlineNumpad } from '@/features/predict/components/InlineNumpad';
 import { OrderComposerSheet } from '@/features/predict/components/OrderComposerSheet';
 import type { ComposerMode } from '@/features/predict/components/OrderComposerSheet';
-import { ResolutionRulesSheet, EventOutcomeLadder, formatEventOdds } from '@/features/predict/components/EventOutcomeLadder';
+import { ResolutionRulesSheet, EventOutcomeLadder } from '@/features/predict/components/EventOutcomeLadder';
 import type { EventOddsFormat } from '@/features/predict/components/EventOutcomeLadder';
 import { DetailPicksPanel } from '@/features/predict/components/DetailPicksPanel';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
+import { DetailPositionSheet } from '@/features/predict/components/DetailPositionSheet';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { buildExecutableBuyQuote, getBestAsk } from '@/features/predict/orderbookQuote';
+import { getMinimumOrderGuardrail } from '@/features/predict/minimumOrderSize';
 import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { makePendingOpenOrder, mergeOpenOrders, prunePendingOpenOrders } from '@/features/predict/pendingOpenOrders';
 import {
@@ -74,6 +74,13 @@ function formatDeadline(endDate: string | null, active: boolean | null): string 
   return `${active === false ? 'Ended' : 'Ends'} ${month} ${day}`;
 }
 
+function formatResolveDate(endDate: string | null): string {
+  if (!endDate) return 'Resolution date unavailable';
+  const time = Date.parse(endDate);
+  if (!Number.isFinite(time)) return 'Resolution date unavailable';
+  return `Resolves ${new Date(time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
 function DisplayTab({
   label,
   active,
@@ -102,7 +109,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const router = useRouter();
   const poly = usePolymarketWallet();
   const connectSheet = useConnectionSheet('evm');
-  const { format, setFormat, formatOdds } = useOddsFormat();
+  const { formatOdds } = useOddsFormat();
   const { width: screenWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
@@ -123,12 +130,13 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const [orderbook, setOrderbook] = useState<Orderbook | null>(null);
   const [orderbookLoading, setOrderbookLoading] = useState(false);
   const [buyBooks, setBuyBooks] = useState<Record<string, Orderbook | null>>({});
+  const [binaryBookSide, setBinaryBookSide] = useState<'yes' | 'no'>('yes');
 
   // Numpad state
   const [numpadOpen, setNumpadOpen] = useState(false);
-  const [selectedSide, setSelectedSide] = useState<'yes' | 'no' | null>(null);
+  const [selectedSide, setSelectedSide] = useState<'yes' | 'no' | null>('yes');
   const [selectedQuotePrice, setSelectedQuotePrice] = useState<number | null>(null);
-  const [numpadAmount, setNumpadAmount] = useState('50');
+  const [numpadAmount, setNumpadAmount] = useState('10');
   const [submitting, setSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>('idle');
   const [pickScope, setPickScope] = useState<'market' | 'all'>('market');
@@ -162,7 +170,9 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const [cashBalance, setCashBalance] = useState<number | null>(null);
   const [setupSubmitting, setSetupSubmitting] = useState(false);
   const [setupAfterConnect, setSetupAfterConnect] = useState(false);
+  const [submitAfterSetup, setSubmitAfterSetup] = useState(false);
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
+  const [positionOpen, setPositionOpen] = useState(false);
   // Composer v2 pilot state (Predict redesign PRD §6). Flag-gated; see COMPOSER_V2.
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerParams, setComposerParams] = useState<{ mode: ComposerMode; limitPriceCents: number } | null>(null);
@@ -177,6 +187,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const reconcileTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
   const submitInFlightRef = useRef(false);
   const buyBookRefreshInFlight = useRef(false);
+  const connectionCompletedRef = useRef(false);
   // Predict settles on Polygon, so its cache scope is the EVM signer — never the
   // Solana wallet. Keying on Solana meant an email/EVM user read as disconnected
   // and a Solana disconnect wiped Predict state that did not depend on it.
@@ -229,10 +240,10 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   }
 
   async function loadOrderbook() {
-    // Event mode: book follows the ladder tab selection; binary mode: Yes book.
+    // Event mode follows its ladder tab; binary mode follows the Yes/No tab.
     const tokenId = isEventMode
       ? (event?.outcomes[eventBookIdx]?.clobTokenIds[0] ?? null)
-      : (detail?.clobTokenIds[0] ?? null);
+      : (detail?.clobTokenIds[binaryBookSide === 'yes' ? 0 : 1] ?? null);
     if (!tokenId) return;
     setOrderbookLoading(true);
     try {
@@ -445,11 +456,11 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   // Load orderbook when switching to orderbook view (or ladder tab in event mode)
   useEffect(() => {
     if (activeView === 'orderbook' && detail) void loadOrderbook();
-  }, [activeView, detail, eventBookIdx]);
+  }, [activeView, detail, eventBookIdx, binaryBookSide]);
 
   useEffect(() => {
-    if (activeView === 'picks') void loadPicks();
-  }, [activeView, slug, poly.polygonAddress, poly.tradingAddress]);
+    void loadPicks();
+  }, [slug, poly.polygonAddress, poly.tradingAddress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -544,6 +555,22 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     void runPredictSetup();
   }, [setupAfterConnect, poly.signer, poly.isReady]);
 
+  useEffect(() => {
+    if (!submitAfterSetup || !poly.isReady || !composerParams) return;
+    setSubmitAfterSetup(false);
+    void submitOrder(composerParams);
+  }, [submitAfterSetup, poly.isReady, composerParams]);
+
+  function confirmComposer(params: { mode: ComposerMode; limitPriceCents: number }) {
+    setComposerParams(params);
+    if (!poly.signer) {
+      setSubmitAfterSetup(true);
+      handlePredictSetupPress();
+      return;
+    }
+    void submitOrder(params);
+  }
+
   function tapOdd(side: 'yes' | 'no') {
     if (submitInFlightRef.current || submitting) return;
     if (numpadOpen && selectedSide === side) {
@@ -554,7 +581,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     }
     setSelectedSide(side);
     setSelectedQuotePrice(side === 'yes' ? (yesPrice ?? detail?.outcomePrices[0] ?? null) : (noPrice ?? detail?.outcomePrices[1] ?? null));
-    setNumpadAmount('50');
+    setNumpadAmount('10');
     setNumpadOpen(true);
     if (COMPOSER_V2) {
       setComposerOpen(true);
@@ -574,7 +601,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     setSelectedSide(null);
     setEventOutcomeId(outcomeId);
     setSelectedQuotePrice(eventOutcomePrices[outcomeId] ?? outcome.price ?? null);
-    setNumpadAmount('50');
+    setNumpadAmount('10');
     setNumpadOpen(true);
     if (COMPOSER_V2) {
       setComposerOpen(true);
@@ -589,7 +616,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     setEventOutcomeId(null);
   }
 
-  async function submitOrder() {
+  async function submitOrder(paramsOverride?: { mode: ComposerMode; limitPriceCents: number } | null) {
     if (!detail || submitting || submitInFlightRef.current) return;
     if (!selectedSide && !selectedEventOutcome) return;
     const amount = parseFloat(numpadAmount);
@@ -648,14 +675,37 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
       const quote = buildExecutableBuyQuote(freshBook, amount);
       // Composer v2 limit mode: rest at the user's chosen price instead of
       // executing at the book average. Size = spend / chosen price.
+      const resolvedComposerParams = paramsOverride ?? composerParams;
       const effectiveLimitCents =
-        composerParams?.mode === 'limit' && composerParams.limitPriceCents > 0
-          ? composerParams.limitPriceCents
+        resolvedComposerParams?.mode === 'limit' && resolvedComposerParams.limitPriceCents > 0
+          ? resolvedComposerParams.limitPriceCents
           : null;
-      if (effectiveLimitCents !== null && Math.round(price * 100) !== effectiveLimitCents) {
-        // GTC resting order at the user's price (client-side GTD is a flagged follow-up).
+      if (effectiveLimitCents === null && (!quote.executable || quote.limitPrice === null || quote.shares <= 0)) {
+        Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
+        return;
+      }
+      const effectivePrice = effectiveLimitCents !== null
+        ? effectiveLimitCents / 100
+        : quote.averagePrice;
+      const effectiveShares = effectiveLimitCents !== null
+        ? amount / (effectiveLimitCents / 100)
+        : quote.shares;
+      const minimumGuardrail = getMinimumOrderGuardrail({
+        orderSize: effectiveShares,
+        minimumOrderSize: freshBook?.minOrderSize,
+        executionPrice: effectivePrice,
+      });
+      if (minimumGuardrail) {
+        Alert.alert(minimumGuardrail.title, minimumGuardrail.message);
+        return;
+      }
+      if (effectiveLimitCents !== null) {
         const limitPrice = effectiveLimitCents / 100;
         const limitShares = amount / limitPrice;
+        const expirationMs = Date.parse(detail.endDate ?? '');
+        if (!Number.isFinite(expirationMs) || expirationMs <= Date.now() + 60_000) {
+          throw new Error('This market has no future deadline for a limit order. Use a market order instead.');
+        }
         const polygonAddressEarly = poly.polygonAddress;
         const resultLimit = await placeBet(signer, {
           polygonAddress: polygonAddressEarly,
@@ -665,7 +715,8 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
           size: limitShares,
           side: 'BUY',
           negRisk: !!detail.negRisk,
-          orderType: 'GTC',
+          orderType: 'GTD',
+          expiration: Math.floor(expirationMs / 1_000),
         });
         if (!resultLimit.success) throw new Error(resultLimit.error || 'Order failed');
         const pendingLimit = makePendingOpenOrder({
@@ -687,10 +738,6 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
           activeView === 'orderbook' ? loadOrderbook() : Promise.resolve(),
         ]);
         scheduleFollowUpReconcile(polygonAddressEarly);
-        return;
-      }
-      if (!quote.executable || quote.limitPrice === null || quote.shares <= 0) {
-        Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
         return;
       }
       const result = await placeBet(poly.client, {
@@ -780,7 +827,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     }
   }
 
-  const chartWidth = screenWidth - 40;
+  const chartWidth = Math.max(260, screenWidth - 60);
   const chartHeight = 180;
   const amountNum = parseFloat(numpadAmount) || 0;
   const latestSelectedPrice = selectedSide === 'no' ? noPrice : yesPrice;
@@ -790,6 +837,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
   const selectedEventQuote = selectedEventBook
     ? buildExecutableBuyQuote(selectedEventBook, amountNum)
     : { executable: false, averagePrice: null, shares: 0, limitPrice: null, unfilledAmount: null };
+  const activeSelectedBook = isEventMode ? selectedEventBook : selectedBook;
   const activeExecutableQuote = isEventMode ? selectedEventQuote : selectedExecutableQuote;
   const selectedNumpadPrice = activeExecutableQuote.averagePrice
     ?? (isEventMode ? selectedEventPrice ?? latestSelectedPrice : latestSelectedPrice)
@@ -811,6 +859,224 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
       : submitStatus === 'syncing'
         ? 'Syncing pick...'
         : 'Placing order...';
+  const activePosition = [...marketPositions].sort((a, b) => b.currentValue - a.currentValue)[0] ?? null;
+
+  if (detail && !loading && !errorMessage && !isEventMode) {
+    const yesPct = yesPrice === null ? 50 : Math.max(0, Math.min(100, yesPrice * 100));
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <AppTopBar
+          left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
+          center={(
+            <View style={styles.mockTitleLockup}>
+              <Text style={styles.mockTopTitle} numberOfLines={1}>{detail.question}</Text>
+              <Text style={styles.mockTopSubtitle}>{detail.category ? `${detail.category} · ` : ''}Binary</Text>
+            </View>
+          )}
+          right={<AppTopBarCashPill value={truncateUsd(cashBalance)} />}
+        />
+
+        <ScrollView
+          style={styles.mockScroll}
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator
+          refreshControl={(
+            <RefreshControl refreshing={refreshing} onRefresh={() => void refreshDetailScreen()} tintColor={tokens.colors.accent} />
+          )}
+          contentContainerStyle={[styles.mockContent, { paddingBottom: Math.max(insets.bottom, 18) + 20 }]}
+        >
+          <View style={styles.mockCard}>
+            <View style={styles.mockCardTop}>
+              <Text style={styles.mockKind}>Yes or no</Text>
+              {activePosition ? (
+                <Pressable style={styles.mockPositionButton} accessibilityRole="button" onPress={() => setPositionOpen(true)}>
+                  <MaterialIcons name="account-circle" size={16} color={tokens.colors.viridian} />
+                  <Text style={styles.mockPositionLabel}>Your pick</Text>
+                  <Text style={[styles.mockPositionPnl, activePosition.cashPnl < 0 && styles.mockPositionPnlNegative]}>
+                    {activePosition.cashPnl >= 0 ? '+' : '-'}${Math.abs(activePosition.cashPnl).toFixed(2)}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <View style={styles.mockBinaryHero}>
+              <View style={styles.mockBinaryMeta}>
+                <Text style={styles.mockCategory}>{detail.category ?? 'Binary'}</Text>
+                <Text style={styles.mockResolveMeta}>
+                  {formatResolveDate(detail.endDate)}{detail.volume !== null ? ` · ${formatUsdCompact(detail.volume)} traded` : ''}
+                </Text>
+              </View>
+              <Text style={styles.mockQuestion}>{detail.question}</Text>
+              <View style={styles.mockConsensus} accessibilityLabel={`Yes ${Math.round(yesPct)} percent, No ${Math.round(100 - yesPct)} percent`}>
+                <View style={styles.mockConsensusSide}>
+                  <Text style={styles.mockYesPrice}>{yesPrice === null ? '--' : `${Math.round(yesPrice * 100)}¢`}</Text>
+                  <Text style={styles.mockConsensusLabel}>Yes</Text>
+                </View>
+                <View style={styles.mockConsensusTrack}>
+                  <View style={[styles.mockConsensusFill, { width: `${yesPct}%` }]} />
+                </View>
+                <View style={[styles.mockConsensusSide, styles.mockConsensusSideRight]}>
+                  <Text style={styles.mockNoPrice}>{noPrice === null ? '--' : `${Math.round(noPrice * 100)}¢`}</Text>
+                  <Text style={styles.mockConsensusLabel}>No</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.mockPanel}>
+              <View style={styles.mockPanelHead}>
+                <View>
+                  <Text style={styles.mockPanelTitle}>Market movement</Text>
+                  <Text style={styles.mockPanelSubtitle}>{activeView === 'orderbook' ? 'Live orders' : 'Price history'}</Text>
+                </View>
+                <View style={styles.mockViewSwitch} accessibilityRole="tablist">
+                  {(['chart', 'orderbook'] as const).map((view) => {
+                    const selected = activeView === view;
+                    return (
+                      <Pressable
+                        key={view}
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected }}
+                        style={[styles.mockViewButton, selected && styles.mockViewButtonActive]}
+                        onPress={() => setActiveView(view)}
+                      >
+                        <MaterialIcons name={view === 'chart' ? 'show-chart' : 'layers'} size={14} color={selected ? tokens.colors.backgroundDark : semantic.text.faint} />
+                        <Text style={[styles.mockViewText, selected && styles.mockViewTextActive]}>{view === 'chart' ? 'Chart' : 'Book'}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+              <View style={styles.mockMarketSurface}>
+                {activeView === 'orderbook' ? (
+                  <View style={styles.mockBookWrap}>
+                    <View style={styles.mockBookTabs}>
+                      {(['yes', 'no'] as const).map((side) => (
+                        <Pressable
+                          key={side}
+                          accessibilityRole="tab"
+                          accessibilityState={{ selected: binaryBookSide === side }}
+                          style={[styles.mockBookTab, binaryBookSide === side && styles.mockBookTabActive]}
+                          onPress={() => setBinaryBookSide(side)}
+                        >
+                          <Text style={[styles.mockBookTabText, binaryBookSide === side && styles.mockBookTabTextActive]}>{side === 'yes' ? 'Yes' : 'No'}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <OrderbookView book={orderbook} loading={orderbookLoading} />
+                  </View>
+                ) : historyLoading ? (
+                  <ActivityIndicator color={semantic.text.faint} />
+                ) : (
+                  <MultiLineChart
+                    series={[
+                      { points: yesHistory, color: tokens.colors.viridian, label: 'Yes' },
+                      { points: noHistory, color: tokens.colors.vermillion, label: 'No' },
+                    ]}
+                    width={chartWidth}
+                    height={chartHeight}
+                  />
+                )}
+              </View>
+            </View>
+
+            <View style={styles.mockPicks}>
+              <View style={styles.mockPicksHead}>
+                <Text style={styles.mockPicksTitle}>What’s your pick?</Text>
+                <Text style={styles.mockPicksMeta}>Current price</Text>
+              </View>
+              {marketClosed ? <Text style={styles.marketClosedText}>This market is closed.</Text> : null}
+              <View style={styles.mockBinaryButtons}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selectedSide === 'yes', disabled: marketClosed || submitting }}
+                  disabled={marketClosed || submitting}
+                  style={[styles.mockBinaryButton, selectedSide === 'yes' && styles.mockBinaryButtonSelected]}
+                  onPress={() => tapOdd('yes')}
+                >
+                  <Text style={styles.mockBinaryLabel}>Yes, it will</Text>
+                  <Text style={styles.mockYesButtonPrice}>{yesPrice === null ? '--' : `${Math.round(yesPrice * 100)}¢`}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selectedSide === 'no', disabled: marketClosed || submitting }}
+                  disabled={marketClosed || submitting}
+                  style={[styles.mockBinaryButton, selectedSide === 'no' && styles.mockBinaryButtonSelected]}
+                  onPress={() => tapOdd('no')}
+                >
+                  <Text style={styles.mockBinaryLabel}>No, it won’t</Text>
+                  <Text style={styles.mockNoButtonPrice}>{noPrice === null ? '--' : `${Math.round(noPrice * 100)}¢`}</Text>
+                </Pressable>
+              </View>
+              <View style={styles.mockHint}>
+                <MaterialIcons name="touch-app" size={13} color={tokens.colors.accent} />
+                <Text style={styles.mockHintText}>Tap a side to place an order</Text>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+
+        <DetailPositionSheet
+          visible={positionOpen}
+          position={activePosition}
+          title={detail.question}
+          onClose={() => setPositionOpen(false)}
+          onAdd={() => {
+            setPositionOpen(false);
+            if (activePosition) tapOdd(activePosition.outcome.toLowerCase() === 'no' ? 'no' : 'yes');
+          }}
+          onCashOut={() => {
+            setPositionOpen(false);
+            if (activePosition) handleCashOut(activePosition);
+          }}
+        />
+        <CashOutConfirmModal
+          visible={cashOutPosition !== null}
+          position={cashOutPosition}
+          submitting={submitting}
+          orderbook={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.book ?? null : null}
+          quoteLoading={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.loading ?? false : false}
+          quoteError={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.error ?? null : null}
+          onClose={() => setCashOutPosition(null)}
+          onConfirm={confirmCashOut}
+        />
+        <OrderComposerSheet
+          visible={composerOpen && selectedSide !== null}
+          side={selectedSide ?? 'yes'}
+          pickLabel={selectedSide === 'no' ? 'No' : 'Yes'}
+          question={detail.question}
+          currentPrice={selectedQuotePrice}
+          amount={numpadAmount}
+          onAmountChange={setNumpadAmount}
+          executableAvgPrice={marketClosed || !activeExecutableQuote.executable ? null : activeExecutableQuote.averagePrice}
+          minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
+          availableCash={cashBalance}
+          guardrail={orderGuardrail}
+          submitting={submitting}
+          submittingLabel={submitLabel}
+          disabled={marketClosed}
+          limitOrderNote="Cancels automatically at the market deadline."
+          onClose={collapseNumpad}
+          onConfirm={confirmComposer}
+        />
+        <ConnectionSheet
+          visible={connectSheet.visible}
+          chain={connectSheet.chain}
+          onConnected={() => {
+            connectionCompletedRef.current = true;
+          }}
+          onClose={() => {
+            const completed = connectionCompletedRef.current;
+            connectionCompletedRef.current = false;
+            if (!completed) {
+              setSetupAfterConnect(false);
+              setSubmitAfterSetup(false);
+            }
+            connectSheet.close();
+          }}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -1094,6 +1360,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
               pickLabel={selectedSide === 'no' ? 'NO' : 'YES'}
               price={selectedNumpadPrice}
               amount={numpadAmount}
+              minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
               availableCash={cashBalance}
               onAmountChange={setNumpadAmount}
               onConfirm={() => { void submitOrder(); }}
@@ -1146,28 +1413,34 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
                 return q.executable && q.averagePrice !== null ? q.averagePrice : null;
               })()
         }
+        minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
         availableCash={cashBalance}
         guardrail={orderGuardrail}
         submitting={submitting}
         submittingLabel={submitLabel}
-        disabled={!poly.isReady}
+        disabled={marketClosed}
         onClose={() => {
           setComposerParams(null);
           collapseNumpad();
         }}
-        onConfirm={(params) => {
-          setComposerParams(params);
-          void submitOrder();
-        }}
+        onConfirm={confirmComposer}
       />
 
       <ConnectionSheet
         visible={connectSheet.visible}
         chain={connectSheet.chain}
+        onConnected={() => {
+          connectionCompletedRef.current = true;
+        }}
         onClose={() => {
           // Cancelling the sheet abandons the pending session setup, so the
           // resume effect must not fire if the user later connects elsewhere.
-          setSetupAfterConnect(false);
+          const completed = connectionCompletedRef.current;
+          connectionCompletedRef.current = false;
+          if (!completed) {
+            setSetupAfterConnect(false);
+            setSubmitAfterSetup(false);
+          }
           connectSheet.close();
         }}
       />
@@ -1177,6 +1450,59 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: semantic.background.screen },
+  mockTitleLockup: { flex: 1, paddingHorizontal: 7 },
+  mockTopTitle: { fontSize: 12, lineHeight: 15, fontWeight: '900', color: semantic.text.primary },
+  mockTopSubtitle: { paddingTop: 2, fontFamily: 'monospace', fontSize: 8, textTransform: 'capitalize', color: semantic.text.faint },
+  mockScroll: { flex: 1 },
+  mockContent: { paddingHorizontal: 14, paddingTop: 10 },
+  mockCard: { overflow: 'hidden', borderRadius: 24, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: tokens.colors.surface, boxShadow: '0 12px 26px rgba(3,31,44,0.32)' },
+  mockCardTop: { minHeight: 48, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: semantic.border.muted },
+  mockKind: { fontFamily: 'monospace', fontSize: 9, fontWeight: '900', textTransform: 'uppercase', color: semantic.text.dim },
+  mockPositionButton: { minHeight: 32, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 11, borderCurve: 'continuous', backgroundColor: tokens.colors.lift },
+  mockPositionLabel: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', color: semantic.text.dim },
+  mockPositionPnl: { fontFamily: 'monospace', fontSize: 9, fontWeight: '900', color: tokens.colors.viridian },
+  mockPositionPnlNegative: { color: tokens.colors.vermillion },
+  mockBinaryHero: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18 },
+  mockBinaryMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  mockCategory: { fontFamily: 'monospace', fontSize: 8, fontWeight: '900', textTransform: 'uppercase', color: tokens.colors.accent },
+  mockResolveMeta: { flex: 1, textAlign: 'right', fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  mockQuestion: { paddingTop: 12, fontSize: 25, lineHeight: 29, letterSpacing: -0.8, fontWeight: '900', color: semantic.text.primary },
+  mockConsensus: { paddingTop: 20, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  mockConsensusSide: { minWidth: 42 },
+  mockConsensusSideRight: { alignItems: 'flex-end' },
+  mockYesPrice: { fontFamily: 'monospace', fontSize: 18, fontWeight: '900', color: tokens.colors.viridian },
+  mockNoPrice: { fontFamily: 'monospace', fontSize: 18, fontWeight: '900', color: tokens.colors.vermillion },
+  mockConsensusLabel: { paddingTop: 3, fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  mockConsensusTrack: { flex: 1, height: 10, overflow: 'hidden', borderRadius: 5, backgroundColor: tokens.colors.vermillion },
+  mockConsensusFill: { height: '100%', backgroundColor: tokens.colors.viridian },
+  mockPanel: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border.muted, backgroundColor: tokens.colors.ground },
+  mockPanelHead: { minHeight: 66, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  mockPanelTitle: { fontSize: 13, fontWeight: '900', color: semantic.text.primary },
+  mockPanelSubtitle: { paddingTop: 3, fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  mockViewSwitch: { flexDirection: 'row', padding: 4, borderRadius: 13, borderCurve: 'continuous', backgroundColor: tokens.colors.lift },
+  mockViewButton: { minWidth: 65, minHeight: 36, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 10, borderCurve: 'continuous' },
+  mockViewButtonActive: { backgroundColor: tokens.colors.accent },
+  mockViewText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.faint },
+  mockViewTextActive: { color: tokens.colors.backgroundDark },
+  mockMarketSurface: { minHeight: 216, paddingHorizontal: 8, paddingBottom: 10, alignItems: 'center', justifyContent: 'center' },
+  mockBookWrap: { width: '100%', minHeight: 202, paddingHorizontal: 5 },
+  mockBookTabs: { flexDirection: 'row', gap: 5, paddingBottom: 8 },
+  mockBookTab: { flex: 1, minHeight: 36, borderRadius: 10, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.surface },
+  mockBookTabActive: { backgroundColor: tokens.colors.accent },
+  mockBookTabText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.faint },
+  mockBookTabTextActive: { color: tokens.colors.backgroundDark },
+  mockPicks: { paddingHorizontal: 13, paddingTop: 13, paddingBottom: 15, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border.muted, backgroundColor: tokens.colors.surface },
+  mockPicksHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  mockPicksTitle: { fontSize: 13, fontWeight: '900', color: semantic.text.primary },
+  mockPicksMeta: { fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  mockBinaryButtons: { paddingTop: 10, flexDirection: 'row', gap: 8 },
+  mockBinaryButton: { flex: 1, minHeight: 74, paddingHorizontal: 12, paddingVertical: 11, justifyContent: 'space-between', borderRadius: 15, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: tokens.colors.ground },
+  mockBinaryButtonSelected: { borderColor: tokens.colors.accent, backgroundColor: tokens.colors.lift, boxShadow: `inset 0 -4px 0 ${tokens.colors.accent}` },
+  mockBinaryLabel: { fontSize: 11, fontWeight: '900', color: semantic.text.dim },
+  mockYesButtonPrice: { fontFamily: 'monospace', fontSize: 20, fontWeight: '900', color: tokens.colors.viridian },
+  mockNoButtonPrice: { fontFamily: 'monospace', fontSize: 20, fontWeight: '900', color: tokens.colors.vermillion },
+  mockHint: { paddingTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  mockHintText: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', textTransform: 'uppercase', color: semantic.text.faint },
 
   // ── States ──
   stateWrap: {

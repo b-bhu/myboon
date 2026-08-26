@@ -1,10 +1,13 @@
+import { Image } from 'expo-image';
 import { StyleSheet, Text, View } from 'react-native';
-import { semantic, tokens } from '@/theme';
+import { semantic } from '@/theme';
 import { teamInitials } from '@/features/predict/formatPredictTitle';
 
 interface SportsMatchupHeaderProps {
   homeTeam: string;
   awayTeam: string;
+  homeLogo?: string | null;
+  awayLogo?: string | null;
   league: string | null;
   startsAt: string | null;
   active: boolean | null;
@@ -18,12 +21,12 @@ function formatKickoff(value: string): string | null {
   return `${day} · ${time}`;
 }
 
-function TeamBlock({ team }: { team: string }) {
+function TeamBlock({ team, logo }: { team: string; logo?: string | null }) {
   const initials = teamInitials(team);
   return (
     <View style={styles.teamBlock}>
       <View style={styles.crest}>
-        {initials ? <Text style={styles.initials}>{initials}</Text> : null}
+        {logo ? <Image source={{ uri: logo }} style={styles.logo} contentFit="contain" /> : initials ? <Text style={styles.initials}>{initials}</Text> : null}
       </View>
       <Text style={styles.teamName} numberOfLines={2}>
         {team}
@@ -35,26 +38,30 @@ function TeamBlock({ team }: { team: string }) {
 export function SportsMatchupHeader({
   homeTeam,
   awayTeam,
+  homeLogo,
+  awayLogo,
   league,
   startsAt,
   active,
 }: SportsMatchupHeaderProps) {
   const kickoff = active === false || !startsAt ? null : formatKickoff(startsAt);
   const accessibilityLabel =
-    `${awayTeam} versus ${homeTeam}` + (kickoff ? `, kickoff ${kickoff}` : '');
+    `${homeTeam} versus ${awayTeam}` + (kickoff ? `, kickoff ${kickoff}` : '');
 
   return (
     <View accessible={true} accessibilityLabel={accessibilityLabel} style={styles.card}>
-      <TeamBlock team={awayTeam} />
+      <TeamBlock team={homeTeam} logo={homeLogo} />
       <View style={styles.center}>
         {league ? <Text style={styles.league}>{league}</Text> : null}
+        <Text style={styles.versus}>VS</Text>
         {active === false ? (
           <Text style={styles.closed}>Closed</Text>
         ) : kickoff ? (
           <Text style={styles.kickoff}>{kickoff}</Text>
         ) : null}
+        <Text style={styles.moneyline}>Moneyline</Text>
       </View>
-      <TeamBlock team={homeTeam} />
+      <TeamBlock team={awayTeam} logo={awayLogo} />
     </View>
   );
 }
@@ -63,11 +70,8 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: tokens.colors.surface,
-    borderColor: semantic.border.muted,
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 22,
   },
   teamBlock: {
     flex: 1,
@@ -76,12 +80,8 @@ const styles = StyleSheet.create({
   crest: {
     width: 64,
     height: 64,
-    borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: tokens.colors.lift,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
   },
   initials: {
     fontFamily: 'monospace',
@@ -89,6 +89,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: semantic.text.primary,
   },
+  logo: { width: 52, height: 52 },
   teamName: {
     marginTop: 10,
     fontSize: 13,
@@ -101,6 +102,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 8,
   },
+  versus: { fontFamily: 'monospace', fontSize: 22, fontWeight: '900', color: semantic.text.primary },
   league: {
     fontSize: 10,
     lineHeight: 13,
@@ -122,4 +124,5 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: semantic.text.faint,
   },
+  moneyline: { paddingTop: 6, fontFamily: 'monospace', fontSize: 9, color: semantic.text.faint },
 });

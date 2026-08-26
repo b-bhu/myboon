@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -119,8 +123,9 @@ export function WithdrawModal({
     return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmedRecipientAddress);
   }, [trimmedRecipientAddress]);
   const isValid =
+    cashBalance !== null &&
     parsedAmount >= minimumWithdraw &&
-    (cashBalance === null || parsedAmount <= cashBalance) &&
+    parsedAmount <= cashBalance &&
     isRecipientValid;
 
   useEffect(() => {
@@ -188,6 +193,7 @@ export function WithdrawModal({
   }, [isOpen, solanaAddress, trackingKey]);
 
   const handleClose = () => {
+    Keyboard.dismiss();
     if (!trackedWithdrawal) {
       setAmount('');
       setState('input');
@@ -202,6 +208,7 @@ export function WithdrawModal({
 
   const handleConfirm = async () => {
     if (!isValid) return;
+    Keyboard.dismiss();
     setState('quoting');
     setError(null);
     try {
@@ -361,8 +368,15 @@ export function WithdrawModal({
 
   return (
     <Modal visible={isOpen} transparent animationType="slide" onRequestClose={handleClose}>
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.sheet}>
+          <ScrollView
+            contentContainerStyle={styles.sheetContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Withdraw</Text>
@@ -384,6 +398,9 @@ export function WithdrawModal({
                   {cashBalance !== null ? `$${cashBalance.toFixed(2)}` : '--'}
                 </Text>
               </View>
+              {cashBalance === null ? (
+                <Text style={styles.errorHint}>Refresh your Predict balance before withdrawing.</Text>
+              ) : null}
 
               {routeLoading && (
                 <View style={styles.routeRow}>
@@ -463,7 +480,7 @@ export function WithdrawModal({
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>From</Text>
-                  <Text style={styles.confirmValue}>Polymarket Deposit Wallet</Text>
+                  <Text style={styles.confirmValue}>Predict deposit wallet</Text>
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>To</Text>
@@ -577,8 +594,9 @@ export function WithdrawModal({
               </Pressable>
             </View>
           )}
+          </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -595,6 +613,10 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     borderTopWidth: 1,
     borderColor: semantic.border.muted,
+    overflow: 'hidden',
+    maxHeight: '88%',
+  },
+  sheetContent: {
     paddingHorizontal: tokens.spacing.lg,
     paddingTop: tokens.spacing.lg,
     paddingBottom: 40,

@@ -212,6 +212,7 @@ export function createPolymarketSportsRoutes(): Hono {
             undefined,
             String(e.slug ?? slug),
           ),
+          gameStartTime: gameStart || null,
           startDate: e.startDate ?? null,
           endDate: e.endDate ?? null,
           image: e.image ?? null,
@@ -219,6 +220,11 @@ export function createPolymarketSportsRoutes(): Hono {
           negRisk: e.negRisk ?? false,
           volume24h: e.volume24hr ?? null,
           liquidity: e.liquidity ?? null,
+          teams: mapGammaEventToFeaturedMarket(e, {
+            category: 'sports',
+            sport,
+            mainMoneylineOnly: true,
+          })?.teams ?? [],
           outcomes,
         })
       } catch (err) {
@@ -303,6 +309,17 @@ export function createPolymarketSportsRoutes(): Hono {
             title: deriveMatchTitle(domeMarkets),
             description: first.description ?? null,
             sport,
+            status: deriveMatchStatus(
+              first.game_start_time ?? null,
+              first.status === 'open',
+              first.status === 'closed',
+              outcomes.map((outcome) => outcome.price),
+              sport,
+              null,
+              undefined,
+              slug,
+            ),
+            gameStartTime: first.game_start_time ?? null,
             startDate: first.game_start_time ?? null,
             endDate: domeEndTimeToIso(first.end_time),
             image: first.image ?? null,
@@ -310,6 +327,7 @@ export function createPolymarketSportsRoutes(): Hono {
             negRisk: true,
             volume24h: domeMarkets.reduce((sum, m) => sum + (m.volume_1_week ?? 0), 0),
             liquidity: null,
+            teams: [],
             outcomes,
           }
         },
@@ -361,11 +379,18 @@ export function createPolymarketSportsRoutes(): Hono {
             outcomes = markets.map(mapOutcome)
           }
 
+          const featured = mapGammaEventToFeaturedMarket(e, {
+            category: 'sports',
+            sport,
+            mainMoneylineOnly: true,
+          })
           return {
             slug: e.slug,
             title: e.title,
             description: e.description ?? null,
             sport,
+            status: featured?.status ?? 'upcoming',
+            gameStartTime: featured?.gameStartTime ?? null,
             startDate: e.startDate ?? null,
             endDate: e.endDate ?? null,
             image: e.image ?? null,
@@ -373,6 +398,7 @@ export function createPolymarketSportsRoutes(): Hono {
             negRisk: e.negRisk ?? false,
             volume24h: e.volume24hr ?? null,
             liquidity: e.liquidity ?? null,
+            teams: featured?.teams ?? [],
             outcomes,
           }
         },
@@ -451,6 +477,7 @@ async function gammaSportsDetail(input: {
     description: event.description ?? null,
     sport: input.sport,
     status: featured.status,
+    gameStartTime: featured.gameStartTime ?? null,
     startDate: event.startDate ?? null,
     endDate: featured.endDate,
     image: featured.image,
@@ -458,6 +485,7 @@ async function gammaSportsDetail(input: {
     negRisk: event.negRisk ?? false,
     volume24h: featured.volume,
     liquidity: event.liquidity ?? null,
+    teams: featured.teams ?? [],
     outcomes,
   }
 }

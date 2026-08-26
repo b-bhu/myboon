@@ -331,7 +331,10 @@ export function ConnectionSheet({
     [solana.address, evm.address],
   );
 
-  const isConnected = step.kind === 'options' && connectedWallets.length > 0;
+  // A wallet on the other chain does not satisfy the requested connection.
+  // Predict requests EVM, so a Solana-only session must still show EVM options.
+  const isConnected =
+    step.kind === 'options' && connectedWallets.some((wallet) => wallet.chain === chain);
 
   const handleCopyAddress = useCallback(async (address: string) => {
     await Clipboard.setStringAsync(address);

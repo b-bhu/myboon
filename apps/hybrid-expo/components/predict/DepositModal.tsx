@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -260,17 +264,23 @@ export function DepositModal({
       ]);
 
       const baseline = trackedDeposit.baselineBalance ?? 0;
-      const balanceReady = trackedDeposit.baselineKnown && balance
-        ? balance.balance > baseline + 0.000001
-        : false;
+      const balanceDelta = trackedDeposit.baselineKnown && balance
+        ? balance.balance - baseline
+        : null;
       const bridgeTransaction = latestDepositTransaction(
         matchingDepositTransactions(transactions, trackedDeposit),
       );
 
-      if (canCompleteTrackedDeposit(balanceReady, bridgeTransaction)) {
+      if (canCompleteTrackedDeposit(
+        balanceDelta,
+        trackedDeposit.intendedAmount,
+        bridgeTransaction,
+      )) {
         setStatusView({
           label: 'Funds available',
-          detail: `Cash balance is now $${balance!.balance.toFixed(2)}.`,
+          detail: balance
+            ? `Cash balance is now $${balance.balance.toFixed(2)}.`
+            : 'The Bridge has completed your deposit.',
           tone: 'success',
         });
 
@@ -300,6 +310,7 @@ export function DepositModal({
   useEffect(() => {
     if (!isOpen || !trackedDeposit) return;
     if (!storageKey || trackingStorageKey !== storageKey) return;
+    if (statusView?.tone === 'success') return;
 
     void refreshDepositStatus();
     const interval = setInterval(() => {
@@ -307,11 +318,27 @@ export function DepositModal({
     }, DEPOSIT_POLL_MS);
 
     return () => clearInterval(interval);
-  }, [isOpen, refreshDepositStatus, storageKey, trackedDeposit, trackingStorageKey]);
+  }, [isOpen, refreshDepositStatus, statusView?.tone, storageKey, trackedDeposit, trackingStorageKey]);
+
+  const handleClose = () => {
+    Keyboard.dismiss();
+    onClose();
+  };
+
+  const handleDone = async () => {
+    if (storageKey) {
+      await AsyncStorage.removeItem(storageKey).catch(() => {});
+    }
+    setTrackingStorageKey(null);
+    setTrackedDeposit(null);
+    setStatusView(null);
+    handleClose();
+  };
 
   const handleCopy = async (asset: BridgeSupportedAsset, address: string) => {
     const plannedAmount = Number.parseFloat(intendedAmount);
     if (!Number.isFinite(plannedAmount) || plannedAmount < asset.minCheckoutUsd) return;
+    Keyboard.dismiss();
     const chain = addressTypeFor(asset);
     await Clipboard.setStringAsync(address);
     setCopied(chain);
@@ -368,13 +395,20 @@ export function DepositModal({
   });
 
   return (
-    <Modal visible={isOpen} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+    <Modal visible={isOpen} transparent animationType="slide" onRequestClose={handleClose}>
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.sheet}>
+          <ScrollView
+            contentContainerStyle={styles.sheetContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Deposit</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close deposit" onPress={onClose} style={styles.closeBtn}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close deposit" onPress={handleClose} style={styles.closeBtn}>
               <MaterialIcons name="close" size={18} color={semantic.text.dim} />
             </Pressable>
           </View>
@@ -510,7 +544,7 @@ export function DepositModal({
                 {trackedDeposit.tokenSymbol ? ` · ${trackedDeposit.tokenSymbol}` : ''} {truncateAddress(trackedDeposit.address)}
               </Text>
               {statusView.tone === 'success' && (
-                <Pressable onPress={onClose} style={styles.doneBtn}>
+                <Pressable onPress={() => void handleDone()} style={styles.doneBtn}>
                   <Text style={styles.doneText}>Done</Text>
                 </Pressable>
               )}
@@ -520,8 +554,9 @@ export function DepositModal({
           {!loading && !error && chains.length === 0 && addresses && (
             <Text style={styles.emptyText}>No deposit addresses available.</Text>
           )}
+          </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -538,10 +573,13 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     borderTopWidth: 1,
     borderColor: semantic.border.muted,
+    overflow: 'hidden',
+    maxHeight: '88%',
+  },
+  sheetContent: {
     paddingHorizontal: tokens.spacing.lg,
     paddingTop: tokens.spacing.lg,
     paddingBottom: 40,
-    maxHeight: '80%',
   },
   header: {
     flexDirection: 'row',

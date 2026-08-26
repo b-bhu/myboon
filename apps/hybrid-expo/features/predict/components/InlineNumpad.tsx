@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { teamInitials } from '@/features/predict/formatPredictTitle';
+import { getMinimumOrderGuardrail } from '@/features/predict/minimumOrderSize';
 import type { PredictOrderGuardrail } from '@/features/predict/predictActivityState';
 import { semantic, tokens } from '@/theme';
 
@@ -18,6 +19,8 @@ interface InlineNumpadProps {
   payoutLabel?: string;
   /** Available cash for the Max quick action. */
   availableCash?: number | null;
+  /** Live per-market minimum share quantity from Polymarket's order book. */
+  minimumOrderSize?: number | null;
   onAmountChange: (amount: string) => void;
   onConfirm: () => void;
   /** Whether an order is currently being submitted */
@@ -79,6 +82,7 @@ export function InlineNumpad({
   confirmLabel,
   payoutLabel = 'You could receive',
   availableCash,
+  minimumOrderSize = null,
   onAmountChange,
   onConfirm,
   submitting = false,
@@ -103,21 +107,29 @@ export function InlineNumpad({
   const hasCashLimit = availableCash !== null && availableCash !== undefined && Number.isFinite(availableCash);
   const exceedsCash = hasCashLimit && amountNum > (availableCash ?? 0) + 0.000001;
   const payout = price > 0 ? amountNum / price : 0;
+  const minimumGuardrail = getMinimumOrderGuardrail({
+    orderSize: price > 0 ? payout : null,
+    minimumOrderSize,
+    executionPrice: price > 0 ? price : null,
+  });
+  const effectiveGuardrail = guardrail?.blocking
+    ? guardrail
+    : minimumGuardrail ?? guardrail;
   const outcomeLabel = pickLabel ?? (side === 'yes' ? 'YES' : 'NO');
   const isYes = side === 'yes';
   const backLabel = confirmLabel ?? `Back ${formatButtonPickLabel(outcomeLabel)} ${formatButtonUsd(amountNum)} get ${formatButtonReturn(payout)}`;
   const inputDisabled = disabled || submitting;
-  const confirmDisabled = disabled || submitting || amountNum <= 0 || exceedsCash || guardrail?.blocking === true;
-  const feedbackText = guardrail?.message ?? (exceedsCash ? 'Not enough cash' : 'If you are wrong, you lose');
-  const feedbackValue = guardrail
-    ? guardrail.title
+  const confirmDisabled = disabled || submitting || amountNum <= 0 || exceedsCash || effectiveGuardrail?.blocking === true;
+  const feedbackText = effectiveGuardrail?.message ?? (exceedsCash ? 'Not enough cash' : 'If you are wrong, you lose');
+  const feedbackValue = effectiveGuardrail
+    ? effectiveGuardrail.title
     : exceedsCash
       ? `Cash ${truncateUsd(availableCash)}`
       : `$${amountNum.toFixed(2)}`;
   const confirmLabelForAccessibility = submitting
     ? submittingLabel
-    : guardrail?.blocking
-      ? guardrail.title
+    : effectiveGuardrail?.blocking
+      ? effectiveGuardrail.title
       : exceedsCash
         ? 'Not enough cash'
         : backLabel;
@@ -212,10 +224,10 @@ export function InlineNumpad({
           <Text style={styles.payoutValue}>${payout.toFixed(2)}</Text>
         </View>
         <View style={styles.downsideRow}>
-          <Text style={[styles.downsideLabel, (exceedsCash || guardrail?.blocking) && styles.errorText, guardrail && !guardrail.blocking && styles.noticeText]}>
+          <Text style={[styles.downsideLabel, (exceedsCash || effectiveGuardrail?.blocking) && styles.errorText, effectiveGuardrail && !effectiveGuardrail.blocking && styles.noticeText]}>
             {feedbackText}
           </Text>
-          <Text style={[styles.downsideValue, (exceedsCash || guardrail?.blocking) && styles.errorText, guardrail && !guardrail.blocking && styles.noticeText]}>
+          <Text style={[styles.downsideValue, (exceedsCash || effectiveGuardrail?.blocking) && styles.errorText, effectiveGuardrail && !effectiveGuardrail.blocking && styles.noticeText]}>
             {feedbackValue}
           </Text>
         </View>
@@ -229,7 +241,7 @@ export function InlineNumpad({
           disabled={confirmDisabled}
           onPress={onConfirm}>
           <Text style={styles.confirmText}>
-            {submitting ? submittingLabel : guardrail?.blocking ? guardrail.title : exceedsCash ? 'Not enough cash' : backLabel}
+            {submitting ? submittingLabel : effectiveGuardrail?.blocking ? effectiveGuardrail.title : exceedsCash ? 'Not enough cash' : backLabel}
           </Text>
         </Pressable>
           </>

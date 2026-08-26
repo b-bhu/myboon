@@ -6,6 +6,7 @@ import { PrivyProvider } from '@/providers/PrivyProvider';
 import { WalletProvider } from '@/providers/WalletProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { WalletSheetProvider } from '@/features/wallet/WalletSheetProvider';
+import { PolymarketWalletProvider } from '@/hooks/usePolymarketWallet';
 import { warmTokenIdentityCatalog } from '@/lib/token-identity';
 import 'react-native-reanimated';
 
@@ -22,6 +23,7 @@ export default function RootLayout() {
   return (
     <PrivyProvider>
     <WalletProvider>
+    <PolymarketWalletProvider>
     <WalletSheetProvider>
       <View style={{ flex: 1 }}>
         <ErrorBoundary>
@@ -58,6 +60,7 @@ export default function RootLayout() {
       </View>
       <StatusBar style="light" />
     </WalletSheetProvider>
+    </PolymarketWalletProvider>
     </WalletProvider>
     </PrivyProvider>
   );

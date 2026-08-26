@@ -4,6 +4,7 @@ import {
   buildComposerReview,
   clampLimitPrice,
 } from '@/features/predict/components/orderComposerMath';
+import { getMinimumOrderGuardrail } from '@/features/predict/minimumOrderSize';
 import type { PredictOrderGuardrail } from '@/features/predict/predictActivityState';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { usePredictQuickAmounts } from '@/features/predict/usePredictQuickAmounts';
@@ -31,6 +32,8 @@ export interface OrderComposerSheetProps {
   onAmountChange: (amount: string) => void;
   /** Live executable average price for market mode (from orderbookQuote.ts), null when unknown. */
   executableAvgPrice: number | null;
+  /** Live per-market minimum share quantity from Polymarket's order book. */
+  minimumOrderSize?: number | null;
   availableCash: number | null;
   guardrail?: PredictOrderGuardrail | null;
   submitting?: boolean;
@@ -80,6 +83,7 @@ export function OrderComposerSheet({
   amount,
   onAmountChange,
   executableAvgPrice,
+  minimumOrderSize = null,
   availableCash,
   guardrail = null,
   submitting = false,
@@ -106,6 +110,14 @@ export function OrderComposerSheet({
   const amountNum = parseFloat(amount) || 0;
   const executionPrice = mode === 'market' ? executableAvgPrice : limitCents / 100;
   const review = buildComposerReview({ amount: amountNum, executionPrice });
+  const minimumGuardrail = getMinimumOrderGuardrail({
+    orderSize: review.shares,
+    minimumOrderSize,
+    executionPrice,
+  });
+  const effectiveGuardrail = guardrail?.blocking
+    ? guardrail
+    : minimumGuardrail ?? guardrail;
   const outcomeLabel = pickLabel ?? (side === 'yes' ? 'YES' : 'NO');
   const isYes = side === 'yes';
 
@@ -116,13 +128,13 @@ export function OrderComposerSheet({
     inputDisabled ||
     amountNum <= 0 ||
     exceedsCash ||
-    guardrail?.blocking === true ||
+    effectiveGuardrail?.blocking === true ||
     review.shares === null;
 
   const confirmText = submitting
     ? submittingLabel
-    : guardrail?.blocking
-      ? guardrail.title
+    : effectiveGuardrail?.blocking
+      ? effectiveGuardrail.title
       : exceedsCash
         ? 'Not enough cash'
         : `Buy ${outcomeLabel} · ${formatUsd(review.youPay ?? 0)}`;
@@ -287,9 +299,9 @@ export function OrderComposerSheet({
           </View>
 
           {/* Feedback line */}
-          {(guardrail || exceedsCash) && (
-            <Text style={[styles.feedback, (exceedsCash || guardrail?.blocking) && styles.errorText]}>
-              {guardrail?.message ?? `Not enough cash. ${truncateUsd(availableCash)} available.`}
+          {(effectiveGuardrail || exceedsCash) && (
+            <Text style={[styles.feedback, (exceedsCash || effectiveGuardrail?.blocking) && styles.errorText]}>
+              {effectiveGuardrail?.message ?? `Not enough cash. ${truncateUsd(availableCash)} available.`}
             </Text>
           )}
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {
   ActivityIndicator,
   Alert,
@@ -17,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppTopBar, AppTopBarCashPill, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { cancelOrder, fetchClobBalance, fetchLivePrices, fetchMarketPositions, fetchOpenOrders, fetchOrderbook, fetchPortfolio, fetchPriceHistory, fetchSportMarketDetail, placeBet } from '@/features/predict/predict.api';
 import type { ActivityItem, ClosedPortfolioPosition, OpenOrder, PortfolioPosition } from '@/features/predict/predict.api';
-import type { PricePoint, SportMarketDetail, SportOutcomeDetail, Orderbook } from '@/features/predict/predict.types';
+import type { FeedTeam, PricePoint, SportMarketDetail, SportOutcomeDetail, Orderbook } from '@/features/predict/predict.types';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
@@ -25,7 +26,6 @@ import { useConnectionSheet } from '@/features/wallet/components/useConnectionSh
 import { semantic, tokens } from '@/theme';
 import { formatUsdCompact } from '@/lib/format';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
-import { OddsFormatToggle } from '@/features/predict/components/OddsFormatToggle';
 import { MultiLineChart } from '@/features/predict/components/MultiLineChart';
 import { OrderbookView } from '@/features/predict/components/OrderbookView';
 import { OrderComposerSheet } from '@/features/predict/components/OrderComposerSheet';
@@ -33,9 +33,11 @@ import type { ComposerMode } from '@/features/predict/components/OrderComposerSh
 import { SportsMatchupHeader } from '@/features/predict/components/SportsMatchupHeader';
 import { DetailPicksPanel } from '@/features/predict/components/DetailPicksPanel';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
+import { DetailPositionSheet } from '@/features/predict/components/DetailPositionSheet';
 import { formatPredictTitle } from '@/features/predict/formatPredictTitle';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { buildExecutableBuyQuote, getBestAsk } from '@/features/predict/orderbookQuote';
+import { getMinimumOrderGuardrail } from '@/features/predict/minimumOrderSize';
 import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { makePendingOpenOrder, mergeOpenOrders, prunePendingOpenOrders } from '@/features/predict/pendingOpenOrders';
 import {
@@ -67,6 +69,12 @@ function sportOutcomeLabel(outcome: SportOutcomeDetail): string {
   return outcome.label.toLowerCase().includes('draw') ? 'Draw' : outcome.label;
 }
 
+function sportOutcomeKey(outcome: SportOutcomeDetail, index: number, surface: 'book' | 'pick'): string {
+  const outcomeIdentity = outcome.clobTokenIds[0]
+    ?? `${outcome.conditionId ?? 'market'}:${outcome.label}:${index}`;
+  return `${outcomeIdentity}:${surface}`;
+}
+
 function outcomeTone(outcome: SportOutcomeDetail, index: number): 'lead' | 'draw' | 'trail' {
   if (outcome.label.toLowerCase().includes('draw')) return 'draw';
   return index === 0 ? 'lead' : 'trail';
@@ -74,20 +82,23 @@ function outcomeTone(outcome: SportOutcomeDetail, index: number): 'lead' | 'draw
 
 function sortSportOutcomes(outcomes: SportOutcomeDetail[]): SportOutcomeDetail[] {
   const list = [...outcomes];
-  const byPriceDesc = (a: SportOutcomeDetail, b: SportOutcomeDetail) => (b.price ?? -1) - (a.price ?? -1);
   const draw = list.find((outcome) => outcome.label.toLowerCase().includes('draw'));
 
   if (list.length === 3 && draw) {
-    const teams = list.filter((outcome) => outcome !== draw).sort(byPriceDesc);
+    const teams = list.filter((outcome) => outcome !== draw);
     if (teams.length === 2) return [teams[0], draw, teams[1]];
   }
+  return list;
+}
 
-  return list.sort((a, b) => {
-    const aIsDraw = a.label.toLowerCase().includes('draw');
-    const bIsDraw = b.label.toLowerCase().includes('draw');
-    if (aIsDraw && !bIsDraw) return 1;
-    if (!aIsDraw && bIsDraw) return -1;
-    return byPriceDesc(a, b);
+function labelBinaryTeamOutcomes(outcomes: SportOutcomeDetail[], teams: FeedTeam[]): SportOutcomeDetail[] {
+  if (teams.length < 2 || outcomes.length !== 2) return outcomes;
+  let teamIndex = 0;
+  return outcomes.map((outcome) => {
+    const normalized = outcome.label.trim().toLowerCase();
+    if (normalized !== 'yes' && normalized !== 'no') return outcome;
+    const team = teams[teamIndex++];
+    return team?.name ? { ...outcome, label: team.name } : outcome;
   });
 }
 
@@ -121,7 +132,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const router = useRouter();
   const poly = usePolymarketWallet();
   const connectSheet = useConnectionSheet('evm');
-  const { format, setFormat, formatOdds } = useOddsFormat();
+  const { formatOdds } = useOddsFormat();
   const { width: screenWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
@@ -136,7 +147,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const [interval, setInterval] = useState<Interval>('1h');
   const [seriesData, setSeriesData] = useState<PricePoint[][]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [activeView, setActiveView] = useState<ActiveView>('picks');
+  const [activeView, setActiveView] = useState<ActiveView>('chart');
   const [orderbook, setOrderbook] = useState<Orderbook | null>(null);
   const [orderbookLoading, setOrderbookLoading] = useState(false);
   const [buyBooks, setBuyBooks] = useState<Record<string, Orderbook | null>>({});
@@ -146,7 +157,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const [numpadOpen, setNumpadOpen] = useState(false);
   const [selectedOutcomeIdx, setSelectedOutcomeIdx] = useState<number | null>(null);
   const [selectedQuotePrice, setSelectedQuotePrice] = useState<number | null>(null);
-  const [numpadAmount, setNumpadAmount] = useState('50');
+  const [numpadAmount, setNumpadAmount] = useState('10');
   const [submitting, setSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>('idle');
   const [pickScope, setPickScope] = useState<'market' | 'all'>('market');
@@ -180,7 +191,9 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const [cashBalance, setCashBalance] = useState<number | null>(null);
   const [setupSubmitting, setSetupSubmitting] = useState(false);
   const [setupAfterConnect, setSetupAfterConnect] = useState(false);
+  const [submitAfterSetup, setSubmitAfterSetup] = useState(false);
   const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
+  const [positionOpen, setPositionOpen] = useState(false);
   // Shared composer state (PRD §6) — the sports flow routes through the same
   // OrderComposerSheet as Yes/No; the InlineNumpad path is retired here.
   const [composerOpen, setComposerOpen] = useState(false);
@@ -191,6 +204,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   const reconcileTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
   const submitInFlightRef = useRef(false);
   const buyBookRefreshInFlight = useRef(false);
+  const connectionCompletedRef = useRef(false);
   // Predict settles on Polygon, so its cache scope is the EVM signer — never the
   // Solana wallet. Keying on Solana meant an email/EVM user read as disconnected
   // and a Solana disconnect wiped Predict state that did not depend on it.
@@ -211,7 +225,10 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   // Live badge pulse
   const livePulse = useRef(new Animated.Value(1)).current;
 
-  const baseSortedOutcomes = useMemo(() => (detail ? sortSportOutcomes(detail.outcomes) : []), [detail]);
+  const baseSortedOutcomes = useMemo(
+    () => (detail ? labelBinaryTeamOutcomes(sortSportOutcomes(detail.outcomes), detail.teams) : []),
+    [detail],
+  );
   const sortedOutcomes = useMemo(
     () =>
       baseSortedOutcomes.map((outcome) => {
@@ -474,8 +491,8 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
   }, [activeView, detail, obOutcomeIdx]);
 
   useEffect(() => {
-    if (activeView === 'picks') void loadPicks();
-  }, [activeView, slug, poly.polygonAddress, poly.tradingAddress]);
+    void loadPicks();
+  }, [slug, poly.polygonAddress, poly.tradingAddress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -533,7 +550,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     }
     setSelectedOutcomeIdx(outcomeIdx);
     setSelectedQuotePrice(sortedOutcomes[outcomeIdx]?.price ?? null);
-    setNumpadAmount('50');
+    setNumpadAmount('10');
     setNumpadOpen(true);
     setComposerOpen(true);
   }
@@ -562,7 +579,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     setComposerParams(null);
   }
 
-  async function submitOrder() {
+  async function submitOrder(paramsOverride?: { mode: ComposerMode; limitPriceCents: number } | null) {
     if (!detail || selectedOutcomeIdx === null || submitting || submitInFlightRef.current) return;
     const amount = parseFloat(numpadAmount);
     if (!amount || amount <= 0) return;
@@ -612,13 +629,37 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
       // Limit mode: rest a GTC order at the user's chosen price instead of
       // executing at the book average. Size = spend / chosen price. Client-side
       // GTD (auto-cancel at kickoff) is a flagged follow-up in the PRD.
+      const resolvedComposerParams = paramsOverride ?? composerParams;
       const effectiveLimitCents =
-        composerParams?.mode === 'limit' && composerParams.limitPriceCents > 0
-          ? composerParams.limitPriceCents
+        resolvedComposerParams?.mode === 'limit' && resolvedComposerParams.limitPriceCents > 0
+          ? resolvedComposerParams.limitPriceCents
           : null;
-      if (effectiveLimitCents !== null && Math.round(price * 100) !== effectiveLimitCents) {
+      if (effectiveLimitCents === null && (!quote.executable || quote.limitPrice === null || quote.shares <= 0)) {
+        Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
+        return;
+      }
+      const effectivePrice = effectiveLimitCents !== null
+        ? effectiveLimitCents / 100
+        : quote.averagePrice;
+      const effectiveShares = effectiveLimitCents !== null
+        ? amount / (effectiveLimitCents / 100)
+        : quote.shares;
+      const minimumGuardrail = getMinimumOrderGuardrail({
+        orderSize: effectiveShares,
+        minimumOrderSize: freshBook?.minOrderSize,
+        executionPrice: effectivePrice,
+      });
+      if (minimumGuardrail) {
+        Alert.alert(minimumGuardrail.title, minimumGuardrail.message);
+        return;
+      }
+      if (effectiveLimitCents !== null) {
         const limitPrice = effectiveLimitCents / 100;
         const limitShares = amount / limitPrice;
+        const expirationMs = Date.parse(detail.gameStartTime ?? detail.endDate ?? '');
+        if (!Number.isFinite(expirationMs) || expirationMs <= Date.now() + 60_000) {
+          throw new Error('Limit orders are unavailable after kickoff. Use a market order instead.');
+        }
         const resultLimit = await placeBet(signer, {
           polygonAddress: poly.polygonAddress,
           tradingAddress: poly.tradingAddress,
@@ -627,7 +668,8 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
           size: limitShares,
           side: 'BUY',
           negRisk: !!detail.negRisk,
-          orderType: 'GTC',
+          orderType: 'GTD',
+          expiration: Math.floor(expirationMs / 1_000),
         });
         if (!resultLimit.success) throw new Error(resultLimit.error || 'Order failed');
         const pendingLimit = makePendingOpenOrder({
@@ -649,10 +691,6 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
           activeView === 'orderbook' ? loadOrderbook(obOutcomeIdx) : Promise.resolve(),
         ]);
         scheduleFollowUpReconcile(poly.polygonAddress);
-        return;
-      }
-      if (!quote.executable || quote.limitPrice === null || quote.shares <= 0) {
-        Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
         return;
       }
       const result = await placeBet(poly.client, {
@@ -742,15 +780,13 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     }
   }
 
-  const numpadPrice = (() => {
-    if (selectedOutcomeIdx === null) return 0.5;
-    const outcome = sortedOutcomes[selectedOutcomeIdx];
-    const tokenId = outcome?.clobTokenIds[0];
-    const amount = parseFloat(numpadAmount) || 0;
-    const quote = buildExecutableBuyQuote(tokenId ? buyBooks[tokenId] ?? null : null, amount);
-    return quote.averagePrice ?? outcome?.price ?? 0.5;
-  })();
   const selectedOutcome = selectedOutcomeIdx !== null ? sortedOutcomes[selectedOutcomeIdx] : null;
+  const selectedOutcomeTokenId = selectedOutcome?.clobTokenIds[0] ?? null;
+  const selectedOutcomeBook = selectedOutcomeTokenId ? buyBooks[selectedOutcomeTokenId] ?? null : null;
+  const selectedExecutableQuote = buildExecutableBuyQuote(
+    selectedOutcomeBook,
+    parseFloat(numpadAmount) || 0,
+  );
   const selectedOutcomeLabel = selectedOutcome ? sportOutcomeLabel(selectedOutcome) : undefined;
   const marketTokenIds = sortedOutcomes.flatMap((outcome) => outcome.clobTokenIds);
   const marketConditionIds = sortedOutcomes.map((outcome) => outcome.conditionId).filter((id): id is string => !!id);
@@ -790,6 +826,22 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     setSetupAfterConnect(false);
     void runPredictSetup();
   }, [setupAfterConnect, poly.signer, poly.isReady]);
+
+  useEffect(() => {
+    if (!submitAfterSetup || !poly.isReady || !composerParams) return;
+    setSubmitAfterSetup(false);
+    void submitOrder(composerParams);
+  }, [submitAfterSetup, poly.isReady, composerParams]);
+
+  function confirmComposer(params: { mode: ComposerMode; limitPriceCents: number }) {
+    setComposerParams(params);
+    if (!poly.signer) {
+      setSubmitAfterSetup(true);
+      handlePredictSetupPress();
+      return;
+    }
+    void submitOrder(params);
+  }
   const orderGuardrail = selectedOutcome
     ? getPredictOrderGuardrail({
         amount: amountNum,
@@ -814,8 +866,229 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         ? 'Syncing pick...'
         : 'Placing order...';
 
-  const chartWidth = screenWidth - 40;
+  const chartWidth = Math.max(260, screenWidth - 60);
   const chartHeight = 180;
+  const activePosition = [...marketPositions].sort((a, b) => b.currentValue - a.currentValue)[0] ?? null;
+  const teamOutcomes = sortedOutcomes.filter((outcome) => !outcome.label.toLowerCase().includes('draw'));
+  const homeOutcome = teamOutcomes[0] ?? null;
+  const awayOutcome = teamOutcomes[1] ?? null;
+  const teamFor = (label: string | undefined, fallbackIndex: number) =>
+    detail?.teams.find((team) => team.name.toLowerCase() === label?.toLowerCase())
+    ?? detail?.teams[fallbackIndex]
+    ?? null;
+  const homeTeam = teamFor(homeOutcome?.label, 0);
+  const awayTeam = teamFor(awayOutcome?.label, 1);
+
+  if (detail && !loading && !errorMessage) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <AppTopBar
+          left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
+          center={(
+            <View style={styles.mockTitleLockup}>
+              <Text style={styles.mockTopTitle} numberOfLines={1}>{displayTitle}</Text>
+              <Text style={styles.mockTopSubtitle}>Sports · Moneyline</Text>
+            </View>
+          )}
+          right={<AppTopBarCashPill value={truncateUsd(cashBalance)} />}
+        />
+
+        <ScrollView
+          style={styles.mockScroll}
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator
+          refreshControl={(
+            <RefreshControl refreshing={refreshing} onRefresh={() => void refreshDetailScreen()} tintColor={tokens.colors.accent} />
+          )}
+          contentContainerStyle={[styles.mockContent, { paddingBottom: Math.max(insets.bottom, 18) + 20 }]}
+        >
+          <View style={styles.mockCard}>
+            <View style={styles.mockCardTop}>
+              <Text style={styles.mockKind}>Match result · Moneyline</Text>
+              {activePosition ? (
+                <Pressable style={styles.mockPositionButton} accessibilityRole="button" onPress={() => setPositionOpen(true)}>
+                  <MaterialIcons name="account-circle" size={16} color={tokens.colors.viridian} />
+                  <Text style={styles.mockPositionLabel}>Your pick</Text>
+                  <Text style={[styles.mockPositionPnl, activePosition.cashPnl < 0 && styles.mockPositionPnlNegative]}>
+                    {activePosition.cashPnl >= 0 ? '+' : '-'}${Math.abs(activePosition.cashPnl).toFixed(2)}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <SportsMatchupHeader
+              homeTeam={homeOutcome ? sportOutcomeLabel(homeOutcome) : (homeTeam?.name ?? displayTitle)}
+              awayTeam={awayOutcome ? sportOutcomeLabel(awayOutcome) : (awayTeam?.name ?? '')}
+              homeLogo={homeTeam?.logo}
+              awayLogo={awayTeam?.logo}
+              league={null}
+              startsAt={null}
+              active={detail.active}
+            />
+
+            <View style={styles.mockPanel}>
+              <View style={styles.mockPanelHead}>
+                <View>
+                  <Text style={styles.mockPanelTitle}>Market movement</Text>
+                  <Text style={styles.mockPanelSubtitle}>{activeView === 'orderbook' ? 'Live orders' : 'Price history'}</Text>
+                </View>
+                <View style={styles.mockViewSwitch} accessibilityRole="tablist">
+                  {(['chart', 'orderbook'] as const).map((view) => {
+                    const selected = activeView === view;
+                    return (
+                      <Pressable
+                        key={view}
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected }}
+                        style={[styles.mockViewButton, selected && styles.mockViewButtonActive]}
+                        onPress={() => setActiveView(view)}
+                      >
+                        <MaterialIcons name={view === 'chart' ? 'show-chart' : 'layers'} size={14} color={selected ? tokens.colors.backgroundDark : semantic.text.faint} />
+                        <Text style={[styles.mockViewText, selected && styles.mockViewTextActive]}>{view === 'chart' ? 'Chart' : 'Book'}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.mockMarketSurface}>
+                {activeView === 'orderbook' ? (
+                  <View style={styles.mockBookWrap}>
+                    <View style={styles.mockBookTabs}>
+                      {sortedOutcomes.map((outcome, index) => (
+                        <Pressable
+                          key={sportOutcomeKey(outcome, index, 'book')}
+                          accessibilityRole="tab"
+                          accessibilityState={{ selected: obOutcomeIdx === index }}
+                          style={[styles.mockBookTab, obOutcomeIdx === index && styles.mockBookTabActive]}
+                          onPress={() => setObOutcomeIdx(index)}
+                        >
+                          <Text style={[styles.mockBookTabText, obOutcomeIdx === index && styles.mockBookTabTextActive]} numberOfLines={1}>
+                            {sportOutcomeLabel(outcome)}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <OrderbookView book={orderbook} loading={orderbookLoading} />
+                  </View>
+                ) : historyLoading ? (
+                  <ActivityIndicator color={semantic.text.faint} />
+                ) : (
+                  <View style={styles.mockChartWrap}>
+                    <View style={styles.mockLegend}>
+                      {chartSeries.map((series) => (
+                        <View key={series.label} style={styles.mockLegendItem}>
+                          <View style={[styles.mockLegendDot, { backgroundColor: series.color }]} />
+                          <Text style={styles.mockLegendText} numberOfLines={1}>{series.label}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    <MultiLineChart series={chartSeries} width={chartWidth} height={chartHeight} />
+                  </View>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.mockMoneyline}>
+              <View style={styles.mockMoneylineHead}>
+                <Text style={styles.mockMoneylineTitle}>Who wins?</Text>
+                <Text style={styles.mockMoneylineMeta}>Live price</Text>
+              </View>
+              {marketClosed ? <Text style={styles.marketClosedText}>This market is closed.</Text> : null}
+              <View style={styles.mockOutcomes}>
+                {sortedOutcomes.map((outcome, index) => {
+                  const tone = outcomeTone(outcome, index);
+                  const selected = selectedOutcomeIdx === index;
+                  return (
+                    <Pressable
+                      key={sportOutcomeKey(outcome, index, 'pick')}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected, disabled: marketClosed || submitting }}
+                      disabled={marketClosed || submitting}
+                      style={[styles.mockOutcome, selected && styles.mockOutcomeSelected]}
+                      onPress={() => tapOdd(index)}
+                    >
+                      <Text style={styles.mockOutcomeLabel} numberOfLines={1}>{sportOutcomeLabel(outcome)}</Text>
+                      <Text style={[
+                        styles.mockOutcomePrice,
+                        tone === 'lead' ? styles.mockOutcomeLead : tone === 'draw' ? styles.mockOutcomeDraw : styles.mockOutcomeTrail,
+                      ]}>
+                        {outcome.price === null ? '--' : `${Math.round(outcome.price * 100)}¢`}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View style={styles.mockHint}>
+                <MaterialIcons name="touch-app" size={13} color={tokens.colors.accent} />
+                <Text style={styles.mockHintText}>Tap a result to place an order</Text>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+
+        <DetailPositionSheet
+          visible={positionOpen}
+          position={activePosition}
+          title="Match result"
+          onClose={() => setPositionOpen(false)}
+          onAdd={() => {
+            setPositionOpen(false);
+            if (activePosition) backMorePosition(activePosition);
+          }}
+          onCashOut={() => {
+            setPositionOpen(false);
+            if (activePosition) handleCashOut(activePosition);
+          }}
+        />
+        <CashOutConfirmModal
+          visible={cashOutPosition !== null}
+          position={cashOutPosition}
+          submitting={submitting}
+          orderbook={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.book ?? null : null}
+          quoteLoading={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.loading ?? false : false}
+          quoteError={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.error ?? null : null}
+          onClose={() => setCashOutPosition(null)}
+          onConfirm={confirmCashOut}
+        />
+        <OrderComposerSheet
+          visible={composerOpen && selectedOutcomeIdx !== null}
+          side={selectedOutcomeIdx === 0 ? 'yes' : 'no'}
+          pickLabel={selectedOutcomeLabel}
+          question={detail.title}
+          currentPrice={selectedQuotePrice}
+          amount={numpadAmount}
+          onAmountChange={setNumpadAmount}
+          executableAvgPrice={marketClosed || !selectedExecutableQuote.executable ? null : selectedExecutableQuote.averagePrice}
+          minimumOrderSize={selectedOutcomeBook?.minOrderSize ?? null}
+          availableCash={cashBalance}
+          guardrail={orderGuardrail}
+          submitting={submitting}
+          submittingLabel={submitLabel}
+          disabled={marketClosed}
+          limitOrderNote="Cancels automatically at kickoff."
+          onClose={collapseNumpad}
+          onConfirm={confirmComposer}
+        />
+        <ConnectionSheet
+          visible={connectSheet.visible}
+          chain={connectSheet.chain}
+          onConnected={() => {
+            connectionCompletedRef.current = true;
+          }}
+          onClose={() => {
+            const completed = connectionCompletedRef.current;
+            connectionCompletedRef.current = false;
+            if (!completed) {
+              setSetupAfterConnect(false);
+              setSubmitAfterSetup(false);
+            }
+            connectSheet.close();
+          }}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -1052,7 +1325,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
             {/* Shared order composer (PRD §6) — replaces the inline numpad */}
             <OrderComposerSheet
               visible={composerOpen && selectedOutcomeIdx !== null}
-              side="yes"
+              side={selectedOutcomeIdx === 0 ? 'yes' : 'no'}
               pickLabel={selectedOutcomeLabel}
               question={detail?.title ?? null}
               currentPrice={selectedQuotePrice}
@@ -1069,19 +1342,17 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
                       return q.executable && q.averagePrice !== null ? q.averagePrice : null;
                     })()
               }
+              minimumOrderSize={selectedOutcomeBook?.minOrderSize ?? null}
               availableCash={cashBalance}
               guardrail={orderGuardrail}
               submitting={submitting}
               submittingLabel={submitLabel}
-              disabled={!poly.isReady}
+              disabled={marketClosed}
               onClose={() => {
                 setComposerParams(null);
                 collapseNumpad();
               }}
-              onConfirm={(params) => {
-                setComposerParams(params);
-                void submitOrder();
-              }}
+              onConfirm={confirmComposer}
             />
           </Animated.View>
         </View>
@@ -1100,10 +1371,18 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
       <ConnectionSheet
         visible={connectSheet.visible}
         chain={connectSheet.chain}
+        onConnected={() => {
+          connectionCompletedRef.current = true;
+        }}
         onClose={() => {
           // Cancelling the sheet abandons the pending session setup, so the
           // resume effect must not fire if the user later connects elsewhere.
-          setSetupAfterConnect(false);
+          const completed = connectionCompletedRef.current;
+          connectionCompletedRef.current = false;
+          if (!completed) {
+            setSetupAfterConnect(false);
+            setSubmitAfterSetup(false);
+          }
           connectSheet.close();
         }}
       />
@@ -1113,6 +1392,53 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: semantic.background.screen },
+  mockTitleLockup: { flex: 1, paddingHorizontal: 7 },
+  mockTopTitle: { fontSize: 12, lineHeight: 15, fontWeight: '900', color: semantic.text.primary },
+  mockTopSubtitle: { paddingTop: 2, fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  mockScroll: { flex: 1 },
+  mockContent: { paddingHorizontal: 14, paddingTop: 10 },
+  mockCard: { overflow: 'hidden', borderRadius: 24, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: tokens.colors.surface, boxShadow: '0 12px 26px rgba(3,31,44,0.32)' },
+  mockCardTop: { minHeight: 48, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: semantic.border.muted },
+  mockKind: { fontFamily: 'monospace', fontSize: 9, fontWeight: '900', textTransform: 'uppercase', color: semantic.text.dim },
+  mockPositionButton: { minHeight: 32, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 11, borderCurve: 'continuous', backgroundColor: tokens.colors.lift },
+  mockPositionLabel: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', color: semantic.text.dim },
+  mockPositionPnl: { fontFamily: 'monospace', fontSize: 9, fontWeight: '900', color: tokens.colors.viridian },
+  mockPositionPnlNegative: { color: tokens.colors.vermillion },
+  mockPanel: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border.muted, backgroundColor: tokens.colors.ground },
+  mockPanelHead: { minHeight: 66, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  mockPanelTitle: { fontSize: 13, fontWeight: '900', color: semantic.text.primary },
+  mockPanelSubtitle: { paddingTop: 3, fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  mockViewSwitch: { flexDirection: 'row', padding: 4, borderRadius: 13, borderCurve: 'continuous', backgroundColor: tokens.colors.lift },
+  mockViewButton: { minWidth: 65, minHeight: 36, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 10, borderCurve: 'continuous' },
+  mockViewButtonActive: { backgroundColor: tokens.colors.accent },
+  mockViewText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.faint },
+  mockViewTextActive: { color: tokens.colors.backgroundDark },
+  mockMarketSurface: { minHeight: 216, paddingHorizontal: 8, paddingBottom: 10, alignItems: 'center', justifyContent: 'center' },
+  mockChartWrap: { width: '100%', alignItems: 'center' },
+  mockLegend: { width: '100%', minHeight: 26, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  mockLegendItem: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  mockLegendDot: { width: 6, height: 6, borderRadius: 3 },
+  mockLegendText: { maxWidth: 92, fontFamily: 'monospace', fontSize: 8, fontWeight: '700', color: semantic.text.faint },
+  mockBookWrap: { width: '100%', minHeight: 202, paddingHorizontal: 5 },
+  mockBookTabs: { flexDirection: 'row', gap: 5, paddingBottom: 8 },
+  mockBookTab: { flex: 1, minHeight: 36, paddingHorizontal: 5, borderRadius: 10, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.surface },
+  mockBookTabActive: { backgroundColor: tokens.colors.accent },
+  mockBookTabText: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', color: semantic.text.faint },
+  mockBookTabTextActive: { color: tokens.colors.backgroundDark },
+  mockMoneyline: { paddingHorizontal: 13, paddingTop: 13, paddingBottom: 15, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border.muted, backgroundColor: tokens.colors.surface },
+  mockMoneylineHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  mockMoneylineTitle: { fontSize: 13, fontWeight: '900', color: semantic.text.primary },
+  mockMoneylineMeta: { fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
+  mockOutcomes: { paddingTop: 10, flexDirection: 'row', gap: 7 },
+  mockOutcome: { flex: 1, minWidth: 0, minHeight: 68, paddingHorizontal: 9, paddingVertical: 11, justifyContent: 'space-between', borderRadius: 13, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: tokens.colors.ground },
+  mockOutcomeSelected: { borderColor: tokens.colors.accent, backgroundColor: tokens.colors.lift, boxShadow: `inset 0 -3px 0 ${tokens.colors.accent}` },
+  mockOutcomeLabel: { fontSize: 9, fontWeight: '900', color: semantic.text.dim },
+  mockOutcomePrice: { fontFamily: 'monospace', fontSize: 17, fontWeight: '900' },
+  mockOutcomeLead: { color: tokens.colors.viridian },
+  mockOutcomeDraw: { color: tokens.colors.accent },
+  mockOutcomeTrail: { color: tokens.colors.vermillion },
+  mockHint: { paddingTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  mockHintText: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', textTransform: 'uppercase', color: semantic.text.faint },
 
   headerRight: {
     flexDirection: 'row',

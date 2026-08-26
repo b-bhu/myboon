@@ -266,6 +266,8 @@ function mapSportMarketDetail(row: unknown): SportMarketDetail | null {
   const status: FeedItemStatus =
     rawStatus === 'live' || rawStatus === 'upcoming' || rawStatus === 'closed'
       ? rawStatus
+      : rawStatus === 'ended'
+        ? 'closed'
       : 'n/a';
 
   return {
@@ -274,6 +276,7 @@ function mapSportMarketDetail(row: unknown): SportMarketDetail | null {
     description: typeof market.description === 'string' ? market.description : null,
     sport,
     status,
+    gameStartTime: typeof market.gameStartTime === 'string' ? market.gameStartTime : null,
     startDate: typeof market.startDate === 'string' ? market.startDate : null,
     endDate: typeof market.endDate === 'string' ? market.endDate : null,
     image: typeof market.image === 'string' ? market.image : null,
@@ -281,6 +284,9 @@ function mapSportMarketDetail(row: unknown): SportMarketDetail | null {
     negRisk: market.negRisk === true,
     volume24h: toNumber(market.volume24h),
     liquidity: toNumber(market.liquidity),
+    teams: (Array.isArray(market.teams) ? market.teams : [])
+      .map(mapFeedTeam)
+      .filter((team): team is FeedTeam => team !== null),
     outcomes,
   };
 }
@@ -1614,7 +1620,11 @@ export async function fetchOrderbook(tokenId: string): Promise<import('./predict
   const bestBid = bids.length > 0 ? Math.max(...bids.map((b) => b.price)) : null;
   const bestAsk = asks.length > 0 ? Math.min(...asks.map((a) => a.price)) : null;
   const spread = bestBid !== null && bestAsk !== null ? Math.abs(bestAsk - bestBid) : null;
+  const parsedMinOrderSize = toNumber(p.min_order_size) ?? toNumber(p.minimum_order_size) ?? toNumber(p.minOrderSize);
+  const minOrderSize = parsedMinOrderSize !== null && parsedMinOrderSize > 0
+    ? parsedMinOrderSize
+    : null;
   const lastPrice = toNumber(p.last_trade_price) ?? toNumber(p.last_price) ?? toNumber(p.lastPrice) ?? bestBid;
 
-  return { bids, asks, lastPrice, spread };
+  return { bids, asks, minOrderSize, lastPrice, spread };
 }

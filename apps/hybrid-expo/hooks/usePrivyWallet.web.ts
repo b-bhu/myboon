@@ -10,6 +10,8 @@ export interface PrivyWalletState {
   waitForWallet: () => Promise<void>;
   signMessage: ((message: Uint8Array) => Promise<Uint8Array>) | null;
   authMethod: 'email' | 'google' | 'wallet' | null;
+  identityEmail: string | null;
+  identityName: string | null;
 }
 
 const unavailable = async () => {
@@ -28,6 +30,8 @@ const webPrivyWallet: PrivyWalletState = {
   waitForWallet: async () => {},
   signMessage: null,
   authMethod: null,
+  identityEmail: null,
+  identityName: null,
 };
 
 export function usePrivyWallet(): PrivyWalletState {

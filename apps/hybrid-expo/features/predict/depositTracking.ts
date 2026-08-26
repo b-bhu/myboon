@@ -15,6 +15,8 @@ export interface TrackedDepositEvidence {
 const TRANSACTION_TIME_TOLERANCE_MS = 30_000;
 const MINIMUM_AMOUNT_TOLERANCE = 0.01;
 const RELATIVE_AMOUNT_TOLERANCE = 0.005;
+const MINIMUM_BALANCE_TOLERANCE = 0.05;
+const RELATIVE_BALANCE_TOLERANCE = 0.02;
 
 export function depositTransactionKey(transaction: DepositBridgeTransaction): string {
   return [
@@ -75,16 +77,35 @@ export function latestDepositTransaction(
 }
 
 export function isCompletedDepositEvidence(transaction: DepositBridgeTransaction | null): boolean {
-  // Earlier Bridge states are progress only. They do not prove the tracked
-  // deposit caused a balance delta, so an unrelated sell could otherwise
-  // complete the flow while this deposit is still bridging.
   return transaction?.status === 'COMPLETED';
 }
 
-/** Balance is only a second confirmation; it can never complete tracking alone. */
+function balanceMatchesTrackedDeposit(
+  balanceDelta: number | null,
+  intendedAmount: number | undefined,
+): boolean {
+  if (balanceDelta === null || !Number.isFinite(balanceDelta) || balanceDelta <= 0) return false;
+  if (intendedAmount === undefined || !Number.isFinite(intendedAmount) || intendedAmount <= 0) return false;
+
+  // A small tolerance allows for bridge fees and decimal rounding, while
+  // preventing an unrelated minor balance change from completing this flow.
+  const tolerance = Math.max(
+    MINIMUM_BALANCE_TOLERANCE,
+    intendedAmount * RELATIVE_BALANCE_TOLERANCE,
+  );
+  return balanceDelta >= intendedAmount - tolerance;
+}
+
+/**
+ * Either upstream completion or a matching spendable-balance credit is final.
+ * The Bridge status feed can lag behind the CLOB balance, and the user should
+ * not remain stuck in "Waiting" after the deposited funds are usable.
+ */
 export function canCompleteTrackedDeposit(
-  balanceIncreased: boolean,
+  balanceDelta: number | null,
+  intendedAmount: number | undefined,
   transaction: DepositBridgeTransaction | null,
 ): boolean {
-  return balanceIncreased && isCompletedDepositEvidence(transaction);
+  return isCompletedDepositEvidence(transaction)
+    || balanceMatchesTrackedDeposit(balanceDelta, intendedAmount);
 }

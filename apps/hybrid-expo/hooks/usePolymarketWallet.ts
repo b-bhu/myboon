@@ -1,6 +1,15 @@
 /** Mobile-owned Polymarket SecureClient lifecycle for the active Privy EOA. */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 import type { SecureClient } from '@polymarket/client';
@@ -36,6 +45,8 @@ export interface PolymarketWallet {
   client: SecureClient | null;
   isReady: boolean;
   isLoading: boolean;
+  /** Unified SDK credentials are refreshed locally; there is no VPS session to expire. */
+  sessionExpired: false;
   enable: () => Promise<void>;
   disable: () => Promise<void>;
   canSignLocally: boolean;
@@ -52,7 +63,9 @@ function storageKeys(address: string): string[] {
   ];
 }
 
-export function usePolymarketWallet(): PolymarketWallet {
+const PolymarketWalletContext = createContext<PolymarketWallet | null>(null);
+
+function usePolymarketWalletController(): PolymarketWallet {
   const { signer, status: signerStatus, connect: connectSigner } = useChainSigner(POLYMARKET_REQUIREMENT);
   const evmAddress = signer?.descriptor.address ?? null;
   const walletPreparing = signerStatus === 'preparing';
@@ -252,6 +265,7 @@ export function usePolymarketWallet(): PolymarketWallet {
       client: null,
       isReady: true,
       isLoading: false,
+      sessionExpired: false,
       enable: async () => {},
       disable: async () => {},
       canSignLocally: true,
@@ -270,6 +284,7 @@ export function usePolymarketWallet(): PolymarketWallet {
     client,
     isReady,
     isLoading,
+    sessionExpired: false,
     enable,
     disable,
     canSignLocally: !!signer,
@@ -277,4 +292,15 @@ export function usePolymarketWallet(): PolymarketWallet {
     signerStatus,
     connectSigner,
   };
+}
+
+export function PolymarketWalletProvider({ children }: { children: ReactNode }) {
+  const wallet = usePolymarketWalletController();
+  return createElement(PolymarketWalletContext.Provider, { value: wallet }, children);
+}
+
+export function usePolymarketWallet(): PolymarketWallet {
+  const wallet = useContext(PolymarketWalletContext);
+  if (!wallet) throw new Error('usePolymarketWallet must be used within PolymarketWalletProvider');
+  return wallet;
 }

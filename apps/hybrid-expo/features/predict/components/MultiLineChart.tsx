@@ -28,10 +28,8 @@ const X_PAD = 20; // bottom padding for x-axis labels
 const TOP_PAD = 4;
 const RIGHT_PAD = 4;
 
-function buildPath(points: PricePoint[], w: number, h: number): string | null {
+function buildPath(points: PricePoint[], w: number, h: number, minT: number, maxT: number): string | null {
   if (points.length < 2) return null;
-  const minT = points[0].t;
-  const maxT = points[points.length - 1].t;
   const rangeT = maxT - minT || 1;
   const chartH = h - X_PAD - TOP_PAD;
   const chartW = w - Y_PAD - RIGHT_PAD;
@@ -44,11 +42,9 @@ function buildPath(points: PricePoint[], w: number, h: number): string | null {
   return coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
 }
 
-function endpointCoord(points: PricePoint[], w: number, h: number): { x: number; y: number } | null {
+function endpointCoord(points: PricePoint[], w: number, h: number, minT: number, maxT: number): { x: number; y: number } | null {
   if (points.length < 1) return null;
   const last = points[points.length - 1];
-  const minT = points[0].t;
-  const maxT = points[points.length - 1].t;
   const rangeT = maxT - minT || 1;
   const chartH = h - X_PAD - TOP_PAD;
   const chartW = w - Y_PAD - RIGHT_PAD;
@@ -107,9 +103,11 @@ function getXLabels(allPoints: PricePoint[], w: number): { label: string; x: num
 export function MultiLineChart({ series, width, height }: MultiLineChartProps) {
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
 
-  // Collect all timestamps from the first series with data (for x-axis)
-  const refSeries = series.find((s) => s.points.length > 0);
-  const allPoints = refSeries?.points ?? [];
+  // Every series shares the same time axis. Mapping each line against its own
+  // first/last timestamp visually compares different moments at the same x.
+  const allPoints = series.flatMap((item) => item.points).sort((a, b) => a.t - b.t);
+  const minTime = allPoints[0]?.t ?? 0;
+  const maxTime = allPoints[allPoints.length - 1]?.t ?? minTime + 1;
   const xLabels = getXLabels(allPoints, width);
 
   const chartH = height - X_PAD - TOP_PAD;
@@ -190,7 +188,7 @@ export function MultiLineChart({ series, width, height }: MultiLineChartProps) {
 
         {/* Data lines */}
         {series.map((s, i) => {
-          const path = buildPath(s.points, width, height);
+          const path = buildPath(s.points, width, height, minTime, maxTime);
           if (!path) return null;
           return (
             <Path
@@ -207,7 +205,7 @@ export function MultiLineChart({ series, width, height }: MultiLineChartProps) {
 
         {/* Endpoint dots */}
         {series.map((s, i) => {
-          const endpoint = endpointCoord(s.points, width, height);
+          const endpoint = endpointCoord(s.points, width, height, minTime, maxTime);
           if (!endpoint) return null;
           return (
             <Circle
