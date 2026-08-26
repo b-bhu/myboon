@@ -18,6 +18,8 @@ import {
   fetchClobBalance,
   fetchDepositAddresses,
   fetchDepositStatus,
+  POLYGON_CHAIN_ID,
+  POLYMARKET_PUSD,
   selectSupportedDepositAssets,
 } from '@/features/predict/predict.api';
 import type {
@@ -25,6 +27,12 @@ import type {
   BridgeSupportedAsset,
   DepositBridgeTransaction,
 } from '@/features/predict/predict.api';
+import {
+  canCompleteTrackedDeposit,
+  depositTransactionKey,
+  latestDepositTransaction,
+  matchingDepositTransactions,
+} from '@/features/predict/depositTracking';
 
 interface DepositModalProps {
   isOpen: boolean;
@@ -58,6 +66,9 @@ interface TrackedDeposit {
   chainId?: string;
   tokenAddress?: string;
   tokenSymbol?: string;
+  tokenDecimals?: number;
+  destinationChainId?: string;
+  destinationTokenAddress?: string;
   intendedAmount?: number;
   address: string;
   baselineBalance: number | null;
@@ -75,49 +86,7 @@ interface DepositStatusView {
 
 const DEPOSIT_POLL_MS = 10_000;
 const DELAYED_AFTER_MS = 5 * 60_000;
-const TRANSACTION_TIME_TOLERANCE_MS = 30_000;
 const DEPOSIT_TRACKING_STORAGE_PREFIX = 'predict.deposit.tracking.v1';
-
-function transactionKey(transaction: DepositBridgeTransaction): string {
-  return [
-    transaction.fromChainId ?? '',
-    transaction.fromTokenAddress ?? '',
-    transaction.fromAmountBaseUnit ?? '',
-    transaction.toChainId ?? '',
-    transaction.toTokenAddress ?? '',
-    transaction.status ?? '',
-    transaction.txHash ?? '',
-    transaction.createdTimeMs ?? '',
-  ].join(':');
-}
-
-function trackingTransactions(
-  transactions: DepositBridgeTransaction[],
-  trackedDeposit: TrackedDeposit,
-): DepositBridgeTransaction[] {
-  const baselineKeys = new Set(trackedDeposit.baselineTransactionKeys);
-  return transactions.filter((transaction) => {
-    if (trackedDeposit.chainId && transaction.fromChainId !== trackedDeposit.chainId) return false;
-    if (
-      trackedDeposit.tokenAddress
-      && transaction.fromTokenAddress?.toLowerCase() !== trackedDeposit.tokenAddress.toLowerCase()
-    ) return false;
-    if (baselineKeys.has(transactionKey(transaction))) return false;
-    if (typeof transaction.createdTimeMs === 'number') {
-      return transaction.createdTimeMs >= trackedDeposit.startedAt - TRANSACTION_TIME_TOLERANCE_MS;
-    }
-    return trackedDeposit.hasStatusSnapshot;
-  });
-}
-
-function latestTransaction(transactions: DepositBridgeTransaction[]): DepositBridgeTransaction | null {
-  if (transactions.length === 0) return null;
-  return [...transactions].sort((a, b) => {
-    const aTime = a.createdTimeMs ?? Number.MAX_SAFE_INTEGER;
-    const bTime = b.createdTimeMs ?? Number.MAX_SAFE_INTEGER;
-    return bTime - aTime;
-  })[0] ?? null;
-}
 
 function statusFromTransaction(transaction: DepositBridgeTransaction | null, startedAt: number): DepositStatusView {
   if (!transaction?.status) {
@@ -249,9 +218,17 @@ export function DepositModal({
           trackedDeposit?: TrackedDeposit | null;
           statusView?: DepositStatusView | null;
         };
-        setTrackedDeposit(saved.trackedDeposit ?? null);
+        const restored = saved.trackedDeposit
+          ? {
+              ...saved.trackedDeposit,
+              tokenDecimals: saved.trackedDeposit.tokenDecimals ?? 6,
+              destinationChainId: saved.trackedDeposit.destinationChainId ?? POLYGON_CHAIN_ID,
+              destinationTokenAddress: saved.trackedDeposit.destinationTokenAddress ?? POLYMARKET_PUSD,
+            }
+          : null;
+        setTrackedDeposit(restored);
         setStatusView(saved.statusView ?? null);
-        setTrackingStorageKey(saved.trackedDeposit ? storageKey : null);
+        setTrackingStorageKey(restored ? storageKey : null);
       })
       .catch(() => {
         if (!cancelled) {
@@ -286,8 +263,11 @@ export function DepositModal({
       const balanceReady = trackedDeposit.baselineKnown && balance
         ? balance.balance > baseline + 0.000001
         : false;
+      const bridgeTransaction = latestDepositTransaction(
+        matchingDepositTransactions(transactions, trackedDeposit),
+      );
 
-      if (balanceReady) {
+      if (canCompleteTrackedDeposit(balanceReady, bridgeTransaction)) {
         setStatusView({
           label: 'Funds available',
           detail: `Cash balance is now $${balance!.balance.toFixed(2)}.`,
@@ -308,7 +288,7 @@ export function DepositModal({
       }
 
       const bridgeView = statusFromTransaction(
-        latestTransaction(trackingTransactions(transactions, trackedDeposit)),
+        bridgeTransaction,
         trackedDeposit.startedAt,
       );
       setStatusView(bridgeView);
@@ -358,11 +338,14 @@ export function DepositModal({
       chainId: asset.chainId,
       tokenAddress: asset.token.address,
       tokenSymbol: asset.token.symbol,
+      tokenDecimals: asset.token.decimals,
+      destinationChainId: POLYGON_CHAIN_ID,
+      destinationTokenAddress: POLYMARKET_PUSD,
       intendedAmount: plannedAmount,
       address,
       baselineBalance: baseline?.balance ?? null,
       baselineKnown: !!baseline,
-      baselineTransactionKeys: existingTransactions.transactions.map(transactionKey),
+      baselineTransactionKeys: existingTransactions.transactions.map(depositTransactionKey),
       hasStatusSnapshot: existingTransactions.ok,
       startedAt,
     });

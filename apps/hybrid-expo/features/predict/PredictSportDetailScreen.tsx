@@ -334,7 +334,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
     }
   }
 
-  usePolymarketUserStream(
+  const realtimeStatus = usePolymarketUserStream(
     poly.client,
     (event) => {
       setOpenOrders((orders) => applyPredictUserEvent(orders, event));
@@ -850,7 +850,14 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
                   marketTokenIds={marketTokenIds}
                   marketConditionIds={marketConditionIds}
                   loading={picksLoading}
-                  freshness={{ ...picksFreshness, loading: picksLoading, syncing: pendingOpenOrders.length > 0 }}
+                  freshness={{
+                    ...picksFreshness,
+                    loading: picksLoading,
+                    syncing: pendingOpenOrders.length > 0,
+                    stale: picksFreshness.stale || realtimeStatus === 'degraded',
+                    error: picksFreshness.error
+                      ?? (realtimeStatus === 'degraded' ? 'Live updates delayed; using periodic refresh' : null),
+                  }}
                   marketPositions={marketPositions}
                   allPositions={allPositions}
                   redeemablePositions={redeemablePositions}

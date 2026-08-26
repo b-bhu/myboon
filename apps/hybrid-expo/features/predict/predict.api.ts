@@ -18,8 +18,8 @@ import type {
   TrendingMarket,
 } from '@/features/predict/predict.types';
 import { OrderSide, OrderType } from '@polymarket/client';
-import { fetchBalanceAllowance } from '@polymarket/client/actions';
-import type { SecureClient } from '@polymarket/client';
+import { fetchBalanceAllowance, fetchTransaction } from '@polymarket/client/actions';
+import type { SecureClient, TransactionHandle } from '@polymarket/client';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import { normalizePredictError } from './predict.errors';
 import { POLYMARKET_BUILDER_CODE } from './predict.signing';
@@ -1169,13 +1169,19 @@ export interface WithdrawParams {
   solanaAddress: string;
 }
 
-export interface WithdrawResult extends PredictOperationMeta {
-  ok: boolean;
-  amount?: number;
-  txHash?: string | null;
-  bridgeAddress?: string;
-  quote?: BridgeQuote;
-  error?: string;
+export interface PreparedWithdrawal {
+  amount: number;
+  solanaAddress: string;
+  bridgeAddress: string;
+  asset: BridgeSupportedAsset;
+  quote: BridgeQuote;
+}
+
+export interface WithdrawalTransferStatus {
+  state: string;
+  transactionId: string;
+  transactionHash: string | null;
+  errorMessage: string | null;
 }
 
 function bridgeAddressFromPayload(data: Record<string, unknown>): string | null {
@@ -1242,39 +1248,43 @@ export async function fetchWithdrawalQuote(
   return { asset, quote };
 }
 
-export async function withdrawFromPolymarket(
+export async function preparePolymarketWithdrawal(
   client: SecureClient,
   params: WithdrawParams,
-): Promise<WithdrawResult> {
-  try {
-    if (!Number.isFinite(params.amount) || params.amount <= 0) {
-      return { ok: false, status: 'failed', error: 'Enter a valid withdrawal amount.' };
-    }
-    // Re-quote at submission time. The modal's quote is for review; this fresh
-    // quote is the execution guard against a stale route or changed impact.
-    const { asset, quote } = await fetchWithdrawalQuote(params.amount, params.solanaAddress);
-    const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(client, params, asset);
-    const amount = BigInt(decimalAmountToBaseUnits(params.amount, 6));
-    const handle = await client.transferErc20({
-      tokenAddress: POLYMARKET_PUSD,
-      recipientAddress: bridgeAddress,
-      amount,
-      metadata: `Withdraw pUSD to Solana ${params.solanaAddress}`,
-    });
-    const outcome = await handle.wait();
-    return {
-      ok: true,
-      amount: params.amount,
-      txHash: outcome.transactionHash,
-      bridgeAddress,
-      quote,
-      status: 'bridging',
-      userMessage: 'Withdraw submitted. Bridge confirmation can take a few minutes.',
-    };
-  } catch (error) {
-    const normalized = normalizePredictError(error, 'Withdraw failed.');
-    return { ok: false, status: 'failed', code: normalized.code, error: normalized.message };
+): Promise<PreparedWithdrawal> {
+  if (!Number.isFinite(params.amount) || params.amount <= 0) {
+    throw new Error('Enter a valid withdrawal amount.');
   }
+  // Re-quote at submission time. The modal's quote is only for review.
+  const { asset, quote } = await fetchWithdrawalQuote(params.amount, params.solanaAddress);
+  const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(client, params, asset);
+  return { ...params, bridgeAddress, asset, quote };
+}
+
+/** Submit without waiting so the caller can durably save the handle first. */
+export function submitPreparedWithdrawal(
+  client: SecureClient,
+  prepared: PreparedWithdrawal,
+): Promise<TransactionHandle> {
+  return client.transferErc20({
+    tokenAddress: POLYMARKET_PUSD,
+    recipientAddress: prepared.bridgeAddress,
+    amount: BigInt(decimalAmountToBaseUnits(prepared.amount, 6)),
+    metadata: `Withdraw pUSD to Solana ${prepared.solanaAddress}`,
+  });
+}
+
+export async function fetchWithdrawalTransferStatus(
+  client: SecureClient,
+  transactionId: string,
+): Promise<WithdrawalTransferStatus> {
+  const transaction = await fetchTransaction(client, { transactionId });
+  return {
+    state: transaction.state,
+    transactionId: transaction.transactionId,
+    transactionHash: transaction.transactionHash,
+    errorMessage: transaction.errorMsg,
+  };
 }
 
 // --- Redeem ---

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SecureClient } from '@polymarket/client';
 import type { OpenOrder } from './predict.api';
 
@@ -11,15 +11,58 @@ type UserStreamEvent = {
 interface UserStreamListener {
   onEvent: (event: unknown) => void;
   onResync: () => void | Promise<void>;
+  onStatus: (status: PredictRealtimeStatus) => void;
 }
 
 interface UserStreamSession {
   listeners: Set<UserStreamListener>;
   handle: Awaited<ReturnType<SecureClient['subscribe']>> | null;
   stopped: boolean;
+  cancelRetry: (() => void) | null;
+  fallbackPoll: ReturnType<typeof globalThis.setInterval> | null;
+  resyncing: Promise<void> | null;
+  recovery: UserStreamRecoveryState;
+  status: PredictRealtimeStatus;
 }
 
 const userStreamSessions = new WeakMap<SecureClient, UserStreamSession>();
+
+export type PredictRealtimeStatus = 'idle' | 'connecting' | 'live' | 'degraded';
+
+export interface UserStreamRecoveryState {
+  attempt: number;
+  needsResync: boolean;
+}
+
+const USER_STREAM_RETRY_BASE_MS = 1_000;
+const USER_STREAM_RETRY_CAP_MS = 30_000;
+export const DEGRADED_USER_STREAM_POLL_MS = 30_000;
+
+export function userStreamRetryDelay(attempt: number, random = Math.random): number {
+  const exponential = USER_STREAM_RETRY_BASE_MS * (2 ** Math.max(0, attempt));
+  const jittered = exponential * (0.8 + (random() * 0.4));
+  return Math.min(USER_STREAM_RETRY_CAP_MS, Math.max(250, Math.round(jittered)));
+}
+
+export function recordUserStreamLoss(state: UserStreamRecoveryState): UserStreamRecoveryState {
+  return { attempt: state.attempt + 1, needsResync: true };
+}
+
+export function recordUserStreamConnected(state: UserStreamRecoveryState): {
+  state: UserStreamRecoveryState;
+  shouldResync: boolean;
+} {
+  return {
+    // Keep the accumulated attempt count until the socket proves stable. A
+    // handshake that immediately closes must continue backing off.
+    state: { attempt: state.attempt, needsResync: false },
+    shouldResync: state.needsResync,
+  };
+}
+
+export function recordUserStreamStable(state: UserStreamRecoveryState): UserStreamRecoveryState {
+  return { attempt: 0, needsResync: state.needsResync };
+}
 
 export function isPredictTradeEvent(rawEvent: unknown): boolean {
   return Boolean(
@@ -105,27 +148,88 @@ export function applyPredictUserEvent(openOrders: OpenOrder[], rawEvent: unknown
 
 /**
  * Maintains the authenticated user stream while a Predict screen is active.
- * Stream events are incremental; a lost connection triggers an authoritative
- * REST refresh before reconnecting.
+ * Stream events are incremental; loss uses bounded retries and REST fallback,
+ * followed by one authoritative refresh at a successful reconnect boundary.
  */
 async function resyncListeners(session: UserStreamSession): Promise<void> {
-  await Promise.allSettled([...session.listeners].map((listener) => listener.onResync()));
+  if (session.resyncing) return session.resyncing;
+  const resync = Promise.allSettled([...session.listeners].map((listener) => listener.onResync()))
+    .then(() => undefined);
+  session.resyncing = resync;
+  try {
+    await resync;
+  } finally {
+    if (session.resyncing === resync) session.resyncing = null;
+  }
+}
+
+function broadcastStatus(session: UserStreamSession, status: PredictRealtimeStatus): void {
+  if (status === 'degraded' && !session.fallbackPoll) {
+    session.fallbackPoll = globalThis.setInterval(() => {
+      if (!session.stopped && session.status === 'degraded') void resyncListeners(session);
+    }, DEGRADED_USER_STREAM_POLL_MS);
+  } else if (status !== 'degraded' && session.fallbackPoll) {
+    globalThis.clearInterval(session.fallbackPoll);
+    session.fallbackPoll = null;
+  }
+  if (session.status === status) return;
+  session.status = status;
+  session.listeners.forEach((listener) => listener.onStatus(status));
+}
+
+function waitForRetry(session: UserStreamSession, delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      session.cancelRetry = null;
+      resolve();
+    };
+    const timer = globalThis.setTimeout(finish, delayMs);
+    session.cancelRetry = () => {
+      globalThis.clearTimeout(timer);
+      finish();
+    };
+  });
 }
 
 async function runUserStream(client: SecureClient, session: UserStreamSession): Promise<void> {
   while (!session.stopped) {
+    let stabilityTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
     try {
       session.handle = await client.subscribe([{ topic: 'user' }]);
+      if (session.stopped) break;
+      const connected = recordUserStreamConnected(session.recovery);
+      session.recovery = connected.state;
+      // Loss is resynced once at the successful reconnect boundary. Failed
+      // connection attempts never fan out into repeated REST refreshes.
+      if (session.fallbackPoll) {
+        globalThis.clearInterval(session.fallbackPoll);
+        session.fallbackPoll = null;
+      }
+      if (connected.shouldResync) await resyncListeners(session);
+      broadcastStatus(session, 'live');
+      const connectedHandle = session.handle;
+      stabilityTimer = globalThis.setTimeout(() => {
+        if (!session.stopped && session.handle === connectedHandle) {
+          session.recovery = recordUserStreamStable(session.recovery);
+        }
+      }, USER_STREAM_RETRY_CAP_MS);
       for await (const event of session.handle) {
         if (session.stopped) break;
+        session.recovery = recordUserStreamStable(session.recovery);
         session.listeners.forEach((listener) => listener.onEvent(event));
       }
       if (!session.stopped) throw new Error('Predict user stream ended.');
     } catch {
       if (session.stopped) break;
-      await resyncListeners(session);
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const retryDelay = userStreamRetryDelay(session.recovery.attempt);
+      session.recovery = recordUserStreamLoss(session.recovery);
+      broadcastStatus(session, 'degraded');
+      await waitForRetry(session, retryDelay);
     } finally {
+      if (stabilityTimer) globalThis.clearTimeout(stabilityTimer);
       await session.handle?.close().catch(() => {});
       session.handle = null;
     }
@@ -136,34 +240,56 @@ export function usePolymarketUserStream(
   client: SecureClient | null,
   onEvent: (event: unknown) => void,
   onResync: () => void | Promise<void>,
-): void {
+): PredictRealtimeStatus {
+  const [status, setStatus] = useState<PredictRealtimeStatus>(client ? 'connecting' : 'idle');
   const eventRef = useRef(onEvent);
   const resyncRef = useRef(onResync);
   eventRef.current = onEvent;
   resyncRef.current = onResync;
 
   useEffect(() => {
-    if (!client) return;
+    if (!client) {
+      setStatus('idle');
+      return;
+    }
     const listener: UserStreamListener = {
       onEvent: (event) => eventRef.current(event),
       onResync: () => resyncRef.current(),
+      onStatus: setStatus,
     };
     let session = userStreamSessions.get(client);
+    let shouldStart = false;
     if (!session) {
-      session = { listeners: new Set(), handle: null, stopped: false };
+      session = {
+        listeners: new Set(),
+        handle: null,
+        stopped: false,
+        cancelRetry: null,
+        fallbackPoll: null,
+        resyncing: null,
+        recovery: { attempt: 0, needsResync: false },
+        status: 'connecting',
+      };
       userStreamSessions.set(client, session);
-      void runUserStream(client, session);
+      shouldStart = true;
     }
     session.listeners.add(listener);
+    listener.onStatus(session.status);
     void Promise.resolve(listener.onResync()).catch(() => {});
+    if (shouldStart) void runUserStream(client, session);
 
     return () => {
       session?.listeners.delete(listener);
       if (session && session.listeners.size === 0) {
         session.stopped = true;
+        session.cancelRetry?.();
+        if (session.fallbackPoll) globalThis.clearInterval(session.fallbackPoll);
+        session.fallbackPoll = null;
         void session.handle?.close().catch(() => {});
         userStreamSessions.delete(client);
       }
     };
   }, [client]);
+
+  return status;
 }

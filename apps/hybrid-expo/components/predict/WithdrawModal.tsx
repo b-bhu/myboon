@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -14,12 +14,26 @@ import type { SecureClient } from '@polymarket/client';
 import {
   fetchBridgeSupportedAssets,
   fetchDepositStatus,
+  fetchWithdrawalTransferStatus,
   fetchWithdrawalQuote,
+  preparePolymarketWithdrawal,
   selectSupportedDepositAssets,
   SOLANA_CHAIN_ID,
-  withdrawFromPolymarket,
+  submitPreparedWithdrawal,
 } from '@/features/predict/predict.api';
-import type { BridgeQuote, BridgeSupportedAsset, DepositBridgeStatus } from '@/features/predict/predict.api';
+import type { BridgeQuote, BridgeSupportedAsset } from '@/features/predict/predict.api';
+import { normalizePredictError } from '@/features/predict/predict.errors';
+import {
+  createPreparedWithdrawal,
+  isWithdrawalTerminal,
+  markWithdrawalAmbiguous,
+  markWithdrawalBridging,
+  markWithdrawalFailed,
+  markWithdrawalSubmitted,
+  markWithdrawalSubmitting,
+  reconcileWithdrawalTracking,
+} from '@/features/predict/withdrawalTracking';
+import type { TrackedWithdrawal } from '@/features/predict/withdrawalTracking';
 import { semantic, tokens } from '@/theme';
 
 interface WithdrawModalProps {
@@ -34,18 +48,25 @@ interface WithdrawModalProps {
 
 type WithdrawState = 'input' | 'quoting' | 'confirming' | 'submitting' | 'success' | 'error';
 
-interface TrackedWithdrawal {
-  amount: number;
-  recipientAddress: string;
-  bridgeAddress: string;
-  txHash: string | null;
-  quote: BridgeQuote;
-  status: DepositBridgeStatus | 'SUBMITTED';
-  startedAt: number;
-}
-
 const WITHDRAW_POLL_MS = 10_000;
 const WITHDRAW_TRACKING_PREFIX = 'predict.withdraw.tracking.v1';
+
+function isAmbiguousSubmissionError(code: string): boolean {
+  return code === 'NETWORK_FAILED' || code === 'ORDER_WAITING' || code === 'PREDICT_FAILED';
+}
+
+function trackingMessage(tracking: TrackedWithdrawal): string {
+  switch (tracking.status) {
+    case 'PREPARED': return 'Ready for confirmation. No transfer has been submitted.';
+    case 'SUBMITTING':
+    case 'AMBIGUOUS':
+      return 'Submission outcome is being reconciled. Do not retry this withdrawal.';
+    case 'SUBMITTED': return 'Relayer accepted the transfer. Waiting for settlement.';
+    case 'BRIDGING': return 'Relayer settled the transfer. Bridge delivery is in progress.';
+    case 'COMPLETED': return 'Bridge completed the withdrawal.';
+    case 'FAILED': return tracking.lastError ?? 'The withdrawal failed before Bridge delivery.';
+  }
+}
 
 export function WithdrawModal({
   isOpen,
@@ -65,7 +86,26 @@ export function WithdrawModal({
   const [routeLoading, setRouteLoading] = useState(false);
   const [quote, setQuote] = useState<BridgeQuote | null>(null);
   const [trackedWithdrawal, setTrackedWithdrawal] = useState<TrackedWithdrawal | null>(null);
+  const trackedWithdrawalRef = useRef<TrackedWithdrawal | null>(null);
   const trackingKey = `${WITHDRAW_TRACKING_PREFIX}:${client.account.wallet.toLowerCase()}`;
+  const persistTracking = useCallback(async (tracking: TrackedWithdrawal) => {
+    await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
+    trackedWithdrawalRef.current = tracking;
+    setTrackedWithdrawal(tracking);
+  }, [trackingKey]);
+  const persistAfterSubmission = useCallback(async (tracking: TrackedWithdrawal): Promise<boolean> => {
+    // Once submission was attempted, never fall back to a clean retry screen
+    // just because local persistence failed. Retain the state in memory and
+    // continue reconciliation conservatively.
+    trackedWithdrawalRef.current = tracking;
+    setTrackedWithdrawal(tracking);
+    try {
+      await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
+      return true;
+    } catch {
+      return false;
+    }
+  }, [trackingKey]);
 
   const parsedAmount = parseFloat(amount);
   const minimumWithdraw = destinationAsset?.minCheckoutUsd ?? Number.POSITIVE_INFINITY;
@@ -94,20 +134,47 @@ export function WithdrawModal({
           .find((asset) => asset.chainId === SOLANA_CHAIN_ID) ?? null;
         setDestinationAsset(selected);
         if (!selected) setError('Solana USDC withdrawals are unavailable right now.');
+        if (!rawTracking) {
+          trackedWithdrawalRef.current = null;
+          setTrackedWithdrawal(null);
+          setState('input');
+          return;
+        }
         if (rawTracking) {
-          const saved = JSON.parse(rawTracking) as TrackedWithdrawal;
+          const parsed = JSON.parse(rawTracking) as TrackedWithdrawal & { txHash?: string | null };
+          const legacyStatus = parsed.status as string;
+          const saved: TrackedWithdrawal = {
+            ...parsed,
+            transactionId: parsed.transactionId ?? null,
+            transactionHash: parsed.transactionHash ?? parsed.txHash ?? null,
+            status: legacyStatus === 'DEPOSIT_DETECTED'
+              || legacyStatus === 'PROCESSING'
+              || legacyStatus === 'ORIGIN_TX_CONFIRMED'
+              || legacyStatus === 'COMPLETED'
+                ? legacyStatus === 'COMPLETED' ? 'COMPLETED' : 'BRIDGING'
+                : legacyStatus === 'FAILED' ? 'FAILED' : parsed.status,
+            updatedAt: parsed.updatedAt ?? parsed.startedAt,
+            lastError: parsed.lastError ?? null,
+          };
           if (saved?.bridgeAddress && saved.quote) {
-            setTrackedWithdrawal(saved);
+            const restored = saved.status === 'SUBMITTING'
+              ? markWithdrawalAmbiguous(saved, 'The app closed while submission was in progress.')
+              : saved;
+            trackedWithdrawalRef.current = restored;
+            setTrackedWithdrawal(restored);
+            if (restored !== saved) {
+              AsyncStorage.setItem(trackingKey, JSON.stringify(restored)).catch(() => {});
+            }
             setAmount(String(saved.amount));
             setRecipientAddress(saved.recipientAddress);
             setQuote(saved.quote);
-            setTxHash(saved.txHash);
-            setBridgeStatus(saved.status === 'COMPLETED'
-              ? 'Bridge completed'
-              : saved.status === 'FAILED'
-                ? 'Bridge reported a failure'
-                : 'Bridge processing');
-            setState('success');
+            setTxHash(restored.transactionHash);
+            setBridgeStatus(trackingMessage(restored));
+            setState(restored.status === 'PREPARED' ? 'confirming' : 'success');
+          } else {
+            trackedWithdrawalRef.current = null;
+            setTrackedWithdrawal(null);
+            setState('input');
           }
         }
       })
@@ -149,30 +216,82 @@ export function WithdrawModal({
     setState('submitting');
     setError(null);
     try {
-      const result = await withdrawFromPolymarket(client, {
+      const prepared = await preparePolymarketWithdrawal(client, {
         amount: parsedAmount,
         solanaAddress: trimmedRecipientAddress,
       });
-      if (result.ok) {
-        if (!result.bridgeAddress || !result.quote) throw new Error('Bridge submission returned incomplete tracking details.');
-        const tracking: TrackedWithdrawal = {
-          amount: parsedAmount,
-          recipientAddress: trimmedRecipientAddress,
-          bridgeAddress: result.bridgeAddress,
-          txHash: result.txHash ?? null,
-          quote: result.quote,
-          status: 'SUBMITTED',
-          startedAt: Date.now(),
-        };
-        await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
-        setTrackedWithdrawal(tracking);
-        setQuote(result.quote);
-        setTxHash(result.txHash ?? null);
+      const preparedTracking = createPreparedWithdrawal({
+        amount: prepared.amount,
+        recipientAddress: prepared.solanaAddress,
+        bridgeAddress: prepared.bridgeAddress,
+        quote: prepared.quote,
+      });
+      // The reviewed intent and generated Bridge address are durable before any
+      // transfer can be accepted upstream.
+      await persistTracking(preparedTracking);
+      setQuote(prepared.quote);
+
+      const submitting = markWithdrawalSubmitting(preparedTracking);
+      await persistTracking(submitting);
+
+      let handle;
+      try {
+        handle = await submitPreparedWithdrawal(client, prepared);
+      } catch (submitError: unknown) {
+        const normalized = normalizePredictError(submitError, 'Withdrawal submission failed.');
+        const next = isAmbiguousSubmissionError(normalized.code)
+          ? markWithdrawalAmbiguous(submitting, normalized.message)
+          : markWithdrawalFailed(submitting, normalized.message);
+        const saved = await persistAfterSubmission(next);
+        setBridgeStatus(saved
+          ? trackingMessage(next)
+          : 'Recovery storage is unavailable. Keep this app open and do not retry.');
         setState('success');
-        onSuccess?.();
-      } else {
-        setError(result.error ?? 'Withdraw failed');
-        setState('error');
+        return;
+      }
+
+      // Save the relayer identifiers before waiting. A timeout, app kill, or
+      // transport failure after this point can be recovered on restart.
+      const submitted = markWithdrawalSubmitted(
+        submitting,
+        handle.transactionId ? String(handle.transactionId) : null,
+        handle.transactionHash ? String(handle.transactionHash) : null,
+      );
+      const submissionSaved = await persistAfterSubmission(submitted);
+      setTxHash(submitted.transactionHash);
+      setBridgeStatus(submissionSaved
+        ? trackingMessage(submitted)
+        : 'Relayer accepted the transfer, but recovery storage is unavailable. Do not retry.');
+      setState('success');
+      try { onSuccess?.(); } catch { /* submission remains accepted and tracked */ }
+
+      try {
+        const outcome = await handle.wait();
+        const current = trackedWithdrawalRef.current?.bridgeAddress === submitted.bridgeAddress
+          ? trackedWithdrawalRef.current
+          : submitted;
+        const bridging = markWithdrawalBridging(
+          current,
+          outcome.transactionId ? String(outcome.transactionId) : null,
+          outcome.transactionHash ? String(outcome.transactionHash) : null,
+        );
+        const saved = await persistAfterSubmission(bridging);
+        setTxHash(bridging.transactionHash);
+        setBridgeStatus(saved
+          ? trackingMessage(bridging)
+          : 'Transfer settled, but recovery storage is unavailable. Keep this app open.');
+      } catch (waitError: unknown) {
+        const normalized = normalizePredictError(waitError, 'Withdrawal confirmation is unknown.');
+        const current = trackedWithdrawalRef.current?.bridgeAddress === submitted.bridgeAddress
+          ? trackedWithdrawalRef.current
+          : submitted;
+        const next = normalized.code === 'TRANSACTION_FAILED'
+          ? markWithdrawalFailed(current, normalized.message)
+          : markWithdrawalAmbiguous(current, normalized.message);
+        const saved = await persistAfterSubmission(next);
+        setBridgeStatus(saved
+          ? trackingMessage(next)
+          : 'Recovery storage is unavailable. Keep this app open and do not retry.');
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Withdraw failed');
@@ -182,24 +301,26 @@ export function WithdrawModal({
 
   useEffect(() => {
     if (!trackedWithdrawal?.bridgeAddress) return;
-    if (trackedWithdrawal.status === 'COMPLETED' || trackedWithdrawal.status === 'FAILED') return;
+    if (trackedWithdrawal.status === 'PREPARED' || isWithdrawalTerminal(trackedWithdrawal)) return;
     let cancelled = false;
     const refresh = async () => {
-      const transactions = await fetchDepositStatus(trackedWithdrawal.bridgeAddress).catch(() => []);
-      if (cancelled || transactions.length === 0) return;
-      const latest = [...transactions].sort((a, b) => (b.createdTimeMs ?? 0) - (a.createdTimeMs ?? 0))[0];
-      const nextStatus = latest?.status ?? 'PROCESSING';
-      setBridgeStatus(nextStatus === 'COMPLETED'
-        ? 'Bridge completed'
-        : nextStatus === 'FAILED'
-          ? 'Bridge reported a failure'
-          : 'Bridge processing');
-      setTrackedWithdrawal((current) => {
-        if (!current) return current;
-        const next = { ...current, status: nextStatus };
-        AsyncStorage.setItem(trackingKey, JSON.stringify(next)).catch(() => {});
-        return next;
-      });
+      const [bridgeResult, relayerResult] = await Promise.allSettled([
+        fetchDepositStatus(trackedWithdrawal.bridgeAddress),
+        trackedWithdrawal.transactionId
+          ? fetchWithdrawalTransferStatus(client, trackedWithdrawal.transactionId)
+          : Promise.resolve(null),
+      ]);
+      if (cancelled) return;
+      const bridgeTransactions = bridgeResult.status === 'fulfilled' ? bridgeResult.value : [];
+      const relayer = relayerResult.status === 'fulfilled' ? relayerResult.value : null;
+      const next = reconcileWithdrawalTracking(trackedWithdrawal, bridgeTransactions, relayer);
+      setBridgeStatus(trackingMessage(next));
+      setTxHash(next.transactionHash);
+      if (next !== trackedWithdrawal) {
+        trackedWithdrawalRef.current = next;
+        setTrackedWithdrawal(next);
+        await AsyncStorage.setItem(trackingKey, JSON.stringify(next)).catch(() => {});
+      }
     };
     void refresh();
     const interval = setInterval(() => void refresh(), WITHDRAW_POLL_MS);
@@ -207,10 +328,11 @@ export function WithdrawModal({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [trackedWithdrawal?.bridgeAddress, trackedWithdrawal?.status, trackingKey]);
+  }, [client, trackedWithdrawal, trackingKey]);
 
   const handleDismissTracking = async () => {
     await AsyncStorage.removeItem(trackingKey);
+    trackedWithdrawalRef.current = null;
     setTrackedWithdrawal(null);
     setAmount('');
     setQuote(null);
@@ -382,29 +504,52 @@ export function WithdrawModal({
             <View style={styles.statusWrap}>
               <ActivityIndicator color={tokens.colors.primary} />
               <Text style={styles.statusText}>Withdrawing ${parsedAmount.toFixed(2)} USDC...</Text>
-              <Text style={styles.statusSubtext}>Relaying via builder (gasless)</Text>
+              <Text style={styles.statusSubtext}>
+                Saving recovery details and reconciling the gasless transfer. Do not submit again.
+              </Text>
             </View>
           )}
 
           {state === 'success' && (
             <View style={styles.statusWrap}>
-              <MaterialIcons name="check-circle" size={32} color={tokens.colors.viridian} />
-              <Text style={styles.statusText}>Withdraw submitted!</Text>
+              <MaterialIcons
+                name={trackedWithdrawal?.status === 'FAILED'
+                  ? 'error-outline'
+                  : trackedWithdrawal?.status === 'COMPLETED'
+                    ? 'check-circle'
+                    : 'schedule'}
+                size={32}
+                color={trackedWithdrawal?.status === 'FAILED'
+                  ? tokens.colors.vermillion
+                  : trackedWithdrawal?.status === 'COMPLETED'
+                    ? tokens.colors.viridian
+                    : tokens.colors.primary}
+              />
+              <Text style={styles.statusText}>
+                {trackedWithdrawal?.status === 'FAILED'
+                  ? 'Withdrawal failed'
+                  : trackedWithdrawal?.status === 'COMPLETED'
+                    ? 'Withdrawal complete'
+                    : 'Withdrawal tracking'}
+              </Text>
               <Text style={styles.statusSubtext}>
                 ${parsedAmount.toFixed(2)} pUSD bridging to {trimmedRecipientAddress.slice(0, 8)}...{trimmedRecipientAddress.slice(-6)} as Solana USDC.{'\n'}
-                {bridgeStatus}. It may take a few minutes to arrive.
+                {bridgeStatus}
               </Text>
               {txHash && (
                 <Text style={styles.txHash}>tx: {txHash.slice(0, 10)}...{txHash.slice(-8)}</Text>
               )}
+              {trackedWithdrawal?.transactionId && (
+                <Text style={styles.txHash}>relayer: {trackedWithdrawal.transactionId}</Text>
+              )}
               <Pressable
-                onPress={trackedWithdrawal?.status === 'COMPLETED' || trackedWithdrawal?.status === 'FAILED'
+                onPress={trackedWithdrawal && isWithdrawalTerminal(trackedWithdrawal)
                   ? () => void handleDismissTracking()
                   : handleClose}
                 style={[styles.withdrawBtn, { marginTop: 16, alignSelf: 'stretch' }]}
               >
                 <Text style={styles.withdrawBtnText}>
-                  {trackedWithdrawal?.status === 'COMPLETED' || trackedWithdrawal?.status === 'FAILED'
+                  {trackedWithdrawal && isWithdrawalTerminal(trackedWithdrawal)
                     ? 'Done'
                     : 'Close · keep tracking'}
                 </Text>

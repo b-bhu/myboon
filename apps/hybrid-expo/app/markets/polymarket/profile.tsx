@@ -323,7 +323,7 @@ export default function PredictProfileScreen() {
     }
   }, [poly.client]);
 
-  usePolymarketUserStream(
+  const realtimeStatus = usePolymarketUserStream(
     isEnabled ? poly.client : null,
     (event) => {
       setOpenOrders((orders) => applyPredictUserEvent(orders, event));
@@ -694,7 +694,13 @@ export default function PredictProfileScreen() {
               closedPositions={closedPositions}
               client={poly.client}
               cancellingOrderId={cancellingId}
-              freshness={{ ...activityFreshness, loading: portfolioLoading || refreshing }}
+              freshness={{
+                ...activityFreshness,
+                loading: portfolioLoading || refreshing,
+                stale: activityFreshness.stale || realtimeStatus === 'degraded',
+                error: activityFreshness.error
+                  ?? (realtimeStatus === 'degraded' ? 'Live updates delayed; using periodic refresh' : null),
+              }}
               sellQuotes={sellQuotes}
               onCashOutPress={handleCashOut}
               onMarketPress={handleOpenMarket}
