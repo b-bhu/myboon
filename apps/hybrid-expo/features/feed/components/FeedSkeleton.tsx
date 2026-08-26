@@ -31,6 +31,12 @@ function SkeletonCard() {
 export function FeedSkeleton() {
   return (
     <View style={styles.container}>
+      <View style={styles.sectionHeading} />
+      <View style={styles.storyRow}>
+        <View style={styles.storyCard} />
+        <View style={styles.storyPeek} />
+      </View>
+      <View style={[styles.sectionHeading, styles.latestHeading]} />
       <SkeletonCard />
       <SkeletonCard />
       <SkeletonCard />
@@ -43,8 +49,42 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 18,
     gap: 10,
+  },
+  sectionHeading: {
+    width: 92,
+    height: 26,
+    borderRadius: 5,
+    backgroundColor: FEED_COLORS.borderSoft,
+    opacity: 0.62,
+  },
+  latestHeading: {
+    marginTop: 18,
+  },
+  storyRow: {
+    height: 218,
+    flexDirection: 'row',
+    gap: 12,
+    overflow: 'hidden',
+  },
+  storyCard: {
+    width: 288,
+    height: 218,
+    borderRadius: 8,
+    backgroundColor: FEED_COLORS.cardDeep,
+    borderWidth: 1,
+    borderColor: FEED_COLORS.border,
+    opacity: 0.7,
+  },
+  storyPeek: {
+    width: 74,
+    height: 218,
+    borderRadius: 8,
+    backgroundColor: FEED_COLORS.cardDeep,
+    borderWidth: 1,
+    borderColor: FEED_COLORS.border,
+    opacity: 0.44,
   },
   card: {
     minHeight: 118,

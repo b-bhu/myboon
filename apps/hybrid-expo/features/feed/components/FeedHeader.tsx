@@ -4,7 +4,11 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { AvatarTrigger } from '@/components/AvatarTrigger';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 
-export function FeedHeader() {
+interface FeedHeaderProps {
+  onCalendarPress?: () => void;
+}
+
+export function FeedHeader({ onCalendarPress }: FeedHeaderProps) {
   const router = useRouter();
 
   return (
@@ -18,7 +22,19 @@ export function FeedHeader() {
         <MaterialIcons name="arrow-back" size={19} color={FEED_COLORS.text} />
       </Pressable>
       <Text style={styles.title}>Feed</Text>
-      <AvatarTrigger />
+      <View style={styles.actions}>
+        {onCalendarPress ? (
+          <Pressable
+            onPress={onCalendarPress}
+            accessibilityRole="button"
+            accessibilityLabel="Open market calendar"
+            style={({ pressed }) => [styles.calendarButton, pressed && styles.pressed]}
+          >
+            <MaterialIcons name="calendar-month" size={18} color={FEED_COLORS.accent} />
+          </Pressable>
+        ) : null}
+        <AvatarTrigger />
+      </View>
     </View>
   );
 }
@@ -40,6 +56,21 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: FEED_COLORS.cardDeep,
+  },
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  calendarButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: FEED_COLORS.border,
     backgroundColor: FEED_COLORS.cardDeep,
   },
   title: {

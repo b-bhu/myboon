@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { TakeActionApps } from '@/features/feed/components/TakeActionApps';
 import { fetchNarrativeDetail, toShortDate } from '@/features/feed/feed.api';
 import type { NarrativeDetail } from '@/features/feed/feed.api';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
-
-const SCREEN_HEIGHT = Dimensions.get('window').height;
-const SHEET_HEIGHT = Math.round(SCREEN_HEIGHT * 0.78);
 
 function normalizeArticleText(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\\n/g, '\n').trim();
@@ -60,6 +59,9 @@ export interface NarrativeSheetItem {
   title: string;
   summary: string;
   createdAt: string;
+  imageUrl?: string | null;
+  imageKind?: 'content' | 'source_avatar' | null;
+  imageAttribution?: string | null;
 }
 
 interface NarrativeSheetProps {
@@ -68,7 +70,9 @@ interface NarrativeSheetProps {
 }
 
 export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
-  const translateY = useRef(new Animated.Value(SHEET_HEIGHT)).current;
+  const { height: screenHeight } = useWindowDimensions();
+  const sheetHeight = Math.round(screenHeight * 0.88);
+  const translateY = useRef(new Animated.Value(1000)).current;
   const [detail, setDetail] = useState<NarrativeDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -76,11 +80,11 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
 
   useEffect(() => {
     Animated.timing(translateY, {
-      toValue: item ? 0 : SHEET_HEIGHT,
+      toValue: item ? 0 : sheetHeight,
       duration: item ? 260 : 220,
       useNativeDriver: true,
     }).start();
-  }, [item, translateY]);
+  }, [item, sheetHeight, translateY]);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +116,8 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   const title = detail?.title ?? item?.title ?? '';
   const summary = detail?.summary ?? item?.summary ?? '';
   const publishedAt = detail?.publishedAt ?? item?.createdAt ?? '';
+  const imageUrl = detail?.imageUrl ?? item?.imageUrl ?? null;
+  const imageKind = detail?.imageKind ?? item?.imageKind ?? null;
 
   return (
     <Modal
@@ -122,7 +128,7 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
       statusBarTranslucent
     >
       <Pressable style={styles.scrim} onPress={onClose} accessibilityLabel="Close Feed item" />
-      <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]}>
+      <Animated.View style={[styles.sheet, { height: sheetHeight + 16, transform: [{ translateY }] }]}>
         <View style={styles.handle} />
         <View style={styles.sheetHeader}>
           <View style={styles.headerCopy}>
@@ -140,6 +146,15 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+          {imageUrl && imageKind === 'content' ? (
+            <Image
+              source={imageUrl}
+              style={styles.heroImage}
+              contentFit="cover"
+              transition={180}
+              accessibilityLabel={detail?.imageAttribution ?? item?.imageAttribution ?? title}
+            />
+          ) : null}
           <Text style={styles.title}>{title}</Text>
           <View style={styles.divider} />
           <Text style={styles.lead}>{summary}</Text>
@@ -157,6 +172,8 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
               <ArticleBody content={detail.content} />
             </>
           ) : null}
+
+          <TakeActionApps onBeforeNavigate={onClose} />
         </ScrollView>
       </Animated.View>
     </Modal>
@@ -173,13 +190,13 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     bottom: -16,
-    height: SHEET_HEIGHT + 16,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     borderWidth: 1,
     borderColor: FEED_COLORS.borderSoft,
     backgroundColor: FEED_COLORS.card,
     overflow: 'hidden',
+    borderCurve: 'continuous',
   },
   handle: {
     alignSelf: 'center',
@@ -228,6 +245,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 24,
     paddingBottom: 52,
+  },
+  heroImage: {
+    width: '100%',
+    height: 210,
+    borderRadius: 10,
+    marginBottom: 20,
+    backgroundColor: FEED_COLORS.cardDeep,
+    borderCurve: 'continuous',
   },
   title: {
     color: FEED_COLORS.text,
