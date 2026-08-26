@@ -34,6 +34,7 @@ import {
   reconcileWithdrawalTracking,
 } from '@/features/predict/withdrawalTracking';
 import type { TrackedWithdrawal } from '@/features/predict/withdrawalTracking';
+import { createSingleFlightLock, runSingleFlight } from '@/features/predict/singleFlight';
 import { semantic, tokens } from '@/theme';
 
 interface WithdrawModalProps {
@@ -87,6 +88,8 @@ export function WithdrawModal({
   const [quote, setQuote] = useState<BridgeQuote | null>(null);
   const [trackedWithdrawal, setTrackedWithdrawal] = useState<TrackedWithdrawal | null>(null);
   const trackedWithdrawalRef = useRef<TrackedWithdrawal | null>(null);
+  const submitLockRef = useRef(createSingleFlightLock());
+  const refreshLockRef = useRef(createSingleFlightLock());
   const trackingKey = `${WITHDRAW_TRACKING_PREFIX}:${client.account.wallet.toLowerCase()}`;
   const persistTracking = useCallback(async (tracking: TrackedWithdrawal) => {
     await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
@@ -212,7 +215,7 @@ export function WithdrawModal({
     }
   };
 
-  const handleSubmit = async () => {
+  const submitWithdrawal = async () => {
     setState('submitting');
     setError(null);
     try {
@@ -299,11 +302,15 @@ export function WithdrawModal({
     }
   };
 
+  const handleSubmit = async () => {
+    await runSingleFlight(submitLockRef.current, submitWithdrawal);
+  };
+
   useEffect(() => {
     if (!trackedWithdrawal?.bridgeAddress) return;
     if (trackedWithdrawal.status === 'PREPARED' || isWithdrawalTerminal(trackedWithdrawal)) return;
     let cancelled = false;
-    const refresh = async () => {
+    const refresh = () => runSingleFlight(refreshLockRef.current, async () => {
       const [bridgeResult, relayerResult] = await Promise.allSettled([
         fetchDepositStatus(trackedWithdrawal.bridgeAddress),
         trackedWithdrawal.transactionId
@@ -313,15 +320,18 @@ export function WithdrawModal({
       if (cancelled) return;
       const bridgeTransactions = bridgeResult.status === 'fulfilled' ? bridgeResult.value : [];
       const relayer = relayerResult.status === 'fulfilled' ? relayerResult.value : null;
-      const next = reconcileWithdrawalTracking(trackedWithdrawal, bridgeTransactions, relayer);
+      const current = trackedWithdrawalRef.current?.bridgeAddress === trackedWithdrawal.bridgeAddress
+        ? trackedWithdrawalRef.current
+        : trackedWithdrawal;
+      const next = reconcileWithdrawalTracking(current, bridgeTransactions, relayer);
       setBridgeStatus(trackingMessage(next));
       setTxHash(next.transactionHash);
-      if (next !== trackedWithdrawal) {
+      if (next !== current) {
         trackedWithdrawalRef.current = next;
         setTrackedWithdrawal(next);
         await AsyncStorage.setItem(trackingKey, JSON.stringify(next)).catch(() => {});
       }
-    };
+    });
     void refresh();
     const interval = setInterval(() => void refresh(), WITHDRAW_POLL_MS);
     return () => {

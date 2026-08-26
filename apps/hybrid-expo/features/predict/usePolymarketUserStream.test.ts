@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   applyPredictUserEvent,
+  attemptUserStreamRecovery,
   DEGRADED_USER_STREAM_POLL_MS,
   recordUserStreamConnected,
   recordUserStreamLoss,
@@ -74,7 +75,27 @@ test('repeated connection failures request only one resync at reconnect', () => 
 
   const connected = recordUserStreamConnected(recovery);
   assert.equal(connected.shouldResync, true);
-  assert.deepEqual(connected.state, { attempt: 3, needsResync: false });
-  assert.equal(recordUserStreamConnected(connected.state).shouldResync, false);
-  assert.deepEqual(recordUserStreamStable(connected.state), { attempt: 0, needsResync: false });
+  assert.deepEqual(connected.state, { attempt: 3, needsResync: true });
+  assert.equal(recordUserStreamConnected(connected.state).shouldResync, true);
+  assert.deepEqual(recordUserStreamStable(connected.state), { attempt: 0, needsResync: true });
+});
+
+test('reconnect stays pending and degraded when REST resync rejects, then retries', async () => {
+  const pending = recordUserStreamLoss({ attempt: 0, needsResync: false });
+  let refreshAttempts = 0;
+  const rejected = await attemptUserStreamRecovery(pending, [async () => {
+    refreshAttempts += 1;
+    throw new Error('REST unavailable');
+  }]);
+  assert.equal(rejected.succeeded, false);
+  assert.equal(rejected.status, 'degraded');
+  assert.equal(rejected.state.needsResync, true);
+
+  const recovered = await attemptUserStreamRecovery(rejected.state, [async () => {
+    refreshAttempts += 1;
+  }]);
+  assert.equal(recovered.succeeded, true);
+  assert.equal(recovered.status, 'live');
+  assert.equal(recovered.state.needsResync, false);
+  assert.equal(refreshAttempts, 2);
 });

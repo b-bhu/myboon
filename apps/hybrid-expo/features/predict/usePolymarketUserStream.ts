@@ -20,7 +20,8 @@ interface UserStreamSession {
   stopped: boolean;
   cancelRetry: (() => void) | null;
   fallbackPoll: ReturnType<typeof globalThis.setInterval> | null;
-  resyncing: Promise<void> | null;
+  resyncing: Promise<boolean> | null;
+  socketConnected: boolean;
   recovery: UserStreamRecoveryState;
   status: PredictRealtimeStatus;
 }
@@ -55,13 +56,36 @@ export function recordUserStreamConnected(state: UserStreamRecoveryState): {
   return {
     // Keep the accumulated attempt count until the socket proves stable. A
     // handshake that immediately closes must continue backing off.
-    state: { attempt: state.attempt, needsResync: false },
+    state: { attempt: state.attempt, needsResync: state.needsResync },
     shouldResync: state.needsResync,
   };
 }
 
 export function recordUserStreamStable(state: UserStreamRecoveryState): UserStreamRecoveryState {
   return { attempt: 0, needsResync: state.needsResync };
+}
+
+export function recordUserStreamResynced(state: UserStreamRecoveryState): UserStreamRecoveryState {
+  return { attempt: state.attempt, needsResync: false };
+}
+
+export async function attemptUserStreamRecovery(
+  state: UserStreamRecoveryState,
+  refreshes: readonly (() => void | Promise<void>)[],
+): Promise<{
+  state: UserStreamRecoveryState;
+  status: 'live' | 'degraded';
+  succeeded: boolean;
+}> {
+  const results = await Promise.allSettled(refreshes.map(async (refresh) => {
+    await refresh();
+  }));
+  const succeeded = results.every((result) => result.status === 'fulfilled');
+  return {
+    state: succeeded ? recordUserStreamResynced(state) : state,
+    status: succeeded ? 'live' : 'degraded',
+    succeeded,
+  };
 }
 
 export function isPredictTradeEvent(rawEvent: unknown): boolean {
@@ -151,22 +175,35 @@ export function applyPredictUserEvent(openOrders: OpenOrder[], rawEvent: unknown
  * Stream events are incremental; loss uses bounded retries and REST fallback,
  * followed by one authoritative refresh at a successful reconnect boundary.
  */
-async function resyncListeners(session: UserStreamSession): Promise<void> {
+async function resyncListeners(session: UserStreamSession): Promise<boolean> {
   if (session.resyncing) return session.resyncing;
-  const resync = Promise.allSettled([...session.listeners].map((listener) => listener.onResync()))
-    .then(() => undefined);
+  const listeners = [...session.listeners];
+  const resync = attemptUserStreamRecovery(
+    session.recovery,
+    listeners.map((listener) => listener.onResync),
+  ).then((result) => result.succeeded);
   session.resyncing = resync;
   try {
-    await resync;
+    return await resync;
   } finally {
     if (session.resyncing === resync) session.resyncing = null;
   }
 }
 
+async function recoverSession(session: UserStreamSession): Promise<boolean> {
+  const succeeded = await resyncListeners(session);
+  if (succeeded) session.recovery = recordUserStreamResynced(session.recovery);
+  return succeeded;
+}
+
 function broadcastStatus(session: UserStreamSession, status: PredictRealtimeStatus): void {
   if (status === 'degraded' && !session.fallbackPoll) {
     session.fallbackPoll = globalThis.setInterval(() => {
-      if (!session.stopped && session.status === 'degraded') void resyncListeners(session);
+      if (!session.stopped && session.status === 'degraded') {
+        void recoverSession(session).then((succeeded) => {
+          if (succeeded && session.socketConnected) broadcastStatus(session, 'live');
+        });
+      }
     }, DEGRADED_USER_STREAM_POLL_MS);
   } else if (status !== 'degraded' && session.fallbackPoll) {
     globalThis.clearInterval(session.fallbackPoll);
@@ -200,16 +237,13 @@ async function runUserStream(client: SecureClient, session: UserStreamSession): 
     try {
       session.handle = await client.subscribe([{ topic: 'user' }]);
       if (session.stopped) break;
+      session.socketConnected = true;
       const connected = recordUserStreamConnected(session.recovery);
       session.recovery = connected.state;
       // Loss is resynced once at the successful reconnect boundary. Failed
       // connection attempts never fan out into repeated REST refreshes.
-      if (session.fallbackPoll) {
-        globalThis.clearInterval(session.fallbackPoll);
-        session.fallbackPoll = null;
-      }
-      if (connected.shouldResync) await resyncListeners(session);
-      broadcastStatus(session, 'live');
+      if (connected.shouldResync) await recoverSession(session);
+      broadcastStatus(session, session.recovery.needsResync ? 'degraded' : 'live');
       const connectedHandle = session.handle;
       stabilityTimer = globalThis.setTimeout(() => {
         if (!session.stopped && session.handle === connectedHandle) {
@@ -224,12 +258,14 @@ async function runUserStream(client: SecureClient, session: UserStreamSession): 
       if (!session.stopped) throw new Error('Predict user stream ended.');
     } catch {
       if (session.stopped) break;
+      session.socketConnected = false;
       const retryDelay = userStreamRetryDelay(session.recovery.attempt);
       session.recovery = recordUserStreamLoss(session.recovery);
       broadcastStatus(session, 'degraded');
       await waitForRetry(session, retryDelay);
     } finally {
       if (stabilityTimer) globalThis.clearTimeout(stabilityTimer);
+      session.socketConnected = false;
       await session.handle?.close().catch(() => {});
       session.handle = null;
     }
@@ -267,6 +303,7 @@ export function usePolymarketUserStream(
         cancelRetry: null,
         fallbackPoll: null,
         resyncing: null,
+        socketConnected: false,
         recovery: { attempt: 0, needsResync: false },
         status: 'connecting',
       };

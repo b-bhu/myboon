@@ -29,6 +29,16 @@ export interface WithdrawalRelayerStatus {
   errorMessage: string | null;
 }
 
+const WITHDRAWAL_STATUS_RANK: Record<WithdrawalTrackingStatus, number> = {
+  PREPARED: 0,
+  SUBMITTING: 1,
+  SUBMITTED: 2,
+  AMBIGUOUS: 2,
+  BRIDGING: 3,
+  COMPLETED: 4,
+  FAILED: 4,
+};
+
 export function createPreparedWithdrawal(input: {
   amount: number;
   recipientAddress: string;
@@ -63,8 +73,20 @@ function updateTracking(
   return { ...tracking, ...patch, updatedAt: now };
 }
 
+function transitionTracking(
+  tracking: TrackedWithdrawal,
+  patch: Partial<TrackedWithdrawal> & { status: WithdrawalTrackingStatus },
+  now?: number,
+): TrackedWithdrawal {
+  if (isWithdrawalTerminal(tracking)) return tracking;
+  if (WITHDRAWAL_STATUS_RANK[patch.status] < WITHDRAWAL_STATUS_RANK[tracking.status]) {
+    return tracking;
+  }
+  return updateTracking(tracking, patch, now);
+}
+
 export function markWithdrawalSubmitting(tracking: TrackedWithdrawal, now?: number): TrackedWithdrawal {
-  return updateTracking(tracking, { status: 'SUBMITTING', lastError: null }, now);
+  return transitionTracking(tracking, { status: 'SUBMITTING', lastError: null }, now);
 }
 
 export function markWithdrawalSubmitted(
@@ -73,7 +95,7 @@ export function markWithdrawalSubmitted(
   transactionHash: string | null,
   now?: number,
 ): TrackedWithdrawal {
-  return updateTracking(tracking, {
+  return transitionTracking(tracking, {
     status: 'SUBMITTED',
     transactionId,
     transactionHash,
@@ -86,8 +108,7 @@ export function markWithdrawalAmbiguous(
   errorMessage: string,
   now?: number,
 ): TrackedWithdrawal {
-  if (tracking.status === 'BRIDGING' || isWithdrawalTerminal(tracking)) return tracking;
-  return updateTracking(tracking, { status: 'AMBIGUOUS', lastError: errorMessage }, now);
+  return transitionTracking(tracking, { status: 'AMBIGUOUS', lastError: errorMessage }, now);
 }
 
 export function markWithdrawalBridging(
@@ -96,7 +117,7 @@ export function markWithdrawalBridging(
   transactionHash: string | null,
   now?: number,
 ): TrackedWithdrawal {
-  return updateTracking(tracking, {
+  return transitionTracking(tracking, {
     status: 'BRIDGING',
     transactionId: transactionId ?? tracking.transactionId,
     transactionHash: transactionHash ?? tracking.transactionHash,
@@ -109,8 +130,7 @@ export function markWithdrawalFailed(
   errorMessage: string,
   now?: number,
 ): TrackedWithdrawal {
-  if (tracking.status === 'COMPLETED') return tracking;
-  return updateTracking(tracking, { status: 'FAILED', lastError: errorMessage }, now);
+  return transitionTracking(tracking, { status: 'FAILED', lastError: errorMessage }, now);
 }
 
 export function isWithdrawalTerminal(tracking: TrackedWithdrawal): boolean {
@@ -143,29 +163,30 @@ export function reconcileWithdrawalTracking(
   relayer: WithdrawalRelayerStatus | null,
   now = Date.now(),
 ): TrackedWithdrawal {
+  if (isWithdrawalTerminal(tracking)) return tracking;
   const bridge = latestBridgeTransaction(bridgeTransactions, tracking);
   const transactionHash = bridge?.txHash ?? relayer?.transactionHash ?? tracking.transactionHash;
   const transactionId = relayer?.transactionId ?? tracking.transactionId;
 
   if (bridge?.status === 'COMPLETED') {
-    return updateTracking(tracking, {
+    return transitionTracking(tracking, {
       status: 'COMPLETED', transactionId, transactionHash, lastError: null,
     }, now);
   }
   if (bridge?.status === 'FAILED') {
-    return updateTracking(tracking, {
+    return transitionTracking(tracking, {
       status: 'FAILED', transactionId, transactionHash,
       lastError: 'Bridge reported that the withdrawal failed.',
     }, now);
   }
   if (bridge?.status) {
-    return updateTracking(tracking, {
+    return transitionTracking(tracking, {
       status: 'BRIDGING', transactionId, transactionHash, lastError: null,
     }, now);
   }
 
   if (relayer?.state === 'STATE_FAILED' || relayer?.state === 'STATE_INVALID') {
-    return updateTracking(tracking, {
+    return transitionTracking(tracking, {
       status: 'FAILED', transactionId, transactionHash,
       lastError: relayer.errorMessage ?? 'Relayer reported that the withdrawal failed.',
     }, now);
@@ -175,12 +196,12 @@ export function reconcileWithdrawalTracking(
     || relayer?.state === 'STATE_MINED'
     || relayer?.state === 'STATE_CONFIRMED'
   ) {
-    return updateTracking(tracking, {
+    return transitionTracking(tracking, {
       status: 'BRIDGING', transactionId, transactionHash, lastError: null,
     }, now);
   }
   if (relayer?.state === 'STATE_NEW') {
-    return updateTracking(tracking, {
+    return transitionTracking(tracking, {
       status: 'SUBMITTED', transactionId, transactionHash, lastError: null,
     }, now);
   }

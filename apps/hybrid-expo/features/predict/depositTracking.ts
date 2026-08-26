@@ -16,14 +16,6 @@ const TRANSACTION_TIME_TOLERANCE_MS = 30_000;
 const MINIMUM_AMOUNT_TOLERANCE = 0.01;
 const RELATIVE_AMOUNT_TOLERANCE = 0.005;
 
-const ACCEPTED_DEPOSIT_STATUSES = new Set([
-  'DEPOSIT_DETECTED',
-  'PROCESSING',
-  'ORIGIN_TX_CONFIRMED',
-  'SUBMITTED',
-  'COMPLETED',
-]);
-
 export function depositTransactionKey(transaction: DepositBridgeTransaction): string {
   return [
     transaction.fromChainId ?? '',
@@ -82,8 +74,11 @@ export function latestDepositTransaction(
   })[0] ?? null;
 }
 
-export function isAcceptedDepositEvidence(transaction: DepositBridgeTransaction | null): boolean {
-  return Boolean(transaction?.status && ACCEPTED_DEPOSIT_STATUSES.has(transaction.status));
+export function isCompletedDepositEvidence(transaction: DepositBridgeTransaction | null): boolean {
+  // Earlier Bridge states are progress only. They do not prove the tracked
+  // deposit caused a balance delta, so an unrelated sell could otherwise
+  // complete the flow while this deposit is still bridging.
+  return transaction?.status === 'COMPLETED';
 }
 
 /** Balance is only a second confirmation; it can never complete tracking alone. */
@@ -91,5 +86,5 @@ export function canCompleteTrackedDeposit(
   balanceIncreased: boolean,
   transaction: DepositBridgeTransaction | null,
 ): boolean {
-  return balanceIncreased && isAcceptedDepositEvidence(transaction);
+  return balanceIncreased && isCompletedDepositEvidence(transaction);
 }

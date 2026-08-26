@@ -70,3 +70,27 @@ test('only authoritative relayer or Bridge failure makes a withdrawal retryable'
     state: 'STATE_FAILED', transactionId: 'relayer-1', transactionHash: null, errorMessage: 'reverted',
   }).status, 'FAILED');
 });
+
+test('stale or empty reconciliation cannot regress COMPLETED tracking', () => {
+  const prepared = createPreparedWithdrawal({
+    amount: 25, recipientAddress: 'recipient', bridgeAddress: '0xbridge', quote, now: 1_000,
+  });
+  const submitted = markWithdrawalSubmitted(markWithdrawalSubmitting(prepared), 'relayer-1', '0xhash');
+  const bridging = reconcileWithdrawalTracking(submitted, [], {
+    state: 'STATE_CONFIRMED', transactionId: 'relayer-1', transactionHash: '0xhash', errorMessage: null,
+  }, 1_500);
+  assert.equal(bridging.status, 'BRIDGING');
+  assert.strictEqual(reconcileWithdrawalTracking(bridging, [], {
+    state: 'STATE_NEW', transactionId: 'relayer-1', transactionHash: '0xhash', errorMessage: null,
+  }, 1_600), bridging);
+
+  const completed = reconcileWithdrawalTracking(bridging, [{
+    status: 'COMPLETED', fromAmountBaseUnit: '25000000', createdTimeMs: 2_000,
+  }], null, 2_100);
+
+  assert.equal(completed.status, 'COMPLETED');
+  assert.strictEqual(reconcileWithdrawalTracking(completed, [], null, 2_200), completed);
+  assert.strictEqual(reconcileWithdrawalTracking(completed, [], {
+    state: 'STATE_NEW', transactionId: 'relayer-1', transactionHash: '0xhash', errorMessage: null,
+  }, 2_300), completed);
+});

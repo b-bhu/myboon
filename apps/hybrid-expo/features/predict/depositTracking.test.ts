@@ -34,6 +34,7 @@ const matching: DepositBridgeTransaction = {
 test('balance increase alone never completes deposit tracking', () => {
   assert.equal(canCompleteTrackedDeposit(true, null), false);
   assert.equal(canCompleteTrackedDeposit(true, { ...matching, status: 'FAILED' }), false);
+  assert.equal(canCompleteTrackedDeposit(true, { ...matching, status: 'PROCESSING' }), false);
 });
 
 test('deposit evidence must match chain, token, amount, and tracking window', () => {
@@ -49,7 +50,16 @@ test('deposit evidence must match chain, token, amount, and tracking window', ()
 });
 
 test('matching accepted Bridge evidence and balance are both required', () => {
-  const transaction = latestDepositTransaction(matchingDepositTransactions([matching], tracked));
+  const transaction = latestDepositTransaction(matchingDepositTransactions([{
+    ...matching,
+    status: 'COMPLETED',
+  }], tracked));
   assert.equal(canCompleteTrackedDeposit(false, transaction), false);
   assert.equal(canCompleteTrackedDeposit(true, transaction), true);
+});
+
+test('matching PROCESSING deposit plus unrelated balance increase does not complete', () => {
+  const transaction = latestDepositTransaction(matchingDepositTransactions([matching], tracked));
+  assert.equal(transaction?.status, 'PROCESSING');
+  assert.equal(canCompleteTrackedDeposit(true, transaction), false);
 });
