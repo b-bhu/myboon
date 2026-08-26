@@ -31,6 +31,11 @@ import { YourPicksSection } from '@/features/predict/profile/YourPicksSection';
 import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
 import type { PredictDataFreshness } from '@/features/predict/predictActivityState';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
+import {
+  applyPredictUserEvent,
+  isPredictTradeEvent,
+  usePolymarketUserStream,
+} from '@/features/predict/usePolymarketUserStream';
 import { semantic, tokens } from '@/theme';
 
 function truncate(addr: string, start = 6, end = 4): string {
@@ -182,6 +187,37 @@ export default function PredictProfileScreen() {
     ordersRefreshInFlight.current = false;
   }, []);
 
+  const handleDisconnectPredict = useCallback(() => {
+    Alert.alert(
+      'Disconnect Predict?',
+      'This revokes the Polymarket API key on the server and removes its encrypted device copy. Your wallet and funds are unchanged.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            setBusy(true);
+            poly.disable()
+              .then(() => {
+                closeSettings();
+                resetWalletScopedState();
+              })
+              .catch((error: unknown) => {
+                Alert.alert(
+                  'Predict was not disconnected',
+                  error instanceof Error
+                    ? error.message
+                    : 'The API key could not be revoked. Your local Predict credentials were preserved.',
+                );
+              })
+              .finally(() => setBusy(false));
+          },
+        },
+      ],
+    );
+  }, [closeSettings, poly, resetWalletScopedState]);
+
   useEffect(() => {
     if (walletScopedKeyRef.current === walletScopedKey) return;
     walletScopedKeyRef.current = walletScopedKey;
@@ -211,12 +247,9 @@ export default function PredictProfileScreen() {
   const loadPortfolio = useCallback(async () => {
     if (!poly.polygonAddress || !poly.client) return;
     const requestKey = walletScopedKeyRef.current;
-    // Gamma data-api tracks by trading wallet address (where funds/positions live)
-    // Authenticated CLOB operations use the active mobile SecureClient.
     setActivityFreshness((prev) => ({ ...prev, loading: true, error: null }));
-    const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
     const [portfolioResult, balanceResult, ordersResult] = await Promise.allSettled([
-      fetchPortfolio(gammaAddr),
+      fetchPortfolio(poly.client),
       fetchClobBalance(poly.client),
       fetchOpenOrders(poly.client),
     ]);
@@ -240,7 +273,7 @@ export default function PredictProfileScreen() {
       stale: failed,
       error: failed ? 'Could not refresh' : null,
     });
-  }, [poly.client, poly.polygonAddress, poly.tradingAddress]);
+  }, [poly.client, poly.polygonAddress]);
 
   const refreshPortfolioQuietly = useCallback(async () => {
     if (!poly.polygonAddress || !poly.client) return;
@@ -248,9 +281,8 @@ export default function PredictProfileScreen() {
     if (portfolioRefreshInFlight.current) return;
     portfolioRefreshInFlight.current = true;
     try {
-      const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
       const [portfolioResult, balanceResult] = await Promise.allSettled([
-        fetchPortfolio(gammaAddr),
+        fetchPortfolio(poly.client),
         fetchClobBalance(poly.client),
       ]);
       const portfolioData = portfolioResult.status === 'fulfilled' ? portfolioResult.value : null;
@@ -273,7 +305,7 @@ export default function PredictProfileScreen() {
     } finally {
       portfolioRefreshInFlight.current = false;
     }
-  }, [poly.client, poly.polygonAddress, poly.tradingAddress]);
+  }, [poly.client, poly.polygonAddress]);
 
   const refreshOpenOrdersQuietly = useCallback(async () => {
     if (!poly.client) return;
@@ -290,6 +322,15 @@ export default function PredictProfileScreen() {
       ordersRefreshInFlight.current = false;
     }
   }, [poly.client]);
+
+  usePolymarketUserStream(
+    isEnabled ? poly.client : null,
+    (event) => {
+      setOpenOrders((orders) => applyPredictUserEvent(orders, event));
+      if (isPredictTradeEvent(event)) void refreshPortfolioQuietly();
+    },
+    loadPortfolio,
+  );
 
   const handleConfirmCashOut = useCallback(async (size: number, limitPrice: number) => {
     const position = cashOutPosition;
@@ -796,7 +837,7 @@ export default function PredictProfileScreen() {
               <>
                 <Text style={styles.settingsTitle}>Polymarket wallet</Text>
                 <Text style={styles.settingsCopy}>
-                  Export the Polygon owner key that controls your Polymarket deposit wallet. Your Solana wallet signs once so the key can be derived locally.
+                  The active mobile SDK account owns authentication, approvals, orders, transfers, and redemption for this deposit wallet.
                 </Text>
                 <View style={styles.walletInfoBox}>
                   <View style={styles.walletInfoRow}>
@@ -816,6 +857,19 @@ export default function PredictProfileScreen() {
                   Your Polymarket wallet is an embedded wallet managed by Privy. There
                   is no key to export from this screen.
                 </Text>
+                {poly.isReady && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Disconnect Predict"
+                    disabled={busy}
+                    onPress={handleDisconnectPredict}
+                    style={[styles.settingsDisconnectBtn, busy && { opacity: 0.5 }]}
+                  >
+                    <Text style={styles.settingsDisconnectText}>
+                      {busy ? 'Disconnecting…' : 'Disconnect Predict'}
+                    </Text>
+                  </Pressable>
+                )}
               </>
             )}
           </View>
@@ -882,6 +936,21 @@ const styles = StyleSheet.create({
     color: semantic.text.dim,
     lineHeight: 15,
     marginBottom: 4,
+  },
+  settingsDisconnectBtn: {
+    marginTop: 8,
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.colors.vermillion,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsDisconnectText: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    fontWeight: '800',
+    color: tokens.colors.vermillion,
   },
   settingsBackRow: {
     alignSelf: 'flex-start',

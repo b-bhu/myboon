@@ -9,8 +9,17 @@ import {
   View,
 } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { SecureClient } from '@polymarket/client';
-import { fetchDepositStatus, withdrawFromPolymarket } from '@/features/predict/predict.api';
+import {
+  fetchBridgeSupportedAssets,
+  fetchDepositStatus,
+  fetchWithdrawalQuote,
+  selectSupportedDepositAssets,
+  SOLANA_CHAIN_ID,
+  withdrawFromPolymarket,
+} from '@/features/predict/predict.api';
+import type { BridgeQuote, BridgeSupportedAsset, DepositBridgeStatus } from '@/features/predict/predict.api';
 import { semantic, tokens } from '@/theme';
 
 interface WithdrawModalProps {
@@ -23,7 +32,20 @@ interface WithdrawModalProps {
   onSuccess?: () => void;
 }
 
-type WithdrawState = 'input' | 'confirming' | 'submitting' | 'success' | 'error';
+type WithdrawState = 'input' | 'quoting' | 'confirming' | 'submitting' | 'success' | 'error';
+
+interface TrackedWithdrawal {
+  amount: number;
+  recipientAddress: string;
+  bridgeAddress: string;
+  txHash: string | null;
+  quote: BridgeQuote;
+  status: DepositBridgeStatus | 'SUBMITTED';
+  startedAt: number;
+}
+
+const WITHDRAW_POLL_MS = 10_000;
+const WITHDRAW_TRACKING_PREFIX = 'predict.withdraw.tracking.v1';
 
 export function WithdrawModal({
   isOpen,
@@ -36,13 +58,17 @@ export function WithdrawModal({
   const [amount, setAmount] = useState('');
   const [state, setState] = useState<WithdrawState>('input');
   const [txHash, setTxHash] = useState<string | null>(null);
-  const [bridgeAddress, setBridgeAddress] = useState<string | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState('Bridge processing');
   const [error, setError] = useState<string | null>(null);
   const [recipientAddress, setRecipientAddress] = useState(solanaAddress);
+  const [destinationAsset, setDestinationAsset] = useState<BridgeSupportedAsset | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [quote, setQuote] = useState<BridgeQuote | null>(null);
+  const [trackedWithdrawal, setTrackedWithdrawal] = useState<TrackedWithdrawal | null>(null);
+  const trackingKey = `${WITHDRAW_TRACKING_PREFIX}:${client.account.wallet.toLowerCase()}`;
 
   const parsedAmount = parseFloat(amount);
-  const MIN_WITHDRAW = 1; // $1 minimum — dust amounts would fail on bridge
+  const minimumWithdraw = destinationAsset?.minCheckoutUsd ?? Number.POSITIVE_INFINITY;
   const trimmedRecipientAddress = recipientAddress.trim();
   const isRecipientValid = useMemo(() => {
     // Solana base58 addresses are usually 32-44 chars. Keep this client-side check light;
@@ -50,28 +76,73 @@ export function WithdrawModal({
     return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmedRecipientAddress);
   }, [trimmedRecipientAddress]);
   const isValid =
-    parsedAmount >= MIN_WITHDRAW &&
+    parsedAmount >= minimumWithdraw &&
     (cashBalance === null || parsedAmount <= cashBalance) &&
     isRecipientValid;
 
   useEffect(() => {
-    if (isOpen) setRecipientAddress(solanaAddress);
-  }, [isOpen, solanaAddress]);
+    if (!isOpen) return;
+    setRecipientAddress(solanaAddress);
+    setRouteLoading(true);
+    setError(null);
+    Promise.all([
+      fetchBridgeSupportedAssets(),
+      AsyncStorage.getItem(trackingKey),
+    ])
+      .then(([assets, rawTracking]) => {
+        const selected = selectSupportedDepositAssets(assets)
+          .find((asset) => asset.chainId === SOLANA_CHAIN_ID) ?? null;
+        setDestinationAsset(selected);
+        if (!selected) setError('Solana USDC withdrawals are unavailable right now.');
+        if (rawTracking) {
+          const saved = JSON.parse(rawTracking) as TrackedWithdrawal;
+          if (saved?.bridgeAddress && saved.quote) {
+            setTrackedWithdrawal(saved);
+            setAmount(String(saved.amount));
+            setRecipientAddress(saved.recipientAddress);
+            setQuote(saved.quote);
+            setTxHash(saved.txHash);
+            setBridgeStatus(saved.status === 'COMPLETED'
+              ? 'Bridge completed'
+              : saved.status === 'FAILED'
+                ? 'Bridge reported a failure'
+                : 'Bridge processing');
+            setState('success');
+          }
+        }
+      })
+      .catch((loadError: unknown) => {
+        setError(loadError instanceof Error ? loadError.message : 'Could not load the withdrawal route.');
+      })
+      .finally(() => setRouteLoading(false));
+  }, [isOpen, solanaAddress, trackingKey]);
 
   const handleClose = () => {
-    setAmount('');
-    setState('input');
-    setTxHash(null);
-    setBridgeAddress(null);
-    setBridgeStatus('Bridge processing');
-    setError(null);
-    setRecipientAddress(solanaAddress);
+    if (!trackedWithdrawal) {
+      setAmount('');
+      setState('input');
+      setTxHash(null);
+      setBridgeStatus('Bridge processing');
+      setError(null);
+      setQuote(null);
+      setRecipientAddress(solanaAddress);
+    }
     onClose();
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!isValid) return;
-    setState('confirming');
+    setState('quoting');
+    setError(null);
+    try {
+      const reviewed = await fetchWithdrawalQuote(parsedAmount, trimmedRecipientAddress);
+      setDestinationAsset(reviewed.asset);
+      setQuote(reviewed.quote);
+      setState('confirming');
+    } catch (quoteError: unknown) {
+      setError(quoteError instanceof Error ? quoteError.message : 'Could not quote this withdrawal.');
+      setState('error');
+    }
   };
 
   const handleSubmit = async () => {
@@ -83,8 +154,20 @@ export function WithdrawModal({
         solanaAddress: trimmedRecipientAddress,
       });
       if (result.ok) {
+        if (!result.bridgeAddress || !result.quote) throw new Error('Bridge submission returned incomplete tracking details.');
+        const tracking: TrackedWithdrawal = {
+          amount: parsedAmount,
+          recipientAddress: trimmedRecipientAddress,
+          bridgeAddress: result.bridgeAddress,
+          txHash: result.txHash ?? null,
+          quote: result.quote,
+          status: 'SUBMITTED',
+          startedAt: Date.now(),
+        };
+        await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
+        setTrackedWithdrawal(tracking);
+        setQuote(result.quote);
         setTxHash(result.txHash ?? null);
-        setBridgeAddress(result.bridgeAddress ?? null);
         setState('success');
         onSuccess?.();
       } else {
@@ -98,23 +181,44 @@ export function WithdrawModal({
   };
 
   useEffect(() => {
-    if (state !== 'success' || !bridgeAddress) return;
+    if (!trackedWithdrawal?.bridgeAddress) return;
+    if (trackedWithdrawal.status === 'COMPLETED' || trackedWithdrawal.status === 'FAILED') return;
     let cancelled = false;
     const refresh = async () => {
-      const transactions = await fetchDepositStatus(bridgeAddress).catch(() => []);
+      const transactions = await fetchDepositStatus(trackedWithdrawal.bridgeAddress).catch(() => []);
       if (cancelled || transactions.length === 0) return;
       const latest = [...transactions].sort((a, b) => (b.createdTimeMs ?? 0) - (a.createdTimeMs ?? 0))[0];
-      if (latest?.status === 'COMPLETED') setBridgeStatus('Bridge completed');
-      else if (latest?.status === 'FAILED') setBridgeStatus('Bridge reported a failure');
-      else setBridgeStatus('Bridge processing');
+      const nextStatus = latest?.status ?? 'PROCESSING';
+      setBridgeStatus(nextStatus === 'COMPLETED'
+        ? 'Bridge completed'
+        : nextStatus === 'FAILED'
+          ? 'Bridge reported a failure'
+          : 'Bridge processing');
+      setTrackedWithdrawal((current) => {
+        if (!current) return current;
+        const next = { ...current, status: nextStatus };
+        AsyncStorage.setItem(trackingKey, JSON.stringify(next)).catch(() => {});
+        return next;
+      });
     };
     void refresh();
-    const interval = setInterval(() => void refresh(), 10_000);
+    const interval = setInterval(() => void refresh(), WITHDRAW_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [bridgeAddress, state]);
+  }, [trackedWithdrawal?.bridgeAddress, trackedWithdrawal?.status, trackingKey]);
+
+  const handleDismissTracking = async () => {
+    await AsyncStorage.removeItem(trackingKey);
+    setTrackedWithdrawal(null);
+    setAmount('');
+    setQuote(null);
+    setTxHash(null);
+    setBridgeStatus('Bridge processing');
+    setState('input');
+    onClose();
+  };
 
   const handleMax = () => {
     if (cashBalance !== null && cashBalance > 0) {
@@ -148,6 +252,14 @@ export function WithdrawModal({
                   {cashBalance !== null ? `$${cashBalance.toFixed(2)}` : '--'}
                 </Text>
               </View>
+
+              {routeLoading && (
+                <View style={styles.routeRow}>
+                  <ActivityIndicator size="small" color={tokens.colors.primary} />
+                  <Text style={styles.statusSubtext}>Loading live Solana USDC route…</Text>
+                </View>
+              )}
+              {error && !routeLoading && <Text style={styles.errorHint}>{error}</Text>}
 
               {/* Amount input */}
               <View style={styles.inputRow}>
@@ -191,13 +303,21 @@ export function WithdrawModal({
               </View>
 
               <Pressable
-                onPress={handleConfirm}
-                disabled={!isValid}
-                style={[styles.withdrawBtn, !isValid && styles.btnDisabled]}
+                onPress={() => void handleConfirm()}
+                disabled={!isValid || routeLoading}
+                style={[styles.withdrawBtn, (!isValid || routeLoading) && styles.btnDisabled]}
               >
                 <Text style={styles.withdrawBtnText}>Review Withdraw</Text>
               </Pressable>
             </>
+          )}
+
+          {state === 'quoting' && (
+            <View style={styles.statusWrap}>
+              <ActivityIndicator color={tokens.colors.primary} />
+              <Text style={styles.statusText}>Checking the live Bridge quote…</Text>
+              <Text style={styles.statusSubtext}>No transfer is sent until you review and confirm.</Text>
+            </View>
           )}
 
           {state === 'confirming' && (
@@ -206,8 +326,8 @@ export function WithdrawModal({
 
               <View style={styles.confirmCard}>
                 <View style={styles.confirmRow}>
-                  <Text style={styles.confirmLabel}>Amount</Text>
-                  <Text style={styles.confirmValue}>${parsedAmount.toFixed(2)} USDC</Text>
+                  <Text style={styles.confirmLabel}>You send</Text>
+                  <Text style={styles.confirmValue}>${parsedAmount.toFixed(2)} pUSD</Text>
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>From</Text>
@@ -220,8 +340,30 @@ export function WithdrawModal({
                   </Text>
                 </View>
                 <View style={styles.confirmRow}>
-                  <Text style={styles.confirmLabel}>Gas</Text>
-                  <Text style={[styles.confirmValue, { color: tokens.colors.viridian }]}>Free (Builder)</Text>
+                  <Text style={styles.confirmLabel}>Estimated receive</Text>
+                  <Text style={styles.confirmValue}>${quote?.estOutputUsd.toFixed(2) ?? '--'} USDC</Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>Fee / impact</Text>
+                  <Text style={styles.confirmValue}>
+                    {quote?.estFeeBreakdown.totalImpactUsd != null
+                      ? `$${quote.estFeeBreakdown.totalImpactUsd.toFixed(2)} · ${quote.estFeeBreakdown.totalImpact?.toFixed(3) ?? '--'}%`
+                      : '--'}
+                  </Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>Minimum receive</Text>
+                  <Text style={styles.confirmValue}>
+                    {quote?.estFeeBreakdown.minReceived != null
+                      ? `$${quote.estFeeBreakdown.minReceived.toFixed(2)} USDC`
+                      : '--'}
+                  </Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>Estimated time</Text>
+                  <Text style={styles.confirmValue}>
+                    {quote ? `${Math.max(1, Math.ceil(quote.estCheckoutTimeMs / 60_000))} min` : '--'}
+                  </Text>
                 </View>
               </View>
 
@@ -249,14 +391,23 @@ export function WithdrawModal({
               <MaterialIcons name="check-circle" size={32} color={tokens.colors.viridian} />
               <Text style={styles.statusText}>Withdraw submitted!</Text>
               <Text style={styles.statusSubtext}>
-                ${parsedAmount.toFixed(2)} USDC bridging to {trimmedRecipientAddress.slice(0, 8)}...{trimmedRecipientAddress.slice(-6)}.{'\n'}
+                ${parsedAmount.toFixed(2)} pUSD bridging to {trimmedRecipientAddress.slice(0, 8)}...{trimmedRecipientAddress.slice(-6)} as Solana USDC.{'\n'}
                 {bridgeStatus}. It may take a few minutes to arrive.
               </Text>
               {txHash && (
                 <Text style={styles.txHash}>tx: {txHash.slice(0, 10)}...{txHash.slice(-8)}</Text>
               )}
-              <Pressable onPress={handleClose} style={[styles.withdrawBtn, { marginTop: 16, alignSelf: 'stretch' }]}>
-                <Text style={styles.withdrawBtnText}>Done</Text>
+              <Pressable
+                onPress={trackedWithdrawal?.status === 'COMPLETED' || trackedWithdrawal?.status === 'FAILED'
+                  ? () => void handleDismissTracking()
+                  : handleClose}
+                style={[styles.withdrawBtn, { marginTop: 16, alignSelf: 'stretch' }]}
+              >
+                <Text style={styles.withdrawBtnText}>
+                  {trackedWithdrawal?.status === 'COMPLETED' || trackedWithdrawal?.status === 'FAILED'
+                    ? 'Done'
+                    : 'Close · keep tracking'}
+                </Text>
               </Pressable>
             </View>
           )}
@@ -339,6 +490,13 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: semantic.text.primary,
+  },
+  routeRow: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
   },
   inputRow: {
     flexDirection: 'row',

@@ -1,6 +1,10 @@
 import type { Hono } from 'hono'
 import { CLOB_HOST, RELAYER_URL } from '../contracts.js'
-import { materializeBuilderPassphrase } from './builder-sign.js'
+import {
+  logPredictRequest,
+  materializeBuilderPassphrase,
+  normalizedObservedPath,
+} from './builder-sign.js'
 
 export function registerProxyRoutes(routes: Hono) {
   routes.get('/book', async (c) => {
@@ -110,6 +114,7 @@ export function registerProxyRoutes(routes: Hono) {
    * forwarded as-is.
    */
   async function relayToClob(c: any) {
+    const startedAt = Date.now()
     const url = new URL(c.req.url)
     const path = url.pathname.replace(/^\/clob\/proxy/, '') || '/'
     const target = `${CLOB_HOST}${path}${url.search}`
@@ -126,25 +131,41 @@ export function registerProxyRoutes(routes: Hono) {
       if (body) headers['Content-Type'] = c.req.header('content-type') ?? 'application/json'
     }
 
-    if (!materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)) {
-      console.warn(`[clob-proxy] refused invalid Builder authorization for ${method} ${path}`)
+    const authorization = materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)
+    const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
+    if (!authorization.ok) {
+      logPredictRequest('warn', {
+        event: 'clob-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'refused', status: 401, durationMs: Date.now() - startedAt,
+        errorCategory: 'invalid_builder_authorization',
+      })
       return c.json({ error: 'Invalid Builder authorization' }, 401)
     }
 
     try {
       const res = await fetch(target, { method, headers, body })
       const text = await res.text()
-      if (!res.ok) {
-        console.warn(`[clob-proxy] ${method} ${path} -> ${res.status}`)
-      }
+      logPredictRequest(res.ok ? 'info' : 'warn', {
+        event: 'clob-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'forwarded', status: res.status, durationMs: Date.now() - startedAt,
+        ...(res.ok ? {} : { errorCategory: 'upstream_rejection' }),
+      })
       // Upstream status passes through untouched: a 401 is a real auth failure
       // the client must act on, not a proxy error to flatten into a 502.
       return new Response(text, {
         status: res.status,
-        headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/json' },
+        headers: {
+          'Content-Type': res.headers.get('content-type') ?? 'application/json',
+          ...(requestId ? { 'X-Predict-Request-ID': requestId } : {}),
+        },
       })
-    } catch (err: any) {
-      return c.json({ error: 'CLOB proxy failed', detail: err.message, path }, 502)
+    } catch {
+      logPredictRequest('error', {
+        event: 'clob-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'failed', status: 502, durationMs: Date.now() - startedAt,
+        errorCategory: 'transport',
+      })
+      return c.json({ error: 'CLOB proxy failed' }, 502)
     }
   }
 
@@ -167,6 +188,7 @@ export function registerProxyRoutes(routes: Hono) {
    * `/submit`) to fail in production exactly like `/deployed` just did.
    */
   async function relayToRelayer(c: any) {
+    const startedAt = Date.now()
     const url = new URL(c.req.url)
     const path = url.pathname.replace(/^\/clob\/relayer-proxy/, '') || '/'
     const target = `${RELAYER_URL}${path}${url.search}`
@@ -184,8 +206,14 @@ export function registerProxyRoutes(routes: Hono) {
       body = await c.req.text()
     }
 
-    if (!materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)) {
-      console.warn(`[relayer-proxy] refused invalid Builder authorization for ${method} ${path}`)
+    const authorization = materializeBuilderPassphrase(headers, method, `${path}${url.search}`, body)
+    const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
+    if (!authorization.ok) {
+      logPredictRequest('warn', {
+        event: 'relayer-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'refused', status: 401, durationMs: Date.now() - startedAt,
+        errorCategory: 'invalid_builder_authorization',
+      })
       return c.json({ error: 'Invalid Builder authorization' }, 401)
     }
 
@@ -195,13 +223,25 @@ export function registerProxyRoutes(routes: Hono) {
       // Status and path only. Request headers carry `POLY_BUILDER_*`
       // signature material and bodies carry transaction payloads, so neither
       // belongs in a log sink.
-      if (!res.ok) console.warn(`[relayer-proxy] ${method} ${path} -> ${res.status}`)
+      logPredictRequest(res.ok ? 'info' : 'warn', {
+        event: 'relayer-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'forwarded', status: res.status, durationMs: Date.now() - startedAt,
+        ...(res.ok ? {} : { errorCategory: 'upstream_rejection' }),
+      })
       return new Response(text, {
         status: res.status,
-        headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/json' },
+        headers: {
+          'Content-Type': res.headers.get('content-type') ?? 'application/json',
+          ...(requestId ? { 'X-Predict-Request-ID': requestId } : {}),
+        },
       })
-    } catch (err: any) {
-      return c.json({ error: 'Relayer proxy failed', detail: err.message, path }, 502)
+    } catch {
+      logPredictRequest('error', {
+        event: 'relayer-proxy', requestId, method, path: normalizedObservedPath(path),
+        decision: 'failed', status: 502, durationMs: Date.now() - startedAt,
+        errorCategory: 'transport',
+      })
+      return c.json({ error: 'Relayer proxy failed' }, 502)
     }
   }
 

@@ -98,7 +98,7 @@ describe('/builder/sign authentication', () => {
     assert.equal(res.status, 200)
     const json = await res.json() as Record<string, string>
     assert.equal(json.POLY_BUILDER_API_KEY, 'test-key')
-    assert.equal(json.POLY_BUILDER_PASSPHRASE, 'myboon-server-injected')
+    assert.match(json.POLY_BUILDER_PASSPHRASE, /^myboon-server-injected:[A-Za-z0-9-]{8,64}$/)
     assert.notEqual(json.POLY_BUILDER_PASSPHRASE, process.env.POLYMARKET_BUILDER_PASSPHRASE)
     assert.ok(json.POLY_BUILDER_SIGNATURE?.length > 0)
     assert.ok(json.POLY_BUILDER_TIMESTAMP?.length > 0)
@@ -109,7 +109,10 @@ describe('/builder/sign authentication', () => {
 
 describe('/builder/sign path allowlist', () => {
   test('permits the two relayer paths the SDK actually uses', async () => {
-    for (const req of [DEPLOYED, { method: 'POST', path: '/submit', body: '{}' }]) {
+    for (const req of [
+      DEPLOYED,
+      { method: 'POST', path: '/submit', body: JSON.stringify({ from: wallet.address }) },
+    ]) {
       const res = await post(await signedHeaders(), req)
       assert.equal(res.status, 200, `expected ${req.method} ${req.path} to be allowed`)
     }
@@ -124,6 +127,7 @@ describe('/builder/sign path allowlist', () => {
       { method: 'POST', path: '/auth/api-key', body: '{}' },
       { method: 'GET', path: '/auth/derive-api-key' },
       { method: 'GET', path: '/auth/api-keys' },
+      { method: 'DELETE', path: '/auth/api-key' },
     ]
     for (const req of credentialCalls) {
       const res = await post(await signedHeaders(), req)
@@ -161,6 +165,22 @@ describe('/builder/sign path allowlist', () => {
     assert.equal(res.status, 403)
   })
 
+  test('requires a valid from address on every relayer submission', async () => {
+    for (const body of [{}, { from: 'not-an-address' }]) {
+      const res = await post(await signedHeaders(), {
+        method: 'POST',
+        path: '/submit',
+        body: JSON.stringify(body),
+      })
+      assert.equal(res.status, 403)
+    }
+  })
+
+  test('permits future harmless reads without widening write policy', async () => {
+    const res = await post(await signedHeaders(), { method: 'GET', path: '/data/new-read?limit=20' })
+    assert.equal(res.status, 200)
+  })
+
   test('permits the SDK gasless preparation and polling paths', async () => {
     for (const req of [
       { method: 'GET', path: `/v1/account/transactions/params?address=${wallet.address}&type=WALLET` },
@@ -177,7 +197,11 @@ describe('/builder/sign rate limiting', () => {
     const heavy = Wallet.createRandom()
     let limited = 0
     for (let i = 0; i < 25; i++) {
-      const res = await post(await signedHeaders(heavy), { method: 'POST', path: '/submit', body: '{}' })
+      const res = await post(await signedHeaders(heavy), {
+        method: 'POST',
+        path: '/submit',
+        body: JSON.stringify({ from: heavy.address }),
+      })
       if (res.status === 429) limited++
     }
     assert.ok(limited > 0, 'expected the address to be rate limited within 25 requests')

@@ -471,18 +471,52 @@ export interface PlaceBetResult extends PredictOperationMeta {
   orderID?: string;
   success: boolean;
   error?: string;
+  estimatedPrice?: number;
+  executionPrice?: number;
+  shares?: number;
+  amount?: number;
+  expectedPayout?: number;
+  tradeIds?: string[];
 }
 
 export async function placeBet(client: SecureClient, params: PlaceBetParams): Promise<PlaceBetResult> {
   try {
     const isMarket = params.orderType === 'FOK' || params.orderType === 'FAK';
+    let estimatedPrice: number | undefined;
+    if (isMarket) {
+      estimatedPrice = await client.estimateMarketPrice(params.side === 'BUY'
+        ? {
+            tokenId: params.tokenID,
+            side: OrderSide.BUY,
+            amount: params.amount ?? (params.size ?? 0) * params.price,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+          }
+        : {
+            tokenId: params.tokenID,
+            side: OrderSide.SELL,
+            shares: params.size ?? 0,
+            orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
+          });
+      const outsideProtection = params.side === 'BUY'
+        ? estimatedPrice > params.price
+        : estimatedPrice < params.price;
+      if (outsideProtection) {
+        return {
+          success: false,
+          status: 'not_filled',
+          code: 'PRICE_PROTECTION',
+          error: 'Not filled. The executable SDK price moved outside your reviewed limit.',
+          estimatedPrice,
+        };
+      }
+    }
     const response = isMarket
       ? await client.placeMarketOrder(params.side === 'BUY'
         ? {
             tokenId: params.tokenID,
             side: OrderSide.BUY,
             amount: params.amount ?? (params.size ?? 0) * params.price,
-            maxPrice: params.price,
+            maxPrice: estimatedPrice ?? params.price,
             maxSpend: params.amount,
             orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
             builderCode: POLYMARKET_BUILDER_CODE,
@@ -491,7 +525,7 @@ export async function placeBet(client: SecureClient, params: PlaceBetParams): Pr
             tokenId: params.tokenID,
             side: OrderSide.SELL,
             shares: params.size ?? 0,
-            minPrice: params.price,
+            minPrice: estimatedPrice ?? params.price,
             orderType: params.orderType === 'FOK' ? OrderType.FOK : OrderType.FAK,
             builderCode: POLYMARKET_BUILDER_CODE,
           })
@@ -511,17 +545,48 @@ export async function placeBet(client: SecureClient, params: PlaceBetParams): Pr
         status: normalized.kind === 'liquidity' ? 'not_filled' : 'failed',
         code: normalized.code,
         error: normalized.message,
+        estimatedPrice,
       };
     }
+
+    const makingAmount = toNumber(response.makingAmount) ?? 0;
+    const takingAmount = toNumber(response.takingAmount) ?? 0;
+    let actualShares = params.side === 'BUY' ? takingAmount : makingAmount;
+    let actualAmount = params.side === 'BUY' ? makingAmount : takingAmount;
+    let executionPrice = actualShares > 0 ? actualAmount / actualShares : undefined;
+
+    // Resting/delayed orders have zero immediate fill amounts. Read back the
+    // authoritative SDK order rather than presenting the local preview as the
+    // accepted order size/price.
+    if (response.status !== 'matched') {
+      try {
+        const order = await client.fetchOrder({ orderId: response.orderId });
+        actualShares = toNumber(order.originalSize) ?? 0;
+        executionPrice = toNumber(order.price) ?? undefined;
+        actualAmount = actualShares * (executionPrice ?? 0);
+      } catch {
+        // The placement result remains authoritative; reconciliation will
+        // fetch the order again after the upstream index catches up.
+      }
+    }
+
+    const resultMeta = {
+      orderID: response.orderId,
+      estimatedPrice,
+      ...(executionPrice !== undefined ? { executionPrice } : {}),
+      ...(actualShares > 0 ? { shares: actualShares, expectedPayout: actualShares } : {}),
+      ...(actualAmount > 0 ? { amount: actualAmount } : {}),
+      tradeIds: response.tradeIds,
+    };
     if (isMarket && response.status === 'matched') {
       try {
         await client.waitForOrderFillSettlement(response);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (/timed?\s*out|timeout/iu.test(message)) {
+        const normalized = normalizePredictError(error, 'Order settlement failed.');
+        if (normalized.kind === 'order_waiting') {
           return {
             success: true,
-            orderID: response.orderId,
+            ...resultMeta,
             status: 'submitted',
             userMessage: 'Order matched. Settlement is still processing.',
           };
@@ -530,7 +595,7 @@ export async function placeBet(client: SecureClient, params: PlaceBetParams): Pr
       }
     }
     const status: PredictOperationStatus = response.status === 'matched' ? 'filled' : 'waiting_to_match';
-    return { success: true, orderID: response.orderId, status };
+    return { success: true, ...resultMeta, status };
   } catch (error) {
     const normalized = normalizePredictError(error, 'Order failed.');
     return { success: false, status: 'failed', code: normalized.code, error: normalized.message };
@@ -551,6 +616,8 @@ export interface OpenOrder {
   outcome: string;
   created_at: number;
   order_type: string;
+  /** SDK trade IDs already reflected in size_matched (used for idempotent stream updates). */
+  associate_trades?: string[];
 }
 
 type SdkOpenOrder = Awaited<ReturnType<SecureClient['fetchOrder']>>;
@@ -568,6 +635,7 @@ function mapOpenOrder(order: SdkOpenOrder): OpenOrder {
     outcome: order.outcome,
     created_at: Date.parse(order.createdAt),
     order_type: order.orderType,
+    associate_trades: order.associateTrades,
   };
 }
 
@@ -645,6 +713,185 @@ export interface DepositBridgeTransaction {
   createdTimeMs?: number;
 }
 
+export interface BridgeSupportedAsset {
+  chainId: string;
+  chainName: string;
+  token: {
+    name: string;
+    symbol: string;
+    address: string;
+    decimals: number;
+  };
+  minCheckoutUsd: number;
+}
+
+export interface BridgeDepositAddresses {
+  evm?: string;
+  svm?: string;
+  [key: string]: string | undefined;
+}
+
+export interface BridgeQuoteFeeBreakdown {
+  appFeePercent: number | null;
+  appFeeUsd: number | null;
+  fillCostPercent: number | null;
+  fillCostUsd: number | null;
+  gasUsd: number | null;
+  maxSlippage: number | null;
+  minReceived: number | null;
+  swapImpact: number | null;
+  totalImpact: number | null;
+  totalImpactUsd: number | null;
+}
+
+export interface BridgeQuote {
+  quoteId: string;
+  estCheckoutTimeMs: number;
+  estInputUsd: number;
+  estOutputUsd: number;
+  estToTokenBaseUnit: string;
+  estFeeBreakdown: BridgeQuoteFeeBreakdown;
+}
+
+export interface BridgeQuoteRequest {
+  fromAmountBaseUnit: string;
+  fromChainId: string;
+  fromTokenAddress: string;
+  recipientAddress: string;
+  toChainId: string;
+  toTokenAddress: string;
+}
+
+export const POLYGON_CHAIN_ID = '137';
+export const SOLANA_CHAIN_ID = '1151111081099710';
+export const POLYGON_USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+export const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+export const POLYMARKET_PUSD = '0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb';
+export const MAX_WITHDRAW_BRIDGE_IMPACT_PERCENT = 0.1; // 10 basis points
+
+async function bridgeJson(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
+  const response = await fetchWithTimeout(`${resolveApiBaseUrl()}${path}`, init);
+  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    const detail = typeof data.error === 'string' ? data.error : `Bridge request failed (${response.status})`;
+    throw Object.assign(new Error(detail), { status: response.status });
+  }
+  return data;
+}
+
+function mapBridgeAsset(value: unknown): BridgeSupportedAsset | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const token = row.token && typeof row.token === 'object'
+    ? row.token as Record<string, unknown>
+    : null;
+  const minCheckoutUsd = toNumber(row.minCheckoutUsd);
+  if (
+    typeof row.chainId !== 'string'
+    || typeof row.chainName !== 'string'
+    || !token
+    || typeof token.name !== 'string'
+    || typeof token.symbol !== 'string'
+    || typeof token.address !== 'string'
+    || typeof token.decimals !== 'number'
+    || minCheckoutUsd === null
+  ) return null;
+  return {
+    chainId: row.chainId,
+    chainName: row.chainName,
+    token: {
+      name: token.name,
+      symbol: token.symbol,
+      address: token.address,
+      decimals: token.decimals,
+    },
+    minCheckoutUsd,
+  };
+}
+
+export async function fetchBridgeSupportedAssets(): Promise<BridgeSupportedAsset[]> {
+  const data = await bridgeJson('/clob/bridge/supported-assets');
+  const rows = Array.isArray(data.supportedAssets) ? data.supportedAssets : [];
+  return rows.map(mapBridgeAsset).filter((asset): asset is BridgeSupportedAsset => asset !== null);
+}
+
+/** Deliberately narrow product support: exact native USDC on Polygon/Solana. */
+export function selectSupportedDepositAssets(assets: BridgeSupportedAsset[]): BridgeSupportedAsset[] {
+  const accepted = new Map([
+    [`${POLYGON_CHAIN_ID}:${POLYGON_USDC.toLowerCase()}`, 0],
+    [`${SOLANA_CHAIN_ID}:${SOLANA_USDC_MINT.toLowerCase()}`, 1],
+  ]);
+  return assets
+    .filter((asset) => accepted.has(`${asset.chainId}:${asset.token.address.toLowerCase()}`))
+    .sort((a, b) => (
+      accepted.get(`${a.chainId}:${a.token.address.toLowerCase()}`)!
+      - accepted.get(`${b.chainId}:${b.token.address.toLowerCase()}`)!
+    ));
+}
+
+export async function fetchDepositAddresses(walletAddress: string): Promise<BridgeDepositAddresses> {
+  const data = await bridgeJson(`/clob/deposit/${encodeURIComponent(walletAddress)}`);
+  const raw = data.address && typeof data.address === 'object'
+    ? data.address as Record<string, unknown>
+    : data;
+  return Object.fromEntries(
+    Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+}
+
+function bridgeFeeNumber(raw: Record<string, unknown>, field: string): number | null {
+  return toNumber(raw[field]);
+}
+
+export async function fetchBridgeQuote(request: BridgeQuoteRequest): Promise<BridgeQuote> {
+  const data = await bridgeJson('/clob/bridge/quote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const fees = data.estFeeBreakdown && typeof data.estFeeBreakdown === 'object'
+    ? data.estFeeBreakdown as Record<string, unknown>
+    : {};
+  const quoteId = typeof data.quoteId === 'string' ? data.quoteId : null;
+  const estCheckoutTimeMs = toNumber(data.estCheckoutTimeMs);
+  const estInputUsd = toNumber(data.estInputUsd);
+  const estOutputUsd = toNumber(data.estOutputUsd);
+  const estToTokenBaseUnit = typeof data.estToTokenBaseUnit === 'string'
+    ? data.estToTokenBaseUnit
+    : null;
+  if (!quoteId || estCheckoutTimeMs === null || estInputUsd === null || estOutputUsd === null || !estToTokenBaseUnit) {
+    throw new Error('Bridge returned an incomplete quote. Try again.');
+  }
+  return {
+    quoteId,
+    estCheckoutTimeMs,
+    estInputUsd,
+    estOutputUsd,
+    estToTokenBaseUnit,
+    estFeeBreakdown: {
+      appFeePercent: bridgeFeeNumber(fees, 'appFeePercent'),
+      appFeeUsd: bridgeFeeNumber(fees, 'appFeeUsd'),
+      fillCostPercent: bridgeFeeNumber(fees, 'fillCostPercent'),
+      fillCostUsd: bridgeFeeNumber(fees, 'fillCostUsd'),
+      gasUsd: bridgeFeeNumber(fees, 'gasUsd'),
+      maxSlippage: bridgeFeeNumber(fees, 'maxSlippage'),
+      minReceived: bridgeFeeNumber(fees, 'minReceived'),
+      swapImpact: bridgeFeeNumber(fees, 'swapImpact'),
+      totalImpact: bridgeFeeNumber(fees, 'totalImpact'),
+      totalImpactUsd: bridgeFeeNumber(fees, 'totalImpactUsd'),
+    },
+  };
+}
+
+export function decimalAmountToBaseUnits(amount: number, decimals: number): string {
+  if (!Number.isFinite(amount) || amount < 0 || !Number.isInteger(decimals) || decimals < 0) {
+    throw new Error('Invalid token amount.');
+  }
+  const fixed = amount.toFixed(decimals);
+  const [whole, fraction = ''] = fixed.split('.');
+  return `${whole}${fraction.padEnd(decimals, '0')}`.replace(/^0+(?=\d)/u, '');
+}
+
 export async function fetchDepositStatus(depositAddress: string): Promise<DepositBridgeTransaction[]> {
   const baseUrl = resolveApiBaseUrl();
   const response = await fetchWithTimeout(`${baseUrl}/clob/deposit-status/${encodeURIComponent(depositAddress)}`);
@@ -655,7 +902,7 @@ export async function fetchDepositStatus(depositAddress: string): Promise<Deposi
     : [];
 }
 
-// --- Portfolio & Positions (Gamma data-api, proxied through VPS) ---
+// --- Account data (authoritative SecureClient account.wallet) ---
 
 export interface PortfolioPosition {
   proxyWallet: string;
@@ -706,6 +953,7 @@ export interface PortfolioData {
   redeemablePositions: PortfolioPosition[];
   closedPositions: ClosedPortfolioPosition[];
   activity: ActivityItem[];
+  recentTrades: RecentAccountTrade[];
   profile: {
     name: string | null;
     bio: string | null;
@@ -727,24 +975,6 @@ export interface PortfolioData {
   };
 }
 
-export async function fetchPortfolio(polygonAddress: string): Promise<PortfolioData> {
-  const payload = await getJson(`/polymarket/portfolio/${encodeURIComponent(polygonAddress)}`);
-  if (!payload || typeof payload !== 'object') throw new Error('Invalid portfolio response');
-  const p = payload as Record<string, unknown>;
-  return {
-    address: typeof p.address === 'string' ? p.address : polygonAddress,
-    portfolioValue: toNumber(p.portfolioValue),
-    positions: Array.isArray(p.positions) ? (p.positions as PortfolioPosition[]) : [],
-    redeemablePositions: Array.isArray(p.redeemablePositions)
-      ? (p.redeemablePositions as PortfolioPosition[]).filter((position) => (position.currentValue ?? 0) >= 0.01)
-      : [],
-    closedPositions: Array.isArray(p.closedPositions) ? (p.closedPositions as ClosedPortfolioPosition[]) : [],
-    activity: Array.isArray(p.activity) ? (p.activity as ActivityItem[]) : [],
-    profile: p.profile as PortfolioData['profile'] ?? null,
-    summary: (p.summary as PortfolioData['summary']) ?? { openPositions: 0, totalPnl: 0, totalCollected: 0 },
-  };
-}
-
 export interface ActivityItem {
   timestamp: number;
   type: string;
@@ -761,16 +991,175 @@ export interface ActivityItem {
   outcome: string;
 }
 
-export async function fetchActivity(polygonAddress: string): Promise<ActivityItem[]> {
-  const payload = await getJson(`/polymarket/activity/${encodeURIComponent(polygonAddress)}`);
-  if (!Array.isArray(payload)) return [];
-  return payload as ActivityItem[];
+export interface RecentAccountTrade {
+  id: string;
+  conditionId: string;
+  tokenId: string;
+  takerOrderId: string;
+  makerOrderIds: string[];
+  side: string;
+  price: number;
+  size: number;
+  status: string;
+  matchedAt: number;
 }
 
-export async function fetchMarketPositions(polygonAddress: string, slug: string): Promise<PortfolioPosition[]> {
-  const payload = await getJson(`/polymarket/positions/${encodeURIComponent(polygonAddress)}/market/${encodeURIComponent(slug)}`);
-  if (!Array.isArray(payload)) return [];
-  return payload as PortfolioPosition[];
+export async function fetchRecentAccountTrades(client: SecureClient): Promise<RecentAccountTrade[]> {
+  const page = await client.listAccountTrades().firstPage();
+  return page.items.map((trade) => ({
+    id: trade.id,
+    conditionId: trade.conditionId,
+    tokenId: trade.tokenId,
+    takerOrderId: trade.takerOrderId,
+    makerOrderIds: trade.makerOrders.map((order) => order.orderId),
+    side: trade.side,
+    price: numberOrZero(trade.price),
+    size: numberOrZero(trade.size),
+    status: trade.status,
+    matchedAt: Date.parse(trade.matchedAt),
+  }));
+}
+
+async function collectSdkPages<T>(paginator: AsyncIterable<{ items: T[] }>): Promise<T[]> {
+  const items: T[] = [];
+  for await (const page of paginator) items.push(...page.items);
+  return items;
+}
+
+function numberOrZero(value: unknown): number {
+  return toNumber(value) ?? 0;
+}
+
+function mapSdkPosition(value: unknown): PortfolioPosition {
+  const position = value as Record<string, unknown>;
+  return {
+    proxyWallet: typeof position.wallet === 'string' ? position.wallet : '',
+    asset: typeof position.tokenId === 'string' ? position.tokenId : '',
+    conditionId: typeof position.conditionId === 'string' ? position.conditionId : '',
+    size: numberOrZero(position.size),
+    avgPrice: numberOrZero(position.avgPrice),
+    currentValue: numberOrZero(position.currentValue),
+    cashPnl: numberOrZero(position.cashPnl),
+    percentPnl: numberOrZero(position.percentPnl),
+    curPrice: numberOrZero(position.curPrice),
+    title: typeof position.title === 'string' ? position.title : '',
+    slug: typeof position.slug === 'string' ? position.slug : '',
+    eventSlug: typeof position.eventSlug === 'string' ? position.eventSlug : '',
+    outcome: typeof position.outcome === 'string' ? position.outcome : '',
+    outcomeIndex: numberOrZero(position.outcomeIndex),
+    icon: typeof position.icon === 'string' ? position.icon : null,
+    endDate: typeof position.endDate === 'string' ? position.endDate : null,
+    negativeRisk: position.negativeRisk === true,
+  };
+}
+
+function mapSdkClosedPosition(value: unknown): ClosedPortfolioPosition {
+  const position = value as Record<string, unknown>;
+  return {
+    proxyWallet: typeof position.wallet === 'string' ? position.wallet : '',
+    asset: typeof position.tokenId === 'string' ? position.tokenId : '',
+    conditionId: typeof position.conditionId === 'string' ? position.conditionId : '',
+    avgPrice: numberOrZero(position.avgPrice),
+    totalBought: numberOrZero(position.totalBought),
+    realizedPnl: numberOrZero(position.realizedPnl),
+    curPrice: numberOrZero(position.curPrice),
+    timestamp: numberOrZero(position.timestamp),
+    title: typeof position.title === 'string' ? position.title : '',
+    slug: typeof position.slug === 'string' ? position.slug : '',
+    icon: typeof position.icon === 'string' ? position.icon : null,
+    eventSlug: typeof position.eventSlug === 'string' ? position.eventSlug : '',
+    outcome: typeof position.outcome === 'string' ? position.outcome : '',
+    outcomeIndex: numberOrZero(position.outcomeIndex),
+    oppositeOutcome: typeof position.oppositeOutcome === 'string' ? position.oppositeOutcome : '',
+    oppositeAsset: typeof position.oppositeTokenId === 'string' ? position.oppositeTokenId : '',
+    endDate: typeof position.endDate === 'string' ? position.endDate : null,
+  };
+}
+
+function mapSdkActivity(value: unknown): ActivityItem {
+  const activity = value as Record<string, unknown>;
+  const isTrade = activity.type === 'TRADE' && activity.isCombo !== true;
+  return {
+    timestamp: numberOrZero(activity.timestamp),
+    type: typeof activity.type === 'string' ? activity.type : 'UNKNOWN',
+    side: isTrade && typeof activity.side === 'string' ? activity.side : '',
+    size: isTrade ? numberOrZero(activity.shares) : 0,
+    usdcSize: numberOrZero(activity.amount),
+    price: isTrade ? numberOrZero(activity.price) : 0,
+    asset: isTrade && typeof activity.tokenId === 'string' ? activity.tokenId : undefined,
+    conditionId: typeof activity.conditionId === 'string' ? activity.conditionId : undefined,
+    eventSlug: typeof activity.eventSlug === 'string' ? activity.eventSlug : undefined,
+    outcomeIndex: isTrade ? numberOrZero(activity.outcomeIndex) : undefined,
+    title: typeof activity.title === 'string' ? activity.title : 'Account activity',
+    slug: typeof activity.slug === 'string' ? activity.slug : '',
+    outcome: isTrade && typeof activity.outcome === 'string' ? activity.outcome : '',
+  };
+}
+
+export async function fetchActivity(client: SecureClient): Promise<ActivityItem[]> {
+  const activities = await collectSdkPages(client.listActivity());
+  return activities.map(mapSdkActivity);
+}
+
+export async function fetchPortfolio(client: SecureClient): Promise<PortfolioData> {
+  const [sdkPositions, sdkClosed, values, activities, profile, recentTrades] = await Promise.all([
+    collectSdkPages(client.listPositions()),
+    collectSdkPages(client.listClosedPositions()),
+    client.fetchPortfolioValue(),
+    collectSdkPages(client.listActivity()),
+    client.fetchPublicProfile({ address: client.account.wallet }),
+    fetchRecentAccountTrades(client),
+  ]);
+  const positions = sdkPositions.map(mapSdkPosition);
+  const redeemablePositions = sdkPositions
+    .filter((position) => (position as unknown as Record<string, unknown>).redeemable === true)
+    .map(mapSdkPosition)
+    .filter((position) => position.currentValue >= 0.01);
+  const closedPositions = sdkClosed.map(mapSdkClosedPosition);
+  const activity = activities.map(mapSdkActivity);
+  const totalPnl = positions.reduce((sum, position) => sum + position.cashPnl, 0);
+  const cashOutNow = positions.reduce((sum, position) => sum + position.currentValue, 0);
+  const readyToCollect = redeemablePositions.reduce((sum, position) => sum + position.currentValue, 0);
+  const totalRealizedPnl = closedPositions.reduce((sum, position) => sum + position.realizedPnl, 0);
+  const totalCollected = activity
+    .filter((entry) => entry.type === 'REDEEM')
+    .reduce((sum, entry) => sum + entry.usdcSize, 0);
+
+  return {
+    address: client.account.wallet,
+    portfolioValue: values.reduce((sum, value) => sum + numberOrZero(value.value), 0),
+    positions,
+    redeemablePositions,
+    closedPositions,
+    activity,
+    recentTrades,
+    profile: profile ? {
+      name: profile.name ?? profile.pseudonym ?? null,
+      bio: profile.bio ?? null,
+      profileImage: profile.profileImage ?? null,
+      xUsername: profile.xUsername ?? null,
+    } : null,
+    summary: {
+      openPositions: positions.length,
+      totalPnl,
+      cashOutNow,
+      readyToCollect,
+      activePickCount: positions.length,
+      closedPickCount: closedPositions.length,
+      activityCount: activity.length,
+      hasActivity: activity.length > 0,
+      hasAnyPicks: positions.length + closedPositions.length > 0,
+      totalCollected,
+      totalRealizedPnl,
+    },
+  };
+}
+
+export async function fetchMarketPositions(client: SecureClient, slug: string): Promise<PortfolioPosition[]> {
+  const positions = await collectSdkPages(client.listPositions());
+  return positions.map(mapSdkPosition).filter((position) => (
+    position.slug === slug || position.eventSlug === slug
+  ));
 }
 
 // --- Withdraw ---
@@ -785,12 +1174,9 @@ export interface WithdrawResult extends PredictOperationMeta {
   amount?: number;
   txHash?: string | null;
   bridgeAddress?: string;
+  quote?: BridgeQuote;
   error?: string;
 }
-
-const SOLANA_CHAIN_ID = '1151111081099710';
-const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const POLYMARKET_PUSD = '0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb';
 
 function bridgeAddressFromPayload(data: Record<string, unknown>): string | null {
   const address = data.address;
@@ -806,14 +1192,15 @@ function bridgeAddressFromPayload(data: Record<string, unknown>): string | null 
 async function fetchExpectedWithdrawBridgeAddress(
   client: SecureClient,
   params: WithdrawParams,
+  destinationAsset: BridgeSupportedAsset,
 ): Promise<string> {
   const response = await fetchWithTimeout(`${resolveApiBaseUrl()}/clob/bridge/withdraw`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       address: client.account.wallet,
-      toChainId: SOLANA_CHAIN_ID,
-      toTokenAddress: SOLANA_USDC_MINT,
+      toChainId: destinationAsset.chainId,
+      toTokenAddress: destinationAsset.token.address,
       recipientAddr: params.solanaAddress,
     }),
   });
@@ -825,6 +1212,36 @@ async function fetchExpectedWithdrawBridgeAddress(
   return bridgeAddress;
 }
 
+export async function fetchWithdrawalQuote(
+  amount: number,
+  solanaAddress: string,
+): Promise<{ asset: BridgeSupportedAsset; quote: BridgeQuote }> {
+  const assets = selectSupportedDepositAssets(await fetchBridgeSupportedAssets());
+  const asset = assets.find((entry) => entry.chainId === SOLANA_CHAIN_ID);
+  if (!asset) throw new Error('Solana USDC withdrawals are unavailable right now.');
+  if (!Number.isFinite(amount) || amount < asset.minCheckoutUsd) {
+    throw new Error(`Minimum withdrawal is $${asset.minCheckoutUsd.toFixed(2)} USDC.`);
+  }
+  const quote = await fetchBridgeQuote({
+    fromAmountBaseUnit: decimalAmountToBaseUnits(amount, 6),
+    fromChainId: POLYGON_CHAIN_ID,
+    fromTokenAddress: POLYMARKET_PUSD,
+    recipientAddress: solanaAddress,
+    toChainId: asset.chainId,
+    toTokenAddress: asset.token.address,
+  });
+  // The documented <10bp offramp rule applies to the pUSD -> native USDC
+  // swap, not total bridge cost (which also includes fixed fill/gas costs).
+  const impact = quote.estFeeBreakdown.swapImpact;
+  if (impact === null) throw new Error('Bridge quote did not include swap impact.');
+  if (impact >= MAX_WITHDRAW_BRIDGE_IMPACT_PERCENT) {
+    throw new Error(
+      `Bridge swap impact is ${impact.toFixed(3)}%; it must stay below ${MAX_WITHDRAW_BRIDGE_IMPACT_PERCENT.toFixed(2)}%.`,
+    );
+  }
+  return { asset, quote };
+}
+
 export async function withdrawFromPolymarket(
   client: SecureClient,
   params: WithdrawParams,
@@ -833,8 +1250,11 @@ export async function withdrawFromPolymarket(
     if (!Number.isFinite(params.amount) || params.amount <= 0) {
       return { ok: false, status: 'failed', error: 'Enter a valid withdrawal amount.' };
     }
-    const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(client, params);
-    const amount = BigInt(params.amount.toFixed(6).replace('.', ''));
+    // Re-quote at submission time. The modal's quote is for review; this fresh
+    // quote is the execution guard against a stale route or changed impact.
+    const { asset, quote } = await fetchWithdrawalQuote(params.amount, params.solanaAddress);
+    const bridgeAddress = await fetchExpectedWithdrawBridgeAddress(client, params, asset);
+    const amount = BigInt(decimalAmountToBaseUnits(params.amount, 6));
     const handle = await client.transferErc20({
       tokenAddress: POLYMARKET_PUSD,
       recipientAddress: bridgeAddress,
@@ -847,6 +1267,7 @@ export async function withdrawFromPolymarket(
       amount: params.amount,
       txHash: outcome.transactionHash,
       bridgeAddress,
+      quote,
       status: 'bridging',
       userMessage: 'Withdraw submitted. Bridge confirmation can take a few minutes.',
     };

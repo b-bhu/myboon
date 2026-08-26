@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { verifyPredictAuthProof } from '../auth-proof.js'
 
 /**
@@ -74,38 +74,24 @@ import { verifyPredictAuthProof } from '../auth-proof.js'
  * what issue #275 was (a returning wallet 403'd on the fallback, surfacing as
  * the SDK's generic "Could not authorize the builder-authenticated request").
  * `/auth/api-keys` is used to validate credentials restored from SecureStore.
- * The transaction-param and transaction-ID paths are the stable SDK's gasless
- * preparation and settlement polling calls. Remaining CLOB entries correspond
- * only to order metadata, posting/cancellation, open-order/trade reconciliation,
- * and collateral balance reads used by the mobile product.
+ * Fixed-host GETs are treated as reads, so new SDK metadata/reconciliation
+ * endpoints do not require a deploy merely to restore an account. Writes stay
+ * explicitly enumerated: credential create/revoke, order post/cancel, and
+ * relayer submit.
  *
- * Allowlisting means a stolen or replayed proof still cannot direct this app's
- * Builder credential at arbitrary relayer or CLOB operations.
+ * Write allowlisting means a stolen or replayed proof still cannot direct this
+ * app's Builder credential at arbitrary state-changing operations.
  *
- * If a future SDK version adds an endpoint, it fails closed here with a 403
- * naming the path, rather than silently widening what this key authorizes.
- * Fail-closed is the right default, but note it makes a missing path look like
- * an auth failure from the client — check for `[builder-sign] refused` here
- * before assuming the credentials or the proof are at fault.
+ * If a future SDK version adds a state-changing endpoint, it fails closed with
+ * a structured policy refusal. New reads remain constrained by the proxies'
+ * fixed Polymarket hosts and cannot select an arbitrary upstream.
  */
-const ALLOWED_BUILDER_PATHS: ReadonlyArray<{ method: string; path: RegExp }> = [
-  { method: 'GET', path: /^\/deployed(\?.*)?$/ },
-  { method: 'GET', path: /^\/v1\/account\/transactions\/params(\?.*)?$/ },
-  { method: 'GET', path: /^\/v1\/account\/transactions\/[^/?]+$/ },
+const ALLOWED_BUILDER_WRITES: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: 'POST', path: /^\/submit$/ },
   { method: 'POST', path: /^\/auth\/api-key$/ },
-  { method: 'GET', path: /^\/auth\/derive-api-key$/ },
-  { method: 'GET', path: /^\/auth\/api-keys$/ },
-  { method: 'GET', path: /^\/markets-by-token\/[^/?]+$/ },
-  { method: 'GET', path: /^\/clob-markets\/[^/?]+$/ },
-  { method: 'GET', path: /^\/fees\/builder-fees\/0x[0-9a-fA-F]{64}$/ },
-  { method: 'GET', path: /^\/balance-allowance(?:\?.*)?$/ },
-  { method: 'GET', path: /^\/balance-allowance\/update(?:\?.*)?$/ },
-  { method: 'GET', path: /^\/data\/orders(?:\?.*)?$/ },
-  { method: 'GET', path: /^\/data\/order\/[^/?]+$/ },
-  { method: 'GET', path: /^\/data\/trades(?:\?.*)?$/ },
   { method: 'POST', path: /^\/order$/ },
   { method: 'DELETE', path: /^\/order$/ },
+  { method: 'DELETE', path: /^\/auth\/api-key$/ },
 ]
 
 /**
@@ -116,6 +102,28 @@ const ALLOWED_BUILDER_PATHS: ReadonlyArray<{ method: string; path: RegExp }> = [
  * exact method, path, and body being forwarded.
  */
 export const SERVER_INJECTED_BUILDER_PASSPHRASE = 'myboon-server-injected'
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/
+
+function requestIdFrom(value: string | undefined): string {
+  return value && REQUEST_ID_PATTERN.test(value) ? value : randomUUID()
+}
+
+/** Strip queries and dynamic identifiers before writing a path to logs. */
+export function normalizedObservedPath(path: string): string {
+  const pathname = path.split('?')[0] || '/'
+  return pathname
+    .replace(/0x[0-9a-fA-F]{16,}/gu, ':hash')
+    .replace(/\b[0-9]{12,}\b/gu, ':id')
+    .replace(/[A-Za-z0-9_-]{48,}/gu, ':id')
+}
+
+export function logPredictRequest(
+  level: 'info' | 'warn' | 'error',
+  fields: Record<string, string | number | boolean | null | undefined>,
+): void {
+  const safe = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined))
+  console[level](JSON.stringify(safe))
+}
 
 function buildBuilderSignature(secret: string, timestamp: string, method: string, path: string, body = ''): string {
   return createHmac('sha256', Buffer.from(secret, 'base64'))
@@ -131,7 +139,7 @@ function headerEntry(headers: Record<string, string>, expectedName: string): [st
 
 /**
  * Materialize the Builder passphrase for the single upstream request it signs.
- * Returns false for a forged, stale, or incomplete server-injection marker.
+ * Returns `ok: false` for a forged, stale, or incomplete server-injection marker.
  * Non-marker credentials are left untouched so this stays a transparent proxy
  * for callers using their own Builder account.
  */
@@ -140,9 +148,16 @@ export function materializeBuilderPassphrase(
   method: string,
   path: string,
   body = '',
-): boolean {
+): { ok: boolean; requestId: string | null } {
   const passphraseEntry = headerEntry(headers, 'POLY_BUILDER_PASSPHRASE')
-  if (!passphraseEntry || passphraseEntry[1] !== SERVER_INJECTED_BUILDER_PASSPHRASE) return true
+  if (!passphraseEntry || !passphraseEntry[1].startsWith(SERVER_INJECTED_BUILDER_PASSPHRASE)) {
+    return { ok: true, requestId: null }
+  }
+  const markerParts = passphraseEntry[1].split(':')
+  const requestId = markerParts.length === 2 && REQUEST_ID_PATTERN.test(markerParts[1] ?? '')
+    ? markerParts[1]!
+    : null
+  if (!requestId) return { ok: false, requestId: null }
 
   const builderKey = process.env.POLYMARKET_BUILDER_API_KEY
   const builderSecret = process.env.POLYMARKET_BUILDER_SECRET
@@ -151,23 +166,32 @@ export function materializeBuilderPassphrase(
   const signature = headerEntry(headers, 'POLY_BUILDER_SIGNATURE')?.[1]
   const timestamp = headerEntry(headers, 'POLY_BUILDER_TIMESTAMP')?.[1]
   if (!builderKey || !builderSecret || !builderPassphrase || apiKey !== builderKey || !signature || !timestamp) {
-    return false
+    return { ok: false, requestId }
   }
 
   const timestampSeconds = Number(timestamp)
-  if (!Number.isInteger(timestampSeconds) || Math.abs(Date.now() / 1000 - timestampSeconds) > 5 * 60) return false
+  if (!Number.isInteger(timestampSeconds) || Math.abs(Date.now() / 1000 - timestampSeconds) > 5 * 60) {
+    return { ok: false, requestId }
+  }
 
   const expected = Buffer.from(buildBuilderSignature(builderSecret, timestamp, method, path, body))
   const actual = Buffer.from(signature)
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return false
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    return { ok: false, requestId }
+  }
 
   headers[passphraseEntry[0]] = builderPassphrase
-  return true
+  return { ok: true, requestId }
 }
 
 function isAllowedBuilderRequest(method: string, path: string): boolean {
   const upper = method.toUpperCase()
-  return ALLOWED_BUILDER_PATHS.some((rule) => rule.method === upper && rule.path.test(path))
+  // Builder requests can only be sent to the two fixed upstream hosts in the
+  // proxies. Permit well-formed reads so an SDK release cannot break account
+  // restoration merely by adding a harmless query endpoint; state-changing
+  // operations remain explicitly allowlisted.
+  if (upper === 'GET') return path.startsWith('/') && !path.startsWith('//') && !/[\r\n]/u.test(path)
+  return ALLOWED_BUILDER_WRITES.some((rule) => rule.method === upper && rule.path.test(path))
 }
 
 /**
@@ -234,8 +258,14 @@ export function registerBuilderSignRoutes(routes: Hono) {
   const builderPassphrase = process.env.POLYMARKET_BUILDER_PASSPHRASE
 
   routes.post('/builder/sign', async (c) => {
+    const startedAt = Date.now()
+    const requestId = requestIdFrom(c.req.header('X-Predict-Request-ID'))
+    c.header('X-Predict-Request-ID', requestId)
     if (!builderKey || !builderSecret || !builderPassphrase) {
-      console.error('[builder-sign] missing builder configuration')
+      logPredictRequest('error', {
+        event: 'builder-sign', requestId, decision: 'refused', status: 500,
+        durationMs: Date.now() - startedAt, errorCategory: 'missing_builder_configuration',
+      })
       return c.json({ error: 'Builder not configured — set POLYMARKET_BUILDER_* env vars' }, 500)
     }
 
@@ -244,11 +274,19 @@ export function registerBuilderSignRoutes(routes: Hono) {
     const proofTimestamp = Number(c.req.header('X-Predict-Timestamp'))
     const proofSignature = c.req.header('X-Predict-Signature')
     if (!proofAddress || !proofSignature || !Number.isFinite(proofTimestamp)) {
-      console.warn('[builder-sign] missing Predict proof')
+      logPredictRequest('warn', {
+        event: 'builder-sign', requestId, decision: 'refused', status: 401,
+        signerDecision: 'missing_proof', durationMs: Date.now() - startedAt,
+        errorCategory: 'missing_predict_proof',
+      })
       return c.json({ error: 'Missing Predict wallet proof' }, 401)
     }
     if (!verifyPredictAuthProof(proofAddress, proofTimestamp, proofSignature)) {
-      console.warn(`[builder-sign] invalid Predict proof for ${proofAddress}`)
+      logPredictRequest('warn', {
+        event: 'builder-sign', requestId, signer: proofAddress, decision: 'refused', status: 401,
+        signerDecision: 'invalid_proof', durationMs: Date.now() - startedAt,
+        errorCategory: 'invalid_predict_proof',
+      })
       return c.json({ error: 'Invalid Predict wallet proof' }, 401)
     }
 
@@ -256,31 +294,54 @@ export function registerBuilderSignRoutes(routes: Hono) {
     try {
       body = await c.req.json()
     } catch {
+      logPredictRequest('warn', {
+        event: 'builder-sign', requestId, signer: proofAddress, decision: 'refused', status: 400,
+        signerDecision: 'verified', durationMs: Date.now() - startedAt, errorCategory: 'bad_json',
+      })
       return c.json({ error: 'Bad request' }, 400)
     }
 
     const { method, path } = body
     if (typeof method !== 'string' || !method || typeof path !== 'string' || !path) {
+      logPredictRequest('warn', {
+        event: 'builder-sign', requestId, signer: proofAddress, decision: 'refused', status: 400,
+        signerDecision: 'verified', durationMs: Date.now() - startedAt,
+        errorCategory: 'missing_method_or_path',
+      })
       return c.json({ error: 'Missing method or path' }, 400)
     }
     // The SDK sends `body` as a pre-serialized string or omits it. Anything
     // else would interpolate as "[object Object]" into the signed message,
     // producing a signature over text that is not what gets sent upstream.
     if (body.body !== undefined && typeof body.body !== 'string') {
+      logPredictRequest('warn', {
+        event: 'builder-sign', requestId, method: method.toUpperCase(), path: normalizedObservedPath(path),
+        signer: proofAddress, decision: 'refused', status: 400, signerDecision: 'verified',
+        durationMs: Date.now() - startedAt, errorCategory: 'invalid_body',
+      })
       return c.json({ error: 'Invalid body' }, 400)
     }
 
     if (!isAllowedBuilderRequest(method, path)) {
-      console.warn(`[builder-sign] refused ${method} ${path} for ${proofAddress}`)
+      logPredictRequest('warn', {
+        event: 'builder-sign', requestId, method: method.toUpperCase(), path: normalizedObservedPath(path),
+        signer: proofAddress, decision: 'refused', status: 403,
+        signerDecision: 'verified', durationMs: Date.now() - startedAt, errorCategory: 'policy',
+      })
       return c.json({ error: `Builder signing not permitted for ${method} ${path}` }, 403)
     }
 
     const ip = requestIp(c.req.raw.headers)
-    if (
-      !withinRateLimit(addressSigningHistory, proofAddress, ADDRESS_RATE_LIMIT_MAX)
-      || !withinRateLimit(ipSigningHistory, ip, IP_RATE_LIMIT_MAX)
-    ) {
-      console.warn(`[builder-sign] rate limited address=${proofAddress} ip=${ip}`)
+    const signerWithinLimit = withinRateLimit(addressSigningHistory, proofAddress, ADDRESS_RATE_LIMIT_MAX)
+    const ipWithinLimit = withinRateLimit(ipSigningHistory, ip, IP_RATE_LIMIT_MAX)
+    if (!signerWithinLimit || !ipWithinLimit) {
+      logPredictRequest('warn', {
+        event: 'builder-sign', requestId, method: method.toUpperCase(), path: normalizedObservedPath(path),
+        signer: proofAddress, decision: 'refused', status: 429,
+        signerDecision: signerWithinLimit ? 'within_limit' : 'rate_limited',
+        ipDecision: ipWithinLimit ? 'within_limit' : 'rate_limited',
+        durationMs: Date.now() - startedAt, errorCategory: 'rate_limit',
+      })
       return c.json({ error: 'Too many Builder signing requests. Try again later.' }, 429)
     }
 
@@ -289,20 +350,40 @@ export function registerBuilderSignRoutes(routes: Hono) {
       try {
         submission = body.body ? JSON.parse(body.body) as Record<string, unknown> : {}
       } catch {
+        logPredictRequest('warn', {
+          event: 'builder-sign', requestId, method: 'POST', path: '/submit', signer: proofAddress,
+          decision: 'refused', status: 400, signerDecision: 'verified', ipDecision: 'within_limit',
+          durationMs: Date.now() - startedAt, errorCategory: 'invalid_submission_body',
+        })
         return c.json({ error: 'Invalid Relayer submission body' }, 400)
       }
       if (
-        typeof submission.from === 'string'
-        && submission.from.toLowerCase() !== proofAddress.toLowerCase()
+        typeof submission.from !== 'string'
+        || !/^0x[0-9a-fA-F]{40}$/u.test(submission.from)
+        || submission.from.toLowerCase() !== proofAddress.toLowerCase()
       ) {
-        console.warn(`[builder-sign] refused signer mismatch for ${proofAddress}`)
+        logPredictRequest('warn', {
+          event: 'builder-sign', requestId, method: 'POST', path: '/submit', signer: proofAddress,
+          decision: 'refused', status: 403, durationMs: Date.now() - startedAt,
+          signerDecision: 'submission_mismatch', ipDecision: 'within_limit',
+          errorCategory: 'signer_mismatch',
+        })
         return c.json({ error: 'Relayer signer does not match Predict proof' }, 403)
       }
-      if (
-        !withinRateLimit(addressSubmissionHistory, proofAddress, SUBMIT_ADDRESS_RATE_LIMIT_MAX)
-        || !withinRateLimit(ipSubmissionHistory, ip, SUBMIT_IP_RATE_LIMIT_MAX)
-      ) {
-        console.warn(`[builder-sign] submission rate limited address=${proofAddress} ip=${ip}`)
+      const signerSubmitWithinLimit = withinRateLimit(
+        addressSubmissionHistory,
+        proofAddress,
+        SUBMIT_ADDRESS_RATE_LIMIT_MAX,
+      )
+      const ipSubmitWithinLimit = withinRateLimit(ipSubmissionHistory, ip, SUBMIT_IP_RATE_LIMIT_MAX)
+      if (!signerSubmitWithinLimit || !ipSubmitWithinLimit) {
+        logPredictRequest('warn', {
+          event: 'builder-sign', requestId, method: 'POST', path: '/submit', signer: proofAddress,
+          decision: 'refused', status: 429, durationMs: Date.now() - startedAt,
+          signerDecision: signerSubmitWithinLimit ? 'within_limit' : 'rate_limited',
+          ipDecision: ipSubmitWithinLimit ? 'within_limit' : 'rate_limited',
+          errorCategory: 'rate_limit',
+        })
         return c.json({ error: 'Too many Relayer submissions. Try again later.' }, 429)
       }
     }
@@ -310,11 +391,17 @@ export function registerBuilderSignRoutes(routes: Hono) {
     const timestamp = Math.floor(Date.now() / 1000)
     const signature = buildBuilderSignature(builderSecret, `${timestamp}`, method, path, body.body ?? '')
 
-    return c.json({
+    const response = c.json({
       POLY_BUILDER_API_KEY: builderKey,
-      POLY_BUILDER_PASSPHRASE: SERVER_INJECTED_BUILDER_PASSPHRASE,
+      POLY_BUILDER_PASSPHRASE: `${SERVER_INJECTED_BUILDER_PASSPHRASE}:${requestId}`,
       POLY_BUILDER_SIGNATURE: signature,
       POLY_BUILDER_TIMESTAMP: `${timestamp}`,
     })
+    logPredictRequest('info', {
+      event: 'builder-sign', requestId, method: method.toUpperCase(), path: normalizedObservedPath(path),
+      signer: proofAddress, decision: 'allowed', status: 200, signerDecision: 'verified_within_limit',
+      ipDecision: 'within_limit', durationMs: Date.now() - startedAt,
+    })
+    return response
   })
 }

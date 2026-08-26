@@ -91,13 +91,14 @@ describe('CLOB auth relay header forwarding', () => {
         POLY_BUILDER_API_KEY: 'test-key',
         POLY_BUILDER_SIGNATURE: signature,
         POLY_BUILDER_TIMESTAMP: timestamp,
-        POLY_BUILDER_PASSPHRASE: 'myboon-server-injected',
+        POLY_BUILDER_PASSPHRASE: 'myboon-server-injected:test-request-id',
         'Content-Type': 'application/json',
       },
       body,
     })
     assert.equal(res.status, 200)
     assert.equal(received['poly_builder_passphrase'], 'test-passphrase')
+    assert.equal(res.headers.get('x-predict-request-id'), 'test-request-id')
   })
 
   test('refuses a forged server-injection marker', async () => {
@@ -108,7 +109,7 @@ describe('CLOB auth relay header forwarding', () => {
         POLY_BUILDER_API_KEY: 'test-key',
         POLY_BUILDER_SIGNATURE: 'forged',
         POLY_BUILDER_TIMESTAMP: `${Math.floor(Date.now() / 1000)}`,
-        POLY_BUILDER_PASSPHRASE: 'myboon-server-injected',
+        POLY_BUILDER_PASSPHRASE: 'myboon-server-injected:test-request-id',
         'Content-Type': 'application/json',
       },
       body: '{}',

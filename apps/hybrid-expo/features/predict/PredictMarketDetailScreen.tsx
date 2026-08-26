@@ -35,6 +35,11 @@ import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { buildExecutableBuyQuote, getBestAsk } from '@/features/predict/orderbookQuote';
 import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { makePendingOpenOrder, mergeOpenOrders, prunePendingOpenOrders } from '@/features/predict/pendingOpenOrders';
+import {
+  applyPredictUserEvent,
+  isPredictTradeEvent,
+  usePolymarketUserStream,
+} from '@/features/predict/usePolymarketUserStream';
 import { getPredictOrderGuardrail, type PredictDataFreshness } from '@/features/predict/predictActivityState';
 import { getPredictMarketHref } from '@/features/predict/predict.navigation';
 
@@ -228,8 +233,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
 
   async function loadPicks() {
     const requestKey = walletScopedKeyRef.current;
-    const gammaAddr = poly.tradingAddress ?? poly.polygonAddress;
-    if (!gammaAddr) {
+    if (!poly.client) {
       setMarketPositions([]);
       setAllPositions([]);
       setRedeemablePositions([]);
@@ -244,9 +248,9 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
     setPicksFreshness((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const [marketResult, portfolioResult, ordersResult] = await Promise.allSettled([
-        fetchMarketPositions(gammaAddr, slug),
-        fetchPortfolio(gammaAddr),
-        poly.client ? fetchOpenOrders(poly.client) : Promise.resolve([]),
+        fetchMarketPositions(poly.client, slug),
+        fetchPortfolio(poly.client),
+        fetchOpenOrders(poly.client),
       ]);
       if (walletScopedKeyRef.current !== requestKey) return;
       const now = Date.now();
@@ -267,7 +271,7 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
           ...(market ?? marketPositions),
           ...(portfolio?.positions ?? allPositions),
           ...(portfolio?.redeemablePositions ?? redeemablePositions),
-        ])
+        ], portfolio?.recentTrades ?? [])
       );
       const failed = marketResult.status === 'rejected' || portfolioResult.status === 'rejected' || ordersResult.status === 'rejected';
       setPicksFreshness({
@@ -282,6 +286,15 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
       setPicksLoading(false);
     }
   }
+
+  usePolymarketUserStream(
+    poly.client,
+    (event) => {
+      setOpenOrders((orders) => applyPredictUserEvent(orders, event));
+      if (isPredictTradeEvent(event)) void loadPicks();
+    },
+    loadPicks,
+  );
 
   useEffect(() => {
     if (activeView !== 'picks' || pendingOpenOrders.length === 0) return;
@@ -565,8 +578,8 @@ export function PredictMarketDetailScreen({ slug }: PredictMarketDetailScreenPro
         id: result.orderID ?? result.operationId,
         slug,
         tokenID,
-        price: quote.limitPrice,
-        size: quote.shares,
+        price: result.executionPrice ?? result.estimatedPrice ?? quote.limitPrice,
+        size: result.shares ?? quote.shares,
         outcome: selectedSide === 'no' ? 'No' : 'Yes',
       });
       setPendingOpenOrders((prev) => [pendingOrder, ...prev.filter((order) => order.id !== pendingOrder.id)]);

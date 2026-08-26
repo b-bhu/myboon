@@ -16,6 +16,7 @@ import type {
   Signer as PolymarketSigner,
   TransactionHandle,
 } from '@polymarket/client';
+import * as Crypto from 'expo-crypto';
 import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 
@@ -124,17 +125,22 @@ function toPolymarketSigner(signer: Signer): PolymarketSigner {
 }
 
 function createBuilderProofHeaders(signer: Signer, address: string) {
-  let cached: { headers: Record<string, string>; mintedAt: number } | null = null;
+  let cached: { authTimestamp: number; authSignature: string; mintedAt: number } | null = null;
   return async (): Promise<Record<string, string>> => {
-    if (cached && Date.now() - cached.mintedAt < BUILDER_PROOF_TTL_MS) return cached.headers;
-    const { authTimestamp, authSignature } = await createPredictAuthProof(signer, address);
-    const headers = {
+    if (!cached || Date.now() - cached.mintedAt >= BUILDER_PROOF_TTL_MS) {
+      const proof = await createPredictAuthProof(signer, address);
+      cached = { ...proof, mintedAt: Date.now() };
+    }
+    // The proof may be cached briefly to avoid repeated wallet prompts, but
+    // each SDK authorization gets its own public correlation ID. The server
+    // carries this ID inside its non-secret passphrase marker through the
+    // CLOB/Relayer proxy without forwarding proof headers upstream.
+    return {
       'X-Predict-Address': address,
-      'X-Predict-Timestamp': `${authTimestamp}`,
-      'X-Predict-Signature': authSignature,
+      'X-Predict-Timestamp': `${cached.authTimestamp}`,
+      'X-Predict-Signature': cached.authSignature,
+      'X-Predict-Request-ID': Crypto.randomUUID(),
     };
-    cached = { headers, mintedAt: Date.now() };
-    return headers;
   };
 }
 

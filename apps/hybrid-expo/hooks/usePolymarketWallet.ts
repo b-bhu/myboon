@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 import type { SecureClient } from '@polymarket/client';
 import { useChainSigner } from '@/features/chain/useChainSigner';
 import { logChainEvent, logChainState } from '@/features/chain/chain.debug';
@@ -11,6 +12,7 @@ import {
   activatePolymarketClient,
   disablePolymarketClient,
   releasePolymarketClient,
+  retainPolymarketClientLifecycle,
   subscribePolymarketClient,
 } from '@/features/predict/predict.client';
 
@@ -35,7 +37,7 @@ export interface PolymarketWallet {
   isReady: boolean;
   isLoading: boolean;
   enable: () => Promise<void>;
-  disable: () => void;
+  disable: () => Promise<void>;
   canSignLocally: boolean;
   signer: Signer | null;
   signerStatus: ReturnType<typeof useChainSigner>['status'];
@@ -61,6 +63,8 @@ export function usePolymarketWallet(): PolymarketWallet {
   const [isLoading, setIsLoading] = useState(true);
   const generationRef = useRef(0);
   const previousAddressRef = useRef<string | null>(null);
+
+  useEffect(() => retainPolymarketClientLifecycle(), []);
 
   const clearUi = useCallback(() => {
     setPolygonAddress(null);
@@ -137,6 +141,38 @@ export function usePolymarketWallet(): PolymarketWallet {
       });
   }, [clearUi, evmAddress, installClient, persistEnabled, signer, walletPreparing]);
 
+  useEffect(() => {
+    if (!signer || !evmAddress) return;
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const wasActive = previousState === 'active';
+      previousState = nextState;
+      if (nextState !== 'active') {
+        if (wasActive) void releasePolymarketClient(evmAddress);
+        return;
+      }
+      if (wasActive) return;
+
+      // A background release closes transient subscriptions only. Restore the
+      // same SecureClient from encrypted credentials when the app returns.
+      AsyncStorage.multiGet(storageKeys(evmAddress))
+        .then(async (entries) => {
+          const [storedEoa, storedWallet, storedMode] = entries.map((entry) => entry[1]);
+          if (!storedEoa || !storedWallet || storedMode !== 'deposit_wallet') return;
+          const secureClient = await activatePolymarketClient(signer, evmAddress);
+          await persistEnabled(evmAddress, secureClient);
+          installClient(evmAddress, secureClient);
+        })
+        .catch((error: unknown) => {
+          logChainEvent('polymarket.resume', 'FAILED', {
+            message: error instanceof Error ? error.message : String(error),
+            eoaAddress: evmAddress,
+          });
+        });
+    });
+    return () => subscription.remove();
+  }, [evmAddress, installClient, persistEnabled, signer]);
+
   const enable = useCallback(async () => {
     if (!signer || !evmAddress) throw new Error('Connect your wallet first');
     const generation = ++generationRef.current;
@@ -173,14 +209,21 @@ export function usePolymarketWallet(): PolymarketWallet {
     }
   }, [evmAddress, installClient, persistEnabled, signer]);
 
-  const disable = useCallback(() => {
-    ++generationRef.current;
+  const disable = useCallback(async () => {
     const address = evmAddress;
-    clearUi();
-    if (!address) return;
-    AsyncStorage.multiRemove(storageKeys(address)).catch(() => {});
-    void disablePolymarketClient(address);
-  }, [clearUi, evmAddress]);
+    if (!address || !client) {
+      throw new Error('Predict is not active, so its API key could not be revoked.');
+    }
+    setIsLoading(true);
+    try {
+      await disablePolymarketClient(address, client);
+      ++generationRef.current;
+      await AsyncStorage.multiRemove(storageKeys(address));
+      clearUi();
+    } finally {
+      setIsLoading(false);
+    }
+  }, [clearUi, client, evmAddress]);
 
   const isReady = !!client && !!polygonAddress && !!depositWalletAddress && walletMode === 'deposit_wallet';
   logChainState('polymarket.account', {
@@ -210,7 +253,7 @@ export function usePolymarketWallet(): PolymarketWallet {
       isReady: true,
       isLoading: false,
       enable: async () => {},
-      disable: () => {},
+      disable: async () => {},
       canSignLocally: true,
       signer: null,
       signerStatus: 'ready',

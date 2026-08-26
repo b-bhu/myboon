@@ -35,6 +35,22 @@ assert.deepEqual(
 );
 
 assert.deepEqual(
+  prunePendingOpenOrders(pending, [], [], [{
+    id: 'trade-1',
+    conditionId: 'condition',
+    tokenId: 'token-2',
+    takerOrderId: 'op_pending_3',
+    makerOrderIds: [],
+    side: 'BUY',
+    price: 0.5,
+    size: 1,
+    status: 'MATCHED',
+    matchedAt: Date.now(),
+  }]).map((item) => item.id),
+  ['op_pending_1', 'op_pending_2'],
+);
+
+assert.deepEqual(
   mergeOpenOrders(pending, [order('remote-order-1', 'token-1')]).map((item) => item.id),
   ['op_pending_2', 'op_pending_3', 'remote-order-1'],
 );

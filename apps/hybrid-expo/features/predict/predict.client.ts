@@ -9,6 +9,7 @@ let active: { address: string; client: SecureClient } | null = null;
 const pending = new Map<string, Promise<SecureClient>>();
 let desiredAddress: string | null = null;
 const listeners = new Set<(snapshot: { address: string; client: SecureClient } | null) => void>();
+let lifecycleConsumers = 0;
 
 function notifyListeners(): void {
   listeners.forEach((listener) => listener(active));
@@ -62,6 +63,18 @@ export function subscribePolymarketClient(
   listeners.add(listener);
   listener(active);
   return () => listeners.delete(listener);
+}
+
+/** Release transient SDK resources when the final Predict lifecycle owner unmounts. */
+export function retainPolymarketClientLifecycle(): () => void {
+  lifecycleConsumers++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    lifecycleConsumers = Math.max(0, lifecycleConsumers - 1);
+    if (lifecycleConsumers === 0) void releasePolymarketClient();
+  };
 }
 
 export async function activatePolymarketClient(
@@ -120,7 +133,24 @@ export async function releasePolymarketClient(address?: string | null): Promise<
   await closeClient(previous.client);
 }
 
-export async function disablePolymarketClient(address: string): Promise<void> {
-  await releasePolymarketClient(address);
+export async function disablePolymarketClient(
+  address: string,
+  expectedClient?: SecureClient | null,
+): Promise<void> {
+  const key = normalizedAddress(address);
+  const client = expectedClient ?? (active?.address === key ? active.client : null);
+  if (!client) {
+    throw new Error('Predict is not active, so its API key could not be revoked. Reopen Predict and try again.');
+  }
+
+  // Explicit disconnect is credential revocation, unlike background release.
+  // Keep the client and SecureStore copy intact when revocation cannot reach
+  // Polymarket so the UI never falsely claims the credential was revoked.
+  await client.endAuthentication();
+  if (active?.client === client) {
+    active = null;
+    desiredAddress = null;
+    notifyListeners();
+  }
   await SecureStore.deleteItemAsync(credentialsKey(address));
 }
