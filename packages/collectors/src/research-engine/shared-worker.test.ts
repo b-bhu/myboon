@@ -19,6 +19,7 @@ import type { ExecutionEventAppendResult } from '../signal-platform/execution-le
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { adaptRetrievedEvidenceArtifact } from '../signal-platform/retrieved-evidence-adapter'
 import { DeterministicRetriever } from './deterministic-retrieval'
+import type { EvidenceReusePolicyInput } from './evidence-reuse-policy'
 import { BoundedStandardSearch, SearchConnectorRegistry } from './search-connector'
 import {
   SharedResearchWorker,
@@ -26,6 +27,7 @@ import {
   type SharedResearchWorkPort,
   type SharedWorkerClock,
   type ResearchExecutionLedgerPort,
+  type SharedResearchSchedulerPort,
 } from './shared-worker'
 import type { StructuredResearchSynthesizer } from './structured-synthesizer'
 
@@ -270,6 +272,54 @@ test('pre-spawn circuit-open releases the lease without spending an attempt', as
   } finally { fx.close() }
 })
 
+test('workload circuit readiness prevents a scheduler claim entirely', async () => {
+  const fx = fixture()
+  try {
+    const item = work({ status: 'synthesis_pending' })
+    fx.store.appendSignal(signal())
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(evidence(item))
+    let claimCalls = 0
+    let providerCalls = 0
+    const scheduler: SharedResearchSchedulerPort = {
+      peekGlobal: async () => [],
+      claimNext: async () => { claimCalls += 1; return null },
+    }
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['synthesis'], scheduler,
+      synthesizer: synthesizer(() => { providerCalls += 1 }),
+      readiness: {
+        checkStage: async () => ({ ready: false, category: 'circuit_open', detail: 'all routes open' }),
+        check: async () => ({ ready: false, category: 'circuit_open', detail: 'all routes open' }),
+      },
+    }))
+
+    assert.deepEqual(await worker.runOnce(), { kind: 'idle' })
+    assert.equal(claimCalls, 0)
+    assert.equal(providerCalls, 0)
+    assert.equal(fx.store.getResearchWork(item.workId)?.status, 'synthesis_pending')
+  } finally { fx.close() }
+})
+
+test('priority partition is passed to the scheduler for a dedicated urgent worker pool', async () => {
+  const fx = fixture()
+  try {
+    const seen: unknown[] = []
+    const scheduler: SharedResearchSchedulerPort = {
+      peekGlobal: async () => [],
+      claimNext: async (command) => { seen.push(command.priorityClasses); return null },
+    }
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      scheduler, priorityClasses: ['P0', 'P1', 'P1'],
+    }))
+    assert.deepEqual(await worker.runOnce(), { kind: 'idle' })
+    assert.deepEqual(seen, [['P0', 'P1']])
+    assert.throws(() => new SharedResearchWorker(workerOptions([fx.store], {
+      priorityClasses: [],
+    })), /priorityClasses/)
+  } finally { fx.close() }
+})
+
 test('standard retrieval discovers bounded corroboration URLs before deterministic fetch', async () => {
   const fx = fixture()
   try {
@@ -378,6 +428,9 @@ test('an existing canonical packet replays only the entity handoff without provi
           readinessCalls += 1
           return { ready: false, category: 'circuit_open', detail: 'must not be consulted during replay' }
         },
+      },
+      evidenceReusePolicy: {
+        evaluate() { throw new Error('completed packet replay must not re-evaluate evidence freshness') },
       },
     }))
 
@@ -662,13 +715,42 @@ test('retrieval replay reuses immutable evidence after a lost completion fence',
     await fx.store.recoverExpiredLeases({ now: '2026-08-26T12:12:00.000Z', limit: 10 })
 
     const secondClock = new FixedClock(new Date('2026-08-26T12:12:00.000Z'))
+    const policyCalls: string[] = []
     const second = new SharedResearchWorker(workerOptions([port], {
       stages: ['retrieval'], clock: secondClock,
       retriever: retriever(() => { retrievalCalls += 1 }),
+      evidenceReusePolicy: {
+        evaluate(input: EvidenceReusePolicyInput) {
+          policyCalls.push(input.artifact.evidenceId)
+          return { reusable: true, policyVersion: 'test.evidence_reuse.v1', reason: 'reusable' }
+        },
+      },
     }))
     assert.equal((await second.runOnce()).kind, 'succeeded')
     assert.equal(retrievalCalls, 1)
+    assert.equal(policyCalls.length, 1)
     assert.equal(fx.store.listEvidenceByWork('work-news', 10).length, 1)
     assert.equal(fx.store.getResearchWork('work-news')?.attemptCount, 1)
+  } finally { fx.close() }
+})
+
+test('stale evidence is never replayed and immutable revalidation creates a new artifact', async () => {
+  const fx = fixture()
+  try {
+    const item = work()
+    const stale = { ...evidence(item), retrievedAt: '2026-08-26T11:59:00.000Z' }
+    fx.store.appendSignal(signal())
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(stale)
+    let retrievalCalls = 0
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
+    }))
+
+    assert.equal((await worker.runOnce()).kind, 'succeeded')
+    assert.equal(retrievalCalls, 1)
+    const stored = fx.store.listEvidenceByWork(item.workId, 10)
+    assert.equal(stored.length, 2)
+    assert.ok(stored.some((artifact) => artifact.retrievedAt === NOW))
   } finally { fx.close() }
 })

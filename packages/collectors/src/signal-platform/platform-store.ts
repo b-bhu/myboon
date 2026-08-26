@@ -25,6 +25,12 @@ export interface CanonicalPlatformStore extends ResearchWorkStoreAdapter {
   appendSignal(signal: Signal): ImmutableAppendResult<Signal>
   getSignal(signalId: string): Signal | null
   findSignalByIdempotencyKey(idempotencyKey: string): Signal | null
+  /** Bounded retry source for Signals retained before a failed triage step. */
+  listSignalsMissingDecision(input: {
+    priorityPolicyVersion?: string
+    budgetPolicyVersion?: string
+    limit: number
+  }): Signal[]
 
   appendTriageDecision(decision: TriageDecisionV1): ImmutableAppendResult<TriageDecisionV1>
   getTriageDecision(decisionId: string): TriageDecisionV1 | null

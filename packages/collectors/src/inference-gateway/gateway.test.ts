@@ -9,6 +9,7 @@ import {
   HermesStructuredAdapter,
   InferenceGateway,
   InferenceGatewayError,
+  InferenceGatewayStageReadiness,
   mapHermesInferenceError,
   type GenerateStructuredRequest,
   type InferenceBudget,
@@ -413,6 +414,63 @@ test('retryable primary failure invokes one fallback and records its reason', as
   assert.equal(result.telemetry.fallbackInvoked, true)
   assert.equal(result.telemetry.fallbackReason, 'provider_timeout')
   assert.equal(result.telemetry.actualProvider, FALLBACK.provider)
+})
+
+test('a real primary deadline reserves wall time for the configured fallback', async () => {
+  const calls: StructuredProviderRequest[] = []
+  const adapter: StructuredProviderAdapter = {
+    async generate(providerRequest) {
+      calls.push(providerRequest)
+      if (providerRequest.target.provider === PRIMARY.provider) {
+        // Simulate an adapter which returns late instead of rejecting at its
+        // requested per-attempt timeout. The gateway still enforces the slice.
+        await new Promise((resolve) => setTimeout(resolve, providerRequest.timeoutMs + 5))
+        return { value: { answer: 'late primary must be discarded' } }
+      }
+      return { value: { answer: 'fallback after real timeout' } }
+    },
+  }
+  const result = await gateway(adapter).generateStructured(request({
+    budget: { ...DEFAULT_BUDGET, maxWallTimeMs: 80 },
+  }))
+
+  assert.deepEqual(calls.map((call) => call.target.provider), [PRIMARY.provider, FALLBACK.provider])
+  assert.ok(calls[0]!.timeoutMs > 0 && calls[0]!.timeoutMs < 80)
+  assert.ok(calls[1]!.timeoutMs > 0)
+  assert.equal(result.telemetry.fallbackReason, 'provider_timeout')
+  assert.equal(result.value.answer, 'fallback after real timeout')
+})
+
+test('route readiness becomes blocked only when every configured target circuit is open', async () => {
+  const primaryOpen = new InferenceGatewayError('primary open', {
+    category: 'circuit_open', retryable: true, retryAfterMs: 5_000,
+  })
+  const fallbackOpen = new InferenceGatewayError('fallback open', {
+    category: 'circuit_open', retryable: true, retryAfterMs: 7_000,
+  })
+  const inference = gateway(new QueueAdapter([primaryOpen, fallbackOpen]))
+  await assert.rejects(inference.generateStructured(request()), InferenceGatewayError)
+
+  const readiness = inference.checkReadiness('research.standard')
+  assert.equal(readiness.ready, false)
+  if (!readiness.ready) {
+    assert.equal(readiness.category, 'circuit_open')
+    assert.equal(readiness.blockedTargets.length, 2)
+    assert.ok(readiness.retryAfterMs > 0)
+  }
+  const workerReadiness = new InferenceGatewayStageReadiness(inference, 'research.standard')
+  assert.deepEqual(await workerReadiness.checkStage('retrieval'), { ready: true })
+  assert.equal((await workerReadiness.checkStage('synthesis')).ready, false)
+  const snapshot = inference.circuitStatusSnapshot()
+  assert.equal(snapshot.schemaVersion, 'myboon.inference_circuit_status.v1')
+  assert.equal(snapshot.workloads[0]?.ready, false)
+  assert.deepEqual(snapshot.workloads[0]?.targets.map((target) => ({
+    provider: target.provider, circuitOpen: target.circuitOpen,
+  })), [
+    { provider: PRIMARY.provider, circuitOpen: true },
+    { provider: FALLBACK.provider, circuitOpen: true },
+  ])
+  assert.equal(JSON.stringify(snapshot).includes('prompt'), false)
 })
 
 test('authentication does not fallback and a failing fallback has no deeper fallback', async () => {

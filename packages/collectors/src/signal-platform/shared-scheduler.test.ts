@@ -20,6 +20,7 @@ const NOW = '2026-08-26T12:00:00.000Z'
 
 class FakeStore implements ResearchWorkStoreAdapter {
   readonly claims: LeaseCommand[] = []
+  readonly peeks: SchedulerQuery[] = []
   readonly sourceType: Signal['sourceType']
   failFirstClaim = false
 
@@ -28,7 +29,11 @@ class FakeStore implements ResearchWorkStoreAdapter {
   }
 
   async peekSchedulable(query: SchedulerQuery): Promise<ResearchWorkItem[]> {
-    return this.work.filter((item) => item.status.endsWith('_pending')).slice(0, query.limit)
+    this.peeks.push(structuredClone(query))
+    return this.work.filter((item) => item.status.endsWith('_pending'))
+      .filter((item) => !query.priorityClasses || query.priorityClasses.includes(item.priorityClass))
+      .filter((item) => !query.researchDepths || query.researchDepths.includes(item.researchDepth))
+      .slice(0, query.limit)
   }
 
   async claimWithLease(command: LeaseCommand): Promise<WorkLease | null> {
@@ -106,13 +111,25 @@ test('priority filter preserves reserved-class claim capacity', async () => {
     makeWork('news', 'news-p2', { priorityClass: 'P2' }),
     makeWork('news', 'news-p0', { priorityClass: 'P0' }),
   ])
-  const scheduler = new SharedResearchScheduler([news], { perStorePeekLimit: 5, createLeaseId: () => 'lease-urgent' })
+  const scheduler = new SharedResearchScheduler([news], { perStorePeekLimit: 1, createLeaseId: () => 'lease-urgent' })
 
   const lease = await scheduler.claimNext({
     now: NOW, leaseOwner: 'urgent-worker', leaseTtlMs: 30_000, priorityClasses: ['P0'],
   })
   assert.equal(lease?.work.workId, 'news-p0')
   assert.equal(news.claims.length, 1)
+  assert.deepEqual(news.peeks[0]?.priorityClasses, ['P0'])
+})
+
+test('global scheduler propagates research depth capabilities to store heads', async () => {
+  const news = new FakeStore('news', [
+    makeWork('news', 'standard-ahead', { researchDepth: 'standard', priorityClass: 'P0' }),
+    makeWork('news', 'light-supported', { researchDepth: 'light', priorityClass: 'P3' }),
+  ])
+  const scheduler = new SharedResearchScheduler([news], { perStorePeekLimit: 1 })
+  const rows = await scheduler.peekGlobal({ now: NOW, limit: 1, researchDepths: ['light'] })
+  assert.deepEqual(rows.map((row) => row.workId), ['light-supported'])
+  assert.deepEqual(news.peeks[0]?.researchDepths, ['light'])
 })
 
 test('rejects duplicate source adapters and aggregates status/recovery', async () => {

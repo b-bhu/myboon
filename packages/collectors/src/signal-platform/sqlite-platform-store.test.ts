@@ -279,6 +279,58 @@ test('two independent connections cannot double claim and stale completion is fe
   }
 })
 
+test('SQLite depth capability filtering happens before LIMIT with more than 250 unsupported rows ahead', async () => {
+  const temp = fixture('depth-filter')
+  const store = new SqliteSignalPlatformStore(temp.path, 'news')
+  try {
+    for (let index = 0; index < 251; index += 1) {
+      const id = `unsupported-${String(index).padStart(3, '0')}`
+      store.appendSignal(signal({ signalId: `signal-${id}`, idempotencyKey: `key-${id}` }))
+      store.admitResearchWork(work({
+        workId: `work-${id}`, signalId: `signal-${id}`,
+        priorityClass: 'P0', researchDepth: 'standard',
+      }))
+    }
+    store.appendSignal(signal({ signalId: 'signal-supported', idempotencyKey: 'key-supported' }))
+    store.admitResearchWork(work({
+      workId: 'work-supported', signalId: 'signal-supported',
+      priorityClass: 'P3', researchDepth: 'light',
+    }))
+    const rows = await store.peekSchedulable({
+      now: '2026-08-26T12:10:00.000Z', limit: 1, researchDepths: ['light'],
+    })
+    assert.deepEqual(rows.map((row) => row.workId), ['work-supported'])
+  } finally {
+    store.close()
+    rmSync(temp.dir, { recursive: true, force: true })
+  }
+})
+
+test('SQLite priority filtering happens before LIMIT with more than 250 urgent rows ahead', async () => {
+  const temp = fixture('priority-filter')
+  const store = new SqliteSignalPlatformStore(temp.path, 'news')
+  try {
+    for (let index = 0; index < 251; index += 1) {
+      const id = `urgent-${String(index).padStart(3, '0')}`
+      store.appendSignal(signal({ signalId: `signal-${id}`, idempotencyKey: `key-${id}` }))
+      store.admitResearchWork(work({
+        workId: `work-${id}`, signalId: `signal-${id}`, priorityClass: 'P0',
+      }))
+    }
+    store.appendSignal(signal({ signalId: 'signal-background', idempotencyKey: 'key-background' }))
+    store.admitResearchWork(work({
+      workId: 'work-background', signalId: 'signal-background', priorityClass: 'P3',
+    }))
+    const rows = await store.peekSchedulable({
+      now: '2026-08-26T12:10:00.000Z', limit: 1, priorityClasses: ['P3'],
+    })
+    assert.deepEqual(rows.map((row) => row.workId), ['work-background'])
+  } finally {
+    store.close()
+    rmSync(temp.dir, { recursive: true, force: true })
+  }
+})
+
 test('priority ordering, circuit-open invariant, expired recovery, and aggregate age are durable', async () => {
   const temp = fixture('scheduler')
   const store = new SqliteSignalPlatformStore(temp.path, 'news')

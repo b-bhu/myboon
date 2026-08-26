@@ -75,6 +75,9 @@ const PIPELINE_TABLES = [
   'signal_platform_research_packets',
   'signal_platform_recovery_events',
   'signal_execution_events',
+  'signal_platform_research_shadow_results',
+  'entity_manager_shadow_observations',
+  'deep_research_active_executions',
 ] as const
 
 const NEWS_TABLES = [
@@ -88,6 +91,9 @@ const NEWS_TABLES = [
   'signal_platform_research_packets',
   'signal_platform_recovery_events',
   'signal_execution_events',
+  'signal_platform_research_shadow_results',
+  'entity_manager_shadow_observations',
+  'deep_research_active_executions',
 ] as const
 
 // The shared signal ledger is additive and may live in either legacy DB. Old
@@ -100,6 +106,9 @@ const OPTIONAL_TABLES = new Set<string>([
   'signal_platform_research_packets',
   'signal_platform_recovery_events',
   'signal_execution_events',
+  'signal_platform_research_shadow_results',
+  'entity_manager_shadow_observations',
+  'deep_research_active_executions',
 ])
 
 const BACKUP_FILE_PREFIX = 'pipeline-'

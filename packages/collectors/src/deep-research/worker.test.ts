@@ -132,8 +132,14 @@ function result(job: DeepResearchJob, stdout = output()): DeepResearchResult {
     stdout, stderr: '', exitCode: 0, signal: null, startedAt: NOW,
     finishedAt: '2026-08-26T12:10:01.000Z', durationMs: 1_000,
     capabilities: [...job.capabilities],
+    fetchedEvidence: [{
+      resultRef: 'primary-result', title: 'Primary confirmation',
+      url: 'https://primary.example/confirmation', observedAt: '2026-08-26T12:09:00.000Z',
+      note: null, contentHash: 'sha256:primary', retrievalMethod: 'http_fetch',
+    }],
     budgetUsed: {
       providerCalls: 2, inputTokens: 1_200, outputTokens: 300, toolCalls: 2,
+      browserNavigations: 1, searchQueries: 0, httpFetches: 1,
       wallTimeMs: 1_000, outputBytes: Buffer.byteLength(stdout),
     },
   }

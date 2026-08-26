@@ -190,9 +190,10 @@ test('failed packets and policy-disallowed partial packets are rejected', () => 
     /Partial Research Packet is disallowed/,
   )
 
-  const calendar = adaptCanonicalResearchPacket(packet('market_calendar', { completion: 'partial' }))
-  assert.equal(calendar.context.completion, 'partial')
-  assert.equal(calendar.eventAt, '2026-08-27T15:00:00.000Z')
+  assert.throws(
+    () => adaptCanonicalResearchPacket(packet('market_calendar', { completion: 'partial' })),
+    /Partial Research Packet is disallowed by market_calendar policy/,
+  )
 })
 
 test('missing or dangling evidence linkage is rejected before Entity Manager', () => {

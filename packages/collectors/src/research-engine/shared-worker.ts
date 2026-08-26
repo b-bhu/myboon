@@ -3,6 +3,7 @@ import type {
   ExecutionEventStatus,
   ExecutionTraceEvent,
   FailureCategory,
+  PriorityClass,
   ResearchPacketV1,
   ResearchWorkItem,
   RetrievedEvidence,
@@ -29,6 +30,10 @@ import {
 } from './deterministic-retrieval'
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
 import type { BoundedStandardSearch, StandardSearchPlan } from './search-connector'
+import {
+  WorkContractEvidenceReusePolicy,
+  type EvidenceReusePolicyPort,
+} from './evidence-reuse-policy'
 
 export type SharedResearchWorkerMode = 'off' | 'shadow' | 'active'
 export type SharedResearchWorkerOwnership = 'legacy' | 'shared'
@@ -57,14 +62,17 @@ export interface DeepResearchPort {
   }): Promise<void>
 }
 
+export type StageReadinessDecision =
+  | { ready: true }
+  | { ready: false, category: 'circuit_open', detail: string, retryAfterMs?: number }
+
 export interface StageReadinessPort {
+  /** Optional workload-level gate evaluated before the scheduler can claim. */
+  checkStage?(stage: ResearchWorkerStage): Promise<StageReadinessDecision>
   check(input: {
     stage: ResearchWorkerStage | 'deep_research'
     workItem: ResearchWorkItem
-  }): Promise<
-    | { ready: true }
-    | { ready: false, category: 'circuit_open', detail: string, retryAfterMs?: number }
-  >
+  }): Promise<StageReadinessDecision>
 }
 
 export interface SharedWorkerClock {
@@ -89,12 +97,15 @@ export interface SharedResearchWorkerOptions {
   ownership?: SharedResearchWorkerOwnership
   legacyClaimersActive?: boolean
   stages?: ResearchWorkerStage[]
+  /** Optional capacity partition for dedicated urgent/background worker pools. */
+  priorityClasses?: PriorityClass[]
   leaseTtlMs?: number
   heartbeatIntervalMs?: number
   maxAttempts?: number
   maxBackoffMs?: number
   retrieval?: Partial<ResearchRetrievalLimits>
   evidenceReadLimit?: number
+  evidenceReusePolicy?: EvidenceReusePolicyPort
   clock?: SharedWorkerClock
 }
 
@@ -137,12 +148,14 @@ export class SharedResearchWorker {
   private readonly mode: SharedResearchWorkerMode
   private readonly ownership: SharedResearchWorkerOwnership
   private readonly stages: ResearchWorkerStage[]
+  private readonly priorityClasses?: PriorityClass[]
   private readonly leaseTtlMs: number
   private readonly heartbeatIntervalMs: number
   private readonly maxAttempts: number
   private readonly maxBackoffMs: number
   private readonly retrievalLimits: ResearchRetrievalLimits
   private readonly evidenceReadLimit: number
+  private readonly evidenceReusePolicy: EvidenceReusePolicyPort
   private readonly clock: SharedWorkerClock
   private stopping = false
   private readonly active = new Set<Promise<SharedResearchRunOutcome>>()
@@ -174,6 +187,7 @@ export class SharedResearchWorker {
     this.deepResearch = options.deepResearch
     this.readiness = options.readiness
     this.stages = uniqueStages(options.stages ?? ['retrieval', 'synthesis'])
+    this.priorityClasses = optionalPriorityClasses(options.priorityClasses)
     this.leaseTtlMs = boundedInteger(options.leaseTtlMs ?? 60_000, 'leaseTtlMs', 1_000, 60 * 60_000)
     this.heartbeatIntervalMs = boundedInteger(
       options.heartbeatIntervalMs ?? Math.max(500, Math.floor(this.leaseTtlMs / 3)),
@@ -192,6 +206,9 @@ export class SharedResearchWorker {
       maxRedirects: 3,
       timeoutMs: 30_000,
       ...options.retrieval,
+    })
+    this.evidenceReusePolicy = options.evidenceReusePolicy ?? new WorkContractEvidenceReusePolicy({
+      maxArtifactBytes: this.retrievalLimits.maxBytesPerSource,
     })
     this.clock = options.clock ?? SYSTEM_CLOCK
   }
@@ -231,6 +248,7 @@ export class SharedResearchWorker {
       now: this.nowIso(),
       limit: 25,
       stages: this.stages,
+      priorityClasses: this.priorityClasses,
     })
     const issues: string[] = []
     let ready = 0
@@ -246,11 +264,21 @@ export class SharedResearchWorker {
 
   private async claimAndProcess(): Promise<SharedResearchRunOutcome> {
     const now = this.nowIso()
+    let claimableStages = this.stages
+    if (this.readiness?.checkStage !== undefined) {
+      const decisions = await Promise.all(this.stages.map(async (stage) => ({
+        stage,
+        readiness: await this.readiness!.checkStage!(stage),
+      })))
+      claimableStages = decisions.filter((item) => item.readiness.ready).map((item) => item.stage)
+      if (claimableStages.length === 0) return { kind: 'idle' }
+    }
     const lease = await this.scheduler.claimNext({
       now,
       leaseOwner: this.workerId,
       leaseTtlMs: this.leaseTtlMs,
-      stages: this.stages,
+      stages: claimableStages,
+      priorityClasses: this.priorityClasses,
     })
     if (lease === null) return { kind: 'idle' }
     const store = this.stores.get(lease.work.sourceType)
@@ -274,10 +302,13 @@ export class SharedResearchWorker {
     }
 
     const existingEvidence = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit)
-    if (existingEvidence.length > 0) {
+    const reusableEvidence = existingEvidence.filter((artifact) => this.evidenceReusePolicy.evaluate({
+      artifact, workItem: lease.work, signal: signal!, now: this.nowIso(),
+    }).reusable)
+    if (reusableEvidence.length > 0) {
       try {
-        const outcome = await this.advanceRetrievedWork(store, lease, signal!, existingEvidence)
-        this.recordArtifactReplay(lease, stage, existingEvidence[0]!.retrievedAt, existingEvidence.map((item) => item.evidenceId))
+        const outcome = await this.advanceRetrievedWork(store, lease, signal!, reusableEvidence)
+        this.recordArtifactReplay(lease, stage, reusableEvidence[0]!.retrievedAt, reusableEvidence.map((item) => item.evidenceId))
         return outcome
       } catch (error) {
         return this.failWithoutExecution(
@@ -367,13 +398,6 @@ export class SharedResearchWorker {
     if (linkageIssue !== null || signal === null) {
       return this.failWithoutExecution(store, lease, stage, 'permanent_source_error', linkageIssue ?? 'signal missing', timing)
     }
-    const evidence = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit)
-    if (evidence.length === 0) {
-      return this.failWithoutExecution(
-        store, lease, stage, 'permanent_source_error',
-        'Synthesis requires at least one immutable evidence artifact', timing,
-      )
-    }
     const existingPackets = store.listResearchPacketsByWork(lease.work.workId, 2)
     if (existingPackets.length > 1) {
       return this.failWithoutExecution(
@@ -392,6 +416,16 @@ export class SharedResearchWorker {
       const outcome = await this.completeSynthesisHandoff(store, lease)
       this.recordPacketReplay(lease, existing)
       return outcome
+    }
+    const evidence = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit).filter((artifact) =>
+      this.evidenceReusePolicy.evaluate({
+        artifact, workItem: lease.work, signal, now: this.nowIso(),
+      }).reusable)
+    if (evidence.length === 0) {
+      return this.failWithoutExecution(
+        store, lease, stage, 'permanent_source_error',
+        'Synthesis requires at least one freshness-approved immutable evidence artifact', timing,
+      )
     }
     const preflight = await this.preflight(stage, store, lease, timing)
     if (preflight !== null) return preflight
@@ -870,6 +904,16 @@ function uniqueStages(stages: ResearchWorkerStage[]): ResearchWorkerStage[] {
   const result = [...new Set(stages)]
   if (result.length === 0 || result.some((stage) => stage !== 'retrieval' && stage !== 'synthesis')) {
     throw new SharedResearchWorkerConfigurationError('stages must include retrieval and/or synthesis')
+  }
+  return result
+}
+
+function optionalPriorityClasses(values: PriorityClass[] | undefined): PriorityClass[] | undefined {
+  if (values === undefined) return undefined
+  const result = [...new Set(values)]
+  const allowed = new Set<PriorityClass>(['P0', 'P1', 'P2', 'P3'])
+  if (result.length === 0 || result.some((value) => !allowed.has(value))) {
+    throw new SharedResearchWorkerConfigurationError('priorityClasses must contain one or more valid priority classes')
   }
   return result
 }

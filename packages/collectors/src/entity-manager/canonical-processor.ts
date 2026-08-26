@@ -19,6 +19,7 @@ import { normalizeSlug } from './normalization'
 import type { CanonicalPacketProcessor, CanonicalPacketProcessorInput } from './shared-worker'
 import type {
   EntityInput,
+  EntityIdentityLookupInput,
   EntityMemoryCandidate,
   EntityMemoryConsolidationPatch,
   EntityMemoryInput,
@@ -106,7 +107,10 @@ export class EntityMemoryStoreCanonLookup implements EntityCanonLookup {
   constructor(private readonly store: EntityMemoryStore) {}
 
   async lookup(query: EntityCanonLookupQuery): Promise<EntityCanonLookupResult> {
-    return { entities: await this.store.findEntities(query.slugs, [...query.names, ...query.aliases]), complete: true }
+    if (!this.store.findEntitiesByIdentity) {
+      return { entities: [], complete: false }
+    }
+    return this.store.findEntitiesByIdentity(query)
   }
 }
 
@@ -150,10 +154,14 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
   async process(input: CanonicalPacketProcessorInput): Promise<void> {
     const canonicalPacket = validateProcessorInput(input)
     ensureNotAborted(input.signal)
-    const packet = adaptCanonicalResearchPacket(canonicalPacket)
+    const adaptedPacket = adaptCanonicalResearchPacket(canonicalPacket)
+    const packet: ResearchPacket = {
+      ...adaptedPacket,
+      context: { ...adaptedPacket.context, ...sourceMediaContext(canonicalPacket) },
+    }
 
     const packetLookup = await canonLookupCall(this.canonLookup, packetHintQuery(canonicalPacket), 'packet entity shortlist')
-    const catalog = uniqueEntities(packetLookup.entities)
+    const catalog = uniqueEntities(packetLookup.entities.filter((entity) => entity.status === 'active'))
     const shortlist = targetedShortlist(catalog, packet).map((entity, rank): CanonicalEntityRef => ({
       entityId: entity.id,
       slug: entity.slug,
@@ -320,7 +328,9 @@ async function resolveAdmissionDecision(
     throw new EntityCanonUnavailableError('Authoritative new Entity collision lookup was incomplete.')
   }
   const entities = uniqueEntities(collisions.entities)
-  const exactSlug = entities.find((entity) => entity.slug === normalized.proposal.slug)
+  const exactSlug = entities.find((entity) => (
+    entity.slug === normalized.proposal.slug && entity.status === 'active'
+  ))
   if (exactSlug) {
     return {
       decision: {
@@ -487,7 +497,15 @@ class CanonicalIdentityStore implements EntityMemoryStore {
   }
 
   async createEntities(entities: EntityInput[]): Promise<EntityRecord[]> {
-    const created = await storageCall('create canonical entity', () => this.delegate.createEntities(entities))
+    if (entities.length > 1) {
+      throw new CanonicalEntityProcessorValidationError('Canonical processing may create only one primary Entity.')
+    }
+    const created = await storageCall('create canonical entity', async () => {
+      if (!this.delegate.createCanonicalEntity) return this.delegate.createEntities(entities)
+      const entity = entities[0]
+      if (!entity) return []
+      return [await this.delegate.createCanonicalEntity(entity, identityQueryForEntity(entity))]
+    })
     for (const entity of created) this.remember(entity)
     return created
   }
@@ -522,10 +540,21 @@ class CanonicalIdentityStore implements EntityMemoryStore {
     return storageCall('upsert canonical entity memories', () => this.delegate.upsertMemories(identified))
   }
 
-  // Canonical packets own one stable memory per plan item. Legacy story/window
-  // consolidation is intentionally disabled for this scoped service call.
-  async listRecentMemories(): Promise<EntityMemoryRecord[]> { return [] }
-  async findLatestMemorySince(): Promise<EntityMemoryRecord | null> { return null }
+  async listRecentMemories(
+    entityIds: string[], sinceIso: string, untilIso: string, limit: number, source: string,
+  ): Promise<EntityMemoryRecord[]> {
+    return storageCall('list recent canonical entity memories', () => (
+      this.delegate.listRecentMemories(entityIds, sinceIso, untilIso, limit, source)
+    ))
+  }
+
+  async findLatestMemorySince(
+    entityId: string, memoryType: EntityMemoryType, sinceIso: string,
+  ): Promise<EntityMemoryRecord | null> {
+    return storageCall('find latest canonical entity memory', () => (
+      this.delegate.findLatestMemorySince(entityId, memoryType, sinceIso)
+    ))
+  }
 
   async updateMemory(id: string, patch: EntityMemoryConsolidationPatch): Promise<EntityMemoryRecord> {
     return storageCall('update canonical entity memory', () => this.delegate.updateMemory(id, patch))
@@ -633,9 +662,38 @@ function traceContext(
     canonical_evidence_ids: [...evidenceIds],
     canonical_source_provenance: packet.sourceSignal.provenance,
     canonical_source_media: isRecord(packet.sourceSignal.media) ? packet.sourceSignal.media : {},
+    ...sourceMediaContext(packet),
     priority_class: work.priorityClass,
     research_depth: work.researchDepth,
     freshness_deadline: work.freshnessDeadline,
+  }
+}
+
+function identityQueryForEntity(entity: EntityInput): EntityIdentityLookupInput {
+  const labels = [entity.name, ...entity.aliases]
+  return {
+    slugs: [...new Set([entity.slug, ...labels.map((label) => normalizeSlug(undefined, label))])],
+    names: [entity.name],
+    aliases: [...entity.aliases],
+  }
+}
+
+function sourceMediaContext(packet: ResearchPacketV1): Record<string, unknown> {
+  const media = isRecord(packet.sourceSignal.media) ? packet.sourceSignal.media : {}
+  const imageUrl = typeof media.imageUrl === 'string' && /^https?:\/\//i.test(media.imageUrl)
+    ? media.imageUrl
+    : null
+  return {
+    image_url: imageUrl,
+    image_kind: imageUrl ? 'content' : null,
+    image_origin: packet.sourceSignal.provenance.provider,
+    image_attribution: typeof media.attribution === 'string' ? media.attribution : null,
+    // The existing resolver deliberately derives image provenance from these
+    // legacy context keys. Supplying them here keeps the canonical packet's
+    // richer provenance intact when it crosses that compatibility boundary.
+    provider_id: packet.sourceSignal.provenance.provider,
+    upstream_source_name: packet.sourceSignal.provenance.upstreamSource
+      ?? (typeof media.attribution === 'string' ? media.attribution : null),
   }
 }
 

@@ -4,6 +4,7 @@ import type { NewsCandidateObservationRow, NewsResearchResultRow } from '../../n
 import type { PipelineCandidateRow, PipelineResearchRow } from '../../pipeline-store/store'
 import { adaptLegacyNewsPacket, adaptLegacyNewsSignal, adaptLegacyNewsWork } from './news'
 import { adaptLegacyPolymarketPacket, adaptLegacyPolymarketSignal, adaptLegacyPolymarketWork } from './polymarket'
+import { adaptLivePolymarketSignal, type PolymarketLiveSignalInput } from './polymarket-live'
 import type { LegacyPacketMigrationPolicy, LegacyWorkMigrationPolicy } from './migration-policy'
 
 const workPolicy: LegacyWorkMigrationPolicy = {
@@ -95,6 +96,34 @@ test('Polymarket adapter emits market_event and preserves mutable-thread limitat
     'legacy_polymarket_candidate_is_a_mutable_thread_snapshot',
   ))
   assert.equal(adaptLegacyPolymarketWork(polymarketCandidate, workPolicy).signalId, signal.signalId)
+})
+
+test('live Polymarket identity ignores polling time but changes for material facts or upstream updates', () => {
+  const input: PolymarketLiveSignalInput = {
+    observedAt: '2026-08-26T12:00:00.000Z', area: 'markets',
+    market: {
+      marketId: 'market-1', slug: 'market-one', title: 'Market one?', tagSlug: 'crypto',
+      tagLabel: 'Crypto', endDate: null, sourceUpdatedAt: '2026-08-26T11:59:00.000Z',
+    },
+    observation: {
+      candidateType: 'odds_moved', whatChanged: 'Odds moved six points', whyFlagged: 'material move',
+      score: 72, scoreBreakdown: {}, metrics: { oddsDelta: 0.06 }, evidenceRefs: [],
+    },
+  }
+  const first = adaptLivePolymarketSignal(input)
+  const laterPoll = adaptLivePolymarketSignal({ ...input, observedAt: '2026-08-26T12:05:00.000Z' })
+  const changed = adaptLivePolymarketSignal({
+    ...input,
+    observation: { ...input.observation, whatChanged: 'Odds moved twelve points', metrics: { oddsDelta: 0.12 } },
+  })
+  const upstreamUpdate = adaptLivePolymarketSignal({
+    ...input,
+    market: { ...input.market, sourceUpdatedAt: '2026-08-26T12:04:00.000Z' },
+  })
+  assert.deepEqual(laterPoll, first)
+  assert.notEqual(changed.signalId, first.signalId)
+  assert.notEqual(upstreamUpdate.signalId, first.signalId)
+  assert.equal(first.observedAt, input.market.sourceUpdatedAt)
 })
 
 test('News packet maps structured fields and explicitly records invalid legacy evidence', () => {

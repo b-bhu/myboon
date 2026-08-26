@@ -26,7 +26,11 @@ import type {
   DeepResearchSpawnOptions,
   DeepResearchSystemdController,
 } from './systemd-controller'
-import { DEEP_RESEARCH_USAGE_SCHEMA_VERSION, type DeepResearchJob } from './types'
+import {
+  DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION,
+  DEEP_RESEARCH_USAGE_SCHEMA_VERSION,
+  type DeepResearchJob,
+} from './types'
 
 const SIGNAL: Signal = {
   schemaVersion: SIGNAL_SCHEMA_VERSION,
@@ -194,6 +198,15 @@ function executor(
       inputTokens: 1_200,
       outputTokens: 300,
       toolCalls: 3,
+      browserNavigations: 1,
+      searchQueries: 1,
+      httpFetches: 1,
+    }))
+  }
+  if (!fileSystem.files.has('/tmp/deep-fixture/fetched-evidence.json')) {
+    fileSystem.files.set('/tmp/deep-fixture/fetched-evidence.json', JSON.stringify({
+      schemaVersion: DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION,
+      jobId: 'deep_job_1', workId: 'work_deep_1', traceId: 'trace_deep_1', results: [],
     }))
   }
   const registry = new InMemoryDeepResearchExecutionRegistry()
@@ -256,9 +269,11 @@ test('builds an argv-only transient service with exact containment properties an
   assert.equal(result.stdout, '{"answer":"ok"}')
   assert.deepEqual(result.budgetUsed, {
     providerCalls: 2, inputTokens: 1_200, outputTokens: 300, toolCalls: 3,
+    browserNavigations: 1, searchQueries: 1, httpFetches: 1,
     wallTimeMs: result.durationMs, outputBytes: 15,
   })
   assert.ok(args.includes('--usage-file=/tmp/deep-fixture/usage.json'))
+  assert.ok(args.includes('--evidence-manifest-file=/tmp/deep-fixture/fetched-evidence.json'))
   assert.equal(context.fileSystem.removed, true)
   assert.deepEqual(context.registry.list(), [])
 })
@@ -270,10 +285,12 @@ test('successful units require strict measured usage and reject over-budget mete
     ['over-provider', {
       schemaVersion: DEEP_RESEARCH_USAGE_SCHEMA_VERSION,
       providerCalls: 6, inputTokens: 1, outputTokens: 1, toolCalls: 1,
+      browserNavigations: 1, searchQueries: 1, httpFetches: 1,
     }, 'budget_exceeded'],
     ['over-tool', {
       schemaVersion: DEEP_RESEARCH_USAGE_SCHEMA_VERSION,
       providerCalls: 1, inputTokens: 1, outputTokens: 1, toolCalls: 6,
+      browserNavigations: 1, searchQueries: 1, httpFetches: 1,
     }, 'budget_exceeded'],
   ] as const) {
     const systemd = new FakeSystemd()
@@ -293,6 +310,49 @@ test('successful units require strict measured usage and reject over-budget mete
     assert.equal(context.fileSystem.removed, true, name)
     assert.deepEqual(context.registry.list(), [], name)
   }
+})
+
+test('successful units require a strict trusted fetched-evidence manifest', async () => {
+  for (const [name, manifest, category] of [
+    ['missing', null, 'invalid_job'],
+    ['wrong-linkage', {
+      schemaVersion: DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION,
+      jobId: 'wrong', workId: 'work_deep_1', traceId: 'trace_deep_1', results: [],
+    }, 'invalid_job'],
+    ['outside-domain', {
+      schemaVersion: DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION,
+      jobId: 'deep_job_1', workId: 'work_deep_1', traceId: 'trace_deep_1',
+      results: [{
+        resultRef: 'result-1', title: 'Bad', url: 'https://evil.example/item', observedAt: null,
+        note: null, contentHash: 'sha256:abc', retrievalMethod: 'http_fetch',
+      }],
+    }, 'invalid_job'],
+  ] as const) {
+    const systemd = new FakeSystemd()
+    systemd.onSpawn = (child) => { systemd.active = false; child.emit('close', 0, null) }
+    const context = executor(systemd)
+    if (manifest === null) context.fileSystem.files.delete('/tmp/deep-fixture/fetched-evidence.json')
+    else context.fileSystem.files.set('/tmp/deep-fixture/fetched-evidence.json', JSON.stringify(manifest))
+    await assert.rejects(context.value.execute(job()), (error: unknown) => {
+      assert.ok(error instanceof DeepResearchError, name)
+      assert.equal(error.category, category, name)
+      return true
+    })
+  }
+})
+
+test('durable registry failure cleans the workspace and never spawns a unit', async () => {
+  const systemd = new FakeSystemd()
+  const context = executor(systemd, new FakeFileSystem(), {
+    registry: { register: () => { throw new Error('disk unavailable') }, unregister: () => undefined, list: () => [] },
+  })
+  await assert.rejects(context.value.execute(job()), (error: unknown) => {
+    assert.ok(error instanceof DeepResearchError)
+    assert.equal(error.category, 'execution_failed')
+    return true
+  })
+  assert.equal(context.fileSystem.removed, true)
+  assert.equal(systemd.spawnCalls.length, 0)
 })
 
 test('rejects unsafe reasons, evidence refs, domains, capabilities, and arbitrary toolsets', async (t) => {

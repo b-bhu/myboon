@@ -28,13 +28,66 @@ export {
   StructuredResearchSynthesizer,
   deterministicPacketId,
 } from './structured-synthesizer'
+export {
+  ResearchDepthFilteredScheduler,
+  SHARED_RESEARCH_ENV,
+  createLiveSharedResearchRuntime,
+  loadSharedResearchRunnerConfig,
+  runSharedResearchLoop,
+} from './run-shared-research'
+export type {
+  CreateLiveSharedResearchRuntimeOptions,
+  RunSharedResearchOptions,
+  SharedResearchRunnerConfig,
+  SharedResearchRunnerCycleResult,
+  SharedResearchRunnerRuntime,
+  SharedResearchRuntimeStatus,
+} from './run-shared-research'
+export {
+  ResearchShadowEvaluator,
+  SHADOW_RESEARCH_EVALUATOR_VERSION,
+  SHADOW_RESEARCH_RESULT_SCHEMA_VERSION,
+  shadowResearchEvaluationId,
+  validateShadowResearchResult,
+} from './shadow-evaluator'
+export type {
+  ResearchShadowEvaluatorClock,
+  ResearchShadowEvaluatorOptions,
+  ShadowEvaluationOutcome,
+  ShadowResearchResult,
+  ShadowResearchResultStore,
+  ShadowResearchSkipReason,
+  ShadowResearchSourcePort,
+} from './shadow-evaluator'
 export { BoundedStandardSearch, SearchConnectorRegistry } from './search-connector'
+export {
+  WORK_CONTRACT_EVIDENCE_REUSE_POLICY_VERSION,
+  WorkContractEvidenceReusePolicy,
+} from './evidence-reuse-policy'
+export type {
+  EvidenceReuseDecision,
+  EvidenceReusePolicyInput,
+  EvidenceReusePolicyPort,
+  WorkContractEvidenceReusePolicyOptions,
+} from './evidence-reuse-policy'
 export type {
   RegisteredSearchConnector,
   SearchConnectorResult,
   StandardSearchPlan,
   StandardSearchPolicy,
 } from './search-connector'
+export {
+  STANDARD_SEARCH_ENV,
+  createConfiguredStandardSearch,
+  loadStandardSearchConfiguration,
+  standardSearchStatus,
+} from './standard-search-configuration'
+export type {
+  RegisteredSearchConnectorFactories,
+  RegisteredSearchConnectorFactory,
+  StandardSearchConfiguration,
+  StandardSearchStatusSnapshot,
+} from './standard-search-configuration'
 export {
   SharedResearchWorker,
   SharedResearchWorkerConfigurationError,
@@ -54,6 +107,7 @@ export type {
   SharedResearchWorkPort,
   SharedWorkerClock,
   StageReadinessPort,
+  StageReadinessDecision,
   StandardResearchSearchPort,
 } from './shared-worker'
 export type {

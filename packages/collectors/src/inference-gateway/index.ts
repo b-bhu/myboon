@@ -22,15 +22,19 @@ export {
   mapHermesInferenceError,
   type HermesStructuredAdapterOptions,
 } from './hermes-adapter'
+export { InferenceGatewayStageReadiness } from './readiness'
 export type {
   ClassifyRequest,
   ContainedInvestigationPort,
   GenerateStructuredRequest,
   InferenceBudget,
   InferenceCallRecord,
+  InferenceCircuitStatusSnapshot,
+  InferenceCircuitTargetStatus,
   InferenceFailureCategory,
   InferenceMode,
   InferenceProviderTarget,
+  InferenceRouteReadiness,
   InferenceRequestByMode,
   InferenceResult,
   InferenceTelemetry,

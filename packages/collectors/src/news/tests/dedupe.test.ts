@@ -64,7 +64,7 @@ test('same article URL, headline, and summary is known_unchanged', () => {
   assert.ok(decision.fingerprint)
 })
 
-test('same article URL with changed headline is known_unchanged', () => {
+test('same article URL with changed headline remains legacy known_unchanged', () => {
   const prior = priorObservation(candidate())
   const decision = classifyNewsCandidate(sourceId, urlId, candidate({
     headline: 'Bitcoin ETF inflows accelerate',
@@ -84,7 +84,7 @@ test('stable feed identity ignores cosmetic headline changes for the same canoni
   assert.match(decision.reason, /stable feed identity/)
 })
 
-test('same article URL with changed summary is known_unchanged', () => {
+test('same article URL with changed summary remains legacy known_unchanged', () => {
   const prior = priorObservation(candidate())
   const decision = classifyNewsCandidate(sourceId, urlId, candidate({
     summary: 'Funds saw a larger day of net inflows.',

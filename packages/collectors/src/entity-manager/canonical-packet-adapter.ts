@@ -55,7 +55,10 @@ const COMMON_CONTEXT_KEYS = [
 const DEFAULT_SOURCE_POLICIES: readonly CanonicalPacketSourcePolicy[] = [
   policy({ sourceType: 'news', sourceArea: 'feed', legacySourceType: 'article', allowPartial: false }),
   policy({ sourceType: 'polymarket', sourceArea: 'markets', legacySourceType: 'market_event', allowPartial: false }),
-  policy({ sourceType: 'market_calendar', sourceArea: 'events', legacySourceType: 'calendar_event', allowPartial: true }),
+  // V1 Entity admission requires complete, evidence-linked claims. Calendar
+  // partials therefore remain pending/research-owned instead of being
+  // accepted by the adapter only to be rejected later by the processor.
+  policy({ sourceType: 'market_calendar', sourceArea: 'events', legacySourceType: 'calendar_event', allowPartial: false }),
   policy({ sourceType: 'x', sourceArea: 'social', legacySourceType: 'social_thread', allowPartial: false }),
 ]
 

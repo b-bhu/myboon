@@ -8,7 +8,7 @@
     "smoke": "tsx src/smoke-test.ts",
     "e2e:featured-markets": "tsx src/e2e/api-e2e.ts",
     "test:internal": "tsx --test src/internal/*.test.ts",
-    "test:feed": "tsx --test src/stories.test.ts src/narratives.test.ts",
+    "test:feed": "tsx --test src/stories.test.ts src/narratives.test.ts src/entity-knowledge.test.ts",
     "test:news-feed": "tsx --test src/news-feed/*.test.ts",
     "test:polymarket-read": "tsx --test src/polymarket/catalog/*.test.ts src/polymarket/routes/*.test.ts",
     "test:spot": "tsx --test src/spot.test.ts",

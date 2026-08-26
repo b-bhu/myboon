@@ -234,7 +234,10 @@ function buildArtifact(
   const requestedUrl = normalizeUrl(approved.url)
   return {
     schemaVersion: 'myboon.evidence.v1',
-    evidenceId: `evidence_${sha256(`${requestedUrl}\n${finalUrl}\n${contentHash}`)}`,
+    // A retrieval observation is immutable. Revalidating unchanged content at
+    // a later time must create a distinct artifact so freshness can advance
+    // without rewriting the original retrievedAt timestamp.
+    evidenceId: `evidence_${sha256(`${requestedUrl}\n${finalUrl}\n${contentHash}\n${retrievedAt}`)}`,
     workId,
     requestedUrl,
     finalUrl,

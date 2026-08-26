@@ -7,6 +7,7 @@ import {
 } from '@myboon/shared/news-feed'
 import { ingestDiscoveredNewsCandidates } from './ingestion'
 import type { NewsStore } from './store'
+import type { SourceIntakeBatchReport, SourceSignalIntakePort } from '../signal-platform/source-intake'
 import type { NewsCandidate, NewsSourceDescriptor, NewsSourceEndpoint } from './types'
 
 export type NewsFeedFetcher = (
@@ -23,6 +24,7 @@ export interface NewsFeedIngestionResult {
   candidatesMateriallyChanged: number
   candidatesInvalid: number
   candidateObservationsInserted: number
+  canonicalIntake: SourceIntakeBatchReport
   meta: NewsFeedMeta
 }
 
@@ -36,6 +38,7 @@ export async function runNewsFeedIngestionOnce(input: {
   store: NewsStore
   fetcher?: NewsFeedFetcher
   now?: Date
+  signalIntake?: SourceSignalIntakePort
 }): Promise<NewsFeedIngestionResult> {
   const observedAt = (input.now ?? new Date()).toISOString()
   const feed = await (input.fetcher ?? fetchFeed)({ limit: 50 })
@@ -48,6 +51,7 @@ export async function runNewsFeedIngestionOnce(input: {
   const ingestion = await ingestDiscoveredNewsCandidates({
     store: input.store,
     discoveries,
+    signalIntake: input.signalIntake,
   })
 
   return {
@@ -60,6 +64,7 @@ export async function runNewsFeedIngestionOnce(input: {
     candidatesMateriallyChanged: ingestion.candidatesMateriallyChanged,
     candidatesInvalid: ingestion.candidatesInvalid,
     candidateObservationsInserted: ingestion.candidateObservationsInserted,
+    canonicalIntake: ingestion.canonicalIntake,
     meta: feed.meta,
   }
 }

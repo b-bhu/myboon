@@ -25,6 +25,7 @@ export type {
 } from './systemd-controller'
 export {
   DEEP_RESEARCH_JOB_SCHEMA_VERSION,
+  DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION,
   DEEP_RESEARCH_RESULT_SCHEMA_VERSION,
   DEEP_RESEARCH_USAGE_SCHEMA_VERSION,
 } from './types'
@@ -34,6 +35,8 @@ export type {
   DeepResearchErrorCategory,
   DeepResearchEscalation,
   DeepResearchExecutionMetadata,
+  DeepResearchFetchedEvidence,
+  DeepResearchFetchedEvidenceManifest,
   DeepResearchJob,
   DeepResearchMeasuredUsage,
   DeepResearchResult,
@@ -59,6 +62,15 @@ export {
   buildDeepResearchJob,
   deterministicDeepJobId,
 } from './worker'
+export {
+  DEEP_RESEARCH_EXECUTION_TABLE,
+  SqliteDeepResearchExecutionRegistry,
+  auditDeepResearchOrphans,
+} from './sqlite-execution-registry'
+export type {
+  DeepResearchOrphanAuditEntry,
+  DeepResearchOrphanAuditSnapshot,
+} from './sqlite-execution-registry'
 export type {
   ContainedDeepResearchExecutionPort,
   DeepResearchJobPolicy,

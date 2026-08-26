@@ -8,6 +8,7 @@ import type {
 export const DEEP_RESEARCH_JOB_SCHEMA_VERSION = 'myboon.deep_research_job.v1' as const
 export const DEEP_RESEARCH_RESULT_SCHEMA_VERSION = 'myboon.deep_research_result.v1' as const
 export const DEEP_RESEARCH_USAGE_SCHEMA_VERSION = 'myboon.deep_research_usage.v1' as const
+export const DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION = 'myboon.deep_research_fetched_evidence.v1' as const
 
 export type DeepResearchCapability =
   | 'browser_navigation'
@@ -65,6 +66,28 @@ export interface DeepResearchMeasuredUsage {
   inputTokens: number
   outputTokens: number
   toolCalls: number
+  browserNavigations: number
+  searchQueries: number
+  httpFetches: number
+}
+
+export interface DeepResearchFetchedEvidence {
+  resultRef: string
+  title: string
+  url: string
+  observedAt: string | null
+  note: string | null
+  contentHash: string
+  retrievalMethod: DeepResearchCapability
+}
+
+/** Written by the trusted contained runtime, never accepted from model stdout. */
+export interface DeepResearchFetchedEvidenceManifest {
+  schemaVersion: typeof DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION
+  jobId: string
+  workId: string
+  traceId: string
+  results: DeepResearchFetchedEvidence[]
 }
 
 export interface DeepResearchResult {
@@ -82,11 +105,15 @@ export interface DeepResearchResult {
   finishedAt: string
   durationMs: number
   capabilities: DeepResearchCapability[]
+  fetchedEvidence: DeepResearchFetchedEvidence[]
   budgetUsed: {
     providerCalls: number
     inputTokens: number
     outputTokens: number
     toolCalls: number
+    browserNavigations: number
+    searchQueries: number
+    httpFetches: number
     wallTimeMs: number
     outputBytes: number
   }

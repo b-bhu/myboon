@@ -1,4 +1,4 @@
-import type { ResearchWorkItem, WorkStatus } from './contracts'
+import type { PriorityClass, ResearchDepth, ResearchWorkItem, WorkStatus } from './contracts'
 import { assertWorkTransition } from './state-machine'
 
 export type SchedulerStage = 'retrieval' | 'deep' | 'synthesis' | 'entity'
@@ -7,6 +7,9 @@ export interface SchedulerQuery {
   now: string
   limit: number
   stages?: SchedulerStage[]
+  /** Capability filter applied by the backend before its bounded LIMIT. */
+  researchDepths?: ResearchDepth[]
+  priorityClasses?: PriorityClass[]
 }
 
 export interface WorkLease {

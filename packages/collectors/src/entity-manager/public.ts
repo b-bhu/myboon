@@ -1,5 +1,11 @@
 import { EntityService, ManualEntityConflictError } from './entity-service'
 import { ManualEntityValidationError, normalizeManualEntityCommand } from './manual-adapter'
+import {
+  ENTITY_KNOWLEDGE_MAX_PAGE_SIZE,
+  ENTITY_KNOWLEDGE_SCHEMA_VERSION,
+  ENTITY_MEMORY_CHANGES_START_CURSOR,
+  InvalidEntityKnowledgeCursorError,
+} from './entity-knowledge-reader'
 import { SupabaseEntityKnowledgeReader } from './supabase-entity-knowledge-reader'
 import { SupabaseEntityMemoryStore } from './supabase-store'
 
@@ -101,12 +107,44 @@ export type {
   EntityCanonLookupResult,
   EntityServiceCanonicalPacketProcessorOptions,
 } from './canonical-processor'
+export {
+  CANONICAL_ENTITY_PROMPT_VERSION,
+  CANONICAL_ENTITY_WORKLOAD,
+  GatewayCanonicalEntityPlanner,
+} from './canonical-planner'
+export type { GatewayCanonicalEntityPlannerOptions } from './canonical-planner'
+export { SqliteEntityPacketWorkPort } from './sqlite-entity-work-port'
+export {
+  ENTITY_SHADOW_OBSERVATION_SCHEMA_VERSION,
+  ENTITY_SHADOW_OBSERVATION_TABLE,
+  EntityShadowObservationConflictError,
+  SqliteEntityShadowObservationStore,
+} from './sqlite-shadow-observation-store'
+export type { DurableEntityShadowObservation } from './sqlite-shadow-observation-store'
+export {
+  ENTITY_MEMORY_MIGRATION_VERIFICATION_SCHEMA_VERSION,
+  EntityMemoryMigrationCapabilityError,
+  assertEntityMemoryMigrationReady,
+  verifyEntityMemoryMigration,
+} from './entity-memory-migration-verifier'
+export type { EntityMemoryMigrationVerificationReport } from './entity-memory-migration-verifier'
+export { createSharedEntityRuntime, waitForSharedEntityShutdown } from './run-shared'
+export type {
+  CreateSharedEntityRuntimeOptions,
+  SharedEntityCycleResult,
+  SharedEntityRuntime,
+  SharedEntityShutdownSignalPort,
+} from './run-shared'
 
 export default {
   EntityService,
   ManualEntityConflictError,
   ManualEntityValidationError,
   normalizeManualEntityCommand,
+  ENTITY_KNOWLEDGE_MAX_PAGE_SIZE,
+  ENTITY_KNOWLEDGE_SCHEMA_VERSION,
+  ENTITY_MEMORY_CHANGES_START_CURSOR,
+  InvalidEntityKnowledgeCursorError,
   SupabaseEntityKnowledgeReader,
   SupabaseEntityMemoryStore,
 }

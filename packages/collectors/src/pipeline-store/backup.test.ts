@@ -14,6 +14,9 @@ import {
 } from './backup'
 import { SqlitePipelineStore } from './sqlite-store'
 import { SqliteNewsStore } from '../news/sqlite-store'
+import { SqliteResearchShadowStore } from '../signal-platform/sqlite-research-shadow-store'
+import { SqliteEntityShadowObservationStore } from '../entity-manager/sqlite-shadow-observation-store'
+import { SqliteDeepResearchExecutionRegistry } from '../deep-research/sqlite-execution-registry'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -223,6 +226,29 @@ test('backupNewsStore: creates and verifies an independent news.sqlite backup', 
       news_research_results: 0,
     })
     assert.equal(verification.ok, true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('backupNewsStore: inventories additive Feed V3 shadow and deep registry tables when present', async () => {
+  const dir = makeTmpDir('news-feed-v3-backup-src-')
+  try {
+    const sourcePath = join(dir, 'news.sqlite')
+    const news = new SqliteNewsStore(sourcePath)
+    news.close()
+    const researchShadow = new SqliteResearchShadowStore(sourcePath)
+    const entityShadow = new SqliteEntityShadowObservationStore(sourcePath)
+    const deepRegistry = new SqliteDeepResearchExecutionRegistry(sourcePath)
+    researchShadow.close()
+    entityShadow.close()
+    deepRegistry.close()
+
+    const result = await backupNewsStore({ sourcePath, backupDir: join(dir, 'backups') })
+    assert.equal(result.tableCounts.signal_platform_research_shadow_results, 0)
+    assert.equal(result.tableCounts.entity_manager_shadow_observations, 0)
+    assert.equal(result.tableCounts.deep_research_active_executions, 0)
+    assert.deepEqual(result.tableCounts, result.sourceTableCounts)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -43,6 +43,9 @@ export function fingerprintNewsCandidate(
   candidate: NewsCandidate
 ): NewsCandidateFingerprint {
   const canonicalUrl = canonicalArticleUrl(candidate.article_url)
+  // Preserve the legacy on-disk hash contract. Changing this normalization
+  // would make every pre-cutover row look materially new on the first Feed V3
+  // poll even when the upstream article is unchanged.
   const headlineHash = hashText(candidate.headline)
   const summary = candidate.summary?.trim()
   const summaryHash = summary ? hashText(summary) : null

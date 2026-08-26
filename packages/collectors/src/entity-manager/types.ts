@@ -109,6 +109,19 @@ export interface EntityInput {
   metadata: Record<string, unknown>
 }
 
+/** Bounded exact identity labels used by canonical Entity admission. */
+export interface EntityIdentityLookupInput {
+  slugs: string[]
+  names: string[]
+  aliases: string[]
+}
+
+export interface EntityIdentityLookupResult {
+  entities: EntityRecord[]
+  /** False when the backing query hit its bounded result ceiling. */
+  complete: boolean
+}
+
 export interface EntityTimelineItem {
   summary: string
   event_at: string
@@ -167,6 +180,20 @@ export interface EntityMemoryInput {
 
 export interface EntityMemoryStore {
   findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]>
+  /**
+   * Canonical Feed V3 exact-identity lookup. Unlike the legacy lookup this
+   * covers slug, canonical name, and aliases with source-neutral semantics.
+   */
+  findEntitiesByIdentity?(input: EntityIdentityLookupInput): Promise<EntityIdentityLookupResult>
+  /**
+   * Atomically repeats the complete identity collision check and creates (or
+   * reuses the exact slug) under a database-scoped lock. Production canonical
+   * creation requires this capability; it is optional only for legacy stores.
+   */
+  createCanonicalEntity?(
+    entity: EntityInput,
+    identity: EntityIdentityLookupInput,
+  ): Promise<EntityRecord>
   /**
    * The full entity catalog (bounded), for canon awareness: the extraction
    * shortlist and the resolver's near-duplicate guardrail both read it.

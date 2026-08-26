@@ -156,12 +156,15 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
   Supabase news, Polymarket working-state, and editor-draft tables. It does not
   touch either local SQLite file or any durable entity/publishing table.
 
-### Feed V3 shadow controls (not yet a production cutover)
+### Feed V3 staged controls (safe-off; not yet a production cutover)
 
 Feed V3 adds canonical Signals, durable triage decisions, shared research work,
-immutable evidence/packets, and execution events as additive tables inside the
-same two SQLite databases. The legacy PM2 lanes remain the only claimers until a
-separately reviewed source-by-source cutover. All Feed V3 modes are safe-off by
+immutable evidence/packets, shadow observations, and execution events as
+additive tables inside the same two SQLite databases. The ecosystem registers
+one shared Research process and one shared Entity Manager process, but both stay
+resident with zero database/provider/network I/O while their mode is `off`.
+Legacy lanes remain the only claimers until a separately reviewed,
+stage-by-stage and source-by-source cutover. All Feed V3 modes are safe-off by
 default:
 
 ```dotenv
@@ -170,21 +173,64 @@ FEED_V3_RESEARCH_MODE=off
 FEED_V3_ENTITY_MODE=off
 FEED_V3_ACTIVE_SOURCES=
 FEED_V3_SHADOW_SOURCES=
+FEED_V3_INTAKE_ACTIVE_SOURCES=
+FEED_V3_INTAKE_SHADOW_SOURCES=
+FEED_V3_RESEARCH_ACTIVE_SOURCES=
+FEED_V3_RESEARCH_SHADOW_SOURCES=
+FEED_V3_ENTITY_ACTIVE_SOURCES=
+FEED_V3_ENTITY_SHADOW_SOURCES=
 FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=
 FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=
 FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
 FEED_V3_DEEP_RESEARCH_ENABLED=0
+FEED_V3_TRIAGE_CLASSIFIER_ENABLED=0
+FEED_V3_TRIAGE_PROVIDER_HEALTH=unavailable
+FEED_V3_TRIAGE_ALLOWED_DEPTHS=light
 ```
 
-The runtime refuses an active source when its corresponding legacy claimer has
-not been explicitly disabled. Do not add Feed V3 workers to PM2 or set any mode
-to `active` until the shadow evaluation and cutover gates in the PRD pass.
+Use the stage-specific source sets for new deployments; the two global source
+sets are compatibility fallbacks only. Unsupported research depths are
+persisted as typed `defer` decisions and are never silently downgraded. Standard
+research additionally requires a code-registered search connector and reviewed
+policy. Deep remains disabled until the VPS containment gate passes.
+
+The runtime refuses active Research or Entity ownership when the matching
+legacy claimer has not been explicitly disabled. Never set a mode to `active`
+until the shadow evaluation, migration, rollback, and cutover gates in the PRD
+pass. Reload the ecosystem file (not plain `pm2 restart all`) when deploying the
+two newly registered safe-off processes:
+
+```bash
+pm2 startOrReload ecosystem.config.cjs --update-env
+pm2 save
+```
 
 Read-only status and trace commands:
 
 ```bash
 pnpm --filter @myboon/collectors feed-v3:status
 pnpm --filter @myboon/collectors feed-v3:trace -- --work-id work_...
+```
+
+Status includes source-local arrivals, admissions, completions, attempts,
+priority/depth queue ages, dead letters, typed recent failures, and measured
+provider/fallback usage. The shared Research process also emits its redacted
+route and in-memory circuit snapshot with each completed cycle; circuit state is
+process-local and is not reconstructed from SQLite. Shadow results remain in
+the source DB: News in `news.sqlite`; Polymarket in `pipeline.sqlite`. The
+verified backup inventory includes these additive shadow and execution tables.
+
+Historical evaluation/backfill is dry-run by default, bounded to 500 rows, and
+does not claim or mutate legacy work. `--apply` verifies backups of both SQLite
+databases before opening the additive canonical stores:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:backfill -- \
+  --source news --since 2026-08-24T00:00:00Z --until 2026-08-25T00:00:00Z --batch 25
+
+# Only after reviewing every reported row:
+pnpm --filter @myboon/collectors feed-v3:backfill -- \
+  --source news --since 2026-08-24T00:00:00Z --until 2026-08-25T00:00:00Z --batch 25 --apply
 ```
 
 Canonical recovery is also dry-run by default and accepts `--source`,
@@ -210,7 +256,26 @@ The committed migration
 title-independent identity used by canonical Entity Memory writes. Apply it only
 as part of the reviewed Entity Manager cutover; this branch does not apply or
 link Supabase. The migration backfills existing rows one-for-one and retains the
-legacy unique index for rolling compatibility.
+legacy unique index for rolling compatibility. After rehearsing or applying the
+migration through the separately approved Supabase workflow, verify all
+required columns, indexes, RPCs, grants, trigger, and identity counts before an
+active Entity worker can claim anything:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:verify-entity-migration
+```
+
+The versioned Entity Knowledge read surface is internal and requires
+`Authorization: Bearer $INTERNAL_DASHBOARD_TOKEN`:
+
+```text
+GET /internal/entity-knowledge/recent
+GET /internal/entity-knowledge/entities/:entityId/memories
+GET /internal/entity-knowledge/changes
+```
+
+Responses are allowlisted consumer DTOs; raw memory context, evidence bodies,
+provider details, and internal provenance are not exposed.
 
 Deep research remains disabled until the transient-systemd-service checks in
 [`2026_08_26_deep_research_transient_systemd_service.md`](modules/entity-manager/ADRs/2026_08_26_deep_research_transient_systemd_service.md)

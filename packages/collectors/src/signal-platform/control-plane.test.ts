@@ -105,11 +105,21 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
       workReader('news', {
         signalCount: 9, triageDecisionCount: 8,
         totalAttempts: 5, attemptedItems: 3, maxAttemptCount: 2,
+        arrivalsInWindow: 4, admissionsInWindow: 3, completionsInWindow: 1,
+        queueAge: [{
+          priorityClass: 'P0', researchDepth: 'standard', status: 'research_pending', count: 2,
+          oldestQueuedAt: '2026-08-26T12:00:00.000Z',
+        }],
+        deadLetters: {
+          total: 1, oldestAt: '2026-08-26T11:30:00.000Z',
+          byFailureCategory: [{ category: 'provider_timeout', count: 1, lastOccurredAt: '2026-08-26T12:55:00.000Z' }],
+        },
         recentFailures: [{ category: 'provider_timeout', count: 2, lastOccurredAt: '2026-08-26T12:55:00.000Z' }],
       }),
       workReader('polymarket', {
         signalCount: 6, triageDecisionCount: 5,
         totalAttempts: 2, attemptedItems: 1, maxAttemptCount: 2,
+        arrivalsInWindow: 2, admissionsInWindow: 1, completionsInWindow: 0,
         recentFailures: [{ category: 'retrieval_blocked', count: 1, lastOccurredAt: '2026-08-26T12:50:00.000Z' }],
       }),
     ],
@@ -136,9 +146,14 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
   assert.equal(status.totals.expired, 2)
   assert.equal(status.totals.leased, 2)
   assert.equal(status.totals.attempts, 7)
+  assert.equal(status.totals.arrivalsInWindow, 6)
+  assert.equal(status.totals.admissionsInWindow, 4)
+  assert.equal(status.totals.completionsInWindow, 1)
   assert.equal(status.sources.news?.byStage.retrieval.byStatus.research_pending, 2)
   assert.equal(status.sources.polymarket?.byStage.synthesis.byStatus.synthesis_leased, 1)
   assert.equal(status.sources.news?.oldestReadyAgeMs, 60 * 60_000)
+  assert.equal(status.sources.news?.queueAge[0]?.oldestAgeMs, 60 * 60_000)
+  assert.equal(status.sources.news?.deadLetters.oldestAgeMs, 90 * 60_000)
   assert.equal(status.execution.bySource.news?.byStage.synthesis?.byStatus.failed, 1)
   assert.equal(status.execution.bySource.polymarket?.byStage.retrieval?.byStatus.failed, 1)
   assert.equal(status.execution.providerUsage.find((row) => row.sourceType === 'polymarket')?.fallbackUsed, true)
@@ -174,6 +189,7 @@ test('empty registered state returns a complete zero snapshot', async () => {
     signals: null, triageDecisions: null, admittedWorkItems: 0,
     workItems: 0, ready: 0, retry: 0, deadLetter: 0,
     expired: 0, leased: 0, unfinished: 0, attempts: null,
+    arrivalsInWindow: null, admissionsInWindow: null, completionsInWindow: null,
   })
   assert.equal(status.execution.totalEvents, 0)
   assert.deepEqual(status.recentFailures, [])

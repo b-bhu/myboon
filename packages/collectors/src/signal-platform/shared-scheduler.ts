@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { PriorityClass, ResearchWorkItem } from './contracts'
+import type { PriorityClass, ResearchDepth, ResearchWorkItem } from './contracts'
 import {
   compareResearchWorkPriority,
   type ResearchWorkStoreAdapter,
@@ -28,6 +28,7 @@ export interface GlobalSchedulerQuery {
   limit: number
   stages?: SchedulerStage[]
   priorityClasses?: PriorityClass[]
+  researchDepths?: ResearchDepth[]
 }
 
 export interface ClaimNextCommand extends Omit<GlobalSchedulerQuery, 'limit'> {
@@ -76,7 +77,13 @@ export class SharedResearchScheduler {
     const limit = boundedInteger(query.limit, 'limit', 1, 250)
     const perStoreLimit = Math.min(this.perStorePeekLimit, limit)
     const heads = await Promise.all([...this.adapters.values()].map((adapter) =>
-      adapter.peekSchedulable({ now: query.now, limit: perStoreLimit, stages: query.stages }),
+      adapter.peekSchedulable({
+        now: query.now,
+        limit: perStoreLimit,
+        stages: query.stages,
+        priorityClasses: query.priorityClasses,
+        researchDepths: query.researchDepths,
+      }),
     ))
     const acceptedPriorities = query.priorityClasses === undefined
       ? null
@@ -103,6 +110,7 @@ export class SharedResearchScheduler {
         limit: Math.min(250, this.perStorePeekLimit * this.adapters.size),
         stages: command.stages,
         priorityClasses: command.priorityClasses,
+        researchDepths: command.researchDepths,
       })
 
       let attemptedThisPass = false

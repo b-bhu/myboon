@@ -267,7 +267,7 @@ export class DeepResearchSideQueueWorker {
           category: 'execution_failed', retryable: true,
         })
       }
-      const body = parseDeepResearchOutput(result.stdout, job)
+      const body = parseDeepResearchOutput(result.stdout, job, result.fetchedEvidence)
       const packet = assembleDeepResearchPacket({
         job,
         result,

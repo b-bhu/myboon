@@ -14,12 +14,14 @@ import type {
   DeepResearchBudget,
   DeepResearchCapability,
   DeepResearchExecutionMetadata,
+  DeepResearchFetchedEvidence,
   DeepResearchJob,
   DeepResearchMeasuredUsage,
   DeepResearchResult,
 } from './types'
 import {
   DEEP_RESEARCH_JOB_SCHEMA_VERSION,
+  DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION,
   DEEP_RESEARCH_RESULT_SCHEMA_VERSION,
   DEEP_RESEARCH_USAGE_SCHEMA_VERSION,
 } from './types'
@@ -174,6 +176,7 @@ export class DeepResearchExecutor {
     const isolatedTmpPath = join(tempPath, 'tmp')
     const jobPath = join(tempPath, 'job.json')
     const usagePath = join(tempPath, 'usage.json')
+    const evidenceManifestPath = join(tempPath, 'fetched-evidence.json')
     try {
       await this.fileSystem.makeDir(profilePath)
       await this.fileSystem.makeDir(isolatedTmpPath)
@@ -205,12 +208,26 @@ export class DeepResearchExecutor {
       tempPath,
       profilePath,
     })
-    this.registry.register(metadata)
+    try {
+      this.registry.register(metadata)
+    } catch (error) {
+      try {
+        await this.fileSystem.removeTree(tempPath)
+        if (await this.fileSystem.exists(tempPath)) throw new Error('temporary path still exists')
+      } catch (cleanupError) {
+        throw deepError(
+          'containment_cleanup_failed',
+          'Failed to verify cleanup after durable execution registration failure',
+          false, metadata, cleanupError,
+        )
+      }
+      throw deepError('execution_failed', 'Failed to durably register deep-research execution', true, metadata, error)
+    }
 
     let child: DeepResearchProcess
     try {
       child = this.systemd.spawnTransient(
-        buildSystemdRunArgs(job, metadata, jobPath, usagePath, isolatedTmpPath, this.worker),
+        buildSystemdRunArgs(job, metadata, jobPath, usagePath, evidenceManifestPath, isolatedTmpPath, this.worker),
         { cwd: tempPath, env: minimalEnvironment() },
       )
     } catch (error) {
@@ -291,8 +308,20 @@ export class DeepResearchExecutor {
       const inactive = await this.waitUntilInactive(metadata.unitName)
       if (!inactive) await this.terminateAndVerify(metadata)
       let measuredUsage: DeepResearchMeasuredUsage
+      let fetchedEvidence: DeepResearchFetchedEvidence[]
       try {
         measuredUsage = await this.readMeasuredUsage(usagePath, job)
+        fetchedEvidence = await this.readFetchedEvidenceManifest(evidenceManifestPath, job)
+        const manifestedByMethod = {
+          browserNavigations: fetchedEvidence.filter((item) => item.retrievalMethod === 'browser_navigation').length,
+          searchQueries: fetchedEvidence.filter((item) => item.retrievalMethod === 'registered_search').length,
+          httpFetches: fetchedEvidence.filter((item) => item.retrievalMethod === 'http_fetch').length,
+        }
+        for (const [field, manifested] of Object.entries(manifestedByMethod) as Array<[keyof typeof manifestedByMethod, number]>) {
+          if (manifested > measuredUsage[field]) {
+            throw deepError('invalid_job', `Fetched-evidence manifest exceeds measured ${field}`, false)
+          }
+        }
       } catch (error) {
         await this.cleanupInactive(metadata)
         throw error
@@ -314,11 +343,15 @@ export class DeepResearchExecutor {
         finishedAt: new Date(finishedAtMs).toISOString(),
         durationMs: Math.max(0, finishedAtMs - startedAtMs),
         capabilities: [...job.capabilities],
+        fetchedEvidence,
         budgetUsed: {
           providerCalls: measuredUsage.providerCalls,
           inputTokens: measuredUsage.inputTokens,
           outputTokens: measuredUsage.outputTokens,
           toolCalls: measuredUsage.toolCalls,
+          browserNavigations: measuredUsage.browserNavigations,
+          searchQueries: measuredUsage.searchQueries,
+          httpFetches: measuredUsage.httpFetches,
           wallTimeMs: Math.max(0, finishedAtMs - startedAtMs),
           outputBytes: Math.min(outputBytes, job.budget.maxOutputBytes),
         },
@@ -346,7 +379,10 @@ export class DeepResearchExecutor {
       throw deepError('invalid_job', 'Contained measured usage must be one object', false)
     }
     const record = value as Record<string, unknown>
-    const expected = ['schemaVersion', 'providerCalls', 'inputTokens', 'outputTokens', 'toolCalls'].sort()
+    const expected = [
+      'schemaVersion', 'providerCalls', 'inputTokens', 'outputTokens', 'toolCalls',
+      'browserNavigations', 'searchQueries', 'httpFetches',
+    ].sort()
     const actual = Object.keys(record).sort()
     if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])
       || record.schemaVersion !== DEEP_RESEARCH_USAGE_SCHEMA_VERSION) {
@@ -357,6 +393,9 @@ export class DeepResearchExecutor {
       inputTokens: job.budget.maxInputTokens,
       outputTokens: job.budget.maxOutputTokens,
       toolCalls: job.budget.maxToolCalls,
+      browserNavigations: job.budget.maxBrowserNavigations,
+      searchQueries: job.budget.maxSearchQueries,
+      httpFetches: job.budget.maxHttpFetches,
     } as const
     for (const [field, limit] of Object.entries(limits) as Array<[keyof typeof limits, number]>) {
       const measured = record[field]
@@ -367,7 +406,40 @@ export class DeepResearchExecutor {
         throw deepError('budget_exceeded', `Contained measured ${field} exceeded its executable budget`, false)
       }
     }
+    if (record.toolCalls !== (record.browserNavigations as number)
+      + (record.searchQueries as number) + (record.httpFetches as number)) {
+      throw deepError('invalid_job', 'Contained measured toolCalls must equal allowlisted capability calls', false)
+    }
     return record as unknown as DeepResearchMeasuredUsage
+  }
+
+  private async readFetchedEvidenceManifest(
+    path: string,
+    job: DeepResearchJob,
+  ): Promise<DeepResearchFetchedEvidence[]> {
+    let value: unknown
+    try {
+      value = JSON.parse(await this.fileSystem.readPrivateFile(path, Math.min(job.budget.maxOutputBytes, 256_000)))
+    } catch (error) {
+      throw deepError('invalid_job', 'Contained worker did not produce a valid fetched-evidence manifest', false, undefined, error)
+    }
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw deepError('invalid_job', 'Contained fetched-evidence manifest must be one object', false)
+    }
+    const manifest = value as Record<string, unknown>
+    const expected = ['schemaVersion', 'jobId', 'workId', 'traceId', 'results'].sort()
+    const actual = Object.keys(manifest).sort()
+    if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])
+      || manifest.schemaVersion !== DEEP_RESEARCH_FETCHED_EVIDENCE_SCHEMA_VERSION
+      || manifest.jobId !== job.jobId || manifest.workId !== job.workItem.workId
+      || manifest.traceId !== job.workItem.traceId || !Array.isArray(manifest.results)) {
+      throw deepError('invalid_job', 'Contained fetched-evidence manifest has invalid schema or linkage', false)
+    }
+    if (manifest.results.length > job.budget.maxBrowserNavigations + job.budget.maxSearchQueries + job.budget.maxHttpFetches) {
+      throw deepError('budget_exceeded', 'Contained fetched-evidence manifest exceeded its executable result budget', false)
+    }
+    const refs = new Set<string>()
+    return manifest.results.map((raw, index) => validateFetchedEvidence(raw, index, job, refs))
   }
 
   private async terminateAndVerify(metadata: DeepResearchExecutionMetadata): Promise<void> {
@@ -425,6 +497,7 @@ export function buildSystemdRunArgs(
   metadata: DeepResearchExecutionMetadata,
   jobPath: string,
   usagePath: string,
+  evidenceManifestPath: string,
   isolatedTmpPath: string,
   worker: DeepResearchWorkerCommand,
 ): string[] {
@@ -454,6 +527,7 @@ export function buildSystemdRunArgs(
     ...(worker.args ?? []),
     `--job-file=${jobPath}`,
     `--usage-file=${usagePath}`,
+    `--evidence-manifest-file=${evidenceManifestPath}`,
     `--profile-dir=${metadata.profilePath}`,
   ]
 }
@@ -462,6 +536,71 @@ export function buildDeepResearchUnitName(workId: string, traceId: string, uniqu
   const safeWork = workId.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'work'
   const digest = createHash('sha256').update(`${workId}\0${traceId}\0${unique}`).digest('hex').slice(0, 16)
   return `myboon-deep-${safeWork}-${digest}.service`
+}
+
+function validateFetchedEvidence(
+  value: unknown,
+  index: number,
+  job: DeepResearchJob,
+  refs: Set<string>,
+): DeepResearchFetchedEvidence {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw deepError('invalid_job', `Contained fetched evidence result ${index} must be an object`, false)
+  }
+  const record = value as Record<string, unknown>
+  const expected = ['resultRef', 'title', 'url', 'observedAt', 'note', 'contentHash', 'retrievalMethod'].sort()
+  const actual = Object.keys(record).sort()
+  if (actual.length !== expected.length || actual.some((key, keyIndex) => key !== expected[keyIndex])) {
+    throw deepError('invalid_job', `Contained fetched evidence result ${index} has invalid schema`, false)
+  }
+  const string = (field: string, max: number): string => {
+    const item = record[field]
+    if (typeof item !== 'string' || !item.trim() || item.length > max || item.includes('\0')) {
+      throw deepError('invalid_job', `Contained fetched evidence ${field} is invalid`, false)
+    }
+    return item
+  }
+  const resultRef = string('resultRef', 300)
+  if (!safeIdentifier(resultRef) || refs.has(resultRef) || job.evidence.some((item) => item.evidenceId === resultRef)) {
+    throw deepError('invalid_job', 'Contained fetched evidence resultRef is invalid, duplicate, or colliding', false)
+  }
+  refs.add(resultRef)
+  const url = string('url', 2_000)
+  let parsed: URL
+  try { parsed = new URL(url) } catch (error) {
+    throw deepError('invalid_job', 'Contained fetched evidence URL is invalid', false, undefined, error)
+  }
+  const hostname = parsed.hostname.toLowerCase()
+  if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password || parsed.hash
+    || !job.approvedDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) {
+    throw deepError('invalid_job', 'Contained fetched evidence URL is outside approved domains', false)
+  }
+  const retrievalMethod = record.retrievalMethod
+  if (!CAPABILITIES.has(retrievalMethod as DeepResearchCapability)
+    || !job.capabilities.includes(retrievalMethod as DeepResearchCapability)) {
+    throw deepError('invalid_job', 'Contained fetched evidence retrieval method is not an enabled capability', false)
+  }
+  const observedAt = record.observedAt
+  if (observedAt !== null && (typeof observedAt !== 'string' || !Number.isFinite(Date.parse(observedAt)))) {
+    throw deepError('invalid_job', 'Contained fetched evidence observedAt is invalid', false)
+  }
+  const note = record.note
+  if (note !== null && (typeof note !== 'string' || note.length > 1_000 || note.includes('\0'))) {
+    throw deepError('invalid_job', 'Contained fetched evidence note is invalid', false)
+  }
+  const contentHash = string('contentHash', 200)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(contentHash)) {
+    throw deepError('invalid_job', 'Contained fetched evidence contentHash is unsafe', false)
+  }
+  return {
+    resultRef,
+    title: string('title', 500),
+    url: parsed.toString(),
+    observedAt: observedAt as string | null,
+    note: note as string | null,
+    contentHash,
+    retrievalMethod: retrievalMethod as DeepResearchCapability,
+  }
 }
 
 export function validateDeepResearchJob(job: DeepResearchJob): void {

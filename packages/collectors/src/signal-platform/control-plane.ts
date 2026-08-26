@@ -2,6 +2,8 @@ import type {
   ExecutionEventStatus,
   ExecutionStage,
   FailureCategory,
+  PriorityClass,
+  ResearchDepth,
   Signal,
   WorkStatus,
 } from './contracts'
@@ -33,6 +35,22 @@ export interface WorkFailureAggregate {
   lastOccurredAt: string | null
 }
 
+export interface WorkQueueAgeAggregate {
+  priorityClass: PriorityClass
+  researchDepth: ResearchDepth
+  status: WorkStatus
+  count: number
+  oldestQueuedAt: string
+  oldestAgeMs: number
+}
+
+export interface DeadLetterAggregate {
+  total: number
+  oldestAt: string | null
+  oldestAgeMs: number | null
+  byFailureCategory: WorkFailureAggregate[]
+}
+
 /** Optional richer read port. It deliberately exposes no mutation methods. */
 export interface WorkObservabilityReadPort {
   readonly sourceType: Signal['sourceType']
@@ -47,6 +65,11 @@ export interface WorkObservabilityReadPort {
     attemptedItems: number
     maxAttemptCount: number
     recentFailures: WorkFailureAggregate[]
+    arrivalsInWindow?: number
+    admissionsInWindow?: number
+    completionsInWindow?: number
+    queueAge?: Array<Omit<WorkQueueAgeAggregate, 'oldestAgeMs'>>
+    deadLetters?: Omit<DeadLetterAggregate, 'oldestAgeMs'>
   }>
 }
 
@@ -89,6 +112,14 @@ export interface SourceControlPlaneStatus {
     maxAttemptCount: number | null
   }
   recentFailures: WorkFailureAggregate[]
+  activity: {
+    windowStart: string
+    arrivals: number | null
+    admissions: number | null
+    completions: number | null
+  }
+  queueAge: WorkQueueAgeAggregate[]
+  deadLetters: DeadLetterAggregate
 }
 
 export interface ExecutionStageStatus {
@@ -143,6 +174,9 @@ export interface SignalPlatformControlPlaneStatus {
     leased: number
     unfinished: number
     attempts: number | null
+    arrivalsInWindow: number | null
+    admissionsInWindow: number | null
+    completionsInWindow: number | null
   }
   sources: Partial<Record<Signal['sourceType'], SourceControlPlaneStatus>>
   execution: ExecutionControlPlaneStatus
@@ -188,7 +222,7 @@ export class SignalPlatformControlPlane {
         this.readWorkDetail(store.sourceType, input.now, failureSince),
       ])
       return [store.sourceType, sourceStatus(
-        store.sourceType, statusResult, detailResult, nowMs,
+        store.sourceType, statusResult, detailResult, nowMs, failureSince,
       )] as const
     }))
     const sources = Object.fromEntries(sourceEntries) as SignalPlatformControlPlaneStatus['sources']
@@ -211,6 +245,10 @@ export class SignalPlatformControlPlane {
     const triageDecisions = availableSources.every((source) => source.intake.triageDecisions !== null)
       ? sum(availableSources.map((source) => source.intake.triageDecisions ?? 0))
       : null
+    const activityTotal = (field: 'arrivals' | 'admissions' | 'completions'): number | null =>
+      availableSources.every((source) => source.activity[field] !== null)
+        ? sum(availableSources.map((source) => source.activity[field] ?? 0))
+        : null
     const availability = overallAvailability(
       availableSources.length,
       this.stores.length,
@@ -234,6 +272,9 @@ export class SignalPlatformControlPlane {
         leased: sum(availableSources.map((source) => source.counts.leased)),
         unfinished: sum(availableSources.map((source) => source.counts.unfinished)),
         attempts,
+        arrivalsInWindow: activityTotal('arrivals'),
+        admissionsInWindow: activityTotal('admissions'),
+        completionsInWindow: activityTotal('completions'),
       },
       sources,
       execution,
@@ -275,8 +316,9 @@ function sourceStatus(
   statusResult: PromiseSettledResult<SchedulerAggregateStatus>,
   detailResult: PromiseSettledResult<Awaited<ReturnType<WorkObservabilityReadPort['readWorkObservability']>> | null>,
   nowMs: number,
+  windowStart: string,
 ): SourceControlPlaneStatus {
-  if (statusResult.status === 'rejected') return unavailableSource(sourceType)
+  if (statusResult.status === 'rejected') return unavailableSource(sourceType, windowStart)
   const status = statusResult.value
   const byStatus = { ...status.byStatus }
   const counts = countWork(byStatus)
@@ -311,10 +353,26 @@ function sourceStatus(
       maxAttemptCount: detail?.maxAttemptCount ?? null,
     },
     recentFailures: detail?.recentFailures.slice(0, 250) ?? [],
+    activity: {
+      windowStart,
+      arrivals: detail?.arrivalsInWindow ?? null,
+      admissions: detail?.admissionsInWindow ?? null,
+      completions: detail?.completionsInWindow ?? null,
+    },
+    queueAge: (detail?.queueAge ?? []).map((row) => ({
+      ...row,
+      oldestAgeMs: Math.max(0, nowMs - Date.parse(row.oldestQueuedAt)),
+    })),
+    deadLetters: {
+      total: detail?.deadLetters?.total ?? counts.deadLetter,
+      oldestAt: detail?.deadLetters?.oldestAt ?? null,
+      oldestAgeMs: ageMs(detail?.deadLetters?.oldestAt ?? null, nowMs),
+      byFailureCategory: detail?.deadLetters?.byFailureCategory ?? [],
+    },
   }
 }
 
-function unavailableSource(sourceType: Signal['sourceType']): SourceControlPlaneStatus {
+function unavailableSource(sourceType: Signal['sourceType'], windowStart: string): SourceControlPlaneStatus {
   return {
     sourceType,
     availability: 'unavailable',
@@ -334,6 +392,9 @@ function unavailableSource(sourceType: Signal['sourceType']): SourceControlPlane
       availability: 'unavailable', totalAttempts: null, attemptedItems: null, maxAttemptCount: null,
     },
     recentFailures: [],
+    activity: { windowStart, arrivals: null, admissions: null, completions: null },
+    queueAge: [],
+    deadLetters: { total: 0, oldestAt: null, oldestAgeMs: null, byFailureCategory: [] },
   }
 }
 

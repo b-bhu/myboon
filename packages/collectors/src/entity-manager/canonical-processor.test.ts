@@ -13,6 +13,8 @@ import {
 } from './canonical-processor'
 import type {
   EntityInput,
+  EntityIdentityLookupInput,
+  EntityIdentityLookupResult,
   EntityMemoryConsolidationPatch,
   EntityMemoryInput,
   EntityMemoryRecord,
@@ -214,6 +216,20 @@ class FakeStore implements EntityMemoryStore {
     return this.entities.filter((item) => slugSet.has(item.slug) || item.aliases.some((alias) => aliasSet.has(alias.toLowerCase())))
   }
 
+  async findEntitiesByIdentity(input: EntityIdentityLookupInput): Promise<EntityIdentityLookupResult> {
+    this.catalogReads += 1
+    if (this.listError) throw this.listError
+    const labels = new Set([...input.names, ...input.aliases].map((label) => label.toLowerCase()))
+    return {
+      complete: true,
+      entities: this.entities.filter((item) => (
+        input.slugs.includes(item.slug)
+        || labels.has(item.name.toLowerCase())
+        || item.aliases.some((alias) => labels.has(alias.toLowerCase()))
+      )),
+    }
+  }
+
   async createEntities(inputs: EntityInput[]): Promise<EntityRecord[]> {
     this.entityWrites += inputs.length
     return inputs.map((value) => {
@@ -308,6 +324,8 @@ test('selects only an admitted existing Entity and preserves canonical traceabil
   assert.equal(store.memories[0].source_ref_id, 'signal-1')
   assert.deepEqual(store.memories[0].context.canonical_claim_ids, ['claim-1'])
   assert.deepEqual(store.memories[0].context.canonical_evidence_ids, ['evidence-1'])
+  assert.equal(store.memories[0].context.image_url, 'https://example.com/image.jpg')
+  assert.equal(store.memories[0].context.image_attribution, 'Example News')
   assert.equal(store.memories[0].context.canonical_trace_id, 'trace-1')
   assert.equal(store.memories[0].context.priority_class, 'P1')
   assert.equal(store.memories[0].context.research_depth, 'standard')
@@ -425,6 +443,27 @@ test('targeted collision lookup reuses exact slugs and rejects ambiguous alias c
     && !error.retryable)
   assert.equal(ambiguousStore.entityWrites, 0)
   assert.equal(ambiguousStore.memoryWrites, 0)
+
+  const inactiveStore = new FakeStore([entity({
+    id: 'inactive-proposal',
+    slug: 'federal-reserve-guidance',
+    name: 'Retired Federal Reserve Guidance',
+    aliases: [],
+    status: 'inactive',
+  })])
+  const inactive = processor(inactiveStore, {
+    async plan() {
+      return plan({
+        action: 'create_new',
+        proposal: { slug: 'federal-reserve-guidance', name: 'Federal Reserve Guidance', type: 'topic' },
+        supportingEvidenceIds: ['evidence-1'],
+      })
+    },
+  })
+  await assert.rejects(inactive.process(input()), (error: unknown) => error instanceof PlatformFailure
+    && error.category === 'entity_resolution_failed')
+  assert.equal(inactiveStore.entityWrites, 0)
+  assert.equal(inactiveStore.memoryWrites, 0)
 })
 
 test('replay uses stable code identity and changed model title targets the same row', async () => {

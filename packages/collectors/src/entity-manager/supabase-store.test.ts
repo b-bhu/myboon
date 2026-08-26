@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  ENTITY_MEMORY_CHANGES_START_CURSOR,
+  PortBackedEntityKnowledgeReader,
+} from './entity-knowledge-reader'
+import type { EntityKnowledgeQueryPort, EntityKnowledgeRow } from './entity-knowledge-query'
 import { SupabaseEntityMemoryStore, __testing } from './supabase-store'
 import type { EntityInput, EntityMemoryRecord, EntityRecord } from './types'
 
@@ -358,7 +363,7 @@ test('explicit stable identity upserts changed title onto the same memory row', 
       }
     },
   } as unknown as SupabaseClient
-  const store = new SupabaseEntityMemoryStore(db)
+  const store = new SupabaseEntityMemoryStore(db, () => new Date('2026-08-26T12:00:00.000Z'))
   const input = {
     ...baseMemory,
     id: undefined,
@@ -375,7 +380,150 @@ test('explicit stable identity upserts changed title onto the same memory row', 
   assert.equal(replay[0].title, 'Changed model wording')
   assert.equal(payloads[0].memory_identity_key, identity)
   assert.equal(payloads[1].memory_identity_key, identity)
+  assert.equal(payloads[0].updated_at, '2026-08-26T12:00:00.000Z')
+  assert.equal(payloads[1].updated_at, '2026-08-26T12:00:00.000Z')
   assert.equal(rows.size, 1)
+})
+
+test('canonical replay advances the knowledge change cursor with its explicit updated_at', async () => {
+  const identity = `myboon.memory_identity.v1:${'d'.repeat(64)}`
+  const rows = new Map<string, EntityKnowledgeRow>()
+  let now = '2026-08-26T12:00:00.000Z'
+  const db = {
+    from() {
+      return {
+        upsert(payload: Array<Record<string, unknown>>) {
+          for (const item of payload) {
+            const key = String(item.memory_identity_key)
+            const existing = rows.get(key)
+            rows.set(key, {
+              ...baseMemory,
+              ...item,
+              id: String(existing?.id ?? 'cursor-memory-1'),
+              created_at: String(existing?.created_at ?? now),
+              updated_at: String(item.updated_at),
+            })
+          }
+          return {
+            async select() {
+              return { data: payload.map((item) => rows.get(String(item.memory_identity_key))), error: null }
+            },
+          }
+        },
+      }
+    },
+  } as unknown as SupabaseClient
+  const store = new SupabaseEntityMemoryStore(db, () => new Date(now))
+  const port: EntityKnowledgeQueryPort = {
+    async queryMemories(query) {
+      return [...rows.values()]
+        .filter((row) => !query.after || (
+          String(row.updated_at) > query.after.at
+          || (String(row.updated_at) === query.after.at && String(row.id) > query.after.id)
+        ))
+        .sort((left, right) => (
+          String(left.updated_at).localeCompare(String(right.updated_at))
+          || String(left.id).localeCompare(String(right.id))
+        ))
+        .slice(0, query.limit)
+    },
+  }
+  const reader = new PortBackedEntityKnowledgeReader(port)
+  const memory = {
+    ...baseMemory,
+    memory_identity_key: identity,
+    id: undefined,
+    created_at: undefined,
+    updated_at: undefined,
+  }
+
+  await store.upsertMemories([{ ...memory, title: 'First wording' }])
+  const first = await reader.getEntityMemoryChanges({
+    afterCursor: ENTITY_MEMORY_CHANGES_START_CURSOR,
+    limit: 10,
+  })
+  assert.equal(first.changes[0]?.changedAt, now)
+
+  now = '2026-08-26T12:05:00.000Z'
+  await store.upsertMemories([{ ...memory, title: 'Changed wording' }])
+  const replay = await reader.getEntityMemoryChanges({ afterCursor: first.nextCursor, limit: 10 })
+  assert.equal(replay.changes.length, 1)
+  assert.equal(replay.changes[0]?.changedAt, now)
+  assert.equal(replay.changes[0]?.memory.title, 'Changed wording')
+})
+
+test('canonical identity lookup covers slug, name, and alias through one bounded RPC', async () => {
+  const calls: Array<{ fn: string, args: Record<string, unknown> }> = []
+  const db = {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      calls.push({ fn, args })
+      return { data: [{ ...baseEntity, total_count: 1 }], error: null }
+    },
+  } as unknown as SupabaseClient
+
+  const result = await new SupabaseEntityMemoryStore(db).findEntitiesByIdentity({
+    slugs: ['bitcoin', 'bitcoin'], names: ['Bitcoin'], aliases: ['BTC'],
+  })
+
+  assert.equal(result.complete, true)
+  assert.deepEqual(result.entities, [baseEntity])
+  assert.deepEqual(calls, [{
+    fn: 'entity_manager_lookup_entities_v1',
+    args: {
+      p_slugs: ['bitcoin'], p_names: ['Bitcoin'], p_aliases: ['BTC'], p_limit: 100,
+    },
+  }])
+})
+
+test('canonical identity lookup fails closed on truncated results and oversized inputs', async () => {
+  let calls = 0
+  const rows = Array.from({ length: 101 }, (_, index) => ({
+    ...baseEntity,
+    id: `entity-${index}`,
+    slug: `entity-${index}`,
+    total_count: 101,
+  }))
+  const db = {
+    async rpc() { calls += 1; return { data: rows, error: null } },
+  } as unknown as SupabaseClient
+  const store = new SupabaseEntityMemoryStore(db)
+
+  const truncated = await store.findEntitiesByIdentity({
+    slugs: ['bitcoin'], names: [], aliases: [],
+  })
+  assert.equal(truncated.complete, false)
+  assert.equal(truncated.entities.length, 100)
+
+  await assert.rejects(store.findEntitiesByIdentity({
+    slugs: Array.from({ length: 101 }, (_, index) => `entity-${index}`),
+    names: [], aliases: [],
+  }), /exceeds 100 labels/)
+  assert.equal(calls, 1)
+})
+
+test('canonical creation delegates collision check and insert to one advisory-lock-backed RPC', async () => {
+  const calls: Array<{ fn: string, args: Record<string, unknown> }> = []
+  const db = {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      calls.push({ fn, args })
+      return { data: [baseEntity], error: null }
+    },
+  } as unknown as SupabaseClient
+  const input: EntityInput = {
+    slug: baseEntity.slug, name: baseEntity.name, type: baseEntity.type,
+    aliases: baseEntity.aliases, summary: baseEntity.summary, status: baseEntity.status,
+    metadata: baseEntity.metadata,
+  }
+
+  const entity = await new SupabaseEntityMemoryStore(db).createCanonicalEntity(input, {
+    slugs: ['bitcoin'], names: ['Bitcoin'], aliases: ['BTC'],
+  })
+
+  assert.equal(entity.id, baseEntity.id)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.fn, 'entity_manager_create_entity_v1')
+  assert.deepEqual(calls[0]?.args.p_identity_names, ['Bitcoin'])
+  assert.deepEqual(calls[0]?.args.p_identity_aliases, ['BTC'])
 })
 
 test('findMemories uses explicit identity without depending on title', async () => {

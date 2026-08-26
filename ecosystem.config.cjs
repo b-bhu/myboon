@@ -241,5 +241,58 @@ module.exports = {
         HERMES_ORPHAN_WORKSPACE_ROOT: ROOT,
       },
     },
+    {
+      // One horizontal Research runner. Off is resident but performs zero
+      // SQLite/provider/network I/O; shadow peeks only; active is guarded by
+      // explicit source ownership and legacy-claimer disablement.
+      name: 'myboon-feed-v3-research',
+      script: 'src/research-engine/run-shared-research.ts',
+      interpreter: TSX,
+      cwd: `${ROOT}/packages/collectors`,
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env: {
+        ...HERMES_ENV,
+        FEED_V3_RESEARCH_MODE: 'off',
+        FEED_V3_RESEARCH_ACTIVE_SOURCES: '',
+        FEED_V3_RESEARCH_SHADOW_SOURCES: '',
+        FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: '',
+        FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '0',
+        FEED_V3_RESEARCH_RUN_ONCE: '0',
+        FEED_V3_RESEARCH_INTERVAL_MS: '5000',
+        FEED_V3_RESEARCH_BATCH_SIZE: '10',
+        FEED_V3_RESEARCH_PROMPT_VERSION: 'research.synthesis.prompt.v1',
+        FEED_V3_RESEARCH_URGENT_PRIORITIES: 'P0,P1',
+        FEED_V3_RESEARCH_BACKGROUND_PRIORITIES: 'P2,P3',
+        FEED_V3_DEEP_RESEARCH_ENABLED: '0',
+      },
+    },
+    {
+      // One horizontal Entity worker replaces source-specific managers only
+      // after a reviewed source-by-source ownership cutover. It is inert now.
+      name: 'myboon-feed-v3-entity-manager',
+      script: 'src/entity-manager/run-shared.ts',
+      interpreter: TSX,
+      cwd: `${ROOT}/packages/collectors`,
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env: {
+        ...HERMES_ENV,
+        FEED_V3_ENTITY_MODE: 'off',
+        FEED_V3_ENTITY_ACTIVE_SOURCES: '',
+        FEED_V3_ENTITY_SHADOW_SOURCES: '',
+        FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: '',
+        FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '0',
+        FEED_V3_ENTITY_RUN_ONCE: '0',
+        FEED_V3_ENTITY_INTERVAL_MS: '30000',
+        FEED_V3_ENTITY_BATCH_SIZE: '10',
+      },
+    },
   ],
 }

@@ -11,6 +11,7 @@ import type {
   WorkStatus,
 } from './contracts'
 import type { TriageDecisionV1 } from './triage-contracts'
+import type { TriageCapacitySnapshot } from './triage-contracts'
 import type { WorkObservabilityReadPort } from './control-plane'
 import {
   ImmutableRecordConflictError,
@@ -68,6 +69,13 @@ export const SIGNAL_PLATFORM_TABLES = [
 
 const PENDING_STATUSES = ['research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending'] as const
 const LEASED_STATUSES = ['retrieval_leased', 'deep_leased', 'synthesis_leased', 'entity_leased'] as const
+const CAPACITY_STATUSES = [...PENDING_STATUSES, ...LEASED_STATUSES, 'retry_wait'] as const
+
+export interface TriageCapacityLimits {
+  byPriority: Record<ResearchWorkItem['priorityClass'], number>
+  byDepth: Record<ResearchWorkItem['researchDepth'], number>
+  reservedByPriority?: Partial<Record<ResearchWorkItem['priorityClass'], number>>
+}
 
 /** Additive canonical store that can share either legacy SQLite database. */
 export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
@@ -243,6 +251,34 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     )
   }
 
+  listSignalsMissingDecision(input: {
+    priorityPolicyVersion?: string
+    budgetPolicyVersion?: string
+    limit: number
+  }): Signal[] {
+    this.assertOpen()
+    const clauses = ['d.signal_id = s.signal_id']
+    const params: unknown[] = [this.sourceType]
+    if (input.priorityPolicyVersion) {
+      clauses.push('d.priority_policy_version = ?')
+      params.push(input.priorityPolicyVersion)
+    }
+    if (input.budgetPolicyVersion) {
+      clauses.push('d.budget_policy_version = ?')
+      params.push(input.budgetPolicyVersion)
+    }
+    params.push(boundedLimit(input.limit))
+    return this.readJsonList(
+      `SELECT s.canonical_json FROM signal_platform_signals s
+       WHERE s.source_type = ? AND NOT EXISTS (
+         SELECT 1 FROM signal_platform_triage_decisions d WHERE ${clauses.join(' AND ')}
+       )
+       ORDER BY s.observed_at ASC, s.signal_id ASC LIMIT ?`,
+      params,
+      validateSignal,
+    )
+  }
+
   appendTriageDecision(input: TriageDecisionV1): ImmutableAppendResult<TriageDecisionV1> {
     this.assertOpen()
     const decision = validateTriageDecision(input)
@@ -349,16 +385,27 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
   async peekSchedulable(query: SchedulerQuery): Promise<ResearchWorkItem[]> {
     this.assertOpen()
     const statuses = statusesForStages(query.stages)
+    if ((query.researchDepths && query.researchDepths.length === 0)
+      || (query.priorityClasses && query.priorityClasses.length === 0)) return []
     const placeholders = statuses.map(() => '?').join(', ')
+    const depthClause = query.researchDepths
+      ? `AND json_extract(work_json, '$.researchDepth') IN (${query.researchDepths.map(() => '?').join(', ')})`
+      : ''
+    const priorityClause = query.priorityClasses
+      ? `AND priority_class IN (${query.priorityClasses.map(() => '?').join(', ')})`
+      : ''
     return this.readJsonList(
       `SELECT work_json FROM signal_platform_research_work
        WHERE source_type = ? AND status IN (${placeholders})
          AND freshness_deadline > ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
          AND lease_id IS NULL
+         ${depthClause}
+         ${priorityClause}
        ORDER BY CASE priority_class WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
          freshness_deadline ASC, priority_score DESC, created_at ASC, work_id ASC
        LIMIT ?`,
-      [this.sourceType, ...statuses, query.now, query.now, boundedLimit(query.limit)],
+      [this.sourceType, ...statuses, query.now, query.now,
+        ...(query.researchDepths ?? []), ...(query.priorityClasses ?? []), boundedLimit(query.limit)],
       validateResearchWorkItem,
     )
   }
@@ -563,6 +610,52 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     }
   }
 
+  /** Read-only local backlog snapshot used by deterministic admission policy. */
+  readTriageCapacitySnapshot(limits: TriageCapacityLimits): TriageCapacitySnapshot {
+    this.assertOpen()
+    const placeholders = CAPACITY_STATUSES.map(() => '?').join(', ')
+    const rows = this.db.prepare(`
+      SELECT priority_class, work_json FROM signal_platform_research_work
+      WHERE source_type = ? AND status IN (${placeholders})
+    `).all(this.sourceType, ...CAPACITY_STATUSES) as Array<Record<string, unknown>>
+    const priorityCounts = { P0: 0, P1: 0, P2: 0, P3: 0 }
+    const depthCounts = { light: 0, standard: 0, deep: 0 }
+    for (const row of rows) {
+      const priority = row.priority_class as keyof typeof priorityCounts
+      if (priority in priorityCounts) priorityCounts[priority] += 1
+      try {
+        const work = JSON.parse(String(row.work_json)) as { researchDepth?: string }
+        const depth = work.researchDepth as keyof typeof depthCounts
+        if (!(depth in depthCounts)) throw new Error('unknown depth')
+        depthCounts[depth] += 1
+      } catch {
+        throw new Error('Local triage capacity is unavailable because canonical work is invalid')
+      }
+    }
+    const bucket = (used: number, maximum: number, reserved = 0) => {
+      const boundedMaximum = Math.max(0, Math.trunc(maximum))
+      const boundedReserved = Math.max(0, Math.min(boundedMaximum, Math.trunc(reserved)))
+      return {
+        available: Math.max(0, boundedMaximum - used),
+        reservedAvailable: Math.max(0, boundedReserved - used),
+        utilization: boundedMaximum === 0 ? 1 : Math.min(1, used / boundedMaximum),
+      }
+    }
+    return {
+      byPriority: {
+        P0: bucket(priorityCounts.P0, limits.byPriority.P0, limits.reservedByPriority?.P0),
+        P1: bucket(priorityCounts.P1, limits.byPriority.P1, limits.reservedByPriority?.P1),
+        P2: bucket(priorityCounts.P2, limits.byPriority.P2, limits.reservedByPriority?.P2),
+        P3: bucket(priorityCounts.P3, limits.byPriority.P3, limits.reservedByPriority?.P3),
+      },
+      byDepth: {
+        light: bucket(depthCounts.light, limits.byDepth.light),
+        standard: bucket(depthCounts.standard, limits.byDepth.standard),
+        deep: bucket(depthCounts.deep, limits.byDepth.deep),
+      },
+    }
+  }
+
   async readWorkObservability(
     input: Parameters<WorkObservabilityReadPort['readWorkObservability']>[0],
   ): ReturnType<WorkObservabilityReadPort['readWorkObservability']> {
@@ -587,12 +680,63 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     `).all(
       this.sourceType, input.recentFailureSince, boundedLimit(input.failureLimit),
     ) as Array<Record<string, unknown>>
+    const activity = this.db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM signal_platform_signals
+          WHERE source_type = ? AND observed_at >= ? AND observed_at <= ?) AS arrivals,
+        (SELECT COUNT(*) FROM signal_platform_research_work
+          WHERE source_type = ? AND created_at >= ? AND created_at <= ?) AS admissions,
+        (SELECT COUNT(*) FROM signal_platform_research_work
+          WHERE source_type = ? AND status = 'complete' AND updated_at >= ? AND updated_at <= ?) AS completions
+    `).get(
+      this.sourceType, input.recentFailureSince, input.now,
+      this.sourceType, input.recentFailureSince, input.now,
+      this.sourceType, input.recentFailureSince, input.now,
+    ) as Record<string, unknown> | undefined
+    const queueAge = this.db.prepare(`
+      SELECT priority_class, json_extract(work_json, '$.researchDepth') AS research_depth,
+        status, COUNT(*) AS count, MIN(updated_at) AS oldest_queued_at
+      FROM signal_platform_research_work
+      WHERE source_type = ?
+        AND status IN ('research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending', 'retry_wait')
+      GROUP BY priority_class, research_depth, status
+      ORDER BY priority_class, research_depth, status
+    `).all(this.sourceType) as Array<Record<string, unknown>>
+    const deadLetterSummary = this.db.prepare(`
+      SELECT COUNT(*) AS count, MIN(updated_at) AS oldest_at
+      FROM signal_platform_research_work WHERE source_type = ? AND status = 'dead_letter'
+    `).get(this.sourceType) as Record<string, unknown> | undefined
+    const deadLetterCategories = this.db.prepare(`
+      SELECT failure_category, COUNT(*) AS count, MAX(updated_at) AS last_occurred_at
+      FROM signal_platform_research_work
+      WHERE source_type = ? AND status = 'dead_letter' AND failure_category IS NOT NULL
+      GROUP BY failure_category ORDER BY count DESC, failure_category ASC
+    `).all(this.sourceType) as Array<Record<string, unknown>>
     return Promise.resolve({
       signalCount: Number(intake?.signal_count ?? 0),
       triageDecisionCount: Number(intake?.triage_decision_count ?? 0),
       totalAttempts: Number(attempt?.total_attempts ?? 0),
       attemptedItems: Number(attempt?.attempted_items ?? 0),
       maxAttemptCount: Number(attempt?.max_attempt_count ?? 0),
+      arrivalsInWindow: Number(activity?.arrivals ?? 0),
+      admissionsInWindow: Number(activity?.admissions ?? 0),
+      completionsInWindow: Number(activity?.completions ?? 0),
+      queueAge: queueAge.map((row) => ({
+        priorityClass: row.priority_class as ResearchWorkItem['priorityClass'],
+        researchDepth: row.research_depth as ResearchWorkItem['researchDepth'],
+        status: row.status as WorkStatus,
+        count: Number(row.count ?? 0),
+        oldestQueuedAt: String(row.oldest_queued_at),
+      })),
+      deadLetters: {
+        total: Number(deadLetterSummary?.count ?? 0),
+        oldestAt: asNullableString(deadLetterSummary?.oldest_at),
+        byFailureCategory: deadLetterCategories.map((row) => ({
+          category: row.failure_category as FailureCategory,
+          count: Number(row.count ?? 0),
+          lastOccurredAt: asNullableString(row.last_occurred_at),
+        })),
+      },
       recentFailures: failures.map((row) => ({
         category: row.failure_category as FailureCategory,
         count: Number(row.count ?? 0),

@@ -9,6 +9,7 @@ import { DeepResearchError } from './errors'
 import {
   DEEP_RESEARCH_RESULT_SCHEMA_VERSION,
   type DeepResearchJob,
+  type DeepResearchFetchedEvidence,
   type DeepResearchResult,
 } from './types'
 
@@ -72,7 +73,11 @@ const ROOT_KEYS = [
   'approvedResults', 'limitations', 'openQuestions', 'completion',
 ] as const
 
-export function parseDeepResearchOutput(stdout: string, job: DeepResearchJob): DeepResearchOutputBody {
+export function parseDeepResearchOutput(
+  stdout: string,
+  job: DeepResearchJob,
+  fetchedEvidence: readonly DeepResearchFetchedEvidence[],
+): DeepResearchOutputBody {
   if (!stdout.trim() || Buffer.byteLength(stdout, 'utf8') > job.budget.maxOutputBytes) {
     throw invalidOutput('Contained stdout is empty or exceeds its declared byte budget')
   }
@@ -103,6 +108,15 @@ export function parseDeepResearchOutput(stdout: string, job: DeepResearchJob): D
   })
   const resultRefs = new Set(approvedResults.map((item) => item.resultRef))
   if (resultRefs.size !== approvedResults.length) throw invalidOutput('approvedResults resultRef values must be unique')
+  const manifestByRef = new Map(fetchedEvidence.map((item) => [item.resultRef, item]))
+  if (manifestByRef.size !== fetchedEvidence.length) throw invalidOutput('Trusted fetched-evidence refs must be unique')
+  for (const item of approvedResults) {
+    const trusted = manifestByRef.get(item.resultRef)
+    if (trusted === undefined || trusted.url !== item.url || trusted.title !== item.title
+      || trusted.observedAt !== item.observedAt || trusted.note !== item.note) {
+      throw invalidOutput(`approvedResults ${item.resultRef} does not match trusted fetched-evidence manifest`)
+    }
+  }
   const allowedRefs = new Set([...suppliedIds, ...resultRefs])
 
   const claims = objectArray(root.claims, 'output.claims', 100, (item, path) => {
@@ -170,6 +184,14 @@ export function assembleDeepResearchPacket(input: {
     throw invalidOutput('Contained execution result linkage does not match the canonical job')
   }
   validateMeasuredUsage(result, job)
+  const trustedByRef = new Map(result.fetchedEvidence.map((item) => [item.resultRef, item]))
+  if (trustedByRef.size !== result.fetchedEvidence.length || body.approvedResults.some((item) => {
+    const trusted = trustedByRef.get(item.resultRef)
+    return trusted === undefined || trusted.url !== item.url || trusted.title !== item.title
+      || trusted.observedAt !== item.observedAt || trusted.note !== item.note
+  })) {
+    throw invalidOutput('Packet approved results do not match trusted fetched-evidence manifest')
+  }
   for (const [name, value] of Object.entries(policy)) {
     boundedString(value, `policy.${name}`, 1, 500)
   }
@@ -300,6 +322,9 @@ function validateMeasuredUsage(result: DeepResearchResult, job: DeepResearchJob)
     inputTokens: job.budget.maxInputTokens,
     outputTokens: job.budget.maxOutputTokens,
     toolCalls: job.budget.maxToolCalls,
+    browserNavigations: job.budget.maxBrowserNavigations,
+    searchQueries: job.budget.maxSearchQueries,
+    httpFetches: job.budget.maxHttpFetches,
     wallTimeMs: job.budget.maxWallTimeMs,
     outputBytes: job.budget.maxOutputBytes,
   } as const

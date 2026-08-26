@@ -1,5 +1,11 @@
 import { classifyNewsCandidate } from './dedupe'
 import { canonicalArticleUrl } from './fingerprint'
+import { adaptLiveNewsSignal } from '../signal-platform/adapters/news-live'
+import {
+  deliverCanonicalSignals,
+  type SourceIntakeBatchReport,
+  type SourceSignalIntakePort,
+} from '../signal-platform/source-intake'
 import type {
   NewsCandidateObservationInput,
   NewsCandidateObservationRow,
@@ -32,6 +38,7 @@ export interface IngestDiscoveredNewsCandidatesResult {
     decision: NewsCandidateDedupeDecision
   }>
   inserted: NewsCandidateObservationRow[]
+  canonicalIntake: SourceIntakeBatchReport
 }
 
 /**
@@ -41,6 +48,7 @@ export interface IngestDiscoveredNewsCandidatesResult {
 export async function ingestDiscoveredNewsCandidates(input: {
   store: NewsStore
   discoveries: DiscoveredNewsCandidate[]
+  signalIntake?: SourceSignalIntakePort
 }): Promise<IngestDiscoveredNewsCandidatesResult> {
   const priorBySource = await fetchPriorBySource(input.store, input.discoveries)
   const stableIdentityWinners = preferredStableIdentityIndexes(input.discoveries)
@@ -82,6 +90,26 @@ export async function ingestDiscoveredNewsCandidates(input: {
     }))
 
   const inserted = await input.store.insertCandidateObservations(insertInputs)
+  const liveSignals = decisions.flatMap(({ discovery, decision }, index) => {
+    const fingerprint = decision.fingerprint
+    if (!fingerprint || !stableIdentityWinners.has(index)) return []
+    const matchingPrior = (priorBySource.get(discovery.source.sourceId) ?? []).filter((prior) => (
+      prior.articleIdentityKey === fingerprint.articleIdentityKey
+    ))
+    const exact = matchingPrior.some((prior) => (
+      prior.headlineHash === fingerprint.headlineHash && prior.summaryHash === fingerprint.summaryHash
+    ))
+    if (exact) return []
+    return [adaptLiveNewsSignal({
+      discovery,
+      fingerprint,
+      materialChange: matchingPrior.length > 0,
+    })]
+  })
+  const canonicalIntake = await deliverCanonicalSignals(
+    input.signalIntake,
+    liveSignals,
+  )
 
   return {
     candidatesFound: decisions.length,
@@ -92,6 +120,7 @@ export async function ingestDiscoveredNewsCandidates(input: {
     candidateObservationsInserted: inserted.length,
     decisions,
     inserted,
+    canonicalIntake,
   }
 }
 

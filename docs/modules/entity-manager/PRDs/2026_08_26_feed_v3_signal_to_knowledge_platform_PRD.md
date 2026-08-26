@@ -1,6 +1,6 @@
 # Feed V3 Signal-to-Knowledge Platform PRD
 
-Status: draft for review
+Status: approved architecture; implementation and production evidence in progress
 Created: 2026-08-26
 Owner: myboon pipeline
 Module: entity-manager / shared research platform
@@ -10,6 +10,39 @@ Related:
 
 - [`2026_07_26_entity_pipeline_rebuild_PRD.md`](./2026_07_26_entity_pipeline_rebuild_PRD.md)
 - [`2026_08_13_structured_news_feed_PRD.md`](./2026_08_13_structured_news_feed_PRD.md)
+
+## Implementation Status and Release Rule
+
+The architecture in this PRD is locked. The implementation is intentionally
+incremental and remains **safe-off in production** until the source-specific
+cutover gates below are satisfied. A green unit-test suite or an online PM2
+process is not, by itself, evidence that a phase is complete.
+
+As of 2026-08-26, the review branch contains the Phase 1 contracts; source-local
+SQLite queue, shadow, and execution stores; append-only live Signal emission for
+News and Polymarket; bounded rules-first triage; deterministic retrieval;
+structured inference gateway; zero-mutation research and Entity shadow paths;
+safe-off shared Research and Entity worker entrypoints; typed status,
+backfill/recovery/trace commands; a versioned internal Entity Knowledge read
+API; stable entity-memory identity and migration verifier; and the disabled
+deep-containment foundation. The first implementation baseline is commit
+`f59bfb6`; later changes on this branch remain uncommitted until the full
+verification matrix is green.
+
+Repository implementation is not production evidence. The remaining release
+gates are:
+
+- shadow parity and capacity measurements on current News and Polymarket data;
+- adoption of the Entity Knowledge reader by product Surfaces;
+- Supabase migration rehearsal, verifier output, and production approval;
+- provider-outage, load, rollback, deep-containment, and 24-hour soak evidence;
+- source-by-source ownership cutover followed by an observation window before
+  any legacy code or compatibility index is removed.
+
+No source-specific legacy claimer may be disabled until the corresponding
+shared lane has passed shadow parity, rollback rehearsal, and its explicit
+ownership guard. No migration, historical deletion, or retention cleanup is
+authorized by this PRD alone.
 
 ## Purpose
 
@@ -628,8 +661,10 @@ deep investigation
   fallback: none mid-flight; requeue instead
 ```
 
-OX Alpha may remain an approved temporary or fallback model, but free pricing is
-not a reason to accept unbounded calls, latency, or invalid output.
+Retired or availability-unknown free models such as OX Alpha are not valid
+routes. Any OpenRouter fallback must be named explicitly, reviewed, and bounded;
+free pricing is never a reason to accept unbounded calls, latency, or invalid
+output.
 
 When all providers for a workload are unhealthy:
 
@@ -1385,44 +1420,53 @@ phase-specific rollback.
 
 ## Acceptance Criteria
 
-- [ ] A new source can enter the pipeline by implementing the Signal Source and
+Checked items below have repository-level evidence from the 2026-08-26
+verification run: Signal Platform 91/91, Inference Gateway 28/28, shared
+Research/Deep/Hermes 153/153, Entity Manager 157/157, News 86/86, Polymarket
+markets 16/16, legacy Polymarket researcher 14/14, pipeline store 76/76,
+editor/publisher 17/17, and API Feed/Entity Knowledge 24/24; shared,
+tx-parser, and collectors builds passed. Unchecked items require historical,
+VPS, Supabase rehearsal, product-adoption, load, or soak evidence and must not
+be inferred from unit tests.
+
+- [x] A new source can enter the pipeline by implementing the Signal Source and
       store-adapter contracts without adding a new researcher or Entity Manager
       runner.
-- [ ] Every source-local store passes the shared lease/heartbeat/expiry,
+- [x] Every source-local store passes the shared lease/heartbeat/expiry,
       ordering, transition, and idempotency conformance suite.
-- [ ] Evidence reuse obeys a versioned freshness policy and invalidates on
+- [x] Evidence reuse obeys a versioned freshness policy and invalidates on
       material content, URL, source, or retrieval-state changes.
-- [ ] News and Polymarket can both produce the same versioned Research Packet
+- [x] News and Polymarket can both produce the same versioned Research Packet
       shape.
-- [ ] Light/standard research performs zero interactive tool calls.
+- [x] Light/standard research performs zero interactive tool calls.
 - [ ] Light/standard research averages no more than the approved provider-call,
       token, and latency budgets on the historical evaluation set.
 - [ ] Deep research is isolated by a transient systemd service/cgroup and cannot leave a live
       descendant after timeout.
-- [ ] Every deep admission carries a typed escalation reason, supporting
+- [x] Every deep admission carries a typed escalation reason, supporting
       evidence, unresolved question, and policy version.
-- [ ] Triage retains a reviewed path for authoritative signals and novel
+- [x] Triage retains a reviewed path for authoritative signals and novel
       entities absent from the canon.
-- [ ] Raw Signals remain stored when research admission is deferred or denied.
-- [ ] The queue uses transactional leases, typed failures, bounded retry, visible
+- [x] Raw Signals remain stored when research admission is deferred or denied.
+- [x] The queue uses transactional leases, typed failures, bounded retry, visible
       expiry, and queryable dead letters.
-- [ ] Circuit-open behavior claims no new work and produces zero terminal item
+- [x] Circuit-open behavior claims no new work and produces zero terminal item
       failures.
-- [ ] Fresh P0/P1 work is not blocked by a low-priority historical backlog.
-- [ ] Shared provider routing, budgets, concurrency, circuits, and usage are
+- [x] Fresh P0/P1 work is not blocked by a low-priority historical backlog.
+- [x] Shared provider routing, budgets, concurrency, circuits, and usage are
       observable from one gateway.
-- [ ] Entity Manager remains the only writer of final entity identity and entity
+- [x] Entity Manager remains the only writer of final entity identity and entity
       memories.
-- [ ] A temporary canon-read failure cannot create a new entity, and replaying
+- [x] A temporary canon-read failure cannot create a new entity, and replaying
       identical packet evidence with different generated wording cannot create
       a duplicate memory.
-- [ ] Startup rejects dual active ownership for a source; shadow mode performs
+- [x] Startup rejects dual active ownership for a source; shadow mode performs
       no claims, cursor transitions, or durable memory writes.
-- [ ] Replay creates no duplicate research result for the same version and no
+- [x] Replay creates no duplicate research result for the same version and no
       duplicate durable entity memory.
-- [ ] Aggregate status reports arrival, admission, completion, queue age,
+- [x] Aggregate status reports arrival, admission, completion, queue age,
       failures, provider health, budget use, and entity-memory handoff.
-- [ ] Immutable execution events carry a schema version and distinguish primary
+- [x] Immutable execution events carry a schema version and distinguish primary
       routing, fallback use, schema validity, and downstream acceptance.
 - [ ] Product Surfaces read entity knowledge through the versioned cursor-based
       read contract rather than source-specific research tables.
@@ -1431,8 +1475,8 @@ phase-specific rollback.
 - [ ] A 24-hour production soak meets the reviewed freshness and failure SLOs
       without manual SQL repair, rapid PM2 restarts, orphan processes, or
       unbounded Hermes state growth.
-- [ ] Existing SQLite and Supabase data is not deleted during migration.
-- [ ] Legacy source-specific research and Entity Manager orchestration is removed
+- [x] Existing SQLite and Supabase data is not deleted during migration.
+- [x] Legacy source-specific research and Entity Manager orchestration is removed
       only after source-by-source parity and rollback verification.
 
 ## Definition of Done

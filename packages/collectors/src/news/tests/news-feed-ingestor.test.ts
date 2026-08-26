@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import type {
   NewsFeedArticle,
@@ -6,6 +9,8 @@ import type {
   NewsFeedResult,
 } from '@myboon/shared/news-feed'
 import { SqliteNewsStore } from '../sqlite-store'
+import { CanonicalSourceSignalIntake, type SourceSignalIntakePort } from '../../signal-platform/source-intake'
+import { SqliteSignalPlatformStore } from '../../signal-platform/sqlite-platform-store'
 import {
   runNewsFeedIngestionOnce,
   newsFeedItemToCandidate,
@@ -187,4 +192,68 @@ test('post mapping retains social kind and untrusted hints in raw candidate data
   assert.equal(candidate.author, '@tokens')
   assert.equal(candidate.provider_id, 'tokens_xyz')
   assert.deepEqual(candidate.related_coin_ids, ['bitcoin'])
+})
+
+test('canonical observe hook is replay-safe and preserves same-URL material changes as distinct Signals', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'news-live-signals-'))
+  const path = join(dir, 'news.sqlite')
+  const store = new SqliteNewsStore(path)
+  const canonical = new SqliteSignalPlatformStore(path, 'news')
+  const signalIntake = new CanonicalSourceSignalIntake({ mode: 'observe', store: canonical })
+  const firstArticle: NewsFeedArticle = {
+    kind: 'article', title: 'Protocol launches version one', url: 'https://example.com/protocol?utm_source=feed',
+    publishedAt: now.toISOString(), outlet: 'Example', author: null, imageUrl: null, relatedCoinIds: [],
+  }
+  try {
+    const first = await runNewsFeedIngestionOnce({
+      store, signalIntake, now, fetcher: fetcher({ ...feed, items: [firstArticle] }),
+    })
+    const replay = await runNewsFeedIngestionOnce({
+      store, signalIntake, now: new Date('2026-08-15T10:05:00.000Z'),
+      fetcher: fetcher({ ...feed, items: [firstArticle] }),
+    })
+    const changed = await runNewsFeedIngestionOnce({
+      store, signalIntake, now: new Date('2026-08-15T10:10:00.000Z'),
+      fetcher: fetcher({ ...feed, items: [{ ...firstArticle, title: 'Protocol launches version two' }] }),
+    })
+    const changedReplay = await runNewsFeedIngestionOnce({
+      store, signalIntake, now: new Date('2026-08-15T10:15:00.000Z'),
+      fetcher: fetcher({ ...feed, items: [{ ...firstArticle, title: 'Protocol launches version two' }] }),
+    })
+
+    assert.equal(first.canonicalIntake.insertedSignals, 1)
+    assert.equal(replay.canonicalIntake.attempted, 0)
+    assert.equal(changed.candidatesUnchanged, 1)
+    assert.equal(changed.candidateObservationsInserted, 0)
+    assert.equal(changed.canonicalIntake.insertedSignals, 1)
+    assert.equal(changedReplay.canonicalIntake.duplicateSignals, 1)
+    const observations = await store.fetchPendingCandidateObservations(10)
+    assert.equal(observations.length, 1)
+    const count = (await canonical.readWorkObservability({
+      now: '2026-08-15T10:10:00.000Z',
+      recentFailureSince: '2026-08-01T00:00:00.000Z', failureLimit: 10,
+    })).signalCount
+    assert.equal(count, 2)
+    assert.equal((await canonical.getSchedulerStatus({ now: '2026-08-15T10:10:00.000Z' })).total, 0)
+  } finally {
+    canonical.close(); store.close(); rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('canonical shadow failure is reported without failing or rolling back legacy ingestion', async () => {
+  await withStore(async (store) => {
+    const broken: SourceSignalIntakePort = {
+      mode: 'observe',
+      async ingest() { throw new Error('canonical database unavailable') },
+    }
+    const result = await runNewsFeedIngestionOnce({
+      store, signalIntake: broken, now,
+      fetcher: fetcher({ ...feed, items: [items[1]!] }),
+    })
+    assert.equal(result.candidateObservationsInserted, 1)
+    assert.equal((await store.fetchPendingCandidateObservations(10)).length, 1)
+    assert.equal(result.canonicalIntake.failures.length, 1)
+    assert.match(result.canonicalIntake.failures[0]?.signalId ?? '', /^sig_/)
+    assert.equal(result.canonicalIntake.failures[0]?.code, 'CANONICAL_SIGNAL_INTAKE_FAILED')
+  })
 })

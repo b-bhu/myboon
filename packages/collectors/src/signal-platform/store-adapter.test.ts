@@ -69,6 +69,8 @@ class InMemorySchedulerStore implements ResearchWorkStoreAdapter {
     return [...this.rows.values()]
       .filter((row) => ['research_pending', 'synthesis_pending', 'entity_pending'].includes(row.status))
       .filter((row) => !stageStatuses || stageStatuses.includes(row.status as never))
+      .filter((row) => !input.researchDepths || input.researchDepths.includes(row.researchDepth))
+      .filter((row) => !input.priorityClasses || input.priorityClasses.includes(row.priorityClass))
       .filter((row) => !row.nextAttemptAt || row.nextAttemptAt <= input.now)
       .filter((row) => row.freshnessDeadline > input.now)
       .sort(compareResearchWorkPriority)

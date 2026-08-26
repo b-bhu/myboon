@@ -5,9 +5,11 @@ import type {
   GenerateStructuredRequest,
   InferenceBudget,
   InferenceCallRecord,
+  InferenceCircuitStatusSnapshot,
   InferenceFailureCategory,
   InferenceMode,
   InferenceProviderTarget,
+  InferenceRouteReadiness,
   InferenceResult,
   InferenceTelemetry,
   InferenceTelemetryObserver,
@@ -27,6 +29,10 @@ export interface InferenceGatewayOptions {
   now?: () => number
   /** Absent until the contained Phase 6 worker is explicitly configured. */
   investigationPort?: ContainedInvestigationPort
+}
+
+function targetKey(target: InferenceProviderTarget): string {
+  return `${target.provider.length}:${target.provider}|${target.model.length}:${target.model}`
 }
 
 interface ExecutionRequest<T> {
@@ -184,6 +190,7 @@ export class InferenceGateway {
   private readonly estimateTokens: (text: string) => number
   private readonly now: () => number
   private readonly investigationPort: ContainedInvestigationPort | null
+  private readonly circuitBlockedUntil = new Map<string, number>()
 
   constructor(options: InferenceGatewayOptions) {
     this.adapter = options.adapter
@@ -224,6 +231,55 @@ export class InferenceGateway {
 
   classify<T>(request: ClassifyRequest<T>): Promise<InferenceResult<T>> {
     return this.execute('classify', request)
+  }
+
+  /**
+   * Non-mutating route readiness for queue admission. A route remains usable
+   * while either its primary or configured fallback target can accept a call.
+   * Circuit state is learned from typed adapter failures and cleared by a
+   * successful call or the advertised probe deadline.
+   */
+  checkReadiness(workload: string): InferenceRouteReadiness {
+    const route = this.resolveRoute(workload, 'generateStructured')
+    const now = this.now()
+    const targets = [route.primary, ...(route.fallback ? [route.fallback] : [])]
+    const blocked = targets.flatMap((target) => {
+      const until = this.circuitBlockedUntil.get(targetKey(target))
+      if (until === undefined) return []
+      if (until <= now) {
+        this.circuitBlockedUntil.delete(targetKey(target))
+        return []
+      }
+      return [{ target, until }]
+    })
+    if (blocked.length < targets.length) return { ready: true }
+    return {
+      ready: false,
+      category: 'circuit_open',
+      retryAfterMs: Math.max(0, Math.min(...blocked.map((item) => item.until)) - now),
+      blockedTargets: Object.freeze(blocked.map((item) => Object.freeze({ ...item.target }))),
+    }
+  }
+
+  /** Redacted control-plane snapshot: route identities and learned circuit state only. */
+  circuitStatusSnapshot(): InferenceCircuitStatusSnapshot {
+    const now = this.now()
+    const workloads = Object.keys(this.routes).sort().map((workload) => {
+      const route = this.resolveRoute(workload, 'generateStructured')
+      const targets = [route.primary, ...(route.fallback ? [route.fallback] : [])].map((target) => {
+        const until = this.circuitBlockedUntil.get(targetKey(target))
+        const open = until !== undefined && until > now
+        if (until !== undefined && !open) this.circuitBlockedUntil.delete(targetKey(target))
+        return Object.freeze({
+          ...target, circuitOpen: open, retryAfterMs: open ? Math.max(0, until! - now) : null,
+        })
+      })
+      return Object.freeze({ workload, ready: targets.some((target) => !target.circuitOpen), targets })
+    })
+    return Object.freeze({
+      schemaVersion: 'myboon.inference_circuit_status.v1' as const,
+      capturedAt: new Date(now).toISOString(), workloads,
+    })
   }
 
   generateStructured<T>(request: GenerateStructuredRequest<T>): Promise<InferenceResult<T>> {
@@ -319,7 +375,19 @@ export class InferenceGateway {
       )) {
         throw budgetError('Repair call budget exhausted')
       }
-      const timeoutMs = Math.floor(remainingWallTime())
+      const wallTimeRemainingMs = Math.floor(remainingWallTime())
+      const reserveForFallback = route.fallback !== undefined
+        && !state.fallbackInvoked
+        && target.provider === route.primary.provider
+        && target.model === route.primary.model
+        && state.providerCalls + 1 < request.budget.maxProviderCalls
+      // A primary may not consume the complete logical-request deadline when
+      // a fallback call is still executable. Reserve half of the remaining
+      // wall budget so a real timed-out process (not only a synthetic early
+      // timeout) can reach the configured fallback.
+      const timeoutMs = reserveForFallback
+        ? Math.floor(wallTimeRemainingMs / 2)
+        : wallTimeRemainingMs
       if (timeoutMs <= 0) throw budgetError('Wall-time budget exhausted')
 
       const estimatedInput = this.estimateTokens(prompt)
@@ -354,11 +422,16 @@ export class InferenceGateway {
       let timer: NodeJS.Timeout | undefined
 
       try {
+        // The adapter receives the smaller per-attempt timeout. The outer
+        // abort remains the logical request deadline so a conforming adapter
+        // can finish its timeout/child cleanup and still leave the reserved
+        // wall budget available to fallback.
+        const hardDeadlineMs = reserveForFallback ? wallTimeRemainingMs : timeoutMs
         const deadline = new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
             controller.abort()
             reject(budgetError('Wall-time budget exhausted during provider call'))
-          }, timeoutMs)
+          }, hardDeadlineMs)
         })
         const result = await Promise.race([
           this.adapter.generate({
@@ -373,6 +446,12 @@ export class InferenceGateway {
           }),
           deadline,
         ])
+        if (reserveForFallback && this.now() - callStartedAt > timeoutMs) {
+          throw new InferenceGatewayError('Primary provider exceeded its reserved attempt wall budget', {
+            category: 'provider_timeout', retryable: true,
+            provider: target.provider, model: target.model,
+          })
+        }
         const actualProvider = result.actualProvider ?? target.provider
         const actualModel = result.actualModel ?? target.model
         state.actualProvider = actualProvider
@@ -396,6 +475,7 @@ export class InferenceGateway {
         if (state.inputTokens > request.budget.maxInputTokens) throw budgetError('Provider exceeded input-token budget')
         if (state.outputTokens > request.budget.maxOutputTokens) throw budgetError('Provider exceeded output-token budget')
         if (remainingWallTime() < 0) throw budgetError('Provider exceeded wall-time budget')
+        this.circuitBlockedUntil.delete(targetKey(target))
         return { result, callIndex }
       } catch (error) {
         record.durationMs = Math.max(0, this.now() - callStartedAt)
@@ -424,6 +504,10 @@ export class InferenceGateway {
           if (callMode === 'repairStructured') state.repairCalls -= 1
           state.inputTokens -= estimatedInput
           record.inputTokens = 0
+          this.circuitBlockedUntil.set(
+            targetKey(target),
+            this.now() + Math.max(1, mapped.retryAfterMs ?? 1_000),
+          )
         }
         throw mapped
       } finally {

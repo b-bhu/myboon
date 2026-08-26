@@ -31,6 +31,32 @@ export interface InferenceWorkloadRoute {
   fallback?: InferenceProviderTarget
 }
 
+export type InferenceRouteReadiness =
+  | { ready: true }
+  | {
+    ready: false
+    category: 'circuit_open'
+    retryAfterMs: number
+    blockedTargets: readonly InferenceProviderTarget[]
+  }
+
+export interface InferenceCircuitTargetStatus {
+  provider: string
+  model: string
+  circuitOpen: boolean
+  retryAfterMs: number | null
+}
+
+export interface InferenceCircuitStatusSnapshot {
+  schemaVersion: 'myboon.inference_circuit_status.v1'
+  capturedAt: string
+  workloads: Array<{
+    workload: string
+    ready: boolean
+    targets: InferenceCircuitTargetStatus[]
+  }>
+}
+
 /**
  * Every limit is enforced by the gateway. Structured modes deliberately make
  * the zero-tool requirement a literal rather than an arbitrary number.

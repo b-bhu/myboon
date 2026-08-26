@@ -345,6 +345,28 @@ test('circuit-open and provider-unavailable preflight release to entity_pending 
   }
 })
 
+test('zero-call planner outage discovered during processing still releases without an attempt', async () => {
+  const port = new FakePort('news', [work('news')])
+  const processor: CanonicalPacketProcessor = {
+    async process() {
+      throw new PlatformFailure({
+        category: 'provider_unavailable',
+        message: 'route became unavailable before a provider call',
+        retryable: true,
+        incrementsAttempt: false,
+      })
+    },
+  }
+
+  const result = await fixture({
+    ports: [port], ownership: { news: 'shared' }, processor,
+  }).worker.runActiveCycle()
+
+  assert.equal(result.released, 1)
+  assert.equal(port.transitions.length, 0)
+  assert.equal(port.releases[0].targetStatus, 'entity_pending')
+})
+
 test('typed retryable and permanent processing failures map to retry_wait and dead_letter', async () => {
   for (const [failure, expected] of [
     [new PlatformFailure({ category: 'storage_transient', message: 'retry' }), 'retry_wait'],

@@ -24,6 +24,38 @@ export function runSchedulerStoreContract(harness: SchedulerStoreContractHarness
       assert.deepEqual(rows.map((row) => row.workId), ['poly-high', 'news-low'])
     })
 
+    it('filters unsupported research depths before returning a bounded head', async () => {
+      const fixture = await harness.create()
+      try {
+        await fixture.seed([
+          harness.makeWork({ workId: 'unsupported-high', priorityClass: 'P0', researchDepth: 'standard' }),
+          harness.makeWork({ workId: 'supported-low', priorityClass: 'P3', researchDepth: 'light' }),
+        ])
+        const rows = await fixture.store.peekSchedulable({
+          now: '2026-08-26T12:00:00.000Z', limit: 1, researchDepths: ['light'],
+        })
+        assert.deepEqual(rows.map((row) => row.workId), ['supported-low'])
+      } finally {
+        await fixture.close()
+      }
+    })
+
+    it('filters priority classes before returning a bounded head', async () => {
+      const fixture = await harness.create()
+      try {
+        await fixture.seed([
+          harness.makeWork({ workId: 'urgent-ahead', priorityClass: 'P0' }),
+          harness.makeWork({ workId: 'background-supported', priorityClass: 'P3' }),
+        ])
+        const rows = await fixture.store.peekSchedulable({
+          now: '2026-08-26T12:00:00.000Z', limit: 1, priorityClasses: ['P3'],
+        })
+        assert.deepEqual(rows.map((row) => row.workId), ['background-supported'])
+      } finally {
+        await fixture.close()
+      }
+    })
+
     it('allows exactly one compare-and-swap lease winner', async () => {
       const fixture = await harness.create()
       try {

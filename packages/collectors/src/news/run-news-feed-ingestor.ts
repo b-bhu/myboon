@@ -1,4 +1,5 @@
 import { envFlag, loadDotenvChain } from '../pipeline-store/cli-env'
+import { resolve } from 'node:path'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import {
   DEFAULT_NEWS_FEED_INTERVAL_MS,
@@ -6,15 +7,39 @@ import {
 } from './runtime-config'
 import { SqliteNewsStore } from './sqlite-store'
 import { runNewsFeedIngestionOnce } from './news-feed-ingestor'
+import { CanonicalSourceSignalIntake } from '../signal-platform/source-intake'
+import { feedV3ModeForSource, loadFeedV3RuntimeConfig } from '../signal-platform/runtime-config'
+import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import { createActiveSourceTriageIntake } from '../signal-platform/active-triage'
+import { SqliteLocalCapacitySnapshot } from '../signal-platform/local-capacity'
 
 async function runOnce(): Promise<void> {
-  const store = new SqliteNewsStore(process.env.NEWS_SQLITE_PATH)
+  const newsPath = process.env.NEWS_SQLITE_PATH ?? resolve(__dirname, '..', '..', '.data', 'news.sqlite')
+  const runtime = loadFeedV3RuntimeConfig()
+  const intakeMode = feedV3ModeForSource(runtime, 'intake', 'news')
+  const store = new SqliteNewsStore(newsPath)
+  const canonicalStore = intakeMode !== 'off'
+    ? new SqliteSignalPlatformStore(newsPath, 'news')
+    : null
   try {
+    const signalIntake = canonicalStore
+      ? intakeMode === 'active'
+        ? createActiveSourceTriageIntake({
+          store: canonicalStore,
+          capacity: new SqliteLocalCapacitySnapshot(canonicalStore),
+          providerHealth: runtime.triageProviderHealth,
+          classifierEnabled: runtime.triageClassifierEnabled,
+          allowedDepths: [...runtime.triageAllowedDepths],
+        })
+        : new CanonicalSourceSignalIntake({ mode: 'observe', store: canonicalStore })
+      : undefined
     const result = await runNewsFeedIngestionOnce({
       store,
+      signalIntake,
     })
     console.log(JSON.stringify(result, null, 2))
   } finally {
+    canonicalStore?.close()
     store.close()
   }
 }

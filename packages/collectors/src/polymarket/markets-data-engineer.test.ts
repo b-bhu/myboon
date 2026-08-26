@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import type { PolymarketMarketsDataEngineerOptions } from './markets-data-engineer'
-import { __testing } from './markets-data-engineer'
+import { __testing, runPolymarketMarketsDataEngineer } from './markets-data-engineer'
+import { CanonicalSourceSignalIntake } from '../signal-platform/source-intake'
+import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 
 const options: Required<PolymarketMarketsDataEngineerOptions> = {
   now: '2026-06-10T00:00:00.000Z',
@@ -276,4 +281,76 @@ test('the Gamma events fetch pins order=volume24hr (regression guard for the ren
   const source = await readFile(join(__dirname, 'markets-data-engineer.ts'), 'utf8')
   assert.ok(source.includes('order=volume24hr&ascending=false'), 'events URL uses the accepted order field')
   assert.ok(!source.includes('order=volume_24hr'), 'the 422-producing spelling must not reappear in any URL')
+})
+
+test('canonical Polymarket Signal survives legacy backlog throttling without legacy queue mutation', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'poly-live-signal-'))
+  const canonical = new SqliteSignalPlatformStore(join(dir, 'pipeline.sqlite'), 'polymarket')
+  const writes = { candidates: 0, updates: 0 }
+  const fakeStore = {
+    async getWatchlistSnapshots() {
+      return [{ slug: 'market-one', latestObservedAt: '2026-08-26T11:00:00.000Z', latestYesPrice: 0.5,
+        latestVolume: 1_000, latestVolume24h: 100, latestLiquidity: 100 }]
+    },
+    async upsertWatchlist() {},
+    async deactivateStaleWatchlist() {},
+    async findExistingDedupeKeys() { return new Set<string>() },
+    async findCandidateThreadsByFamilyKey() { return [] },
+    async findCandidatesForBacklog() { return [] },
+    async findResearchForBacklog() { return [] },
+    async findEditorDecisions() { return [] },
+    async getResearchByIds() { return [] },
+    async getBacklogDepth() {
+      return { candidatesPending: 1, candidatesInFlight: 0, candidatesFailed: 0,
+        candidatesStaleExpired: 0, candidatesLeaseExpired: 0 }
+    },
+    async insertCandidates() { writes.candidates += 1; return [] },
+    async updateCandidateThreads(rows: unknown[]) { if (rows.length > 0) writes.updates += 1 },
+  }
+  const chain = {
+    select() { return this }, eq() { return this }, gte() { return this }, order() { return this },
+    async limit() { return { data: [], error: null } },
+  }
+  const fakeSupabase = { from() { return chain } }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const value = String(url)
+    const body = value.includes('/tags/slug/')
+      ? { id: 'tag-1', label: 'Crypto', slug: 'crypto' }
+      : [{
+          id: 'event-1', title: 'Market one?', slug: 'market-one', active: true, closed: false,
+          updatedAt: '2026-08-26T11:59:00.000Z',
+          markets: [{
+            id: 'market-1', conditionId: 'market-1', slug: 'market-one', question: 'Market one?',
+            active: true, closed: false, outcomePrices: JSON.stringify([0.56, 0.44]),
+            volume: 1_000, volume24hr: 100, liquidity: 100,
+            updatedAt: '2026-08-26T11:59:00.000Z',
+          }],
+        }]
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  try {
+    const result = await runPolymarketMarketsDataEngineer(
+      fakeStore as never,
+      fakeSupabase as never,
+      {
+        now: '2026-08-26T12:00:00.000Z', tagSlugs: ['crypto'], topMarketsPerTag: 1,
+        fetchLimitPerTag: 10, includeManualPins: false, backlogThreshold: 1,
+        backlogHardCeiling: 10, candidateMaterialMoveMultiplier: 10,
+      },
+      new CanonicalSourceSignalIntake({ mode: 'observe', store: canonical }),
+    )
+    assert.equal(result.candidatesThrottledByBackpressure, 1)
+    assert.equal(result.candidatesWritten, 0)
+    assert.equal(writes.candidates, 0)
+    assert.equal(writes.updates, 0)
+    assert.equal(result.canonicalIntake.insertedSignals, 1)
+    assert.equal((await canonical.readWorkObservability({
+      now: '2026-08-26T12:00:00.000Z', recentFailureSince: '2026-08-01T00:00:00.000Z', failureLimit: 10,
+    })).signalCount, 1)
+    assert.equal((await canonical.getSchedulerStatus({ now: '2026-08-26T12:00:00.000Z' })).total, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+    canonical.close(); rmSync(dir, { recursive: true, force: true })
+  }
 })

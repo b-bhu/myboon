@@ -1,11 +1,14 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
+import entityManager from '@myboon/collectors/entity-manager'
+import { createClient } from '@supabase/supabase-js'
 import { createAiRoutes } from '../ai/routes.js'
 import { clobRoutes } from '../clob.js'
 import { createInternalEntityCommandRoutes } from '../internal/entity-commands.js'
 import { createInternalEntityRoutes } from '../internal/entities.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
+import { createEntityKnowledgeRoutes } from '../entity-knowledge.js'
 import { createNarrativeRoutes } from '../narratives.js'
 import { pacificaRoutes } from '../pacifica.js'
 import { phoenixRoutes } from '../phoenix.js'
@@ -31,6 +34,7 @@ import { createTokenRoutes } from '../tokens/routes.js'
 import type { ApiConfig } from './config.js'
 
 export function createApp(config: ApiConfig): Hono {
+  const { SupabaseEntityKnowledgeReader } = entityManager
   const app = new Hono()
   const polymarketCatalogStore = new SupabasePolymarketCatalogStore(
     config.supabaseUrl,
@@ -43,6 +47,11 @@ export function createApp(config: ApiConfig): Hono {
   const upDownService = new PolymarketUpDownService({
     priceService: new UpDownPriceService(upDownReferenceStore),
   })
+  const entityKnowledgeReader = new SupabaseEntityKnowledgeReader(createClient(
+    config.supabaseUrl,
+    config.supabaseServiceRoleKey,
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  ) as never)
 
   const publicCors = cors()
   app.use('*', async (c, next) => {
@@ -72,6 +81,10 @@ export function createApp(config: ApiConfig): Hono {
     internalReadToken: config.internalDashboardToken,
     internalWriteToken: config.internalPolymarketCatalogWriteToken,
     store: polymarketCatalogStore,
+  }))
+  app.route('/internal/entity-knowledge', createEntityKnowledgeRoutes({
+    reader: entityKnowledgeReader,
+    internalToken: config.internalDashboardToken,
   }))
   app.route('/internal', createInternalEntityRoutes({
     supabaseUrl: config.supabaseUrl,

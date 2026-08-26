@@ -370,7 +370,10 @@ export class SharedEntityWorker {
         })
       }
       const typed = typedFailure(error)
-      if (!processingStarted && (typed.category === 'circuit_open' || typed.category === 'provider_unavailable')) {
+      if (
+        (typed.category === 'circuit_open' || typed.category === 'provider_unavailable')
+        && (!processingStarted || typed.incrementsAttempt === false)
+      ) {
         const outcome = await this.releasePending(port, lease)
         return this.finishLease(outcome, lease, canonicalPacket, {
           entityStatus: outcome === 'released' ? 'skipped' : 'failed',

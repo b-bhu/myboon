@@ -116,6 +116,7 @@ export type TriageDecisionReasonCode =
   | 'typed_deep_escalation'
   | 'ambiguous_classifier'
   | 'rules_default'
+  | 'unsupported_research_depth_defer'
 
 export interface TriageDecisionReason {
   code: TriageDecisionReasonCode
