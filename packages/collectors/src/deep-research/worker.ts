@@ -54,6 +54,11 @@ export type DeepResearchPreflightReason =
   | 'systemd_unavailable'
 
 export interface DeepResearchPreflightPort {
+  /** Process-wide containment/configuration gate. Runs before any deep lease is acquired. */
+  checkStage?(): Promise<
+    | { ready: true }
+    | { ready: false, reason: DeepResearchPreflightReason, detail: string }
+  >
   check(job: DeepResearchJob): Promise<
     | { ready: true }
     | { ready: false, reason: DeepResearchPreflightReason, detail: string }
@@ -182,6 +187,7 @@ export class DeepResearchSideQueueWorker {
   }
 
   private async claimAndProcess(): Promise<DeepResearchWorkerOutcome> {
+    if (this.preflight.checkStage !== undefined && !await this.preclaimReady()) return { kind: 'idle' }
     const lease = await this.scheduler.claimNext({
       now: this.nowIso(), leaseOwner: this.workerId, leaseTtlMs: this.leaseTtlMs, stages: ['deep'],
     })
@@ -189,6 +195,30 @@ export class DeepResearchSideQueueWorker {
     const store = this.stores.get(lease.work.sourceType)
     if (store === undefined) throw new DeepResearchWorkerConfigurationError(`Unregistered source ${lease.work.sourceType}`)
     return this.process(store, lease)
+  }
+
+  /**
+   * Production containment checks the exact queue head without mutating it.
+   * Existing-packet handoff replay remains available during provider/systemd
+   * outages because it does not start a contained unit.
+   */
+  private async preclaimReady(): Promise<boolean> {
+    const now = this.nowIso()
+    const [work] = await this.scheduler.peekGlobal({ now, limit: 1, stages: ['deep'] })
+    if (!work) return false
+    const store = this.stores.get(work.sourceType)
+    if (!store) return false
+    const packetId = deterministicDeepPacketId(work.workId, work.researchContractVersion)
+    if (store.getResearchPacket(packetId) !== null) return true
+    const signal = store.getSignal(work.signalId)
+    const evidence = store.listEvidenceByWork(work.workId, this.evidenceReadLimit)
+    if (signal === null || validateLinkage(store, work, signal, evidence) !== null) return false
+    let job: DeepResearchJob
+    try { job = buildDeepResearchJob({ workItem: work, signal, evidence, policy: this.policy }) } catch { return false }
+    const stageReadiness = await this.preflight.checkStage!()
+    if (!stageReadiness.ready) return false
+    const jobReadiness = await this.preflight.check(job)
+    return jobReadiness.ready
   }
 
   private async process(store: DeepResearchWorkStore, lease: WorkLease): Promise<DeepResearchWorkerOutcome> {

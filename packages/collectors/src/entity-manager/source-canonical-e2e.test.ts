@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -252,6 +253,41 @@ test('source-local News/Polymarket flow isolates canon outages, replays stably, 
   seed(pipelinePath, 'polymarket', 'poly-source')
   const database = new FakeCanonicalSupabase()
   const titles = { news: 'First generated News title', polymarket: 'Market odds moved' }
+  const receiptPath = join(directory, 'cutover-receipts.json')
+  const receipts = (['news', 'polymarket'] as const).map((sourceType) => {
+    const shadowName = `${sourceType}-shadow.json`
+    const shadowBytes = JSON.stringify({
+      schemaVersion: 'myboon.feed_v3_shadow_evaluation.v1', sourceType, stage: 'entity',
+      passed: true, sampleSize: 1_000,
+    })
+    writeFileSync(join(directory, shadowName), shadowBytes)
+    const rollbackName = `${sourceType}-rollback.json`
+    const rollbackBytes = JSON.stringify({
+      schemaVersion: 'myboon.feed_v3_rollback_rehearsal.v1', sourceType, stage: 'entity',
+      passed: true, rehearsedAt: '2026-08-26T00:00:00.000Z',
+    })
+    writeFileSync(join(directory, rollbackName), rollbackBytes)
+    return {
+      schemaVersion: 'myboon.feed_v3_cutover_receipt.v1',
+      receiptId: `entity-${sourceType}-approved`, sourceType, stage: 'entity',
+      approvedAt: '2026-08-26T00:00:00.000Z', approvedBy: 'feed-v3-e2e',
+      attestationMode: 'manual_review', expiresAt: '2099-08-26T00:00:00.000Z',
+      shadowEvaluation: {
+        sampleSize: 1_000, passed: true, artifactPath: shadowName,
+        artifactSchemaVersion: 'myboon.feed_v3_shadow_evaluation.v1',
+        artifactSha256: createHash('sha256').update(shadowBytes).digest('hex'),
+      },
+      rollbackRehearsal: {
+        rehearsedAt: '2026-08-26T00:00:00.000Z', passed: true, artifactPath: rollbackName,
+        artifactSchemaVersion: 'myboon.feed_v3_rollback_rehearsal.v1',
+        artifactSha256: createHash('sha256').update(rollbackBytes).digest('hex'),
+      },
+    }
+  })
+  writeFileSync(receiptPath, JSON.stringify({
+    schemaVersion: 'myboon.feed_v3_cutover_manifest.v1',
+    receipts,
+  }))
 
   try {
     const runtime = createSharedEntityRuntime({
@@ -259,6 +295,7 @@ test('source-local News/Polymarket flow isolates canon outages, replays stably, 
         FEED_V3_ENTITY_MODE: 'active',
         FEED_V3_ENTITY_ACTIVE_SOURCES: 'news,polymarket',
         FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news,polymarket',
+        FEED_V3_CUTOVER_RECEIPT_PATH: receiptPath,
         NEWS_SQLITE_PATH: newsPath,
         PIPELINE_SQLITE_PATH: pipelinePath,
         SUPABASE_URL: 'https://example.supabase.co',

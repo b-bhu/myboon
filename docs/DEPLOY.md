@@ -131,6 +131,21 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
 - Verified online backups for both `pipeline.sqlite` and `news.sqlite`:
   `pnpm --filter @myboon/collectors pipeline-store:backup`
   (run it on a cron; it is cheap)
+- Restore is deliberately a separate, dry-run-first command and never chooses a
+  live target implicitly. Review the integrity output, stop the owning workers,
+  and then repeat with `--apply`; add `--force` only when replacing an existing
+  target is explicitly approved:
+  ```bash
+  pnpm --filter @myboon/collectors pipeline-store:restore -- \
+    --store news --backup /absolute/path/news.sqlite.backup \
+    --target /absolute/path/news.sqlite.restored
+  pnpm --filter @myboon/collectors pipeline-store:restore -- \
+    --store news --backup /absolute/path/news.sqlite.backup \
+    --target /absolute/path/news.sqlite.restored --apply
+  ```
+  The command verifies the selected backup before copying and verifies the
+  restored file afterward. It does not delete the backup or infer production
+  paths.
 - Failed-work recovery is dry-run first and stage-specific. Examples:
   ```bash
   pnpm --filter @myboon/collectors pipeline-store:recover-research -- \
@@ -181,11 +196,20 @@ FEED_V3_ENTITY_ACTIVE_SOURCES=
 FEED_V3_ENTITY_SHADOW_SOURCES=
 FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=
 FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=
+FEED_V3_CUTOVER_RECEIPT_PATH=
 FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
 FEED_V3_DEEP_RESEARCH_ENABLED=0
 FEED_V3_TRIAGE_CLASSIFIER_ENABLED=0
 FEED_V3_TRIAGE_PROVIDER_HEALTH=unavailable
 FEED_V3_TRIAGE_ALLOWED_DEPTHS=light
+FEED_V3_RESEARCH_RECOVERY_INTERVAL_MS=30000
+FEED_V3_RESEARCH_RECOVERY_LIMIT_PER_SOURCE=100
+FEED_V3_RESEARCH_DRAIN_GRACE_MS=150000
+FEED_V3_RESEARCH_RUNTIME_STATUS_PATH=.data/feed-v3-research-runtime-status.json
+FEED_V3_ENTITY_RUNTIME_STATUS_PATH=.data/feed-v3-entity-runtime-status.json
+FEED_V3_RUNTIME_CONTROL_PATH=.data/feed-v3-runtime-control.json
+FEED_V3_RESEARCH_RUNTIME_STATUS_STALE_MS=60000
+FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS=60000
 ```
 
 Use the stage-specific source sets for new deployments; the two global source
@@ -212,17 +236,178 @@ pnpm --filter @myboon/collectors feed-v3:status
 pnpm --filter @myboon/collectors feed-v3:trace -- --work-id work_...
 ```
 
+`feed-v3:status` reports Research and Entity runtime snapshot availability as
+`current`, `stale`, `missing`, or `invalid`. The Entity snapshot contains only
+the desired drain state, measured `entity.extract` provider success/duration,
+and circuit/next-probe state. It never contains prompts, evidence, credentials,
+raw provider errors, token usage, or inferred costs. Entity mode `off` does not
+create or read the snapshot file.
+
+Retention inventory is also strictly read-only. It requires an explicit cutoff,
+accepts `--store news`, `--store pipeline`, or `--store both`, and reports exact
+eligible counts plus at most 500 metadata-only samples per table and SQLite
+main/WAL/SHM sizes. It inventories only terminal canonical queue rows, terminal
+execution rows, source-routed Research and Entity shadow observations, and
+expired deep-registry entries with a boolean temp artifact check. Entity shadow
+observations are read from `news.sqlite` for News and `pipeline.sqlite` for the
+pipeline-routed sources. It never opens a writable database, creates a table,
+reads entity/entity-memory content, or exposes an apply/delete option:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:retention-preview -- \
+  --store both --before 2026-08-01T00:00:00Z --limit 25
+```
+
+Review this output as planning evidence only. Any future deletion or archival
+workflow requires a separately reviewed implementation and backup procedure.
+
+The Feed V3 load/soak harness is non-production evidence tooling for the
+canonical SQLite queue, scheduler, leases, retries, and state transitions only.
+It never invokes a provider, Supabase, legacy table, or production database.
+Both paths must be explicit absolute paths, the fixture database must be new,
+and the command refuses the configured `NEWS_SQLITE_PATH` and
+`PIPELINE_SQLITE_PATH`. It is dry-run by default; add `--execute` to create the
+fixture and write the versioned JSON artifact:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:load-soak -- \
+  --fixture-db /absolute/scratch/feed-v3-load.sqlite \
+  --output /absolute/scratch/feed-v3-load-artifact.json \
+  --duration-seconds 300 \
+  --baseline-arrivals-per-second 2 \
+  --arrival-multiplier 2 \
+  --completion-capacity-per-second 4 \
+  --max-queue-depth 25 \
+  --min-completion-ratio 0.99 \
+  --execute
+```
+
+The harness is bounded to 100,000 offered items and a maximum logical duration
+of 24 hours. Executed runs are paced against monotonic wall time; their artifact
+reports measured offered/admitted/completed rates, wall time, queue p95
+and maximum depth, duplicate/collision/failure counts, SQLite errors, reviewed
+thresholds, and pass/fail reasons. This deterministic logical-clock simulation
+does not satisfy AC22 wall-clock 2x throughput or AC23's live 24-hour soak by
+itself. It also cannot satisfy provider-outage, deep-containment, Supabase, or
+end-to-end Product Surface acceptance gates; those require separately reviewed
+live evidence.
+
 Status includes source-local arrivals, admissions, completions, attempts,
 priority/depth queue ages, dead letters, typed recent failures, and measured
-provider/fallback usage. The shared Research process also emits its redacted
-route and in-memory circuit snapshot with each completed cycle; circuit state is
-process-local and is not reconstructed from SQLite. Shadow results remain in
-the source DB: News in `news.sqlite`; Polymarket in `pipeline.sqlite`. The
-verified backup inventory includes these additive shadow and execution tables.
+provider/fallback usage. It also reads the shared Research process's redacted
+runtime file and the shared Entity process's independent redacted health file,
+labeling each `current`, `stale`, `missing`, or `invalid`. Both expose only the
+latest measured route/provider outcome, duration, circuit readiness, and
+next-probe time; Entity also reports its durable drain/control state.
+Circuit state is process-local and is not reconstructed from SQLite. Shadow results remain in
+the source DB: News in `news.sqlite`; Polymarket, Market Calendar, and X in
+`pipeline.sqlite`. The verified backup inventory includes these additive shadow
+and execution tables.
+
+The shared Research runner also atomically refreshes its redacted runtime snapshot
+in active/shadow mode. The snapshot contains measured last-call duration and
+success, route/circuit state, and next-probe timestamps; it contains no prompts,
+evidence, credentials, or invented cost. Off mode never creates or reads this
+file. On startup and every bounded recovery interval, active mode returns
+expired leases and due retry waits to their recorded pending stages without
+spending attempts. SIGTERM immediately gates new claims and drains the current
+call for `FEED_V3_RESEARCH_DRAIN_GRACE_MS`; PM2 `kill_timeout` must remain larger
+than that grace before deploying an override.
+
+The shared Entity runner refreshes its health snapshot after active/shadow
+cycles and on drain/stop. Health writes are best-effort observability: a
+missing/unwritable snapshot is visible to `feed-v3:status` but cannot change a
+queue result or trigger provider work. Entity off mode performs no health or
+runtime-control I/O.
+
+Controlled drain/resume is durable across PM2 restarts and does not require a
+database or provider connection. Commands are dry-run unless `--apply` is
+explicit; inspect the proposed revision before applying it:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
+  --stage research --action drain
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
+  --stage research --action drain --apply
+
+# After deployment/restart and queue verification:
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
+  --stage research --action resume --apply
+```
+
+The same command accepts `--stage entity`. A drained resident worker finishes
+its current bounded call, performs no new claims, and reports `draining` until
+an applied resume. The control document is atomically replaced with mode 0600;
+do not edit it by hand. Its lock contains an owning PID and token: a dead-owner
+lock is reclaimed, while a partial lock is reclaimed only after a one-minute
+age gate. A live owner's lock is never stolen.
 
 Historical evaluation/backfill is dry-run by default, bounded to 500 rows, and
 does not claim or mutate legacy work. `--apply` verifies backups of both SQLite
 databases before opening the additive canonical stores:
+
+The reviewed labeled evaluation set can be JSON or JSONL. Produce a redacted,
+content-free cutover artifact by supplying the approved thresholds explicitly;
+the default minimum is 1,000 records and a failed gate exits with status 2:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:evaluate-triage -- \
+  --input /absolute/path/feed-v3-labeled-evaluation.jsonl \
+  --max-false-negative-rate 0.05 \
+  --min-metered-completion-rate 1 \
+  --max-provider-calls-per-completion 2 \
+  --max-input-tokens-per-completion 5000 \
+  --max-output-tokens-per-completion 1000 \
+  --max-p95-latency-ms 90000 \
+  > /absolute/path/feed-v3-evaluation-artifact.json
+```
+
+The artifact records the input SHA-256 digest, thresholds, aggregate metrics,
+source, stage, exact sample size, and pass/fail reasons. It contains no Signal
+title, summary, prompt, evidence, or credential. Run the evaluation separately
+for every source being approved; a mixed-source artifact cannot authorize a
+source-specific cutover.
+
+Active Research and Entity startup requires a manifest at
+`FEED_V3_CUTOVER_RECEIPT_PATH`. Each source/stage receipt is an explicit manual
+attestation binding the reviewed shadow artifact and rollback-rehearsal artifact
+by relative path, schema version, and SHA-256 digest. Artifact paths must remain
+inside the manifest directory, the shadow sample must contain at least 1,000
+rows, rollback rehearsal must precede approval, and receipts expire. Changing
+even one artifact byte invalidates startup. This is an operator review control,
+not a cryptographic signature or a substitute for the production soak.
+
+Minimal manifest shape (digests shown are placeholders):
+
+```json
+{
+  "schemaVersion": "myboon.feed_v3_cutover_manifest.v1",
+  "receipts": [{
+    "schemaVersion": "myboon.feed_v3_cutover_receipt.v1",
+    "receiptId": "news-research-20260826",
+    "sourceType": "news",
+    "stage": "research",
+    "approvedAt": "2026-08-26T12:00:00.000Z",
+    "approvedBy": "release-owner",
+    "attestationMode": "manual_review",
+    "expiresAt": "2026-08-28T12:00:00.000Z",
+    "shadowEvaluation": {
+      "sampleSize": 1000,
+      "passed": true,
+      "artifactPath": "news-research-shadow.json",
+      "artifactSchemaVersion": "myboon.feed_v3_triage_evaluation.v1",
+      "artifactSha256": "<64 lowercase hex characters>"
+    },
+    "rollbackRehearsal": {
+      "rehearsedAt": "2026-08-26T11:00:00.000Z",
+      "passed": true,
+      "artifactPath": "news-research-rollback.json",
+      "artifactSchemaVersion": "myboon.feed_v3_rollback_rehearsal.v1",
+      "artifactSha256": "<64 lowercase hex characters>"
+    }
+  }]
+}
+```
 
 ```bash
 pnpm --filter @myboon/collectors feed-v3:backfill -- \
@@ -281,6 +466,47 @@ Deep research remains disabled until the transient-systemd-service checks in
 [`2026_08_26_deep_research_transient_systemd_service.md`](modules/entity-manager/ADRs/2026_08_26_deep_research_transient_systemd_service.md)
 are completed on the target VPS. No local test result is evidence that the VPS
 cgroup, timeout, descendant-kill, or temporary-profile requirements have passed.
+The durable registry can be audited without creating tables, killing units, or
+deleting workspaces:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:deep-orphan-audit
+```
+
+With no arguments the audit reads both configured source databases (News and
+Pipeline, deduplicating identical physical paths); it never creates a missing
+database or table. `--registry /absolute/scratch.sqlite` remains available for
+the synthetic verifier or a manual scratch audit. The command exits with status
+2 when either production database is missing, an expired unit/workspace appears orphaned,
+or systemd/filesystem inspection is incomplete. Its JSON omits trace IDs,
+profile paths, and temporary paths. Cleanup remains an explicit, separately
+reviewed operation.
+
+The VPS containment verifier is also opt-in. It runs only the checked-in
+`descendant-timeout-v1` synthetic fixture, which deliberately leaves a child
+alive until the transient service timeout kills the whole control group. Use
+dedicated absolute registry and artifact paths; do not point it at the live
+registry. Both files must be new inside an existing scratch directory. The
+command resolves parent directories and refuses the configured News/Pipeline
+databases, aliases through symlinks, duplicate flags, existing targets, and
+registry/artifact collisions; artifact publication is atomic mode-0600 and
+never replaces an existing file. The artifact is redacted and records unit inactivity, registry
+cleanup, and temporary-workspace cleanup, but it does not enable Deep Research:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:verify-deep-containment -- \
+  --apply \
+  --fixture descendant-timeout-v1 \
+  --registry /var/lib/myboon/verification/deep-registry.sqlite \
+  --artifact /var/lib/myboon/verification/deep-containment.json
+```
+
+Keep `FEED_V3_DEEP_RESEARCH_ENABLED=0` until that host artifact, the cutover
+receipt, contained executable, exact public-domain/tool policy, and source-local
+registry storage have all been reviewed. The shared Research runner validates
+those settings and systemd readiness before acquiring a deep lease. Successful
+contained output still fails closed unless the trusted usage sidecar and
+fetched-evidence manifest are present and within the canonical work budget.
 
 ---
 

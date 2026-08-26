@@ -202,6 +202,7 @@ export class DeepResearchExecutor {
       jobId: job.jobId,
       workId: job.workItem.workId,
       traceId: job.workItem.traceId,
+      sourceType: job.workItem.sourceType,
       unitName,
       startedAt: new Date(startedAtMs).toISOString(),
       deadlineAt: new Date(startedAtMs + job.budget.maxWallTimeMs).toISOString(),

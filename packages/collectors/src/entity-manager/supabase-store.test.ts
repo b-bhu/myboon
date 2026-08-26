@@ -427,6 +427,7 @@ test('canonical replay advances the knowledge change cursor with its explicit up
         ))
         .slice(0, query.limit)
     },
+    async queryMemoryEvents() { return { rows: [], totalCount: 0 } },
   }
   const reader = new PortBackedEntityKnowledgeReader(port)
   const memory = {

@@ -8,18 +8,27 @@ import type { DeepResearchExecutionMetadata } from './types'
 interface Statement { run(...params: unknown[]): { changes: number | bigint }; all(...params: unknown[]): unknown[]; get(...params: unknown[]): unknown }
 interface Database { exec(sql: string): void; prepare(sql: string): Statement; close(): void }
 const nodeRequire = createRequire(__filename)
-const { DatabaseSync } = nodeRequire('node:sqlite') as { DatabaseSync: new(path: string) => Database }
+const { DatabaseSync } = nodeRequire('node:sqlite') as {
+  DatabaseSync: new(path: string, options?: { readOnly?: boolean }) => Database
+}
 
 export const DEEP_RESEARCH_EXECUTION_TABLE = 'deep_research_active_executions' as const
 
 /** Durable process registry used by the executor and a boot-time orphan audit. */
 export class SqliteDeepResearchExecutionRegistry implements DeepResearchExecutionRegistry {
   private readonly db: Database
+  private readonly tablePresent: boolean
 
-  constructor(path: string) {
+  constructor(path: string, options: { readOnly?: boolean } = {}) {
     const resolved = resolve(path)
-    mkdirSync(dirname(resolved), { recursive: true })
-    this.db = new DatabaseSync(resolved)
+    if (!options.readOnly) mkdirSync(dirname(resolved), { recursive: true })
+    this.db = new DatabaseSync(resolved, options.readOnly ? { readOnly: true } : {})
+    if (options.readOnly) {
+      this.tablePresent = this.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ).get(DEEP_RESEARCH_EXECUTION_TABLE) !== undefined
+      return
+    }
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA busy_timeout = 5000;
@@ -37,6 +46,7 @@ export class SqliteDeepResearchExecutionRegistry implements DeepResearchExecutio
       CREATE INDEX IF NOT EXISTS idx_deep_research_execution_deadline
         ON ${DEEP_RESEARCH_EXECUTION_TABLE}(deadline_at, unit_name);
     `)
+    this.tablePresent = true
   }
 
   register(metadata: DeepResearchExecutionMetadata): void {
@@ -62,6 +72,7 @@ export class SqliteDeepResearchExecutionRegistry implements DeepResearchExecutio
   }
 
   list(): readonly DeepResearchExecutionMetadata[] {
+    if (!this.tablePresent) return []
     const rows = this.db.prepare(
       `SELECT metadata_json FROM ${DEEP_RESEARCH_EXECUTION_TABLE} ORDER BY started_at, unit_name`,
     ).all() as Array<{ metadata_json?: unknown }>
@@ -122,6 +133,7 @@ function validateMetadata(value: DeepResearchExecutionMetadata): void {
   if (typeof value !== 'object' || value === null
     || !value.unitName.endsWith('.service')
     || !value.jobId || !value.workId || !value.traceId
+    || !['news', 'polymarket', 'market_calendar', 'x'].includes(value.sourceType)
     || !Number.isFinite(Date.parse(value.startedAt)) || !Number.isFinite(Date.parse(value.deadlineAt))
     || !value.tempPath.startsWith('/') || !value.profilePath.startsWith('/')) {
     throw new Error('Invalid deep-research execution metadata')

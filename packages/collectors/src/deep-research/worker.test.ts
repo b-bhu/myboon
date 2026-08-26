@@ -365,6 +365,37 @@ test('disabled or unavailable containment releases deep work with zero attempts'
   }
 })
 
+test('stage containment preflight blocks before acquiring a deep lease', async () => {
+  const fx = fixture()
+  try {
+    let claims = 0
+    let executions = 0
+    const port = new Proxy(fx.store, {
+      get(target, property, receiver) {
+        if (property === 'claimWithLease') return async (...args: Parameters<DeepResearchWorkStore['claimWithLease']>) => {
+          claims += 1
+          return target.claimWithLease(...args)
+        }
+        const value = Reflect.get(target, property, receiver) as unknown
+        return typeof value === 'function' ? (value as Function).bind(target) : value
+      },
+    }) as DeepResearchWorkStore
+    const worker = new DeepResearchSideQueueWorker(options(port, {
+      execute: async (job) => { executions += 1; return result(job) },
+    }, {
+      preflight: {
+        checkStage: async () => ({ ready: false, reason: 'systemd_unavailable', detail: 'not ready' }),
+        check: async () => ({ ready: true }),
+      },
+    }))
+    assert.equal((await worker.runOnce()).kind, 'idle')
+    assert.equal(claims, 0)
+    assert.equal(executions, 0)
+    assert.equal(fx.store.getResearchWork('work-deep')?.status, 'deep_pending')
+    assert.equal(fx.store.getResearchWork('work-deep')?.attemptCount, 0)
+  } finally { fx.close() }
+})
+
 test('completion replay reuses the immutable packet and does not execute twice', async () => {
   const fx = fixture()
   try {

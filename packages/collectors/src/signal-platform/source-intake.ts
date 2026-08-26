@@ -24,6 +24,8 @@ export interface SourceSignalIntakeResult {
 export interface SourceSignalIntakePort {
   readonly mode: SourceIntakeMode
   ingest(signal: Signal): Promise<SourceSignalIntakeResult>
+  /** Pure decision preview; implementations must not append Signal/work state. */
+  preview?(signal: Signal): Promise<TriageDecisionV1>
   retryUntriaged?(limit: number): Promise<SourceIntakeBatchReport>
 }
 
@@ -106,6 +108,16 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
     })
     const result = await coordinator.process({ ...triageInput, signal })
     return fromCoordinator(result, this.mode, appended.inserted)
+  }
+
+  async preview(input: Signal): Promise<TriageDecisionV1> {
+    const signal = validateSignal(input)
+    if (signal.sourceType !== this.options.store.sourceType) {
+      throw new Error(`Source intake store ${this.options.store.sourceType} cannot preview ${signal.sourceType}`)
+    }
+    if (!this.evaluates) throw new Error('Source intake is not configured for triage evaluation')
+    const triageInput = await this.options.buildTriageInput!(signal)
+    return this.options.triage!.decide({ ...triageInput, signal })
   }
 
   /** Bounded source-local repair for append-before-triage partial failures. */

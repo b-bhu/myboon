@@ -77,6 +77,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
         outcome: 'defer',
         budget: null,
         deepEscalationReason: null,
+        deepEscalation: null,
         reasons: [...selected.reasons, {
           code: 'unsupported_research_depth_defer',
           detail: `${selected.outcome} research is not enabled for this source intake capability policy.`,

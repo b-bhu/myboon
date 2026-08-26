@@ -1,4 +1,10 @@
-import type { DeepEscalationReason, PriorityClass, ResearchBudget, ResearchDepth } from './contracts'
+import type {
+  DeepEscalationAdmission,
+  DeepEscalationReason,
+  PriorityClass,
+  ResearchBudget,
+  ResearchDepth,
+} from './contracts'
 import {
   COMMON_PRIORITY_SEMANTICS,
   PRIORITY_POLICY_SCHEMA_VERSION,
@@ -80,6 +86,23 @@ export function validateTriageDecision(value: unknown): TriageDecisionV1 {
   if (outcome !== 'deep' && decision.deepEscalationReason !== null) {
     throw new ContractValidationError('triageDecision.deepEscalationReason', 'must be null unless outcome is deep')
   }
+  const escalation = nullableDeepEscalation(decision.deepEscalation, 'triageDecision.deepEscalation')
+  if (outcome === 'deep' && escalation === null) {
+    throw new ContractValidationError('triageDecision.deepEscalation', 'is required for deep')
+  }
+  if (outcome !== 'deep' && escalation !== null) {
+    throw new ContractValidationError('triageDecision.deepEscalation', 'must be null unless outcome is deep')
+  }
+  if (escalation !== null && escalation.reason !== decision.deepEscalationReason) {
+    throw new ContractValidationError(
+      'triageDecision.deepEscalation.reason', 'must match deepEscalationReason',
+    )
+  }
+  if (escalation !== null && escalation.policyVersion !== decision.priorityPolicyVersion) {
+    throw new ContractValidationError(
+      'triageDecision.deepEscalation.policyVersion', 'must match priorityPolicyVersion',
+    )
+  }
   if ((outcome === 'archive' || outcome === 'defer') && decision.budget !== null) {
     throw new ContractValidationError('triageDecision.budget', 'must be null without admission')
   }
@@ -88,6 +111,25 @@ export function validateTriageDecision(value: unknown): TriageDecisionV1 {
     throw new ContractValidationError('triageDecision.classifierUsed', 'must be boolean')
   }
   return value as TriageDecisionV1
+}
+
+function nullableDeepEscalation(value: unknown, path: string): DeepEscalationAdmission | null {
+  if (value === null || value === undefined) return null
+  const escalation = record(value, path)
+  oneOf(escalation.reason, DEEP_REASONS, `${path}.reason`)
+  if (!Array.isArray(escalation.supportingEvidenceRefs) || escalation.supportingEvidenceRefs.length === 0) {
+    throw new ContractValidationError(`${path}.supportingEvidenceRefs`, 'must contain supporting evidence')
+  }
+  for (const [index, ref] of escalation.supportingEvidenceRefs.entries()) {
+    nonEmpty(ref, `${path}.supportingEvidenceRefs[${index}]`)
+  }
+  if (new Set(escalation.supportingEvidenceRefs).size !== escalation.supportingEvidenceRefs.length) {
+    throw new ContractValidationError(`${path}.supportingEvidenceRefs`, 'must not contain duplicates')
+  }
+  nonEmpty(escalation.unresolvedQuestion, `${path}.unresolvedQuestion`)
+  nonEmpty(escalation.policyVersion, `${path}.policyVersion`)
+  nonEmpty(escalation.policyRule, `${path}.policyRule`)
+  return value as DeepEscalationAdmission
 }
 
 export function validateBoundedClassifierResult(value: unknown): BoundedTriageClassifierResult {

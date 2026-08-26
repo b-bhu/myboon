@@ -29,7 +29,8 @@
  */
 
 import { createRequire } from 'node:module'
-import { copyFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { copyFileSync, linkSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 
 const nodeRequire = createRequire(__filename)
@@ -330,17 +331,38 @@ async function verifySqliteBackup(
  * Restores a backup file to `targetPath`. Refuses to overwrite an existing
  * target unless `force` is set. Verifies the backup's integrity BEFORE
  * touching the target - a corrupt backup must never be allowed to clobber
- * a good target - then copies it into place and re-verifies the target
- * after the copy to confirm the bytes that landed are the bytes that were
- * meant to land.
+ * a good target - then copies to a same-directory temporary file, verifies
+ * that copy, and atomically renames it over the target. An interrupted or
+ * failed verification therefore leaves any existing target intact.
  */
 export async function restorePipelineStore(options: {
   backupPath: string
   targetPath: string
   force?: boolean
 }): Promise<PipelineRestoreResult> {
+  return restoreSqliteStore(options, verifyPipelineBackup)
+}
+
+/** News-store counterpart with the same pre-copy and post-copy guarantees. */
+export async function restoreNewsStore(options: {
+  backupPath: string
+  targetPath: string
+  force?: boolean
+}): Promise<PipelineRestoreResult> {
+  return restoreSqliteStore(options, verifyNewsBackup)
+}
+
+async function restoreSqliteStore(
+  options: { backupPath: string; targetPath: string; force?: boolean },
+  verify: (
+    path: string,
+    expected?: Record<string, number>,
+  ) => Promise<PipelineBackupVerification>,
+): Promise<PipelineRestoreResult> {
   const backupPath = resolve(options.backupPath)
   const targetPath = resolve(options.targetPath)
+
+  assertRestoreSidecarsAbsent(targetPath)
 
   let targetExists = true
   try {
@@ -354,7 +376,7 @@ export async function restorePipelineStore(options: {
     )
   }
 
-  const preCheck = await verifyPipelineBackup(backupPath)
+  const preCheck = await verify(backupPath)
   if (!preCheck.ok) {
     throw new Error(
       `Refusing to restore from a backup that fails verification: integrity="${preCheck.integrity}"` +
@@ -363,15 +385,63 @@ export async function restorePipelineStore(options: {
   }
 
   mkdirSync(dirname(targetPath), { recursive: true })
-  copyFileSync(backupPath, targetPath)
+  const temporaryPath = `${targetPath}.restore.${process.pid}.${randomUUID()}.tmp`
+  let postCheck: PipelineBackupVerification
+  try {
+    copyFileSync(backupPath, temporaryPath)
+    postCheck = await verify(temporaryPath, preCheck.tableCounts)
+    if (!postCheck.ok) {
+      throw new Error(
+        `Restored copy failed verification: integrity="${postCheck.integrity}"`
+        + (postCheck.mismatches.length > 0 ? `, mismatches=${postCheck.mismatches.join('; ')}` : ''),
+      )
+    }
+    // Recheck immediately before publication. Restoring a main DB over live
+    // WAL/SHM state can replay unrelated pages into the verified copy.
+    assertRestoreSidecarsAbsent(targetPath)
+    if (options.force) {
+      renameSync(temporaryPath, targetPath)
+    } else {
+      // link(2) is an atomic no-replace publication on the same filesystem.
+      // Unlike rename, it cannot clobber a target created after our first
+      // existence check.
+      try {
+        linkSync(temporaryPath, targetPath)
+      } catch (error) {
+        if (isNodeError(error) && error.code === 'EEXIST') {
+          throw new Error(`Refusing to overwrite existing target "${targetPath}" without force: true`)
+        }
+        throw error
+      }
+    }
+  } finally {
+    rmSync(temporaryPath, { force: true })
+  }
 
-  const postCheck = await verifyPipelineBackup(targetPath, preCheck.tableCounts)
+  assertRestoreSidecarsAbsent(targetPath)
+  const finalCheck = await verify(targetPath, preCheck.tableCounts)
+  if (!finalCheck.ok) throw new Error(`Published restore target failed final verification: ${finalCheck.integrity}`)
 
   return {
     targetPath,
-    tableCounts: postCheck.tableCounts,
-    verified: postCheck.ok,
+    tableCounts: finalCheck.tableCounts,
+    verified: finalCheck.ok,
   }
+}
+
+function assertRestoreSidecarsAbsent(targetPath: string): void {
+  const present = [`${targetPath}-wal`, `${targetPath}-shm`].filter((path) => {
+    try { statSync(path); return true } catch { return false }
+  })
+  if (present.length > 0) {
+    throw new Error(
+      `Refusing restore while SQLite sidecars exist for "${targetPath}"; stop/checkpoint the owning workers first`,
+    )
+  }
+}
+
+function isNodeError(value: unknown): value is NodeJS.ErrnoException {
+  return value instanceof Error && 'code' in value
 }
 
 interface BackupFileInfo {

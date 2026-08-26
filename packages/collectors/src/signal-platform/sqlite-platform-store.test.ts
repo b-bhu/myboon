@@ -6,12 +6,14 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { SqliteNewsStore } from '../news/sqlite-store'
 import { backupNewsStore, verifyNewsBackup } from '../pipeline-store/backup'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import {
   RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
   RETRIEVED_EVIDENCE_SCHEMA_VERSION,
   SIGNAL_SCHEMA_VERSION,
   type NewsSignal,
+  type PolymarketSignal,
   type ResearchPacketV1,
   type ResearchWorkItem,
   type RetrievedEvidence,
@@ -50,6 +52,35 @@ function signal(overrides: Partial<NewsSignal> = {}): NewsSignal {
     idempotencyKey: 'source-key-1',
     ...overrides,
   }
+}
+
+function polymarketSignal(overrides: Partial<PolymarketSignal> = {}): PolymarketSignal {
+  return {
+    schemaVersion: SIGNAL_SCHEMA_VERSION,
+    signalId: 'signal-1',
+    sourceType: 'polymarket',
+    sourceId: 'polymarket:market:1',
+    contentKind: 'market_event',
+    content: {
+      schemaVersion: 'myboon.signal_content.market_event.v1',
+      marketId: 'market-1',
+      candidateType: 'odds_spike',
+    },
+    observedAt: '2026-08-26T12:00:00.000Z',
+    publishedAt: null,
+    canonicalUrl: 'https://polymarket.com/event/example',
+    title: 'Example market',
+    visibleSummary: 'Odds moved materially.',
+    media: { imageUrl: null, attribution: 'Polymarket' },
+    sourceHints: { entities: [], assets: [], eventId: 'market-1', deadline: null },
+    provenance: { provider: 'polymarket', upstreamSource: 'markets', rawPayloadRef: 'candidate-1' },
+    idempotencyKey: 'polymarket-key-1',
+    ...overrides,
+  }
+}
+
+function polymarketWork(overrides: Partial<ResearchWorkItem> = {}): ResearchWorkItem {
+  return work({ sourceType: 'polymarket', ...overrides })
 }
 
 function work(overrides: Partial<ResearchWorkItem> = {}): ResearchWorkItem {
@@ -430,9 +461,72 @@ test('news database backup inventory includes every initialized canonical platfo
   }
 })
 
+test('SQLite observability reports stored triage, artifacts, latency percentiles, queue ages, and file size', async () => {
+  const temp = fixture('observability')
+  const store = new SqliteSignalPlatformStore(temp.path, 'news')
+  try {
+    for (const [suffix, updatedAt] of [
+      ['a', '2026-08-26T12:00:00.000Z'],
+      ['b', '2026-08-26T12:30:00.000Z'],
+      ['c', '2026-08-26T12:50:00.000Z'],
+    ] as const) {
+      store.appendSignal(signal({
+        signalId: `signal-${suffix}`,
+        idempotencyKey: `signal-key-${suffix}`,
+        observedAt: updatedAt,
+      }))
+      store.admitResearchWork(work({
+        workId: `work-${suffix}`,
+        signalId: `signal-${suffix}`,
+        traceId: `trace-${suffix}`,
+        createdAt: updatedAt,
+        updatedAt,
+      }))
+    }
+
+    store.appendSignal(signal())
+    const decision = await triageDecision()
+    store.appendTriageDecision(decision)
+    store.admitResearchWork(work({
+      status: 'complete',
+      updatedAt: '2026-08-26T12:30:00.000Z',
+    }))
+    store.appendEvidence(evidence())
+    store.appendResearchPacket(packet())
+
+    const detail = await store.readWorkObservability({
+      now: '2026-08-26T13:00:00.000Z',
+      recentFailureSince: '2026-08-26T11:00:00.000Z',
+      failureLimit: 25,
+    })
+    assert.equal(detail.triageDecisionCount, 1)
+    assert.equal(detail.triageOutcomes?.[decision.outcome], 1)
+    assert.equal(detail.researchPacketCount, 1)
+    assert.equal(detail.entityMemoryHandoffCount, 1)
+    assert.deepEqual(detail.endToEndLatency, {
+      sampleCount: 1,
+      p50Ms: 30 * 60_000,
+      p95Ms: 30 * 60_000,
+      p99Ms: 30 * 60_000,
+    })
+    assert.ok((detail.sqliteSize?.totalBytes ?? 0) > 0)
+    const pending = detail.queueAge?.find((row) => row.status === 'research_pending')
+    assert.deepEqual(pending, {
+      priorityClass: 'P1', researchDepth: 'standard', status: 'research_pending', count: 3,
+      oldestQueuedAt: '2026-08-26T12:00:00.000Z',
+      p50AgeMs: 30 * 60_000, p95AgeMs: 60 * 60_000,
+    })
+  } finally {
+    store.close()
+    rmSync(temp.dir, { recursive: true, force: true })
+  }
+})
+
 runSchedulerStoreContract({
   async create() {
     const temp = fixture('conformance')
+    const legacy = new SqliteNewsStore(temp.path)
+    legacy.close()
     const store = new SqliteSignalPlatformStore(temp.path, 'news')
     return {
       store,
@@ -453,4 +547,31 @@ runSchedulerStoreContract({
     }
   },
   makeWork: work,
+})
+
+runSchedulerStoreContract({
+  async create() {
+    const temp = fixture('pipeline-conformance')
+    const legacy = new SqlitePipelineStore(temp.path)
+    legacy.close()
+    const store = new SqliteSignalPlatformStore(temp.path, 'polymarket')
+    return {
+      store,
+      seed: async (items) => {
+        for (const item of items) {
+          store.appendSignal(polymarketSignal({
+            signalId: item.signalId,
+            idempotencyKey: `key-${item.signalId}`,
+          }))
+          store.admitResearchWork(item)
+        }
+      },
+      read: async (workId) => store.getResearchWork(workId),
+      close: async () => {
+        store.close()
+        rmSync(temp.dir, { recursive: true, force: true })
+      },
+    }
+  },
+  makeWork: polymarketWork,
 })

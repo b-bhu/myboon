@@ -18,24 +18,27 @@ incremental and remains **safe-off in production** until the source-specific
 cutover gates below are satisfied. A green unit-test suite or an online PM2
 process is not, by itself, evidence that a phase is complete.
 
-As of 2026-08-26, the review branch contains the Phase 1 contracts; source-local
-SQLite queue, shadow, and execution stores; append-only live Signal emission for
-News and Polymarket; bounded rules-first triage; deterministic retrieval;
-structured inference gateway; zero-mutation research and Entity shadow paths;
-safe-off shared Research and Entity worker entrypoints; typed status,
-backfill/recovery/trace commands; a versioned internal Entity Knowledge read
-API; stable entity-memory identity and migration verifier; and the disabled
-deep-containment foundation. The first implementation baseline is commit
-`f59bfb6`; later changes on this branch remain uncommitted until the full
-verification matrix is green.
+As of 2026-08-26, the review branch contains the canonical contracts;
+source-local SQLite queue, shadow, artifact, and execution stores; append-only
+live Signal emission for News and Polymarket; bounded rules-first triage;
+deterministic retrieval; one configured structured-inference gateway;
+zero-mutation Research and Entity shadow paths; safe-off shared Research and
+Entity workers for all four registered sources; typed status,
+backfill/recovery/trace/restore/drain/retention/orphan-audit commands; a
+versioned Entity Knowledge reader adopted by the API Stories and Narrative
+surfaces plus Editor and Publisher; stable entity-memory identity and migration
+verifier; and the disabled deep-containment foundation. The first
+implementation baseline is commit `f59bfb6`; the later hardening work remains
+safe-off until every applicable external release gate below is satisfied.
 
 Repository implementation is not production evidence. The remaining release
 gates are:
 
-- shadow parity and capacity measurements on current News and Polymarket data;
-- adoption of the Entity Knowledge reader by product Surfaces;
+- reviewed per-source historical/shadow parity and capacity measurements on
+  current News and Polymarket data;
 - Supabase migration rehearsal, verifier output, and production approval;
-- provider-outage, load, rollback, deep-containment, and 24-hour soak evidence;
+- provider-outage, two-times load, rollback, VPS deep-containment, and 24-hour
+  soak evidence;
 - source-by-source ownership cutover followed by an observation window before
   any legacy code or compatibility index is removed.
 
@@ -1421,13 +1424,13 @@ phase-specific rollback.
 ## Acceptance Criteria
 
 Checked items below have repository-level evidence from the 2026-08-26
-verification run: Signal Platform 91/91, Inference Gateway 28/28, shared
-Research/Deep/Hermes 153/153, Entity Manager 157/157, News 86/86, Polymarket
-markets 16/16, legacy Polymarket researcher 14/14, pipeline store 76/76,
-editor/publisher 17/17, and API Feed/Entity Knowledge 24/24; shared,
-tx-parser, and collectors builds passed. Unchecked items require historical,
-VPS, Supabase rehearsal, product-adoption, load, or soak evidence and must not
-be inferred from unit tests.
+verification run: Signal Platform 123/123, Inference/Research/Hermes/Deep
+213/213, Entity Manager 169/169, News 86/86, Polymarket markets 16/16, legacy
+Polymarket researcher 14/14, pipeline store 82/82, Publisher 11/11, Editor
+10/10, API Feed 27/27, and API internal routes 15/15. Shared, tx-parser, and
+collectors builds passed. Unchecked items require historical, VPS, Supabase
+rehearsal, live load, cutover, or soak evidence and must not be inferred from
+unit tests or from the deterministic queue harness.
 
 - [x] A new source can enter the pipeline by implementing the Signal Source and
       store-adapter contracts without adding a new researcher or Entity Manager
@@ -1468,7 +1471,7 @@ be inferred from unit tests.
       failures, provider health, budget use, and entity-memory handoff.
 - [x] Immutable execution events carry a schema version and distinguish primary
       routing, fallback use, schema validity, and downstream acceptance.
-- [ ] Product Surfaces read entity knowledge through the versioned cursor-based
+- [x] Product Surfaces read entity knowledge through the versioned cursor-based
       read contract rather than source-specific research tables.
 - [ ] The proposed system sustains at least twice the measured admitted arrival
       rate in load testing.
@@ -1476,8 +1479,35 @@ be inferred from unit tests.
       without manual SQL repair, rapid PM2 restarts, orphan processes, or
       unbounded Hermes state growth.
 - [x] Existing SQLite and Supabase data is not deleted during migration.
-- [x] Legacy source-specific research and Entity Manager orchestration is removed
-      only after source-by-source parity and rollback verification.
+- [ ] Legacy source-specific research and Entity Manager orchestration has been
+      removed only after source-by-source parity, rollback verification, and an
+      observation window. The repository guards the cutover, but no production
+      source has been retired by this branch.
+
+### Implementation Evidence (2026-08-26)
+
+Repository evidence proves contract and failure behavior, not production
+readiness. Before checking any remaining item, attach these separately reviewed
+artifacts to the source/stage cutover manifest:
+
+1. A per-source historical/shadow evaluation artifact with at least 1,000
+   labeled rows, reviewed false-negative threshold, measured provider/token
+   coverage, zero interactive tool calls, and blind product-quality review.
+2. The Entity Memory migration rehearsal and read-only verifier output from the
+   approved Supabase project. This PRD and branch do not authorize applying it.
+3. A target-VPS deep containment artifact proving transient-service timeout,
+   inactive cgroup, empty scratch verification registry, and removed temporary
+   state, plus a clean read-only audit of both source-routed live registries.
+4. A measured two-times admitted-arrival load report. The checked-in
+   logical-clock SQLite harness is preparatory evidence only.
+5. A rollback-rehearsal artifact bound by digest to the exact source and stage.
+6. A 24-hour live soak report containing PM2 restart counts, queue freshness
+   percentiles, typed failures, Research and Entity provider/circuit health,
+   SQLite size/error deltas, orphan audit, and end-to-end memory handoffs.
+
+Until all applicable artifacts pass and a non-expired manual-review receipt is
+present, the shared workers remain safe-off and the legacy claimers remain the
+owners.
 
 ## Definition of Done
 

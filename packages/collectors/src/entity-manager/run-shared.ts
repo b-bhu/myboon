@@ -1,16 +1,32 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { createConfiguredInferenceGateway } from '../inference-gateway'
+import {
+  createConfiguredInferenceGateway,
+  type InferenceCircuitStatusSnapshot,
+  type InferenceTelemetryObserver,
+} from '../inference-gateway'
 import { envFlag, loadDotenvChain, positiveInteger } from '../pipeline-store/cli-env'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
+import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
 import type { ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
 import { loadFeedV3RuntimeConfig, type FeedV3RuntimeConfig } from '../signal-platform/runtime-config'
+import {
+  FileRuntimeControlStore,
+  resolveRuntimeControlPath,
+  stageRuntimeControl,
+  type RuntimeControlReadPort,
+} from '../signal-platform/runtime-control'
 import { SqliteExecutionLedger } from '../signal-platform/sqlite-execution-ledger'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { EntityServiceCanonicalPacketProcessor } from './canonical-processor'
 import { GatewayCanonicalEntityPlanner } from './canonical-planner'
+import {
+  AtomicEntityRuntimeHealthFile,
+  EntityRuntimeHealthTracker,
+  type EntityRuntimeHealthWriter,
+} from './entity-runtime-health'
 import { assertEntityMemoryMigrationReady } from './entity-memory-migration-verifier'
 import {
   SharedEntityWorker,
@@ -27,11 +43,17 @@ import { SupabaseEntityMemoryStore } from './supabase-store'
 const PACKAGE_DIR = resolve(__dirname, '..', '..')
 const DEFAULT_INTERVAL_MS = 30_000
 const INERT_KEEP_ALIVE_INTERVAL_MS = 2_147_483_647
+const DEFAULT_ENTITY_RUNTIME_STATUS_PATH = '.data/feed-v3-entity-runtime-status.json'
 
 export type SharedEntityCycleResult =
   | { mode: 'off' }
   | { mode: 'shadow', result: ShadowCycleResult }
-  | { mode: 'active', result: ActiveCycleResult }
+  | {
+    mode: 'active'
+    controlState: 'running' | 'draining'
+    controlStatus: 'ok' | 'unavailable'
+    result: ActiveCycleResult
+  }
 
 export interface SharedEntityRuntime {
   mode: FeedV3RuntimeConfig['entityMode']
@@ -59,10 +81,17 @@ export interface CreateSharedEntityRuntimeOptions {
   storeFactory?: (path: string, sourceType: Signal['sourceType'], readOnly: boolean) => SqliteSignalPlatformStore
   supabaseFactory?: (url: string, serviceRoleKey: string) => SupabaseClient
   ledgerFactory?: (path: string) => SqliteExecutionLedger
-  gatewayFactory?: (env: Readonly<Record<string, string | undefined>>) => ReturnType<typeof createConfiguredInferenceGateway>['gateway']
+  gatewayFactory?: (
+    env: Readonly<Record<string, string | undefined>>,
+    observer: InferenceTelemetryObserver,
+  ) => ReturnType<typeof createConfiguredInferenceGateway>['gateway']
   workerFactory?: (options: SharedEntityWorkerOptions) => WorkerRuntimePort
   shadowObservations?: ShadowEntityObservationPort
   shadowObservationFactory?: (path: string) => SqliteEntityShadowObservationStore
+  runtimeControl?: RuntimeControlReadPort
+  healthWriter?: EntityRuntimeHealthWriter
+  healthWriterFactory?: (path: string) => EntityRuntimeHealthWriter
+  now?: () => Date
 }
 
 /**
@@ -73,11 +102,18 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
   const env = options.env ?? process.env
   const runtime = loadFeedV3RuntimeConfig(env)
   if (runtime.entityMode === 'off') return disabledRuntime()
+  const now = options.now ?? (() => new Date())
 
   const sources = runtime.entityMode === 'shadow'
     ? runtime.entityShadowSources
     : runtime.entityActiveSources
   if (sources.size === 0) throw new Error(`Shared Entity ${runtime.entityMode} mode has no configured sources.`)
+  if (runtime.entityMode === 'active') {
+    assertActiveCutoverReceipts({
+      path: runtime.cutoverReceiptPath!,
+      required: [...runtime.entityActiveSources].map((sourceType) => ({ sourceType, stage: 'entity' })),
+    })
+  }
   const sourcePaths = new Map<Signal['sourceType'], string>()
   const stores: SqliteSignalPlatformStore[] = []
   for (const source of sources) {
@@ -92,6 +128,11 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
 
   const closables: Closable[] = [...stores]
   try {
+    const healthTracker = new EntityRuntimeHealthTracker()
+    const healthWriter = options.healthWriter
+      ?? (options.healthWriterFactory ?? ((path) => new AtomicEntityRuntimeHealthFile(path)))(configuredPath(
+        env.FEED_V3_ENTITY_RUNTIME_STATUS_PATH?.trim() || DEFAULT_ENTITY_RUNTIME_STATUS_PATH,
+      ))
     const ports = stores.map((store) => new SqliteEntityPacketWorkPort(store))
     let shadowObservations = options.shadowObservations
     if (!shadowObservations && runtime.entityMode === 'shadow') {
@@ -119,6 +160,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
     let processor: EntityServiceCanonicalPacketProcessor
     let executionLedger: SharedEntityWorkerOptions['executionLedger']
     let activePreflight: (() => Promise<void>) | undefined
+    let circuitSnapshot: (() => InferenceCircuitStatusSnapshot) | undefined
 
     if (runtime.entityMode === 'active') {
       const supabase = (options.supabaseFactory ?? createClient)(
@@ -129,7 +171,11 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       if (!entityStore.createCanonicalEntity || !entityStore.findEntitiesByIdentity) {
         throw new Error('Active shared Entity processing requires atomic canonical identity store capabilities.')
       }
-      const gateway = (options.gatewayFactory ?? ((values) => createConfiguredInferenceGateway({ env: values }).gateway))(env)
+      const observeInference: InferenceTelemetryObserver = (event) => healthTracker.observe(event, now().toISOString())
+      const gateway = options.gatewayFactory
+        ? options.gatewayFactory(env, observeInference)
+        : createConfiguredInferenceGateway({ env, observer: observeInference }).gateway
+      circuitSnapshot = () => gateway.circuitStatusSnapshot()
       processor = new EntityServiceCanonicalPacketProcessor({
         store: entityStore,
         planner: new GatewayCanonicalEntityPlanner({ gateway }),
@@ -174,6 +220,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       shadowSampleBasisPoints: runtime.shadowSampleBasisPoints,
       runtimeTopology: topology,
     })
+    const runtimeControl = options.runtimeControl ?? new FileRuntimeControlStore(resolveRuntimeControlPath(env))
     const worker = (options.workerFactory ?? ((input) => new SharedEntityWorker(input)))({
       config,
       ports,
@@ -182,8 +229,14 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       workerId: safeWorkerId(env.FEED_V3_ENTITY_WORKER_ID),
       activeLimitPerSource: positiveInteger(env.FEED_V3_ENTITY_BATCH_SIZE, 10),
       executionLedger,
+      claimsEnabled: runtime.entityMode === 'active' ? () => entityClaimControl(runtimeControl).enabled : undefined,
     })
-    return managedRuntime(runtime.entityMode, worker, closables, activePreflight)
+    return managedRuntime(runtime.entityMode, worker, closables, activePreflight, runtimeControl, {
+      writer: healthWriter,
+      tracker: healthTracker,
+      circuitSnapshot,
+      now,
+    })
   } catch (error) {
     for (const resource of [...closables].reverse()) resource.close()
     throw error
@@ -195,6 +248,13 @@ function managedRuntime(
   worker: WorkerRuntimePort,
   resources: Closable[],
   preflight?: () => Promise<void>,
+  runtimeControl?: RuntimeControlReadPort,
+  health?: {
+    writer: EntityRuntimeHealthWriter
+    tracker: EntityRuntimeHealthTracker
+    circuitSnapshot?: () => InferenceCircuitStatusSnapshot
+    now: () => Date
+  },
 ): SharedEntityRuntime {
   let closed = false
   let ready: Promise<void> | null = null
@@ -206,23 +266,103 @@ function managedRuntime(
     })
     await ready
   }
+  const writeHealth = async (
+    lifecycleState: 'running' | 'draining' | 'stopped',
+    control = entityClaimControl(runtimeControl!),
+  ) => {
+    if (!health) return
+    try {
+      await health.writer.write(health.tracker.snapshot({
+        capturedAt: health.now().toISOString(),
+        mode,
+        lifecycleState,
+        desiredState: control.desiredState,
+        controlStatus: control.status,
+        circuit: safeCircuitSnapshot(health.circuitSnapshot),
+      }))
+    } catch {
+      // Health is observational. A missing/invalid snapshot is visible to the
+      // status command but must never alter a durable queue outcome.
+    }
+  }
   return {
     mode,
     async runCycle() {
       if (closed) throw new Error('Shared Entity runtime is closed.')
-      await ensureReady()
-      return mode === 'shadow'
-        ? { mode, result: await worker.runShadowCycle() }
-        : { mode, result: await worker.runActiveCycle() }
+      if (mode === 'active') {
+        const control = entityClaimControl(runtimeControl!)
+        if (!control.enabled) {
+          await writeHealth('draining', control)
+          return { mode, controlState: 'draining', controlStatus: control.status, result: emptyActiveCycleResult() }
+        }
+        try {
+          await ensureReady()
+          return { mode, controlState: 'running', controlStatus: 'ok', result: await worker.runActiveCycle() }
+        } finally {
+          const finalControl = entityClaimControl(runtimeControl!)
+          await writeHealth(finalControl.enabled ? 'running' : 'draining', finalControl)
+        }
+      }
+      try {
+        return { mode, result: await worker.runShadowCycle() }
+      } finally {
+        const finalControl = entityClaimControl(runtimeControl!)
+        await writeHealth(finalControl.enabled ? 'running' : 'draining', finalControl)
+      }
     },
     stop(input) { worker.stop(input) },
     async close() {
       if (closed) return
       closed = true
       worker.stop({ abortActive: true })
-      await worker.drain()
-      for (const resource of [...resources].reverse()) resource.close()
+      try {
+        await worker.drain()
+        await writeHealth('stopped')
+      } finally {
+        for (const resource of [...resources].reverse()) resource.close()
+      }
     },
+  }
+}
+
+function entityClaimControl(control: RuntimeControlReadPort): {
+  enabled: boolean
+  status: 'ok' | 'unavailable'
+  desiredState: 'running' | 'draining'
+} {
+  try {
+    const desiredState = stageRuntimeControl(control.read(), 'entity').desiredState
+    return {
+      enabled: desiredState === 'running',
+      status: 'ok',
+      desiredState,
+    }
+  } catch {
+    // A malformed or temporarily unreadable control file is a disabled claim
+    // gate, not a process-fatal condition. Later reads can observe a repair.
+    return { enabled: false, status: 'unavailable', desiredState: 'draining' }
+  }
+}
+
+function safeCircuitSnapshot(
+  snapshot: (() => InferenceCircuitStatusSnapshot) | undefined,
+): InferenceCircuitStatusSnapshot | null {
+  try {
+    return snapshot?.() ?? null
+  } catch {
+    return null
+  }
+}
+
+function emptyActiveCycleResult(): ActiveCycleResult {
+  return {
+    claimed: 0,
+    completed: 0,
+    retryWait: 0,
+    deadLettered: 0,
+    released: 0,
+    staleLeases: 0,
+    sourceErrors: {},
   }
 }
 

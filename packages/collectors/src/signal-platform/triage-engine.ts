@@ -2,6 +2,7 @@ import {
   RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
   type DeepEscalationReason,
+  type DeepEscalationAdmission,
   type PriorityClass,
   type ResearchBudget,
   type ResearchDepth,
@@ -10,6 +11,7 @@ import {
   type TriageOutcome,
 } from './contracts'
 import { stableContractId } from './adapters/identity'
+import { canonicalJson } from './canonical-json'
 import {
   COMMON_PRIORITY_SEMANTICS,
   PRIORITY_POLICY_SCHEMA_VERSION,
@@ -229,6 +231,7 @@ export function createResearchWorkItemFromDecision(input: {
   const workId = stableContractId(
     'work', signal.signalId, triage.priorityPolicyVersion,
     triage.budgetPolicyVersion, triage.outcome,
+    triage.deepEscalation ? canonicalJson(triage.deepEscalation) : '',
   )
   const traceId = stableContractId('trace', workId, triage.decisionId)
   return validateResearchWorkItem({
@@ -238,6 +241,7 @@ export function createResearchWorkItemFromDecision(input: {
     sourceType: signal.sourceType,
     researchDepth: triage.outcome,
     deepReason: triage.deepEscalationReason,
+    deepEscalation: triage.deepEscalation ? structuredClone(triage.deepEscalation) : null,
     priorityClass: triage.priorityClass,
     priorityScore: triage.priorityScore,
     freshnessDeadline: triage.freshnessDeadline,
@@ -330,7 +334,24 @@ function decision(
   const decisionId = stableContractId(
     'triage', signal.signalId, policy.policyVersion, policy.budgetPolicyVersion,
     input.now, input.dedupeOutcome, values.outcome, values.priorityClass,
+    values.outcome === 'deep' && input.deepEscalation
+      ? JSON.stringify({
+        reason: input.deepEscalation.reason,
+        evidenceRefs: [...input.deepEscalation.evidenceRefs].sort(),
+        unresolvedQuestion: input.deepEscalation.unresolvedQuestion,
+        policyRule: input.deepEscalation.policyRule,
+      }) : '',
   )
+  const deepEscalation: DeepEscalationAdmission | null = values.outcome === 'deep'
+    && values.deepReason !== null && input.deepEscalation !== null
+    ? {
+      reason: values.deepReason,
+      supportingEvidenceRefs: [...new Set(input.deepEscalation.evidenceRefs)].sort(),
+      unresolvedQuestion: input.deepEscalation.unresolvedQuestion,
+      policyVersion: policy.policyVersion,
+      policyRule: input.deepEscalation.policyRule,
+    }
+    : null
   return validateTriageDecision({
     schemaVersion: TRIAGE_DECISION_SCHEMA_VERSION,
     decisionId,
@@ -344,6 +365,7 @@ function decision(
     budgetPolicyVersion: policy.budgetPolicyVersion,
     budget: isResearchOutcome(values.outcome) ? { ...policy.budgets[values.outcome] } : null,
     deepEscalationReason: values.outcome === 'deep' ? values.deepReason : null,
+    deepEscalation,
     priorityPolicyVersion: policy.policyVersion,
     classifierUsed: values.classifierUsed,
     decidedAt: input.now,
@@ -384,7 +406,9 @@ function validateInput(input: RulesFirstTriageInput): void {
   if (input.deepEscalation && (
     !input.deepEscalation.unresolvedQuestion.trim()
     || !input.deepEscalation.policyRule.trim()
-  )) throw new Error('deep escalation requires a question and policy rule')
+    || input.deepEscalation.evidenceRefs.length === 0
+    || input.deepEscalation.evidenceRefs.some((ref) => !ref.trim())
+  )) throw new Error('deep escalation requires supporting evidence, a question, and a policy rule')
 }
 
 function isResearchOutcome(outcome: TriageOutcome): outcome is ResearchDepth {

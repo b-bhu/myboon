@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { canonicalJson } from './canonical-json'
@@ -81,11 +81,13 @@ export interface TriageCapacityLimits {
 export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
   readonly sourceType: Signal['sourceType']
   private readonly db: SqliteDatabase
+  private readonly databasePath: string
   private closed = false
 
   constructor(path: string, sourceType: Signal['sourceType'], options: SqliteSignalPlatformStoreOptions = {}) {
     this.sourceType = sourceType
     const resolved = resolve(path)
+    this.databasePath = resolved
     if (!options.readOnly) mkdirSync(dirname(resolved), { recursive: true })
     this.db = new DatabaseSync(resolved, options.readOnly ? { readOnly: true, open: true } : {})
     if (options.readOnly) {
@@ -665,6 +667,17 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         (SELECT COUNT(*) FROM signal_platform_signals WHERE source_type = ?) AS signal_count,
         (SELECT COUNT(*) FROM signal_platform_triage_decisions WHERE source_type = ?) AS triage_decision_count
     `).get(this.sourceType, this.sourceType) as Record<string, unknown> | undefined
+    const triageOutcomes = this.db.prepare(`
+      SELECT outcome, COUNT(*) AS count
+      FROM signal_platform_triage_decisions WHERE source_type = ?
+      GROUP BY outcome ORDER BY outcome
+    `).all(this.sourceType) as Array<Record<string, unknown>>
+    const artifacts = this.db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM signal_platform_research_packets WHERE source_type = ?) AS packet_count,
+        (SELECT COUNT(*) FROM signal_platform_research_work
+          WHERE source_type = ? AND status = 'complete') AS entity_memory_handoff_count
+    `).get(this.sourceType, this.sourceType) as Record<string, unknown> | undefined
     const attempt = this.db.prepare(`
       SELECT COALESCE(SUM(attempt_count), 0) AS total_attempts,
         SUM(CASE WHEN attempt_count > 0 THEN 1 ELSE 0 END) AS attempted_items,
@@ -694,14 +707,42 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       this.sourceType, input.recentFailureSince, input.now,
     ) as Record<string, unknown> | undefined
     const queueAge = this.db.prepare(`
-      SELECT priority_class, json_extract(work_json, '$.researchDepth') AS research_depth,
-        status, COUNT(*) AS count, MIN(updated_at) AS oldest_queued_at
-      FROM signal_platform_research_work
-      WHERE source_type = ?
-        AND status IN ('research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending', 'retry_wait')
-      GROUP BY priority_class, research_depth, status
+      WITH ages AS (
+        SELECT priority_class, json_extract(work_json, '$.researchDepth') AS research_depth,
+          status, updated_at,
+          MAX(0, ROUND((julianday(?) - julianday(updated_at)) * 86400000)) AS age_ms
+        FROM signal_platform_research_work
+        WHERE source_type = ?
+          AND status IN ('research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending', 'retry_wait')
+      ), ranked AS (
+        SELECT *,
+          ROW_NUMBER() OVER (PARTITION BY priority_class, research_depth, status ORDER BY age_ms) AS rank,
+          COUNT(*) OVER (PARTITION BY priority_class, research_depth, status) AS group_count
+        FROM ages
+      )
+      SELECT priority_class, research_depth, status, MAX(group_count) AS count,
+        MIN(updated_at) AS oldest_queued_at,
+        MAX(CASE WHEN rank = CAST((group_count * 50 + 99) / 100 AS INTEGER) THEN age_ms END) AS p50_age_ms,
+        MAX(CASE WHEN rank = CAST((group_count * 95 + 99) / 100 AS INTEGER) THEN age_ms END) AS p95_age_ms
+      FROM ranked GROUP BY priority_class, research_depth, status
       ORDER BY priority_class, research_depth, status
-    `).all(this.sourceType) as Array<Record<string, unknown>>
+    `).all(input.now, this.sourceType) as Array<Record<string, unknown>>
+    const endToEnd = this.db.prepare(`
+      WITH latencies AS (
+        SELECT MAX(0, ROUND((julianday(w.updated_at) - julianday(s.observed_at)) * 86400000)) AS latency_ms
+        FROM signal_platform_research_work w
+        JOIN signal_platform_signals s ON s.signal_id = w.signal_id
+        WHERE w.source_type = ? AND w.status = 'complete'
+      ), ranked AS (
+        SELECT latency_ms, ROW_NUMBER() OVER (ORDER BY latency_ms) AS rank, COUNT(*) OVER () AS total
+        FROM latencies
+      )
+      SELECT COUNT(*) AS sample_count,
+        MAX(CASE WHEN rank = CAST((total * 50 + 99) / 100 AS INTEGER) THEN latency_ms END) AS p50_ms,
+        MAX(CASE WHEN rank = CAST((total * 95 + 99) / 100 AS INTEGER) THEN latency_ms END) AS p95_ms,
+        MAX(CASE WHEN rank = CAST((total * 99 + 99) / 100 AS INTEGER) THEN latency_ms END) AS p99_ms
+      FROM ranked
+    `).get(this.sourceType) as Record<string, unknown> | undefined
     const deadLetterSummary = this.db.prepare(`
       SELECT COUNT(*) AS count, MIN(updated_at) AS oldest_at
       FROM signal_platform_research_work WHERE source_type = ? AND status = 'dead_letter'
@@ -715,6 +756,18 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     return Promise.resolve({
       signalCount: Number(intake?.signal_count ?? 0),
       triageDecisionCount: Number(intake?.triage_decision_count ?? 0),
+      triageOutcomes: Object.fromEntries(
+        triageOutcomes.map((row) => [String(row.outcome), Number(row.count ?? 0)]),
+      ),
+      researchPacketCount: Number(artifacts?.packet_count ?? 0),
+      entityMemoryHandoffCount: Number(artifacts?.entity_memory_handoff_count ?? 0),
+      endToEndLatency: {
+        sampleCount: Number(endToEnd?.sample_count ?? 0),
+        p50Ms: nullableNumber(endToEnd?.p50_ms),
+        p95Ms: nullableNumber(endToEnd?.p95_ms),
+        p99Ms: nullableNumber(endToEnd?.p99_ms),
+      },
+      sqliteSize: sqliteSize(this.databasePath),
       totalAttempts: Number(attempt?.total_attempts ?? 0),
       attemptedItems: Number(attempt?.attempted_items ?? 0),
       maxAttemptCount: Number(attempt?.max_attempt_count ?? 0),
@@ -727,6 +780,8 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         status: row.status as WorkStatus,
         count: Number(row.count ?? 0),
         oldestQueuedAt: String(row.oldest_queued_at),
+        p50AgeMs: Number(row.p50_age_ms ?? 0),
+        p95AgeMs: Number(row.p95_age_ms ?? 0),
       })),
       deadLetters: {
         total: Number(deadLetterSummary?.count ?? 0),
@@ -982,4 +1037,25 @@ function boundedLimit(limit: number): number {
 
 function asNullableString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function sqliteSize(path: string): {
+  mainBytes: number
+  walBytes: number
+  shmBytes: number
+  totalBytes: number
+} {
+  const bytes = (candidate: string): number => {
+    try { return statSync(candidate).size } catch { return 0 }
+  }
+  const mainBytes = bytes(path)
+  const walBytes = bytes(`${path}-wal`)
+  const shmBytes = bytes(`${path}-shm`)
+  return { mainBytes, walBytes, shmBytes, totalBytes: mainBytes + walBytes + shmBytes }
 }

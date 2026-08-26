@@ -1,5 +1,6 @@
 import type {
   DeepEscalationReason,
+  DeepEscalationAdmission,
   PriorityClass,
   ResearchBudget,
   ResearchDepth,
@@ -136,6 +137,8 @@ export interface TriageDecisionV1 {
   budgetPolicyVersion: string
   budget: ResearchBudget | null
   deepEscalationReason: DeepEscalationReason | null
+  /** Additive v1 field; every newly created deep decision includes it. */
+  deepEscalation?: DeepEscalationAdmission | null
   priorityPolicyVersion: string
   classifierUsed: boolean
   decidedAt: string

@@ -63,6 +63,26 @@ export {
   deterministicDeepJobId,
 } from './worker'
 export {
+  DEEP_RESEARCH_RUNTIME_ENV,
+  SourceRoutedDeepResearchExecutionRegistry,
+  createProductionDeepResearchRuntime,
+  loadDeepResearchRuntimeConfiguration,
+} from './runtime-composition'
+export type {
+  CreateProductionDeepResearchRuntimeOptions,
+  DeepResearchRuntimeConfiguration,
+  ProductionDeepResearchRuntime,
+} from './runtime-composition'
+export {
+  parseDeepContainmentVerificationArgs,
+  runDeepContainmentVerification,
+} from './containment-verification'
+export type {
+  DeepContainmentVerificationArtifact,
+  DeepContainmentVerificationCommand,
+  DeepContainmentVerificationDependencies,
+} from './containment-verification'
+export {
   DEEP_RESEARCH_EXECUTION_TABLE,
   SqliteDeepResearchExecutionRegistry,
   auditDeepResearchOrphans,

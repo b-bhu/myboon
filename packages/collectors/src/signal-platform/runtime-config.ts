@@ -20,6 +20,7 @@ export const FEED_V3_ENV = Object.freeze({
   triageClassifierEnabled: 'FEED_V3_TRIAGE_CLASSIFIER_ENABLED',
   triageProviderHealth: 'FEED_V3_TRIAGE_PROVIDER_HEALTH',
   triageAllowedDepths: 'FEED_V3_TRIAGE_ALLOWED_DEPTHS',
+  cutoverReceiptPath: 'FEED_V3_CUTOVER_RECEIPT_PATH',
 } as const)
 
 export type FeedV3Source = Signal['sourceType']
@@ -46,6 +47,7 @@ export interface FeedV3RuntimeConfig {
   triageClassifierEnabled: boolean
   triageProviderHealth: ProviderWorkloadHealth
   triageAllowedDepths: ReadonlySet<ResearchDepth>
+  cutoverReceiptPath: string | null
 }
 
 const SOURCES = ['news', 'polymarket', 'market_calendar', 'x'] as const
@@ -77,6 +79,7 @@ export function loadFeedV3RuntimeConfig(
   )
   const triageProviderHealth = providerHealth(env[FEED_V3_ENV.triageProviderHealth])
   const triageAllowedDepths = researchDepths(env[FEED_V3_ENV.triageAllowedDepths])
+  const cutoverReceiptPath = env[FEED_V3_ENV.cutoverReceiptPath]?.trim() || null
 
   if (intakeMode === 'active' && intakeActiveSources.size === 0) requireStageSources('intake', 'active')
   if (researchMode === 'active' && researchActiveSources.size === 0) requireStageSources('research', 'active')
@@ -90,6 +93,9 @@ export function loadFeedV3RuntimeConfig(
   }
   if (researchMode === 'active') assertDisabled(researchActiveSources, legacyResearchDisabledSources, 'research')
   if (entityMode === 'active') assertDisabled(entityActiveSources, legacyEntityDisabledSources, 'entity')
+  if ((researchMode === 'active' || entityMode === 'active') && cutoverReceiptPath === null) {
+    throw new FeedV3RuntimeConfigError('Active shared ownership requires FEED_V3_CUTOVER_RECEIPT_PATH')
+  }
   if (deepResearchEnabled && researchMode !== 'active') {
     throw new FeedV3RuntimeConfigError('Deep research can be enabled only with active shared research ownership')
   }
@@ -106,7 +112,7 @@ export function loadFeedV3RuntimeConfig(
     legacyResearchDisabledSources: new Set(legacyResearchDisabledSources),
     legacyEntityDisabledSources: new Set(legacyEntityDisabledSources),
     shadowSampleBasisPoints, deepResearchEnabled, triageClassifierEnabled, triageProviderHealth,
-    triageAllowedDepths: new Set(triageAllowedDepths),
+    triageAllowedDepths: new Set(triageAllowedDepths), cutoverReceiptPath,
   })
 }
 

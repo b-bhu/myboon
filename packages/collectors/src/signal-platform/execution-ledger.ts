@@ -29,6 +29,10 @@ export interface ExecutionAggregateRow {
   fallbackProvider: string | null
   fallbackModel: string | null
   fallbackUsed: boolean
+  configuredPrimaryProvider: string | null
+  configuredPrimaryModel: string | null
+  fallbackReason: FailureCategory | null
+  outputSchemaValid: boolean | null
   promptVersion: string | null
   policyVersion: string | null
   researchContractVersion: string | null

@@ -52,6 +52,7 @@ export interface DeepResearchExecutionMetadata {
   jobId: string
   workId: string
   traceId: string
+  sourceType: Signal['sourceType']
   unitName: string
   startedAt: string
   deadlineAt: string

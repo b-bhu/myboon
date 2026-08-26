@@ -50,6 +50,13 @@ class InMemoryQueryPort implements EntityKnowledgeQueryPort {
 
   async queryMemories(query: EntityKnowledgeQuery): Promise<EntityKnowledgeRow[]> {
     this.limits.push(query.limit)
+    if (query.order === 'id-asc') {
+      const memoryIds = new Set(query.memoryIds ?? [])
+      return this.rows
+        .filter((candidate) => memoryIds.has(String(candidate.id)))
+        .sort((left, right) => String(left.id).localeCompare(String(right.id)))
+        .slice(0, query.limit)
+    }
     const timeField = query.order === 'observed-desc' ? 'observed_at' : 'updated_at'
     const direction = query.order === 'observed-desc' ? -1 : 1
     const filtered = this.rows.filter((candidate) => {
@@ -77,6 +84,22 @@ class InMemoryQueryPort implements EntityKnowledgeQueryPort {
         : (leftId < rightId ? -1 : leftId > rightId ? 1 : 0) * direction
     })
     return filtered.slice(0, query.limit)
+  }
+
+  async queryMemoryEvents(query: import('./entity-knowledge-query').EntityKnowledgeEventQuery) {
+    const rows = this.rows.filter((candidate) => (
+      candidate.entity_id === query.entityId && typeof candidate.event_at === 'string'
+    ))
+    const filtered = rows.filter((candidate) => !query.after || (
+      String(candidate.event_at) < query.after.at
+      || (String(candidate.event_at) === query.after.at && String(candidate.id) < query.after.id)
+    ))
+    filtered.sort((left, right) => (
+      String(right.event_at).localeCompare(String(left.event_at))
+      || String(right.id).localeCompare(String(left.id))
+    ))
+    this.limits.push(query.limit)
+    return { rows: filtered.slice(0, query.limit), totalCount: rows.length }
   }
 }
 
@@ -120,6 +143,62 @@ test('entity memories apply inclusive since and memory type filters', async () =
   })
 
   assert.deepEqual(page.items.map((item) => item.id), ['included'])
+})
+
+test('event-time pages are stable on ties and carry the exact Entity event count', async () => {
+  const reader = new PortBackedEntityKnowledgeReader(new InMemoryQueryPort([
+    row({ id: 'memory-a', event_at: T1 }),
+    row({ id: 'memory-b', event_at: T2 }),
+    row({ id: 'memory-c', event_at: T2 }),
+    row({ id: 'memory-without-event', event_at: null }),
+    row({ id: 'other-entity', entity_id: 'entity-2', event_at: T3 }),
+  ]))
+
+  const first = await reader.getEntityMemoryEvents({ entityId: 'entity-1', limit: 2 })
+  assert.deepEqual(first.items.map((item) => item.id), ['memory-c', 'memory-b'])
+  assert.equal(first.totalCount, 3)
+  assert.equal(first.hasMore, true)
+  assert.ok(first.nextCursor)
+  const second = await reader.getEntityMemoryEvents({
+    entityId: 'entity-1', limit: 2, cursor: first.nextCursor ?? undefined,
+  })
+  assert.deepEqual(second.items.map((item) => item.id), ['memory-a'])
+  assert.equal(second.totalCount, 3)
+  assert.equal(second.hasMore, false)
+})
+
+test('exact memory hydration is bounded, deduplicated, and follows first-requested ID order', async () => {
+  const port = new InMemoryQueryPort([
+    row({ id: 'memory-a' }),
+    row({ id: 'memory-b' }),
+    row({ id: 'memory-c' }),
+  ])
+  const reader = new PortBackedEntityKnowledgeReader(port)
+
+  const memories = await reader.getEntityMemoriesByIds({
+    memoryIds: ['memory-c', 'memory-missing', 'memory-a', 'memory-c'],
+    limit: 3,
+  })
+
+  assert.deepEqual(memories.map((memory) => memory.id), ['memory-c', 'memory-a'])
+  assert.deepEqual(port.limits, [3])
+})
+
+test('exact memory hydration rejects invalid IDs and silent limit truncation', async () => {
+  const reader = new PortBackedEntityKnowledgeReader(new InMemoryQueryPort([]))
+
+  await assert.rejects(
+    reader.getEntityMemoriesByIds({ memoryIds: ['memory-a', 'memory-b'], limit: 1 }),
+    /more unique IDs than limit/,
+  )
+  await assert.rejects(
+    reader.getEntityMemoriesByIds({ memoryIds: ['not valid'], limit: 1 }),
+    /Invalid entity memory ID/,
+  )
+  await assert.rejects(
+    reader.getEntityMemoriesByIds({ memoryIds: ['memory-a'], limit: ENTITY_KNOWLEDGE_MAX_PAGE_SIZE + 1 }),
+    /between 1 and 100/,
+  )
 })
 
 test('recent memories apply common priority classes independently of source', async () => {

@@ -94,10 +94,12 @@ export function createApp(config: ApiConfig): Hono {
   app.route('/stories', createStoryRoutes({
     supabaseUrl: config.supabaseUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
+    memoryReader: entityKnowledgeReader,
   }))
   app.route('/narratives', createNarrativeRoutes({
     supabaseUrl: config.supabaseUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
+    memoryReader: entityKnowledgeReader,
   }))
 
   app.route('/clob', clobRoutes)

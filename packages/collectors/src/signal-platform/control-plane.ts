@@ -5,6 +5,7 @@ import type {
   PriorityClass,
   ResearchDepth,
   Signal,
+  TriageOutcome,
   WorkStatus,
 } from './contracts'
 import type {
@@ -42,6 +43,22 @@ export interface WorkQueueAgeAggregate {
   count: number
   oldestQueuedAt: string
   oldestAgeMs: number
+  p50AgeMs: number
+  p95AgeMs: number
+}
+
+export interface LatencyPercentiles {
+  sampleCount: number
+  p50Ms: number | null
+  p95Ms: number | null
+  p99Ms: number | null
+}
+
+export interface SqliteSizeAggregate {
+  mainBytes: number
+  walBytes: number
+  shmBytes: number
+  totalBytes: number
 }
 
 export interface DeadLetterAggregate {
@@ -61,6 +78,11 @@ export interface WorkObservabilityReadPort {
   }): Promise<{
     signalCount: number
     triageDecisionCount: number
+    triageOutcomes?: Partial<Record<TriageOutcome, number>>
+    researchPacketCount?: number
+    entityMemoryHandoffCount?: number
+    endToEndLatency?: LatencyPercentiles
+    sqliteSize?: SqliteSizeAggregate
     totalAttempts: number
     attemptedItems: number
     maxAttemptCount: number
@@ -104,6 +126,7 @@ export interface SourceControlPlaneStatus {
     signals: number | null
     triageDecisions: number | null
     admittedWorkItems: number | null
+    triageOutcomes: Partial<Record<TriageOutcome, number>>
   }
   attempts: {
     availability: ControlPlaneAvailability
@@ -120,6 +143,12 @@ export interface SourceControlPlaneStatus {
   }
   queueAge: WorkQueueAgeAggregate[]
   deadLetters: DeadLetterAggregate
+  artifacts: {
+    researchPackets: number | null
+    entityMemoryHandoffs: number | null
+  }
+  endToEndLatency: LatencyPercentiles | null
+  sqliteSize: SqliteSizeAggregate | null
 }
 
 export interface ExecutionStageStatus {
@@ -177,6 +206,9 @@ export interface SignalPlatformControlPlaneStatus {
     arrivalsInWindow: number | null
     admissionsInWindow: number | null
     completionsInWindow: number | null
+    researchPackets: number | null
+    entityMemoryHandoffs: number | null
+    sqliteBytes: number | null
   }
   sources: Partial<Record<Signal['sourceType'], SourceControlPlaneStatus>>
   execution: ExecutionControlPlaneStatus
@@ -249,6 +281,10 @@ export class SignalPlatformControlPlane {
       availableSources.every((source) => source.activity[field] !== null)
         ? sum(availableSources.map((source) => source.activity[field] ?? 0))
         : null
+    const detailTotal = (read: (source: SourceControlPlaneStatus) => number | null): number | null =>
+      availableSources.every((source) => read(source) !== null)
+        ? sum(availableSources.map((source) => read(source) ?? 0))
+        : null
     const availability = overallAvailability(
       availableSources.length,
       this.stores.length,
@@ -275,6 +311,9 @@ export class SignalPlatformControlPlane {
         arrivalsInWindow: activityTotal('arrivals'),
         admissionsInWindow: activityTotal('admissions'),
         completionsInWindow: activityTotal('completions'),
+        researchPackets: detailTotal((source) => source.artifacts.researchPackets),
+        entityMemoryHandoffs: detailTotal((source) => source.artifacts.entityMemoryHandoffs),
+        sqliteBytes: detailTotal((source) => source.sqliteSize?.totalBytes ?? null),
       },
       sources,
       execution,
@@ -345,6 +384,7 @@ function sourceStatus(
       signals: detail?.signalCount ?? null,
       triageDecisions: detail?.triageDecisionCount ?? null,
       admittedWorkItems: status.total,
+      triageOutcomes: { ...(detail?.triageOutcomes ?? {}) },
     },
     attempts: {
       availability: hasConfiguredDetail ? availability : 'unavailable',
@@ -369,6 +409,12 @@ function sourceStatus(
       oldestAgeMs: ageMs(detail?.deadLetters?.oldestAt ?? null, nowMs),
       byFailureCategory: detail?.deadLetters?.byFailureCategory ?? [],
     },
+    artifacts: {
+      researchPackets: detail?.researchPacketCount ?? null,
+      entityMemoryHandoffs: detail?.entityMemoryHandoffCount ?? null,
+    },
+    endToEndLatency: detail?.endToEndLatency ?? null,
+    sqliteSize: detail?.sqliteSize ?? null,
   }
 }
 
@@ -387,6 +433,7 @@ function unavailableSource(sourceType: Signal['sourceType'], windowStart: string
     oldestLeaseExpiresInMs: null,
     intake: {
       availability: 'unavailable', signals: null, triageDecisions: null, admittedWorkItems: null,
+      triageOutcomes: {},
     },
     attempts: {
       availability: 'unavailable', totalAttempts: null, attemptedItems: null, maxAttemptCount: null,
@@ -395,6 +442,9 @@ function unavailableSource(sourceType: Signal['sourceType'], windowStart: string
     activity: { windowStart, arrivals: null, admissions: null, completions: null },
     queueAge: [],
     deadLetters: { total: 0, oldestAt: null, oldestAgeMs: null, byFailureCategory: [] },
+    artifacts: { researchPackets: null, entityMemoryHandoffs: null },
+    endToEndLatency: null,
+    sqliteSize: null,
   }
 }
 

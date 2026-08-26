@@ -25,8 +25,9 @@ export interface EntityKnowledgeRow {
 }
 
 export interface EntityKnowledgeQuery {
-  order: 'observed-desc' | 'updated-asc'
+  order: 'observed-desc' | 'updated-asc' | 'id-asc'
   entityId?: string
+  memoryIds?: string[]
   since?: string
   memoryTypes?: EntityKnowledgeMemoryType[]
   priorityClasses?: PriorityClass[]
@@ -37,4 +38,18 @@ export interface EntityKnowledgeQuery {
 
 export interface EntityKnowledgeQueryPort {
   queryMemories(query: EntityKnowledgeQuery): Promise<EntityKnowledgeRow[]>
+  queryMemoryEvents(query: EntityKnowledgeEventQuery): Promise<EntityKnowledgeEventQueryResult>
+}
+
+export interface EntityKnowledgeEventQuery {
+  entityId: string
+  after?: { at: string, id: string }
+  /** Includes the one-row lookahead used to calculate hasMore. */
+  limit: number
+}
+
+export interface EntityKnowledgeEventQueryResult {
+  rows: EntityKnowledgeRow[]
+  /** Exact total before applying the keyset cursor. */
+  totalCount: number
 }

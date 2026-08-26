@@ -60,6 +60,11 @@ export interface EntityMemoryPage {
   hasMore: boolean
 }
 
+export interface EntityMemoryEventPage extends EntityMemoryPage {
+  /** Exact total event-linked memories for the Entity, independent of cursor. */
+  totalCount: number
+}
+
 export interface EntityMemoryChangeV1 {
   changeType: 'upsert'
   changedAt: string
@@ -83,6 +88,17 @@ export interface GetEntityMemoriesInput {
   cursor?: string
 }
 
+export interface GetEntityMemoriesByIdsInput {
+  memoryIds: string[]
+  limit: number
+}
+
+export interface GetEntityMemoryEventsInput {
+  entityId: string
+  limit: number
+  cursor?: string
+}
+
 export interface GetRecentEntityMemoriesInput {
   priorityClasses?: PriorityClass[]
   since?: string
@@ -97,6 +113,8 @@ export interface GetEntityMemoryChangesInput {
 
 export interface EntityKnowledgeReader {
   getEntityMemories(input: GetEntityMemoriesInput): Promise<EntityMemoryPage>
+  getEntityMemoriesByIds(input: GetEntityMemoriesByIdsInput): Promise<EntityKnowledgeMemoryV1[]>
+  getEntityMemoryEvents(input: GetEntityMemoryEventsInput): Promise<EntityMemoryEventPage>
   getRecentEntityMemories(input: GetRecentEntityMemoriesInput): Promise<EntityMemoryPage>
   getEntityMemoryChanges(input: GetEntityMemoryChangesInput): Promise<EntityMemoryChangePage>
 }
@@ -108,7 +126,7 @@ export class InvalidEntityKnowledgeCursorError extends Error {
   }
 }
 
-type CursorKind = 'entity-memories' | 'recent-memories' | 'memory-changes'
+type CursorKind = 'entity-memories' | 'entity-memory-events' | 'recent-memories' | 'memory-changes'
 
 interface CursorPayloadV1 {
   v: 1
@@ -166,6 +184,65 @@ export class PortBackedEntityKnowledgeReader implements EntityKnowledgeReader {
       after,
       limit: limit + 1,
     }, limit, 'entity-memories', queryKey)
+  }
+
+  /**
+   * Bounded exact hydration for consumers that already hold durable memory IDs.
+   * Results follow first-requested ID order; duplicate and missing IDs never
+   * create duplicate or placeholder memories.
+   */
+  async getEntityMemoriesByIds(input: GetEntityMemoriesByIdsInput): Promise<EntityKnowledgeMemoryV1[]> {
+    const limit = validLimit(input.limit)
+    const memoryIds = normalizeMemoryIds(input.memoryIds)
+    if (memoryIds.length > limit) {
+      throw new RangeError('memoryIds must not contain more unique IDs than limit')
+    }
+    if (memoryIds.length === 0) return []
+
+    const rows = await this.port.queryMemories({
+      order: 'id-asc',
+      memoryIds,
+      limit: memoryIds.length,
+    })
+    const requested = new Set(memoryIds)
+    const byId = new Map<string, EntityKnowledgeMemoryV1>()
+    for (const row of rows) {
+      const memory = normalizeRow(row)
+      if (requested.has(memory.id) && !byId.has(memory.id)) byId.set(memory.id, memory)
+    }
+    return memoryIds.flatMap((id) => {
+      const memory = byId.get(id)
+      return memory ? [memory] : []
+    })
+  }
+
+  async getEntityMemoryEvents(input: GetEntityMemoryEventsInput): Promise<EntityMemoryEventPage> {
+    const entityId = requiredString(input.entityId, 'entityId')
+    const limit = validLimit(input.limit)
+    const queryKey = JSON.stringify({ entityId })
+    const after = input.cursor
+      ? cursorPosition(decodeCursor(input.cursor, 'entity-memory-events', queryKey))
+      : undefined
+    const result = await this.port.queryMemoryEvents({ entityId, after, limit: limit + 1 })
+    if (!Number.isSafeInteger(result.totalCount) || result.totalCount < 0) {
+      throw new TypeError('Entity memory event count is incomplete')
+    }
+    const rows = sortEventRows(result.rows)
+    const hasMore = rows.length > limit
+    const items = rows.slice(0, limit).map(normalizeRow)
+    for (const item of items) {
+      if (!item.eventAt) throw new TypeError('Entity memory event is missing eventAt')
+    }
+    const last = items.at(-1)
+    return {
+      schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION,
+      items,
+      totalCount: result.totalCount,
+      nextCursor: hasMore && last
+        ? encodeCursor({ v: 1, kind: 'entity-memory-events', query: queryKey, at: last.eventAt!, id: last.id })
+        : null,
+      hasMore,
+    }
   }
 
   async getRecentEntityMemories(input: GetRecentEntityMemoriesInput): Promise<EntityMemoryPage> {
@@ -277,6 +354,15 @@ function normalizePriorityClasses(values: PriorityClass[] | undefined): Priority
   return [...new Set(values)].sort()
 }
 
+function normalizeMemoryIds(values: string[]): string[] {
+  if (!Array.isArray(values)) throw new TypeError('memoryIds must be an array')
+  const normalized = values.map((value) => requiredString(value, 'memoryIds item'))
+  for (const value of normalized) {
+    if (!CURSOR_ID_PATTERN.test(value)) throw new TypeError(`Invalid entity memory ID: ${value}`)
+  }
+  return [...new Set(normalized)]
+}
+
 function cursorPosition(cursor: CursorPayloadV1): NonNullable<EntityKnowledgeQuery['after']> {
   return { at: cursor.at, id: cursor.id }
 }
@@ -302,6 +388,9 @@ function decodeCursor(cursor: string, kind: CursorKind, query: string): CursorPa
 }
 
 function sortRows(rows: EntityKnowledgeRow[], order: EntityKnowledgeQuery['order']): EntityKnowledgeRow[] {
+  if (order === 'id-asc') {
+    return [...rows].sort((left, right) => compareStrings(String(left.id), String(right.id)))
+  }
   const timeField = order === 'observed-desc' ? 'observed_at' : 'updated_at'
   const direction = order === 'observed-desc' ? -1 : 1
   return [...rows].sort((left, right) => {
@@ -313,6 +402,13 @@ function sortRows(rows: EntityKnowledgeRow[], order: EntityKnowledgeQuery['order
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
+}
+
+function sortEventRows(rows: EntityKnowledgeRow[]): EntityKnowledgeRow[] {
+  return [...rows].sort((left, right) => (
+    compareStrings(String(right.event_at), String(left.event_at))
+    || compareStrings(String(right.id), String(left.id))
+  ))
 }
 
 function normalizeRow(row: EntityKnowledgeRow): EntityKnowledgeMemoryV1 {

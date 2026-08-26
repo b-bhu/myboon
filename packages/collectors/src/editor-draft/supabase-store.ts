@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildEntityDraftBundles } from './input-builder'
 import type { EntityMemoryRecord, EntityRecord } from '../entity-manager/types'
+import { ENTITY_KNOWLEDGE_MAX_PAGE_SIZE } from '../entity-manager/entity-knowledge-reader'
+import type {
+  EntityKnowledgeMemoryV1,
+  EntityKnowledgeReader,
+} from '../entity-manager/entity-knowledge-reader'
 import type { PipelineDraftUpsertInput, PipelineStore } from '../pipeline-store/store'
 import type {
   EntityDraftBundle,
@@ -16,7 +21,6 @@ import type {
 } from './types'
 
 const ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, show_in_carousel, metadata, created_at, updated_at'
-const MEMORY_SELECT = 'id, entity_id, source, source_area, source_type, source_ref_id, source_research_id, memory_type, title, summary, body, event_at, observed_at, confidence, evidence, mentions, metrics, context, created_at, updated_at'
 const ENTITY_PUBLISHED_HISTORY_TABLE = 'entity_published_history'
 
 function asStringArray(value: unknown): string[] {
@@ -45,29 +49,28 @@ function normalizeEntity(row: unknown): EntityRecord {
   }
 }
 
-function normalizeMemory(row: unknown): EntityMemoryRecord {
-  const record = row as Record<string, unknown>
+function normalizeMemory(memory: EntityKnowledgeMemoryV1): EntityMemoryRecord {
   return {
-    id: String(record.id),
-    entity_id: typeof record.entity_id === 'string' ? record.entity_id : null,
-    source: String(record.source),
-    source_area: String(record.source_area),
-    source_type: String(record.source_type),
-    source_ref_id: String(record.source_ref_id),
-    source_research_id: String(record.source_research_id),
-    memory_type: record.memory_type as EntityMemoryRecord['memory_type'],
-    title: String(record.title),
-    summary: String(record.summary),
-    body: typeof record.body === 'string' ? record.body : null,
-    event_at: typeof record.event_at === 'string' ? record.event_at : null,
-    observed_at: String(record.observed_at),
-    confidence: typeof record.confidence === 'number' ? record.confidence : null,
-    evidence: Array.isArray(record.evidence) ? record.evidence : [],
-    mentions: asStringArray(record.mentions),
-    metrics: asRecord(record.metrics),
-    context: asRecord(record.context),
-    created_at: typeof record.created_at === 'string' ? record.created_at : undefined,
-    updated_at: typeof record.updated_at === 'string' ? record.updated_at : undefined,
+    id: memory.id,
+    entity_id: memory.entityId,
+    source: memory.provenance.provider,
+    source_area: memory.provenance.sourceArea,
+    source_type: memory.provenance.sourceType,
+    source_ref_id: memory.provenance.sourceRefId,
+    source_research_id: memory.provenance.researchPacketId,
+    memory_type: memory.memoryType,
+    title: memory.title,
+    summary: memory.summary,
+    body: memory.body,
+    event_at: memory.eventAt,
+    observed_at: memory.observedAt,
+    confidence: memory.confidence,
+    evidence: memory.evidence,
+    mentions: memory.mentions,
+    metrics: memory.metrics,
+    context: memory.context,
+    created_at: memory.createdAt ?? undefined,
+    updated_at: memory.updatedAt,
   }
 }
 
@@ -97,18 +100,28 @@ function isMissingPublishedHistoryTable(error: { code?: string, message?: string
 }
 
 async function fetchRecentMemories(
-  db: SupabaseClient,
+  reader: Pick<EntityKnowledgeReader, 'getRecentEntityMemories'>,
   limit: number
 ): Promise<EntityMemoryRecord[]> {
-  const { data, error } = await db
-    .from('entity_memories')
-    .select(MEMORY_SELECT)
-    .not('entity_id', 'is', null)
-    .neq('memory_type', 'source_marker')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  if (error) throw new Error(`editor draft memory fetch failed: ${error.message}`)
-  return (data ?? []).map(normalizeMemory)
+  try {
+    const memories: EntityKnowledgeMemoryV1[] = []
+    let cursor: string | undefined
+    while (memories.length < limit) {
+      const page = await reader.getRecentEntityMemories({
+        limit: Math.min(limit - memories.length, ENTITY_KNOWLEDGE_MAX_PAGE_SIZE),
+        ...(cursor ? { cursor } : {}),
+      })
+      memories.push(...page.items)
+      if (!page.hasMore || !page.nextCursor || page.items.length === 0) break
+      cursor = page.nextCursor
+    }
+    return memories
+      .slice(0, limit)
+      .map(normalizeMemory)
+      .sort(compareMemoryIntakeDesc)
+  } catch (error) {
+    throw knowledgeReadError('editor draft memory fetch failed', error)
+  }
 }
 
 async function fetchEntities(db: SupabaseClient, entityIds: string[]): Promise<EntityRecord[]> {
@@ -122,22 +135,44 @@ async function fetchEntities(db: SupabaseClient, entityIds: string[]): Promise<E
 }
 
 async function fetchMemoriesForEntities(
-  db: SupabaseClient,
+  reader: Pick<EntityKnowledgeReader, 'getEntityMemories'>,
   entityIds: string[],
   limit: number
 ): Promise<EntityMemoryRecord[]> {
   const rows = await Promise.all(entityIds.map(async (entityId) => {
-    const { data, error } = await db
-      .from('entity_memories')
-      .select(MEMORY_SELECT)
-      .eq('entity_id', entityId)
-      .neq('memory_type', 'source_marker')
-      .order('created_at', { ascending: false })
-      .limit(limit)
-    if (error) throw new Error(`editor draft lane fetch failed: ${error.message}`)
-    return (data ?? []).map(normalizeMemory)
+    try {
+      const memories: EntityKnowledgeMemoryV1[] = []
+      let cursor: string | undefined
+      while (memories.length < limit) {
+        const page = await reader.getEntityMemories({
+          entityId,
+          limit: Math.min(limit - memories.length, ENTITY_KNOWLEDGE_MAX_PAGE_SIZE),
+          ...(cursor ? { cursor } : {}),
+        })
+        memories.push(...page.items)
+        if (!page.hasMore || !page.nextCursor || page.items.length === 0) break
+        cursor = page.nextCursor
+      }
+      return memories
+        .slice(0, limit)
+        .map(normalizeMemory)
+        .sort(compareMemoryIntakeDesc)
+    } catch (error) {
+      throw knowledgeReadError('editor draft lane fetch failed', error)
+    }
   }))
   return rows.flat()
+}
+
+function compareMemoryIntakeDesc(left: EntityMemoryRecord, right: EntityMemoryRecord): number {
+  const leftAt = Date.parse(left.created_at || left.observed_at || left.event_at || '') || 0
+  const rightAt = Date.parse(right.created_at || right.observed_at || right.event_at || '') || 0
+  return rightAt - leftAt || right.id.localeCompare(left.id)
+}
+
+function knowledgeReadError(message: string, error: unknown): Error {
+  const detail = error instanceof Error ? error.message : 'unknown error'
+  return new Error(`${message}: ${detail}`, { cause: error })
 }
 
 async function fetchPublishedHistory(
@@ -177,8 +212,8 @@ function unique(values: string[]): string[] {
 // Local-store (PipelineStore) <-> editor-draft type mapping.
 //
 // editor_drafts moved off Supabase into PipelineStore's `pipeline_editor_drafts`
-// table. Everything else fetchBundles reads (entities, entity_memories,
-// entity_published_history) is durable product data and stays on Supabase.
+// table. Durable Entity memories are read through EntityKnowledgeReader;
+// entities and entity_published_history remain direct Supabase product reads.
 // ---------------------------------------------------------------------------
 
 function toPriorEditorDraft(row: {
@@ -307,11 +342,18 @@ function toDraftUpsertInput(draft: EditorDraftInput): PipelineDraftUpsertInput {
 }
 
 export class SupabaseEditorDraftStore implements EditorDraftStore {
-  constructor(private readonly db: SupabaseClient, private readonly store: PipelineStore) {}
+  constructor(
+    private readonly db: SupabaseClient,
+    private readonly store: PipelineStore,
+    private readonly knowledgeReader: Pick<
+      EntityKnowledgeReader,
+      'getRecentEntityMemories' | 'getEntityMemories'
+    >,
+  ) {}
 
   async fetchBundles(options: FetchEditorDraftBundlesOptions): Promise<EntityDraftBundle[]> {
     const recentFetchLimit = Math.max(options.batchSize * options.recentMemoryLimit * 10, options.batchSize)
-    const recentMemories = await fetchRecentMemories(this.db, recentFetchLimit)
+    const recentMemories = await fetchRecentMemories(this.knowledgeReader, recentFetchLimit)
     const recentReviewed = await this.store.findReviewedMemoryIds(recentMemories.map((memory) => memory.id))
     const eligibleEntityIds = unique(
       recentMemories
@@ -323,7 +365,7 @@ export class SupabaseEditorDraftStore implements EditorDraftStore {
 
     const [entities, laneMemories, priorDraftsByEntity, publishedHistory] = await Promise.all([
       fetchEntities(this.db, eligibleEntityIds),
-      fetchMemoriesForEntities(this.db, eligibleEntityIds, options.laneMemoryLimit),
+      fetchMemoriesForEntities(this.knowledgeReader, eligibleEntityIds, options.laneMemoryLimit),
       this.store.fetchPriorDraftsByEntity(eligibleEntityIds, options.priorDraftLimit),
       fetchPublishedHistory(this.db, eligibleEntityIds, options.publishedHistoryLimit),
     ])

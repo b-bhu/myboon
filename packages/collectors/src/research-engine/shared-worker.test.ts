@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { InferenceGatewayError } from '../inference-gateway'
+import { InferenceGatewayError, type InferenceTelemetry } from '../inference-gateway'
 import {
   RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
@@ -19,7 +19,11 @@ import type { ExecutionEventAppendResult } from '../signal-platform/execution-le
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { adaptRetrievedEvidenceArtifact } from '../signal-platform/retrieved-evidence-adapter'
 import { DeterministicRetriever } from './deterministic-retrieval'
-import type { EvidenceReusePolicyInput } from './evidence-reuse-policy'
+import {
+  EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION,
+  sourceMaterialHash,
+  type EvidenceReusePolicyInput,
+} from './evidence-reuse-policy'
 import { BoundedStandardSearch, SearchConnectorRegistry } from './search-connector'
 import {
   SharedResearchWorker,
@@ -119,6 +123,8 @@ function packet(item: ResearchWorkItem, source: Signal, artifact: RetrievedEvide
       provider: 'fixture', model: 'fixture', fallbackProvider: null, fallbackModel: null,
       fallbackUsed: false, promptVersion: 'prompt.v1', policyVersion: item.policyVersion,
       traceId: item.traceId, attempt: item.attemptCount,
+      configuredPrimaryProvider: 'configured-primary', configuredPrimaryModel: 'configured-model',
+      fallbackReason: null, outputSchemaValid: true,
     },
     researchContractVersion: RESEARCH_PACKET_SCHEMA_VERSION, createdAt: NOW,
   }
@@ -149,6 +155,18 @@ function synthesizer(onCall?: (work: ResearchWorkItem) => void): StructuredResea
       return packet(input.workItem, input.signal, adaptRetrievedEvidenceArtifact(input.evidence[0]!))
     },
   } as StructuredResearchSynthesizer
+}
+
+function failedTelemetry(): InferenceTelemetry {
+  return {
+    workload: 'research.synthesis', purpose: 'structured research synthesis', mode: 'generateStructured',
+    promptVersion: 'prompt.v1', policyVersion: 'policy.v1',
+    configuredPrimaryProvider: 'primary-provider', configuredPrimaryModel: 'primary-model',
+    actualProvider: 'fallback-provider', actualModel: 'fallback-model', fallbackInvoked: true,
+    fallbackReason: 'provider_timeout', schemaValid: null,
+    providerCalls: 2, repairCalls: 0, inputTokens: 120, outputTokens: 0, toolCalls: 0,
+    durationMs: 1_500, budgetExceeded: false, failureCategory: 'provider_timeout', calls: [],
+  }
 }
 
 function workerOptions(stores: SharedResearchWorkPort[], overrides: Record<string, unknown> = {}) {
@@ -219,6 +237,10 @@ test('retrieval and structured synthesis complete fenced happy stages and entity
     assert.equal(synthesisEvent.outputTokens, 10)
     assert.equal(synthesisEvent.wallTimeMs, 10)
     assert.equal(synthesisEvent.promptVersion, 'prompt.v1')
+    assert.equal(synthesisEvent.configuredPrimaryProvider, 'configured-primary')
+    assert.equal(synthesisEvent.configuredPrimaryModel, 'configured-model')
+    assert.equal(synthesisEvent.fallbackReason, null)
+    assert.equal(synthesisEvent.outputSchemaValid, true)
   } finally { fx.close() }
 })
 
@@ -269,6 +291,8 @@ test('pre-spawn circuit-open releases the lease without spending an attempt', as
     assert.equal(event.attempt, 0)
     assert.equal(event.providerCalls, 0)
     assert.equal(event.provider, null)
+    assert.equal(event.configuredPrimaryProvider, null)
+    assert.equal(event.outputSchemaValid, null)
   } finally { fx.close() }
 })
 
@@ -487,6 +511,9 @@ test('packet replay emits one idempotent skipped event and never charges packet 
     assert.equal(event.providerCalls, 0)
     assert.equal(event.inputTokens, 0)
     assert.equal(event.outputTokens, 0)
+    assert.equal(event.configuredPrimaryProvider, 'configured-primary')
+    assert.equal(event.configuredPrimaryModel, 'configured-model')
+    assert.equal(event.outputSchemaValid, true)
   } finally { fx.close() }
 })
 
@@ -503,6 +530,7 @@ test('failed execution records only typed redacted failure data', async () => {
       synthesize: async () => {
         throw new InferenceGatewayError(`prompt and evidence ${secret}`, {
           category: 'provider_timeout', retryable: true,
+          telemetry: failedTelemetry(),
         })
       },
     } as unknown as StructuredResearchSynthesizer
@@ -515,7 +543,44 @@ test('failed execution records only typed redacted failure data', async () => {
     assert.equal(event.failureCategory, 'provider_timeout')
     assert.equal(event.failureDetail, 'failure:provider_timeout')
     assert.doesNotMatch(JSON.stringify(event), /prompt and evidence|sk-this/)
+    assert.equal(event.providerCalls, 2)
+    assert.equal(event.inputTokens, 120)
+    assert.equal(event.wallTimeMs, 1_500)
+    assert.equal(event.provider, 'fallback-provider')
+    assert.equal(event.model, 'fallback-model')
+    assert.equal(event.configuredPrimaryProvider, 'primary-provider')
+    assert.equal(event.configuredPrimaryModel, 'primary-model')
+    assert.equal(event.fallbackUsed, true)
+    assert.equal(event.fallbackReason, 'provider_timeout')
+    assert.equal(event.outputSchemaValid, null)
+  } finally { fx.close() }
+})
+
+test('synthesis failure without gateway telemetry does not invent route or usage provenance', async () => {
+  const fx = fixture()
+  try {
+    const item = work({ status: 'synthesis_pending' })
+    fx.store.appendSignal(signal())
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(evidence(item))
+    const ledger = new CapturingExecutionLedger()
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['synthesis'], executionLedger: ledger,
+      synthesizer: {
+        synthesize: async () => { throw new InferenceGatewayError('timeout', { category: 'provider_timeout', retryable: true }) },
+      } as unknown as StructuredResearchSynthesizer,
+    }))
+    assert.equal((await worker.runOnce()).kind, 'retry_wait')
+    const event = [...ledger.events.values()][0]!
+    assert.equal(event.provider, null)
+    assert.equal(event.model, null)
+    assert.equal(event.configuredPrimaryProvider, null)
+    assert.equal(event.configuredPrimaryModel, null)
+    assert.equal(event.fallbackReason, null)
+    assert.equal(event.outputSchemaValid, null)
     assert.equal(event.providerCalls, 0)
+    assert.equal(event.inputTokens, 0)
+    assert.equal(event.outputTokens, 0)
   } finally { fx.close() }
 })
 
@@ -711,7 +776,12 @@ test('retrieval replay reuses immutable evidence after a lost completion fence',
       stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
     }))
     assert.equal((await first.runOnce()).kind, 'lease_lost')
-    assert.equal(fx.store.listEvidenceByWork('work-news', 10).length, 1)
+    const firstArtifacts = fx.store.listEvidenceByWork('work-news', 10)
+    assert.equal(firstArtifacts.length, 1)
+    assert.equal(
+      (firstArtifacts[0]?.evidenceReuseContext as { schemaVersion?: unknown } | undefined)?.schemaVersion,
+      EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION,
+    )
     await fx.store.recoverExpiredLeases({ now: '2026-08-26T12:12:00.000Z', limit: 10 })
 
     const secondClock = new FixedClock(new Date('2026-08-26T12:12:00.000Z'))
@@ -754,3 +824,106 @@ test('stale evidence is never replayed and immutable revalidation creates a new 
     assert.ok(stored.some((artifact) => artifact.retrievedAt === NOW))
   } finally { fx.close() }
 })
+
+test('fresh evidence with matching persisted reuse context advances without retrieval or an attempt', async () => {
+  const fx = fixture()
+  try {
+    const source = signal()
+    const item = work()
+    fx.store.appendSignal(source)
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(withPersistedReuse(evidence(item), source))
+    let retrievalCalls = 0
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
+    }))
+    assert.equal((await worker.runOnce()).kind, 'succeeded')
+    assert.equal(retrievalCalls, 0)
+    assert.equal(fx.store.getResearchWork(item.workId)?.attemptCount, 0)
+    assert.equal(fx.store.listEvidenceByWork(item.workId, 10).length, 1)
+  } finally { fx.close() }
+})
+
+for (const scenario of [
+  {
+    name: 'content hash changed',
+    state: (item: ResearchWorkItem, artifact: RetrievedEvidence, source: Signal) => ({
+      item: withReuseState(item, { contentHashByRequestedUrl: { [artifact.requestedUrl]: 'new-content-hash' } }),
+      artifact: withPersistedReuse(artifact, source),
+    }),
+  },
+  {
+    name: 'final URL changed',
+    state: (item: ResearchWorkItem, artifact: RetrievedEvidence, source: Signal) => ({
+      item: withReuseState(item, { finalUrlByRequestedUrl: { [artifact.requestedUrl]: 'https://news.example/redirected' } }),
+      artifact: withPersistedReuse(artifact, source),
+    }),
+  },
+  {
+    name: 'source material changed',
+    state: (item: ResearchWorkItem, artifact: RetrievedEvidence) => ({
+      item,
+      artifact: { ...artifact, evidenceReuseContext: persistedReuse(artifact, 'stale-source-material-hash') },
+    }),
+  },
+  {
+    name: 'retrieval became blocked',
+    state: (item: ResearchWorkItem, artifact: RetrievedEvidence, source: Signal) => ({
+      item: withReuseState(item, { blockedRequestedUrls: [artifact.requestedUrl] }),
+      artifact: withPersistedReuse(artifact, source),
+    }),
+  },
+  {
+    name: 'manual invalidation',
+    state: (item: ResearchWorkItem, artifact: RetrievedEvidence, source: Signal) => ({
+      item: withReuseState(item, { manuallyInvalidatedEvidenceIds: [artifact.evidenceId] }),
+      artifact: withPersistedReuse(artifact, source),
+    }),
+  },
+] as const) {
+  test(`live retrieval replay invalidates when ${scenario.name}`, async () => {
+    const fx = fixture()
+    try {
+      const source = signal()
+      const base = work()
+      const existing = evidence(base)
+      const configured = scenario.state(base, existing, source)
+      fx.store.appendSignal(source)
+      fx.store.admitResearchWork(configured.item)
+      fx.store.appendEvidence(configured.artifact)
+      let retrievalCalls = 0
+      const worker = new SharedResearchWorker(workerOptions([fx.store], {
+        stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
+      }))
+      assert.equal((await worker.runOnce()).kind, 'succeeded')
+      assert.equal(retrievalCalls, 1)
+      assert.equal(fx.store.listEvidenceByWork(base.workId, 10).length, 2)
+      assert.equal(fx.store.getResearchWork(base.workId)?.attemptCount, 1)
+    } finally { fx.close() }
+  })
+}
+
+function withReuseState(item: ResearchWorkItem, state: Record<string, unknown>): ResearchWorkItem {
+  return {
+    ...item,
+    retrievalPlan: {
+      ...item.retrievalPlan,
+      evidenceReuseState: { schemaVersion: EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION, ...state },
+    },
+  }
+}
+
+function withPersistedReuse(artifact: RetrievedEvidence, source: Signal): RetrievedEvidence {
+  return { ...artifact, evidenceReuseContext: persistedReuse(artifact, sourceMaterialHash(source)) }
+}
+
+function persistedReuse(artifact: RetrievedEvidence, materialHash: string) {
+  return {
+    schemaVersion: EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION,
+    sourceMaterialHash: materialHash,
+    requestedUrl: artifact.requestedUrl,
+    finalUrl: artifact.finalUrl,
+    contentHash: artifact.contentHash,
+    retrievalState: 'succeeded' as const,
+  }
+}

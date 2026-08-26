@@ -5,6 +5,7 @@ import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { SignalPlatformControlPlane } from './control-plane'
 import { formatControlPlaneStatusJson } from './control-plane-format'
 import type { ExecutionAggregateQuery, ExecutionAggregateStatus } from './execution-ledger'
+import { readFeedV3RuntimeStatusAvailability } from './runtime-status'
 import { SqliteExecutionLedger } from './sqlite-execution-ledger'
 import { SqliteSignalPlatformStore } from './sqlite-platform-store'
 
@@ -20,12 +21,34 @@ function databasePath(value: string | undefined, fallback: string): string {
 async function main(): Promise<void> {
   const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
   const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
+  const runtimeStatusPath = databasePath(
+    process.env.FEED_V3_RESEARCH_RUNTIME_STATUS_PATH,
+    '.data/feed-v3-research-runtime-status.json',
+  )
+  const runtimeStaleAfterMs = positiveInteger(
+    process.env.FEED_V3_RESEARCH_RUNTIME_STATUS_STALE_MS,
+    60_000,
+    'FEED_V3_RESEARCH_RUNTIME_STATUS_STALE_MS',
+  )
+  const entityRuntimeStatusPath = databasePath(
+    process.env.FEED_V3_ENTITY_RUNTIME_STATUS_PATH,
+    '.data/feed-v3-entity-runtime-status.json',
+  )
+  const entityRuntimeStaleAfterMs = positiveInteger(
+    process.env.FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS,
+    60_000,
+    'FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS',
+  )
   for (const [name, path] of [['news', newsPath], ['pipeline', pipelinePath]] as const) {
     if (!existsSync(path)) throw new Error(`${name} SQLite database does not exist at configured path`)
   }
 
-  const news = new SqliteSignalPlatformStore(newsPath, 'news', { readOnly: true })
-  const polymarket = new SqliteSignalPlatformStore(pipelinePath, 'polymarket', { readOnly: true })
+  const stores = [
+    new SqliteSignalPlatformStore(newsPath, 'news', { readOnly: true }),
+    new SqliteSignalPlatformStore(pipelinePath, 'polymarket', { readOnly: true }),
+    new SqliteSignalPlatformStore(pipelinePath, 'market_calendar', { readOnly: true }),
+    new SqliteSignalPlatformStore(pipelinePath, 'x', { readOnly: true }),
+  ]
   const newsEvents = new SqliteExecutionLedger(newsPath, { readOnly: true })
   const pipelineEvents = new SqliteExecutionLedger(pipelinePath, { readOnly: true })
   try {
@@ -40,17 +63,29 @@ async function main(): Promise<void> {
       },
     }
     const status = await new SignalPlatformControlPlane({
-      stores: [news, polymarket],
-      workReaders: [news, polymarket],
+      stores,
+      workReaders: stores,
       executionReader,
     }).readStatus({ now: new Date().toISOString() })
-    process.stdout.write(`${formatControlPlaneStatusJson(status)}\n`)
+    const { researchRuntime, entityRuntime } = await readFeedV3RuntimeStatusAvailability({
+      researchPath: runtimeStatusPath,
+      researchStaleAfterMs: runtimeStaleAfterMs,
+      entityPath: entityRuntimeStatusPath,
+      entityStaleAfterMs: entityRuntimeStaleAfterMs,
+    })
+    process.stdout.write(`${formatControlPlaneStatusJson({ ...status, researchRuntime, entityRuntime })}\n`)
   } finally {
     newsEvents.close()
     pipelineEvents.close()
-    news.close()
-    polymarket.close()
+    for (const store of stores) store.close()
   }
+}
+
+function positiveInteger(raw: string | undefined, fallback: number, name: string): number {
+  if (raw === undefined) return fallback
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`)
+  return value
 }
 
 main().catch((error) => {

@@ -27,8 +27,11 @@ export type {
   EntityKnowledgeReader,
   EntityMemoryChangePage,
   EntityMemoryChangeV1,
+  EntityMemoryEventPage,
   EntityMemoryPage,
   GetEntityMemoriesInput,
+  GetEntityMemoriesByIdsInput,
+  GetEntityMemoryEventsInput,
   GetEntityMemoryChangesInput,
   GetRecentEntityMemoriesInput,
   PriorityClass,
@@ -135,6 +138,20 @@ export type {
   SharedEntityRuntime,
   SharedEntityShutdownSignalPort,
 } from './run-shared'
+export {
+  ENTITY_RUNTIME_HEALTH_SCHEMA_VERSION,
+  AtomicEntityRuntimeHealthFile,
+  EntityRuntimeHealthTracker,
+  readEntityRuntimeHealthSnapshot,
+  validateEntityRuntimeHealthSnapshot,
+} from './entity-runtime-health'
+export type {
+  EntityRuntimeControlStatus,
+  EntityRuntimeHealthRead,
+  EntityRuntimeHealthSnapshot,
+  EntityRuntimeHealthWriter,
+  EntityRuntimeLifecycleState,
+} from './entity-runtime-health'
 
 export default {
   EntityService,

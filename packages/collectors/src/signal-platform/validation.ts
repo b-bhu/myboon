@@ -106,6 +106,19 @@ export function validateResearchWorkItem(value: unknown): ResearchWorkItem {
   if (depth === 'deep' && record.deepReason === null) {
     throw new ContractValidationError('work.deepReason', 'is required for deep research')
   }
+  if (record.deepEscalation !== undefined && record.deepEscalation !== null) {
+    validateDeepEscalation(
+      record.deepEscalation, 'work.deepEscalation', record.deepReason, record.policyVersion,
+    )
+  }
+  // Legacy adapters may omit the additive field. New triage-backed admissions
+  // are identifiable by their durable decision link and must never omit it.
+  if (depth === 'deep' && record.triageDecisionId !== undefined && record.deepEscalation == null) {
+    throw new ContractValidationError('work.deepEscalation', 'is required for triage-backed deep research')
+  }
+  if (depth !== 'deep' && record.deepEscalation != null) {
+    throw new ContractValidationError('work.deepEscalation', 'must be null unless researchDepth is deep')
+  }
   oneOf(record.priorityClass, [...PRIORITIES], 'work.priorityClass')
   boundedNumber(record.priorityScore, 'work.priorityScore', 0, 1)
   timestamp(record.freshnessDeadline, 'work.freshnessDeadline')
@@ -132,6 +145,36 @@ export function validateResearchWorkItem(value: unknown): ResearchWorkItem {
   timestamp(record.createdAt, 'work.createdAt')
   timestamp(record.updatedAt, 'work.updatedAt')
   return value as ResearchWorkItem
+}
+
+function validateDeepEscalation(
+  value: unknown,
+  path: string,
+  expectedReason: unknown,
+  expectedPolicyVersion: unknown,
+): void {
+  const escalation = object(value, path)
+  const reason = oneOf(escalation.reason, [...DEEP_REASONS], `${path}.reason`)
+  if (reason !== expectedReason) {
+    throw new ContractValidationError(`${path}.reason`, 'must match work.deepReason')
+  }
+  stringArray(escalation.supportingEvidenceRefs, `${path}.supportingEvidenceRefs`)
+  if ((escalation.supportingEvidenceRefs as string[]).length === 0) {
+    throw new ContractValidationError(`${path}.supportingEvidenceRefs`, 'must contain supporting evidence')
+  }
+  if (new Set(escalation.supportingEvidenceRefs as string[]).size
+    !== (escalation.supportingEvidenceRefs as string[]).length) {
+    throw new ContractValidationError(`${path}.supportingEvidenceRefs`, 'must not contain duplicates')
+  }
+  for (const [index, ref] of (escalation.supportingEvidenceRefs as string[]).entries()) {
+    nonEmpty(ref, `${path}.supportingEvidenceRefs[${index}]`)
+  }
+  nonEmpty(escalation.unresolvedQuestion, `${path}.unresolvedQuestion`)
+  nonEmpty(escalation.policyVersion, `${path}.policyVersion`)
+  if (escalation.policyVersion !== expectedPolicyVersion) {
+    throw new ContractValidationError(`${path}.policyVersion`, 'must match work.policyVersion')
+  }
+  nonEmpty(escalation.policyRule, `${path}.policyRule`)
 }
 
 export function validateRetrievedEvidence(value: unknown): RetrievedEvidence {
@@ -214,6 +257,21 @@ export function validateResearchPacket(value: unknown): ResearchPacketV1 {
   nullableString(execution.fallbackModel, 'packet.execution.fallbackModel')
   boolean(execution.fallbackUsed, 'packet.execution.fallbackUsed')
   integer(execution.attempt, 'packet.execution.attempt', 0)
+  const packetHasConfiguredProvider = execution.configuredPrimaryProvider !== undefined
+  const packetHasConfiguredModel = execution.configuredPrimaryModel !== undefined
+  if (packetHasConfiguredProvider !== packetHasConfiguredModel) {
+    throw new ContractValidationError('packet.execution.configuredPrimaryProvider', 'provider and model must be present together')
+  }
+  if (packetHasConfiguredProvider) {
+    nonEmpty(execution.configuredPrimaryProvider, 'packet.execution.configuredPrimaryProvider')
+    nonEmpty(execution.configuredPrimaryModel, 'packet.execution.configuredPrimaryModel')
+  }
+  if (execution.fallbackReason !== undefined) {
+    nullableFailure(execution.fallbackReason, 'packet.execution.fallbackReason')
+  }
+  if (execution.outputSchemaValid !== undefined && execution.outputSchemaValid !== null) {
+    boolean(execution.outputSchemaValid, 'packet.execution.outputSchemaValid')
+  }
   return value as ResearchPacketV1
 }
 
@@ -237,10 +295,41 @@ export function validateExecutionTraceEvent(value: unknown): ExecutionTraceEvent
     nullableString(record[key], `event.${key}`)
   }
   boolean(record.fallbackUsed, 'event.fallbackUsed')
+  const eventHasConfiguredProvider = record.configuredPrimaryProvider !== undefined
+  const eventHasConfiguredModel = record.configuredPrimaryModel !== undefined
+  if (eventHasConfiguredProvider !== eventHasConfiguredModel) {
+    throw new ContractValidationError('event.configuredPrimaryProvider', 'provider and model must be present together')
+  }
+  if (eventHasConfiguredProvider) {
+    nullableString(record.configuredPrimaryProvider, 'event.configuredPrimaryProvider')
+    nullableString(record.configuredPrimaryModel, 'event.configuredPrimaryModel')
+    if ((record.configuredPrimaryProvider === null) !== (record.configuredPrimaryModel === null)) {
+      throw new ContractValidationError('event.configuredPrimaryProvider', 'provider and model must both be null or both be strings')
+    }
+  }
+  if (record.fallbackReason !== undefined) nullableFailure(record.fallbackReason, 'event.fallbackReason')
+  if (record.outputSchemaValid !== undefined && record.outputSchemaValid !== null) {
+    boolean(record.outputSchemaValid, 'event.outputSchemaValid')
+  }
   boolean(record.budgetExceeded, 'event.budgetExceeded')
   timestamp(record.createdAt, 'event.createdAt')
   if (record.status !== 'started' && record.finishedAt === null) {
     throw new ContractValidationError('event.finishedAt', 'is required for a finished event')
+  }
+  // v1 is explicitly extensible. Normalize events written by pre-AC20
+  // producers/read from existing ledgers so downstream Entity and operator
+  // consumers observe explicit unknowns rather than guessed provenance.
+  if (record.configuredPrimaryProvider === undefined
+    || record.configuredPrimaryModel === undefined
+    || record.fallbackReason === undefined
+    || record.outputSchemaValid === undefined) {
+    return {
+      ...record,
+      configuredPrimaryProvider: record.configuredPrimaryProvider ?? null,
+      configuredPrimaryModel: record.configuredPrimaryModel ?? null,
+      fallbackReason: record.fallbackReason ?? null,
+      outputSchemaValid: record.outputSchemaValid ?? null,
+    } as unknown as ExecutionTraceEvent
   }
   return value as ExecutionTraceEvent
 }

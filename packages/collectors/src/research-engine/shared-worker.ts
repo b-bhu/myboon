@@ -1,4 +1,4 @@
-import { InferenceGatewayError } from '../inference-gateway'
+import { InferenceGatewayError, type InferenceTelemetry } from '../inference-gateway'
 import type {
   ExecutionEventStatus,
   ExecutionTraceEvent,
@@ -33,6 +33,7 @@ import type { BoundedStandardSearch, StandardSearchPlan } from './search-connect
 import {
   WorkContractEvidenceReusePolicy,
   type EvidenceReusePolicyPort,
+  withEvidenceReuseContext,
 } from './evidence-reuse-policy'
 
 export type SharedResearchWorkerMode = 'off' | 'shadow' | 'active'
@@ -346,7 +347,9 @@ export class SharedResearchWorker {
         const failure = selectRetrievalFailure(batch)
         return await this.failAfterExecution(store, lease, stage, failure.category, failure.message, failure.retryable, timing)
       }
-      const evidence = batch.artifacts.map(adaptRetrievedEvidenceArtifact)
+      const evidence = batch.artifacts.map((artifact) => withEvidenceReuseContext(
+        adaptRetrievedEvidenceArtifact(artifact), { signal: signal!, workItem: lease.work },
+      ))
       for (const artifact of evidence) store.appendEvidence(artifact)
       this.recordExecution(lease, stage, timing, {
         status: 'succeeded', attempt: lease.work.attemptCount + 1,
@@ -446,6 +449,9 @@ export class SharedResearchWorker {
     } catch (error) {
       return this.failAfterExecution(
         store, lease, stage, failureCategory(error, stage), errorMessage(error), retryable(error), timing,
+        error instanceof InferenceGatewayError && error.telemetry
+          ? telemetryExecutionProvenance(error.telemetry)
+          : undefined,
       )
     } finally {
       heartbeat.stop()
@@ -557,8 +563,9 @@ export class SharedResearchWorker {
     detail: string,
     mayRetry: boolean,
     timing: StageTiming,
+    provenance?: ExecutionProvenance,
   ): Promise<SharedResearchRunOutcome> {
-    return this.transitionFailure(store, lease, stage, category, detail, mayRetry, true, timing)
+    return this.transitionFailure(store, lease, stage, category, detail, mayRetry, true, timing, provenance)
   }
 
   private async transitionFailure(
@@ -570,6 +577,7 @@ export class SharedResearchWorker {
     mayRetry: boolean,
     attemptBegan: boolean,
     timing: StageTiming,
+    provenance?: ExecutionProvenance,
   ): Promise<SharedResearchRunOutcome> {
     const now = this.clock.now()
     const attempts = lease.work.attemptCount + (attemptBegan ? 1 : 0)
@@ -587,6 +595,7 @@ export class SharedResearchWorker {
     this.recordExecution(lease, stage, timing, {
       status: kind, failureCategory: category,
       attempt: lease.work.attemptCount + (attemptBegan ? 1 : 0),
+      provenance,
     })
     return terminal(kind, stage, lease.work, category)
   }
@@ -600,15 +609,19 @@ export class SharedResearchWorker {
       attempt: number
       failureCategory?: FailureCategory | null
       discriminator?: string
+      provenance?: ExecutionProvenance
     },
   ): void {
     const finishedAt = this.nowIso()
-    this.appendExecutionEvent(baseExecutionEvent({
-      lease, stage, timing, finishedAt,
-      status: input.status, attempt: input.attempt,
-      failureCategory: input.failureCategory ?? null,
-      discriminator: input.discriminator ?? `attempt:${input.attempt}`,
-    }))
+    this.appendExecutionEvent({
+      ...baseExecutionEvent({
+        lease, stage, timing, finishedAt,
+        status: input.status, attempt: input.attempt,
+        failureCategory: input.failureCategory ?? null,
+        discriminator: input.discriminator ?? `attempt:${input.attempt}`,
+      }),
+      ...input.provenance,
+    })
   }
 
   private recordSynthesisSuccess(lease: WorkLease, packet: ResearchPacketV1, timing: StageTiming): void {
@@ -627,6 +640,10 @@ export class SharedResearchWorker {
       fallbackProvider: packet.execution.fallbackProvider,
       fallbackModel: packet.execution.fallbackModel,
       fallbackUsed: packet.execution.fallbackUsed,
+      configuredPrimaryProvider: packet.execution.configuredPrimaryProvider ?? null,
+      configuredPrimaryModel: packet.execution.configuredPrimaryModel ?? null,
+      fallbackReason: packet.execution.fallbackReason ?? null,
+      outputSchemaValid: packet.execution.outputSchemaValid ?? null,
       promptVersion: packet.execution.promptVersion,
       policyVersion: packet.execution.policyVersion,
       researchContractVersion: packet.researchContractVersion,
@@ -641,11 +658,19 @@ export class SharedResearchWorker {
 
   private recordPacketReplay(lease: WorkLease, packet: ResearchPacketV1): void {
     const timing = { startedAt: packet.createdAt, queueWaitMs: 0 }
-    this.appendExecutionEvent(baseExecutionEvent({
-      lease, stage: 'synthesis', timing, finishedAt: packet.createdAt,
-      status: 'skipped', attempt: packet.execution.attempt, failureCategory: null,
-      discriminator: `packet_replay:${packet.packetId}`, packetId: packet.packetId,
-    }))
+    this.appendExecutionEvent({
+      ...baseExecutionEvent({
+        lease, stage: 'synthesis', timing, finishedAt: packet.createdAt,
+        status: 'skipped', attempt: packet.execution.attempt, failureCategory: null,
+        discriminator: `packet_replay:${packet.packetId}`, packetId: packet.packetId,
+      }),
+      configuredPrimaryProvider: packet.execution.configuredPrimaryProvider ?? null,
+      configuredPrimaryModel: packet.execution.configuredPrimaryModel ?? null,
+      fallbackReason: packet.execution.fallbackReason ?? null,
+      outputSchemaValid: packet.execution.outputSchemaValid ?? null,
+      promptVersion: packet.execution.promptVersion,
+      policyVersion: packet.execution.policyVersion,
+    })
   }
 
   private recordArtifactReplay(
@@ -726,6 +751,50 @@ function mergeStandardSearchPlan(
   return { ...retrieval, urls }
 }
 
+type ExecutionProvenance = Pick<ExecutionTraceEvent,
+  | 'provider'
+  | 'model'
+  | 'fallbackProvider'
+  | 'fallbackModel'
+  | 'fallbackUsed'
+  | 'configuredPrimaryProvider'
+  | 'configuredPrimaryModel'
+  | 'fallbackReason'
+  | 'outputSchemaValid'
+  | 'promptVersion'
+  | 'policyVersion'
+  | 'providerCalls'
+  | 'repairCalls'
+  | 'inputTokens'
+  | 'outputTokens'
+  | 'toolCalls'
+  | 'wallTimeMs'
+  | 'budgetExceeded'
+>
+
+function telemetryExecutionProvenance(telemetry: InferenceTelemetry): ExecutionProvenance {
+  return {
+    provider: telemetry.actualProvider,
+    model: telemetry.actualModel,
+    fallbackProvider: telemetry.fallbackInvoked ? telemetry.actualProvider : null,
+    fallbackModel: telemetry.fallbackInvoked ? telemetry.actualModel : null,
+    fallbackUsed: telemetry.fallbackInvoked,
+    configuredPrimaryProvider: telemetry.configuredPrimaryProvider,
+    configuredPrimaryModel: telemetry.configuredPrimaryModel,
+    fallbackReason: telemetry.fallbackReason,
+    outputSchemaValid: telemetry.schemaValid,
+    promptVersion: telemetry.promptVersion,
+    policyVersion: telemetry.policyVersion,
+    providerCalls: telemetry.providerCalls,
+    repairCalls: telemetry.repairCalls,
+    inputTokens: telemetry.inputTokens,
+    outputTokens: telemetry.outputTokens,
+    toolCalls: telemetry.toolCalls,
+    wallTimeMs: telemetry.durationMs,
+    budgetExceeded: telemetry.budgetExceeded,
+  }
+}
+
 interface StageTiming {
   startedAt: string
   queueWaitMs: number
@@ -774,6 +843,10 @@ function baseExecutionEvent(input: {
     fallbackProvider: null,
     fallbackModel: null,
     fallbackUsed: false,
+    configuredPrimaryProvider: null,
+    configuredPrimaryModel: null,
+    fallbackReason: null,
+    outputSchemaValid: null,
     promptVersion: null,
     policyVersion: work.policyVersion,
     researchContractVersion: work.researchContractVersion,

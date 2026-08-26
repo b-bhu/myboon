@@ -5,6 +5,7 @@ import type {
 } from './triage-contracts'
 import type { RulesFirstTriageEngine } from './triage-engine'
 import { validateTriageDecision } from './triage-validation'
+import { validateSignal } from './validation'
 
 export interface TriageEvaluationLabel {
   productRelevant: boolean
@@ -112,15 +113,23 @@ export async function runTriageShadowEvaluation(
 
 /** Reports replay/shadow measurements; it intentionally declares no target mix or pass threshold. */
 export function evaluateTriageRecords(records: TriageEvaluationRecord[]): TriageEvaluationReport {
+  const recordIds = new Set<string>()
   const normalized = records.map((record) => ({
     ...record,
+    recordId: validateRecordId(record.recordId, recordIds),
+    signal: validateSignal(record.signal),
     decision: validateTriageDecision(record.decision),
+    label: validateLabel(record.label),
+    observedCost: validateObservedCost(record.observedCost),
     weight: validateWeight(record.arrivalWeight),
   }))
   for (const record of normalized) {
     if (record.signal.signalId !== record.decision.signalId
       || record.signal.sourceType !== record.decision.sourceType) {
       throw new Error(`Evaluation record ${record.recordId} has mismatched signal and decision identity`)
+    }
+    if (record.observedCost && !isDepth(record.decision.outcome)) {
+      throw new Error(`Evaluation record ${record.recordId} meters a non-admitted decision`)
     }
   }
   const totalWeight = sum(normalized.map((record) => record.weight))
@@ -231,6 +240,35 @@ function validateWeight(value: number | undefined): number {
   const weight = value ?? 1
   if (!Number.isFinite(weight) || weight <= 0) throw new Error('arrivalWeight must be positive')
   return weight
+}
+
+function validateRecordId(value: string, seen: Set<string>): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('recordId must be non-empty')
+  const result = value.trim()
+  if (seen.has(result)) throw new Error(`Duplicate evaluation recordId: ${result}`)
+  seen.add(result)
+  return result
+}
+
+function validateLabel(value: TriageEvaluationLabel): TriageEvaluationLabel {
+  if (value === null || typeof value !== 'object'
+    || typeof value.productRelevant !== 'boolean' || typeof value.usefulEntityMemory !== 'boolean') {
+    throw new Error('Evaluation label must contain boolean productRelevant and usefulEntityMemory')
+  }
+  return { productRelevant: value.productRelevant, usefulEntityMemory: value.usefulEntityMemory }
+}
+
+function validateObservedCost(
+  value: TriageEvaluationCostObservation | null | undefined,
+): TriageEvaluationCostObservation | null | undefined {
+  if (value === null || value === undefined) return value
+  const fields = ['latencyMs', 'providerCalls', 'inputTokens', 'outputTokens', 'toolCalls'] as const
+  for (const field of fields) {
+    if (!Number.isSafeInteger(value[field]) || value[field] < 0) {
+      throw new Error(`observedCost.${field} must be a non-negative integer`)
+    }
+  }
+  return { ...value }
 }
 
 function sum(values: number[]): number {

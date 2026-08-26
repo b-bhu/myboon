@@ -76,6 +76,12 @@ export interface SharedEntityWorkerOptions {
   now?: () => Date
   leaseId?: () => string
   heartbeatScheduler?: HeartbeatScheduler
+  /**
+   * Synchronous durable claim gate. It is rechecked around every peek/claim
+   * boundary so an operator drain cannot race a previously returned candidate.
+   * Throwing is treated as disabled (fail closed).
+   */
+  claimsEnabled?: () => boolean
   /** Optional durable append-only ledger; no hidden global is consulted. */
   executionLedger?: Pick<ExecutionLedger, 'append'>
 }
@@ -219,7 +225,7 @@ export class SharedEntityWorker {
     const limit = bounded(this.options.activeLimitPerSource ?? 10, 1, 100)
 
     for (const [sourceType, owner] of Object.entries(this.options.config.ownership) as Array<[EntityWorkerSourceType, string]>) {
-      if (this.stopping) break
+      if (this.stopping || !this.claimsEnabled()) break
       if (owner !== 'shared') continue
       const port = this.ports.get(sourceType)
       if (!port) {
@@ -264,6 +270,7 @@ export class SharedEntityWorker {
   ): Promise<'not_claimed' | 'completed' | 'retryWait' | 'deadLettered' | 'released' | 'staleLeases'> {
     const now = this.now()
     const leaseId = this.options.leaseId?.() ?? randomUUID()
+    if (!this.claimsEnabled()) return 'not_claimed'
     const lease = await port.claimWithLease({
       workId: work.workId,
       expectedStatus: 'entity_pending',
@@ -279,6 +286,14 @@ export class SharedEntityWorker {
       return await running
     } finally {
       this.active.delete(running)
+    }
+  }
+
+  private claimsEnabled(): boolean {
+    try {
+      return this.options.claimsEnabled?.() ?? true
+    } catch {
+      return false
     }
   }
 

@@ -35,6 +35,20 @@ export {
   loadSharedResearchRunnerConfig,
   runSharedResearchLoop,
 } from './run-shared-research'
+export {
+  AtomicResearchRuntimeStatusFile,
+  RESEARCH_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+  ResearchRuntimeDrainTimeoutError,
+  awaitDrainWithin,
+  readResearchRuntimeStatusSnapshot,
+} from './research-runtime-lifecycle'
+export type {
+  ResearchRuntimeLifecycleState,
+  ResearchRuntimeRecoverySnapshot,
+  ResearchRuntimeStatusRead,
+  ResearchRuntimeStatusSnapshot,
+  ResearchRuntimeStatusWriter,
+} from './research-runtime-lifecycle'
 export type {
   CreateLiveSharedResearchRuntimeOptions,
   RunSharedResearchOptions,
@@ -61,13 +75,18 @@ export type {
 } from './shadow-evaluator'
 export { BoundedStandardSearch, SearchConnectorRegistry } from './search-connector'
 export {
+  EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION,
   WORK_CONTRACT_EVIDENCE_REUSE_POLICY_VERSION,
   WorkContractEvidenceReusePolicy,
+  sourceMaterialHash,
+  withEvidenceReuseContext,
 } from './evidence-reuse-policy'
 export type {
+  CurrentEvidenceReuseState,
   EvidenceReuseDecision,
   EvidenceReusePolicyInput,
   EvidenceReusePolicyPort,
+  PersistedEvidenceReuseContext,
   WorkContractEvidenceReusePolicyOptions,
 } from './evidence-reuse-policy'
 export type {

@@ -1,8 +1,22 @@
 import { Hono } from 'hono'
+import type {
+  EntityKnowledgeMemoryV1,
+  GetEntityMemoriesByIdsInput,
+} from '@myboon/collectors/entity-manager'
+import entityManager from '@myboon/collectors/entity-manager'
+
+const { ENTITY_KNOWLEDGE_MAX_PAGE_SIZE } = entityManager
+
+export interface NarrativeMemoryReader {
+  getEntityMemoriesByIds(
+    input: GetEntityMemoriesByIdsInput,
+  ): Promise<Array<Pick<EntityKnowledgeMemoryV1, 'id' | 'media'>>>
+}
 
 export interface NarrativeRoutesConfig {
   supabaseUrl: string
   serviceRoleKey: string
+  memoryReader: NarrativeMemoryReader
   fetch?: typeof globalThis.fetch
 }
 
@@ -133,33 +147,26 @@ export function createNarrativeRoutes(config: NarrativeRoutesConfig): Hono {
   async function readMemoryImages(rows: NarrativeRow[]): Promise<Map<string, NarrativeImage>> {
     const memoryIds = [...new Set(rows.flatMap((row) => row.source_memory_ids))]
       .filter((id) => UUID_RE.test(id))
+    const allowedMemoryIds = new Set(memoryIds)
     const images = new Map<string, NarrativeImage>()
     if (memoryIds.length === 0) return images
 
-    const params = new URLSearchParams({
-      select: 'id,context',
-      id: `in.(${memoryIds.join(',')})`,
-    })
-    try {
-      const url = new URL(`${restBaseUrl}/entity_memories`)
-      params.forEach((value, key) => url.searchParams.append(key, value))
-      const response = await fetchImpl(url, {
-        headers: supabaseHeaders(),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      })
-      if (!response.ok) return images
-      const body: unknown = await response.json()
-      if (!Array.isArray(body)) return images
-      for (const value of body) {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) continue
-        const record = value as Record<string, unknown>
-        if (typeof record.id !== 'string' || !memoryIds.includes(record.id)) continue
-        const image = narrativeImage(record.context)
-        if (image) images.set(record.id, image)
+    for (let offset = 0; offset < memoryIds.length; offset += ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) {
+      const chunk = memoryIds.slice(offset, offset + ENTITY_KNOWLEDGE_MAX_PAGE_SIZE)
+      try {
+        const memories = await config.memoryReader.getEntityMemoriesByIds({
+          memoryIds: chunk,
+          limit: chunk.length,
+        })
+        for (const memory of memories) {
+          if (!allowedMemoryIds.has(memory.id)) continue
+          const image = narrativeImage(memory.media)
+          if (image) images.set(memory.id, image)
+        }
+      } catch {
+        // Media enrichment is optional; a transient knowledge read must not
+        // take down the public feed after the narrative query succeeded.
       }
-    } catch {
-      // Media enrichment is optional; a transient context read must not take
-      // down the public feed after the narrative query already succeeded.
     }
     return images
   }
@@ -227,11 +234,11 @@ function preferredNarrativeImage(
 function narrativeImage(value: unknown): NarrativeImage | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const context = value as Record<string, unknown>
-  const imageUrl = safeHttpUrl(context.image_url)
+  const imageUrl = safeHttpUrl(context.imageUrl)
   if (!imageUrl) return null
-  const imageKind = context.image_kind === 'source_avatar' ? 'source_avatar' : 'content'
-  const imageAttribution = typeof context.image_attribution === 'string' && context.image_attribution.trim()
-    ? context.image_attribution.trim()
+  const imageKind = context.imageKind === 'source_avatar' ? 'source_avatar' : 'content'
+  const imageAttribution = typeof context.attribution === 'string' && context.attribution.trim()
+    ? context.attribution.trim()
     : null
   return { imageUrl, imageKind, imageAttribution }
 }

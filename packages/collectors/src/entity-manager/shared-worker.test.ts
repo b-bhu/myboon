@@ -105,12 +105,14 @@ class FakePort implements EntityPacketWorkPort {
   transitionAccepted = true
   peekError: unknown = null
   packetOverride: unknown | undefined
+  afterPeek?: () => void
 
   constructor(readonly sourceType: EntityWorkerSourceType, readonly items: ResearchWorkItem[]) {}
 
   async peekSchedulable(_query: SchedulerQuery): Promise<ResearchWorkItem[]> {
     this.calls.peek += 1
     if (this.peekError) throw this.peekError
+    this.afterPeek?.()
     return this.items
   }
   async claimWithLease(command: LeaseCommand): Promise<WorkLease | null> {
@@ -157,6 +159,7 @@ function fixture(input: {
   maxShadow?: number
   executionLedger?: { append(event: ExecutionTraceEvent): ExecutionEventAppendResult }
   now?: () => Date
+  claimsEnabled?: () => boolean
 }) {
   const observations: ShadowEntityObservation[] = []
   let processed = 0
@@ -176,6 +179,7 @@ function fixture(input: {
     heartbeatScheduler: input.scheduler ?? { schedule: () => () => {} },
     shadowMaxObservationsPerCycle: input.maxShadow,
     executionLedger: input.executionLedger,
+    claimsEnabled: input.claimsEnabled,
   })
   return { worker, observations, processed: () => processed }
 }
@@ -239,6 +243,37 @@ test('active cycle claims only sources owned by shared worker', async () => {
   assert.equal(news.calls.claim, 1)
   assert.equal(polymarket.calls.peek, 0)
   assert.equal(polymarket.calls.claim, 0)
+})
+
+test('active claim gate is rechecked after peek so a mid-cycle drain prevents the CAS claim', async () => {
+  let enabled = true
+  const port = new FakePort('news', [work('news')])
+  port.afterPeek = () => { enabled = false }
+  const f = fixture({
+    ports: [port],
+    ownership: { news: 'shared' },
+    claimsEnabled: () => enabled,
+  })
+
+  const result = await f.worker.runActiveCycle()
+  assert.equal(port.calls.peek, 1)
+  assert.equal(port.calls.claim, 0)
+  assert.equal(result.claimed, 0)
+  assert.equal(f.processed(), 0)
+})
+
+test('a throwing active claim gate fails closed before peeking', async () => {
+  const port = new FakePort('news', [work('news')])
+  const f = fixture({
+    ports: [port],
+    ownership: { news: 'shared' },
+    claimsEnabled() { throw new Error('malformed durable runtime control') },
+  })
+
+  const result = await f.worker.runActiveCycle()
+  assert.equal(port.calls.peek, 0)
+  assert.equal(port.calls.claim, 0)
+  assert.equal(result.claimed, 0)
 })
 
 test('successful processing appends immutable entity and memory execution events', async () => {

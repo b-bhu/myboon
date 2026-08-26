@@ -157,6 +157,19 @@ export interface ResearchBudget extends ExtensibleContract {
   maxWallTimeMs: number
 }
 
+/**
+ * Immutable support recorded at the moment deep research is admitted.  The
+ * optional field on ResearchWorkItem is an additive v1 compatibility seam for
+ * legacy migrated work; every new triage-backed deep admission must carry it.
+ */
+export interface DeepEscalationAdmission extends ExtensibleContract {
+  reason: DeepEscalationReason
+  supportingEvidenceRefs: string[]
+  unresolvedQuestion: string
+  policyVersion: string
+  policyRule: string
+}
+
 export interface ResearchWorkItem extends ExtensibleContract {
   schemaVersion: ResearchWorkSchemaVersion
   workId: string
@@ -164,6 +177,7 @@ export interface ResearchWorkItem extends ExtensibleContract {
   sourceType: Signal['sourceType']
   researchDepth: ResearchDepth
   deepReason: DeepEscalationReason | null
+  deepEscalation?: DeepEscalationAdmission | null
   priorityClass: PriorityClass
   priorityScore: number
   freshnessDeadline: string
@@ -266,6 +280,11 @@ export interface ResearchExecution extends ExtensibleContract {
   policyVersion: string
   traceId: string
   attempt: number
+  /** Additive gateway provenance. Absent on packets written before AC20. */
+  configuredPrimaryProvider?: string
+  configuredPrimaryModel?: string
+  fallbackReason?: FailureCategory | null
+  outputSchemaValid?: boolean | null
 }
 
 export interface ResearchPacketV1 extends ExtensibleContract {
@@ -338,6 +357,11 @@ export interface ExecutionTraceEvent extends ExtensibleContract {
   fallbackProvider: string | null
   fallbackModel: string | null
   fallbackUsed: boolean
+  /** Additive route/schema provenance; legacy v1 events may omit these keys. */
+  configuredPrimaryProvider?: string | null
+  configuredPrimaryModel?: string | null
+  fallbackReason?: FailureCategory | null
+  outputSchemaValid?: boolean | null
   promptVersion: string | null
   policyVersion: string | null
   researchContractVersion: string | null

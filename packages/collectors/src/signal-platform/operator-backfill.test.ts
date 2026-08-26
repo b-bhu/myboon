@@ -7,6 +7,7 @@ import type { Signal } from './contracts'
 import { createActiveSourceTriageIntake } from './active-triage'
 import {
   BACKFILL_OPERATION_SCHEMA_VERSION,
+  decodeLegacySignalBackfillCursor,
   LegacySignalBackfillOperator,
   parseLegacySignalBackfillArgs,
   type LegacySignalBackfillCandidate,
@@ -47,7 +48,16 @@ function reader(items: LegacySignalBackfillCandidate[]): LegacySignalBackfillRea
     async list(input) {
       return items.filter((item) => (!input.filters.legacyId || item.legacyId === input.filters.legacyId)
         && (!input.filters.since || item.observedAt >= input.filters.since)
-        && (!input.filters.until || item.observedAt < input.filters.until)).slice(0, input.limit)
+        && (!input.filters.until || item.observedAt < input.filters.until)
+        && (!input.filters.after || (
+          item.observedAt.localeCompare(input.filters.after.observedAt)
+          || item.sourceType.localeCompare(input.filters.after.sourceType)
+          || item.legacyId.localeCompare(input.filters.after.legacyId)
+        ) > 0))
+        .sort((left, right) => left.observedAt.localeCompare(right.observedAt)
+          || left.sourceType.localeCompare(right.sourceType)
+          || left.legacyId.localeCompare(right.legacyId))
+        .slice(0, input.limit)
     },
   }
 }
@@ -58,7 +68,13 @@ test('legacy backfill is bounded, filtered, dry-run by default, and performs no 
   try {
     const intake = createActiveSourceTriageIntake({
       store, mode: 'observe', providerHealth: 'unavailable', clock: () => NOW,
-      capacity: { snapshot: () => { throw new Error('dry-run must not evaluate') } },
+      capacity: { snapshot: () => {
+        const bucket = { available: 100, reservedAvailable: 10, utilization: 0 }
+        return {
+          byPriority: { P0: { ...bucket }, P1: { ...bucket }, P2: { ...bucket }, P3: { ...bucket } },
+          byDepth: { light: { ...bucket }, standard: { ...bucket }, deep: { ...bucket } },
+        }
+      } },
     })
     const items = ['a', 'b', 'c'].map((id, index) => {
       const observedAt = `2026-08-26T${String(index + 8).padStart(2, '0')}:00:00.000Z`
@@ -72,8 +88,60 @@ test('legacy backfill is bounded, filtered, dry-run by default, and performs no 
     assert.equal(report.mode, 'dry_run')
     assert.equal(report.matchedCount, 1)
     assert.equal(report.truncated, true)
+    assert.ok(report.nextCursor)
     assert.equal(report.rows[0]?.legacyId, 'b')
+    assert.equal(report.rows[0]?.triageOutcome, 'defer')
     assert.equal(store.getSignal(signal('b').signalId), null)
+  } finally {
+    store.close(); rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('composite continuation advances same-timestamp batches and replays each page idempotently', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'backfill-cursor-'))
+  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  try {
+    const bucket = { available: 100, reservedAvailable: 10, utilization: 0 }
+    const intake = createActiveSourceTriageIntake({
+      store, mode: 'observe', providerHealth: 'healthy', clock: () => NOW,
+      capacity: { snapshot: () => ({
+        byPriority: { P0: { ...bucket }, P1: { ...bucket }, P2: { ...bucket }, P3: { ...bucket } },
+        byDepth: { light: { ...bucket }, standard: { ...bucket }, deep: { ...bucket } },
+      }) },
+    })
+    const candidates = ['a', 'b', 'c'].map((id) => ({
+      sourceType: 'news' as const, legacyId: id, observedAt: NOW, signal: signal(id),
+    }))
+    const operator = new LegacySignalBackfillOperator({
+      readers: [reader(candidates)], intakes: [{ sourceType: 'news', intake }],
+    })
+    const backupReceipt = { receiptId: 'backup', verified: true as const, verifiedAt: NOW, sources: ['news' as const] }
+
+    const first = await operator.run({ apply: true, now: NOW, batchSize: 1, backupReceipt })
+    assert.equal(first.rows[0]?.legacyId, 'a')
+    assert.ok(first.nextCursor)
+    const afterFirst = decodeLegacySignalBackfillCursor(first.nextCursor!)
+    assert.deepEqual(afterFirst, {
+      schemaVersion: 'myboon.signal_backfill_cursor.v1', observedAt: NOW, sourceType: 'news', legacyId: 'a',
+    })
+
+    const secondCommand = { apply: true, now: NOW, batchSize: 1, backupReceipt, filters: { after: afterFirst } }
+    const second = await operator.run(secondCommand)
+    assert.equal(second.rows[0]?.legacyId, 'b')
+    const replay = await operator.run(secondCommand)
+    assert.equal(replay.operationId, second.operationId)
+    assert.equal(replay.rows[0]?.outcome, 'duplicate')
+    assert.equal(store.getSignal(signal('c').signalId), null)
+
+    const third = await operator.run({
+      apply: true, now: NOW, batchSize: 1, backupReceipt,
+      filters: { after: decodeLegacySignalBackfillCursor(second.nextCursor!) },
+    })
+    assert.equal(third.rows[0]?.legacyId, 'c')
+    assert.equal(third.nextCursor, null)
+    assert.ok(store.getSignal(signal('a').signalId))
+    assert.ok(store.getSignal(signal('b').signalId))
+    assert.ok(store.getSignal(signal('c').signalId))
   } finally {
     store.close(); rmSync(dir, { recursive: true, force: true })
   }

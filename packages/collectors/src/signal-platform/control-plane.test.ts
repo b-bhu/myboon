@@ -57,6 +57,10 @@ function executionRow(overrides: Partial<ExecutionAggregateRow> = {}): Execution
     fallbackProvider: null,
     fallbackModel: null,
     fallbackUsed: false,
+    configuredPrimaryProvider: 'primary-provider',
+    configuredPrimaryModel: 'model-a',
+    fallbackReason: null,
+    outputSchemaValid: true,
     promptVersion: 'prompt-v1',
     policyVersion: 'policy-v1',
     researchContractVersion: 'myboon.research_packet.v1',
@@ -104,11 +108,16 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
     workReaders: [
       workReader('news', {
         signalCount: 9, triageDecisionCount: 8,
+        triageOutcomes: { standard: 3, defer: 5 },
+        researchPacketCount: 2, entityMemoryHandoffCount: 1,
+        endToEndLatency: { sampleCount: 1, p50Ms: 1_000, p95Ms: 1_000, p99Ms: 1_000 },
+        sqliteSize: { mainBytes: 80, walBytes: 20, shmBytes: 0, totalBytes: 100 },
         totalAttempts: 5, attemptedItems: 3, maxAttemptCount: 2,
         arrivalsInWindow: 4, admissionsInWindow: 3, completionsInWindow: 1,
         queueAge: [{
           priorityClass: 'P0', researchDepth: 'standard', status: 'research_pending', count: 2,
           oldestQueuedAt: '2026-08-26T12:00:00.000Z',
+          p50AgeMs: 30 * 60_000, p95AgeMs: 60 * 60_000,
         }],
         deadLetters: {
           total: 1, oldestAt: '2026-08-26T11:30:00.000Z',
@@ -118,6 +127,10 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
       }),
       workReader('polymarket', {
         signalCount: 6, triageDecisionCount: 5,
+        triageOutcomes: { light: 4, archive: 1 },
+        researchPacketCount: 1, entityMemoryHandoffCount: 0,
+        endToEndLatency: { sampleCount: 0, p50Ms: null, p95Ms: null, p99Ms: null },
+        sqliteSize: { mainBytes: 200, walBytes: 0, shmBytes: 0, totalBytes: 200 },
         totalAttempts: 2, attemptedItems: 1, maxAttemptCount: 2,
         arrivalsInWindow: 2, admissionsInWindow: 1, completionsInWindow: 0,
         recentFailures: [{ category: 'retrieval_blocked', count: 1, lastOccurredAt: '2026-08-26T12:50:00.000Z' }],
@@ -149,10 +162,19 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
   assert.equal(status.totals.arrivalsInWindow, 6)
   assert.equal(status.totals.admissionsInWindow, 4)
   assert.equal(status.totals.completionsInWindow, 1)
+  assert.equal(status.totals.researchPackets, 3)
+  assert.equal(status.totals.entityMemoryHandoffs, 1)
+  assert.equal(status.totals.sqliteBytes, 300)
+  assert.equal(status.sources.news?.intake.triageOutcomes.defer, 5)
+  assert.equal(status.sources.polymarket?.intake.triageOutcomes.light, 4)
+  assert.equal(status.sources.news?.artifacts.researchPackets, 2)
+  assert.equal(status.sources.news?.endToEndLatency?.p95Ms, 1_000)
   assert.equal(status.sources.news?.byStage.retrieval.byStatus.research_pending, 2)
   assert.equal(status.sources.polymarket?.byStage.synthesis.byStatus.synthesis_leased, 1)
   assert.equal(status.sources.news?.oldestReadyAgeMs, 60 * 60_000)
   assert.equal(status.sources.news?.queueAge[0]?.oldestAgeMs, 60 * 60_000)
+  assert.equal(status.sources.news?.queueAge[0]?.p50AgeMs, 30 * 60_000)
+  assert.equal(status.sources.news?.queueAge[0]?.p95AgeMs, 60 * 60_000)
   assert.equal(status.sources.news?.deadLetters.oldestAgeMs, 90 * 60_000)
   assert.equal(status.execution.bySource.news?.byStage.synthesis?.byStatus.failed, 1)
   assert.equal(status.execution.bySource.polymarket?.byStage.retrieval?.byStatus.failed, 1)
@@ -190,9 +212,25 @@ test('empty registered state returns a complete zero snapshot', async () => {
     workItems: 0, ready: 0, retry: 0, deadLetter: 0,
     expired: 0, leased: 0, unfinished: 0, attempts: null,
     arrivalsInWindow: null, admissionsInWindow: null, completionsInWindow: null,
+    researchPackets: null, entityMemoryHandoffs: null, sqliteBytes: null,
   })
   assert.equal(status.execution.totalEvents, 0)
   assert.deepEqual(status.recentFailures, [])
+})
+
+test('registered Calendar and X queues remain visible beside News and Polymarket', async () => {
+  const sources: Signal['sourceType'][] = ['news', 'polymarket', 'market_calendar', 'x']
+  const controlPlane = new SignalPlatformControlPlane({
+    stores: sources.map((sourceType, index) => store(
+      sourceType, schedulerStatus(index + 1, { research_pending: index + 1 }, '2026-08-26T12:00:00.000Z'),
+    )),
+    executionReader: executionReader([]),
+  })
+  const status = await controlPlane.readStatus({ now: '2026-08-26T13:00:00.000Z' })
+  assert.deepEqual(Object.keys(status.sources).sort(), [...sources].sort())
+  assert.equal(status.sources.market_calendar?.total, 3)
+  assert.equal(status.sources.x?.total, 4)
+  assert.equal(status.totals.workItems, 10)
 })
 
 test('CLI formatter removes sensitive keys and redacts credential-shaped values', async () => {

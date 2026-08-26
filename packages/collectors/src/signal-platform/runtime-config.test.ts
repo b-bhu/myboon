@@ -13,6 +13,7 @@ test('Feed V3 is entirely off by default', () => {
   assert.equal(config.triageClassifierEnabled, false)
   assert.equal(config.activeSources.size, 0)
   assert.equal(config.intakeActiveSources.size, 0)
+  assert.equal(config.cutoverReceiptPath, null)
 })
 
 test('shadow requires explicit sources and sampling but no ownership mutation', () => {
@@ -29,6 +30,7 @@ test('active research and entity ownership require explicit matching legacy-disa
   const base = {
     [FEED_V3_ENV.intakeMode]: 'active', [FEED_V3_ENV.researchMode]: 'active',
     [FEED_V3_ENV.entityMode]: 'active', [FEED_V3_ENV.activeSources]: 'news',
+    [FEED_V3_ENV.cutoverReceiptPath]: '/run/myboon/feed-v3-cutover.json',
   }
   assert.throws(() => loadFeedV3RuntimeConfig(base), /legacy-disabled sources: news/)
   const config = loadFeedV3RuntimeConfig({
@@ -45,6 +47,7 @@ test('deep is fail-closed unless shared research is active', () => {
   const config = loadFeedV3RuntimeConfig({
     [FEED_V3_ENV.researchMode]: 'active', [FEED_V3_ENV.activeSources]: 'news',
     [FEED_V3_ENV.legacyResearchDisabledSources]: 'news', [FEED_V3_ENV.deepEnabled]: '1',
+    [FEED_V3_ENV.cutoverReceiptPath]: '/run/myboon/feed-v3-cutover.json',
   })
   assert.equal(config.deepResearchEnabled, true)
 })
@@ -66,6 +69,7 @@ test('standard depth requires explicit capability config while deep also require
     [FEED_V3_ENV.researchMode]: 'active',
     [FEED_V3_ENV.researchActiveSources]: 'news',
     [FEED_V3_ENV.legacyResearchDisabledSources]: 'news',
+    [FEED_V3_ENV.cutoverReceiptPath]: '/run/myboon/feed-v3-cutover.json',
   })
   assert.equal(deep.triageAllowedDepths.has('deep'), true)
 })
@@ -81,6 +85,7 @@ test('stage-specific source sets permit independent cutover and override legacy 
     [FEED_V3_ENV.researchActiveSources]: 'news',
     [FEED_V3_ENV.entityShadowSources]: 'polymarket',
     [FEED_V3_ENV.legacyResearchDisabledSources]: 'news',
+    [FEED_V3_ENV.cutoverReceiptPath]: '/run/myboon/feed-v3-cutover.json',
     [FEED_V3_ENV.shadowSampleBasisPoints]: '100',
   })
   assert.equal(feedV3ModeForSource(config, 'intake', 'news'), 'observe')
@@ -97,5 +102,6 @@ test('ownership validation uses the stage-specific active set', () => {
     [FEED_V3_ENV.researchActiveSources]: 'polymarket',
     [FEED_V3_ENV.activeSources]: 'news',
     [FEED_V3_ENV.legacyResearchDisabledSources]: 'news',
+    [FEED_V3_ENV.cutoverReceiptPath]: '/run/myboon/feed-v3-cutover.json',
   }), /legacy-disabled sources: polymarket/)
 })

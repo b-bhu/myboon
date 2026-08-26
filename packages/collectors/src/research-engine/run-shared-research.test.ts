@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { RESEARCH_WORK_SCHEMA_VERSION, type ResearchWorkItem } from '../signal-platform/contracts'
+import {
+  RESEARCH_WORK_SCHEMA_VERSION,
+  SIGNAL_SCHEMA_VERSION,
+  type ResearchWorkItem,
+  type Signal,
+} from '../signal-platform/contracts'
+import { SharedResearchScheduler } from '../signal-platform/shared-scheduler'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import { defaultRuntimeControl, FileRuntimeControlStore } from '../signal-platform/runtime-control'
 import type { SharedResearchWorkPort } from './shared-worker'
 import {
   ResearchDepthFilteredScheduler,
@@ -17,6 +24,7 @@ import {
 } from './run-shared-research'
 
 const nodeRequire = createRequire(__filename)
+const TEST_CUTOVER_RECEIPT_PATH = '/tmp/feed-v3-test-cutover-receipt.json'
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
   DatabaseSync: new(path: string, options: { readOnly: boolean, open: boolean }) => {
     prepare(sql: string): { get(...params: unknown[]): unknown }; close(): void
@@ -35,6 +43,11 @@ function runtime(mode: 'active' | 'shadow', onCycle: () => void): SharedResearch
         investigate: { enabled: false, fallbackEnabled: false }, routes: [],
       },
       circuits: { schemaVersion: 'myboon.inference_circuit_status.v1', capturedAt: '2026-08-26T12:00:00.000Z', workloads: [] },
+      circuitNextProbes: [],
+      providerObservation: {
+        lastCompletedAt: null, lastSucceededAt: null, workload: null, provider: null, model: null,
+        succeeded: null, durationMs: null, providerCalls: 0, repairCalls: 0, failureCategory: null,
+      },
       deepEnabled: false,
     },
     runCycle: async () => { onCycle(); return [] },
@@ -45,16 +58,22 @@ function runtime(mode: 'active' | 'shadow', onCycle: () => void): SharedResearch
 
 test('off mode stays resident without constructing stores, providers, or runtimes', async () => {
   let creates = 0
+  let statusCreates = 0
+  let controlCreates = 0
   let reports = 0
   const controller = new AbortController()
   await runSharedResearchLoop({
     env: { [SHARED_RESEARCH_ENV.intervalMs]: '100' },
     signal: controller.signal,
     createRuntime: () => { creates += 1; throw new Error('must not construct') },
+    createStatusWriter: () => { statusCreates += 1; throw new Error('must not construct status writer') },
+    createRuntimeControl: () => { controlCreates += 1; throw new Error('must not construct runtime control') },
     onResult: () => { reports += 1 },
     wait: async () => { controller.abort() },
   })
   assert.equal(creates, 0)
+  assert.equal(statusCreates, 0)
+  assert.equal(controlCreates, 0)
   assert.equal(reports, 1)
 })
 
@@ -76,15 +95,201 @@ test('shadow delegates cycles to the evaluator runtime and active requires expli
   }), /legacy-disabled/)
 })
 
+test('active runner recovers at startup and on a bounded cadence before further claims', async () => {
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let cycles = 0
+  let waits = 0
+  const recoveries: string[] = []
+  const writes: string[] = []
+  const active = runtime('active', () => { cycles += 1 })
+  active.recoverExpired = async ({ now, limitPerSource }) => {
+    assert.equal(limitPerSource, 7)
+    recoveries.push(now)
+    return { news: recoveries.length === 1 ? ['expired-work'] : [] }
+  }
+  await runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+      FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+      [SHARED_RESEARCH_ENV.intervalMs]: '100', [SHARED_RESEARCH_ENV.recoveryIntervalMs]: '200',
+      [SHARED_RESEARCH_ENV.recoveryLimitPerSource]: '7',
+    },
+    signal: controller.signal, now: () => current,
+    createRuntime: () => active,
+    createStatusWriter: () => ({ write: async ({ lifecycleState }) => { writes.push(lifecycleState) } }),
+    wait: async (ms) => {
+      current += ms
+      waits += 1
+      if (waits === 3) controller.abort()
+    },
+  })
+  assert.equal(cycles, 3)
+  assert.deepEqual(recoveries, ['2026-08-26T12:00:00.000Z', '2026-08-26T12:00:00.200Z'])
+  assert.equal(writes.at(-1), 'stopped')
+})
+
+test('SIGTERM-equivalent abort gates new claims immediately and waits for the active call to drain', async () => {
+  const controller = new AbortController()
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let stopping = false
+  let closed = false
+  const live: SharedResearchRunnerRuntime = {
+    ...runtime('active', () => undefined),
+    async runCycle() { entered(); await gate; return [] },
+    async stop() { stopping = true; await gate },
+    close() { closed = true },
+  }
+  const running = runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', [SHARED_RESEARCH_ENV.drainGraceMs]: '1000',
+      FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+    },
+    signal: controller.signal, createRuntime: () => live,
+    createStatusWriter: () => ({ write: async () => undefined }),
+  })
+  await started
+  controller.abort()
+  assert.equal(stopping, true)
+  assert.equal(closed, false)
+  release()
+  await running
+  assert.equal(closed, true)
+})
+
+test('durable operator drain survives restart, stays resident, and resume re-enables cycles', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-control-'))
+  const controlPath = join(dir, 'control.json')
+  const control = new FileRuntimeControlStore(controlPath)
+  control.run({ stage: 'research', action: 'drain', apply: true, now: '2026-08-26T12:00:00.000Z' })
+  const baseEnv = {
+    FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+    FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+    FEED_V3_RUNTIME_CONTROL_PATH: controlPath, [SHARED_RESEARCH_ENV.runOnce]: '1',
+  }
+  try {
+    for (let restart = 0; restart < 2; restart += 1) {
+      let cycles = 0
+      const reports: string[] = []
+      await runSharedResearchLoop({
+        env: baseEnv, createRuntime: () => runtime('active', () => { cycles += 1 }),
+        createStatusWriter: () => ({ write: async () => undefined }),
+        onResult: (result) => { reports.push(result.kind) },
+      })
+      assert.equal(cycles, 0)
+      assert.deepEqual(reports, ['draining'])
+    }
+
+    const controller = new AbortController()
+    let current = Date.parse('2026-08-26T12:02:00.000Z')
+    let cycles = 0
+    const reports: string[] = []
+    await runSharedResearchLoop({
+      env: { ...baseEnv, [SHARED_RESEARCH_ENV.runOnce]: '0', [SHARED_RESEARCH_ENV.intervalMs]: '100' },
+      signal: controller.signal, now: () => current,
+      createRuntime: () => runtime('active', () => { cycles += 1 }),
+      createStatusWriter: () => ({ write: async () => undefined }),
+      wait: async (ms) => {
+        current += ms
+        control.run({ stage: 'research', action: 'resume', apply: true, now: new Date(current).toISOString() })
+      },
+      onResult: (result) => {
+        reports.push(result.kind)
+        if (result.kind === 'completed') controller.abort()
+      },
+    })
+    assert.equal(cycles, 1)
+    assert.deepEqual(reports, ['draining', 'completed'])
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('unreadable durable control fails closed while resident and resumes after repair', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-control-repair-'))
+  const controlPath = join(dir, 'control.json')
+  writeFileSync(controlPath, '{malformed', 'utf8')
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let cycles = 0
+  let waits = 0
+  const reports: Array<{ kind: string, reason?: string }> = []
+  const lifecycle: string[] = []
+  try {
+    await runSharedResearchLoop({
+      env: {
+        FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+        FEED_V3_RUNTIME_CONTROL_PATH: controlPath, [SHARED_RESEARCH_ENV.intervalMs]: '100',
+      },
+      signal: controller.signal,
+      now: () => current,
+      createRuntime: () => runtime('active', () => { cycles += 1 }),
+      createStatusWriter: () => ({ write: async ({ lifecycleState }) => { lifecycle.push(lifecycleState) } }),
+      wait: async (ms) => {
+        waits += 1
+        current += ms
+        writeFileSync(controlPath, `${JSON.stringify(defaultRuntimeControl())}\n`, { mode: 0o600 })
+      },
+      onResult: (result) => {
+        reports.push({ kind: result.kind, ...('reason' in result ? { reason: result.reason } : {}) })
+        if (result.kind === 'completed') controller.abort()
+      },
+    })
+    assert.equal(waits, 1)
+    assert.equal(cycles, 1)
+    assert.deepEqual(reports, [
+      { kind: 'draining', reason: 'control_unreadable' },
+      { kind: 'completed' },
+    ])
+    assert.equal(lifecycle.includes('draining'), true)
+    assert.equal(lifecycle.at(-1), 'stopped')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('active config exposes dedicated disjoint priority pools', () => {
   const config = loadSharedResearchRunnerConfig({
     FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
     FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+    FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
     [SHARED_RESEARCH_ENV.urgentPriorities]: 'P0,P1',
     [SHARED_RESEARCH_ENV.backgroundPriorities]: 'P2,P3',
   })
   assert.deepEqual(config.urgentPriorities, ['P0', 'P1'])
   assert.deepEqual(config.backgroundPriorities, ['P2', 'P3'])
+})
+
+test('active composition validates cutover evidence before opening a source database or provider', () => {
+  const config = loadSharedResearchRunnerConfig({
+    FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+    FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+    FEED_V3_CUTOVER_RECEIPT_PATH: '/does/not/exist/cutover.json',
+    NEWS_SQLITE_PATH: '/does/not/exist/news.sqlite',
+  })
+  assert.throws(() => createLiveSharedResearchRuntime(config), /receipt manifest/i)
+})
+
+test('calendar and X use the registered pipeline store without a source-specific Research runner', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-sources-'))
+  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const bootstrap = new SqliteSignalPlatformStore(pipelinePath, 'market_calendar')
+  bootstrap.close()
+  try {
+    const config = loadSharedResearchRunnerConfig({
+      FEED_V3_RESEARCH_MODE: 'shadow', FEED_V3_RESEARCH_SHADOW_SOURCES: 'market_calendar,x',
+      FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '100', PIPELINE_SQLITE_PATH: pipelinePath,
+    })
+    assert.deepEqual(config.sources, ['market_calendar', 'x'])
+    const live = createLiveSharedResearchRuntime(config)
+    assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }])
+    assert.deepEqual(live.status.sources, ['market_calendar', 'x'])
+    await live.stop()
+    live.close()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
 test('live shadow composition writes its result table inside the source database boundary', async () => {
@@ -161,6 +366,64 @@ test('dedicated background pool pushes priority filtering before the bounded sto
   assert.equal(work[0]?.workId, 'background')
 })
 
+test('claim gate is rechecked after peek so a mid-cycle drain prevents the CAS claim', async () => {
+  let enabled = true
+  let claims = 0
+  const item = researchWork('controlled', 'light')
+  const store = {
+    sourceType: 'news',
+    peekSchedulable: async () => { enabled = false; return [item] },
+    claimWithLease: async () => { claims += 1; throw new Error('must remain gated') },
+  } as unknown as SharedResearchWorkPort
+  const scheduler = new ResearchDepthFilteredScheduler([store], ['light'], () => enabled)
+  assert.equal(await scheduler.claimNext({
+    now: '2026-08-26T12:00:00.000Z', leaseOwner: 'worker', leaseTtlMs: 1_000,
+  }), null)
+  assert.equal(claims, 0)
+})
+
+test('recovery resumes expired leases and due retries once without inflating attempts', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-recovery-'))
+  const store = new SqliteSignalPlatformStore(join(dir, 'store.sqlite'), 'news')
+  try {
+    const expired = researchWork('expired', 'light')
+    const retry = researchWork('retry', 'light')
+    store.appendSignal(researchSignal(expired.signalId))
+    store.appendSignal(researchSignal(retry.signalId))
+    store.admitResearchWork(expired)
+    store.admitResearchWork(retry)
+    await store.claimWithLease({
+      workId: expired.workId, expectedStatus: 'research_pending', leaseOwner: 'crashed', leaseId: 'expired-lease',
+      now: '2026-08-26T11:58:00.000Z', leaseExpiresAt: '2026-08-26T11:59:00.000Z',
+    })
+    await store.claimWithLease({
+      workId: retry.workId, expectedStatus: 'research_pending', leaseOwner: 'failed', leaseId: 'retry-lease',
+      now: '2026-08-26T11:58:00.000Z', leaseExpiresAt: '2026-08-26T12:05:00.000Z',
+    })
+    assert.equal(await store.transitionLeased({
+      workId: retry.workId, expectedStatus: 'retrieval_leased', leaseOwner: 'failed', leaseId: 'retry-lease',
+      nextStatus: 'retry_wait', nextAttemptAt: '2026-08-26T11:59:30.000Z',
+      failureCategory: 'retrieval_timeout', failureDetail: 'failure:retrieval_timeout',
+      attemptDelta: 1, now: '2026-08-26T11:58:30.000Z',
+    }), true)
+    const scheduler = new SharedResearchScheduler([store])
+    const recovered = await scheduler.recoverExpiredLeases({ now: '2026-08-26T12:00:00.000Z', limitPerStore: 10 })
+    assert.deepEqual(new Set(recovered.news), new Set([expired.workId, retry.workId]))
+    assert.equal(store.getResearchWork(expired.workId)?.attemptCount, 0)
+    assert.equal(store.getResearchWork(retry.workId)?.attemptCount, 1)
+    assert.deepEqual(await scheduler.recoverExpiredLeases({
+      now: '2026-08-26T12:00:00.000Z', limitPerStore: 10,
+    }), { news: [] })
+    const command = { now: '2026-08-26T12:00:01.000Z', leaseOwner: 'resumed', leaseTtlMs: 60_000, stages: ['retrieval' as const] }
+    const resumed = [await scheduler.claimNext(command), await scheduler.claimNext(command)]
+    assert.deepEqual(new Set(resumed.map((lease) => lease?.work.workId)), new Set([expired.workId, retry.workId]))
+    assert.equal(await scheduler.claimNext(command), null)
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function researchWork(workId: string, depth: ResearchWorkItem['researchDepth']): ResearchWorkItem {
   return {
     schemaVersion: RESEARCH_WORK_SCHEMA_VERSION, workId, signalId: `signal-${workId}`, sourceType: 'news',
@@ -172,5 +435,17 @@ function researchWork(workId: string, depth: ResearchWorkItem['researchDepth']):
     status: 'research_pending', attemptCount: 0, nextAttemptAt: null, leaseOwner: null, leaseId: null,
     leaseExpiresAt: null, failureCategory: null, failureDetail: null, traceId: `trace-${workId}`,
     createdAt: '2026-08-26T12:00:00.000Z', updatedAt: '2026-08-26T12:00:00.000Z',
+  }
+}
+
+function researchSignal(signalId: string): Signal {
+  return {
+    schemaVersion: SIGNAL_SCHEMA_VERSION, signalId, sourceType: 'news', sourceId: `news:${signalId}`,
+    contentKind: 'article', content: { schemaVersion: 'myboon.signal_content.article.v1' },
+    observedAt: '2026-08-26T11:50:00.000Z', publishedAt: '2026-08-26T11:49:00.000Z',
+    canonicalUrl: 'https://example.com/item', title: 'Runner recovery', visibleSummary: null,
+    media: { imageUrl: null, attribution: null }, sourceHints: { entities: [], assets: [], eventId: null, deadline: null },
+    provenance: { provider: 'fixture', upstreamSource: null, rawPayloadRef: 'fixture:runner' },
+    idempotencyKey: `fixture:${signalId}`,
   }
 }

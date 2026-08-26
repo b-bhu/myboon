@@ -51,7 +51,7 @@ export class SqliteNewsLegacyBackfillReader extends SqliteLegacyBackfillReader {
     limit: number
   }): Promise<LegacySignalBackfillCandidate[]> {
     this.assertOpen()
-    const { clauses, params } = queryFilters(input.filters)
+    const { clauses, params } = queryFilters(input.filters, this.sourceType)
     params.push(limit(input.limit))
     const rows = this.db.prepare(`
       SELECT * FROM news_candidate_observations
@@ -78,7 +78,7 @@ export class SqlitePolymarketLegacyBackfillReader extends SqliteLegacyBackfillRe
     limit: number
   }): Promise<LegacySignalBackfillCandidate[]> {
     this.assertOpen()
-    const { clauses, params } = queryFilters(input.filters)
+    const { clauses, params } = queryFilters(input.filters, this.sourceType)
     params.push(limit(input.limit))
     const rows = this.db.prepare(`
       SELECT * FROM pipeline_candidates
@@ -97,7 +97,10 @@ export class SqlitePolymarketLegacyBackfillReader extends SqliteLegacyBackfillRe
   }
 }
 
-function queryFilters(filters: Omit<LegacySignalBackfillFilters, 'sourceType'>): {
+function queryFilters(
+  filters: Omit<LegacySignalBackfillFilters, 'sourceType'>,
+  sourceType: LegacySignalBackfillCandidate['sourceType'],
+): {
   clauses: string[]; params: unknown[]
 } {
   const clauses = ['1 = 1']
@@ -105,6 +108,19 @@ function queryFilters(filters: Omit<LegacySignalBackfillFilters, 'sourceType'>):
   if (filters.legacyId) { clauses.push('id = ?'); params.push(filters.legacyId) }
   if (filters.since) { clauses.push('observed_at >= ?'); params.push(filters.since) }
   if (filters.until) { clauses.push('observed_at < ?'); params.push(filters.until) }
+  if (filters.after) {
+    const sourceOrder = sourceType.localeCompare(filters.after.sourceType)
+    if (sourceOrder < 0) {
+      clauses.push('observed_at > ?')
+      params.push(filters.after.observedAt)
+    } else if (sourceOrder > 0) {
+      clauses.push('observed_at >= ?')
+      params.push(filters.after.observedAt)
+    } else {
+      clauses.push('(observed_at > ? OR (observed_at = ? AND id > ?))')
+      params.push(filters.after.observedAt, filters.after.observedAt, filters.after.legacyId)
+    }
+  }
   return { clauses, params }
 }
 

@@ -1,5 +1,9 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
+import type { EntityKnowledgeMemoryV1, EntityKnowledgeReader } from '@myboon/collectors/entity-manager'
+import entityManager from '@myboon/collectors/entity-manager'
+
+const { ENTITY_KNOWLEDGE_MAX_PAGE_SIZE } = entityManager
 
 const MAX_STORIES = 5
 const DEFAULT_STORY_EVENT_LIMIT = 20
@@ -9,20 +13,11 @@ const REQUEST_TIMEOUT_MS = 10_000
 const SAFE_STORY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const ENTITY_SELECT = 'id,slug,name'
-const MEMORY_SELECT = 'entity_id,memory_type,summary,event_at,context'
 
 interface EntityRow {
   id: unknown
   slug: unknown
   name: unknown
-}
-
-interface MemoryRow {
-  entity_id: unknown
-  memory_type: unknown
-  summary: unknown
-  event_at: unknown
-  context: unknown
 }
 
 interface SelectedEntity {
@@ -72,6 +67,7 @@ export interface StoryPagination {
 export interface StoryRoutesConfig {
   supabaseUrl: string
   serviceRoleKey: string
+  memoryReader: Pick<EntityKnowledgeReader, 'getEntityMemoryEvents'>
   fetch?: typeof globalThis.fetch
 }
 
@@ -103,29 +99,6 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     return body as T[]
   }
 
-  async function readRowsPage<T>(table: string, params: URLSearchParams): Promise<{ rows: T[], total: number | null }> {
-    const url = new URL(`${restBaseUrl}/${table}`)
-    params.forEach((value, key) => url.searchParams.append(key, value))
-    const response = await fetchImpl(url, {
-      headers: {
-        apikey: config.serviceRoleKey,
-        Authorization: `Bearer ${config.serviceRoleKey}`,
-        Accept: 'application/json',
-        Prefer: 'count=exact',
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (!response.ok) {
-      throw new Error(`Supabase read failed for ${table}: ${response.status}`)
-    }
-    const body: unknown = await response.json()
-    if (!Array.isArray(body)) throw new Error(`Supabase returned an invalid ${table} response`)
-    return {
-      rows: body as T[],
-      total: contentRangeTotal(response.headers.get('content-range')),
-    }
-  }
-
   async function selectedEntities(): Promise<SelectedEntity[]> {
     const params = new URLSearchParams({
       select: ENTITY_SELECT,
@@ -148,69 +121,76 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     return selectedEntity(rows[0])
   }
 
-  async function storyMemories(entityIds: string[]): Promise<Map<string, StoryMemory[]>> {
+  async function storyMemories(entityIds: string[]): Promise<{
+    memoriesByEntity: Map<string, StoryMemory[]>,
+    totalsByEntity: Map<string, number>,
+  }> {
     const grouped = new Map<string, StoryMemory[]>()
-    if (entityIds.length === 0) return grouped
-
-    const safeIds = entityIds.filter((id) => UUID_RE.test(id))
-    if (safeIds.length === 0) return grouped
-
-    const params = new URLSearchParams({
-      select: MEMORY_SELECT,
-      entity_id: `in.(${safeIds.join(',')})`,
-      memory_type: 'neq.source_marker',
-      event_at: 'not.is.null',
-      order: 'event_at.asc',
-    })
-    const rows = await readRows<MemoryRow>('entity_memories', params)
-    const allowedEntityIds = new Set(safeIds)
-
-    for (const row of rows) {
-      const memory = storyMemory(row)
-      if (!memory || !allowedEntityIds.has(memory.entityId)) continue
-      const entityMemories = grouped.get(memory.entityId) ?? []
-      entityMemories.push(memory)
-      grouped.set(memory.entityId, entityMemories)
-    }
-
-    for (const memories of grouped.values()) {
-      memories.sort((left, right) => Date.parse(left.eventAt) - Date.parse(right.eventAt))
-    }
-    return grouped
+    const totals = new Map<string, number>()
+    if (entityIds.length === 0) return { memoriesByEntity: grouped, totalsByEntity: totals }
+    await Promise.all(entityIds.filter((id) => UUID_RE.test(id)).map(async (entityId) => {
+      const page = await config.memoryReader.getEntityMemoryEvents({ entityId, limit: 1 })
+      const memory = page.items[0] ? storyMemory(page.items[0]) : null
+      const expectedItems = page.totalCount === 0 ? 0 : 1
+      if (
+        page.items.length !== expectedItems
+        || (expectedItems === 1 && (!memory || memory.entityId !== entityId))
+        || page.hasMore !== (page.totalCount > 1)
+        || (page.hasMore && !page.nextCursor)
+      ) {
+        throw new Error('Entity memory event page was incomplete')
+      }
+      if (memory) grouped.set(entityId, [memory])
+      totals.set(entityId, page.totalCount)
+    }))
+    return { memoriesByEntity: grouped, totalsByEntity: totals }
   }
 
   async function storyMemoryPage(entityId: string, limit: number, offset: number): Promise<{
     memories: StoryMemory[]
     total: number
+    latest: StoryMemory | null
   }> {
-    if (!UUID_RE.test(entityId)) return { memories: [], total: 0 }
-    const params = new URLSearchParams({
-      select: MEMORY_SELECT,
-      entity_id: `eq.${entityId}`,
-      memory_type: 'neq.source_marker',
-      event_at: 'not.is.null',
-      order: 'event_at.desc',
-      limit: String(limit),
-      offset: String(offset),
-    })
-    const page = await readRowsPage<MemoryRow>('entity_memories', params)
-    const memories = page.rows
-      .map(storyMemory)
-      .filter((memory): memory is StoryMemory => memory?.entityId === entityId)
-      .sort((left, right) => Date.parse(right.eventAt) - Date.parse(left.eventAt))
-    return {
-      memories,
-      total: page.total ?? offset + memories.length,
+    if (!UUID_RE.test(entityId)) return { memories: [], total: 0, latest: null }
+    const memories: StoryMemory[] = []
+    let cursor: string | undefined
+    let consumed = 0
+    let total: number | null = null
+    let latest: StoryMemory | null = null
+    while (consumed < offset + limit) {
+      const page = await config.memoryReader.getEntityMemoryEvents({
+        entityId,
+        limit: Math.min(ENTITY_KNOWLEDGE_MAX_PAGE_SIZE, offset + limit - consumed),
+        ...(cursor ? { cursor } : {}),
+      })
+      if (total !== null && page.totalCount !== total) throw new Error('Entity memory event count changed during pagination')
+      total = page.totalCount
+      for (const item of page.items) {
+        const memory = storyMemory(item)
+        if (!memory || memory.entityId !== entityId) throw new Error('Entity memory event page was incomplete')
+        latest ??= memory
+        if (consumed >= offset && memories.length < limit) memories.push(memory)
+        consumed += 1
+      }
+      if (consumed >= offset + limit || !page.hasMore) break
+      if (!page.nextCursor || page.items.length === 0) throw new Error('Entity memory event page was incomplete')
+      cursor = page.nextCursor
     }
+    const exactTotal = total ?? 0
+    const expected = Math.min(limit, Math.max(0, exactTotal - offset))
+    if (consumed < Math.min(offset, exactTotal) || memories.length !== expected) {
+      throw new Error('Entity memory event page was incomplete')
+    }
+    return { memories, total: exactTotal, latest }
   }
 
   app.get('/', async (c) => {
     try {
       const entities = await selectedEntities()
-      const memoriesByEntity = await storyMemories(entities.map((entity) => entity.id))
+      const { memoriesByEntity, totalsByEntity } = await storyMemories(entities.map((entity) => entity.id))
       const stories = entities.flatMap((entity) => {
         const memories = memoriesByEntity.get(entity.id) ?? []
-        const story = storySummary(entity, memories)
+        const story = storySummary(entity, memories, totalsByEntity.get(entity.id) ?? memories.length)
         return story ? [story] : []
       })
       return c.json({ stories })
@@ -231,11 +211,8 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
 
       const limit = boundedInteger(c.req.query('limit'), DEFAULT_STORY_EVENT_LIMIT, 1, MAX_STORY_EVENT_LIMIT)
       const offset = boundedInteger(c.req.query('offset'), 0, 0, MAX_STORY_EVENT_OFFSET)
-      const pagePromise = storyMemoryPage(entity.id, limit, offset)
-      const [page, latestPage] = offset === 0
-        ? await pagePromise.then((value) => [value, value] as const)
-        : await Promise.all([pagePromise, storyMemoryPage(entity.id, 1, 0)])
-      const story = storySummary(entity, latestPage.memories, page.total)
+      const page = await storyMemoryPage(entity.id, limit, offset)
+      const story = storySummary(entity, page.latest ? [page.latest] : [], page.total)
       if (!story) return c.json({ error: 'Story not found' }, 404)
 
       const events: StoryEvent[] = page.memories.map((memory) => ({
@@ -269,17 +246,14 @@ function selectedEntity(row: EntityRow | undefined): SelectedEntity | null {
   return { id: row.id, slug: row.slug, name: row.name.trim() }
 }
 
-function storyMemory(row: MemoryRow): StoryMemory | null {
-  if (row.memory_type === 'source_marker') return null
-  if (typeof row.entity_id !== 'string' || !UUID_RE.test(row.entity_id)) return null
-  if (typeof row.summary !== 'string' || !row.summary.trim()) return null
-  if (typeof row.event_at !== 'string' || !row.event_at.trim()) return null
-  if (!Number.isFinite(Date.parse(row.event_at))) return null
-  const image = storyImage(row.context)
+function storyMemory(row: EntityKnowledgeMemoryV1): StoryMemory | null {
+  if (!UUID_RE.test(row.entityId) || !row.summary.trim() || !row.eventAt) return null
+  if (!Number.isFinite(Date.parse(row.eventAt))) return null
+  const image = storyImage(row.media)
   return {
-    entityId: row.entity_id,
+    entityId: row.entityId,
     summary: row.summary.trim(),
-    eventAt: row.event_at,
+    eventAt: row.eventAt,
     ...image,
   }
 }
@@ -289,15 +263,15 @@ function storyImage(value: unknown): Pick<StoryMemory, 'imageUrl' | 'imageKind' 
     return { imageUrl: null, imageKind: null, imageAttribution: null }
   }
   const context = value as Record<string, unknown>
-  const imageUrl = safeHttpUrl(context.image_url)
+  const imageUrl = safeHttpUrl(context.imageUrl)
   if (!imageUrl) {
     return { imageUrl: null, imageKind: null, imageAttribution: null }
   }
-  const imageKind = context.image_kind === 'content' || context.image_kind === 'source_avatar'
-    ? context.image_kind
+  const imageKind = context.imageKind === 'content' || context.imageKind === 'source_avatar'
+    ? context.imageKind
     : new URL(imageUrl).pathname.includes('/profile_images/') ? 'source_avatar' : 'content'
-  const imageAttribution = typeof context.image_attribution === 'string' && context.image_attribution.trim()
-    ? context.image_attribution.trim()
+  const imageAttribution = typeof context.attribution === 'string' && context.attribution.trim()
+    ? context.attribution.trim()
     : null
   return { imageUrl, imageKind, imageAttribution }
 }
@@ -336,14 +310,6 @@ function boundedInteger(raw: string | undefined, fallback: number, min: number, 
   const parsed = Number(raw)
   if (!Number.isSafeInteger(parsed)) return fallback
   return Math.min(Math.max(parsed, min), max)
-}
-
-function contentRangeTotal(value: string | null): number | null {
-  if (!value) return null
-  const match = /\/(\d+)$/.exec(value.trim())
-  if (!match) return null
-  const total = Number(match[1])
-  return Number.isSafeInteger(total) && total >= 0 ? total : null
 }
 
 function storyError(c: Context, error: unknown, label: string) {

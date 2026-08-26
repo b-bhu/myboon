@@ -6,8 +6,8 @@ const CREDENTIAL_URL = /([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/ig
 const COMMON_SECRET = /\b(?:sk-[a-z0-9_-]{12,}|ghp_[a-z0-9]{12,}|xox[baprs]-[a-z0-9-]{12,}|AKIA[A-Z0-9]{16})\b/ig
 
 /** Credential-free JSON intended for terminals, runbooks, and status collectors. */
-export function formatControlPlaneStatusJson(
-  status: SignalPlatformControlPlaneStatus,
+export function formatControlPlaneStatusJson<T extends SignalPlatformControlPlaneStatus>(
+  status: T,
   options: { pretty?: boolean } = {},
 ): string {
   return JSON.stringify(redact(status), null, options.pretty === false ? undefined : 2)

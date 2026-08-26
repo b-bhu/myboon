@@ -9,7 +9,10 @@ import {
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { createActiveSourceTriageIntake } from './active-triage'
 import { stableContractId } from './adapters/identity'
-import { SqliteLocalCapacitySnapshot } from './local-capacity'
+import {
+  DEFAULT_LOCAL_TRIAGE_CAPACITY,
+  SqliteLocalCapacitySnapshot,
+} from './local-capacity'
 import {
   LegacySignalBackfillOperator,
   parseLegacySignalBackfillArgs,
@@ -46,27 +49,34 @@ async function main(): Promise<void> {
   try {
     const receipt = parsed.apply ? await createVerifiedDualBackup({ newsPath, pipelinePath, now }) : undefined
     const runtime = loadFeedV3RuntimeConfig()
-    const intakes: LegacySignalBackfillIntakePort[] = parsed.apply
-      ? selected.map((sourceType) => {
-        const store = new SqliteSignalPlatformStore(sourceType === 'news' ? newsPath : pipelinePath, sourceType)
-        stores.push(store)
-        return {
-          sourceType,
-          intake: createActiveSourceTriageIntake({
-            store,
-            mode: 'observe',
-            capacity: new SqliteLocalCapacitySnapshot(store),
-            providerHealth: runtime.triageProviderHealth,
-            classifierEnabled: runtime.triageClassifierEnabled,
-            allowedDepths: [...runtime.triageAllowedDepths],
-            clock: () => now,
-          }),
-        }
-      })
-      : selected.map((sourceType) => ({
+    const intakes: LegacySignalBackfillIntakePort[] = selected.map((sourceType) => {
+      const store = new SqliteSignalPlatformStore(
+        sourceType === 'news' ? newsPath : pipelinePath,
         sourceType,
-        intake: { mode: 'observe', ingest: async () => { throw new Error('dry-run intake is disabled') } },
-      }))
+        { readOnly: !parsed.apply },
+      )
+      stores.push(store)
+      const liveCapacity = new SqliteLocalCapacitySnapshot(store)
+      return {
+        sourceType,
+        intake: createActiveSourceTriageIntake({
+          store,
+          mode: 'observe',
+          capacity: {
+            snapshot: async (input) => {
+              try { return await liveCapacity.snapshot(input) } catch {
+                if (parsed.apply) throw new Error('Canonical capacity snapshot is unavailable')
+                return emptyCapacitySnapshot()
+              }
+            },
+          },
+          providerHealth: runtime.triageProviderHealth,
+          classifierEnabled: runtime.triageClassifierEnabled,
+          allowedDepths: [...runtime.triageAllowedDepths],
+          clock: () => now,
+        }),
+      }
+    })
     const report = await new LegacySignalBackfillOperator({ readers, intakes }).run({
       ...parsed,
       now,
@@ -76,6 +86,26 @@ async function main(): Promise<void> {
   } finally {
     for (const store of stores) store.close()
     for (const reader of readers) reader.close()
+  }
+}
+
+function emptyCapacitySnapshot() {
+  const bucket = (maximum: number, reserved = 0) => ({
+    available: maximum, reservedAvailable: reserved, utilization: 0,
+  })
+  const limits = DEFAULT_LOCAL_TRIAGE_CAPACITY
+  return {
+    byPriority: {
+      P0: bucket(limits.byPriority.P0, limits.reservedByPriority?.P0),
+      P1: bucket(limits.byPriority.P1, limits.reservedByPriority?.P1),
+      P2: bucket(limits.byPriority.P2, limits.reservedByPriority?.P2),
+      P3: bucket(limits.byPriority.P3, limits.reservedByPriority?.P3),
+    },
+    byDepth: {
+      light: bucket(limits.byDepth.light),
+      standard: bucket(limits.byDepth.standard),
+      deep: bucket(limits.byDepth.deep),
+    },
   }
 }
 

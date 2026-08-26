@@ -101,7 +101,11 @@ export class SqliteExecutionLedger implements ExecutionLedger {
         `SELECT event_json FROM ${EXECUTION_LEDGER_TABLE} WHERE event_id = ?`,
       ).get(event.eventId) as { event_json?: unknown } | undefined
       if (existing) {
-        if (existing.event_json !== eventJson) throw new ExecutionEventConflictError(event.eventId)
+        // Normalize additive v1 fields before comparing so replay of an event
+        // written before AC20 remains idempotent instead of becoming a false
+        // immutable conflict merely because explicit null provenance was added.
+        const normalizedExisting = canonicalJson(parseEvent(existing.event_json))
+        if (normalizedExisting !== eventJson) throw new ExecutionEventConflictError(event.eventId)
         this.db.exec('COMMIT')
         return { inserted: false, event }
       }
@@ -156,6 +160,10 @@ export class SqliteExecutionLedger implements ExecutionLedger {
     const raw = this.db.prepare(`
       SELECT event_schema_version, source_type, stage, status, failure_category,
         provider, model, fallback_provider, fallback_model, fallback_used,
+        json_extract(event_json, '$.configuredPrimaryProvider') AS configured_primary_provider,
+        json_extract(event_json, '$.configuredPrimaryModel') AS configured_primary_model,
+        json_extract(event_json, '$.fallbackReason') AS fallback_reason,
+        json_extract(event_json, '$.outputSchemaValid') AS output_schema_valid,
         prompt_version, policy_version, research_contract_version,
         COUNT(*) AS event_count,
         SUM(provider_calls) AS provider_calls,
@@ -168,6 +176,10 @@ export class SqliteExecutionLedger implements ExecutionLedger {
       FROM ${EXECUTION_LEDGER_TABLE} ${where}
       GROUP BY event_schema_version, source_type, stage, status, failure_category,
         provider, model, fallback_provider, fallback_model, fallback_used,
+        json_extract(event_json, '$.configuredPrimaryProvider'),
+        json_extract(event_json, '$.configuredPrimaryModel'),
+        json_extract(event_json, '$.fallbackReason'),
+        json_extract(event_json, '$.outputSchemaValid'),
         prompt_version, policy_version, research_contract_version
       ORDER BY source_type, stage, status, provider
     `).all(...params) as Array<Record<string, unknown>>
@@ -182,6 +194,10 @@ export class SqliteExecutionLedger implements ExecutionLedger {
       fallbackProvider: row.fallback_provider as string | null,
       fallbackModel: row.fallback_model as string | null,
       fallbackUsed: Number(row.fallback_used) === 1,
+      configuredPrimaryProvider: row.configured_primary_provider as string | null,
+      configuredPrimaryModel: row.configured_primary_model as string | null,
+      fallbackReason: row.fallback_reason as ExecutionAggregateRow['fallbackReason'],
+      outputSchemaValid: row.output_schema_valid === null ? null : Number(row.output_schema_valid) === 1,
       promptVersion: row.prompt_version as string | null,
       policyVersion: row.policy_version as string | null,
       researchContractVersion: row.research_contract_version as string | null,
@@ -194,9 +210,32 @@ export class SqliteExecutionLedger implements ExecutionLedger {
       budgetExceededCount: Number(row.budget_exceeded_count),
       totalWallTimeMs: Number(row.total_wall_time_ms),
     }))
+    const activeClauses = ['s.status = ?']
+    const activeParams: unknown[] = ['started']
+    if (query.sourceType) { activeClauses.push('s.source_type = ?'); activeParams.push(query.sourceType) }
+    if (query.stage) { activeClauses.push('s.stage = ?'); activeParams.push(query.stage) }
+    if (query.since) { activeClauses.push('s.started_at >= ?'); activeParams.push(query.since) }
+    if (query.until) { activeClauses.push('s.started_at < ?'); activeParams.push(query.until) }
+    const active = this.db.prepare(`
+      SELECT COUNT(*) AS active_count FROM (
+        SELECT s.trace_id, s.work_id, s.source_type, s.stage, s.attempt
+        FROM ${EXECUTION_LEDGER_TABLE} s
+        WHERE ${activeClauses.join(' AND ')}
+          AND NOT EXISTS (
+            SELECT 1 FROM ${EXECUTION_LEDGER_TABLE} terminal
+            WHERE terminal.status <> 'started'
+              AND terminal.trace_id = s.trace_id
+              AND COALESCE(terminal.work_id, '') = COALESCE(s.work_id, '')
+              AND terminal.source_type = s.source_type
+              AND terminal.stage = s.stage
+              AND terminal.attempt = s.attempt
+          )
+        GROUP BY s.trace_id, s.work_id, s.source_type, s.stage, s.attempt
+      )
+    `).get(...activeParams) as Record<string, unknown> | undefined
     return {
       totalEvents: rows.reduce((sum, row) => sum + row.eventCount, 0),
-      activeEvents: rows.filter((row) => row.status === 'started').reduce((sum, row) => sum + row.eventCount, 0),
+      activeEvents: Number(active?.active_count ?? 0),
       rows,
     }
   }

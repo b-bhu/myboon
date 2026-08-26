@@ -13,7 +13,12 @@ import {
   createResearchWorkItemFromDecision,
 } from './triage-engine'
 import { runTriageShadowEvaluation } from './triage-evaluator'
-import { validateBoundedClassifierResult, validatePriorityPolicy } from './triage-validation'
+import {
+  validateBoundedClassifierResult,
+  validatePriorityPolicy,
+  validateTriageDecision,
+} from './triage-validation'
+import { validateResearchWorkItem } from './validation'
 
 const policy = createPriorityPolicyV1({
   policyVersion: 'priority-2026-08-26.1',
@@ -177,6 +182,32 @@ test('overload tightens deep before light and requires a typed eligible reason',
   }))
   assert.equal(admitted.outcome, 'deep')
   assert.equal(admitted.deepEscalationReason, 'regulatory_interpretation_required')
+  assert.deepEqual(admitted.deepEscalation, {
+    reason: 'regulatory_interpretation_required',
+    supportingEvidenceRefs: ['evidence-1'],
+    unresolvedQuestion: 'What is the scope?',
+    policyVersion: policy.policyVersion,
+    policyRule: 'deep-regulatory-v1',
+  })
+  const work = createResearchWorkItemFromDecision({
+    signal: admitted.signalId === 'signal-1' ? signal() : signal({ signalId: admitted.signalId }),
+    decision: admitted,
+    retrievalPolicy: {
+      policyVersion: 'retrieval-v1', allowedDomains: ['example.com'],
+      maxExternalSourcesByDepth: { light: 1, standard: 3, deep: 5 },
+    },
+  })
+  assert.deepEqual(work.deepEscalation, admitted.deepEscalation)
+  assert.throws(() => validateResearchWorkItem({
+    ...work,
+    deepEscalation: { ...work.deepEscalation!, policyVersion: 'different-policy' },
+  }), /must match work.policyVersion/)
+
+  assert.throws(() => validateTriageDecision({
+    ...admitted,
+    deepEscalation: { ...admitted.deepEscalation!, supportingEvidenceRefs: [] },
+  }), /supporting evidence/)
+  assert.throws(() => validateTriageDecision({ ...admitted, deepEscalation: null }), /required for deep/)
 })
 
 test('cheap classifier is called only for explicit ambiguity and its result is strictly bounded', async () => {

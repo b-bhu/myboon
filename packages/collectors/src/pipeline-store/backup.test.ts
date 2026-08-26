@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { closeSync, mkdtempSync, openSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -8,6 +8,7 @@ import {
   backupNewsStore,
   backupPipelineStore,
   pruneOldBackups,
+  restoreNewsStore,
   restorePipelineStore,
   verifyNewsBackup,
   verifyPipelineBackup,
@@ -364,6 +365,24 @@ test('restorePipelineStore: round-trip reproduces the seeded data at a fresh pat
   }
 })
 
+test('restoreNewsStore: verifies and restores news.sqlite independently', async () => {
+  const dir = makeTmpDir('news-backup-restore-')
+  try {
+    const sourcePath = join(dir, 'news.sqlite')
+    const store = new SqliteNewsStore(sourcePath)
+    store.close()
+    const backup = await backupNewsStore({ sourcePath, backupDir: join(dir, 'backups') })
+    const targetPath = join(dir, 'restored', 'news.sqlite')
+
+    const restored = await restoreNewsStore({ backupPath: backup.path, targetPath })
+    assert.equal(restored.targetPath, targetPath)
+    assert.equal(restored.verified, true)
+    assert.deepEqual(restored.tableCounts, backup.tableCounts)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('restorePipelineStore: refuses to overwrite an existing target without force, succeeds with force', async () => {
   const dir = makeTmpDir('pipeline-backup-force-')
   try {
@@ -408,6 +427,22 @@ test('restorePipelineStore: refuses a corrupt backup even with force', async () 
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('restorePipelineStore: refuses targets with WAL/SHM sidecars even with force', async () => {
+  const dir = makeTmpDir('pipeline-restore-sidecar-')
+  try {
+    const sourcePath = join(dir, 'source.sqlite')
+    await seedStore(sourcePath)
+    const backupResult = await backupPipelineStore({ sourcePath, backupDir: join(dir, 'backups') })
+    const targetPath = join(dir, 'target.sqlite')
+    writeFileSync(`${targetPath}-wal`, 'stale-sidecar')
+    await assert.rejects(
+      () => restorePipelineStore({ backupPath: backupResult.path, targetPath, force: true }),
+      /sidecars exist/,
+    )
+    assert.equal(existsSync(targetPath), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
 test('pruneOldBackups: keeps the newest N and deletes the rest, sorted by filename timestamp', async () => {

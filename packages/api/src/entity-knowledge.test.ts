@@ -46,6 +46,13 @@ class FakeReader implements EntityKnowledgeReader {
     this.entityInput = input
     return { schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION, items: [memory], nextCursor: 'next', hasMore: true }
   }
+
+  async getEntityMemoriesByIds() {
+    return []
+  }
+  async getEntityMemoryEvents() {
+    return { schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION, items: [], totalCount: 0, nextCursor: null, hasMore: false }
+  }
   async getRecentEntityMemories(input: GetRecentEntityMemoriesInput) {
     this.recentInput = input
     return { schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION, items: [memory], nextCursor: null, hasMore: false }
