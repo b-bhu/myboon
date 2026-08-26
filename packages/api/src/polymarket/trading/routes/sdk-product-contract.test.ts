@@ -130,9 +130,12 @@ test('mobile SDK product contract passes remote signer policy and both fixed-hos
       sdkSource.includes(operation.sdkPathFragment),
       `${operation.name}: installed SDK no longer contains ${operation.sdkPathFragment}; update the product contract and policy`,
     )
+    const requestUrl = new URL(operation.path, 'https://sdk-contract.invalid')
     const request = {
       method: operation.method,
-      path: operation.path,
+      // Match ServiceClient exactly: URLSearchParams are sent separately and
+      // are not part of the pathname passed to Builder authorization.
+      path: requestUrl.pathname,
       ...(operation.body === undefined ? {} : { body: operation.body }),
     }
     const builderHeaders = await (operation.proxy === 'proxy'
