@@ -37,6 +37,7 @@ function runtime(mode: 'active' | 'shadow', onCycle: () => void): SharedResearch
       schemaVersion: 'myboon.shared_research_runtime_status.v1', mode, sources: ['news'],
       supportedDepths: ['light'],
       priorityPools: [{ name: 'urgent', priorities: ['P0', 'P1'] }, { name: 'background', priorities: ['P2', 'P3'] }],
+      sourceFairness: { maxConsecutiveClaimsPerSource: 2 },
       standardSearch: { schemaVersion: 'myboon.standard_search_status.v1', enabled: false, connectorId: null, policyVersion: null },
       gateway: {
         schemaVersion: 'myboon.inference_gateway_status.v1', hermesProfileConfigured: false,
@@ -261,6 +262,7 @@ test('active config exposes dedicated disjoint priority pools', () => {
   })
   assert.deepEqual(config.urgentPriorities, ['P0', 'P1'])
   assert.deepEqual(config.backgroundPriorities, ['P2', 'P3'])
+  assert.equal(config.maxConsecutiveClaimsPerSource, 2)
 })
 
 test('active composition validates cutover evidence before opening a source database or provider', () => {
@@ -366,6 +368,38 @@ test('dedicated background pool pushes priority filtering before the bounded sto
   assert.equal(work[0]?.workId, 'background')
 })
 
+test('same-priority source fairness prevents one adapter from consuming every claim in a batch', async () => {
+  const pending = new Map<'news' | 'polymarket', string[]>([
+    ['news', Array.from({ length: 251 }, (_, index) => `news-${String(index).padStart(3, '0')}`)],
+    ['polymarket', ['poly-z']],
+  ])
+  const claims: string[] = []
+  const store = (sourceType: 'news' | 'polymarket') => ({
+    sourceType,
+    peekSchedulable: async (query: { limit: number }) => (pending.get(sourceType) ?? [])
+      .slice(0, query.limit).map((id) => researchWork(id, 'light', sourceType)),
+    claimWithLease: async (command: { workId: string; leaseOwner: string; leaseId: string; leaseExpiresAt: string }) => {
+      const rows = pending.get(sourceType) ?? []
+      const index = rows.indexOf(command.workId)
+      if (index < 0) return null
+      rows.splice(index, 1)
+      claims.push(command.workId)
+      const work = researchWork(command.workId, 'light', sourceType)
+      return {
+        work: { ...work, status: 'retrieval_leased' as const }, leaseOwner: command.leaseOwner,
+        leaseId: command.leaseId, leaseExpiresAt: command.leaseExpiresAt, queuedAt: work.updatedAt,
+      }
+    },
+  }) as unknown as SharedResearchWorkPort
+  const scheduler = new ResearchDepthFilteredScheduler(
+    [store('news'), store('polymarket')], ['light'], () => true, 2,
+  )
+  for (let index = 0; index < 3; index += 1) await scheduler.claimNext({
+    now: '2026-08-26T12:00:00.000Z', leaseOwner: 'worker', leaseTtlMs: 1_000,
+  })
+  assert.deepEqual(claims, ['news-000', 'news-001', 'poly-z'])
+})
+
 test('claim gate is rechecked after peek so a mid-cycle drain prevents the CAS claim', async () => {
   let enabled = true
   let claims = 0
@@ -424,9 +458,13 @@ test('recovery resumes expired leases and due retries once without inflating att
   }
 })
 
-function researchWork(workId: string, depth: ResearchWorkItem['researchDepth']): ResearchWorkItem {
+function researchWork(
+  workId: string,
+  depth: ResearchWorkItem['researchDepth'],
+  sourceType: Signal['sourceType'] = 'news',
+): ResearchWorkItem {
   return {
-    schemaVersion: RESEARCH_WORK_SCHEMA_VERSION, workId, signalId: `signal-${workId}`, sourceType: 'news',
+    schemaVersion: RESEARCH_WORK_SCHEMA_VERSION, workId, signalId: `signal-${workId}`, sourceType,
     researchDepth: depth, deepReason: depth === 'deep' ? 'manual_analyst_request' : null,
     priorityClass: 'P2', priorityScore: 0.5, freshnessDeadline: '2026-08-27T12:00:00.000Z',
     policyVersion: 'policy.v1', researchContractVersion: 'myboon.research_packet.v1',

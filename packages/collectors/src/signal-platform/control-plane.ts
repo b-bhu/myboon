@@ -76,6 +76,8 @@ export interface WorkObservabilityReadPort {
   readWorkObservability(input: {
     now: string
     recentFailureSince: string
+    /** Independent rolling window for arrival/admission/completion comparison. */
+    activitySince?: string
     failureLimit: number
   }): Promise<{
     signalCount: number
@@ -305,6 +307,7 @@ export interface SignalPlatformControlPlaneOptions {
   workReaders?: WorkObservabilityReadPort[]
   executionReader?: ExecutionObservabilityReadPort | null
   recentFailureWindowMs?: number
+  activityWindowMs?: number
   recentFailureLimit?: number
   alertPolicy?: ControlPlaneAlertPolicy | null
 }
@@ -315,6 +318,7 @@ export class SignalPlatformControlPlane {
   private readonly executionReader: ExecutionObservabilityReadPort | null
   private readonly recentFailureWindowMs: number
   private readonly recentFailureLimit: number
+  private readonly activityWindowMs: number
   private readonly alertPolicy: ControlPlaneAlertPolicy | null
 
   constructor(options: SignalPlatformControlPlaneOptions) {
@@ -328,6 +332,10 @@ export class SignalPlatformControlPlane {
       'recentFailureWindowMs', 1, 30 * 24 * 60 * 60_000,
     )
     this.recentFailureLimit = boundedInteger(options.recentFailureLimit ?? 25, 'recentFailureLimit', 1, 250)
+    this.activityWindowMs = boundedInteger(
+      options.activityWindowMs ?? 30 * 60_000,
+      'activityWindowMs', 60_000, 30 * 24 * 60 * 60_000,
+    )
     this.alertPolicy = options.alertPolicy ?? null
   }
 
@@ -335,18 +343,20 @@ export class SignalPlatformControlPlane {
     const nowMs = Date.parse(input.now)
     if (!Number.isFinite(nowMs)) throw new Error('now must be a valid timestamp')
     const failureSince = new Date(nowMs - this.recentFailureWindowMs).toISOString()
+    const activitySince = new Date(nowMs - this.activityWindowMs).toISOString()
 
     const sourceEntries = await Promise.all(this.stores.map(async (store) => {
       const [statusResult, detailResult] = await Promise.allSettled([
         store.getSchedulerStatus({ now: input.now }),
-        this.readWorkDetail(store.sourceType, input.now, failureSince),
+        this.readWorkDetail(store.sourceType, input.now, failureSince, activitySince),
       ])
       return [store.sourceType, sourceStatus(
-        store.sourceType, statusResult, detailResult, nowMs, failureSince,
+        store.sourceType, statusResult, detailResult, nowMs, activitySince,
       )] as const
     }))
-    const sources = Object.fromEntries(sourceEntries) as SignalPlatformControlPlaneStatus['sources']
+    let sources = Object.fromEntries(sourceEntries) as SignalPlatformControlPlaneStatus['sources']
     const execution = await this.readExecution(input.now, failureSince)
+    sources = applyMemoryWriteCoverage(sources, execution)
     const errors = [
       ...sourceEntries.flatMap(([, source]) => source.error ? [source.error] : []),
       ...(execution.error ? [execution.error] : []),
@@ -435,12 +445,14 @@ export class SignalPlatformControlPlane {
     sourceType: Signal['sourceType'],
     now: string,
     recentFailureSince: string,
+    activitySince: string,
   ): Promise<Awaited<ReturnType<WorkObservabilityReadPort['readWorkObservability']>> | null> {
     const reader = this.workReaders.get(sourceType)
     if (!reader) return null
     return reader.readWorkObservability({
       now,
       recentFailureSince,
+      activitySince,
       failureLimit: this.recentFailureLimit,
     })
   }
@@ -734,6 +746,23 @@ function evaluateAlerts(
   }
   return alerts.sort((a, b) => a.sourceType.localeCompare(b.sourceType)
     || a.code.localeCompare(b.code) || (a.provider ?? '').localeCompare(b.provider ?? ''))
+}
+
+/** A completed queue item is not proof that a durable memory was written. */
+function applyMemoryWriteCoverage(
+  sources: SignalPlatformControlPlaneStatus['sources'],
+  execution: ExecutionControlPlaneStatus,
+): SignalPlatformControlPlaneStatus['sources'] {
+  return Object.fromEntries(Object.entries(sources).map(([sourceType, source]) => {
+    if (!source) return [sourceType, source]
+    const succeeded = execution.availability === 'available'
+      ? execution.bySource[source.sourceType]?.byStage.memory_write?.byStatus.succeeded ?? 0
+      : null
+    return [sourceType, {
+      ...source,
+      artifacts: { ...source.artifacts, entityMemoryHandoffs: succeeded },
+    }]
+  })) as SignalPlatformControlPlaneStatus['sources']
 }
 
 function mergeProviderUsage(rows: ExecutionAggregateRow[]): ProviderUsageAggregate[] {

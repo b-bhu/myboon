@@ -31,6 +31,13 @@ verifier; and the disabled deep-containment foundation. The first
 implementation baseline is commit `f59bfb6`; the later hardening work remains
 safe-off until every applicable external release gate below is satisfied.
 
+The repository also contains a two-artifact blind Research Packet comparison
+workflow: reviewers receive only randomized A/B content views, while a separate
+private manifest retains current/proposed identity and measured canonical
+packet usage. The evaluator joins them only after review and emits aggregates
+without packet prose, route identity, prompts, or credentials. This closes the
+evaluation-tooling gap but is not a substitute for the required reviewed data.
+
 Repository implementation is not production evidence. The remaining release
 gates are:
 
@@ -1398,6 +1405,12 @@ phase-specific rollback.
 
 ## Open Product and Architecture Questions
 
+Resolved for the v1 scheduler: urgent/background capacity is reserved globally
+by priority class. Within an equal priority class, one source may claim at most
+the configured consecutive-source burst before another eligible source is
+selected. Source-specific urgent reservations require measured starvation in
+the historical/load evidence; they are not guessed in advance.
+
 1. What are the reviewed P0 and P1 freshness SLOs for News, Polymarket, and
    Market Calendar signals?
 2. Which signal categories are always admitted even when no canonical entity is
@@ -1413,21 +1426,19 @@ phase-specific rollback.
 7. Is `deep` research automatically selected by policy, manually approved, or
    both?
 8. Which approved model is the OpenRouter fallback when Ollama Cloud is primary?
-9. Should urgent capacity be reserved separately for each source or globally by
-   priority class?
-10. How should the existing backlog be handled during cutover: finish, re-triage,
+9. How should the existing backlog be handled during cutover: finish, re-triage,
     expire by policy, or preserve without execution?
-11. Is the long-term product/platform name `Signal-to-Knowledge`, `Research
+10. Is the long-term product/platform name `Signal-to-Knowledge`, `Research
     Platform`, or another name? Feed V3 remains the product-generation context,
     not necessarily the package name.
 
 ## Acceptance Criteria
 
-Checked items below have repository-level evidence from the 2026-08-26
-verification run: Signal Platform 133/133, Inference/Research/Hermes/Deep
-231/231, Entity Manager 179/179, News 86/86, Polymarket markets 16/16, legacy
-Polymarket researcher 14/14, pipeline store 82/82, Publisher 12/12, Editor
-13/13, API Feed 28/28, and API internal routes 15/15. Shared, tx-parser, and
+Checked items below have repository-level evidence from the 2026-08-27
+closure run: Signal Platform 141/141, Inference/Research/Hermes/Deep
+232/232, Entity Manager 179/179, News 86/86, combined Polymarket collection
+and research 30/30, pipeline store 82/82, Publisher and Editor 25/25, API Feed
+28/28, and API internal routes 15/15 (818 tests total). Shared, tx-parser, and
 collectors builds passed. Unchecked items require historical, VPS, Supabase
 rehearsal, live load, cutover, or soak evidence and must not be inferred from
 unit tests or from the deterministic queue harness.
@@ -1492,7 +1503,8 @@ artifacts to the source/stage cutover manifest:
 
 1. A per-source historical/shadow evaluation artifact with at least 1,000
    labeled rows, reviewed false-negative threshold, measured provider/token
-   coverage, zero interactive tool calls, and blind product-quality review.
+   coverage, zero interactive tool calls, plus the separate blind current-vs-
+   proposed Research Packet comparison artifact.
 2. The Entity Memory migration rehearsal and read-only verifier output from the
    approved Supabase project. This PRD and branch do not authorize applying it.
 3. A target-VPS deep containment artifact proving transient-service timeout,
@@ -1500,8 +1512,11 @@ artifacts to the source/stage cutover manifest:
    state, plus a clean read-only audit of both source-routed live registries.
 4. A measured two-times admitted-arrival load report. The checked-in
    logical-clock SQLite harness is preparatory evidence only.
-5. A rollback-rehearsal artifact bound by digest to the exact source and stage.
-6. A 24-hour live soak report containing PM2 restart counts, queue freshness
+5. A provider-outage rehearsal artifact bound to a tracked cohort and proving
+   zero claims/attempt spend while open, exactly one half-open probe, resumed
+   completion, and no duplicate or terminal outage artifacts.
+6. A rollback-rehearsal artifact bound by digest to the exact source and stage.
+7. A 24-hour live soak report containing PM2 restart counts, queue freshness
    percentiles, typed failures, Research and Entity provider/circuit health,
    SQLite size/error deltas, orphan audit, and end-to-end memory handoffs.
 

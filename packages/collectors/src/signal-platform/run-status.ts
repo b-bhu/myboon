@@ -4,6 +4,7 @@ import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { formatControlPlaneStatusJson } from './control-plane-format'
 import { parseControlPlaneAlertPolicy } from './control-plane'
 import { readFeedV3RuntimeStatusAvailability } from './runtime-status'
+import { evaluateOperationalAlerts, parseOperationalAlertPolicy } from './runtime-alerts'
 import { readSqliteControlPlaneStatus } from './status-sqlite-composition'
 
 loadDotenvChain()
@@ -40,14 +41,24 @@ async function main(): Promise<void> {
   const alertPolicy = process.env.FEED_V3_STATUS_ALERT_POLICY_JSON?.trim()
     ? parseControlPlaneAlertPolicy(JSON.parse(process.env.FEED_V3_STATUS_ALERT_POLICY_JSON))
     : null
-  const status = await readSqliteControlPlaneStatus({ newsPath, pipelinePath, now, alertPolicy })
+  const activityWindowMs = positiveInteger(
+    process.env.FEED_V3_STATUS_ACTIVITY_WINDOW_MS, 30 * 60_000, 'FEED_V3_STATUS_ACTIVITY_WINDOW_MS',
+  )
+  const status = await readSqliteControlPlaneStatus({
+    newsPath, pipelinePath, now, alertPolicy, activityWindowMs,
+  })
   const { researchRuntime, entityRuntime } = await readFeedV3RuntimeStatusAvailability({
     researchPath: runtimeStatusPath,
     researchStaleAfterMs: runtimeStaleAfterMs,
     entityPath: entityRuntimeStatusPath,
     entityStaleAfterMs: entityRuntimeStaleAfterMs,
   })
-  process.stdout.write(`${formatControlPlaneStatusJson({ ...status, researchRuntime, entityRuntime })}\n`)
+  const operationalAlertPolicy = process.env.FEED_V3_OPERATIONAL_ALERT_POLICY_JSON?.trim()
+    ? parseOperationalAlertPolicy(JSON.parse(process.env.FEED_V3_OPERATIONAL_ALERT_POLICY_JSON))
+    : null
+  const runtime = { researchRuntime, entityRuntime }
+  const operationalAlerts = evaluateOperationalAlerts({ status, runtime, policy: operationalAlertPolicy })
+  process.stdout.write(`${formatControlPlaneStatusJson({ ...status, ...runtime, operationalAlerts })}\n`)
 }
 
 function positiveInteger(raw: string | undefined, fallback: number, name: string): number {

@@ -6,6 +6,7 @@ import type { CutoverStage } from './cutover-receipt'
 
 export const ROLLBACK_REHEARSAL_SCHEMA_VERSION = 'myboon.feed_v3_rollback_rehearsal.v1' as const
 export const LIVE_SOAK_EVIDENCE_SCHEMA_VERSION = 'myboon.feed_v3_live_soak_evidence.v1' as const
+export const PROVIDER_OUTAGE_EVIDENCE_SCHEMA_VERSION = 'myboon.feed_v3_provider_outage_rehearsal.v1' as const
 
 export interface RollbackRehearsalEvidenceV1 {
   schemaVersion: typeof ROLLBACK_REHEARSAL_SCHEMA_VERSION
@@ -80,7 +81,44 @@ export interface LiveSoakEvidenceV1 {
   failures: string[]
 }
 
-export type OperationalEvidence = RollbackRehearsalEvidenceV1 | LiveSoakEvidenceV1
+export interface ProviderOutageRehearsalEvidenceV1 {
+  schemaVersion: typeof PROVIDER_OUTAGE_EVIDENCE_SCHEMA_VERSION
+  artifactId: string
+  sourceType: Signal['sourceType']
+  stage: 'research' | 'entity'
+  failureCategory: Extract<FailureCategory, 'provider_timeout' | 'provider_rate_limited' | 'provider_unavailable'>
+  startedAt: string
+  circuitOpenedAt: string
+  probeAllowedAt: string
+  recoveredAt: string
+  finishedAt: string
+  configuredCooldownMs: number
+  cohortSha256: string
+  statusSamplesSha256: string
+  traceSamplesSha256: string
+  cohortSize: number
+  duringOpen: {
+    pendingItems: number
+    claimedItems: number
+    terminalFailures: number
+    attemptDelta: number
+    providerCalls: number
+  }
+  probe: { calls: number; succeeded: boolean }
+  afterRecovery: {
+    pendingItems: number
+    retryingItems: number
+    completedItems: number
+    deadLetterItems: number
+    duplicateArtifacts: number
+    terminalOutageFailures: number
+  }
+  manualSqlRepairs: number
+  passed: boolean
+  failures: string[]
+}
+
+export type OperationalEvidence = RollbackRehearsalEvidenceV1 | LiveSoakEvidenceV1 | ProviderOutageRehearsalEvidenceV1
 
 export function validateRollbackRehearsalEvidence(value: unknown): RollbackRehearsalEvidenceV1 {
   const record = object(value)
@@ -211,15 +249,93 @@ export function validateLiveSoakEvidence(value: unknown): LiveSoakEvidenceV1 {
   return result
 }
 
+export function validateProviderOutageRehearsalEvidence(value: unknown): ProviderOutageRehearsalEvidenceV1 {
+  const record = object(value)
+  literal(record.schemaVersion, PROVIDER_OUTAGE_EVIDENCE_SCHEMA_VERSION, 'schemaVersion')
+  const during = object(record.duringOpen)
+  const probe = object(record.probe)
+  const after = object(record.afterRecovery)
+  const result: ProviderOutageRehearsalEvidenceV1 = {
+    schemaVersion: PROVIDER_OUTAGE_EVIDENCE_SCHEMA_VERSION,
+    artifactId: text(record.artifactId, 'artifactId'),
+    sourceType: source(record.sourceType),
+    stage: outageStage(record.stage),
+    failureCategory: outageCategory(record.failureCategory),
+    startedAt: timestamp(record.startedAt, 'startedAt'),
+    circuitOpenedAt: timestamp(record.circuitOpenedAt, 'circuitOpenedAt'),
+    probeAllowedAt: timestamp(record.probeAllowedAt, 'probeAllowedAt'),
+    recoveredAt: timestamp(record.recoveredAt, 'recoveredAt'),
+    finishedAt: timestamp(record.finishedAt, 'finishedAt'),
+    configuredCooldownMs: positiveInteger(record.configuredCooldownMs, 'configuredCooldownMs'),
+    cohortSha256: digest(record.cohortSha256, 'cohortSha256'),
+    statusSamplesSha256: digest(record.statusSamplesSha256, 'statusSamplesSha256'),
+    traceSamplesSha256: digest(record.traceSamplesSha256, 'traceSamplesSha256'),
+    cohortSize: positiveInteger(record.cohortSize, 'cohortSize'),
+    duringOpen: {
+      pendingItems: integer(during.pendingItems, 'duringOpen.pendingItems'),
+      claimedItems: integer(during.claimedItems, 'duringOpen.claimedItems'),
+      terminalFailures: integer(during.terminalFailures, 'duringOpen.terminalFailures'),
+      attemptDelta: integer(during.attemptDelta, 'duringOpen.attemptDelta'),
+      providerCalls: integer(during.providerCalls, 'duringOpen.providerCalls'),
+    },
+    probe: {
+      calls: integer(probe.calls, 'probe.calls'),
+      succeeded: bool(probe.succeeded, 'probe.succeeded'),
+    },
+    afterRecovery: {
+      pendingItems: integer(after.pendingItems, 'afterRecovery.pendingItems'),
+      retryingItems: integer(after.retryingItems, 'afterRecovery.retryingItems'),
+      completedItems: integer(after.completedItems, 'afterRecovery.completedItems'),
+      deadLetterItems: integer(after.deadLetterItems, 'afterRecovery.deadLetterItems'),
+      duplicateArtifacts: integer(after.duplicateArtifacts, 'afterRecovery.duplicateArtifacts'),
+      terminalOutageFailures: integer(after.terminalOutageFailures, 'afterRecovery.terminalOutageFailures'),
+    },
+    manualSqlRepairs: integer(record.manualSqlRepairs, 'manualSqlRepairs'),
+    passed: bool(record.passed, 'passed'),
+    failures: strings(record.failures, 'failures'),
+  }
+  const start = Date.parse(result.startedAt)
+  const opened = Date.parse(result.circuitOpenedAt)
+  const probeAt = Date.parse(result.probeAllowedAt)
+  const recovered = Date.parse(result.recoveredAt)
+  const finished = Date.parse(result.finishedAt)
+  if (!(start <= opened && opened <= probeAt && probeAt <= recovered && recovered <= finished)) {
+    throw new Error('provider outage timestamps must be ordered')
+  }
+  if (probeAt - opened < result.configuredCooldownMs) {
+    throw new Error('probeAllowedAt precedes the configured circuit cooldown')
+  }
+  const afterCount = result.afterRecovery.pendingItems + result.afterRecovery.retryingItems
+    + result.afterRecovery.completedItems + result.afterRecovery.deadLetterItems
+  const derivedFailures = [
+    ...(result.configuredCooldownMs < 10 * 60_000 || result.configuredCooldownMs > 15 * 60_000
+      ? ['configured cooldown is outside the reviewed 10-15 minute range'] : []),
+    ...(result.duringOpen.pendingItems !== result.cohortSize ? ['outage cohort was not fully pending while open'] : []),
+    ...(result.duringOpen.claimedItems !== 0 ? ['work was claimed while the provider circuit was open'] : []),
+    ...(result.duringOpen.terminalFailures !== 0 ? ['terminal failures were created while the circuit was open'] : []),
+    ...(result.duringOpen.attemptDelta !== 0 ? ['attempt counters changed while the circuit was open'] : []),
+    ...(result.duringOpen.providerCalls !== 0 ? ['provider calls occurred while the circuit was open'] : []),
+    ...(result.probe.calls !== 1 ? ['half-open recovery did not allow exactly one probe'] : []),
+    ...(!result.probe.succeeded ? ['half-open recovery probe did not succeed'] : []),
+    ...(afterCount !== result.cohortSize ? ['post-recovery cohort cardinality changed'] : []),
+    ...(result.afterRecovery.completedItems === 0 ? ['no cohort work completed after recovery'] : []),
+    ...(result.afterRecovery.duplicateArtifacts !== 0 ? ['recovery created duplicate artifacts'] : []),
+    ...(result.afterRecovery.terminalOutageFailures !== 0 ? ['outage produced terminal cohort failures'] : []),
+    ...(result.manualSqlRepairs !== 0 ? ['manual SQL repairs were required'] : []),
+  ]
+  assertTruthfulPass(result.passed, result.failures, derivedFailures)
+  return result
+}
+
 export function readOperationalEvidence(input: {
-  kind: 'rollback' | 'live-soak'
+  kind: 'rollback' | 'live-soak' | 'provider-outage'
   inputPath: string
 }): OperationalEvidence {
   if (!isAbsolute(input.inputPath)) throw new Error('--input must be an absolute path')
   const value = JSON.parse(readFileSync(resolve(input.inputPath), 'utf8')) as unknown
-  return input.kind === 'rollback'
-    ? validateRollbackRehearsalEvidence(value)
-    : validateLiveSoakEvidence(value)
+  if (input.kind === 'rollback') return validateRollbackRehearsalEvidence(value)
+  if (input.kind === 'live-soak') return validateLiveSoakEvidence(value)
+  return validateProviderOutageRehearsalEvidence(value)
 }
 
 export function formatOperationalEvidenceJson(value: OperationalEvidence): string {
@@ -233,6 +349,17 @@ function assertTruthfulPass(passed: boolean, declared: string[], derived: string
   if (!passed && declared.length === 0 && derived.length === 0) {
     throw new Error('Failed evidence must declare or derive at least one failure')
   }
+}
+
+function outageStage(value: unknown): ProviderOutageRehearsalEvidenceV1['stage'] {
+  if (value !== 'research' && value !== 'entity') throw new Error('stage must be research or entity')
+  return value
+}
+function outageCategory(value: unknown): ProviderOutageRehearsalEvidenceV1['failureCategory'] {
+  if (value !== 'provider_timeout' && value !== 'provider_rate_limited' && value !== 'provider_unavailable') {
+    throw new Error('failureCategory must be a retryable provider outage category')
+  }
+  return value
 }
 
 function object(value: unknown): Record<string, unknown> {

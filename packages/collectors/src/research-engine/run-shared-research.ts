@@ -67,6 +67,7 @@ export const SHARED_RESEARCH_ENV = Object.freeze({
   promptVersion: 'FEED_V3_RESEARCH_PROMPT_VERSION',
   urgentPriorities: 'FEED_V3_RESEARCH_URGENT_PRIORITIES',
   backgroundPriorities: 'FEED_V3_RESEARCH_BACKGROUND_PRIORITIES',
+  maxConsecutiveClaimsPerSource: 'FEED_V3_RESEARCH_MAX_CONSECUTIVE_CLAIMS_PER_SOURCE',
   recoveryIntervalMs: 'FEED_V3_RESEARCH_RECOVERY_INTERVAL_MS',
   recoveryLimitPerSource: 'FEED_V3_RESEARCH_RECOVERY_LIMIT_PER_SOURCE',
   drainGraceMs: 'FEED_V3_RESEARCH_DRAIN_GRACE_MS',
@@ -86,6 +87,7 @@ export interface SharedResearchRunnerConfig {
   deepEnabled: boolean
   urgentPriorities: PriorityClass[]
   backgroundPriorities: PriorityClass[]
+  maxConsecutiveClaimsPerSource: number
   recoveryIntervalMs: number
   recoveryLimitPerSource: number
   drainGraceMs: number
@@ -103,6 +105,7 @@ export interface SharedResearchRuntimeStatus {
   sources: SupportedResearchSource[]
   supportedDepths: ResearchWorkItem['researchDepth'][]
   priorityPools: Array<{ name: 'urgent' | 'background', priorities: PriorityClass[] }>
+  sourceFairness: { maxConsecutiveClaimsPerSource: number }
   standardSearch: StandardSearchStatusSnapshot
   gateway: InferenceGatewayStatusSnapshot
   circuits: InferenceCircuitStatusSnapshot
@@ -192,6 +195,10 @@ export function loadSharedResearchRunnerConfig(
     deepEnabled: feed.deepResearchEnabled,
     urgentPriorities: priorities(env[SHARED_RESEARCH_ENV.urgentPriorities], ['P0', 'P1']),
     backgroundPriorities: priorities(env[SHARED_RESEARCH_ENV.backgroundPriorities], ['P2', 'P3']),
+    maxConsecutiveClaimsPerSource: integer(
+      env[SHARED_RESEARCH_ENV.maxConsecutiveClaimsPerSource], 1, 100, 2,
+      'research maximum consecutive claims per source',
+    ),
     recoveryIntervalMs: integer(env[SHARED_RESEARCH_ENV.recoveryIntervalMs], 100, 24 * 60 * 60_000, 30_000, 'research recovery interval'),
     recoveryLimitPerSource: integer(env[SHARED_RESEARCH_ENV.recoveryLimitPerSource], 1, 1_000, 100, 'research recovery limit'),
     drainGraceMs: integer(env[SHARED_RESEARCH_ENV.drainGraceMs], 100, 15 * 60_000, 150_000, 'research drain grace'),
@@ -370,6 +377,7 @@ export function createLiveSharedResearchRuntime(
         { name: 'urgent' as const, priorities: [...config.urgentPriorities] },
         { name: 'background' as const, priorities: [...config.backgroundPriorities] },
       ],
+      sourceFairness: { maxConsecutiveClaimsPerSource: config.maxConsecutiveClaimsPerSource },
       standardSearch: standardSearchStatus(standardConfiguration), gateway: gatewayRuntime.status,
       circuits,
       circuitNextProbes: circuits.workloads.flatMap((workload) => workload.targets.map((target) => ({
@@ -440,7 +448,9 @@ export function createLiveSharedResearchRuntime(
         stores, executionLedger, env: config.env, executionRegistries, gateway: gatewayRuntime.gateway,
       })
     }
-    const scheduler = new ResearchDepthFilteredScheduler(stores, supportedDepths, claimsEnabled)
+    const scheduler = new ResearchDepthFilteredScheduler(
+      stores, supportedDepths, claimsEnabled, config.maxConsecutiveClaimsPerSource,
+    )
     const recoveryScheduler = new SharedResearchScheduler(stores)
     const readiness = new InferenceGatewayStageReadiness(gatewayRuntime.gateway)
     const makeWorker = (name: 'urgent' | 'background', priorityClasses: PriorityClass[]) => new SharedResearchWorker({
@@ -502,30 +512,40 @@ function sourceDatabasePaths(config: SharedResearchRunnerConfig): ReadonlyMap<Su
 export class ResearchDepthFilteredScheduler implements SharedResearchSchedulerPort {
   private readonly stores: ReadonlyMap<Signal['sourceType'], SharedResearchWorkPort>
   private readonly depths: ReadonlySet<ResearchWorkItem['researchDepth']>
+  private lastClaimedSource: Signal['sourceType'] | null = null
+  private consecutiveClaims = 0
   constructor(
     stores: SharedResearchWorkPort[],
     depths: ResearchWorkItem['researchDepth'][],
     private readonly claimsEnabled: () => boolean = () => true,
+    private readonly maxConsecutiveClaimsPerSource = 2,
   ) {
     this.stores = new Map(stores.map((store) => [store.sourceType, store]))
     this.depths = new Set(depths)
+    if (!Number.isInteger(maxConsecutiveClaimsPerSource)
+      || maxConsecutiveClaimsPerSource < 1 || maxConsecutiveClaimsPerSource > 100) {
+      throw new Error('maxConsecutiveClaimsPerSource must be an integer between 1 and 100')
+    }
   }
   async peekGlobal(query: GlobalSchedulerQuery): Promise<ResearchWorkItem[]> {
-    const heads = await Promise.all([...this.stores.values()].map((store) => store.peekSchedulable({
-      now: query.now, limit: Math.min(250, Math.max(query.limit, 25)), stages: query.stages,
-      researchDepths: [...this.depths], priorityClasses: query.priorityClasses,
-    })))
-    const acceptedPriorities = query.priorityClasses === undefined ? null : new Set(query.priorityClasses)
-    return heads.flat()
-      .filter((work) => this.depths.has(work.researchDepth))
-      .filter((work) => acceptedPriorities === null || acceptedPriorities.has(work.priorityClass))
-      .sort(compareResearchWorkPriority)
-      .slice(0, query.limit)
+    return (await this.peekEligibleStoreHeads(
+      query, Math.min(250, Math.max(query.limit, 25)),
+    )).slice(0, query.limit)
   }
   async claimNext(command: ClaimNextCommand): Promise<WorkLease | null> {
     if (!this.claimsEnabled()) return null
-    const candidates = await this.peekGlobal({ ...command, limit: 250 })
-    for (const work of candidates) {
+    // Keep a bounded head from every source until after the fairness choice;
+    // slicing a global head first can hide an alternate source behind 250 rows.
+    const candidates = await this.peekEligibleStoreHeads({ ...command, limit: 250 }, 250)
+    const first = candidates[0]
+    const fairAlternative = first && this.lastClaimedSource === first.sourceType
+      && this.consecutiveClaims >= this.maxConsecutiveClaimsPerSource
+      ? candidates.find((candidate) => candidate.sourceType !== first.sourceType
+        && candidate.priorityClass === first.priorityClass) : undefined
+    const ordered = fairAlternative
+      ? [fairAlternative, ...candidates.filter((candidate) => candidate !== fairAlternative)]
+      : candidates
+    for (const work of ordered) {
       if (!this.claimsEnabled()) return null
       const expectedStatus = work.status === 'research_pending' ? 'research_pending'
         : work.status === 'synthesis_pending' ? 'synthesis_pending'
@@ -536,9 +556,28 @@ export class ResearchDepthFilteredScheduler implements SharedResearchSchedulerPo
         leaseId: `lease_${randomUUID()}`,
         leaseExpiresAt: new Date(Date.parse(command.now) + command.leaseTtlMs).toISOString(), now: command.now,
       })
-      if (lease) return lease
+      if (lease) {
+        if (this.lastClaimedSource === work.sourceType) this.consecutiveClaims += 1
+        else { this.lastClaimedSource = work.sourceType; this.consecutiveClaims = 1 }
+        return lease
+      }
     }
     return null
+  }
+
+  private async peekEligibleStoreHeads(
+    query: GlobalSchedulerQuery,
+    perStoreLimit: number,
+  ): Promise<ResearchWorkItem[]> {
+    const heads = await Promise.all([...this.stores.values()].map((store) => store.peekSchedulable({
+      now: query.now, limit: perStoreLimit, stages: query.stages,
+      researchDepths: [...this.depths], priorityClasses: query.priorityClasses,
+    })))
+    const acceptedPriorities = query.priorityClasses === undefined ? null : new Set(query.priorityClasses)
+    return heads.flat()
+      .filter((work) => this.depths.has(work.researchDepth))
+      .filter((work) => acceptedPriorities === null || acceptedPriorities.has(work.priorityClass))
+      .sort(compareResearchWorkPriority)
   }
 }
 

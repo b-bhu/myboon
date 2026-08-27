@@ -9,6 +9,7 @@ import {
   formatOperationalEvidenceJson,
   readOperationalEvidence,
   validateLiveSoakEvidence,
+  validateProviderOutageRehearsalEvidence,
   validateRollbackRehearsalEvidence,
 } from './operational-evidence'
 
@@ -63,6 +64,25 @@ function soakEvidence() {
       maximumProviderP95LatencyMs: 1000, maximumSqliteGrowthBytes: 1000,
       minimumMemoryHandoffRate: 0.95, maximumDeadLetterRate: 0.01, maximumBoundedStateGrowth: 0 },
     passed: true, failures: [],
+  } as const
+}
+
+function providerOutageEvidence() {
+  return {
+    schemaVersion: 'myboon.feed_v3_provider_outage_rehearsal.v1', artifactId: 'outage-1',
+    sourceType: 'news', stage: 'research', failureCategory: 'provider_timeout',
+    startedAt: '2026-08-26T00:00:00.000Z', circuitOpenedAt: '2026-08-26T00:01:00.000Z',
+    probeAllowedAt: '2026-08-26T00:11:00.000Z', recoveredAt: '2026-08-26T00:11:10.000Z',
+    finishedAt: '2026-08-26T00:20:00.000Z', configuredCooldownMs: 600_000,
+    cohortSha256: HASH_A, statusSamplesSha256: HASH_B, traceSamplesSha256: HASH_A,
+    cohortSize: 10,
+    duringOpen: { pendingItems: 10, claimedItems: 0, terminalFailures: 0, attemptDelta: 0, providerCalls: 0 },
+    probe: { calls: 1, succeeded: true },
+    afterRecovery: {
+      pendingItems: 5, retryingItems: 0, completedItems: 5, deadLetterItems: 0,
+      duplicateArtifacts: 0, terminalOutageFailures: 0,
+    },
+    manualSqlRepairs: 0, passed: true, failures: [],
   } as const
 }
 
@@ -123,6 +143,23 @@ test('live soak evidence requires all PRD measurements and derives pass from the
   assert.throws(() => validateLiveSoakEvidence(superficial), /object/)
 })
 
+test('provider outage evidence proves no claims or attempt spend while open and one successful recovery probe', () => {
+  const evidence = validateProviderOutageRehearsalEvidence(providerOutageEvidence())
+  assert.equal(evidence.passed, true)
+  assert.throws(() => validateProviderOutageRehearsalEvidence({
+    ...evidence, duringOpen: { ...evidence.duringOpen, claimedItems: 1 },
+  }), /cannot pass/)
+  assert.throws(() => validateProviderOutageRehearsalEvidence({
+    ...evidence, probe: { calls: 2, succeeded: true },
+  }), /cannot pass/)
+  assert.throws(() => validateProviderOutageRehearsalEvidence({
+    ...evidence, afterRecovery: { ...evidence.afterRecovery, duplicateArtifacts: 1 },
+  }), /cannot pass/)
+  assert.throws(() => validateProviderOutageRehearsalEvidence({
+    ...evidence, probeAllowedAt: '2026-08-26T00:05:00.000Z',
+  }), /precedes/)
+})
+
 test('file reader requires an explicit absolute artifact and formatter redacts credentials', () => {
   const dir = mkdtempSync(join(tmpdir(), 'feed-v3-evidence-'))
   try {
@@ -135,5 +172,8 @@ test('file reader requires an explicit absolute artifact and formatter redacts c
       { ...evidence, secret: 'sk-this-must-not-leak' } as unknown as typeof evidence,
     )
     assert.equal(json.includes('sk-this-must-not-leak'), false)
+    const outagePath = join(dir, 'outage.json')
+    writeFileSync(outagePath, JSON.stringify(providerOutageEvidence()))
+    assert.equal(readOperationalEvidence({ kind: 'provider-outage', inputPath: outagePath }).artifactId, 'outage-1')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

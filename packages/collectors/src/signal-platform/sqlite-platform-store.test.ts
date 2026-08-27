@@ -525,6 +525,9 @@ test('SQLite observability reports stored triage, artifacts, latency percentiles
     assert.equal(detail.triageOutcomes?.[decision.outcome], 1)
     assert.equal(detail.researchPacketCount, 1)
     assert.equal(detail.entityMemoryHandoffCount, 1)
+    assert.equal(detail.arrivalsInWindow, 0)
+    assert.equal(detail.admissionsInWindow, 4)
+    assert.equal(detail.completionsInWindow, 1)
     assert.deepEqual(detail.endToEndLatency, {
       sampleCount: 1,
       p50Ms: 30 * 60_000,
@@ -538,6 +541,16 @@ test('SQLite observability reports stored triage, artifacts, latency percentiles
       oldestQueuedAt: '2026-08-26T12:00:00.000Z',
       p50AgeMs: 30 * 60_000, p95AgeMs: 60 * 60_000,
     })
+    const rolling = await store.readWorkObservability({
+      now: '2026-08-26T13:00:00.000Z',
+      recentFailureSince: '2026-08-26T11:00:00.000Z',
+      activitySince: '2026-08-26T12:20:00.000Z', failureLimit: 25,
+    })
+    assert.deepEqual({
+      arrivals: rolling.arrivalsInWindow,
+      admissions: rolling.admissionsInWindow,
+      researchPackets: rolling.completionsInWindow,
+    }, { arrivals: 0, admissions: 2, researchPackets: 0 })
   } finally {
     store.close()
     rmSync(temp.dir, { recursive: true, force: true })

@@ -153,6 +153,7 @@ test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, a
     ],
     executionReader: executionReader([
       executionRow({ failureCategory: 'provider_timeout', status: 'failed', eventCount: 1 }),
+      executionRow({ stage: 'memory_write', status: 'succeeded', eventCount: 1 }),
       executionRow({
         sourceType: 'polymarket', stage: 'retrieval', status: 'failed',
         failureCategory: 'budget_exceeded', provider: 'fallback-provider', model: 'model-b',

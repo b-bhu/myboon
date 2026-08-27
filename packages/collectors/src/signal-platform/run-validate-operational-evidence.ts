@@ -9,8 +9,8 @@ function main(): void {
   const inputIndex = args.indexOf('--input')
   const kind = args[kindIndex + 1]
   const inputPath = args[inputIndex + 1]
-  if ((kind !== 'rollback' && kind !== 'live-soak') || !inputPath || args.length !== 4) {
-    throw new Error('Usage: --kind rollback|live-soak --input /absolute/evidence.json')
+  if ((kind !== 'rollback' && kind !== 'live-soak' && kind !== 'provider-outage') || !inputPath || args.length !== 4) {
+    throw new Error('Usage: --kind rollback|live-soak|provider-outage --input /absolute/evidence.json')
   }
   process.stdout.write(`${formatOperationalEvidenceJson(readOperationalEvidence({ kind, inputPath }))}\n`)
 }

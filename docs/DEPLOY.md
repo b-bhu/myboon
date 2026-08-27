@@ -258,6 +258,52 @@ thresholds by source, `providerErrorRateThreshold`, and
 `deadLetterCountThreshold`. The status output records whether alert evaluation
 was available; it never substitutes default SLOs.
 
+The additional initial-alert checks use a separate reviewed
+`FEED_V3_OPERATIONAL_ALERT_POLICY_JSON` containing
+`minimumThroughputWindowMs`, `minimumCompletionAdmissionRatio`, and
+`sqliteWriteErrorCountThreshold`. Circuit-open and containment-survivor alerts
+come from the atomic Research/Entity runtime snapshots. Completion/admission
+uses an independent 30-minute SQLite activity window while provider failures
+retain their five-minute window. Missing/stale runtime snapshots, an
+unconfigured policy, and unavailable SQLite write-error collection are emitted
+as explicit coverage gaps rather than treated as healthy.
+Set `FEED_V3_STATUS_ACTIVITY_WINDOW_MS` to the exact reviewed throughput window
+(default `1800000`); a policy requesting a longer window than the status sample
+is reported unavailable rather than evaluated on partial history.
+
+Research capacity is split into urgent and background pools. Inside an equal
+priority class, `FEED_V3_RESEARCH_MAX_CONSECUTIVE_CLAIMS_PER_SOURCE` bounds a
+single adapter's claim burst (default `2`); it never lets lower-priority work
+jump ahead of P0/P1 work.
+
+Historical packet quality is evaluated separately from triage. First prepare
+reviewer-safe A/B assignments and a private mapping manifest; the assignments
+omit packet/work/signal identity, provider, model, usage, and cost:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:prepare-packet-comparison -- \
+  --input packet-pairs.jsonl --dataset-id 2026-08-news-poly \
+  --assignments-out /absolute/private/reviewer-assignments.json \
+  --manifest-out /absolute/private/packet-manifest.json
+```
+
+After reviewers return `myboon.blind_packet_score.v1` rows, evaluate the private
+manifest with a reviewed threshold JSON file:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:evaluate-packet-comparison -- \
+  --manifest /absolute/private/packet-manifest.json \
+  --reviews /absolute/private/reviews.json \
+  --thresholds /absolute/private/packet-thresholds.json
+```
+
+The aggregate artifact joins A/B scores to current/proposed identities only
+after review. Every score carries the assignment-content digest and the private
+manifest independently reconstructs and verifies that digest, so a modified
+review packet cannot be silently joined. The evaluator meters usage from the validated canonical packets, enforces zero
+interactive tools, and contains neither packet prose nor route identity. A
+real reviewed data set is still required; these commands do not fabricate it.
+
 Externally produced rollback-rehearsal and live-soak evidence can be validated
 and redacted without asserting that the evidence exists:
 
@@ -266,11 +312,16 @@ pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
   --kind rollback --input /absolute/path/rollback.json
 pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
   --kind live-soak --input /absolute/path/live-soak.json
+pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
+  --kind provider-outage --input /absolute/path/provider-outage.json
 ```
 
 The validator rejects a claimed pass when measured duration, rollback bounds,
 SQLite errors, dead-letter threshold, ownership restoration, queue integrity,
-or orphan results contradict it. It does not generate production evidence.
+or orphan results contradict it. Provider-outage evidence additionally binds a
+tracked cohort and proves zero claims, attempts, provider calls, and terminal
+failures while open; exactly one half-open probe; recovery progress; and zero
+duplicate artifacts. It does not generate production evidence.
 
 `feed-v3:status` reports Research and Entity runtime snapshot availability as
 `current`, `stale`, `missing`, or `invalid`. The Entity snapshot contains only

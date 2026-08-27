@@ -73,6 +73,7 @@ function status(): SharedResearchRuntimeStatus {
     schemaVersion: 'myboon.shared_research_runtime_status.v1', mode: 'active', sources: ['news'],
     supportedDepths: ['light'],
     priorityPools: [{ name: 'urgent', priorities: ['P0', 'P1'] }, { name: 'background', priorities: ['P2', 'P3'] }],
+    sourceFairness: { maxConsecutiveClaimsPerSource: 2 },
     standardSearch: { schemaVersion: 'myboon.standard_search_status.v1', enabled: false, connectorId: null, policyVersion: null },
     gateway: {
       schemaVersion: 'myboon.inference_gateway_status.v1', hermesProfileConfigured: false,

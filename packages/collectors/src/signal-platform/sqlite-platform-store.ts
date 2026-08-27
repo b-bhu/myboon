@@ -725,12 +725,12 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
           WHERE source_type = ? AND observed_at >= ? AND observed_at <= ?) AS arrivals,
         (SELECT COUNT(*) FROM signal_platform_research_work
           WHERE source_type = ? AND created_at >= ? AND created_at <= ?) AS admissions,
-        (SELECT COUNT(*) FROM signal_platform_research_work
-          WHERE source_type = ? AND status = 'complete' AND updated_at >= ? AND updated_at <= ?) AS completions
+        (SELECT COUNT(*) FROM signal_platform_research_packets
+          WHERE source_type = ? AND created_at >= ? AND created_at <= ?) AS completions
     `).get(
-      this.sourceType, input.recentFailureSince, input.now,
-      this.sourceType, input.recentFailureSince, input.now,
-      this.sourceType, input.recentFailureSince, input.now,
+      this.sourceType, input.activitySince ?? input.recentFailureSince, input.now,
+      this.sourceType, input.activitySince ?? input.recentFailureSince, input.now,
+      this.sourceType, input.activitySince ?? input.recentFailureSince, input.now,
     ) as Record<string, unknown> | undefined
     const queueAge = this.db.prepare(`
       WITH ages AS (

@@ -16,6 +16,7 @@ export async function readSqliteControlPlaneStatus(input: {
   pipelinePath: string
   now: string
   alertPolicy?: ControlPlaneAlertPolicy | null
+  activityWindowMs?: number
 }): Promise<SignalPlatformControlPlaneStatus> {
   const openedStores = [
     openStatusStore(input.newsPath, 'news'),
@@ -45,6 +46,7 @@ export async function readSqliteControlPlaneStatus(input: {
       workReaders: openedStores.map((entry) => entry.reader),
       executionReader,
       alertPolicy: input.alertPolicy,
+      activityWindowMs: input.activityWindowMs,
     }).readStatus({ now: input.now })
   } finally {
     for (const entry of ledgers) entry.ledger?.close()
