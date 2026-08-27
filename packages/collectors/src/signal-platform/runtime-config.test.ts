@@ -142,3 +142,52 @@ test('phase1 policy parses active ownership without a receipt path', () => {
   assert.equal(config.researchMode, 'active')
   assert.equal(config.entityMode, 'active')
 })
+
+test('phase1 rejects any active intake/research/entity source outside news and polymarket', () => {
+  const base = {
+    [FEED_V3_ENV.cutoverPolicy]: 'phase1',
+    [FEED_V3_ENV.legacyResearchDisabledSources]: 'news,polymarket,market_calendar,x',
+    [FEED_V3_ENV.legacyEntityDisabledSources]: 'news,polymarket,market_calendar,x',
+  }
+  // Active intake source outside scope.
+  assert.throws(() => loadFeedV3RuntimeConfig({
+    ...base, [FEED_V3_ENV.intakeMode]: 'active', [FEED_V3_ENV.intakeActiveSources]: 'news,market_calendar',
+  }), /Phase 1 does not admit active source: market_calendar/)
+  // Active research source outside scope.
+  assert.throws(() => loadFeedV3RuntimeConfig({
+    ...base, [FEED_V3_ENV.researchMode]: 'active', [FEED_V3_ENV.researchActiveSources]: 'news,x',
+  }), /Phase 1 does not admit active source: x/)
+  // Active entity source outside scope.
+  assert.throws(() => loadFeedV3RuntimeConfig({
+    ...base, [FEED_V3_ENV.entityMode]: 'active', [FEED_V3_ENV.entityActiveSources]: 'polymarket,x',
+  }), /Phase 1 does not admit active source: x/)
+  // A single out-of-scope source across any stage is rejected.
+  assert.throws(() => loadFeedV3RuntimeConfig({
+    ...base,
+    [FEED_V3_ENV.intakeMode]: 'active', [FEED_V3_ENV.intakeActiveSources]: 'news',
+    [FEED_V3_ENV.researchMode]: 'active', [FEED_V3_ENV.researchActiveSources]: 'news',
+    [FEED_V3_ENV.entityMode]: 'active', [FEED_V3_ENV.entityActiveSources]: 'news,market_calendar',
+  }), /Phase 1 does not admit active source: market_calendar/)
+})
+
+test('phase1 keeps shadow and off sources outside scope safe and deterministic', () => {
+  const base = {
+    [FEED_V3_ENV.cutoverPolicy]: 'phase1',
+    [FEED_V3_ENV.shadowSampleBasisPoints]: '100',
+  }
+  // Shadow sources outside the Phase 1 scope are allowed (shadow is not active
+  // ownership) and remain deterministic.
+  const shadow = loadFeedV3RuntimeConfig({
+    ...base,
+    [FEED_V3_ENV.researchMode]: 'shadow', [FEED_V3_ENV.researchShadowSources]: 'market_calendar,x',
+    [FEED_V3_ENV.entityMode]: 'shadow', [FEED_V3_ENV.entityShadowSources]: 'market_calendar,x',
+  })
+  assert.deepEqual([...shadow.researchShadowSources].sort(), ['market_calendar', 'x'])
+  assert.deepEqual([...shadow.entityShadowSources].sort(), ['market_calendar', 'x'])
+  // Off mode with out-of-scope sources configured is also accepted.
+  const off = loadFeedV3RuntimeConfig({
+    ...base,
+    [FEED_V3_ENV.researchMode]: 'off', [FEED_V3_ENV.researchActiveSources]: 'market_calendar',
+  })
+  assert.equal(off.researchMode, 'off')
+})

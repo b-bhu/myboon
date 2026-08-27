@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import type { InferenceTelemetry } from '../inference-gateway/types'
-import type { ExecutionTraceEvent, ResearchPacketV1, ResearchWorkItem, Signal } from '../signal-platform/contracts'
+import type { ExecutionTraceEvent, ResearchDepth, ResearchPacketV1, ResearchWorkItem, Signal } from '../signal-platform/contracts'
 import { ExecutionEventConflictError, type ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
 import { PlatformFailure } from '../signal-platform/failures'
 import type {
@@ -170,7 +170,7 @@ class FakePort implements EntityPacketWorkPort {
 }
 
 function fixture(input: {
-  ports: FakePort[]
+  ports: EntityPacketWorkPort[]
   ownership?: Partial<Record<EntityWorkerSourceType, 'legacy' | 'shared'>>
   shadowSources?: EntityWorkerSourceType[]
   sampleBasisPoints?: number
@@ -180,6 +180,7 @@ function fixture(input: {
   executionLedger?: { append(event: ExecutionTraceEvent): ExecutionEventAppendResult }
   now?: () => Date
   claimsEnabled?: () => boolean
+  researchDepths?: ReadonlySet<ResearchDepth>
 }) {
   const observations: ShadowEntityObservation[] = []
   let processed = 0
@@ -200,6 +201,7 @@ function fixture(input: {
     shadowMaxObservationsPerCycle: input.maxShadow,
     executionLedger: input.executionLedger,
     claimsEnabled: input.claimsEnabled,
+    researchDepths: input.researchDepths,
   })
   return { worker, observations, processed: () => processed }
 }
@@ -263,6 +265,94 @@ test('active cycle claims only sources owned by shared worker', async () => {
   assert.equal(news.calls.claim, 1)
   assert.equal(polymarket.calls.peek, 0)
   assert.equal(polymarket.calls.claim, 0)
+})
+
+test('researchDepths are carried into the scheduler query and disallowed rows are never claimed', async () => {
+  const items = [
+    { ...work('news', 'standard'), researchDepth: 'standard' as const },
+    { ...work('news', 'deep'), researchDepth: 'deep' as const },
+    { ...work('news', 'light'), researchDepth: 'light' as const },
+  ]
+  const queries: SchedulerQuery[] = []
+  const claimed: string[] = []
+  const port = {
+    sourceType: 'news' as const,
+    async peekSchedulable(query: SchedulerQuery) {
+      queries.push(query)
+      // Simulate the backend applying the depth filter before its bounded LIMIT.
+      return items
+        .filter((item) => query.researchDepths?.includes(item.researchDepth) ?? true)
+        .slice(0, query.limit)
+    },
+    async claimWithLease(command: LeaseCommand) {
+      claimed.push(command.workId)
+      const item = items.find((candidate) => candidate.workId === command.workId)!
+      return {
+        work: { ...item, status: 'entity_leased' as const, updatedAt: command.now },
+        leaseOwner: command.leaseOwner, leaseId: command.leaseId,
+        leaseExpiresAt: command.leaseExpiresAt, queuedAt: item.updatedAt,
+      }
+    },
+    async readResearchPacket(workId: string) {
+      const item = items.find((candidate) => candidate.workId === workId)
+      return item ? packet(item) : null
+    },
+    async heartbeatLease() { return true },
+    async transitionLeased() { return true },
+    async releaseLease() { return true },
+  } as unknown as EntityPacketWorkPort
+
+  const f = fixture({
+    ports: [port],
+    ownership: { news: 'shared' },
+    researchDepths: new Set(['light']),
+  })
+  const result = await f.worker.runActiveCycle()
+  assert.equal(result.completed, 1)
+  assert.deepEqual(claimed, ['news-work-light'])
+  assert.ok(queries.length > 0)
+  for (const query of queries) {
+    assert.deepEqual(query.researchDepths, ['light'])
+  }
+})
+
+test('omitted researchDepths keeps default direct construction backwards-compatible (all depths allowed)', async () => {
+  const items = [
+    { ...work('news', 'standard'), researchDepth: 'standard' as const },
+    { ...work('news', 'deep'), researchDepth: 'deep' as const },
+    { ...work('news', 'light'), researchDepth: 'light' as const },
+  ]
+  const queries: SchedulerQuery[] = []
+  const claimed: string[] = []
+  const port = {
+    sourceType: 'news' as const,
+    async peekSchedulable(query: SchedulerQuery) {
+      queries.push(query)
+      return items.filter((item) => query.researchDepths?.includes(item.researchDepth) ?? true).slice(0, query.limit)
+    },
+    async claimWithLease(command: LeaseCommand) {
+      claimed.push(command.workId)
+      const item = items.find((candidate) => candidate.workId === command.workId)!
+      return {
+        work: { ...item, status: 'entity_leased' as const, updatedAt: command.now },
+        leaseOwner: command.leaseOwner, leaseId: command.leaseId,
+        leaseExpiresAt: command.leaseExpiresAt, queuedAt: item.updatedAt,
+      }
+    },
+    async readResearchPacket(workId: string) {
+      const item = items.find((candidate) => candidate.workId === workId)
+      return item ? packet(item) : null
+    },
+    async heartbeatLease() { return true },
+    async transitionLeased() { return true },
+    async releaseLease() { return true },
+  } as unknown as EntityPacketWorkPort
+
+  const f = fixture({ ports: [port], ownership: { news: 'shared' } })
+  const result = await f.worker.runActiveCycle()
+  assert.equal(result.completed, 3)
+  assert.deepEqual(claimed.sort(), ['news-work-deep', 'news-work-light', 'news-work-standard'])
+  assert.ok(queries.every((query) => query.researchDepths === undefined))
 })
 
 test('active claim gate is rechecked after peek so a mid-cycle drain prevents the CAS claim', async () => {

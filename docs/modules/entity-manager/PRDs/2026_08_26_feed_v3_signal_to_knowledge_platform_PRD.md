@@ -73,8 +73,9 @@ In scope for Phase 1:
   one queue contract. News stays in `news.sqlite`; Polymarket stays in
   `pipeline.sqlite`. No third Feed V3 SQLite path is introduced.
 - **One shared Research worker** and **one shared Entity worker**, active for
-  News and Polymarket with the legacy Research/Entity claimers declared disabled
-  for those two sources.
+  News and Polymarket. The four source-specific Research/Entity PM2
+  registrations are absent from the Phase 1 runtime topology; there is no
+  resident legacy claimer.
 - **Final `entities` / `entity_memories` in Supabase** remain the durable
   product output, written only by the shared Entity worker through the existing
   store boundary.

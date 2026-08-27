@@ -150,6 +150,9 @@ function identity(pair: CutoverReadinessPair): string {
 function dedupeAndValidate(
   pairs: ReadonlyArray<CutoverReadinessPair>,
 ): Array<CutoverReadinessPair> {
+  if (pairs.length === 0) {
+    throw new CutoverReadinessError('At least one cutover readiness pair is required')
+  }
   const supported = new Set(PHASE_1_READINESS_PAIRS.map(identity))
   const seen = new Set<string>()
   const result: Array<CutoverReadinessPair> = []

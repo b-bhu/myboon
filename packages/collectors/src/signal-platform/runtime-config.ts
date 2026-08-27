@@ -55,6 +55,12 @@ export interface FeedV3RuntimeConfig {
 
 const SOURCES = ['news', 'polymarket', 'market_calendar', 'x'] as const
 
+/**
+ * Sources admitted as active under the Phase 1 cutover policy. Any other active
+ * source (market_calendar, x) is out of scope and fails the guard closed.
+ */
+export const PHASE1_SCOPE_SOURCES: readonly FeedV3Source[] = Object.freeze(['news', 'polymarket'])
+
 export function loadFeedV3RuntimeConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): FeedV3RuntimeConfig {
@@ -105,6 +111,27 @@ export function loadFeedV3RuntimeConfig(
   }
   if (triageAllowedDepths.has('deep') && !deepResearchEnabled) {
     throw new FeedV3RuntimeConfigError('Deep triage admission requires FEED_V3_DEEP_RESEARCH_ENABLED=1')
+  }
+  if (cutoverPolicy === 'phase1') {
+    // Phase 1 is a clean runtime ownership replacement scoped to News and
+    // Polymarket only. Any source that is actually active in any stage
+    // (intake active/observe, research active, entity active) outside that
+    // scope is rejected at config load so market_calendar/x cannot be active
+    // in any stage. Off/shadow semantics remain safe and deterministic: only
+    // active sources are gated here.
+    const phase1Active = new Set<FeedV3Source>()
+    if (intakeMode === 'active' || intakeMode === 'observe') {
+      for (const source of intakeMode === 'active' ? intakeActiveSources : intakeShadowSources) phase1Active.add(source)
+    }
+    if (researchMode === 'active') for (const source of researchActiveSources) phase1Active.add(source)
+    if (entityMode === 'active') for (const source of entityActiveSources) phase1Active.add(source)
+    for (const source of phase1Active) {
+      if (!(PHASE1_SCOPE_SOURCES as readonly string[]).includes(source)) {
+        throw new FeedV3RuntimeConfigError(
+          `Phase 1 does not admit active source: ${source}`,
+        )
+      }
+    }
   }
 
   return Object.freeze({

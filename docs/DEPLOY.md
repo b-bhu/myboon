@@ -6,12 +6,10 @@
 |------|---------|---------|
 | `myboon-api` | `packages/api` | persistent HTTP server (port 3000) |
 | `myboon-polymarket-data-engineer` | `packages/collectors` | Polymarket markets Data Engineer |
-| `myboon-polymarket-researcher` | `packages/collectors` | Polymarket Researcher |
-| `myboon-polymarket-entity-manager` | `packages/collectors` | Polymarket ResearchPacket to Entity Memory |
 | `myboon-news-feed-ingestor` | `packages/collectors` | Structured article/social collection every 10 minutes |
-| `myboon-news-researcher` | `packages/collectors` | Hermes source-aware research only |
+| `myboon-feed-v3-research` | `packages/collectors` | Shared News + Polymarket Research worker |
+| `myboon-feed-v3-entity-manager` | `packages/collectors` | Shared ResearchPacket to Entity Memory worker |
 | `myboon-hermes-orphan-sweeper` | `packages/collectors` | Reaps aged, unowned Hermes/browser process groups |
-| `myboon-news-entity-manager` | `packages/collectors` | News ResearchPacket to Entity Memory |
 | `myboon-editor-draft` | `packages/collectors` | Entity Memory to Editor Draft |
 | `myboon-publisher` | `packages/collectors` | Generic Editor Draft Publisher |
 
@@ -25,9 +23,9 @@ production path is researcher → entity-manager → editor-draft → publisher.
 
 ## Hermes CLI prerequisite
 
-Five processes shell out to the `hermes` CLI (both researchers, both
-entity-managers, and editor-draft). The structured news-feed ingestor does not
-use Hermes. Before starting PM2 the box needs:
+The shared Research worker, shared Entity worker, and editor-draft can shell
+out to the `hermes` CLI. The two scouts do not use Hermes. Before starting PM2
+the box needs:
 
 ```bash
 # hermes installed, on PATH, and authenticated
@@ -46,32 +44,23 @@ pnpm --filter @myboon/collectors exec agent-browser --json --content-boundaries 
   --max-output 2000 read https://example.com
 ```
 
-Create the five isolated production profiles once, cloning provider credentials
-and model configuration but not history from the authenticated default profile:
+Existing isolated Hermes profiles may be retained for rollback to an earlier
+release, but Phase 1 does not register the four source-specific workers that
+used them. Do not delete or repair profile data during this cutover.
 
 ```bash
-hermes profile create myboonresearch --clone-from default
-hermes profile create myboonnews --clone-from default
-hermes profile create myboonnewsentity --clone-from default
-hermes profile create myboonpolyentity --clone-from default
 hermes profile create mybooneditor --clone-from default
 ```
 
-The ecosystem pins each LLM-heavy worker to its own profile wrapper. This keeps
-Hermes state databases isolated per worker and prevents concurrent pipeline
-processes from writing the default profile's SQLite database. Do not delete or
-repair an existing profile database during deployment; quarantine a damaged
-profile and create a fresh clone instead. PM2 uses the wrappers' absolute paths
-under `/root/.local/bin`, because its startup environment does not include that
-directory in `PATH`.
+Provider/model routing for the shared workers is owned by the inference gateway
+configuration. Do not add source-specific Hermes wrappers back to the PM2
+ecosystem.
 
-If the Hermes chat command fails, news browser fallback and the Polymarket
-research engine cannot work; fix Hermes before starting, or set
-`RESEARCH_ENGINE_DISABLED=1` (the researcher then uses the legacy retrieval
-path, which additionally needs `python3.12` and the last30days script at
-`/root/.agents/skills/last30days/scripts/last30days.py`). If only the
-agent-browser smoke fails, news can still use Hermes browser fallback, but the
-lower-CPU fast path is unavailable. Version 0.34.0 requires Node.js 24 or newer.
+If the structured Hermes smoke fails, keep shared Research and Entity safe-off
+and repair provider authentication before activation. Phase 1 has no
+source-specific or last30days fallback. Agent-browser is used only by bounded
+code-owned retrieval paths; do not enable browser/deep research as an implicit
+fallback. Version 0.34.0 requires Node.js 24 or newer.
 
 Known news article URLs are first retrieved by a public-only HTTP client that
 validates every redirect before requesting it and pins the validated DNS address
@@ -79,14 +68,9 @@ through connection. The retrieved bytes are then exposed on a random, one-use
 loopback URL for pinned `agent-browser`'s HTTP-only `read` command; agent-browser
 never receives the external URL. A successful conversion must report
 `lifecycle.launched=false`; its bounded content is treated as untrusted evidence
-and passed to structured Hermes. A blocked, short, or timed-out conversion may
-fall back to Hermes browser-only chat with agent-browser native domain
-containment set to the already-vetted redirect hosts. Contained source-URL
-fallback excludes the separate Hermes `web` tool because it does not inherit
-agent-browser network policy. Invalid, private, or
-incompletely vetted destinations fail closed and never reach that fallback.
-`NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED=0` is the fast
-kill switch, while `NEWS_HERMES_BROWSER_FALLBACK_ENABLED=0` disables fallback.
+and passed to structured Hermes. Invalid, private, short, timed-out, or
+incompletely vetted destinations fail closed in Phase 1; they do not trigger a
+source-specific browser or `web` fallback.
 
 All programmatic Hermes calls go through `HermesService`. Browser chat and
 structured one-shot work have independent cross-process budgets, controlled by
@@ -229,11 +213,16 @@ policy. Deep remains disabled until the VPS containment gate passes.
 The runtime refuses active Research or Entity ownership when the matching
 legacy claimer has not been explicitly disabled. Never set a mode to `active`
 until the shadow evaluation, migration, rollback, and cutover gates in the PRD
-pass. Reload the ecosystem file (not plain `pm2 restart all`) when deploying the
-two newly registered safe-off processes:
+pass. Remove only the retired registrations and load the shared processes from
+the ecosystem (not plain `pm2 restart all`):
 
 ```bash
-pm2 startOrReload ecosystem.config.cjs --update-env
+pm2 delete myboon-news-researcher 2>/dev/null || true
+pm2 delete myboon-polymarket-researcher 2>/dev/null || true
+pm2 delete myboon-news-entity-manager 2>/dev/null || true
+pm2 delete myboon-polymarket-entity-manager 2>/dev/null || true
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
 pm2 save
 ```
 
@@ -304,17 +293,26 @@ Contract notes:
 3. Set the Phase 1 env contract above in the shell that invokes PM2 (or in
    `packages/collectors/.env`). Do not hardcode an active mode in the
    ecosystem file.
-4. Perform a clean PM2 config reload (not a plain restart) so the new shared
-   apps and env are picked up:
+4. Remove only the four retired registrations, then reload the two scouts and
+   two shared owners from the reviewed ecosystem. This leaves API, editor,
+   publisher, sweeper, and unrelated PM2 apps untouched:
    ```bash
-   pm2 startOrReload ecosystem.config.cjs --update-env
+   pm2 delete myboon-news-researcher 2>/dev/null || true
+   pm2 delete myboon-polymarket-researcher 2>/dev/null || true
+   pm2 delete myboon-news-entity-manager 2>/dev/null || true
+   pm2 delete myboon-polymarket-entity-manager 2>/dev/null || true
+   pm2 startOrReload ecosystem.config.cjs --only myboon-news-feed-ingestor --update-env
+   pm2 startOrReload ecosystem.config.cjs --only myboon-polymarket-data-engineer --update-env
+   pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
+   pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
    pm2 save
    ```
 5. Verify:
    - shared workers online: `pm2 list` shows `myboon-feed-v3-research` and
      `myboon-feed-v3-entity-manager` online;
-   - legacy Research/Entity resident but inert for owned sources: the News and
-     Polymarket legacy runners log their inert line and claim nothing;
+   - clean ownership: `pm2 list` contains none of
+     `myboon-news-researcher`, `myboon-polymarket-researcher`,
+     `myboon-news-entity-manager`, or `myboon-polymarket-entity-manager`;
    - API, publisher, and editor unchanged: `myboon-api`, `myboon-publisher`,
      and `myboon-editor-draft` remain online with no config change;
    - source-local queue progress: `pnpm --filter @myboon/collectors
@@ -333,8 +331,7 @@ deletes data.
    pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage research --action drain --apply
    pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage entity --action drain --apply
    ```
-2. Return modes off and policy full, and clear the legacy-disabled
-   declarations:
+2. Return shared modes off and policy full:
    ```bash
    export FEED_V3_CUTOVER_POLICY=full
    export FEED_V3_INTAKE_MODE=off
@@ -346,15 +343,22 @@ deletes data.
    export FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=
    export FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=
    ```
-3. Reload the ecosystem so the shared workers are safe-off and the legacy
-   claimers resume:
+3. If rollback only means stopping Feed V3 processing, reload only the two
+   scouts and shared workers with those safe-off values. If source-specific legacy processing
+   is required, first deploy the reviewed earlier known-good commit whose
+   ecosystem still contains those workers; then follow that release's reviewed
+   deployment procedure.
+   Never reintroduce old app registrations by an ad-hoc PM2 command.
    ```bash
-   pm2 startOrReload ecosystem.config.cjs --update-env
+   pm2 startOrReload ecosystem.config.cjs --only myboon-news-feed-ingestor --update-env
+   pm2 startOrReload ecosystem.config.cjs --only myboon-polymarket-data-engineer --update-env
+   pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
+   pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
    pm2 save
    ```
-4. Verify legacy owners resume: the News and Polymarket legacy Research and
-   Entity runners log normal claiming again, and `feed-v3:status` reports the
-   shared workers off with no active claims.
+4. Verify `feed-v3:status` reports the shared workers off with no active claims.
+   For an earlier-release rollback, additionally verify its expected legacy
+   owners only after that reviewed code/config is deployed.
 
 Read-only status and trace commands:
 
@@ -583,8 +587,10 @@ row minimum is enforced for every included source. Run the evaluation
 separately for every source being approved; a mixed-source artifact cannot
 authorize a source-specific cutover.
 
-Active Research and Entity startup requires a manifest at
-`FEED_V3_CUTOVER_RECEIPT_PATH`. Each source/stage receipt is an explicit manual
+Full-policy active Research and Entity startup requires a manifest at
+`FEED_V3_CUTOVER_RECEIPT_PATH`. Phase 1 instead uses its receipt-free,
+News/Polymarket-only policy guard described above. Under the full policy, each
+source/stage receipt is an explicit manual
 attestation binding the reviewed shadow artifact and rollback-rehearsal artifact
 by relative path, schema version, and SHA-256 digest. Artifact paths must remain
 inside the manifest directory, the shadow sample must contain at least 1,000
@@ -626,107 +632,21 @@ Minimal manifest shape (digests shown are placeholders):
 
 #### Research source ownership cutover and rollback
 
-The News legacy researcher, Polymarket legacy researcher, and shared Research
-worker consume the same `FEED_V3_RESEARCH_*`,
-`FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES`, sample, and receipt values. PM2
-copies those keys into all three apps only when they are explicitly present in
-the invoking shell; otherwise every process loads the common
-`packages/collectors/.env`, whose code defaults remain safe-off.
-
-Cut over one reviewed source in this order: make the source's legacy researcher
-resident/inert, verify it has stopped claiming, and only then start shared
-claims. The exact receipt must contain `stage: "research"`. Example for News
-(use `myboon-polymarket-researcher` and `polymarket` for that lane):
-
-```bash
-export FEED_V3_RESEARCH_MODE=active
-export FEED_V3_RESEARCH_ACTIVE_SOURCES=news
-export FEED_V3_RESEARCH_SHADOW_SOURCES=
-export FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=news
-export FEED_V3_CUTOVER_RECEIPT_PATH=/absolute/path/cutover-receipts.json
-export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
-
-pm2 startOrReload ecosystem.config.cjs --only myboon-news-researcher --update-env
-# Verify the inert log line and zero new legacy claims before shared ownership.
-pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
-pm2 save
-```
-
-Rollback reverses ownership without overlap. Drain shared Research, wait for
-status to report no active Research execution, then make shared safe-off before
-restoring the legacy claimer:
-
-```bash
-pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
-  --stage research --action drain --apply
-
-export FEED_V3_RESEARCH_MODE=off
-export FEED_V3_RESEARCH_ACTIVE_SOURCES=
-export FEED_V3_RESEARCH_SHADOW_SOURCES=
-export FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=
-export FEED_V3_CUTOVER_RECEIPT_PATH=
-export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
-
-pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
-pm2 startOrReload ecosystem.config.cjs --only myboon-news-researcher --update-env
-pm2 save
-```
+The PM2 ecosystem has one shared Research registration and no source-specific
+Research registrations. Ownership changes therefore use the reviewed policy
+and a controlled clean PM2 rebuild; never start an old researcher by name from
+the current ecosystem. Full-policy source cutover still requires a receipt for
+each source/stage pair. Rollback to source-specific Research requires deploying
+the reviewed earlier release first, followed by another clean PM2 rebuild.
 
 #### Entity source ownership cutover and rollback
 
-The News legacy Entity runner, Polymarket legacy Entity runner, and shared
-Entity worker consume the same `FEED_V3_ENTITY_*`,
-`FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES`, sample, and receipt values. The PM2
-ecosystem copies those keys into all three apps only when they are explicitly
-present in the shell invoking PM2; otherwise every process loads the common
-`packages/collectors/.env`, whose code defaults remain safe-off. Do not put a
-different ownership declaration in a per-app PM2 override.
-
-Cut over one reviewed source in this order. First make its legacy runner inert,
-then start shared claims. The exact receipt must contain `stage: "entity"` for
-the source. Example for News (use the Polymarket app name/source to cut that
-lane):
-
-```bash
-export FEED_V3_ENTITY_MODE=active
-export FEED_V3_ENTITY_ACTIVE_SOURCES=news
-export FEED_V3_ENTITY_SHADOW_SOURCES=
-export FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=news
-export FEED_V3_CUTOVER_RECEIPT_PATH=/absolute/path/cutover-receipts.json
-export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
-
-# Step 1: the receipt-bound guard makes the legacy process resident/inert.
-pm2 startOrReload ecosystem.config.cjs --only myboon-news-entity-manager --update-env
-# Verify its single inert log line and zero new legacy claims before step 2.
-pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
-pm2 save
-```
-
-Rollback reverses ownership without an overlap. Drain shared Entity and wait
-for status to report no active Entity execution, then make shared safe-off
-before re-enabling legacy:
-
-```bash
-pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
-  --stage entity --action drain --apply
-
-export FEED_V3_ENTITY_MODE=off
-export FEED_V3_ENTITY_ACTIVE_SOURCES=
-export FEED_V3_ENTITY_SHADOW_SOURCES=
-export FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=
-export FEED_V3_CUTOVER_RECEIPT_PATH=
-export FEED_V3_SHADOW_SAMPLE_BASIS_POINTS=0
-
-# Step 1: stop shared ownership. Step 2: restore the legacy claimer.
-pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
-pm2 startOrReload ecosystem.config.cjs --only myboon-news-entity-manager --update-env
-pm2 save
-```
-
-Removing a legacy-disabled source without first making shared mode `off` is
-rejected by runtime configuration. Declaring a legacy source disabled without
-matching active shared ownership and a valid receipt is also fail-closed before
-database, provider, or claim I/O.
+The PM2 ecosystem has one shared Entity registration and no source-specific
+Entity registrations. Source/stage receipts and migration readiness still fail
+closed before database, provider, or claim I/O under the full policy. Rollback
+to source-specific Entity processing requires deploying the reviewed earlier
+release first, followed by a controlled clean PM2 rebuild; it is not an
+in-place PM2 toggle.
 
 ```bash
 pnpm --filter @myboon/collectors feed-v3:backfill -- \
@@ -882,8 +802,11 @@ git pull --ff-only && pnpm install --frozen-lockfile
 pnpm --filter @myboon/shared build
 pnpm --filter @myboon/tx-parser build
 pnpm --filter @myboon/collectors build
-# One-time structured-news cutover: remove the retired PM2 app name.
-pm2 delete myboon-news-runner 2>/dev/null || true
+# Remove only retired registrations; reload reviewed apps without deleting API.
+pm2 delete myboon-news-researcher 2>/dev/null || true
+pm2 delete myboon-polymarket-researcher 2>/dev/null || true
+pm2 delete myboon-news-entity-manager 2>/dev/null || true
+pm2 delete myboon-polymarket-entity-manager 2>/dev/null || true
 pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 save
 
@@ -892,7 +815,7 @@ pm2 logs
 
 # Watch a specific process
 pm2 logs myboon-api
-pm2 logs myboon-polymarket-researcher
+pm2 logs myboon-feed-v3-research
 
 # Process status overview
 pm2 list
@@ -902,11 +825,9 @@ pm2 monit
 
 # Restart a single process
 pm2 restart myboon-polymarket-data-engineer
-pm2 restart myboon-polymarket-researcher
-pm2 restart myboon-polymarket-entity-manager
 pm2 restart myboon-news-feed-ingestor
-pm2 restart myboon-news-researcher
-pm2 restart myboon-news-entity-manager
+pm2 restart myboon-feed-v3-research
+pm2 restart myboon-feed-v3-entity-manager
 pm2 restart myboon-editor-draft
 pm2 restart myboon-publisher
 
@@ -994,44 +915,15 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 # HERMES_ORPHAN_SWEEP_INTERVAL_MS=300000
 # HERMES_ORPHAN_MAX_AGE_MS=900000
 # HERMES_ORPHAN_KILL_GRACE_MS=5000
-# NEWS_HERMES_PROFILE=myboonnews   # news worker chat profile
-# NEWS_HERMES_TOOLSETS=browser
-# NEWS_AGENT_BROWSER_DIRECT_READ_ENABLED=1
-# NEWS_AGENT_BROWSER_READ_TIMEOUT_MS=30000
-# NEWS_AGENT_BROWSER_MAX_OUTPUT_CHARS=40000
-# NEWS_HERMES_BROWSER_FALLBACK_ENABLED=1
 # EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
 
-# --- Research gate + engine (entity pipeline rebuild) ---
-# Both ON by default. Kill switches, '1' disables:
-# RESEARCH_GATE_DISABLED=0         # skip the pre-research entity-memory check
-# RESEARCH_ENGINE_DISABLED=0       # fall back to legacy planner/last30days path
-# RESEARCH_ENGINE_HERMES_PROFILE=myboonresearch
-# RESEARCH_ENGINE_TOOLSETS=browser # browser-only; excludes Firecrawl-backed web tools
-# POLYMARKET_RESEARCH_PLANNER_HERMES_TOOLSETS=browser
+# --- Shared Feed V3 Research + Entity ---
+# Use the exact Phase 1 contract above. There is no source-specific Research or
+# Entity fallback in the current PM2 ecosystem.
 
 POLYMARKET_MARKETS_RUN_ONCE=0
-POLYMARKET_RESEARCHER_RUN_ONCE=0
-POLYMARKET_RESEARCHER_INTERVAL_MS=300000
-ENTITY_MANAGER_POLYMARKET_RUN_ONCE=0
-ENTITY_MANAGER_POLYMARKET_INTERVAL_MS=300000
-ENTITY_MANAGER_POLYMARKET_BATCH_SIZE=20
-ENTITY_MANAGER_POLYMARKET_MAX_AGE_MS=172800000  # only the latest 48h reaches Hermes
-ENTITY_MANAGER_POLYMARKET_LEASE_MS=7200000
-ENTITY_MANAGER_POLYMARKET_MAX_ATTEMPTS=3         # transient extraction attempts
-ENTITY_MANAGER_POLYMARKET_RETRY_BASE_MS=300000   # exponential backoff, capped at 1h
 NEWS_FEED_RUN_ONCE=0
 NEWS_FEED_INTERVAL_MS=600000
-NEWS_RESEARCHER_RUN_ONCE=0
-NEWS_RESEARCHER_INTERVAL_MS=300000
-NEWS_RESEARCHER_BATCH_SIZE=10
-NEWS_RESEARCHER_CONCURRENCY=2
-NEWS_RESEARCH_BACKLOG_WARN_COUNT=20
-NEWS_RESEARCH_BACKLOG_WARN_AGE_MS=3600000
-ENTITY_MANAGER_NEWS_RUN_ONCE=0
-ENTITY_MANAGER_NEWS_INTERVAL_MS=300000
-ENTITY_MANAGER_NEWS_BATCH_SIZE=20
-ENTITY_MANAGER_HERMES_TIMEOUT_MS=600000
 EDITOR_DRAFT_RUN_ONCE=0
 EDITOR_DRAFT_INTERVAL_MS=3600000
 EDITOR_DRAFT_BATCH_SIZE=2
@@ -1057,11 +949,10 @@ pnpm --filter @myboon/collectors pipeline-store:status
 # Watch the researcher's first cycle end-to-end. Expect gate verdicts in the
 # result JSON (skippedRecentlyResearched / skipped[].reason gate_already_known)
 # and engine outcomes (nothingFound count, research_backend research_engine).
-pm2 logs myboon-polymarket-researcher --lines 100
+pm2 logs myboon-feed-v3-research --lines 100
 ```
 
 After a restart following downtime, prefer a cautious first cycle: watch the
-first few engine conclusions by hand before trusting the cadence. Kill
-switches if anything misbehaves: `RESEARCH_GATE_DISABLED=1`,
-`RESEARCH_ENGINE_DISABLED=1` (set in `packages/collectors/.env` or the
-researcher's PM2 env, then `pm2 restart myboon-polymarket-researcher --update-env`).
+first few shared Research outcomes by hand before trusting the cadence. If it
+misbehaves, drain Research through `feed-v3:runtime-control`, set
+`FEED_V3_RESEARCH_MODE=off`, and perform the controlled clean PM2 rebuild.

@@ -18,7 +18,9 @@ import {
   ResearchDepthFilteredScheduler,
   SHARED_RESEARCH_ENV,
   createLiveSharedResearchRuntime,
+  loadSharedResearchProcessEnvironment,
   loadSharedResearchRunnerConfig,
+  resolveSupportedResearchDepths,
   runSharedResearchLoop,
   type SharedResearchRunnerRuntime,
 } from './run-shared-research'
@@ -314,13 +316,37 @@ test('phase1 accepts news and polymarket with no receipt when all invariants are
       FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news,polymarket',
       FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news,polymarket',
       FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+      FEED_V3_STANDARD_SEARCH_CONNECTOR: 'approved-search',
+      FEED_V3_STANDARD_SEARCH_POLICY_VERSION: 'standard-search.v1',
       NEWS_SQLITE_PATH: newsPath, PIPELINE_SQLITE_PATH: pipelinePath,
     })
     assert.equal(config.cutoverReceiptPath, null)
-    const live = createLiveSharedResearchRuntime(config)
+    const live = createLiveSharedResearchRuntime(config, {
+      standardSearchFactories: {
+        'approved-search': () => ({ connectorId: 'approved-search', search: async () => [] }),
+      },
+    })
     assert.deepEqual(live.status.sources, ['news', 'polymarket'])
+    assert.deepEqual(live.status.supportedDepths, ['light'])
     live.close()
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('shared Research CLI environment seam loads dotenv before composition without exposing values', () => {
+  let calls = 0
+  loadSharedResearchProcessEnvironment(() => { calls += 1 })
+  assert.equal(calls, 1)
+})
+
+test('full policy preserves every available Research depth while Phase 1 remains light-only', () => {
+  assert.deepEqual(resolveSupportedResearchDepths({
+    cutoverPolicy: 'full', triageAllowedDepths: new Set(['light']),
+    standardAvailable: true, deepAvailable: true,
+  }), ['light', 'standard', 'deep'])
+  assert.deepEqual(resolveSupportedResearchDepths({
+    cutoverPolicy: 'phase1', triageAllowedDepths: new Set(['light']),
+    standardAvailable: true, deepAvailable: true,
+  }), ['light'])
 })
 
 test('phase1 rejects invalid invariants before any dependency construction', () => {
@@ -345,8 +371,9 @@ test('phase1 rejects invalid invariants before any dependency construction', () 
     { env: { FEED_V3_TRIAGE_CLASSIFIER_ENABLED: '1' }, pattern: /triage classifier to be disabled/ },
     // non-healthy provider
     { env: { FEED_V3_TRIAGE_PROVIDER_HEALTH: 'degraded' }, pattern: /healthy triage provider health/ },
-    // unsupported source
-    { env: { FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news,market_calendar', FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news,market_calendar' }, pattern: /does not admit active research source: market_calendar/ },
+    // unsupported source (rejected by the config loader's Phase 1 scope guard
+    // before the phase1 cutover guard, still before any dependency construction)
+    { env: { FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news,market_calendar', FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news,market_calendar' }, pattern: /Phase 1 does not admit active source: market_calendar/ },
     // missing legacy-disabled ownership (rejected by the config loader before
     // the phase1 guard, still before any dependency construction)
     { env: { FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news' }, pattern: /legacy-disabled sources: polymarket/ },
@@ -460,6 +487,42 @@ test('depth-filtered scheduler excludes standard and deep work before claim in l
   assert.equal(lease?.work.workId, 'light')
   assert.deepEqual(claimed, ['light'])
   assert.deepEqual(depthQueries, [['light'], ['light']])
+})
+
+test('light-only scheduler never peeks or claims disallowed rows that precede a light row in the bounded head', async () => {
+  // The store returns a bounded head where disallowed standard/deep rows come
+  // first and the only light row sits behind them. The depth filter must be
+  // applied before the backend LIMIT so the light row is still found and the
+  // disallowed rows are never peeked or claimed.
+  const work = [
+    researchWork('standard-a', 'standard'),
+    researchWork('deep-a', 'deep'),
+    researchWork('light', 'light'),
+  ]
+  const claimed: string[] = []
+  const depthQueries: unknown[] = []
+  const store = {
+    sourceType: 'news',
+    peekSchedulable: async (query: { limit: number, researchDepths?: ResearchWorkItem['researchDepth'][] }) => {
+      depthQueries.push(query.researchDepths)
+      // Simulate the backend applying the depth filter before its bounded LIMIT.
+      return work
+        .filter((item) => query.researchDepths?.includes(item.researchDepth) ?? true)
+        .slice(0, query.limit)
+    },
+    claimWithLease: async (command: { workId: string }) => {
+      claimed.push(command.workId)
+      const selected = work.find((item) => item.workId === command.workId)!
+      return { work: selected, leaseOwner: 'worker', leaseId: 'lease', leaseExpiresAt: selected.freshnessDeadline, queuedAt: selected.updatedAt }
+    },
+  } as unknown as SharedResearchWorkPort
+  const scheduler = new ResearchDepthFilteredScheduler([store], ['light'])
+  const peeked = await scheduler.peekGlobal({ now: '2026-08-26T12:00:00.000Z', limit: 1 })
+  assert.deepEqual(peeked.map((item) => item.workId), ['light'])
+  const lease = await scheduler.claimNext({ now: '2026-08-26T12:00:00.000Z', leaseOwner: 'worker', leaseTtlMs: 1_000 })
+  assert.equal(lease?.work.workId, 'light')
+  assert.deepEqual(claimed, ['light'])
+  assert.ok(depthQueries.every((depths) => Array.isArray(depths) && depths.length === 1 && depths[0] === 'light'))
 })
 
 test('dedicated background pool pushes priority filtering before the bounded store head', async () => {

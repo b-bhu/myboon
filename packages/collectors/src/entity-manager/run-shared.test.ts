@@ -253,6 +253,7 @@ test('active composition requires explicit legacy cutover and wires scoped owner
     assert.equal(captured!.config.ownership.news, 'shared')
     assert.equal(captured!.config.ownership.polymarket, 'legacy')
     assert.deepEqual(captured!.ports.map((port) => port.sourceType), ['news'])
+    assert.equal(captured!.researchDepths, undefined)
     assert.ok(captured!.executionLedger)
     assert.equal(captured!.claimsEnabled?.(), false)
     inferenceObserver!(entityTelemetry())
@@ -408,6 +409,7 @@ test('phase1 accepts news and polymarket with no receipt when all invariants are
     })
     assert.equal(runtime.mode, 'active')
     assert.deepEqual(captured!.ports.map((port) => port.sourceType), ['news', 'polymarket'])
+    assert.deepEqual([...captured!.researchDepths!], ['light'])
     await runtime.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
@@ -440,8 +442,9 @@ test('phase1 rejects invalid invariants before any dependency construction', () 
     { env: { FEED_V3_TRIAGE_CLASSIFIER_ENABLED: '1' }, pattern: /triage classifier to be disabled/ },
     // non-healthy provider
     { env: { FEED_V3_TRIAGE_PROVIDER_HEALTH: 'degraded' }, pattern: /healthy triage provider health/ },
-    // unsupported source
-    { env: { FEED_V3_ENTITY_ACTIVE_SOURCES: 'news,x', FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news,x' }, pattern: /does not admit active entity source: x/ },
+    // unsupported source (rejected by the config loader's Phase 1 scope guard
+    // before the phase1 cutover guard, still before any dependency construction)
+    { env: { FEED_V3_ENTITY_ACTIVE_SOURCES: 'news,x', FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news,x' }, pattern: /Phase 1 does not admit active source: x/ },
     // missing legacy-disabled ownership (rejected by the config loader before
     // the phase1 guard, still before any dependency construction)
     { env: { FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news' }, pattern: /legacy-disabled sources: polymarket/ },

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
+import { loadDotenvChain } from '../pipeline-store/cli-env'
 import {
   createProductionDeepResearchRuntime,
   SqliteDeepResearchExecutionRegistry,
@@ -16,7 +17,7 @@ import {
   type InferenceGatewayStatusSnapshot,
   type InferenceTelemetry,
 } from '../inference-gateway'
-import type { PriorityClass, ResearchWorkItem, Signal } from '../signal-platform/contracts'
+import type { PriorityClass, ResearchDepth, ResearchWorkItem, Signal } from '../signal-platform/contracts'
 import type { ExecutionTraceEvent } from '../signal-platform/contracts'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
@@ -377,8 +378,14 @@ export function createLiveSharedResearchRuntime(
     throw error
   }
   const synthesizer = new StructuredResearchSynthesizer({ gateway: gatewayRuntime.gateway, promptVersion: config.promptVersion })
-  const supportedDepths: ResearchWorkItem['researchDepth'][] = standardSearch ? ['light', 'standard'] : ['light']
-  if (config.deepEnabled) supportedDepths.push('deep')
+  // Phase 1 intersects available capabilities with its exact light-only
+  // admission policy. Full policy preserves the pre-Phase-1 capability set.
+  const supportedDepths = resolveSupportedResearchDepths({
+    cutoverPolicy: config.runtimeConfig.cutoverPolicy,
+    triageAllowedDepths: config.runtimeConfig.triageAllowedDepths,
+    standardAvailable: standardSearch !== undefined,
+    deepAvailable: config.deepEnabled,
+  })
   let deepRuntime: ProductionDeepResearchRuntime | undefined
   const runtimeStatus = (): SharedResearchRuntimeStatus => {
     const circuits = gatewayRuntime.gateway.circuitStatusSnapshot()
@@ -510,6 +517,22 @@ export function createLiveSharedResearchRuntime(
     stores.forEach((store) => store.close())
     throw error
   }
+}
+
+/** Preserve full-policy capability behavior; Phase 1 alone is admission-bounded. */
+export function resolveSupportedResearchDepths(input: {
+  cutoverPolicy: FeedV3RuntimeConfig['cutoverPolicy']
+  triageAllowedDepths: ReadonlySet<ResearchDepth>
+  standardAvailable: boolean
+  deepAvailable: boolean
+}): ResearchWorkItem['researchDepth'][] {
+  const capabilities: ResearchWorkItem['researchDepth'][] = input.standardAvailable
+    ? ['light', 'standard']
+    : ['light']
+  if (input.deepAvailable) capabilities.push('deep')
+  return input.cutoverPolicy === 'phase1'
+    ? capabilities.filter((depth) => input.triageAllowedDepths.has(depth))
+    : capabilities
 }
 
 /** Source registration is code-owned; all non-News source queues share pipeline.sqlite. */
@@ -709,7 +732,19 @@ function abortableWait(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/**
+ * Explicit CLI seam: load package/root dotenv sources before any process.env
+ * based runtime composition. The injectable loader keeps the behavior testable
+ * without reading or exposing real credentials.
+ */
+export function loadSharedResearchProcessEnvironment(
+  loader: () => void = loadDotenvChain,
+): void {
+  loader()
+}
+
 if (require.main === module) {
+  loadSharedResearchProcessEnvironment()
   const controller = new AbortController()
   process.once('SIGTERM', () => controller.abort())
   process.once('SIGINT', () => controller.abort())

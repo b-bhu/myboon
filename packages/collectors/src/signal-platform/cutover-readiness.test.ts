@@ -154,6 +154,15 @@ test('unsupported source or stage pairs are rejected', () => {
   )
 })
 
+test('an empty requested pair list is rejected instead of reporting ready', () => {
+  const path = writeManifest(phase1Receipts())
+  const loader = makeLoader(path)
+  assert.throws(
+    () => reportCutoverReadiness({ pairs: [], loader, now: NOW }),
+    /At least one cutover readiness pair is required/,
+  )
+})
+
 test('evaluation is read-only and does not mutate the loader', () => {
   const path = writeManifest(phase1Receipts())
   const { loader, calls } = countingLoader(path)

@@ -3,6 +3,7 @@ import {
   EXECUTION_EVENT_SCHEMA_VERSION,
   type ExecutionEventStatus,
   type ExecutionTraceEvent,
+  type ResearchDepth,
   type ResearchPacketV1,
   type ResearchWorkItem,
 } from '../signal-platform/contracts'
@@ -90,6 +91,14 @@ export interface SharedEntityWorkerOptions {
   claimsEnabled?: () => boolean
   /** Optional durable append-only ledger; no hidden global is consulted. */
   executionLedger?: Pick<ExecutionLedger, 'append'>
+  /**
+   * Allowed research depths carried from FeedV3RuntimeConfig.triageAllowedDepths.
+   * When omitted (default direct construction) all depths are allowed, keeping
+   * the worker backwards-compatible. When set, it is applied to every
+   * SchedulerQuery before the backend's bounded LIMIT so disallowed rows are
+   * never peeked or claimed.
+   */
+  researchDepths?: ReadonlySet<ResearchDepth>
 }
 
 export interface ActiveCycleResult {
@@ -483,7 +492,13 @@ export class SharedEntityWorker {
   }
 
   private query(limit: number): SchedulerQuery {
-    return { now: this.now(), limit, stages: ['entity'] }
+    const query: SchedulerQuery = { now: this.now(), limit, stages: ['entity'] }
+    if (this.options.researchDepths !== undefined) {
+      // Apply the allowed research depths before the backend's bounded LIMIT so
+      // disallowed rows are never peeked or claimed in Phase 1.
+      query.researchDepths = [...this.options.researchDepths]
+    }
+    return query
   }
 
   private heartbeatCommand(lease: WorkLease): HeartbeatCommand {

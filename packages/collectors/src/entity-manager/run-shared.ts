@@ -238,6 +238,11 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       shadowObservations,
       workerId: safeWorkerId(env.FEED_V3_ENTITY_WORKER_ID),
       activeLimitPerSource: positiveInteger(env.FEED_V3_ENTITY_BATCH_SIZE, 10),
+      // Phase 1 alone is light-only. Full policy preserves the previous Entity
+      // behavior and may drain packets produced by every available depth.
+      researchDepths: runtime.cutoverPolicy === 'phase1'
+        ? runtime.triageAllowedDepths
+        : undefined,
       executionLedger,
       claimsEnabled: runtime.entityMode === 'active'
         ? () => entityClaimControl(runtimeControl).enabled && inferenceClaimsReady()

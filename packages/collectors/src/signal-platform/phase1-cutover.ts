@@ -1,4 +1,8 @@
-import type { FeedV3RuntimeConfig, FeedV3Source } from './runtime-config'
+import {
+  PHASE1_SCOPE_SOURCES,
+  type FeedV3RuntimeConfig,
+  type FeedV3Source,
+} from './runtime-config'
 
 export const PHASE1_CUTOVER_SCHEMA_VERSION = 'myboon.feed_v3_phase1_cutover.v1' as const
 
@@ -8,7 +12,7 @@ export type Phase1CutoverStage = 'research' | 'entity'
  * Sources admitted under the Phase 1 cutover policy. Any other active source
  * (market_calendar, x) is out of scope and fails the guard closed.
  */
-export const PHASE1_CUTOVER_SOURCES: readonly FeedV3Source[] = Object.freeze(['news', 'polymarket'])
+export const PHASE1_CUTOVER_SOURCES: readonly FeedV3Source[] = PHASE1_SCOPE_SOURCES
 
 export interface Phase1CutoverSummary {
   schemaVersion: typeof PHASE1_CUTOVER_SCHEMA_VERSION

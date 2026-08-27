@@ -6,13 +6,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { legacyEntityOwnership, runLegacyEntityWhenOwned } from './legacy-ownership-guard'
 
-test('PM2 injects one exact Entity ownership topology into both legacy runners and shared worker', () => {
+test('PM2 registers only the shared Entity owner and omits source-specific legacy runners', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const ecosystem = require('../../../../ecosystem.config.cjs') as { apps: Array<{ name: string, env: Record<string, string> }> }
-  const names = [
+  const legacyNames = [
     'myboon-news-entity-manager',
     'myboon-polymarket-entity-manager',
-    'myboon-feed-v3-entity-manager',
   ]
   const keys = [
     'FEED_V3_ENTITY_MODE',
@@ -22,15 +21,12 @@ test('PM2 injects one exact Entity ownership topology into both legacy runners a
     'FEED_V3_CUTOVER_RECEIPT_PATH',
     'FEED_V3_SHADOW_SAMPLE_BASIS_POINTS',
   ]
-  const apps = names.map((name) => ecosystem.apps.find((app) => app.name === name))
-  assert.equal(apps.every(Boolean), true)
-  const topology = Object.fromEntries(keys.map((key) => [key, apps[0]!.env[key]]))
-  for (const app of apps.slice(1)) {
-    assert.deepEqual(Object.fromEntries(keys.map((key) => [key, app!.env[key]])), topology)
-  }
+  for (const name of legacyNames) assert.equal(ecosystem.apps.some((app) => app.name === name), false)
+  const shared = ecosystem.apps.find((app) => app.name === 'myboon-feed-v3-entity-manager')
+  assert.ok(shared)
   for (const key of keys) {
     if (process.env[key] === undefined) {
-      assert.equal(Object.hasOwn(apps[0]!.env, key), false, `${key} must remain available to collectors/.env`)
+      assert.equal(Object.hasOwn(shared.env, key), false, `${key} must remain available to collectors/.env`)
     }
   }
 })

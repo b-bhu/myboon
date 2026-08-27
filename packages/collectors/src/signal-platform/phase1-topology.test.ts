@@ -11,7 +11,7 @@ const ECOSYSTEM_PATH = resolve(REPO_ROOT, 'ecosystem.config.cjs')
 
 /**
  * The exact Phase 1 env contract (News + Polymarket only). Every value is
- * required; the shared workers and the legacy claimers must agree on it.
+ * required; the shared workers and the scouts must agree on it.
  */
 const PHASE1_ENV: Record<string, string> = {
   [FEED_V3_ENV.cutoverPolicy]: 'phase1',
@@ -54,7 +54,7 @@ test('Phase 1 env contract parses both sources and stages with all invariants', 
   assert.equal(config.cutoverReceiptPath, null)
 })
 
-test('ecosystem registers both shared apps with the policy/safety keys and legacy apps with ownership', () => {
+test('ecosystem registers both scouts and both shared apps with the policy/safety keys', () => {
   const originalEnv = { ...process.env }
   const originalCache = { ...nodeRequire.cache }
   try {
@@ -67,6 +67,10 @@ test('ecosystem registers both shared apps with the policy/safety keys and legac
       apps: Array<{ name: string, env?: Record<string, string> }>
     }
     const byName = new Map(ecosystem.apps.map((app) => [app.name, app]))
+
+    // Both scouts remain registered.
+    assert.ok(byName.get('myboon-news-feed-ingestor'), 'news scout must be registered')
+    assert.ok(byName.get('myboon-polymarket-data-engineer'), 'polymarket scout must be registered')
 
     // Both shared apps exist.
     const sharedResearch = byName.get('myboon-feed-v3-research')
@@ -88,31 +92,17 @@ test('ecosystem registers both shared apps with the policy/safety keys and legac
       }
     }
 
-    // Legacy News+Polymarket Research apps receive the research ownership
-    // declarations; legacy Entity apps receive the entity ownership ones.
-    const researchOwnershipKeys = [
-      FEED_V3_ENV.researchMode,
-      FEED_V3_ENV.researchActiveSources,
-      FEED_V3_ENV.legacyResearchDisabledSources,
+    // The four legacy Research/Entity registrations are absent. Phase 1 is a
+    // clean runtime ownership replacement: the shared workers are the only
+    // claimers, so no legacy app may remain registered (resident or inert).
+    const legacyNames = [
+      'myboon-polymarket-researcher',
+      'myboon-news-researcher',
+      'myboon-news-entity-manager',
+      'myboon-polymarket-entity-manager',
     ]
-    const entityOwnershipKeys = [
-      FEED_V3_ENV.entityMode,
-      FEED_V3_ENV.entityActiveSources,
-      FEED_V3_ENV.legacyEntityDisabledSources,
-    ]
-    for (const name of ['myboon-news-researcher', 'myboon-polymarket-researcher']) {
-      const app = byName.get(name)
-      assert.ok(app, `${name} must be registered`)
-      for (const key of researchOwnershipKeys) {
-        assert.equal(app.env?.[key], PHASE1_ENV[key], `${name} must receive ${key}`)
-      }
-    }
-    for (const name of ['myboon-news-entity-manager', 'myboon-polymarket-entity-manager']) {
-      const app = byName.get(name)
-      assert.ok(app, `${name} must be registered`)
-      for (const key of entityOwnershipKeys) {
-        assert.equal(app.env?.[key], PHASE1_ENV[key], `${name} must receive ${key}`)
-      }
+    for (const name of legacyNames) {
+      assert.equal(byName.has(name), false, `${name} must not be registered in Phase 1`)
     }
   } finally {
     // Restore process.env and the module cache exactly as they were.
