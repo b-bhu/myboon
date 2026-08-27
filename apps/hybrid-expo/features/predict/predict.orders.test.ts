@@ -5,6 +5,11 @@ import { join } from 'node:path';
 
 const SOURCE = readFileSync(join(__dirname, 'predict.api.ts'), 'utf8');
 const PLACE_BET = SOURCE.slice(SOURCE.indexOf('export async function placeBet'), SOURCE.indexOf('// --- CLOB Open Orders ---'));
+const ORDER_SCREENS = [
+  join(__dirname, 'PredictMarketDetailScreen.tsx'),
+  join(__dirname, 'PredictSportDetailScreen.tsx'),
+  join(__dirname, '../../app/markets/polymarket/updown.tsx'),
+].map((path) => readFileSync(path, 'utf8')).join('\n');
 
 test('SDK market estimate is performed before final market placement', () => {
   const estimate = PLACE_BET.indexOf('client.estimateMarketPrice');
@@ -27,4 +32,9 @@ test('GTC and GTD limit orders stay on the unified SDK path', () => {
   assert.match(PLACE_BET, /client\.placeLimitOrder/);
   assert.match(PLACE_BET, /params\.orderType === 'GTD'/);
   assert.match(PLACE_BET, /expiration: params\.expiration/);
+});
+
+test('every order screen passes SecureClient rather than a bare signer', () => {
+  assert.doesNotMatch(ORDER_SCREENS, /placeBet\((?:poly\.)?signer\s*,/u);
+  assert.match(ORDER_SCREENS, /placeBet\(poly\.client\s*,/u);
 });

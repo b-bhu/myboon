@@ -660,14 +660,11 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         if (!Number.isFinite(expirationMs) || expirationMs <= Date.now() + 60_000) {
           throw new Error('Limit orders are unavailable after kickoff. Use a market order instead.');
         }
-        const resultLimit = await placeBet(signer, {
-          polygonAddress: poly.polygonAddress,
-          tradingAddress: poly.tradingAddress,
+        const resultLimit = await placeBet(poly.client, {
           tokenID,
           price: limitPrice,
           size: limitShares,
           side: 'BUY',
-          negRisk: !!detail.negRisk,
           orderType: 'GTD',
           expiration: Math.floor(expirationMs / 1_000),
         });
@@ -687,10 +684,14 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
         setPickScope('market');
         await Promise.allSettled([
           loadPicks(),
-          fetchClobBalance(poly.polygonAddress).then((b) => setCashBalance(b?.balance ?? null)),
+          fetchClobBalance(poly.client).then((b) => setCashBalance(b?.balance ?? null)),
           activeView === 'orderbook' ? loadOrderbook(obOutcomeIdx) : Promise.resolve(),
         ]);
-        scheduleFollowUpReconcile(poly.polygonAddress);
+        scheduleFollowUpReconcile();
+        return;
+      }
+      if (!quote.executable || quote.limitPrice === null || quote.shares <= 0) {
+        Alert.alert('Not filled', 'Not enough liquidity at the current price. Try a smaller amount or refresh the market.');
         return;
       }
       const result = await placeBet(poly.client, {
