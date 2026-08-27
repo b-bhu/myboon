@@ -14,6 +14,7 @@ test('Feed V3 is entirely off by default', () => {
   assert.equal(config.activeSources.size, 0)
   assert.equal(config.intakeActiveSources.size, 0)
   assert.equal(config.cutoverReceiptPath, null)
+  assert.equal(config.cutoverPolicy, 'full')
 })
 
 test('shadow requires explicit sources and sampling but no ownership mutation', () => {
@@ -104,4 +105,40 @@ test('ownership validation uses the stage-specific active set', () => {
     [FEED_V3_ENV.legacyResearchDisabledSources]: 'news',
     [FEED_V3_ENV.cutoverReceiptPath]: '/run/myboon/feed-v3-cutover.json',
   }), /legacy-disabled sources: polymarket/)
+})
+
+test('cutover policy defaults to full and rejects unknown values', () => {
+  assert.equal(loadFeedV3RuntimeConfig({}).cutoverPolicy, 'full')
+  assert.equal(loadFeedV3RuntimeConfig({ [FEED_V3_ENV.cutoverPolicy]: 'full' }).cutoverPolicy, 'full')
+  assert.equal(loadFeedV3RuntimeConfig({ [FEED_V3_ENV.cutoverPolicy]: 'phase1' }).cutoverPolicy, 'phase1')
+  assert.throws(() => loadFeedV3RuntimeConfig({ [FEED_V3_ENV.cutoverPolicy]: 'partial' }), /cutover policy/)
+})
+
+test('full policy keeps the receipt path mandatory for active shared ownership', () => {
+  const base = {
+    [FEED_V3_ENV.researchMode]: 'active', [FEED_V3_ENV.entityMode]: 'active',
+    [FEED_V3_ENV.activeSources]: 'news',
+    [FEED_V3_ENV.legacyResearchDisabledSources]: 'news',
+    [FEED_V3_ENV.legacyEntityDisabledSources]: 'news',
+  }
+  assert.throws(() => loadFeedV3RuntimeConfig(base), /FEED_V3_CUTOVER_RECEIPT_PATH/)
+  const config = loadFeedV3RuntimeConfig({
+    ...base, [FEED_V3_ENV.cutoverReceiptPath]: '/run/myboon/feed-v3-cutover.json',
+  })
+  assert.equal(config.cutoverPolicy, 'full')
+  assert.equal(config.cutoverReceiptPath, '/run/myboon/feed-v3-cutover.json')
+})
+
+test('phase1 policy parses active ownership without a receipt path', () => {
+  const config = loadFeedV3RuntimeConfig({
+    [FEED_V3_ENV.cutoverPolicy]: 'phase1',
+    [FEED_V3_ENV.researchMode]: 'active', [FEED_V3_ENV.entityMode]: 'active',
+    [FEED_V3_ENV.activeSources]: 'news,polymarket',
+    [FEED_V3_ENV.legacyResearchDisabledSources]: 'news,polymarket',
+    [FEED_V3_ENV.legacyEntityDisabledSources]: 'news,polymarket',
+  })
+  assert.equal(config.cutoverPolicy, 'phase1')
+  assert.equal(config.cutoverReceiptPath, null)
+  assert.equal(config.researchMode, 'active')
+  assert.equal(config.entityMode, 'active')
 })

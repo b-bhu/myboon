@@ -21,12 +21,14 @@ export const FEED_V3_ENV = Object.freeze({
   triageProviderHealth: 'FEED_V3_TRIAGE_PROVIDER_HEALTH',
   triageAllowedDepths: 'FEED_V3_TRIAGE_ALLOWED_DEPTHS',
   cutoverReceiptPath: 'FEED_V3_CUTOVER_RECEIPT_PATH',
+  cutoverPolicy: 'FEED_V3_CUTOVER_POLICY',
 } as const)
 
 export type FeedV3Source = Signal['sourceType']
 export type FeedV3IntakeMode = 'off' | 'observe' | 'active'
 export type FeedV3WorkerMode = 'off' | 'shadow' | 'active'
 export type FeedV3RuntimeStage = 'intake' | 'research' | 'entity'
+export type FeedV3CutoverPolicy = 'full' | 'phase1'
 
 export interface FeedV3RuntimeConfig {
   intakeMode: FeedV3IntakeMode
@@ -48,6 +50,7 @@ export interface FeedV3RuntimeConfig {
   triageProviderHealth: ProviderWorkloadHealth
   triageAllowedDepths: ReadonlySet<ResearchDepth>
   cutoverReceiptPath: string | null
+  cutoverPolicy: FeedV3CutoverPolicy
 }
 
 const SOURCES = ['news', 'polymarket', 'market_calendar', 'x'] as const
@@ -80,6 +83,7 @@ export function loadFeedV3RuntimeConfig(
   const triageProviderHealth = providerHealth(env[FEED_V3_ENV.triageProviderHealth])
   const triageAllowedDepths = researchDepths(env[FEED_V3_ENV.triageAllowedDepths])
   const cutoverReceiptPath = env[FEED_V3_ENV.cutoverReceiptPath]?.trim() || null
+  const cutoverPolicy = cutoverPolicyValue(env[FEED_V3_ENV.cutoverPolicy])
 
   if (intakeMode === 'active' && intakeActiveSources.size === 0) requireStageSources('intake', 'active')
   if (researchMode === 'active' && researchActiveSources.size === 0) requireStageSources('research', 'active')
@@ -93,7 +97,7 @@ export function loadFeedV3RuntimeConfig(
   }
   if (researchMode === 'active') assertDisabled(researchActiveSources, legacyResearchDisabledSources, 'research')
   if (entityMode === 'active') assertDisabled(entityActiveSources, legacyEntityDisabledSources, 'entity')
-  if ((researchMode === 'active' || entityMode === 'active') && cutoverReceiptPath === null) {
+  if (cutoverPolicy === 'full' && (researchMode === 'active' || entityMode === 'active') && cutoverReceiptPath === null) {
     throw new FeedV3RuntimeConfigError('Active shared ownership requires FEED_V3_CUTOVER_RECEIPT_PATH')
   }
   if (deepResearchEnabled && researchMode !== 'active') {
@@ -112,8 +116,16 @@ export function loadFeedV3RuntimeConfig(
     legacyResearchDisabledSources: new Set(legacyResearchDisabledSources),
     legacyEntityDisabledSources: new Set(legacyEntityDisabledSources),
     shadowSampleBasisPoints, deepResearchEnabled, triageClassifierEnabled, triageProviderHealth,
-    triageAllowedDepths: new Set(triageAllowedDepths), cutoverReceiptPath,
+    triageAllowedDepths: new Set(triageAllowedDepths), cutoverReceiptPath, cutoverPolicy,
   })
+}
+
+function cutoverPolicyValue(raw: string | undefined): FeedV3CutoverPolicy {
+  const value = raw?.trim() || 'full'
+  if (value !== 'full' && value !== 'phase1') {
+    throw new FeedV3RuntimeConfigError(`Unsupported Feed V3 cutover policy: ${value}`)
+  }
+  return value
 }
 
 function providerHealth(raw: string | undefined): ProviderWorkloadHealth {
