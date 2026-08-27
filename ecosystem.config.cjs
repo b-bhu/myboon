@@ -57,9 +57,27 @@ const RESEARCH_OWNERSHIP_ENV = Object.fromEntries(
     .filter((key) => process.env[key] !== undefined)
     .map((key) => [key, process.env[key]]),
 )
+// Policy/safety keys shared by both horizontal workers so shared Research and
+// shared Entity always agree on cutover policy, triage admission, classifier,
+// provider health, and deep activation. Values come from the invoking shell
+// when explicitly present; otherwise each runner loads collectors/.env whose
+// code defaults remain safe-off. These are injected into the two shared apps
+// only; the legacy News/Polymarket runners receive their ownership keys below.
+const FEED_V3_POLICY_KEYS = [
+  'FEED_V3_CUTOVER_POLICY',
+  'FEED_V3_TRIAGE_ALLOWED_DEPTHS',
+  'FEED_V3_TRIAGE_CLASSIFIER_ENABLED',
+  'FEED_V3_TRIAGE_PROVIDER_HEALTH',
+  'FEED_V3_DEEP_RESEARCH_ENABLED',
+]
+const FEED_V3_POLICY_ENV = Object.fromEntries(
+  FEED_V3_POLICY_KEYS
+    .filter((key) => process.env[key] !== undefined)
+    .map((key) => [key, process.env[key]]),
+)
 const RESEARCH_RUNTIME_KEYS = [
   ...RESEARCH_OWNERSHIP_KEYS,
-  'FEED_V3_DEEP_RESEARCH_ENABLED',
+  ...FEED_V3_POLICY_KEYS,
   'FEED_V3_DEEP_RESEARCH_WORKER_EXECUTABLE',
   'FEED_V3_DEEP_RESEARCH_WORKER_CONTRACT_VERSION',
   'FEED_V3_DEEP_RESEARCH_WORKER_ARGS_JSON',
@@ -358,6 +376,7 @@ module.exports = {
       env: {
         ...HERMES_ENV,
         ...ENTITY_OWNERSHIP_ENV,
+        ...FEED_V3_POLICY_ENV,
         FEED_V3_RUNTIME_CONTROL_PATH: '.data/feed-v3-runtime-control.json',
         FEED_V3_ENTITY_RUN_ONCE: '0',
         FEED_V3_ENTITY_INTERVAL_MS: '30000',

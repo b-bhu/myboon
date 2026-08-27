@@ -54,6 +54,52 @@ shared lane has passed shadow parity, rollback rehearsal, and its explicit
 ownership guard. No migration, historical deletion, or retention cleanup is
 authorized by this PRD alone.
 
+## Phase 1 Scope (controlled first activation — News + Polymarket only)
+
+Phase 1 is a bounded, reversible first production activation of the shared
+Research and shared Entity workers. It is not the full cutover and does not
+satisfy the full release gates. The broader PRD below remains the authoritative
+backlog and superset; this section only labels what Phase 1 delivers and what
+it explicitly defers.
+
+In scope for Phase 1:
+
+- **Existing scouts unchanged.** The News feed ingestor and Polymarket data
+  engineer continue to collect exactly as today; no source adapter behavior
+  changes.
+- **Canonical internal Signal.** News and Polymarket emit the canonical Signal
+  contract into the shared spine.
+- **`news.sqlite` and `pipeline.sqlite` remain separate physical stores** under
+  one queue contract. News stays in `news.sqlite`; Polymarket stays in
+  `pipeline.sqlite`. No third Feed V3 SQLite path is introduced.
+- **One shared Research worker** and **one shared Entity worker**, active for
+  News and Polymarket with the legacy Research/Entity claimers declared disabled
+  for those two sources.
+- **Final `entities` / `entity_memories` in Supabase** remain the durable
+  product output, written only by the shared Entity worker through the existing
+  store boundary.
+- **Existing API, publisher, and editor unchanged.** No product surface,
+  publisher, or editor behavior changes in Phase 1.
+- **Reliability essentials included.** Bounded rules-first triage (light only),
+  deterministic retrieval, one tool-less synthesis call, typed retries, circuit
+  semantics, durable leases, idempotent memory writes, and the controlled
+  drain/resume control plane.
+
+Explicitly deferred (remain backlog / superset, not deleted):
+
+- Calendar/X implementation (Market Calendar and X stay out of Phase 1).
+- Deep research activation (deep stays disabled; `FEED_V3_DEEP_RESEARCH_ENABLED=0`).
+- Formal 1000-item certification (the reviewed 1000-row evaluation artifact).
+- Measured 2x load (the two-times admitted-arrival load report).
+- Full rollback evidence (the digest-bound rollback-rehearsal artifact).
+- Retention automation (any deletion/archival workflow).
+- 24-hour certification (the live 24-hour soak report).
+
+Phase 1 runs under the `phase1` cutover policy and requires no receipt; the
+full policy still requires the reviewed receipt plus the 1000-row evaluation
+and rollback-rehearsal artifacts. The exact Phase 1 env contract and the
+controlled activation/rollback runbook live in `docs/DEPLOY.md`.
+
 ## Purpose
 
 Turn the current Feed V3 pipeline into a reusable Signal-to-Knowledge Platform.

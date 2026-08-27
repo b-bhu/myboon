@@ -237,6 +237,125 @@ pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 save
 ```
 
+### Feed V3 Phase 1 controlled activation (News + Polymarket only)
+
+Phase 1 is the first production cutover of the shared Research and shared Entity
+workers, scoped to exactly News and Polymarket. It is a controlled, reversible
+activation — not the full cutover. The full policy still requires the reviewed
+receipt manifest plus the 1000-row shadow evaluation and rollback-rehearsal
+artifacts before any active shared ownership; Phase 1 deliberately runs without
+a receipt and is bounded to the invariants below.
+
+#### Phase 1 env contract
+
+The exact Phase 1 environment. Every value is required; do not mix it with the
+full cutover policy.
+
+```dotenv
+FEED_V3_CUTOVER_POLICY=phase1
+FEED_V3_INTAKE_MODE=active
+FEED_V3_RESEARCH_MODE=active
+FEED_V3_ENTITY_MODE=active
+FEED_V3_INTAKE_ACTIVE_SOURCES=news,polymarket
+FEED_V3_RESEARCH_ACTIVE_SOURCES=news,polymarket
+FEED_V3_ENTITY_ACTIVE_SOURCES=news,polymarket
+FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=news,polymarket
+FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=news,polymarket
+FEED_V3_TRIAGE_ALLOWED_DEPTHS=light
+FEED_V3_DEEP_RESEARCH_ENABLED=0
+FEED_V3_TRIAGE_CLASSIFIER_ENABLED=0
+FEED_V3_TRIAGE_PROVIDER_HEALTH=healthy
+NEWS_SQLITE_PATH=.data/news.sqlite
+PIPELINE_SQLITE_PATH=.data/pipeline.sqlite
+INFERENCE_GATEWAY_PRIMARY_PROVIDER=ollama-cloud
+INFERENCE_GATEWAY_PRIMARY_MODEL=deepseek-v4-flash
+```
+
+Contract notes:
+
+- Intake, Research, and Entity active sources are `news,polymarket`; the legacy
+  Research and Entity disabled-source declarations are also `news,polymarket`.
+- Cutover policy is `phase1`; allowed depth is exactly `light`; deep is `0`;
+  the triage classifier is `0`; provider health is `healthy`.
+- Source SQLite paths remain the two existing physical stores under one queue
+  contract: `news.sqlite` for News and `pipeline.sqlite` for Polymarket. No
+  third Feed V3 SQLite path is introduced.
+- The gateway provider/model are explicit (`ollama-cloud` /
+  `deepseek-v4-flash`); the shared workers never fall back to an unapproved
+  route.
+- The full policy still requires the existing reviewed receipt and the
+  1000-row evaluation / rollback-rehearsal artifacts. Phase 1 does not
+  substitute for them; it is a bounded, reversible first activation.
+
+#### Activation runbook
+
+1. Back up both SQLite databases and verify the backups:
+   ```bash
+   pnpm --filter @myboon/collectors pipeline-store:backup
+   ```
+2. Verify Hermes/profile and Entity migration readiness without printing
+   secrets:
+   ```bash
+   hermes --version
+   hermes profile list
+   pnpm --filter @myboon/collectors feed-v3:verify-entity-migration
+   ```
+   (The verifier reports readiness only; it never prints credentials.)
+3. Set the Phase 1 env contract above in the shell that invokes PM2 (or in
+   `packages/collectors/.env`). Do not hardcode an active mode in the
+   ecosystem file.
+4. Perform a clean PM2 config reload (not a plain restart) so the new shared
+   apps and env are picked up:
+   ```bash
+   pm2 startOrReload ecosystem.config.cjs --update-env
+   pm2 save
+   ```
+5. Verify:
+   - shared workers online: `pm2 list` shows `myboon-feed-v3-research` and
+     `myboon-feed-v3-entity-manager` online;
+   - legacy Research/Entity resident but inert for owned sources: the News and
+     Polymarket legacy runners log their inert line and claim nothing;
+   - API, publisher, and editor unchanged: `myboon-api`, `myboon-publisher`,
+     and `myboon-editor-draft` remain online with no config change;
+   - source-local queue progress: `pnpm --filter @myboon/collectors
+     feed-v3:status` shows News and Polymarket arrivals/admissions advancing;
+   - no duplicate claims/memories: `feed-v3:status` reports zero duplicate
+     artifacts and the Entity snapshot shows no duplicate memory writes;
+   - bounded errors: `pm2 logs` shows no crash loop and no unbounded retry.
+
+#### Rollback sequence
+
+Rollback reverses ownership without overlap and never runs migrations or
+deletes data.
+
+1. Drain both shared workers and wait for status to report no active execution:
+   ```bash
+   pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage research --action drain --apply
+   pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage entity --action drain --apply
+   ```
+2. Return modes off and policy full, and clear the legacy-disabled
+   declarations:
+   ```bash
+   export FEED_V3_CUTOVER_POLICY=full
+   export FEED_V3_INTAKE_MODE=off
+   export FEED_V3_RESEARCH_MODE=off
+   export FEED_V3_ENTITY_MODE=off
+   export FEED_V3_INTAKE_ACTIVE_SOURCES=
+   export FEED_V3_RESEARCH_ACTIVE_SOURCES=
+   export FEED_V3_ENTITY_ACTIVE_SOURCES=
+   export FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES=
+   export FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES=
+   ```
+3. Reload the ecosystem so the shared workers are safe-off and the legacy
+   claimers resume:
+   ```bash
+   pm2 startOrReload ecosystem.config.cjs --update-env
+   pm2 save
+   ```
+4. Verify legacy owners resume: the News and Polymarket legacy Research and
+   Entity runners log normal claiming again, and `feed-v3:status` reports the
+   shared workers off with no active claims.
+
 Read-only status and trace commands:
 
 ```bash
