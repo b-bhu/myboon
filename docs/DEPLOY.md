@@ -360,6 +360,71 @@ deletes data.
    For an earlier-release rollback, additionally verify its expected legacy
    owners only after that reviewed code/config is deployed.
 
+### Feed V3 Phase 2 stabilization gate
+
+Phase 2 does not change the Phase 1 pipeline topology. It keeps the News and
+Polymarket scouts, one shared Research worker, one shared Entity Manager, the
+two existing SQLite files, light-only research, and deep/classifier/fallback
+disabled. Its new command is a strict read-only gate for controlled activation
+and overnight operation; it never claims work, creates tables, calls a
+provider, contacts Supabase/Tokens, invokes PM2, or mutates a file.
+
+Configure the exact Phase 1 env contract above, plus reviewed queue/provider
+alert thresholds. The credential values are checked only for non-empty
+presence and never appear in the report:
+
+```dotenv
+FEED_V3_STATUS_ALERT_POLICY_JSON={"queueAgeSloMs":{"news":{"P0":300000,"P1":900000},"polymarket":{"P0":300000,"P1":900000}},"providerErrorRateThreshold":0.10,"deadLetterCountThreshold":0}
+```
+
+Run preflight before opening shared ownership. Missing worker snapshots are
+warnings at this point because the workers may not be started yet; every
+configuration, credential, route, fallback, database availability, and SQLite
+integrity failure is a blocker:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:phase2-check -- --mode preflight
+pnpm --filter @myboon/collectors pipeline-store:backup
+```
+
+If preflight is ready, use only the selective Phase 1 activation commands. Do
+not use `pm2 delete all` or `pm2 restart all`:
+
+```bash
+pm2 delete myboon-news-researcher 2>/dev/null || true
+pm2 delete myboon-polymarket-researcher 2>/dev/null || true
+pm2 delete myboon-news-entity-manager 2>/dev/null || true
+pm2 delete myboon-polymarket-entity-manager 2>/dev/null || true
+pm2 startOrReload ecosystem.config.cjs --only myboon-news-feed-ingestor --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-polymarket-data-engineer --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
+pm2 save
+```
+
+After telemetry exists, runtime mode requires current active snapshots, exact
+News/Polymarket ownership, closed circuits, available source/control-plane
+status, no active alerts or stuck failures, complete measured cost coverage,
+and a reviewed per-packet ceiling. The ceiling is in USD micros (for example,
+`10000` is USD 0.01). Cost is never inferred from tokens; an unmetered provider
+therefore produces an honest blocker rather than a guessed value.
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:phase2-check -- \
+  --mode runtime --max-cost-usd-micros-per-packet 10000
+```
+
+If runtime is not ready, drain and use the existing Phase 1 rollback sequence:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage research --action drain --apply
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage entity --action drain --apply
+```
+
+This gate is intentionally not the full PRD certification: it does not claim a
+1,000-item quality comparison, a 24-hour soak, deep containment, standard
+research, Market Calendar/X adoption, or approval to delete legacy data.
+
 Read-only status and trace commands:
 
 ```bash
