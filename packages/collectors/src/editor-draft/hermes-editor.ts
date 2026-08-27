@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { HermesService } from '../hermes'
-import { parseAgentEditorDraftResponse } from './normalizer'
-import type { AgentEditorDraftDecision, EditorDraftProvider, EntityDraftBundle } from './types'
+import { createConfiguredInferenceGateway, type InferenceGateway } from '../inference-gateway'
+import type { AgentEditorDraftDecision, AgentEditorDraftResponse, EditorDraftProvider, EntityDraftBundle } from './types'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -12,6 +12,8 @@ export interface HermesEditorDraftProviderOptions {
   timeoutMs?: number
   /** Injectable central Hermes service; built from `command` when omitted. */
   service?: HermesService
+  /** Test/composition seam; production uses the centrally configured gateway. */
+  gateway?: Pick<InferenceGateway, 'generateStructured'>
 }
 
 function memoryPayload(memory: EntityDraftBundle['memoryLane'][number]): Record<string, unknown> {
@@ -77,35 +79,42 @@ export async function buildHermesEditorDraftPrompt(bundle: EntityDraftBundle): P
 }
 
 export class HermesEditorDraftProvider implements EditorDraftProvider {
-  private readonly toolsets: string
   private readonly timeoutMs: number
-  private readonly service: HermesService
+  private readonly gateway: Pick<InferenceGateway, 'generateStructured'>
 
   constructor(options: HermesEditorDraftProviderOptions = {}) {
-    this.toolsets = options.toolsets ?? process.env.EDITOR_DRAFT_HERMES_TOOLSETS ?? ''
+    const toolsets = options.toolsets ?? process.env.EDITOR_DRAFT_HERMES_TOOLSETS ?? ''
+    if (toolsets.trim()) throw new Error('Editor draft inference is tool-less; Hermes toolsets are forbidden')
     const envTimeout = Number(process.env.EDITOR_DRAFT_HERMES_TIMEOUT_MS)
     this.timeoutMs = options.timeoutMs ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : DEFAULT_TIMEOUT_MS)
-    this.service = options.service ?? new HermesService({
+    const service = options.service ?? new HermesService({
       command: options.command
         ?? process.env.EDITOR_DRAFT_HERMES_COMMAND
         ?? process.env.HERMES_COMMAND
         ?? 'hermes',
     })
+    this.gateway = options.gateway ?? createConfiguredInferenceGateway({ serviceFactory: () => service }).gateway
   }
 
   async decide(bundle: EntityDraftBundle): Promise<AgentEditorDraftDecision> {
     const prompt = await buildHermesEditorDraftPrompt(bundle)
-    const { stdout, stderr } = await this.service.oneshot({
-      purpose: 'editor-draft.decide',
-      prompt,
-      timeoutMs: this.timeoutMs,
-      toolsets: this.toolsets || undefined,
+    const result = await this.gateway.generateStructured<AgentEditorDraftResponse>({
+      workload: 'editor.draft', purpose: 'editor-draft.decide', prompt,
+      promptVersion: 'editor.draft.prompt.v1', policyVersion: 'editor.draft.policy.v1',
+      budget: {
+        maxProviderCalls: 2, maxRepairCalls: 1, maxInputTokens: 100_000,
+        maxOutputTokens: 20_000, maxWallTimeMs: this.timeoutMs, maxToolCalls: 0,
+      },
+      validate(value) {
+        if (typeof value === 'object' && value !== null && Array.isArray((value as AgentEditorDraftResponse).decisions)) {
+          return { valid: true, value: value as AgentEditorDraftResponse }
+        }
+        return { valid: false, issues: ['decisions must be an array'] }
+      },
     })
-
-    const parsed = parseAgentEditorDraftResponse(stdout)
-    const decision = parsed.decisions[0]
+    const decision = result.value.decisions[0]
     if (!decision) {
-      throw new Error(`Editor draft agent returned no decisions. stderr=${stderr.slice(0, 500)}`)
+      throw new Error('Editor draft agent returned no decisions')
     }
     return decision
   }

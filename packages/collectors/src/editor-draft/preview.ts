@@ -4,6 +4,7 @@ loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
 import { editorDraftCliConfig } from './runner'
@@ -23,7 +24,11 @@ async function main(): Promise<void> {
   )
   const pipelineStore = new SqlitePipelineStore()
   try {
-    const store = new SupabaseEditorDraftStore(supabase, pipelineStore)
+    const store = new SupabaseEditorDraftStore(
+      supabase,
+      pipelineStore,
+      new SupabaseEntityKnowledgeReader(supabase),
+    )
     const provider = new HermesEditorDraftProvider({ timeoutMs: config.hermesTimeoutMs })
     const bundles = await store.fetchBundles({
       batchSize: config.batchSize,

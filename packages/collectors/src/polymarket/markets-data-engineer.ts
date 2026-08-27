@@ -5,6 +5,12 @@ import type {
   PipelineStore,
   PipelineStoreCandidateStatus,
 } from '../pipeline-store/store'
+import { adaptLivePolymarketSignal } from '../signal-platform/adapters/polymarket-live'
+import {
+  deliverCanonicalSignals,
+  type SourceIntakeBatchReport,
+  type SourceSignalIntakePort,
+} from '../signal-platform/source-intake'
 import pinnedSlugs from './pinned.json'
 import defaultConfig from './markets-data-engineer-config.json'
 
@@ -192,6 +198,7 @@ export interface PolymarketMarketsDataEngineerResult {
    * backlogHardCeiling - the bounded exception to the material-move bypass.
    */
   candidatesThrottledAtHardCeiling: number
+  canonicalIntake: SourceIntakeBatchReport
   backlogDepthAtRun: {
     candidatesPending: number
     candidatesInFlight: number
@@ -1464,7 +1471,8 @@ function threadUpdatePayloadForStore(payload: Record<string, unknown>): Pipeline
 export async function runPolymarketMarketsDataEngineer(
   store: PipelineStore,
   db: SupabaseClient,
-  partialOptions: PolymarketMarketsDataEngineerOptions = {}
+  partialOptions: PolymarketMarketsDataEngineerOptions = {},
+  signalIntake?: SourceSignalIntakePort,
 ): Promise<PolymarketMarketsDataEngineerResult> {
   const options = selectedOptions(partialOptions)
   const observedAt = options.now
@@ -1500,6 +1508,33 @@ export async function runPolymarketMarketsDataEngineer(
   }
 
   const familyDedupedCandidateInserts = dedupeCandidateInserts(candidateInserts)
+  // Canonical observation precedes every legacy backlog gate. A throttled
+  // legacy candidate therefore remains durably visible to Feed V3.
+  const canonicalIntake = await deliverCanonicalSignals(
+    signalIntake,
+    familyDedupedCandidateInserts.map(({ market, draft }) => adaptLivePolymarketSignal({
+      observedAt,
+      area: AREA,
+      market: {
+        marketId: market.marketId,
+        slug: market.slug,
+        title: market.title,
+        tagSlug: market.tagSlug,
+        tagLabel: market.tagLabel,
+        endDate: market.endDate,
+        sourceUpdatedAt: market.updatedAt,
+      },
+      observation: {
+        candidateType: draft.candidateType,
+        whatChanged: draft.whatChanged,
+        whyFlagged: draft.whyFlagged,
+        score: draft.score,
+        scoreBreakdown: draft.scoreBreakdown,
+        metrics: draft.metrics,
+        evidenceRefs: draft.evidenceRefs,
+      },
+    })),
+  )
   const existingCandidateKeys = await fetchExistingCandidateKeys(store, familyDedupedCandidateInserts.map((candidate) => candidate.dedupeKey))
   const existingThreads = await fetchExistingCandidateThreads(store, familyDedupedCandidateInserts.map((candidate) => candidate.familyKey))
   const threadUpdates: CandidateThreadUpdate[] = []
@@ -1581,6 +1616,7 @@ export async function runPolymarketMarketsDataEngineer(
     candidatesSkippedForBacklog,
     candidatesThrottledByBackpressure,
     candidatesThrottledAtHardCeiling,
+    canonicalIntake,
     backlogDepthAtRun: {
       candidatesPending: backlogDepth.candidatesPending,
       candidatesInFlight: backlogDepth.candidatesInFlight,

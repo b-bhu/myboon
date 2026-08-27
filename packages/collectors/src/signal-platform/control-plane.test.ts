@@ -1,0 +1,306 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import {
+  CONTROL_PLANE_STATUS_SCHEMA_VERSION,
+  SignalPlatformControlPlane,
+  parseControlPlaneAlertPolicy,
+  type ExecutionObservabilityReadPort,
+  type WorkObservabilityReadPort,
+} from './control-plane'
+import { formatControlPlaneStatusJson } from './control-plane-format'
+import { EXECUTION_EVENT_SCHEMA_VERSION, type Signal, type WorkStatus } from './contracts'
+import type { ExecutionAggregateRow } from './execution-ledger'
+import type { ResearchWorkStoreAdapter, SchedulerAggregateStatus } from './store-adapter'
+
+function store(
+  sourceType: Signal['sourceType'],
+  status: SchedulerAggregateStatus | Error,
+): ResearchWorkStoreAdapter {
+  const unused = async () => { throw new Error('unused mutation method') }
+  return {
+    sourceType,
+    peekSchedulable: async () => [],
+    claimWithLease: unused,
+    beginAttempt: unused,
+    heartbeatLease: unused,
+    transitionLeased: unused,
+    releaseLease: unused,
+    recoverExpiredLeases: unused,
+    getSchedulerStatus: async () => {
+      if (status instanceof Error) throw status
+      return status
+    },
+  } as ResearchWorkStoreAdapter
+}
+
+function workReader(
+  sourceType: Signal['sourceType'],
+  values: Awaited<ReturnType<WorkObservabilityReadPort['readWorkObservability']>> | Error,
+): WorkObservabilityReadPort {
+  return {
+    sourceType,
+    readWorkObservability: async () => {
+      if (values instanceof Error) throw values
+      return values
+    },
+  }
+}
+
+function executionRow(overrides: Partial<ExecutionAggregateRow> = {}): ExecutionAggregateRow {
+  return {
+    eventSchemaVersion: EXECUTION_EVENT_SCHEMA_VERSION,
+    sourceType: 'news',
+    stage: 'synthesis',
+    status: 'succeeded',
+    failureCategory: null,
+    provider: 'primary-provider',
+    model: 'model-a',
+    fallbackProvider: null,
+    fallbackModel: null,
+    fallbackUsed: false,
+    configuredPrimaryProvider: 'primary-provider',
+    configuredPrimaryModel: 'model-a',
+    fallbackReason: null,
+    outputSchemaValid: true,
+    promptVersion: 'prompt-v1',
+    policyVersion: 'policy-v1',
+    researchContractVersion: 'myboon.research_packet.v1',
+    eventCount: 1,
+    providerCalls: 1,
+    repairCalls: 0,
+    inputTokens: 100,
+    outputTokens: 40,
+    toolCalls: 0,
+    budgetExceededCount: 0,
+    totalWallTimeMs: 800,
+    measuredCostEventCount: 0,
+    totalCostUsdMicros: 0,
+    ...overrides,
+  }
+}
+
+function executionReader(rows: ExecutionAggregateRow[]): ExecutionObservabilityReadPort {
+  return {
+    readAggregateStatus: () => ({
+      totalEvents: rows.reduce((sum, row) => sum + row.eventCount, 0),
+      activeEvents: rows.filter((row) => row.status === 'started').reduce((sum, row) => sum + row.eventCount, 0),
+      rows,
+      providerPerformance: rows.flatMap((row) => row.provider ? [{
+        sourceType: row.sourceType, stage: row.stage, provider: row.provider, model: row.model,
+        terminalEventCount: row.eventCount,
+        succeededEventCount: row.status === 'succeeded' ? row.eventCount : 0,
+        failedEventCount: row.status === 'failed' ? row.eventCount : 0,
+        successRate: row.status === 'succeeded' ? 1 : 0,
+        latency: { sampleCount: row.eventCount, p50Ms: row.totalWallTimeMs / row.eventCount,
+          p95Ms: row.totalWallTimeMs / row.eventCount, p99Ms: row.totalWallTimeMs / row.eventCount },
+      }] : []),
+      completionUsage: {
+        completedPackets: 0, inputTokens: 0, outputTokens: 0, measuredCostPackets: 0, totalCostUsdMicros: 0,
+      },
+    }),
+  }
+}
+
+function schedulerStatus(
+  total: number,
+  byStatus: Partial<Record<WorkStatus, number>>,
+  oldestReadyAt: string | null,
+  oldestLeaseExpiresAt: string | null = null,
+): SchedulerAggregateStatus {
+  return { total, byStatus, oldestReadyAt, oldestLeaseExpiresAt }
+}
+
+test('aggregates mixed News/Polymarket work, stage/status, attempts, failures, and provider usage', async () => {
+  const controlPlane = new SignalPlatformControlPlane({
+    stores: [
+      store('news', schedulerStatus(6, {
+        research_pending: 2, retry_wait: 1, dead_letter: 1, retrieval_leased: 1, complete: 1,
+      }, '2026-08-26T12:00:00.000Z', '2026-08-26T13:05:00.000Z')),
+      store('polymarket', schedulerStatus(4, {
+        synthesis_leased: 1, expired: 2, entity_pending: 1,
+      }, '2026-08-26T12:30:00.000Z', '2026-08-26T13:02:00.000Z')),
+    ],
+    workReaders: [
+      workReader('news', {
+        signalCount: 9, observationCount: 12, deduplicatedObservationCount: 3, triageDecisionCount: 8,
+        triageOutcomes: { standard: 3, defer: 5 },
+        researchPacketCount: 2, entityMemoryHandoffCount: 1,
+        endToEndLatency: { sampleCount: 1, p50Ms: 1_000, p95Ms: 1_000, p99Ms: 1_000 },
+        sqliteSize: { mainBytes: 80, walBytes: 20, shmBytes: 0, totalBytes: 100 },
+        totalAttempts: 5, attemptedItems: 3, maxAttemptCount: 2,
+        arrivalsInWindow: 4, admissionsInWindow: 3, completionsInWindow: 1,
+        queueAge: [{
+          priorityClass: 'P0', researchDepth: 'standard', status: 'research_pending', count: 2,
+          oldestQueuedAt: '2026-08-26T12:00:00.000Z',
+          p50AgeMs: 30 * 60_000, p95AgeMs: 60 * 60_000,
+        }],
+        deadLetters: {
+          total: 1, oldestAt: '2026-08-26T11:30:00.000Z',
+          byFailureCategory: [{ category: 'provider_timeout', count: 1, lastOccurredAt: '2026-08-26T12:55:00.000Z' }],
+        },
+        recentFailures: [{ category: 'provider_timeout', count: 2, lastOccurredAt: '2026-08-26T12:55:00.000Z' }],
+      }),
+      workReader('polymarket', {
+        signalCount: 6, observationCount: 8, deduplicatedObservationCount: 2, triageDecisionCount: 5,
+        triageOutcomes: { light: 4, archive: 1 },
+        researchPacketCount: 1, entityMemoryHandoffCount: 0,
+        endToEndLatency: { sampleCount: 0, p50Ms: null, p95Ms: null, p99Ms: null },
+        sqliteSize: { mainBytes: 200, walBytes: 0, shmBytes: 0, totalBytes: 200 },
+        totalAttempts: 2, attemptedItems: 1, maxAttemptCount: 2,
+        arrivalsInWindow: 2, admissionsInWindow: 1, completionsInWindow: 0,
+        recentFailures: [{ category: 'retrieval_blocked', count: 1, lastOccurredAt: '2026-08-26T12:50:00.000Z' }],
+      }),
+    ],
+    executionReader: executionReader([
+      executionRow({ failureCategory: 'provider_timeout', status: 'failed', eventCount: 1 }),
+      executionRow({ stage: 'memory_write', status: 'succeeded', eventCount: 1 }),
+      executionRow({
+        sourceType: 'polymarket', stage: 'retrieval', status: 'failed',
+        failureCategory: 'budget_exceeded', provider: 'fallback-provider', model: 'model-b',
+        fallbackProvider: 'fallback-provider', fallbackModel: 'model-b', fallbackUsed: true,
+        providerCalls: 2, repairCalls: 1, budgetExceededCount: 1, totalWallTimeMs: 1200,
+      }),
+    ]),
+    alertPolicy: {
+      queueAgeSloMs: { news: { P0: 30 * 60_000 } },
+      providerErrorRateThreshold: 0.1,
+      deadLetterCountThreshold: 0,
+    },
+  })
+  const status = await controlPlane.readStatus({ now: '2026-08-26T13:00:00.000Z' })
+  assert.equal(status.schemaVersion, CONTROL_PLANE_STATUS_SCHEMA_VERSION)
+  assert.equal(status.availability, 'available')
+  assert.equal(status.totals.signals, 15)
+  assert.equal(status.totals.observations, 20)
+  assert.equal(status.totals.deduplicatedObservations, 5)
+  assert.equal(status.totals.triageDecisions, 13)
+  assert.equal(status.totals.admittedWorkItems, 10)
+  assert.equal(status.totals.workItems, 10)
+  assert.equal(status.totals.ready, 3)
+  assert.equal(status.totals.retry, 1)
+  assert.equal(status.totals.deadLetter, 1)
+  assert.equal(status.totals.expired, 2)
+  assert.equal(status.totals.leased, 2)
+  assert.equal(status.totals.attempts, 7)
+  assert.equal(status.totals.arrivalsInWindow, 6)
+  assert.equal(status.totals.admissionsInWindow, 4)
+  assert.equal(status.totals.completionsInWindow, 1)
+  assert.equal(status.totals.researchPackets, 3)
+  assert.equal(status.totals.entityMemoryHandoffs, 1)
+  assert.equal(status.totals.sqliteBytes, 300)
+  assert.equal(status.sources.news?.intake.triageOutcomes.defer, 5)
+  assert.equal(status.sources.polymarket?.intake.triageOutcomes.light, 4)
+  assert.equal(status.sources.news?.artifacts.researchPackets, 2)
+  assert.equal(status.sources.news?.endToEndLatency?.p95Ms, 1_000)
+  assert.equal(status.sources.news?.byStage.retrieval.byStatus.research_pending, 2)
+  assert.equal(status.sources.polymarket?.byStage.synthesis.byStatus.synthesis_leased, 1)
+  assert.equal(status.sources.news?.oldestReadyAgeMs, 60 * 60_000)
+  assert.equal(status.sources.news?.queueAge[0]?.oldestAgeMs, 60 * 60_000)
+  assert.equal(status.sources.news?.queueAge[0]?.p50AgeMs, 30 * 60_000)
+  assert.equal(status.sources.news?.queueAge[0]?.p95AgeMs, 60 * 60_000)
+  assert.equal(status.sources.news?.deadLetters.oldestAgeMs, 90 * 60_000)
+  assert.equal(status.execution.bySource.news?.byStage.synthesis?.byStatus.failed, 1)
+  assert.equal(status.execution.bySource.polymarket?.byStage.retrieval?.byStatus.failed, 1)
+  assert.equal(status.execution.providerUsage.find((row) => row.sourceType === 'polymarket')?.fallbackUsed, true)
+  assert.equal(status.execution.providerUsage.find((row) => row.sourceType === 'polymarket')?.budgetExceededCount, 1)
+  assert.equal(status.execution.providerPerformance.find((row) => row.provider === 'primary-provider')?.successRate, 0)
+  assert.equal(status.execution.perCompletedPacket.canonicalPackets, 3)
+  assert.equal(status.execution.perCompletedPacket.telemetryCoverageRate, 0)
+  assert.equal(status.sources.news?.intake.deduplicationRate, 0.25)
+  assert.equal(status.sources.news?.sqliteWriteErrors.availability, 'unavailable')
+  assert.equal(status.sqliteWriteErrors.availability, 'unavailable')
+  assert.ok(status.alerts.items.some((alert) => alert.code === 'QUEUE_AGE_SLO_EXCEEDED'))
+  assert.ok(status.alerts.items.some((alert) => alert.code === 'PROVIDER_ERROR_RATE'))
+  assert.equal(status.recentFailures.find((failure) => failure.category === 'provider_timeout')?.count, 3)
+})
+
+test('one broken store is isolated and reported as partial without hiding healthy state', async () => {
+  const controlPlane = new SignalPlatformControlPlane({
+    stores: [
+      store('news', schedulerStatus(2, { research_pending: 2 }, '2026-08-26T12:30:00.000Z')),
+      store('polymarket', new Error('API_KEY=do-not-leak database unavailable')),
+    ],
+    executionReader: executionReader([]),
+  })
+  const status = await controlPlane.readStatus({ now: '2026-08-26T13:00:00.000Z' })
+  assert.equal(status.availability, 'partial')
+  assert.equal(status.totals.workItems, 2)
+  assert.equal(status.sources.news?.availability, 'available')
+  assert.equal(status.sources.polymarket?.availability, 'unavailable')
+  assert.equal(status.sources.polymarket?.error?.code, 'STORE_STATUS_UNAVAILABLE')
+  assert.equal(JSON.stringify(status).includes('do-not-leak'), false)
+})
+
+test('empty registered state returns a complete zero snapshot', async () => {
+  const controlPlane = new SignalPlatformControlPlane({
+    stores: [store('news', schedulerStatus(0, {}, null))],
+    executionReader: executionReader([]),
+  })
+  const status = await controlPlane.readStatus({ now: '2026-08-26T13:00:00.000Z' })
+  assert.equal(status.availability, 'available')
+  assert.deepEqual(status.totals, {
+    signals: null, triageDecisions: null, admittedWorkItems: 0,
+    observations: null, deduplicatedObservations: null,
+    workItems: 0, ready: 0, retry: 0, deadLetter: 0,
+    expired: 0, leased: 0, unfinished: 0, attempts: null,
+    arrivalsInWindow: null, admissionsInWindow: null, completionsInWindow: null,
+    researchPackets: null, entityMemoryHandoffs: null, sqliteBytes: null,
+  })
+  assert.equal(status.execution.totalEvents, 0)
+  assert.deepEqual(status.recentFailures, [])
+})
+
+test('registered Calendar and X queues remain visible beside News and Polymarket', async () => {
+  const sources: Signal['sourceType'][] = ['news', 'polymarket', 'market_calendar', 'x']
+  const controlPlane = new SignalPlatformControlPlane({
+    stores: sources.map((sourceType, index) => store(
+      sourceType, schedulerStatus(index + 1, { research_pending: index + 1 }, '2026-08-26T12:00:00.000Z'),
+    )),
+    executionReader: executionReader([]),
+  })
+  const status = await controlPlane.readStatus({ now: '2026-08-26T13:00:00.000Z' })
+  assert.deepEqual(Object.keys(status.sources).sort(), [...sources].sort())
+  assert.equal(status.sources.market_calendar?.total, 3)
+  assert.equal(status.sources.x?.total, 4)
+  assert.equal(status.totals.workItems, 10)
+})
+
+test('CLI formatter removes sensitive keys and redacts credential-shaped values', async () => {
+  const controlPlane = new SignalPlatformControlPlane({
+    stores: [store('news', schedulerStatus(0, {}, null))],
+    executionReader: executionReader([]),
+  })
+  const status = await controlPlane.readStatus({ now: '2026-08-26T13:00:00.000Z' })
+  const hostile = {
+    ...status,
+    apiKey: 'sk-live-secret',
+    nested: { password: 'hunter2', safe: 'keep', url: 'https://user:pass@example.com/path' },
+    errors: [{
+      code: 'STORE_STATUS_UNAVAILABLE', component: 'news',
+      message: 'Bearer abc.def token=raw-secret',
+    }],
+  } as unknown as typeof status
+  const formatted = formatControlPlaneStatusJson(hostile)
+  const parsed = JSON.parse(formatted) as Record<string, unknown>
+  assert.equal('apiKey' in parsed, false)
+  assert.equal(formatted.includes('sk-live-secret'), false)
+  assert.equal(formatted.includes('hunter2'), false)
+  assert.equal(formatted.includes('user:pass'), false)
+  assert.equal(formatted.includes('abc.def'), false)
+  assert.equal(formatted.includes('raw-secret'), false)
+  assert.equal(formatted.includes('"safe": "keep"'), true)
+})
+
+test('alert policy parsing is explicit and rejects invented or malformed thresholds', () => {
+  const policy = parseControlPlaneAlertPolicy({
+    queueAgeSloMs: { news: { P0: 1_000, P1: 2_000 } },
+    providerErrorRateThreshold: 0.1, deadLetterCountThreshold: 2,
+  })
+  assert.equal(policy.queueAgeSloMs.news?.P0, 1_000)
+  assert.throws(() => parseControlPlaneAlertPolicy({
+    queueAgeSloMs: { news: { P2: 1 } }, providerErrorRateThreshold: 0.1, deadLetterCountThreshold: 1,
+  }), /priority/)
+  assert.throws(() => parseControlPlaneAlertPolicy({
+    queueAgeSloMs: {}, providerErrorRateThreshold: 2, deadLetterCountThreshold: 1,
+  }), /between 0 and 1/)
+})

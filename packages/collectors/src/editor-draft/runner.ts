@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { envFlag, positiveInteger } from '../pipeline-store/cli-env'
 import type { PipelineStore } from '../pipeline-store/store'
+import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
 import { SupabaseEditorDraftStore } from './supabase-store'
@@ -82,7 +83,11 @@ export async function runEditorDraft(
   let store = options.store
   if (!store) {
     if (!pipelineStore) throw new Error('runEditorDraft requires a PipelineStore when options.store is not provided')
-    store = new SupabaseEditorDraftStore(db, pipelineStore)
+    store = new SupabaseEditorDraftStore(
+      db,
+      pipelineStore,
+      new SupabaseEntityKnowledgeReader(db),
+    )
   }
   const provider = options.provider ?? new HermesEditorDraftProvider()
   const backend = options.backend ?? 'hermes_cli'

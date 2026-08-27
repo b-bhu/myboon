@@ -8,6 +8,7 @@ import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { ResearchEngine } from '../research-engine'
+import { legacyResearchOwnership, runLegacyResearchWhenOwned } from '../research-engine/legacy-ownership-guard'
 import { SupabaseEntityMemoryReader } from '../research-gate'
 import { runPolymarketResearcher } from './researcher'
 
@@ -74,7 +75,16 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
 
 async function main(): Promise<void> {
   const config = polymarketResearcherCliConfig()
-  await runOnce(config)
+  const { ownership } = await runLegacyResearchWhenOwned({
+    sourceType: 'polymarket',
+    run: () => runOnce(config),
+  })
+  if (ownership.owner === 'shared') {
+    console.log('[polymarket-researcher] shared Research owns polymarket; legacy runner is inert')
+    if (config.runOnce) return
+    await waitForShutdownSignal()
+    return
+  }
 
   // One-shot mode is only for controlled manual runs and end-to-end tests.
   // The PM2 ecosystem explicitly forces this flag to 0: a clean one-shot
@@ -90,6 +100,25 @@ async function main(): Promise<void> {
     intervalMs: config.intervalMs,
     run: () => runOnce(config),
   })
+}
+
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise((resolve) => {
+    const stop = () => {
+      process.removeListener('SIGTERM', stop)
+      process.removeListener('SIGINT', stop)
+      resolve()
+    }
+    process.once('SIGTERM', stop)
+    process.once('SIGINT', stop)
+  })
+}
+
+export function polymarketResearchRunnerOwnership(
+  env: Readonly<Record<string, string | undefined>>,
+  now?: Date,
+) {
+  return legacyResearchOwnership('polymarket', env, now)
 }
 
 if (require.main === module || process.env.NODE_APP_INSTANCE !== undefined) {

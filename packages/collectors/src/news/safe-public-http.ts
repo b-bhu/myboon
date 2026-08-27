@@ -21,6 +21,12 @@ export interface SafePublicFetchOptions {
   timeoutMs: number
   maxBytes?: number
   maxRedirects?: number
+  /**
+   * Optional redirect-safe host policy. A destination is rejected before DNS
+   * resolution or connection unless its hostname is this domain or one of its
+   * subdomains. Empty means no destination is approved.
+   */
+  allowedDomains?: string[]
   resolveHost?: ResolveHost
   requestImpl?: (url: URL, address: string, timeoutMs: number, maxBytes: number) => Promise<SafePublicHopResponse>
 }
@@ -54,6 +60,9 @@ export async function fetchPublicDocument(
     const remainingMs = deadline - Date.now()
     if (remainingMs <= 0) throw timeoutError('Safe article fetch timed out')
     const hostname = normalizedHostname(current)
+    if (options.allowedDomains && !isAllowedHostname(hostname, options.allowedDomains)) {
+      throw new Error(`Article URL host is outside the approved domain policy: ${hostname}`)
+    }
     const addresses = isIP(hostname) ? [hostname] : await resolveHost(hostname)
     const publicAddresses = addresses.filter(isPublicAddress)
     if (addresses.length === 0 || publicAddresses.length !== addresses.length) {
@@ -77,6 +86,14 @@ export async function fetchPublicDocument(
   }
 
   throw new Error('Article redirect handling failed')
+}
+
+export function isAllowedHostname(hostname: string, allowedDomains: string[]): boolean {
+  const normalizedHost = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase()
+  return allowedDomains.some((rawDomain) => {
+    const domain = rawDomain.trim().replace(/^\*\./, '').replace(/\.$/, '').toLowerCase()
+    return domain.length > 0 && (normalizedHost === domain || normalizedHost.endsWith(`.${domain}`))
+  })
 }
 
 export function parseHttpUrl(rawUrl: string): URL {

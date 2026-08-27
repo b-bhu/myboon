@@ -1,5 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PipelineStore } from '../pipeline-store/store'
+import {
+  ENTITY_KNOWLEDGE_MAX_PAGE_SIZE,
+} from '../entity-manager/entity-knowledge-reader'
+import type {
+  EntityKnowledgeMemoryV1,
+  EntityKnowledgeReader,
+} from '../entity-manager/entity-knowledge-reader'
 import type {
   PublishedNarrativeInput,
   PublishedNarrativeRecord,
@@ -10,9 +17,9 @@ import type {
   PublisherWriteResult,
 } from './types'
 
-const MEMORY_SELECT = 'id, source, source_area, source_type, source_ref_id, source_research_id, title, summary, evidence, context'
 const ENTITY_SELECT = 'id, slug, name, type, metadata'
 const NARRATIVE_SELECT = 'id, editor_draft_id, created_at, published_at'
+const MAX_MEMORY_HYDRATION_REQUESTS = 10
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -33,19 +40,18 @@ function nullableNumber(value: unknown): number | null {
   return null
 }
 
-function normalizeMemory(row: unknown): PublisherMemoryRecord {
-  const record = row as Record<string, unknown>
+function normalizeMemory(memory: EntityKnowledgeMemoryV1): PublisherMemoryRecord {
   return {
-    id: String(record.id),
-    source: String(record.source),
-    source_area: String(record.source_area),
-    source_type: String(record.source_type),
-    source_ref_id: String(record.source_ref_id),
-    source_research_id: String(record.source_research_id),
-    title: String(record.title),
-    summary: String(record.summary),
-    evidence: Array.isArray(record.evidence) ? record.evidence : [],
-    context: asRecord(record.context),
+    id: memory.id,
+    source: memory.provenance.provider,
+    source_area: memory.provenance.sourceArea,
+    source_type: memory.provenance.sourceType,
+    source_ref_id: memory.provenance.sourceRefId,
+    source_research_id: memory.provenance.researchPacketId,
+    title: memory.title,
+    summary: memory.summary,
+    evidence: memory.evidence,
+    context: memory.context,
   }
 }
 
@@ -86,7 +92,11 @@ function isUniqueViolation(error: { code?: string, message?: string } | null): b
  * how that inconsistency window is bounded and recovered from.
  */
 export class SupabasePublisherStore implements PublisherStore {
-  constructor(private readonly db: SupabaseClient, private readonly store: PipelineStore) {}
+  constructor(
+    private readonly db: SupabaseClient,
+    private readonly store: PipelineStore,
+    private readonly knowledgeReader: Pick<EntityKnowledgeReader, 'getEntityMemoriesByIds'>,
+  ) {}
 
   async fetchEligibleDrafts(batchSize: number): Promise<PublisherDraftRecord[]> {
     const rows = await this.store.fetchEligibleDrafts({
@@ -123,13 +133,28 @@ export class SupabasePublisherStore implements PublisherStore {
 
   async fetchMemories(memoryIds: string[]): Promise<PublisherMemoryRecord[]> {
     if (memoryIds.length === 0) return []
-    const { data, error } = await this.db
-      .from('entity_memories')
-      .select(MEMORY_SELECT)
-      .in('id', memoryIds)
-
-    if (error) throw new Error(`publisher memory fetch failed: ${error.message}`)
-    return (data ?? []).map(normalizeMemory)
+    const uniqueIds = [...new Set(memoryIds)]
+    if (Math.ceil(uniqueIds.length / ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) > MAX_MEMORY_HYDRATION_REQUESTS) {
+      throw new Error(`publisher memory fetch exceeds ${MAX_MEMORY_HYDRATION_REQUESTS} bounded knowledge requests`)
+    }
+    const hydrated: EntityKnowledgeMemoryV1[] = []
+    try {
+      for (let offset = 0; offset < uniqueIds.length; offset += ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) {
+        const chunk = uniqueIds.slice(offset, offset + ENTITY_KNOWLEDGE_MAX_PAGE_SIZE)
+        hydrated.push(...await this.knowledgeReader.getEntityMemoriesByIds({
+          memoryIds: chunk,
+          limit: chunk.length,
+        }))
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unknown error'
+      throw new Error(`publisher memory fetch failed: ${detail}`, { cause: error })
+    }
+    const byId = new Map(hydrated.map((memory) => [memory.id, memory]))
+    return uniqueIds.flatMap((id) => {
+      const memory = byId.get(id)
+      return memory ? [normalizeMemory(memory)] : []
+    })
   }
 
   async fetchEntity(entityId: string): Promise<PublisherEntityRecord | null> {

@@ -5,17 +5,21 @@ import test from 'node:test'
 
 const repoRoot = resolve(__dirname, '..', '..', '..', '..', '..')
 
-test('PM2 news workers share the local SQLite store entrypoints', () => {
+test('PM2 keeps both scouts and registers only the shared Research/Entity owners', () => {
   const ecosystem = readFileSync(resolve(repoRoot, 'ecosystem.config.cjs'), 'utf8')
 
   assert.match(ecosystem, /name: 'myboon-news-feed-ingestor'[\s\S]*?script: 'src\/news\/run-news-feed-ingestor\.ts'[\s\S]*?NEWS_SQLITE_PATH: '\.data\/news\.sqlite'/)
-  assert.match(ecosystem, /name: 'myboon-news-researcher'[\s\S]*?script: 'src\/news\/run-news\.ts'[\s\S]*?NEWS_SQLITE_PATH: '\.data\/news\.sqlite'/)
-  assert.match(ecosystem, /name: 'myboon-news-researcher'[\s\S]*?HERMES_COMMAND: '\/root\/\.local\/bin\/myboonnews'[\s\S]*?NEWS_HERMES_PROFILE: 'myboonnews'/)
-  assert.match(ecosystem, /name: 'myboon-news-researcher'[\s\S]*?NEWS_HERMES_TOOLSETS: 'browser'/)
-  assert.match(ecosystem, /name: 'myboon-news-entity-manager'[\s\S]*?script: 'src\/entity-manager\/run-news\.ts'[\s\S]*?NEWS_SQLITE_PATH: '\.data\/news\.sqlite'/)
-
-  assert.match(ecosystem, /name: 'myboon-polymarket-researcher'[\s\S]*?RESEARCH_ENGINE_TOOLSETS: 'browser'[\s\S]*?POLYMARKET_RESEARCH_PLANNER_HERMES_TOOLSETS: 'browser'/)
+  assert.match(ecosystem, /name: 'myboon-polymarket-data-engineer'[\s\S]*?script: 'src\/polymarket\/run-markets-data-engineer\.ts'/)
+  assert.match(ecosystem, /name: 'myboon-feed-v3-research'[\s\S]*?script: 'src\/research-engine\/run-shared-research\.ts'/)
+  assert.match(ecosystem, /name: 'myboon-feed-v3-entity-manager'[\s\S]*?script: 'src\/entity-manager\/run-shared\.ts'/)
   assert.match(ecosystem, /name: 'myboon-hermes-orphan-sweeper'[\s\S]*?script: 'src\/hermes\/run-orphan-sweeper\.ts'/)
+
+  for (const legacyName of [
+    'myboon-news-researcher', 'myboon-polymarket-researcher',
+    'myboon-news-entity-manager', 'myboon-polymarket-entity-manager',
+  ]) {
+    assert.doesNotMatch(ecosystem, new RegExp(`name: '${legacyName}'`))
+  }
 
   assert.doesNotMatch(ecosystem, /myboon-news-(?:feed-ingestor|researcher|entity-manager)[\s\S]*?run-news[^'\n]*-supabase/)
 })

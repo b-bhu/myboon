@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
+import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
 
 async function main(): Promise<void> {
   const config = publisherCliConfig()
@@ -16,7 +17,11 @@ async function main(): Promise<void> {
   const pipelineStore = new SqlitePipelineStore()
   try {
     const result = await runPublisher({
-      store: new SupabasePublisherStore(supabase, pipelineStore),
+      store: new SupabasePublisherStore(
+        supabase,
+        pipelineStore,
+        new SupabaseEntityKnowledgeReader(supabase),
+      ),
       batchSize: config.batchSize,
       dryRun: true,
     })

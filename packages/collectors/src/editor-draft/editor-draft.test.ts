@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildHermesEditorDraftPrompt } from './hermes-editor'
+import { buildHermesEditorDraftPrompt, HermesEditorDraftProvider } from './hermes-editor'
+import type { GenerateStructuredRequest } from '../inference-gateway'
 import { buildEntityDraftBundles } from './input-builder'
 import { normalizeEditorDraftDecision, parseAgentEditorDraftResponse, sourceMemoryHash } from './normalizer'
 import { runEditorDraft } from './runner'
 import type { EntityMemoryRecord, EntityRecord } from '../entity-manager/types'
 import type {
+  AgentEditorDraftDecision,
   EditorDraftInput,
   EditorDraftProvider,
   EditorDraftRecord,
@@ -228,6 +230,29 @@ test('buildHermesEditorDraftPrompt excludes new memories from prior memory lane 
 
   assert.deepEqual(payload.new_memories.map((item) => item.id), [fresh.id])
   assert.deepEqual(payload.prior_memory_lane.map((item) => item.id), [prior.id])
+})
+
+test('editor draft uses the central tool-less structured gateway workload', async () => {
+  const acme = entity('entity-1', 'acme', 'Acme')
+  const fresh = memory('memory-2', acme.id, 'Fresh memory', '2026-06-30T00:00:00.000Z')
+  const bundle = buildEntityDraftBundles([acme], [fresh], [], [], { recentMemoryLimit: 1, laneMemoryLimit: 10 })[0]!
+  let request: GenerateStructuredRequest<{ decisions: AgentEditorDraftDecision[] }> | undefined
+  const provider = new HermesEditorDraftProvider({
+    gateway: {
+      async generateStructured(input) {
+        request = input as GenerateStructuredRequest<{ decisions: AgentEditorDraftDecision[] }>
+        return {
+          value: { decisions: [{ action: 'watch', reasoning: 'Needs time.' }] } as typeof input extends GenerateStructuredRequest<infer T> ? T : never,
+          telemetry: {} as never,
+        }
+      },
+    },
+  })
+  assert.equal((await provider.decide(bundle)).action, 'watch')
+  assert.equal(request?.workload, 'editor.draft')
+  assert.equal(request?.budget.maxToolCalls, 0)
+  assert.equal('tools' in (request as object), false)
+  assert.throws(() => new HermesEditorDraftProvider({ toolsets: 'browser' }), /tool-less/)
 })
 
 test('parseAgentEditorDraftResponse extracts fenced JSON and normalizes actions', () => {

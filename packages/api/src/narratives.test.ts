@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import type { NarrativeMemoryReader } from './narratives.js'
 import { createNarrativeRoutes } from './narratives.js'
 
 const firstId = '00000000-0000-4000-8000-000000000001'
 const secondId = '00000000-0000-4000-8000-000000000002'
 
-function createApp(fetchImpl: typeof globalThis.fetch) {
+function createApp(
+  fetchImpl: typeof globalThis.fetch,
+  memoryReader: NarrativeMemoryReader = { async getEntityMemoriesByIds() { return [] } },
+) {
   return createNarrativeRoutes({
     supabaseUrl: 'https://project.supabase.co/',
     serviceRoleKey: 'service-role-test-key',
+    memoryReader,
     fetch: fetchImpl,
   })
 }
@@ -147,32 +152,34 @@ test('GET / enriches Feed items with the preferred source-memory image', async (
   const contentMemoryId = '00000000-0000-4000-8000-000000000010'
   const avatarMemoryId = '00000000-0000-4000-8000-000000000011'
   const requests: URL[] = []
+  const hydrationCalls: unknown[] = []
   const app = createApp(async (input) => {
     const url = new URL(String(input))
     requests.push(url)
-    if (url.pathname.endsWith('/published_narratives')) {
-      return jsonResponse([{
-        ...narrativeRow(firstId, 'Bitcoin moves', 'Short update', 'Full update', '2026-07-14T12:00:00.000Z'),
-        source_memory_ids: [avatarMemoryId, contentMemoryId],
-      }])
-    }
-    assert.equal(url.pathname, '/rest/v1/entity_memories')
-    assert.equal(url.searchParams.get('select'), 'id,context')
+    assert.equal(url.pathname, '/rest/v1/published_narratives')
     return jsonResponse([{
-      id: avatarMemoryId,
-      context: {
-        image_url: 'https://pbs.twimg.com/profile_images/123/avatar.jpg',
-        image_kind: 'source_avatar',
-        image_attribution: '@tokens',
-      },
-    }, {
-      id: contentMemoryId,
-      context: {
-        image_url: 'https://pbs.twimg.com/media/story.jpg',
-        image_kind: 'content',
-        image_attribution: '@tokens',
-      },
+      ...narrativeRow(firstId, 'Bitcoin moves', 'Short update', 'Full update', '2026-07-14T12:00:00.000Z'),
+      source_memory_ids: [avatarMemoryId, contentMemoryId],
     }])
+  }, {
+    async getEntityMemoriesByIds(input) {
+      hydrationCalls.push(input)
+      return [{
+        id: avatarMemoryId,
+        media: {
+          imageUrl: 'https://pbs.twimg.com/profile_images/123/avatar.jpg',
+          imageKind: 'source_avatar',
+          attribution: '@tokens',
+        },
+      }, {
+        id: contentMemoryId,
+        media: {
+          imageUrl: 'https://pbs.twimg.com/media/story.jpg',
+          imageKind: 'content',
+          attribution: '@tokens',
+        },
+      }]
+    },
   })
 
   const response = await app.request('/')
@@ -186,7 +193,53 @@ test('GET / enriches Feed items with the preferred source-memory image', async (
     imageKind: 'content',
     imageAttribution: '@tokens',
   }])
-  assert.equal(requests.length, 2)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(hydrationCalls, [{
+    memoryIds: [avatarMemoryId, contentMemoryId],
+    limit: 2,
+  }])
+})
+
+test('GET / keeps optional media enrichment fail-open', async () => {
+  const memoryId = '00000000-0000-4000-8000-000000000012'
+  const app = createApp(async () => jsonResponse([{
+    ...narrativeRow(firstId, 'Bitcoin moves', 'Short update', 'Full update', '2026-07-14T12:00:00.000Z'),
+    source_memory_ids: [memoryId],
+  }]), {
+    async getEntityMemoriesByIds() {
+      throw new Error('knowledge store unavailable')
+    },
+  })
+
+  const response = await app.request('/')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), [{
+    updateKey: firstId,
+    title: 'Bitcoin moves',
+    summary: 'Short update',
+    publishedAt: '2026-07-14T12:00:00.000Z',
+    imageUrl: null,
+    imageKind: null,
+    imageAttribution: null,
+  }])
+})
+
+test('GET / fails closed before an extreme aggregate memory hydration drain', async () => {
+  const memoryIds = Array.from({ length: 1_001 }, (_, index) => (
+    `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`
+  ))
+  let calls = 0
+  const app = createApp(async () => jsonResponse([{
+    ...narrativeRow(firstId, 'Bitcoin moves', 'Short update', 'Full update', '2026-07-14T12:00:00.000Z'),
+    source_memory_ids: memoryIds,
+  }]), {
+    async getEntityMemoriesByIds() { calls += 1; return [] },
+  })
+
+  const response = await app.request('/')
+  assert.equal(response.status, 500)
+  assert.deepEqual(await response.json(), { error: 'Internal server error' })
+  assert.equal(calls, 0)
 })
 
 test('GET /:updateKey hides missing, unlinked, and archived narratives behind 404', async (context) => {

@@ -53,6 +53,7 @@ const DEFAULT_COMMAND = 'hermes'
 const DEFAULT_MAX_BUFFER_BYTES = 10 * 1024 * 1024
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 5
 const DEFAULT_CIRCUIT_COOLDOWN_MS = 10 * 60_000
+const MAX_ROUTING_VALUE_CHARS = 200
 
 export const HERMES_PROVIDER_CIRCUIT_OPEN_CODE = 'HERMES_PROVIDER_CIRCUIT_OPEN'
 
@@ -63,6 +64,10 @@ export interface HermesCallRecord {
   purpose: string
   mode: HermesCallMode
   command: string
+  /** Requested routing only; Hermes does not currently report resolved routing. */
+  requestedProfile: string | null
+  requestedProvider: string | null
+  requestedModel: string | null
   status: HermesCallStatus
   startedAt: string
   finishedAt: string
@@ -190,6 +195,23 @@ export class HermesProviderCircuitBreaker {
 }
 
 const processProviderCircuitBreaker = new HermesProviderCircuitBreaker()
+const processStructuredCircuitBreakers = new Map<string, HermesProviderCircuitBreaker>()
+
+function structuredCircuitKey(request: Pick<HermesOneshotRequest, 'provider' | 'model'>): string {
+  if (request.provider === undefined && request.model === undefined) return 'default'
+  const provider = request.provider ?? ''
+  const model = request.model ?? ''
+  return `${provider.length}:${provider}|${model.length}:${model}`
+}
+
+function processStructuredCircuitBreaker(request: Pick<HermesOneshotRequest, 'provider' | 'model'>): HermesProviderCircuitBreaker {
+  const key = structuredCircuitKey(request)
+  const existing = processStructuredCircuitBreakers.get(key)
+  if (existing) return existing
+  const created = new HermesProviderCircuitBreaker()
+  processStructuredCircuitBreakers.set(key, created)
+  return created
+}
 
 type ExecFileImpl = (
   command: string,
@@ -224,7 +246,11 @@ export interface HermesServiceOptions {
   structuredLimiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
   browserLimiter?: Pick<HermesConcurrencyLimiter, 'acquire'>
   processGroupKillGraceMs?: number
-  /** Test seam. Production shares one in-memory breaker per Node process. */
+  /**
+   * Legacy deterministic test seam. When injected, oneshot and chat both use
+   * this exact breaker. Production oneshot calls instead use the process-local
+   * provider+model registry; chat retains the process-level default breaker.
+   */
   circuitBreaker?: HermesProviderCircuitBreaker
 }
 
@@ -235,6 +261,12 @@ export interface HermesOneshotRequest {
   timeoutMs: number
   /** Value for `-t` - comma-separated toolsets string, omitted when empty. */
   toolsets?: string
+  /** Hermes CLI profile (`-p`), when explicitly configured. */
+  profile?: string
+  /** Hermes provider route (`--provider`). */
+  provider?: string
+  /** Hermes model route (`-m`). */
+  model?: string
   /** Adds `--ignore-rules` (researcher/extractor legacy behavior). */
   ignoreRules?: boolean
   maxBufferBytes?: number
@@ -345,6 +377,20 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
+function routingValue(name: 'profile' | 'provider' | 'model', value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (!value.trim() || value !== value.trim()) {
+    throw new Error(`Hermes oneshot ${name} must be a non-empty trimmed value`)
+  }
+  if (value.length > MAX_ROUTING_VALUE_CHARS) {
+    throw new Error(`Hermes oneshot ${name} must be at most ${MAX_ROUTING_VALUE_CHARS} characters`)
+  }
+  if (/\p{Cc}/u.test(value)) {
+    throw new Error(`Hermes oneshot ${name} must not contain control characters`)
+  }
+  return value
+}
+
 function sessionIdFromStderr(stderr: string): string | null {
   return stderr.match(SESSION_ID_PATTERN)?.[1] ?? null
 }
@@ -398,7 +444,8 @@ export class HermesService {
   private readonly structuredLimiter: Pick<HermesConcurrencyLimiter, 'acquire'>
   private readonly browserLimiter: Pick<HermesConcurrencyLimiter, 'acquire'>
   private readonly processGroupKillGraceMs: number
-  private readonly circuitBreaker: HermesProviderCircuitBreaker
+  private readonly injectedCircuitBreaker: HermesProviderCircuitBreaker | null
+  private readonly chatCircuitBreaker: HermesProviderCircuitBreaker
 
   constructor(options: HermesServiceOptions = {}) {
     this.command = options.command ?? process.env.HERMES_COMMAND ?? DEFAULT_COMMAND
@@ -424,7 +471,8 @@ export class HermesService {
         ?? '/tmp/myboon-hermes-slots',
     })
     this.processGroupKillGraceMs = options.processGroupKillGraceMs ?? PROCESS_GROUP_KILL_GRACE_MS
-    this.circuitBreaker = options.circuitBreaker ?? processProviderCircuitBreaker
+    this.injectedCircuitBreaker = options.circuitBreaker ?? null
+    this.chatCircuitBreaker = options.circuitBreaker ?? processProviderCircuitBreaker
   }
 
   private record(record: HermesCallRecord): void {
@@ -438,19 +486,26 @@ export class HermesService {
 
   async oneshot(request: HermesOneshotRequest): Promise<HermesOneshotResult> {
     const command = request.commandOverride ?? this.command
+    const profile = routingValue('profile', request.profile)
+    const provider = routingValue('provider', request.provider)
+    const model = routingValue('model', request.model)
     const args = [
       ...(request.ignoreRules ? ['--ignore-rules'] : []),
       ...(request.toolsets ? ['-t', request.toolsets] : []),
+      ...(profile ? ['-p', profile] : []),
+      ...(provider ? ['--provider', provider] : []),
+      ...(model ? ['-m', model] : []),
       '-z',
       request.prompt,
     ]
     const startedAtMs = Date.now()
-    const permit = this.circuitBreaker.beforeCall()
+    const circuitBreaker = this.injectedCircuitBreaker ?? processStructuredCircuitBreaker({ provider, model })
+    const permit = circuitBreaker.beforeCall()
     let lease: { release(): void }
     try {
       lease = await this.structuredLimiter.acquire(request.timeoutMs)
     } catch (error) {
-      this.circuitBreaker.abort(permit)
+      circuitBreaker.abort(permit)
       throw error
     }
     try {
@@ -461,12 +516,15 @@ export class HermesService {
           env: { ...process.env },
         })
         : await this.runSpawnedOneshot(command, args, request)
-      this.circuitBreaker.succeeded()
+      circuitBreaker.succeeded()
       const finishedAtMs = Date.now()
       this.record({
         purpose: request.purpose,
         mode: 'oneshot',
         command,
+        requestedProfile: profile ?? null,
+        requestedProvider: provider ?? null,
+        requestedModel: model ?? null,
         status: 'succeeded',
         startedAt: new Date(startedAtMs).toISOString(),
         finishedAt: new Date(finishedAtMs).toISOString(),
@@ -479,12 +537,15 @@ export class HermesService {
       })
       return { stdout, stderr }
     } catch (error) {
-      this.circuitBreaker.failed(permit, retryableProviderFailure(error))
+      circuitBreaker.failed(permit, retryableProviderFailure(error))
       const finishedAtMs = Date.now()
       this.record({
         purpose: request.purpose,
         mode: 'oneshot',
         command,
+        requestedProfile: profile ?? null,
+        requestedProvider: provider ?? null,
+        requestedModel: model ?? null,
         status: oneshotStatus(error),
         startedAt: new Date(startedAtMs).toISOString(),
         finishedAt: new Date(finishedAtMs).toISOString(),
@@ -596,7 +657,7 @@ export class HermesService {
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0) {
       throw new Error(`Hermes chat timeoutMs must be positive for purpose ${request.purpose}`)
     }
-    const permit = this.circuitBreaker.beforeCall()
+    const permit = this.chatCircuitBreaker.beforeCall()
     return this.chatWithLease(request, permit)
   }
 
@@ -606,7 +667,7 @@ export class HermesService {
     try {
       lease = await this.browserLimiter.acquire(request.timeoutMs)
     } catch (error) {
-      this.circuitBreaker.abort(permit)
+      this.chatCircuitBreaker.abort(permit)
       const finishedAtMs = Date.now()
       const message = errorMessage(error)
       const command = request.commandOverride ?? this.command
@@ -625,6 +686,9 @@ export class HermesService {
         purpose: request.purpose,
         mode: 'chat',
         command,
+        requestedProfile: request.profile ?? null,
+        requestedProvider: null,
+        requestedModel: null,
         status: result.status,
         startedAt: result.startedAt,
         finishedAt: result.finishedAt,
@@ -639,11 +703,11 @@ export class HermesService {
     }
     try {
       const result = await this.runChat(request)
-      if (result.status === 'succeeded') this.circuitBreaker.succeeded()
-      else this.circuitBreaker.failed(permit, retryableChatResult(result))
+      if (result.status === 'succeeded') this.chatCircuitBreaker.succeeded()
+      else this.chatCircuitBreaker.failed(permit, retryableChatResult(result))
       return result
     } catch (error) {
-      this.circuitBreaker.failed(permit, retryableProviderFailure(error))
+      this.chatCircuitBreaker.failed(permit, retryableProviderFailure(error))
       throw error
     } finally {
       lease.release()
@@ -706,6 +770,9 @@ export class HermesService {
           purpose: request.purpose,
           mode: 'chat',
           command,
+          requestedProfile: request.profile ?? null,
+          requestedProvider: null,
+          requestedModel: null,
           status,
           startedAt,
           finishedAt: result.finishedAt,

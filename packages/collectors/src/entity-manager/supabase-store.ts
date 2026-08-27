@@ -1,6 +1,10 @@
+import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { PlatformFailure } from '../signal-platform/failures'
 import type {
   EntityInput,
+  EntityIdentityLookupInput,
+  EntityIdentityLookupResult,
   EntityMemoryConsolidationPatch,
   EntityMemoryInput,
   EntityMemoryRecord,
@@ -14,7 +18,7 @@ import type {
 
 const ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, show_in_carousel, metadata, created_at, updated_at'
 const LEGACY_ENTITY_SELECT = 'id, slug, name, type, aliases, summary, status, metadata, created_at, updated_at'
-const MEMORY_SELECT = 'id, entity_id, source, source_area, source_type, source_ref_id, source_research_id, memory_type, title, summary, body, event_at, observed_at, confidence, evidence, mentions, metrics, context, created_at, updated_at'
+const MEMORY_SELECT = 'id, memory_identity_key, entity_id, source, source_area, source_type, source_ref_id, source_research_id, memory_type, title, summary, body, event_at, observed_at, confidence, evidence, mentions, metrics, context, created_at, updated_at'
 const MANUAL_COMMAND_LOG_SELECT = 'request_id, command_hash, actor, entity_id, applied_at'
 
 interface EntityRowsResult {
@@ -26,6 +30,12 @@ interface EntityRowResult {
   data: unknown
   error: { message: string; code?: string } | null
 }
+
+interface EntityIdentityRow extends Record<string, unknown> {
+  total_count?: unknown
+}
+
+const CANONICAL_IDENTITY_LOOKUP_LIMIT = 100
 
 function normalizeEntity(row: unknown): EntityRecord {
   const record = row as Record<string, unknown>
@@ -50,6 +60,7 @@ function normalizeMemory(row: unknown): EntityMemoryRecord {
   const record = row as Record<string, unknown>
   return {
     id: String(record.id),
+    memory_identity_key: typeof record.memory_identity_key === 'string' ? record.memory_identity_key : undefined,
     entity_id: typeof record.entity_id === 'string' ? record.entity_id : null,
     source: String(record.source),
     source_area: String(record.source_area),
@@ -79,7 +90,10 @@ function normalizeMemory(row: unknown): EntityMemoryRecord {
 }
 
 export class SupabaseEntityMemoryStore implements EntityMemoryStore {
-  constructor(private readonly db: SupabaseClient) {}
+  constructor(
+    private readonly db: SupabaseClient,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   async listEntities(limit = 1000): Promise<EntityRecord[]> {
     let result = await this.db
@@ -144,6 +158,56 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     return [...byId.values()]
   }
 
+  async findEntitiesByIdentity(input: EntityIdentityLookupInput): Promise<EntityIdentityLookupResult> {
+    const identity = normalizedIdentityLookup(input)
+    if (identity.slugs.length === 0 && identity.names.length === 0 && identity.aliases.length === 0) {
+      return { entities: [], complete: true }
+    }
+    const { data, error } = await this.db.rpc('entity_manager_lookup_entities_v1', {
+      p_slugs: identity.slugs,
+      p_names: identity.names,
+      p_aliases: identity.aliases,
+      p_limit: CANONICAL_IDENTITY_LOOKUP_LIMIT,
+    }) as unknown as EntityRowsResult
+    if (error) throw new Error(`canonical entity identity lookup failed: ${error.message}`)
+    const rows = (data ?? []) as EntityIdentityRow[]
+    const total = rows.length === 0 ? 0 : Number(rows[0]?.total_count)
+    const complete = Number.isSafeInteger(total) && total <= CANONICAL_IDENTITY_LOOKUP_LIMIT
+    return {
+      entities: rows.slice(0, CANONICAL_IDENTITY_LOOKUP_LIMIT).map(normalizeEntity),
+      complete,
+    }
+  }
+
+  async createCanonicalEntity(entity: EntityInput, input: EntityIdentityLookupInput): Promise<EntityRecord> {
+    const identity = normalizedIdentityLookup(input)
+    const { data, error } = await this.db.rpc('entity_manager_create_entity_v1', {
+      p_slug: entity.slug,
+      p_name: entity.name,
+      p_type: entity.type,
+      p_aliases: entity.aliases,
+      p_summary: entity.summary,
+      p_status: entity.status,
+      p_show_in_carousel: entity.show_in_carousel ?? false,
+      p_metadata: entity.metadata,
+      p_identity_slugs: identity.slugs,
+      p_identity_names: identity.names,
+      p_identity_aliases: identity.aliases,
+    }) as unknown as EntityRowsResult
+    if (error) {
+      if (error.code === '23505' && /canonical entity identity collision/i.test(error.message)) {
+        throw new PlatformFailure({
+          category: 'entity_resolution_failed',
+          message: 'Canonical Entity creation collided with an existing name or alias.',
+          retryable: false,
+        })
+      }
+      throw new Error(`canonical entity creation failed: ${error.message}`)
+    }
+    if ((data ?? []).length !== 1) throw new Error('canonical entity creation returned an invalid row count')
+    return normalizeEntity(data![0])
+  }
+
   async createEntities(entities: EntityInput[]): Promise<EntityRecord[]> {
     if (entities.length === 0) return []
     let result = await this.db
@@ -196,43 +260,42 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
   }
 
   async findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]> {
-    const byKey = new Map<string, MemoryLookupKey>()
-    for (const key of keys) {
-      byKey.set([
-        key.source,
-        key.sourceArea,
-        key.sourceResearchId,
-        key.entityId ?? '',
-        key.memoryType,
-        key.title,
-      ].join('|'), key)
-    }
-    const sourceResearchIds = [...new Set([...byKey.values()].map((key) => key.sourceResearchId))]
-    if (sourceResearchIds.length === 0) return []
+    const identities = [...new Set(keys.map((key) => key.memoryIdentityKey
+      ? explicitMemoryIdentity(key.memoryIdentityKey)
+      : legacyMemoryIdentity({
+        source: key.source,
+        source_area: key.sourceArea,
+        source_research_id: key.sourceResearchId,
+        entity_id: key.entityId,
+        memory_type: key.memoryType,
+        title: key.title,
+      })))]
+    if (identities.length === 0) return []
     const { data, error } = await this.db
       .from('entity_memories')
       .select(MEMORY_SELECT)
-      .in('source_research_id', sourceResearchIds)
+      .in('memory_identity_key', identities)
     if (error) throw new Error(`entity memory lookup failed: ${error.message}`)
-    const wanted = new Set(byKey.keys())
-    return (data ?? [])
-      .map(normalizeMemory)
-      .filter((memory) => wanted.has([
-        memory.source,
-        memory.source_area,
-        memory.source_research_id,
-        memory.entity_id ?? '',
-        memory.memory_type,
-        memory.title,
-      ].join('|')))
+    const wanted = new Set(identities)
+    return (data ?? []).map(normalizeMemory).filter((memory) => (
+      typeof memory.memory_identity_key === 'string' && wanted.has(memory.memory_identity_key)
+    ))
   }
 
   async upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]> {
     if (memories.length === 0) return []
+    const updatedAt = this.now().toISOString()
+    const identified = memories.map((memory) => ({
+      ...memory,
+      updated_at: updatedAt,
+      memory_identity_key: memory.memory_identity_key
+        ? explicitMemoryIdentity(memory.memory_identity_key)
+        : legacyMemoryIdentity(memory),
+    }))
     const { data, error } = await this.db
       .from('entity_memories')
-      .upsert(memories, {
-        onConflict: 'source,source_area,source_research_id,entity_id,memory_type,title',
+      .upsert(identified, {
+        onConflict: 'memory_identity_key',
       })
       .select(MEMORY_SELECT)
     if (error) throw new Error(`entity memory upsert failed: ${error.message}`)
@@ -316,6 +379,28 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
   }
 }
 
+function normalizedIdentityLookup(input: EntityIdentityLookupInput): EntityIdentityLookupInput {
+  return {
+    slugs: boundedIdentityLabels(input.slugs, 'slugs'),
+    names: boundedIdentityLabels(input.names, 'names'),
+    aliases: boundedIdentityLabels(input.aliases, 'aliases'),
+  }
+}
+
+function boundedIdentityLabels(values: readonly string[], field: string): string[] {
+  if (!Array.isArray(values)) throw new TypeError(`canonical entity ${field} must be an array`)
+  const normalized = [...new Set(values.map((value) => {
+    if (typeof value !== 'string' || value.trim() === '' || value.trim().length > 500) {
+      throw new TypeError(`canonical entity ${field} contains an invalid label`)
+    }
+    return value.trim()
+  }))].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+  if (normalized.length > CANONICAL_IDENTITY_LOOKUP_LIMIT) {
+    throw new RangeError(`canonical entity ${field} exceeds ${CANONICAL_IDENTITY_LOOKUP_LIMIT} labels`)
+  }
+  return normalized
+}
+
 function normalizeManualCommandLog(row: unknown): ManualCommandLogRecord {
   const record = row as Record<string, unknown>
   const actor = record.actor && typeof record.actor === 'object' && !Array.isArray(record.actor)
@@ -343,10 +428,39 @@ function carouselMigrationError(): Error {
   return new Error('Entity carousel selection requires the pending entity_carousel_flag migration.')
 }
 
+const EXPLICIT_MEMORY_IDENTITY_PATTERN = /^myboon\.memory_identity\.v1:[0-9a-f]{64}$/
+const LEGACY_MEMORY_IDENTITY_SEPARATOR = '\u001f'
+
+function explicitMemoryIdentity(value: string): string {
+  if (!EXPLICIT_MEMORY_IDENTITY_PATTERN.test(value)) {
+    throw new TypeError('memory_identity_key must be a myboon.memory_identity.v1 SHA-256 key')
+  }
+  return value
+}
+
+function legacyMemoryIdentity(memory: Pick<
+  EntityMemoryInput,
+  'source' | 'source_area' | 'source_research_id' | 'entity_id' | 'memory_type' | 'title'
+>): string {
+  const canonical = [
+    memory.source,
+    memory.source_area,
+    memory.source_research_id,
+    memory.entity_id ?? '',
+    memory.memory_type,
+    memory.title,
+  ].join(LEGACY_MEMORY_IDENTITY_SEPARATOR)
+  return `myboon.memory_identity.v1:legacy:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`
+}
+
 export const __testing = {
   ENTITY_SELECT,
   LEGACY_ENTITY_SELECT,
   MEMORY_SELECT,
   normalizeEntity,
+  normalizeMemory,
+  explicitMemoryIdentity,
+  legacyMemoryIdentity,
+  normalizedIdentityLookup,
   isMissingCarouselColumn,
 }

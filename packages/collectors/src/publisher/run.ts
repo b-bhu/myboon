@@ -8,6 +8,7 @@ import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
+import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
 
 function previewOnly(env: NodeJS.ProcessEnv): boolean {
   return env.PUBLISHER_PREVIEW_ONLY === '1' || env.PUBLISHER_DRY_RUN === '1'
@@ -33,7 +34,11 @@ async function runOnce(): Promise<void> {
         },
       },
       () => runPublisher({
-        store: new SupabasePublisherStore(supabase, pipelineStore),
+        store: new SupabasePublisherStore(
+          supabase,
+          pipelineStore,
+          new SupabaseEntityKnowledgeReader(supabase),
+        ),
         batchSize: config.batchSize,
         dryRun: previewOnly(process.env),
       })

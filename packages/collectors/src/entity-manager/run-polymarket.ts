@@ -10,6 +10,7 @@ import { HermesEntityExtractionProvider } from './extractor'
 import { polymarketResearchToPacket, type PolymarketCandidateContext, type PolymarketResearchRow } from './polymarket-adapter'
 import { EntityService } from './entity-service'
 import { SupabaseEntityMemoryStore } from './supabase-store'
+import { legacyEntityOwnership, runLegacyEntityWhenOwned } from './legacy-ownership-guard'
 import type { EntityMemoryStore, ExtractionProvider, ResearchPacket, WriteExtractionResult } from './types'
 
 const SOURCE = 'polymarket'
@@ -335,7 +336,20 @@ function isPermanentEntityManagerError(error: unknown): boolean {
 
 async function main(): Promise<void> {
   loadDotenvChain()
+  const { ownership } = await runLegacyEntityWhenOwned({
+    sourceType: 'polymarket',
+    run: runOwnedPolymarketRunner,
+  })
+  if (ownership.owner === 'shared') {
+    console.log('[entity-manager:polymarket] shared Entity owns polymarket; legacy runner is inert')
+    if (envFlag(process.env.ENTITY_MANAGER_POLYMARKET_RUN_ONCE)) return
+    await waitForShutdownSignal()
+    return
+  }
 
+}
+
+async function runOwnedPolymarketRunner(): Promise<void> {
   const config = polymarketEntityManagerCliConfig()
   const supabase = createClient(
     requiredEnv('SUPABASE_URL'),
@@ -355,6 +369,25 @@ async function main(): Promise<void> {
   } finally {
     if (config.runOnce) store.close()
   }
+}
+
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise((resolve) => {
+    const stop = () => {
+      process.removeListener('SIGTERM', stop)
+      process.removeListener('SIGINT', stop)
+      resolve()
+    }
+    process.once('SIGTERM', stop)
+    process.once('SIGINT', stop)
+  })
+}
+
+export function polymarketEntityRunnerOwnership(
+  env: Readonly<Record<string, string | undefined>>,
+  now?: Date,
+) {
+  return legacyEntityOwnership('polymarket', env, now)
 }
 
 if (require.main === module) {

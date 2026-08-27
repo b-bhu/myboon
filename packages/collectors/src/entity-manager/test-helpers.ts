@@ -1,5 +1,7 @@
 import type {
   EntityInput,
+  EntityIdentityLookupInput,
+  EntityIdentityLookupResult,
   EntityMemoryConsolidationPatch,
   EntityMemoryInput,
   EntityMemoryRecord,
@@ -29,6 +31,18 @@ export class InMemoryEntityMemoryStore implements EntityMemoryStore {
       slugSet.has(entity.slug)
       || entity.aliases.some((alias) => aliasSet.has(alias.toLowerCase()))
     ))
+  }
+
+  async findEntitiesByIdentity(input: EntityIdentityLookupInput): Promise<EntityIdentityLookupResult> {
+    const labels = new Set([...input.names, ...input.aliases].map((label) => label.toLowerCase()))
+    return {
+      complete: true,
+      entities: this.entities.filter((entity) => (
+        input.slugs.includes(entity.slug)
+        || labels.has(entity.name.toLowerCase())
+        || entity.aliases.some((alias) => labels.has(alias.toLowerCase()))
+      )),
+    }
   }
 
   async createEntities(entities: EntityInput[]): Promise<EntityRecord[]> {

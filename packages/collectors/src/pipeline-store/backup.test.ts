@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { closeSync, mkdtempSync, openSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -8,12 +8,16 @@ import {
   backupNewsStore,
   backupPipelineStore,
   pruneOldBackups,
+  restoreNewsStore,
   restorePipelineStore,
   verifyNewsBackup,
   verifyPipelineBackup,
 } from './backup'
 import { SqlitePipelineStore } from './sqlite-store'
 import { SqliteNewsStore } from '../news/sqlite-store'
+import { SqliteResearchShadowStore } from '../signal-platform/sqlite-research-shadow-store'
+import { SqliteEntityShadowObservationStore } from '../entity-manager/sqlite-shadow-observation-store'
+import { SqliteDeepResearchExecutionRegistry } from '../deep-research/sqlite-execution-registry'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -228,6 +232,29 @@ test('backupNewsStore: creates and verifies an independent news.sqlite backup', 
   }
 })
 
+test('backupNewsStore: inventories additive Feed V3 shadow and deep registry tables when present', async () => {
+  const dir = makeTmpDir('news-feed-v3-backup-src-')
+  try {
+    const sourcePath = join(dir, 'news.sqlite')
+    const news = new SqliteNewsStore(sourcePath)
+    news.close()
+    const researchShadow = new SqliteResearchShadowStore(sourcePath)
+    const entityShadow = new SqliteEntityShadowObservationStore(sourcePath)
+    const deepRegistry = new SqliteDeepResearchExecutionRegistry(sourcePath)
+    researchShadow.close()
+    entityShadow.close()
+    deepRegistry.close()
+
+    const result = await backupNewsStore({ sourcePath, backupDir: join(dir, 'backups') })
+    assert.equal(result.tableCounts.signal_platform_research_shadow_results, 0)
+    assert.equal(result.tableCounts.entity_manager_shadow_observations, 0)
+    assert.equal(result.tableCounts.deep_research_active_executions, 0)
+    assert.deepEqual(result.tableCounts, result.sourceTableCounts)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('verifyPipelineBackup: returns ok:true and integrity "ok" on a good backup', async () => {
   const dir = makeTmpDir('pipeline-backup-verify-good-')
   try {
@@ -338,6 +365,24 @@ test('restorePipelineStore: round-trip reproduces the seeded data at a fresh pat
   }
 })
 
+test('restoreNewsStore: verifies and restores news.sqlite independently', async () => {
+  const dir = makeTmpDir('news-backup-restore-')
+  try {
+    const sourcePath = join(dir, 'news.sqlite')
+    const store = new SqliteNewsStore(sourcePath)
+    store.close()
+    const backup = await backupNewsStore({ sourcePath, backupDir: join(dir, 'backups') })
+    const targetPath = join(dir, 'restored', 'news.sqlite')
+
+    const restored = await restoreNewsStore({ backupPath: backup.path, targetPath })
+    assert.equal(restored.targetPath, targetPath)
+    assert.equal(restored.verified, true)
+    assert.deepEqual(restored.tableCounts, backup.tableCounts)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('restorePipelineStore: refuses to overwrite an existing target without force, succeeds with force', async () => {
   const dir = makeTmpDir('pipeline-backup-force-')
   try {
@@ -382,6 +427,22 @@ test('restorePipelineStore: refuses a corrupt backup even with force', async () 
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('restorePipelineStore: refuses targets with WAL/SHM sidecars even with force', async () => {
+  const dir = makeTmpDir('pipeline-restore-sidecar-')
+  try {
+    const sourcePath = join(dir, 'source.sqlite')
+    await seedStore(sourcePath)
+    const backupResult = await backupPipelineStore({ sourcePath, backupDir: join(dir, 'backups') })
+    const targetPath = join(dir, 'target.sqlite')
+    writeFileSync(`${targetPath}-wal`, 'stale-sidecar')
+    await assert.rejects(
+      () => restorePipelineStore({ backupPath: backupResult.path, targetPath, force: true }),
+      /sidecars exist/,
+    )
+    assert.equal(existsSync(targetPath), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
 test('pruneOldBackups: keeps the newest N and deletes the rest, sorted by filename timestamp', async () => {
