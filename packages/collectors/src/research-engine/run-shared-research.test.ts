@@ -275,6 +275,123 @@ test('active composition validates cutover evidence before opening a source data
   assert.throws(() => createLiveSharedResearchRuntime(config), /receipt manifest/i)
 })
 
+test('full policy rejects missing and invalid receipts before any dependency construction', () => {
+  const missing = loadSharedResearchRunnerConfig({
+    FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+    FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+    FEED_V3_CUTOVER_RECEIPT_PATH: '/does/not/exist/cutover.json',
+    NEWS_SQLITE_PATH: '/does/not/exist/news.sqlite',
+  })
+  // The guard must throw before the SQLite existence check, so a missing
+  // database path must never surface as the failure.
+  assert.throws(() => createLiveSharedResearchRuntime(missing), /receipt manifest/i)
+
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-full-invalid-'))
+  try {
+    const invalidPath = join(dir, 'cutover-receipts.json')
+    writeFileSync(invalidPath, JSON.stringify({
+      schemaVersion: 'myboon.feed_v3_cutover_manifest.v1', receipts: [],
+    }))
+    const invalid = loadSharedResearchRunnerConfig({
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+      FEED_V3_CUTOVER_RECEIPT_PATH: invalidPath,
+      NEWS_SQLITE_PATH: join(dir, 'news.sqlite'),
+    })
+    assert.throws(() => createLiveSharedResearchRuntime(invalid), /Cutover receipt missing for research:news/)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('phase1 accepts news and polymarket with no receipt when all invariants are valid', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-phase1-accept-'))
+  const newsPath = join(dir, 'news.sqlite')
+  const pipelinePath = join(dir, 'pipeline.sqlite')
+  new SqliteSignalPlatformStore(newsPath, 'news').close()
+  new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
+  try {
+    const config = loadSharedResearchRunnerConfig({
+      FEED_V3_CUTOVER_POLICY: 'phase1',
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news,polymarket',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news,polymarket',
+      FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+      NEWS_SQLITE_PATH: newsPath, PIPELINE_SQLITE_PATH: pipelinePath,
+    })
+    assert.equal(config.cutoverReceiptPath, null)
+    const live = createLiveSharedResearchRuntime(config)
+    assert.deepEqual(live.status.sources, ['news', 'polymarket'])
+    live.close()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('phase1 rejects invalid invariants before any dependency construction', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-phase1-reject-'))
+  const newsPath = join(dir, 'news.sqlite')
+  const pipelinePath = join(dir, 'pipeline.sqlite')
+  new SqliteSignalPlatformStore(newsPath, 'news').close()
+  new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
+  const base = {
+    FEED_V3_CUTOVER_POLICY: 'phase1',
+    FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news,polymarket',
+    FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news,polymarket',
+    FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+    NEWS_SQLITE_PATH: newsPath, PIPELINE_SQLITE_PATH: pipelinePath,
+  }
+  const cases: Array<{ env: Record<string, string>, pattern: RegExp }> = [
+    // standard depth admitted
+    { env: { FEED_V3_TRIAGE_ALLOWED_DEPTHS: 'light,standard' }, pattern: /exactly light/ },
+    // deep research enabled
+    { env: { FEED_V3_DEEP_RESEARCH_ENABLED: '1' }, pattern: /deep research to be disabled/ },
+    // triage classifier enabled
+    { env: { FEED_V3_TRIAGE_CLASSIFIER_ENABLED: '1' }, pattern: /triage classifier to be disabled/ },
+    // non-healthy provider
+    { env: { FEED_V3_TRIAGE_PROVIDER_HEALTH: 'degraded' }, pattern: /healthy triage provider health/ },
+    // unsupported source
+    { env: { FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news,market_calendar', FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news,market_calendar' }, pattern: /does not admit active research source: market_calendar/ },
+    // missing legacy-disabled ownership (rejected by the config loader before
+    // the phase1 guard, still before any dependency construction)
+    { env: { FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news' }, pattern: /legacy-disabled sources: polymarket/ },
+  ]
+  try {
+    for (const { env, pattern } of cases) {
+      // The guard (or the config loader for the missing-legacy case) must fail
+      // closed before the SQLite existence check, so a valid database path
+      // must never be reached on a rejected config.
+      assert.throws(() => createLiveSharedResearchRuntime(loadSharedResearchRunnerConfig({ ...base, ...env })), pattern)
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('off and shadow research never evaluate active cutover authorization', async () => {
+  let creates = 0
+  const controller = new AbortController()
+  await runSharedResearchLoop({
+    env: { [SHARED_RESEARCH_ENV.intervalMs]: '100' },
+    signal: controller.signal,
+    createRuntime: () => { creates += 1; throw new Error('must not construct') },
+    createStatusWriter: () => { creates += 1; throw new Error('must not construct status writer') },
+    createRuntimeControl: () => { creates += 1; throw new Error('must not construct runtime control') },
+    wait: async () => { controller.abort() },
+  })
+  assert.equal(creates, 0)
+
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-phase1-shadow-'))
+  const newsPath = join(dir, 'news.sqlite')
+  new SqliteSignalPlatformStore(newsPath, 'news').close()
+  try {
+    const config = loadSharedResearchRunnerConfig({
+      FEED_V3_CUTOVER_POLICY: 'phase1',
+      FEED_V3_RESEARCH_MODE: 'shadow', FEED_V3_RESEARCH_SHADOW_SOURCES: 'news',
+      FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '100', NEWS_SQLITE_PATH: newsPath,
+    })
+    // Shadow mode must not require a receipt path or evaluate active cutover.
+    assert.equal(config.cutoverReceiptPath, null)
+    const live = createLiveSharedResearchRuntime(config)
+    assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }])
+    await live.stop()
+    live.close()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('calendar and X use the registered pipeline store without a source-specific Research runner', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-sources-'))
   const pipelinePath = join(dir, 'pipeline.sqlite')

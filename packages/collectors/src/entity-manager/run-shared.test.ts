@@ -317,6 +317,188 @@ test('active cutover receipts fail closed before opening SQLite, Supabase, or pr
   }
 })
 
+test('full policy rejects missing and invalid receipts before any dependency construction', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-full-invalid-'))
+  const missingPath = join(directory, 'missing-cutover.json')
+  let constructed = 0
+  try {
+    // Missing receipt path must fail before the SQLite existence check.
+    assert.throws(() => createSharedEntityRuntime({
+      env: {
+        FEED_V3_ENTITY_MODE: 'active',
+        FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: missingPath,
+        NEWS_SQLITE_PATH: join(directory, 'news.sqlite'),
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_SERVICE_ROLE_KEY: 'test-only',
+      },
+      storeFactory() { constructed += 1; throw new Error('must not open') },
+      supabaseFactory() { constructed += 1; throw new Error('must not open') },
+      gatewayFactory() { constructed += 1; throw new Error('must not open') },
+    }), /receipt manifest/i)
+    assert.equal(constructed, 0)
+
+    const invalidPath = join(directory, 'cutover-receipts.json')
+    writeFileSync(invalidPath, JSON.stringify({
+      schemaVersion: 'myboon.feed_v3_cutover_manifest.v1',
+      receipts: [],
+    }))
+    assert.throws(() => createSharedEntityRuntime({
+      env: {
+        FEED_V3_ENTITY_MODE: 'active',
+        FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: invalidPath,
+        NEWS_SQLITE_PATH: join(directory, 'news.sqlite'),
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_SERVICE_ROLE_KEY: 'test-only',
+      },
+      storeFactory() { constructed += 1; throw new Error('must not open') },
+      supabaseFactory() { constructed += 1; throw new Error('must not open') },
+      gatewayFactory() { constructed += 1; throw new Error('must not open') },
+    }), /Cutover receipt missing for entity:news/)
+    assert.equal(constructed, 0)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('phase1 accepts news and polymarket with no receipt when all invariants are valid', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-phase1-accept-'))
+  const newsPath = join(directory, 'news.sqlite')
+  const pipelinePath = join(directory, 'pipeline.sqlite')
+  new SqliteSignalPlatformStore(newsPath, 'news').close()
+  new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
+  let captured: SharedEntityWorkerOptions | undefined
+  try {
+    const runtime = createSharedEntityRuntime({
+      env: {
+        FEED_V3_CUTOVER_POLICY: 'phase1',
+        FEED_V3_ENTITY_MODE: 'active',
+        FEED_V3_ENTITY_ACTIVE_SOURCES: 'news,polymarket',
+        FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news,polymarket',
+        FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+        NEWS_SQLITE_PATH: newsPath,
+        PIPELINE_SQLITE_PATH: pipelinePath,
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_SERVICE_ROLE_KEY: 'test-only',
+      },
+      storeFactory(databasePath, sourceType) {
+        return new SqliteSignalPlatformStore(databasePath, sourceType)
+      },
+      supabaseFactory() {
+        return { async rpc() { return { data: migrationReport(), error: null } } } as never
+      },
+      gatewayFactory() {
+        return {
+          checkReadiness() { return { ready: true } },
+          async generateStructured() { throw new Error('not invoked during composition') },
+          circuitStatusSnapshot() {
+            return {
+              schemaVersion: 'myboon.inference_circuit_status.v1',
+              capturedAt: '2026-08-26T12:00:00.000Z',
+              workloads: [],
+            }
+          },
+        } as never
+      },
+      healthWriter: noOpHealthWriter,
+      workerFactory: workerFactory((options) => { captured = options }),
+    })
+    assert.equal(runtime.mode, 'active')
+    assert.deepEqual(captured!.ports.map((port) => port.sourceType), ['news', 'polymarket'])
+    await runtime.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('phase1 rejects invalid invariants before any dependency construction', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-phase1-reject-'))
+  const newsPath = join(directory, 'news.sqlite')
+  const pipelinePath = join(directory, 'pipeline.sqlite')
+  new SqliteSignalPlatformStore(newsPath, 'news').close()
+  new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
+  const base = {
+    FEED_V3_CUTOVER_POLICY: 'phase1',
+    FEED_V3_ENTITY_MODE: 'active',
+    FEED_V3_ENTITY_ACTIVE_SOURCES: 'news,polymarket',
+    FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news,polymarket',
+    FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+    NEWS_SQLITE_PATH: newsPath,
+    PIPELINE_SQLITE_PATH: pipelinePath,
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'test-only',
+  }
+  const cases: Array<{ env: Record<string, string>, pattern: RegExp }> = [
+    // standard depth admitted
+    { env: { FEED_V3_TRIAGE_ALLOWED_DEPTHS: 'light,standard' }, pattern: /exactly light/ },
+    // deep research enabled (loader requires active research ownership first)
+    { env: { FEED_V3_DEEP_RESEARCH_ENABLED: '1', FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news', FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news' }, pattern: /deep research to be disabled/ },
+    // triage classifier enabled
+    { env: { FEED_V3_TRIAGE_CLASSIFIER_ENABLED: '1' }, pattern: /triage classifier to be disabled/ },
+    // non-healthy provider
+    { env: { FEED_V3_TRIAGE_PROVIDER_HEALTH: 'degraded' }, pattern: /healthy triage provider health/ },
+    // unsupported source
+    { env: { FEED_V3_ENTITY_ACTIVE_SOURCES: 'news,x', FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news,x' }, pattern: /does not admit active entity source: x/ },
+    // missing legacy-disabled ownership (rejected by the config loader before
+    // the phase1 guard, still before any dependency construction)
+    { env: { FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news' }, pattern: /legacy-disabled sources: polymarket/ },
+  ]
+  try {
+    for (const { env, pattern } of cases) {
+      let constructed = 0
+      assert.throws(() => createSharedEntityRuntime({
+        env: { ...base, ...env },
+        storeFactory() { constructed += 1; throw new Error('must not open') },
+        supabaseFactory() { constructed += 1; throw new Error('must not open') },
+        gatewayFactory() { constructed += 1; throw new Error('must not open') },
+      }), pattern)
+      assert.equal(constructed, 0)
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('off and shadow entity never evaluate active cutover authorization', async () => {
+  let constructed = 0
+  const off = createSharedEntityRuntime({
+    env: {},
+    storeFactory() { constructed += 1; throw new Error('must not open') },
+    supabaseFactory() { constructed += 1; throw new Error('must not open') },
+    gatewayFactory() { constructed += 1; throw new Error('must not open') },
+  })
+  assert.equal(off.mode, 'off')
+  assert.equal(constructed, 0)
+  await off.close()
+
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-phase1-shadow-'))
+  const path = join(directory, 'pipeline.sqlite')
+  new SqliteSignalPlatformStore(path, 'polymarket').close()
+  try {
+    const runtime = createSharedEntityRuntime({
+      env: {
+        FEED_V3_CUTOVER_POLICY: 'phase1',
+        FEED_V3_ENTITY_MODE: 'shadow',
+        FEED_V3_ENTITY_SHADOW_SOURCES: 'polymarket',
+        FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '500',
+        PIPELINE_SQLITE_PATH: path,
+      },
+      supabaseFactory() { constructed += 1; throw new Error('shadow must not open') },
+      gatewayFactory() { constructed += 1; throw new Error('shadow must not open') },
+      healthWriter: noOpHealthWriter,
+      workerFactory: workerFactory(() => undefined),
+    })
+    assert.equal(runtime.mode, 'shadow')
+    assert.equal(constructed, 0)
+    await runtime.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('active migration preflight fails before the worker can claim', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-preflight-'))
   const path = join(directory, 'news.sqlite')

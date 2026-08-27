@@ -20,8 +20,13 @@ import type { PriorityClass, ResearchWorkItem, Signal } from '../signal-platform
 import type { ExecutionTraceEvent } from '../signal-platform/contracts'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
+import { assertPhase1CutoverPolicy } from '../signal-platform/phase1-cutover'
 import { SqliteExecutionLedger } from '../signal-platform/sqlite-execution-ledger'
-import { loadFeedV3RuntimeConfig, type FeedV3WorkerMode } from '../signal-platform/runtime-config'
+import {
+  loadFeedV3RuntimeConfig,
+  type FeedV3RuntimeConfig,
+  type FeedV3WorkerMode,
+} from '../signal-platform/runtime-config'
 import {
   SharedResearchScheduler,
   type ClaimNextCommand,
@@ -94,6 +99,7 @@ export interface SharedResearchRunnerConfig {
   runtimeStatusPath: string
   runtimeControlPath: string
   cutoverReceiptPath: string | null
+  runtimeConfig: FeedV3RuntimeConfig
   newsPath: string
   pipelinePath: string
   env: Readonly<Record<string, string | undefined>>
@@ -205,6 +211,7 @@ export function loadSharedResearchRunnerConfig(
     runtimeStatusPath: databasePath(env[SHARED_RESEARCH_ENV.runtimeStatusPath], '.data/feed-v3-research-runtime-status.json'),
     runtimeControlPath: resolveRuntimeControlPath(env, PACKAGE_DIR),
     cutoverReceiptPath: feed.cutoverReceiptPath,
+    runtimeConfig: feed,
     newsPath: databasePath(env.NEWS_SQLITE_PATH, '.data/news.sqlite'),
     pipelinePath: databasePath(env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite'),
     env,
@@ -324,10 +331,16 @@ export function createLiveSharedResearchRuntime(
   const runtimeMode = config.mode
   if (runtimeMode === 'off') throw new Error('Disabled research must not construct a live runtime')
   if (runtimeMode === 'active') {
-    assertActiveCutoverReceipts({
-      path: config.cutoverReceiptPath!,
-      required: config.sources.map((sourceType) => ({ sourceType, stage: 'research' as const })),
-    })
+    if (config.runtimeConfig.cutoverPolicy === 'phase1') {
+      // Phase 1 admits only news/polymarket with all invariants valid and
+      // never evaluates active cutover receipts or dereferences a null path.
+      assertPhase1CutoverPolicy(config.runtimeConfig, 'research')
+    } else {
+      assertActiveCutoverReceipts({
+        path: config.cutoverReceiptPath!,
+        required: config.sources.map((sourceType) => ({ sourceType, stage: 'research' as const })),
+      })
+    }
   }
   const paths = sourceDatabasePaths(config)
   for (const source of config.sources) {

@@ -11,6 +11,7 @@ import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
 import type { ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
+import { assertPhase1CutoverPolicy } from '../signal-platform/phase1-cutover'
 import { loadFeedV3RuntimeConfig, type FeedV3RuntimeConfig } from '../signal-platform/runtime-config'
 import {
   FileRuntimeControlStore,
@@ -109,10 +110,16 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
     : runtime.entityActiveSources
   if (sources.size === 0) throw new Error(`Shared Entity ${runtime.entityMode} mode has no configured sources.`)
   if (runtime.entityMode === 'active') {
-    assertActiveCutoverReceipts({
-      path: runtime.cutoverReceiptPath!,
-      required: [...runtime.entityActiveSources].map((sourceType) => ({ sourceType, stage: 'entity' })),
-    })
+    if (runtime.cutoverPolicy === 'phase1') {
+      // Phase 1 admits only news/polymarket with all invariants valid and
+      // never evaluates active cutover receipts or dereferences a null path.
+      assertPhase1CutoverPolicy(runtime, 'entity')
+    } else {
+      assertActiveCutoverReceipts({
+        path: runtime.cutoverReceiptPath!,
+        required: [...runtime.entityActiveSources].map((sourceType) => ({ sourceType, stage: 'entity' })),
+      })
+    }
   }
   const sourcePaths = new Map<Signal['sourceType'], string>()
   const stores: SqliteSignalPlatformStore[] = []
