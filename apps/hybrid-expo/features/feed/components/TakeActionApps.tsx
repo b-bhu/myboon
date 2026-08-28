@@ -2,10 +2,13 @@ import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
+import { getPhoenixActionRoute } from '@/features/feed/takeAction.routes';
 import { PHOENIX_MARK_SVG, POLYMARKET_MARK_SVG } from '@/features/home/marketBrandAssets';
 
 interface TakeActionAppsProps {
   onBeforeNavigate?: () => void;
+  storySlug?: string;
+  variant?: 'cards' | 'icons';
 }
 
 type ApplicationRoute = '/markets/polymarket' | '/markets/phoenix';
@@ -34,12 +37,42 @@ const APPLICATIONS: {
   },
 ];
 
-export function TakeActionApps({ onBeforeNavigate }: TakeActionAppsProps) {
+export function TakeActionApps({
+  onBeforeNavigate,
+  storySlug,
+  variant = 'cards',
+}: TakeActionAppsProps) {
   const router = useRouter();
 
   function openApplication(route: ApplicationRoute) {
     onBeforeNavigate?.();
-    router.push(route);
+    router.push(route === '/markets/phoenix' ? getPhoenixActionRoute(storySlug) : route);
+  }
+
+  if (variant === 'icons') {
+    return (
+      <View style={styles.iconSection}>
+        <Text style={styles.iconSectionLabel}>TAKE ACTION</Text>
+        <View style={styles.iconRow}>
+          {APPLICATIONS.map((application) => (
+            <Pressable
+              key={application.route}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${application.name}`}
+              hitSlop={4}
+              onPress={() => openApplication(application.route)}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+            >
+              <SvgXml
+                xml={application.icon.xml}
+                width={application.icon.width * 0.78}
+                height={application.icon.height * 0.78}
+              />
+            </Pressable>
+          ))}
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -73,6 +106,28 @@ export function TakeActionApps({ onBeforeNavigate }: TakeActionAppsProps) {
 }
 
 const styles = StyleSheet.create({
+  iconSection: {
+    alignItems: 'center',
+    gap: 1,
+  },
+  iconSectionLabel: {
+    color: FEED_COLORS.textFaint,
+    fontSize: 8,
+    lineHeight: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  iconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   section: {
     marginTop: 8,
   },

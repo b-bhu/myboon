@@ -36,6 +36,7 @@ import {
   type PhoenixExecutionContext,
 } from '@/features/perps/phoenix.execution';
 import { PhoenixPriceChart } from '@/features/perps/PhoenixPriceChart';
+import { isBitcoinPerpSymbol } from '@/features/perps/btc-demo-events';
 import { semantic, tokens } from '@/theme';
 
 type Side = 'long' | 'short';
@@ -634,6 +635,9 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
         <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
           <PhoenixPriceChart
             symbol={market.symbol}
+            showBitcoinDemo={isBitcoinPerpSymbol(symbol)
+              || isBitcoinPerpSymbol(market.symbol)
+              || market.baseSymbol.trim().toUpperCase() === 'BTC'}
             height={140}
             onScrub={handleScrub}
             onLatestPrice={handleLatestPrice}

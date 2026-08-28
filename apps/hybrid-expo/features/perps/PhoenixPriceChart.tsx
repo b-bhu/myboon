@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType, ReactNode } from 'react';
+import { Image } from 'expo-image';
 import {
+  type AccessibilityActionEvent,
   ActivityIndicator,
   LayoutChangeEvent,
   PanResponder,
@@ -16,6 +18,11 @@ import {
   type PhoenixCandle,
   type PhoenixCandleInterval,
 } from '@/features/perps/phoenix.api';
+import {
+  mapPhoenixChartEvents,
+  type PhoenixChartEventMarker,
+} from '@/features/perps/phoenix.chart-events';
+import { BTC_DEMO_EVENTS, isBitcoinPerpSymbol } from '@/features/perps/btc-demo-events';
 import { semantic, tokens } from '@/theme';
 
 const TIMEFRAMES: { label: string; interval: PhoenixCandleInterval; count: number }[] = [
@@ -29,6 +36,7 @@ const ChartDefs = Defs as unknown as ComponentType<{ children?: ReactNode }>;
 
 interface PhoenixPriceChartProps {
   symbol: string;
+  showBitcoinDemo?: boolean;
   height?: number;
   onScrub?: (price: number | null, time: number | null) => void;
   onLatestPrice?: (price: number | null) => void;
@@ -36,6 +44,7 @@ interface PhoenixPriceChartProps {
 
 export function PhoenixPriceChart({
   symbol,
+  showBitcoinDemo,
   height = 150,
   onScrub,
   onLatestPrice,
@@ -75,6 +84,11 @@ export function PhoenixPriceChart({
   const isUp = candles.length >= 2 ? candles[candles.length - 1].close >= candles[0].open : true;
   const lineColor = isUp ? tokens.colors.viridian : tokens.colors.vermillion;
   const scrubCandle = scrubIndex !== null ? candles[scrubIndex] : null;
+  const shouldShowBitcoinDemo = showBitcoinDemo ?? isBitcoinPerpSymbol(symbol);
+  const eventMarkers = useMemo(() => mapPhoenixChartEvents(
+    candles,
+    shouldShowBitcoinDemo ? BTC_DEMO_EVENTS : [],
+  ), [candles, shouldShowBitcoinDemo]);
 
   const handleScrub = useCallback((index: number | null) => {
     setScrubIndex(index);
@@ -111,6 +125,7 @@ export function PhoenixPriceChart({
             candles={candles}
             height={height}
             color={lineColor}
+            eventMarkers={eventMarkers}
             scrubIndex={scrubIndex}
             onScrub={handleScrub}
           />
@@ -156,16 +171,43 @@ interface InteractiveChartProps {
   candles: PhoenixCandle[];
   height: number;
   color: string;
+  eventMarkers: PhoenixChartEventMarker[];
   scrubIndex: number | null;
   onScrub: (index: number | null) => void;
 }
 
 const CHART_PAD_TOP = 8;
 const CHART_PAD_BOTTOM = 8;
+const EVENT_MARKER_OFFSET = 24;
+const EVENT_MARKER_SIZE = 26;
+const EVENT_HIT_RADIUS = 32;
+const EVENT_BUBBLE_SIDE_GUTTER = 8;
+const EVENT_BUBBLE_MAX_WIDTH = 248;
+const EVENT_BUBBLE_HEIGHT = 68;
+const EVENT_DRAG_THRESHOLD = 6;
 
-function InteractiveChart({ candles, height, color, scrubIndex, onScrub }: InteractiveChartProps) {
+interface RenderedEventMarker extends PhoenixChartEventMarker {
+  xPercent: number;
+  pointY: number;
+  markerY: number;
+}
+
+function InteractiveChart({
+  candles,
+  height,
+  color,
+  eventMarkers,
+  scrubIndex,
+  onScrub,
+}: InteractiveChartProps) {
   const layoutWidth = useRef(0);
   const layoutXRef = useRef(0);
+  const layoutYRef = useRef(0);
+  const gestureMarkerRef = useRef<string | null>(null);
+  const gestureMovedRef = useRef(false);
+  const [chartWidth, setChartWidth] = useState(0);
+  const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
+  const [selectedEventIndex, setSelectedEventIndex] = useState(0);
 
   const closes = useMemo(() => candles.map((candle) => candle.close), [candles]);
   const min = useMemo(() => Math.min(...closes), [closes]);
@@ -189,37 +231,167 @@ function InteractiveChart({ candles, height, color, scrubIndex, onScrub }: Inter
   const fillPath = `${linePath} L100,${height} L0,${height} Z`;
   const lastPoint = points[points.length - 1];
   const scrubPoint = scrubIndex !== null ? points[scrubIndex] : null;
+  const renderedEventMarkers = useMemo<RenderedEventMarker[]>(() => eventMarkers.flatMap((marker) => {
+    const point = points[marker.candleIndex];
+    if (!point) return [];
+    const markerY = Math.max(EVENT_MARKER_SIZE / 2, point.y - EVENT_MARKER_OFFSET);
+    return [{
+      ...marker,
+      xPercent: marker.chartPosition === null ? point.x : marker.chartPosition * 100,
+      pointY: point.y,
+      markerY,
+    }];
+  }), [eventMarkers, points]);
+  const selectedMarker = renderedEventMarkers.find((marker) => marker.id === selectedMarkerId) ?? null;
+  const selectedEvent = selectedMarker?.events[selectedEventIndex] ?? selectedMarker?.events[0] ?? null;
+  const accessibleEvents = useMemo(() => renderedEventMarkers.flatMap((marker) => (
+    marker.events.map((_event, eventIndex) => ({ marker, eventIndex }))
+  )), [renderedEventMarkers]);
+
+  useEffect(() => {
+    if (selectedMarkerId && !renderedEventMarkers.some((marker) => marker.id === selectedMarkerId)) {
+      setSelectedMarkerId(null);
+      setSelectedEventIndex(0);
+    }
+  }, [renderedEventMarkers, selectedMarkerId]);
 
   const getIndexFromX = useCallback((pageX: number, layoutX: number) => {
     const x = pageX - layoutX;
-    const pct = Math.max(0, Math.min(1, x / layoutWidth.current));
+    const pct = Math.max(0, Math.min(1, x / Math.max(1, layoutWidth.current)));
     return Math.round(pct * (candles.length - 1));
   }, [candles.length]);
+
+  const getEventMarkerFromPoint = useCallback((pageX: number, pageY: number): RenderedEventMarker | null => {
+    if (layoutWidth.current <= 0) return null;
+    const localX = pageX - layoutXRef.current;
+    const localY = pageY - layoutYRef.current;
+    let nearest: RenderedEventMarker | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    renderedEventMarkers.forEach((marker) => {
+      const markerX = (marker.xPercent / 100) * layoutWidth.current;
+      const distance = Math.hypot(markerX - localX, marker.markerY - localY);
+      if (distance <= EVENT_HIT_RADIUS && distance < nearestDistance) {
+        nearest = marker;
+        nearestDistance = distance;
+      }
+    });
+    return nearest;
+  }, [renderedEventMarkers]);
 
   const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: (event) => {
+      const marker = getEventMarkerFromPoint(event.nativeEvent.pageX, event.nativeEvent.pageY);
+      gestureMarkerRef.current = marker?.id ?? null;
+      gestureMovedRef.current = false;
+      if (marker) {
+        if (selectedMarkerId === marker.id) {
+          setSelectedEventIndex((index) => (index + 1) % marker.events.length);
+        } else {
+          setSelectedEventIndex(0);
+          setSelectedMarkerId(marker.id);
+        }
+        onScrub(null);
+        return;
+      }
+      setSelectedMarkerId(null);
+      setSelectedEventIndex(0);
       onScrub(getIndexFromX(event.nativeEvent.pageX, layoutXRef.current));
     },
-    onPanResponderMove: (event) => {
+    onPanResponderMove: (event, gestureState) => {
+      const moved = Math.abs(gestureState.dx) > EVENT_DRAG_THRESHOLD
+        || Math.abs(gestureState.dy) > EVENT_DRAG_THRESHOLD;
+      gestureMovedRef.current ||= moved;
+      if (gestureMarkerRef.current && !gestureMovedRef.current) return;
+      if (gestureMarkerRef.current) {
+        gestureMarkerRef.current = null;
+        setSelectedMarkerId(null);
+        setSelectedEventIndex(0);
+      }
       onScrub(getIndexFromX(event.nativeEvent.pageX, layoutXRef.current));
     },
-    onPanResponderRelease: () => onScrub(null),
-    onPanResponderTerminate: () => onScrub(null),
-  }), [getIndexFromX, onScrub]);
+    onPanResponderRelease: () => {
+      gestureMarkerRef.current = null;
+      gestureMovedRef.current = false;
+      onScrub(null);
+    },
+    onPanResponderTerminate: () => {
+      gestureMarkerRef.current = null;
+      gestureMovedRef.current = false;
+      onScrub(null);
+    },
+  }), [getEventMarkerFromPoint, getIndexFromX, onScrub, selectedMarkerId]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     layoutWidth.current = event.nativeEvent.layout.width;
+    setChartWidth(event.nativeEvent.layout.width);
     layoutXRef.current = event.nativeEvent.layout.x;
-    (event.target as unknown as { measureInWindow?: (callback: (x: number) => void) => void })
-      ?.measureInWindow?.((x) => {
+    (event.target as unknown as { measureInWindow?: (callback: (x: number, y: number) => void) => void })
+      ?.measureInWindow?.((x, y) => {
         layoutXRef.current = x;
+        layoutYRef.current = y;
       });
   }, []);
 
+  const handleAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
+    const action = event.nativeEvent.actionName;
+    if (action === 'escape') {
+      setSelectedMarkerId(null);
+      setSelectedEventIndex(0);
+      return;
+    }
+    if (accessibleEvents.length === 0) return;
+
+    const currentIndex = accessibleEvents.findIndex(({ marker, eventIndex }) => (
+      marker.id === selectedMarkerId && eventIndex === selectedEventIndex
+    ));
+    let nextIndex = currentIndex;
+    if (action === 'decrement') {
+      nextIndex = currentIndex <= 0 ? accessibleEvents.length - 1 : currentIndex - 1;
+    } else if (action === 'increment' || action === 'activate') {
+      nextIndex = currentIndex < 0 || currentIndex >= accessibleEvents.length - 1 ? 0 : currentIndex + 1;
+    } else {
+      return;
+    }
+
+    const next = accessibleEvents[nextIndex];
+    setSelectedMarkerId(next.marker.id);
+    setSelectedEventIndex(next.eventIndex);
+    onScrub(null);
+  }, [accessibleEvents, onScrub, selectedEventIndex, selectedMarkerId]);
+
+  const bubbleWidth = Math.min(EVENT_BUBBLE_MAX_WIDTH, Math.max(0, chartWidth - EVENT_BUBBLE_SIDE_GUTTER * 2));
+  const selectedMarkerX = selectedMarker ? (selectedMarker.xPercent / 100) * chartWidth : 0;
+  const bubbleLeft = Math.max(
+    EVENT_BUBBLE_SIDE_GUTTER,
+    Math.min(
+      selectedMarkerX - bubbleWidth / 2,
+      Math.max(EVENT_BUBBLE_SIDE_GUTTER, chartWidth - bubbleWidth - EVENT_BUBBLE_SIDE_GUTTER),
+    ),
+  );
+  const bubbleTop = selectedMarker && selectedMarker.pointY > height / 2
+    ? EVENT_BUBBLE_SIDE_GUTTER
+    : Math.max(EVENT_BUBBLE_SIDE_GUTTER, height - EVENT_BUBBLE_HEIGHT - EVENT_BUBBLE_SIDE_GUTTER);
+
   return (
-    <View style={{ width: '100%', height }} onLayout={handleLayout} {...panResponder.panHandlers}>
+    <View
+      style={{ width: '100%', height }}
+      onLayout={handleLayout}
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel={`Phoenix price chart with ${accessibleEvents.length} story events`}
+      accessibilityHint="Swipe up or down to move between story events. Double tap to select the next event."
+      accessibilityValue={selectedEvent ? { text: `${formatEventTime(selectedEvent.eventAt)}. ${selectedEvent.text}` } : undefined}
+      accessibilityActions={[
+        { name: 'activate', label: 'Select next story event' },
+        { name: 'increment', label: 'Next story event' },
+        { name: 'decrement', label: 'Previous story event' },
+        { name: 'escape', label: 'Dismiss story event' },
+      ]}
+      onAccessibilityAction={handleAccessibilityAction}
+      {...panResponder.panHandlers}
+    >
       <Svg width="100%" height={height} viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
         <ChartDefs>
           <LinearGradient id="phoenixChartFill" x1="0" y1="0" x2="0" y2="1">
@@ -253,8 +425,102 @@ function InteractiveChart({ candles, height, color, scrubIndex, onScrub }: Inter
           </>
         )}
       </Svg>
+
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        {renderedEventMarkers.map((marker) => {
+          const selected = marker.id === selectedMarkerId;
+          const markerEvent = marker.events[selected ? selectedEventIndex : 0] ?? marker.events[0];
+          const stemTop = Math.min(marker.markerY, marker.pointY);
+          return (
+            <View key={marker.id} style={StyleSheet.absoluteFill}>
+              <View
+                style={[
+                  styles.eventStem,
+                  {
+                    left: `${marker.xPercent}%`,
+                    top: stemTop,
+                    height: Math.max(1, Math.abs(marker.pointY - marker.markerY)),
+                    backgroundColor: selected ? color : tokens.colors.accent,
+                  },
+                ]}
+              />
+              <View
+                style={[
+                  styles.eventMarker,
+                  {
+                    left: `${marker.xPercent}%`,
+                    top: marker.markerY,
+                    borderColor: selected ? semantic.text.primary : semantic.background.screen,
+                  },
+                  selected && styles.eventMarkerSelected,
+                ]}
+              >
+                {markerEvent?.imageUrl ? (
+                  <Image
+                    source={markerEvent.imageUrl}
+                    style={styles.eventMarkerImage}
+                    contentFit="cover"
+                    transition={100}
+                  />
+                ) : (
+                  <View style={styles.eventMarkerFallback}>
+                    <Text style={styles.eventMarkerFallbackText}>₿</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          );
+        })}
+
+        {selectedMarker && selectedEvent && chartWidth > 0 ? (
+          <View
+            style={[
+              styles.eventBubble,
+              { left: bubbleLeft, top: bubbleTop, width: bubbleWidth },
+            ]}
+          >
+            {selectedEvent.imageUrl ? (
+              <Image
+                source={selectedEvent.imageUrl}
+                style={styles.eventBubbleImage}
+                contentFit="cover"
+                transition={140}
+                accessibilityLabel="Bitcoin memory image"
+              />
+            ) : (
+              <View style={styles.eventBubbleImageFallback}>
+                <Text style={styles.eventBubbleImageFallbackText}>₿</Text>
+              </View>
+            )}
+            <View style={styles.eventBubbleCopy}>
+              <Text style={styles.eventBubbleText} numberOfLines={2}>
+                {selectedEvent.text}
+              </Text>
+              <View style={styles.eventBubbleMetaRow}>
+                <Text style={styles.eventBubbleTime} numberOfLines={1}>
+                  {formatEventTime(selectedEvent.eventAt)}
+                </Text>
+                {selectedMarker.events.length > 1 ? (
+                  <Text style={styles.eventBubbleCount}>
+                    {selectedEventIndex + 1}/{selectedMarker.events.length} · tap marker
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          </View>
+        ) : null}
+      </View>
     </View>
   );
+}
+
+function formatEventTime(value: string | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `${day} · ${time}`;
 }
 
 const styles = StyleSheet.create({
@@ -299,6 +565,112 @@ const styles = StyleSheet.create({
     fontSize: tokens.fontSize.xxs,
     color: semantic.text.faint,
     marginTop: 2,
+  },
+  eventStem: {
+    position: 'absolute',
+    width: 1,
+    transform: [{ translateX: -0.5 }],
+    opacity: 0.9,
+  },
+  eventMarker: {
+    position: 'absolute',
+    width: EVENT_MARKER_SIZE,
+    height: EVENT_MARKER_SIZE,
+    borderRadius: EVENT_MARKER_SIZE / 2,
+    borderWidth: 2,
+    overflow: 'hidden',
+    backgroundColor: semantic.background.screen,
+    transform: [
+      { translateX: -EVENT_MARKER_SIZE / 2 },
+      { translateY: -EVENT_MARKER_SIZE / 2 },
+    ],
+  },
+  eventMarkerSelected: {
+    borderWidth: 3,
+    transform: [
+      { translateX: -EVENT_MARKER_SIZE / 2 },
+      { translateY: -EVENT_MARKER_SIZE / 2 },
+      { scale: 1.15 },
+    ],
+  },
+  eventMarkerImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: tokens.radius.full,
+  },
+  eventMarkerFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.colors.accent,
+  },
+  eventMarkerFallbackText: {
+    color: semantic.background.screen,
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '900',
+  },
+  eventBubble: {
+    position: 'absolute',
+    minHeight: EVENT_BUBBLE_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing.sm,
+    paddingHorizontal: tokens.spacing.sm,
+    paddingVertical: 7,
+    borderRadius: tokens.radius.md,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: semantic.background.surface,
+    borderCurve: 'continuous',
+  },
+  eventBubbleImage: {
+    width: 34,
+    height: 34,
+    borderRadius: tokens.radius.full,
+    backgroundColor: semantic.background.screen,
+  },
+  eventBubbleImageFallback: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: tokens.radius.full,
+    backgroundColor: semantic.background.screen,
+  },
+  eventBubbleImageFallbackText: {
+    color: tokens.colors.accent,
+    fontSize: tokens.fontSize.md,
+    fontWeight: '900',
+  },
+  eventBubbleCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: tokens.spacing.xs,
+  },
+  eventBubbleText: {
+    color: semantic.text.primary,
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '700',
+    lineHeight: 13,
+  },
+  eventBubbleMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: tokens.spacing.sm,
+  },
+  eventBubbleTime: {
+    flex: 1,
+    color: semantic.text.faint,
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xxs,
+  },
+  eventBubbleCount: {
+    color: semantic.text.accentDim,
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xxs,
+    fontWeight: '700',
   },
   tfRow: {
     flexDirection: 'row',

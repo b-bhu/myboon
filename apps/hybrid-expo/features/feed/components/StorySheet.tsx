@@ -120,7 +120,14 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
               accessibilityLabel={story.imageAttribution ? `${story.name}, ${story.imageAttribution}` : story.name}
             />
           ) : null}
-          <Text style={styles.title}>{story?.name ?? ''}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>{story?.name ?? ''}</Text>
+            <TakeActionApps
+              variant="icons"
+              onBeforeNavigate={onClose}
+              storySlug={storySlug}
+            />
+          </View>
 
           {loading ? <Text style={styles.stateText}>Loading Story…</Text> : null}
           {error ? (
@@ -167,7 +174,6 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
                   <Text style={styles.loadMoreText}>{loadingMore ? 'Loading…' : 'Load earlier'}</Text>
                 </Pressable>
               ) : null}
-              <TakeActionApps onBeforeNavigate={onClose} />
             </>
           ) : null}
         </ScrollView>
@@ -250,12 +256,21 @@ const styles = StyleSheet.create({
     backgroundColor: FEED_COLORS.cardDeep,
     borderCurve: 'continuous',
   },
+  titleRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 24,
+  },
   title: {
+    flex: 1,
+    minWidth: 0,
     color: FEED_COLORS.text,
     fontSize: 28,
     lineHeight: 34,
     fontWeight: '900',
-    marginBottom: 24,
   },
   currentCard: {
     borderRadius: 8,
