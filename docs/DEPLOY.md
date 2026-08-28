@@ -2,6 +2,10 @@
 
 ## Processes managed by PM2
 
+The reviewed ecosystem contains exactly eight registrations. The four retired
+source-specific Research and Entity registrations must not remain alongside
+the two shared Feed V3 owners.
+
 | Name | Package | Schedule |
 |------|---------|---------|
 | `myboon-api` | `packages/api` | persistent HTTP server (port 3000) |
@@ -296,14 +300,20 @@ Contract notes:
    ```bash
    pnpm --filter @myboon/collectors pipeline-store:backup
    ```
-2. Verify Hermes/profile and Entity migration readiness without printing
-   secrets:
+2. Verify Hermes/profile as the same operating-system account that owns the
+   PM2 daemon, and verify Entity migration readiness without printing secrets.
+   On the production VPS PM2 is root-owned, so use:
    ```bash
-   hermes --version
-   hermes profile list
+   sudo -n hermes --version
+   sudo -n hermes profile list
+   sudo -n hermes --ignore-rules --provider ollama-cloud \
+     --model deepseek-v4-flash -z 'Return exactly this JSON: {"ok":true}'
    pnpm --filter @myboon/collectors feed-v3:verify-entity-migration
    ```
    (The verifier reports readiness only; it never prints credentials.)
+   If either command fails, stop here. Do not start either scout or either
+   shared owner: otherwise collection can advance while Research/Entity cannot,
+   recreating an avoidable backlog.
 3. Set the Phase 1 env contract above in the shell that invokes PM2 (or in
    `packages/collectors/.env`). Do not hardcode an active mode in the
    ecosystem file.
@@ -322,6 +332,8 @@ Contract notes:
    pm2 save
    ```
 5. Verify:
+   - exact topology: `pm2 list` contains exactly the eight names in the table at
+     the top of this guide;
    - shared workers online: `pm2 list` shows `myboon-feed-v3-research` and
      `myboon-feed-v3-entity-manager` online;
    - clean ownership: `pm2 list` contains none of
