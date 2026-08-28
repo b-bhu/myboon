@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from 'node:path'
+import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import {
   formatLoadSoakArtifact,
@@ -11,7 +12,7 @@ loadDotenvChain()
 const PACKAGE_DIR = resolve(__dirname, '..', '..')
 
 async function main(): Promise<void> {
-  const command = parseLoadSoakArgs(process.argv.slice(2))
+  const command = parseLoadSoakArgs(packageScriptArgs(process.argv.slice(2)))
   const protectedDatabasePaths = [
     databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite'),
     databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite'),

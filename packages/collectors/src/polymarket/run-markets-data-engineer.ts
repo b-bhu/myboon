@@ -13,6 +13,10 @@ import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-st
 import { createActiveSourceTriageIntake } from '../signal-platform/active-triage'
 import { SqliteLocalCapacitySnapshot } from '../signal-platform/local-capacity'
 import {
+  FileSqliteWriteHealthJournal,
+  resolveSqliteWriteHealthJournalPath,
+} from '../signal-platform/sqlite-write-error-journal'
+import {
   previewPolymarketMarketsDataEngineer,
   runPolymarketMarketsDataEngineer,
 } from './markets-data-engineer'
@@ -38,8 +42,10 @@ async function runOnce(): Promise<void> {
   // SQLite; only published_narratives reads still go through Supabase, done
   // inside runPolymarketMarketsDataEngineer itself.
   const store = new SqlitePipelineStore(pipelinePath)
+  const writeHealthJournal = intakeMode !== 'off'
+    ? new FileSqliteWriteHealthJournal(resolveSqliteWriteHealthJournalPath()) : null
   const canonicalStore = intakeMode !== 'off'
-    ? new SqliteSignalPlatformStore(pipelinePath, 'polymarket')
+    ? new SqliteSignalPlatformStore(pipelinePath, 'polymarket', { writeHealthJournal })
     : null
   try {
     const signalIntake = canonicalStore

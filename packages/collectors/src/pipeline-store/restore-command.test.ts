@@ -26,7 +26,10 @@ test('dry-run verifies only and never calls restore', async () => {
   }, {
     verifyPipeline: async () => {
       verifies += 1
-      return { ok: true, integrity: 'ok', tableCounts: { pipeline_candidates: 3 }, mismatches: [] }
+      return {
+        ok: true, integrity: 'ok', tableCounts: { pipeline_candidates: 3 }, mismatches: [],
+        manifestPath: '/tmp/pipeline-backup.sqlite.manifest.json', manifest: null,
+      }
     },
     restorePipeline: async () => {
       restores += 1
@@ -49,7 +52,10 @@ test('apply dispatches only the selected store restore and forwards force', asyn
     restoreNews: async (input) => {
       newsCalls += 1
       assert.equal(input.force, true)
-      return { targetPath: resolve(input.targetPath), tableCounts: { news_candidate_observations: 2 }, verified: true }
+      return {
+        targetPath: resolve(input.targetPath), tableCounts: { news_candidate_observations: 2 },
+        verified: true, backupSha256: 'a'.repeat(64),
+      }
     },
     restorePipeline: async () => {
       pipelineCalls += 1

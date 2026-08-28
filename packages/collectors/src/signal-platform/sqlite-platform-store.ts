@@ -1,5 +1,4 @@
 import { mkdirSync, statSync } from 'node:fs'
-import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { canonicalJson } from './canonical-json'
@@ -42,6 +41,10 @@ import {
   validateSignal,
 } from './validation'
 import { validateTriageDecision } from './triage-validation'
+import {
+  sqliteStoreId,
+  type SqliteWriteHealthJournalPort,
+} from './sqlite-write-error-journal'
 
 interface SqliteRunResult { changes: number | bigint }
 interface SqliteStatement {
@@ -60,7 +63,11 @@ const { DatabaseSync } = nodeRequire('node:sqlite') as {
   DatabaseSync: new (path: string, options?: { readOnly?: boolean; open?: boolean }) => SqliteDatabase
 }
 
-export interface SqliteSignalPlatformStoreOptions { readOnly?: boolean }
+export interface SqliteSignalPlatformStoreOptions {
+  readOnly?: boolean
+  writeHealthJournal?: SqliteWriteHealthJournalPort | null
+  writeHealthStaleAfterMs?: number
+}
 
 export const SIGNAL_PLATFORM_TABLES = [
   'signal_platform_signals',
@@ -86,19 +93,25 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
   readonly sourceType: Signal['sourceType']
   private readonly db: SqliteDatabase
   private readonly databasePath: string
+  private readonly storeId: string
+  private readonly writeHealthJournal: SqliteWriteHealthJournalPort | null
+  private readonly writeHealthStaleAfterMs: number
   private closed = false
 
   constructor(path: string, sourceType: Signal['sourceType'], options: SqliteSignalPlatformStoreOptions = {}) {
     this.sourceType = sourceType
     const resolved = resolve(path)
     this.databasePath = resolved
+    this.storeId = sqliteStoreId(resolved)
+    this.writeHealthJournal = options.writeHealthJournal ?? null
+    this.writeHealthStaleAfterMs = options.writeHealthStaleAfterMs ?? 5 * 60_000
     if (!options.readOnly) mkdirSync(dirname(resolved), { recursive: true })
     this.db = new DatabaseSync(resolved, options.readOnly ? { readOnly: true, open: true } : {})
     if (options.readOnly) {
       this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;')
       return
     }
-    this.db.exec(`
+    try { this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA busy_timeout = 5000;
       PRAGMA foreign_keys = ON;
@@ -222,7 +235,11 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         ON signal_platform_research_packets(signal_id, created_at, packet_id);
       CREATE INDEX IF NOT EXISTS idx_signal_platform_packets_trace
         ON signal_platform_research_packets(trace_id, created_at, packet_id);
-    `)
+    `) } catch (error) {
+      this.observeWriteFailure('initialize', error)
+      throw error
+    }
+    this.observeWriteSuccess('initialize')
   }
 
   appendSignal(input: Signal): ImmutableAppendResult<Signal> {
@@ -796,12 +813,18 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         p99Ms: nullableNumber(endToEnd?.p99_ms),
       },
       sqliteSize: sqliteSize(this.databasePath),
-      sqliteStoreId: createHash('sha256').update(this.databasePath, 'utf8').digest('hex'),
-      sqliteWriteErrors: {
+      sqliteStoreId: this.storeId,
+      sqliteWriteErrors: this.writeHealthJournal?.readCoverage({
+        sourceType: this.sourceType,
+        storeId: this.storeId,
+        since: input.recentFailureSince,
+        now: input.now,
+        staleAfterMs: this.writeHealthStaleAfterMs,
+      }) ?? {
         availability: 'unavailable' as const,
         value: null,
         measuredCount: 0,
-        reason: 'SQLite does not expose historical write-error counts; configure an external durable collector',
+        reason: 'No durable SQLite write-health journal is configured',
       },
       totalAttempts: Number(attempt?.total_attempts ?? 0),
       attemptedItems: Number(attempt?.attempted_items ?? 0),
@@ -1079,15 +1102,36 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
   }
 
   private inImmediateTransaction<T>(action: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.db.exec('BEGIN IMMEDIATE')
+    } catch (error) {
+      this.observeWriteFailure('begin_immediate', error)
+      throw error
+    }
     try {
       const result = action()
       this.db.exec('COMMIT')
+      this.observeWriteSuccess('commit')
       return result
     } catch (error) {
-      this.db.exec('ROLLBACK')
+      try { this.db.exec('ROLLBACK') } catch (rollbackError) {
+        this.observeWriteFailure('rollback', rollbackError)
+      }
+      this.observeWriteFailure('transaction', error)
       throw error
     }
+  }
+
+  private observeWriteSuccess(operation: string): void {
+    try {
+      this.writeHealthJournal?.observeSuccess({ sourceType: this.sourceType, storeId: this.storeId, operation })
+    } catch { /* health journaling must never change a successful queue result */ }
+  }
+
+  private observeWriteFailure(operation: string, error: unknown): void {
+    try {
+      this.writeHealthJournal?.observeFailure({ sourceType: this.sourceType, storeId: this.storeId, operation, error })
+    } catch { /* preserve the authoritative SQLite failure */ }
   }
 
   private assertSource(sourceType: Signal['sourceType']): void {

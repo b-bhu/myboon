@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { link, lstat, open, realpath, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import {
@@ -10,7 +12,7 @@ import {
   type RetrievedEvidence,
 } from '../signal-platform/contracts'
 import { DeepResearchError } from './errors'
-import { DeepResearchExecutor } from './executor'
+import { DEEP_RESEARCH_STATIC_SYSTEMD_PROPERTIES, DeepResearchExecutor } from './executor'
 import { SqliteDeepResearchExecutionRegistry } from './sqlite-execution-registry'
 import { NodeSystemdController } from './systemd-controller'
 import { DEEP_RESEARCH_JOB_SCHEMA_VERSION, type DeepResearchJob } from './types'
@@ -24,7 +26,7 @@ export interface DeepContainmentVerificationCommand {
 }
 
 export interface DeepContainmentVerificationArtifact {
-  schemaVersion: 'myboon.deep_containment_verification.v1'
+  schemaVersion: 'myboon.deep_containment_verification.v2'
   fixture: 'descendant-timeout-v1'
   executedAt: string
   systemdAvailable: boolean
@@ -33,14 +35,41 @@ export interface DeepContainmentVerificationArtifact {
   registryCleared: boolean
   temporaryWorkspaceRemoved: boolean
   passed: boolean
+  identity: {
+    digestAlgorithm: 'sha256'
+    configurationSha256: string
+    fixtureSha256: string
+    hostExecutableSha256: string
+    /** Digest of the canonical artifact with this one field omitted. */
+    artifactPayloadSha256: string
+  }
   /** This artifact is host evidence only; it does not enable the feature. */
   enablesDeepResearch: false
 }
 
+export type DeepContainmentVerificationOutcome = Omit<DeepContainmentVerificationArtifact, 'schemaVersion' | 'identity'>
+
 export interface DeepContainmentVerificationDependencies {
-  execute(command: DeepContainmentVerificationCommand): Promise<DeepContainmentVerificationArtifact>
+  execute(command: DeepContainmentVerificationCommand): Promise<DeepContainmentVerificationOutcome>
   writeArtifact(path: string, artifact: DeepContainmentVerificationArtifact): Promise<void>
+  hashFile(path: string): Promise<string>
 }
+
+export const DEEP_CONTAINMENT_VERIFICATION_CONFIGURATION = Object.freeze({
+  schemaVersion: 'myboon.deep_containment_configuration.v1',
+  fixture: 'descendant-timeout-v1',
+  terminationGraceMs: 250,
+  inactivePollMs: 50,
+  inactiveTimeoutMs: 2_000,
+  systemdRunMode: Object.freeze(['--wait', '--collect', '--pipe']),
+  staticSystemdProperties: DEEP_RESEARCH_STATIC_SYSTEMD_PROPERTIES,
+  jobBudget: Object.freeze({
+    maxProviderCalls: 1, maxInputTokens: 1, maxOutputTokens: 1, maxToolCalls: 1,
+    maxBrowserNavigations: 0, maxSearchQueries: 0, maxHttpFetches: 1,
+    maxWallTimeMs: 500, maxOutputBytes: 16_384,
+    cpuQuotaPercent: 25, memoryMaxBytes: 128 * 1024 * 1024, tasksMax: 16,
+  }),
+})
 
 export function parseDeepContainmentVerificationArgs(
   argv: string[],
@@ -77,14 +106,25 @@ export async function runDeepContainmentVerification(
   dependencies: Partial<DeepContainmentVerificationDependencies> = {},
 ): Promise<DeepContainmentVerificationArtifact> {
   await reserveFreshScratchTargets(command)
-  const artifact = await (dependencies.execute ?? DEFAULT_DEPENDENCIES.execute)(command)
+  const hashFile = dependencies.hashFile ?? DEFAULT_DEPENDENCIES.hashFile
+  const fixturePath = deepContainmentFixturePath()
+  const fixtureSha256 = await hashFile(fixturePath)
+  const hostExecutableSha256 = await hashFile(process.execPath)
+  const outcome = await (dependencies.execute ?? DEFAULT_DEPENDENCIES.execute)(command)
+  if (await hashFile(fixturePath) !== fixtureSha256 || await hashFile(process.execPath) !== hostExecutableSha256) {
+    throw new Error('Containment fixture or host executable identity changed during verification')
+  }
+  const artifact = await createDeepContainmentVerificationArtifact(outcome, {
+    fixtureSha256,
+    hostExecutableSha256,
+  })
   await (dependencies.writeArtifact ?? DEFAULT_DEPENDENCIES.writeArtifact)(command.artifactPath, artifact)
   return artifact
 }
 
 async function executeSyntheticTimeout(
   command: DeepContainmentVerificationCommand,
-): Promise<DeepContainmentVerificationArtifact> {
+): Promise<DeepContainmentVerificationOutcome> {
   const systemd = new NodeSystemdController()
   const systemdAvailable = process.platform === 'linux' && await systemd.isAvailable()
   if (!systemdAvailable) throw new Error('Linux transient systemd services are unavailable; verification was not run')
@@ -97,13 +137,13 @@ async function executeSyntheticTimeout(
       enabled: true,
       worker: {
         executable: process.execPath,
-        args: [resolve(__dirname, 'containment-timeout-fixture.cjs')],
+        args: [deepContainmentFixturePath()],
       },
       systemd,
       registry,
-      terminationGraceMs: 250,
-      inactivePollMs: 50,
-      inactiveTimeoutMs: 2_000,
+      terminationGraceMs: DEEP_CONTAINMENT_VERIFICATION_CONFIGURATION.terminationGraceMs,
+      inactivePollMs: DEEP_CONTAINMENT_VERIFICATION_CONFIGURATION.inactivePollMs,
+      inactiveTimeoutMs: DEEP_CONTAINMENT_VERIFICATION_CONFIGURATION.inactiveTimeoutMs,
     })
     try {
       await executor.execute(syntheticTimeoutJob())
@@ -118,7 +158,6 @@ async function executeSyntheticTimeout(
     const registryCleared = registry.list().length === 0
     const passed = timeoutObserved && descendantUnitInactive && registryCleared && temporaryWorkspaceRemoved
     return {
-      schemaVersion: 'myboon.deep_containment_verification.v1',
       fixture: command.fixture,
       executedAt: new Date().toISOString(),
       systemdAvailable,
@@ -183,6 +222,73 @@ async function canonicalPotentialPath(path: string): Promise<string> {
 const DEFAULT_DEPENDENCIES: DeepContainmentVerificationDependencies = {
   execute: executeSyntheticTimeout,
   writeArtifact: writeAtomicArtifact,
+  hashFile: sha256File,
+}
+
+export function deepContainmentFixturePath(): string {
+  return resolve(__dirname, 'containment-timeout-fixture.cjs')
+}
+
+export function deepContainmentConfigurationSha256(): string {
+  return sha256Text(stableJson(DEEP_CONTAINMENT_VERIFICATION_CONFIGURATION))
+}
+
+export async function createDeepContainmentVerificationArtifact(
+  outcome: DeepContainmentVerificationOutcome,
+  identity: { fixtureSha256: string, hostExecutableSha256: string },
+): Promise<DeepContainmentVerificationArtifact> {
+  assertSha256(identity.fixtureSha256, 'fixtureSha256')
+  assertSha256(identity.hostExecutableSha256, 'hostExecutableSha256')
+  const withoutPayloadDigest = {
+    schemaVersion: 'myboon.deep_containment_verification.v2' as const,
+    ...outcome,
+    identity: {
+      digestAlgorithm: 'sha256' as const,
+      configurationSha256: deepContainmentConfigurationSha256(),
+      fixtureSha256: identity.fixtureSha256,
+      hostExecutableSha256: identity.hostExecutableSha256,
+    },
+  }
+  return Object.freeze({
+    ...withoutPayloadDigest,
+    identity: Object.freeze({
+      ...withoutPayloadDigest.identity,
+      artifactPayloadSha256: sha256Text(stableJson(withoutPayloadDigest)),
+    }),
+  })
+}
+
+export function deepContainmentArtifactPayloadSha256(artifact: DeepContainmentVerificationArtifact): string {
+  const { artifactPayloadSha256: _omitted, ...identity } = artifact.identity
+  return sha256Text(stableJson({ ...artifact, identity }))
+}
+
+async function sha256File(path: string): Promise<string> {
+  const digest = createHash('sha256')
+  await new Promise<void>((resolvePromise, reject) => {
+    const stream = createReadStream(path)
+    stream.on('data', (chunk) => digest.update(chunk))
+    stream.once('error', reject)
+    stream.once('end', resolvePromise)
+  })
+  return digest.digest('hex')
+}
+
+function sha256Text(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function assertSha256(value: string, field: string): void {
+  if (!/^[a-f0-9]{64}$/.test(value)) throw new Error(`Containment ${field} must be a lowercase SHA-256 digest`)
 }
 
 function syntheticTimeoutJob(): DeepResearchJob {
@@ -224,9 +330,7 @@ function syntheticTimeoutJob(): DeepResearchJob {
     approvedDomains: ['example.com'], capabilities: ['http_fetch'],
     inference: { provider: 'synthetic-verifier', model: 'no-provider-call', reasoningEffort: 'low' },
     budget: {
-      maxProviderCalls: 1, maxInputTokens: 1, maxOutputTokens: 1, maxToolCalls: 1,
-      maxBrowserNavigations: 0, maxSearchQueries: 0, maxHttpFetches: 1, maxWallTimeMs: 500,
-      maxOutputBytes: 16_384, cpuQuotaPercent: 25, memoryMaxBytes: 128 * 1024 * 1024, tasksMax: 16,
+      ...DEEP_CONTAINMENT_VERIFICATION_CONFIGURATION.jobBudget,
     },
   }
 }

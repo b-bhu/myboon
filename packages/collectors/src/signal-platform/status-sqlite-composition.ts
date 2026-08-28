@@ -8,6 +8,7 @@ import {
 import type { ExecutionAggregateQuery, ExecutionAggregateStatus } from './execution-ledger'
 import { SqliteExecutionLedger } from './sqlite-execution-ledger'
 import { SqliteSignalPlatformStore } from './sqlite-platform-store'
+import { FileSqliteWriteHealthJournal } from './sqlite-write-error-journal'
 import type { ResearchWorkStoreAdapter } from './store-adapter'
 
 /** Read-only composition that preserves healthy source status when a physical DB is missing or corrupt. */
@@ -17,12 +18,16 @@ export async function readSqliteControlPlaneStatus(input: {
   now: string
   alertPolicy?: ControlPlaneAlertPolicy | null
   activityWindowMs?: number
+  writeHealthJournalPath?: string
+  writeHealthStaleAfterMs?: number
 }): Promise<SignalPlatformControlPlaneStatus> {
+  const writeHealthJournal = input.writeHealthJournalPath
+    ? new FileSqliteWriteHealthJournal(input.writeHealthJournalPath, { readOnly: true }) : null
   const openedStores = [
-    openStatusStore(input.newsPath, 'news'),
-    openStatusStore(input.pipelinePath, 'polymarket'),
-    openStatusStore(input.pipelinePath, 'market_calendar'),
-    openStatusStore(input.pipelinePath, 'x'),
+    openStatusStore(input.newsPath, 'news', writeHealthJournal, input.writeHealthStaleAfterMs),
+    openStatusStore(input.pipelinePath, 'polymarket', writeHealthJournal, input.writeHealthStaleAfterMs),
+    openStatusStore(input.pipelinePath, 'market_calendar', writeHealthJournal, input.writeHealthStaleAfterMs),
+    openStatusStore(input.pipelinePath, 'x', writeHealthJournal, input.writeHealthStaleAfterMs),
   ]
   const ledgers = [
     openLedger(input.newsPath, ['news']),
@@ -74,13 +79,20 @@ function mergeExecutionReports(
   }
 }
 
-function openStatusStore(path: string, sourceType: Signal['sourceType']): {
+function openStatusStore(
+  path: string,
+  sourceType: Signal['sourceType'],
+  writeHealthJournal: FileSqliteWriteHealthJournal | null,
+  writeHealthStaleAfterMs = 5 * 60_000,
+): {
   store: ResearchWorkStoreAdapter
   reader: WorkObservabilityReadPort
   close?: () => void
 } {
   try {
-    const store = new SqliteSignalPlatformStore(path, sourceType, { readOnly: true })
+    const store = new SqliteSignalPlatformStore(path, sourceType, {
+      readOnly: true, writeHealthJournal, writeHealthStaleAfterMs,
+    })
     return { store, reader: store, close: () => store.close() }
   } catch {
     const unavailable = async () => { throw new Error(`${sourceType} store unavailable`) }

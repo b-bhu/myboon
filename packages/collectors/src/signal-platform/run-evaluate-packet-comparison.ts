@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+import { packageScriptArgs } from '../cli-args'
 import {
   evaluatePacketComparisonEvidence,
   parsePacketComparisonThresholds,
@@ -11,7 +12,7 @@ import type { BlindPacketManifestV1, BlindPacketScoreV1 } from './packet-blind-e
 const MAX_INPUT_BYTES = 128 * 1024 * 1024
 
 function main(): void {
-  const args = flags(process.argv.slice(2), ['--manifest', '--reviews', '--thresholds'])
+  const args = flags(packageScriptArgs(process.argv.slice(2)), ['--manifest', '--reviews', '--thresholds'])
   const manifest = readJson<BlindPacketManifestV1>(required(args, '--manifest'))
   const reviews = readJson<BlindPacketScoreV1[]>(required(args, '--reviews'))
   if (!Array.isArray(reviews)) throw new Error('reviews input must be a JSON array')

@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from 'node:path'
+import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import {
   formatRetentionPreviewJson,
@@ -80,7 +81,7 @@ export function runRetentionPreviewCli(
 if (require.main === module) {
   loadDotenvChain()
   try {
-    process.stdout.write(`${runRetentionPreviewCli(process.argv.slice(2))}\n`)
+    process.stdout.write(`${runRetentionPreviewCli(packageScriptArgs(process.argv.slice(2)))}\n`)
   } catch (error) {
     process.stderr.write(`[feed-v3-retention-preview] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1

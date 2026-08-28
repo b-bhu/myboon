@@ -1,6 +1,4 @@
-import { realpathSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { basename, isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute } from 'node:path'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import type { RetrievedEvidence, ResearchWorkItem, Signal } from '../signal-platform/contracts'
 import type { DeepResearchPort } from '../research-engine/shared-worker'
@@ -12,6 +10,7 @@ import { DeepResearchGatewayPort } from './gateway-port'
 import {
   NodeDeepResearchOrphanInspector,
   discoverDeepResearchOrphans,
+  validateDeepResearchAuditRoots,
   type DeepResearchOrphanInspectionPort,
 } from './orphan-discovery'
 import {
@@ -356,36 +355,7 @@ function absolute(value: string, name: string): string {
 function validatedAuditRoots(env: Readonly<Record<string, string | undefined>>, name: string): string[] {
   const values = csv(env, name).map((value) => absolute(value, name))
   if (values.length === 0) throw new Error(`${name} must contain at least one explicit root`)
-  if (values.length > 16) throw new Error(`${name} must contain at most 16 roots`)
-  const roots = values.map((value) => {
-    let real: string
-    try {
-      real = realpathSync(value)
-      if (!statSync(real).isDirectory()) throw new Error('not directory')
-    } catch { throw new Error(`${name} roots must be existing real directories`) }
-    const projectRoot = resolve(process.cwd().endsWith('/packages/collectors') ? resolve(process.cwd(), '../..') : process.cwd())
-    const protectedBoundaries = [resolve(homedir()), projectRoot]
-    if (!basename(real).startsWith('myboon-deep')
-      || real === '/'
-      || protectedBoundaries.some((boundary) => isWithin(real, boundary) || isWithin(boundary, real))) {
-      throw new Error(`${name} must use dedicated roots outside home, repository, and broad system paths`)
-    }
-    return real
-  })
-  const unique = [...new Set(roots)]
-  for (let index = 0; index < unique.length; index += 1) {
-    for (let other = index + 1; other < unique.length; other += 1) {
-      if (isWithin(unique[index]!, unique[other]!) || isWithin(unique[other]!, unique[index]!)) {
-        throw new Error(`${name} roots must not overlap or nest`)
-      }
-    }
-  }
-  return unique
-}
-
-function isWithin(candidate: string, boundary: string): boolean {
-  const path = relative(boundary, candidate)
-  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
+  return validateDeepResearchAuditRoots(values, name)
 }
 
 function csv(env: Readonly<Record<string, string | undefined>>, name: string): string[] {

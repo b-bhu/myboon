@@ -333,6 +333,7 @@ test('source-local News/Polymarket flow isolates canon outages, replays stably, 
       },
       supabaseFactory: () => database.client,
       gatewayFactory: () => plannerGateway(titles) as never,
+      now: () => new Date(NOW),
     })
     const cycle = await runtime.runCycle()
     assert.equal(cycle.mode, 'active')

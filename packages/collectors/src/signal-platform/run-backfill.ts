@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
+import { packageScriptArgs } from '../cli-args'
 import {
   backupNewsStore,
   backupPipelineStore,
@@ -25,12 +26,16 @@ import {
 import type { VerifiedBackupReceipt } from './operator-recovery'
 import { loadFeedV3RuntimeConfig } from './runtime-config'
 import { SqliteSignalPlatformStore } from './sqlite-platform-store'
+import {
+  FileSqliteWriteHealthJournal,
+  resolveSqliteWriteHealthJournalPath,
+} from './sqlite-write-error-journal'
 
 loadDotenvChain()
 const PACKAGE_DIR = resolve(__dirname, '..', '..')
 
 async function main(): Promise<void> {
-  const parsed = parseLegacySignalBackfillArgs(process.argv.slice(2))
+  const parsed = parseLegacySignalBackfillArgs(packageScriptArgs(process.argv.slice(2)))
   const now = new Date().toISOString()
   const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
   const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
@@ -49,11 +54,14 @@ async function main(): Promise<void> {
   try {
     const receipt = parsed.apply ? await createVerifiedDualBackup({ newsPath, pipelinePath, now }) : undefined
     const runtime = loadFeedV3RuntimeConfig()
+    const writeHealthJournal = new FileSqliteWriteHealthJournal(
+      resolveSqliteWriteHealthJournalPath(), { readOnly: !parsed.apply },
+    )
     const intakes: LegacySignalBackfillIntakePort[] = selected.map((sourceType) => {
       const store = new SqliteSignalPlatformStore(
         sourceType === 'news' ? newsPath : pipelinePath,
         sourceType,
-        { readOnly: !parsed.apply },
+        { readOnly: !parsed.apply, writeHealthJournal },
       )
       stores.push(store)
       const liveCapacity = new SqliteLocalCapacitySnapshot(store)

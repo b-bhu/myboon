@@ -1,4 +1,5 @@
 import { loadDotenvChain } from './cli-env'
+import { packageScriptArgs } from '../cli-args'
 
 loadDotenvChain()
 
@@ -112,7 +113,7 @@ Actions:
 }
 
 async function main(): Promise<void> {
-  const args = parseRecoveryArgs(process.argv.slice(2))
+  const args = parseRecoveryArgs(packageScriptArgs(process.argv.slice(2)))
   if (args.help) {
     console.log(usage())
     return

@@ -28,6 +28,10 @@ import {
   type GlobalSchedulerQuery,
 } from '../signal-platform/shared-scheduler'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import {
+  FileSqliteWriteHealthJournal,
+  resolveSqliteWriteHealthJournalPath,
+} from '../signal-platform/sqlite-write-error-journal'
 import { SqliteResearchShadowStore } from '../signal-platform/sqlite-research-shadow-store'
 import {
   FileRuntimeControlStore,
@@ -334,8 +338,11 @@ export function createLiveSharedResearchRuntime(
     const path = paths.get(source)!
     if (!existsSync(path)) throw new Error(`${source} SQLite database does not exist at ${path}`)
   }
+  const writeHealthJournal = new FileSqliteWriteHealthJournal(
+    resolveSqliteWriteHealthJournalPath(config.env), { readOnly: config.mode === 'shadow' },
+  )
   const stores = config.sources.map((source) => new SqliteSignalPlatformStore(paths.get(source)!, source, {
-    readOnly: config.mode === 'shadow',
+    readOnly: config.mode === 'shadow', writeHealthJournal,
   }))
   let standardConfiguration: ReturnType<typeof loadStandardSearchConfiguration>
   let standardSearch: ReturnType<typeof createConfiguredStandardSearch>
