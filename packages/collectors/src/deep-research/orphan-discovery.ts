@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process'
+import { realpathSync, statSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { DeepResearchExecutionMetadata } from './types'
 
@@ -29,6 +31,49 @@ export interface DeepResearchDiscoverySnapshot {
   errors: readonly string[]
 }
 
+/**
+ * Applies the same fail-closed root rules to the standalone audit and runtime.
+ * Discovery must never turn a broad directory such as /tmp, the checkout, or
+ * an operator home into an implicit search scope.
+ */
+export function validateDeepResearchAuditRoots(
+  values: readonly string[],
+  name: string,
+  options: { cwd?: string, home?: string } = {},
+): string[] {
+  if (values.length > 16) throw new Error(`${name} must contain at most 16 roots`)
+  const projectCwd = resolve(options.cwd ?? process.cwd())
+  const projectRoot = projectCwd.endsWith('/packages/collectors') ? resolve(projectCwd, '../..') : projectCwd
+  const protectedBoundaries = [resolve(options.home ?? homedir()), projectRoot]
+  const roots = values.map((value) => {
+    if (!isAbsolute(value) || value.includes('\0')) throw new Error(`${name} must contain absolute paths`)
+    let real: string
+    try {
+      real = realpathSync(value)
+      if (!statSync(real).isDirectory()) throw new Error('not directory')
+    } catch { throw new Error(`${name} roots must be existing real directories`) }
+    if (!basename(real).startsWith('myboon-deep') || real === '/'
+      || protectedBoundaries.some((boundary) => isWithin(real, boundary) || isWithin(boundary, real))) {
+      throw new Error(`${name} must use dedicated roots outside home, repository, and broad system paths`)
+    }
+    return real
+  })
+  const unique = [...new Set(roots)]
+  for (let index = 0; index < unique.length; index += 1) {
+    for (let other = index + 1; other < unique.length; other += 1) {
+      if (isWithin(unique[index]!, unique[other]!) || isWithin(unique[other]!, unique[index]!)) {
+        throw new Error(`${name} roots must not overlap or nest`)
+      }
+    }
+  }
+  return unique
+}
+
+function isWithin(candidate: string, boundary: string): boolean {
+  const path = relative(boundary, candidate)
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
+}
+
 export async function discoverDeepResearchOrphans(input: {
   registered: readonly DeepResearchExecutionMetadata[]
   inspector: DeepResearchOrphanInspectionPort
@@ -50,7 +95,7 @@ export async function discoverDeepResearchOrphans(input: {
   const units = await inspect('transient_unit_inspection_failed', () => input.inspector.listTransientUnits(input.limit + 1))
   if (units.length > input.limit) errors.push('transient_unit_inspection_truncated')
   for (const unit of units.slice(0, input.limit)) {
-    if (/^myboon-deep-[a-z0-9-]+\.service$/.test(unit) && !registeredUnits.has(unit)) {
+    if (/^myboon-deep-[a-z0-9_.-]+\.service$/.test(unit) && !registeredUnits.has(unit)) {
       artifacts.push({ kind: 'transient_unit', identifier: unit })
     }
   }

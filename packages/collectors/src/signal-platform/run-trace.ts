@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from 'node:path'
 
+import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import {
   formatTraceInspectionJson,
@@ -17,7 +18,7 @@ function databasePath(value: string | undefined, fallback: string): string {
 }
 
 async function main(): Promise<void> {
-  const query = parseQuery(process.argv.slice(2))
+  const query = parseQuery(packageScriptArgs(process.argv.slice(2)))
   const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
   const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
   const result = await inspectSqliteTrace({

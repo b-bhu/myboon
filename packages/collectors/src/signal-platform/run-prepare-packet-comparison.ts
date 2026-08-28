@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 
+import { packageScriptArgs } from '../cli-args'
 import {
   PACKET_PAIR_SCHEMA_VERSION,
   prepareBlindPacketEvaluation,
@@ -11,7 +12,7 @@ import {
 const MAX_INPUT_BYTES = 128 * 1024 * 1024
 
 function main(): void {
-  const args = flags(process.argv.slice(2), ['--input', '--dataset-id', '--assignments-out', '--manifest-out'])
+  const args = flags(packageScriptArgs(process.argv.slice(2)), ['--input', '--dataset-id', '--assignments-out', '--manifest-out'])
   const inputPath = resolve(required(args, '--input'))
   const assignmentsPath = absolute(required(args, '--assignments-out'), '--assignments-out')
   const manifestPath = absolute(required(args, '--manifest-out'), '--manifest-out')

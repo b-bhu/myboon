@@ -1,9 +1,10 @@
+import { packageScriptArgs } from '../cli-args'
 import {
   parseDeepContainmentVerificationArgs,
   runDeepContainmentVerification,
 } from './containment-verification'
 
-runDeepContainmentVerification(parseDeepContainmentVerificationArgs(process.argv.slice(2))).then((artifact) => {
+runDeepContainmentVerification(parseDeepContainmentVerificationArgs(packageScriptArgs(process.argv.slice(2)))).then((artifact) => {
   process.stdout.write(`${JSON.stringify(artifact, null, 2)}\n`)
   if (!artifact.passed) process.exitCode = 2
 }).catch((error: unknown) => {

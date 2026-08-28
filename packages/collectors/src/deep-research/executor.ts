@@ -45,6 +45,17 @@ const CAPABILITIES = new Set<DeepResearchCapability>([
   'http_fetch',
 ])
 
+export const DEEP_RESEARCH_STATIC_SYSTEMD_PROPERTIES = Object.freeze([
+  'PrivateTmp=yes',
+  'ProtectSystem=strict',
+  'ProtectHome=yes',
+  'NoNewPrivileges=yes',
+  'KillMode=control-group',
+  'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6',
+  'RestrictSUIDSGID=yes',
+  'LockPersonality=yes',
+])
+
 export interface DeepResearchFileSystem {
   makeTempDir(prefix: string): Promise<string>
   makeDir(path: string): Promise<void>
@@ -517,14 +528,7 @@ export function buildSystemdRunArgs(
     `--property=MemoryMax=${job.budget.memoryMaxBytes}`,
     `--property=TasksMax=${job.budget.tasksMax}`,
     `--property=RuntimeMaxSec=${Math.ceil(job.budget.maxWallTimeMs / 1000)}s`,
-    '--property=PrivateTmp=yes',
-    '--property=ProtectSystem=strict',
-    '--property=ProtectHome=yes',
-    '--property=NoNewPrivileges=yes',
-    '--property=KillMode=control-group',
-    '--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6',
-    '--property=RestrictSUIDSGID=yes',
-    '--property=LockPersonality=yes',
+    ...DEEP_RESEARCH_STATIC_SYSTEMD_PROPERTIES.map((property) => `--property=${property}`),
     `--property=BindPaths=${metadata.tempPath}`,
     `--working-directory=${metadata.tempPath}`,
     `--setenv=HOME=${metadata.profilePath}`,

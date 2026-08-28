@@ -1,9 +1,10 @@
+import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from './cli-env'
 import { parseRestoreCommandArgs, runRestoreCommand } from './restore-command'
 
 loadDotenvChain()
 
-runRestoreCommand(parseRestoreCommandArgs(process.argv.slice(2))).then(
+runRestoreCommand(parseRestoreCommandArgs(packageScriptArgs(process.argv.slice(2)))).then(
   (result) => {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
     if (result.mode === 'dry_run' && !result.verification.ok) process.exitCode = 1

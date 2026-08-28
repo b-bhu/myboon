@@ -1,11 +1,12 @@
 import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { packageScriptArgs } from '../cli-args'
 import { evaluateTriageDataset, parseTriageEvaluationArgs } from './triage-evaluation-command'
 
 const MAX_DATASET_BYTES = 64 * 1024 * 1024
 
 function main(): void {
-  const command = parseTriageEvaluationArgs(process.argv.slice(2))
+  const command = parseTriageEvaluationArgs(packageScriptArgs(process.argv.slice(2)))
   const path = resolve(command.inputPath)
   const size = statSync(path).size
   if (size > MAX_DATASET_BYTES) throw new Error(`Evaluation dataset exceeds ${MAX_DATASET_BYTES} bytes`)

@@ -15,7 +15,7 @@ test('bounded orphan discovery reports unregistered units, roots, and sandbox ex
     registered: [registered], tempRoots: ['/scratch'], profileRoots: ['/profiles'],
     sandboxExecutables: ['/opt/deep-worker'], limit: 10,
     inspector: {
-      listTransientUnits: async () => [registered.unitName, 'myboon-deep-unregistered.service'],
+      listTransientUnits: async () => [registered.unitName, 'myboon-deep-unregistered.service', 'myboon-deep-dotted_work.service'],
       listRootEntries: async (root) => root === '/scratch'
         ? ['myboon-deep-registered', 'myboon-deep-stale'] : ['myboon-deep-profile-stale'],
       listSandboxExecutors: async () => [
@@ -26,9 +26,9 @@ test('bounded orphan discovery reports unregistered units, roots, and sandbox ex
     now: () => new Date('2026-08-26T12:00:00.000Z'),
   })
   assert.equal(snapshot.activeExecutions, 1)
-  assert.equal(snapshot.suspectedOrphans, 5)
+  assert.equal(snapshot.suspectedOrphans, 6)
   assert.deepEqual(snapshot.unregisteredArtifacts.map((item) => item.kind).sort(), [
-    'profile_directory', 'sandbox_executor', 'temp_directory', 'transient_unit',
+    'profile_directory', 'sandbox_executor', 'temp_directory', 'transient_unit', 'transient_unit',
   ])
   assert.doesNotMatch(JSON.stringify(snapshot), /secret|\/opt\/deep-worker|\/scratch/)
 })

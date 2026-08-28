@@ -12,14 +12,20 @@ import { feedV3ModeForSource, loadFeedV3RuntimeConfig } from '../signal-platform
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { createActiveSourceTriageIntake } from '../signal-platform/active-triage'
 import { SqliteLocalCapacitySnapshot } from '../signal-platform/local-capacity'
+import {
+  FileSqliteWriteHealthJournal,
+  resolveSqliteWriteHealthJournalPath,
+} from '../signal-platform/sqlite-write-error-journal'
 
 async function runOnce(): Promise<void> {
   const newsPath = process.env.NEWS_SQLITE_PATH ?? resolve(__dirname, '..', '..', '.data', 'news.sqlite')
   const runtime = loadFeedV3RuntimeConfig()
   const intakeMode = feedV3ModeForSource(runtime, 'intake', 'news')
   const store = new SqliteNewsStore(newsPath)
+  const writeHealthJournal = intakeMode !== 'off'
+    ? new FileSqliteWriteHealthJournal(resolveSqliteWriteHealthJournalPath()) : null
   const canonicalStore = intakeMode !== 'off'
-    ? new SqliteSignalPlatformStore(newsPath, 'news')
+    ? new SqliteSignalPlatformStore(newsPath, 'news', { writeHealthJournal })
     : null
   try {
     const signalIntake = canonicalStore

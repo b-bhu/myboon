@@ -29,8 +29,19 @@
  */
 
 import { createRequire } from 'node:module'
-import { randomUUID } from 'node:crypto'
-import { copyFileSync, linkSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  copyFileSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 
 const nodeRequire = createRequire(__filename)
@@ -117,9 +128,27 @@ const OPTIONAL_TABLES = new Set<string>([
 
 const BACKUP_FILE_PREFIX = 'pipeline-'
 const BACKUP_FILE_SUFFIX = '.sqlite'
+const BACKUP_MANIFEST_SUFFIX = '.manifest.json'
+export const SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION = 'myboon.sqlite_backup_manifest.v1' as const
+
+export type SqliteBackupStoreKind = 'pipeline' | 'news'
+
+export interface SqliteBackupManifest {
+  schemaVersion: typeof SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION
+  store: SqliteBackupStoreKind
+  createdAt: string
+  /** Identifies the source without disclosing its directory. */
+  source: { fileName: string; pathSha256: string }
+  backup: { fileName: string; sha256: string; sizeBytes: number }
+  integrity: string
+  sqliteSchema: { userVersion: number; sha256: string }
+  tableCounts: Record<string, number>
+}
 
 export interface PipelineBackupResult {
   path: string
+  manifestPath: string
+  manifest: SqliteBackupManifest
   sizeBytes: number
   /** Counts read back from the freshly written backup FILE. */
   tableCounts: Record<string, number>
@@ -139,15 +168,25 @@ export interface PipelineBackupVerification {
   integrity: string
   tableCounts: Record<string, number>
   mismatches: string[]
+  manifestPath: string
+  manifest: SqliteBackupManifest | null
 }
 
 export interface PipelineRestoreResult {
   targetPath: string
   tableCounts: Record<string, number>
   verified: boolean
+  backupSha256: string
 }
 
 function filenameSafeTimestamp(iso: string): string {
+  let canonical = false
+  try {
+    canonical = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(iso) && new Date(iso).toISOString() === iso
+  } catch { canonical = false }
+  if (!canonical) {
+    throw new Error('Backup createdAt must be a canonical ISO-8601 UTC timestamp')
+  }
   return iso.replace(/:/g, '-').replace(/\./g, '-')
 }
 
@@ -185,32 +224,91 @@ async function backupSqliteStore(options: {
   createdAt: string
   prefix: string
   tables: readonly string[]
+  store: SqliteBackupStoreKind
 }): Promise<PipelineBackupResult> {
   mkdirSync(options.backupDir, { recursive: true })
   const backupPath = join(
     options.backupDir,
     `${options.prefix}${filenameSafeTimestamp(options.createdAt)}${BACKUP_FILE_SUFFIX}`
   )
+  const manifestPath = backupManifestPath(backupPath)
+  assertBackupOutputsAbsent(backupPath, manifestPath)
+
+  const temporaryPath = join(options.backupDir, `.${basename(backupPath)}.${process.pid}.${randomUUID()}.tmp`)
+  const temporaryManifestPath = `${temporaryPath}${BACKUP_MANIFEST_SUFFIX}`
 
   const source = openReadWrite(options.sourcePath)
   let sourceTableCounts: Record<string, number>
   try {
-    await sqliteBackup(source, backupPath)
+    await sqliteBackup(source, temporaryPath)
     sourceTableCounts = readSelectedTableCounts(source, options.tables)
+  } catch (error) {
+    rmSync(temporaryPath, { force: true })
+    throw error
   } finally {
     source.close()
   }
 
-  const backupDb = openReadOnly(backupPath)
-  let tableCounts: Record<string, number>
+  let backupDb: SqliteDatabase
   try {
+    backupDb = openReadOnly(temporaryPath)
+  } catch (error) {
+    rmSync(temporaryPath, { force: true })
+    throw error
+  }
+  let tableCounts: Record<string, number>
+  let integrity: string
+  let sqliteSchema: SqliteBackupManifest['sqliteSchema']
+  try {
+    integrity = readIntegrityCheck(backupDb)
+    if (integrity !== 'ok') throw new Error(`New backup failed integrity verification: ${integrity}`)
     tableCounts = readSelectedTableCounts(backupDb, options.tables)
+    sqliteSchema = readSchemaIdentity(backupDb)
+  } catch (error) {
+    rmSync(temporaryPath, { force: true })
+    throw error
   } finally {
     backupDb.close()
   }
 
+  const manifest: SqliteBackupManifest = {
+    schemaVersion: SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION,
+    store: options.store,
+    createdAt: options.createdAt,
+    source: {
+      fileName: basename(options.sourcePath),
+      pathSha256: sha256(Buffer.from(resolve(options.sourcePath), 'utf8')),
+    },
+    backup: {
+      fileName: basename(backupPath),
+      sha256: sha256(readFileSync(temporaryPath)),
+      sizeBytes: fileSize(temporaryPath),
+    },
+    integrity,
+    sqliteSchema,
+    tableCounts,
+  }
+
+  try {
+    writeFileSync(temporaryManifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
+    publishNoReplace(temporaryPath, backupPath)
+    try {
+      publishNoReplace(temporaryManifestPath, manifestPath)
+    } catch (error) {
+      // The database link was created by this invocation. Remove that link so
+      // a manifest collision cannot leave an apparently usable orphan backup.
+      unlinkSync(backupPath)
+      throw error
+    }
+  } finally {
+    rmSync(temporaryPath, { force: true })
+    rmSync(temporaryManifestPath, { force: true })
+  }
+
   return {
     path: backupPath,
+    manifestPath,
+    manifest,
     sizeBytes: fileSize(backupPath),
     tableCounts,
     sourceTableCounts,
@@ -226,6 +324,50 @@ function readIntegrityCheck(db: SqliteDatabase): string {
 
 function fileSize(path: string): number {
   return statSync(path).size
+}
+
+export function backupManifestPath(backupPath: string): string {
+  return `${resolve(backupPath)}${BACKUP_MANIFEST_SUFFIX}`
+}
+
+function readSchemaIdentity(db: SqliteDatabase): SqliteBackupManifest['sqliteSchema'] {
+  const versionRow = db.prepare('PRAGMA user_version').get() as Record<string, unknown> | undefined
+  const rawVersion = versionRow?.user_version
+  const userVersion = typeof rawVersion === 'bigint' ? Number(rawVersion) : Number(rawVersion ?? 0)
+  const schemaRows = db.prepare(
+    "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+  ).all() as Array<Record<string, unknown>>
+  return {
+    userVersion,
+    sha256: sha256(Buffer.from(JSON.stringify(schemaRows), 'utf8')),
+  }
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+function assertBackupOutputsAbsent(backupPath: string, manifestPath: string): void {
+  for (const path of [backupPath, manifestPath]) {
+    try {
+      statSync(path)
+      throw new Error(`Refusing to replace existing backup output "${path}"`)
+    } catch (error) {
+      if (isNodeError(error) && error.code === 'ENOENT') continue
+      throw error
+    }
+  }
+}
+
+function publishNoReplace(sourcePath: string, targetPath: string): void {
+  try {
+    linkSync(sourcePath, targetPath)
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'EEXIST') {
+      throw new Error(`Refusing to replace existing backup output "${targetPath}"`)
+    }
+    throw error
+  }
 }
 
 /**
@@ -245,7 +387,9 @@ export async function backupPipelineStore(options?: {
   const sourcePath = resolve(options?.sourcePath ?? DEFAULT_SOURCE_PATH)
   const backupDir = resolve(options?.backupDir ?? DEFAULT_BACKUP_DIR)
   const createdAt = options?.now ?? new Date().toISOString()
-  return backupSqliteStore({ sourcePath, backupDir, createdAt, prefix: BACKUP_FILE_PREFIX, tables: PIPELINE_TABLES })
+  return backupSqliteStore({
+    sourcePath, backupDir, createdAt, prefix: BACKUP_FILE_PREFIX, tables: PIPELINE_TABLES, store: 'pipeline',
+  })
 }
 
 export async function backupNewsStore(options?: {
@@ -259,6 +403,7 @@ export async function backupNewsStore(options?: {
     createdAt: options?.now ?? new Date().toISOString(),
     prefix: 'news-',
     tables: NEWS_TABLES,
+    store: 'news',
   })
 }
 
@@ -273,23 +418,28 @@ export async function verifyPipelineBackup(
   backupPath: string,
   expected?: Record<string, number>
 ): Promise<PipelineBackupVerification> {
-  return verifySqliteBackup(backupPath, PIPELINE_TABLES, expected)
+  return verifySqliteBackup(backupPath, 'pipeline', PIPELINE_TABLES, expected)
 }
 
 export async function verifyNewsBackup(
   backupPath: string,
   expected?: Record<string, number>
 ): Promise<PipelineBackupVerification> {
-  return verifySqliteBackup(backupPath, NEWS_TABLES, expected)
+  return verifySqliteBackup(backupPath, 'news', NEWS_TABLES, expected)
 }
 
 async function verifySqliteBackup(
   backupPath: string,
+  store: SqliteBackupStoreKind,
   tables: readonly string[],
-  expected?: Record<string, number>
+  expected?: Record<string, number>,
+  manifestOverride?: SqliteBackupManifest,
 ): Promise<PipelineBackupVerification> {
+  const resolvedBackupPath = resolve(backupPath)
+  const manifestPath = backupManifestPath(resolvedBackupPath)
   let integrity: string
   let tableCounts: Record<string, number>
+  let sqliteSchema: SqliteBackupManifest['sqliteSchema'] | null = null
 
   // Corruption can surface two different ways depending on how badly the
   // file is damaged: `PRAGMA integrity_check` can return a row describing
@@ -299,10 +449,11 @@ async function verifySqliteBackup(
   // Both must be treated as "not ok" rather than allowed to propagate -
   // a verifier that crashes instead of reporting failure is not a verifier.
   try {
-    const db = openReadOnly(resolve(backupPath))
+    const db = openReadOnly(resolvedBackupPath)
     try {
       integrity = readIntegrityCheck(db)
       tableCounts = integrity === 'ok' ? readSelectedTableCounts(db, tables) : {}
+      sqliteSchema = integrity === 'ok' ? readSchemaIdentity(db) : null
     } finally {
       db.close()
     }
@@ -312,14 +463,48 @@ async function verifySqliteBackup(
   }
 
   const mismatches: string[] = []
-  if (expected) {
-    for (const table of tables) {
-      const expectedCount = expected[table] ?? 0
-      const actualCount = tableCounts[table] ?? 0
-      if (expectedCount !== actualCount) {
-        mismatches.push(`${table}: expected ${expectedCount}, got ${actualCount}`)
-      }
+  let manifest: SqliteBackupManifest | null = manifestOverride ?? null
+  if (!manifest) {
+    try {
+      manifest = parseBackupManifest(readFileSync(manifestPath, 'utf8'))
+    } catch (error) {
+      mismatches.push(`manifest: ${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+
+  if (manifest) {
+    if (manifest.store !== store) mismatches.push(`manifest store: expected ${store}, got ${manifest.store}`)
+    if (!manifestOverride && manifest.backup.fileName !== basename(resolvedBackupPath)) {
+      mismatches.push(`manifest backup filename: expected ${basename(resolvedBackupPath)}, got ${manifest.backup.fileName}`)
+    }
+    let actualSize: number | null = null
+    let actualDigest: string | null = null
+    try {
+      const bytes = readFileSync(resolvedBackupPath)
+      actualSize = bytes.byteLength
+      actualDigest = sha256(bytes)
+    } catch (error) {
+      mismatches.push(`backup bytes: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (actualSize !== null && manifest.backup.sizeBytes !== actualSize) {
+      mismatches.push(`backup size: expected ${manifest.backup.sizeBytes}, got ${actualSize}`)
+    }
+    if (actualDigest !== null && manifest.backup.sha256 !== actualDigest) {
+      mismatches.push(`backup sha256: expected ${manifest.backup.sha256}, got ${actualDigest}`)
+    }
+    if (manifest.integrity !== integrity) {
+      mismatches.push(`integrity: manifest ${manifest.integrity}, actual ${integrity}`)
+    }
+    if (sqliteSchema && (
+      manifest.sqliteSchema.userVersion !== sqliteSchema.userVersion
+      || manifest.sqliteSchema.sha256 !== sqliteSchema.sha256
+    )) {
+      mismatches.push('sqlite schema does not match manifest')
+    }
+    compareTableCounts(tables, manifest.tableCounts, tableCounts, mismatches, 'manifest')
+  }
+  if (expected) {
+    compareTableCounts(tables, expected, tableCounts, mismatches, 'expected')
   }
 
   return {
@@ -327,7 +512,103 @@ async function verifySqliteBackup(
     integrity,
     tableCounts,
     mismatches,
+    manifestPath,
+    manifest,
   }
+}
+
+function compareTableCounts(
+  tables: readonly string[],
+  expected: Record<string, number>,
+  actual: Record<string, number>,
+  mismatches: string[],
+  source: 'manifest' | 'expected',
+): void {
+  for (const table of tables) {
+    const expectedHasTable = Object.prototype.hasOwnProperty.call(expected, table)
+    const actualHasTable = Object.prototype.hasOwnProperty.call(actual, table)
+    if (source === 'manifest' && expectedHasTable !== actualHasTable) {
+      mismatches.push(`${table}: manifest table presence does not match backup`)
+      continue
+    }
+    const expectedCount = expected[table] ?? 0
+    const actualCount = actual[table] ?? 0
+    if (expectedCount !== actualCount) {
+      mismatches.push(`${table}: ${source} ${expectedCount}, got ${actualCount}`)
+    }
+  }
+}
+
+function parseBackupManifest(raw: string): SqliteBackupManifest {
+  let value: unknown
+  try { value = JSON.parse(raw) } catch { throw new Error('missing or invalid JSON') }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('must be an object')
+  const record = value as Record<string, unknown>
+  assertExactKeys(record, [
+    'schemaVersion', 'store', 'createdAt', 'source', 'backup', 'integrity', 'sqliteSchema', 'tableCounts',
+  ], 'manifest')
+  if (record.schemaVersion !== SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION) throw new Error('unsupported schemaVersion')
+  if (record.store !== 'pipeline' && record.store !== 'news') throw new Error('store is invalid')
+  if (typeof record.createdAt !== 'string' || !Number.isFinite(Date.parse(record.createdAt))) {
+    throw new Error('createdAt is invalid')
+  }
+  const source = requiredRecord(record.source, 'source')
+  const backup = requiredRecord(record.backup, 'backup')
+  const sqliteSchema = requiredRecord(record.sqliteSchema, 'sqliteSchema')
+  const tableCounts = requiredRecord(record.tableCounts, 'tableCounts')
+  assertExactKeys(source, ['fileName', 'pathSha256'], 'source')
+  assertExactKeys(backup, ['fileName', 'sha256', 'sizeBytes'], 'backup')
+  assertExactKeys(sqliteSchema, ['userVersion', 'sha256'], 'sqliteSchema')
+  if (typeof source.fileName !== 'string' || source.fileName.length === 0 || source.fileName.includes('/') || source.fileName.includes('\\')) {
+    throw new Error('source.fileName is invalid')
+  }
+  assertSha256(source.pathSha256, 'source.pathSha256')
+  if (typeof backup.fileName !== 'string' || backup.fileName.length === 0 || basename(backup.fileName) !== backup.fileName) {
+    throw new Error('backup.fileName is invalid')
+  }
+  const expectedFileName = `${record.store === 'pipeline' ? BACKUP_FILE_PREFIX : 'news-'}${filenameSafeTimestamp(record.createdAt)}${BACKUP_FILE_SUFFIX}`
+  if (backup.fileName !== expectedFileName) throw new Error('backup.fileName does not match store and createdAt')
+  assertSha256(backup.sha256, 'backup.sha256')
+  if (!Number.isSafeInteger(backup.sizeBytes) || Number(backup.sizeBytes) <= 0) throw new Error('backup.sizeBytes is invalid')
+  if (record.integrity !== 'ok') throw new Error('integrity must be ok')
+  if (!Number.isSafeInteger(sqliteSchema.userVersion) || Number(sqliteSchema.userVersion) < 0) {
+    throw new Error('sqliteSchema.userVersion is invalid')
+  }
+  assertSha256(sqliteSchema.sha256, 'sqliteSchema.sha256')
+  const validatedCounts: Record<string, number> = {}
+  const allowedTables = new Set(record.store === 'pipeline' ? PIPELINE_TABLES : NEWS_TABLES)
+  for (const [name, count] of Object.entries(tableCounts)) {
+    if (!allowedTables.has(name as (typeof PIPELINE_TABLES)[number] | (typeof NEWS_TABLES)[number])) {
+      throw new Error(`tableCounts.${name || '<empty>'} is not part of the ${record.store} inventory`)
+    }
+    if (!name || !Number.isSafeInteger(count) || Number(count) < 0) throw new Error(`tableCounts.${name || '<empty>'} is invalid`)
+    validatedCounts[name] = Number(count)
+  }
+  return {
+    schemaVersion: SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION,
+    store: record.store,
+    createdAt: record.createdAt,
+    source: { fileName: source.fileName, pathSha256: source.pathSha256 as string },
+    backup: { fileName: backup.fileName, sha256: backup.sha256 as string, sizeBytes: Number(backup.sizeBytes) },
+    integrity: 'ok',
+    sqliteSchema: { userVersion: Number(sqliteSchema.userVersion), sha256: sqliteSchema.sha256 as string },
+    tableCounts: validatedCounts,
+  }
+}
+
+function assertExactKeys(record: Record<string, unknown>, keys: readonly string[], field: string): void {
+  const allowed = new Set(keys)
+  for (const key of Object.keys(record)) if (!allowed.has(key)) throw new Error(`${field}.${key} is unknown`)
+  for (const key of keys) if (!(key in record)) throw new Error(`${field}.${key} is required`)
+}
+
+function requiredRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${field} is invalid`)
+  return value as Record<string, unknown>
+}
+
+function assertSha256(value: unknown, field: string): asserts value is string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error(`${field} is invalid`)
 }
 
 /**
@@ -343,7 +624,7 @@ export async function restorePipelineStore(options: {
   targetPath: string
   force?: boolean
 }): Promise<PipelineRestoreResult> {
-  return restoreSqliteStore(options, verifyPipelineBackup)
+  return restoreSqliteStore(options, 'pipeline', PIPELINE_TABLES)
 }
 
 /** News-store counterpart with the same pre-copy and post-copy guarantees. */
@@ -352,15 +633,13 @@ export async function restoreNewsStore(options: {
   targetPath: string
   force?: boolean
 }): Promise<PipelineRestoreResult> {
-  return restoreSqliteStore(options, verifyNewsBackup)
+  return restoreSqliteStore(options, 'news', NEWS_TABLES)
 }
 
 async function restoreSqliteStore(
   options: { backupPath: string; targetPath: string; force?: boolean },
-  verify: (
-    path: string,
-    expected?: Record<string, number>,
-  ) => Promise<PipelineBackupVerification>,
+  store: SqliteBackupStoreKind,
+  tables: readonly string[],
 ): Promise<PipelineRestoreResult> {
   const backupPath = resolve(options.backupPath)
   const targetPath = resolve(options.targetPath)
@@ -379,20 +658,21 @@ async function restoreSqliteStore(
     )
   }
 
-  const preCheck = await verify(backupPath)
+  const preCheck = await verifySqliteBackup(backupPath, store, tables)
   if (!preCheck.ok) {
     throw new Error(
       `Refusing to restore from a backup that fails verification: integrity="${preCheck.integrity}"` +
         (preCheck.mismatches.length > 0 ? `, mismatches=${preCheck.mismatches.join('; ')}` : '')
     )
   }
+  if (!preCheck.manifest) throw new Error('Refusing to restore without a valid backup manifest')
 
   mkdirSync(dirname(targetPath), { recursive: true })
   const temporaryPath = `${targetPath}.restore.${process.pid}.${randomUUID()}.tmp`
   let postCheck: PipelineBackupVerification
   try {
     copyFileSync(backupPath, temporaryPath)
-    postCheck = await verify(temporaryPath, preCheck.tableCounts)
+    postCheck = await verifySqliteBackup(temporaryPath, store, tables, preCheck.tableCounts, preCheck.manifest)
     if (!postCheck.ok) {
       throw new Error(
         `Restored copy failed verification: integrity="${postCheck.integrity}"`
@@ -422,13 +702,14 @@ async function restoreSqliteStore(
   }
 
   assertRestoreSidecarsAbsent(targetPath)
-  const finalCheck = await verify(targetPath, preCheck.tableCounts)
+  const finalCheck = await verifySqliteBackup(targetPath, store, tables, preCheck.tableCounts, preCheck.manifest)
   if (!finalCheck.ok) throw new Error(`Published restore target failed final verification: ${finalCheck.integrity}`)
 
   return {
     targetPath,
     tableCounts: finalCheck.tableCounts,
     verified: finalCheck.ok,
+    backupSha256: preCheck.manifest.backup.sha256,
   }
 }
 
@@ -449,53 +730,95 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
 
 interface BackupFileInfo {
   path: string
+  manifestPath: string
   timestamp: string
 }
 
 function parseBackupFileName(fileName: string, prefix: string): string | null {
   if (!fileName.startsWith(prefix) || !fileName.endsWith(BACKUP_FILE_SUFFIX)) return null
-  return fileName.slice(prefix.length, fileName.length - BACKUP_FILE_SUFFIX.length)
+  const timestamp = fileName.slice(prefix.length, fileName.length - BACKUP_FILE_SUFFIX.length)
+  return /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/.test(timestamp) ? timestamp : null
 }
 
-/**
- * Keeps the `keep` newest backups in `backupDir` and deletes the rest.
- * "Newest" is determined by the timestamp encoded in the filename (sorted
- * lexicographically, which matches chronological order for ISO-derived
- * timestamps), not filesystem mtime - mtime is unreliable across copies
- * (e.g. restoring a backup elsewhere, or a filesystem that does not
- * preserve mtime on copy) whereas the filename is the backup's own record
- * of when it was taken.
- */
+export interface BackupPruneAudit {
+  mode: 'dry_run' | 'apply'
+  backupDir: string
+  prefix: string
+  keep: number
+  limit: number
+  matchedBackups: number
+  retainedBackupPaths: string[]
+  candidateBackupPaths: string[]
+  candidateDeletePaths: string[]
+  deletedPaths: string[]
+  limited: boolean
+  auditedAt: string
+}
+
+/** Plans exact paths first. Deletion is opt-in and bounded by `limit`. */
 export async function pruneOldBackups(options?: {
   backupDir?: string
   keep?: number
   prefix?: string
-}): Promise<string[]> {
+  limit?: number
+  apply?: boolean
+  now?: string
+}): Promise<BackupPruneAudit> {
   const backupDir = resolve(options?.backupDir ?? DEFAULT_BACKUP_DIR)
   const keep = options?.keep ?? 7
+  const limit = options?.limit ?? 100
   const prefix = options?.prefix ?? BACKUP_FILE_PREFIX
+  if (!Number.isSafeInteger(keep) || keep < 1) throw new Error('keep must be a positive integer')
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+    throw new Error('limit must be an integer between 1 and 1000')
+  }
 
   let entries: string[]
   try {
     entries = readdirSync(backupDir)
   } catch {
-    return []
+    entries = []
   }
 
   const infos: BackupFileInfo[] = []
   for (const entry of entries) {
     const timestamp = parseBackupFileName(basename(entry), prefix)
     if (timestamp === null) continue
-    infos.push({ path: join(backupDir, entry), timestamp })
+    const path = join(backupDir, entry)
+    infos.push({ path, manifestPath: backupManifestPath(path), timestamp })
   }
 
   infos.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0))
 
-  const toDelete = infos.slice(Math.max(0, keep))
-  const deleted: string[] = []
-  for (const info of toDelete) {
-    unlinkSync(info.path)
-    deleted.push(info.path)
+  // Apply the bounded deletion budget to the oldest backups first.
+  const allCandidates = infos.slice(keep).reverse()
+  const candidates = allCandidates.slice(0, limit)
+  const candidateDeletePaths = candidates.flatMap((info) => (
+    pathExists(info.manifestPath) ? [info.path, info.manifestPath] : [info.path]
+  ))
+  const deletedPaths: string[] = []
+  if (options?.apply) {
+    for (const path of candidateDeletePaths) {
+      unlinkSync(path)
+      deletedPaths.push(path)
+    }
   }
-  return deleted
+  return {
+    mode: options?.apply ? 'apply' : 'dry_run',
+    backupDir,
+    prefix,
+    keep,
+    limit,
+    matchedBackups: infos.length,
+    retainedBackupPaths: infos.slice(0, keep).map((info) => info.path),
+    candidateBackupPaths: candidates.map((info) => info.path),
+    candidateDeletePaths,
+    deletedPaths,
+    limited: allCandidates.length > candidates.length,
+    auditedAt: options?.now ?? new Date().toISOString(),
+  }
+}
+
+function pathExists(path: string): boolean {
+  try { statSync(path); return true } catch { return false }
 }

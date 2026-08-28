@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { closeSync, existsSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -198,6 +198,14 @@ test('backupPipelineStore: backup of a store with real data has tableCounts matc
     assert.ok(result.sizeBytes > 0, 'backup file should be non-empty')
     assert.ok(result.path.includes('pipeline-2026-07-28T12-00-00-000Z.sqlite'))
     assert.equal(result.createdAt, '2026-07-28T12:00:00.000Z')
+    assert.equal(result.manifest.store, 'pipeline')
+    assert.equal(result.manifest.backup.fileName, 'pipeline-2026-07-28T12-00-00-000Z.sqlite')
+    assert.match(result.manifest.backup.sha256, /^[a-f0-9]{64}$/)
+    assert.equal(result.manifest.backup.sizeBytes, result.sizeBytes)
+    assert.equal(result.manifest.integrity, 'ok')
+    assert.deepEqual(result.manifest.tableCounts, result.tableCounts)
+    assert.equal(JSON.stringify(result.manifest).includes(dir), false, 'manifest must redact the source directory')
+    assert.equal(existsSync(result.manifestPath), true)
 
     const fileStat = statSync(result.path)
     assert.equal(fileStat.size, result.sizeBytes)
@@ -429,6 +437,74 @@ test('restorePipelineStore: refuses a corrupt backup even with force', async () 
   }
 })
 
+test('restorePipelineStore: requires the companion manifest and refuses manifest/backup digest mismatch', async () => {
+  const dir = makeTmpDir('pipeline-backup-manifest-restore-')
+  try {
+    const sourcePath = join(dir, 'pipeline.sqlite')
+    await seedStore(sourcePath)
+    const first = await backupPipelineStore({
+      sourcePath, backupDir: join(dir, 'backups'), now: '2026-08-27T10:00:00.000Z',
+    })
+    unlinkSync(first.manifestPath)
+    await assert.rejects(
+      () => restorePipelineStore({ backupPath: first.path, targetPath: join(dir, 'missing-manifest.sqlite') }),
+      /manifest/i,
+    )
+
+    const second = await backupPipelineStore({
+      sourcePath, backupDir: join(dir, 'backups'), now: '2026-08-27T10:01:00.000Z',
+    })
+    const manifest = JSON.parse(readFileSync(second.manifestPath, 'utf8')) as { backup: { sha256: string } }
+    manifest.backup.sha256 = '0'.repeat(64)
+    writeFileSync(second.manifestPath, `${JSON.stringify(manifest)}\n`)
+    await assert.rejects(
+      () => restorePipelineStore({ backupPath: second.path, targetPath: join(dir, 'digest-mismatch.sqlite') }),
+      /sha256/i,
+    )
+
+    const third = await backupPipelineStore({
+      sourcePath, backupDir: join(dir, 'backups'), now: '2026-08-27T10:02:00.000Z',
+    })
+    const timestampManifest = JSON.parse(readFileSync(third.manifestPath, 'utf8')) as { createdAt: string }
+    timestampManifest.createdAt = '2026-08-27T10:03:00.000Z'
+    writeFileSync(third.manifestPath, `${JSON.stringify(timestampManifest)}\n`)
+    await assert.rejects(
+      () => restorePipelineStore({ backupPath: third.path, targetPath: join(dir, 'created-at-mismatch.sqlite') }),
+      /createdAt/i,
+    )
+
+    const fourth = await backupPipelineStore({
+      sourcePath, backupDir: join(dir, 'backups'), now: '2026-08-27T10:04:00.000Z',
+    })
+    const extendedManifest = JSON.parse(readFileSync(fourth.manifestPath, 'utf8')) as Record<string, unknown>
+    extendedManifest.unreviewed = true
+    writeFileSync(fourth.manifestPath, `${JSON.stringify(extendedManifest)}\n`)
+    await assert.rejects(
+      () => restorePipelineStore({ backupPath: fourth.path, targetPath: join(dir, 'unknown-field.sqlite') }),
+      /unknown/i,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('backupPipelineStore: timestamp collisions never replace an existing backup or manifest', async () => {
+  const dir = makeTmpDir('pipeline-backup-no-replace-')
+  try {
+    const sourcePath = join(dir, 'pipeline.sqlite')
+    await seedStore(sourcePath)
+    const options = { sourcePath, backupDir: join(dir, 'backups'), now: '2026-08-27T11:00:00.000Z' }
+    const first = await backupPipelineStore(options)
+    const originalBackup = readFileSync(first.path)
+    const originalManifest = readFileSync(first.manifestPath)
+    await assert.rejects(() => backupPipelineStore(options), /Refusing to replace existing backup output/)
+    assert.deepEqual(readFileSync(first.path), originalBackup)
+    assert.deepEqual(readFileSync(first.manifestPath), originalManifest)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('restorePipelineStore: refuses targets with WAL/SHM sidecars even with force', async () => {
   const dir = makeTmpDir('pipeline-restore-sidecar-')
   try {
@@ -445,7 +521,7 @@ test('restorePipelineStore: refuses targets with WAL/SHM sidecars even with forc
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
-test('pruneOldBackups: keeps the newest N and deletes the rest, sorted by filename timestamp', async () => {
+test('pruneOldBackups: dry-run reports exact bounded paths and apply deletes backup/manifest pairs', async () => {
   const dir = makeTmpDir('pipeline-backup-prune-')
   try {
     const sourcePath = join(dir, 'pipeline.sqlite')
@@ -465,19 +541,21 @@ test('pruneOldBackups: keeps the newest N and deletes the rest, sorted by filena
       created.push(result.path)
     }
 
-    const deleted = await pruneOldBackups({ backupDir, keep: 2 })
+    const preview = await pruneOldBackups({ backupDir, keep: 2, limit: 2, now: '2026-08-27T12:00:00.000Z' })
 
-    // Oldest 3 of 5 should be deleted; newest 2 survive.
-    assert.equal(deleted.length, 3)
-    assert.ok(deleted.includes(created[0]))
-    assert.ok(deleted.includes(created[1]))
-    assert.ok(deleted.includes(created[2]))
-    assert.ok(!deleted.includes(created[3]))
-    assert.ok(!deleted.includes(created[4]))
+    assert.equal(preview.mode, 'dry_run')
+    assert.deepEqual(preview.candidateBackupPaths, [created[0], created[1]])
+    assert.equal(preview.candidateDeletePaths.length, 4)
+    assert.equal(preview.deletedPaths.length, 0)
+    assert.equal(preview.limited, true)
+    assert.equal(existsSync(created[0]), true, 'dry-run must not delete')
 
-    for (const path of deleted) {
-      assert.throws(() => statSync(path))
-    }
+    const applied = await pruneOldBackups({ backupDir, keep: 2, limit: 2, apply: true })
+    assert.deepEqual(applied.candidateBackupPaths, [created[0], created[1]])
+    assert.deepEqual(applied.deletedPaths, applied.candidateDeletePaths)
+    assert.equal(existsSync(created[0]), false)
+    assert.equal(existsSync(`${created[0]}.manifest.json`), false)
+    assert.equal(existsSync(created[2]), true, 'the limit bounds each apply')
     assert.doesNotThrow(() => statSync(created[3]))
     assert.doesNotThrow(() => statSync(created[4]))
   } finally {
@@ -485,7 +563,7 @@ test('pruneOldBackups: keeps the newest N and deletes the rest, sorted by filena
   }
 })
 
-test('pruneOldBackups: defaults to keeping 7 backups when keep is not specified', async () => {
+test('pruneOldBackups: defaults to keeping 7 backups and remains dry-run', async () => {
   const dir = makeTmpDir('pipeline-backup-prune-default-')
   try {
     const sourcePath = join(dir, 'pipeline.sqlite')
@@ -497,8 +575,10 @@ test('pruneOldBackups: defaults to keeping 7 backups when keep is not specified'
       await backupPipelineStore({ sourcePath, backupDir, now: `2026-07-${day}T00:00:00.000Z` })
     }
 
-    const deleted = await pruneOldBackups({ backupDir })
-    assert.equal(deleted.length, 2)
+    const audit = await pruneOldBackups({ backupDir })
+    assert.equal(audit.candidateBackupPaths.length, 2)
+    assert.equal(audit.deletedPaths.length, 0)
+    assert.equal(existsSync(audit.candidateBackupPaths[0]!), true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

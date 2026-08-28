@@ -21,6 +21,10 @@ import {
 } from '../signal-platform/runtime-control'
 import { SqliteExecutionLedger } from '../signal-platform/sqlite-execution-ledger'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import {
+  FileSqliteWriteHealthJournal,
+  resolveSqliteWriteHealthJournalPath,
+} from '../signal-platform/sqlite-write-error-journal'
 import { EntityServiceCanonicalPacketProcessor } from './canonical-processor'
 import { GatewayCanonicalEntityPlanner } from './canonical-planner'
 import {
@@ -123,12 +127,18 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
   }
   const sourcePaths = new Map<Signal['sourceType'], string>()
   const stores: SqliteSignalPlatformStore[] = []
+  const writeHealthJournal = !options.storeFactory
+    ? new FileSqliteWriteHealthJournal(resolveSqliteWriteHealthJournalPath(env), {
+      readOnly: runtime.entityMode === 'shadow',
+    }) : null
+  const storeFactory = options.storeFactory ?? ((path, sourceType, readOnly) =>
+    new SqliteSignalPlatformStore(path, sourceType, { readOnly, writeHealthJournal }))
   for (const source of sources) {
     const path = sourceDatabasePath(source, env)
     if (!options.storeFactory && !existsSync(path)) {
       throw new Error(`${source} SQLite database does not exist at configured path ${path}`)
     }
-    const store = (options.storeFactory ?? defaultStoreFactory)(path, source, runtime.entityMode === 'shadow')
+    const store = storeFactory(path, source, runtime.entityMode === 'shadow')
     stores.push(store)
     sourcePaths.set(source, path)
   }
@@ -243,6 +253,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       researchDepths: runtime.cutoverPolicy === 'phase1'
         ? runtime.triageAllowedDepths
         : undefined,
+      now,
       executionLedger,
       claimsEnabled: runtime.entityMode === 'active'
         ? () => entityClaimControl(runtimeControl).enabled && inferenceClaimsReady()
@@ -404,10 +415,6 @@ function sourceDatabasePath(
 
 function configuredPath(value: string): string {
   return isAbsolute(value) ? value : resolve(PACKAGE_DIR, value)
-}
-
-function defaultStoreFactory(path: string, source: Signal['sourceType'], readOnly: boolean) {
-  return new SqliteSignalPlatformStore(path, source, { readOnly })
 }
 
 function required(env: Readonly<Record<string, string | undefined>>, field: string): string {
