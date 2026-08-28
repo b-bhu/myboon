@@ -53,6 +53,7 @@
     "test:signal-platform": "tsx --test src/signal-platform/*.test.ts src/signal-platform/adapters/*.test.ts",
     "test:signal-platform:operators": "tsx --test src/signal-platform/operator-*.test.ts",
     "feed-v3:status": "tsx src/signal-platform/run-status.ts",
+    "feed-v3:phase2-check": "tsx src/signal-platform/run-phase2-check.ts",
     "feed-v3:backfill": "tsx src/signal-platform/run-backfill.ts",
     "feed-v3:recover": "tsx src/signal-platform/run-recovery.ts",
     "feed-v3:trace": "tsx src/signal-platform/run-trace.ts",
