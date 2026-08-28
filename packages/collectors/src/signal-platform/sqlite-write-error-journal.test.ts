@@ -82,6 +82,7 @@ test('one physical pipeline heartbeat covers every logical adapter on that SQLit
     const report = await calendar.readWorkObservability({
       now, recentFailureSince: new Date(Date.parse(now) - 60_000).toISOString(), failureLimit: 10,
     })
+    assert.ok(report.sqliteWriteErrors)
     assert.equal(report.sqliteWriteErrors.availability, 'available')
     calendar.close()
   } finally { rmSync(directory, { recursive: true, force: true }) }

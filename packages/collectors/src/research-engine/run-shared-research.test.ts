@@ -18,12 +18,19 @@ import {
   ResearchDepthFilteredScheduler,
   SHARED_RESEARCH_ENV,
   createLiveSharedResearchRuntime,
+  isSharedResearchProcessEntrypoint,
   loadSharedResearchProcessEnvironment,
   loadSharedResearchRunnerConfig,
   resolveSupportedResearchDepths,
   runSharedResearchLoop,
   type SharedResearchRunnerRuntime,
 } from './run-shared-research'
+
+test('shared Research entrypoint runs both directly and through PM2', () => {
+  assert.equal(isSharedResearchProcessEntrypoint({ direct: true, nodeAppInstance: undefined }), true)
+  assert.equal(isSharedResearchProcessEntrypoint({ direct: false, nodeAppInstance: '0' }), true)
+  assert.equal(isSharedResearchProcessEntrypoint({ direct: false, nodeAppInstance: undefined }), false)
+})
 
 const nodeRequire = createRequire(__filename)
 const TEST_CUTOVER_RECEIPT_PATH = '/tmp/feed-v3-test-cutover-receipt.json'
@@ -91,6 +98,7 @@ test('shadow delegates cycles to the evaluator runtime and active requires expli
       assert.equal(config.mode, 'shadow')
       return runtime('shadow', () => { shadowCycles += 1 })
     },
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
   })
   assert.equal(shadowCycles, 1)
   assert.throws(() => loadSharedResearchRunnerConfig({
@@ -121,6 +129,7 @@ test('active runner recovers at startup and on a bounded cadence before further 
     },
     signal: controller.signal, now: () => current,
     createRuntime: () => active,
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
     createStatusWriter: () => ({ write: async ({ lifecycleState }) => { writes.push(lifecycleState) } }),
     wait: async (ms) => {
       current += ms
@@ -154,6 +163,7 @@ test('SIGTERM-equivalent abort gates new claims immediately and waits for the ac
       FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
     },
     signal: controller.signal, createRuntime: () => live,
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
     createStatusWriter: () => ({ write: async () => undefined }),
   })
   await started
@@ -409,6 +419,7 @@ test('off and shadow research never evaluate active cutover authorization', asyn
       FEED_V3_CUTOVER_POLICY: 'phase1',
       FEED_V3_RESEARCH_MODE: 'shadow', FEED_V3_RESEARCH_SHADOW_SOURCES: 'news',
       FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '100', NEWS_SQLITE_PATH: newsPath,
+      FEED_V3_RUNTIME_CONTROL_PATH: join(dir, 'control.json'),
     })
     // Shadow mode must not require a receipt path or evaluate active cutover.
     assert.equal(config.cutoverReceiptPath, null)
@@ -428,6 +439,7 @@ test('calendar and X use the registered pipeline store without a source-specific
     const config = loadSharedResearchRunnerConfig({
       FEED_V3_RESEARCH_MODE: 'shadow', FEED_V3_RESEARCH_SHADOW_SOURCES: 'market_calendar,x',
       FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '100', PIPELINE_SQLITE_PATH: pipelinePath,
+      FEED_V3_RUNTIME_CONTROL_PATH: join(dir, 'control.json'),
     })
     assert.deepEqual(config.sources, ['market_calendar', 'x'])
     const live = createLiveSharedResearchRuntime(config)
@@ -447,6 +459,7 @@ test('live shadow composition writes its result table inside the source database
     const config = loadSharedResearchRunnerConfig({
       FEED_V3_RESEARCH_MODE: 'shadow', FEED_V3_RESEARCH_SHADOW_SOURCES: 'news',
       FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '100', NEWS_SQLITE_PATH: newsPath,
+      FEED_V3_RUNTIME_CONTROL_PATH: join(dir, 'control.json'),
     })
     const live = createLiveSharedResearchRuntime(config)
     assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }])

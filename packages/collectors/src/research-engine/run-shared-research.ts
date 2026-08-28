@@ -750,7 +750,20 @@ export function loadSharedResearchProcessEnvironment(
   loader()
 }
 
-if (require.main === module) {
+export function isSharedResearchProcessEntrypoint(input: {
+  direct: boolean
+  nodeAppInstance: string | undefined
+} = {
+  direct: require.main === module,
+  nodeAppInstance: process.env.NODE_APP_INSTANCE,
+}): boolean {
+  return input.direct || input.nodeAppInstance !== undefined
+}
+
+// PM2 executes TypeScript through its process-container wrapper, so
+// `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
+// execution marker and keeps imports/tests inert outside the process manager.
+if (isSharedResearchProcessEntrypoint()) {
   loadSharedResearchProcessEnvironment()
   const controller = new AbortController()
   process.once('SIGTERM', () => controller.abort())

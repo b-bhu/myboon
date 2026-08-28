@@ -490,7 +490,20 @@ async function main(): Promise<void> {
   })
 }
 
-if (require.main === module) {
+export function isSharedEntityProcessEntrypoint(input: {
+  direct: boolean
+  nodeAppInstance: string | undefined
+} = {
+  direct: require.main === module,
+  nodeAppInstance: process.env.NODE_APP_INSTANCE,
+}): boolean {
+  return input.direct || input.nodeAppInstance !== undefined
+}
+
+// PM2 executes TypeScript through its process-container wrapper, so
+// `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
+// execution marker and keeps imports/tests inert outside the process manager.
+if (isSharedEntityProcessEntrypoint()) {
   main().catch((error) => {
     process.stderr.write(`[feed-v3-entity] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
