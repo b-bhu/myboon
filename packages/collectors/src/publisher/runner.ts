@@ -93,7 +93,11 @@ export function buildPublication(
     title: draft.title?.trim() ?? '',
     content_small: draft.summary?.trim() ?? '',
     content_full: draft.body?.trim() ?? '',
-    priority: draft.priority ?? 0,
+    // Production's long-lived public feed column is integer-valued even
+    // though newer draft storage accepts numeric scores. Normalize at the
+    // publication boundary so a legacy fractional draft cannot crash-loop
+    // the publisher.
+    priority: Math.round(draft.priority ?? 0),
     actions: deriveActionsFromMemories(memories),
     tags: tagsForEntity(entity),
     status: 'published',

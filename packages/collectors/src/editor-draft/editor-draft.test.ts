@@ -278,6 +278,20 @@ test('parseAgentEditorDraftResponse extracts fenced JSON and normalizes actions'
   assert.deepEqual(normalized.sourceMemoryIds, [fresh.id])
 })
 
+test('editor normalization emits an integer priority for the public feed contract', () => {
+  const acme = entity('entity-1', 'acme', 'Acme')
+  const fresh = memory('memory-2', acme.id, 'Fresh memory', '2026-06-30T00:00:00.000Z')
+  const bundle = buildEntityDraftBundles(
+    [acme], [fresh], [], [], { recentMemoryLimit: 5, laneMemoryLimit: 10 }
+  )[0]
+
+  const normalized = normalizeEditorDraftDecision({
+    action: 'draft_post', source_memory_ids: [fresh.id], priority: 0.7,
+  }, bundle)
+
+  assert.equal(normalized.priority, 1)
+})
+
 test('runEditorDraft writes idempotently by source memory bundle', async () => {
   const acme = entity('entity-1', 'acme', 'Acme')
   const fresh = memory('memory-1', acme.id, 'New market signal', '2026-06-30T00:00:00.000Z')

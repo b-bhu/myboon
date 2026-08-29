@@ -72,6 +72,11 @@ function boundedNumber(value: unknown, min: number, max: number): number | null 
   return Math.max(min, Math.min(max, parsed))
 }
 
+function boundedInteger(value: unknown, min: number, max: number): number | null {
+  const bounded = boundedNumber(value, min, max)
+  return bounded === null ? null : Math.round(bounded)
+}
+
 export function sourceMemoryHash(sourceMemoryIds: string[]): string {
   return createHash('sha256')
     .update(unique(sourceMemoryIds).sort().join('\n'))
@@ -123,7 +128,7 @@ export function normalizeEditorDraftDecision(
     reasoning: asNullableString(decision.reasoning) ?? 'Editor draft agent did not provide reasoning.',
     reasonCodes: asStringArray(decision.reason_codes),
     evidenceQuality: normalizeEvidenceQuality(decision.evidence_quality),
-    priority: boundedNumber(decision.priority, 0, 100),
+    priority: boundedInteger(decision.priority, 0, 100),
     confidence: boundedNumber(decision.confidence, 0, 1),
     mergeTargetDraftId: mergeTargetDraftId && priorDraftIds.has(mergeTargetDraftId) ? mergeTargetDraftId : null,
     relatedDraftIds,
