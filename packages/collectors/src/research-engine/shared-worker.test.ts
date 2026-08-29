@@ -844,6 +844,30 @@ test('fresh evidence with matching persisted reuse context advances without retr
   } finally { fx.close() }
 })
 
+test('upstream Signal content hash is not mistaken for retrieved document bytes', async () => {
+  const fx = fixture()
+  try {
+    const base = signal('news')
+    if (base.sourceType !== 'news') throw new Error('expected News fixture')
+    const source: Signal = {
+      ...base,
+      content: { ...base.content, contentHash: 'upstream-headline-hash' },
+    }
+    const item = work()
+    const artifact = withPersistedReuse(evidence(item), source)
+    fx.store.appendSignal(source)
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(artifact)
+    let retrievalCalls = 0
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
+    }))
+    assert.equal((await worker.runOnce()).kind, 'succeeded')
+    assert.equal(retrievalCalls, 0)
+    assert.equal(fx.store.getResearchWork(item.workId)?.attemptCount, 0)
+  } finally { fx.close() }
+})
+
 for (const scenario of [
   {
     name: 'content hash changed',
