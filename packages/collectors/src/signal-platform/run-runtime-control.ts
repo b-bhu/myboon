@@ -1,7 +1,8 @@
+import { packageScriptArgs } from '../cli-args'
 import { runRuntimeControlCommand } from './runtime-control-command'
 
 function main(): void {
-  const result = runRuntimeControlCommand(process.argv.slice(2))
+  const result = runRuntimeControlCommand(packageScriptArgs(process.argv.slice(2)))
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
 }
 

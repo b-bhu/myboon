@@ -1,11 +1,18 @@
 import { isAbsolute, resolve } from 'node:path'
 
+import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { formatControlPlaneStatusJson } from './control-plane-format'
 import { parseControlPlaneAlertPolicy } from './control-plane'
 import { readFeedV3RuntimeStatusAvailability } from './runtime-status'
 import { evaluateOperationalAlerts, parseOperationalAlertPolicy } from './runtime-alerts'
 import { readSqliteControlPlaneStatus } from './status-sqlite-composition'
+import { resolveSqliteWriteHealthJournalPath } from './sqlite-write-error-journal'
+import {
+  parseStatusArgs,
+  readStatusPolicy,
+  verifyStrictStatus,
+} from './status-verification'
 
 loadDotenvChain()
 
@@ -17,6 +24,8 @@ function databasePath(value: string | undefined, fallback: string): string {
 }
 
 async function main(): Promise<void> {
+  const command = parseStatusArgs(packageScriptArgs(process.argv.slice(2)))
+  const reviewedPolicy = command.policyPath ? readStatusPolicy(command.policyPath) : null
   const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
   const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
   const runtimeStatusPath = databasePath(
@@ -38,14 +47,21 @@ async function main(): Promise<void> {
     'FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS',
   )
   const now = new Date().toISOString()
-  const alertPolicy = process.env.FEED_V3_STATUS_ALERT_POLICY_JSON?.trim()
+  const alertPolicy = reviewedPolicy?.policy.controlPlaneAlerts ?? (process.env.FEED_V3_STATUS_ALERT_POLICY_JSON?.trim()
     ? parseControlPlaneAlertPolicy(JSON.parse(process.env.FEED_V3_STATUS_ALERT_POLICY_JSON))
-    : null
+    : null)
   const activityWindowMs = positiveInteger(
     process.env.FEED_V3_STATUS_ACTIVITY_WINDOW_MS, 30 * 60_000, 'FEED_V3_STATUS_ACTIVITY_WINDOW_MS',
   )
+  const writeHealthJournalPath = resolveSqliteWriteHealthJournalPath(process.env, PACKAGE_DIR)
+  const writeHealthStaleAfterMs = positiveInteger(
+    process.env.FEED_V3_SQLITE_WRITE_ERROR_HEARTBEAT_STALE_MS,
+    5 * 60_000,
+    'FEED_V3_SQLITE_WRITE_ERROR_HEARTBEAT_STALE_MS',
+  )
   const status = await readSqliteControlPlaneStatus({
     newsPath, pipelinePath, now, alertPolicy, activityWindowMs,
+    writeHealthJournalPath, writeHealthStaleAfterMs,
   })
   const { researchRuntime, entityRuntime } = await readFeedV3RuntimeStatusAvailability({
     researchPath: runtimeStatusPath,
@@ -53,12 +69,18 @@ async function main(): Promise<void> {
     entityPath: entityRuntimeStatusPath,
     entityStaleAfterMs: entityRuntimeStaleAfterMs,
   })
-  const operationalAlertPolicy = process.env.FEED_V3_OPERATIONAL_ALERT_POLICY_JSON?.trim()
+  const operationalAlertPolicy = reviewedPolicy?.policy.operationalAlerts ?? (process.env.FEED_V3_OPERATIONAL_ALERT_POLICY_JSON?.trim()
     ? parseOperationalAlertPolicy(JSON.parse(process.env.FEED_V3_OPERATIONAL_ALERT_POLICY_JSON))
-    : null
+    : null)
   const runtime = { researchRuntime, entityRuntime }
   const operationalAlerts = evaluateOperationalAlerts({ status, runtime, policy: operationalAlertPolicy })
-  process.stdout.write(`${formatControlPlaneStatusJson({ ...status, ...runtime, operationalAlerts })}\n`)
+  const verification = command.strict && reviewedPolicy
+    ? verifyStrictStatus({
+      status, runtime, operationalAlerts, policy: reviewedPolicy.policy, policySha256: reviewedPolicy.sha256,
+    })
+    : null
+  process.stdout.write(`${formatControlPlaneStatusJson({ ...status, ...runtime, operationalAlerts, verification })}\n`)
+  if (verification && !verification.passed) process.exitCode = 2
 }
 
 function positiveInteger(raw: string | undefined, fallback: number, name: string): number {

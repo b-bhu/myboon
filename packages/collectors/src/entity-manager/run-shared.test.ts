@@ -10,6 +10,7 @@ import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-st
 import { defaultRuntimeControl } from '../signal-platform/runtime-control'
 import {
   createSharedEntityRuntime,
+  isSharedEntityProcessEntrypoint,
   waitForSharedEntityShutdown,
   type SharedEntityShutdownSignalPort,
 } from './run-shared'
@@ -17,6 +18,12 @@ import type { SharedEntityWorkerOptions } from './shared-worker'
 import { SqliteEntityShadowObservationStore } from './sqlite-shadow-observation-store'
 
 const noOpHealthWriter = { async write() {} }
+
+test('shared Entity entrypoint runs both directly and through PM2', () => {
+  assert.equal(isSharedEntityProcessEntrypoint({ direct: true, nodeAppInstance: undefined }), true)
+  assert.equal(isSharedEntityProcessEntrypoint({ direct: false, nodeAppInstance: '0' }), true)
+  assert.equal(isSharedEntityProcessEntrypoint({ direct: false, nodeAppInstance: undefined }), false)
+})
 
 function migrationReport(overrides: Record<string, unknown> = {}) {
   return {
@@ -156,6 +163,7 @@ test('shadow composition writes observations source-locally without Supabase/pro
       supabaseFactory() { forbiddenConstruction += 1; throw new Error('shadow write') },
       gatewayFactory() { forbiddenConstruction += 1; throw new Error('shadow provider') },
       healthWriter: { async write(snapshot) { healthSnapshots.push(snapshot) } },
+      runtimeControl: { read: defaultRuntimeControl },
       workerFactory: workerFactory((options) => { captured = options }),
     })
 
@@ -535,6 +543,7 @@ test('active migration preflight fails before the worker can claim', async () =>
         } as never
       },
       healthWriter: noOpHealthWriter,
+      runtimeControl: { read: defaultRuntimeControl },
       workerFactory: (options) => ({
         async runShadowCycle() { return { inspected: 0, sampled: 0, accepted: 0, rejected: 0 } },
         async runActiveCycle() {

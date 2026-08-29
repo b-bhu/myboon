@@ -6,7 +6,7 @@ import test from 'node:test'
 import {
   parseDeepContainmentVerificationArgs,
   runDeepContainmentVerification,
-  type DeepContainmentVerificationArtifact,
+  type DeepContainmentVerificationOutcome,
 } from './containment-verification'
 
 test('containment verifier refuses dry-run, implicit fixture, and relative output targets', () => {
@@ -31,8 +31,8 @@ test('containment verifier emits only a redacted proof artifact and never enable
   const command = parseDeepContainmentVerificationArgs([
     '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'registry.sqlite'), '--artifact', join(dir, 'report.json'),
   ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
-  const expected: DeepContainmentVerificationArtifact = {
-    schemaVersion: 'myboon.deep_containment_verification.v1', fixture: 'descendant-timeout-v1',
+  const expected: DeepContainmentVerificationOutcome = {
+    fixture: 'descendant-timeout-v1',
     executedAt: '2026-08-26T00:00:00.000Z', systemdAvailable: true, timeoutObserved: true,
     descendantUnitInactive: true, registryCleared: true, temporaryWorkspaceRemoved: true,
     passed: true, enablesDeepResearch: false,
@@ -41,10 +41,14 @@ test('containment verifier emits only a redacted proof artifact and never enable
   try {
     const actual = await runDeepContainmentVerification(command, {
       execute: async () => expected,
+      hashFile: async () => 'a'.repeat(64),
       writeArtifact: async (path, artifact) => { written = { path, artifact } },
     })
-    assert.deepEqual(actual, expected)
-    assert.deepEqual(written, { path: join(dir, 'report.json'), artifact: expected })
+    assert.deepEqual({ ...actual, schemaVersion: undefined, identity: undefined }, {
+      ...expected, schemaVersion: undefined, identity: undefined,
+    })
+    assert.deepEqual(written, { path: join(dir, 'report.json'), artifact: actual })
+    assert.match(actual.identity.artifactPayloadSha256, /^[a-f0-9]{64}$/)
     assert.equal(JSON.stringify(actual).includes('traceId'), false)
     assert.equal(JSON.stringify(actual).includes('tempPath'), false)
   } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -60,6 +64,7 @@ test('containment verifier performs zero execution or artifact writes for protec
   const dependencies = {
     execute: async () => { executions += 1; throw new Error('must not execute') },
     writeArtifact: async () => { writes += 1 },
+    hashFile: async () => 'a'.repeat(64),
   }
   try {
     const protectedCommand = parseDeepContainmentVerificationArgs([
@@ -81,8 +86,8 @@ test('containment artifact publication is no-replace even if a target appears af
   const command = parseDeepContainmentVerificationArgs([
     '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'scratch.sqlite'), '--artifact', artifactPath,
   ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
-  const expected: DeepContainmentVerificationArtifact = {
-    schemaVersion: 'myboon.deep_containment_verification.v1', fixture: 'descendant-timeout-v1',
+  const expected: DeepContainmentVerificationOutcome = {
+    fixture: 'descendant-timeout-v1',
     executedAt: '2026-08-26T00:00:00.000Z', systemdAvailable: true, timeoutObserved: true,
     descendantUnitInactive: true, registryCleared: true, temporaryWorkspaceRemoved: true,
     passed: true, enablesDeepResearch: false,
@@ -90,6 +95,7 @@ test('containment artifact publication is no-replace even if a target appears af
   try {
     await assert.rejects(runDeepContainmentVerification(command, {
       execute: async () => { writeFileSync(artifactPath, 'concurrent-owner', { mode: 0o600 }); return expected },
+      hashFile: async () => 'a'.repeat(64),
     }), /EEXIST|exist/i)
     assert.equal(readFileSync(artifactPath, 'utf8'), 'concurrent-owner')
   } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -101,14 +107,40 @@ test('containment artifact is published mode-0600 after a successful explicit sc
   const command = parseDeepContainmentVerificationArgs([
     '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'scratch.sqlite'), '--artifact', artifactPath,
   ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
-  const expected: DeepContainmentVerificationArtifact = {
-    schemaVersion: 'myboon.deep_containment_verification.v1', fixture: 'descendant-timeout-v1',
+  const expected: DeepContainmentVerificationOutcome = {
+    fixture: 'descendant-timeout-v1',
     executedAt: '2026-08-26T00:00:00.000Z', systemdAvailable: true, timeoutObserved: true,
     descendantUnitInactive: true, registryCleared: true, temporaryWorkspaceRemoved: true,
     passed: true, enablesDeepResearch: false,
   }
   try {
-    await runDeepContainmentVerification(command, { execute: async () => expected })
+    await runDeepContainmentVerification(command, {
+      execute: async () => expected,
+      hashFile: async () => 'a'.repeat(64),
+    })
     assert.equal(statSync(artifactPath).mode & 0o777, 0o600)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('containment verifier refuses to publish when fixture identity changes during execution', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'deep-containment-identity-race-'))
+  const command = parseDeepContainmentVerificationArgs([
+    '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'scratch.sqlite'),
+    '--artifact', join(dir, 'artifact.json'),
+  ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
+  const expected: DeepContainmentVerificationOutcome = {
+    fixture: 'descendant-timeout-v1', executedAt: '2026-08-26T00:00:00.000Z',
+    systemdAvailable: true, timeoutObserved: true, descendantUnitInactive: true,
+    registryCleared: true, temporaryWorkspaceRemoved: true, passed: true, enablesDeepResearch: false,
+  }
+  let hashes = 0
+  let writes = 0
+  try {
+    await assert.rejects(runDeepContainmentVerification(command, {
+      execute: async () => expected,
+      hashFile: async () => (++hashes === 3 ? 'c' : 'a').repeat(64),
+      writeArtifact: async () => { writes += 1 },
+    }), /identity changed/)
+    assert.equal(writes, 0)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

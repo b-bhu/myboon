@@ -23,6 +23,14 @@ families but does **not** filter DNS names. Approved-domain enforcement belongs
 to the registered browser/search/HTTP worker connectors. This design does not
 claim systemd provides hostname allowlisting.
 
+The checked-in read-only egress verifier treats `IPAddressDeny=any`, an exact
+reviewed `IPAddressAllow` CIDR set, unit attachment, and domain-resolution
+binding as separate observations. A missing property or an enforcement layer
+that the systemd adapter cannot observe remains `null` and makes the report
+incomplete. In particular, systemd IP address properties alone cannot prove
+hostname-to-address binding, so that adapter cannot independently approve a
+domain-based policy. The verifier never mutates a unit or firewall.
+
 ## Deployment verification
 
 Before enabling Phase 6 on a VPS, an operator must inspect the generated unit
@@ -42,3 +50,7 @@ The failure-injection procedure must demonstrate that timeout and cancellation
 leave the unit inactive with no live PIDs in its `ControlGroup`, and that the
 temporary/profile directory is removed. These checks are deployment
 requirements; this ADR does not assert they have already passed on any host.
+The v2 failure-injection artifact additionally binds the canonical verifier
+configuration, fixture bytes, host executable bytes, and artifact payload with
+SHA-256 digests. A separate offline command recomputes every identity available
+to the reviewer without executing the fixture.

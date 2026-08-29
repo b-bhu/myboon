@@ -1561,16 +1561,33 @@ artifacts to the source/stage cutover manifest:
    approved Supabase project. This PRD and branch do not authorize applying it.
 3. A target-VPS deep containment artifact proving transient-service timeout,
    inactive cgroup, empty scratch verification registry, and removed temporary
-   state, plus a clean read-only audit of both source-routed live registries.
-4. A measured two-times admitted-arrival load report. The checked-in
-   logical-clock SQLite harness is preparatory evidence only.
-5. A provider-outage rehearsal artifact bound to a tracked cohort and proving
-   zero claims/attempt spend while open, exactly one half-open probe, resumed
-   completion, and no duplicate or terminal outage artifacts.
+   state, bound to the verifier configuration, fixture, host executable, and
+   artifact payload, plus a clean read-only audit of both source-routed live
+   registries and independently discovered units/processes/scratch roots. The
+   OS egress-policy evidence must be complete; connector hostname validation or
+   `RestrictAddressFamilies` alone is not OS destination enforcement.
+4. A measured two-times admitted-arrival `live_load_evidence.v1` report, bound
+   to independently reviewed thresholds and raw arrival/status/trace artifacts
+   whose SHA-256 values are recomputed by the validator. The checked-in
+   logical-clock SQLite harness is preparatory evidence only; the checked-in
+   live-load CLI is dry-run planning only and has no provider/load collector.
+5. A provider-outage rehearsal artifact bound to a tracked raw cohort and
+   status/trace samples, proving a real retryable outage trigger, at least two
+   observations spanning the reviewed cooldown, zero claims/attempt spend while
+   open, exactly one half-open probe, full cohort completion, and no duplicate,
+   dead-letter, or terminal outage artifacts.
 6. A rollback-rehearsal artifact bound by digest to the exact source and stage.
-7. A 24-hour live soak report containing PM2 restart counts, queue freshness
-   percentiles, typed failures, Research and Entity provider/circuit health,
-   SQLite size/error deltas, orphan audit, and end-to-end memory handoffs.
+7. A 24-hour live soak report whose raw samples span the full window with a
+   reviewed maximum gap, containing PM2 restart counts and continuous uptime,
+   queue freshness percentiles and sample counts, typed failures, Research and
+   Entity provider/circuit health, SQLite size/error deltas, orphan audit, and
+   completely sampled end-to-end memory handoffs.
+
+All four operational evidence formats use exact-key validation and bind a
+separately supplied, unexpired manual-review policy artifact by its recomputed
+file digest. Every raw artifact reference is an absolute path plus declared
+SHA-256; the validator recomputes the digest from bytes and rejects missing,
+aliased, duplicate, or modified inputs.
 
 Until all applicable artifacts pass and a non-expired manual-review receipt is
 present, the shared workers remain safe-off and the legacy claimers remain the

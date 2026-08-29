@@ -4,6 +4,7 @@ export {
   InMemoryDeepResearchExecutionRegistry,
   buildDeepResearchUnitName,
   buildSystemdRunArgs,
+  DEEP_RESEARCH_STATIC_SYSTEMD_PROPERTIES,
   validateDeepResearchJob,
 } from './executor'
 export type {
@@ -65,6 +66,7 @@ export {
 export {
   NodeDeepResearchOrphanInspector,
   discoverDeepResearchOrphans,
+  validateDeepResearchAuditRoots,
 } from './orphan-discovery'
 export type {
   DeepResearchDiscoverySnapshot,
@@ -97,7 +99,27 @@ export type {
   DeepContainmentVerificationArtifact,
   DeepContainmentVerificationCommand,
   DeepContainmentVerificationDependencies,
+  DeepContainmentVerificationOutcome,
 } from './containment-verification'
+export {
+  parseDeepContainmentArtifactValidationArgs,
+  validateDeepContainmentArtifact,
+} from './containment-artifact-validator'
+export {
+  NodeSystemdEgressPolicyInspector,
+  parseDeepResearchEgressPolicyVerificationArgs,
+  verifyDeepResearchEgressPolicy,
+} from './egress-policy-verification'
+export type {
+  DeepResearchEgressPolicyInspection,
+  DeepResearchEgressPolicyInspectionPort,
+  DeepResearchEgressPolicyVerificationCommand,
+  DeepResearchEgressPolicyVerificationReport,
+} from './egress-policy-verification'
+export type {
+  DeepContainmentArtifactValidationCommand,
+  DeepContainmentArtifactValidationReport,
+} from './containment-artifact-validator'
 export {
   DEEP_RESEARCH_EXECUTION_TABLE,
   SqliteDeepResearchExecutionRegistry,

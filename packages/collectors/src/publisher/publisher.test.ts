@@ -137,6 +137,17 @@ test('buildPublication maps editor draft content without rewriting', () => {
   assert.equal(publication.status, 'published')
 })
 
+test('buildPublication normalizes a fractional draft priority for the integer public feed', () => {
+  const publication = buildPublication(
+    draft({ priority: 0.7 }),
+    entity(),
+    [memory()],
+    '2026-07-03T01:00:00.000Z'
+  )
+
+  assert.equal(publication.priority, 1)
+})
+
 test('runPublisher skips non-draft actions and invalid drafted rows', async () => {
   const store = new InMemoryPublisherStore([
     draft({ id: 'watch-1', action: 'watch', status: 'watching' }),

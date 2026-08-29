@@ -109,10 +109,11 @@ function defaultContext(input: EvidenceReusePolicyInput): Omit<EvidenceReuseCont
   const current = currentReuseState(input)
   const requestedUrl = normalizeUrl(input.artifact.requestedUrl)
   const sourceContent = record(input.signal.content)
-  const contentHash = stringValue(sourceContent?.contentHash)
-    ?? current?.contentHashByRequestedUrl?.[requestedUrl]
-  const finalUrl = stringValue(sourceContent?.finalUrl)
-    ?? current?.finalUrlByRequestedUrl?.[requestedUrl]
+  // A Signal content hash identifies the upstream signal payload/headline; it
+  // is not the hash of bytes retrieved from requestedUrl. Only an explicit
+  // URL-keyed revalidation observation can be compared with artifact bytes.
+  const contentHash = current?.contentHashByRequestedUrl?.[requestedUrl]
+  const finalUrl = current?.finalUrlByRequestedUrl?.[requestedUrl]
   const plannedSourceUrl = input.artifact.authority === 'source_url'
     ? input.workItem.retrievalPlan.sourceUrl : input.artifact.requestedUrl
   return {

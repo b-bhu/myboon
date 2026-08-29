@@ -3,15 +3,25 @@ import test from 'node:test'
 import { formatDeepOrphanAudit, parseDeepOrphanAuditArgs } from './orphan-audit-command'
 
 test('parser defaults to both source-local production databases and accepts one explicit scratch registry', () => {
-  assert.deepEqual(parseDeepOrphanAuditArgs([], {}), {
-    registryPaths: ['.data/news.sqlite', '.data/pipeline.sqlite'], registryRequired: true, productionDefault: true,
+  const defaults = parseDeepOrphanAuditArgs([], {})
+  assert.deepEqual(defaults.registryPaths, ['.data/news.sqlite', '.data/pipeline.sqlite'])
+  assert.equal(defaults.productionDefault, true)
+  assert.deepEqual(defaults.configurationErrors, [
+    'temp_roots_not_configured', 'profile_roots_not_configured', 'sandbox_executable_not_configured',
+  ])
+  const configured = parseDeepOrphanAuditArgs([], {
+    NEWS_SQLITE_PATH: '/run/news.sqlite', PIPELINE_SQLITE_PATH: '/run/pipeline.sqlite',
+    FEED_V3_DEEP_RESEARCH_AUDIT_TEMP_ROOTS: '/var/tmp/myboon-deep-workspaces',
+    FEED_V3_DEEP_RESEARCH_AUDIT_PROFILE_ROOTS: '/var/tmp/myboon-deep-profiles',
+    FEED_V3_DEEP_RESEARCH_WORKER_EXECUTABLE: '/opt/myboon/deep-worker',
+    FEED_V3_DEEP_RESEARCH_AUDIT_LIMIT: '25',
   })
-  assert.deepEqual(parseDeepOrphanAuditArgs([], { NEWS_SQLITE_PATH: '/run/news.sqlite', PIPELINE_SQLITE_PATH: '/run/pipeline.sqlite' }), {
-    registryPaths: ['/run/news.sqlite', '/run/pipeline.sqlite'], registryRequired: true, productionDefault: true,
-  })
-  assert.deepEqual(parseDeepOrphanAuditArgs(['--registry', '/tmp/deep.sqlite']), {
-    registryPaths: ['/tmp/deep.sqlite'], registryRequired: true, productionDefault: false,
-  })
+  assert.deepEqual(configured.registryPaths, ['/run/news.sqlite', '/run/pipeline.sqlite'])
+  assert.equal(configured.limit, 25)
+  assert.deepEqual(configured.configurationErrors, [])
+  const scratch = parseDeepOrphanAuditArgs(['--registry', '/tmp/deep.sqlite'])
+  assert.deepEqual(scratch.registryPaths, ['/tmp/deep.sqlite'])
+  assert.equal(scratch.productionDefault, false)
   assert.throws(() => parseDeepOrphanAuditArgs(['--apply']), /Usage/)
 })
 
@@ -53,4 +63,23 @@ test('missing configured source-local production database is an incomplete audit
   assert.equal(report.registryPresent, false)
   assert.equal(report.registryRequired, true)
   assert.equal(report.incompleteAudits, 1)
+})
+
+test('formatter includes redacted unregistered discovery and explicit inspection gaps', () => {
+  const report = formatDeepOrphanAudit({
+    schemaVersion: 'myboon.deep_research_orphan_audit.v1',
+    auditedAt: '2026-08-26T12:00:00.000Z', registeredExecutions: 0, entries: [],
+  }, true, true, {
+    auditedAt: '2026-08-26T12:00:00.000Z', activeExecutions: 0, suspectedOrphans: 1,
+    unregisteredArtifacts: [{ kind: 'sandbox_executor', identifier: 'pid:42' }],
+    incomplete: true, errors: ['profile_directory_inspection_failed'],
+  }, {
+    limit: 25, transientUnits: true, tempRootsConfigured: 1,
+    profileRootsConfigured: 1, sandboxExecutablesConfigured: 1,
+  })
+  assert.equal(report.schemaVersion, 'myboon.deep_research_orphan_audit_report.v2')
+  assert.equal(report.suspectedOrphans, 1)
+  assert.equal(report.incomplete, true)
+  assert.deepEqual(report.unregisteredArtifacts, [{ kind: 'sandbox_executor', identifier: 'pid:42' }])
+  assert.doesNotMatch(JSON.stringify(report), /\/secret|argv|tempPath|profilePath/)
 })

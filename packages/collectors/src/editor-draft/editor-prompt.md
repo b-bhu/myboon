@@ -65,3 +65,6 @@ Return strict JSON only:
   ]
 }
 ```
+
+`priority` must be an integer score from 0 to 100. `confidence` remains a
+number from 0 to 1.

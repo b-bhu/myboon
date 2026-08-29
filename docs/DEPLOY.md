@@ -2,6 +2,10 @@
 
 ## Processes managed by PM2
 
+The reviewed ecosystem contains exactly eight registrations. The four retired
+source-specific Research and Entity registrations must not remain alongside
+the two shared Feed V3 owners.
+
 | Name | Package | Schedule |
 |------|---------|---------|
 | `myboon-api` | `packages/api` | persistent HTTP server (port 3000) |
@@ -114,22 +118,36 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
   `pnpm --filter @myboon/collectors pipeline-store:status`
 - Verified online backups for both `pipeline.sqlite` and `news.sqlite`:
   `pnpm --filter @myboon/collectors pipeline-store:backup`
-  (run it on a cron; it is cheap)
+  (run it on a cron; it is cheap). Each no-replace `.sqlite` backup has a
+  companion `.sqlite.manifest.json` containing a redacted/digested source
+  identity, backup SHA-256 and size, SQLite integrity/schema identity, exact
+  table counts, and creation time. A timestamp collision fails instead of
+  replacing either artifact. Backup creation never prunes older files.
+- Pruning is a separate dry-run-first command. Supply an absolute directory,
+  store, retention count, and per-invocation deletion limit; inspect the exact
+  `candidateDeletePaths` in the JSON audit, then repeat with `--apply`:
+  ```bash
+  pnpm --filter @myboon/collectors pipeline-store:backup:prune -- \
+    --store news --backup-dir /srv/myboon/backups --keep 14 --limit 10
+  pnpm --filter @myboon/collectors pipeline-store:backup:prune -- \
+    --store news --backup-dir /srv/myboon/backups --keep 14 --limit 10 --apply
+  ```
 - Restore is deliberately a separate, dry-run-first command and never chooses a
   live target implicitly. Review the integrity output, stop the owning workers,
   and then repeat with `--apply`; add `--force` only when replacing an existing
   target is explicitly approved:
   ```bash
   pnpm --filter @myboon/collectors pipeline-store:restore -- \
-    --store news --backup /absolute/path/news.sqlite.backup \
+    --store news --backup /absolute/path/news-2026-08-27T12-00-00-000Z.sqlite \
     --target /absolute/path/news.sqlite.restored
   pnpm --filter @myboon/collectors pipeline-store:restore -- \
-    --store news --backup /absolute/path/news.sqlite.backup \
+    --store news --backup /absolute/path/news-2026-08-27T12-00-00-000Z.sqlite \
     --target /absolute/path/news.sqlite.restored --apply
   ```
-  The command verifies the selected backup before copying and verifies the
-  restored file afterward. It does not delete the backup or infer production
-  paths.
+  The companion manifest is required. The command recomputes and validates its
+  backup digest, integrity, schema identity, and table counts before copying,
+  then verifies the restored file afterward. It does not delete the backup or
+  infer production paths.
 - Failed-work recovery is dry-run first and stage-specific. Examples:
   ```bash
   pnpm --filter @myboon/collectors pipeline-store:recover-research -- \
@@ -282,14 +300,20 @@ Contract notes:
    ```bash
    pnpm --filter @myboon/collectors pipeline-store:backup
    ```
-2. Verify Hermes/profile and Entity migration readiness without printing
-   secrets:
+2. Verify Hermes/profile as the same operating-system account that owns the
+   PM2 daemon, and verify Entity migration readiness without printing secrets.
+   On the production VPS PM2 is root-owned, so use:
    ```bash
-   hermes --version
-   hermes profile list
+   sudo -n hermes --version
+   sudo -n hermes profile list
+   sudo -n hermes --ignore-rules --provider ollama-cloud \
+     --model deepseek-v4-flash -z 'Return exactly this JSON: {"ok":true}'
    pnpm --filter @myboon/collectors feed-v3:verify-entity-migration
    ```
    (The verifier reports readiness only; it never prints credentials.)
+   If either command fails, stop here. Do not start either scout or either
+   shared owner: otherwise collection can advance while Research/Entity cannot,
+   recreating an avoidable backlog.
 3. Set the Phase 1 env contract above in the shell that invokes PM2 (or in
    `packages/collectors/.env`). Do not hardcode an active mode in the
    ecosystem file.
@@ -308,6 +332,8 @@ Contract notes:
    pm2 save
    ```
 5. Verify:
+   - exact topology: `pm2 list` contains exactly the eight names in the table at
+     the top of this guide;
    - shared workers online: `pm2 list` shows `myboon-feed-v3-research` and
      `myboon-feed-v3-entity-manager` online;
    - clean ownership: `pm2 list` contains none of
@@ -360,6 +386,71 @@ deletes data.
    For an earlier-release rollback, additionally verify its expected legacy
    owners only after that reviewed code/config is deployed.
 
+### Feed V3 Phase 2 stabilization gate
+
+Phase 2 does not change the Phase 1 pipeline topology. It keeps the News and
+Polymarket scouts, one shared Research worker, one shared Entity Manager, the
+two existing SQLite files, light-only research, and deep/classifier/fallback
+disabled. Its new command is a strict read-only gate for controlled activation
+and overnight operation; it never claims work, creates tables, calls a
+provider, contacts Supabase/Tokens, invokes PM2, or mutates a file.
+
+Configure the exact Phase 1 env contract above, plus reviewed queue/provider
+alert thresholds. The credential values are checked only for non-empty
+presence and never appear in the report:
+
+```dotenv
+FEED_V3_STATUS_ALERT_POLICY_JSON={"queueAgeSloMs":{"news":{"P0":300000,"P1":900000},"polymarket":{"P0":300000,"P1":900000}},"providerErrorRateThreshold":0.10,"deadLetterCountThreshold":0}
+```
+
+Run preflight before opening shared ownership. Missing worker snapshots are
+warnings at this point because the workers may not be started yet; every
+configuration, credential, route, fallback, database availability, and SQLite
+integrity failure is a blocker:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:phase2-check -- --mode preflight
+pnpm --filter @myboon/collectors pipeline-store:backup
+```
+
+If preflight is ready, use only the selective Phase 1 activation commands. Do
+not use `pm2 delete all` or `pm2 restart all`:
+
+```bash
+pm2 delete myboon-news-researcher 2>/dev/null || true
+pm2 delete myboon-polymarket-researcher 2>/dev/null || true
+pm2 delete myboon-news-entity-manager 2>/dev/null || true
+pm2 delete myboon-polymarket-entity-manager 2>/dev/null || true
+pm2 startOrReload ecosystem.config.cjs --only myboon-news-feed-ingestor --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-polymarket-data-engineer --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-research --update-env
+pm2 startOrReload ecosystem.config.cjs --only myboon-feed-v3-entity-manager --update-env
+pm2 save
+```
+
+After telemetry exists, runtime mode requires current active snapshots, exact
+News/Polymarket ownership, closed circuits, available source/control-plane
+status, no active alerts or stuck failures, complete measured cost coverage,
+and a reviewed per-packet ceiling. The ceiling is in USD micros (for example,
+`10000` is USD 0.01). Cost is never inferred from tokens; an unmetered provider
+therefore produces an honest blocker rather than a guessed value.
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:phase2-check -- \
+  --mode runtime --max-cost-usd-micros-per-packet 10000
+```
+
+If runtime is not ready, drain and use the existing Phase 1 rollback sequence:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage research --action drain --apply
+pnpm --filter @myboon/collectors feed-v3:runtime-control -- --stage entity --action drain --apply
+```
+
+This gate is intentionally not the full PRD certification: it does not claim a
+1,000-item quality comparison, a 24-hour soak, deep containment, standard
+research, Market Calendar/X adoption, or approval to delete legacy data.
+
 Read-only status and trace commands:
 
 ```bash
@@ -367,11 +458,33 @@ pnpm --filter @myboon/collectors feed-v3:status
 pnpm --filter @myboon/collectors feed-v3:trace -- --work-id work_...
 ```
 
+For a release gate, do not treat a successfully printed partial status as a
+pass. Supply an independently reviewed, non-expired
+`myboon.feed_v3_status_policy.v1` file and use strict mode:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:status -- \
+  --strict --policy /absolute/reviewed/feed-v3-status-policy.json
+```
+
+Strict status exits nonzero for a partial/unavailable store, missing alert
+coverage, active alert, stale Research or Entity snapshot, expired policy, or
+unavailable durable SQLite write-error count. The report binds the decision to
+the policy file's SHA-256. Normal status remains diagnostic and does not claim
+release readiness.
+
 Status reports durable source-observation and dedup counts when the additive
 observation ledger is present. Monetary cost is reported only from measured
 `costUsdMicros` execution telemetry, with explicit coverage; missing prices are
-never inferred from token counts. SQLite historical write-error counts remain
-explicitly unavailable unless a durable external collector is registered.
+never inferred from token counts. SQLite write failures are recorded as typed,
+redacted events in the separate append-only
+`FEED_V3_SQLITE_WRITE_ERROR_JOURNAL_PATH` sidecar (default
+`.data/feed-v3-sqlite-write-errors.jsonl`). Because it is outside the failed
+transaction, lock/read-only/full-disk/I/O failures can still be observed. A
+successful canonical write refreshes a bounded collector heartbeat; status
+reports coverage unavailable when the journal is missing, invalid, or older
+than `FEED_V3_SQLITE_WRITE_ERROR_HEARTBEAT_STALE_MS` (default five minutes).
+The journal never stores SQL, values, paths, or raw exception messages.
 Missing or corrupt News/Pipeline stores produce typed partial status/trace
 output instead of hiding healthy sources.
 
@@ -427,24 +540,59 @@ review packet cannot be silently joined. The evaluator meters usage from the val
 interactive tools, and contains neither packet prose nor route identity. A
 real reviewed data set is still required; these commands do not fabricate it.
 
-Externally produced rollback-rehearsal and live-soak evidence can be validated
-and redacted without asserting that the evidence exists:
+Externally produced rollback-rehearsal, live-load, live-soak, and provider-outage
+evidence can be validated and redacted without asserting that the evidence
+exists. Every validation requires a separately supplied, manually reviewed
+`myboon.feed_v3_operational_evidence_policy.v1` artifact; thresholds embedded
+in evidence are rejected:
 
 ```bash
 pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
-  --kind rollback --input /absolute/path/rollback.json
+  --kind rollback --input /absolute/path/rollback.json \
+  --policy /absolute/path/reviewed-rollback-policy.json
 pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
-  --kind live-soak --input /absolute/path/live-soak.json
+  --kind live-load --input /absolute/path/live-load.json \
+  --policy /absolute/path/reviewed-live-load-policy.json
 pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
-  --kind provider-outage --input /absolute/path/provider-outage.json
+  --kind live-soak --input /absolute/path/live-soak.json \
+  --policy /absolute/path/reviewed-live-soak-policy.json
+pnpm --filter @myboon/collectors feed-v3:validate-operational-evidence -- \
+  --kind provider-outage --input /absolute/path/provider-outage.json \
+  --policy /absolute/path/reviewed-provider-outage-policy.json
 ```
 
-The validator rejects a claimed pass when measured duration, rollback bounds,
-SQLite errors, dead-letter threshold, ownership restoration, queue integrity,
-or orphan results contradict it. Provider-outage evidence additionally binds a
-tracked cohort and proves zero claims, attempts, provider calls, and terminal
-failures while open; exactly one half-open probe; recovery progress; and zero
-duplicate artifacts. It does not generate production evidence.
+The schemas require exact keys. Evidence binds the reviewed policy by its raw
+file SHA-256 and references each cohort, status, trace, PM2, input, and audit
+artifact by absolute path. Validation re-reads and hashes those files; a
+digest-shaped string alone is never treated as proof. The soak additionally
+requires sampling to span at least 24 hours with bounded gaps, continuous
+expected-process uptime, reviewed sample counts, complete provider/circuit
+coverage, and one latency sample per Entity completion. Provider-outage
+evidence proves a real retryable-failure trigger, at least two observations
+spanning cooldown, zero claims/attempt spend/provider calls/terminal failures
+while open, one successful half-open probe, and full cohort completion without
+duplicates or dead letters. The validator does not generate production
+evidence.
+
+The live-load command is a safe-off planning boundary. It only reads the
+reviewed policy and prints a `myboon.feed_v3_live_load_plan.v1`; it does not
+open a database, invoke a provider, write the requested output, or collect
+evidence:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:live-load -- \
+  --policy /absolute/path/reviewed-live-load-policy.json \
+  --output /absolute/private/live-load-evidence.json \
+  --artifact-dir /absolute/private/live-load-raw \
+  --source-types news,polymarket \
+  --duration-seconds 300 \
+  --baseline-arrivals-per-second 2
+```
+
+Even when `--execute` is supplied, the checked-in CLI fails closed because it
+does not wire a live collector. A future production collector must be reviewed
+and injected through the explicit collector interface; this branch does not
+authorize or implement provider/load execution.
 
 `feed-v3:status` reports Research and Entity runtime snapshot availability as
 `current`, `stale`, `missing`, or `invalid`. The Entity snapshot contains only
@@ -540,6 +688,11 @@ pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
 pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
   --stage research --action drain --apply
 
+# Bind the applied operation ID printed above and wait at most five minutes.
+pnpm --filter @myboon/collectors feed-v3:verify-drain -- \
+  --stage research --operation-id runtime_control_... --sources news,polymarket \
+  --timeout-ms 300000 --poll-ms 1000
+
 # After deployment/restart and queue verification:
 pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
   --stage research --action resume --apply
@@ -547,7 +700,11 @@ pnpm --filter @myboon/collectors feed-v3:runtime-control -- \
 
 The same command accepts `--stage entity`. A drained resident worker finishes
 its current bounded call, performs no new claims, and reports `draining` until
-an applied resume. The control document is atomically replaced with mode 0600;
+an applied resume. `feed-v3:verify-drain` is read-only and passes only when the
+exact control operation is still authoritative, the corresponding runtime
+snapshot is current and drained/stopped, and every named source has available
+status with zero leased work. It exits nonzero on timeout and never infers a
+drain from a stopped PM2 parent alone. The control document is atomically replaced with mode 0600;
 do not edit it by hand. Its lock contains an owning PID and token: a dead-owner
 lock is reclaimed, while a partial lock is reclaimed only after a one-minute
 age gate. A live owner's lock is never stolen.
@@ -714,12 +871,20 @@ pnpm --filter @myboon/collectors feed-v3:deep-orphan-audit
 
 With no arguments the audit reads both configured source databases (News and
 Pipeline, deduplicating identical physical paths); it never creates a missing
-database or table. `--registry /absolute/scratch.sqlite` remains available for
-the synthetic verifier or a manual scratch audit. The command exits with status
-2 when either production database is missing, an expired unit/workspace appears orphaned,
-or systemd/filesystem inspection is incomplete. Its JSON omits trace IDs,
-profile paths, and temporary paths. Cleanup remains an explicit, separately
-reviewed operation.
+database or table. It also independently enumerates bounded
+`myboon-deep-*.service` units, the configured dedicated temporary/profile
+roots, and processes whose executable exactly matches the configured contained
+worker. This finds unregistered artifacts even when no registry row exists.
+The root and executable scope comes from the same `FEED_V3_DEEP_RESEARCH_*`
+configuration used by the runtime; missing scope is reported as incomplete,
+not clean. `--registry`, repeatable `--temp-root`, `--profile-root`, and
+`--sandbox-executable`, plus `--limit`, are available for a reviewed scratch
+audit. The command exits with status 2 when either production database is
+missing, an orphan is suspected, discovery is truncated, or any inspection is
+incomplete. Its v2 JSON includes only unit names, directory basenames, PIDs,
+counts, and typed error codes; it omits trace IDs, command lines, executable
+paths, profile paths, and temporary paths. Cleanup remains an explicit,
+separately reviewed operation.
 
 The VPS containment verifier is also opt-in. It runs only the checked-in
 `descendant-timeout-v1` synthetic fixture, which deliberately leaves a child
@@ -729,8 +894,11 @@ registry. Both files must be new inside an existing scratch directory. The
 command resolves parent directories and refuses the configured News/Pipeline
 databases, aliases through symlinks, duplicate flags, existing targets, and
 registry/artifact collisions; artifact publication is atomic mode-0600 and
-never replaces an existing file. The artifact is redacted and records unit inactivity, registry
-cleanup, and temporary-workspace cleanup, but it does not enable Deep Research:
+never replaces an existing file. The artifact is redacted and records unit
+inactivity, registry cleanup, and temporary-workspace cleanup. Its v2 identity
+binds the canonical verification configuration, checked-in fixture bytes, host
+executable bytes, and canonical artifact payload. It does not enable Deep
+Research:
 
 ```bash
 pnpm --filter @myboon/collectors feed-v3:verify-deep-containment -- \
@@ -739,6 +907,38 @@ pnpm --filter @myboon/collectors feed-v3:verify-deep-containment -- \
   --registry /var/lib/myboon/verification/deep-registry.sqlite \
   --artifact /var/lib/myboon/verification/deep-containment.json
 ```
+
+Validate that artifact offline without starting systemd or executing the
+fixture. By default the validator compares against this checkout's fixture and
+the current Node executable; use explicit copied target-host files when review
+occurs on another host. Missing identity inputs are incomplete rather than
+silently accepted:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:validate-deep-containment -- \
+  --artifact /var/lib/myboon/verification/deep-containment.json \
+  --fixture-file /absolute/review/containment-timeout-fixture.cjs \
+  --host-executable /absolute/review/node
+```
+
+The OS egress check is separately read-only. It inspects an already-existing
+unit's systemd `IPAddressDeny`/`IPAddressAllow` properties; it never starts,
+stops, or changes a unit or firewall. Supply reviewed CIDRs rather than relying
+on DNS names alone:
+
+```bash
+pnpm --filter @myboon/collectors feed-v3:verify-deep-egress-policy -- \
+  --unit myboon-deep-<reviewed-id>.service \
+  --approved-domain example.com \
+  --allowed-cidr 203.0.113.0/24
+```
+
+Systemd address properties cannot prove that changing DNS answers remain bound
+to the approved hostname policy. The built-in inspector therefore reports the
+domain-binding check as incomplete; a reviewed OS enforcement adapter must
+provide that observation before the contract can pass. The JSON hashes the
+unit and policy identities and never emits domain, CIDR, path, or command-line
+values.
 
 Keep `FEED_V3_DEEP_RESEARCH_ENABLED=0` until that host artifact, the cutover
 receipt, contained executable, exact public-domain/tool policy, and source-local
