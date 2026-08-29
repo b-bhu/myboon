@@ -1,21 +1,24 @@
 # myboon Feed
 
-Status: foundation note (polymarket V0 pipeline: data-engineer + researcher + editor + publisher implemented)
+Status: current product and pipeline note (Feed V3 shared research and entity pipeline implemented)
 Scope: source-agnostic design for the myboon feed
 
 ## What The Feed Is
 
-The myboon feed is a 24-hour market intelligence channel and a research memory
-engine.
+The myboon feed is the product's research and story layer. The intended user
+experience is a personal market analyst: developing stories are organized in
+chronological order, latest updates cover the wider market, and the calendar
+shows important dates that have happened or are coming.
 
 It watches many sources, connects observations to durable entities, researches
 what changed, updates the entity graph, applies an editorial test, and publishes
 only when there is something useful for the user.
 
 The feed is not a raw data stream, a generic news app, or a collection of
-source-specific feeds. It should help a serious market participant notice
-something earlier or more clearly, then connect that context to something they
-can inspect or act on.
+source-specific feeds. A user should be able to understand the latest
+development and what happened before it, instead of acting on one isolated
+headline. When a useful action exists, the Story should connect to the relevant
+asset and market rather than becoming a reading dead end.
 
 ## Core Principle
 
@@ -157,9 +160,10 @@ Who amplified the story?
 What changed since we last researched it?
 ```
 
-The visible feed monetizes timely research. The entity graph monetizes the
-memory of all useful research, including research that was not publishable at
-the time.
+The visible feed can eventually support monetization around timely research and
+user actions. The entity graph can support a later context API built from useful
+research memory, including work that was not publishable at the time. Neither
+path has revenue or user validation yet.
 
 ## Entity Maturity
 

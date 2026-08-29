@@ -5,6 +5,11 @@ Date: 2026-07-15
 Owner: myboon Apps
 Platform: mobile-first Expo app, Android beta first
 
+> **Implementation note (2026-08-29):** A Meteora beta surface and wallet
+> position integration now exist. This PRD remains the dated design record; see
+> [`../markets.md`](../markets.md) for the current product-level integration
+> status and [`../VISION.md`](../VISION.md) for current positioning.
+
 ## Purpose
 
 Add Meteora as the first liquidity application inside myboon.

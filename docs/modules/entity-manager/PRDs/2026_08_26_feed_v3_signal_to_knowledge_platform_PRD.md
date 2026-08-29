@@ -1,11 +1,16 @@
 # Feed V3 Signal-to-Knowledge Platform PRD
 
-Status: approved architecture; implementation and production evidence in progress
+Status: approved architecture; phase-one implementation landed on main, with production cutover governed by the release gates below
 Created: 2026-08-26
 Owner: myboon pipeline
 Module: entity-manager / shared research platform
 Review branch: `codex/feed-v3-signal-to-knowledge-prd`
 Supersedes: source-specific research and Entity Manager orchestration described by the existing pipeline PRDs
+
+> **Current-status note (2026-08-29):** The shared runtime and phase-one News
+> and Polymarket wiring landed on main on August 27. This does not waive the
+> safe-off, evidence, or rollback requirements in this PRD; runtime activation
+> must still be read from the operational controls and receipts described below.
 Related:
 
 - [`2026_07_26_entity_pipeline_rebuild_PRD.md`](./2026_07_26_entity_pipeline_rebuild_PRD.md)

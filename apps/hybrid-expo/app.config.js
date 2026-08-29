@@ -89,6 +89,7 @@ const REQUIRED_PUBLIC_ENV = [
   ['EXPO_PUBLIC_PRIVY_APP_ID', 'Privy auth — login and embedded wallets'],
   ['EXPO_PUBLIC_PRIVY_CLIENT_ID', 'Privy auth — required for mobile clients'],
   ['EXPO_PUBLIC_SOLANA_RPC_URL', 'Solana reads; the public fallback is rate-limited'],
+  ['EXPO_PUBLIC_POLYGON_RPC_URL', 'Polygon reads and Predict transaction confirmation'],
 ];
 
 /**

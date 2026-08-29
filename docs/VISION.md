@@ -2,24 +2,28 @@
 
 ## What Is myboon?
 
-**myboon** is a mobile-first context-to-action app for crypto markets, built
-around Solana.
+**myboon** tells users why the market moved and lets them act in the same app.
+It is a mobile product built around Solana.
 
 It helps users understand why markets are moving, what changed, and where the
 relevant action is, without forcing them to piece context together from X,
 Telegram, Discord, YouTube, Instagram, dashboards, news, and trading apps.
 
-The product starts by turning scattered market signals into clear context. That
-context builds durable entity memory and connects timely market understanding to
-integrated action surfaces inside the same mobile experience.
+The product turns scattered market signals into researched, developing stories.
+It then connects those stories to relevant assets and market surfaces, while
+keeping wallet balances and resulting positions visible in the same experience.
 
 ```text
-Market moves -> myboon explains the context -> user opens the relevant market -> positions track what happens next
+Market moves -> myboon explains why -> user opens the relevant market -> myboon tracks what happens next
 ```
 
 ## The Problem
 
-Users do not lack information. They lack useful context at the right time.
+The problem has two connected parts: understanding and action.
+
+Users do not lack information. They lack useful context at the right time, and
+the path from understanding a market move to acting on it is unnecessarily
+fragmented.
 
 Most market participants already gather information from many places:
 
@@ -36,15 +40,18 @@ projects are moving. A dashboard shows volume or open interest. Someone on X
 posts a wallet move. By the time a normal user understands why the market is
 moving, the move may already be crowded or the context may be stale.
 
-Execution is also disconnected from understanding. A user may see a narrative,
-but still has to figure out which venue, asset, market, route, wallet, and app
-to use next.
+Execution is also disconnected from understanding. Even after finding the
+explanation, a user still has to interpret crypto terminology and work out which
+venue, asset, market, route, wallet, and app to use next. That complexity is a
+real part of the problem, especially for someone still learning how crypto
+financial products work.
 
 myboon exists to close that gap.
 
 ## The Vision
 
-The long-term vision is a context-to-action layer for mobile crypto users.
+The long-term vision is one clear mobile experience for understanding, acting,
+and tracking.
 
 myboon should feel like opening one app and immediately knowing:
 
@@ -88,7 +95,9 @@ items that answer:
 
 The first user is not "everyone." The first user is a mobile-first market
 participant who already follows crypto narratives, but does not want to live
-inside five different apps to understand and act on them.
+inside five different apps to understand and act on them. Over time, the same
+product should make crypto feel more familiar to newer users by hiding protocol
+jargon behind clear, consistent financial-product interactions.
 
 ## Product Shape
 
@@ -103,11 +112,11 @@ entity-level context. Each item should have a reason to exist: a price move,
 odds shift, wallet action, funding change, news catalyst, on-chain event, or
 developing story.
 
-The context layer should be fast, but speed alone is not the promise. The
-promise is earlier context and better signal selection than a user can assemble
-manually. Not every researched signal needs to be published. Unpublished
-research can still strengthen the entity graph that makes later context items
-and agent answers better.
+The context layer should be fast, but speed alone is not the goal. The design
+goal is useful context and better signal selection than a raw chronological
+feed. This still needs user validation. Not every researched signal needs to be
+published. Unpublished research can strengthen the entity graph that makes
+later context items and agent answers better.
 
 ### Markets And Actions
 
@@ -121,8 +130,9 @@ Near-term action surfaces include:
 - swaps
 - wallet and position views
 
-The action layer exists because context earns trust. Trading, swaps, and market
-views are not the moat by themselves. The moat is knowing what matters and why.
+The action layer should become useful only after the context earns trust.
+Trading, swaps, and market views are not the differentiator by themselves. The
+product bet is knowing what matters and why, then making the next step clear.
 
 ### Positions
 
@@ -133,7 +143,7 @@ Over time, myboon can become more personalized by understanding what a user
 owns, follows, trades, or cares about. That can make alerts and feed ranking
 more relevant.
 
-This should be treated as an expansion of the context-to-action layer, not the
+This should be treated as an expansion of the connected product loop, not the
 starting point of the product.
 
 ## Why Mobile
@@ -152,8 +162,8 @@ myboon should feel native to a phone:
 - simple to act from
 - useful even when the user has only a minute
 
-The goal is not to shrink a desktop terminal. The goal is to design the market
-intelligence workflow around mobile behavior from the start.
+The goal is not to shrink a desktop terminal. The goal is to design the full
+understand-act-track journey around mobile behavior from the start.
 
 ## How The System Works
 
@@ -186,9 +196,19 @@ Each layer has a job.
 This matters because the context should be grounded in receipts. The app can
 sound simple, but the system underneath should know why a story exists.
 
-## Current Build Direction
+## Current Status And Build Direction
 
-The current build focuses on getting from prototype to public beta.
+As of August 29, 2026, myboon is a working beta built by one founder working
+full-time for the past six months. The mobile app, backend, research pipeline,
+wallet experience, and multiple market integrations exist. A Bitcoin Story can
+hand a user directly to the Phoenix BTC market, where research markers remain
+visible on the chart.
+
+There are no external users, meaningful usage metrics, or revenue yet. Demand
+should not be described as validated. The myboon X account is active and is being
+used to share progress, find early users, and create a feedback loop. The next
+milestone is Android beta distribution through Solana Mobile and direct product
+usage with the first testers.
 
 Near-term priorities:
 
@@ -198,13 +218,28 @@ Near-term priorities:
 - make published context items more evidence-backed
 - improve the mobile experience
 - connect context items to useful action surfaces
-- prepare for Seeker/mobile distribution
+- prepare for Solana Mobile distribution
+- instrument and validate the understand-act-track journey with beta users
 
-The initial collectors and product surfaces are already in motion. The work now
-is to make the context layer sharper, reduce noise, and make the app useful
-enough that early users return for the context.
+The work now is to make the feed sharper, reduce noise, finish the most important
+action paths, and learn whether early users return because the connected
+experience is more useful than their existing collection of apps.
+
+## Founder
+
+Bibhu is the solo founder and product engineer, based in Hyderabad, India, and
+open to relocating if funded. He has nearly seven years of frontend-engineering
+experience building data-heavy interfaces. Outside myboon, Magic Bet placed
+second in the MagicBlock track of the Solana Graveyard Hackathon, and LPCLI
+placed third in a Nosana Builders Challenge.
 
 ## What Makes myboon Different
+
+The closest alternative is not one direct competitor; it is the stack users
+assemble today. Products such as Kaito and Birdeye focus on information or
+market data, while products such as Jupiter and Axiom focus on execution and
+portfolio workflows. Each can be strong at its own job while the user still has
+to carry context between them.
 
 Most products in this space focus on one layer:
 
@@ -228,15 +263,15 @@ catalysts over time.
 
 ## Business Model
 
-The near-term business model follows user activity.
+myboon is pre-revenue. The near-term business model follows user activity.
 
 Potential revenue paths:
 
 - builder or affiliate revenue from prediction market actions
 - swap routing or partner fees
 - perps venue fee share
-- premium alerts, watchlists, or feed filters
-- paid market intelligence APIs in the future, powered by curated entity memory
+- paid context and research APIs in the future, powered by curated entity memory
+  and usage-based payments such as x402
 
 Ads are possible later, but they should not be the core assumption. The first
 business model should come from helping users act on useful market context.
@@ -255,12 +290,14 @@ Once the context is useful and users trust it, myboon can expand into:
 
 These are future paths. The immediate priority is simple:
 
-Build the best mobile context-to-action experience for Solana users.
+Build the clearest mobile experience for Solana users to understand what is
+moving, act if they choose, and track what they own.
 
 ## Success Metrics
 
-myboon should be judged by whether its context is useful enough to bring users
-back and help them take better next steps.
+myboon should be judged by whether the connected experience is useful enough to
+bring users back and reduce unnecessary switching between information, market,
+and portfolio applications.
 
 Important metrics:
 
@@ -277,10 +314,10 @@ The goal is not to publish more. The goal is to publish better.
 
 ## References
 
-- **Repo:** <https://github.com/bucketshop69/myboon>
+- **Repo:** <https://github.com/b-bhu/myboon>
 - **Website:** <https://www.myboon.tech/>
 - **X:** <https://x.com/myboonapp>
 
 ---
 
-*Last updated: May 27, 2026*
+*Last updated: August 29, 2026*

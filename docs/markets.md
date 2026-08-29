@@ -1,6 +1,6 @@
 # myboon Markets
 
-Status: foundation note
+Status: current product note (August 29, 2026)
 Scope: what Markets is in myboon, what is integrated now, and what is planned next
 
 ## What Markets Is
@@ -14,17 +14,18 @@ place to inspect the related market, venue, or action surface inside the app.
 Feed explains what changed -> Markets shows the related action surface
 ```
 
-Markets is not meant to be a generic trading terminal. It exists because market
-intelligence becomes more useful when the user can move from context to a clear
-market surface without jumping across many apps.
+Markets is not meant to be a generic trading terminal. It exists because an
+explanation becomes more useful when the user can move from the developing
+story to a clear market surface without jumping across many apps.
 
 The role of Markets is to connect market intelligence to places where the user
 can inspect, compare, understand, or act.
 
 ## How Markets Fits Into myboon
 
-myboon is a mobile-first market intelligence app. Markets is one of the surfaces
-that completes the loop between signal, context, and action.
+myboon helps users understand why a market moved and act from the same mobile
+app. Markets is the product layer that completes the loop between a researched
+story, a relevant action, and the position that follows.
 
 ```text
 signal -> Feed context -> Markets surface -> user inspection or action
@@ -56,28 +57,33 @@ Category notes:
 
 ## Current Integrated Markets
 
-The current integrated Markets are:
+The current beta contains product surfaces for:
 
 ```text
 Polymarket
 Pacifica
 Phoenix
+Meteora
+Jupiter-routed spot swaps
 ```
 
-These are the Markets surfaces that already exist in the product direction today.
+The strongest demonstrated bridge is currently a Bitcoin Story that opens the
+Phoenix BTC perpetual market and carries researched event markers onto its
+chart. Other story-to-market routes should be treated as beta work, not as a
+fully generalized system.
 
 ## Next Pipeline
 
-The next Markets pipeline is focused on:
+The next Markets pipeline is focused on improving reliability and consistency
+across the existing surfaces, then expanding liquidity coverage through:
 
 ```text
-Meteora
 Raydium
 Orca
 ```
 
-These are expected to expand Markets beyond prediction markets and perps into
-additional Solana market surfaces.
+These are expected to expand the liquidity category beyond the existing Meteora
+surface.
 
 ## Future Dedicated Market Docs
 
@@ -109,12 +115,13 @@ Near-term, that means strengthening:
 Polymarket
 Pacifica
 Phoenix
+Meteora
+Spot swaps
 ```
 
 Next, it means researching and adding:
 
 ```text
-Meteora
 Raydium
 Orca
 ```

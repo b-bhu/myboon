@@ -5,6 +5,12 @@ Date: 2026-07-11
 Owner: myboon product
 P0 timebox: July 10–22, 2026
 
+> **Historical-status note (2026-08-29):** This PRD records the July beta
+> readiness sprint. myboon is now described as a working beta with no external
+> users or revenue. The current product narrative and validation baseline live
+> in [`../VISION.md`](../VISION.md) and
+> [`../applications/2026-08-founder-application-qa.md`](../applications/2026-08-founder-application-qa.md).
+
 ## Purpose
 
 Move myboon from an installable pre-beta build to one coherent, device-tested

@@ -11,6 +11,15 @@ import {
 import { ChainOverlay, HeadlineAloneOverlay } from "./week1/ProblemOverlay";
 import { Captions } from "./week1/Captions";
 import { Thumbnail } from "./week1/Thumbnail";
+import { Week2Captions } from "./week2/Captions";
+import { ForgePitchCaptions } from "./forge/Captions";
+import { FinalSubmissionScreens } from "./final-submission/FinalSubmission";
+import { FinalEternalDemo } from "./final-submission/FinalDemo";
+import {
+  FINAL_ETERNAL_DEMO_TOTAL_FRAMES,
+  FINAL_SUBMISSION_FPS,
+  FINAL_SUBMISSION_TOTAL_FRAMES,
+} from "./final-submission/constants";
 
 /** Source clip lengths, in frames at 30fps, for the caption compositions. */
 const CAPTION_SECTIONS = [
@@ -79,6 +88,38 @@ export const RemotionRoot: React.FC = () => {
           defaultProps={{ section: id }}
         />
       ))}
+      <Composition
+        id="Week2Captions"
+        component={Week2Captions}
+        durationInFrames={2292}
+        fps={30}
+        width={1920}
+        height={1080}
+      />
+      <Composition
+        id="ForgePitchCaptions"
+        component={ForgePitchCaptions}
+        durationInFrames={2055}
+        fps={30}
+        width={1920}
+        height={1080}
+      />
+      <Composition
+        id="FinalSubmissionScreens"
+        component={FinalSubmissionScreens}
+        durationInFrames={FINAL_SUBMISSION_TOTAL_FRAMES}
+        fps={FINAL_SUBMISSION_FPS}
+        width={1920}
+        height={1080}
+      />
+      <Composition
+        id="FinalEternalDemo"
+        component={FinalEternalDemo}
+        durationInFrames={FINAL_ETERNAL_DEMO_TOTAL_FRAMES}
+        fps={FINAL_SUBMISSION_FPS}
+        width={1920}
+        height={1080}
+      />
       <Composition
         id="Week1ProblemHeadline"
         component={HeadlineAloneOverlay}

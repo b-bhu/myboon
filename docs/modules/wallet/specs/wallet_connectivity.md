@@ -1,249 +1,372 @@
 # Wallet Connectivity Model
 
-Status: living specification
-Last amended: 2026-07-26
+Status: current functionality
+Last amended: 2026-08-15
 Owner: myboon Apps
-Scope: how applications inside myboon obtain a wallet capable of signing on the
-chain they need
+Scope: how myboon exposes, activates, resolves, and manages wallets for Solana
 
-This document describes how the system works, not what work is outstanding.
-Amend it when the model changes. Do not add issues, phases, or acceptance
-criteria here — those belong in a PRD.
-
-Companion change plan:
-`docs/modules/wallet/PRDs/2026_07_26_wallet_connectivity_restructure_PRD.md`.
+This is the durable product and engineering contract for wallet connectivity.
+The behavior below is the completed baseline, not a list of proposed work.
+Application PRDs may depend on it without reopening wallet presentation,
+authentication, chain selection, or signer-precedence decisions.
 
 ## The model in one paragraph
 
-An application does not own a wallet connection. It declares the chain it needs
-to sign on, and the connectivity layer resolves that requirement against what
-the user already has. Wallets are held per chain, at the session level, and are
-shared by every application that needs the same chain. When a requirement cannot
-be satisfied, the layer presents one connection modal whose available options
-are filtered by what that chain actually supports.
+Wallets belong to the myboon session, not to an individual venue. An
+application declares the chain and signing capabilities it needs, and the
+connectivity layer either returns an already-active signer or opens the single
+app-wide wallet sheet for that requirement. Privy authentication is shared,
+but its Solana and Polygon wallets are created only when the user explicitly
+activates that chain. External wallets are supported for Solana through Mobile
+Wallet Adapter. The global manager shows every active chain; an application
+requirement shows only the chain that application needs.
 
-## Vocabulary
+## Product language
 
-These four terms are load-bearing. They are used precisely throughout the
-codebase and in every related document.
+User-facing copy uses these terms consistently:
 
-**Backend** — the thing that holds key material. There are two:
-Privy embedded wallets, and external wallets reached over Mobile Wallet Adapter.
+- **Solana wallet** — a wallet used by Spot, Meteora, Phoenix, Pacifica, and
+  other Solana applications.
+- **Polygon wallet** — the myboon wallet used by Polymarket.
+- **External wallet** — a Solana wallet connected through Mobile Wallet
+  Adapter.
+- **myboon wallet** — an embedded wallet reached through email or Google.
+- **Connect wallet** — the global action when no chain is active.
+- **Wallets** — the global action when one or more chains are active.
 
-**Provisioned** — key material exists for a given chain. For Privy this means
-the embedded wallet has been created. For an external wallet it means the user
-has authorized a connection.
+Do not expose “EVM,” “backend,” “provisioned,” “entropy,” or “activation” as
+primary product language. Those terms remain valid in code and diagnostics.
 
-**Active** — the user has expressed intent for this chain. Only active chains
-appear in the Wallet surface, can be funded from within the app, and are offered
-to applications.
+## State vocabulary
+
+**Backend** — the system holding key material. The supported backends are Privy
+embedded wallets and external wallets reached through Mobile Wallet Adapter.
+
+**Provisioned** — key material exists for a chain. For Privy, the embedded
+wallet has been created. For an external wallet, the user has authorized the
+connection.
+
+**Active** — the user explicitly selected that chain and signer for the current
+session. Only active, usable chains appear in the global Wallets manager and
+may satisfy application requirements.
+
+**Dormant** — a chain is not active. Authentication alone does not make a chain
+active and must not make it appear connected.
 
 **Requirement** — an application's declaration of the chain and signing
-capabilities it needs, evaluated by the resolver.
+capabilities it needs.
 
-Provisioned and Active are independent. A chain can be provisioned but dormant
-(key exists, user has not expressed intent). A chain cannot be active without
-being provisioned.
+Provisioned and active are independent. A provisioned wallet can be dormant; a
+chain cannot be active unless its signer is usable.
 
-## The two backends
+## Supported wallet backends
 
-### Privy — universal
+### Privy embedded wallets
 
-One social or passkey login provisions wallets on every supported chain under a
-single user identity. A Privy user has no chain-specific connection step
-anywhere in the product. They log in once; Solana applications work, EVM
-applications work, and a chain added next year works without the user doing
-anything.
+Email or Google establishes one Privy identity. It does not automatically
+create wallets on every supported chain. Both embedded wallet hooks use
+deferred creation:
 
-Privy exposes `useEmbeddedEthereumWallet()` and `useEmbeddedSolanaWallet()`,
-each with a `create()` method, and `createOnLogin` is configurable
-independently per chain in the provider config. This is what makes lazy
-per-chain provisioning possible — see Dormancy below.
+- entering a Solana application can create or activate the Privy Solana wallet;
+- entering Polymarket can create or activate the Privy Polygon wallet;
+- activating one chain does not create, activate, or display the other.
 
-Privy embedded wallets are recoverable across devices and survive reinstall.
+An already-authenticated user is not asked to authenticate again. The relevant
+requirement sheet offers **Enable Polygon wallet**, **Create Solana wallet**, or
+**Use myboon wallet**, depending on existing state.
 
-### External wallets — Solana only, and permanently so
+Signing out of Privy disconnects every active Privy-backed chain because those
+wallets share authentication. A separately connected external Solana wallet
+remains active and unchanged.
 
-Mobile Wallet Adapter is Solana-only by specification. `authorize` accepts
-`solana:mainnet`, `solana:testnet`, and `solana:devnet`; other chain types are
-described as envisioned, not shipped.
+### External wallets
 
-Phantom mobile does hold Ethereum, Base, Polygon, and HyperEVM accounts, but
-those accounts are unreachable through MWA. This is not a gap we can close by
-writing more code, and it is not a Phantom limitation we can route around. It is
-a property of the transport.
+External wallet connectivity is Solana-only through Mobile Wallet Adapter.
+External EVM/Polygon accounts are not reachable through that transport, even
+when the installed wallet application holds them.
 
-**Consequence:** there is no external wallet path for EVM on mobile. An EVM
-application can only ever be satisfied by Privy. This single constraint explains
-most of the asymmetry in this document.
+Consequently:
 
-## Resolution
+- Solana requirements may offer an external wallet, email, or Google;
+- Polygon requirements offer email or Google only;
+- a connected external Solana wallet never satisfies or hides a Polygon
+  requirement.
 
-When an application needs a chain:
+## Session and activation
+
+Activation is per chain and sticky within the session. It survives
+backgrounding, process death, and app restart. The explicit session boundaries
+are disconnecting a wallet and signing out of Privy.
+
+A chain becomes active only through a user action that expresses intent:
+
+- connecting an external wallet for that chain;
+- creating or selecting a myboon wallet for that chain; or
+- satisfying an application's requirement for that chain.
+
+Authentication is not activation. A dormant chain has no active row, no active
+badge, and no implication that it can transact.
+
+Privy wallets are created on demand rather than eagerly created and hidden.
+This prevents an unused chain from acquiring an undisclosed deposit address.
+If a provisioned-but-dormant address is ever found with a non-zero balance, the
+manager surfaces it as a safety exception with an explicit activation action.
+
+## Requirement resolution contract
+
+Applications obtain wallets through the requirement resolver. They never read
+an arbitrary global address and never mount their own connection sheet.
 
 ```text
-1. Chain is active            -> use the connected wallet, no prompt
-2. Chain is provisioned only  -> activate, then use it
-3. Neither                    -> present the connection modal
+1. Requested chain is active and has the required capability
+   -> return the active signer without prompting
+2. Requested chain can be activated for an authenticated Privy user
+   -> open that chain's enable/use presentation
+3. Requested chain has no usable signer
+   -> open that chain's connection options
+4. A recorded wallet cannot sign on this device
+   -> show the neutral recovery presentation
 ```
 
-Resolution is per chain and session-scoped. Connect a Solana wallet once and
-every Solana application in that session uses it. Applications never prompt for
-a chain that is already satisfied.
+Opening a requirement has this completion contract:
 
-**Session boundary.** A session ends only on explicit user action —
-disconnecting a wallet, or logging out. It survives backgrounding, process
-death, and app restart. Activation state is therefore persisted, not held in
-memory: a user who backgrounds the app and returns is not re-prompted for a
-chain they have already activated. Anything less makes stickiness meaningless.
+```ts
+type WalletRequirementOutcome = 'satisfied' | 'cancelled';
 
-## The connection modal
+openForRequirement(input: {
+  chain: 'solana' | 'evm';
+  applicationLabel: string;
+}): Promise<WalletRequirementOutcome>;
+```
 
-There is one connection modal in the product, not one per chain. It offers:
+The promise resolves `satisfied` only after the requested chain is active and
+exposes a signer with the declared capabilities. Dismissal resolves
+`cancelled`. Technical failures reject. The calling application resumes its
+action only after `satisfied`; cancellation and failure preserve the calling
+screen's state.
 
-- **Connect an external wallet** — available only when the required chain has an
-  external path. Today that means Solana only.
-- **Continue with Privy** — always available, on every chain.
+For Polymarket, `poly.enable()` or equivalent account setup runs only after the
+Polygon requirement is satisfied. This avoids callback, ref, and timing races.
 
-What varies per application is which options render, driven by the chain
-requirement:
+## The canonical app-wide wallet sheet
 
-| Application needs | External wallet | Privy |
-|---|---|---|
-| Solana | offered | offered |
-| EVM | not offered — no mobile transport exists | offered |
+There is exactly one mounted wallet sheet. Every screen uses its provider; no
+venue, profile, or detail screen owns a local copy.
 
-An EVM application therefore shows a single-option modal. This is a filtering
-outcome, not a separate screen. The modal must be built as a list of available
-options rather than a Privy-branded screen, so that adding an external EVM
-transport later is a change to the availability rule and nothing else.
+It has two explicit intents:
 
-## Dormancy
+```ts
+type WalletSheetIntent =
+  | { kind: 'manage' }
+  | {
+      kind: 'requirement';
+      chain: 'solana' | 'evm';
+      applicationLabel: string;
+    };
+```
 
-A user who logs in through an EVM application gets Privy wallets. Privy can
-provision Solana at the same time. That user has expressed no intent toward
-Solana, does not know a Solana address exists, and has no mental model for it.
-Showing it would be presenting the user with an account they did not ask for —
-and if they funded it, real value would sit somewhere they do not understand.
+### Management intent
 
-So: **only active chains are surfaced.** A chain becomes active when the user
-takes an action implying intent for it — connecting an external wallet on that
-chain, or entering an application that requires it.
+Management answers: **Which wallets is myboon actively using?**
 
-Activation is per chain, sticky, and one-way within a session lifecycle. It is
-not per application. Once Solana is active it stays active; entering a second
-Solana application does not re-prompt.
+- Show one card per active chain, Solana first.
+- Show the chain, truncated address, source, copy action, and appropriate
+  disconnect/manage action.
+- Show all active chains regardless of which screen opened the manager.
+- Do not show dormant chains as connected or render empty chain placeholders.
+- When nothing is active, show Solana-primary onboarding with email, Google,
+  and external-wallet choices. Do not promote Polygon until the user enters a
+  Polygon application.
 
-Because `createOnLogin` is configurable per chain and both wallet hooks expose
-`create()`, dormancy is implemented as **deferred creation, not hidden
-display**. A dormant chain has no wallet, and therefore no address that can
-receive funds by accident. This is strictly safer than provisioning eagerly and
-hiding the result, and it is the required implementation.
+The state matrix is:
 
-Deferred creation means a dormant chain should never hold a balance, because it
-should never have an address. The Wallet surface still checks balances for any
-provisioned-but-dormant chain and surfaces a non-zero one with an activation
-prompt. This is a safety net, not an expected path: if it ever fires, deferred
-creation has failed somewhere and that is a bug. Concealing a funded address
-would be a correctness failure, so the check stays even though it should be
-unreachable.
+| Active session state | Global Wallets manager |
+|---|---|
+| No wallet | Solana-primary onboarding; no empty chain cards |
+| External Solana only | Solana card · External wallet |
+| myboon Solana only | Solana card · myboon wallet |
+| myboon Polygon only | Polygon card · myboon wallet |
+| myboon Solana + myboon Polygon | Two cards |
+| External Solana + myboon Polygon | Two cards; external remains Solana signer |
+| External Solana + myboon Solana + myboon Polygon | Two active-chain cards; do not expose a Solana switcher |
+| External Solana + authenticated Privy, Polygon dormant | Solana card only |
 
-## The Wallet surface
+One chain produces one active card. Multiple Solana backends describe
+provenance and dormant state; they are not multiple selectable signers in this
+version.
 
-Wallet is a top-level destination in the home screen, alongside Feed and
-Apps/Markets. It is the only place a user manages connections. Applications do
-not own connection UI; they trigger the shared modal when a requirement is
-unsatisfied.
+### Requirement intent
 
-The surface has two states over the same screen, not two products:
+Requirement mode answers: **What wallet does this application need now?**
 
-- **Nothing active** — it is a connection manager. It presents the connection
-  modal and explains what connecting does.
-- **Something active** — it is a portfolio. Active chains, their addresses,
-  balances, and positions. Switching or disconnecting a wallet is an explicit
-  action taken here, never a per-application prompt.
+- Show only the requested chain's choices and actions.
+- Use a context rail in the form `APPLICATION · CHAIN`.
+- Never show an unrelated chain as a wallet row.
+- Another active chain may be acknowledged with one quiet reassurance sentence.
+- If the requirement is already satisfied, do not open the sheet.
 
-Portfolio depth is a scope dial. The surface owns the job; how much of it ships
-first is a PRD question.
+#### Polygon application
 
-## Governing rules
+Polymarket opens a Polygon requirement and renders:
 
-Rules that constrain all future chain work. Enforce in review.
+- rail: **POLYMARKET · POLYGON**;
+- title: **Connect Polygon wallet**;
+- explanation that Polymarket uses Polygon for orders, deposits, and payouts;
+- **Continue with email** and **Continue with Google** when authentication is
+  needed;
+- **Enable Polygon wallet** when the user is already authenticated;
+- **Your Solana wallet stays connected and unchanged** only when Solana is
+  active.
 
-### A signature may AUTHORIZE a key. A signature must never BE a key.
+No Solana card, Solana disconnect action, or external-wallet option appears in
+this presentation. During creation, the action shows **Creating your Polygon
+wallet…**. Success briefly shows **Polygon wallet ready**, closes the sheet,
+and resolves the waiting application requirement.
 
-Key material comes from a CSPRNG or a managed wallet provider. Signatures prove
-that a durable identity approves a generated key — the model Hyperliquid uses
-for agent wallets. Authorization material is safe to leak; key material is not.
+#### Solana application
 
-Ed25519 signing is deterministic under RFC 8032: the same key over the same
-message returns byte-identical output forever. Wallet apps log signatures,
-support tickets contain screenshots of them, and session state holds them. A
-signature is public data. Deriving a key from one means the key is public data
-too, and it cannot be rotated without abandoning the account.
+Spot, Meteora, Phoenix, Pacifica, and other Solana applications open a Solana
+requirement and render:
 
-This rule exists because it was violated once. See the PRD's Problem section for
-the specific instance.
+- rail such as **SPOT · SOLANA** or **METEORA · SOLANA**;
+- title: **Connect Solana wallet**;
+- **Continue with email** and **Continue with Google**;
+- **Connect external wallet**;
+- an enable/use action instead of authentication when the user is already
+  authenticated and a myboon Solana wallet can be activated.
 
-### Applications declare requirements; they do not reach for a global
+No Polygon address, Polygon status, Polymarket profile, or EVM terminology
+appears in this presentation.
 
-Every application states the chain and capabilities it needs, in the style of
-`PerpsVenueDescriptor.capabilities` in
-`apps/hybrid-expo/features/perps/perps.registry.ts`. No module-level mutable
-wallet singleton may exist. A signer is obtained through the resolver, scoped to
-the application that asked for it.
+## Global visibility and venue profiles
 
-### Key material never leaves the device boundary
+Every major Home, Feed, and venue-root screen exposes wallet management in one
+top-bar tap:
 
-Never logged, never sent to our backend, never written to the clipboard.
-Addresses may be logged; keys and signatures over fixed strings may not.
+- no active chain: wallet icon + **Connect wallet**;
+- one or more active chains: wallet icon + **Wallets**;
+- accessible labels: **Connect wallet** or **Manage wallets**.
 
-### Transaction adapters validate calldata before signing
+The control derives its state from all active chains, never from Solana alone.
+An active Polygon-only user therefore sees **Wallets**, not a disconnected
+avatar or Connect state.
 
-The validation in `predict.signing.ts:262-286` is the required pattern for any
-adapter that signs transactions, not an optional extra.
+Wallet management and venue identity remain separate controls:
+
+- **Wallets** manages chain accounts and connection state;
+- a venue profile opens that venue's positions, orders, deposits, and settings.
+
+The controls must have distinct visible or accessible labels and must never be
+represented by two visually identical identity avatars.
+
+## Solana coexistence and signer selection
+
+An external Solana wallet can coexist with myboon Solana and Polygon wallets.
+When external Solana is active, it remains the active Solana signer. Logging
+into Privy for Polygon does not replace it and does not create a Solana wallet
+unless the user explicitly requests one.
+
+Disconnecting external Solana deactivates Solana. The system does not silently
+fall back to a provisioned myboon Solana wallet. A later Solana action opens the
+requirement sheet and asks the user to choose **Use myboon wallet** or connect
+an external wallet. A transaction never changes signer without explicit user
+action.
+
+## Recovery behavior
+
+The repository does not establish which Privy recovery method is configured in
+the Privy dashboard. Product copy therefore does not promise iCloud, Google
+Drive, passcode, recovery key, or any other method-specific recovery.
+
+When Privy records a wallet that cannot sign on the current device:
+
+- show **Wallet unavailable on this device**;
+- do not call wallet creation again or imply the chain is connected;
+- keep the user in the same contextual sheet;
+- provide the configured myboon support path;
+- introduce a method-specific recovery action only after that method is
+  verified and implemented end to end.
+
+## Signing and capability honesty
+
+An active signer is returned only when it satisfies the requesting
+application's declared capabilities. Address presence alone is insufficient.
+
+- Solana transaction applications require transaction signing and a supported
+  broadcast path.
+- Polygon applications use the Privy EVM provider for their declared message,
+  typed-data, or transaction capability.
+- Capability tables reflect device-verified behavior and never route an
+  application to a method that throws “unsupported.”
+- Every transaction adapter validates the operation it asks the wallet to sign.
+
+## Governing security rules
+
+### Applications declare requirements
+
+Applications obtain signers through the resolver, scoped to the application
+that requested them. No module-level mutable wallet singleton may choose a
+wallet implicitly.
+
+### A signature authorizes a key; it is never key material
+
+Signatures are public authorization material. Never derive durable private-key
+material from a deterministic signature.
+
+### Key material stays inside its provider boundary
+
+Private keys are never logged, copied, returned by application APIs, or sent to
+myboon servers. Addresses may be displayed and copied. Sensitive signing
+payloads and signatures over fixed strings are not diagnostic identifiers.
+
+### Transactions are validated before signing
+
+Every transaction adapter decodes and validates the operation, expected chain,
+program or contract, accounts, recipient, amount constraints, and authority
+changes before invoking the signer. A server-built payload is not trusted merely
+because it came from a myboon endpoint.
 
 ## Deliberate exclusions
 
-Each of these is excluded for a stated reason. Revisit by amending this
-document.
+- External EVM/Polygon connection through WalletConnect or Reown.
+- EVM support through Mobile Wallet Adapter.
+- A Solana wallet switcher when external and myboon Solana wallets coexist.
+- Automatic signer fallback after disconnect.
+- Eager creation of every Privy chain wallet at login.
+- ERC-4337 smart accounts.
+- Seed-phrase onboarding for email or Google users.
+- Bridging and cross-chain balance movement.
 
-- **External EVM wallet connect (Reown / WalletConnect).** No mobile transport
-  today. The connection modal is built as a filtered list so this can be added
-  without restructuring.
-- **MWA EVM support.** Not available in the protocol. Not actionable by us.
-- **ERC-4337 smart accounts.** Correct long-term direction; deferred on cost and
-  chain support.
-- **Seed-phrase-backed self-custody EVM as a user-facing product.** A social-auth
-  user must retain full signing ability with no seed phrase and no external
-  wallet. Any design that asks a passkey or email user to record a seed phrase in
-  order to use an application is out of scope.
-- **Bridging.** How value moves between chains is a separate concern.
+These are product-boundary decisions. A future change requires an amendment to
+this specification rather than a venue-specific exception.
 
 ## Trust boundaries
 
-Not all credentials are equivalent, and reviews should not conflate them.
-
-**Account-level key material** — controls funds, cannot be revoked. Governed by
+**Account-level key material** controls funds and cannot be revoked. It follows
 every rule above.
 
-**Protocol session credentials** — for example Polymarket CLOB L2 credentials,
-which can place and cancel orders but cannot move funds out, and are revocable.
-A deliberately lower tier. These may be held server-side.
+**Protocol session credentials**, such as Polymarket CLOB credentials, are
+revocable and may place or cancel orders without holding the user's private
+wallet key. They are a deliberately lower trust tier and must not be treated as
+wallet key material.
 
 ## References
 
 ### Internal
 
-- `apps/hybrid-expo/providers/PrivyProvider.tsx` — embedded wallet config
-- `apps/hybrid-expo/features/perps/perps.registry.ts` — capability descriptor
-  pattern this model follows
-- `apps/hybrid-expo/features/predict/predict.signing.ts` — calldata validation
-  pattern
+- `apps/hybrid-expo/providers/PrivyProvider.tsx` — deferred embedded-wallet
+  creation configuration
+- `apps/hybrid-expo/features/chain/` — requirement, activation, capability, and
+  signer resolution
+- `apps/hybrid-expo/features/wallet/WalletSheetProvider.tsx` — canonical sheet
+  ownership and completion contract
+- `apps/hybrid-expo/features/wallet/components/ConnectionSheet.tsx` — shared
+  management and requirement presentations
+- `apps/hybrid-expo/features/predict/predict.signing.ts` — transaction
+  validation posture
 
 ### External
 
-- [Mobile Wallet Adapter specification](https://github.com/solana-mobile/mobile-wallet-adapter/blob/main/spec/spec.md) — chain scope is Solana-only
-- [Privy React Native quickstart](https://docs.privy.io/basics/react-native/quickstart) — embedded wallets across Ethereum and Solana
-- [Privy Expo Solana wallet creation](https://docs.privy.io/guide/expo/embedded/solana/creation) — `create()` for on-demand provisioning
-- [Hyperliquid nonces and API wallets](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/nonces-and-api-wallets) — authorize-a-generated-key pattern
+- [Mobile Wallet Adapter specification](https://github.com/solana-mobile/mobile-wallet-adapter/blob/main/spec/spec.md)
+- [Privy React Native quickstart](https://docs.privy.io/basics/react-native/quickstart)
+- [Privy Expo Solana wallet creation](https://docs.privy.io/guide/expo/embedded/solana/creation)
