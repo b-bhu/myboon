@@ -15,8 +15,9 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'myboon | A news feed for markets',
-  description: 'A news feed for markets. Take action on everything you read.',
+  title: 'myboon | Know why the market moved',
+  description:
+    'myboon tells you why the market moved and lets you act on it in the same app.',
 }
 
 export default function RootLayout({

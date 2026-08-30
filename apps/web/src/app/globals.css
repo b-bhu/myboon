@@ -9,7 +9,7 @@ body {
 }
 
 .landing-page-gradient {
-  min-height: 100vh;
+  min-height: 100dvh;
   background:
     linear-gradient(
       180deg,
@@ -58,6 +58,8 @@ body {
   }
 }
 
-.phone-container {
-  animation: float-phone 4s ease-in-out infinite alternate;
+@media (prefers-reduced-motion: no-preference) {
+  .phone-container {
+    animation: float-phone 4s ease-in-out infinite alternate;
+  }
 }
