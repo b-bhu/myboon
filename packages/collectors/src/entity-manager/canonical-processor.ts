@@ -12,8 +12,14 @@ import {
   type EvidenceSpan,
   type ValidatedEntityAdmissionDecision,
 } from './admission'
-import { shortlistForPacket, toCanonEntity, normalizeEntityType } from './canon'
+import { isBannedEntitySlug, shortlistForPacket, toCanonEntity, normalizeEntityType } from './canon'
 import { adaptCanonicalResearchPacket } from './canonical-packet-adapter'
+import {
+  EntityAdmissionKnowledgeValidationError,
+  validateEntityAdmissionKnowledge,
+  type EntityAdmissionKnowledgeContextV1,
+  type EntityAdmissionKnowledgePort,
+} from './entity-knowledge-context'
 import { EntityService } from './entity-service'
 import { deriveMemoryIdentityKey } from './memory-identity'
 import { normalizeSlug } from './normalization'
@@ -40,7 +46,7 @@ import type {
 } from './types'
 
 export const CANONICAL_ENTITY_PLAN_SCHEMA_VERSION = 'myboon.canonical_entity_plan.v1' as const
-export const CANONICAL_ENTITY_SHORTLIST_POLICY_VERSION = 'myboon.entity_shortlist.v1' as const
+export const CANONICAL_ENTITY_SHORTLIST_POLICY_VERSION = 'myboon.entity_shortlist.v2' as const
 
 const MAX_PLAN_MEMORIES = 10
 const MAX_CANON_LOOKUP_SLUGS = 100
@@ -128,6 +134,12 @@ export interface EntityServiceCanonicalPacketProcessorOptions {
   store: EntityMemoryStore
   planner: CanonicalEntityPlanningPort
   canonLookup?: EntityCanonLookup
+  /**
+   * Optional reviewed knowledge projection for the real admission path. When
+   * absent, the processor remains catalog-only. Configured lookup failures
+   * fail closed before planner invocation or durable writes.
+   */
+  admissionKnowledge?: EntityAdmissionKnowledgePort
   shortlistPolicyVersion?: string
 }
 
@@ -199,7 +211,16 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
 
     const packetLookup = await canonLookupCall(this.canonLookup, packetHintQuery(canonicalPacket), 'packet entity shortlist')
     const catalog = uniqueEntities(packetLookup.entities.filter((entity) => entity.status === 'active'))
-    const shortlist = targetedShortlist(catalog, packet).map((entity, rank): CanonicalEntityRef => ({
+    const subjectSourceEntitySlugs = explicitlySupportedSourceEntitySlugs(canonicalPacket)
+    const shortlistEntities = targetedShortlist(catalog, packet, subjectSourceEntitySlugs)
+    const knowledgeByEntityId = await admissionKnowledgeByEntityId(
+      this.options.admissionKnowledge,
+      shortlistEntities,
+      canonicalPacket,
+      input.signal,
+    )
+    ensureNotAborted(input.signal)
+    const shortlist = shortlistEntities.map((entity, rank): CanonicalEntityRef => ({
       entityId: entity.id,
       slug: entity.slug,
       name: entity.name,
@@ -207,6 +228,7 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
       aliases: [...entity.aliases],
       summary: entity.summary,
       rank,
+      ...(knowledgeByEntityId.has(entity.id) ? { knowledge: knowledgeByEntityId.get(entity.id)! } : {}),
     }))
     const canonAvailability: CanonAvailability = packetLookup.complete
       ? { state: 'loaded', complete: true }
@@ -486,14 +508,60 @@ function packetHintQuery(packet: ResearchPacketV1): EntityCanonLookupQuery {
   }
 }
 
-function targetedShortlist(catalog: readonly EntityRecord[], packet: ResearchPacket): EntityRecord[] {
-  const canon = catalog.map(toCanonEntity)
-  const ranked = shortlistForPacket(canon, packet)
+function targetedShortlist(
+  catalog: readonly EntityRecord[],
+  packet: ResearchPacket,
+  allowedSourceEntitySlugs: ReadonlySet<string>,
+): EntityRecord[] {
+  const canon = catalog
+    .map(toCanonEntity)
+    .filter((entity) => !isBannedEntitySlug(entity.slug) || allowedSourceEntitySlugs.has(entity.slug))
+  const ranked = shortlistForPacket(canon, packet, 20, {
+    allowSourceEntitySlugs: [...allowedSourceEntitySlugs],
+  })
   const rankedIds = new Set(ranked.map((entity) => entity.id))
   const remainder = canon.filter((entity) => !rankedIds.has(entity.id))
   return [...ranked, ...remainder]
     .slice(0, 20)
     .map((entity) => catalog.find((record) => record.id === entity.id)!)
+}
+
+function explicitlySupportedSourceEntitySlugs(packet: ResearchPacketV1): Set<string> {
+  const output = new Set<string>()
+  for (const hint of packet.entityHints) {
+    const role = hint.role?.trim().toLowerCase().replace(/[\s-]+/g, '_') ?? ''
+    if (role !== 'subject' && role !== 'primary_subject' && role !== 'primary') continue
+    if (hint.claimRefs.length === 0 && hint.evidenceRefs.length === 0) continue
+    for (const label of [hint.name, ...hint.aliases]) {
+      const slug = normalizeSlug(undefined, label)
+      if (isBannedEntitySlug(slug)) output.add(slug)
+    }
+  }
+  return output
+}
+
+async function admissionKnowledgeByEntityId(
+  port: EntityAdmissionKnowledgePort | undefined,
+  entities: readonly EntityRecord[],
+  packet: ResearchPacketV1,
+  signal: AbortSignal,
+): Promise<Map<string, EntityAdmissionKnowledgeContextV1>> {
+  if (!port || entities.length === 0) return new Map()
+  ensureNotAborted(signal)
+  const raw = await storageCall('Entity admission knowledge lookup', () => (
+    port.getEntityAdmissionKnowledge({ entities, packet, signal })
+  ))
+  try {
+    const contexts = validateEntityAdmissionKnowledge(raw, new Set(entities.map((entity) => entity.id)))
+    return new Map(contexts.map((context) => [context.entityId, context]))
+  } catch (error) {
+    if (!(error instanceof EntityAdmissionKnowledgeValidationError)) throw error
+    throw new PlatformFailure({
+      category: 'storage_permanent',
+      message: `Entity admission knowledge is invalid: ${error.message}`,
+      retryable: false,
+    })
+  }
 }
 
 function uniqueEntities(entities: readonly EntityRecord[]): EntityRecord[] {

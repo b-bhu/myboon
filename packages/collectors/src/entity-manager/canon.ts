@@ -120,6 +120,15 @@ export function normalizeEntityType(type: string): string {
   return TYPE_SYNONYMS[cleaned] ?? 'topic'
 }
 
+export interface EntityShortlistOptions {
+  /**
+   * A normally source-only slug may participate when canonical packet
+   * evidence explicitly identifies it as the subject. Source provenance alone
+   * never populates this allowlist.
+   */
+  allowSourceEntitySlugs?: readonly string[]
+}
+
 export function toCanonEntity(record: EntityRecord): CanonEntity {
   return {
     id: record.id,
@@ -158,12 +167,18 @@ function tokenSet(thing: NamedThing): Set<string> {
  * single-word aliases match on word boundaries only ("US" must not match
  * inside "confusing"). Zero LLM cost - this runs before the model is called.
  */
-export function shortlistForPacket(catalog: CanonEntity[], packet: ResearchPacket, limit = 20): CanonEntity[] {
+export function shortlistForPacket(
+  catalog: CanonEntity[],
+  packet: ResearchPacket,
+  limit = 20,
+  options: EntityShortlistOptions = {},
+): CanonEntity[] {
   const text = [packet.title, packet.summary, packet.body.slice(0, 2000)].join('\n').toLowerCase()
   const textTokens = new Set(text.split(/[^a-z0-9]+/).filter(Boolean))
+  const allowedSourceEntities = new Set(options.allowSourceEntitySlugs ?? [])
 
   const scored = catalog.flatMap((entity) => {
-    if (isBannedEntitySlug(entity.slug)) return []
+    if (isBannedEntitySlug(entity.slug) && !allowedSourceEntities.has(entity.slug)) return []
     let score = 0
     for (const label of [entity.name, ...entity.aliases]) {
       const cleaned = label.trim().toLowerCase()

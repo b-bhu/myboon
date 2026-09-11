@@ -1,8 +1,13 @@
 import type { EntityHint, ResearchPacketV1 } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { validateResearchPacket } from '../signal-platform/validation'
+import {
+  EntityAdmissionKnowledgeValidationError,
+  validateEntityAdmissionKnowledge,
+  type EntityAdmissionKnowledgeContextV1,
+} from './entity-knowledge-context'
 
-export const ENTITY_ADMISSION_SCHEMA_VERSION = 'myboon.entity_admission.v1' as const
+export const ENTITY_ADMISSION_SCHEMA_VERSION = 'myboon.entity_admission.v2' as const
 export const ENTITY_ADMISSION_MAX_SHORTLIST_SIZE = 20
 
 export interface CanonicalEntityRef {
@@ -14,6 +19,8 @@ export interface CanonicalEntityRef {
   summary: string | null
   /** Deterministic code-owned rank; lower ranks are preferred. */
   rank: number
+  /** Optional bounded reviewed context; absent keeps the catalog-only path. */
+  knowledge?: EntityAdmissionKnowledgeContextV1
 }
 
 /** A bounded excerpt linked to canonical packet evidence and, optionally, claims. */
@@ -260,7 +267,7 @@ function normalizeShortlist(shortlist: readonly CanonicalEntityRef[]): Canonical
     if (!Number.isInteger(entity.rank) || entity.rank < 0) {
       throw new EntityAdmissionValidationError(`canonicalEntityShortlist[${index}].rank must be a non-negative integer.`)
     }
-    return {
+    const normalized = {
       entityId,
       slug: nonEmpty(entity.slug, `canonicalEntityShortlist[${index}].slug`),
       name: nonEmpty(entity.name, `canonicalEntityShortlist[${index}].name`),
@@ -268,6 +275,19 @@ function normalizeShortlist(shortlist: readonly CanonicalEntityRef[]): Canonical
       aliases: sortedUniqueStrings(entity.aliases, `canonicalEntityShortlist[${index}].aliases`),
       summary: entity.summary === null ? null : nonEmpty(entity.summary, `canonicalEntityShortlist[${index}].summary`),
       rank: entity.rank,
+    }
+    if (entity.knowledge === undefined) return normalized
+    try {
+      const knowledge = validateEntityAdmissionKnowledge([entity.knowledge], new Set([entityId]))[0]
+      if (!knowledge) throw new EntityAdmissionKnowledgeValidationError('Entity admission knowledge is missing.')
+      return { ...normalized, knowledge }
+    } catch (error) {
+      if (error instanceof EntityAdmissionKnowledgeValidationError) {
+        throw new EntityAdmissionValidationError(
+          `canonicalEntityShortlist[${index}].knowledge is invalid: ${error.message}`,
+        )
+      }
+      throw error
     }
   }).sort((left, right) => left.rank - right.rank || compareStrings(left.entityId, right.entityId))
 }

@@ -119,4 +119,12 @@ test('normalizeEntityType collapses the historical type zoo into the fixed vocab
 test('source objects are banned as entities', () => {
   assert.equal(isBannedEntitySlug('polymarket'), true)
   assert.equal(isBannedEntitySlug('telegram'), false, 'real organizations that happen to be platforms stay allowed')
+
+  const polymarket = entity({ slug: 'polymarket', name: 'Polymarket', type: 'product', aliases: ['Polymarket'] })
+  const aboutPolymarket = packet({ title: 'Polymarket launches a new product', summary: '' })
+  assert.deepEqual(shortlistForPacket([polymarket], aboutPolymarket), [])
+  assert.deepEqual(
+    shortlistForPacket([polymarket], aboutPolymarket, 20, { allowSourceEntitySlugs: ['polymarket'] }),
+    [polymarket],
+  )
 })

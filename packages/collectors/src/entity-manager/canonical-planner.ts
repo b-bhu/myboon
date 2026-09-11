@@ -15,7 +15,7 @@ import {
   withCanonicalEntityTelemetry,
 } from './canonical-processor'
 
-export const CANONICAL_ENTITY_PROMPT_VERSION = 'myboon.entity_planner_prompt.v1' as const
+export const CANONICAL_ENTITY_PROMPT_VERSION = 'myboon.entity_planner_prompt.v2' as const
 export const CANONICAL_ENTITY_WORKLOAD = 'entity.extract' as const
 
 const MAX_PROMPT_CHARS = 160_000
@@ -88,12 +88,18 @@ export class GatewayCanonicalEntityPlanner implements CanonicalEntityPlanningPor
 }
 
 export function entityPlanningPrompt(input: CanonicalEntityPlanningInput): string {
+  const hasReviewedKnowledge = input.admission.canonicalEntityShortlist.some((entity) => entity.knowledge !== undefined)
   return [
     'Create a canonical Entity admission decision and durable memory plan.',
     'Return only one JSON object with exactly these top-level keys: schemaVersion, decision, memories.',
     `Set schemaVersion to ${CANONICAL_ENTITY_PLAN_SCHEMA_VERSION}.`,
     'Choose exactly one primary entity for this packet. Every memory in the response belongs to that entity.',
     'Select only an entityId in canonicalEntityShortlist, or use create_new.',
+    ...(hasReviewedKnowledge ? [
+      'Some shortlisted entities include reviewed knowledge. Use it as structural context only.',
+      'Shared classifications or relationships improve context but never make a broad parent the primary subject by themselves.',
+      'Do not return or invent classification/relationship writes; this scoped contract only informs the existing Entity decision.',
+    ] : []),
     'decision must be either {"action":"select_existing","entityId":"<supplied entityId>","supportingClaimIds":[],"supportingEvidenceIds":[]} or {"action":"create_new","proposal":{"slug":"<slug>","name":"<name>","type":"<type>","aliases":[],"summary":null},"supportingClaimIds":[],"supportingEvidenceIds":[]}.',
     'Each memory must use: memoryType, memoryRole, representedClaimIds, representedEvidenceIds, title, and summary. memoryType must be one of research_note, market_signal, news_event, social_signal, timeline_event, metric_change.',
     'Every create_new decision and every memory must cite supplied claim/evidence IDs using the exact field names above.',

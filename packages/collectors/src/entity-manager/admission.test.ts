@@ -111,7 +111,7 @@ test('builder creates a versioned deterministic bounded admission input from can
   const input = buildInput()
   const admission = buildEntityAdmissionInput(input)
 
-  assert.equal(admission.schemaVersion, 'myboon.entity_admission.v1')
+  assert.equal(admission.schemaVersion, 'myboon.entity_admission.v2')
   assert.equal(admission.packet, input.packet)
   assert.deepEqual(admission.canonicalEntityShortlist.map((item) => item.entityId), ['entity-1', 'entity-2'])
   assert.deepEqual(admission.canonicalEntityShortlist[0].aliases, ['Alpha', 'Zed'])

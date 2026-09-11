@@ -4,7 +4,7 @@ import { InferenceGatewayError } from '../inference-gateway/errors'
 import type { GenerateStructuredRequest, InferenceResult, InferenceTelemetry } from '../inference-gateway/types'
 import { operatorPacket, operatorWork } from '../signal-platform/operator-fixtures.test-support'
 import { PlatformFailure } from '../signal-platform/failures'
-import { buildEntityAdmissionInput } from './admission'
+import { buildEntityAdmissionInput, type CanonicalEntityRef } from './admission'
 import { adaptCanonicalResearchPacket } from './canonical-packet-adapter'
 import {
   CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
@@ -15,7 +15,7 @@ import {
   GatewayCanonicalEntityPlanner,
 } from './canonical-planner'
 
-function planningInput() {
+function planningInput(canonicalEntityShortlist: CanonicalEntityRef[] = []) {
   const canonicalPacket = operatorPacket('news', 'planner')
   const work = operatorWork('news', 'planner', {
     status: 'entity_leased', priorityClass: 'P1', researchDepth: 'standard',
@@ -23,11 +23,11 @@ function planningInput() {
   return {
     admission: buildEntityAdmissionInput({
       packet: canonicalPacket,
-      canonicalEntityShortlist: [],
+      canonicalEntityShortlist,
       evidenceSpans: [{
         spanId: 'span-1', evidenceId: 'evidence-planner', claimRefs: ['claim-planner'], text: 'Evidence',
       }],
-      shortlistPolicyVersion: 'myboon.entity_shortlist.v1',
+      shortlistPolicyVersion: 'myboon.entity_shortlist.v2',
       canonAvailability: { state: 'loaded' as const, complete: true as const },
     }),
     packet: adaptCanonicalResearchPacket(canonicalPacket),
@@ -82,10 +82,53 @@ test('gateway planner sends a bounded tool-less Entity request and returns its v
   assert.equal('toolsets' in request, false)
 })
 
+test('planner prompt treats reviewed entity knowledge as context rather than filing authority or write output', async () => {
+  let prompt = ''
+  const planner = new GatewayCanonicalEntityPlanner({
+    gateway: {
+      async generateStructured<T>(request: GenerateStructuredRequest<T>): Promise<InferenceResult<T>> {
+        prompt = request.prompt
+        return { value: plan() as T, telemetry: telemetry() } as InferenceResult<T>
+      },
+    },
+  })
+  const provenance = { kind: 'reviewed_record' as const, reference: 'reviewed-jupiter-fixture-v1' }
+
+  await planner.plan(planningInput([{
+    entityId: 'entity-jupiter',
+    slug: 'jupiter',
+    name: 'Jupiter',
+    type: 'project',
+    aliases: ['Jupiter'],
+    summary: 'A Solana trading protocol.',
+    rank: 0,
+    knowledge: {
+      schemaVersion: 'myboon.entity_admission_knowledge.v1',
+      entityId: 'entity-jupiter',
+      kind: 'protocol',
+      classifications: [{
+        conceptId: 'ecosystem:solana', scheme: 'ecosystem', slug: 'solana', name: 'Solana ecosystem',
+        path: ['solana'], verificationStatus: 'reviewed', provenance,
+      }],
+      relationships: [{
+        predicate: 'operates_on', direction: 'outgoing',
+        relatedEntity: { id: 'entity-solana', slug: 'solana', name: 'Solana', kind: 'network' },
+        verificationStatus: 'reviewed', provenance,
+      }],
+    },
+  }]))
+
+  assert.match(prompt, /reviewed knowledge/i)
+  assert.match(prompt, /never make a broad parent the primary subject/i)
+  assert.match(prompt, /do not return or invent classification\/relationship writes/i)
+  assert.match(prompt, /"kind":"protocol"/)
+  assert.match(prompt, /"predicate":"operates_on"/)
+})
+
 function telemetry(): InferenceTelemetry {
   return {
     workload: 'entity.extract', purpose: 'entity.canonical-admission-and-memory-plan', mode: 'generateStructured',
-    promptVersion: CANONICAL_ENTITY_PROMPT_VERSION, policyVersion: 'myboon.entity_shortlist.v1',
+    promptVersion: CANONICAL_ENTITY_PROMPT_VERSION, policyVersion: 'myboon.entity_shortlist.v2',
     configuredPrimaryProvider: 'primary', configuredPrimaryModel: 'primary-model',
     actualProvider: 'fallback', actualModel: 'fallback-model', fallbackInvoked: true,
     fallbackReason: 'provider_timeout', schemaValid: true, providerCalls: 2, repairCalls: 0,

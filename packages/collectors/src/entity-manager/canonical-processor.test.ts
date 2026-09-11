@@ -12,6 +12,12 @@ import {
   type CanonicalEntityPlanningPort,
   type EntityCanonLookup,
 } from './canonical-processor'
+import {
+  ENTITY_ADMISSION_KNOWLEDGE_SCHEMA_VERSION,
+  StaticEntityAdmissionKnowledgeProvider,
+  type EntityAdmissionKnowledgeContextV1,
+  type EntityAdmissionKnowledgePort,
+} from './entity-knowledge-context'
 import type {
   EntityInput,
   EntityIdentityLookupInput,
@@ -309,8 +315,13 @@ class FakeStore implements EntityMemoryStore {
   }
 }
 
-function processor(store: FakeStore, planner: CanonicalEntityPlanningPort, canonLookup?: EntityCanonLookup) {
-  return new EntityServiceCanonicalPacketProcessor({ store, planner, canonLookup })
+function processor(
+  store: FakeStore,
+  planner: CanonicalEntityPlanningPort,
+  canonLookup?: EntityCanonLookup,
+  admissionKnowledge?: EntityAdmissionKnowledgePort,
+) {
+  return new EntityServiceCanonicalPacketProcessor({ store, planner, canonLookup, admissionKnowledge })
 }
 
 test('selects only an admitted existing Entity and preserves canonical traceability', async () => {
@@ -354,6 +365,164 @@ test('selects only an admitted existing Entity and preserves canonical traceabil
   assert.equal(store.memories[0].context.entity_configured_reasoning_effort, 'high')
   assert.equal(store.memories[0].context.entity_actual_reasoning_effort, 'medium')
   assert.deepEqual(store.memories[0].evidence, packet().evidence)
+})
+
+test('reviewed scoped knowledge flows through the canonical admission path without adding writes', async () => {
+  const jupiter = entity({
+    id: 'entity-jupiter',
+    slug: 'jupiter',
+    name: 'Jupiter',
+    type: 'project',
+    aliases: ['Jupiter', 'Jupiter Exchange'],
+    summary: 'A Solana trading protocol.',
+  })
+  const store = new FakeStore([jupiter])
+  const provenance = {
+    kind: 'reviewed_record' as const,
+    reference: 'entity-knowledge-model-prd#worked-knowledge-map',
+  }
+  const knowledge: EntityAdmissionKnowledgeContextV1 = {
+    schemaVersion: ENTITY_ADMISSION_KNOWLEDGE_SCHEMA_VERSION,
+    entityId: jupiter.id,
+    kind: 'protocol',
+    classifications: [{
+      conceptId: 'ecosystem:solana',
+      scheme: 'ecosystem',
+      slug: 'solana',
+      name: 'Solana ecosystem',
+      path: ['solana'],
+      verificationStatus: 'reviewed',
+      provenance,
+    }, {
+      conceptId: 'sector:defi',
+      scheme: 'sector',
+      slug: 'defi',
+      name: 'DeFi',
+      path: ['financial-markets', 'defi'],
+      verificationStatus: 'reviewed',
+      provenance,
+    }],
+    relationships: [{
+      predicate: 'operates_on',
+      direction: 'outgoing',
+      relatedEntity: { id: 'entity-solana', slug: 'solana', name: 'Solana', kind: 'network' },
+      verificationStatus: 'reviewed',
+      provenance,
+    }],
+  }
+  let observedKnowledge: EntityAdmissionKnowledgeContextV1 | undefined
+  const subject = processor(store, {
+    async plan({ admission }) {
+      assert.equal(admission.schemaVersion, 'myboon.entity_admission.v2')
+      observedKnowledge = admission.canonicalEntityShortlist[0]?.knowledge
+      return plan({ action: 'select_existing', entityId: jupiter.id })
+    },
+  }, undefined, new StaticEntityAdmissionKnowledgeProvider([knowledge]))
+  const jupiterPacket = packet({
+    sourceSignal: {
+      ...packet().sourceSignal,
+      title: 'Jupiter expands its Solana product surface',
+    },
+    entityHints: [{
+      name: 'Jupiter', type: 'protocol', role: 'subject', aliases: ['Jupiter Exchange'], source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }],
+  })
+
+  await subject.process(input(jupiterPacket))
+
+  assert.equal(observedKnowledge?.kind, 'protocol')
+  assert.deepEqual(observedKnowledge?.classifications.map((item) => item.conceptId), [
+    'ecosystem:solana',
+    'sector:defi',
+  ])
+  assert.equal(observedKnowledge?.relationships[0]?.relatedEntity.slug, 'solana')
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 1, 'the existing canonical memory write remains the only durable write')
+})
+
+test('configured knowledge failure or invalid output fails closed before planning and writes', async () => {
+  for (const admissionKnowledge of [
+    {
+      async getEntityAdmissionKnowledge() { throw new Error('knowledge store offline') },
+    },
+    {
+      async getEntityAdmissionKnowledge() {
+        return [{
+          schemaVersion: ENTITY_ADMISSION_KNOWLEDGE_SCHEMA_VERSION,
+          entityId: 'unrequested-entity',
+          kind: 'topic',
+          classifications: [],
+          relationships: [],
+        }]
+      },
+    },
+  ] satisfies EntityAdmissionKnowledgePort[]) {
+    const store = new FakeStore([entity()])
+    let plannerCalls = 0
+    const subject = processor(store, {
+      async plan() {
+        plannerCalls += 1
+        return plan({ action: 'select_existing', entityId: 'entity-fed' })
+      },
+    }, undefined, admissionKnowledge)
+
+    await assert.rejects(subject.process(input()), (error: unknown) => (
+      error instanceof PlatformFailure
+      && (error.category === 'storage_transient' || error.category === 'storage_permanent')
+    ))
+    assert.equal(plannerCalls, 0)
+    assert.equal(store.entityWrites, 0)
+    assert.equal(store.memoryWrites, 0)
+  }
+})
+
+test('Polymarket is admitted only when evidence-linked hints make it the subject, never from venue/source role alone', async () => {
+  const polymarket = entity({
+    id: 'entity-polymarket', slug: 'polymarket', name: 'Polymarket', type: 'platform', aliases: ['Polymarket'],
+  })
+  const solana = entity({
+    id: 'entity-solana', slug: 'solana', name: 'Solana', type: 'asset', aliases: ['Solana', 'SOL'],
+  })
+
+  const aboutStore = new FakeStore([polymarket])
+  let aboutShortlist: string[] = []
+  const about = processor(aboutStore, {
+    async plan({ admission }) {
+      aboutShortlist = admission.canonicalEntityShortlist.map((item) => item.entityId)
+      return plan({ action: 'select_existing', entityId: polymarket.id })
+    },
+  })
+  const aboutPacket = packet({
+    sourceSignal: { ...packet().sourceSignal, title: 'Polymarket launches a new product' },
+    entityHints: [{
+      name: 'Polymarket', type: 'product', role: 'primary_subject', aliases: [], source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  await about.process(input(aboutPacket))
+  assert.deepEqual(aboutShortlist, [polymarket.id])
+
+  const venueStore = new FakeStore([polymarket, solana])
+  let venueShortlist: string[] = []
+  const venue = processor(venueStore, {
+    async plan({ admission }) {
+      venueShortlist = admission.canonicalEntityShortlist.map((item) => item.entityId)
+      return plan({ action: 'select_existing', entityId: solana.id })
+    },
+  })
+  const venuePacket = packet({
+    sourceSignal: { ...packet().sourceSignal, title: 'Polymarket odds move on the price of Solana' },
+    entityHints: [{
+      name: 'Polymarket', type: 'product', role: 'venue', aliases: [], source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }, {
+      name: 'Solana', type: 'network', role: 'subject', aliases: ['SOL'], source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  await venue.process(input(venuePacket))
+  assert.deepEqual(venueShortlist, [solana.id])
 })
 
 test('admits evidence-backed creation only with a complete canon', async () => {

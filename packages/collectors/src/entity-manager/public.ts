@@ -38,6 +38,31 @@ export type {
 } from './entity-knowledge-reader'
 export { SupabaseEntityKnowledgeReader } from './supabase-entity-knowledge-reader'
 export {
+  ENTITY_ADMISSION_KNOWLEDGE_MAX_CLASSIFICATIONS,
+  ENTITY_ADMISSION_KNOWLEDGE_MAX_RELATIONSHIPS,
+  ENTITY_ADMISSION_KNOWLEDGE_SCHEMA_VERSION,
+  ENTITY_CLASSIFICATION_SCHEME_V1_VALUES,
+  ENTITY_KIND_V1_VALUES,
+  ENTITY_RELATIONSHIP_PREDICATE_V1_VALUES,
+  EntityAdmissionKnowledgeValidationError,
+  StaticEntityAdmissionKnowledgeProvider,
+  legacyEntityTypeToKindV1,
+  validateEntityAdmissionKnowledge,
+} from './entity-knowledge-context'
+export type {
+  EntityAdmissionKnowledgeContextV1,
+  EntityAdmissionKnowledgePort,
+  EntityClassificationSchemeV1,
+  EntityKnowledgeClassificationV1,
+  EntityKnowledgeRelatedEntityV1,
+  EntityKnowledgeRelationshipV1,
+  EntityKindV1,
+  EntityRelationshipDirectionV1,
+  EntityRelationshipPredicateV1,
+  GetEntityAdmissionKnowledgeInput,
+  ReviewedEntityKnowledgeProvenanceV1,
+} from './entity-knowledge-context'
+export {
   ENTITY_ADMISSION_MAX_SHORTLIST_SIZE,
   ENTITY_ADMISSION_SCHEMA_VERSION,
   EntityAdmissionValidationError,
