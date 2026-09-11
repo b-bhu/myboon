@@ -59,6 +59,12 @@ apps/video/--props
 apps/video/out/
 apps/video/bin/
 apps/video/public/week1/
+apps/video/.whisper-cpp/
+apps/video/public/final-submission/*.mov
+apps/video/public/final-submission/*.wav
+apps/video/public/final-submission/recordings/
+apps/video/public/final-submission/captions/*-raw.json
+apps/video/public/final-submission/captions/*-whisper.json
 packages/collectors/src/world-cup/
 docs/specs/world-cup-x-campaign.md
 docs/scripts/

@@ -47,36 +47,23 @@ section shows. Better decisions is the one still open.
 
 ## Where the industry stands today
 
-Here's what's actually out there, checked directly rather than assumed.
+The closest alternative is not one direct competitor. It is the stack a user
+assembles today.
 
-**Phantom** — self-reported 20+ million users — has gone well past "store
-your crypto." The homepage now calls itself "the money app that'll take you
-places," and ships spot trading, prediction markets, and perps directly
-inside the wallet.
+**Kaito** focuses on searching and organizing fragmented crypto information.
+**Birdeye** focuses on market, token, wallet, and on-chain data. **Jupiter**
+brings swaps, perps, lending, and portfolio views into the Solana ecosystem.
+**Axiom** combines fast execution with monitoring and trading tools.
 
-**Jupiter** — Solana's dominant DEX aggregator, north of $1.5B in TVL — has
-done the same thing from the other direction: spot, prediction markets,
-perps, lending, recurring orders, all bundled into one app.
+These are not bad products making an obvious mistake. They optimize different
+parts of the workflow. Information products help users research. Data products
+help them inspect. Trading and portfolio products help them act and track. The
+user still has to carry the developing story between those surfaces.
 
-Both of the biggest names in this space have already made the obvious move:
-take the app with the wallet connection and the distribution, and bolt more
-trading venues onto it. That's not a hypothetical gap — it's done, at scale,
-by the two players best positioned to do it.
-
-What neither has done is the other half. Open either app around a
-prediction market or a perp position and what you get is a price, an odds
-number, a chart. Not *why* it's moving, not whether it's happened before,
-not whether the move is fresh or already crowded, not what's actually worth
-watching next. Execution is solved. Understanding, before you act, is not
-— and it doesn't look like an accident. Adding a trading venue to a wallet
-is an integration. Building context worth trusting is a research and
-editorial function, closer to a newsroom than a feature team, and it's not
-naturally where a wallet company's incentives point.
-
-That's the honest read on the Musk framework applied here: the obvious
-move already got made, by everyone with distribution, immediately. The
-harder move is still sitting open, and it's open for a structural reason,
-not because nobody noticed.
+That is the remaining opening: not another information destination and not
+another trading interface, but the connection between them. Building that
+connection requires a research and editorial system as well as the product work
+needed to map a story to the relevant asset and venue.
 
 ## myboon
 
@@ -95,12 +82,13 @@ research work — checking claims, remembering entities, grading evidence —
 before anything gets shown to a user, so what you see is something you can
 actually trust, not just something fast.
 
-To be straight about where this stands: myboon is pre-beta. The context
-pipeline is actively being built and tuned, not a finished, proven thing.
-Some of the action-surface plumbing is still being wired up. The first
-user isn't "everyone" — it's someone already mobile-first, already
-following crypto narratives, tired of assembling context from five apps
-before they can even decide whether to act.
+To be straight about where this stands: myboon is a working beta with no
+external users, revenue, or validated demand yet. The research pipeline and
+action surfaces exist, and the first direct Story-to-market path connects a
+Bitcoin Story to the Phoenix BTC market and places research markers on its
+chart. The first user is not "everyone" — it is someone already mobile-first,
+already following crypto narratives, and tired of assembling context from
+several apps before deciding whether to act.
 
 The obvious move — more trading, bolted onto an existing wallet — already
 happened. The harder move — context worth trusting, connected to the
@@ -108,11 +96,8 @@ trade — is still open. That's the bet.
 
 ---
 
-*Numbers cited: Phantom "20+ million users" (self-reported, homepage,
-likely cross-chain rather than Solana-only), Jupiter TVL ~$1.5B, Solana
-24h active addresses ~1.9M and 24h DEX volume ~$1.2B (DefiLlama) — pulled
-directly from each source. Solflare's active-user count is shown as an
-animated counter and couldn't be read reliably, so it's left out rather
-than guessed. The opening Musk line is widely attributed to him across
-quote sites but could not be traced to a primary interview or transcript —
-flagged here rather than presented as a verified citation.*
+*Product references reviewed August 2026: [Kaito](https://docs.kaito.ai/what-is-kaito),
+[Birdeye](https://birdeye.so/peak), [Jupiter](https://jup.ag/portfolio), and
+[Axiom](https://docs.axiom.trade/). The opening Musk line is widely attributed
+to him but could not be traced to a primary interview or transcript, so it is
+flagged rather than presented as a verified quotation.*

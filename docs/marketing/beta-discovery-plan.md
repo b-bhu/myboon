@@ -1,30 +1,45 @@
 # myboon Beta Discovery Plan
 
-Status: working brief
+Status: current working brief (August 29, 2026)
 Scope: beta discovery, Seeker launch preparation, ecosystem visibility
 
 ## Objective
 
-Get myboon discovered before beta by showing proof of a mobile product that turns
-market context into market action.
+Get the working myboon beta in front of its first relevant users by showing one
+clear mobile journey: understand why a market moved, open the relevant market,
+and track the resulting position.
 
 The goal is not to make a generic launch campaign. The goal is to make the right
 people understand what myboon is, see that it is real, and want early access.
 
 ## Current Positioning
 
-myboon is a context-to-action app for crypto markets.
+myboon tells you why the market moved and lets you act in the same app.
 
-It watches scattered signals, builds entity-first market memory, and connects the
-resulting context to actions users can inspect or take from a mobile wallet-like
-interface.
+It turns scattered signals into researched, developing stories, connects each
+story to the relevant asset and market, and keeps wallet balances and resulting
+positions visible in one consistent mobile experience.
 
 Short version:
 
 ```text
-Fast-moving markets create scattered signals.
-myboon remembers the context and connects it to action.
+Understand what moved, why it moved, and what happened before.
+Act if you choose, then track what you own without changing apps.
 ```
+
+## Validation Baseline
+
+myboon has no external users, product-usage metrics, or revenue yet. The founder
+has not completed prospective-user interviews, so demand must not be described
+as validated. The active myboon X account is a channel for sharing progress and
+finding testers; it is not evidence of product-market fit.
+
+The first beta should test whether users:
+
+- understand a developing Story without assembling it from several sources
+- open a relevant market from that Story
+- complete and track an action with less application switching
+- return to the feed because the connected experience is useful
 
 ## Primary Audience
 
@@ -99,8 +114,8 @@ What they care about:
 Message:
 
 ```text
-myboon brings market intelligence and action into a mobile Solana experience,
-starting with prediction markets, perps signals, and entity memory.
+myboon combines researched market stories, relevant Solana actions, and position
+tracking in one mobile product. The working beta now needs real user validation.
 ```
 
 ## Channel Strategy
@@ -152,7 +167,7 @@ Simple weekly updates showing what shipped.
 Examples:
 
 - entity memory pipeline
-- Hyperliquid perps connector
+- Bitcoin Story to Phoenix BTC market and chart markers
 - Polymarket market signals
 - Penpot design organization
 - wallet-like mobile UX improvements
@@ -208,7 +223,7 @@ Examples:
 - "I want feedback from people who trade prediction markets or perps."
 - "If you follow market narratives and hate scattered context, I want to talk."
 
-## This Week Sprint
+## Next Discovery Sprint
 
 ### Day 1: Make The Beta Surface
 
@@ -225,11 +240,11 @@ Minimum:
 Beta page copy:
 
 ```text
-myboon is a mobile context-to-action app for crypto markets.
+myboon tells you why the market moved and lets you act in the same app.
 
-It remembers market context around entities like markets, wallets, protocols,
-events, and narratives, then connects that context to actions you can inspect
-from one mobile app.
+It turns scattered signals into researched, developing stories, connects those
+stories to relevant Solana markets, and tracks what happens next from one mobile
+experience.
 ```
 
 ### Day 2: Publish The Current Build Log
@@ -245,7 +260,7 @@ This week was about organizing context.
 Talk about:
 
 - entity memory pipeline
-- Hyperliquid perps connector started
+- Bitcoin Story to Phoenix BTC market connection
 - Penpot used to organize product screens
 - why this helps the app move toward beta
 
@@ -264,7 +279,8 @@ Target:
 DM structure:
 
 ```text
-Hey, I am building myboon, a mobile context-to-action app for crypto markets.
+Hey, I am building myboon. It tells you why the market moved and lets you act in
+the same mobile app.
 I am preparing the Seeker beta path and looking for early feedback from people
 who care about mobile crypto UX or market context.
 

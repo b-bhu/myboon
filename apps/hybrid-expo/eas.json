@@ -13,11 +13,12 @@
       }
     },
     "dapp-store": {
+      "autoIncrement": true,
       "distribution": "internal",
       "android": {
         "buildType": "apk"
       },
-      "environment": "preview",
+      "environment": "production",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://api.myboon.tech"
       }
@@ -33,6 +34,7 @@
       }
     },
     "production": {
+      "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
       },

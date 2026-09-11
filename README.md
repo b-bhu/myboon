@@ -1,22 +1,23 @@
 # myboon
 
-> **A context-to-action app for crypto markets.**
+> **myboon tells you why the market moved and lets you act in the same app.**
 
-myboon turns scattered crypto signals into remembered context, then connects
-that context to integrated market actions. Understand what moved, open the
-relevant market, and track what happens next from one mobile experience.
+Crypto users currently understand the market in one place and act in another.
+myboon brings those two parts together: it turns scattered signals into
+researched, developing stories, connects each story to the relevant market, and
+keeps the resulting positions visible from one mobile experience.
 
 ---
 
 ## How it works
 
 ```
-Markets move -> myboon explains the context -> you open the relevant market -> positions track what happens next
+Markets move -> myboon explains why -> you open the relevant market -> myboon tracks what happens next
 ```
 
-A whale drops $500K on a Polymarket bet. Funding rate spikes on BTC perps.
-Odds shift on an EPL match. myboon catches the signal, explains the context,
-and brings the relevant market into the app.
+A funding rate spikes on BTC perps. Odds shift in a prediction market. A token
+narrative develops across social and news sources. myboon researches the signal,
+shows how the story developed, and brings the relevant market into the app.
 
 ---
 
@@ -26,18 +27,29 @@ myboon is built around one loop, not a row of disconnected crypto tools.
 
 | Layer | What happens |
 |-------|--------------|
-| **Context** | Understand the live narratives, signals, and entities moving markets |
-| **Markets** | Inspect or act through integrated prediction markets, perps, and future swap routes |
-| **Positions** | Track balances, venues, outcomes, and what happened after the action |
+| **Understand** | Follow researched updates, developing stories, and important market dates |
+| **Act** | Inspect or act through integrated prediction markets, perps, swaps, and liquidity products |
+| **Track** | See wallet balances, open positions, venues, and outcomes together |
 
-Context explains what matters. Markets brings the next step into the app.
-Positions show what you own and what changed.
+The feed explains what matters. Markets brings the next step into the app.
+Wallet and position views show what the user owns and what changed.
+
+---
+
+## Current status
+
+myboon is a working beta built by a solo founder. It does not yet have external
+users or revenue. The immediate milestone is to distribute the Android beta
+through Solana Mobile, onboard the first users, and validate whether this
+connected experience reduces confusion and unnecessary app switching.
 
 ---
 
 ## Architecture
 
-See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the full system design.
+Start with the current [`product vision`](./docs/VISION.md), the
+[`documentation index`](./docs/README.md), and the
+[`founder application Q&A`](./docs/applications/2026-08-founder-application-qa.md).
 
 ---
 
@@ -68,7 +80,7 @@ packages/
 ### Install
 
 ```bash
-git clone https://github.com/bucketshop69/myboon.git
+git clone https://github.com/b-bhu/myboon.git
 cd myboon
 pnpm install
 ```
@@ -115,7 +127,9 @@ records are written to Supabase.
 
 ---
 
-## Revenue
+## Planned revenue
+
+myboon is currently pre-revenue.
 
 - **Prediction market actions** — Polymarket builder affiliate %
 - **Perps / swap routes** — fee share

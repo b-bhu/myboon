@@ -259,15 +259,25 @@ describe('TC-SEC-009: exactly two wallet backends exist', () => {
     assert.deepEqual([...WALLET_BACKENDS].sort(), ['external_mwa', 'privy_embedded']);
   });
 
-  it('no code imports expo-secure-store to hold EVM key material', () => {
+  it('SecureStore is not used to hold EVM key material', () => {
     // The superseded draft proposed a device-bound secure-store EVM key. It must
     // not have landed: it would reintroduce a key this app can read.
     //
-    // The package stays declared in package.json/app.json because Privy's SDK
-    // depends on it — a declared dependency ships nothing on its own. What would
-    // matter is *our* code importing it, so that is what this asserts.
+    // Predict stores revocable Polymarket API credentials in SecureStore. That
+    // reviewed cache is not wallet key material and is the only application-level
+    // import allowed here; any additional caller must still be reviewed.
     const hits = appSourceHits("from 'expo-secure-store'|require\\('expo-secure-store'\\)");
-    assert.deepEqual(hits, [], `secure-store import to review for key material: ${hits.join(', ')}`);
+    const allowedPredictCredentialCache = /apps\/hybrid-expo\/features\/predict\/predict\.client\.ts:\d+:import \* as SecureStore from 'expo-secure-store';/;
+    assert.deepEqual(
+      hits.filter((hit) => !allowedPredictCredentialCache.test(hit)),
+      [],
+      `secure-store import to review for key material: ${hits.join(', ')}`,
+    );
+    assert.equal(
+      hits.filter((hit) => allowedPredictCredentialCache.test(hit)).length,
+      1,
+      'expected only the reviewed Predict API-credential cache to import SecureStore',
+    );
   });
 });
 
@@ -384,4 +394,3 @@ describe('TC-SEC-002 / TC-SEC-003: no signature-derived key material anywhere', 
     assert.deepEqual(sourceFilesContaining('myboon:polymarket:enable'), []);
   });
 });
-

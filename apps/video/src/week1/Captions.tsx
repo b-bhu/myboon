@@ -1,9 +1,9 @@
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 
-import intro from "../../out/week1-assets/words/intro.json";
-import outer from "../../out/week1-assets/words/outer.json";
-import problem from "../../out/week1-assets/words/problem.json";
-import solution from "../../out/week1-assets/words/solution.json";
+import intro from "./data/intro.json";
+import outer from "./data/outer.json";
+import problem from "./data/problem.json";
+import solution from "./data/solution.json";
 
 /**
  * Word-by-word captions for the week-1 vlog, rendered on a transparent
