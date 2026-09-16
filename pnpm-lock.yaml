@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@solana-mobile/mobile-wallet-adapter-protocol': 2.2.6
+
 importers:
 
   .:
