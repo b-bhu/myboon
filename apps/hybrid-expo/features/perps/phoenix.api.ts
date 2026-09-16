@@ -453,8 +453,8 @@ async function phoenixRequest(path: string, init?: RequestInit): Promise<unknown
   return payload;
 }
 
-async function phoenixGet(path: string): Promise<unknown> {
-  return phoenixRequest(path);
+async function phoenixGet(path: string, init?: RequestInit): Promise<unknown> {
+  return phoenixRequest(path, init);
 }
 
 async function phoenixPost(path: string, body: Record<string, unknown>): Promise<unknown> {
@@ -489,6 +489,11 @@ export async function fetchPhoenixCandles(
   symbol: string,
   interval: PhoenixCandleInterval,
   count: number,
+  options?: {
+    signal?: AbortSignal;
+    startTime?: number;
+    endTime?: number;
+  },
 ): Promise<PhoenixCandle[]> {
   const params = new URLSearchParams({
     symbol: normalizeVenueSymbol(symbol),
@@ -496,8 +501,16 @@ export async function fetchPhoenixCandles(
     count: String(count),
     enableExternalSource: 'true',
   });
+  if (options?.startTime !== undefined) {
+    params.set('startTime', String(options.startTime));
+  }
+  if (options?.endTime !== undefined) {
+    params.set('endTime', String(options.endTime));
+  }
 
-  const payload = await phoenixGet(`/candles?${params.toString()}`);
+  const payload = await phoenixGet(`/candles?${params.toString()}`, {
+    signal: options?.signal,
+  });
   return payloadArray(payload)
     .map(normalizeCandle)
     .filter((candle): candle is PhoenixCandle => candle !== null)

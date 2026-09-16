@@ -36,7 +36,7 @@ import {
   type PhoenixExecutionContext,
 } from '@/features/perps/phoenix.execution';
 import { PhoenixPriceChart } from '@/features/perps/PhoenixPriceChart';
-import { isBitcoinPerpSymbol } from '@/features/perps/btc-demo-events';
+import { marketChartTheme } from '@/features/charts/market-chart.theme';
 import { semantic, tokens } from '@/theme';
 
 type Side = 'long' | 'short';
@@ -635,10 +635,6 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
         <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
           <PhoenixPriceChart
             symbol={market.symbol}
-            showBitcoinDemo={isBitcoinPerpSymbol(symbol)
-              || isBitcoinPerpSymbol(market.symbol)
-              || market.baseSymbol.trim().toUpperCase() === 'BTC'}
-            height={140}
             onScrub={handleScrub}
             onLatestPrice={handleLatestPrice}
           />
@@ -1347,9 +1343,12 @@ const styles = StyleSheet.create({
   statsStrip: {
     flexDirection: 'row',
     paddingHorizontal: tokens.spacing.lg,
-    paddingVertical: tokens.spacing.sm,
+    paddingVertical: tokens.spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: marketChartTheme.colors.divider,
     borderBottomWidth: 1,
-    borderBottomColor: semantic.border.muted,
+    borderBottomColor: marketChartTheme.colors.divider,
+    backgroundColor: marketChartTheme.colors.toolbar,
   },
   stat: {
     flex: 1,
@@ -1357,16 +1356,16 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   statLabel: {
-    fontFamily: 'monospace',
     fontSize: tokens.fontSize.xxs - 1,
-    letterSpacing: 1,
+    fontWeight: '600',
+    letterSpacing: 0.7,
     textTransform: 'uppercase',
     color: semantic.text.faint,
   },
   statVal: {
-    fontFamily: 'monospace',
     fontSize: tokens.fontSize.sm,
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
     color: semantic.text.primary,
   },
   disconnectedCta: {

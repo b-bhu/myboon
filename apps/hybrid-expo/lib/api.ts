@@ -25,14 +25,19 @@ export function fetchWithTimeout(
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init ?? {};
 
   const controller = new AbortController();
-  // Respect an existing signal by forwarding abort
-  if (fetchInit.signal) {
-    fetchInit.signal.addEventListener('abort', () => controller.abort());
+  const externalSignal = fetchInit.signal;
+  const forwardAbort = () => controller.abort();
+  // Respect an existing signal, including one that was aborted before this call.
+  if (externalSignal?.aborted) {
+    forwardAbort();
+  } else if (externalSignal) {
+    externalSignal.addEventListener('abort', forwardAbort, { once: true });
   }
 
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  return fetch(input, { ...fetchInit, signal: controller.signal }).finally(() =>
-    clearTimeout(timer),
-  );
+  return fetch(input, { ...fetchInit, signal: controller.signal }).finally(() => {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', forwardAbort);
+  });
 }
