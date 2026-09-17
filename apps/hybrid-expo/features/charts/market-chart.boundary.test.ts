@@ -31,7 +31,7 @@ describe('shared chart boundary', () => {
     assert.equal(marketChartTheme.metrics.toolbarHeight, 48);
     assert.equal(marketChartTheme.metrics.controlHeight, 32);
     assert.equal(marketChartTheme.metrics.priceAxisWidth, 48);
-    assert.equal(marketChartTheme.metrics.liveEdgeGap, 16);
+    assert.equal(marketChartTheme.metrics.liveEdgeGap, 24);
   });
 
   it('contains the approved gesture and keyboard grammar', () => {

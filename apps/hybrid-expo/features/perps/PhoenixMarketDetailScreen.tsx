@@ -36,6 +36,11 @@ import {
   type PhoenixExecutionContext,
 } from '@/features/perps/phoenix.execution';
 import { PhoenixPriceChart } from '@/features/perps/PhoenixPriceChart';
+import {
+  applyPhoenixLiveMarketStats,
+  type PhoenixLiveConnectionStatus,
+  type PhoenixLiveMarketStats,
+} from '@/features/perps/phoenix.live';
 import { marketChartTheme } from '@/features/charts/market-chart.theme';
 import { semantic, tokens } from '@/theme';
 
@@ -116,6 +121,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
   const [marketError, setMarketError] = useState<string | null>(null);
   const [latestPrice, setLatestPrice] = useState<number | null>(null);
   const [scrubPrice, setScrubPrice] = useState<number | null>(null);
+  const [liveStatus, setLiveStatus] = useState<PhoenixLiveConnectionStatus>('connecting');
   const [side, setSide] = useState<Side>('long');
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [amountMode, setAmountMode] = useState<AmountMode>('usd');
@@ -258,6 +264,10 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
 
   const handleLatestPrice = useCallback((price: number | null) => {
     setLatestPrice(price);
+  }, []);
+
+  const handleLiveMarketStats = useCallback((stats: PhoenixLiveMarketStats) => {
+    setMarket((current) => current ? applyPhoenixLiveMarketStats(current, stats) : current);
   }, []);
 
   const handleSubmit = useCallback(async () => {
@@ -600,12 +610,26 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
           </Pressable>
         )}
         center={(
-          <View style={styles.headerPriceCenter}>
+          <View
+            style={styles.headerPriceCenter}
+            accessible
+            accessibilityLabel={`${formatPhoenixPrice(displayedPrice)}, ${scrubPrice === null ? liveStatusLabel(liveStatus) : 'historical candle'}`}
+          >
             <Text style={styles.headerPrice}>{formatPhoenixPrice(displayedPrice)}</Text>
             {scrubPrice === null && (
-              <Text style={[styles.headerChange, isUp ? styles.textPos : styles.textNeg]}>
-                {formatPhoenixPercent(change24h)}
-              </Text>
+              <View style={styles.headerChangeRow}>
+                <View style={[
+                  styles.liveDot,
+                  liveStatus === 'live'
+                    ? styles.liveDotConnected
+                    : liveStatus === 'stale'
+                    ? styles.liveDotStale
+                    : styles.liveDotConnecting,
+                ]} />
+                <Text style={[styles.headerChange, isUp ? styles.textPos : styles.textNeg]}>
+                  {formatPhoenixPercent(change24h)}
+                </Text>
+              </View>
             )}
           </View>
         )}
@@ -637,6 +661,8 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
             symbol={market.symbol}
             onScrub={handleScrub}
             onLatestPrice={handleLatestPrice}
+            onLiveMarketStats={handleLiveMarketStats}
+            onLiveStatusChange={setLiveStatus}
           />
 
           <View style={styles.statsStrip}>
@@ -1248,6 +1274,13 @@ function formatPhoenixSignedUsd(value: number | null): string {
   return `${sign}${formatPhoenixPrice(Math.abs(value))}`;
 }
 
+function liveStatusLabel(status: PhoenixLiveConnectionStatus): string {
+  if (status === 'live') return 'live market data';
+  if (status === 'stale') return 'market data delayed';
+  if (status === 'paused') return 'live market data paused';
+  return 'connecting to live market data';
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -1286,7 +1319,26 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: tokens.fontSize.xxs,
     fontWeight: '600',
+  },
+  headerChangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing.xs,
     marginTop: 1,
+  },
+  liveDot: {
+    width: 5,
+    height: 5,
+    borderRadius: tokens.radius.full,
+  },
+  liveDotConnected: {
+    backgroundColor: semantic.sentiment.positive,
+  },
+  liveDotConnecting: {
+    backgroundColor: semantic.text.faint,
+  },
+  liveDotStale: {
+    backgroundColor: tokens.colors.accent,
   },
   avatarRing: {
     width: 28,

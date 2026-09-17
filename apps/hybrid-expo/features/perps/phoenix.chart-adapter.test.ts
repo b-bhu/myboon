@@ -5,6 +5,7 @@ import {
   adaptPhoenixCandles,
   mergePhoenixCandlePages,
   normalizePhoenixCandleEpoch,
+  upsertPhoenixLiveCandle,
 } from './phoenix.chart-adapter';
 import type { PhoenixCandle } from './phoenix.api';
 
@@ -73,5 +74,27 @@ describe('mergePhoenixCandlePages', () => {
 
     assert.equal(merged.length, 1);
     assert.equal(merged[0].close, 14);
+  });
+});
+
+describe('upsertPhoenixLiveCandle', () => {
+  it('replaces the active candle without changing its position', () => {
+    const current = [candle(1), candle(2, { close: 11 })];
+    const next = upsertPhoenixLiveCandle(current, candle(2, { close: 13, volume: 9 }));
+
+    assert.deepEqual(next.map((entry) => entry.time), [1, 2]);
+    assert.equal(next[1].close, 13);
+    assert.equal(next[1].volume, 9);
+    assert.equal(current[1].close, 11);
+  });
+
+  it('appends a newly opened candle and accepts a historical correction', () => {
+    const current = [candle(2), candle(3)];
+    const appended = upsertPhoenixLiveCandle(current, candle(4));
+    const corrected = upsertPhoenixLiveCandle(appended, candle(1, { close: 8 }));
+
+    assert.deepEqual(appended.map((entry) => entry.time), [2, 3, 4]);
+    assert.deepEqual(corrected.map((entry) => entry.time), [1, 2, 3, 4]);
+    assert.equal(corrected[0].close, 8);
   });
 });

@@ -2,6 +2,7 @@ export { MarketChart } from '@/features/charts/market-chart';
 export { normalizeMarketCandles } from '@/features/charts/market-chart.normalization';
 export type {
   MarketCandle,
+  MarketChartAnnotation,
   MarketChartLayers,
   MarketChartMode,
   MarketChartProps,

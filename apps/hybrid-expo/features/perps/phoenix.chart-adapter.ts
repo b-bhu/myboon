@@ -42,3 +42,25 @@ export function mergePhoenixCandlePages(
     normalizePhoenixCandleEpoch(left.time) - normalizePhoenixCandleEpoch(right.time)
   ));
 }
+
+export function upsertPhoenixLiveCandle(
+  current: readonly PhoenixCandle[],
+  liveCandle: PhoenixCandle,
+): PhoenixCandle[] {
+  if (current.length === 0) return [liveCandle];
+
+  const liveTime = normalizePhoenixCandleEpoch(liveCandle.time);
+  const existingIndex = current.findIndex(
+    (candle) => normalizePhoenixCandleEpoch(candle.time) === liveTime,
+  );
+  if (existingIndex >= 0) {
+    const next = [...current];
+    next[existingIndex] = liveCandle;
+    return next;
+  }
+
+  const latestTime = normalizePhoenixCandleEpoch(current[current.length - 1].time);
+  if (liveTime > latestTime) return [...current, liveCandle];
+
+  return mergePhoenixCandlePages([liveCandle], current);
+}

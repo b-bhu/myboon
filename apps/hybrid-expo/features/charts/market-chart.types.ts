@@ -9,6 +9,18 @@ export interface MarketCandle {
   readonly volume?: number | null;
 }
 
+export interface MarketChartAnnotation {
+  readonly id: string;
+  /** Exact candle timestamp used as the chart anchor. */
+  readonly timeMs: number;
+  readonly label: string;
+  readonly accessibilityLabel: string;
+  readonly imageUrl?: string | null;
+  readonly fallbackText?: string;
+  readonly count?: number;
+  readonly tone?: 'accent' | 'positive' | 'negative' | 'neutral';
+}
+
 export type MarketChartStatus =
   | { readonly kind: 'ready' }
   | { readonly kind: 'loading'; readonly accessibilityLabel?: string }
@@ -23,6 +35,7 @@ export type MarketChartStatus =
 export interface MarketChartLayers {
   readonly volume?: boolean;
   readonly currentPrice?: boolean;
+  readonly annotations?: boolean;
 }
 
 export interface MarketChartSelection {
@@ -65,6 +78,9 @@ export interface MarketChartProps {
   readonly historyLoadThreshold?: number;
   readonly onRetry?: () => void;
   readonly resetSignal?: number;
+  readonly annotations?: readonly MarketChartAnnotation[];
+  readonly selectedAnnotationId?: string | null;
+  readonly onAnnotationSelectionChange?: (annotation: MarketChartAnnotation | null) => void;
 }
 
 export interface IndexViewport {

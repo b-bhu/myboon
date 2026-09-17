@@ -15,7 +15,9 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import Svg, {
   Circle,
   ClipPath,
@@ -27,6 +29,13 @@ import Svg, {
   Text as SvgText,
 } from 'react-native-svg';
 import { buildMarketChartAccessibilityValue } from '@/features/charts/market-chart.accessibility';
+import {
+  createMarketChartAnnotationLayouts,
+  findMarketChartAnnotationAtPoint,
+  MARKET_CHART_ANNOTATION_SIZE,
+  nextAnnotationInLayout,
+  type MarketChartAnnotationLayout,
+} from '@/features/charts/market-chart.annotations';
 import {
   buildCandlestickPaths,
   buildLinePath,
@@ -43,6 +52,7 @@ import {
 } from '@/features/charts/market-chart.geometry';
 import type {
   IndexViewport,
+  MarketChartAnnotation,
   MarketChartProps,
   MarketChartStatus,
 } from '@/features/charts/market-chart.types';
@@ -121,6 +131,9 @@ export function MarketChart({
   historyLoadThreshold = 30,
   onRetry,
   resetSignal = 0,
+  annotations = [],
+  selectedAnnotationId = null,
+  onAnnotationSelectionChange,
 }: MarketChartProps) {
   const [width, setWidth] = useState(0);
   const [viewport, setViewport] = useState<IndexViewport>(() => (
@@ -151,6 +164,7 @@ export function MarketChart({
 
   const volumeRequested = layers?.volume ?? true;
   const currentPriceRequested = layers?.currentPrice ?? true;
+  const annotationsRequested = layers?.annotations ?? true;
   const hasVisibleVolume = useMemo(() => {
     if (!volumeRequested) return false;
     return hasVisibleCandleVolume(
@@ -188,6 +202,25 @@ export function MarketChart({
   const geometryRef = useRef(geometry);
   geometryRef.current = geometry;
   priceScaleRef.current = priceScale;
+
+  const annotationLayouts = useMemo(() => (
+    annotationsRequested
+      ? createMarketChartAnnotationLayouts(annotations, candles, geometry)
+      : []
+  ), [annotations, annotationsRequested, candles, geometry]);
+  const visibleAnnotations = useMemo(
+    () => annotationLayouts.flatMap((layout) => layout.annotations),
+    [annotationLayouts],
+  );
+  const selectedAnnotation = useMemo(() => (
+    visibleAnnotations.find((annotation) => annotation.id === selectedAnnotationId) ?? null
+  ), [selectedAnnotationId, visibleAnnotations]);
+
+  useEffect(() => {
+    if (selectedAnnotationId !== null && !selectedAnnotation) {
+      onAnnotationSelectionChange?.(null);
+    }
+  }, [onAnnotationSelectionChange, selectedAnnotation, selectedAnnotationId]);
 
   const selectedCandleIndex = useMemo(() => findCandleIndexByTime(
     candles,
@@ -255,6 +288,10 @@ export function MarketChart({
     }
   }, [onSelectionChange]);
 
+  const clearAnnotationSelection = useCallback(() => {
+    if (selectedAnnotationId !== null) onAnnotationSelectionChange?.(null);
+  }, [onAnnotationSelectionChange, selectedAnnotationId]);
+
   const resetToLatest = useCallback(() => {
     commitViewport(createInitialViewport(
       candles.length,
@@ -262,19 +299,43 @@ export function MarketChart({
       minimumVisibleCandles,
     ));
     clearSelection();
-  }, [candles.length, clearSelection, commitViewport, initialVisibleCandles, minimumVisibleCandles]);
+    clearAnnotationSelection();
+  }, [
+    candles.length,
+    clearAnnotationSelection,
+    clearSelection,
+    commitViewport,
+    initialVisibleCandles,
+    minimumVisibleCandles,
+  ]);
 
   const selectAtX = useCallback((x: number) => {
     const candleIndex = candleIndexForX(geometryRef.current, x, candles.length);
     if (candleIndex !== null) emitSelection(candleIndex);
   }, [candles.length, emitSelection]);
 
-  const handleSingleTap = useCallback(() => {
+  const handleSingleTap = useCallback((x: number, y: number) => {
+    const layout = findMarketChartAnnotationAtPoint(annotationLayouts, x, y);
+    if (layout) {
+      clearSelection();
+      onAnnotationSelectionChange?.(
+        nextAnnotationInLayout(layout, selectedAnnotationId),
+      );
+      return;
+    }
+    clearAnnotationSelection();
     clearSelection();
-  }, [clearSelection]);
+  }, [
+    annotationLayouts,
+    clearAnnotationSelection,
+    clearSelection,
+    onAnnotationSelectionChange,
+    selectedAnnotationId,
+  ]);
 
   const selectRelativeCandle = useCallback((direction: -1 | 1) => {
     if (candles.length === 0) return;
+    clearAnnotationSelection();
     const currentIndex = findCandleIndexByTime(
       candles,
       selectionIdentityRef.current.timeMs,
@@ -301,7 +362,13 @@ export function MarketChart({
         minimumVisibleCandles,
       ));
     }
-  }, [candles, commitViewport, emitSelection, minimumVisibleCandles]);
+  }, [
+    candles,
+    clearAnnotationSelection,
+    commitViewport,
+    emitSelection,
+    minimumVisibleCandles,
+  ]);
 
   useLayoutEffect(() => {
     const previousCandles = previousCandlesRef.current;
@@ -316,6 +383,7 @@ export function MarketChart({
       ));
       setPriceScale(1);
       clearSelection();
+      onAnnotationSelectionChange?.(null);
       return;
     }
     if (previousCandles === candles) return;
@@ -349,6 +417,7 @@ export function MarketChart({
     initialVisibleCandles,
     minimumVisibleCandles,
     onSelectionChange,
+    onAnnotationSelectionChange,
     seriesKey,
   ]);
 
@@ -392,6 +461,7 @@ export function MarketChart({
       .failOffsetY([-16, 16])
       .runOnJS(true)
       .onBegin(() => {
+        clearAnnotationSelection();
         panStartViewportRef.current = viewportRef.current;
       })
       .onUpdate((event) => {
@@ -411,6 +481,7 @@ export function MarketChart({
       .shouldCancelWhenOutside(false)
       .runOnJS(true)
       .onStart((event) => {
+        clearAnnotationSelection();
         selectAtX(event.x);
       })
       .onUpdate((event) => {
@@ -453,8 +524,8 @@ export function MarketChart({
       .numberOfTaps(1)
       .maxDistance(PAN_DISTANCE)
       .runOnJS(true)
-      .onEnd((_event, success) => {
-        if (success) handleSingleTap();
+      .onEnd((event, success) => {
+        if (success) handleSingleTap(event.x, event.y);
       });
 
     return Gesture.Race(
@@ -465,6 +536,7 @@ export function MarketChart({
     );
   }, [
     candles.length,
+    clearAnnotationSelection,
     flushScheduledViewport,
     handleSingleTap,
     minimumVisibleCandles,
@@ -572,10 +644,29 @@ export function MarketChart({
   }, [candles.length, handleWheel, status.kind]);
 
   const activateSelection = useCallback(() => {
+    if (visibleAnnotations.length > 0) {
+      const currentIndex = visibleAnnotations.findIndex(
+        (annotation) => annotation.id === selectedAnnotationId,
+      );
+      const nextIndex = currentIndex < 0 || currentIndex >= visibleAnnotations.length - 1
+        ? 0
+        : currentIndex + 1;
+      clearSelection();
+      onAnnotationSelectionChange?.(visibleAnnotations[nextIndex]);
+      return;
+    }
     if (selectedCandleIndex === null && candles.length > 0) {
       emitSelection(candles.length - 1);
     }
-  }, [candles.length, emitSelection, selectedCandleIndex]);
+  }, [
+    candles.length,
+    clearSelection,
+    emitSelection,
+    onAnnotationSelectionChange,
+    selectedAnnotationId,
+    selectedCandleIndex,
+    visibleAnnotations,
+  ]);
 
   const handleKeyDown = useCallback((event: KeyLikeEvent) => {
     const key = event.nativeEvent?.key ?? event.key;
@@ -590,19 +681,32 @@ export function MarketChart({
     }
     if (key === 'ArrowLeft') selectRelativeCandle(-1);
     else if (key === 'ArrowRight') selectRelativeCandle(1);
-    else if (key === 'Escape') clearSelection();
+    else if (key === 'Escape') {
+      clearAnnotationSelection();
+      clearSelection();
+    }
     else if (key === 'End') resetToLatest();
     else if (key === 'Enter' || key === ' ') activateSelection();
-  }, [activateSelection, clearSelection, resetToLatest, selectRelativeCandle]);
+  }, [
+    activateSelection,
+    clearAnnotationSelection,
+    clearSelection,
+    resetToLatest,
+    selectRelativeCandle,
+  ]);
 
   const handleAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
     const action = event.nativeEvent.actionName;
     if (action === 'decrement') selectRelativeCandle(-1);
     else if (action === 'increment') selectRelativeCandle(1);
-    else if (action === 'escape') clearSelection();
+    else if (action === 'escape') {
+      clearAnnotationSelection();
+      clearSelection();
+    }
     else if (action === 'activate') activateSelection();
   }, [
     activateSelection,
+    clearAnnotationSelection,
     clearSelection,
     selectRelativeCandle,
   ]);
@@ -661,6 +765,11 @@ export function MarketChart({
     formatTime,
     formatVolume,
   );
+  const chartAccessibilityValue = selectedAnnotation?.accessibilityLabel
+    ?? accessibilityValue;
+  const annotationCountLabel = visibleAnnotations.length > 0
+    ? `, ${visibleAnnotations.length} annotations`
+    : '';
 
   return (
     <GestureDetector gesture={gesture}>
@@ -672,13 +781,18 @@ export function MarketChart({
         accessible
         focusable
         accessibilityRole="adjustable"
-        accessibilityLabel={`${accessibilityLabel}, ${mode} mode, ${candles.length} candles`}
-        accessibilityHint="Long press to inspect candles. Pinch to zoom and drag horizontally to browse history."
-        accessibilityValue={accessibilityValue ? { text: accessibilityValue } : undefined}
+        accessibilityLabel={`${accessibilityLabel}, ${mode} mode, ${candles.length} candles${annotationCountLabel}`}
+        accessibilityHint={visibleAnnotations.length > 0
+          ? 'Long press to inspect candles. Pinch to zoom, drag to browse history, or activate to move through annotations.'
+          : 'Long press to inspect candles. Pinch to zoom and drag horizontally to browse history.'}
+        accessibilityValue={chartAccessibilityValue ? { text: chartAccessibilityValue } : undefined}
         accessibilityActions={[
           { name: 'increment', label: 'Next candle' },
           { name: 'decrement', label: 'Previous candle' },
-          { name: 'activate', label: 'Activate selection' },
+          {
+            name: 'activate',
+            label: visibleAnnotations.length > 0 ? 'Next annotation' : 'Activate selection',
+          },
           { name: 'escape', label: 'Clear selection' },
         ]}
         onAccessibilityAction={handleAccessibilityAction}
@@ -907,6 +1021,11 @@ export function MarketChart({
           </Svg>
         ) : null}
 
+        <ChartAnnotationOverlay
+          layouts={annotationLayouts}
+          selectedAnnotationId={selectedAnnotationId}
+        />
+
         {selectedCandle ? (
           <View
             pointerEvents="none"
@@ -953,6 +1072,95 @@ export function MarketChart({
       </View>
     </GestureDetector>
   );
+}
+
+function ChartAnnotationOverlay({
+  layouts,
+  selectedAnnotationId,
+}: {
+  readonly layouts: readonly MarketChartAnnotationLayout[];
+  readonly selectedAnnotationId: string | null;
+}) {
+  if (layouts.length === 0) return null;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={styles.annotationLayer}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {layouts.map((layout) => {
+        const selectedAnnotation = layout.annotations.find(
+          (annotation) => annotation.id === selectedAnnotationId,
+        );
+        const annotation = selectedAnnotation ?? layout.annotations[0];
+        const selected = selectedAnnotation !== undefined;
+        const tone = annotationToneColor(annotation);
+        const stemTop = Math.min(layout.y, layout.anchorY);
+        return (
+          <View key={layout.id} style={StyleSheet.absoluteFill}>
+            <View
+              style={[
+                styles.annotationStem,
+                {
+                  left: layout.x,
+                  top: stemTop,
+                  height: Math.max(1, Math.abs(layout.anchorY - layout.y)),
+                  backgroundColor: tone,
+                },
+              ]}
+            />
+            <Animated.View
+              entering={FadeIn.duration(160)}
+              style={[
+                styles.annotationMarker,
+                {
+                  left: layout.x,
+                  top: layout.y,
+                  borderColor: selected ? marketChartTheme.colors.primaryText : tone,
+                  transform: [
+                    { translateX: -MARKET_CHART_ANNOTATION_SIZE / 2 },
+                    { translateY: -MARKET_CHART_ANNOTATION_SIZE / 2 },
+                    { scale: selected ? 1.12 : 1 },
+                  ],
+                },
+              ]}
+            >
+              {annotation.imageUrl ? (
+                <Image
+                  source={annotation.imageUrl}
+                  style={styles.annotationImage}
+                  contentFit="cover"
+                  transition={120}
+                />
+              ) : (
+                <View style={[styles.annotationFallback, { backgroundColor: tone }]}>
+                  <Text style={styles.annotationFallbackText}>
+                    {(annotation.fallbackText || '•').slice(0, 2)}
+                  </Text>
+                </View>
+              )}
+              {layout.count > 1 ? (
+                <View style={styles.annotationCountBadge}>
+                  <Text style={styles.annotationCountText}>
+                    {layout.count > 9 ? '9+' : layout.count}
+                  </Text>
+                </View>
+              ) : null}
+            </Animated.View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function annotationToneColor(annotation: MarketChartAnnotation): string {
+  if (annotation.tone === 'positive') return marketChartTheme.colors.bullish;
+  if (annotation.tone === 'negative') return marketChartTheme.colors.bearish;
+  if (annotation.tone === 'neutral') return marketChartTheme.colors.selection;
+  return tokens.colors.accent;
 }
 
 function MarketChartState({
@@ -1014,6 +1222,62 @@ const styles = StyleSheet.create({
     width: '100%',
     overflow: 'hidden',
     backgroundColor: marketChartTheme.colors.canvas,
+  },
+  annotationLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2,
+  },
+  annotationStem: {
+    position: 'absolute',
+    width: 1,
+    opacity: 0.72,
+    transform: [{ translateX: -0.5 }],
+  },
+  annotationMarker: {
+    position: 'absolute',
+    width: MARKET_CHART_ANNOTATION_SIZE,
+    height: MARKET_CHART_ANNOTATION_SIZE,
+    borderRadius: MARKET_CHART_ANNOTATION_SIZE / 2,
+    borderWidth: 2,
+    backgroundColor: marketChartTheme.colors.canvas,
+    boxShadow: '0 3px 8px rgba(0, 0, 0, 0.28)',
+  },
+  annotationImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: MARKET_CHART_ANNOTATION_SIZE / 2,
+    backgroundColor: marketChartTheme.colors.control,
+  },
+  annotationFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: MARKET_CHART_ANNOTATION_SIZE / 2,
+  },
+  annotationFallbackText: {
+    color: marketChartTheme.colors.canvas,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  annotationCountBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -7,
+    minWidth: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: marketChartTheme.colors.canvas,
+    borderRadius: 8,
+    backgroundColor: tokens.colors.accent,
+  },
+  annotationCountText: {
+    color: marketChartTheme.colors.canvas,
+    fontSize: 8,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
   },
   inspectionReadout: {
     position: 'absolute',

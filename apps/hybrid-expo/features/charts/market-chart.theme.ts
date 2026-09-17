@@ -39,6 +39,6 @@ export const marketChartTheme = {
     menuOffset: 4,
     priceAxisWidth: 48,
     timeAxisHeight: 24,
-    liveEdgeGap: 16,
+    liveEdgeGap: 24,
   },
 } as const;
