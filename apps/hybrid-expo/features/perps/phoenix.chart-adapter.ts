@@ -48,12 +48,18 @@ export function mergePhoenixCandlePages(
  *
  * Snapshot rows deliberately win duplicate timestamps so a reconnect can
  * repair OHLCV values that became stale while the socket was unavailable.
+ * Socket rows observed during the request are then replayed in arrival order
+ * so a cached snapshot cannot regress the live edge.
  */
 export function reconcilePhoenixCandleSnapshot(
   current: readonly PhoenixCandle[],
   snapshot: readonly PhoenixCandle[],
+  liveUpdates: readonly PhoenixCandle[] = [],
 ): PhoenixCandle[] {
-  return mergePhoenixCandlePages(current, snapshot);
+  return liveUpdates.reduce(
+    (reconciled, liveCandle) => upsertPhoenixLiveCandle(reconciled, liveCandle),
+    mergePhoenixCandlePages(current, snapshot),
+  );
 }
 
 export function upsertPhoenixLiveCandle(

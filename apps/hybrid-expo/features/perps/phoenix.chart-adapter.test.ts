@@ -111,4 +111,20 @@ describe('reconcilePhoenixCandleSnapshot', () => {
     assert.equal(reconciled[1].close, 22);
     assert.equal(reconciled[1].volume, 9);
   });
+
+  it('replays socket updates that arrived while the reconnect snapshot was loading', () => {
+    const reconciled = reconcilePhoenixCandleSnapshot(
+      [candle(1), candle(2, { close: 20, volume: 4 })],
+      [candle(2, { close: 22, volume: 9 }), candle(3)],
+      [
+        candle(2, { close: 23, volume: 10 }),
+        candle(3, { close: 24, volume: 2 }),
+      ],
+    );
+
+    assert.deepEqual(reconciled.map((entry) => entry.time), [1, 2, 3]);
+    assert.equal(reconciled[1].close, 23);
+    assert.equal(reconciled[1].volume, 10);
+    assert.equal(reconciled[2].close, 24);
+  });
 });

@@ -64,6 +64,31 @@ describe('shared chart boundary', () => {
     assert.match(chart, /label: 'Reset time scale'/);
   });
 
+  it('keeps the chart summary and axis controls as sibling accessibility elements', () => {
+    const chart = source('./market-chart.tsx');
+    const hostTag = /<View\s+ref=\{chartHostRef\}[\s\S]*?>/.exec(chart)?.[0] ?? '';
+    assert.doesNotMatch(hostTag, /\baccessible\b/);
+    assert.match(chart, /style=\{styles\.accessibilitySummary\}[\s\S]*?accessible/);
+
+    const summaryIndex = chart.indexOf('style={styles.accessibilitySummary}');
+    const priceAxisIndex = chart.indexOf('accessibilityLabel="Price scale"');
+    const timeAxisIndex = chart.indexOf('accessibilityLabel="Time scale"');
+    assert.ok(summaryIndex >= 0 && summaryIndex < priceAxisIndex);
+    assert.ok(priceAxisIndex < timeAxisIndex);
+  });
+
+  it('removes nonessential chart and Story transitions under reduced motion', () => {
+    const chart = source('./market-chart.tsx');
+    const phoenix = source('../perps/PhoenixPriceChart.tsx');
+    assert.match(chart, /useReducedMotion\(\)/);
+    assert.match(chart, /entering=\{reduceMotion \? undefined : FadeIn\.duration\(160\)\}/);
+    assert.match(chart, /transition=\{reduceMotion \? 0 : 120\}/);
+    assert.match(phoenix, /useReducedMotion\(\)/);
+    assert.match(phoenix, /entering=\{reduceMotion \? undefined : FadeIn\.duration\(160\)\}/);
+    assert.match(phoenix, /exiting=\{reduceMotion \? undefined : FadeOut\.duration\(120\)\}/);
+    assert.match(phoenix, /transition=\{reduceMotion \? 0 : 120\}/);
+  });
+
   it('keeps loading, empty, error, and retry presentation generic', () => {
     const chart = source('./market-chart.tsx');
     assert.match(chart, /effectiveStatus\.kind !== 'ready'/);

@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import Svg, {
   Circle,
   ClipPath,
@@ -818,28 +818,32 @@ export function MarketChart({
     <GestureDetector gesture={gesture}>
       <View
         ref={chartHostRef}
-        {...webInteractionProps}
         style={[styles.chart, { height }]}
         onLayout={handleLayout}
-        accessible
-        focusable
-        accessibilityRole="adjustable"
-        accessibilityLabel={`${accessibilityLabel}, ${mode} mode, ${candles.length} candles${annotationCountLabel}`}
-        accessibilityHint={visibleAnnotations.length > 0
-          ? 'Long press to inspect candles. Pinch to zoom, drag to browse history, or activate to move through annotations.'
-          : 'Long press to inspect candles. Pinch to zoom and drag horizontally to browse history.'}
-        accessibilityValue={chartAccessibilityValue ? { text: chartAccessibilityValue } : undefined}
-        accessibilityActions={[
-          { name: 'increment', label: 'Next candle' },
-          { name: 'decrement', label: 'Previous candle' },
-          {
-            name: 'activate',
-            label: visibleAnnotations.length > 0 ? 'Next annotation' : 'Activate selection',
-          },
-          { name: 'escape', label: 'Clear selection' },
-        ]}
-        onAccessibilityAction={handleAccessibilityAction}
       >
+        <View
+          {...webInteractionProps}
+          pointerEvents="none"
+          style={styles.accessibilitySummary}
+          accessible
+          focusable
+          accessibilityRole="adjustable"
+          accessibilityLabel={`${accessibilityLabel}, ${mode} mode, ${candles.length} candles${annotationCountLabel}`}
+          accessibilityHint={visibleAnnotations.length > 0
+            ? 'Long press to inspect candles. Pinch to zoom, drag to browse history, or activate to move through annotations.'
+            : 'Long press to inspect candles. Pinch to zoom and drag horizontally to browse history.'}
+          accessibilityValue={chartAccessibilityValue ? { text: chartAccessibilityValue } : undefined}
+          accessibilityActions={[
+            { name: 'increment', label: 'Next candle' },
+            { name: 'decrement', label: 'Previous candle' },
+            {
+              name: 'activate',
+              label: visibleAnnotations.length > 0 ? 'Next annotation' : 'Activate selection',
+            },
+            { name: 'escape', label: 'Clear selection' },
+          ]}
+          onAccessibilityAction={handleAccessibilityAction}
+        />
         {width > 0 ? (
           <Svg
             width={width}
@@ -1140,6 +1144,7 @@ function ChartAnnotationOverlay({
   readonly layouts: readonly MarketChartAnnotationLayout[];
   readonly selectedAnnotationId: string | null;
 }) {
+  const reduceMotion = useReducedMotion();
   if (layouts.length === 0) return null;
 
   return (
@@ -1176,7 +1181,7 @@ function ChartAnnotationOverlay({
               />
             ) : null}
             <Animated.View
-              entering={FadeIn.duration(160)}
+              entering={reduceMotion ? undefined : FadeIn.duration(160)}
               style={[
                 styles.annotationMarker,
                 {
@@ -1202,7 +1207,7 @@ function ChartAnnotationOverlay({
                   source={annotation.imageUrl}
                   style={[styles.annotationImage, { borderRadius: markerSize / 2 }]}
                   contentFit="cover"
-                  transition={120}
+                  transition={reduceMotion ? 0 : 120}
                 />
               ) : selected ? (
                 <View style={[styles.annotationFallback, { backgroundColor: tone }]}>
@@ -1285,6 +1290,13 @@ const styles = StyleSheet.create({
     width: '100%',
     overflow: 'hidden',
     backgroundColor: marketChartTheme.colors.canvas,
+  },
+  accessibilitySummary: {
+    position: 'absolute',
+    top: 0,
+    right: MARKET_CHART_PRICE_AXIS_WIDTH,
+    bottom: MARKET_CHART_TIME_AXIS_HEIGHT,
+    left: 0,
   },
   annotationLayer: {
     ...StyleSheet.absoluteFillObject,

@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Image } from 'expo-image';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, useReducedMotion } from 'react-native-reanimated';
 import {
   IconChartCandle,
   IconChartLine,
@@ -70,6 +70,11 @@ interface PhoenixCandleHistoryState {
   readonly hasMoreHistory: boolean;
 }
 
+interface PhoenixResyncReplay {
+  readonly controller: AbortController;
+  readonly liveUpdates: PhoenixCandle[];
+}
+
 interface PhoenixPriceChartProps {
   symbol: string;
   height?: number;
@@ -114,6 +119,7 @@ export function PhoenixPriceChart({
   const historyLoadingRef = useRef(false);
   const historyControllerRef = useRef<AbortController | null>(null);
   const resyncControllerRef = useRef<AbortController | null>(null);
+  const resyncReplayRef = useRef<PhoenixResyncReplay | null>(null);
   const liveConnectionRef = useRef({ seriesKey: '', sequence: 0 });
   const latestLivePriceRef = useRef<number | null>(null);
   latestPriceCallbackRef.current = onLatestPrice;
@@ -132,6 +138,7 @@ export function PhoenixPriceChart({
     historyControllerRef.current = null;
     resyncControllerRef.current?.abort();
     resyncControllerRef.current = null;
+    resyncReplayRef.current = null;
     historyLoadingRef.current = false;
     setResolvedSeriesKey(null);
     setStatus({ kind: 'loading', accessibilityLabel: `Loading ${symbol} chart` });
@@ -185,6 +192,7 @@ export function PhoenixPriceChart({
       controller.abort();
       historyControllerRef.current?.abort();
       resyncControllerRef.current?.abort();
+      resyncReplayRef.current = null;
     };
   }, [reloadSignal, seriesKey, symbol, timeframe.count, timeframe.interval]);
 
@@ -198,12 +206,18 @@ export function PhoenixPriceChart({
       return;
     }
 
+    const resyncReplay = resyncReplayRef.current;
+    if (resyncReplay && !resyncReplay.controller.signal.aborted) {
+      resyncReplay.liveUpdates.push(update.candle);
+    }
     setCandleHistory((current) => ({
       ...current,
       rawCandles: upsertPhoenixLiveCandle(current.rawCandles, update.candle),
     }));
-    if (!live.marketStats) latestPriceCallbackRef.current?.(update.candle.close);
-  }, [live.candle, live.marketStats, symbol, timeframe.interval]);
+    if (latestLivePriceRef.current === null) {
+      latestPriceCallbackRef.current?.(update.candle.close);
+    }
+  }, [live.candle, symbol, timeframe.interval]);
 
   useEffect(() => {
     if (!live.marketStats) return;
@@ -244,14 +258,22 @@ export function PhoenixPriceChart({
     const controller = new AbortController();
     resyncControllerRef.current?.abort();
     resyncControllerRef.current = controller;
+    resyncReplayRef.current = { controller, liveUpdates: [] };
     void fetchPhoenixCandles(symbol, timeframe.interval, timeframe.count, {
       signal: controller.signal,
     })
       .then((data) => {
         if (controller.signal.aborted) return;
+        const liveUpdates = resyncReplayRef.current?.controller === controller
+          ? [...resyncReplayRef.current.liveUpdates]
+          : [];
         setCandleHistory((current) => ({
           ...current,
-          rawCandles: reconcilePhoenixCandleSnapshot(current.rawCandles, data),
+          rawCandles: reconcilePhoenixCandleSnapshot(
+            current.rawCandles,
+            data,
+            liveUpdates,
+          ),
         }));
       })
       .catch((error: unknown) => {
@@ -264,9 +286,17 @@ export function PhoenixPriceChart({
         if (resyncControllerRef.current === controller) {
           resyncControllerRef.current = null;
         }
+        if (resyncReplayRef.current?.controller === controller) {
+          resyncReplayRef.current = null;
+        }
       });
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (resyncReplayRef.current?.controller === controller) {
+        resyncReplayRef.current = null;
+      }
+    };
   }, [
     live.connectionSequence,
     resolvedSeriesKey,
@@ -678,10 +708,12 @@ function StoryAnnotationCard({
   readonly currentIndex: number;
   readonly total: number;
 }) {
+  const reduceMotion = useReducedMotion();
+
   return (
     <Animated.View
-      entering={FadeIn.duration(160)}
-      exiting={FadeOut.duration(120)}
+      entering={reduceMotion ? undefined : FadeIn.duration(160)}
+      exiting={reduceMotion ? undefined : FadeOut.duration(120)}
       pointerEvents="none"
       style={styles.storyCard}
       accessibilityElementsHidden
@@ -692,7 +724,7 @@ function StoryAnnotationCard({
           source={imageUrl}
           style={styles.storyCardImage}
           contentFit="cover"
-          transition={120}
+          transition={reduceMotion ? 0 : 120}
         />
       ) : (
         <View style={styles.storyCardFallback}>
