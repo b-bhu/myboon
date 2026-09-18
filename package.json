@@ -21,5 +21,10 @@
   "devDependencies": {
     "dotenv": "^17.4.2",
     "tsx": "^4.21.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@solana-mobile/mobile-wallet-adapter-protocol": "2.2.6"
+    }
   }
 }

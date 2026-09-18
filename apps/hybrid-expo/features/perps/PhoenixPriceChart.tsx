@@ -1,692 +1,1027 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentType, ReactNode } from 'react';
-import { Image } from 'expo-image';
 import {
-  type AccessibilityActionEvent,
-  ActivityIndicator,
-  LayoutChangeEvent,
-  PanResponder,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import Svg, { Circle, Defs, LinearGradient, Line, Path, Stop } from 'react-native-svg';
+import { Image } from 'expo-image';
+import Animated, { FadeIn, FadeOut, useReducedMotion } from 'react-native-reanimated';
+import {
+  IconChartCandle,
+  IconChartLine,
+  IconCheck,
+  IconChevronDown,
+  IconRefresh,
+  IconSparkles,
+} from '@tabler/icons-react-native';
+import {
+  MarketChart,
+  type MarketCandle,
+  type MarketChartAnnotation,
+  type MarketChartMode,
+  type MarketChartSelection,
+  type MarketChartStatus,
+} from '@/features/charts';
+import {
+  adaptPhoenixCandles,
+  mergePhoenixCandlePages,
+  reconcilePhoenixCandleSnapshot,
+  upsertPhoenixLiveCandle,
+} from '@/features/perps/phoenix.chart-adapter';
+import {
+  DEFAULT_PHOENIX_CHART_TIMEFRAME_INDEX,
+  formatPhoenixAxisPrice,
+  formatPhoenixChartTime,
+  PHOENIX_CHART_TIMEFRAMES,
+} from '@/features/perps/phoenix.chart-config';
+import {
+  mapPhoenixStoryToChartMarkers,
+  type PhoenixChartStoryMarker,
+} from '@/features/perps/phoenix.chart-stories';
 import {
   fetchPhoenixCandles,
   formatPhoenixPrice,
   type PhoenixCandle,
-  type PhoenixCandleInterval,
 } from '@/features/perps/phoenix.api';
 import {
-  mapPhoenixChartEvents,
-  type PhoenixChartEventMarker,
-} from '@/features/perps/phoenix.chart-events';
-import { BTC_DEMO_EVENTS, isBitcoinPerpSymbol } from '@/features/perps/btc-demo-events';
-import { semantic, tokens } from '@/theme';
+  normalizePhoenixLiveSymbol,
+  type PhoenixLiveConnectionStatus,
+  type PhoenixLiveMarketStats,
+} from '@/features/perps/phoenix.live';
+import { usePhoenixLiveMarket } from '@/features/perps/use-phoenix-live-market';
+import { usePhoenixChartStories } from '@/features/perps/use-phoenix-chart-stories';
+import { marketChartTheme } from '@/features/charts/market-chart.theme';
+import { tokens } from '@/theme';
 
-const TIMEFRAMES: { label: string; interval: PhoenixCandleInterval; count: number }[] = [
-  { label: '1H', interval: '1m', count: 60 },
-  { label: '1D', interval: '15m', count: 96 },
-  { label: '1W', interval: '1h', count: 168 },
-  { label: '1M', interval: '4h', count: 180 },
-];
+/*
+ * PhoenixPriceChart owns the venue-specific realtime and Story adapters.
+ * MarketChart stays transport- and product-agnostic and only renders normalized
+ * candles plus generic annotations supplied by this parent.
+ */
 
-const ChartDefs = Defs as unknown as ComponentType<{ children?: ReactNode }>;
+const DEFAULT_CHART_HEIGHT = 320;
+const EMPTY_MARKET_CANDLES: readonly MarketCandle[] = [];
+
+interface PhoenixCandleHistoryState {
+  readonly rawCandles: PhoenixCandle[];
+  readonly hasMoreHistory: boolean;
+}
+
+interface PhoenixResyncReplay {
+  readonly controller: AbortController;
+  readonly liveUpdates: PhoenixCandle[];
+}
 
 interface PhoenixPriceChartProps {
   symbol: string;
-  showBitcoinDemo?: boolean;
   height?: number;
   onScrub?: (price: number | null, time: number | null) => void;
   onLatestPrice?: (price: number | null) => void;
+  onLiveMarketStats?: (stats: PhoenixLiveMarketStats) => void;
+  onLiveStatusChange?: (status: PhoenixLiveConnectionStatus) => void;
 }
 
 export function PhoenixPriceChart({
   symbol,
-  showBitcoinDemo,
-  height = 150,
+  height = DEFAULT_CHART_HEIGHT,
   onScrub,
   onLatestPrice,
+  onLiveMarketStats,
+  onLiveStatusChange,
 }: PhoenixPriceChartProps) {
-  const [tfIndex, setTfIndex] = useState(1);
-  const [candles, setCandles] = useState<PhoenixCandle[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const [timeframeIndex, setTimeframeIndex] = useState(
+    DEFAULT_PHOENIX_CHART_TIMEFRAME_INDEX,
+  );
+  const [timeframeOpen, setTimeframeOpen] = useState(false);
+  const [mode, setMode] = useState<MarketChartMode>('candles');
+  const [storiesVisible, setStoriesVisible] = useState(true);
+  const [selectedStoryMarkerId, setSelectedStoryMarkerId] = useState<string | null>(null);
+  const [selectedStoryEventIndex, setSelectedStoryEventIndex] = useState(0);
+  const [{ rawCandles, hasMoreHistory }, setCandleHistory] = useState<PhoenixCandleHistoryState>({
+    rawCandles: [],
+    hasMoreHistory: true,
+  });
+  const [resolvedSeriesKey, setResolvedSeriesKey] = useState<string | null>(null);
+  const [status, setStatus] = useState<MarketChartStatus>({ kind: 'loading' });
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
+  const [reloadSignal, setReloadSignal] = useState(0);
+  const [timeframeAnchor, setTimeframeAnchor] = useState({ x: 0, y: 0 });
+  const timeframeAnchorRef = useRef<View | null>(null);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const latestPriceCallbackRef = useRef(onLatestPrice);
+  const scrubCallbackRef = useRef(onScrub);
+  const liveMarketStatsCallbackRef = useRef(onLiveMarketStats);
+  const liveStatusCallbackRef = useRef(onLiveStatusChange);
+  const historyLoadingRef = useRef(false);
+  const historyControllerRef = useRef<AbortController | null>(null);
+  const resyncControllerRef = useRef<AbortController | null>(null);
+  const resyncReplayRef = useRef<PhoenixResyncReplay | null>(null);
+  const liveConnectionRef = useRef({ seriesKey: '', sequence: 0 });
+  const latestLivePriceRef = useRef<number | null>(null);
+  latestPriceCallbackRef.current = onLatestPrice;
+  scrubCallbackRef.current = onScrub;
+  liveMarketStatsCallbackRef.current = onLiveMarketStats;
+  liveStatusCallbackRef.current = onLiveStatusChange;
 
-  const tf = TIMEFRAMES[tfIndex];
+  const timeframe = PHOENIX_CHART_TIMEFRAMES[timeframeIndex];
+  const seriesKey = `${symbol}:${timeframe.interval}:${timeframe.count}`;
+  const live = usePhoenixLiveMarket(symbol, timeframe.interval);
+  const chartStories = usePhoenixChartStories(symbol);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setErrorMessage(null);
+    const controller = new AbortController();
+    historyControllerRef.current?.abort();
+    historyControllerRef.current = null;
+    resyncControllerRef.current?.abort();
+    resyncControllerRef.current = null;
+    resyncReplayRef.current = null;
+    historyLoadingRef.current = false;
+    setResolvedSeriesKey(null);
+    setStatus({ kind: 'loading', accessibilityLabel: `Loading ${symbol} chart` });
+    setCandleHistory({ rawCandles: [], hasMoreHistory: true });
+    setIsLoadingHistory(false);
+    setHistoryError(false);
+    latestLivePriceRef.current = null;
+    scrubCallbackRef.current?.(null, null);
+    latestPriceCallbackRef.current?.(null);
 
-    fetchPhoenixCandles(symbol, tf.interval, tf.count)
+    fetchPhoenixCandles(symbol, timeframe.interval, timeframe.count, {
+      signal: controller.signal,
+    })
       .then((data) => {
-        if (cancelled) return;
-        setCandles(data);
-        onLatestPrice?.(data.at(-1)?.close ?? null);
+        if (controller.signal.aborted) return;
+        const normalizedResponse = adaptPhoenixCandles(data);
+        setCandleHistory((current) => ({
+          ...current,
+          rawCandles: mergePhoenixCandlePages(data, current.rawCandles),
+        }));
+        setResolvedSeriesKey(seriesKey);
+        latestPriceCallbackRef.current?.(
+          latestLivePriceRef.current ?? normalizedResponse.candles.at(-1)?.close ?? null,
+        );
+        setStatus(normalizedResponse.candles.length > 0
+          ? { kind: 'ready' }
+          : {
+              kind: 'empty',
+              title: 'No candle history',
+              description: data.length > 0
+                ? 'Phoenix returned no usable candles for this range.'
+                : 'Phoenix returned no candles for this range.',
+            });
       })
-      .catch((err) => {
-        if (cancelled) return;
-        setCandles([]);
-        onLatestPrice?.(null);
-        setErrorMessage(err instanceof Error ? err.message : 'Phoenix candles unavailable');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || isAbortError(error)) return;
+        setCandleHistory((current) => ({ ...current, rawCandles: [] }));
+        setResolvedSeriesKey(seriesKey);
+        latestPriceCallbackRef.current?.(null);
+        setStatus({
+          kind: 'error',
+          title: 'Chart unavailable',
+          description: error instanceof Error
+            ? error.message
+            : 'Phoenix candle history could not be loaded.',
+          retryLabel: 'Retry',
+        });
       });
 
-    return () => { cancelled = true; };
-  }, [symbol, tf.interval, tf.count, onLatestPrice]);
+    return () => {
+      controller.abort();
+      historyControllerRef.current?.abort();
+      resyncControllerRef.current?.abort();
+      resyncReplayRef.current = null;
+    };
+  }, [reloadSignal, seriesKey, symbol, timeframe.count, timeframe.interval]);
 
-  const isUp = candles.length >= 2 ? candles[candles.length - 1].close >= candles[0].open : true;
-  const lineColor = isUp ? tokens.colors.viridian : tokens.colors.vermillion;
-  const scrubCandle = scrubIndex !== null ? candles[scrubIndex] : null;
-  const shouldShowBitcoinDemo = showBitcoinDemo ?? isBitcoinPerpSymbol(symbol);
-  const eventMarkers = useMemo(() => mapPhoenixChartEvents(
-    candles,
-    shouldShowBitcoinDemo ? BTC_DEMO_EVENTS : [],
-  ), [candles, shouldShowBitcoinDemo]);
-
-  const handleScrub = useCallback((index: number | null) => {
-    setScrubIndex(index);
-    if (index !== null && candles[index]) {
-      onScrub?.(candles[index].close, candles[index].time);
+  useEffect(() => {
+    const update = live.candle;
+    if (
+      !update
+      || update.timeframe !== timeframe.interval
+      || update.symbol !== normalizePhoenixLiveSymbol(symbol)
+    ) {
       return;
     }
-    onScrub?.(null, null);
-  }, [candles, onScrub]);
+
+    const resyncReplay = resyncReplayRef.current;
+    if (resyncReplay && !resyncReplay.controller.signal.aborted) {
+      resyncReplay.liveUpdates.push(update.candle);
+    }
+    setCandleHistory((current) => ({
+      ...current,
+      rawCandles: upsertPhoenixLiveCandle(current.rawCandles, update.candle),
+    }));
+    if (latestLivePriceRef.current === null) {
+      latestPriceCallbackRef.current?.(update.candle.close);
+    }
+  }, [live.candle, symbol, timeframe.interval]);
+
+  useEffect(() => {
+    if (!live.marketStats) return;
+    latestLivePriceRef.current = live.marketStats.markPrice;
+    latestPriceCallbackRef.current?.(live.marketStats.markPrice);
+    liveMarketStatsCallbackRef.current?.(live.marketStats);
+  }, [live.marketStats]);
+
+  useEffect(() => {
+    liveStatusCallbackRef.current?.(live.status);
+  }, [live.status]);
+
+  useEffect(() => {
+    const previous = liveConnectionRef.current;
+    if (previous.seriesKey !== seriesKey) {
+      liveConnectionRef.current = {
+        seriesKey,
+        sequence: live.connectionSequence,
+      };
+      return;
+    }
+    if (live.connectionSequence < previous.sequence) {
+      liveConnectionRef.current = {
+        seriesKey,
+        sequence: live.connectionSequence,
+      };
+      return;
+    }
+    if (live.connectionSequence <= previous.sequence) return;
+
+    const shouldResync = previous.sequence > 0;
+    liveConnectionRef.current = {
+      seriesKey,
+      sequence: live.connectionSequence,
+    };
+    if (!shouldResync || resolvedSeriesKey !== seriesKey) return;
+
+    const controller = new AbortController();
+    resyncControllerRef.current?.abort();
+    resyncControllerRef.current = controller;
+    resyncReplayRef.current = { controller, liveUpdates: [] };
+    void fetchPhoenixCandles(symbol, timeframe.interval, timeframe.count, {
+      signal: controller.signal,
+    })
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        const liveUpdates = resyncReplayRef.current?.controller === controller
+          ? [...resyncReplayRef.current.liveUpdates]
+          : [];
+        setCandleHistory((current) => ({
+          ...current,
+          rawCandles: reconcilePhoenixCandleSnapshot(
+            current.rawCandles,
+            data,
+            liveUpdates,
+          ),
+        }));
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || isAbortError(error)) return;
+        if (__DEV__) {
+          console.warn('[PhoenixPriceChart] reconnect candle resync failed', error);
+        }
+      })
+      .finally(() => {
+        if (resyncControllerRef.current === controller) {
+          resyncControllerRef.current = null;
+        }
+        if (resyncReplayRef.current?.controller === controller) {
+          resyncReplayRef.current = null;
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (resyncReplayRef.current?.controller === controller) {
+        resyncReplayRef.current = null;
+      }
+    };
+  }, [
+    live.connectionSequence,
+    resolvedSeriesKey,
+    seriesKey,
+    symbol,
+    timeframe.count,
+    timeframe.interval,
+  ]);
+
+  const adapted = useMemo(() => adaptPhoenixCandles(rawCandles), [rawCandles]);
+  const candles = resolvedSeriesKey === seriesKey
+    ? adapted.candles
+    : EMPTY_MARKET_CANDLES;
+  const storyMarkers = useMemo<readonly PhoenixChartStoryMarker[]>(() => {
+    if (rawCandles.length === 0 || !chartStories.story) return [];
+    return mapPhoenixStoryToChartMarkers(
+      rawCandles,
+      chartStories.story,
+      chartStories.events,
+    );
+  }, [chartStories.events, chartStories.story, rawCandles]);
+  const storyAnnotations = useMemo<readonly MarketChartAnnotation[]>(() => (
+    storyMarkers.map((marker) => ({
+      id: marker.id,
+      timeMs: marker.time,
+      label: marker.events[0]?.text ?? marker.story.name,
+      accessibilityLabel: `${marker.story.name}. ${marker.events[0]?.text ?? marker.story.latestDevelopment}`,
+      imageUrl: marker.events[0]?.imageUrl ?? marker.story.imageUrl,
+      fallbackText: '✦',
+      tone: 'accent' as const,
+    }))
+  ), [storyMarkers]);
+  const selectedStoryMarker = storyMarkers.find(
+    (marker) => marker.id === selectedStoryMarkerId,
+  ) ?? null;
+  const selectedStoryEvent = selectedStoryMarker?.events[selectedStoryEventIndex]
+    ?? selectedStoryMarker?.events[0]
+    ?? null;
+
+  useEffect(() => {
+    if (
+      selectedStoryMarkerId !== null
+      && !storyMarkers.some((marker) => marker.id === selectedStoryMarkerId)
+    ) {
+      setSelectedStoryMarkerId(null);
+      setSelectedStoryEventIndex(0);
+    }
+  }, [selectedStoryMarkerId, storyMarkers]);
+
+  useEffect(() => {
+    if (!__DEV__ || (adapted.rejectedRows === 0 && adapted.duplicateTimes.length === 0)) {
+      return;
+    }
+    console.warn('[PhoenixPriceChart] normalized malformed candle response', {
+      rejectedRows: adapted.rejectedRows,
+      duplicateTimes: adapted.duplicateTimes.length,
+    });
+  }, [adapted.duplicateTimes.length, adapted.rejectedRows]);
+
+  const chartStatus = useMemo<MarketChartStatus>(() => (
+    resolvedSeriesKey !== seriesKey
+      ? { kind: 'loading', accessibilityLabel: `Loading ${symbol} chart` }
+      : status.kind === 'ready' && candles.length === 0
+      ? {
+          kind: 'empty',
+          title: 'No candle history',
+          description: 'Phoenix returned no usable candles for this range.',
+        }
+      : status
+  ), [candles.length, resolvedSeriesKey, seriesKey, status, symbol]);
+
+  const handleSelectionChange = useCallback((next: MarketChartSelection) => {
+    if (next.candle) {
+      setSelectedStoryMarkerId(null);
+      setSelectedStoryEventIndex(0);
+    }
+    scrubCallbackRef.current?.(
+      next.candle?.close ?? null,
+      next.candle?.timeMs ?? null,
+    );
+  }, []);
+
+  const handleAnnotationSelectionChange = useCallback((
+    annotation: MarketChartAnnotation | null,
+  ) => {
+    scrubCallbackRef.current?.(null, null);
+    if (!annotation) {
+      setSelectedStoryMarkerId(null);
+      setSelectedStoryEventIndex(0);
+      return;
+    }
+
+    const marker = storyMarkers.find((candidate) => candidate.id === annotation.id);
+    if (!marker) return;
+    if (annotation.id === selectedStoryMarkerId) {
+      setSelectedStoryEventIndex((index) => (
+        marker.events.length > 1 ? (index + 1) % marker.events.length : 0
+      ));
+    } else {
+      setSelectedStoryMarkerId(annotation.id);
+      setSelectedStoryEventIndex(0);
+    }
+  }, [selectedStoryMarkerId, storyMarkers]);
+
+  const toggleStories = useCallback(() => {
+    if (storiesVisible) {
+      setSelectedStoryMarkerId(null);
+      setSelectedStoryEventIndex(0);
+    }
+    setStoriesVisible(!storiesVisible);
+  }, [storiesVisible]);
+
+  const handleTimeframeChange = useCallback((index: number) => {
+    setTimeframeOpen(false);
+    if (index === timeframeIndex) return;
+    setTimeframeIndex(index);
+    setSelectedStoryMarkerId(null);
+    setSelectedStoryEventIndex(0);
+    scrubCallbackRef.current?.(null, null);
+  }, [timeframeIndex]);
+
+  const openTimeframeMenu = useCallback(() => {
+    timeframeAnchorRef.current?.measureInWindow((x, y, width, height) => {
+      setTimeframeAnchor({
+        x: Math.max(
+          marketChartTheme.metrics.toolbarInset,
+          Math.min(
+            x,
+            windowWidth
+              - marketChartTheme.metrics.toolbarInset
+              - marketChartTheme.metrics.menuWidth,
+          ),
+        ),
+        y: Math.max(
+          marketChartTheme.metrics.toolbarInset,
+          Math.min(
+            y + height + marketChartTheme.metrics.menuOffset,
+            windowHeight
+              - marketChartTheme.metrics.toolbarInset
+              - PHOENIX_CHART_TIMEFRAMES.length * marketChartTheme.metrics.menuRowHeight,
+          ),
+        ),
+      });
+      setTimeframeOpen(true);
+    });
+  }, [windowHeight, windowWidth]);
+
+  const loadMoreHistory = useCallback(() => {
+    if (
+      historyLoadingRef.current
+      || !hasMoreHistory
+      || rawCandles.length === 0
+      || resolvedSeriesKey !== seriesKey
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const oldestCandle = rawCandles[0];
+    historyControllerRef.current = controller;
+    historyLoadingRef.current = true;
+    setIsLoadingHistory(true);
+    setHistoryError(false);
+
+    void fetchPhoenixCandles(symbol, timeframe.interval, timeframe.count, {
+      signal: controller.signal,
+      endTime: oldestCandle.time - 1,
+    })
+      .then((olderCandles) => {
+        if (controller.signal.aborted) return;
+        setCandleHistory((current) => {
+          const merged = mergePhoenixCandlePages(olderCandles, current.rawCandles);
+          const addedCount = merged.length - current.rawCandles.length;
+          return {
+            rawCandles: merged,
+            hasMoreHistory: addedCount > 0 && current.hasMoreHistory,
+          };
+        });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || isAbortError(error)) return;
+        setHistoryError(true);
+        setCandleHistory((current) => ({ ...current, hasMoreHistory: false }));
+      })
+      .finally(() => {
+        if (historyControllerRef.current !== controller) return;
+        historyControllerRef.current = null;
+        historyLoadingRef.current = false;
+        setIsLoadingHistory(false);
+      });
+  }, [
+    hasMoreHistory,
+    rawCandles,
+    resolvedSeriesKey,
+    seriesKey,
+    symbol,
+    timeframe.count,
+    timeframe.interval,
+  ]);
+
+  const handleHistoryRetry = useCallback(() => {
+    setHistoryError(false);
+    setCandleHistory((current) => ({ ...current, hasMoreHistory: true }));
+  }, []);
+
+  const handleRetry = useCallback(() => {
+    setReloadSignal((value) => value + 1);
+  }, []);
 
   return (
     <View style={styles.container}>
-      {scrubCandle && (
-        <View style={styles.scrubOverlay}>
-          <Text style={[styles.scrubPrice, { color: lineColor }]}>
-            {formatPhoenixPrice(scrubCandle.close)}
-          </Text>
-          <Text style={styles.scrubTime}>{formatScrubTime(scrubCandle.time, tf.interval)}</Text>
-        </View>
-      )}
-
-      <View style={[styles.chartArea, { height }]}>
-        {loading ? (
-          <ActivityIndicator size="small" color={semantic.text.accent} />
-        ) : errorMessage ? (
-          <View style={styles.noDataWrap}>
-            <Text style={styles.noData}>Candles unavailable</Text>
-            <Text style={styles.noDataDetail} numberOfLines={2}>{errorMessage}</Text>
-          </View>
-        ) : candles.length < 2 ? (
-          <Text style={styles.noData}>No candle data</Text>
-        ) : (
-          <InteractiveChart
-            candles={candles}
-            height={height}
-            color={lineColor}
-            eventMarkers={eventMarkers}
-            scrubIndex={scrubIndex}
-            onScrub={handleScrub}
-          />
-        )}
-      </View>
-
-      <View style={styles.tfRow}>
-        {TIMEFRAMES.map((timeframe, index) => (
+      <View style={styles.controls}>
+        <View ref={timeframeAnchorRef} collapsable={false}>
           <Pressable
-            key={timeframe.label}
-            style={[
-              styles.tfPill,
-              index === tfIndex && {
-                backgroundColor: isUp ? 'rgba(6,214,160,0.12)' : 'rgba(239,71,111,0.12)',
-              },
+            style={({ pressed }) => [
+              styles.timeframeButton,
+              pressed && styles.controlPressed,
             ]}
-            onPress={() => {
-              setTfIndex(index);
-              setScrubIndex(null);
-              onScrub?.(null, null);
-            }}>
-            <Text style={[styles.tfText, index === tfIndex && { color: lineColor }]}>
-              {timeframe.label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function formatScrubTime(ms: number, interval: PhoenixCandleInterval): string {
-  const date = new Date(ms);
-  const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  if (interval === '1s' || interval === '5s' || interval === '1m' || interval === '5m' || interval === '15m' || interval === '30m') {
-    return time;
-  }
-  const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  return interval === '1d' ? day : `${day}, ${time}`;
-}
-
-interface InteractiveChartProps {
-  candles: PhoenixCandle[];
-  height: number;
-  color: string;
-  eventMarkers: PhoenixChartEventMarker[];
-  scrubIndex: number | null;
-  onScrub: (index: number | null) => void;
-}
-
-const CHART_PAD_TOP = 8;
-const CHART_PAD_BOTTOM = 8;
-const EVENT_MARKER_OFFSET = 24;
-const EVENT_MARKER_SIZE = 26;
-const EVENT_HIT_RADIUS = 32;
-const EVENT_BUBBLE_SIDE_GUTTER = 8;
-const EVENT_BUBBLE_MAX_WIDTH = 248;
-const EVENT_BUBBLE_HEIGHT = 68;
-const EVENT_DRAG_THRESHOLD = 6;
-
-interface RenderedEventMarker extends PhoenixChartEventMarker {
-  xPercent: number;
-  pointY: number;
-  markerY: number;
-}
-
-function InteractiveChart({
-  candles,
-  height,
-  color,
-  eventMarkers,
-  scrubIndex,
-  onScrub,
-}: InteractiveChartProps) {
-  const layoutWidth = useRef(0);
-  const layoutXRef = useRef(0);
-  const layoutYRef = useRef(0);
-  const gestureMarkerRef = useRef<string | null>(null);
-  const gestureMovedRef = useRef(false);
-  const [chartWidth, setChartWidth] = useState(0);
-  const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
-  const [selectedEventIndex, setSelectedEventIndex] = useState(0);
-
-  const closes = useMemo(() => candles.map((candle) => candle.close), [candles]);
-  const min = useMemo(() => Math.min(...closes), [closes]);
-  const max = useMemo(() => Math.max(...closes), [closes]);
-  const range = max - min || 1;
-  const drawHeight = height - CHART_PAD_TOP - CHART_PAD_BOTTOM;
-
-  const points = useMemo(() =>
-    closes.map((value, index) => ({
-      x: (index / (closes.length - 1)) * 100,
-      y: CHART_PAD_TOP + drawHeight - ((value - min) / range) * drawHeight,
-    })),
-    [closes, min, range, drawHeight],
-  );
-
-  const linePath = useMemo(() =>
-    points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(1)}`).join(' '),
-    [points],
-  );
-
-  const fillPath = `${linePath} L100,${height} L0,${height} Z`;
-  const lastPoint = points[points.length - 1];
-  const scrubPoint = scrubIndex !== null ? points[scrubIndex] : null;
-  const renderedEventMarkers = useMemo<RenderedEventMarker[]>(() => eventMarkers.flatMap((marker) => {
-    const point = points[marker.candleIndex];
-    if (!point) return [];
-    const markerY = Math.max(EVENT_MARKER_SIZE / 2, point.y - EVENT_MARKER_OFFSET);
-    return [{
-      ...marker,
-      xPercent: marker.chartPosition === null ? point.x : marker.chartPosition * 100,
-      pointY: point.y,
-      markerY,
-    }];
-  }), [eventMarkers, points]);
-  const selectedMarker = renderedEventMarkers.find((marker) => marker.id === selectedMarkerId) ?? null;
-  const selectedEvent = selectedMarker?.events[selectedEventIndex] ?? selectedMarker?.events[0] ?? null;
-  const accessibleEvents = useMemo(() => renderedEventMarkers.flatMap((marker) => (
-    marker.events.map((_event, eventIndex) => ({ marker, eventIndex }))
-  )), [renderedEventMarkers]);
-
-  useEffect(() => {
-    if (selectedMarkerId && !renderedEventMarkers.some((marker) => marker.id === selectedMarkerId)) {
-      setSelectedMarkerId(null);
-      setSelectedEventIndex(0);
-    }
-  }, [renderedEventMarkers, selectedMarkerId]);
-
-  const getIndexFromX = useCallback((pageX: number, layoutX: number) => {
-    const x = pageX - layoutX;
-    const pct = Math.max(0, Math.min(1, x / Math.max(1, layoutWidth.current)));
-    return Math.round(pct * (candles.length - 1));
-  }, [candles.length]);
-
-  const getEventMarkerFromPoint = useCallback((pageX: number, pageY: number): RenderedEventMarker | null => {
-    if (layoutWidth.current <= 0) return null;
-    const localX = pageX - layoutXRef.current;
-    const localY = pageY - layoutYRef.current;
-    let nearest: RenderedEventMarker | null = null;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    renderedEventMarkers.forEach((marker) => {
-      const markerX = (marker.xPercent / 100) * layoutWidth.current;
-      const distance = Math.hypot(markerX - localX, marker.markerY - localY);
-      if (distance <= EVENT_HIT_RADIUS && distance < nearestDistance) {
-        nearest = marker;
-        nearestDistance = distance;
-      }
-    });
-    return nearest;
-  }, [renderedEventMarkers]);
-
-  const panResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderGrant: (event) => {
-      const marker = getEventMarkerFromPoint(event.nativeEvent.pageX, event.nativeEvent.pageY);
-      gestureMarkerRef.current = marker?.id ?? null;
-      gestureMovedRef.current = false;
-      if (marker) {
-        if (selectedMarkerId === marker.id) {
-          setSelectedEventIndex((index) => (index + 1) % marker.events.length);
-        } else {
-          setSelectedEventIndex(0);
-          setSelectedMarkerId(marker.id);
-        }
-        onScrub(null);
-        return;
-      }
-      setSelectedMarkerId(null);
-      setSelectedEventIndex(0);
-      onScrub(getIndexFromX(event.nativeEvent.pageX, layoutXRef.current));
-    },
-    onPanResponderMove: (event, gestureState) => {
-      const moved = Math.abs(gestureState.dx) > EVENT_DRAG_THRESHOLD
-        || Math.abs(gestureState.dy) > EVENT_DRAG_THRESHOLD;
-      gestureMovedRef.current ||= moved;
-      if (gestureMarkerRef.current && !gestureMovedRef.current) return;
-      if (gestureMarkerRef.current) {
-        gestureMarkerRef.current = null;
-        setSelectedMarkerId(null);
-        setSelectedEventIndex(0);
-      }
-      onScrub(getIndexFromX(event.nativeEvent.pageX, layoutXRef.current));
-    },
-    onPanResponderRelease: () => {
-      gestureMarkerRef.current = null;
-      gestureMovedRef.current = false;
-      onScrub(null);
-    },
-    onPanResponderTerminate: () => {
-      gestureMarkerRef.current = null;
-      gestureMovedRef.current = false;
-      onScrub(null);
-    },
-  }), [getEventMarkerFromPoint, getIndexFromX, onScrub, selectedMarkerId]);
-
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
-    layoutWidth.current = event.nativeEvent.layout.width;
-    setChartWidth(event.nativeEvent.layout.width);
-    layoutXRef.current = event.nativeEvent.layout.x;
-    (event.target as unknown as { measureInWindow?: (callback: (x: number, y: number) => void) => void })
-      ?.measureInWindow?.((x, y) => {
-        layoutXRef.current = x;
-        layoutYRef.current = y;
-      });
-  }, []);
-
-  const handleAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
-    const action = event.nativeEvent.actionName;
-    if (action === 'escape') {
-      setSelectedMarkerId(null);
-      setSelectedEventIndex(0);
-      return;
-    }
-    if (accessibleEvents.length === 0) return;
-
-    const currentIndex = accessibleEvents.findIndex(({ marker, eventIndex }) => (
-      marker.id === selectedMarkerId && eventIndex === selectedEventIndex
-    ));
-    let nextIndex = currentIndex;
-    if (action === 'decrement') {
-      nextIndex = currentIndex <= 0 ? accessibleEvents.length - 1 : currentIndex - 1;
-    } else if (action === 'increment' || action === 'activate') {
-      nextIndex = currentIndex < 0 || currentIndex >= accessibleEvents.length - 1 ? 0 : currentIndex + 1;
-    } else {
-      return;
-    }
-
-    const next = accessibleEvents[nextIndex];
-    setSelectedMarkerId(next.marker.id);
-    setSelectedEventIndex(next.eventIndex);
-    onScrub(null);
-  }, [accessibleEvents, onScrub, selectedEventIndex, selectedMarkerId]);
-
-  const bubbleWidth = Math.min(EVENT_BUBBLE_MAX_WIDTH, Math.max(0, chartWidth - EVENT_BUBBLE_SIDE_GUTTER * 2));
-  const selectedMarkerX = selectedMarker ? (selectedMarker.xPercent / 100) * chartWidth : 0;
-  const bubbleLeft = Math.max(
-    EVENT_BUBBLE_SIDE_GUTTER,
-    Math.min(
-      selectedMarkerX - bubbleWidth / 2,
-      Math.max(EVENT_BUBBLE_SIDE_GUTTER, chartWidth - bubbleWidth - EVENT_BUBBLE_SIDE_GUTTER),
-    ),
-  );
-  const bubbleTop = selectedMarker && selectedMarker.pointY > height / 2
-    ? EVENT_BUBBLE_SIDE_GUTTER
-    : Math.max(EVENT_BUBBLE_SIDE_GUTTER, height - EVENT_BUBBLE_HEIGHT - EVENT_BUBBLE_SIDE_GUTTER);
-
-  return (
-    <View
-      style={{ width: '100%', height }}
-      onLayout={handleLayout}
-      accessible
-      accessibilityRole="adjustable"
-      accessibilityLabel={`Phoenix price chart with ${accessibleEvents.length} story events`}
-      accessibilityHint="Swipe up or down to move between story events. Double tap to select the next event."
-      accessibilityValue={selectedEvent ? { text: `${formatEventTime(selectedEvent.eventAt)}. ${selectedEvent.text}` } : undefined}
-      accessibilityActions={[
-        { name: 'activate', label: 'Select next story event' },
-        { name: 'increment', label: 'Next story event' },
-        { name: 'decrement', label: 'Previous story event' },
-        { name: 'escape', label: 'Dismiss story event' },
-      ]}
-      onAccessibilityAction={handleAccessibilityAction}
-      {...panResponder.panHandlers}
-    >
-      <Svg width="100%" height={height} viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
-        <ChartDefs>
-          <LinearGradient id="phoenixChartFill" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0%" stopColor={color} stopOpacity={0.25} />
-            <Stop offset="100%" stopColor={color} stopOpacity={0} />
-          </LinearGradient>
-        </ChartDefs>
-        <Path d={fillPath} fill="url(#phoenixChartFill)" />
-        <Path d={linePath} fill="none" stroke={color} strokeWidth={0.6} />
-
-        {scrubPoint && (
-          <>
-            <Line
-              x1={scrubPoint.x}
-              y1={0}
-              x2={scrubPoint.x}
-              y2={height}
-              stroke="rgba(255,255,255,0.2)"
-              strokeWidth={0.3}
-              strokeDasharray="2,2"
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={`Candle interval, ${timeframe.label}`}
+            accessibilityHint="Opens candle interval options"
+            accessibilityState={{ expanded: timeframeOpen }}
+            onPress={openTimeframeMenu}
+          >
+            <Text style={styles.timeframeButtonLabel}>{timeframe.label}</Text>
+            <IconChevronDown
+              size={16}
+              strokeWidth={2}
+              color={marketChartTheme.colors.secondaryText}
             />
-            <Circle cx={scrubPoint.x} cy={scrubPoint.y} r={1.2} fill="#fff" />
-            <Circle cx={scrubPoint.x} cy={scrubPoint.y} r={2.5} fill={color} opacity={0.4} />
-          </>
-        )}
+          </Pressable>
+        </View>
 
-        {scrubIndex === null && lastPoint && (
-          <>
-            <Circle cx={lastPoint.x} cy={lastPoint.y} r={1} fill={color} />
-            <Circle cx={lastPoint.x} cy={lastPoint.y} r={2} fill={color} opacity={0.3} />
-          </>
-        )}
-      </Svg>
-
-      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        {renderedEventMarkers.map((marker) => {
-          const selected = marker.id === selectedMarkerId;
-          const markerEvent = marker.events[selected ? selectedEventIndex : 0] ?? marker.events[0];
-          const stemTop = Math.min(marker.markerY, marker.pointY);
-          return (
-            <View key={marker.id} style={StyleSheet.absoluteFill}>
-              <View
-                style={[
-                  styles.eventStem,
-                  {
-                    left: `${marker.xPercent}%`,
-                    top: stemTop,
-                    height: Math.max(1, Math.abs(marker.pointY - marker.markerY)),
-                    backgroundColor: selected ? color : tokens.colors.accent,
-                  },
-                ]}
+        <View style={styles.controlGroup}>
+          {historyError ? (
+            <Pressable
+              style={({ pressed }) => [styles.iconButton, pressed && styles.controlPressed]}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading older candles"
+              onPress={handleHistoryRetry}
+            >
+              <IconRefresh
+                size={marketChartTheme.metrics.iconSize}
+                strokeWidth={2}
+                color={marketChartTheme.colors.secondaryText}
               />
-              <View
-                style={[
-                  styles.eventMarker,
-                  {
-                    left: `${marker.xPercent}%`,
-                    top: marker.markerY,
-                    borderColor: selected ? semantic.text.primary : semantic.background.screen,
-                  },
-                  selected && styles.eventMarkerSelected,
-                ]}
-              >
-                {markerEvent?.imageUrl ? (
-                  <Image
-                    source={markerEvent.imageUrl}
-                    style={styles.eventMarkerImage}
-                    contentFit="cover"
-                    transition={100}
-                  />
-                ) : (
-                  <View style={styles.eventMarkerFallback}>
-                    <Text style={styles.eventMarkerFallbackText}>₿</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          );
-        })}
+            </Pressable>
+          ) : null}
 
-        {selectedMarker && selectedEvent && chartWidth > 0 ? (
+          <View
+            style={styles.modeToggle}
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Chart type"
+          >
+            <ChartModeButton
+              mode="candles"
+              selected={mode === 'candles'}
+              label="Candlestick chart"
+              onPress={() => setMode('candles')}
+            />
+            <View style={styles.modeDivider} />
+            <ChartModeButton
+              mode="line"
+              selected={mode === 'line'}
+              label="Line chart"
+              onPress={() => setMode('line')}
+            />
+          </View>
+
+          {storyAnnotations.length > 0 ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.storiesButton,
+                storiesVisible && styles.storiesButtonSelected,
+                pressed && styles.controlPressed,
+              ]}
+              hitSlop={{ top: 6, bottom: 6 }}
+              accessibilityRole="switch"
+              accessibilityLabel="Story annotations"
+              accessibilityState={{ checked: storiesVisible }}
+              onPress={toggleStories}
+            >
+              <IconSparkles
+                size={14}
+                strokeWidth={2}
+                color={storiesVisible
+                  ? tokens.colors.accent
+                  : marketChartTheme.colors.secondaryText}
+              />
+              <Text style={[
+                styles.storiesButtonLabel,
+                storiesVisible && styles.storiesButtonLabelSelected,
+              ]}>
+                Stories
+              </Text>
+            </Pressable>
+          ) : null}
+
+        </View>
+      </View>
+
+      <Modal
+        visible={timeframeOpen}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={() => setTimeframeOpen(false)}
+      >
+        <View style={styles.menuLayer} accessibilityViewIsModal>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            accessibilityRole="button"
+            accessibilityLabel="Close candle interval menu"
+            onPress={() => setTimeframeOpen(false)}
+          />
           <View
             style={[
-              styles.eventBubble,
-              { left: bubbleLeft, top: bubbleTop, width: bubbleWidth },
+              styles.timeframeMenu,
+              { left: timeframeAnchor.x, top: timeframeAnchor.y },
             ]}
           >
-            {selectedEvent.imageUrl ? (
-              <Image
-                source={selectedEvent.imageUrl}
-                style={styles.eventBubbleImage}
-                contentFit="cover"
-                transition={140}
-                accessibilityLabel="Bitcoin memory image"
-              />
-            ) : (
-              <View style={styles.eventBubbleImageFallback}>
-                <Text style={styles.eventBubbleImageFallbackText}>₿</Text>
-              </View>
-            )}
-            <View style={styles.eventBubbleCopy}>
-              <Text style={styles.eventBubbleText} numberOfLines={2}>
-                {selectedEvent.text}
-              </Text>
-              <View style={styles.eventBubbleMetaRow}>
-                <Text style={styles.eventBubbleTime} numberOfLines={1}>
-                  {formatEventTime(selectedEvent.eventAt)}
-                </Text>
-                {selectedMarker.events.length > 1 ? (
-                  <Text style={styles.eventBubbleCount}>
-                    {selectedEventIndex + 1}/{selectedMarker.events.length} · tap marker
+            {PHOENIX_CHART_TIMEFRAMES.map((candidate, index) => {
+              const selected = index === timeframeIndex;
+              return (
+                <Pressable
+                  key={candidate.label}
+                  style={({ pressed }) => [
+                    styles.timeframeMenuRow,
+                    selected && styles.timeframeMenuRowSelected,
+                    pressed && styles.timeframeMenuRowPressed,
+                  ]}
+                  accessibilityRole="menuitem"
+                  accessibilityState={{ selected }}
+                  onPress={() => handleTimeframeChange(index)}
+                >
+                  <Text style={[
+                    styles.timeframeMenuLabel,
+                    selected && styles.timeframeMenuLabelSelected,
+                  ]}>
+                    {candidate.label}
                   </Text>
-                ) : null}
-              </View>
-            </View>
+                  {selected ? (
+                    <IconCheck
+                      size={17}
+                      strokeWidth={2.25}
+                      color={marketChartTheme.colors.accent}
+                    />
+                  ) : null}
+                </Pressable>
+              );
+            })}
           </View>
+        </View>
+      </Modal>
+
+      <View style={[styles.chartWrap, { height }]}>
+        <MarketChart
+          seriesKey={seriesKey}
+          candles={candles}
+          mode={mode}
+          status={chartStatus}
+          layers={{
+            volume: true,
+            currentPrice: true,
+            annotations: storiesVisible,
+          }}
+          height={height}
+          formatPrice={formatPhoenixPrice}
+          formatAxisPrice={formatPhoenixAxisPrice}
+          formatTime={(timeMs) => formatPhoenixChartTime(timeMs, timeframe.interval)}
+          formatVolume={formatCompactVolume}
+          accessibilityLabel={`${symbol} Phoenix price chart`}
+          onSelectionChange={handleSelectionChange}
+          onLoadMoreHistory={loadMoreHistory}
+          hasMoreHistory={hasMoreHistory}
+          isLoadingHistory={isLoadingHistory}
+          onRetry={handleRetry}
+          annotations={storiesVisible ? storyAnnotations : []}
+          selectedAnnotationId={storiesVisible ? selectedStoryMarkerId : null}
+          onAnnotationSelectionChange={handleAnnotationSelectionChange}
+        />
+        {storiesVisible && selectedStoryEvent ? (
+          <StoryAnnotationCard
+            text={selectedStoryEvent.text}
+            eventAt={selectedStoryEvent.eventAt}
+            imageUrl={selectedStoryEvent.imageUrl}
+            currentIndex={selectedStoryEventIndex}
+            total={selectedStoryMarker?.events.length ?? 1}
+          />
         ) : null}
       </View>
     </View>
   );
 }
 
-function formatEventTime(value: string | undefined): string {
-  if (!value) return '';
+function StoryAnnotationCard({
+  text,
+  eventAt,
+  imageUrl,
+  currentIndex,
+  total,
+}: {
+  readonly text: string;
+  readonly eventAt: string;
+  readonly imageUrl: string | null;
+  readonly currentIndex: number;
+  readonly total: number;
+}) {
+  const reduceMotion = useReducedMotion();
+
+  return (
+    <Animated.View
+      entering={reduceMotion ? undefined : FadeIn.duration(160)}
+      exiting={reduceMotion ? undefined : FadeOut.duration(120)}
+      pointerEvents="none"
+      style={styles.storyCard}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {imageUrl ? (
+        <Image
+          source={imageUrl}
+          style={styles.storyCardImage}
+          contentFit="cover"
+          transition={reduceMotion ? 0 : 120}
+        />
+      ) : (
+        <View style={styles.storyCardFallback}>
+          <Text style={styles.storyCardFallbackText}>S</Text>
+        </View>
+      )}
+      <View style={styles.storyCardCopy}>
+        <Text style={styles.storyCardTitle} numberOfLines={2} selectable>
+          {text}
+        </Text>
+        <View style={styles.storyCardMeta}>
+          <Text style={styles.storyCardTime} numberOfLines={1} selectable>
+            {formatStoryTime(eventAt)}
+          </Text>
+          {total > 1 ? (
+            <Text style={styles.storyCardCount}>
+              {currentIndex + 1}/{total}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    </Animated.View>
+  );
+}
+
+function ChartModeButton({
+  mode,
+  selected,
+  label,
+  onPress,
+}: {
+  readonly mode: MarketChartMode;
+  readonly selected: boolean;
+  readonly label: string;
+  readonly onPress: () => void;
+}) {
+  const Icon = mode === 'candles' ? IconChartCandle : IconChartLine;
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.modeButton,
+        selected && styles.modeButtonSelected,
+        pressed && styles.controlPressed,
+      ]}
+      hitSlop={{ top: 6, bottom: 6 }}
+      accessibilityRole="radio"
+      accessibilityLabel={label}
+      accessibilityState={{ checked: selected }}
+      onPress={onPress}
+    >
+      <Icon
+        size={marketChartTheme.metrics.iconSize}
+        strokeWidth={2}
+        color={selected
+          ? marketChartTheme.colors.primaryText
+          : marketChartTheme.colors.secondaryText}
+      />
+    </Pressable>
+  );
+}
+
+function formatCompactVolume(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatStoryTime(value: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
   const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const time = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
   return `${day} · ${time}`;
+}
+
+function isAbortError(value: unknown): boolean {
+  return value instanceof Error && value.name === 'AbortError';
 }
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: semantic.background.screen,
-    paddingTop: tokens.spacing.sm,
+    backgroundColor: marketChartTheme.colors.canvas,
   },
-  chartArea: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  noDataWrap: {
-    alignItems: 'center',
-    gap: tokens.spacing.xs,
-    paddingHorizontal: tokens.spacing.lg,
-  },
-  noData: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    color: semantic.text.dim,
-  },
-  noDataDetail: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    lineHeight: 13,
-    color: semantic.text.faint,
-    textAlign: 'center',
-  },
-  scrubOverlay: {
-    position: 'absolute',
-    top: tokens.spacing.sm,
-    left: tokens.spacing.lg,
-    zIndex: 2,
-  },
-  scrubPrice: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.sm,
-    fontWeight: '700',
-  },
-  scrubTime: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.faint,
-    marginTop: 2,
-  },
-  eventStem: {
-    position: 'absolute',
-    width: 1,
-    transform: [{ translateX: -0.5 }],
-    opacity: 0.9,
-  },
-  eventMarker: {
-    position: 'absolute',
-    width: EVENT_MARKER_SIZE,
-    height: EVENT_MARKER_SIZE,
-    borderRadius: EVENT_MARKER_SIZE / 2,
-    borderWidth: 2,
-    overflow: 'hidden',
-    backgroundColor: semantic.background.screen,
-    transform: [
-      { translateX: -EVENT_MARKER_SIZE / 2 },
-      { translateY: -EVENT_MARKER_SIZE / 2 },
-    ],
-  },
-  eventMarkerSelected: {
-    borderWidth: 3,
-    transform: [
-      { translateX: -EVENT_MARKER_SIZE / 2 },
-      { translateY: -EVENT_MARKER_SIZE / 2 },
-      { scale: 1.15 },
-    ],
-  },
-  eventMarkerImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: tokens.radius.full,
-  },
-  eventMarkerFallback: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: tokens.colors.accent,
-  },
-  eventMarkerFallbackText: {
-    color: semantic.background.screen,
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '900',
-  },
-  eventBubble: {
-    position: 'absolute',
-    minHeight: EVENT_BUBBLE_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.sm,
-    paddingHorizontal: tokens.spacing.sm,
-    paddingVertical: 7,
-    borderRadius: tokens.radius.md,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: semantic.background.surface,
-    borderCurve: 'continuous',
-  },
-  eventBubbleImage: {
-    width: 34,
-    height: 34,
-    borderRadius: tokens.radius.full,
-    backgroundColor: semantic.background.screen,
-  },
-  eventBubbleImageFallback: {
-    width: 34,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: tokens.radius.full,
-    backgroundColor: semantic.background.screen,
-  },
-  eventBubbleImageFallbackText: {
-    color: tokens.colors.accent,
-    fontSize: tokens.fontSize.md,
-    fontWeight: '900',
-  },
-  eventBubbleCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: tokens.spacing.xs,
-  },
-  eventBubbleText: {
-    color: semantic.text.primary,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '700',
-    lineHeight: 13,
-  },
-  eventBubbleMetaRow: {
+  controls: {
+    height: marketChartTheme.metrics.toolbarHeight,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: tokens.spacing.sm,
+    gap: marketChartTheme.metrics.controlGap,
+    paddingHorizontal: marketChartTheme.metrics.toolbarInset,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: marketChartTheme.colors.divider,
+    backgroundColor: marketChartTheme.colors.toolbar,
   },
-  eventBubbleTime: {
-    flex: 1,
-    color: semantic.text.faint,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-  },
-  eventBubbleCount: {
-    color: semantic.text.accentDim,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '700',
-  },
-  tfRow: {
+  timeframeButton: {
+    width: marketChartTheme.metrics.timeframeWidth,
+    height: marketChartTheme.metrics.controlHeight,
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: tokens.spacing.sm,
-    paddingVertical: tokens.spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: marketChartTheme.colors.border,
+    borderRadius: marketChartTheme.metrics.controlRadius,
+    backgroundColor: marketChartTheme.colors.control,
+    borderCurve: 'continuous',
   },
-  tfPill: {
-    paddingHorizontal: tokens.spacing.md,
-    paddingVertical: 6,
-    borderRadius: tokens.radius.xs,
-  },
-  tfText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
+  timeframeButtonLabel: {
+    color: marketChartTheme.colors.primaryText,
+    fontSize: 13,
     fontWeight: '700',
-    color: semantic.text.faint,
+    fontVariant: ['tabular-nums'],
+  },
+  timeframeMenu: {
+    position: 'absolute',
+    width: marketChartTheme.metrics.menuWidth,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: marketChartTheme.colors.border,
+    borderRadius: marketChartTheme.metrics.menuRadius,
+    backgroundColor: marketChartTheme.colors.menu,
+    borderCurve: 'continuous',
+    shadowColor: '#000',
+    shadowOpacity: 0.32,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  menuLayer: {
+    flex: 1,
+  },
+  timeframeMenuRow: {
+    height: marketChartTheme.metrics.menuRowHeight,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+  },
+  timeframeMenuRowSelected: {
+    backgroundColor: marketChartTheme.colors.menuSelected,
+  },
+  timeframeMenuRowPressed: {
+    backgroundColor: marketChartTheme.colors.controlSelected,
+  },
+  timeframeMenuLabel: {
+    color: marketChartTheme.colors.secondaryText,
+    fontSize: 13,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  timeframeMenuLabelSelected: {
+    color: marketChartTheme.colors.primaryText,
+  },
+  controlGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: marketChartTheme.metrics.controlGap,
+  },
+  modeToggle: {
+    width: marketChartTheme.metrics.modeWidth,
+    height: marketChartTheme.metrics.controlHeight,
+    flexDirection: 'row',
+    alignItems: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: marketChartTheme.colors.border,
+    borderRadius: marketChartTheme.metrics.controlRadius,
+    backgroundColor: marketChartTheme.colors.control,
+    borderCurve: 'continuous',
+  },
+  modeButton: {
+    flex: 1,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeButtonSelected: {
+    backgroundColor: marketChartTheme.colors.controlSelected,
+  },
+  modeDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 20,
+    backgroundColor: marketChartTheme.colors.border,
+  },
+  storiesButton: {
+    width: 72,
+    height: marketChartTheme.metrics.controlHeight,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: marketChartTheme.colors.border,
+    borderRadius: marketChartTheme.metrics.controlRadius,
+    backgroundColor: marketChartTheme.colors.control,
+    borderCurve: 'continuous',
+  },
+  storiesButtonSelected: {
+    borderColor: 'rgba(255, 209, 102, 0.42)',
+    backgroundColor: 'rgba(255, 209, 102, 0.09)',
+  },
+  storiesButtonLabel: {
+    color: marketChartTheme.colors.secondaryText,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  storiesButtonLabelSelected: {
+    color: marketChartTheme.colors.primaryText,
+  },
+  iconButton: {
+    width: marketChartTheme.metrics.controlHeight,
+    height: marketChartTheme.metrics.controlHeight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: marketChartTheme.colors.border,
+    borderRadius: marketChartTheme.metrics.controlRadius,
+    backgroundColor: marketChartTheme.colors.control,
+    borderCurve: 'continuous',
+  },
+  controlPressed: {
+    opacity: 0.72,
+  },
+  chartWrap: {
+    position: 'relative',
+  },
+  storyCard: {
+    position: 'absolute',
+    left: 12,
+    right: marketChartTheme.metrics.priceAxisWidth + 8,
+    bottom: marketChartTheme.metrics.timeAxisHeight + 8,
+    minHeight: 62,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 209, 102, 0.38)',
+    borderRadius: 9,
+    backgroundColor: 'rgba(5, 47, 59, 0.96)',
+    borderCurve: 'continuous',
+    boxShadow: '0 5px 14px rgba(0, 0, 0, 0.30)',
+    zIndex: 4,
+  },
+  storyCardImage: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: marketChartTheme.colors.control,
+  },
+  storyCardFallback: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 19,
+    backgroundColor: tokens.colors.accent,
+  },
+  storyCardFallbackText: {
+    color: marketChartTheme.colors.canvas,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  storyCardCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  storyCardTitle: {
+    color: marketChartTheme.colors.primaryText,
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 13,
+  },
+  storyCardMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  storyCardTime: {
+    flex: 1,
+    color: marketChartTheme.colors.secondaryText,
+    fontSize: 9,
+    fontVariant: ['tabular-nums'],
+  },
+  storyCardCount: {
+    color: tokens.colors.accent,
+    fontSize: 9,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
 });

@@ -1,0 +1,1639 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>myboon Chart Lab</title>
+  <style>
+    :root {
+      --ink: #020d14;
+      --screen: #073b4c;
+      --ground: #063343;
+      --surface: #0a4659;
+      --surface-strong: #0d5267;
+      --border: #185a70;
+      --border-soft: rgba(78, 137, 154, 0.28);
+      --text: #f5fafc;
+      --text-dim: #a5bdc6;
+      --text-faint: #6f98a5;
+      --cyan: #57bfd8;
+      --accent: #ffd166;
+      --positive: #35d6a3;
+      --negative: #f2677e;
+      --volume: #4b8fa3;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      min-height: 100%;
+      margin: 0;
+      background: var(--ink);
+      color: var(--text);
+    }
+
+    body {
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at 79% 20%, rgba(87, 191, 216, 0.08), transparent 27rem),
+        linear-gradient(135deg, #020d14 0%, #041923 62%, #020d14 100%);
+    }
+
+    button, select { font: inherit; }
+    button { color: inherit; }
+
+    .lab {
+      width: min(1180px, 100%);
+      min-height: 100dvh;
+      margin: 0 auto;
+      padding: 32px;
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) minmax(430px, 1fr);
+      gap: clamp(32px, 7vw, 88px);
+      align-items: center;
+    }
+
+    .brief {
+      max-width: 350px;
+      align-self: center;
+    }
+
+    .brief-label {
+      margin: 0 0 13px;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 330px;
+      margin: 0;
+      font-size: clamp(35px, 5vw, 58px);
+      line-height: 0.96;
+      letter-spacing: -0.055em;
+    }
+
+    .brief-copy {
+      max-width: 34ch;
+      margin: 20px 0 28px;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.58;
+    }
+
+    .principles {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      border-top: 1px solid var(--border);
+    }
+
+    .principles li {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 16px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .principles strong {
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .principles span {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .state-control {
+      margin-top: 22px;
+    }
+
+    .state-control label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .state-control select {
+      width: 100%;
+      min-height: 44px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: 0;
+      background: var(--ground);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .state-control select:focus-visible,
+    button:focus-visible,
+    canvas:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .keyboard-note {
+      margin: 13px 0 0;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      line-height: 1.5;
+    }
+
+    .prototype {
+      display: grid;
+      place-items: center;
+    }
+
+    .phone {
+      width: 430px;
+      height: min(900px, calc(100dvh - 44px));
+      min-height: 720px;
+      overflow: hidden;
+      border: 1px solid #1b6076;
+      border-radius: 34px;
+      background: var(--screen);
+      box-shadow: 0 32px 90px rgba(0, 0, 0, 0.46);
+    }
+
+    .app {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .status-bar {
+      min-height: 43px;
+      padding: 18px 20px 7px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .sample-label {
+      color: var(--accent);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .asset-header {
+      min-height: 92px;
+      padding: 13px 16px 14px;
+      border-top: 1px solid var(--border-soft);
+      border-bottom: 1px solid var(--border-soft);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .asset-identity {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .asset-mark {
+      width: 42px;
+      height: 42px;
+      flex: 0 0 auto;
+      border: 1px solid rgba(87, 191, 216, 0.7);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--surface);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: -0.06em;
+    }
+
+    .asset-name { min-width: 0; }
+    .asset-name strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+    }
+
+    .asset-name span {
+      display: block;
+      margin-top: 4px;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+
+    .quote {
+      text-align: right;
+    }
+
+    .quote strong {
+      display: block;
+      font-family: var(--mono);
+      font-size: 17px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .quote span {
+      display: block;
+      margin-top: 4px;
+      color: var(--positive);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .controls {
+      min-height: 52px;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--border-soft);
+      background: rgba(3, 31, 44, 0.34);
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .control-button {
+      min-height: 36px;
+      padding: 0 11px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-faint);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+      transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 80ms ease;
+    }
+
+    .control-button:hover {
+      border-color: var(--border);
+      color: var(--text-dim);
+    }
+
+    .control-button:active { transform: translateY(1px); }
+
+    .control-button[aria-pressed="true"] {
+      border-color: rgba(87, 191, 216, 0.58);
+      background: rgba(87, 191, 216, 0.12);
+      color: var(--text);
+    }
+
+    .layer-button {
+      min-width: 42px;
+      padding-inline: 9px;
+    }
+
+    .chart-shell {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 340px;
+      background: rgba(2, 23, 32, 0.29);
+      isolation: isolate;
+    }
+
+    .chart-readout {
+      position: absolute;
+      z-index: 3;
+      top: 10px;
+      left: 13px;
+      right: 58px;
+      min-height: 34px;
+      pointer-events: none;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .chart-readout strong {
+      color: var(--text);
+      font-size: 10px;
+    }
+
+    .chart-readout span { color: var(--text-dim); }
+    .chart-readout .readout-value { color: var(--positive); }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    canvas.dragging { cursor: grabbing; }
+    canvas.inspecting { cursor: crosshair; }
+
+    .chart-message {
+      position: absolute;
+      z-index: 5;
+      inset: 0;
+      display: none;
+      place-items: center;
+      padding: 26px;
+      background: rgba(3, 31, 44, 0.92);
+      text-align: center;
+    }
+
+    .chart-message.visible { display: grid; }
+
+    .message-content { max-width: 230px; }
+
+    .message-content strong {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 14px;
+    }
+
+    .message-content span {
+      display: block;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .retry-button {
+      min-width: 110px;
+      min-height: 44px;
+      margin-top: 16px;
+      border: 1px solid var(--cyan);
+      border-radius: 8px;
+      background: rgba(87, 191, 216, 0.12);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .skeleton {
+      width: 100%;
+      height: 100%;
+      opacity: 0.65;
+      background:
+        linear-gradient(90deg, transparent, rgba(87, 191, 216, 0.1), transparent) -100% 0 / 55% 100% no-repeat,
+        repeating-linear-gradient(to bottom, transparent 0 73px, rgba(78, 137, 154, 0.16) 74px 75px);
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+      to { background-position: 240% 0, 0 0; }
+    }
+
+    .live-button {
+      position: absolute;
+      z-index: 4;
+      right: 12px;
+      bottom: 14px;
+      min-height: 38px;
+      padding: 0 12px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: var(--ground);
+      color: var(--accent);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 900;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(5px);
+      transition: opacity 150ms ease, transform 150ms ease;
+    }
+
+    .live-button.visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    .timeframes {
+      min-height: 50px;
+      padding: 7px 12px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 3px;
+      border-top: 1px solid var(--border-soft);
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .timeframe-button {
+      min-height: 36px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-faint);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .timeframe-button[aria-pressed="true"] {
+      background: rgba(87, 191, 216, 0.12);
+      color: var(--cyan);
+    }
+
+    .inspector {
+      min-height: 112px;
+      padding: 13px 16px calc(14px + env(safe-area-inset-bottom));
+      background: rgba(3, 31, 44, 0.66);
+    }
+
+    .inspector-kicker {
+      margin: 0 0 9px;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .inspector-cell span {
+      display: block;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 7px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .inspector-cell strong {
+      display: block;
+      margin-top: 4px;
+      overflow: hidden;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .marker-inspector {
+      display: none;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 11px;
+      align-items: center;
+    }
+
+    .marker-inspector.visible { display: grid; }
+    .candle-inspector.hidden { display: none; }
+
+    .marker-avatar {
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--accent);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--surface-strong);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 900;
+    }
+
+    .marker-copy strong,
+    .marker-copy span { display: block; }
+
+    .marker-copy strong { font-size: 12px; }
+    .marker-copy span {
+      margin-top: 4px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+
+    .marker-side {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .marker-side.buy { color: var(--positive); }
+    .marker-side.sell { color: var(--negative); }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 820px) {
+      body { background: var(--screen); }
+      .lab { display: block; min-height: 100dvh; padding: 0; }
+      .brief { display: none; }
+      .phone {
+        width: 100%;
+        height: 100dvh;
+        min-height: 650px;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+    }
+
+    @media (max-height: 760px) and (min-width: 821px) {
+      .lab { padding-block: 16px; }
+      .phone { min-height: 690px; height: calc(100dvh - 32px); }
+      .asset-header { min-height: 76px; }
+      .status-bar { min-height: 34px; padding-top: 10px; }
+      .inspector { min-height: 92px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="lab">
+    <section class="brief" aria-labelledby="lab-title">
+      <p class="brief-label">Interactive component study</p>
+      <h1 id="lab-title">One chart. Small, exact layers.</h1>
+      <p class="brief-copy">Phoenix proves the rendering contract. Screens choose data and controls. The chart handles coordinates, gestures, selection, and layers.</p>
+      <p class="brief-copy"><strong>Scope note:</strong> marker and trade-bubble experiments in this lab are deferred to phase two and are not part of the shipping chart V1.</p>
+
+      <ul class="principles">
+        <li><strong>Render only</strong><span>No API, venue, or token knowledge inside the chart.</span></li>
+        <li><strong>Native touch</strong><span>Pan, pinch, long press, pinned inspection, and live-edge recovery.</span></li>
+        <li><strong>Composable</strong><span>Candles, line, volume, current price, and trade markers are independent layers.</span></li>
+      </ul>
+
+      <div class="state-control">
+        <label for="data-state">Preview data state</label>
+        <select id="data-state">
+          <option value="ready">Ready</option>
+          <option value="loading">Loading</option>
+          <option value="empty">Empty</option>
+          <option value="error">Error</option>
+        </select>
+      </div>
+      <p class="keyboard-note">Keyboard: arrows inspect candles, Escape clears, End jumps live. Mouse wheel zooms. Double-click resets.</p>
+    </section>
+
+    <section class="prototype" aria-label="Mobile chart prototype">
+      <div class="phone">
+        <div class="app">
+          <header class="status-bar">
+            <span>11:24</span>
+            <span class="sample-label">Simulated Phoenix data</span>
+          </header>
+
+          <section class="asset-header">
+            <div class="asset-identity">
+              <div class="asset-mark" aria-hidden="true">BTC</div>
+              <div class="asset-name">
+                <strong>BTC-PERP</strong>
+                <span>Phoenix perpetual</span>
+              </div>
+            </div>
+            <div class="quote">
+              <strong id="header-price">$64,218.40</strong>
+              <span id="header-change">+2.47%</span>
+            </div>
+          </section>
+
+          <nav class="controls" aria-label="Chart controls">
+            <div class="control-group" role="group" aria-label="Chart mode">
+              <button class="control-button mode-button" type="button" data-mode="candles" aria-pressed="true">Candles</button>
+              <button class="control-button mode-button" type="button" data-mode="line" aria-pressed="false">Line</button>
+            </div>
+            <div class="control-group" role="group" aria-label="Chart layers">
+              <button class="control-button layer-button" type="button" id="volume-toggle" aria-pressed="true" aria-label="Toggle volume">Vol</button>
+              <button class="control-button layer-button" type="button" id="marker-toggle" aria-pressed="true" aria-label="Toggle trade markers">Trades</button>
+            </div>
+          </nav>
+
+          <section class="chart-shell" id="chart-shell">
+            <div class="chart-readout" id="chart-readout" aria-hidden="true"></div>
+            <canvas id="chart" tabindex="0" role="img" aria-label="Interactive BTC perpetual candlestick chart. Long press to inspect a candle, drag to pan, and pinch to zoom."></canvas>
+            <div class="chart-message" id="chart-message" role="status" aria-live="polite"></div>
+            <button class="live-button" id="live-button" type="button">Jump to live</button>
+          </section>
+
+          <nav class="timeframes" aria-label="Time range">
+            <button class="timeframe-button" type="button" data-range="1H" aria-pressed="false">1H</button>
+            <button class="timeframe-button" type="button" data-range="1D" aria-pressed="true">1D</button>
+            <button class="timeframe-button" type="button" data-range="1W" aria-pressed="false">1W</button>
+            <button class="timeframe-button" type="button" data-range="1M" aria-pressed="false">1M</button>
+          </nav>
+
+          <section class="inspector" aria-label="Selected chart data">
+            <p class="inspector-kicker" id="inspector-kicker">Latest candle</p>
+            <div class="candle-inspector" id="candle-inspector">
+              <div class="inspector-grid">
+                <div class="inspector-cell"><span>Open</span><strong id="inspect-open">-</strong></div>
+                <div class="inspector-cell"><span>High</span><strong id="inspect-high">-</strong></div>
+                <div class="inspector-cell"><span>Low</span><strong id="inspect-low">-</strong></div>
+                <div class="inspector-cell"><span>Close</span><strong id="inspect-close">-</strong></div>
+              </div>
+            </div>
+            <div class="marker-inspector" id="marker-inspector">
+              <div class="marker-avatar" id="marker-avatar">W1</div>
+              <div class="marker-copy">
+                <strong id="marker-title">Wallet</strong>
+                <span id="marker-detail">Trade details</span>
+              </div>
+              <span class="marker-side buy" id="marker-side">BUY</span>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="sr-only" id="sr-live" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const RANGE_CONFIG = {
+        "1H": { count: 72, stepMs: 60_000, volatility: 0.0019 },
+        "1D": { count: 112, stepMs: 15 * 60_000, volatility: 0.0042 },
+        "1W": { count: 176, stepMs: 60 * 60_000, volatility: 0.0072 },
+        "1M": { count: 190, stepMs: 4 * 60 * 60_000, volatility: 0.012 },
+      };
+
+      const COLORS = {
+        text: "#f5fafc",
+        dim: "#a5bdc6",
+        faint: "#6f98a5",
+        grid: "rgba(78, 137, 154, 0.22)",
+        cyan: "#57bfd8",
+        accent: "#ffd166",
+        positive: "#35d6a3",
+        negative: "#f2677e",
+        volume: "#4b8fa3",
+        surface: "#0a4659",
+        ground: "#063343",
+      };
+
+      const ui = {
+        canvas: document.getElementById("chart"),
+        shell: document.getElementById("chart-shell"),
+        readout: document.getElementById("chart-readout"),
+        message: document.getElementById("chart-message"),
+        liveButton: document.getElementById("live-button"),
+        headerPrice: document.getElementById("header-price"),
+        headerChange: document.getElementById("header-change"),
+        inspectorKicker: document.getElementById("inspector-kicker"),
+        candleInspector: document.getElementById("candle-inspector"),
+        markerInspector: document.getElementById("marker-inspector"),
+        inspectOpen: document.getElementById("inspect-open"),
+        inspectHigh: document.getElementById("inspect-high"),
+        inspectLow: document.getElementById("inspect-low"),
+        inspectClose: document.getElementById("inspect-close"),
+        markerAvatar: document.getElementById("marker-avatar"),
+        markerTitle: document.getElementById("marker-title"),
+        markerDetail: document.getElementById("marker-detail"),
+        markerSide: document.getElementById("marker-side"),
+        srLive: document.getElementById("sr-live"),
+        dataState: document.getElementById("data-state"),
+      };
+
+      function seededRandom(seed) {
+        let state = seed >>> 0;
+        return () => {
+          state += 0x6d2b79f5;
+          let value = state;
+          value = Math.imul(value ^ (value >>> 15), value | 1);
+          value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+          return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function createSeries(range) {
+        const config = RANGE_CONFIG[range];
+        const random = seededRandom(81173 + config.count * 13);
+        const now = Date.now();
+        let close = range === "1M" ? 57_420 : 61_880;
+        const candles = [];
+
+        for (let index = 0; index < config.count; index += 1) {
+          const progress = index / Math.max(1, config.count - 1);
+          const trend = 0.00012 + Math.sin(progress * Math.PI * 5.2) * 0.00055;
+          const shock = (random() - 0.48) * config.volatility;
+          const open = close;
+          close = Math.max(1, open * (1 + trend + shock));
+          const body = Math.abs(close - open);
+          const wick = Math.max(open * config.volatility * (0.15 + random() * 0.42), body * 0.25);
+          const high = Math.max(open, close) + wick * (0.5 + random());
+          const low = Math.min(open, close) - wick * (0.5 + random());
+          const activity = 22 + Math.abs(shock) * 19_000 + random() * 46;
+
+          candles.push({
+            time: now - (config.count - 1 - index) * config.stepMs,
+            open,
+            high,
+            low,
+            close,
+            volume: activity,
+          });
+        }
+
+        return candles;
+      }
+
+      function createMarkers(candles) {
+        const templates = [
+          { ratio: 0.28, initials: "W1", wallet: "7iNJ...Vo9C", side: "buy", size: "18.4 SOL" },
+          { ratio: 0.47, initials: "YOU", wallet: "Your wallet", side: "buy", size: "2.1 SOL" },
+          { ratio: 0.68, initials: "W2", wallet: "9xmT...1BpQ", side: "sell", size: "31.7 SOL" },
+          { ratio: 0.84, initials: "W3", wallet: "4qLx...8CkP", side: "buy", size: "12.6 SOL" },
+        ];
+
+        return templates.map((template, markerIndex) => {
+          const index = Math.min(candles.length - 1, Math.max(0, Math.round(template.ratio * candles.length)));
+          return { ...template, id: `marker-${markerIndex}`, index, time: candles[index].time };
+        });
+      }
+
+      function formatPrice(value) {
+        return new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          maximumFractionDigits: 2,
+        }).format(value);
+      }
+
+      function formatCompact(value) {
+        return new Intl.NumberFormat("en-US", {
+          notation: "compact",
+          maximumFractionDigits: 1,
+        }).format(value);
+      }
+
+      function formatTime(value, range) {
+        const date = new Date(value);
+        if (range === "1W" || range === "1M") {
+          return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        }
+        return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      class ChartEngine {
+        constructor(canvas, callbacks) {
+          this.canvas = canvas;
+          this.ctx = canvas.getContext("2d");
+          this.callbacks = callbacks;
+          this.data = [];
+          this.markers = [];
+          this.range = "1D";
+          this.mode = "candles";
+          this.showVolume = true;
+          this.showMarkers = true;
+          this.viewport = { start: 0, end: 1 };
+          this.selectionIndex = null;
+          this.selectedMarker = null;
+          this.pointerMap = new Map();
+          this.pointerStart = null;
+          this.lastPointer = null;
+          this.longPressTimer = null;
+          this.interaction = "idle";
+          this.pinch = null;
+          this.lastRender = null;
+          this.frame = 0;
+          this.layers = [
+            this.drawGrid.bind(this),
+            this.drawVolume.bind(this),
+            this.drawSeries.bind(this),
+            this.drawCurrentPrice.bind(this),
+            this.drawMarkers.bind(this),
+            this.drawCrosshair.bind(this),
+            this.drawAxes.bind(this),
+          ];
+
+          this.bindEvents();
+          this.resizeObserver = new ResizeObserver(() => this.resize());
+          this.resizeObserver.observe(canvas.parentElement);
+        }
+
+        setInput(input) {
+          const keepViewport = input.preserveViewport === true && this.data.length > 0;
+          const previousLength = this.data.length;
+          const previousViewport = { ...this.viewport };
+          this.data = input.data;
+          this.markers = input.markers || [];
+          this.range = input.range;
+          this.mode = input.mode;
+          this.showVolume = input.showVolume;
+          this.showMarkers = input.showMarkers;
+
+          if (keepViewport) {
+            const delta = this.data.length - previousLength;
+            if (input.followLive) {
+              this.viewport.end = this.data.length;
+              this.viewport.start = Math.max(0, this.viewport.end - (previousViewport.end - previousViewport.start));
+            } else {
+              this.viewport = previousViewport;
+              if (delta < 0) this.clampViewport();
+            }
+          } else {
+            this.fitLatest();
+          }
+
+          if (this.selectionIndex !== null) {
+            this.selectionIndex = clamp(this.selectionIndex, 0, Math.max(0, this.data.length - 1));
+          }
+          this.scheduleRender();
+        }
+
+        setMode(mode) {
+          this.mode = mode;
+          this.scheduleRender();
+        }
+
+        setLayer(name, enabled) {
+          if (name === "volume") this.showVolume = enabled;
+          if (name === "markers") this.showMarkers = enabled;
+          if (!this.showMarkers) this.selectedMarker = null;
+          this.scheduleRender();
+        }
+
+        fitLatest() {
+          const visible = Math.min(54, Math.max(1, this.data.length));
+          this.viewport.end = this.data.length;
+          this.viewport.start = Math.max(0, this.viewport.end - visible);
+          this.emitViewport();
+        }
+
+        jumpLive() {
+          const width = this.viewport.end - this.viewport.start;
+          this.viewport.end = this.data.length;
+          this.viewport.start = Math.max(0, this.viewport.end - width);
+          this.selectionIndex = null;
+          this.selectedMarker = null;
+          this.emitSelection();
+          this.emitViewport();
+          this.scheduleRender();
+        }
+
+        isAtLiveEdge() {
+          return this.viewport.end >= this.data.length - 0.25;
+        }
+
+        resize() {
+          const rect = this.canvas.parentElement.getBoundingClientRect();
+          const ratio = Math.min(window.devicePixelRatio || 1, 2);
+          const width = Math.max(1, Math.round(rect.width));
+          const height = Math.max(1, Math.round(rect.height));
+          this.canvas.width = Math.round(width * ratio);
+          this.canvas.height = Math.round(height * ratio);
+          this.canvas.style.width = `${width}px`;
+          this.canvas.style.height = `${height}px`;
+          this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+          this.width = width;
+          this.height = height;
+          this.scheduleRender();
+        }
+
+        scheduleRender() {
+          cancelAnimationFrame(this.frame);
+          this.frame = requestAnimationFrame(() => this.render());
+        }
+
+        render() {
+          if (!this.width || !this.height || this.data.length === 0) return;
+          const plot = this.createPlot();
+          this.lastRender = plot;
+          this.ctx.clearRect(0, 0, this.width, this.height);
+          for (const layer of this.layers) layer(plot);
+        }
+
+        createPlot() {
+          const padding = { top: 50, right: 58, bottom: 30, left: 12 };
+          const volumeHeight = this.showVolume ? Math.min(74, this.height * 0.2) : 0;
+          const plotLeft = padding.left;
+          const plotRight = this.width - padding.right;
+          const plotTop = padding.top;
+          const plotBottom = this.height - padding.bottom - volumeHeight;
+          const start = Math.max(0, Math.floor(this.viewport.start));
+          const end = Math.min(this.data.length, Math.ceil(this.viewport.end));
+          const visible = this.data.slice(start, end);
+          let min = Infinity;
+          let max = -Infinity;
+          let maxVolume = 1;
+
+          for (const candle of visible) {
+            min = Math.min(min, candle.low);
+            max = Math.max(max, candle.high);
+            maxVolume = Math.max(maxVolume, candle.volume);
+          }
+
+          const rawRange = Math.max(0.0001, max - min);
+          min -= rawRange * 0.1;
+          max += rawRange * 0.1;
+          const span = Math.max(1, this.viewport.end - this.viewport.start);
+          const plotWidth = Math.max(1, plotRight - plotLeft);
+          const plotHeight = Math.max(1, plotBottom - plotTop);
+
+          const xForIndex = (index) => plotLeft + ((index + 0.5 - this.viewport.start) / span) * plotWidth;
+          const yForPrice = (price) => plotTop + (1 - (price - min) / (max - min)) * plotHeight;
+          const indexForX = (x) => clamp(Math.floor(this.viewport.start + ((x - plotLeft) / plotWidth) * span), 0, this.data.length - 1);
+
+          return {
+            padding,
+            volumeHeight,
+            plotLeft,
+            plotRight,
+            plotTop,
+            plotBottom,
+            plotWidth,
+            plotHeight,
+            start,
+            end,
+            visible,
+            min,
+            max,
+            maxVolume,
+            span,
+            candleWidth: plotWidth / span,
+            xForIndex,
+            yForPrice,
+            indexForX,
+            markerHits: [],
+          };
+        }
+
+        drawGrid(plot) {
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.strokeStyle = COLORS.grid;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([]);
+
+          for (let index = 0; index <= 4; index += 1) {
+            const y = plot.plotTop + (plot.plotHeight * index) / 4;
+            ctx.beginPath();
+            ctx.moveTo(plot.plotLeft, y + 0.5);
+            ctx.lineTo(plot.plotRight, y + 0.5);
+            ctx.stroke();
+          }
+
+          for (let index = 0; index <= 4; index += 1) {
+            const x = plot.plotLeft + (plot.plotWidth * index) / 4;
+            ctx.beginPath();
+            ctx.moveTo(x + 0.5, plot.plotTop);
+            ctx.lineTo(x + 0.5, this.height - plot.padding.bottom);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        drawVolume(plot) {
+          if (!this.showVolume) return;
+          const ctx = this.ctx;
+          const base = this.height - plot.padding.bottom;
+          const top = base - plot.volumeHeight + 8;
+          ctx.save();
+          ctx.font = `8px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
+          ctx.fillStyle = COLORS.faint;
+          ctx.fillText("VOLUME", plot.plotLeft, top - 5);
+
+          for (let index = plot.start; index < plot.end; index += 1) {
+            const candle = this.data[index];
+            const x = plot.xForIndex(index);
+            const height = Math.max(1, (candle.volume / plot.maxVolume) * (plot.volumeHeight - 15));
+            const width = Math.max(1, Math.min(plot.candleWidth * 0.68, 9));
+            ctx.fillStyle = candle.close >= candle.open ? "rgba(53,214,163,0.42)" : "rgba(242,103,126,0.42)";
+            ctx.fillRect(x - width / 2, base - height, width, height);
+          }
+          ctx.restore();
+        }
+
+        drawSeries(plot) {
+          if (this.mode === "line") this.drawLine(plot);
+          else this.drawCandles(plot);
+        }
+
+        drawCandles(plot) {
+          const ctx = this.ctx;
+          const width = Math.max(1.2, Math.min(10, plot.candleWidth * 0.62));
+          ctx.save();
+          ctx.lineWidth = Math.max(1, Math.min(1.4, plot.candleWidth * 0.12));
+
+          for (let index = plot.start; index < plot.end; index += 1) {
+            const candle = this.data[index];
+            const x = plot.xForIndex(index);
+            const up = candle.close >= candle.open;
+            const color = up ? COLORS.positive : COLORS.negative;
+            const yOpen = plot.yForPrice(candle.open);
+            const yClose = plot.yForPrice(candle.close);
+            const top = Math.min(yOpen, yClose);
+            const bodyHeight = Math.max(1.5, Math.abs(yClose - yOpen));
+
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x + 0.5, plot.yForPrice(candle.high));
+            ctx.lineTo(x + 0.5, plot.yForPrice(candle.low));
+            ctx.stroke();
+            ctx.fillRect(x - width / 2, top, width, bodyHeight);
+          }
+          ctx.restore();
+        }
+
+        drawLine(plot) {
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.beginPath();
+          let started = false;
+
+          for (let index = plot.start; index < plot.end; index += 1) {
+            const candle = this.data[index];
+            const x = plot.xForIndex(index);
+            const y = plot.yForPrice(candle.close);
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else ctx.lineTo(x, y);
+          }
+
+          ctx.strokeStyle = COLORS.cyan;
+          ctx.lineWidth = 2.2;
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        drawCurrentPrice(plot) {
+          const latest = this.data[this.data.length - 1];
+          if (!latest || latest.close < plot.min || latest.close > plot.max) return;
+          const ctx = this.ctx;
+          const y = plot.yForPrice(latest.close);
+          ctx.save();
+          ctx.strokeStyle = COLORS.cyan;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 4]);
+          ctx.beginPath();
+          ctx.moveTo(plot.plotLeft, y + 0.5);
+          ctx.lineTo(plot.plotRight, y + 0.5);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = COLORS.cyan;
+          ctx.fillRect(plot.plotRight + 4, y - 10, 52, 20);
+          ctx.fillStyle = "#041923";
+          ctx.font = `800 9px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(formatCompact(latest.close), plot.plotRight + 30, y);
+          ctx.restore();
+        }
+
+        drawMarkers(plot) {
+          if (!this.showMarkers) return;
+          const ctx = this.ctx;
+          const visibleMarkers = this.markers.filter((marker) => marker.index >= plot.start && marker.index < plot.end);
+          const lanes = [];
+          ctx.save();
+
+          for (const marker of visibleMarkers) {
+            const x = plot.xForIndex(marker.index);
+            const anchorY = plot.yForPrice(this.data[marker.index].high);
+            let lane = 0;
+            while (lanes[lane] !== undefined && Math.abs(lanes[lane] - x) < 29) lane += 1;
+            lanes[lane] = x;
+            const y = clamp(anchorY - 24 - lane * 27, plot.plotTop + 19, plot.plotBottom - 19);
+            const selected = this.selectedMarker && this.selectedMarker.id === marker.id;
+            const radius = selected ? 15 : 13;
+
+            ctx.strokeStyle = selected ? COLORS.accent : marker.side === "buy" ? COLORS.positive : COLORS.negative;
+            ctx.fillStyle = COLORS.surface;
+            ctx.lineWidth = selected ? 2.5 : 1.5;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `900 ${marker.initials === "YOU" ? 7 : 8}px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(marker.initials, x, y + 0.5);
+            plot.markerHits.push({ marker, x, y, radius: 20 });
+          }
+          ctx.restore();
+        }
+
+        drawCrosshair(plot) {
+          if (this.selectionIndex === null || !this.data[this.selectionIndex]) return;
+          const ctx = this.ctx;
+          const candle = this.data[this.selectionIndex];
+          const x = plot.xForIndex(this.selectionIndex);
+          const y = plot.yForPrice(candle.close);
+          if (x < plot.plotLeft || x > plot.plotRight) return;
+
+          ctx.save();
+          ctx.strokeStyle = "rgba(245,250,252,0.55)";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(x + 0.5, plot.plotTop);
+          ctx.lineTo(x + 0.5, this.height - plot.padding.bottom);
+          ctx.moveTo(plot.plotLeft, y + 0.5);
+          ctx.lineTo(plot.plotRight, y + 0.5);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          ctx.fillStyle = COLORS.text;
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          const time = formatTime(candle.time, this.range);
+          ctx.font = `800 9px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
+          const textWidth = ctx.measureText(time).width + 14;
+          const labelX = clamp(x - textWidth / 2, plot.plotLeft, plot.plotRight - textWidth);
+          const labelY = this.height - plot.padding.bottom + 5;
+          ctx.fillStyle = COLORS.ground;
+          ctx.fillRect(labelX, labelY, textWidth, 20);
+          ctx.fillStyle = COLORS.text;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(time, labelX + textWidth / 2, labelY + 10);
+          ctx.restore();
+        }
+
+        drawAxes(plot) {
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.font = `8px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
+          ctx.fillStyle = COLORS.faint;
+          ctx.textBaseline = "middle";
+          ctx.textAlign = "left";
+
+          for (let index = 0; index <= 4; index += 1) {
+            const ratio = index / 4;
+            const y = plot.plotTop + plot.plotHeight * ratio;
+            const price = plot.max - (plot.max - plot.min) * ratio;
+            ctx.fillText(formatCompact(price), plot.plotRight + 8, y);
+          }
+
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          for (let index = 0; index <= 4; index += 1) {
+            const chartIndex = clamp(Math.round(this.viewport.start + (plot.span * index) / 4), 0, this.data.length - 1);
+            const x = plot.plotLeft + (plot.plotWidth * index) / 4;
+            ctx.fillText(formatTime(this.data[chartIndex].time, this.range), x, this.height - plot.padding.bottom + 6);
+          }
+          ctx.restore();
+        }
+
+        bindEvents() {
+          this.canvas.addEventListener("pointerdown", (event) => this.onPointerDown(event));
+          this.canvas.addEventListener("pointermove", (event) => this.onPointerMove(event));
+          this.canvas.addEventListener("pointerup", (event) => this.onPointerUp(event));
+          this.canvas.addEventListener("pointercancel", (event) => this.onPointerUp(event));
+          this.canvas.addEventListener("dblclick", () => this.reset());
+          this.canvas.addEventListener("wheel", (event) => this.onWheel(event), { passive: false });
+          this.canvas.addEventListener("keydown", (event) => this.onKeyDown(event));
+        }
+
+        onPointerDown(event) {
+          this.canvas.setPointerCapture(event.pointerId);
+          this.pointerMap.set(event.pointerId, { x: event.offsetX, y: event.offsetY });
+
+          if (this.pointerMap.size === 2) {
+            clearTimeout(this.longPressTimer);
+            const points = [...this.pointerMap.values()];
+            this.pinch = {
+              distance: Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y),
+              viewport: { ...this.viewport },
+              centerX: (points[0].x + points[1].x) / 2,
+            };
+            this.interaction = "pinch";
+            return;
+          }
+
+          this.pointerStart = { x: event.offsetX, y: event.offsetY, at: performance.now() };
+          this.lastPointer = { x: event.offsetX, y: event.offsetY };
+          this.interaction = "pending";
+          clearTimeout(this.longPressTimer);
+          this.longPressTimer = setTimeout(() => {
+            if (this.interaction !== "pending") return;
+            this.interaction = "inspect";
+            this.canvas.classList.add("inspecting");
+            this.selectAtX(this.lastPointer.x);
+          }, 330);
+        }
+
+        onPointerMove(event) {
+          if (!this.pointerMap.has(event.pointerId)) return;
+          this.pointerMap.set(event.pointerId, { x: event.offsetX, y: event.offsetY });
+
+          if (this.pointerMap.size === 2 && this.pinch) {
+            const points = [...this.pointerMap.values()];
+            const distance = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
+            const factor = this.pinch.distance / distance;
+            const originalWidth = this.pinch.viewport.end - this.pinch.viewport.start;
+            const newWidth = clamp(originalWidth * factor, 14, this.data.length);
+            const plot = this.lastRender || this.createPlot();
+            const centerRatio = clamp((this.pinch.centerX - plot.plotLeft) / plot.plotWidth, 0, 1);
+            const anchor = this.pinch.viewport.start + originalWidth * centerRatio;
+            this.viewport.start = anchor - newWidth * centerRatio;
+            this.viewport.end = this.viewport.start + newWidth;
+            this.clampViewport();
+            this.emitViewport();
+            this.scheduleRender();
+            return;
+          }
+
+          if (!this.lastPointer || !this.pointerStart) return;
+          const dx = event.offsetX - this.lastPointer.x;
+          const total = Math.hypot(event.offsetX - this.pointerStart.x, event.offsetY - this.pointerStart.y);
+          this.lastPointer = { x: event.offsetX, y: event.offsetY };
+
+          if (this.interaction === "inspect") {
+            this.selectAtX(event.offsetX);
+            return;
+          }
+
+          if (total > 6) {
+            clearTimeout(this.longPressTimer);
+            this.interaction = "pan";
+            this.canvas.classList.add("dragging");
+            const plotWidth = (this.lastRender || this.createPlot()).plotWidth;
+            const span = this.viewport.end - this.viewport.start;
+            const shift = -(dx / plotWidth) * span;
+            this.viewport.start += shift;
+            this.viewport.end += shift;
+            this.clampViewport();
+            this.emitViewport();
+            this.scheduleRender();
+          }
+        }
+
+        onPointerUp(event) {
+          const releasePoint = this.pointerMap.get(event.pointerId) || { x: event.offsetX, y: event.offsetY };
+          const wasInteraction = this.interaction;
+          this.pointerMap.delete(event.pointerId);
+          clearTimeout(this.longPressTimer);
+
+          if (wasInteraction === "pending") {
+            const marker = this.markerAt(releasePoint.x, releasePoint.y);
+            if (marker) {
+              this.selectedMarker = marker;
+              this.selectionIndex = marker.index;
+            } else {
+              this.selectedMarker = null;
+              this.selectionIndex = null;
+            }
+            this.emitSelection();
+            this.scheduleRender();
+          }
+
+          if (this.pointerMap.size < 2) this.pinch = null;
+          if (this.pointerMap.size === 0) {
+            this.interaction = "idle";
+            this.pointerStart = null;
+            this.lastPointer = null;
+            this.canvas.classList.remove("dragging", "inspecting");
+          }
+        }
+
+        onWheel(event) {
+          event.preventDefault();
+          const plot = this.lastRender || this.createPlot();
+          const ratio = clamp((event.offsetX - plot.plotLeft) / plot.plotWidth, 0, 1);
+          const width = this.viewport.end - this.viewport.start;
+          const nextWidth = clamp(width * (event.deltaY > 0 ? 1.12 : 0.88), 14, this.data.length);
+          const anchor = this.viewport.start + width * ratio;
+          this.viewport.start = anchor - nextWidth * ratio;
+          this.viewport.end = this.viewport.start + nextWidth;
+          this.clampViewport();
+          this.emitViewport();
+          this.scheduleRender();
+        }
+
+        onKeyDown(event) {
+          if (event.key === "Escape") {
+            this.selectionIndex = null;
+            this.selectedMarker = null;
+            this.emitSelection();
+            this.scheduleRender();
+            return;
+          }
+          if (event.key === "End") {
+            event.preventDefault();
+            this.jumpLive();
+            return;
+          }
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          const direction = event.key === "ArrowLeft" ? -1 : 1;
+          const initial = this.selectionIndex === null ? Math.min(this.data.length - 1, Math.floor(this.viewport.end) - 1) : this.selectionIndex;
+          this.selectionIndex = clamp(initial + direction, 0, this.data.length - 1);
+          this.selectedMarker = null;
+          this.ensureSelectionVisible();
+          this.emitSelection();
+          this.scheduleRender();
+        }
+
+        reset() {
+          this.selectionIndex = null;
+          this.selectedMarker = null;
+          this.fitLatest();
+          this.emitSelection();
+          this.scheduleRender();
+        }
+
+        selectAtX(x) {
+          const plot = this.lastRender || this.createPlot();
+          this.selectionIndex = plot.indexForX(x);
+          this.selectedMarker = null;
+          this.emitSelection();
+          this.scheduleRender();
+        }
+
+        markerAt(x, y) {
+          if (!this.showMarkers || !this.lastRender) return null;
+          const hit = this.lastRender.markerHits.find((entry) => Math.hypot(entry.x - x, entry.y - y) <= entry.radius);
+          return hit ? hit.marker : null;
+        }
+
+        ensureSelectionVisible() {
+          if (this.selectionIndex < this.viewport.start + 1) {
+            const width = this.viewport.end - this.viewport.start;
+            this.viewport.start = Math.max(0, this.selectionIndex - 1);
+            this.viewport.end = this.viewport.start + width;
+          } else if (this.selectionIndex > this.viewport.end - 2) {
+            const width = this.viewport.end - this.viewport.start;
+            this.viewport.end = Math.min(this.data.length, this.selectionIndex + 2);
+            this.viewport.start = this.viewport.end - width;
+          }
+          this.clampViewport();
+          this.emitViewport();
+        }
+
+        clampViewport() {
+          const width = Math.min(this.data.length, Math.max(14, this.viewport.end - this.viewport.start));
+          if (this.viewport.start < 0) {
+            this.viewport.start = 0;
+            this.viewport.end = width;
+          }
+          if (this.viewport.end > this.data.length) {
+            this.viewport.end = this.data.length;
+            this.viewport.start = Math.max(0, this.viewport.end - width);
+          }
+        }
+
+        emitSelection() {
+          this.callbacks.onSelection({
+            candle: this.selectionIndex === null ? null : this.data[this.selectionIndex],
+            index: this.selectionIndex,
+            marker: this.selectedMarker,
+          });
+        }
+
+        emitViewport() {
+          this.callbacks.onViewport({ atLiveEdge: this.isAtLiveEdge() });
+        }
+      }
+
+      const state = {
+        range: "1D",
+        mode: "candles",
+        showVolume: true,
+        showMarkers: true,
+        dataState: "ready",
+        candles: createSeries("1D"),
+        markers: [],
+        liveTicks: 0,
+      };
+      state.markers = createMarkers(state.candles);
+
+      const engine = new ChartEngine(ui.canvas, {
+        onSelection: renderSelection,
+        onViewport: ({ atLiveEdge }) => ui.liveButton.classList.toggle("visible", !atLiveEdge),
+      });
+
+      function renderSelection({ candle, marker }) {
+        const selected = candle || state.candles[state.candles.length - 1];
+        if (!selected) return;
+        const isPinned = Boolean(candle);
+
+        ui.readout.innerHTML = [
+          `<strong>${isPinned ? formatTime(selected.time, state.range) : "LIVE"}</strong>`,
+          `<span>O <b class="readout-value">${formatCompact(selected.open)}</b></span>`,
+          `<span>H <b class="readout-value">${formatCompact(selected.high)}</b></span>`,
+          `<span>L <b class="readout-value">${formatCompact(selected.low)}</b></span>`,
+          `<span>C <b class="readout-value">${formatCompact(selected.close)}</b></span>`,
+        ].join("");
+
+        if (marker) {
+          ui.inspectorKicker.textContent = "Selected trade marker";
+          ui.candleInspector.classList.add("hidden");
+          ui.markerInspector.classList.add("visible");
+          ui.markerAvatar.textContent = marker.initials;
+          ui.markerTitle.textContent = marker.wallet;
+          ui.markerDetail.textContent = `${marker.size} at ${formatPrice(selected.close)}`;
+          ui.markerSide.textContent = marker.side.toUpperCase();
+          ui.markerSide.className = `marker-side ${marker.side}`;
+          ui.srLive.textContent = `${marker.wallet}, ${marker.side}, ${marker.size}, at ${formatPrice(selected.close)}`;
+        } else {
+          ui.inspectorKicker.textContent = isPinned ? `Pinned candle, ${formatTime(selected.time, state.range)}` : "Latest candle";
+          ui.candleInspector.classList.remove("hidden");
+          ui.markerInspector.classList.remove("visible");
+          ui.inspectOpen.textContent = formatCompact(selected.open);
+          ui.inspectHigh.textContent = formatCompact(selected.high);
+          ui.inspectLow.textContent = formatCompact(selected.low);
+          ui.inspectClose.textContent = formatCompact(selected.close);
+          if (isPinned) {
+            ui.srLive.textContent = `Candle ${formatTime(selected.time, state.range)}. Open ${formatPrice(selected.open)}, high ${formatPrice(selected.high)}, low ${formatPrice(selected.low)}, close ${formatPrice(selected.close)}`;
+          }
+        }
+      }
+
+      function renderHeader() {
+        const first = state.candles[0];
+        const latest = state.candles[state.candles.length - 1];
+        if (!first || !latest) return;
+        const change = ((latest.close - first.open) / first.open) * 100;
+        ui.headerPrice.textContent = formatPrice(latest.close);
+        ui.headerChange.textContent = `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
+        ui.headerChange.style.color = change >= 0 ? COLORS.positive : COLORS.negative;
+      }
+
+      function syncEngine(options = {}) {
+        if (state.dataState !== "ready") return;
+        engine.setInput({
+          data: state.candles,
+          markers: state.markers,
+          range: state.range,
+          mode: state.mode,
+          showVolume: state.showVolume,
+          showMarkers: state.showMarkers,
+          preserveViewport: options.preserveViewport,
+          followLive: options.followLive,
+        });
+        renderHeader();
+        renderSelection({ candle: engine.selectionIndex === null ? null : state.candles[engine.selectionIndex], marker: engine.selectedMarker });
+      }
+
+      function setRange(range) {
+        state.range = range;
+        state.candles = createSeries(range);
+        state.markers = createMarkers(state.candles);
+        engine.selectionIndex = null;
+        engine.selectedMarker = null;
+        document.querySelectorAll(".timeframe-button").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.range === range));
+        });
+        syncEngine();
+      }
+
+      function setDataState(nextState) {
+        state.dataState = nextState;
+        ui.message.classList.toggle("visible", nextState !== "ready");
+        ui.liveButton.classList.remove("visible");
+
+        if (nextState === "loading") {
+          ui.message.innerHTML = '<div class="skeleton" aria-label="Loading chart data"></div>';
+        } else if (nextState === "empty") {
+          ui.message.innerHTML = '<div class="message-content"><strong>No candle history</strong><span>Phoenix returned no candles for this range.</span></div>';
+        } else if (nextState === "error") {
+          ui.message.innerHTML = '<div class="message-content"><strong>Chart unavailable</strong><span>Candle history could not be loaded.</span><button type="button" class="retry-button" id="retry-button">Retry</button></div>';
+          document.getElementById("retry-button").addEventListener("click", () => {
+            ui.dataState.value = "loading";
+            setDataState("loading");
+            setTimeout(() => {
+              ui.dataState.value = "ready";
+              setDataState("ready");
+            }, 650);
+          });
+        } else {
+          ui.message.innerHTML = "";
+          syncEngine();
+        }
+      }
+
+      document.querySelectorAll(".mode-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.mode = button.dataset.mode;
+          document.querySelectorAll(".mode-button").forEach((entry) => entry.setAttribute("aria-pressed", String(entry === button)));
+          engine.setMode(state.mode);
+        });
+      });
+
+      document.querySelectorAll(".timeframe-button").forEach((button) => {
+        button.addEventListener("click", () => setRange(button.dataset.range));
+      });
+
+      document.getElementById("volume-toggle").addEventListener("click", (event) => {
+        state.showVolume = !state.showVolume;
+        event.currentTarget.setAttribute("aria-pressed", String(state.showVolume));
+        engine.setLayer("volume", state.showVolume);
+      });
+
+      document.getElementById("marker-toggle").addEventListener("click", (event) => {
+        state.showMarkers = !state.showMarkers;
+        event.currentTarget.setAttribute("aria-pressed", String(state.showMarkers));
+        engine.setLayer("markers", state.showMarkers);
+        renderSelection({ candle: engine.selectionIndex === null ? null : state.candles[engine.selectionIndex], marker: engine.selectedMarker });
+      });
+
+      ui.liveButton.addEventListener("click", () => engine.jumpLive());
+      ui.dataState.addEventListener("change", () => setDataState(ui.dataState.value));
+
+      function updateLiveCandle() {
+        if (state.dataState !== "ready" || document.hidden) return;
+        const wasLive = engine.isAtLiveEdge();
+        const candles = state.candles;
+        const latest = candles[candles.length - 1];
+        const movement = Math.sin(Date.now() / 1800) * 0.00034 + (Math.random() - 0.5) * 0.00028;
+        const nextClose = Math.max(1, latest.close * (1 + movement));
+        latest.close = nextClose;
+        latest.high = Math.max(latest.high, nextClose);
+        latest.low = Math.min(latest.low, nextClose);
+        latest.volume += 1.7 + Math.random() * 3.2;
+        state.liveTicks += 1;
+
+        if (state.liveTicks % 9 === 0) {
+          const config = RANGE_CONFIG[state.range];
+          const open = latest.close;
+          candles.push({
+            time: latest.time + config.stepMs,
+            open,
+            high: open * 1.0004,
+            low: open * 0.9996,
+            close: open,
+            volume: 2,
+          });
+        }
+
+        syncEngine({ preserveViewport: true, followLive: wasLive });
+      }
+
+      syncEngine();
+      setInterval(updateLiveCandle, 1000);
+    })();
+  </script>
+</body>
+</html>

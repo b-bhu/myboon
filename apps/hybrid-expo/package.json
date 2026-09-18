@@ -21,9 +21,10 @@
     "test:security": "tsx --test features/chain/security.deletions.test.ts",
     "test:predict": "tsx --test components/predict/deposit.chains.test.ts features/predict/depositTracking.test.ts features/predict/minimumOrderSize.test.ts features/predict/predict.navigation.test.ts features/predict/predict.errors.test.ts features/predict/predict.orders.test.ts features/predict/pendingOpenOrders.test.ts features/predict/profile/profile-state.test.ts features/predict/profile/profile-portfolio-state.test.ts features/predict/singleFlight.test.ts features/predict/usePolymarketUserStream.test.ts features/predict/withdrawalTracking.test.ts",
     "test:feed": "tsx --test features/feed/takeAction.routes.test.ts",
-    "test:format": "tsx --test lib/format.test.ts lib/api-client-session.test.ts",
-    "test:markets": "tsx --test features/markets/venue.registry.core.test.ts features/perps/pacifica.rows.test.ts features/perps/phoenix.rows.test.ts features/perps/phoenix.chart-events.test.ts features/perps/btc-demo-events.test.ts features/meteora/meteora.rows.test.ts",
-    "test": "pnpm test:chain && pnpm test:wallet && pnpm test:security && pnpm test:predict && pnpm test:feed && pnpm test:format && pnpm test:markets"
+    "test:format": "tsx --test lib/format.test.ts lib/api.test.ts lib/api-client-session.test.ts",
+    "test:charts": "tsx --test features/charts/*.test.ts features/perps/phoenix.chart-adapter.test.ts features/perps/phoenix.chart-config.test.ts features/perps/phoenix.live.test.ts",
+    "test:markets": "tsx --test features/markets/venue.registry.core.test.ts features/perps/pacifica.rows.test.ts features/perps/phoenix.rows.test.ts features/perps/phoenix.chart-stories.test.ts features/meteora/meteora.rows.test.ts",
+    "test": "pnpm test:chain && pnpm test:wallet && pnpm test:security && pnpm test:predict && pnpm test:feed && pnpm test:format && pnpm test:charts && pnpm test:markets"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
@@ -47,6 +48,7 @@
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/wallet-standard-wallet-adapter-react": "1.1.4",
     "@solana/web3.js": "^1.98.4",
+    "@tabler/icons-react-native": "^3.46.0",
     "@wallet-ui/react-native-web3js": "^4.0.2",
     "bs58": "^5.0.0",
     "buffer": "^6.0.3",

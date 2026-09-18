@@ -32,11 +32,13 @@ export async function fetchStoryDetail(
   storySlug: string,
   limit = DEFAULT_STORY_EVENT_LIMIT,
   offset = 0,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<StoryDetail> {
   const safeLimit = Math.min(50, Math.max(1, Math.floor(limit)));
   const safeOffset = Math.min(10_000, Math.max(0, Math.floor(offset)));
   const response = await fetchWithTimeout(
     `${resolveApiBaseUrl()}/stories/${encodeURIComponent(storySlug)}?limit=${safeLimit}&offset=${safeOffset}`,
+    { signal: options?.signal },
   );
   if (!response.ok) throw new Error(`Story request failed (${response.status})`);
 
