@@ -26,7 +26,7 @@ const geometry = createMarketChartGeometry(
 );
 
 describe('market chart annotation layout', () => {
-  it('anchors exact candle timestamps and clusters nearby bubbles', () => {
+  it('clusters nearby candles on a shared volume rail', () => {
     const layouts = createMarketChartAnnotationLayouts([
       annotation('a', 10),
       annotation('b', 11),
@@ -35,14 +35,56 @@ describe('market chart annotation layout', () => {
 
     assert.equal(layouts.length, 2);
     assert.deepEqual(layouts[0].annotations.map((item) => item.id), ['a', 'b']);
-    assert.equal(layouts[0].count, 2);
     assert.deepEqual(layouts[1].annotations.map((item) => item.id), ['c']);
+    assert.deepEqual(layouts.map((layout) => layout.count), [2, 1]);
     layouts.forEach((layout) => {
       assert.ok(layout.x >= geometry.plotLeft);
       assert.ok(layout.x <= geometry.plotRight);
-      assert.ok(layout.y >= geometry.plotTop);
-      assert.ok(layout.y <= geometry.priceBottom);
+      assert.equal(layout.y, geometry.volumeTop + 8);
     });
+  });
+
+  it('preserves same-candle annotations inside their rail cluster', () => {
+    const layouts = createMarketChartAnnotationLayouts([
+      annotation('a', 10),
+      annotation('b', 10),
+      annotation('c', 30),
+    ], candles, geometry);
+
+    assert.equal(layouts.length, 2);
+    assert.deepEqual(layouts[0].annotations.map((item) => item.id), ['a', 'b']);
+    assert.deepEqual(layouts[1].annotations.map((item) => item.id), ['c']);
+    assert.equal(layouts[0].count, 2);
+    assert.equal(layouts[1].count, 1);
+  });
+
+  it('collapses a dense run into one compact rail marker', () => {
+    const layouts = createMarketChartAnnotationLayouts(
+      Array.from({ length: 6 }, (_, index) => annotation(`dense-${index}`, 40 + index)),
+      candles,
+      geometry,
+    );
+
+    assert.equal(layouts.length, 1);
+    assert.equal(layouts[0].annotations.length, 6);
+    assert.equal(layouts[0].count, 6);
+  });
+
+  it('separates a cluster as candle spacing grows under zoom', () => {
+    const zoomedGeometry = createMarketChartGeometry(
+      candles,
+      { start: 8, end: 18 },
+      400,
+      320,
+      true,
+    );
+    const layouts = createMarketChartAnnotationLayouts([
+      annotation('a', 10),
+      annotation('b', 11),
+    ], candles, zoomedGeometry);
+
+    assert.equal(layouts.length, 2);
+    assert.deepEqual(layouts.map((layout) => layout.annotations[0].id), ['a', 'b']);
   });
 
   it('omits unknown timestamps and malformed display contracts', () => {
@@ -55,7 +97,7 @@ describe('market chart annotation layout', () => {
     assert.deepEqual(layouts.flatMap((layout) => layout.annotations.map((item) => item.id)), ['visible']);
   });
 
-  it('hit-tests the nearest cluster and cycles its annotations', () => {
+  it('hit-tests the rail marker and cycles annotations inside a cluster', () => {
     const [layout] = createMarketChartAnnotationLayouts([
       annotation('a', 10),
       annotation('b', 11),

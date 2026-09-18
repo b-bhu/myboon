@@ -36,11 +36,10 @@ import {
   formatPhoenixChartTime,
   PHOENIX_CHART_TIMEFRAMES,
 } from '@/features/perps/phoenix.chart-config';
-import { BTC_DEMO_EVENTS, isBitcoinPerpSymbol } from '@/features/perps/btc-demo-events';
 import {
-  mapPhoenixChartEvents,
-  type PhoenixChartEventMarker,
-} from '@/features/perps/phoenix.chart-events';
+  mapPhoenixStoryToChartMarkers,
+  type PhoenixChartStoryMarker,
+} from '@/features/perps/phoenix.chart-stories';
 import {
   fetchPhoenixCandles,
   formatPhoenixPrice,
@@ -52,16 +51,17 @@ import {
   type PhoenixLiveMarketStats,
 } from '@/features/perps/phoenix.live';
 import { usePhoenixLiveMarket } from '@/features/perps/use-phoenix-live-market';
+import { usePhoenixChartStories } from '@/features/perps/use-phoenix-chart-stories';
 import { marketChartTheme } from '@/features/charts/market-chart.theme';
 import { tokens } from '@/theme';
 
 /*
- * PhoenixPriceChart owns the venue-specific realtime adapter. MarketChart stays
- * transport-agnostic and only receives the resulting normalized candle array.
+ * PhoenixPriceChart owns the venue-specific realtime and Story adapters.
+ * MarketChart stays transport- and product-agnostic and only renders normalized
+ * candles plus generic annotations supplied by this parent.
  */
 
 const DEFAULT_CHART_HEIGHT = 320;
-const STORY_DEMO_WINDOW_CANDLES = 90;
 const EMPTY_MARKET_CANDLES: readonly MarketCandle[] = [];
 
 interface PhoenixPriceChartProps {
@@ -116,6 +116,7 @@ export function PhoenixPriceChart({
   const timeframe = PHOENIX_CHART_TIMEFRAMES[timeframeIndex];
   const seriesKey = `${symbol}:${timeframe.interval}:${timeframe.count}`;
   const live = usePhoenixLiveMarket(symbol, timeframe.interval);
+  const chartStories = usePhoenixChartStories(symbol);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -263,28 +264,24 @@ export function PhoenixPriceChart({
   const candles = resolvedSeriesKey === seriesKey
     ? adapted.candles
     : EMPTY_MARKET_CANDLES;
-  const storyMarkers = useMemo<readonly PhoenixChartEventMarker[]>(() => {
-    if (!isBitcoinPerpSymbol(symbol) || rawCandles.length === 0) return [];
-    return mapPhoenixChartEvents(
-      rawCandles.slice(-STORY_DEMO_WINDOW_CANDLES),
-      BTC_DEMO_EVENTS,
+  const storyMarkers = useMemo<readonly PhoenixChartStoryMarker[]>(() => {
+    if (rawCandles.length === 0 || !chartStories.story) return [];
+    return mapPhoenixStoryToChartMarkers(
+      rawCandles,
+      chartStories.story,
+      chartStories.events,
     );
-  }, [rawCandles, symbol]);
+  }, [chartStories.events, chartStories.story, rawCandles]);
   const storyAnnotations = useMemo<readonly MarketChartAnnotation[]>(() => (
-    storyMarkers.flatMap((marker) => {
-      const event = marker.events[0];
-      if (!event) return [];
-      return [{
-        id: marker.id,
-        timeMs: marker.time,
-        label: event.text,
-        accessibilityLabel: `${formatStoryTime(event.eventAt)}. ${event.text}`,
-        imageUrl: event.imageUrl,
-        fallbackText: 'S',
-        count: marker.events.length,
-        tone: 'accent' as const,
-      }];
-    })
+    storyMarkers.map((marker) => ({
+      id: marker.id,
+      timeMs: marker.time,
+      label: marker.events[0]?.text ?? marker.story.name,
+      accessibilityLabel: `${marker.story.name}. ${marker.events[0]?.text ?? marker.story.latestDevelopment}`,
+      imageUrl: marker.events[0]?.imageUrl ?? marker.story.imageUrl,
+      fallbackText: '✦',
+      tone: 'accent' as const,
+    }))
   ), [storyMarkers]);
   const selectedStoryMarker = storyMarkers.find(
     (marker) => marker.id === selectedStoryMarkerId,
@@ -349,7 +346,9 @@ export function PhoenixPriceChart({
     const marker = storyMarkers.find((candidate) => candidate.id === annotation.id);
     if (!marker) return;
     if (annotation.id === selectedStoryMarkerId) {
-      setSelectedStoryEventIndex((index) => (index + 1) % marker.events.length);
+      setSelectedStoryEventIndex((index) => (
+        marker.events.length > 1 ? (index + 1) % marker.events.length : 0
+      ));
     } else {
       setSelectedStoryMarkerId(annotation.id);
       setSelectedStoryEventIndex(0);

@@ -32,6 +32,7 @@ import { buildMarketChartAccessibilityValue } from '@/features/charts/market-cha
 import {
   createMarketChartAnnotationLayouts,
   findMarketChartAnnotationAtPoint,
+  MARKET_CHART_ANNOTATION_DOT_SIZE,
   MARKET_CHART_ANNOTATION_SIZE,
   nextAnnotationInLayout,
   type MarketChartAnnotationLayout,
@@ -1097,54 +1098,58 @@ function ChartAnnotationOverlay({
         const annotation = selectedAnnotation ?? layout.annotations[0];
         const selected = selectedAnnotation !== undefined;
         const tone = annotationToneColor(annotation);
-        const stemTop = Math.min(layout.y, layout.anchorY);
+        const clustered = layout.annotations.length > 1;
+        const markerSize = selected
+          ? MARKET_CHART_ANNOTATION_SIZE
+          : MARKET_CHART_ANNOTATION_DOT_SIZE;
+        const clusterOffset = clustered && !selected ? 2.5 : 0;
         return (
           <View key={layout.id} style={StyleSheet.absoluteFill}>
-            <View
-              style={[
-                styles.annotationStem,
-                {
-                  left: layout.x,
-                  top: stemTop,
-                  height: Math.max(1, Math.abs(layout.anchorY - layout.y)),
-                  backgroundColor: tone,
-                },
-              ]}
-            />
+            {clustered && !selected ? (
+              <View
+                style={[
+                  styles.annotationClusterEcho,
+                  {
+                    left: layout.x - clusterOffset,
+                    top: layout.y,
+                    backgroundColor: tone,
+                  },
+                ]}
+              />
+            ) : null}
             <Animated.View
               entering={FadeIn.duration(160)}
               style={[
                 styles.annotationMarker,
                 {
-                  left: layout.x,
+                  left: layout.x + clusterOffset,
                   top: layout.y,
-                  borderColor: selected ? marketChartTheme.colors.primaryText : tone,
+                  width: markerSize,
+                  height: markerSize,
+                  borderRadius: markerSize / 2,
+                  borderWidth: selected ? 2 : 0,
+                  borderColor: marketChartTheme.colors.primaryText,
+                  backgroundColor: selected ? marketChartTheme.colors.canvas : tone,
+                  opacity: selected ? 1 : 0.72,
+                  boxShadow: selected ? '0 3px 8px rgba(0, 0, 0, 0.28)' : 'none',
                   transform: [
-                    { translateX: -MARKET_CHART_ANNOTATION_SIZE / 2 },
-                    { translateY: -MARKET_CHART_ANNOTATION_SIZE / 2 },
-                    { scale: selected ? 1.12 : 1 },
+                    { translateX: -markerSize / 2 },
+                    { translateY: -markerSize / 2 },
                   ],
                 },
               ]}
             >
-              {annotation.imageUrl ? (
+              {selected && annotation.imageUrl ? (
                 <Image
                   source={annotation.imageUrl}
-                  style={styles.annotationImage}
+                  style={[styles.annotationImage, { borderRadius: markerSize / 2 }]}
                   contentFit="cover"
                   transition={120}
                 />
-              ) : (
+              ) : selected ? (
                 <View style={[styles.annotationFallback, { backgroundColor: tone }]}>
                   <Text style={styles.annotationFallbackText}>
                     {(annotation.fallbackText || '•').slice(0, 2)}
-                  </Text>
-                </View>
-              )}
-              {layout.count > 1 ? (
-                <View style={styles.annotationCountBadge}>
-                  <Text style={styles.annotationCountText}>
-                    {layout.count > 9 ? '9+' : layout.count}
                   </Text>
                 </View>
               ) : null}
@@ -1227,25 +1232,23 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     zIndex: 2,
   },
-  annotationStem: {
-    position: 'absolute',
-    width: 1,
-    opacity: 0.72,
-    transform: [{ translateX: -0.5 }],
-  },
   annotationMarker: {
     position: 'absolute',
-    width: MARKET_CHART_ANNOTATION_SIZE,
-    height: MARKET_CHART_ANNOTATION_SIZE,
-    borderRadius: MARKET_CHART_ANNOTATION_SIZE / 2,
-    borderWidth: 2,
-    backgroundColor: marketChartTheme.colors.canvas,
-    boxShadow: '0 3px 8px rgba(0, 0, 0, 0.28)',
+  },
+  annotationClusterEcho: {
+    position: 'absolute',
+    width: MARKET_CHART_ANNOTATION_DOT_SIZE,
+    height: MARKET_CHART_ANNOTATION_DOT_SIZE,
+    borderRadius: MARKET_CHART_ANNOTATION_DOT_SIZE / 2,
+    opacity: 0.36,
+    transform: [
+      { translateX: -MARKET_CHART_ANNOTATION_DOT_SIZE / 2 },
+      { translateY: -MARKET_CHART_ANNOTATION_DOT_SIZE / 2 },
+    ],
   },
   annotationImage: {
     width: '100%',
     height: '100%',
-    borderRadius: MARKET_CHART_ANNOTATION_SIZE / 2,
     backgroundColor: marketChartTheme.colors.control,
   },
   annotationFallback: {
@@ -1258,26 +1261,6 @@ const styles = StyleSheet.create({
     color: marketChartTheme.colors.canvas,
     fontSize: 10,
     fontWeight: '900',
-  },
-  annotationCountBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -7,
-    minWidth: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-    borderWidth: 1.5,
-    borderColor: marketChartTheme.colors.canvas,
-    borderRadius: 8,
-    backgroundColor: tokens.colors.accent,
-  },
-  annotationCountText: {
-    color: marketChartTheme.colors.canvas,
-    fontSize: 8,
-    fontWeight: '900',
-    fontVariant: ['tabular-nums'],
   },
   inspectionReadout: {
     position: 'absolute',

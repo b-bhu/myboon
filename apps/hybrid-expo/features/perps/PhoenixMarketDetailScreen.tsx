@@ -609,14 +609,14 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
             <Text style={styles.detailSym}>{market?.symbol ?? symbol}</Text>
           </Pressable>
         )}
-        center={(
+        center={displayedPrice !== null ? (
           <View
             style={styles.headerPriceCenter}
             accessible
             accessibilityLabel={`${formatPhoenixPrice(displayedPrice)}, ${scrubPrice === null ? liveStatusLabel(liveStatus) : 'historical candle'}`}
           >
             <Text style={styles.headerPrice}>{formatPhoenixPrice(displayedPrice)}</Text>
-            {scrubPrice === null && (
+            {scrubPrice === null && change24h !== null && (
               <View style={styles.headerChangeRow}>
                 <View style={[
                   styles.liveDot,
@@ -632,7 +632,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
               </View>
             )}
           </View>
-        )}
+        ) : null}
         right={(
           <Pressable onPress={() => router.push('/markets/phoenix/profile')} style={styles.avatarRing}>
             <View style={styles.avatarInner}>

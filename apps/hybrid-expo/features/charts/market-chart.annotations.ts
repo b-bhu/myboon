@@ -1,6 +1,5 @@
 import {
   xForCandleIndex,
-  yForPrice,
   type MarketChartGeometry,
 } from '@/features/charts/market-chart.geometry';
 import type {
@@ -9,10 +8,11 @@ import type {
 } from '@/features/charts/market-chart.types';
 import { clamp } from '@/features/charts/market-chart.viewport';
 
-export const MARKET_CHART_ANNOTATION_SIZE = 30;
+export const MARKET_CHART_ANNOTATION_SIZE = 28;
+export const MARKET_CHART_ANNOTATION_DOT_SIZE = 8;
 export const MARKET_CHART_ANNOTATION_HIT_SIZE = 44;
-const ANNOTATION_STEM_OFFSET = 34;
-const ANNOTATION_CLUSTER_DISTANCE = MARKET_CHART_ANNOTATION_SIZE + 8;
+const ANNOTATION_CLUSTER_WINDOW = 28;
+const ANNOTATION_RAIL_OFFSET = 8;
 
 export interface MarketChartAnnotationLayout {
   readonly id: string;
@@ -20,7 +20,6 @@ export interface MarketChartAnnotationLayout {
   readonly candleIndex: number;
   readonly x: number;
   readonly y: number;
-  readonly anchorY: number;
   readonly count: number;
 }
 
@@ -28,7 +27,6 @@ interface AnnotationPoint {
   readonly annotation: MarketChartAnnotation;
   readonly candleIndex: number;
   readonly x: number;
-  readonly anchorY: number;
 }
 
 export function createMarketChartAnnotationLayouts(
@@ -59,52 +57,61 @@ export function createMarketChartAnnotationLayouts(
       annotation,
       candleIndex,
       x,
-      anchorY: yForPrice(geometry, candle.close),
     }];
   }).sort((left, right) => left.x - right.x || left.annotation.id.localeCompare(right.annotation.id));
 
-  const clusters: AnnotationPoint[][] = [];
+  const candleGroups: AnnotationPoint[][] = [];
   points.forEach((point) => {
-    const current = clusters.at(-1);
-    if (!current) {
-      clusters.push([point]);
+    const current = candleGroups.at(-1);
+    if (!current || current[0].candleIndex !== point.candleIndex) {
+      candleGroups.push([point]);
       return;
     }
-    const currentCenter = current.reduce((sum, item) => sum + item.x, 0) / current.length;
-    if (point.x - currentCenter <= ANNOTATION_CLUSTER_DISTANCE) {
-      current.push(point);
-    } else {
-      clusters.push([point]);
+    current.push(point);
+  });
+
+  const clusters: AnnotationPoint[][][] = [];
+  candleGroups.forEach((group) => {
+    const current = clusters.at(-1);
+    if (!current || groupX(group) - groupX(current[0]) > ANNOTATION_CLUSTER_WINDOW) {
+      clusters.push([group]);
+      return;
     }
+    current.push(group);
   });
 
   const radius = MARKET_CHART_ANNOTATION_SIZE / 2;
+  const railY = clamp(
+    geometry.volumeTop < geometry.volumeBottom
+      ? geometry.volumeTop + ANNOTATION_RAIL_OFFSET
+      : geometry.priceBottom - ANNOTATION_RAIL_OFFSET,
+    geometry.plotTop + radius,
+    geometry.volumeBottom - radius,
+  );
   return clusters.map((cluster) => {
-    const annotationsInCluster = cluster.map((point) => point.annotation);
+    const pointsInCluster = cluster.flat();
+    const annotationsInCluster = pointsInCluster.map((point) => point.annotation);
     const x = clamp(
-      cluster.reduce((sum, point) => sum + point.x, 0) / cluster.length,
+      pointsInCluster.reduce((sum, point) => sum + point.x, 0) / pointsInCluster.length,
       geometry.plotLeft + radius,
       geometry.plotRight - radius,
-    );
-    const anchorY = Math.min(...cluster.map((point) => point.anchorY));
-    const y = clamp(
-      anchorY - ANNOTATION_STEM_OFFSET,
-      geometry.plotTop + radius,
-      geometry.priceBottom - radius,
     );
     return {
       id: annotationsInCluster.map((annotation) => annotation.id).join('|'),
       annotations: annotationsInCluster,
-      candleIndex: cluster[0].candleIndex,
+      candleIndex: pointsInCluster[0].candleIndex,
       x,
-      y,
-      anchorY,
+      y: railY,
       count: annotationsInCluster.reduce(
         (sum, annotation) => sum + Math.max(1, annotation.count ?? 1),
         0,
       ),
     };
   });
+}
+
+function groupX(group: readonly AnnotationPoint[]): number {
+  return group.reduce((sum, point) => sum + point.x, 0) / group.length;
 }
 
 export function findMarketChartAnnotationAtPoint(
