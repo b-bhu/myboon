@@ -43,6 +43,19 @@ export function mergePhoenixCandlePages(
   ));
 }
 
+/**
+ * Reconciles a fresh venue snapshot with locally cached candles.
+ *
+ * Snapshot rows deliberately win duplicate timestamps so a reconnect can
+ * repair OHLCV values that became stale while the socket was unavailable.
+ */
+export function reconcilePhoenixCandleSnapshot(
+  current: readonly PhoenixCandle[],
+  snapshot: readonly PhoenixCandle[],
+): PhoenixCandle[] {
+  return mergePhoenixCandlePages(current, snapshot);
+}
+
 export function upsertPhoenixLiveCandle(
   current: readonly PhoenixCandle[],
   liveCandle: PhoenixCandle,

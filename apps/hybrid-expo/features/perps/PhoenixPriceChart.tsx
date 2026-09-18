@@ -28,6 +28,7 @@ import {
 import {
   adaptPhoenixCandles,
   mergePhoenixCandlePages,
+  reconcilePhoenixCandleSnapshot,
   upsertPhoenixLiveCandle,
 } from '@/features/perps/phoenix.chart-adapter';
 import {
@@ -64,6 +65,11 @@ import { tokens } from '@/theme';
 const DEFAULT_CHART_HEIGHT = 320;
 const EMPTY_MARKET_CANDLES: readonly MarketCandle[] = [];
 
+interface PhoenixCandleHistoryState {
+  readonly rawCandles: PhoenixCandle[];
+  readonly hasMoreHistory: boolean;
+}
+
 interface PhoenixPriceChartProps {
   symbol: string;
   height?: number;
@@ -89,10 +95,12 @@ export function PhoenixPriceChart({
   const [storiesVisible, setStoriesVisible] = useState(true);
   const [selectedStoryMarkerId, setSelectedStoryMarkerId] = useState<string | null>(null);
   const [selectedStoryEventIndex, setSelectedStoryEventIndex] = useState(0);
-  const [rawCandles, setRawCandles] = useState<PhoenixCandle[]>([]);
+  const [{ rawCandles, hasMoreHistory }, setCandleHistory] = useState<PhoenixCandleHistoryState>({
+    rawCandles: [],
+    hasMoreHistory: true,
+  });
   const [resolvedSeriesKey, setResolvedSeriesKey] = useState<string | null>(null);
   const [status, setStatus] = useState<MarketChartStatus>({ kind: 'loading' });
-  const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState(false);
   const [reloadSignal, setReloadSignal] = useState(0);
@@ -127,8 +135,7 @@ export function PhoenixPriceChart({
     historyLoadingRef.current = false;
     setResolvedSeriesKey(null);
     setStatus({ kind: 'loading', accessibilityLabel: `Loading ${symbol} chart` });
-    setRawCandles([]);
-    setHasMoreHistory(true);
+    setCandleHistory({ rawCandles: [], hasMoreHistory: true });
     setIsLoadingHistory(false);
     setHistoryError(false);
     latestLivePriceRef.current = null;
@@ -141,7 +148,10 @@ export function PhoenixPriceChart({
       .then((data) => {
         if (controller.signal.aborted) return;
         const normalizedResponse = adaptPhoenixCandles(data);
-        setRawCandles((current) => mergePhoenixCandlePages(data, current));
+        setCandleHistory((current) => ({
+          ...current,
+          rawCandles: mergePhoenixCandlePages(data, current.rawCandles),
+        }));
         setResolvedSeriesKey(seriesKey);
         latestPriceCallbackRef.current?.(
           latestLivePriceRef.current ?? normalizedResponse.candles.at(-1)?.close ?? null,
@@ -158,7 +168,7 @@ export function PhoenixPriceChart({
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || isAbortError(error)) return;
-        setRawCandles([]);
+        setCandleHistory((current) => ({ ...current, rawCandles: [] }));
         setResolvedSeriesKey(seriesKey);
         latestPriceCallbackRef.current?.(null);
         setStatus({
@@ -188,7 +198,10 @@ export function PhoenixPriceChart({
       return;
     }
 
-    setRawCandles((current) => upsertPhoenixLiveCandle(current, update.candle));
+    setCandleHistory((current) => ({
+      ...current,
+      rawCandles: upsertPhoenixLiveCandle(current.rawCandles, update.candle),
+    }));
     if (!live.marketStats) latestPriceCallbackRef.current?.(update.candle.close);
   }, [live.candle, live.marketStats, symbol, timeframe.interval]);
 
@@ -236,7 +249,10 @@ export function PhoenixPriceChart({
     })
       .then((data) => {
         if (controller.signal.aborted) return;
-        setRawCandles((current) => mergePhoenixCandlePages(data, current));
+        setCandleHistory((current) => ({
+          ...current,
+          rawCandles: reconcilePhoenixCandleSnapshot(current.rawCandles, data),
+        }));
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || isAbortError(error)) return;
@@ -409,8 +425,7 @@ export function PhoenixPriceChart({
     }
 
     const controller = new AbortController();
-    const currentCandles = rawCandles;
-    const oldestCandle = currentCandles[0];
+    const oldestCandle = rawCandles[0];
     historyControllerRef.current = controller;
     historyLoadingRef.current = true;
     setIsLoadingHistory(true);
@@ -422,18 +437,19 @@ export function PhoenixPriceChart({
     })
       .then((olderCandles) => {
         if (controller.signal.aborted) return;
-        const merged = mergePhoenixCandlePages(olderCandles, currentCandles);
-        const addedCount = merged.length - currentCandles.length;
-        if (addedCount <= 0) {
-          setHasMoreHistory(false);
-          return;
-        }
-        setRawCandles(merged);
+        setCandleHistory((current) => {
+          const merged = mergePhoenixCandlePages(olderCandles, current.rawCandles);
+          const addedCount = merged.length - current.rawCandles.length;
+          return {
+            rawCandles: merged,
+            hasMoreHistory: addedCount > 0 && current.hasMoreHistory,
+          };
+        });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || isAbortError(error)) return;
         setHistoryError(true);
-        setHasMoreHistory(false);
+        setCandleHistory((current) => ({ ...current, hasMoreHistory: false }));
       })
       .finally(() => {
         if (historyControllerRef.current !== controller) return;
@@ -453,7 +469,7 @@ export function PhoenixPriceChart({
 
   const handleHistoryRetry = useCallback(() => {
     setHistoryError(false);
-    setHasMoreHistory(true);
+    setCandleHistory((current) => ({ ...current, hasMoreHistory: true }));
   }, []);
 
   const handleRetry = useCallback(() => {

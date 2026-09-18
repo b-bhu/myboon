@@ -79,6 +79,7 @@ const CURRENT_PRICE_LABEL_HEIGHT = 20;
 const DEFAULT_RIGHT_PADDING_CANDLES = 0;
 const DEFAULT_RIGHT_PADDING_PIXELS = marketChartTheme.metrics.liveEdgeGap;
 const AXIS_ZOOM_DISTANCE = 160;
+const AXIS_ACCESSIBILITY_ZOOM_STEP = 1.25;
 
 type SelectionIdentity = {
   readonly timeMs: number | null;
@@ -546,6 +547,11 @@ export function MarketChart({
     selectAtX,
   ]);
 
+  const resetPriceScale = useCallback(() => {
+    priceScaleRef.current = 1;
+    setPriceScale(1);
+  }, []);
+
   const priceAxisGesture = useMemo(() => {
     const zoom = Gesture.Pan()
       .maxPointers(1)
@@ -570,12 +576,11 @@ export function MarketChart({
       .runOnJS(true)
       .onEnd((_event, success) => {
         if (!success) return;
-        priceScaleRef.current = 1;
-        setPriceScale(1);
+        resetPriceScale();
       });
 
     return Gesture.Exclusive(reset, zoom);
-  }, []);
+  }, [resetPriceScale]);
 
   const timeAxisGesture = useMemo(() => {
     const zoom = Gesture.Pan()
@@ -612,6 +617,43 @@ export function MarketChart({
     resetToLatest,
     scheduleViewport,
   ]);
+
+  const handlePriceScaleAccessibilityAction = useCallback((
+    event: AccessibilityActionEvent,
+  ) => {
+    const action = event.nativeEvent.actionName;
+    if (action === 'activate') {
+      resetPriceScale();
+      return;
+    }
+    if (action !== 'increment' && action !== 'decrement') return;
+    const factor = action === 'increment'
+      ? AXIS_ACCESSIBILITY_ZOOM_STEP
+      : 1 / AXIS_ACCESSIBILITY_ZOOM_STEP;
+    const nextScale = clamp(priceScaleRef.current * factor, 0.25, 8);
+    priceScaleRef.current = nextScale;
+    setPriceScale(nextScale);
+  }, [resetPriceScale]);
+
+  const handleTimeScaleAccessibilityAction = useCallback((
+    event: AccessibilityActionEvent,
+  ) => {
+    const action = event.nativeEvent.actionName;
+    if (action === 'activate') {
+      resetToLatest();
+      return;
+    }
+    if (action !== 'increment' && action !== 'decrement') return;
+    commitViewport(zoomViewport(
+      viewportRef.current,
+      action === 'increment'
+        ? AXIS_ACCESSIBILITY_ZOOM_STEP
+        : 1 / AXIS_ACCESSIBILITY_ZOOM_STEP,
+      0.5,
+      candles.length,
+      minimumVisibleCandles,
+    ));
+  }, [candles.length, commitViewport, minimumVisibleCandles, resetToLatest]);
 
   const handleWheel = useCallback((event: WebWheelEvent) => {
     const deltaY = event.deltaY;
@@ -1056,7 +1098,14 @@ export function MarketChart({
             accessible
             accessibilityRole="adjustable"
             accessibilityLabel="Price scale"
-            accessibilityHint="Drag vertically to zoom the price scale. Double tap to reset."
+            accessibilityHint="Swipe up or down to zoom the price scale. Activate to reset."
+            accessibilityValue={{ text: `${Math.round(priceScale * 100)}% zoom` }}
+            accessibilityActions={[
+              { name: 'increment', label: 'Zoom in' },
+              { name: 'decrement', label: 'Zoom out' },
+              { name: 'activate', label: 'Reset price scale' },
+            ]}
+            onAccessibilityAction={handlePriceScaleAccessibilityAction}
           />
         </GestureDetector>
 
@@ -1067,7 +1116,16 @@ export function MarketChart({
             accessible
             accessibilityRole="adjustable"
             accessibilityLabel="Time scale"
-            accessibilityHint="Drag horizontally to change candle spacing. Double tap to reset."
+            accessibilityHint="Swipe up or down to change candle spacing. Activate to reset."
+            accessibilityValue={{
+              text: `${Math.round(viewport.end - viewport.start)} candles visible`,
+            }}
+            accessibilityActions={[
+              { name: 'increment', label: 'Show fewer candles' },
+              { name: 'decrement', label: 'Show more candles' },
+              { name: 'activate', label: 'Reset time scale' },
+            ]}
+            onAccessibilityAction={handleTimeScaleAccessibilityAction}
           />
         </GestureDetector>
       </View>

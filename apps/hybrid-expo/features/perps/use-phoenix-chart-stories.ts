@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchStoryDetail } from '@/features/feed/stories.api';
 import type { StoryEvent, StorySummary } from '@/features/feed/feed.types';
 import {
+  collectPhoenixChartStoryPages,
   PHOENIX_CHART_STORY_PAGE_SIZE,
   phoenixStorySlugForSymbol,
 } from '@/features/perps/phoenix.chart-stories';
@@ -41,9 +42,11 @@ export function usePhoenixChartStories(symbol: string): PhoenixChartStoriesState
     const controller = new AbortController();
     setState({ status: 'loading', storySlug, story: null, events: EMPTY_EVENTS });
 
-    void fetchStoryDetail(storySlug, PHOENIX_CHART_STORY_PAGE_SIZE, 0, {
-      signal: controller.signal,
-    })
+    void collectPhoenixChartStoryPages((offset) => (
+      fetchStoryDetail(storySlug, PHOENIX_CHART_STORY_PAGE_SIZE, offset, {
+        signal: controller.signal,
+      })
+    ))
       .then((detail) => {
         if (controller.signal.aborted) return;
         setState({

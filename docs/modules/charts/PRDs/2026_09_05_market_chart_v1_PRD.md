@@ -196,7 +196,7 @@ The chart shows an explicit loading, empty, or error state supplied by its paren
 - price, time, volume, and marker formatting;
 - product copy for empty and error states;
 - whether live updates are enabled;
-- where “Jump to live” is placed and how it is styled;
+- whether the screen exposes a separate reset-to-live control;
 - analytics and business event names;
 - action sheets or navigation opened from a marker;
 - persistence, if a screen wants to remember a chosen mode or timeframe.
@@ -666,15 +666,15 @@ If candles append while the user is away from live:
 - preserve the visible start and end timestamps;
 - do not move the viewport;
 - report `atLiveEdge: false`;
-- let the parent show “Jump to live.”
+- remain historical until the user invokes a supported reset gesture or the parent changes `resetSignal`.
 
 ### 16.6 Older-history prepend
 
 Preserve the viewport by timestamp. Prepending must not visually jump the candles the user was inspecting.
 
-### 16.7 Jump to live
+### 16.7 Return to live
 
-The chart does not render a fixed product button. The parent observes `atLiveEdge: false`, renders its own action, and increments `resetSignal` when tapped.
+The shared chart does not render a fixed product button. It returns to the latest fitted viewport through double tap, the web `End` key, or an external `resetSignal` change. Phoenix v1/v2 intentionally does not add a visible “Jump to live” action; this product decision supersedes the earlier mock exploration while keeping the generic reset contract available to future consumers.
 
 ### 16.8 Timeframe or symbol change
 
@@ -885,7 +885,7 @@ Positive and negative candles differ through accessible text and body direction,
 
 - Parent controls precede the chart in native focus order.
 - The chart is one adjustable region rather than one focus target per candle.
-- Parent-rendered “Jump to live” follows the chart or sits in a predictable overlay order without trapping focus.
+- Any consumer-provided reset-to-live action follows the chart or sits in a predictable overlay order without trapping focus.
 
 ### 21.6 Dynamic announcements
 
@@ -1136,7 +1136,7 @@ Capture at minimum:
 - pinned crosshair;
 - selected marker near left edge;
 - selected marker near right edge;
-- historical viewport with Jump to live parent action;
+- historical viewport without a fixed reset-to-live button;
 - loading;
 - empty;
 - error;
@@ -1243,7 +1243,7 @@ Parents may record:
 - first pan or zoom in a session;
 - inspection started;
 - marker opened;
-- Jump to live used;
+- reset to live invoked;
 - chart retry requested;
 - chart data load failed.
 
@@ -1441,12 +1441,6 @@ The fixture is shared by geometry, component, screenshot, and Phoenix adapter te
   onRetry={loadCandles}
   resetSignal={resetSignal}
 />
-
-{!viewport.atLiveEdge ? (
-  <Pressable onPress={() => setResetSignal((value) => value + 1)}>
-    <Text>Jump to live</Text>
-  </Pressable>
-) : null}
 
 <PhoenixChartInspector
   candle={selection.candle ?? chartCandles.at(-1) ?? null}

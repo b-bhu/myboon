@@ -1,4 +1,8 @@
-import type { StoryEvent, StorySummary } from '@/features/feed/feed.types';
+import type {
+  StoryDetail,
+  StoryEvent,
+  StorySummary,
+} from '@/features/feed/feed.types';
 
 export const PHOENIX_CHART_STORY_PAGE_SIZE = 50;
 
@@ -19,6 +23,45 @@ export interface PhoenixChartStoryMarker {
   readonly story: StorySummary;
   /** Valid developments sorted newest-first for card navigation. */
   readonly events: readonly StoryEvent[];
+}
+
+export interface PhoenixChartStoryData {
+  readonly story: StorySummary;
+  readonly events: readonly StoryEvent[];
+}
+
+/**
+ * Follows Story pagination until every development is available to the chart.
+ * The page loader keeps transport and cancellation concerns in the calling hook.
+ */
+export async function collectPhoenixChartStoryPages(
+  loadPage: (offset: number) => Promise<StoryDetail>,
+): Promise<PhoenixChartStoryData> {
+  const visitedOffsets = new Set<number>();
+  const events: StoryEvent[] = [];
+  let offset = 0;
+  let story: StorySummary | null = null;
+
+  while (true) {
+    if (visitedOffsets.has(offset)) {
+      throw new Error('Story pagination repeated an offset');
+    }
+    visitedOffsets.add(offset);
+
+    const detail = await loadPage(offset);
+    if (story && detail.story.storySlug !== story.storySlug) {
+      throw new Error('Story pagination returned a different Story');
+    }
+    story = detail.story;
+    events.push(...detail.events);
+
+    const { hasMore, nextOffset } = detail.pagination;
+    if (!hasMore) return { story, events };
+    if (nextOffset === null || nextOffset <= offset) {
+      throw new Error('Story pagination did not advance');
+    }
+    offset = nextOffset;
+  }
 }
 
 interface PhoenixChartCandleInput {

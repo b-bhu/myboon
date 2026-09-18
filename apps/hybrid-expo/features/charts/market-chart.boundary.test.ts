@@ -54,6 +54,16 @@ describe('shared chart boundary', () => {
     assert.doesNotMatch(chart, /onWheel: handleWheel/);
   });
 
+  it('gives both adjustable axes accessible zoom and reset actions', () => {
+    const chart = source('./market-chart.tsx');
+    assert.match(chart, /accessibilityLabel="Price scale"/);
+    assert.match(chart, /onAccessibilityAction=\{handlePriceScaleAccessibilityAction\}/);
+    assert.match(chart, /label: 'Reset price scale'/);
+    assert.match(chart, /accessibilityLabel="Time scale"/);
+    assert.match(chart, /onAccessibilityAction=\{handleTimeScaleAccessibilityAction\}/);
+    assert.match(chart, /label: 'Reset time scale'/);
+  });
+
   it('keeps loading, empty, error, and retry presentation generic', () => {
     const chart = source('./market-chart.tsx');
     assert.match(chart, /effectiveStatus\.kind !== 'ready'/);

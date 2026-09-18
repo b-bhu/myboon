@@ -5,6 +5,7 @@ import {
   adaptPhoenixCandles,
   mergePhoenixCandlePages,
   normalizePhoenixCandleEpoch,
+  reconcilePhoenixCandleSnapshot,
   upsertPhoenixLiveCandle,
 } from './phoenix.chart-adapter';
 import type { PhoenixCandle } from './phoenix.api';
@@ -96,5 +97,18 @@ describe('upsertPhoenixLiveCandle', () => {
     assert.deepEqual(appended.map((entry) => entry.time), [2, 3, 4]);
     assert.deepEqual(corrected.map((entry) => entry.time), [1, 2, 3, 4]);
     assert.equal(corrected[0].close, 8);
+  });
+});
+
+describe('reconcilePhoenixCandleSnapshot', () => {
+  it('lets a reconnect snapshot correct stale cached OHLCV values', () => {
+    const reconciled = reconcilePhoenixCandleSnapshot(
+      [candle(1), candle(2, { close: 20, volume: 4 })],
+      [candle(2, { close: 22, volume: 9 }), candle(3)],
+    );
+
+    assert.deepEqual(reconciled.map((entry) => entry.time), [1, 2, 3]);
+    assert.equal(reconciled[1].close, 22);
+    assert.equal(reconciled[1].volume, 9);
   });
 });

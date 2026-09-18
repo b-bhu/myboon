@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  collectPhoenixChartStoryPages,
   mapPhoenixStoryToChartMarkers,
   phoenixStorySlugForSymbol,
 } from './phoenix.chart-stories';
-import type { StoryEvent, StorySummary } from '@/features/feed/feed.types';
+import type {
+  StoryDetail,
+  StoryEvent,
+  StorySummary,
+} from '@/features/feed/feed.types';
 
 describe('phoenixStorySlugForSymbol', () => {
   it('maps only the approved Bitcoin market to its production Story', () => {
@@ -12,6 +17,32 @@ describe('phoenixStorySlugForSymbol', () => {
     assert.equal(phoenixStorySlugForSymbol(' btc '), 'bitcoin');
     assert.equal(phoenixStorySlugForSymbol('SOL-PERP'), null);
     assert.equal(phoenixStorySlugForSymbol(''), null);
+  });
+});
+
+describe('collectPhoenixChartStoryPages', () => {
+  it('loads every page using the server-provided next offset', async () => {
+    const requestedOffsets: number[] = [];
+    const result = await collectPhoenixChartStoryPages(async (offset) => {
+      requestedOffsets.push(offset);
+      return offset === 0
+        ? storyDetail(['Newest', 'Middle'], true, 2)
+        : storyDetail(['Oldest'], false, null, 2);
+    });
+
+    assert.deepEqual(requestedOffsets, [0, 2]);
+    assert.deepEqual(result.events.map((entry) => entry.text), [
+      'Newest',
+      'Middle',
+      'Oldest',
+    ]);
+  });
+
+  it('rejects pagination that claims more data without advancing', async () => {
+    await assert.rejects(
+      collectPhoenixChartStoryPages(async () => storyDetail(['Event'], true, 0)),
+      /did not advance/,
+    );
   });
 });
 
@@ -88,5 +119,27 @@ function event(text: string, eventAt: string): StoryEvent {
     imageUrl: null,
     imageKind: null,
     imageAttribution: null,
+  };
+}
+
+function storyDetail(
+  texts: readonly string[],
+  hasMore: boolean,
+  nextOffset: number | null,
+  offset = 0,
+): StoryDetail {
+  return {
+    story: story({ eventCount: 3 }),
+    events: texts.map((text, index) => event(
+      text,
+      new Date(1_700_000_000_000 - (offset + index) * 60_000).toISOString(),
+    )),
+    pagination: {
+      limit: 50,
+      offset,
+      total: 3,
+      hasMore,
+      nextOffset,
+    },
   };
 }
