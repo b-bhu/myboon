@@ -138,6 +138,16 @@ class MemoryQuery implements PromiseLike<{ data: EntityMemoryRecord[]; error: nu
     this.rows = this.rows.filter((row) => String((row as unknown as Record<string, unknown>)[column]) <= value)
     return this
   }
+  contains(column: string, value: Record<string, unknown>) {
+    this.rows = this.rows.filter((row) => {
+      const candidate = (row as unknown as Record<string, unknown>)[column]
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false
+      return Object.entries(value).every(([key, expected]) => (
+        (candidate as Record<string, unknown>)[key] === expected
+      ))
+    })
+    return this
+  }
   order(column: string, options: { ascending: boolean }) {
     const direction = options.ascending ? 1 : -1
     this.rows.sort((left, right) => {

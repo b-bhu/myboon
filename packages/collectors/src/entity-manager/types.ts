@@ -203,6 +203,18 @@ export interface EntityMemoryStore {
   createEntities(entities: EntityInput[]): Promise<EntityRecord[]>
   updateEntity(entity: EntityRecord): Promise<EntityRecord>
   findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]>
+  /**
+   * Rolling compatibility lookup for canonical rows written with an older
+   * identity algorithm. The canonical adapter reuses the stored key so a
+   * replay cannot create a one-time duplicate during an identity cutover.
+   */
+  findCanonicalPacketMemory?(
+    source: string,
+    sourceArea: string,
+    sourceResearchId: string,
+    entityId: string,
+    sourceItemId?: string,
+  ): Promise<EntityMemoryRecord | null>
   upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]>
   /**
    * Recent memories across the shortlisted entities, used by the existing

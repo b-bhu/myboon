@@ -61,6 +61,11 @@ test('canonical Solana wins over GPT-5.6 aliases for the live Solana (SOL) subje
       && match.matchKind === 'canonical_name'
       && match.decision === 'authoritative_canonical'
   )))
+  assert.ok(solanaSupport?.matches.some((match) => (
+    match.label === 'SOL'
+      && match.matchKind === 'alias'
+      && match.decision === 'authoritative_unique_alias'
+  )))
   assert.ok(gptSupport?.matches.some((match) => (
     match.label === 'Solana'
       && match.matchKind === 'alias'
@@ -82,6 +87,26 @@ test('an uppercase ticker does not case-fold into an unrelated title-case canoni
 
   assert.deepEqual(result.candidates, [])
   assert.deepEqual(result.support, [])
+})
+
+test('a unique uppercase ticker alias is not authoritative without canonical corroboration', () => {
+  const solana = entity({
+    id: 'entity-solana',
+    slug: 'solana',
+    name: 'Solana',
+    type: 'network',
+    aliases: ['SOL'],
+  })
+
+  const result = groundEntityCandidates([solana], [hint({
+    name: 'SOL',
+    aliases: [],
+    evidenceRefs: ['evidence-sol'],
+    claimRefs: [],
+  })])
+
+  assert.deepEqual(result.candidates, [])
+  assert.equal(result.support[0]?.matches[0]?.decision, 'non_authoritative_alias')
 })
 
 test('an unambiguous evidence-linked SEC alias authorizes its subject candidate', () => {
@@ -215,4 +240,23 @@ test('clearly incompatible normalized hint and entity types are rejected', () =>
   assert.equal(result.support[0]?.matches[0]?.hintType, 'network')
   assert.equal(result.support[0]?.matches[0]?.entityType, 'product')
   assert.equal(result.support[0]?.matches[0]?.decision, 'incompatible_type')
+})
+
+test('network and blockchain types normalize compatibly during grounding', () => {
+  const solana = entity({
+    id: 'entity-solana-network',
+    slug: 'solana',
+    name: 'Solana',
+    type: 'network',
+  })
+
+  const result = groundEntityCandidates([solana], [hint({
+    name: 'Solana',
+    type: 'blockchain',
+  })])
+
+  assert.deepEqual(result.candidates.map((candidate) => candidate.id), [solana.id])
+  assert.equal(result.support[0]?.matches[0]?.hintType, 'network')
+  assert.equal(result.support[0]?.matches[0]?.entityType, 'network')
+  assert.equal(result.support[0]?.matches[0]?.decision, 'authoritative_canonical')
 })

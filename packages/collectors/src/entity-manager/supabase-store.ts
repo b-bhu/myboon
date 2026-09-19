@@ -282,6 +282,38 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     ))
   }
 
+  async findCanonicalPacketMemory(
+    source: string,
+    sourceArea: string,
+    sourceResearchId: string,
+    entityId: string,
+    sourceItemId?: string,
+  ): Promise<EntityMemoryRecord | null> {
+    const lookup = async (bySourceItem: boolean): Promise<EntityMemoryRecord | null> => {
+      const base = this.db
+        .from('entity_memories')
+        .select(MEMORY_SELECT)
+        .eq('source', source)
+        .eq('source_area', sourceArea)
+        .eq('entity_id', entityId)
+      const scoped = bySourceItem
+        ? base.contains('context', { canonical_source_item_id: sourceItemId })
+        : base.eq('source_research_id', sourceResearchId)
+      const { data, error } = await scoped
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle() as unknown as EntityRowResult
+      if (error) throw new Error(`canonical packet memory lookup failed: ${error.message}`)
+      return data ? normalizeMemory(data) : null
+    }
+
+    if (source === 'news' && sourceItemId) {
+      const articleMemory = await lookup(true)
+      if (articleMemory) return articleMemory
+    }
+    return lookup(false)
+  }
+
   async upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]> {
     if (memories.length === 0) return []
     const updatedAt = this.now().toISOString()

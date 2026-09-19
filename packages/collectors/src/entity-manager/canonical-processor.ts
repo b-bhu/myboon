@@ -1082,8 +1082,50 @@ function extractionFor(
   }
 }
 
+function validateAtomicCreateResult(
+  created: EntityRecord,
+  requested: EntityInput,
+  packet: ResearchPacketV1,
+): void {
+  const requestedAliases = new Set(requested.aliases.map(groundingLabelKey))
+  const createdAliases = new Set(created.aliases.map(groundingLabelKey))
+  const identityMatches = created.slug === requested.slug
+    && groundingLabelKey(created.name) === groundingLabelKey(requested.name)
+    && normalizeEntityType(created.type) === normalizeEntityType(requested.type)
+    && createdAliases.size === requestedAliases.size
+    && [...requestedAliases].every((alias) => createdAliases.has(alias))
+    && created.status === 'active'
+  if (!identityMatches) {
+    throw new PlatformFailure({
+      category: 'storage_transient',
+      message: 'Atomic canonical Entity creation returned an identity-mismatched row; retry resolution.',
+      retryable: true,
+    })
+  }
+
+  const grounding = groundEntityCandidates([created], packet.entityHints)
+  const support = grounding.support.find((item) => (
+    item.entityId === created.id
+    && item.primarySelectionAuthorized
+    && item.supportingClaimIds.length > 0
+    && item.matches.some((match) => (
+      match.primarySelectionAuthorized && match.matchKind === 'canonical_name'
+    ))
+  ))
+  if (!support || grounding.candidates.length !== 1) {
+    throw new CanonicalEntityProcessorValidationError(
+      'Atomic canonical Entity creation result is not grounded by the packet subject.',
+    )
+  }
+}
+
+function uniqueMemoriesById(memories: readonly EntityMemoryRecord[]): EntityMemoryRecord[] {
+  return [...new Map(memories.map((memory) => [memory.id, memory])).values()]
+}
+
 class CanonicalIdentityStore implements EntityMemoryStore {
   private readonly entities: EntityRecord[]
+  private readonly compatibleIdentityByEntityId = new Map<string, string>()
 
   constructor(
     private readonly delegate: EntityMemoryStore,
@@ -1097,16 +1139,32 @@ class CanonicalIdentityStore implements EntityMemoryStore {
   }
 
   async listEntities(limit = 1_000): Promise<EntityRecord[]> {
-    return this.entities.slice(0, limit)
+    // The canonical planner has already made and validated the ownership
+    // decision. Do not let the legacy resolver's catalogue/near-duplicate
+    // heuristics override it after validation.
+    if (!this.selectedExistingEntityId) return []
+    return this.entities
+      .filter((entity) => entity.id === this.selectedExistingEntityId)
+      .slice(0, limit)
   }
 
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
     const wantedSlugs = new Set(slugs)
-    const wantedAliases = new Set(aliases.map((alias) => alias.toLowerCase()))
-    return this.entities.filter((entity) => (
-      wantedSlugs.has(entity.slug)
-      || entity.aliases.some((alias) => wantedAliases.has(alias.toLowerCase()))
-    ))
+    if (this.selectedExistingEntityId) {
+      const selected = this.entities.find((entity) => entity.id === this.selectedExistingEntityId)
+      if (!selected) {
+        throw new CanonicalEntityProcessorValidationError(
+          `Selected Entity disappeared: ${this.selectedExistingEntityId}`,
+        )
+      }
+      return wantedSlugs.has(selected.slug) ? [selected] : []
+    }
+
+    // A create_new plan has already passed a complete, proposal-specific
+    // identity collision lookup. Alias matching here would let the legacy
+    // resolver remap that validated decision, so only exact slugs participate.
+    void aliases
+    return this.entities.filter((entity) => wantedSlugs.has(entity.slug))
   }
 
   async createEntities(entities: EntityInput[]): Promise<EntityRecord[]> {
@@ -1119,7 +1177,14 @@ class CanonicalIdentityStore implements EntityMemoryStore {
       if (!entity) return []
       return [await this.delegate.createCanonicalEntity(entity, identityQueryForEntity(entity))]
     })
-    for (const entity of created) this.remember(entity)
+    for (const [index, entity] of created.entries()) {
+      const requested = entities[index]
+      if (!requested) {
+        throw new CanonicalEntityProcessorValidationError('Canonical Entity creation returned an unexpected row.')
+      }
+      validateAtomicCreateResult(entity, requested, this.packet)
+      this.remember(entity)
+    }
     return created
   }
 
@@ -1135,10 +1200,38 @@ class CanonicalIdentityStore implements EntityMemoryStore {
   }
 
   async findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]> {
-    return storageCall('find canonical entity memories', () => this.delegate.findMemories(keys.map((key) => ({
+    const compatibilityRows = this.delegate.findCanonicalPacketMemory
+      ? await storageCall('find canonical packet memory compatibility row', async () => {
+        const rows: EntityMemoryRecord[] = []
+        const seen = new Set<string>()
+        for (const key of keys) {
+          const entityId = key.entityId
+          if (!entityId) {
+            throw new CanonicalEntityProcessorValidationError('Canonical memory lookup requires an Entity ID.')
+          }
+          if (seen.has(entityId)) continue
+          seen.add(entityId)
+          const row = await this.delegate.findCanonicalPacketMemory!(
+            key.source,
+            key.sourceArea,
+            key.sourceResearchId,
+            entityId,
+            canonicalSourceItemIdentity(this.packet),
+          )
+          if (!row) continue
+          if (typeof row.memory_identity_key === 'string') {
+            this.compatibleIdentityByEntityId.set(entityId, row.memory_identity_key)
+          }
+          rows.push(row)
+        }
+        return rows
+      })
+      : []
+    const exactRows = await storageCall('find canonical entity memories', () => this.delegate.findMemories(keys.map((key) => ({
       ...key,
       memoryIdentityKey: this.identityFor(key.entityId, key.memoryType, key.title),
     }))))
+    return uniqueMemoriesById([...compatibilityRows, ...exactRows])
   }
 
   async upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]> {
@@ -1195,6 +1288,8 @@ class CanonicalIdentityStore implements EntityMemoryStore {
 
   private identityFor(entityId: string | null, memoryType: EntityMemoryType, title: string): string {
     if (!entityId) throw new CanonicalEntityProcessorValidationError('Canonical memory must resolve to an Entity ID.')
+    const compatibleIdentity = this.compatibleIdentityByEntityId.get(entityId)
+    if (compatibleIdentity) return compatibleIdentity
     const draft = this.drafts.find((item) => item.memoryType === memoryType && item.title === title)
     if (!draft) throw new CanonicalEntityProcessorValidationError('Canonical memory does not match a validated plan item.')
     return deriveMemoryIdentityKey({
@@ -1212,6 +1307,13 @@ class CanonicalIdentityStore implements EntityMemoryStore {
     if (index === -1) this.entities.push(entity)
     else this.entities[index] = entity
   }
+}
+
+function canonicalSourceItemIdentity(packet: ResearchPacketV1): string {
+  const sourceId = packet.sourceSignal.sourceId
+  return typeof sourceId === 'string' && sourceId.trim() !== ''
+    ? sourceId.trim()
+    : packet.signalId
 }
 
 function validateProcessorInput(input: CanonicalPacketProcessorInput): ResearchPacketV1 {

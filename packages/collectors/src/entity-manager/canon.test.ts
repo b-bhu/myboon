@@ -107,6 +107,10 @@ test('isNearDuplicate never swallows a BROADER candidate into a narrower existin
 test('normalizeEntityType collapses the historical type zoo into the fixed vocabulary', () => {
   assert.equal(normalizeEntityType('organization'), 'organization')
   assert.equal(normalizeEntityType('company'), 'organization')
+  assert.equal(normalizeEntityType('network'), 'network')
+  assert.equal(normalizeEntityType('blockchain'), 'network')
+  assert.equal(normalizeEntityType('blockchain network'), 'network')
+  assert.equal(normalizeEntityType('layer-1'), 'network')
   assert.equal(normalizeEntityType('nation'), 'country')
   assert.equal(normalizeEntityType('currency'), 'asset')
   assert.equal(normalizeEntityType('index'), 'asset')

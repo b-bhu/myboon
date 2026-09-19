@@ -561,6 +561,55 @@ test('findMemories uses explicit identity without depending on title', async () 
   assert.equal(found[0].memory_identity_key, identity)
 })
 
+test('news compatibility lookup uses canonical source-item and Entity scope', async () => {
+  const filters: Array<[string, unknown]> = []
+  const contained: Array<[string, Record<string, unknown>]> = []
+  const builder = {
+    select(columns: string) {
+      assert.equal(columns, __testing.MEMORY_SELECT)
+      return this
+    },
+    eq(column: string, value: unknown) {
+      filters.push([column, value])
+      return this
+    },
+    contains(column: string, value: Record<string, unknown>) {
+      contained.push([column, value])
+      return this
+    },
+    order(column: string, options: { ascending: boolean }) {
+      assert.equal(column, 'created_at')
+      assert.deepEqual(options, { ascending: true })
+      return this
+    },
+    limit(value: number) {
+      assert.equal(value, 1)
+      return this
+    },
+    async maybeSingle() {
+      return { data: baseMemory, error: null }
+    },
+  }
+  const db = {
+    from(table: string) {
+      assert.equal(table, 'entity_memories')
+      return builder
+    },
+  } as unknown as SupabaseClient
+
+  const found = await new SupabaseEntityMemoryStore(db).findCanonicalPacketMemory(
+    'news', 'feed', 'packet-2', 'entity-1', 'news-item-1',
+  )
+
+  assert.equal(found?.id, baseMemory.id)
+  assert.deepEqual(filters, [
+    ['source', 'news'],
+    ['source_area', 'feed'],
+    ['entity_id', 'entity-1'],
+  ])
+  assert.deepEqual(contained, [['context', { canonical_source_item_id: 'news-item-1' }]])
+})
+
 test('malformed explicit identity fails before issuing a Supabase query', async () => {
   let queried = false
   const db = { from() { queried = true; return {} } } as unknown as SupabaseClient

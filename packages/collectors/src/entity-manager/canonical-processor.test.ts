@@ -326,6 +326,25 @@ class FakeStore implements EntityMemoryStore {
     return this.memories.filter((memory) => identities.has(memory.memory_identity_key))
   }
 
+  async findCanonicalPacketMemory(
+    source: string,
+    sourceArea: string,
+    sourceResearchId: string,
+    entityId: string,
+    sourceItemId?: string,
+  ): Promise<EntityMemoryRecord | null> {
+    const scoped = this.memories.filter((memory) => (
+      memory.source === source
+      && memory.source_area === sourceArea
+      && memory.entity_id === entityId
+    ))
+    if (source === 'news' && sourceItemId) {
+      const article = scoped.find((memory) => memory.context.canonical_source_item_id === sourceItemId)
+      if (article) return article
+    }
+    return scoped.find((memory) => memory.source_research_id === sourceResearchId) ?? null
+  }
+
   async upsertMemories(inputs: EntityMemoryInput[]): Promise<EntityMemoryRecord[]> {
     this.memoryWrites += inputs.length
     return inputs.map((value) => {
@@ -378,6 +397,20 @@ class FakeStore implements EntityMemoryStore {
   async findManualCommand(): Promise<ManualCommandLogRecord | null> { return null }
   async recordManualCommand(_input: ManualCommandLogInput): Promise<ManualCommandLogRecord> {
     throw new Error('not used')
+  }
+}
+
+class AtomicRaceStore extends FakeStore {
+  constructor(private readonly racedEntity: EntityRecord) {
+    super()
+  }
+
+  async createCanonicalEntity(
+    _input: EntityInput,
+    _identity: EntityIdentityLookupInput,
+  ): Promise<EntityRecord> {
+    this.entityWrites += 1
+    return this.racedEntity
   }
 }
 
@@ -434,6 +467,59 @@ test('selects only an admitted existing Entity and preserves canonical traceabil
   assert.equal(store.memories[0].context.entity_configured_reasoning_effort, 'high')
   assert.equal(store.memories[0].context.entity_actual_reasoning_effort, 'medium')
   assert.deepEqual(store.memories[0].evidence, packet().evidence)
+})
+
+test('validated existing Entity selection cannot be remapped by another grounded Entity alias', async () => {
+  const alpha = entity({
+    id: 'entity-alpha', slug: 'alpha', name: 'Alpha', aliases: ['Alpha', 'Beta'],
+  })
+  const beta = entity({
+    id: 'entity-beta', slug: 'beta', name: 'Beta', aliases: ['Beta'],
+  })
+  const store = new FakeStore([alpha, beta])
+  const multiSubjectPacket = packet({
+    sourceSignal: {
+      ...packet().sourceSignal,
+      title: 'Alpha and Beta publish separate updates',
+      sourceHints: { entities: ['Alpha', 'Beta'], assets: [], eventId: null, deadline: null },
+    },
+    claims: [{
+      claimId: 'claim-alpha', claim: 'Alpha published its update.',
+      attributedTo: 'Alpha', evidenceRefs: ['evidence-1'],
+    }, {
+      claimId: 'claim-beta', claim: 'Beta published its update.',
+      attributedTo: 'Beta', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Alpha', type: 'organization', role: 'subject', aliases: [], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }, {
+      name: 'Beta', type: 'organization', role: 'subject', aliases: [], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  const betaMemory: CanonicalEntityMemoryDraft = {
+    ...memoryDraft('Beta publishes an update'),
+    representedClaimIds: ['claim-beta'],
+    summary: 'Beta published its update.',
+    mentions: ['Beta'],
+  }
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'select_existing',
+        entityId: beta.id,
+        supportingClaimIds: ['claim-beta'],
+        supportingEvidenceIds: ['evidence-1'],
+      }, [betaMemory])
+    },
+  })
+
+  await subject.process(input(multiSubjectPacket))
+
+  assert.equal(store.memories.length, 1)
+  assert.equal(store.memories[0].entity_id, beta.id)
+  assert.equal(store.entityWrites, 0)
 })
 
 test('polluted GPT aliases cannot displace the evidence-linked Solana canonical subject', async () => {
@@ -988,6 +1074,91 @@ test('admits evidence-backed creation only with a complete canon', async () => {
   assert.equal(incomplete.memoryWrites, 0)
 })
 
+test('atomic create rejects an identity-mismatched concurrent exact-slug row', async () => {
+  const raced = entity({
+    id: 'entity-raced',
+    slug: 'novel-protocol',
+    name: 'GPT-5.6',
+    type: 'product',
+    aliases: ['GPT-5.6', 'Solana'],
+  })
+  const store = new AtomicRaceStore(raced)
+  const novelPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'Novel Protocol launched its network.',
+      attributedTo: 'Novel Protocol', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Novel Protocol', type: 'project', role: 'subject', aliases: [], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'create_new',
+        proposal: { slug: 'novel-protocol', name: 'Novel Protocol', type: 'project', aliases: [] },
+        supportingClaimIds: ['claim-1'],
+      }, [{
+        ...memoryDraft('Novel Protocol launches'),
+        representedClaimIds: ['claim-1'],
+        summary: 'Novel Protocol launched its network.',
+        mentions: ['Novel Protocol'],
+      }])
+    },
+  })
+
+  await assert.rejects(subject.process(input(novelPacket)), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'storage_transient'
+    && error.retryable
+    && /identity-mismatched/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 1)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('atomic create accepts a concurrently created row with the exact grounded identity', async () => {
+  const raced = entity({
+    id: 'entity-raced',
+    slug: 'novel-protocol',
+    name: 'Novel Protocol',
+    type: 'project',
+    aliases: ['Novel Protocol'],
+  })
+  const store = new AtomicRaceStore(raced)
+  const novelPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'Novel Protocol launched its network.',
+      attributedTo: 'Novel Protocol', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Novel Protocol', type: 'project', role: 'subject', aliases: [], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'create_new',
+        proposal: { slug: 'novel-protocol', name: 'Novel Protocol', type: 'project', aliases: [] },
+        supportingClaimIds: ['claim-1'],
+      }, [{
+        ...memoryDraft('Novel Protocol launches'),
+        representedClaimIds: ['claim-1'],
+        summary: 'Novel Protocol launched its network.',
+        mentions: ['Novel Protocol'],
+      }])
+    },
+  })
+
+  await subject.process(input(novelPacket))
+
+  assert.equal(store.entityWrites, 1)
+  assert.equal(store.memories.length, 1)
+  assert.equal(store.memories[0].entity_id, raced.id)
+})
+
 test('new Entity proposals cannot smuggle aliases that are absent from authoritative packet hints', async () => {
   const store = new FakeStore()
   const subject = processor(store, {
@@ -1258,26 +1429,73 @@ test('targeted collision lookup reuses exact slugs and rejects ambiguous alias c
   assert.equal(inactiveStore.memoryWrites, 0)
 })
 
-test('replay uses stable code identity and changed model title targets the same row', async () => {
+test('replay uses one article identity across changed model title, role, and claim selection', async () => {
   const store = new FakeStore([entity()])
   let title = 'First generated title'
+  let secondPlan = false
+  const replayPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'The Federal Reserve changed its guidance.',
+      attributedTo: 'Federal Reserve', evidenceRefs: ['evidence-1'],
+    }, {
+      claimId: 'claim-2', claim: 'The Federal Reserve also changed its forecast.',
+      attributedTo: 'Federal Reserve', evidenceRefs: ['evidence-1'],
+    }],
+  })
   const subject = processor(store, {
     async plan() {
-      return plan({ action: 'select_existing', entityId: 'entity-fed' }, [memoryDraft(title)])
+      return plan({ action: 'select_existing', entityId: 'entity-fed' }, [{
+        ...memoryDraft(title),
+        memoryRole: secondPlan ? 'material_follow_up' : 'primary_event',
+        representedClaimIds: [secondPlan ? 'claim-2' : 'claim-1'],
+      }])
     },
   })
 
-  await subject.process(input())
+  await subject.process(input(replayPacket))
   const firstId = store.memories[0].id
   const firstIdentity = store.memories[0].memory_identity_key
   title = 'Completely different generated title'
-  await subject.process(input())
+  secondPlan = true
+  await subject.process(input(replayPacket))
 
   assert.equal(store.memories.length, 1)
   assert.equal(store.memories[0].id, firstId)
   assert.equal(store.memories[0].memory_identity_key, firstIdentity)
   assert.equal(store.memories[0].title, title)
   assert.equal(store.memoryWrites, 2)
+})
+
+test('replay reuses a canonical row written with the previous v1 identity algorithm', async () => {
+  const store = new FakeStore([entity()])
+  const previousIdentity = `myboon.memory_identity.v1:${'f'.repeat(64)}`
+  store.memories.push(storedMemory({
+    id: 'memory-previous-v1',
+    memory_identity_key: previousIdentity,
+    entity_id: 'entity-fed',
+    source_research_id: 'packet-previous',
+    title: 'Previous generated title',
+    context: {
+      ...storedMemory().context,
+      canonical_source_item_id: 'news-item-1',
+    },
+  }))
+  const subject = processor(store, {
+    async plan() {
+      return plan({ action: 'select_existing', entityId: 'entity-fed' }, [{
+        ...memoryDraft('New generated title'),
+        memoryRole: 'changed_model_role',
+      }])
+    },
+  })
+
+  await subject.process(input())
+
+  assert.equal(store.memories.length, 1)
+  assert.equal(store.memories[0].id, 'memory-previous-v1')
+  assert.equal(store.memories[0].memory_identity_key, previousIdentity)
+  assert.equal(store.memories[0].title, 'New generated title')
+  assert.equal(store.memoryWrites, 1)
 })
 
 test('unknown Entity decisions and dangling memory references are rejected before any write', async () => {

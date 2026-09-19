@@ -113,7 +113,7 @@ export function groundEntityCandidates(
       const aliasMatches = compatibleMatches.filter((match) => match.kind === 'alias')
 
       for (const match of matches) {
-        const decision = groundingDecision(match, canonicalMatches, aliasMatches, roleAuthorizes, label.value)
+        const decision = groundingDecision(match, canonicalMatches, aliasMatches, roleAuthorizes, hint, label.value)
         match.state.matches.push({
           hintIndex,
           label: label.value,
@@ -275,6 +275,7 @@ function groundingDecision(
   canonicalMatches: readonly IdentityMatch[],
   aliasMatches: readonly IdentityMatch[],
   roleAuthorizes: boolean,
+  hint: EntityHint,
   label: string,
 ): EntityGroundingDecision {
   if (!match.compatible) return 'incompatible_type'
@@ -284,28 +285,45 @@ function groundingDecision(
   if (!roleAuthorizes) return 'non_authoritative_role'
   if (
     match.kind === 'alias'
-    && !isTickerLike(normalizedIdentity(label))
     && !entityAliasIsStructurallyRelated(label, match.state.entity.name)
+    && !tickerIsExplicitlyCorroborated(hint, label, match.state.entity)
   ) return 'non_authoritative_alias'
   return match.kind === 'alias' ? 'authoritative_unique_alias' : 'authoritative_canonical'
 }
 
 export function entityAliasIsStructurallyRelated(alias: string, canonicalName: string): boolean {
+  const tickerLike = isTickerLike(normalizedIdentity(alias))
   const normalizedAlias = normalizedIdentity(alias).replace(/^@/, '').toLocaleLowerCase('en-US')
   const words = normalizedIdentity(canonicalName)
     .toLocaleLowerCase('en-US')
     .split(/[^a-z0-9]+/)
     .filter(Boolean)
   if (normalizedAlias.length < 3) return false
-  if (words.some((word) => word.startsWith(normalizedAlias))) return true
+  // A title-case abbreviation such as `Fed` may be a deterministic lexical
+  // prefix. Uppercase ticker symbols do not receive that inference: `SOL`,
+  // `ETH`, or `NVDA` need a canonical acronym/exact identity or an explicit
+  // `Name (TICKER)` assertion from the evidence-linked hint.
+  if (!tickerLike && words.some((word) => word.startsWith(normalizedAlias))) return true
   const compactName = words.join('')
   const compactAlias = normalizedAlias.replace(/[^a-z0-9]+/g, '')
   if (compactAlias.length >= 3 && compactAlias === compactName) return true
   const acronym = words
-    .filter((word) => !['a', 'an', 'and', 'for', 'of', 'the', 'to'].includes(word))
+    .filter((word) => word.length > 1 && !['an', 'and', 'for', 'of', 'the', 'to'].includes(word))
     .map((word) => word[0])
     .join('')
   return compactAlias.length >= 2 && compactAlias === acronym
+}
+
+function tickerIsExplicitlyCorroborated(hint: EntityHint, label: string, entity: EntityRecord): boolean {
+  const normalizedLabel = normalizedIdentity(label)
+  if (!isTickerLike(normalizedLabel)) return false
+  const parenthetical = cleanOptional(hint.name)?.match(/^(.+?)\s*\(([^()]+)\)$/)
+  if (!parenthetical) return false
+  const canonicalLabel = cleanOptional(parenthetical[1])
+  const ticker = cleanOptional(parenthetical[2])
+  if (!canonicalLabel || ticker !== normalizedLabel) return false
+  return identityEquals(canonicalLabel, entity.name)
+    || normalizeSlug(undefined, canonicalLabel) === normalizeSlug(undefined, entity.slug)
 }
 
 function toEntitySupport(state: CandidateState): EntityGroundingSupport {
