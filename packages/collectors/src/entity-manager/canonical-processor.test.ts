@@ -81,12 +81,16 @@ function packet(overrides: Partial<ResearchPacketV1> = {}): ResearchPacketV1 {
     sourceType: 'news',
     observedAt: NOW,
     sourceSignal: {
+      sourceId: 'news-item-1',
       title: 'Federal Reserve changes its guidance',
       canonicalUrl: 'https://example.com/story',
       publishedAt: NOW,
       provenance: { provider: 'fixture', upstreamSource: 'Example News', rawPayloadRef: 'raw-1' },
       contentKind: 'article',
-      content: { text: 'The Federal Reserve changed its guidance.' },
+      content: {
+        text: 'The Federal Reserve changed its guidance.',
+        contentHash: 'content-hash-1',
+      },
       media: { imageUrl: 'https://example.com/image.jpg', attribution: 'Example News' },
       sourceHints: { entities: ['Federal Reserve'], assets: [], eventId: null, deadline: null },
     },
@@ -176,11 +180,52 @@ function memoryDraft(title = 'Fed changes forward guidance'): CanonicalEntityMem
   }
 }
 
+function storedMemory(overrides: Partial<EntityMemoryRecord> = {}): EntityMemoryRecord {
+  return {
+    id: 'memory-existing',
+    memory_identity_key: 'myboon.memory_identity.v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    entity_id: 'entity-fed',
+    source: 'news',
+    source_area: 'feed',
+    source_type: 'article',
+    source_ref_id: 'signal-old',
+    source_research_id: 'packet-old',
+    memory_type: 'news_event',
+    title: 'Earlier Fed guidance',
+    summary: 'The earlier guidance.',
+    body: 'Earlier body.',
+    event_at: '2026-08-26T09:00:00.000Z',
+    observed_at: '2026-08-26T10:00:00.000Z',
+    confidence: 0.9,
+    evidence: [],
+    mentions: ['Federal Reserve'],
+    metrics: {},
+    context: {
+      canonical_source_item_id: 'news-item-old',
+      canonical_source_content_hash: 'content-hash-old',
+      source_url: 'https://example.com/old-story',
+    },
+    created_at: '2026-08-26T10:00:00.000Z',
+    updated_at: '2026-08-26T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
 function plan(
   decision: CanonicalEntityPlan['decision'],
   memories: CanonicalEntityMemoryDraft[] = [memoryDraft()],
 ): CanonicalEntityPlan {
-  return { schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION, decision, memories }
+  assert.equal(memories.length, 1, 'canonical plans retain exactly one memory')
+  const supportedDecision = decision.action === 'select_existing'
+    && decision.supportingClaimIds === undefined
+    && decision.supportingEvidenceIds === undefined
+    ? { ...decision, supportingEvidenceIds: ['evidence-1'] }
+    : decision
+  return {
+    schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
+    decision: supportedDecision,
+    memory: { action: 'keep', memory: memories[0] },
+  }
 }
 
 function entityTelemetry(): InferenceTelemetry {
@@ -214,7 +259,9 @@ class FakeStore implements EntityMemoryStore {
   entityWrites = 0
   memoryWrites = 0
   catalogReads = 0
+  recentMemoryReads = 0
   listError: unknown = null
+  recentMemoryError: unknown = null
   private nextEntity = 1
   private nextMemory = 1
 
@@ -299,7 +346,26 @@ class FakeStore implements EntityMemoryStore {
     })
   }
 
-  async listRecentMemories(): Promise<EntityMemoryRecord[]> { return [] }
+  async listRecentMemories(
+    entityIds: string[],
+    sinceIso: string,
+    untilIso: string,
+    limit: number,
+    source: string,
+  ): Promise<EntityMemoryRecord[]> {
+    this.recentMemoryReads += 1
+    if (this.recentMemoryError) throw this.recentMemoryError
+    const wanted = new Set(entityIds)
+    const since = Date.parse(sinceIso)
+    const until = Date.parse(untilIso)
+    return this.memories.filter((memory) => (
+      memory.entity_id !== null
+      && wanted.has(memory.entity_id)
+      && memory.source === source
+      && Date.parse(memory.observed_at) >= since
+      && Date.parse(memory.observed_at) <= until
+    )).sort((left, right) => Date.parse(right.observed_at) - Date.parse(left.observed_at)).slice(0, limit)
+  }
   async findLatestMemorySince(_entityId: string, _memoryType: EntityMemoryType, _sinceIso: string): Promise<EntityMemoryRecord | null> {
     return null
   }
@@ -352,6 +418,9 @@ test('selects only an admitted existing Entity and preserves canonical traceabil
   assert.equal(store.memories[0].context.image_url, 'https://example.com/image.jpg')
   assert.equal(store.memories[0].context.image_attribution, 'Example News')
   assert.equal(store.memories[0].context.canonical_trace_id, 'trace-1')
+  assert.equal(store.memories[0].context.canonical_source_item_id, 'news-item-1')
+  assert.equal(store.memories[0].context.canonical_source_url, 'https://example.com/story')
+  assert.equal(store.memories[0].context.canonical_source_content_hash, 'content-hash-1')
   assert.equal(store.memories[0].context.priority_class, 'P1')
   assert.equal(store.memories[0].context.research_depth, 'standard')
   assert.equal(store.memories[0].context.freshness_deadline, '2026-08-26T13:00:00.000Z')
@@ -365,6 +434,335 @@ test('selects only an admitted existing Entity and preserves canonical traceabil
   assert.equal(store.memories[0].context.entity_configured_reasoning_effort, 'high')
   assert.equal(store.memories[0].context.entity_actual_reasoning_effort, 'medium')
   assert.deepEqual(store.memories[0].evidence, packet().evidence)
+})
+
+test('polluted GPT aliases cannot displace the evidence-linked Solana canonical subject', async () => {
+  const solana = entity({
+    id: 'entity-solana', slug: 'solana', name: 'Solana', type: 'asset', aliases: ['Solana', 'SOL', '@Solana'],
+  })
+  const gpt = entity({
+    id: 'entity-gpt', slug: 'openai-gpt-5-6', name: 'GPT-5.6', type: 'product',
+    aliases: ['GPT 5.6', 'Sol', 'Solana', '@Solana'],
+  })
+  const store = new FakeStore([gpt, solana])
+  const solanaPacket = packet({
+    sourceSignal: { ...packet().sourceSignal, title: 'Solana holds above $100 as SOL demand rises' },
+    claims: [{
+      claimId: 'claim-1', claim: 'Solana held above $100.', attributedTo: null, evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Solana (SOL)', type: null, role: 'subject of report', aliases: ['SOL'], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  let shortlist: string[] = []
+  const subject = processor(store, {
+    async plan({ admission }) {
+      shortlist = admission.canonicalEntityShortlist.map((item) => item.entityId)
+      return plan({
+        action: 'select_existing', entityId: solana.id, supportingEvidenceIds: ['evidence-1'],
+      })
+    },
+  })
+
+  await subject.process(input(solanaPacket))
+
+  assert.deepEqual(shortlist, [solana.id])
+  assert.equal(store.memories[0]?.entity_id, solana.id)
+  assert.equal(store.memories.some((memory) => memory.entity_id === gpt.id), false)
+})
+
+test('derived canonical hint names participate in lookup even when the real Entity lacks the ticker alias', async () => {
+  const solana = entity({
+    id: 'entity-solana', slug: 'solana', name: 'Solana', type: 'asset', aliases: [],
+  })
+  const gpt = entity({
+    id: 'entity-gpt', slug: 'openai-gpt-5-6', name: 'GPT-5.6', type: 'product', aliases: ['Solana'],
+  })
+  const store = new FakeStore([gpt, solana])
+  const solanaPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'Solana held above $100.',
+      attributedTo: 'Solana', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Solana (SOL)', type: null, role: 'subject of report', aliases: ['SOL'], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  let lookupIncludedDerivedBase = false
+  const subject = processor(store, {
+    async plan({ admission }) {
+      assert.deepEqual(admission.canonicalEntityShortlist.map((item) => item.entityId), [solana.id])
+      return plan({
+        action: 'select_existing', entityId: solana.id, supportingEvidenceIds: ['evidence-1'],
+      })
+    },
+  }, {
+    async lookup(query) {
+      lookupIncludedDerivedBase = query.slugs.includes('solana') && query.names.includes('Solana')
+      return { entities: lookupIncludedDerivedBase ? [gpt, solana] : [gpt], complete: true }
+    },
+  })
+
+  await subject.process(input(solanaPacket))
+
+  assert.equal(lookupIncludedDerivedBase, true)
+  assert.equal(store.memories[0]?.entity_id, solana.id)
+})
+
+test('aliases stay out of the bounded canonical-name lookup channel', async () => {
+  const aliases = Array.from({ length: 20 }, (_, index) => `Example Alias ${index}`)
+  const example = entity({ id: 'entity-example', slug: 'example', name: 'Example', aliases })
+  const store = new FakeStore([example])
+  const aliasHeavyPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'Example announced an update.',
+      attributedTo: 'Example', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Example', type: 'organization', role: 'subject', aliases, source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  let observedNameCount = -1
+  let observedAliasCount = -1
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'select_existing', entityId: example.id, supportingClaimIds: ['claim-1'],
+      })
+    },
+  }, {
+    async lookup(query) {
+      observedNameCount = query.names.length
+      observedAliasCount = query.aliases.length
+      return { entities: [example], complete: true }
+    },
+  })
+
+  await subject.process(input(aliasHeavyPacket))
+
+  assert.equal(observedNameCount, 1)
+  assert.equal(observedAliasCount, 20)
+  assert.equal(store.memories[0]?.entity_id, example.id)
+})
+
+test('create_new cannot alias-ground an unrelated canonical name and collide back onto GPT-5.6', async () => {
+  const solana = entity({
+    id: 'entity-solana', slug: 'solana', name: 'Solana', type: 'asset', aliases: ['Solana', 'SOL'],
+  })
+  const gpt = entity({
+    id: 'entity-gpt', slug: 'openai-gpt-5-6', name: 'GPT-5.6', type: 'product', aliases: ['Solana'],
+  })
+  const store = new FakeStore([gpt, solana])
+  const solanaPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'Solana held above $100.',
+      attributedTo: 'Solana', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Solana (SOL)', type: null, role: 'subject of report', aliases: ['SOL'], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'create_new',
+        proposal: {
+          slug: 'openai-gpt-5-6', name: 'GPT-5.6', type: 'product', aliases: ['Solana'],
+        },
+        supportingEvidenceIds: ['evidence-1'],
+      })
+    },
+  })
+
+  await assert.rejects(subject.process(input(solanaPacket)), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'invalid_structured_output'
+    && /primary-subject hint|canonical name/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('create_new cannot use a matching slug to disguise an unrelated canonical name', async () => {
+  const store = new FakeStore()
+  const novelPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'Novel Protocol launched a new product.',
+      attributedTo: 'Novel Protocol', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Novel Protocol', type: 'product', role: 'subject', aliases: [], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'create_new',
+        proposal: { slug: 'novel-protocol', name: 'Unrelated Product', type: 'product', aliases: [] },
+        supportingEvidenceIds: ['evidence-1'],
+      })
+    },
+  })
+
+  await assert.rejects(subject.process(input(novelPacket)), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'invalid_structured_output'
+    && /canonical name/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('retained memory evidence must concern the selected primary Entity', async () => {
+  const store = new FakeStore([entity()])
+  const multiTopicPacket = packet({
+    claims: [
+      ...packet().claims,
+      {
+        claimId: 'claim-2', claim: 'The SEC approved a tokenized-stock exemption.',
+        attributedTo: 'SEC', evidenceRefs: ['evidence-1'],
+      },
+    ],
+    entityHints: [{
+      ...packet().entityHints[0],
+      aliases: ['Fed', 'SEC'],
+      claimRefs: [],
+      evidenceRefs: ['evidence-1'],
+    }],
+  })
+  const subject = processor(store, {
+    async plan() {
+      return plan(
+        { action: 'select_existing', entityId: 'entity-fed', supportingEvidenceIds: ['evidence-1'] },
+        [{
+          ...memoryDraft('Unrelated tokenized-stock development'),
+          representedClaimIds: ['claim-2'],
+          representedEvidenceIds: ['evidence-1'],
+        }],
+      )
+    },
+  })
+
+  await assert.rejects(subject.process(input(multiTopicPacket)), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'invalid_structured_output'
+    && /claims must overlap the selected Entity/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('no relevant subject completes with no Entity or memory write', async () => {
+  const store = new FakeStore([entity()])
+  const subject = processor(store, {
+    async plan() {
+      return {
+        schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
+        decision: {
+          action: 'no_relevant_subject', reasonCode: 'no_evidence_backed_subject',
+          reason: 'The packet has no evidence-backed durable subject.',
+        },
+        memory: {
+          action: 'drop', reasonCode: 'no_relevant_subject',
+          reason: 'Nothing belongs in Entity memory.',
+        },
+      }
+    },
+  })
+
+  const result = await subject.process(input())
+
+  assert.equal(result.memoryOutcome, 'skipped')
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+  assert.equal(store.memories.length, 0)
+})
+
+test('canonical news planning sees bounded recent memory and can update it at the established confidence boundary', async () => {
+  const store = new FakeStore([entity()])
+  store.memories.push(storedMemory())
+  let recentIds: string[] = []
+  let recentSourceIdentity: [string | null, string | null] | null = null
+  const subject = processor(store, {
+    async plan({ recentMemories }) {
+      recentIds = recentMemories.map((memory) => memory.id)
+      recentSourceIdentity = [
+        recentMemories[0]?.sourceItemId ?? null,
+        recentMemories[0]?.sourceContentHash ?? null,
+      ]
+      return {
+        schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
+        decision: {
+          action: 'select_existing', entityId: 'entity-fed', supportingEvidenceIds: ['evidence-1'],
+        },
+        memory: {
+          action: 'update', subtype: 'material_update', existingMemoryId: 'memory-existing',
+          confidence: 0.8, reason: 'The same policy story materially advanced.',
+          memory: { ...memoryDraft(), summary: 'The Federal Reserve materially changed its guidance.' },
+        },
+      }
+    },
+  })
+
+  const result = await subject.process(input())
+
+  assert.deepEqual(recentIds, ['memory-existing'])
+  assert.deepEqual(recentSourceIdentity, ['news-item-old', 'content-hash-old'])
+  assert.equal(store.recentMemoryReads, 1, 'one fail-closed lookback is reused by the write boundary')
+  assert.equal(store.memories.length, 1)
+  assert.equal(store.memories[0].summary, 'The Federal Reserve materially changed its guidance.')
+  assert.equal(store.memories[0].context.last_story_reconciliation, 'update_existing_story')
+  assert.equal(result.memoryOutcome, 'written')
+})
+
+test('relevant Entity with no durable delta drops without mutating memory', async () => {
+  const store = new FakeStore([entity()])
+  store.memories.push(storedMemory())
+  const before = structuredClone(store.memories)
+  const subject = processor(store, {
+    async plan() {
+      return {
+        schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
+        decision: {
+          action: 'select_existing', entityId: 'entity-fed', supportingEvidenceIds: ['evidence-1'],
+        },
+        memory: {
+          action: 'drop', reasonCode: 'no_material_change',
+          reason: 'The recent timeline already contains the same durable fact.',
+        },
+      }
+    },
+  })
+
+  const result = await subject.process(input())
+
+  assert.equal(result.memoryOutcome, 'skipped')
+  assert.deepEqual(store.memories, before)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('required recent-memory lookback failure is retryable and prevents planner and writes', async () => {
+  const store = new FakeStore([entity()])
+  store.recentMemoryError = new Error('recent memory database unavailable')
+  let plannerCalls = 0
+  const subject = processor(store, {
+    async plan() {
+      plannerCalls += 1
+      return plan({ action: 'select_existing', entityId: 'entity-fed' })
+    },
+  })
+
+  await assert.rejects(subject.process(input()), (error: unknown) => (
+    error instanceof PlatformFailure && error.category === 'storage_transient' && error.retryable
+  ))
+  assert.equal(plannerCalls, 0)
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
 })
 
 test('reviewed scoped knowledge flows through the canonical admission path without adding writes', async () => {
@@ -423,6 +821,10 @@ test('reviewed scoped knowledge flows through the canonical admission path witho
       ...packet().sourceSignal,
       title: 'Jupiter expands its Solana product surface',
     },
+    claims: [{
+      claimId: 'claim-1', claim: 'Jupiter expanded its Solana product surface.',
+      attributedTo: 'Jupiter', evidenceRefs: ['evidence-1'],
+    }],
     entityHints: [{
       name: 'Jupiter', type: 'protocol', role: 'subject', aliases: ['Jupiter Exchange'], source: 'research',
       claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
@@ -495,6 +897,10 @@ test('Polymarket is admitted only when evidence-linked hints make it the subject
   })
   const aboutPacket = packet({
     sourceSignal: { ...packet().sourceSignal, title: 'Polymarket launches a new product' },
+    claims: [{
+      claimId: 'claim-1', claim: 'Polymarket launched a new product.',
+      attributedTo: 'Polymarket', evidenceRefs: ['evidence-1'],
+    }],
     entityHints: [{
       name: 'Polymarket', type: 'product', role: 'primary_subject', aliases: [], source: 'research',
       claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
@@ -513,11 +919,15 @@ test('Polymarket is admitted only when evidence-linked hints make it the subject
   })
   const venuePacket = packet({
     sourceSignal: { ...packet().sourceSignal, title: 'Polymarket odds move on the price of Solana' },
+    claims: [{
+      claimId: 'claim-1', claim: 'Solana price odds moved on Polymarket.',
+      attributedTo: 'Solana', evidenceRefs: ['evidence-1'],
+    }],
     entityHints: [{
       name: 'Polymarket', type: 'product', role: 'venue', aliases: [], source: 'research',
       claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
     }, {
-      name: 'Solana', type: 'network', role: 'subject', aliases: ['SOL'], source: 'research',
+      name: 'Solana', type: 'asset', role: 'subject', aliases: ['SOL'], source: 'research',
       claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
     }],
   })
@@ -531,7 +941,7 @@ test('admits evidence-backed creation only with a complete canon', async () => {
     async plan() {
       return plan({
         action: 'create_new',
-        proposal: { slug: 'federal-reserve-guidance', name: 'Federal Reserve Guidance', type: 'topic' },
+        proposal: { slug: 'federal-reserve', name: 'Federal Reserve', type: 'organization', aliases: [] },
         supportingClaimIds: ['claim-1'],
       })
     },
@@ -543,11 +953,22 @@ test('admits evidence-backed creation only with a complete canon', async () => {
   assert.equal(store.entities[0].metadata.canonical_packet_id, 'packet-1')
 
   const incomplete = new FakeStore()
+  const brandPacket = packet({
+    sourceSignal: { ...packet().sourceSignal, title: 'Brand New Entity announces a durable launch' },
+    claims: [{
+      claimId: 'claim-1', claim: 'Brand New Entity announced a durable launch.',
+      attributedTo: 'Brand New Entity', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Brand New Entity', type: 'organization', role: 'subject', aliases: [], source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }],
+  })
   const blocked = processor(incomplete, {
     async plan() {
       return plan({
         action: 'create_new',
-        proposal: { slug: 'brand-new-entity', name: 'Brand New Entity', type: 'topic' },
+        proposal: { slug: 'brand-new-entity', name: 'Brand New Entity', type: 'organization' },
         supportingEvidenceIds: ['evidence-1'],
       })
     },
@@ -560,11 +981,167 @@ test('admits evidence-backed creation only with a complete canon', async () => {
     },
   })
 
-  await assert.rejects(blocked.process(input()), (error: unknown) => error instanceof PlatformFailure
+  await assert.rejects(blocked.process(input(brandPacket)), (error: unknown) => error instanceof PlatformFailure
     && error.category === 'storage_transient'
     && error.retryable)
   assert.equal(incomplete.entityWrites, 0)
   assert.equal(incomplete.memoryWrites, 0)
+})
+
+test('new Entity proposals cannot smuggle aliases that are absent from authoritative packet hints', async () => {
+  const store = new FakeStore()
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'create_new',
+        proposal: {
+          slug: 'federal-reserve',
+          name: 'Federal Reserve',
+          type: 'organization',
+          aliases: ['Fed', 'Solana'],
+        },
+        supportingEvidenceIds: ['evidence-1'],
+      })
+    },
+  })
+
+  await assert.rejects(subject.process(input()), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'invalid_structured_output'
+    && /alias is not grounded/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('new Entity proposals cannot mint an unrelated alias from a co-mention', async () => {
+  const store = new FakeStore()
+  const acmePacket = packet({
+    claims: [{
+      claimId: 'claim-1',
+      claim: 'Acme partnered with Solitron.',
+      attributedTo: 'Acme',
+      evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Acme', type: 'organization', role: 'subject', aliases: ['Solitron'], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  const subject = processor(store, {
+    async plan() {
+      return plan({
+        action: 'create_new',
+        proposal: {
+          slug: 'acme', name: 'Acme', type: 'organization', aliases: ['Solitron'],
+        },
+        supportingClaimIds: ['claim-1'],
+      })
+    },
+  })
+
+  await assert.rejects(subject.process(input(acmePacket)), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'invalid_structured_output'
+    && /alias is not grounded/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('partial canon results cannot make an alias appear uniquely authoritative', async () => {
+  const federalReserve = entity()
+  const store = new FakeStore([federalReserve])
+  const fedPacket = packet({
+    claims: [{
+      claimId: 'claim-1', claim: 'Fed changed its guidance.',
+      attributedTo: 'Fed', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Fed', type: 'organization', role: 'subject', aliases: [], source: 'research',
+      claimRefs: [], evidenceRefs: ['evidence-1'],
+    }],
+  })
+  let shortlist: string[] = []
+  const subject = processor(store, {
+    async plan({ admission }) {
+      shortlist = admission.canonicalEntityShortlist.map((item) => item.entityId)
+      return plan({ action: 'select_existing', entityId: federalReserve.id })
+    },
+  }, {
+    async lookup() {
+      return { entities: [federalReserve], complete: false }
+    },
+  })
+
+  await assert.rejects(subject.process(input(fedPacket)), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'entity_resolution_failed'
+    && /Unknown canonical entity ID/.test(error.message)
+  ))
+  assert.deepEqual(shortlist, [])
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('a planner cannot create an Entity when its article decision is drop', async () => {
+  const store = new FakeStore()
+  const subject = processor(store, {
+    async plan() {
+      return {
+        schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
+        decision: {
+          action: 'create_new',
+          proposal: { slug: 'federal-reserve', name: 'Federal Reserve', type: 'organization', aliases: ['Fed'] },
+          supportingEvidenceIds: ['evidence-1'],
+        },
+        memory: {
+          action: 'drop', reasonCode: 'low_durable_value', reason: 'No durable observation should be stored.',
+        },
+      }
+    },
+  })
+
+  await assert.rejects(subject.process(input()), (error: unknown) => (
+    error instanceof PlatformFailure
+    && error.category === 'invalid_structured_output'
+    && /cannot create/.test(error.message)
+  ))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('memory updates reject confidence below 0.8 and targets from the current packet', async () => {
+  for (const invalid of [
+    { confidence: 0.79, sourceResearchId: 'packet-old', message: /at least 0.8/ },
+    { confidence: 0.8, sourceResearchId: 'packet-1', message: /same Research Packet/ },
+  ]) {
+    const store = new FakeStore([entity()])
+    store.memories.push(storedMemory({ source_research_id: invalid.sourceResearchId }))
+    const subject = processor(store, {
+      async plan() {
+        return {
+          schemaVersion: CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
+          decision: {
+            action: 'select_existing', entityId: 'entity-fed', supportingEvidenceIds: ['evidence-1'],
+          },
+          memory: {
+            action: 'update', subtype: 'material_update', existingMemoryId: 'memory-existing',
+            confidence: invalid.confidence, reason: 'The same story appears to have changed.',
+            memory: memoryDraft(),
+          },
+        }
+      },
+    })
+
+    await assert.rejects(subject.process(input()), (error: unknown) => (
+      error instanceof PlatformFailure
+      && error.category === 'invalid_structured_output'
+      && invalid.message.test(error.message)
+    ))
+    assert.equal(store.entityWrites, 0)
+    assert.equal(store.memoryWrites, 0)
+  }
 })
 
 test('unrelated catalogs above the former limit do not block targeted new Entity creation', async () => {
@@ -575,6 +1152,17 @@ test('unrelated catalogs above the former limit do not block targeted new Entity
     aliases: [`Unrelated ${index}`],
   }))
   const store = new FakeStore(unrelated)
+  const novelPacket = packet({
+    sourceSignal: { ...packet().sourceSignal, title: 'Novel Policy Topic becomes a durable regulatory subject' },
+    claims: [{
+      claimId: 'claim-1', claim: 'Novel Policy Topic became a durable regulatory subject.',
+      attributedTo: 'Novel Policy Topic', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Novel Policy Topic', type: 'topic', role: 'subject', aliases: [], source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }],
+  })
   const subject = processor(store, {
     async plan() {
       return plan({
@@ -585,7 +1173,7 @@ test('unrelated catalogs above the former limit do not block targeted new Entity
     },
   })
 
-  await subject.process(input())
+  await subject.process(input(novelPacket))
 
   assert.equal(store.entities.some((item) => item.slug === 'novel-policy-topic'), true)
   assert.equal(store.entityWrites, 1)
@@ -593,10 +1181,22 @@ test('unrelated catalogs above the former limit do not block targeted new Entity
 })
 
 test('targeted collision lookup reuses exact slugs and rejects ambiguous alias collisions', async () => {
+  const guidancePacket = packet({
+    sourceSignal: { ...packet().sourceSignal, title: 'Federal Reserve Guidance changes materially' },
+    claims: [{
+      claimId: 'claim-1', claim: 'Federal Reserve Guidance changed materially.',
+      attributedTo: 'Federal Reserve Guidance', evidenceRefs: ['evidence-1'],
+    }],
+    entityHints: [{
+      name: 'Federal Reserve Guidance', type: 'topic', role: 'subject', aliases: [], source: 'research',
+      claimRefs: ['claim-1'], evidenceRefs: ['evidence-1'],
+    }],
+  })
   const exact = entity({
     id: 'existing-proposal',
     slug: 'federal-reserve-guidance',
     name: 'Federal Reserve Guidance',
+    type: 'topic',
     aliases: ['Federal Reserve Guidance'],
   })
   const exactStore = new FakeStore([exact])
@@ -610,7 +1210,7 @@ test('targeted collision lookup reuses exact slugs and rejects ambiguous alias c
     },
   })
 
-  await exactSubject.process(input())
+  await exactSubject.process(input(guidancePacket))
   assert.equal(exactStore.entityWrites, 0)
   assert.equal(exactStore.memories[0].entity_id, exact.id)
 
@@ -630,7 +1230,7 @@ test('targeted collision lookup reuses exact slugs and rejects ambiguous alias c
     },
   })
 
-  await assert.rejects(ambiguous.process(input()), (error: unknown) => error instanceof PlatformFailure
+  await assert.rejects(ambiguous.process(input(guidancePacket)), (error: unknown) => error instanceof PlatformFailure
     && error.category === 'entity_resolution_failed'
     && !error.retryable)
   assert.equal(ambiguousStore.entityWrites, 0)
@@ -652,7 +1252,7 @@ test('targeted collision lookup reuses exact slugs and rejects ambiguous alias c
       })
     },
   })
-  await assert.rejects(inactive.process(input()), (error: unknown) => error instanceof PlatformFailure
+  await assert.rejects(inactive.process(input(guidancePacket)), (error: unknown) => error instanceof PlatformFailure
     && error.category === 'entity_resolution_failed')
   assert.equal(inactiveStore.entityWrites, 0)
   assert.equal(inactiveStore.memoryWrites, 0)

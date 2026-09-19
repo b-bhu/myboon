@@ -207,7 +207,7 @@ test('assembles canonical packet linkage, provenance, and code-owned metadata', 
   assert.deepEqual(packet.verifiedFacts[0].evidenceRefs, ['evidence_independent'])
   assert.deepEqual(packet.evidence.map((item) => item.evidenceId), ['evidence_source', 'evidence_independent'])
   assert.match(packet.claims[0].claimId, /^claim_[0-9a-f]{32}$/)
-  assert.deepEqual(packet.entityHints[0].claimRefs, [])
+  assert.deepEqual(packet.entityHints[0].claimRefs, [packet.claims[0].claimId])
   assert.deepEqual(packet.entityHints[0].evidenceRefs, ['evidence_source'])
   assert.equal(packet.execution.traceId, WORK.traceId)
   assert.equal(packet.execution.policyVersion, WORK.policyVersion)
@@ -316,6 +316,9 @@ test('passes an exact zero-tool budget and exposes no tool request surface', asy
   assert.equal('toolsets' in request, false)
   assert.match(request.prompt, /Return JSON only/)
   assert.match(request.prompt, /Every entityHints item must contain at least one allowed evidenceId/)
+  assert.match(request.prompt, /subject or primary_subject only for a true report subject/)
+  assert.match(request.prompt, /canonical name in at least one claim text/)
+  assert.match(request.prompt, /attributedTo, an alias, or a ticker alone cannot establish/)
 })
 
 test('packet and claim identities are deterministic across replay time', async () => {

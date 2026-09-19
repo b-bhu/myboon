@@ -63,6 +63,20 @@ export type {
   ReviewedEntityKnowledgeProvenanceV1,
 } from './entity-knowledge-context'
 export {
+  entityAliasIsStructurallyRelated,
+  entityHintAuthorizesPrimarySelection,
+  entityHintCanonicalLabels,
+  entityHintIdentityLabels,
+  groundEntityCandidates,
+} from './entity-grounding'
+export type {
+  EntityGroundingDecision,
+  EntityGroundingMatchKind,
+  EntityGroundingMatchSupport,
+  EntityGroundingResult,
+  EntityGroundingSupport,
+} from './entity-grounding'
+export {
   ENTITY_ADMISSION_MAX_SHORTLIST_SIZE,
   ENTITY_ADMISSION_SCHEMA_VERSION,
   EntityAdmissionValidationError,
@@ -111,6 +125,7 @@ export type {
   ActiveCycleResult,
   CanonicalPacketProcessor,
   CanonicalPacketProcessorInput,
+  CanonicalPacketProcessorResult,
   EntityPacketWorkPort,
   HeartbeatScheduler,
   ShadowCycleResult,
@@ -130,6 +145,10 @@ export type {
   CanonicalEntityPlan,
   CanonicalEntityPlanningInput,
   CanonicalEntityPlanningPort,
+  CanonicalEntityPlanningResult,
+  CanonicalMemoryDecision,
+  CanonicalNoRelevantSubjectDecision,
+  CanonicalRecentMemoryContext,
   EntityCanonLookup,
   EntityCanonLookupQuery,
   EntityCanonLookupResult,

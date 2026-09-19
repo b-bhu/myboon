@@ -203,6 +203,12 @@ function packet(source: CanonicalSource, id: string, observedAt = '2026-08-26T10
   const label = SOURCE_ENTITY[source].label
   return operatorPacket(source, id, {
     observedAt,
+    claims: [{
+      claimId: `claim-${id}`,
+      claim: `${label} reported a durable development.`,
+      attributedTo: label,
+      evidenceRefs: [`evidence-${id}`],
+    }],
     entityHints: [{
       name: label, type: 'organization', role: 'subject', aliases: [], source: 'canonical',
       claimRefs: [`claim-${id}`], evidenceRefs: [`evidence-${id}`],
@@ -227,14 +233,17 @@ function plannerGateway(titles: Record<CanonicalSource, string>) {
           supportingClaimIds: [`claim-${id}`],
           supportingEvidenceIds: [`evidence-${id}`],
         },
-        memories: [{
-          memoryType: SOURCE_ENTITY[source].memoryType,
-          memoryRole: 'primary_event',
-          title: titles[source],
-          summary: `${source} canonical summary for ${id}`,
-          representedClaimIds: [`claim-${id}`],
-          representedEvidenceIds: [`evidence-${id}`],
-        }],
+        memory: {
+          action: 'keep',
+          memory: {
+            memoryType: SOURCE_ENTITY[source].memoryType,
+            memoryRole: 'primary_event',
+            title: titles[source],
+            summary: `${source} canonical summary for ${id}`,
+            representedClaimIds: [`claim-${id}`],
+            representedEvidenceIds: [`evidence-${id}`],
+          },
+        },
       }
       const validated = request.validate(value)
       assert.equal(validated.valid, true)

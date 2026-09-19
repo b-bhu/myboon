@@ -151,6 +151,9 @@ export function validateEntityAdmissionDecision(
     if (!input.canonicalEntityShortlist.some((entity) => entity.entityId === entityId)) {
       throw new EntityAdmissionValidationError(`Unknown canonical entity ID: ${entityId}`)
     }
+    if (supportingClaimIds.length === 0 && supportingEvidenceIds.length === 0) {
+      throw new EntityAdmissionValidationError('select_existing requires supporting packet claim or evidence references.')
+    }
     return { action: 'select_existing', entityId, supportingClaimIds, supportingEvidenceIds }
   }
 

@@ -201,7 +201,7 @@ export function loadSharedResearchRunnerConfig(
     batchSize: integer(env[SHARED_RESEARCH_ENV.batchSize], 1, 250, 10, 'research batch size'),
     intervalMs: integer(env[SHARED_RESEARCH_ENV.intervalMs], 100, 24 * 60 * 60_000, 5_000, 'research interval'),
     runOnce: flag(env[SHARED_RESEARCH_ENV.runOnce], false, 'research run once'),
-    promptVersion: safeValue(env[SHARED_RESEARCH_ENV.promptVersion] ?? 'research.synthesis.prompt.v1', 'research prompt version'),
+    promptVersion: safeValue(env[SHARED_RESEARCH_ENV.promptVersion] ?? 'research.synthesis.prompt.v2', 'research prompt version'),
     sampleBasisPoints: feed.shadowSampleBasisPoints,
     deepEnabled: feed.deepResearchEnabled,
     urgentPriorities: priorities(env[SHARED_RESEARCH_ENV.urgentPriorities], ['P0', 'P1']),

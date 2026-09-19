@@ -4,6 +4,7 @@ import {
   type ResearchCompletion,
   type ResearchPacketV1,
 } from '../signal-platform/contracts'
+import { deriveEntityHintClaimRefs } from '../signal-platform/entity-hint-claims'
 import { validateResearchPacket } from '../signal-platform/validation'
 import { DeepResearchError } from './errors'
 import {
@@ -201,6 +202,12 @@ export function assembleDeepResearchPacket(input: {
     stableId('deep_evidence', packetId, item.url),
   ]))
   const mapRefs = (refs: string[]) => refs.map((ref) => resultEvidenceIds.get(ref) ?? ref)
+  const claims = body.claims.map((claim, index) => ({
+    claimId: stableId('claim', packetId, String(index), claim.claim),
+    claim: claim.claim,
+    attributedTo: claim.attributedTo,
+    evidenceRefs: mapRefs(claim.evidenceRefs),
+  }))
   const packet: ResearchPacketV1 = {
     schemaVersion: RESEARCH_PACKET_SCHEMA_VERSION,
     packetId,
@@ -224,12 +231,7 @@ export function assembleDeepResearchPacket(input: {
         assets: [...job.signal.sourceHints.assets],
       },
     },
-    claims: body.claims.map((claim, index) => ({
-      claimId: stableId('claim', packetId, String(index), claim.claim),
-      claim: claim.claim,
-      attributedTo: claim.attributedTo,
-      evidenceRefs: mapRefs(claim.evidenceRefs),
-    })),
+    claims,
     verifiedFacts: body.verifiedFacts.map((fact) => ({ ...fact, evidenceRefs: mapRefs(fact.evidenceRefs) })),
     unresolvedClaims: body.unresolvedClaims.map((claim) => ({ ...claim, evidenceRefs: mapRefs(claim.evidenceRefs) })),
     evidence: [
@@ -250,7 +252,7 @@ export function assembleDeepResearchPacket(input: {
         note: item.note,
       })),
     ],
-    entityHints: body.entityHints.map((hint) => ({
+    entityHints: deriveEntityHintClaimRefs(body.entityHints.map((hint) => ({
       name: hint.name,
       type: hint.type,
       role: hint.role,
@@ -258,7 +260,7 @@ export function assembleDeepResearchPacket(input: {
       source: hint.source,
       claimRefs: [],
       evidenceRefs: mapRefs(hint.evidenceRefs),
-    })),
+    })), claims),
     limitations: [...body.limitations],
     openQuestions: [...body.openQuestions],
     completion: body.completion,

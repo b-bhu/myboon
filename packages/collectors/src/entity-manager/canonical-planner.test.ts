@@ -9,13 +9,17 @@ import { adaptCanonicalResearchPacket } from './canonical-packet-adapter'
 import {
   CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
   type CanonicalEntityPlan,
+  type CanonicalRecentMemoryContext,
 } from './canonical-processor'
 import {
   CANONICAL_ENTITY_PROMPT_VERSION,
   GatewayCanonicalEntityPlanner,
 } from './canonical-planner'
 
-function planningInput(canonicalEntityShortlist: CanonicalEntityRef[] = []) {
+function planningInput(
+  canonicalEntityShortlist: CanonicalEntityRef[] = [],
+  recentMemories: CanonicalRecentMemoryContext[] = [],
+) {
   const canonicalPacket = operatorPacket('news', 'planner')
   const work = operatorWork('news', 'planner', {
     status: 'entity_leased', priorityClass: 'P1', researchDepth: 'standard',
@@ -31,6 +35,7 @@ function planningInput(canonicalEntityShortlist: CanonicalEntityRef[] = []) {
       canonAvailability: { state: 'loaded' as const, complete: true as const },
     }),
     packet: adaptCanonicalResearchPacket(canonicalPacket),
+    recentMemories,
     work,
     signal: new AbortController().signal,
   }
@@ -44,10 +49,13 @@ function plan(): CanonicalEntityPlan {
       proposal: { slug: 'example', name: 'Example', type: 'organization' },
       supportingClaimIds: ['claim-planner'], supportingEvidenceIds: ['evidence-planner'],
     },
-    memories: [{
-      memoryType: 'news_event', memoryRole: 'primary_event', title: 'Example update', summary: 'Example changed.',
-      representedClaimIds: ['claim-planner'], representedEvidenceIds: ['evidence-planner'],
-    }],
+    memory: {
+      action: 'keep',
+      memory: {
+        memoryType: 'news_event', memoryRole: 'primary_event', title: 'Example update', summary: 'Example changed.',
+        representedClaimIds: ['claim-planner'], representedEvidenceIds: ['evidence-planner'],
+      },
+    },
   }
 }
 
@@ -75,9 +83,10 @@ test('gateway planner sends a bounded tool-less Entity request and returns its v
   assert.equal(request.budget.maxToolCalls, 0)
   assert.equal(request.budget.maxProviderCalls, 2)
   assert.match(request.prompt, /select only an entityId/i)
-  assert.match(request.prompt, /exactly these top-level keys: schemaVersion, decision, memories/i)
+  assert.match(request.prompt, /exactly these top-level keys: schemaVersion, decision, memory/i)
   assert.match(request.prompt, /representedClaimIds, representedEvidenceIds/i)
-  assert.match(request.prompt, /choose exactly one primary entity/i)
+  assert.match(request.prompt, /no_relevant_subject/i)
+  assert.match(request.prompt, /keep, update, or drop/i)
   assert.equal('tools' in request, false)
   assert.equal('toolsets' in request, false)
 })
@@ -123,6 +132,28 @@ test('planner prompt treats reviewed entity knowledge as context rather than fil
   assert.match(prompt, /do not return or invent classification\/relationship writes/i)
   assert.match(prompt, /"kind":"protocol"/)
   assert.match(prompt, /"predicate":"operates_on"/)
+})
+
+test('planner prompt receives only the bounded recent-memory IDs it may update', async () => {
+  let prompt = ''
+  const planner = new GatewayCanonicalEntityPlanner({
+    gateway: {
+      async generateStructured<T>(request: GenerateStructuredRequest<T>): Promise<InferenceResult<T>> {
+        prompt = request.prompt
+        return { value: plan() as T, telemetry: telemetry() } as InferenceResult<T>
+      },
+    },
+  })
+  await planner.plan(planningInput([], [{
+    id: 'memory-recent-1', entityId: 'entity-1', entitySlug: 'example', entityName: 'Example',
+    memoryType: 'news_event', title: 'Earlier event', summary: 'Earlier durable fact.',
+    eventAt: null, observedAt: '2026-08-26T11:00:00.000Z', sourceResearchId: 'packet-earlier',
+    sourceItemId: 'article-example', sourceUrl: 'https://example.com/earlier', sourceContentHash: 'hash-example',
+  }]))
+
+  assert.match(prompt, /"recentMemories":\[/)
+  assert.match(prompt, /"id":"memory-recent-1"/)
+  assert.match(prompt, /update may target only an exact supplied recent memory ID/i)
 })
 
 function telemetry(): InferenceTelemetry {
