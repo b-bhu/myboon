@@ -18,6 +18,8 @@ export {
   type HermesOneshotRequest,
   type HermesOneshotResult,
   type HermesProviderCircuitBreakerOptions,
+  type HermesSendRequest,
+  type HermesSendResult,
   type HermesServiceOptions,
   type HermesStructuredResult,
 } from './service'

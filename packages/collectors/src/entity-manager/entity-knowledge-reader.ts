@@ -160,6 +160,21 @@ export const ENTITY_MEMORY_CHANGES_START_CURSOR = encodeCursor({
 })
 
 /**
+ * Creates an initial change-feed cursor at a caller-selected time boundary.
+ * New consumers can start from a recent lookback without replaying the full
+ * Entity memory history. Updates exactly on the boundary remain visible.
+ */
+export function entityMemoryChangesCursorAt(value: string): string {
+  return encodeCursor({
+    v: 1,
+    kind: 'memory-changes',
+    query: CHANGE_QUERY_KEY,
+    at: timestamp(value, 'memory changes cursor timestamp'),
+    id: INITIAL_CHANGE_ID,
+  })
+}
+
+/**
  * Port-backed implementation kept separate from Supabase so cursor/filter
  * semantics can be contract-tested without mocking the fluent client.
  */

@@ -284,6 +284,19 @@ export interface HermesStructuredResult<T> extends HermesOneshotResult {
   value: T | null
 }
 
+export interface HermesSendRequest {
+  /** Hermes delivery target, for example `discord:hermes`. */
+  target: string
+  message: string
+  timeoutMs: number
+  commandOverride?: string
+}
+
+export interface HermesSendResult {
+  stdout: string
+  stderr: string
+}
+
 export interface HermesChatRequest {
   purpose: string
   prompt: string
@@ -482,6 +495,28 @@ export class HermesService {
     } catch {
       // Observability must never break the call it observes.
     }
+  }
+
+  /**
+   * Deliver an already-authored message through a configured Hermes platform.
+   * This path invokes no model and intentionally does not share the inference
+   * circuit breaker or concurrency pools.
+   */
+  async send(request: HermesSendRequest): Promise<HermesSendResult> {
+    const target = request.target.trim()
+    if (!target || target !== request.target || target.length > 500 || /\p{Cc}/u.test(target)) {
+      throw new Error('Hermes send target must be a trimmed value of at most 500 characters without controls')
+    }
+    if (!request.message.trim()) throw new Error('Hermes send message must not be empty')
+    if (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0) {
+      throw new Error('Hermes send timeoutMs must be positive')
+    }
+    const command = request.commandOverride ?? this.command
+    return this.execFileImpl(command, ['send', '--to', target, '--quiet', request.message], {
+      timeout: request.timeoutMs,
+      maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
+      env: { ...process.env },
+    })
   }
 
   async oneshot(request: HermesOneshotRequest): Promise<HermesOneshotResult> {

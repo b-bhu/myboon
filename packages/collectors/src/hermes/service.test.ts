@@ -50,6 +50,34 @@ function fakeSpawn(script?: (child: FakeChild) => void) {
   return { calls, children, impl }
 }
 
+test('send uses the configured Hermes delivery target without invoking a model', async () => {
+  const { calls, impl } = fakeExec({ stdout: '' })
+  const service = new HermesService({ command: 'hermes', execFileImpl: impl })
+
+  await service.send({ target: 'discord:hermes', message: 'X Desk found a post.', timeoutMs: 10_000 })
+
+  assert.deepEqual(calls[0].args, [
+    'send', '--to', 'discord:hermes', '--quiet', 'X Desk found a post.',
+  ])
+  assert.equal(calls[0].command, 'hermes')
+  assert.equal(calls[0].options.timeout, 10_000)
+})
+
+test('send rejects unsafe routing and empty messages before invoking Hermes', async () => {
+  const { calls, impl } = fakeExec({ stdout: '' })
+  const service = new HermesService({ command: 'hermes', execFileImpl: impl })
+
+  await assert.rejects(
+    service.send({ target: ' discord:hermes', message: 'ok', timeoutMs: 1000 }),
+    /send target/,
+  )
+  await assert.rejects(
+    service.send({ target: 'discord:hermes', message: ' ', timeoutMs: 1000 }),
+    /must not be empty/,
+  )
+  assert.equal(calls.length, 0)
+})
+
 test('oneshot and chat acquire independent structured and browser pools', async () => {
   let structuredAcquires = 0
   let browserAcquires = 0
