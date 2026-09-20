@@ -226,7 +226,9 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       restart_delay: 5000,
-      kill_timeout: 180000,
+      // Shutdown stops after the active bounded Hermes batch (120s max) and
+      // releases the database lease before PM2 may force-kill the process.
+      kill_timeout: 300000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,

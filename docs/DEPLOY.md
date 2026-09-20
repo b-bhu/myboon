@@ -112,6 +112,12 @@ builds compact profiles in Supabase and sends only candidate pairs to the
 configured structured Hermes route. Memory bodies, summaries, evidence,
 metrics, and arbitrary context never enter this prompt.
 
+Automatic mode will not switch to incremental checks until a completed full
+catalogue baseline exists. One global database lease covers both full and
+incremental scopes. On shutdown, the worker stops future batches, fails the
+interrupted run so its watermark cannot advance, drains the bounded active
+Hermes call, and releases the lease before exiting.
+
 The scheduled process is dry-run only. It writes reviewable findings and has no
 Entity merge capability. An approved polluted alias can be quarantined through
 the separate operator command; that operation is atomic and reversible. Merge

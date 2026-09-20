@@ -29,6 +29,7 @@ export interface RunEntityCatalogMaintenanceInput {
   mode?: EntityCatalogMaintenanceMode
   scope?: EntityCatalogMaintenanceScope
   changedSince?: string
+  signal?: AbortSignal
 }
 
 export class EntityCatalogMaintenanceService {
@@ -59,6 +60,7 @@ export class EntityCatalogMaintenanceService {
     if (mode !== 'dry_run') {
       throw new Error('Entity catalogue maintenance analysis currently supports dry_run mode only.')
     }
+    throwIfInterrupted(input.signal)
     const run = await this.store.beginRun({
       trigger: input.trigger,
       mode,
@@ -70,7 +72,9 @@ export class EntityCatalogMaintenanceService {
     })
 
     try {
+      throwIfInterrupted(input.signal)
       const profiles = await this.store.listProfiles(scope, input.changedSince)
+      throwIfInterrupted(input.signal)
       const allCandidates = buildEntityMaintenanceCandidates(profiles)
       const candidates = scope === 'incremental'
         ? incrementalCandidates(allCandidates, requiredTimestamp(input.changedSince, 'changedSince'))
@@ -80,9 +84,11 @@ export class EntityCatalogMaintenanceService {
       this.logger(`[entity-maintenance] run=${run.id} scanned=${profiles.length} candidates=${candidates.length}`)
 
       for (let offset = 0; offset < candidates.length; offset += this.batchSize) {
+        throwIfInterrupted(input.signal)
         const batch = candidates.slice(offset, offset + this.batchSize)
         try {
           const judgments = await this.judge.judge(batch)
+          throwIfInterrupted(input.signal)
           const batchByPair = new Map(batch.map((candidate) => [candidate.pairKey, candidate]))
           const batchFindings = judgments.map((judgment) => {
             const candidate = batchByPair.get(judgment.pairKey)
@@ -92,6 +98,7 @@ export class EntityCatalogMaintenanceService {
           await this.store.saveFindings(batchFindings)
           findings.push(...batchFindings)
         } catch (error) {
+          if (input.signal?.aborted) throw error
           batchErrors.push({
             pairKeys: batch.map((candidate) => candidate.pairKey),
             error: errorMessage(error).slice(0, 800),
@@ -100,6 +107,7 @@ export class EntityCatalogMaintenanceService {
         await this.store.heartbeatRun(run.id, this.leaseMs)
       }
 
+      throwIfInterrupted(input.signal)
       const mergeProposalCount = findings.filter((finding) => finding.recommendedAction === 'merge').length
       const aliasQuarantineCount = findings.filter((finding) => finding.recommendedAction === 'quarantine_alias').length
       const uncertainCount = findings.filter((finding) => finding.recommendedAction === 'review').length
@@ -144,6 +152,12 @@ function nonEmpty(value: string, field: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function throwIfInterrupted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new Error('Entity catalogue maintenance interrupted by shutdown; the run will be retried.')
+  }
 }
 
 function requiredTimestamp(value: string | undefined, field: string): number {

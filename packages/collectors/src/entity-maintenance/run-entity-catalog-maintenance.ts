@@ -1,7 +1,11 @@
 import { createClient } from '@supabase/supabase-js'
 import { HermesService } from '../hermes'
 import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import {
+  startIntervalRunner,
+  type IntervalRunnerHandle,
+  type IntervalRunnerOptions,
+} from '../pipeline-store/interval-runner'
 import type { EntityCatalogMaintenanceScope } from './contracts'
 import { HermesEntityIdentityJudge } from './hermes-judge'
 import { EntityCatalogMaintenanceService } from './service'
@@ -13,7 +17,26 @@ const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_LEASE_MS = 30 * 60_000
 const INCREMENTAL_OVERLAP_MS = 5 * 60_000
 
-type RequestedScope = EntityCatalogMaintenanceScope | 'auto'
+export type RequestedScope = EntityCatalogMaintenanceScope | 'auto'
+
+export interface MaintenanceRunPlan {
+  scope: EntityCatalogMaintenanceScope
+  changedSince?: string
+}
+
+interface ShutdownSignalPort {
+  once(signal: 'SIGTERM' | 'SIGINT', listener: () => void): unknown
+  removeListener(signal: 'SIGTERM' | 'SIGINT', listener: () => void): unknown
+}
+
+interface MaintenanceDaemonOptions {
+  intervalMs: number
+  runOnceOnly: boolean
+  runInitial: (signal: AbortSignal) => Promise<void>
+  runScheduled: (signal: AbortSignal) => Promise<void>
+  signals?: ShutdownSignalPort
+  intervalFactory?: (options: IntervalRunnerOptions) => IntervalRunnerHandle
+}
 
 async function main(): Promise<void> {
   loadDotenvChain()
@@ -48,36 +71,138 @@ async function main(): Promise<void> {
     leaseMs,
   })
 
-  const safeRun = async (trigger: 'manual' | 'scheduled'): Promise<void> => {
+  const safeRun = async (trigger: 'manual' | 'scheduled', signal: AbortSignal): Promise<void> => {
+    if (signal.aborted) return
     try {
-      const latest = requestedScope === 'auto' ? await store.latestCompletedRun() : null
-      const scope: EntityCatalogMaintenanceScope = requestedScope === 'auto'
-        ? latest ? 'incremental' : 'full_catalog'
-        : requestedScope
-      const changedSince = scope === 'incremental'
-        ? new Date(Date.parse(latest?.startedAt ?? new Date(Date.now() - intervalMs).toISOString()) - INCREMENTAL_OVERLAP_MS).toISOString()
-        : undefined
-      const result = await service.run({ trigger, scope, changedSince, mode: 'dry_run' })
+      const hasFullCatalogBaseline = requestedScope === 'auto'
+        ? await store.hasCompletedFullCatalogRun()
+        : false
+      const latest = requestedScope === 'incremental' || (requestedScope === 'auto' && hasFullCatalogBaseline)
+        ? await store.latestCompletedRun()
+        : null
+      const plan = resolveMaintenanceRunPlan({
+        requestedScope,
+        hasFullCatalogBaseline,
+        latestCompletedStartedAt: latest?.startedAt ?? null,
+        intervalMs,
+        nowMs: Date.now(),
+      })
+      const result = await service.run({ trigger, ...plan, mode: 'dry_run', signal })
       console.log(JSON.stringify({ event: 'entity_catalog_maintenance_completed', ...result }))
     } catch (error) {
       console.error('[entity-maintenance] run failed:', error)
-      if (runOnceOnly) process.exitCode = 1
+      if (runOnceOnly && !signal.aborted) process.exitCode = 1
     }
   }
 
-  await safeRun('manual')
-  if (!runOnceOnly) {
-    const interval = startIntervalRunner({
-      label: 'entity-catalog-maintenance',
-      intervalMs,
-      run: () => safeRun('scheduled'),
-    })
-    const stop = () => {
-      interval.stop()
-      process.exit(0)
+  await runMaintenanceDaemon({
+    intervalMs,
+    runOnceOnly,
+    runInitial: (signal) => safeRun('manual', signal),
+    runScheduled: (signal) => safeRun('scheduled', signal),
+  })
+}
+
+/**
+ * Auto mode cannot become incremental until a completed full-catalog run
+ * exists. A completed explicit incremental run is only a watermark, never a
+ * substitute for that baseline.
+ */
+export function resolveMaintenanceRunPlan(input: {
+  requestedScope: RequestedScope
+  hasFullCatalogBaseline: boolean
+  latestCompletedStartedAt: string | null
+  intervalMs: number
+  nowMs: number
+}): MaintenanceRunPlan {
+  const scope: EntityCatalogMaintenanceScope = input.requestedScope === 'auto'
+    ? input.hasFullCatalogBaseline ? 'incremental' : 'full_catalog'
+    : input.requestedScope
+  if (scope === 'full_catalog') return { scope }
+
+  const fallbackMs = input.nowMs - input.intervalMs
+  const watermarkMs = input.latestCompletedStartedAt === null
+    ? fallbackMs
+    : Date.parse(input.latestCompletedStartedAt)
+  if (!Number.isFinite(watermarkMs)) {
+    throw new Error('Latest Entity maintenance watermark must be a valid timestamp.')
+  }
+  return {
+    scope,
+    changedSince: new Date(watermarkMs - INCREMENTAL_OVERLAP_MS).toISOString(),
+  }
+}
+
+/**
+ * Installs signal handling before the initial run. Shutdown stops future
+ * ticks, asks the service to stop after its bounded active call, and waits for
+ * the database lease to be released before this process can exit.
+ */
+export async function runMaintenanceDaemon(options: MaintenanceDaemonOptions): Promise<void> {
+  const signals = options.signals ?? process
+  const intervalFactory = options.intervalFactory ?? startIntervalRunner
+  const coordinator = new MaintenanceRunCoordinator()
+  let interval: IntervalRunnerHandle | null = null
+  let stopping = false
+  let resolveShutdown!: () => void
+  let rejectShutdown!: (error: unknown) => void
+  const shutdownComplete = new Promise<void>((resolve, reject) => {
+    resolveShutdown = resolve
+    rejectShutdown = reject
+  })
+  const stop = () => {
+    if (stopping) return
+    stopping = true
+    interval?.stop()
+    signals.removeListener('SIGTERM', stop)
+    signals.removeListener('SIGINT', stop)
+    void coordinator.stop().then(resolveShutdown, rejectShutdown)
+  }
+  signals.once('SIGTERM', stop)
+  signals.once('SIGINT', stop)
+
+  try {
+    await coordinator.run(options.runInitial)
+    if (stopping) {
+      await shutdownComplete
+      return
     }
-    process.once('SIGTERM', stop)
-    process.once('SIGINT', stop)
+    if (options.runOnceOnly) return
+
+    interval = intervalFactory({
+      label: 'entity-catalog-maintenance',
+      intervalMs: options.intervalMs,
+      run: () => coordinator.run(options.runScheduled),
+    })
+    await shutdownComplete
+  } finally {
+    interval?.stop()
+    signals.removeListener('SIGTERM', stop)
+    signals.removeListener('SIGINT', stop)
+  }
+}
+
+class MaintenanceRunCoordinator {
+  private readonly controller = new AbortController()
+  private active: Promise<void> | null = null
+  private stopping = false
+
+  async run(work: (signal: AbortSignal) => Promise<void>): Promise<void> {
+    if (this.stopping) return
+    if (this.active) throw new Error('Entity maintenance coordinator already has a run in flight.')
+    const active = work(this.controller.signal)
+    this.active = active
+    try {
+      await active
+    } finally {
+      if (this.active === active) this.active = null
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.stopping = true
+    this.controller.abort()
+    await this.active
   }
 }
 

@@ -3,6 +3,61 @@ import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabaseEntityCatalogMaintenanceStore } from './supabase-store'
 
+test('run claim expires stale leases globally rather than within one scope', async () => {
+  const equalityFilters: Array<[string, unknown]> = []
+  const builder: Record<string, unknown> & { error: null } = { error: null }
+  Object.assign(builder, {
+    update() { return builder },
+    insert() { return builder },
+    select() { return builder },
+    eq(field: string, value: unknown) {
+      equalityFilters.push([field, value])
+      return builder
+    },
+    lt() { return builder },
+    async single() {
+      return { data: { id: 'run-1', status: 'running' }, error: null }
+    },
+  })
+  const db = { from() { return builder } } as unknown as SupabaseClient
+  const store = new SupabaseEntityCatalogMaintenanceStore(db, () => new Date('2026-09-20T00:00:00.000Z'))
+
+  await store.beginRun({
+    trigger: 'scheduled',
+    mode: 'dry_run',
+    scope: 'incremental',
+    provider: 'ollama-cloud',
+    model: 'glm-5.3-flash',
+    promptVersion: 'entity.catalog.maintenance.v1',
+    leaseMs: 60_000,
+  })
+
+  assert.ok(equalityFilters.some(([field, value]) => field === 'status' && value === 'running'))
+  assert.equal(equalityFilters.some(([field]) => field === 'scope'), false)
+})
+
+test('full-catalog baseline lookup cannot be satisfied by an incremental run', async () => {
+  const equalityFilters: Array<[string, unknown]> = []
+  const builder: Record<string, unknown> = {}
+  Object.assign(builder, {
+    select() { return builder },
+    eq(field: string, value: unknown) {
+      equalityFilters.push([field, value])
+      return builder
+    },
+    limit() { return builder },
+    async maybeSingle() { return { data: { id: 'full-run' }, error: null } },
+  })
+  const db = { from() { return builder } } as unknown as SupabaseClient
+  const store = new SupabaseEntityCatalogMaintenanceStore(db)
+
+  assert.equal(await store.hasCompletedFullCatalogRun(), true)
+  assert.deepEqual(equalityFilters, [
+    ['scope', 'full_catalog'],
+    ['status', 'completed'],
+  ])
+})
+
 test('profile hydration keyset-paginates beyond the Supabase Data API row ceiling', async () => {
   const calls: Array<Record<string, unknown>> = []
   const firstPage = Array.from({ length: 500 }, (_, index) => profileRow(`entity-${String(index).padStart(4, '0')}`))

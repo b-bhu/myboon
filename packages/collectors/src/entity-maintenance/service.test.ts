@@ -25,6 +25,7 @@ class FakeStore implements EntityCatalogMaintenanceStore {
     this.beginInputs.push(input)
     return { id: 'run-1', status: 'running' as const }
   }
+  async hasCompletedFullCatalogRun() { return false }
   async latestCompletedRun() { return null }
   async heartbeatRun() { this.heartbeats += 1 }
   async listProfiles(_scope: EntityCatalogMaintenanceScope) { return this.profiles }
@@ -133,4 +134,45 @@ test('incremental inference still has the full catalogue as its matching univers
   assert.deepEqual(judgedPairKeys, ['new:old'])
   assert.equal(result.catalogCount, 4)
   assert.equal(result.candidateCount, 1)
+})
+
+test('shutdown interruption fails the lease and leaves the run retryable', async () => {
+  const store = new FakeStore([
+    maintenanceProfile({ id: 'one', name: 'Duplicate' }),
+    maintenanceProfile({ id: 'two', name: 'DUPLICATE' }),
+  ])
+  const controller = new AbortController()
+  let releaseJudge!: () => void
+  let markStarted!: () => void
+  const judgeStarted = new Promise<void>((resolve) => { markStarted = resolve })
+  const judgeReleased = new Promise<void>((resolve) => { releaseJudge = resolve })
+  const service = new EntityCatalogMaintenanceService({
+    store,
+    judge: {
+      async judge(candidates) {
+        markStarted()
+        await judgeReleased
+        return candidates.map((candidate) => ({
+          pairKey: candidate.pairKey,
+          decision: 'unsure' as const,
+          confidence: 0.5,
+          reason: 'Would normally require review.',
+          pollutedEntityId: null,
+          pollutedAlias: null,
+        }))
+      },
+    },
+    provider: 'ollama-cloud',
+    model: 'glm-5.3-flash',
+  })
+
+  const run = service.run({ trigger: 'scheduled', signal: controller.signal })
+  await judgeStarted
+  controller.abort()
+  releaseJudge()
+
+  await assert.rejects(run, /interrupted by shutdown/)
+  assert.match(store.failed ?? '', /interrupted by shutdown/)
+  assert.equal(store.findings.length, 0)
+  assert.equal(store.completion, null)
 })

@@ -129,6 +129,7 @@ export interface CompleteEntityMaintenanceRunInput {
 
 export interface EntityCatalogMaintenanceStore {
   beginRun(input: BeginEntityMaintenanceRunInput): Promise<EntityMaintenanceRunRecord>
+  hasCompletedFullCatalogRun(): Promise<boolean>
   latestCompletedRun(): Promise<{ startedAt: string } | null>
   heartbeatRun(runId: string, leaseMs: number): Promise<void>
   listProfiles(scope: EntityCatalogMaintenanceScope, changedSince?: string): Promise<EntityCatalogProfile[]>

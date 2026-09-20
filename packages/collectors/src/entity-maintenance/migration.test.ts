@@ -7,6 +7,10 @@ const sql = readFileSync(resolve(
   __dirname,
   '../../../../supabase/migrations/20260920151558_entity_catalog_maintenance.sql',
 ), 'utf8')
+const globalLeaseSql = readFileSync(resolve(
+  __dirname,
+  '../../../../supabase/migrations/20260920161429_entity_catalog_global_lease.sql',
+), 'utf8')
 
 test('maintenance migration is additive, service-role-only, and has no automatic rewrite', () => {
   assert.match(sql, /CREATE TABLE public\.entity_catalog_maintenance_runs/i)
@@ -47,4 +51,16 @@ test('mutation boundary supports approved reversible alias quarantine but no mer
   assert.match(sql, /'memoryIdentityKeysRewritten', false/)
   assert.match(sql, /'applyEligible', false/)
   assert.doesNotMatch(sql, /entity_catalog_apply_merge_v1/)
+})
+
+test('follow-up migration replaces the per-scope lease with one global lease', () => {
+  assert.match(globalLeaseSql, /DROP INDEX IF EXISTS public\.entity_catalog_maintenance_one_running_scope_idx/i)
+  assert.match(globalLeaseSql, /CREATE UNIQUE INDEX entity_catalog_maintenance_one_running_global_idx/i)
+  assert.match(globalLeaseSql, /ON public\.entity_catalog_maintenance_runs \(\(1\)\)/i)
+  assert.match(globalLeaseSql, /WHERE status = 'running'/i)
+  assert.ok(
+    globalLeaseSql.indexOf('CREATE UNIQUE INDEX entity_catalog_maintenance_one_running_global_idx')
+      < globalLeaseSql.indexOf('DROP INDEX IF EXISTS public.entity_catalog_maintenance_one_running_scope_idx'),
+    'the global lease must exist before the per-scope lease is removed',
+  )
 })

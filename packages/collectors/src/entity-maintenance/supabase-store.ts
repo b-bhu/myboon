@@ -31,7 +31,6 @@ export class SupabaseEntityCatalogMaintenanceStore implements EntityCatalogMaint
         finished_at: nowIso,
         updated_at: nowIso,
       })
-      .eq('scope', input.scope)
       .eq('status', 'running')
       .lt('lease_expires_at', nowIso)
     if (stale.error) throw new Error(`Entity maintenance stale-run recovery failed: ${stale.error.message}`)
@@ -73,6 +72,18 @@ export class SupabaseEntityCatalogMaintenanceStore implements EntityCatalogMaint
       .maybeSingle()
     if (error) throw new Error(`Entity maintenance heartbeat failed: ${error.message}`)
     if (!data) throw new Error(`Entity maintenance run ${runId} no longer owns the active lease.`)
+  }
+
+  async hasCompletedFullCatalogRun(): Promise<boolean> {
+    const { data, error } = await this.db
+      .from(RUN_TABLE)
+      .select('id')
+      .eq('scope', 'full_catalog')
+      .eq('status', 'completed')
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new Error(`Entity maintenance full-baseline lookup failed: ${error.message}`)
+    return data !== null
   }
 
   async latestCompletedRun(): Promise<{ startedAt: string } | null> {
