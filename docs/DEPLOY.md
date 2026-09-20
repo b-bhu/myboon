@@ -2,7 +2,7 @@
 
 ## Processes managed by PM2
 
-The reviewed ecosystem contains exactly eight registrations. The four retired
+The reviewed ecosystem contains exactly nine registrations. The four retired
 source-specific Research and Entity registrations must not remain alongside
 the two shared Feed V3 owners.
 
@@ -14,6 +14,7 @@ the two shared Feed V3 owners.
 | `myboon-feed-v3-research` | `packages/collectors` | Shared News + Polymarket Research worker |
 | `myboon-feed-v3-entity-manager` | `packages/collectors` | Shared ResearchPacket to Entity Memory worker |
 | `myboon-hermes-orphan-sweeper` | `packages/collectors` | Reaps aged, unowned Hermes/browser process groups |
+| `myboon-entity-catalog-maintenance` | `packages/collectors` | Daily dry-run Entity catalogue audit |
 | `myboon-editor-draft` | `packages/collectors` | Entity Memory to Editor Draft |
 | `myboon-publisher` | `packages/collectors` | Generic Editor Draft Publisher |
 
@@ -100,6 +101,42 @@ hermes sessions prune --source tool --older-than 1h --yes
 
 Repeat with `--profile myboonfeed` for the news profile. Never run an
 unfiltered session prune on the production host.
+
+---
+
+## Entity catalogue maintenance
+
+`myboon-entity-catalog-maintenance` performs one full scan on its first run,
+then checks changed Entities against the complete catalogue every 24 hours. It
+builds compact profiles in Supabase and sends only candidate pairs to the
+configured structured Hermes route. Memory bodies, summaries, evidence,
+metrics, and arbitrary context never enter this prompt.
+
+The scheduled process is dry-run only. It writes reviewable findings and has no
+Entity merge capability. An approved polluted alias can be quarantined through
+the separate operator command; that operation is atomic and reversible. Merge
+findings can produce an inventory manifest, but the database marks every merge
+plan ineligible to apply until local draft inventory and replacement memory
+identity keys are supplied.
+
+```bash
+# One full dry run (after applying the maintenance migration)
+ENTITY_CATALOG_MAINTENANCE_RUN_ONCE=1 \
+ENTITY_CATALOG_MAINTENANCE_SCOPE=full_catalog \
+pnpm --filter @myboon/collectors entity-catalog:maintain
+
+# Latest compact report
+pnpm --filter @myboon/collectors entity-catalog:report
+
+# Explicit review and reversible alias operation examples
+pnpm --filter @myboon/collectors entity-catalog:operate -- approve <finding-id> <actor>
+pnpm --filter @myboon/collectors entity-catalog:operate -- quarantine-alias <finding-id> <actor>
+pnpm --filter @myboon/collectors entity-catalog:operate -- rollback-alias <operation-id> <actor>
+```
+
+Do not start the PM2 process until
+`20260920151558_entity_catalog_maintenance.sql` is applied. Do not enable or
+invent an automatic merge path based only on model confidence.
 
 ---
 
@@ -1116,6 +1153,15 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 # HERMES_ORPHAN_MAX_AGE_MS=900000
 # HERMES_ORPHAN_KILL_GRACE_MS=5000
 # EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
+
+# --- Entity catalogue maintenance (dry-run only) ---
+# ENTITY_CATALOG_MAINTENANCE_INTERVAL_MS=86400000
+# ENTITY_CATALOG_MAINTENANCE_SCOPE=auto
+# ENTITY_CATALOG_MAINTENANCE_BATCH_SIZE=8
+# ENTITY_CATALOG_MAINTENANCE_PROVIDER=ollama-cloud
+# ENTITY_CATALOG_MAINTENANCE_MODEL=glm-5.3-flash
+# ENTITY_CATALOG_MAINTENANCE_HERMES_TIMEOUT_MS=120000
+# ENTITY_CATALOG_MAINTENANCE_LEASE_MS=1800000
 
 # --- Shared Feed V3 Research + Entity ---
 # Use the exact Phase 1 contract above. There is no source-specific Research or
