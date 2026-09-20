@@ -109,11 +109,23 @@ export function groundEntityCandidates(
         }]
       })
       const compatibleMatches = matches.filter((match) => match.compatible)
-      const canonicalMatches = compatibleMatches.filter((match) => match.kind !== 'alias')
-      const aliasMatches = compatibleMatches.filter((match) => match.kind === 'alias')
+      const identityEligibleMatches = compatibleMatches.filter((match) => (
+        identityRouteSupportsCandidate(hint, label, match)
+      ))
+      const canonicalMatches = identityEligibleMatches.filter((match) => !usesAliasAuthority(label, match))
+      // Any compatible alias-route collision makes that label ambiguous,
+      // even when only one candidate has a plausible structural relation.
+      const aliasMatches = compatibleMatches.filter((match) => usesAliasAuthority(label, match))
 
       for (const match of matches) {
-        const decision = groundingDecision(match, canonicalMatches, aliasMatches, roleAuthorizes, hint, label.value)
+        const decision = groundingDecision(
+          match,
+          canonicalMatches,
+          aliasMatches,
+          roleAuthorizes,
+          label,
+          identityEligibleMatches.includes(match),
+        )
         match.state.matches.push({
           hintIndex,
           label: label.value,
@@ -275,20 +287,47 @@ function groundingDecision(
   canonicalMatches: readonly IdentityMatch[],
   aliasMatches: readonly IdentityMatch[],
   roleAuthorizes: boolean,
-  hint: EntityHint,
-  label: string,
+  label: HintLabel,
+  identityEligible: boolean,
 ): EntityGroundingDecision {
   if (!match.compatible) return 'incompatible_type'
-  if (match.kind === 'alias' && canonicalMatches.length > 0) return 'suppressed_by_canonical'
-  if (match.kind !== 'alias' && canonicalMatches.length > 1) return 'ambiguous_canonical'
-  if (match.kind === 'alias' && aliasMatches.length > 1) return 'ambiguous_alias'
+  const aliasAuthority = usesAliasAuthority(label, match)
+  if (aliasAuthority && canonicalMatches.length > 0) return 'suppressed_by_canonical'
+  if (!aliasAuthority && canonicalMatches.length > 1) return 'ambiguous_canonical'
+  if (aliasAuthority && aliasMatches.length > 1) return 'ambiguous_alias'
   if (!roleAuthorizes) return 'non_authoritative_role'
-  if (
-    match.kind === 'alias'
-    && !entityAliasIsStructurallyRelated(label, match.state.entity.name)
-    && !tickerIsExplicitlyCorroborated(hint, label, match.state.entity)
-  ) return 'non_authoritative_alias'
-  return match.kind === 'alias' ? 'authoritative_unique_alias' : 'authoritative_canonical'
+  if (!identityEligible) return 'non_authoritative_alias'
+  return aliasAuthority ? 'authoritative_unique_alias' : 'authoritative_canonical'
+}
+
+function usesAliasAuthority(label: HintLabel, match: IdentityMatch): boolean {
+  return label.source === 'alias' || match.kind === 'alias'
+}
+
+function identityRouteSupportsCandidate(hint: EntityHint, label: HintLabel, match: IdentityMatch): boolean {
+  if (!usesAliasAuthority(label, match)) return true
+  if (tickerIsExplicitlyCorroborated(hint, label.value, match.state.entity)) return true
+  if (label.source === 'alias') {
+    return entityHintCanonicalLabels(hint).some((canonicalLabel) => (
+      canonicalLabelSupportsCandidate(canonicalLabel, match.state.entity)
+    ))
+  }
+  return entityAliasIsStructurallyRelated(label.value, match.state.entity.name)
+}
+
+function canonicalLabelSupportsCandidate(label: string, entity: EntityRecord): boolean {
+  if (identityEquals(label, entity.name)) return true
+  const normalizedLabel = normalizedIdentity(label)
+  if (!isTickerLike(normalizedLabel) && entityAliasIsStructurallyRelated(label, entity.name)) return true
+  const labelSlug = normalizeSlug(undefined, label)
+  const entitySlugs = [normalizeSlug(undefined, entity.name), normalizeSlug(undefined, entity.slug)]
+  return labelSlug.length >= 5 && entitySlugs.some((entitySlug) => (
+    entitySlug === labelSlug
+    || (entitySlug.length >= 5 && (
+      `-${entitySlug}-`.includes(`-${labelSlug}-`)
+      || `-${labelSlug}-`.includes(`-${entitySlug}-`)
+    ))
+  ))
 }
 
 export function entityAliasIsStructurallyRelated(alias: string, canonicalName: string): boolean {

@@ -109,6 +109,29 @@ test('a unique uppercase ticker alias is not authoritative without canonical cor
   assert.equal(result.support[0]?.matches[0]?.decision, 'non_authoritative_alias')
 })
 
+test('a model alias matching an unrelated Entity canonical ticker is not authoritative', () => {
+  const unrelatedSol = entity({
+    id: 'entity-unrelated-sol',
+    slug: 'unrelated-sol',
+    name: 'SOL',
+    type: 'asset',
+    aliases: [],
+  })
+
+  const result = groundEntityCandidates([unrelatedSol], [hint({
+    name: 'Solana (SOL)',
+    type: 'asset',
+    aliases: ['SOL'],
+    claimRefs: ['claim-solana'],
+  })])
+
+  assert.deepEqual(result.candidates, [])
+  const tickerMatch = result.support[0]?.matches.find((match) => match.label === 'SOL')
+  assert.equal(tickerMatch?.labelSource, 'alias')
+  assert.equal(tickerMatch?.matchKind, 'canonical_name')
+  assert.equal(tickerMatch?.decision, 'non_authoritative_alias')
+})
+
 test('an unambiguous evidence-linked SEC alias authorizes its subject candidate', () => {
   const sec = entity({
     id: 'entity-sec',
