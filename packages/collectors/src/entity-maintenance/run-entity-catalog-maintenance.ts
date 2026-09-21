@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { resolve } from 'node:path'
 import { HermesService } from '../hermes'
 import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 import {
@@ -7,8 +8,10 @@ import {
   type IntervalRunnerOptions,
 } from '../pipeline-store/interval-runner'
 import type { EntityCatalogMaintenanceScope } from './contracts'
+import { SupabaseEntityCatalogCleanupExecutor } from './cleanup-executor'
 import { HermesEntityIdentityJudge } from './hermes-judge'
 import { EntityCatalogMaintenanceService } from './service'
+import { SqliteEntityDraftInventory } from './sqlite-draft-inventory'
 import { SupabaseEntityCatalogMaintenanceStore } from './supabase-store'
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60_000
@@ -46,6 +49,7 @@ async function main(): Promise<void> {
   const leaseMs = positiveInteger(process.env.ENTITY_CATALOG_MAINTENANCE_LEASE_MS, DEFAULT_LEASE_MS)
   const runOnceOnly = envFlag(process.env.ENTITY_CATALOG_MAINTENANCE_RUN_ONCE)
   const requestedScope = maintenanceScope(process.env.ENTITY_CATALOG_MAINTENANCE_SCOPE)
+  const mode = maintenanceMode(process.env.ENTITY_CATALOG_MAINTENANCE_MODE)
   const provider = process.env.ENTITY_CATALOG_MAINTENANCE_PROVIDER?.trim()
     || process.env.INFERENCE_GATEWAY_PRIMARY_PROVIDER?.trim()
     || 'ollama-cloud'
@@ -54,6 +58,9 @@ async function main(): Promise<void> {
     || 'glm-5.3-flash'
   const db = createClient(requiredEnv('SUPABASE_URL'), requiredEnv('SUPABASE_SERVICE_ROLE_KEY'))
   const store = new SupabaseEntityCatalogMaintenanceStore(db)
+  const draftInventory = new SqliteEntityDraftInventory(resolve(
+    process.env.PIPELINE_SQLITE_PATH?.trim() || '.data/pipeline.sqlite',
+  ))
   const judge = new HermesEntityIdentityJudge({
     service: new HermesService(),
     provider,
@@ -69,6 +76,7 @@ async function main(): Promise<void> {
     model,
     batchSize,
     leaseMs,
+    cleanup: new SupabaseEntityCatalogCleanupExecutor(db, draftInventory),
   })
 
   const safeRun = async (trigger: 'manual' | 'scheduled', signal: AbortSignal): Promise<void> => {
@@ -87,7 +95,7 @@ async function main(): Promise<void> {
         intervalMs,
         nowMs: Date.now(),
       })
-      const result = await service.run({ trigger, ...plan, mode: 'dry_run', signal })
+      const result = await service.run({ trigger, ...plan, mode, signal })
       console.log(JSON.stringify({ event: 'entity_catalog_maintenance_completed', ...result }))
     } catch (error) {
       console.error('[entity-maintenance] run failed:', error)
@@ -95,12 +103,16 @@ async function main(): Promise<void> {
     }
   }
 
-  await runMaintenanceDaemon({
-    intervalMs,
-    runOnceOnly,
-    runInitial: (signal) => safeRun('manual', signal),
-    runScheduled: (signal) => safeRun('scheduled', signal),
-  })
+  try {
+    await runMaintenanceDaemon({
+      intervalMs,
+      runOnceOnly,
+      runInitial: (signal) => safeRun('manual', signal),
+      runScheduled: (signal) => safeRun('scheduled', signal),
+    })
+  } finally {
+    draftInventory.close()
+  }
 }
 
 /**
@@ -210,6 +222,12 @@ function maintenanceScope(value: string | undefined): RequestedScope {
   const cleaned = value?.trim() || 'auto'
   if (cleaned === 'auto' || cleaned === 'full_catalog' || cleaned === 'incremental') return cleaned
   throw new Error('ENTITY_CATALOG_MAINTENANCE_SCOPE must be auto, full_catalog, or incremental.')
+}
+
+export function maintenanceMode(value: string | undefined): 'dry_run' | 'apply' {
+  const cleaned = value?.trim() || 'dry_run'
+  if (cleaned === 'dry_run' || cleaned === 'apply') return cleaned
+  throw new Error('ENTITY_CATALOG_MAINTENANCE_MODE must be dry_run or apply.')
 }
 
 if (require.main === module || process.env.NODE_APP_INSTANCE !== undefined) {

@@ -32,8 +32,19 @@ export function findingFromJudgment(
     reason: judgment.reason,
     candidateSignals: candidate.signals,
     profileSnapshot: { left: candidate.left, right: candidate.right },
-    autoApplyEligible: canonical !== null && autoMergeEligible(candidate, judgment),
+    autoApplyEligible: automaticCleanupEligible(candidate, judgment),
   }
+}
+
+export function automaticCleanupEligible(
+  candidate: EntityMaintenanceCandidate,
+  judgment: EntityIdentityJudgment,
+): boolean {
+  if (judgment.decision === 'same_entity') return autoMergeEligible(candidate, judgment)
+  // Alias meaning is contextual: a cross-type canonical-name overlap can be a
+  // legitimate ticker, maker, or product-family alias. The model may propose
+  // quarantine, but it never receives autonomous deletion authority.
+  return false
 }
 
 /** Code, not the model, chooses which stable ID survives a proposed merge. */

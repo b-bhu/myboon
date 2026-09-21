@@ -60,3 +60,12 @@ test('identity normalization is deterministic across punctuation and case', () =
   assert.equal(normalizedIdentity('  GPT–5.6 '), 'gpt 5 6')
   assert.equal(normalizedIdentity('GPT_5-6'), 'gpt 5 6')
 })
+
+test('archived merge sources never re-enter duplicate discovery', () => {
+  const candidates = buildEntityMaintenanceCandidates([
+    maintenanceProfile({ id: 'canonical', name: 'Acme' }),
+    maintenanceProfile({ id: 'redirect-source', name: 'ACME', status: 'archived' }),
+  ])
+
+  assert.deepEqual(candidates, [])
+})

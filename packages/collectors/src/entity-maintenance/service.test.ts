@@ -86,7 +86,7 @@ test('invalid Hermes batch is recorded as a partial run, not converted into a gu
   assert.equal(store.completion?.summary.failedBatchCount, 1)
 })
 
-test('analysis service rejects apply mode before claiming a run', async () => {
+test('analysis service rejects apply mode without a cleanup executor before claiming a run', async () => {
   const store = new FakeStore([])
   const service = new EntityCatalogMaintenanceService({
     store,
@@ -96,9 +96,96 @@ test('analysis service rejects apply mode before claiming a run', async () => {
   })
   await assert.rejects(
     service.run({ trigger: 'manual', mode: 'apply' }),
-    /supports dry_run mode only/,
+    /requires a cleanup executor/,
   )
   assert.equal(store.beginInputs.length, 0)
+})
+
+test('apply mode sends findings to cleanup only after complete analysis', async () => {
+  const store = new FakeStore([
+    maintenanceProfile({ id: 'model', name: 'Model', type: 'product', aliases: ['Network'] }),
+    maintenanceProfile({ id: 'network', name: 'Network', type: 'asset' }),
+  ])
+  const cleanupCalls: EntityMaintenanceFindingInput[][] = []
+  const service = new EntityCatalogMaintenanceService({
+    store,
+    judge: {
+      async judge(candidates) {
+        return candidates.map((candidate) => ({
+          pairKey: candidate.pairKey,
+          decision: 'polluted_alias' as const,
+          confidence: 0.95,
+          reason: 'The product stores the asset canonical name as an alias.',
+          pollutedEntityId: 'model',
+          pollutedAlias: 'Network',
+        }))
+      },
+    },
+    cleanup: {
+      async applyEligible(_runId, findings) {
+        cleanupCalls.push([...findings])
+        return {
+          mutationCount: 1,
+          aliasQuarantineCount: 1,
+          mergeCount: 0,
+          skipped: [],
+          errors: [],
+        }
+      },
+    },
+    provider: 'ollama-cloud',
+    model: 'glm-5.3-flash',
+  })
+
+  const result = await service.run({ trigger: 'scheduled', mode: 'apply' })
+
+  assert.equal(result.status, 'completed')
+  assert.equal(cleanupCalls.length, 1)
+  assert.equal(cleanupCalls[0]?.[0]?.autoApplyEligible, false)
+  assert.equal(store.completion?.summary.mutationCount, 1)
+  assert.equal(store.completion?.summary.appliedAliasQuarantineCount, 1)
+})
+
+test('a skipped eligible cleanup keeps the run partial and retryable', async () => {
+  const store = new FakeStore([
+    maintenanceProfile({ id: 'old', name: 'Duplicate' }),
+    maintenanceProfile({ id: 'new', name: 'DUPLICATE' }),
+  ])
+  const service = new EntityCatalogMaintenanceService({
+    store,
+    judge: {
+      async judge(candidates) {
+        return candidates.map((candidate) => ({
+          pairKey: candidate.pairKey,
+          decision: 'same_entity' as const,
+          confidence: 0.999,
+          reason: 'Exact canonical identity.',
+          pollutedEntityId: null,
+          pollutedAlias: null,
+        }))
+      },
+    },
+    cleanup: {
+      async applyEligible() {
+        return {
+          mutationCount: 0,
+          aliasQuarantineCount: 0,
+          mergeCount: 0,
+          skipped: [{ findingId: 'finding-1', reason: 'local_draft_inventory_not_empty:1' }],
+          errors: [],
+        }
+      },
+    },
+    provider: 'ollama-cloud',
+    model: 'glm-5.3-flash',
+  })
+
+  const result = await service.run({ trigger: 'scheduled', mode: 'apply' })
+
+  assert.equal(result.status, 'partial')
+  assert.deepEqual(store.completion?.summary.cleanupSkipped, [
+    { findingId: 'finding-1', reason: 'local_draft_inventory_not_empty:1' },
+  ])
 })
 
 test('incremental inference still has the full catalogue as its matching universe', async () => {

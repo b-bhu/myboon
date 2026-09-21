@@ -215,9 +215,9 @@ module.exports = {
       },
     },
     {
-      // Daily, overlap-guarded Entity catalogue analysis. This process is
-      // intentionally dry-run only: it persists reviewable findings but has
-      // no Entity mutation path.
+      // Daily, overlap-guarded Entity catalogue maintenance. Model findings
+      // remain proposals; only deterministic, database-revalidated and
+      // reversible cleanups receive mutation authority.
       name: 'myboon-entity-catalog-maintenance',
       script: 'src/entity-maintenance/run-entity-catalog-maintenance.ts',
       interpreter: TSX,
@@ -233,6 +233,7 @@ module.exports = {
       env: {
         ...HERMES_ENV,
         ENTITY_CATALOG_MAINTENANCE_RUN_ONCE: '0',
+        ENTITY_CATALOG_MAINTENANCE_MODE: 'apply',
         ENTITY_CATALOG_MAINTENANCE_INTERVAL_MS: '86400000',
         ENTITY_CATALOG_MAINTENANCE_SCOPE: 'auto',
         ENTITY_CATALOG_MAINTENANCE_BATCH_SIZE: '8',

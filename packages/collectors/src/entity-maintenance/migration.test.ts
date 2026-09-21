@@ -11,6 +11,18 @@ const globalLeaseSql = readFileSync(resolve(
   __dirname,
   '../../../../supabase/migrations/20260920161429_entity_catalog_global_lease.sql',
 ), 'utf8')
+const automaticCleanupSql = readFileSync(resolve(
+  __dirname,
+  '../../../../supabase/migrations/20260921141231_entity_catalog_automatic_cleanup.sql',
+), 'utf8')
+const automaticAliasDisableSql = readFileSync(resolve(
+  __dirname,
+  '../../../../supabase/migrations/20260921141414_disable_entity_catalog_automatic_alias_cleanup.sql',
+), 'utf8')
+const cleanupBoundarySql = readFileSync(resolve(
+  __dirname,
+  '../../../../supabase/migrations/20260921142116_strengthen_entity_catalog_cleanup_boundaries.sql',
+), 'utf8')
 
 test('maintenance migration is additive, service-role-only, and has no automatic rewrite', () => {
   assert.match(sql, /CREATE TABLE public\.entity_catalog_maintenance_runs/i)
@@ -63,4 +75,27 @@ test('follow-up migration replaces the per-scope lease with one global lease', (
       < globalLeaseSql.indexOf('DROP INDEX IF EXISTS public.entity_catalog_maintenance_one_running_scope_idx'),
     'the global lease must exist before the per-scope lease is removed',
   )
+})
+
+test('automatic cleanup is snapshot-guarded, reversible, and never deletes an Entity', () => {
+  assert.match(automaticCleanupSql, /entity_catalog_apply_eligible_alias_v1/)
+  assert.match(automaticCleanupSql, /finding\.auto_apply_eligible/)
+  assert.match(automaticCleanupSql, /Entity identity changed after the finding; rerun maintenance/)
+  assert.match(automaticCleanupSql, /entity_catalog_apply_merge_v1/)
+  assert.match(automaticCleanupSql, /status = 'archived'/)
+  assert.match(automaticCleanupSql, /INSERT INTO public\.entity_redirects/)
+  assert.match(automaticCleanupSql, /entity_catalog_rollback_merge_v1/)
+  assert.match(automaticCleanupSql, /canonical memory-scope conflict/)
+  assert.match(automaticCleanupSql, /canonical_source_item_id/)
+  assert.match(automaticCleanupSql, /source_entity\.aliases/)
+  assert.match(automaticCleanupSql, /resolve_entity_redirect_v1/)
+  assert.match(automaticCleanupSql, /source_alias/)
+  assert.match(automaticCleanupSql, /entity_redirect_single_hop_guard/)
+  assert.match(automaticCleanupSql, /entity_memories_active_entity_guard/)
+  assert.match(automaticCleanupSql, /external narrative dependency/)
+  assert.doesNotMatch(automaticCleanupSql, /DELETE FROM public\.entities/i)
+  assert.match(automaticCleanupSql, /REVOKE ALL ON FUNCTION public\.entity_catalog_apply_merge_v1/)
+  assert.match(automaticAliasDisableSql, /DROP FUNCTION IF EXISTS public\.entity_catalog_apply_eligible_alias_v1/)
+  assert.match(cleanupBoundarySql, /referenced Entity is no longer active; resolve its redirect and retry/)
+  assert.match(cleanupBoundarySql, /a new narrative depends on a moved memory/)
 })

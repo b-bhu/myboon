@@ -102,10 +102,13 @@ export function buildPublication(
     tags: tagsForEntity(entity),
     status: 'published',
     published_at: observedAt,
-    entity_id: draft.entity_id,
-    entity_slug: draft.entity_slug,
-    entity_name: draft.entity_name,
-    entity_type: draft.entity_type,
+    // An Entity merge can race a locally queued draft. fetchEntity resolves
+    // the durable redirect, so publication always binds to the active target
+    // even when the draft still carries the archived source identity.
+    entity_id: entity?.id ?? draft.entity_id,
+    entity_slug: entity?.slug ?? draft.entity_slug,
+    entity_name: entity?.name ?? draft.entity_name,
+    entity_type: entity?.type ?? draft.entity_type,
     entity_category: entityCategory(entity, draft),
     source_memory_ids: draft.source_memory_ids,
     source_memory_hash: draft.source_memory_hash,

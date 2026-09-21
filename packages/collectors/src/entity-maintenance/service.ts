@@ -2,6 +2,8 @@ import { buildEntityMaintenanceCandidates } from './candidates'
 import {
   ENTITY_CATALOG_MAINTENANCE_PROMPT_VERSION,
   type EntityCatalogMaintenanceMode,
+  type EntityCatalogCleanupExecutor,
+  type EntityCatalogCleanupResult,
   type EntityCatalogMaintenanceRunResult,
   type EntityCatalogMaintenanceScope,
   type EntityCatalogMaintenanceStore,
@@ -22,6 +24,7 @@ export interface EntityCatalogMaintenanceServiceOptions {
   batchSize?: number
   leaseMs?: number
   logger?: (message: string) => void
+  cleanup?: EntityCatalogCleanupExecutor
 }
 
 export interface RunEntityCatalogMaintenanceInput {
@@ -40,6 +43,7 @@ export class EntityCatalogMaintenanceService {
   private readonly batchSize: number
   private readonly leaseMs: number
   private readonly logger: (message: string) => void
+  private readonly cleanup: EntityCatalogCleanupExecutor | null
 
   constructor(options: EntityCatalogMaintenanceServiceOptions) {
     this.store = options.store
@@ -49,16 +53,14 @@ export class EntityCatalogMaintenanceService {
     this.batchSize = positiveInteger(options.batchSize ?? DEFAULT_BATCH_SIZE, 'batchSize')
     this.leaseMs = positiveInteger(options.leaseMs ?? DEFAULT_LEASE_MS, 'leaseMs')
     this.logger = options.logger ?? ((message) => console.log(message))
+    this.cleanup = options.cleanup ?? null
   }
 
   async run(input: RunEntityCatalogMaintenanceInput): Promise<EntityCatalogMaintenanceRunResult> {
     const mode = input.mode ?? 'dry_run'
     const scope = input.scope ?? 'full_catalog'
-    // Mutation execution deliberately remains a separate, explicitly approved
-    // operation. The scheduled analysis process cannot acquire mutation power
-    // merely by changing its inference output.
-    if (mode !== 'dry_run') {
-      throw new Error('Entity catalogue maintenance analysis currently supports dry_run mode only.')
+    if (mode === 'apply' && !this.cleanup) {
+      throw new Error('Entity catalogue maintenance apply mode requires a cleanup executor.')
     }
     throwIfInterrupted(input.signal)
     const run = await this.store.beginRun({
@@ -111,7 +113,16 @@ export class EntityCatalogMaintenanceService {
       const mergeProposalCount = findings.filter((finding) => finding.recommendedAction === 'merge').length
       const aliasQuarantineCount = findings.filter((finding) => finding.recommendedAction === 'quarantine_alias').length
       const uncertainCount = findings.filter((finding) => finding.recommendedAction === 'review').length
-      const status = findings.length === candidates.length ? 'completed' : 'partial'
+      const analysisComplete = findings.length === candidates.length
+      const cleanup = mode === 'apply' && analysisComplete
+        ? await this.cleanup!.applyEligible(run.id, findings)
+        : emptyCleanupResult()
+      // A skipped eligible cleanup must remain retryable. Marking this run
+      // completed would advance the incremental watermark and strand the
+      // unchanged pair after its temporary local-draft blocker clears.
+      const status = analysisComplete && cleanup.errors.length === 0 && cleanup.skipped.length === 0
+        ? 'completed'
+        : 'partial'
       const completion = {
         status,
         catalogCount: profiles.length,
@@ -127,7 +138,11 @@ export class EntityCatalogMaintenanceService {
           failedBatchCount: batchErrors.length,
           batchErrors,
           autoApplyEligibleCount: findings.filter((finding) => finding.autoApplyEligible).length,
-          mutationCount: 0,
+          mutationCount: cleanup.mutationCount,
+          appliedAliasQuarantineCount: cleanup.aliasQuarantineCount,
+          appliedMergeCount: cleanup.mergeCount,
+          cleanupSkipped: cleanup.skipped,
+          cleanupErrors: cleanup.errors,
         },
       } as const
       await this.store.completeRun(run.id, completion)
@@ -136,6 +151,16 @@ export class EntityCatalogMaintenanceService {
       await this.store.failRun(run.id, errorMessage(error).slice(0, 2_000))
       throw error
     }
+  }
+}
+
+function emptyCleanupResult(): EntityCatalogCleanupResult {
+  return {
+    mutationCount: 0,
+    aliasQuarantineCount: 0,
+    mergeCount: 0,
+    skipped: [],
+    errors: [],
   }
 }
 

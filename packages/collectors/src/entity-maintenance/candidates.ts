@@ -33,7 +33,9 @@ const STOP_WORDS = new Set([
 export function buildEntityMaintenanceCandidates(
   profiles: readonly EntityCatalogProfile[],
 ): EntityMaintenanceCandidate[] {
-  const uniqueProfiles = uniqueById(profiles)
+  // Archived merge sources remain durable for redirects and rollback, but
+  // they must never re-enter duplicate discovery as live catalogue entries.
+  const uniqueProfiles = uniqueById(profiles.filter((profile) => profile.status === 'active'))
   const accumulators = new Map<string, CandidateAccumulator>()
   const buckets = identityBuckets(uniqueProfiles)
 

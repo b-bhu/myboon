@@ -314,7 +314,24 @@ export function createInternalEntityRoutes(config: InternalEntityRoutesConfig): 
     params.set(UUID_RE.test(idOrSlug) ? 'id' : 'slug', `eq.${idOrSlug}`)
     params.set('limit', '1')
     const { rows } = await readEntityRows(params)
-    return rows[0] ?? null
+    const direct = rows[0] ?? null
+    const sourceId = direct?.id ?? (UUID_RE.test(idOrSlug) ? idOrSlug : null)
+    if (!sourceId || direct?.status === 'active') return direct
+
+    const redirectParams = new URLSearchParams()
+    redirectParams.set('select', 'target_entity_id')
+    redirectParams.set('source_entity_id', `eq.${sourceId}`)
+    redirectParams.set('limit', '1')
+    const redirect = await readRows<{ target_entity_id: string }>('entity_redirects', redirectParams, { optional: true })
+    const targetId = redirect.rows[0]?.target_entity_id
+    if (!targetId || !UUID_RE.test(targetId) || targetId === sourceId) return direct
+
+    const targetParams = new URLSearchParams()
+    targetParams.set('select', ENTITY_SELECT)
+    targetParams.set('id', `eq.${targetId}`)
+    targetParams.set('limit', '1')
+    const target = await readEntityRows(targetParams)
+    return target.rows[0] ?? direct
   }
 
   async function enrichEntities(rows: EntityRow[]) {

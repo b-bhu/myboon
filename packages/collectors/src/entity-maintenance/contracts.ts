@@ -138,6 +138,21 @@ export interface EntityCatalogMaintenanceStore {
   failRun(runId: string, error: string): Promise<void>
 }
 
+export interface EntityCatalogCleanupResult {
+  mutationCount: number
+  aliasQuarantineCount: number
+  mergeCount: number
+  skipped: Array<{ findingId: string, reason: string }>
+  errors: Array<{ findingId: string, error: string }>
+}
+
+export interface EntityCatalogCleanupExecutor {
+  applyEligible(
+    runId: string,
+    findings: readonly EntityMaintenanceFindingInput[],
+  ): Promise<EntityCatalogCleanupResult>
+}
+
 export interface EntityCatalogMaintenanceRunResult extends CompleteEntityMaintenanceRunInput {
   runId: string
   mode: EntityCatalogMaintenanceMode

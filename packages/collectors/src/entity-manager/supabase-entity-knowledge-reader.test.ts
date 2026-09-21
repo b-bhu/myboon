@@ -45,6 +45,11 @@ class CountBuilder implements PromiseLike<{ count: number, error: null }> {
 test('Supabase query port uses only entity_memories with deterministic keyset ordering', async () => {
   const builder = new RecordingBuilder([])
   const db = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      assert.equal(name, 'resolve_entity_redirect_v1')
+      assert.deepEqual(args, { p_entity_id: 'entity-1' })
+      return { data: 'entity-canonical', error: null }
+    },
     from(table: string) {
       assert.equal(table, 'entity_memories')
       return {
@@ -68,7 +73,7 @@ test('Supabase query port uses only entity_memories with deterministic keyset or
   })
 
   assert.deepEqual(builder.calls, [
-    ['eq', 'entity_id', 'entity-1'],
+    ['eq', 'entity_id', 'entity-canonical'],
     ['gte', 'observed_at', '2026-08-26T10:00:00.000Z'],
     ['in', 'memory_type', ['news_event']],
     ['in', 'context->>priority_class', ['P0', 'P1']],
@@ -126,6 +131,7 @@ test('Supabase event pages use event-time keysets and an exact unscoped count', 
   const rows = new RecordingBuilder([])
   const count = new CountBuilder(7)
   const db = {
+    async rpc() { return { data: 'entity-canonical', error: null } },
     from(table: string) {
       assert.equal(table, 'entity_memories')
       return {
@@ -144,7 +150,7 @@ test('Supabase event pages use event-time keysets and an exact unscoped count', 
 
   assert.equal(result.totalCount, 7)
   assert.deepEqual(rows.calls, [
-    ['eq', 'entity_id', 'entity-1'],
+    ['eq', 'entity_id', 'entity-canonical'],
     ['neq', 'memory_type', 'source_marker'],
     ['not', 'event_at', 'is', null],
     ['or', 'event_at.lt.2026-08-26T12:00:00.000Z,and(event_at.eq.2026-08-26T12:00:00.000Z,id.lt.memory-z)'],
@@ -153,7 +159,7 @@ test('Supabase event pages use event-time keysets and an exact unscoped count', 
     ['limit', 11],
   ])
   assert.deepEqual(count.calls, [
-    ['eq', 'entity_id', 'entity-1'],
+    ['eq', 'entity_id', 'entity-canonical'],
     ['neq', 'memory_type', 'source_marker'],
     ['not', 'event_at', 'is', null],
   ])

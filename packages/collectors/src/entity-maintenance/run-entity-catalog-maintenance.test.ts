@@ -4,7 +4,14 @@ import test from 'node:test'
 import {
   resolveMaintenanceRunPlan,
   runMaintenanceDaemon,
+  maintenanceMode,
 } from './run-entity-catalog-maintenance'
+
+test('maintenance mode defaults safe and accepts explicit apply', () => {
+  assert.equal(maintenanceMode(undefined), 'dry_run')
+  assert.equal(maintenanceMode('apply'), 'apply')
+  assert.throws(() => maintenanceMode('automatic'), /must be dry_run or apply/)
+})
 
 test('auto mode requires a completed full-catalog baseline', () => {
   const plan = resolveMaintenanceRunPlan({
