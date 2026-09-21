@@ -72,6 +72,15 @@ interface MemoryStatsRow {
   evidence_count: string | number
 }
 
+interface RedirectResolutionRow {
+  input_entity_id: string
+  resolved_entity_id: string | null
+}
+
+interface CanonicalIdentityRow extends EntityRow {
+  total_count?: string | number
+}
+
 const ENTITY_SELECT = 'id,slug,name,type,aliases,summary,status,show_in_carousel,metadata,created_at,updated_at'
 const LEGACY_ENTITY_SELECT = 'id,slug,name,type,aliases,summary,status,metadata,created_at,updated_at'
 const MEMORY_SELECT = 'id,entity_id,source,source_area,source_type,source_ref_id,source_research_id,memory_type,title,summary,body,event_at,observed_at,confidence,evidence,mentions,metrics,context,created_at,updated_at'
@@ -174,8 +183,11 @@ export function createInternalEntityRoutes(config: InternalEntityRoutesConfig): 
       const memoryMatchedRows = query
         ? await fetchEntitiesFromMemorySearch(query, type, status)
         : []
+      const identityMatchedRows = query
+        ? await fetchEntitiesFromIdentitySearch(query)
+        : []
 
-      const mergedRows = dedupeEntities([...baseRows, ...memoryMatchedRows])
+      const mergedRows = dedupeEntities([...baseRows, ...memoryMatchedRows, ...identityMatchedRows])
       const filteredRows = filterRowsLocally(mergedRows, { query, type, status })
       const enriched = await enrichEntities(filteredRows)
       const sorted = sortEntityList(enriched, sort)
@@ -246,6 +258,11 @@ export function createInternalEntityRoutes(config: InternalEntityRoutesConfig): 
   })
 
   async function readEntityRows(params: URLSearchParams): Promise<{ rows: EntityRow[]; count: number | null }> {
+    const result = await readRawEntityRows(params)
+    return { rows: await canonicalizeEntityRows(result.rows), count: result.count }
+  }
+
+  async function readRawEntityRows(params: URLSearchParams): Promise<{ rows: EntityRow[]; count: number | null }> {
     params.set('select', ENTITY_SELECT)
     try {
       return await readRows<EntityRow>('entities', params)
@@ -254,6 +271,38 @@ export function createInternalEntityRoutes(config: InternalEntityRoutesConfig): 
       params.set('select', LEGACY_ENTITY_SELECT)
       return readRows<EntityRow>('entities', params)
     }
+  }
+
+  async function canonicalizeEntityRows(rows: EntityRow[]): Promise<EntityRow[]> {
+    const archivedIds = [...new Set(rows
+      .filter((row) => row.status !== 'active')
+      .map((row) => row.id))]
+    if (archivedIds.length === 0) return dedupeEntities(rows)
+
+    const resolutions = await restRpc<RedirectResolutionRow>('resolve_entity_redirects_v1', {
+      p_entity_ids: archivedIds,
+    })
+    const targetBySource = new Map(resolutions.map((row) => [row.input_entity_id, row.resolved_entity_id]))
+    for (const sourceId of archivedIds) {
+      const targetId = targetBySource.get(sourceId)
+      if (!targetId || !UUID_RE.test(targetId)) {
+        throw new Error(`Archived Entity ${sourceId} has no active canonical redirect`)
+      }
+    }
+
+    const targets = await fetchRawEntitiesByIds(
+      [...new Set([...targetBySource.values()].filter((id): id is string => Boolean(id)))],
+    )
+    const targetRows = new Map(targets.map((row) => [row.id, row]))
+    return dedupeEntities(rows.map((row) => {
+      if (row.status === 'active') return row
+      const targetId = targetBySource.get(row.id)
+      const target = targetId ? targetRows.get(targetId) : undefined
+      if (!target || target.status !== 'active') {
+        throw new Error(`Archived Entity ${row.id} did not resolve to an active canonical row`)
+      }
+      return target
+    }))
   }
 
   async function fetchEntityRows(input: {
@@ -271,7 +320,10 @@ export function createInternalEntityRoutes(config: InternalEntityRoutesConfig): 
     params.set('order', input.sort === 'name_asc' ? 'name.asc' : 'updated_at.desc')
 
     if (input.type) params.set('type', `eq.${input.type}`)
-    if (input.status) params.set('status', `eq.${input.status}`)
+    // The internal catalogue is canonical by default. Archived sources remain
+    // discoverable through the redirect-aware identity RPC, not as duplicate
+    // list rows.
+    params.set('status', `eq.${input.status || 'active'}`)
     if (input.query) {
       const pattern = postgrestSearchPattern(input.query)
       params.set('or', `(name.ilike.${pattern},slug.ilike.${pattern},type.ilike.${pattern},status.ilike.${pattern},summary.ilike.${pattern})`)
@@ -295,43 +347,60 @@ export function createInternalEntityRoutes(config: InternalEntityRoutesConfig): 
     return filterRowsLocally(entityRows, { query: '', type, status })
   }
 
+  async function fetchEntitiesFromIdentitySearch(query: string): Promise<EntityRow[]> {
+    const rows = await restRpc<CanonicalIdentityRow>('entity_manager_lookup_entities_v1', {
+      p_slugs: [query],
+      p_names: [query],
+      p_aliases: [query],
+      p_limit: 100,
+    })
+    const total = rows.length === 0 ? 0 : Number(rows[0]?.total_count)
+    if (!Number.isSafeInteger(total) || total > 100 || rows.length > 100) {
+      throw new Error('Canonical Entity identity lookup was incomplete')
+    }
+    return canonicalizeEntityRows(rows.slice(0, 100))
+  }
+
   async function fetchEntitiesByIds(ids: string[]): Promise<EntityRow[]> {
+    return canonicalizeEntityRows(await fetchRawEntitiesByIds(ids))
+  }
+
+  async function fetchRawEntitiesByIds(ids: string[]): Promise<EntityRow[]> {
     const rows: EntityRow[] = []
     for (const chunk of chunks(ids, 80)) {
       const params = new URLSearchParams()
       params.set('select', ENTITY_SELECT)
       params.set('id', `in.(${chunk.join(',')})`)
       params.set('limit', String(chunk.length))
-      const result = await readEntityRows(params)
+      const result = await readRawEntityRows(params)
       rows.push(...result.rows)
     }
     return rows
   }
 
   async function fetchEntityByIdOrSlug(idOrSlug: string): Promise<EntityRow | null> {
+    if (!UUID_RE.test(idOrSlug)) {
+      const rows = await restRpc<CanonicalIdentityRow>('entity_manager_lookup_entities_v1', {
+        p_slugs: [idOrSlug],
+        p_names: [idOrSlug],
+        p_aliases: [idOrSlug],
+        p_limit: 2,
+      })
+      const total = rows.length === 0 ? 0 : Number(rows[0]?.total_count)
+      if (total === 0) return null
+      if (total !== 1 || rows.length !== 1) {
+        throw new Error(`Entity identifier ${idOrSlug} is ambiguous`)
+      }
+      const [canonical] = await canonicalizeEntityRows(rows)
+      return canonical ?? null
+    }
+
     const params = new URLSearchParams()
     params.set('select', ENTITY_SELECT)
-    params.set(UUID_RE.test(idOrSlug) ? 'id' : 'slug', `eq.${idOrSlug}`)
+    params.set('id', `eq.${idOrSlug}`)
     params.set('limit', '1')
     const { rows } = await readEntityRows(params)
-    const direct = rows[0] ?? null
-    const sourceId = direct?.id ?? (UUID_RE.test(idOrSlug) ? idOrSlug : null)
-    if (!sourceId || direct?.status === 'active') return direct
-
-    const redirectParams = new URLSearchParams()
-    redirectParams.set('select', 'target_entity_id')
-    redirectParams.set('source_entity_id', `eq.${sourceId}`)
-    redirectParams.set('limit', '1')
-    const redirect = await readRows<{ target_entity_id: string }>('entity_redirects', redirectParams, { optional: true })
-    const targetId = redirect.rows[0]?.target_entity_id
-    if (!targetId || !UUID_RE.test(targetId) || targetId === sourceId) return direct
-
-    const targetParams = new URLSearchParams()
-    targetParams.set('select', ENTITY_SELECT)
-    targetParams.set('id', `eq.${targetId}`)
-    targetParams.set('limit', '1')
-    const target = await readEntityRows(targetParams)
-    return target.rows[0] ?? direct
+    return rows[0] ?? null
   }
 
   async function enrichEntities(rows: EntityRow[]) {

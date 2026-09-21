@@ -52,7 +52,7 @@ test('automatic cleanup refuses to mutate aliases even if an input is incorrectl
   const rpcCalls: Array<{ name: string, args: Record<string, unknown> }> = []
   const executor = new SupabaseEntityCatalogCleanupExecutor(
     fakeDb(rpcCalls),
-    { async count() { return 0 } },
+    { async withMutationFence(_entityId, action) { return action(0) } },
   )
   const alias = finding({
     decision: 'polluted_alias',
@@ -78,7 +78,7 @@ test('automatic merge fails closed while any local draft references the source E
   const rpcCalls: Array<{ name: string, args: Record<string, unknown> }> = []
   const executor = new SupabaseEntityCatalogCleanupExecutor(
     fakeDb(rpcCalls),
-    { async count(entityId) { assert.equal(entityId, 'right'); return 2 } },
+    { async withMutationFence(entityId, action) { assert.equal(entityId, 'right'); return action(2) } },
   )
 
   const result = await executor.applyEligible('run-1', [finding()])
@@ -95,7 +95,7 @@ test('automatic merge calls the guarded atomic RPC when local inventory is empty
   const rpcCalls: Array<{ name: string, args: Record<string, unknown> }> = []
   const executor = new SupabaseEntityCatalogCleanupExecutor(
     fakeDb(rpcCalls),
-    { async count() { return 0 } },
+    { async withMutationFence(_entityId, action) { return action(0) } },
   )
 
   const result = await executor.applyEligible('run-1', [finding()])

@@ -84,6 +84,24 @@ test('Supabase query port uses only entity_memories with deterministic keyset or
   ])
 })
 
+test('Supabase query port fails closed when an Entity ID has no active canonical resolution', async () => {
+  let queried = false
+  const db = {
+    async rpc() { return { data: null, error: null } },
+    from() { queried = true; throw new Error('stale Entity must not be queried') },
+  } as unknown as SupabaseClient
+
+  await assert.rejects(
+    new SupabaseEntityKnowledgeQueryPort(db).queryMemories({
+      order: 'observed-desc',
+      entityId: 'entity-archived',
+      limit: 1,
+    }),
+    /did not resolve an active canonical Entity/,
+  )
+  assert.equal(queried, false)
+})
+
 test('Supabase change query orders updated_at and id ascending after its cursor', async () => {
   const builder = new RecordingBuilder([])
   const db = {

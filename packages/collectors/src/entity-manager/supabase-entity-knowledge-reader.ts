@@ -54,11 +54,12 @@ export class SupabaseEntityKnowledgeQueryPort implements EntityKnowledgeQueryPor
   constructor(private readonly db: SupabaseClient) {}
 
   async queryMemories(input: EntityKnowledgeQuery): Promise<EntityKnowledgeRow[]> {
+    const entityId = input.entityId ? await this.resolveEntityId(input.entityId) : null
     let query = this.db
       .from('entity_memories')
       .select(ENTITY_KNOWLEDGE_SELECT) as unknown as QueryBuilder
 
-    if (input.entityId) query = query.eq('entity_id', await this.resolveEntityId(input.entityId))
+    if (entityId) query = query.eq('entity_id', entityId)
     if (input.memoryIds) query = query.in('id', input.memoryIds)
     if (input.since) query = query.gte('observed_at', input.since)
     if (input.memoryTypes) query = query.in('memory_type', input.memoryTypes)
@@ -130,7 +131,10 @@ export class SupabaseEntityKnowledgeQueryPort implements EntityKnowledgeQueryPor
   private async resolveEntityId(entityId: string): Promise<string> {
     const { data, error } = await this.db.rpc('resolve_entity_redirect_v1', { p_entity_id: entityId })
     if (error) throw new Error(`entity redirect lookup failed: ${error.message}`)
-    return typeof data === 'string' && data ? data : entityId
+    if (typeof data !== 'string' || !data) {
+      throw new Error('entity redirect lookup did not resolve an active canonical Entity')
+    }
+    return data
   }
 }
 

@@ -6,7 +6,12 @@ import type {
 } from './contracts'
 
 export interface EntityDraftInventory {
-  count(entityId: string): Promise<number>
+  /**
+   * Runs `action` while draft writers are fenced for this Entity. The count is
+   * taken after the fence is acquired, so a zero count remains true until the
+   * action completes.
+   */
+  withMutationFence<T>(entityId: string, action: (actionableDraftCount: number) => Promise<T>): Promise<T>
 }
 
 export class SupabaseEntityCatalogCleanupExecutor implements EntityCatalogCleanupExecutor {
@@ -52,19 +57,22 @@ export class SupabaseEntityCatalogCleanupExecutor implements EntityCatalogCleanu
         const sourceEntityId = finding.leftEntityId === finding.canonicalEntityId
           ? finding.rightEntityId
           : finding.leftEntityId
-        const draftCount = await this.drafts.count(sourceEntityId)
-        if (draftCount > 0) {
+        const attempt = await this.drafts.withMutationFence(sourceEntityId, async (draftCount) => {
+          if (draftCount > 0) return { applied: false as const, draftCount }
+          await this.rpc('entity_catalog_apply_merge_v1', {
+            p_finding_id: id,
+            p_actor: this.actor,
+            p_aliases_to_add: [],
+          })
+          return { applied: true as const, draftCount: 0 }
+        })
+        if (!attempt.applied) {
           result.skipped.push({
             findingId: id,
-            reason: `local_draft_inventory_not_empty:${draftCount}`,
+            reason: `local_draft_inventory_not_empty:${attempt.draftCount}`,
           })
           continue
         }
-        await this.rpc('entity_catalog_apply_merge_v1', {
-          p_finding_id: id,
-          p_actor: this.actor,
-          p_aliases_to_add: [],
-        })
         result.mergeCount += 1
         result.mutationCount += 1
       } catch (error) {

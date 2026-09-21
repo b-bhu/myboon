@@ -23,6 +23,10 @@ const cleanupBoundarySql = readFileSync(resolve(
   __dirname,
   '../../../../supabase/migrations/20260921142116_strengthen_entity_catalog_cleanup_boundaries.sql',
 ), 'utf8')
+const reviewBoundarySql = readFileSync(resolve(
+  __dirname,
+  '../../../../supabase/migrations/20260921153932_harden_entity_catalog_review_boundaries.sql',
+), 'utf8')
 
 test('maintenance migration is additive, service-role-only, and has no automatic rewrite', () => {
   assert.match(sql, /CREATE TABLE public\.entity_catalog_maintenance_runs/i)
@@ -98,4 +102,31 @@ test('automatic cleanup is snapshot-guarded, reversible, and never deletes an En
   assert.match(automaticAliasDisableSql, /DROP FUNCTION IF EXISTS public\.entity_catalog_apply_eligible_alias_v1/)
   assert.match(cleanupBoundarySql, /referenced Entity is no longer active; resolve its redirect and retry/)
   assert.match(cleanupBoundarySql, /a new narrative depends on a moved memory/)
+})
+
+test('review boundary serializes memory and publication admission with Entity merges', () => {
+  assert.match(reviewBoundarySql, /entity_memory_canonical_scope_guard_v1/)
+  assert.match(reviewBoundarySql, /pg_advisory_xact_lock/)
+  assert.match(reviewBoundarySql, /canonical memory scope already exists for this Entity/)
+  assert.match(reviewBoundarySql, /entity_publication_relationship_guard_v1/)
+  assert.match(reviewBoundarySql, /source_memory_ids contains a missing memory/)
+  assert.match(reviewBoundarySql, /FOR KEY SHARE/)
+  assert.match(reviewBoundarySql, /ORDER BY memory\.id\s+FOR SHARE/)
+  assert.match(reviewBoundarySql, /ORDER BY narrative\.id\s+FOR SHARE/)
+  assert.match(reviewBoundarySql, /published_narratives_relationship_guard/)
+  assert.match(reviewBoundarySql, /entity_published_history_relationship_guard/)
+})
+
+test('review boundary makes rollback full-row strict and canonical reads fail closed', () => {
+  assert.match(reviewBoundarySql, /entity_catalog_operation_strict_state_v1/)
+  assert.match(reviewBoundarySql, /strictRowDigests/)
+  assert.match(reviewBoundarySql, /entity_catalog_row_sha256_v1\(to_jsonb\(memory\)\)/)
+  assert.match(reviewBoundarySql, /entity_catalog_row_sha256_v1\(to_jsonb\(narrative\)\)/)
+  assert.match(reviewBoundarySql, /entity_catalog_row_sha256_v1\(to_jsonb\(history\)\)/)
+  assert.match(reviewBoundarySql, /Entity merge rows changed after apply; strict rollback requires review/)
+  assert.match(reviewBoundarySql, /resolve_entity_redirects_v1/)
+  assert.match(reviewBoundarySql, /CREATE OR REPLACE FUNCTION public\.resolve_entity_redirect_v1/)
+  assert.match(reviewBoundarySql, /WHEN source\.status = 'active' THEN source\.id/)
+  assert.match(reviewBoundarySql, /WHEN target\.status = 'active' THEN target\.id/)
+  assert.match(reviewBoundarySql, /REVOKE ALL ON FUNCTION public\.resolve_entity_redirects_v1\(uuid\[\]\)/)
 })

@@ -162,7 +162,8 @@ export class SupabasePublisherStore implements PublisherStore {
       p_entity_id: entityId,
     })
     if (redirectError) throw new Error(`publisher entity redirect lookup failed: ${redirectError.message}`)
-    const resolvedEntityId = typeof resolved === 'string' ? resolved : entityId
+    if (typeof resolved !== 'string' || resolved.trim() === '') return null
+    const resolvedEntityId = resolved
     const { data, error } = await this.db
       .from('entities')
       .select(ENTITY_SELECT)

@@ -60,7 +60,7 @@ async function main(): Promise<void> {
   const store = new SupabaseEntityCatalogMaintenanceStore(db)
   const draftInventory = new SqliteEntityDraftInventory(resolve(
     process.env.PIPELINE_SQLITE_PATH?.trim() || '.data/pipeline.sqlite',
-  ))
+  ), { leaseMs })
   const judge = new HermesEntityIdentityJudge({
     service: new HermesService(),
     provider,
