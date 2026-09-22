@@ -158,10 +158,16 @@ export class SupabasePublisherStore implements PublisherStore {
   }
 
   async fetchEntity(entityId: string): Promise<PublisherEntityRecord | null> {
+    const { data: resolved, error: redirectError } = await this.db.rpc('resolve_entity_redirect_v1', {
+      p_entity_id: entityId,
+    })
+    if (redirectError) throw new Error(`publisher entity redirect lookup failed: ${redirectError.message}`)
+    if (typeof resolved !== 'string' || resolved.trim() === '') return null
+    const resolvedEntityId = resolved
     const { data, error } = await this.db
       .from('entities')
       .select(ENTITY_SELECT)
-      .eq('id', entityId)
+      .eq('id', resolvedEntityId)
       .maybeSingle()
 
     if (error) throw new Error(`publisher entity fetch failed: ${error.message}`)

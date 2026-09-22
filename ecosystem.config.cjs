@@ -215,6 +215,35 @@ module.exports = {
       },
     },
     {
+      // Daily, overlap-guarded Entity catalogue maintenance. Model findings
+      // remain proposals; only deterministic, database-revalidated and
+      // reversible cleanups receive mutation authority.
+      name: 'myboon-entity-catalog-maintenance',
+      script: 'src/entity-maintenance/run-entity-catalog-maintenance.ts',
+      interpreter: TSX,
+      cwd: `${ROOT}/packages/collectors`,
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      // Shutdown stops after the active bounded Hermes batch (120s max) and
+      // releases the database lease before PM2 may force-kill the process.
+      kill_timeout: 300000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env: {
+        ...HERMES_ENV,
+        ENTITY_CATALOG_MAINTENANCE_RUN_ONCE: '0',
+        ENTITY_CATALOG_MAINTENANCE_MODE: 'apply',
+        ENTITY_CATALOG_MAINTENANCE_INTERVAL_MS: '86400000',
+        ENTITY_CATALOG_MAINTENANCE_SCOPE: 'auto',
+        ENTITY_CATALOG_MAINTENANCE_BATCH_SIZE: '8',
+        ENTITY_CATALOG_MAINTENANCE_HERMES_TIMEOUT_MS: '120000',
+        ENTITY_CATALOG_MAINTENANCE_LEASE_MS: '1800000',
+        ENTITY_CATALOG_MAINTENANCE_PROVIDER: 'ollama-cloud',
+        ENTITY_CATALOG_MAINTENANCE_MODEL: 'glm-5.3-flash',
+      },
+    },
+    {
       // One horizontal Research runner. Off is resident but performs zero
       // SQLite/provider/network I/O; shadow peeks only; active is guarded by
       // explicit source ownership and legacy-claimer disablement.

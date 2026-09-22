@@ -54,11 +54,12 @@ export class SupabaseEntityKnowledgeQueryPort implements EntityKnowledgeQueryPor
   constructor(private readonly db: SupabaseClient) {}
 
   async queryMemories(input: EntityKnowledgeQuery): Promise<EntityKnowledgeRow[]> {
+    const entityId = input.entityId ? await this.resolveEntityId(input.entityId) : null
     let query = this.db
       .from('entity_memories')
       .select(ENTITY_KNOWLEDGE_SELECT) as unknown as QueryBuilder
 
-    if (input.entityId) query = query.eq('entity_id', input.entityId)
+    if (entityId) query = query.eq('entity_id', entityId)
     if (input.memoryIds) query = query.in('id', input.memoryIds)
     if (input.since) query = query.gte('observed_at', input.since)
     if (input.memoryTypes) query = query.in('memory_type', input.memoryTypes)
@@ -94,11 +95,12 @@ export class SupabaseEntityKnowledgeQueryPort implements EntityKnowledgeQueryPor
   }
 
   async queryMemoryEvents(input: EntityKnowledgeEventQuery): Promise<EntityKnowledgeEventQueryResult> {
+    const entityId = await this.resolveEntityId(input.entityId)
     let rowsQuery = this.db
       .from('entity_memories')
       .select(ENTITY_KNOWLEDGE_SELECT) as unknown as QueryBuilder
     rowsQuery = rowsQuery
-      .eq('entity_id', input.entityId)
+      .eq('entity_id', entityId)
       .neq('memory_type', 'source_marker')
       .not('event_at', 'is', null)
     if (input.after) {
@@ -114,7 +116,7 @@ export class SupabaseEntityKnowledgeQueryPort implements EntityKnowledgeQueryPor
     const countQuery = this.db
       .from('entity_memories')
       .select('id', { count: 'exact', head: true })
-      .eq('entity_id', input.entityId)
+      .eq('entity_id', entityId)
       .neq('memory_type', 'source_marker')
       .not('event_at', 'is', null) as unknown as PromiseLike<CountResult>
     const [{ data, error }, countResult] = await Promise.all([rowsQuery, countQuery])
@@ -124,6 +126,15 @@ export class SupabaseEntityKnowledgeQueryPort implements EntityKnowledgeQueryPor
       throw new Error('entity knowledge event count was unavailable')
     }
     return { rows: (data ?? []) as EntityKnowledgeRow[], totalCount: countResult.count! }
+  }
+
+  private async resolveEntityId(entityId: string): Promise<string> {
+    const { data, error } = await this.db.rpc('resolve_entity_redirect_v1', { p_entity_id: entityId })
+    if (error) throw new Error(`entity redirect lookup failed: ${error.message}`)
+    if (typeof data !== 'string' || !data) {
+      throw new Error('entity redirect lookup did not resolve an active canonical Entity')
+    }
+    return data
   }
 }
 

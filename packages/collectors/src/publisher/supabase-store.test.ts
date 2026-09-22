@@ -110,3 +110,18 @@ test('publisher fails closed before an extreme aggregate knowledge hydration dra
   await assert.rejects(store.fetchMemories(memoryIds), /exceeds 10 bounded knowledge requests/)
   assert.equal(calls, 0)
 })
+
+test('publisher does not fall back to a stale Entity ID when canonical resolution fails', async () => {
+  let directReads = 0
+  const store = new SupabasePublisherStore(
+    {
+      async rpc() { return { data: null, error: null } },
+      from() { directReads += 1; throw new Error('stale Entity must not be read') },
+    } as unknown as SupabaseClient,
+    {} as PipelineStore,
+    { async getEntityMemoriesByIds() { return [] } },
+  )
+
+  assert.equal(await store.fetchEntity(id(999)), null)
+  assert.equal(directReads, 0)
+})

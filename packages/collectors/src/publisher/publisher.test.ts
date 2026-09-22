@@ -148,6 +148,25 @@ test('buildPublication normalizes a fractional draft priority for the integer pu
   assert.equal(publication.priority, 1)
 })
 
+test('buildPublication replaces a stale draft Entity with its resolved merge target', () => {
+  const publication = buildPublication(
+    draft({
+      entity_id: 'entity-archived',
+      entity_slug: 'old-slug',
+      entity_name: 'Old Name',
+      entity_type: 'topic',
+    }),
+    entity({ id: 'entity-canonical', slug: 'canonical', name: 'Canonical', type: 'organization' }),
+    [memory()],
+    '2026-07-03T01:00:00.000Z',
+  )
+
+  assert.equal(publication.entity_id, 'entity-canonical')
+  assert.equal(publication.entity_slug, 'canonical')
+  assert.equal(publication.entity_name, 'Canonical')
+  assert.equal(publication.entity_type, 'organization')
+})
+
 test('runPublisher skips non-draft actions and invalid drafted rows', async () => {
   const store = new InMemoryPublisherStore([
     draft({ id: 'watch-1', action: 'watch', status: 'watching' }),

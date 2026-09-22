@@ -72,6 +72,9 @@ class FakeCanonicalSupabase {
       this.createCalls += 1
       return { data: null, error: { message: 'unexpected canonical creation' } }
     }
+    if (fn === 'resolve_entity_redirect_v1') {
+      return { data: args.p_entity_id, error: null }
+    }
     return { data: null, error: { message: `unexpected RPC ${fn}` } }
   }
 
