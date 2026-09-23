@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { HermesService } from '../hermes'
+import { ClassificationDoubleFailureError, type ClassificationRequest } from '../inference-gateway'
+import { InferenceGatewayError } from '../inference-gateway/errors'
 import { gateSignal } from './gate'
 import type { EntityMemoryReader, GateEntity, GateMemory, GateSignal } from './types'
 
@@ -154,4 +156,47 @@ test('the gate prompt shows the timeline and forbids significance judgment', asy
   assert.match(prompt, /41% to 58%/, 'the new signal is shown to the model')
   assert.match(prompt, /Do NOT judge importance/, 'role boundary: novelty only, never significance')
   assert.match(prompt, /already_known/, 'verdict vocabulary is defined in the prompt')
+})
+
+test('uses the shared classification contract and records the downstream policy outcome', async () => {
+  const requests: unknown[] = []
+  const outcomes: unknown[] = []
+  const decision = await gateSignal(SIGNAL, {
+    reader: reader(),
+    classification: {
+      async classify<TDecision>(request: ClassificationRequest) {
+        requests.push(request)
+        return {
+          decisionId: 'classification-1', workload: request.workload, decisionVersion: request.decisionVersion,
+          value: { verdict: 'already_known' as const, reason: 'The timeline already contains the same repricing.' } as TDecision,
+          configuredPrimary: { provider: 'typesafe', model: 'jev-1.13.0' }, configuredFallback: null,
+          actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash', fallbackUsed: false,
+          fallbackReason: null, answers: null, usage: { inputTokens: 1, outputTokens: 1 }, durationMs: 1,
+        }
+      },
+      async recordPolicyOutcome(value) { outcomes.push(value) },
+    },
+  })
+  assert.equal(decision.verdict, 'already_known')
+  assert.equal(decision.proceed, false)
+  assert.equal((requests[0] as { workload: string }).workload, 'research.novelty')
+  assert.deepEqual(outcomes, [{
+    decisionId: 'classification-1', consumer: 'research-gate',
+    policyVersion: 'research-gate.novelty-policy.v1', outcome: 'hold', reasonCode: 'already_known',
+  }])
+})
+
+test('classification double failure records fail-open and never loses the signal', async () => {
+  const outcomes: unknown[] = []
+  const cause = new InferenceGatewayError('down', { category: 'provider_unavailable', retryable: true })
+  const decision = await gateSignal(SIGNAL, {
+    reader: reader(),
+    classification: {
+      async classify() { throw new ClassificationDoubleFailureError('classification-failed', 'provider_timeout', cause) },
+      async recordPolicyOutcome(value) { outcomes.push(value) },
+    },
+  })
+  assert.equal(decision.verdict, 'gate_unavailable')
+  assert.equal(decision.proceed, true)
+  assert.equal((outcomes[0] as { reasonCode: string }).reasonCode, 'classification_double_failure_fail_open')
 })

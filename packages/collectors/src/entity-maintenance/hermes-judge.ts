@@ -69,8 +69,8 @@ export function buildIdentityJudgmentPrompt(candidates: readonly EntityMaintenan
   const dossiers = candidates.map((candidate) => ({
     pairKey: candidate.pairKey,
     signals: candidate.signals,
-    left: compactProfile(candidate.left),
-    right: compactProfile(candidate.right),
+    left: compactEntityCatalogProfile(candidate.left),
+    right: compactEntityCatalogProfile(candidate.right),
   }))
   return [
     `You are the Entity identity auditor for ${ENTITY_CATALOG_MAINTENANCE_PROMPT_VERSION}.`,
@@ -157,7 +157,7 @@ function validatePollutedAlias(
   return { pollutedEntityId, pollutedAlias: actualAlias }
 }
 
-function compactProfile(profile: EntityCatalogProfile): Record<string, unknown> {
+export function compactEntityCatalogProfile(profile: EntityCatalogProfile): Record<string, unknown> {
   return {
     id: profile.id,
     name: profile.name,

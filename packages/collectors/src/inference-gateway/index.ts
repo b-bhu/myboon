@@ -23,8 +23,80 @@ export {
   type HermesStructuredAdapterOptions,
 } from './hermes-adapter'
 export { InferenceGatewayStageReadiness } from './readiness'
+export {
+  ClassificationDoubleFailureError,
+  ClassificationGateway,
+  InMemoryClassificationPorts,
+  type ClassificationGatewayOptions,
+} from './classification-gateway'
+export {
+  HermesDecisionAdapter,
+  JevSystemOneAdapter,
+  type HermesDecisionAdapterOptions,
+  type JevSystemOneAdapterOptions,
+} from './classification-adapters'
+export {
+  StaticClassificationRegistry,
+  classificationLifecycleFromEnv,
+  tightenLifecycleMode,
+} from './classification-registry'
+export {
+  SqliteClassificationControlPlane,
+  type ClaimedClassificationShadow,
+} from './classification-store'
+export {
+  CLASSIFICATION_ENV,
+  classificationModeForDefinition,
+  configuredClassificationModes,
+  createConfiguredClassificationRuntime,
+  type ConfiguredClassificationRuntime,
+} from './classification-configuration'
+export {
+  ENTITY_CATALOG_IDENTITY_VERSION,
+  ENTITY_CATALOG_IDENTITY_WORKLOAD,
+  RESEARCH_NOVELTY_VERSION,
+  RESEARCH_NOVELTY_WORKLOAD,
+  approvedClassificationDefinitions,
+  entityCatalogIdentityDefinition,
+  researchNoveltyDefinition,
+  type EntityCatalogIdentityDecision,
+  type EntityCatalogIdentityState,
+  type ResearchNoveltyDecision,
+  type ResearchNoveltyState,
+} from './classification-definitions'
 export type {
-  ClassifyRequest,
+  ClassificationAttemptCall,
+  ClassificationAttemptRecord,
+  ClassificationAuditSink,
+  ClassificationBudget,
+  ClassificationCapacityCoordinator,
+  ClassificationCapacityPolicy,
+  ClassificationDecisionValidation,
+  ClassificationDefinition,
+  ClassificationExecutionMode,
+  ClassificationLease,
+  ClassificationLifecycleMode,
+  ClassificationPolicyOutcomeRecord,
+  ClassificationProviderUsage,
+  ClassificationRegistry,
+  ClassificationRequest,
+  ClassificationResult,
+  ClassificationShadowEnvelope,
+  ClassificationShadowOutbox,
+  ClassificationStateValidation,
+  HermesClassificationAdapter,
+  HermesClassificationCall,
+  HermesClassificationResponse,
+  JevAnswer,
+  JevChoiceAnswer,
+  JevClassificationAdapter,
+  JevClassificationCall,
+  JevClassificationResponse,
+  JevNoulAnswer,
+  JevQuestion,
+  JevScoreAnswer,
+} from './classification-types'
+export type {
   ContainedInvestigationPort,
   ContainedInvestigationResult,
   GenerateStructuredRequest,

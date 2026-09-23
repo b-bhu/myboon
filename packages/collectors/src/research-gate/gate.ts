@@ -1,4 +1,12 @@
 import { HermesService } from '../hermes'
+import { createHash } from 'node:crypto'
+import {
+  ClassificationDoubleFailureError,
+  RESEARCH_NOVELTY_VERSION,
+  RESEARCH_NOVELTY_WORKLOAD,
+  type ClassificationGateway,
+  type ResearchNoveltyDecision,
+} from '../inference-gateway'
 import type {
   EntityMemoryReader,
   GateDecision,
@@ -11,7 +19,9 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MEMORY_LIMIT = 12
 
 export interface ResearchGateOptions {
-  hermes: HermesService
+  /** Transitional compatibility. New composition must supply classification. */
+  hermes?: HermesService
+  classification?: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
   reader: EntityMemoryReader
   /** The gate is a cheap structured call - default 30s, far below research timeouts. */
   timeoutMs?: number
@@ -132,6 +142,10 @@ export async function gateSignal(signal: GateSignal, options: ResearchGateOption
   }
 
   try {
+    if (options.classification) {
+      return await classifyWithGateway(signal, context, entityIds, options)
+    }
+    if (!options.hermes) throw new Error('Research gate classification gateway is not configured')
     const { value } = await options.hermes.structured<GateModelAnswer>({
       purpose: 'research-gate.novelty',
       prompt: buildGatePrompt(signal, context),
@@ -162,6 +176,56 @@ export async function gateSignal(signal: GateSignal, options: ResearchGateOption
       context
     )
   }
+}
+
+async function classifyWithGateway(
+  signal: GateSignal,
+  context: GateEntityContext,
+  entityIds: string[],
+  options: ResearchGateOptions,
+): Promise<GateDecision> {
+  const classification = options.classification!
+  try {
+    const result = await classification.classify<ResearchNoveltyDecision>({
+      workload: RESEARCH_NOVELTY_WORKLOAD,
+      decisionVersion: RESEARCH_NOVELTY_VERSION,
+      state: { signal, context },
+      trace: {
+        stableDecisionKey: researchNoveltyKey(signal),
+        correlationIds: { source: signal.source.slice(0, 200), sourceRefId: signal.sourceRefId.slice(0, 200) },
+      },
+      ...(options.timeoutMs ? { tighterDeadlineMs: options.timeoutMs } : {}),
+    })
+    const verdict = result.value.verdict
+    const output = decision(verdict, result.value.reason, entityIds, context.recentMemories.length, context)
+    await classification.recordPolicyOutcome({
+      decisionId: result.decisionId,
+      consumer: 'research-gate',
+      policyVersion: 'research-gate.novelty-policy.v1',
+      outcome: output.proceed ? 'proceed' : 'hold',
+      reasonCode: verdict,
+    })
+    return output
+  } catch (error) {
+    if (error instanceof ClassificationDoubleFailureError) {
+      try {
+        await classification.recordPolicyOutcome({
+          decisionId: error.decisionId,
+          consumer: 'research-gate',
+          policyVersion: 'research-gate.novelty-policy.v1',
+          outcome: 'proceed',
+          reasonCode: 'classification_double_failure_fail_open',
+        })
+      } catch { /* failure audit must not turn fail-open into signal loss */ }
+    }
+    throw error
+  }
+}
+
+function researchNoveltyKey(signal: GateSignal): string {
+  return `research-novelty:${createHash('sha256')
+    .update(JSON.stringify([signal.source, signal.sourceRefId, signal.observedAt]))
+    .digest('hex')}`
 }
 
 export const __testing = {

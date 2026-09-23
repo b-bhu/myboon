@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { HermesService, extractJson } from '../hermes'
+import type { ClassificationGateway } from '../inference-gateway'
 import { gateSignal, type EntityMemoryReader, type GateDecision, type GateEntityContext } from '../research-gate'
 import type { ResearchConclusion, ResearchTask } from '../research-engine'
 import type {
@@ -106,6 +107,7 @@ export interface PolymarketResearcherOptions {
 
 export interface PolymarketResearchGateConfig {
   reader: EntityMemoryReader
+  classification?: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
   memoryLimit?: number
   timeoutMs?: number
 }
@@ -1008,7 +1010,9 @@ async function gateDeepWebDecisions(
       whatChanged: candidate.what_changed,
       observedAt: candidate.observed_at,
     }, {
-      hermes: options.hermes,
+      ...(options.gate.classification
+        ? { classification: options.gate.classification }
+        : { hermes: options.hermes }),
       reader: options.gate.reader,
       memoryLimit: options.gate.memoryLimit,
       timeoutMs: options.gate.timeoutMs,

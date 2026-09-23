@@ -1,5 +1,4 @@
 export type InferenceMode =
-  | 'classify'
   | 'generateStructured'
   | 'repairStructured'
   | 'investigate'
@@ -83,7 +82,7 @@ export interface InferenceUsage {
 }
 
 export interface StructuredProviderRequest {
-  mode: 'classify' | 'generateStructured' | 'repairStructured'
+  mode: 'generateStructured' | 'repairStructured'
   workload: string
   purpose: string
   prompt: string
@@ -124,11 +123,6 @@ interface StructuredRequestBase<T> {
   policyVersion: string
   budget: InferenceBudget
   validate: StructuredOutputValidator<T>
-}
-
-/** There is intentionally no tools/toolsets property on structured requests. */
-export interface ClassifyRequest<T> extends StructuredRequestBase<T> {
-  mode?: 'classify'
 }
 
 /** There is intentionally no tools/toolsets property on structured requests. */
@@ -179,7 +173,6 @@ export interface ContainedInvestigationPort {
 }
 
 export interface InferenceRequestByMode<T = unknown> {
-  classify: ClassifyRequest<T>
   generateStructured: GenerateStructuredRequest<T>
   repairStructured: RepairStructuredRequest<T>
   investigate: InvestigateRequest

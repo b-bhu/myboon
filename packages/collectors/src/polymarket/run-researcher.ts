@@ -4,6 +4,7 @@ loadDotenvChain()
 
 import { createClient } from '@supabase/supabase-js'
 import { HermesService } from '../hermes'
+import { createConfiguredClassificationRuntime } from '../inference-gateway'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
@@ -37,6 +38,10 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
   // or writes any Supabase table directly, but still takes the client for
   // signature parity with the data-engineer stage and any future need.
   const store = new SqlitePipelineStore()
+  const hermes = new HermesService()
+  const gateEnabled = process.env.RESEARCH_GATE_DISABLED !== '1'
+  const classification = gateEnabled
+    ? createConfiguredClassificationRuntime({ hermesService: hermes }) : null
   try {
     const result = await withPipelineRun(
       new PipelineStoreLedgerStore(store),
@@ -54,13 +59,15 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
       //   RESEARCH_GATE_DISABLED=1   - skip the pre-research entity gate
       //   RESEARCH_ENGINE_DISABLED=1 - use the legacy planner/last30days path
       () => {
-        const hermes = new HermesService()
         return runPolymarketResearcher(store, supabase, {
           hermes,
           researchPlannerHermesToolsets: config.researchPlannerHermesToolsets,
-          ...(process.env.RESEARCH_GATE_DISABLED === '1'
+          ...(!gateEnabled
             ? {}
-            : { gate: { reader: new SupabaseEntityMemoryReader(supabase) } }),
+            : { gate: {
+              reader: new SupabaseEntityMemoryReader(supabase),
+              classification: classification!.gateway,
+            } }),
           ...(process.env.RESEARCH_ENGINE_DISABLED === '1'
             ? {}
             : { engine: new ResearchEngine({ hermes }) }),
@@ -69,6 +76,7 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {
+    classification?.close()
     store.close()
   }
 }

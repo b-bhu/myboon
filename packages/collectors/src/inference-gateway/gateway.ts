@@ -1,6 +1,5 @@
 import { InferenceGatewayError } from './errors'
 import type {
-  ClassifyRequest,
   ContainedInvestigationPort,
   GenerateStructuredRequest,
   InferenceBudget,
@@ -48,7 +47,7 @@ interface ExecutionRequest<T> {
 interface MutableTelemetry {
   workload: string
   purpose: string
-  mode: 'classify' | 'generateStructured' | 'repairStructured'
+  mode: 'generateStructured' | 'repairStructured'
   promptVersion: string
   policyVersion: string
   configuredPrimaryProvider: string
@@ -260,10 +259,6 @@ export class InferenceGateway {
     }
   }
 
-  classify<T>(request: ClassifyRequest<T>): Promise<InferenceResult<T>> {
-    return this.execute('classify', request)
-  }
-
   /**
    * Non-mutating route readiness for queue admission. A route remains usable
    * while either its primary or configured fallback target can accept a call.
@@ -369,7 +364,7 @@ export class InferenceGateway {
   }
 
   private async execute<T>(
-    mode: 'classify' | 'generateStructured' | 'repairStructured',
+    mode: 'generateStructured' | 'repairStructured',
     request: ExecutionRequest<T>,
     invalidOutput?: unknown,
     validationIssues?: readonly string[],
@@ -433,7 +428,7 @@ export class InferenceGateway {
     const remainingWallTime = (): number => request.budget.maxWallTimeMs - (this.now() - startedAt)
 
     const callTarget = async (
-      callMode: 'classify' | 'generateStructured' | 'repairStructured',
+      callMode: 'generateStructured' | 'repairStructured',
       prompt: string,
       target: InferenceProviderTarget,
     ): Promise<AttemptResult> => {
@@ -601,7 +596,7 @@ export class InferenceGateway {
     }
 
     const callWithFallback = async (
-      callMode: 'classify' | 'generateStructured' | 'repairStructured',
+      callMode: 'generateStructured' | 'repairStructured',
       prompt: string,
     ): Promise<AttemptResult> => {
       // Once a logical request moves to fallback it stays there. Never bounce
