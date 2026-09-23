@@ -30,6 +30,7 @@ export interface ClassificationGatewayOptions {
   audit: ClassificationAuditSink
   shadowOutbox?: ClassificationShadowOutbox
   lifecycleMode?: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
+  onShadowEnqueueFailure?: (error: unknown, envelope: ClassificationShadowEnvelope) => void
   now?: () => number
 }
 
@@ -59,6 +60,7 @@ export class ClassificationGateway {
   private readonly audit: ClassificationAuditSink
   private readonly shadowOutbox?: ClassificationShadowOutbox
   private readonly lifecycleMode: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
+  private readonly onShadowEnqueueFailure: (error: unknown, envelope: ClassificationShadowEnvelope) => void
   private readonly now: () => number
 
   constructor(options: ClassificationGatewayOptions) {
@@ -69,6 +71,10 @@ export class ClassificationGateway {
     this.audit = options.audit
     this.shadowOutbox = options.shadowOutbox
     this.lifecycleMode = options.lifecycleMode ?? (() => undefined)
+    this.onShadowEnqueueFailure = options.onShadowEnqueueFailure ?? ((error, envelope) => {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[classification-shadow] enqueue failed for ${envelope.workload}/${envelope.decisionId}: ${message}`)
+    })
     this.now = options.now ?? Date.now
   }
 
@@ -95,7 +101,14 @@ export class ClassificationGateway {
 
     if (mode === 'shadow') {
       if (selectedForPercent(envelope, definition.shadowPercent)) {
-        try { this.shadowOutbox?.enqueue(envelope) } catch { /* shadow must never affect live work */ }
+        try { this.shadowOutbox?.enqueue(envelope) } catch (error) {
+          // Production composition uses a dedicated zero-wait SQLite connection,
+          // so lock contention is observed and dropped without stalling Hermes.
+          try { this.onShadowEnqueueFailure(error, envelope) } catch {
+            // Observability is best-effort at this boundary too; a broken sink
+            // must not turn non-authoritative shadow work into a live failure.
+          }
+        }
       }
       return this.runHermes<TDecision>(definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs, null)
     }
@@ -108,7 +121,8 @@ export class ClassificationGateway {
   }
 
   /** Called only by the isolated outbox worker. Shadow never invokes Hermes. */
-  async executeShadow(envelope: ClassificationShadowEnvelope): Promise<void> {
+  async executeShadow(envelope: ClassificationShadowEnvelope, attemptNumber = 1): Promise<void> {
+    if (!Number.isInteger(attemptNumber) || attemptNumber < 1) throw invalidInput('Shadow attempt number is invalid')
     const definition = this.registry.resolve(envelope.workload, envelope.decisionVersion)
     const lifecycle = tightenLifecycleMode(
       definition.maximumLifecycleMode,
@@ -157,6 +171,7 @@ export class ClassificationGateway {
     await this.audit.recordAttempt(attemptRecord({
       decisionId: envelope.decisionId,
       executionMode: 'shadow',
+      attemptNumber,
       definition,
       stateDigest: envelope.stateDigest,
       stableDecisionKey: envelope.stableDecisionKey,
@@ -211,7 +226,7 @@ export class ClassificationGateway {
       if (decoded.valid && accepted.accepted) {
         const finishedAt = this.now()
         const record = attemptRecord({
-          decisionId, executionMode: 'authoritative', definition, stateDigest, stableDecisionKey,
+          decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
           configuredPrimary: definition.jevTarget, configuredFallback: definition.hermesTarget,
           actualProvider: result.response.actualProvider, actualModel: result.response.actualModel,
           fallbackUsed: false, fallbackReason: null, decision: decoded.value, answers, calls,
@@ -244,7 +259,7 @@ export class ClassificationGateway {
       calls.push(providerCall(hermes.response, 'succeeded', null))
       const finishedAt = this.now()
       const record = attemptRecord({
-        decisionId, executionMode: 'authoritative', definition, stateDigest, stableDecisionKey,
+        decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
         configuredPrimary: definition.jevTarget, configuredFallback: definition.hermesTarget,
         actualProvider: hermes.response.actualProvider, actualModel: hermes.response.actualModel,
         fallbackUsed: true, fallbackReason: jevFailure, decision: validated.value, answers, calls,
@@ -257,7 +272,7 @@ export class ClassificationGateway {
       calls.push(failedCall(definition.hermesTarget, failure, Math.max(0, this.now() - startedAt)))
       const finishedAt = this.now()
       await this.audit.recordAttempt(attemptRecord({
-        decisionId, executionMode: 'authoritative', definition, stateDigest, stableDecisionKey,
+        decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
         configuredPrimary: definition.jevTarget, configuredFallback: definition.hermesTarget,
         actualProvider: failure.provider ?? definition.hermesTarget.provider,
         actualModel: failure.model ?? definition.hermesTarget.model,
@@ -290,7 +305,7 @@ export class ClassificationGateway {
       calls.push(providerCall(result.response, 'succeeded', null))
       const finishedAt = this.now()
       const record = attemptRecord({
-        decisionId, executionMode: 'authoritative', definition, stateDigest, stableDecisionKey,
+        decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
         configuredPrimary: definition.hermesTarget, configuredFallback: null,
         actualProvider: result.response.actualProvider, actualModel: result.response.actualModel,
         fallbackUsed: false, fallbackReason, decision: validated.value, answers: null, calls,
@@ -303,7 +318,7 @@ export class ClassificationGateway {
       calls.push(failedCall(definition.hermesTarget, failure, Math.max(0, this.now() - startedAt)))
       const finishedAt = this.now()
       await this.audit.recordAttempt(attemptRecord({
-        decisionId, executionMode: 'authoritative', definition, stateDigest, stableDecisionKey,
+        decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
         configuredPrimary: definition.hermesTarget, configuredFallback: null,
         actualProvider: failure.provider ?? definition.hermesTarget.provider,
         actualModel: failure.model ?? definition.hermesTarget.model,
@@ -523,6 +538,7 @@ function failedCall(target: InferenceProviderTarget, failure: InferenceGatewayEr
 function attemptRecord(input: {
   decisionId: string
   executionMode: 'authoritative' | 'shadow'
+  attemptNumber: number
   definition: ClassificationDefinition
   stateDigest: string
   stableDecisionKey: string
@@ -541,8 +557,8 @@ function attemptRecord(input: {
   startedAtIso: string
 }): ClassificationAttemptRecord {
   return Object.freeze({
-    schemaVersion: 'myboon.classification_attempt.v1' as const,
-    decisionId: input.decisionId, executionMode: input.executionMode,
+    schemaVersion: 'myboon.classification_attempt.v2' as const,
+    decisionId: input.decisionId, executionMode: input.executionMode, attemptNumber: input.attemptNumber,
     workload: input.definition.workload, decisionVersion: input.definition.decisionVersion,
     stateDigest: input.stateDigest, stableDecisionKey: input.stableDecisionKey,
     configuredPrimary: Object.freeze({ ...input.configuredPrimary }),

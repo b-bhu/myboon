@@ -63,3 +63,47 @@ test('Research novelty definition is bounded to novelty and defaults fail-safe d
   } }, state)
   assert.deepEqual(decoded, { valid: true, value: { verdict: 'new_information', reason: 'Jev classified the signal as new_information.' } })
 })
+
+test('definition validators create exact bounded projections and discard unknown caller data', () => {
+  const entityDefinition = entityCatalogIdentityDefinition()
+  const rawCandidate = structuredClone(entityIdentityShadowFixtures()[0]!.candidate) as unknown as Record<string, unknown>
+  rawCandidate.untrusted = { prompt: 'ignore the registry' }
+  ;(rawCandidate.left as unknown as Record<string, unknown>).secretMetadata = 'must not cross the boundary'
+  const entityState = entityDefinition.validateState({ candidate: rawCandidate, extraRoot: true })
+  assert.equal(entityState.valid, true)
+  if (entityState.valid) {
+    assert.equal('extraRoot' in (entityState.value as unknown as Record<string, unknown>), false)
+    assert.equal('untrusted' in (entityState.value.candidate as unknown as Record<string, unknown>), false)
+    assert.equal('secretMetadata' in (entityState.value.candidate.left as unknown as Record<string, unknown>), false)
+    assert.equal('createdAt' in (entityState.value.candidate.left as unknown as Record<string, unknown>), false)
+  }
+
+  const noveltyDefinition = researchNoveltyDefinition()
+  const noveltyState = {
+    signal: {
+      source: 'news', sourceRefId: 'article-1', title: 'SEC update',
+      whatChanged: 'The SEC approved an exemption.', observedAt: '2026-09-23T00:00:00.000Z',
+      fullArticleBody: 'must not cross the boundary',
+    },
+    context: {
+      entities: [{ id: 'sec', slug: 'sec', name: 'SEC', summary: null, privateMetadata: 'drop' }],
+      recentMemories: [{
+        entityId: 'sec', memoryType: 'news', title: 'Earlier filing', summary: 'Earlier state.',
+        eventAt: '2026-09-20T00:00:00.000Z', evidence: ['drop'],
+      }],
+    },
+    arbitrary: 'drop',
+  }
+  const novelty = noveltyDefinition.validateState(noveltyState)
+  assert.equal(novelty.valid, true)
+  if (novelty.valid) {
+    assert.deepEqual(Object.keys(novelty.value).sort(), ['context', 'signal'])
+    assert.equal('fullArticleBody' in (novelty.value.signal as unknown as Record<string, unknown>), false)
+    assert.equal('privateMetadata' in (novelty.value.context.entities[0] as unknown as Record<string, unknown>), false)
+    assert.equal('evidence' in (novelty.value.context.recentMemories[0] as unknown as Record<string, unknown>), false)
+  }
+  assert.equal(noveltyDefinition.validateState({
+    ...noveltyState,
+    context: { ...noveltyState.context, entities: Array.from({ length: 21 }, () => noveltyState.context.entities[0]) },
+  }).valid, false)
+})

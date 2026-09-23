@@ -1,6 +1,9 @@
-import type { EntityMaintenanceCandidate } from '../entity-maintenance/contracts'
+import type {
+  EntityCandidateSignal,
+  EntityCandidateSignalKind,
+  EntityCatalogRecentMemory,
+} from '../entity-maintenance/contracts'
 import { normalizedIdentity } from '../entity-maintenance/candidates'
-import { compactEntityCatalogProfile } from '../entity-maintenance/hermes-judge'
 import type { GateEntityContext, GateSignal } from '../research-gate/types'
 import type {
   ClassificationDefinition,
@@ -20,15 +23,40 @@ const DEFAULT_HERMES_TARGET = Object.freeze({ provider: 'ollama-cloud', model: '
 const DEFAULT_CAPACITY = Object.freeze({
   liveConcurrency: 4,
   shadowConcurrency: 1,
-  maxCalls: 60,
+  providerMaxCalls: 120,
+  workloadMaxCalls: 60,
   windowMs: 60_000,
   circuitFailureThreshold: 5,
   circuitCooldownMs: 10 * 60_000,
   leaseMs: 2 * 60_000,
 })
 
+interface EntityCatalogIdentityProfile {
+  id: string
+  slug: string
+  name: string
+  type: string
+  aliases: string[]
+  summary: string | null
+  status: string
+  showInCarousel: boolean
+  tags: string[]
+  memoryCount: number
+  sourceCount: number
+  firstMemoryAt: string | null
+  lastMemoryAt: string | null
+  recentMemories: EntityCatalogRecentMemory[]
+}
+
+interface EntityCatalogIdentityCandidate {
+  pairKey: string
+  left: EntityCatalogIdentityProfile
+  right: EntityCatalogIdentityProfile
+  signals: EntityCandidateSignal[]
+}
+
 export interface EntityCatalogIdentityState {
-  candidate: EntityMaintenanceCandidate
+  candidate: EntityCatalogIdentityCandidate
 }
 
 export interface EntityCatalogIdentityDecision {
@@ -167,13 +195,12 @@ export function researchNoveltyDefinition(
 
 function validateEntityState(value: unknown) {
   if (!record(value) || !record(value.candidate)) return { valid: false as const, issues: ['candidate is required'] }
-  const candidate = value.candidate as unknown as EntityMaintenanceCandidate
-  if (typeof candidate.pairKey !== 'string' || !record(candidate.left) || !record(candidate.right)
-    || !Array.isArray(candidate.signals)) return { valid: false as const, issues: ['candidate dossier is invalid'] }
-  return { valid: true as const, value: { candidate } }
+  try {
+    return { valid: true as const, value: { candidate: projectEntityCandidate(value.candidate) } }
+  } catch (error) { return invalid(error) }
 }
 
-function entityQuestions(candidate: EntityMaintenanceCandidate) {
+function entityQuestions(candidate: EntityCatalogIdentityCandidate) {
   const aliases = [
     ...candidate.left.aliases.slice(0, 25).map((alias, index) => [`left_alias_${index}`, { ownerEntityId: candidate.left.id, storedAlias: alias }]),
     ...candidate.right.aliases.slice(0, 25).map((alias, index) => [`right_alias_${index}`, { ownerEntityId: candidate.right.id, storedAlias: alias }]),
@@ -236,13 +263,45 @@ function validateNoveltyState(value: unknown) {
     || !Array.isArray(value.context.entities) || !Array.isArray(value.context.recentMemories)) {
     return { valid: false as const, issues: ['signal and bounded entity context are required'] }
   }
-  const state = value as unknown as ResearchNoveltyState
-  if (typeof state.signal.source !== 'string' || typeof state.signal.sourceRefId !== 'string'
-    || typeof state.signal.title !== 'string' || typeof state.signal.whatChanged !== 'string'
-    || typeof state.signal.observedAt !== 'string') {
-    return { valid: false as const, issues: ['signal is invalid'] }
-  }
-  return { valid: true as const, value: state }
+  try {
+    const signal = value.signal
+    const context = value.context
+    const entities = context.entities as unknown[]
+    const recentMemories = context.recentMemories as unknown[]
+    if (entities.length > 20 || recentMemories.length > 20) {
+      throw new Error('entity context exceeds the registered array limits')
+    }
+    return { valid: true as const, value: {
+      signal: {
+        source: boundedText(signal.source, 'signal.source', 100),
+        sourceRefId: boundedText(signal.sourceRefId, 'signal.sourceRefId', 300),
+        title: boundedText(signal.title, 'signal.title', 500),
+        whatChanged: boundedText(signal.whatChanged, 'signal.whatChanged', 2_000),
+        observedAt: boundedText(signal.observedAt, 'signal.observedAt', 64),
+      },
+      context: {
+        entities: entities.map((item, index) => {
+          const entity = requiredRecord(item, `context.entities[${index}]`)
+          return {
+            id: boundedText(entity.id, `context.entities[${index}].id`, 200),
+            slug: boundedText(entity.slug, `context.entities[${index}].slug`, 200),
+            name: boundedText(entity.name, `context.entities[${index}].name`, 300),
+            summary: nullableText(entity.summary, `context.entities[${index}].summary`, 1_000),
+          }
+        }),
+        recentMemories: recentMemories.map((item, index) => {
+          const memory = requiredRecord(item, `context.recentMemories[${index}]`)
+          return {
+            entityId: boundedText(memory.entityId, `context.recentMemories[${index}].entityId`, 200),
+            memoryType: boundedText(memory.memoryType, `context.recentMemories[${index}].memoryType`, 100),
+            title: boundedText(memory.title, `context.recentMemories[${index}].title`, 500),
+            summary: boundedText(memory.summary, `context.recentMemories[${index}].summary`, 2_000),
+            eventAt: boundedText(memory.eventAt, `context.recentMemories[${index}].eventAt`, 64),
+          }
+        }),
+      },
+    } }
+  } catch (error) { return invalid(error) }
 }
 
 function validateNoveltyDecision(value: unknown): ClassificationDecisionValidation<ResearchNoveltyDecision> {
@@ -297,13 +356,95 @@ function validateEntityHermesDecision(
   } catch (error) { return invalid(error) }
 }
 
-function entityDossier(candidate: EntityMaintenanceCandidate) {
+function entityDossier(candidate: EntityCatalogIdentityCandidate) {
+  return candidate
+}
+
+const ENTITY_SIGNAL_KINDS = new Set<EntityCandidateSignalKind>([
+  'exact_name', 'name_alias', 'shared_alias', 'similar_name', 'similar_slug', 'memory_title_overlap',
+])
+
+function projectEntityCandidate(value: Record<string, unknown>): EntityCatalogIdentityCandidate {
+  const signals = value.signals
+  if (!Array.isArray(signals) || signals.length > 20) throw new Error('candidate.signals must be an array of at most 20 items')
   return {
-    pairKey: candidate.pairKey,
-    signals: candidate.signals,
-    left: compactEntityCatalogProfile(candidate.left),
-    right: compactEntityCatalogProfile(candidate.right),
+    pairKey: boundedText(value.pairKey, 'candidate.pairKey', 200),
+    left: projectEntityProfile(value.left, 'candidate.left'),
+    right: projectEntityProfile(value.right, 'candidate.right'),
+    signals: signals.map((item, index) => {
+      const signal = requiredRecord(item, `candidate.signals[${index}]`)
+      const kind = boundedText(signal.kind, `candidate.signals[${index}].kind`, 40) as EntityCandidateSignalKind
+      if (!ENTITY_SIGNAL_KINDS.has(kind)) throw new Error(`candidate.signals[${index}].kind is unsupported`)
+      const output: EntityCandidateSignal = { kind }
+      if (signal.label !== undefined) output.label = boundedText(signal.label, `candidate.signals[${index}].label`, 300)
+      if (signal.score !== undefined) output.score = boundedScore(signal.score, `candidate.signals[${index}].score`)
+      return output
+    }),
   }
+}
+
+function projectEntityProfile(value: unknown, field: string): EntityCatalogIdentityProfile {
+  const profile = requiredRecord(value, field)
+  if (!Array.isArray(profile.aliases) || profile.aliases.length > 25) throw new Error(`${field}.aliases must contain at most 25 items`)
+  if (!Array.isArray(profile.tags) || profile.tags.length > 20) throw new Error(`${field}.tags must contain at most 20 items`)
+  if (!Array.isArray(profile.recentMemories) || profile.recentMemories.length > 5) {
+    throw new Error(`${field}.recentMemories must contain at most 5 items`)
+  }
+  if (typeof profile.showInCarousel !== 'boolean') throw new Error(`${field}.showInCarousel must be boolean`)
+  return {
+    id: boundedText(profile.id, `${field}.id`, 200),
+    slug: boundedText(profile.slug, `${field}.slug`, 200),
+    name: boundedText(profile.name, `${field}.name`, 300),
+    type: boundedText(profile.type, `${field}.type`, 100),
+    aliases: profile.aliases.map((item, index) => boundedText(item, `${field}.aliases[${index}]`, 200)),
+    summary: nullableText(profile.summary, `${field}.summary`, 1_000),
+    status: boundedText(profile.status, `${field}.status`, 40),
+    showInCarousel: profile.showInCarousel,
+    tags: profile.tags.map((item, index) => boundedText(item, `${field}.tags[${index}]`, 100)),
+    memoryCount: boundedCount(profile.memoryCount, `${field}.memoryCount`),
+    sourceCount: boundedCount(profile.sourceCount, `${field}.sourceCount`),
+    firstMemoryAt: nullableText(profile.firstMemoryAt, `${field}.firstMemoryAt`, 64),
+    lastMemoryAt: nullableText(profile.lastMemoryAt, `${field}.lastMemoryAt`, 64),
+    recentMemories: profile.recentMemories.map((item, index) => {
+      const memory = requiredRecord(item, `${field}.recentMemories[${index}]`)
+      return {
+        title: boundedText(memory.title, `${field}.recentMemories[${index}].title`, 500),
+        memoryType: boundedText(memory.memoryType, `${field}.recentMemories[${index}].memoryType`, 100),
+        source: boundedText(memory.source, `${field}.recentMemories[${index}].source`, 100),
+        observedAt: boundedText(memory.observedAt, `${field}.recentMemories[${index}].observedAt`, 64),
+      }
+    }),
+  }
+}
+
+function requiredRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!record(value)) throw new Error(`${field} must be an object`)
+  return value
+}
+
+function boundedText(value: unknown, field: string, maximum: number): string {
+  if (typeof value !== 'string') throw new Error(`${field} must be text`)
+  const text = value.trim()
+  if (!text || text.length > maximum || text.includes('\0')) throw new Error(`${field} is outside its registered bounds`)
+  return text
+}
+
+function nullableText(value: unknown, field: string, maximum: number): string | null {
+  return value === null ? null : boundedText(value, field, maximum)
+}
+
+function boundedCount(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || Number(value) < 0 || Number(value) > 1_000_000_000) {
+    throw new Error(`${field} must be a bounded non-negative integer`)
+  }
+  return Number(value)
+}
+
+function boundedScore(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${field} must be between zero and one`)
+  }
+  return value
 }
 
 function isChoice(value: JevAnswer | undefined): value is JevChoiceAnswer {

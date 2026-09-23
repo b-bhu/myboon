@@ -295,8 +295,12 @@ routes, retry behavior, or maximum budgets. The registry resolves all of them
 from `(workload, decisionVersion)`. An unknown or retired version fails before
 any provider call; the gateway never silently substitutes a newer definition.
 
-The registry validates `state` against its exact schema and size ceiling before
-provider selection. A state that violates the registered caller contract is a
+The registry constructs a fresh field-by-field projection of `state` against
+its exact schema before provider selection. Unknown root and nested fields are
+discarded; malformed values or relevant arrays beyond their registered bounds
+are rejected before persistence or transmission. The projected value, not the
+caller's object, is cloned, hashed, saved to the outbox, and sent to either
+provider. A state that violates the registered caller contract is a
 non-retryable caller error, not a reason to send uncontrolled input to Hermes.
 
 The gateway creates a `decisionId` before the first attempt and returns it on
@@ -786,21 +790,23 @@ The system must never invent a default label merely to keep the queue moving.
 
 Configuration is workload-based and read at process startup.
 
-Conceptual environment contract:
+Implemented environment contract:
 
 ```text
 JEV_API_TOKEN=<secret>
-CLASSIFICATION_PRIMARY_PROVIDER=typesafe
-CLASSIFICATION_PRIMARY_MODEL=jev-1.13.0
-CLASSIFICATION_FALLBACK=hermes-current
-CLASSIFICATION_ENABLED=0|1
-CLASSIFICATION_SHADOW_MODE=0|1
-CLASSIFICATION_WORKLOAD_POLICIES_JSON=<versioned route controls>
+CLASSIFICATION_LIFECYCLE_JSON={"research.novelty":"disabled|shadow|canary"}
+CLASSIFICATION_SQLITE_PATH=.data/classification.sqlite
+INFERENCE_GATEWAY_PRIMARY_PROVIDER=ollama-cloud
+INFERENCE_GATEWAY_PRIMARY_MODEL=glm-5.3-flash
+RESEARCH_GATE_CLASSIFICATION_DISABLED=0|1
 ```
 
-`hermes-current` means the provider/model already configured on the Hermes side
-for that workload. It is resolved during composition and recorded as an exact
-provider/model in readiness status and telemetry.
+`RESEARCH_GATE_CLASSIFICATION_DISABLED=1` is the composition-level emergency
+rollback for the first canary: the classification runtime is not constructed
+and Research Gate uses its previous `buildGatePrompt`/`ignoreRules` Hermes path.
+This is separate from `RESEARCH_GATE_DISABLED=1`, which disables novelty gating
+entirely. The selected Hermes provider/model is resolved during composition and
+recorded as an exact target in telemetry.
 
 Deployment configuration may disable a workload, select a lifecycle mode no
 more permissive than the registry's `maximumLifecycleMode`, reduce rollout
@@ -862,6 +868,9 @@ Authority and isolation rules:
 - Jev output cannot alter the live result, queue state, attempt count, retry
   schedule, latency, or failure status.
 - The live worker never awaits a Jev network call.
+- The live worker uses a dedicated SQLite handoff connection with
+  `busy_timeout=0`; lock contention fails immediately, emits a bounded warning,
+  and cannot inherit the control plane's five-second writer wait.
 - A bounded local outbox stores only the registry-validated compact state,
   decision version, input digest, trace identifiers, and `decisionId`.
 - Outbox insertion failure emits an observability error but does not fail the
@@ -869,6 +878,13 @@ Authority and isolation rules:
 - A separate shadow worker owns Jev timeout, retry scheduling, concurrency, and
   retention. Shadow Jev has no Hermes fallback because Hermes already supplied
   the authoritative decision.
+- Retryable timeout, `429`, provider-unavailable, and circuit-open failures use
+  bounded exponential backoff for at most three recorded attempts. Invalid,
+  wrong-model, authentication, or final-attempt failures are terminal.
+- Terminal snapshots are age-pruned after seven days and oldest-first pruned
+  before admission to keep the outbox below 10,000 rows and 64 MiB. If active
+  rows alone fill either bound, the new shadow snapshot is rejected without
+  affecting the authoritative result.
 - The immutable snapshot is content-addressed; the shadow worker never
   re-reads a mutable Entity, memory, or source row to reconstruct old state.
 - Shadow capacity is lower priority than canary/active capacity and cannot
@@ -899,6 +915,8 @@ error, not a provider disagreement.
 - The gateway reserves time for Hermes fallback before starting Jev.
 - Concurrency and rate limits are enforced deployment-wide per workload and
   per provider/model, not independently inside each PM2 process.
+- Provider-global and workload-specific call ceilings are distinct registry
+  values and are checked atomically before the same rate event is inserted.
 - Jev circuit state is deployment-wide and keyed by exact provider/model.
 - Queue admission checks whether either Jev or Hermes can accept the workload.
 - If both routes are unavailable, normal retry/defer semantics apply.
@@ -939,6 +957,7 @@ classification_attempt                owned by Classification Gateway
   decisionId
   workload / decisionVersion
   executionMode                       authoritative | shadow
+  attemptNumber                       1 for live; increasing for shadow retries
   inputDigest
   configured primary/fallback
   ordered provider attempts
@@ -963,10 +982,12 @@ The gateway persists/emits `classification_attempt` before returning or
 throwing. A double-failure error still carries `decisionId`, allowing the
 consumer to record its fail-open, hold, defer, retry, or review outcome.
 
-There is one attempt record per `(decisionId, executionMode)`. An active/canary
-record may contain the ordered Jev and Hermes attempts. A shadow decision has a
-Hermes `authoritative` record and a separate Jev `shadow` record under the same
-`decisionId`; they never share authority or provider answers.
+There is one attempt record per
+`(decisionId, executionMode, attemptNumber)`. An active/canary authoritative
+record has attempt number 1 and may contain the ordered Jev and Hermes calls.
+A shadow decision has a Hermes `authoritative` record plus one or more Jev
+`shadow` attempt records under the same `decisionId`; they never share
+authority or provider answers.
 
 The consuming module records exactly one terminal policy outcome for each
 authoritative decision it consumes, idempotent on
@@ -1113,6 +1134,8 @@ dataset.
   maximum budgets.
 - Unknown decision versions and invalid/oversized registry state fail before a
   provider call.
+- Unknown nested caller fields never reach a digest, outbox snapshot, or
+  provider; malformed and over-limit dossier fields fail before provider call.
 - If any required Jev answer is invalid or not accepted, all Jev answers are
   excluded and the complete decision goes to Hermes.
 - Missing token routes directly to Hermes and reports degraded readiness.
@@ -1164,6 +1187,12 @@ dataset.
 - Simulate latency, rate limiting, and outage.
 - Prove a shadow Jev timeout does not change authoritative latency, result,
   attempts, or retry state.
+- Hold the SQLite writer lock and prove live shadow handoff fails immediately
+  rather than waiting on the control-plane busy timeout.
+- Prove retryable shadow failures back off for a bounded number of independently
+  auditable attempts, while non-retryable failures dead-letter immediately.
+- Prove age, row, and byte retention bounds prune only terminal shadow rows and
+  fail admission when active rows alone consume the bound.
 - Prove stable sampling survives retries and PM2 restarts and joins on the same
   snapshot digest/decision version.
 - Force Hermes globally and per workload without restart where the existing
@@ -1295,7 +1324,9 @@ Phase 0 resolved the implementation choices that affect the shared contract:
    hidden attempts.
 2. The current single-VPS deployment uses `.data/classification.sqlite` for
    linked attempts/outcomes, shared leases/rate/circuit state, and the shadow
-   outbox. A multi-host deployment must replace this coordinator first.
+   outbox. Live outbox admission uses a separate zero-wait connection; the
+   worker owns bounded retry and terminal retention. A multi-host deployment
+   must replace this coordinator first.
 3. Provisional acceptance thresholds live in each versioned definition and
    remain rollout gates, not globally shared confidence values.
 4. The Hermes fallback target is resolved from the existing inference-gateway

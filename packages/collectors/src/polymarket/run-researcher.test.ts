@@ -10,6 +10,7 @@ test('polymarket researcher CLI config separates one-shot and daemon interval se
     runOnce: true,
     intervalMs: 45_000,
     researchPlannerHermesToolsets: 'browser',
+    researchGateClassificationEnabled: true,
   })
 
   assert.deepEqual(polymarketResearcherCliConfig({
@@ -19,7 +20,14 @@ test('polymarket researcher CLI config separates one-shot and daemon interval se
     runOnce: false,
     intervalMs: 300_000,
     researchPlannerHermesToolsets: 'browser',
+    researchGateClassificationEnabled: true,
   })
+})
+
+test('polymarket researcher can restore the legacy Hermes gate without constructing classification', () => {
+  assert.equal(polymarketResearcherCliConfig({
+    RESEARCH_GATE_CLASSIFICATION_DISABLED: '1',
+  }).researchGateClassificationEnabled, false)
 })
 
 test('polymarket researcher CLI config pins and trims planner toolsets', () => {

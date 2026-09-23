@@ -8,7 +8,7 @@ import {
   StaticClassificationRegistry,
   tightenLifecycleMode,
 } from './classification-registry'
-import { SqliteClassificationControlPlane } from './classification-store'
+import { SqliteClassificationControlPlane, SqliteClassificationShadowWriter } from './classification-store'
 import type {
   ClassificationDefinition,
   ClassificationLifecycleMode,
@@ -67,9 +67,12 @@ export function createConfiguredClassificationRuntime(options: {
   if (configuredEndpoint && configuredEndpoint !== APPROVED_JEV_ENDPOINT) {
     throw new Error('JEV_API_ENDPOINT must be the approved TypeSafe System One endpoint')
   }
-  const store = new SqliteClassificationControlPlane(resolve(
-    env[CLASSIFICATION_ENV.sqlitePath]?.trim() || '.data/classification.sqlite',
-  ), { now: options.now })
+  const sqlitePath = resolve(env[CLASSIFICATION_ENV.sqlitePath]?.trim() || '.data/classification.sqlite')
+  const store = new SqliteClassificationControlPlane(sqlitePath, { now: options.now })
+  // Live requests never enqueue through the control connection's 5-second
+  // busy timeout. This separate handoff connection fails immediately on lock
+  // contention and the gateway emits a bounded warning without delaying Hermes.
+  const shadowWriter = new SqliteClassificationShadowWriter(sqlitePath, { now: options.now })
   const jev = options.jevAdapter ?? (env[CLASSIFICATION_ENV.jevToken]?.trim()
     ? new JevSystemOneAdapter({
       apiToken: env[CLASSIFICATION_ENV.jevToken]!,
@@ -85,11 +88,11 @@ export function createConfiguredClassificationRuntime(options: {
     }),
     capacity: store,
     audit: store,
-    shadowOutbox: store,
+    shadowOutbox: shadowWriter,
     lifecycleMode: (definition) => modes.get(definition.workload),
     now: options.now,
   })
-  return { gateway, store, close: () => store.close() }
+  return { gateway, store, close: () => { shadowWriter.close(); store.close() } }
 }
 
 export function configuredClassificationModes(

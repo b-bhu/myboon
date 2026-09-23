@@ -22,7 +22,7 @@ function definition(mode: ClassificationDefinition['maximumLifecycleMode'] = 'ac
     hermesTarget: { provider: 'ollama-cloud', model: 'glm-5.3-flash' },
     budget: { deadlineMs: 1_000, maxStateBytes: 1_000, maxInputTokens: 100, maxOutputTokens: 100 },
     capacity: {
-      liveConcurrency: 2, shadowConcurrency: 1, maxCalls: 20, windowMs: 1_000,
+      liveConcurrency: 2, shadowConcurrency: 1, providerMaxCalls: 40, workloadMaxCalls: 20, windowMs: 1_000,
       circuitFailureThreshold: 3, circuitCooldownMs: 1_000, leaseMs: 1_000,
     },
     validateState(value) {
@@ -70,6 +70,8 @@ function gateway(input: {
   mode?: ClassificationDefinition['maximumLifecycleMode']
   jev?: JevClassificationAdapter
   hermes?: HermesClassificationAdapter
+  shadowOutbox?: { enqueue(value: unknown): void }
+  onShadowEnqueueFailure?: (error: unknown) => void
 }) {
   const ports = new InMemoryClassificationPorts()
   let jevCalls = 0
@@ -82,7 +84,8 @@ function gateway(input: {
       return { actualProvider: call.target.provider, actualModel: call.target.model, value: { label: 'drop' },
         durationMs: 10, usage: { inputTokens: 5, outputTokens: 2 } }
     } },
-    capacity: ports, audit: ports, shadowOutbox: ports,
+    capacity: ports, audit: ports, shadowOutbox: (input.shadowOutbox ?? ports) as never,
+    onShadowEnqueueFailure: input.onShadowEnqueueFailure,
   })
   return { instance, ports, calls: () => ({ jevCalls, hermesCalls }) }
 }
@@ -143,6 +146,19 @@ test('shadow mode returns Hermes immediately and only enqueues immutable Jev wor
   assert.equal(setup.ports.shadows.length, 1)
   assert.equal(setup.ports.shadows[0]?.decisionId, result.decisionId)
   assert.deepEqual(setup.ports.shadows[0]?.state, { subject: 'SEC' })
+})
+
+test('shadow enqueue failure is observable and cannot change the authoritative Hermes result', async () => {
+  const observed: unknown[] = []
+  const setup = gateway({
+    mode: 'shadow',
+    shadowOutbox: { enqueue() { throw new Error('database is locked') } },
+    onShadowEnqueueFailure: (error) => observed.push(error),
+  })
+  const result = await setup.instance.classify<Decision>(request())
+  assert.deepEqual(result.value, { label: 'drop' })
+  assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 1 })
+  assert.equal((observed[0] as Error).message, 'database is locked')
 })
 
 test('caller cannot inject questions, schema, confidence policy, or budget', async () => {

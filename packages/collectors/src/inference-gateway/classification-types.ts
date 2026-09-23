@@ -109,7 +109,10 @@ export interface ClassificationBudget {
 export interface ClassificationCapacityPolicy {
   liveConcurrency: number
   shadowConcurrency: number
-  maxCalls: number
+  /** Ceiling shared by every workload using the same provider/model/lane. */
+  providerMaxCalls: number
+  /** Independent ceiling for this workload within the provider window. */
+  workloadMaxCalls: number
   windowMs: number
   circuitFailureThreshold: number
   circuitCooldownMs: number
@@ -158,9 +161,11 @@ export interface ClassificationAttemptCall {
 }
 
 export interface ClassificationAttemptRecord {
-  schemaVersion: 'myboon.classification_attempt.v1'
+  schemaVersion: 'myboon.classification_attempt.v2'
   decisionId: string
   executionMode: ClassificationExecutionMode
+  /** One for authoritative calls; monotonically increasing for shadow retries. */
+  attemptNumber: number
   workload: string
   decisionVersion: string
   stateDigest: string

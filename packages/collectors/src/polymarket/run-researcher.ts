@@ -19,12 +19,14 @@ export function polymarketResearcherCliConfig(env: NodeJS.ProcessEnv = process.e
   runOnce: boolean
   intervalMs: number
   researchPlannerHermesToolsets: string
+  researchGateClassificationEnabled: boolean
 } {
   return {
     runOnce: envFlag(env.POLYMARKET_RESEARCHER_RUN_ONCE),
     intervalMs: positiveInteger(env.POLYMARKET_RESEARCHER_INTERVAL_MS, DEFAULT_RESEARCHER_INTERVAL_MS),
     researchPlannerHermesToolsets: env.POLYMARKET_RESEARCH_PLANNER_HERMES_TOOLSETS
       ?.split(',').map((item) => item.trim()).filter(Boolean).join(',') || 'browser',
+    researchGateClassificationEnabled: !envFlag(env.RESEARCH_GATE_CLASSIFICATION_DISABLED),
   }
 }
 
@@ -40,7 +42,7 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
   const store = new SqlitePipelineStore()
   const hermes = new HermesService()
   const gateEnabled = process.env.RESEARCH_GATE_DISABLED !== '1'
-  const classification = gateEnabled
+  const classification = gateEnabled && config.researchGateClassificationEnabled
     ? createConfiguredClassificationRuntime({ hermesService: hermes }) : null
   try {
     const result = await withPipelineRun(
@@ -57,6 +59,7 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
       //
       // Kill switches (each independently returns to the previous behavior):
       //   RESEARCH_GATE_DISABLED=1   - skip the pre-research entity gate
+      //   RESEARCH_GATE_CLASSIFICATION_DISABLED=1 - keep the gate on its legacy Hermes prompt
       //   RESEARCH_ENGINE_DISABLED=1 - use the legacy planner/last30days path
       () => {
         return runPolymarketResearcher(store, supabase, {
@@ -66,7 +69,7 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
             ? {}
             : { gate: {
               reader: new SupabaseEntityMemoryReader(supabase),
-              classification: classification!.gateway,
+              ...(classification ? { classification: classification.gateway } : {}),
             } }),
           ...(process.env.RESEARCH_ENGINE_DISABLED === '1'
             ? {}

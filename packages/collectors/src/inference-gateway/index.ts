@@ -42,7 +42,11 @@ export {
 } from './classification-registry'
 export {
   SqliteClassificationControlPlane,
+  SqliteClassificationShadowWriter,
+  DEFAULT_CLASSIFICATION_SHADOW_RETENTION,
   type ClaimedClassificationShadow,
+  type ClassificationShadowOutboxStats,
+  type ClassificationShadowRetentionPolicy,
 } from './classification-store'
 export {
   CLASSIFICATION_ENV,

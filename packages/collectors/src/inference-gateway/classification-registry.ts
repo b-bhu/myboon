@@ -22,7 +22,10 @@ export class StaticClassificationRegistry implements ClassificationRegistry {
       if (this.definitions.has(key)) throw new Error(`Duplicate classification definition ${key}`)
       for (const target of [definition.jevTarget, definition.hermesTarget]) {
         const targetId = `${target.provider.length}:${target.provider}|${target.model.length}:${target.model}`
-        const capacity = JSON.stringify(definition.capacity)
+        // Provider-global controls must agree across workloads sharing a
+        // target. The workload ceiling is intentionally allowed to differ.
+        const { workloadMaxCalls: _workloadMaxCalls, ...providerCapacity } = definition.capacity
+        const capacity = JSON.stringify(providerCapacity)
         const existing = capacityByTarget.get(targetId)
         if (existing !== undefined && existing !== capacity) {
           throw new Error(`Classification capacity policy must be consistent for target ${target.provider}/${target.model}`)
@@ -98,5 +101,8 @@ function validateDefinition(definition: ClassificationDefinition): void {
     || definition.capacity.circuitCooldownMs > 86_400_000
     || definition.capacity.leaseMs > 60 * 60_000) {
     throw new Error(`Classification capacity duration is too large for ${definition.workload}`)
+  }
+  if (definition.capacity.workloadMaxCalls > definition.capacity.providerMaxCalls) {
+    throw new Error(`Classification workload rate limit exceeds provider limit for ${definition.workload}`)
   }
 }
