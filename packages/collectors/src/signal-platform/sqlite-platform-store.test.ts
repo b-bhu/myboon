@@ -435,6 +435,32 @@ test('priority ordering, circuit-open invariant, expired recovery, and aggregate
   }
 })
 
+test('scheduler status separates actionable work from stale pending and retry rows', async () => {
+  const temp = fixture('scheduler-status-eligibility')
+  const store = new SqliteSignalPlatformStore(temp.path, 'news')
+  try {
+    for (const [id, deadline] of [
+      ['live', '2026-08-26T12:30:00.000Z'],
+      ['stale', '2026-08-26T11:30:00.000Z'],
+    ] as const) {
+      store.appendSignal(signal({ signalId: `signal-${id}`, idempotencyKey: `key-${id}` }))
+      store.admitResearchWork(work({
+        workId: `work-${id}`, signalId: `signal-${id}`, freshnessDeadline: deadline,
+      }))
+    }
+
+    const status = await store.getSchedulerStatus({ now: '2026-08-26T12:00:00.000Z' })
+    assert.equal(status.byStatus.research_pending, 2)
+    assert.equal(status.actionableReady, 1)
+    assert.equal(status.stalePending, 1)
+    assert.equal(status.dueRetry, 0)
+    assert.equal(status.staleRetry, 0)
+  } finally {
+    store.close()
+    rmSync(temp.dir, { recursive: true, force: true })
+  }
+})
+
 test('additive initialization preserves unrelated legacy rows and close is idempotent', () => {
   const temp = fixture('legacy')
   const raw = new DatabaseSync(temp.path)

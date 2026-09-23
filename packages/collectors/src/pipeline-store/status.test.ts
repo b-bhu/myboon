@@ -3,7 +3,7 @@ import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import type { PipelineCandidateInsertInput } from './store'
 import { SqlitePipelineStore } from './sqlite-store'
-import { buildPipelineStatusReport } from './status'
+import { buildNewsOperationalStatus, buildPipelineStatusReport } from './status'
 
 const T0 = '2026-07-01T00:00:00.000Z'
 
@@ -129,4 +129,30 @@ test('buildPipelineStatusReport returns zeroed counts and false flags for an are
   } finally {
     store.close()
   }
+})
+
+test('news operational status never presents legacy pending rows as the canonical backlog', () => {
+  const report = buildNewsOperationalStatus({
+    total: 23_421,
+    byStatus: { research_pending: 12, complete: 10_015, dead_letter: 13_390 },
+    oldestReadyAt: null,
+    oldestLeaseExpiresAt: null,
+    actionableReady: 0,
+    stalePending: 12,
+    dueRetry: 0,
+    staleRetry: 0,
+  }, {
+    sourceRuns: {},
+    candidates: { pending_research: 24_676 },
+    researchResults: {},
+  })
+
+  assert.equal(report.authority, 'feed_v3')
+  assert.equal(report.canonical.actionableReady, 0)
+  assert.equal(report.canonical.stalePending, 12)
+  assert.equal(report.canonical.completed, 10_015)
+  assert.equal(report.canonical.deadLetter, 13_390)
+  assert.equal(report.legacy.authoritative, false)
+  assert.equal(report.legacy.candidates.pending_research, 24_676)
+  assert.match(report.legacy.warning, /must not be interpreted as the active Feed V3 backlog/)
 })

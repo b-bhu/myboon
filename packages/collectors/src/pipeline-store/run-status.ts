@@ -3,8 +3,9 @@ import { loadDotenvChain } from './cli-env'
 loadDotenvChain()
 
 import { SqlitePipelineStore } from './sqlite-store'
-import { buildPipelineStatusReport } from './status'
+import { buildNewsOperationalStatus, buildPipelineStatusReport } from './status'
 import { SqliteNewsStore } from '../news/sqlite-store'
+import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 
 /**
  * CLI: `pnpm pipeline-store:status`
@@ -41,16 +42,24 @@ async function main(): Promise<void> {
 
   const store = new SqlitePipelineStore(sqlitePath)
   const newsStore = new SqliteNewsStore(newsSqlitePath)
+  const canonicalNewsStore = new SqliteSignalPlatformStore(
+    newsSqlitePath ?? '.data/news.sqlite', 'news', { readOnly: true },
+  )
   try {
-    const pipeline = await buildPipelineStatusReport(store, areas)
+    const generatedAt = new Date().toISOString()
+    const [pipeline, canonicalNews] = await Promise.all([
+      buildPipelineStatusReport(store, areas, generatedAt),
+      canonicalNewsStore.getSchedulerStatus({ now: generatedAt }),
+    ])
     console.log(JSON.stringify({
       generatedAt: pipeline.generatedAt,
       pipeline: pipeline.areas,
-      news: newsStore.getOperationalStatus(),
+      news: buildNewsOperationalStatus(canonicalNews, newsStore.getOperationalStatus()),
     }, null, 2))
   } finally {
     store.close()
     newsStore.close()
+    canonicalNewsStore.close()
   }
 }
 

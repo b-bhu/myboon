@@ -77,6 +77,14 @@ export interface SchedulerAggregateStatus {
   byStatus: Partial<Record<WorkStatus, number>>
   oldestReadyAt: string | null
   oldestLeaseExpiresAt: string | null
+  /** Pending stage rows that are currently claimable under freshness/retry policy. */
+  actionableReady?: number
+  /** Pending stage rows whose freshness deadline has already passed. */
+  stalePending?: number
+  /** Retry rows whose retry time is due and whose freshness deadline is still live. */
+  dueRetry?: number
+  /** Retry rows whose freshness deadline has already passed. */
+  staleRetry?: number
 }
 
 /**

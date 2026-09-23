@@ -644,11 +644,36 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       SELECT MIN(lease_expires_at) AS oldest FROM signal_platform_research_work
       WHERE source_type = ? AND status IN ('retrieval_leased', 'deep_leased', 'synthesis_leased', 'entity_leased')
     `).get(this.sourceType) as Record<string, unknown> | undefined
+    const eligibility = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN status IN ('research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending')
+            AND freshness_deadline > ?
+            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+          THEN 1 ELSE 0 END), 0) AS actionable_ready,
+        COALESCE(SUM(CASE
+          WHEN status IN ('research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending')
+            AND freshness_deadline <= ?
+          THEN 1 ELSE 0 END), 0) AS stale_pending,
+        COALESCE(SUM(CASE
+          WHEN status = 'retry_wait' AND freshness_deadline > ? AND next_attempt_at <= ?
+          THEN 1 ELSE 0 END), 0) AS due_retry,
+        COALESCE(SUM(CASE
+          WHEN status = 'retry_wait' AND freshness_deadline <= ?
+          THEN 1 ELSE 0 END), 0) AS stale_retry
+      FROM signal_platform_research_work WHERE source_type = ?
+    `).get(
+      input.now, input.now, input.now, input.now, input.now, input.now, this.sourceType,
+    ) as Record<string, unknown> | undefined
     return {
       total: Object.values(byStatus).reduce((sum, count) => sum + (count ?? 0), 0),
       byStatus,
       oldestReadyAt: asNullableString(ready?.oldest),
       oldestLeaseExpiresAt: asNullableString(lease?.oldest),
+      actionableReady: Number(eligibility?.actionable_ready ?? 0),
+      stalePending: Number(eligibility?.stale_pending ?? 0),
+      dueRetry: Number(eligibility?.due_retry ?? 0),
+      staleRetry: Number(eligibility?.stale_retry ?? 0),
     }
   }
 
