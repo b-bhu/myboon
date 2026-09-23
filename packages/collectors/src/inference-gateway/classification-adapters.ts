@@ -13,6 +13,7 @@ import type {
 } from './classification-types'
 
 const DEFAULT_JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
+const MAX_PROVIDER_RETRY_AFTER_MS = 24 * 60 * 60_000
 
 export interface JevSystemOneAdapterOptions {
   apiToken: string
@@ -63,9 +64,11 @@ export class JevSystemOneAdapter implements JevClassificationAdapter {
       const category = response.status === 429 ? 'provider_rate_limited'
         : response.status === 401 || response.status === 403 ? 'provider_authentication'
           : response.status >= 500 ? 'provider_unavailable' : 'invalid_structured_output'
+      const retryable = category === 'provider_rate_limited' || category === 'provider_unavailable'
       throw new InferenceGatewayError(`Jev classification failed with HTTP ${response.status}`, {
         category,
-        retryable: category === 'provider_rate_limited' || category === 'provider_unavailable',
+        retryable,
+        ...(retryable ? { retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after'), Date.now()) } : {}),
         provider: request.target.provider,
         model: request.target.model,
       })
@@ -105,6 +108,20 @@ export class JevSystemOneAdapter implements JevClassificationAdapter {
       durationMs: Math.max(0, Date.now() - startedAt),
     }
   }
+}
+
+function parseRetryAfterMs(value: string | null, nowMs: number): number | undefined {
+  const retryAfter = value?.trim()
+  if (!retryAfter) return undefined
+  if (/^\d+$/.test(retryAfter)) {
+    const seconds = Number(retryAfter)
+    return Number.isFinite(seconds)
+      ? Math.min(MAX_PROVIDER_RETRY_AFTER_MS, seconds * 1_000)
+      : MAX_PROVIDER_RETRY_AFTER_MS
+  }
+  const retryAtMs = Date.parse(retryAfter)
+  if (!Number.isFinite(retryAtMs)) return undefined
+  return Math.min(MAX_PROVIDER_RETRY_AFTER_MS, Math.max(0, retryAtMs - nowMs))
 }
 
 export interface HermesDecisionAdapterOptions {

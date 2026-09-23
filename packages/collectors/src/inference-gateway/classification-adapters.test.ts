@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { JevSystemOneAdapter } from './classification-adapters'
+import { InferenceGatewayError } from './errors'
+import { classificationShadowRetryAt } from './run-classification-shadow'
 
 test('Jev adapter preserves native Choice and Noul semantics and passes AbortSignal', async () => {
   let body: Record<string, unknown> | null = null
@@ -66,4 +68,41 @@ test('Jev adapter rejects wrong-model and incomplete answer envelopes', async ()
     target: { provider: 'typesafe', model: 'jev-1.13.0' },
     deadlineMs: 1_000, signal: new AbortController().signal,
   }), /wrong model/)
+})
+
+test('Jev retry headers reach the bounded shadow retry scheduler', async () => {
+  const request = {
+    workload: 'test', decisionVersion: 'v1', state: {},
+    questions: { relevant: { type: 'noul' as const, instructions: 'x' } },
+    target: { provider: 'typesafe', model: 'jev-1.13.0' },
+    deadlineMs: 1_000, signal: new AbortController().signal,
+  }
+  const failureFor = async (retryAfter: string): Promise<InferenceGatewayError> => {
+    const adapter = new JevSystemOneAdapter({
+      apiToken: 'secret',
+      fetchImpl: (async () => new Response('{}', {
+        status: 429,
+        headers: { 'Retry-After': retryAfter },
+      })) as typeof fetch,
+    })
+    try {
+      await adapter.classify(request)
+      throw new Error('Expected Jev 429 failure')
+    } catch (error) {
+      assert.ok(error instanceof InferenceGatewayError)
+      return error
+    }
+  }
+
+  const delta = await failureFor('45')
+  assert.equal(delta.retryAfterMs, 45_000)
+  assert.equal(classificationShadowRetryAt({
+    error: delta, attempt: 1, nowMs: 10_000, maxAttempts: 3,
+    baseBackoffMs: 5_000, maxBackoffMs: 60_000,
+  }), 55_000)
+
+  const date = await failureFor(new Date(Date.now() + 60_000).toUTCString())
+  assert.ok((date.retryAfterMs ?? 0) >= 58_000 && (date.retryAfterMs ?? 0) <= 60_000)
+  const bounded = await failureFor('999999999999999999999999')
+  assert.equal(bounded.retryAfterMs, 24 * 60 * 60_000)
 })
