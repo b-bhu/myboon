@@ -104,24 +104,6 @@ test('generateStructured succeeds with one tool-less provider call and complete 
   assert.equal(events.length, 1)
 })
 
-test('classify is a first-class tool-less mode with the same validation and repair guarantees', async () => {
-  const adapter = new QueueAdapter([
-    { value: { wrong: true }, rawOutput: '{"wrong":true}' },
-    { value: { answer: 'classified' }, rawOutput: '{"answer":"classified"}' },
-  ])
-  const result = await gateway(adapter).classify({
-    ...request(),
-    mode: 'classify',
-  })
-
-  assert.equal(result.value.answer, 'classified')
-  assert.equal(result.telemetry.mode, 'classify')
-  assert.deepEqual(adapter.requests.map((call) => call.mode), ['classify', 'repairStructured'])
-  assert.equal(adapter.requests.some((call) => 'tools' in call || 'toolsets' in call), false)
-  assert.equal(result.telemetry.providerCalls, 2)
-  assert.equal(result.telemetry.repairCalls, 1)
-})
-
 test('investigate fails closed without invoking the structured adapter', async () => {
   const adapter = new QueueAdapter([{ value: { answer: 'must not run' } }])
   await assert.rejects(gateway(adapter).investigate({

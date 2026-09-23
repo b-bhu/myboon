@@ -244,6 +244,24 @@ module.exports = {
       },
     },
     {
+      // Best-effort Jev shadow execution is isolated from every authoritative
+      // pipeline. Workloads are safe-off unless CLASSIFICATION_LIFECYCLE_JSON
+      // enables a source-controlled shadow definition.
+      name: 'myboon-classification-shadow',
+      script: 'src/inference-gateway/run-classification-shadow.ts',
+      interpreter: TSX,
+      cwd: `${ROOT}/packages/collectors`,
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      kill_timeout: 30000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env: {
+        CLASSIFICATION_SHADOW_INTERVAL_MS: '2000',
+      },
+    },
+    {
       // One horizontal Research runner. Off is resident but performs zero
       // SQLite/provider/network I/O; shadow peeks only; active is guarded by
       // explicit source ownership and legacy-claimer disablement.

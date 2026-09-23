@@ -38,6 +38,8 @@
     "entity-catalog:maintain": "tsx src/entity-maintenance/run-entity-catalog-maintenance.ts",
     "entity-catalog:report": "tsx src/entity-maintenance/run-report.ts",
     "entity-catalog:operate": "tsx src/entity-maintenance/run-operation.ts",
+    "entity-catalog:shadow:jev": "tsx src/entity-maintenance/run-entity-identity-shadow.ts",
+    "classification:shadow": "tsx src/inference-gateway/run-classification-shadow.ts",
     "build": "tsc",
     "pipeline-store:backup": "tsx src/pipeline-store/run-backup.ts",
     "pipeline-store:backup:prune": "tsx src/pipeline-store/run-prune.ts",

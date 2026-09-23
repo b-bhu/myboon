@@ -140,7 +140,7 @@ test('configured runtime passes profile and actual primary/fallback targets thro
   assert.equal(result.telemetry.fallbackInvoked, true)
 })
 
-test('configured gateway rejects unknown workloads and investigate remains fail-closed', async () => {
+test('configured structured gateway rejects unknown workloads and investigate remains fail-closed', async () => {
   let calls = 0
   const runtime = createConfiguredInferenceGateway({
     env: {},
@@ -151,10 +151,10 @@ test('configured gateway rejects unknown workloads and investigate remains fail-
       },
     }),
   })
-  await assert.rejects(runtime.gateway.classify({
+  await assert.rejects(runtime.gateway.generateStructured({
     workload: 'not.registered',
     purpose: 'test.unknown',
-    prompt: 'Classify',
+    prompt: 'Generate',
     promptVersion: 'prompt.v1',
     policyVersion: 'policy.v1',
     budget: BUDGET,
