@@ -116,46 +116,16 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
   }
 
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
-    const byId = new Map<string, EntityRecord>()
-    const uniqueSlugs = [...new Set(slugs)]
-    if (uniqueSlugs.length > 0) {
-      let result = await this.db
-        .from('entities')
-        .select(ENTITY_SELECT)
-        .in('slug', uniqueSlugs) as unknown as EntityRowsResult
-      if (isMissingCarouselColumn(result.error)) {
-        result = await this.db.from('entities').select(LEGACY_ENTITY_SELECT).in('slug', uniqueSlugs) as unknown as EntityRowsResult
-      }
-      const { data, error } = result
-      if (error) throw new Error(`entity slug lookup failed: ${error.message}`)
-      for (const row of data ?? []) {
-        const entity = normalizeEntity(row)
-        byId.set(entity.id, entity)
-      }
-    }
-
-    for (const alias of [...new Set(aliases)]) {
-      let result = await this.db
-        .from('entities')
-        .select(ENTITY_SELECT)
-        .contains('aliases', JSON.stringify([alias]))
-        .limit(20) as unknown as EntityRowsResult
-      if (isMissingCarouselColumn(result.error)) {
-        result = await this.db
-          .from('entities')
-          .select(LEGACY_ENTITY_SELECT)
-          .contains('aliases', JSON.stringify([alias]))
-          .limit(20) as unknown as EntityRowsResult
-      }
-      const { data, error } = result
-      if (error) throw new Error(`entity alias lookup failed: ${error.message}`)
-      for (const row of data ?? []) {
-        const entity = normalizeEntity(row)
-        byId.set(entity.id, entity)
-      }
-    }
-
-    return [...byId.values()]
+    // Legacy resolver/manual-command callers share the same canonical lookup
+    // as Feed V3. Archived source labels therefore resolve to the active
+    // target instead of returning a stale row that cannot accept a memory.
+    const result = await this.findEntitiesByIdentity({
+      slugs,
+      names: aliases,
+      aliases,
+    })
+    if (!result.complete) throw new Error('entity lookup was truncated before redirect resolution completed')
+    return result.entities
   }
 
   async findEntitiesByIdentity(input: EntityIdentityLookupInput): Promise<EntityIdentityLookupResult> {
@@ -260,16 +230,26 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
   }
 
   async findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]> {
-    const identities = [...new Set(keys.map((key) => key.memoryIdentityKey
-      ? explicitMemoryIdentity(key.memoryIdentityKey)
-      : legacyMemoryIdentity({
+    const resolvedIds = new Map<string, string>()
+    for (const entityId of new Set(keys.flatMap((key) => (
+      !key.memoryIdentityKey && key.entityId ? [key.entityId] : []
+    )))) {
+      resolvedIds.set(entityId, await this.resolveEntityId(entityId))
+    }
+    const identities = [...new Set(keys.flatMap((key) => {
+      if (key.memoryIdentityKey) return [explicitMemoryIdentity(key.memoryIdentityKey)]
+      const entityIds = new Set<string | null>([key.entityId])
+      const resolvedId = key.entityId ? resolvedIds.get(key.entityId) : undefined
+      if (resolvedId) entityIds.add(resolvedId)
+      return [...entityIds].map((entityId) => legacyMemoryIdentity({
         source: key.source,
         source_area: key.sourceArea,
         source_research_id: key.sourceResearchId,
-        entity_id: key.entityId,
+        entity_id: entityId,
         memory_type: key.memoryType,
         title: key.title,
-      })))]
+      }))
+    }))]
     if (identities.length === 0) return []
     const { data, error } = await this.db
       .from('entity_memories')
@@ -280,6 +260,39 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     return (data ?? []).map(normalizeMemory).filter((memory) => (
       typeof memory.memory_identity_key === 'string' && wanted.has(memory.memory_identity_key)
     ))
+  }
+
+  async findCanonicalPacketMemory(
+    source: string,
+    sourceArea: string,
+    sourceResearchId: string,
+    entityId: string,
+    sourceItemId?: string,
+  ): Promise<EntityMemoryRecord | null> {
+    const canonicalEntityId = await this.resolveEntityId(entityId)
+    const lookup = async (bySourceItem: boolean): Promise<EntityMemoryRecord | null> => {
+      const base = this.db
+        .from('entity_memories')
+        .select(MEMORY_SELECT)
+        .eq('source', source)
+        .eq('source_area', sourceArea)
+        .eq('entity_id', canonicalEntityId)
+      const scoped = bySourceItem
+        ? base.contains('context', { canonical_source_item_id: sourceItemId })
+        : base.eq('source_research_id', sourceResearchId)
+      const { data, error } = await scoped
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle() as unknown as EntityRowResult
+      if (error) throw new Error(`canonical packet memory lookup failed: ${error.message}`)
+      return data ? normalizeMemory(data) : null
+    }
+
+    if (source === 'news' && sourceItemId) {
+      const articleMemory = await lookup(true)
+      if (articleMemory) return articleMemory
+    }
+    return lookup(false)
   }
 
   async upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]> {
@@ -309,7 +322,9 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     limit: number,
     source: string,
   ): Promise<EntityMemoryRecord[]> {
-    const uniqueEntityIds = [...new Set(entityIds)]
+    const uniqueEntityIds = [...new Set(await Promise.all(
+      [...new Set(entityIds)].map((entityId) => this.resolveEntityId(entityId)),
+    ))]
     if (uniqueEntityIds.length === 0 || limit <= 0) return []
     const { data, error } = await this.db
       .from('entity_memories')
@@ -329,10 +344,11 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     memoryType: EntityMemoryType,
     sinceIso: string,
   ): Promise<EntityMemoryRecord | null> {
+    const canonicalEntityId = await this.resolveEntityId(entityId)
     const { data, error } = await this.db
       .from('entity_memories')
       .select(MEMORY_SELECT)
-      .eq('entity_id', entityId)
+      .eq('entity_id', canonicalEntityId)
       .eq('memory_type', memoryType)
       .gte('observed_at', sinceIso)
       .order('observed_at', { ascending: false })
@@ -340,6 +356,15 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
       .maybeSingle() as unknown as EntityRowResult
     if (error) throw new Error(`latest entity memory lookup failed: ${error.message}`)
     return data ? normalizeMemory(data) : null
+  }
+
+  private async resolveEntityId(entityId: string): Promise<string> {
+    const { data, error } = await this.db.rpc('resolve_entity_redirect_v1', { p_entity_id: entityId })
+    if (error) throw new Error(`entity redirect lookup failed: ${error.message}`)
+    if (typeof data !== 'string' || data.trim() === '') {
+      throw new Error('entity redirect lookup returned an invalid Entity ID')
+    }
+    return data
   }
 
   async updateMemory(id: string, patch: EntityMemoryConsolidationPatch): Promise<EntityMemoryRecord> {

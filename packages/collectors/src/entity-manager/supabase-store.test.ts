@@ -135,6 +135,10 @@ const baseMemory: EntityMemoryRecord = {
 
 test('listRecentMemories bounds news memories by shortlisted entities and time', async () => {
   const db = {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      assert.equal(fn, 'resolve_entity_redirect_v1')
+      return { data: args.p_entity_id, error: null }
+    },
     from(table: string) {
       assert.equal(table, 'entity_memories')
       return {
@@ -191,6 +195,10 @@ test('listRecentMemories bounds news memories by shortlisted entities and time',
 
 test('findLatestMemorySince filters by entity, memory type, and recency, ordered newest first', async () => {
   const db = {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      assert.equal(fn, 'resolve_entity_redirect_v1')
+      return { data: args.p_entity_id, error: null }
+    },
     from(table: string) {
       assert.equal(table, 'entity_memories')
       return {
@@ -234,6 +242,9 @@ test('findLatestMemorySince filters by entity, memory type, and recency, ordered
 
 test('findLatestMemorySince returns null when no recent memory exists', async () => {
   const db = {
+    async rpc(_fn: string, args: Record<string, unknown>) {
+      return { data: args.p_entity_id, error: null }
+    },
     from() {
       return {
         select() {
@@ -259,6 +270,10 @@ test('findLatestMemorySince returns null when no recent memory exists', async ()
 
 test('updateMemory patches the row by id and stamps updated_at', async () => {
   const db = {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      assert.equal(fn, 'resolve_entity_redirect_v1')
+      return { data: args.p_entity_id, error: null }
+    },
     from(table: string) {
       assert.equal(table, 'entity_memories')
       return {
@@ -559,6 +574,106 @@ test('findMemories uses explicit identity without depending on title', async () 
 
   assert.equal(found[0].id, baseMemory.id)
   assert.equal(found[0].memory_identity_key, identity)
+})
+
+test('news compatibility lookup uses canonical source-item and Entity scope', async () => {
+  const filters: Array<[string, unknown]> = []
+  const contained: Array<[string, Record<string, unknown>]> = []
+  const builder = {
+    select(columns: string) {
+      assert.equal(columns, __testing.MEMORY_SELECT)
+      return this
+    },
+    eq(column: string, value: unknown) {
+      filters.push([column, value])
+      return this
+    },
+    contains(column: string, value: Record<string, unknown>) {
+      contained.push([column, value])
+      return this
+    },
+    order(column: string, options: { ascending: boolean }) {
+      assert.equal(column, 'created_at')
+      assert.deepEqual(options, { ascending: true })
+      return this
+    },
+    limit(value: number) {
+      assert.equal(value, 1)
+      return this
+    },
+    async maybeSingle() {
+      return { data: baseMemory, error: null }
+    },
+  }
+  const db = {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      assert.equal(fn, 'resolve_entity_redirect_v1')
+      return { data: args.p_entity_id, error: null }
+    },
+    from(table: string) {
+      assert.equal(table, 'entity_memories')
+      return builder
+    },
+  } as unknown as SupabaseClient
+
+  const found = await new SupabaseEntityMemoryStore(db).findCanonicalPacketMemory(
+    'news', 'feed', 'packet-2', 'entity-1', 'news-item-1',
+  )
+
+  assert.equal(found?.id, baseMemory.id)
+  assert.deepEqual(filters, [
+    ['source', 'news'],
+    ['source_area', 'feed'],
+    ['entity_id', 'entity-1'],
+  ])
+  assert.deepEqual(contained, [['context', { canonical_source_item_id: 'news-item-1' }]])
+})
+
+test('legacy identity lookup uses the canonical redirect-aware RPC', async () => {
+  const calls: Array<{ fn: string, args: Record<string, unknown> }> = []
+  const db = {
+    async rpc(fn: string, args: Record<string, unknown>) {
+      calls.push({ fn, args })
+      return { data: [{ ...baseEntity, total_count: 1 }], error: null }
+    },
+  } as unknown as SupabaseClient
+
+  const found = await new SupabaseEntityMemoryStore(db).findEntities(['legacy-bitcoin'], ['Legacy Bitcoin'])
+
+  assert.equal(found[0]?.id, baseEntity.id)
+  assert.equal(calls[0]?.fn, 'entity_manager_lookup_entities_v1')
+  assert.deepEqual(calls[0]?.args, {
+    p_slugs: ['legacy-bitcoin'],
+    p_names: ['Legacy Bitcoin'],
+    p_aliases: ['Legacy Bitcoin'],
+    p_limit: 100,
+  })
+})
+
+test('direct memory reads resolve archived Entity IDs before querying', async () => {
+  const targetId = 'entity-canonical'
+  const filters: Array<[string, unknown]> = []
+  const builder = {
+    select() { return this },
+    eq(column: string, value: unknown) { filters.push([column, value]); return this },
+    gte() { return this },
+    order() { return this },
+    limit() { return this },
+    async maybeSingle() { return { data: null, error: null } },
+  }
+  const db = {
+    async rpc(fn: string) {
+      assert.equal(fn, 'resolve_entity_redirect_v1')
+      return { data: targetId, error: null }
+    },
+    from() { return builder },
+  } as unknown as SupabaseClient
+
+  await new SupabaseEntityMemoryStore(db).findLatestMemorySince(
+    'entity-archived', 'news_event', '2026-06-30T12:00:00.000Z',
+  )
+
+  assert.deepEqual(filters[0], ['entity_id', targetId])
 })
 
 test('malformed explicit identity fails before issuing a Supabase query', async () => {

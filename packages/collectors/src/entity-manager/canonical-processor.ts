@@ -1,4 +1,8 @@
 import type { ResearchPacketV1, ResearchWorkItem } from '../signal-platform/contracts'
+import {
+  claimRefsForIdentityLabels,
+  deriveEntityHintClaimRefs,
+} from '../signal-platform/entity-hint-claims'
 import type { InferenceTelemetry } from '../inference-gateway/types'
 import { PlatformFailure } from '../signal-platform/failures'
 import {
@@ -20,6 +24,14 @@ import {
   type EntityAdmissionKnowledgeContextV1,
   type EntityAdmissionKnowledgePort,
 } from './entity-knowledge-context'
+import {
+  entityAliasIsStructurallyRelated,
+  entityHintAuthorizesPrimarySelection,
+  entityHintCanonicalLabels,
+  entityHintIdentityLabels,
+  groundEntityCandidates,
+  type EntityGroundingSupport,
+} from './entity-grounding'
 import { EntityService } from './entity-service'
 import { deriveMemoryIdentityKey } from './memory-identity'
 import { normalizeSlug } from './normalization'
@@ -45,13 +57,15 @@ import type {
   ResearchPacket,
 } from './types'
 
-export const CANONICAL_ENTITY_PLAN_SCHEMA_VERSION = 'myboon.canonical_entity_plan.v1' as const
-export const CANONICAL_ENTITY_SHORTLIST_POLICY_VERSION = 'myboon.entity_shortlist.v2' as const
+export const CANONICAL_ENTITY_PLAN_SCHEMA_VERSION = 'myboon.canonical_entity_plan.v2' as const
+export const CANONICAL_ENTITY_SHORTLIST_POLICY_VERSION = 'myboon.entity_shortlist.v3' as const
 
-const MAX_PLAN_MEMORIES = 10
 const MAX_CANON_LOOKUP_SLUGS = 100
 const MAX_CANON_LOOKUP_NAMES = 20
 const MAX_CANON_LOOKUP_ALIASES = 100
+const CANONICAL_NEWS_LOOKBACK_HOURS = 48
+const CANONICAL_NEWS_LOOKBACK_LIMIT = 30
+const CANONICAL_NEWS_UPDATE_MIN_CONFIDENCE = 0.8
 const MEMORY_TYPES = new Set<EntityMemoryType>([
   'research_note',
   'market_signal',
@@ -78,15 +92,54 @@ export interface CanonicalEntityMemoryDraft {
   context?: Record<string, unknown>
 }
 
+export interface CanonicalRecentMemoryContext {
+  id: string
+  entityId: string
+  entitySlug: string
+  entityName: string
+  memoryType: EntityMemoryType
+  title: string
+  summary: string
+  eventAt: string | null
+  observedAt: string
+  sourceResearchId: string
+  sourceItemId: string | null
+  sourceUrl: string | null
+  sourceContentHash: string | null
+}
+
+export type CanonicalNoRelevantSubjectDecision = {
+  action: 'no_relevant_subject'
+  reasonCode: 'no_evidence_backed_subject' | 'ambiguous_identity' | 'source_only_subject' | 'no_durable_subject'
+  reason: string
+}
+
+export type CanonicalMemoryDecision =
+  | { action: 'keep'; memory: CanonicalEntityMemoryDraft }
+  | {
+    action: 'update'
+    subtype: 'material_update' | 'duplicate_source'
+    existingMemoryId: string
+    confidence: number
+    reason: string
+    memory: CanonicalEntityMemoryDraft
+  }
+  | {
+    action: 'drop'
+    reasonCode: 'no_relevant_subject' | 'no_material_change' | 'duplicate_without_new_evidence' | 'low_durable_value'
+    reason: string
+  }
+
 export interface CanonicalEntityPlan {
   schemaVersion: typeof CANONICAL_ENTITY_PLAN_SCHEMA_VERSION
-  decision: EntityAdmissionDecision
-  memories: CanonicalEntityMemoryDraft[]
+  decision: EntityAdmissionDecision | CanonicalNoRelevantSubjectDecision
+  memory: CanonicalMemoryDecision
 }
 
 export interface CanonicalEntityPlanningInput {
   admission: EntityAdmissionInput
   packet: ResearchPacket
+  recentMemories: CanonicalRecentMemoryContext[]
   work: ResearchWorkItem
   signal: AbortSignal
 }
@@ -203,20 +256,35 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
   async process(input: CanonicalPacketProcessorInput): Promise<CanonicalPacketProcessorResult> {
     const canonicalPacket = validateProcessorInput(input)
     ensureNotAborted(input.signal)
-    const adaptedPacket = adaptCanonicalResearchPacket(canonicalPacket)
+    const groundedPacket: ResearchPacketV1 = {
+      ...canonicalPacket,
+      entityHints: deriveEntityHintClaimRefs(canonicalPacket.entityHints, canonicalPacket.claims),
+    }
+    const adaptedPacket = adaptCanonicalResearchPacket(groundedPacket)
     const packet: ResearchPacket = {
       ...adaptedPacket,
-      context: { ...adaptedPacket.context, ...sourceMediaContext(canonicalPacket) },
+      context: { ...adaptedPacket.context, ...sourceMediaContext(groundedPacket) },
     }
 
-    const packetLookup = await canonLookupCall(this.canonLookup, packetHintQuery(canonicalPacket), 'packet entity shortlist')
-    const catalog = uniqueEntities(packetLookup.entities.filter((entity) => entity.status === 'active'))
-    const subjectSourceEntitySlugs = explicitlySupportedSourceEntitySlugs(canonicalPacket)
+    const packetQuery = packetHintQuery(groundedPacket)
+    const packetLookup = await canonLookupCall(this.canonLookup, packetQuery.query, 'packet entity shortlist')
+    const lookupCatalog = uniqueEntities(packetLookup.entities.filter((entity) => entity.status === 'active'))
+    const packetLookupComplete = packetLookup.complete && !packetQuery.truncated
+    const grounding = groundEntityCandidates(lookupCatalog, groundedPacket.entityHints)
+    const claimGroundedEntityIds = new Set(grounding.support
+      .filter((support) => support.primarySelectionAuthorized && support.supportingClaimIds.length > 0)
+      .map((support) => support.entityId))
+    // Alias uniqueness cannot be established from a partial canon page. An
+    // exact proposal-specific lookup may still safely resolve or create later.
+    const catalog = packetLookupComplete
+      ? grounding.candidates.filter((entity) => claimGroundedEntityIds.has(entity.id))
+      : []
+    const subjectSourceEntitySlugs = explicitlySupportedSourceEntitySlugs(groundedPacket)
     const shortlistEntities = targetedShortlist(catalog, packet, subjectSourceEntitySlugs)
     const knowledgeByEntityId = await admissionKnowledgeByEntityId(
       this.options.admissionKnowledge,
       shortlistEntities,
-      canonicalPacket,
+      groundedPacket,
       input.signal,
     )
     ensureNotAborted(input.signal)
@@ -230,51 +298,90 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
       rank,
       ...(knowledgeByEntityId.has(entity.id) ? { knowledge: knowledgeByEntityId.get(entity.id)! } : {}),
     }))
-    const canonAvailability: CanonAvailability = packetLookup.complete
+    const canonAvailability: CanonAvailability = packetLookupComplete
       ? { state: 'loaded', complete: true }
-      : { state: 'loaded', complete: false, detail: 'Packet identity lookup was incomplete.' }
+      : {
+        state: 'loaded',
+        complete: false,
+        detail: packetQuery.truncated
+          ? 'Packet identity hints exceeded the bounded lookup window.'
+          : 'Packet identity lookup was incomplete.',
+      }
     const admission = buildEntityAdmissionInput({
-      packet: canonicalPacket,
+      packet: groundedPacket,
       canonicalEntityShortlist: shortlist,
-      evidenceSpans: evidenceSpans(canonicalPacket),
+      evidenceSpans: evidenceSpans(groundedPacket),
       shortlistPolicyVersion: this.options.shortlistPolicyVersion ?? CANONICAL_ENTITY_SHORTLIST_POLICY_VERSION,
       canonAvailability,
     })
+    const recentMemoryRows = await loadCanonicalRecentMemories(
+      this.options.store,
+      groundedPacket,
+      shortlistEntities,
+    )
+    const recentMemories = recentMemoryContext(recentMemoryRows, shortlistEntities)
 
     const rawPlanningResult = await providerCall('Entity planning', () => this.options.planner.plan({
       admission,
       packet,
+      recentMemories,
       work: input.work,
       signal: input.signal,
     }))
     const planningResult = planningResultFrom(rawPlanningResult)
     try {
       ensureNotAborted(input.signal)
-      const plan = normalizePlan(planningResult.plan, canonicalPacket)
+      const plan = normalizePlan(planningResult.plan, groundedPacket, recentMemories)
+      if (plan.decision.action === 'no_relevant_subject') {
+        return { entityTelemetry: planningResult.telemetry, memoryOutcome: 'skipped' }
+      }
+      if (plan.memory.action === 'drop') {
+        if (plan.decision.action === 'create_new') {
+          throw new CanonicalEntityProcessorValidationError('A dropped memory cannot create a new canonical Entity.')
+        }
+        const validated = validateEntityAdmissionDecision(admission, plan.decision)
+        validateGroundedDecisionSupport(validated, grounding.support)
+        return { entityTelemetry: planningResult.telemetry, memoryOutcome: 'skipped' }
+      }
       const resolved = await resolveAdmissionDecision(admission, plan.decision, this.canonLookup)
+      const resolvedGrounding = resolved.collisionEntities.length > 0
+        ? groundEntityCandidates(
+          uniqueEntities([...lookupCatalog, ...resolved.collisionEntities]),
+          groundedPacket.entityHints,
+        )
+        : grounding
+      const primarySupport = resolved.decision.action === 'select_existing'
+        ? validateGroundedDecisionSupport(resolved.decision, resolvedGrounding.support)
+        : resolved.proposalSupport
+      if (!primarySupport) {
+        throw new CanonicalEntityProcessorValidationError('Resolved Entity is missing authoritative grounding support.')
+      }
+      validateResolvedMemoryDecision(plan.memory, resolved.decision, recentMemoryRows, groundedPacket)
+      validateMemoryGroundingSupport(plan.memory.memory, primarySupport, groundedPacket)
       const processingCatalog = uniqueEntities([...catalog, ...resolved.collisionEntities])
       const extraction = extractionFor(
         resolved.decision,
-        plan.memories,
-        canonicalPacket,
+        plan.memory,
+        groundedPacket,
         input.work,
         processingCatalog,
         planningResult.telemetry,
       )
 
-    // The scoped adapter serves the exact canon used for admission and injects
-    // stable identities at the final store boundary. EntityService therefore
-    // retains its resolver behavior without title-based replay identity.
+      // The scoped adapter serves the exact canon used for admission and injects
+      // stable identities at the final store boundary. EntityService therefore
+      // retains its resolver behavior without title-based replay identity.
       const scopedStore = new CanonicalIdentityStore(
         this.options.store,
         processingCatalog,
-        canonicalPacket,
-        plan.memories,
+        groundedPacket,
+        [plan.memory.memory],
         resolved.decision.action === 'select_existing' ? resolved.decision.entityId : null,
+        recentMemoryRows,
       )
       const service = new EntityService(scopedStore)
       await service.writeExtraction(packet, { async extract() { return extraction } })
-      return { entityTelemetry: planningResult.telemetry }
+      return { entityTelemetry: planningResult.telemetry, memoryOutcome: 'written' }
     } catch (error) {
       const failure = error instanceof PlatformFailure ? error : new CanonicalEntityProcessorValidationError(
         error instanceof Error ? error.message : 'Canonical EntityService processing failed.',
@@ -345,9 +452,25 @@ interface NormalizedMemoryDraft extends CanonicalEntityMemoryDraft {
   context: Record<string, unknown>
 }
 
-function normalizePlan(value: unknown, packet: ResearchPacketV1): {
-  decision: EntityAdmissionDecision
-  memories: NormalizedMemoryDraft[]
+type NormalizedCanonicalMemoryDecision =
+  | { action: 'keep'; memory: NormalizedMemoryDraft }
+  | {
+    action: 'update'
+    subtype: 'material_update' | 'duplicate_source'
+    existingMemoryId: string
+    confidence: number
+    reason: string
+    memory: NormalizedMemoryDraft
+  }
+  | Extract<CanonicalMemoryDecision, { action: 'drop' }>
+
+function normalizePlan(
+  value: unknown,
+  packet: ResearchPacketV1,
+  recentMemories: readonly CanonicalRecentMemoryContext[],
+): {
+  decision: EntityAdmissionDecision | CanonicalNoRelevantSubjectDecision
+  memory: NormalizedCanonicalMemoryDecision
 } {
   if (!isRecord(value) || value.schemaVersion !== CANONICAL_ENTITY_PLAN_SCHEMA_VERSION) {
     throw new CanonicalEntityProcessorValidationError(
@@ -357,71 +480,153 @@ function normalizePlan(value: unknown, packet: ResearchPacketV1): {
   if (!isRecord(value.decision)) {
     throw new CanonicalEntityProcessorValidationError('Entity plan decision is required.')
   }
-  if (!Array.isArray(value.memories) || value.memories.length < 1 || value.memories.length > MAX_PLAN_MEMORIES) {
-    throw new CanonicalEntityProcessorValidationError(`Entity plan must contain 1-${MAX_PLAN_MEMORIES} memories.`)
+  if (!isRecord(value.memory)) {
+    throw new CanonicalEntityProcessorValidationError('Entity plan memory decision is required.')
   }
+  const decision = normalizePlanDecision(value.decision)
+  const memory = normalizeMemoryDecision(value.memory, packet, recentMemories)
+  if (decision.action === 'no_relevant_subject') {
+    if (memory.action !== 'drop' || memory.reasonCode !== 'no_relevant_subject') {
+      throw new CanonicalEntityProcessorValidationError(
+        'no_relevant_subject must pair with a no_relevant_subject drop decision.',
+      )
+    }
+  } else if (memory.action === 'drop' && memory.reasonCode === 'no_relevant_subject') {
+    throw new CanonicalEntityProcessorValidationError(
+      'A relevant Entity admission decision cannot use the no_relevant_subject drop reason.',
+    )
+  }
+  return { decision, memory }
+}
+
+function normalizePlanDecision(value: Record<string, unknown>): EntityAdmissionDecision | CanonicalNoRelevantSubjectDecision {
+  if (value.action !== 'no_relevant_subject') return value as unknown as EntityAdmissionDecision
+  const reasonCodes = new Set<CanonicalNoRelevantSubjectDecision['reasonCode']>([
+    'no_evidence_backed_subject',
+    'ambiguous_identity',
+    'source_only_subject',
+    'no_durable_subject',
+  ])
+  if (typeof value.reasonCode !== 'string' || !reasonCodes.has(value.reasonCode as CanonicalNoRelevantSubjectDecision['reasonCode'])) {
+    throw new CanonicalEntityProcessorValidationError('no_relevant_subject reasonCode is unsupported.')
+  }
+  return {
+    action: 'no_relevant_subject',
+    reasonCode: value.reasonCode as CanonicalNoRelevantSubjectDecision['reasonCode'],
+    reason: boundedText(value.reason, 'decision.reason', 1_000),
+  }
+}
+
+function normalizeMemoryDecision(
+  value: Record<string, unknown>,
+  packet: ResearchPacketV1,
+  recentMemories: readonly CanonicalRecentMemoryContext[],
+): NormalizedCanonicalMemoryDecision {
+  if (value.action === 'drop') {
+    const reasonCodes = new Set<Extract<CanonicalMemoryDecision, { action: 'drop' }>['reasonCode']>([
+      'no_relevant_subject',
+      'no_material_change',
+      'duplicate_without_new_evidence',
+      'low_durable_value',
+    ])
+    if (typeof value.reasonCode !== 'string' || !reasonCodes.has(value.reasonCode as never)) {
+      throw new CanonicalEntityProcessorValidationError('Memory drop reasonCode is unsupported.')
+    }
+    return {
+      action: 'drop',
+      reasonCode: value.reasonCode as Extract<CanonicalMemoryDecision, { action: 'drop' }>['reasonCode'],
+      reason: boundedText(value.reason, 'memory.reason', 1_000),
+    }
+  }
+  if (value.action !== 'keep' && value.action !== 'update') {
+    throw new CanonicalEntityProcessorValidationError('Memory action must be keep, update, or drop.')
+  }
+  if (!isRecord(value.memory)) {
+    throw new CanonicalEntityProcessorValidationError(`Memory ${value.action} requires one memory object.`)
+  }
+  const memory = normalizeMemoryDraft(value.memory, packet)
+  if (packet.sourceType === 'news' && memory.memoryType !== 'news_event') {
+    throw new CanonicalEntityProcessorValidationError('Canonical news packets may retain only one news_event memory.')
+  }
+  if (value.action === 'keep') return { action: 'keep', memory }
+
+  const existingMemoryId = boundedText(value.existingMemoryId, 'memory.existingMemoryId', 500)
+  const target = recentMemories.find((item) => item.id === existingMemoryId)
+  if (!target) {
+    throw new CanonicalEntityProcessorValidationError('Memory update target must be present in the supplied recent-memory context.')
+  }
+  const confidence = confidenceValue(value.confidence, 'memory.confidence')
+  if (confidence === null || confidence < CANONICAL_NEWS_UPDATE_MIN_CONFIDENCE) {
+    throw new CanonicalEntityProcessorValidationError(
+      `Memory update confidence must be at least ${CANONICAL_NEWS_UPDATE_MIN_CONFIDENCE}.`,
+    )
+  }
+  if (value.subtype !== 'material_update' && value.subtype !== 'duplicate_source') {
+    throw new CanonicalEntityProcessorValidationError('Memory update subtype must be material_update or duplicate_source.')
+  }
+  return {
+    action: 'update',
+    subtype: value.subtype,
+    existingMemoryId,
+    confidence,
+    reason: boundedText(value.reason, 'memory.reason', 1_000),
+    memory,
+  }
+}
+
+function normalizeMemoryDraft(item: Record<string, unknown>, packet: ResearchPacketV1): NormalizedMemoryDraft {
   const claimIds = new Set(packet.claims.map((claim) => claim.claimId))
   const evidenceIds = new Set(packet.evidence.map((evidence) => evidence.evidenceId))
-  const correspondenceKeys = new Set<string>()
-  const identityShapes = new Set<string>()
-  const memories = value.memories.map((item, index): NormalizedMemoryDraft => {
-    if (!isRecord(item)) throw new CanonicalEntityProcessorValidationError(`memories[${index}] must be an object.`)
-    const memoryType = memoryTypeValue(item.memoryType, index)
-    const memoryRole = stableRole(item.memoryRole, index)
-    const representedClaimIds = references(item.representedClaimIds, claimIds, `memories[${index}].representedClaimIds`)
-    const explicitEvidenceIds = references(
-      item.representedEvidenceIds,
-      evidenceIds,
-      `memories[${index}].representedEvidenceIds`,
-    )
-    const representedClaimSet = new Set(representedClaimIds)
-    const representedEvidenceIds = [...new Set([
-      ...explicitEvidenceIds,
-      ...packet.claims
-        .filter((claim) => representedClaimSet.has(claim.claimId))
-        .flatMap((claim) => claim.evidenceRefs),
-    ])].sort(compareStrings)
-    if (representedClaimIds.length === 0 && representedEvidenceIds.length === 0) {
-      throw new CanonicalEntityProcessorValidationError(`memories[${index}] must represent a packet claim or evidence item.`)
-    }
-    const title = boundedText(item.title, `memories[${index}].title`, 240)
-    const summary = boundedText(item.summary, `memories[${index}].summary`, 2_000)
-    const correspondenceKey = `${memoryType}\u001f${title}`
-    if (correspondenceKeys.has(correspondenceKey)) {
-      throw new CanonicalEntityProcessorValidationError('Memory type/title pairs must be unique within an Entity plan.')
-    }
-    correspondenceKeys.add(correspondenceKey)
-    const identityShape = JSON.stringify([memoryType, memoryRole, representedClaimIds, representedEvidenceIds])
-    if (identityShapes.has(identityShape)) {
-      throw new CanonicalEntityProcessorValidationError('Entity plan contains duplicate stable memory identity material.')
-    }
-    identityShapes.add(identityShape)
-    return {
-      memoryType,
-      memoryRole,
-      representedClaimIds,
-      representedEvidenceIds,
-      title,
-      summary,
-      body: nullableText(item.body, `memories[${index}].body`, 20_000),
-      eventAt: nullableTimestamp(item.eventAt, `memories[${index}].eventAt`),
-      observedAt: optionalTimestamp(item.observedAt, `memories[${index}].observedAt`),
-      confidence: confidenceValue(item.confidence, index),
-      mentions: stringArray(item.mentions ?? [], `memories[${index}].mentions`),
-      metrics: plainRecord(item.metrics, `memories[${index}].metrics`),
-      context: plainRecord(item.context, `memories[${index}].context`),
-    }
-  })
-  return { decision: value.decision as unknown as EntityAdmissionDecision, memories }
+  const memoryType = memoryTypeValue(item.memoryType, 0)
+  const memoryRole = stableRole(item.memoryRole, 0)
+  const representedClaimIds = references(item.representedClaimIds, claimIds, 'memory.memory.representedClaimIds')
+  const explicitEvidenceIds = references(
+    item.representedEvidenceIds,
+    evidenceIds,
+    'memory.memory.representedEvidenceIds',
+  )
+  const representedClaimSet = new Set(representedClaimIds)
+  const representedEvidenceIds = [...new Set([
+    ...explicitEvidenceIds,
+    ...packet.claims
+      .filter((claim) => representedClaimSet.has(claim.claimId))
+      .flatMap((claim) => claim.evidenceRefs),
+  ])].sort(compareStrings)
+  if (representedClaimIds.length === 0 && representedEvidenceIds.length === 0) {
+    throw new CanonicalEntityProcessorValidationError('Retained memory must represent a packet claim or evidence item.')
+  }
+  return {
+    memoryType,
+    memoryRole,
+    representedClaimIds,
+    representedEvidenceIds,
+    title: boundedText(item.title, 'memory.memory.title', 240),
+    summary: boundedText(item.summary, 'memory.memory.summary', 2_000),
+    body: nullableText(item.body, 'memory.memory.body', 20_000),
+    eventAt: nullableTimestamp(item.eventAt, 'memory.memory.eventAt'),
+    observedAt: optionalTimestamp(item.observedAt, 'memory.memory.observedAt'),
+    confidence: confidenceValue(item.confidence, 'memory.memory.confidence'),
+    mentions: stringArray(item.mentions ?? [], 'memory.memory.mentions'),
+    metrics: plainRecord(item.metrics, 'memory.memory.metrics'),
+    context: plainRecord(item.context, 'memory.memory.context'),
+  }
 }
 
 async function resolveAdmissionDecision(
   admission: EntityAdmissionInput,
   decision: EntityAdmissionDecision,
   canonLookup: EntityCanonLookup,
-): Promise<{ decision: ValidatedEntityAdmissionDecision; collisionEntities: EntityRecord[] }> {
+): Promise<{
+  decision: ValidatedEntityAdmissionDecision
+  collisionEntities: EntityRecord[]
+  proposalSupport: EntityGroundingSupport | null
+}> {
   if (decision.action !== 'create_new') {
-    return { decision: validateEntityAdmissionDecision(admission, decision), collisionEntities: [] }
+    return {
+      decision: validateEntityAdmissionDecision(admission, decision),
+      collisionEntities: [],
+      proposalSupport: null,
+    }
   }
 
   // Validate the proposal shape and packet evidence first. Completeness is
@@ -434,6 +639,7 @@ async function resolveAdmissionDecision(
   if (normalized.action !== 'create_new') {
     throw new CanonicalEntityProcessorValidationError('Expected a normalized create_new decision.')
   }
+  const proposalSupport = validateNewEntityProposalGrounding(normalized, admission.packet)
   const collisions = await canonLookupCall(canonLookup, {
     slugs: [
       normalized.proposal.slug,
@@ -459,6 +665,7 @@ async function resolveAdmissionDecision(
         supportingEvidenceIds: normalized.supportingEvidenceIds,
       },
       collisionEntities: entities,
+      proposalSupport: null,
     }
   }
   if (entities.length > 0) {
@@ -468,7 +675,94 @@ async function resolveAdmissionDecision(
       retryable: false,
     })
   }
-  return { decision: normalized, collisionEntities: [] }
+  return { decision: normalized, collisionEntities: [], proposalSupport }
+}
+
+function validateNewEntityProposalGrounding(
+  decision: Extract<ValidatedEntityAdmissionDecision, { action: 'create_new' }>,
+  packet: ResearchPacketV1,
+): EntityGroundingSupport {
+  const proposal = decision.proposal
+  const candidate: EntityRecord = {
+    id: 'proposed-canonical-entity',
+    slug: proposal.slug,
+    name: proposal.name,
+    type: normalizeEntityType(proposal.type),
+    aliases: proposal.aliases,
+    summary: proposal.summary,
+    status: 'active',
+    show_in_carousel: false,
+    metadata: {},
+  }
+  const grounding = groundEntityCandidates([candidate], packet.entityHints)
+  const support = grounding.support.find((item) => (
+    item.entityId === candidate.id && item.primarySelectionAuthorized
+  ))
+  if (grounding.candidates.length !== 1 || !support) {
+    throw new CanonicalEntityProcessorValidationError(
+      'New Entity proposal must match an evidence-linked primary-subject hint.',
+    )
+  }
+  if (support.supportingClaimIds.length === 0) {
+    throw new CanonicalEntityProcessorValidationError(
+      'New Entity canonical name must be linked to a packet claim.',
+    )
+  }
+  if (!support.matches.some((match) => (
+    match.primarySelectionAuthorized && match.matchKind === 'canonical_name'
+  ))) {
+    throw new CanonicalEntityProcessorValidationError(
+      'New Entity canonical name must match an evidence-linked primary-subject hint.',
+    )
+  }
+  const supportedClaims = new Set(support.supportingClaimIds)
+  const supportedEvidence = new Set(support.supportingEvidenceIds)
+  if (
+    !decision.supportingClaimIds.some((id) => supportedClaims.has(id))
+    && !decision.supportingEvidenceIds.some((id) => supportedEvidence.has(id))
+  ) {
+    throw new CanonicalEntityProcessorValidationError(
+      'New Entity support does not overlap its authoritative packet hint.',
+    )
+  }
+  for (const alias of proposal.aliases) {
+    const groundedAlias = support.matches.some((match) => (
+      match.primarySelectionAuthorized
+      && match.matchKind === 'alias'
+      && groundingLabelKey(match.label) === groundingLabelKey(alias)
+    ))
+    const relatedToCanonicalName = entityAliasIsStructurallyRelated(alias, proposal.name)
+      || packet.entityHints.some((hint) => parentheticalAliasSupportsProposal(hint, proposal.name, alias))
+    if (
+      !groundedAlias
+      || !relatedToCanonicalName
+      || claimRefsForIdentityLabels([alias], packet.claims).length === 0
+    ) {
+      throw new CanonicalEntityProcessorValidationError(
+        `New Entity alias is not grounded by a subject-linked packet claim: ${alias}`,
+      )
+    }
+  }
+  return support
+}
+
+function parentheticalAliasSupportsProposal(
+  hint: ResearchPacketV1['entityHints'][number],
+  proposalName: string,
+  alias: string,
+): boolean {
+  const match = hint.name.normalize('NFKC').replace(/\s+/g, ' ').trim().match(/^(.+?)\s*\(([^()]+)\)$/)
+  if (!match) return false
+  return groundingLabelKey(match[1]) === groundingLabelKey(proposalName)
+    && groundingLabelKey(match[2]) === groundingLabelKey(alias)
+    && hint.aliases.some((candidate) => groundingLabelKey(candidate) === groundingLabelKey(alias))
+}
+
+function groundingLabelKey(value: string): string {
+  const normalized = value.normalize('NFKC').replace(/\s+/g, ' ').trim()
+  return /^\$?[A-Z][A-Z0-9.-]{1,9}$/.test(normalized)
+    ? normalized
+    : normalized.toLocaleLowerCase('en-US')
 }
 
 async function canonLookupCall(
@@ -499,13 +793,31 @@ async function canonLookupCall(
   return result
 }
 
-function packetHintQuery(packet: ResearchPacketV1): EntityCanonLookupQuery {
-  const labels = packet.entityHints.flatMap((hint) => [hint.name, ...hint.aliases])
+function packetHintQuery(packet: ResearchPacketV1): { query: EntityCanonLookupQuery; truncated: boolean } {
+  const prioritized = packet.entityHints
+    .map((hint, index) => ({ hint, index }))
+    .sort((left, right) => (
+      Number(entityHintAuthorizesPrimarySelection(right.hint.role))
+      - Number(entityHintAuthorizesPrimarySelection(left.hint.role))
+      || left.index - right.index
+    ))
+  const allLabels = uniqueStrings(prioritized.flatMap(({ hint }) => entityHintIdentityLabels(hint)))
+  const allNames = uniqueStrings(prioritized.flatMap(({ hint }) => entityHintCanonicalLabels(hint)))
+  const allAliases = uniqueStrings(prioritized.flatMap(({ hint }) => hint.aliases))
   return {
-    slugs: labels.map((label) => normalizeSlug(undefined, label)),
-    names: packet.entityHints.map((hint) => hint.name),
-    aliases: packet.entityHints.flatMap((hint) => hint.aliases),
+    query: {
+      slugs: allLabels.slice(0, MAX_CANON_LOOKUP_SLUGS).map((label) => normalizeSlug(undefined, label)),
+      names: allNames.slice(0, MAX_CANON_LOOKUP_NAMES),
+      aliases: allAliases.slice(0, MAX_CANON_LOOKUP_ALIASES),
+    },
+    truncated: allLabels.length > MAX_CANON_LOOKUP_SLUGS
+      || allNames.length > MAX_CANON_LOOKUP_NAMES
+      || allAliases.length > MAX_CANON_LOOKUP_ALIASES,
   }
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)]
 }
 
 function targetedShortlist(
@@ -572,14 +884,138 @@ function uniqueEntities(entities: readonly EntityRecord[]): EntityRecord[] {
   ).values()]
 }
 
+async function loadCanonicalRecentMemories(
+  store: EntityMemoryStore,
+  packet: ResearchPacketV1,
+  entities: readonly EntityRecord[],
+): Promise<EntityMemoryRecord[]> {
+  if (packet.sourceType !== 'news' || entities.length === 0) return []
+  const until = Date.parse(packet.observedAt)
+  if (!Number.isFinite(until)) {
+    throw new CanonicalEntityProcessorValidationError('Research Packet observedAt is invalid for memory lookback.')
+  }
+  const sinceIso = new Date(until - CANONICAL_NEWS_LOOKBACK_HOURS * 3_600_000).toISOString()
+  return storageCall('canonical Entity recent-memory lookback', () => store.listRecentMemories(
+    entities.map((entity) => entity.id),
+    sinceIso,
+    new Date(until).toISOString(),
+    CANONICAL_NEWS_LOOKBACK_LIMIT,
+    'news',
+  ))
+}
+
+function recentMemoryContext(
+  memories: readonly EntityMemoryRecord[],
+  entities: readonly EntityRecord[],
+): CanonicalRecentMemoryContext[] {
+  const byId = new Map(entities.map((entity) => [entity.id, entity]))
+  return memories.flatMap((memory) => {
+    const entity = memory.entity_id ? byId.get(memory.entity_id) : undefined
+    if (!entity) return []
+    return [{
+      id: memory.id,
+      entityId: entity.id,
+      entitySlug: entity.slug,
+      entityName: entity.name,
+      memoryType: memory.memory_type,
+      title: memory.title.slice(0, 240),
+      summary: memory.summary.slice(0, 700),
+      eventAt: memory.event_at,
+      observedAt: memory.observed_at,
+      sourceResearchId: memory.source_research_id,
+      sourceItemId: typeof memory.context.canonical_source_item_id === 'string'
+        ? memory.context.canonical_source_item_id.slice(0, 500)
+        : null,
+      sourceUrl: typeof memory.context.canonical_source_url === 'string'
+        ? memory.context.canonical_source_url.slice(0, 1_000)
+        : typeof memory.context.source_url === 'string'
+          ? memory.context.source_url.slice(0, 1_000)
+          : null,
+      sourceContentHash: typeof memory.context.canonical_source_content_hash === 'string'
+        ? memory.context.canonical_source_content_hash.slice(0, 500)
+        : null,
+    }]
+  })
+}
+
+function validateResolvedMemoryDecision(
+  memory: Exclude<NormalizedCanonicalMemoryDecision, { action: 'drop' }>,
+  decision: ValidatedEntityAdmissionDecision,
+  recentMemories: readonly EntityMemoryRecord[],
+  packet: ResearchPacketV1,
+): void {
+  if (memory.action !== 'update') return
+  if (decision.action !== 'select_existing') {
+    throw new CanonicalEntityProcessorValidationError('A memory update cannot create a new canonical Entity.')
+  }
+  const target = recentMemories.find((item) => item.id === memory.existingMemoryId)
+  if (!target || target.entity_id !== decision.entityId) {
+    throw new CanonicalEntityProcessorValidationError('Memory update target must belong to the selected canonical Entity.')
+  }
+  if (target.source_research_id === packet.packetId) {
+    throw new CanonicalEntityProcessorValidationError('Memory update target cannot come from the same Research Packet.')
+  }
+}
+
+function validateGroundedDecisionSupport(
+  decision: ValidatedEntityAdmissionDecision,
+  grounding: readonly EntityGroundingSupport[],
+): EntityGroundingSupport {
+  if (decision.action !== 'select_existing') {
+    throw new CanonicalEntityProcessorValidationError('Grounded support validation requires an existing Entity decision.')
+  }
+  const support = grounding.find((item) => (
+    item.entityId === decision.entityId && item.primarySelectionAuthorized
+  ))
+  if (!support) {
+    throw new CanonicalEntityProcessorValidationError(
+      'Selected Entity is not grounded by an evidence-linked primary-subject hint.',
+    )
+  }
+  const supportedClaims = new Set(support.supportingClaimIds)
+  const supportedEvidence = new Set(support.supportingEvidenceIds)
+  const overlaps = decision.supportingClaimIds.some((id) => supportedClaims.has(id))
+    || decision.supportingEvidenceIds.some((id) => supportedEvidence.has(id))
+  if (!overlaps) {
+    throw new CanonicalEntityProcessorValidationError(
+      'Selected Entity support does not overlap its authoritative packet hint.',
+    )
+  }
+  return support
+}
+
+function validateMemoryGroundingSupport(
+  memory: NormalizedMemoryDraft,
+  support: EntityGroundingSupport,
+  packet: ResearchPacketV1,
+): void {
+  const authoritative = support.matches.filter((match) => match.primarySelectionAuthorized)
+  const bestKind = authoritative.some((match) => match.matchKind === 'canonical_name')
+    ? 'canonical_name'
+    : authoritative.some((match) => match.matchKind === 'canonical_slug')
+      ? 'canonical_slug'
+      : 'alias'
+  const labels = authoritative
+    .filter((match) => match.matchKind === bestKind)
+    .map((match) => match.label)
+  const supportedClaims = new Set(claimRefsForIdentityLabels(labels, packet.claims))
+  const overlaps = memory.representedClaimIds.some((id) => supportedClaims.has(id))
+  if (!overlaps) {
+    throw new CanonicalEntityProcessorValidationError(
+      'Retained memory claims must overlap the selected Entity primary-subject hint.',
+    )
+  }
+}
+
 function extractionFor(
   decision: ValidatedEntityAdmissionDecision,
-  memories: NormalizedMemoryDraft[],
+  memoryDecision: Exclude<NormalizedCanonicalMemoryDecision, { action: 'drop' }>,
   packet: ResearchPacketV1,
   work: ResearchWorkItem,
   catalog: readonly EntityRecord[],
   telemetry: InferenceTelemetry | null,
 ): EntityMemoryExtraction {
+  const memory = memoryDecision.memory
   const existing = decision.action === 'select_existing'
     ? catalog.find((entity) => entity.id === decision.entityId)
     : undefined
@@ -610,7 +1046,7 @@ function extractionFor(
         createReason: 'canonical_entity_admission',
         metadata: traceContext(packet, work, decision.supportingClaimIds, decision.supportingEvidenceIds, telemetry),
       }],
-    memories: memories.map((memory): EntityMemoryCandidate => ({
+    memories: [{
       entitySlug,
       memoryType: memory.memoryType,
       title: memory.title,
@@ -632,12 +1068,64 @@ function extractionFor(
         ...traceContext(packet, work, memory.representedClaimIds, representedEvidenceIds(packet, memory), telemetry),
         canonical_memory_role: memory.memoryRole,
       },
-    })),
+      ...(memoryDecision.action === 'update' ? {
+        reconciliation: {
+          action: memoryDecision.subtype === 'duplicate_source' ? 'duplicate_source' as const : 'update_existing_story' as const,
+          existingMemoryId: memoryDecision.existingMemoryId,
+          confidence: memoryDecision.confidence,
+          reason: memoryDecision.reason,
+        },
+      } : {
+        reconciliation: { action: 'new_story' as const },
+      }),
+    }],
   }
+}
+
+function validateAtomicCreateResult(
+  created: EntityRecord,
+  requested: EntityInput,
+  packet: ResearchPacketV1,
+): void {
+  const requestedAliases = new Set(requested.aliases.map(groundingLabelKey))
+  const createdAliases = new Set(created.aliases.map(groundingLabelKey))
+  const identityMatches = created.slug === requested.slug
+    && groundingLabelKey(created.name) === groundingLabelKey(requested.name)
+    && normalizeEntityType(created.type) === normalizeEntityType(requested.type)
+    && createdAliases.size === requestedAliases.size
+    && [...requestedAliases].every((alias) => createdAliases.has(alias))
+    && created.status === 'active'
+  if (!identityMatches) {
+    throw new PlatformFailure({
+      category: 'storage_transient',
+      message: 'Atomic canonical Entity creation returned an identity-mismatched row; retry resolution.',
+      retryable: true,
+    })
+  }
+
+  const grounding = groundEntityCandidates([created], packet.entityHints)
+  const support = grounding.support.find((item) => (
+    item.entityId === created.id
+    && item.primarySelectionAuthorized
+    && item.supportingClaimIds.length > 0
+    && item.matches.some((match) => (
+      match.primarySelectionAuthorized && match.matchKind === 'canonical_name'
+    ))
+  ))
+  if (!support || grounding.candidates.length !== 1) {
+    throw new CanonicalEntityProcessorValidationError(
+      'Atomic canonical Entity creation result is not grounded by the packet subject.',
+    )
+  }
+}
+
+function uniqueMemoriesById(memories: readonly EntityMemoryRecord[]): EntityMemoryRecord[] {
+  return [...new Map(memories.map((memory) => [memory.id, memory])).values()]
 }
 
 class CanonicalIdentityStore implements EntityMemoryStore {
   private readonly entities: EntityRecord[]
+  private readonly compatibleIdentityByEntityId = new Map<string, string>()
 
   constructor(
     private readonly delegate: EntityMemoryStore,
@@ -645,21 +1133,38 @@ class CanonicalIdentityStore implements EntityMemoryStore {
     private readonly packet: ResearchPacketV1,
     private readonly drafts: readonly NormalizedMemoryDraft[],
     private readonly selectedExistingEntityId: string | null,
+    private readonly recentMemoryRows: readonly EntityMemoryRecord[] = [],
   ) {
     this.entities = [...catalog]
   }
 
   async listEntities(limit = 1_000): Promise<EntityRecord[]> {
-    return this.entities.slice(0, limit)
+    // The canonical planner has already made and validated the ownership
+    // decision. Do not let the legacy resolver's catalogue/near-duplicate
+    // heuristics override it after validation.
+    if (!this.selectedExistingEntityId) return []
+    return this.entities
+      .filter((entity) => entity.id === this.selectedExistingEntityId)
+      .slice(0, limit)
   }
 
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
     const wantedSlugs = new Set(slugs)
-    const wantedAliases = new Set(aliases.map((alias) => alias.toLowerCase()))
-    return this.entities.filter((entity) => (
-      wantedSlugs.has(entity.slug)
-      || entity.aliases.some((alias) => wantedAliases.has(alias.toLowerCase()))
-    ))
+    if (this.selectedExistingEntityId) {
+      const selected = this.entities.find((entity) => entity.id === this.selectedExistingEntityId)
+      if (!selected) {
+        throw new CanonicalEntityProcessorValidationError(
+          `Selected Entity disappeared: ${this.selectedExistingEntityId}`,
+        )
+      }
+      return wantedSlugs.has(selected.slug) ? [selected] : []
+    }
+
+    // A create_new plan has already passed a complete, proposal-specific
+    // identity collision lookup. Alias matching here would let the legacy
+    // resolver remap that validated decision, so only exact slugs participate.
+    void aliases
+    return this.entities.filter((entity) => wantedSlugs.has(entity.slug))
   }
 
   async createEntities(entities: EntityInput[]): Promise<EntityRecord[]> {
@@ -672,7 +1177,14 @@ class CanonicalIdentityStore implements EntityMemoryStore {
       if (!entity) return []
       return [await this.delegate.createCanonicalEntity(entity, identityQueryForEntity(entity))]
     })
-    for (const entity of created) this.remember(entity)
+    for (const [index, entity] of created.entries()) {
+      const requested = entities[index]
+      if (!requested) {
+        throw new CanonicalEntityProcessorValidationError('Canonical Entity creation returned an unexpected row.')
+      }
+      validateAtomicCreateResult(entity, requested, this.packet)
+      this.remember(entity)
+    }
     return created
   }
 
@@ -688,10 +1200,38 @@ class CanonicalIdentityStore implements EntityMemoryStore {
   }
 
   async findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]> {
-    return storageCall('find canonical entity memories', () => this.delegate.findMemories(keys.map((key) => ({
+    const compatibilityRows = this.delegate.findCanonicalPacketMemory
+      ? await storageCall('find canonical packet memory compatibility row', async () => {
+        const rows: EntityMemoryRecord[] = []
+        const seen = new Set<string>()
+        for (const key of keys) {
+          const entityId = key.entityId
+          if (!entityId) {
+            throw new CanonicalEntityProcessorValidationError('Canonical memory lookup requires an Entity ID.')
+          }
+          if (seen.has(entityId)) continue
+          seen.add(entityId)
+          const row = await this.delegate.findCanonicalPacketMemory!(
+            key.source,
+            key.sourceArea,
+            key.sourceResearchId,
+            entityId,
+            canonicalSourceItemIdentity(this.packet),
+          )
+          if (!row) continue
+          if (typeof row.memory_identity_key === 'string') {
+            this.compatibleIdentityByEntityId.set(entityId, row.memory_identity_key)
+          }
+          rows.push(row)
+        }
+        return rows
+      })
+      : []
+    const exactRows = await storageCall('find canonical entity memories', () => this.delegate.findMemories(keys.map((key) => ({
       ...key,
       memoryIdentityKey: this.identityFor(key.entityId, key.memoryType, key.title),
     }))))
+    return uniqueMemoriesById([...compatibilityRows, ...exactRows])
   }
 
   async upsertMemories(memories: EntityMemoryInput[]): Promise<EntityMemoryRecord[]> {
@@ -709,6 +1249,18 @@ class CanonicalIdentityStore implements EntityMemoryStore {
   async listRecentMemories(
     entityIds: string[], sinceIso: string, untilIso: string, limit: number, source: string,
   ): Promise<EntityMemoryRecord[]> {
+    if (this.packet.sourceType === 'news' && source === 'news') {
+      const wanted = new Set(entityIds)
+      const since = Date.parse(sinceIso)
+      const until = Date.parse(untilIso)
+      return this.recentMemoryRows.filter((memory) => (
+        memory.entity_id !== null
+        && wanted.has(memory.entity_id)
+        && memory.source === source
+        && Date.parse(memory.observed_at) >= since
+        && Date.parse(memory.observed_at) <= until
+      )).slice(0, Math.max(0, limit))
+    }
     return storageCall('list recent canonical entity memories', () => (
       this.delegate.listRecentMemories(entityIds, sinceIso, untilIso, limit, source)
     ))
@@ -736,6 +1288,8 @@ class CanonicalIdentityStore implements EntityMemoryStore {
 
   private identityFor(entityId: string | null, memoryType: EntityMemoryType, title: string): string {
     if (!entityId) throw new CanonicalEntityProcessorValidationError('Canonical memory must resolve to an Entity ID.')
+    const compatibleIdentity = this.compatibleIdentityByEntityId.get(entityId)
+    if (compatibleIdentity) return compatibleIdentity
     const draft = this.drafts.find((item) => item.memoryType === memoryType && item.title === title)
     if (!draft) throw new CanonicalEntityProcessorValidationError('Canonical memory does not match a validated plan item.')
     return deriveMemoryIdentityKey({
@@ -753,6 +1307,13 @@ class CanonicalIdentityStore implements EntityMemoryStore {
     if (index === -1) this.entities.push(entity)
     else this.entities[index] = entity
   }
+}
+
+function canonicalSourceItemIdentity(packet: ResearchPacketV1): string {
+  const sourceId = packet.sourceSignal.sourceId
+  return typeof sourceId === 'string' && sourceId.trim() !== ''
+    ? sourceId.trim()
+    : packet.signalId
 }
 
 function validateProcessorInput(input: CanonicalPacketProcessorInput): ResearchPacketV1 {
@@ -817,6 +1378,7 @@ function traceContext(
   evidenceIds: readonly string[],
   telemetry: InferenceTelemetry | null,
 ): Record<string, unknown> {
+  const sourceContent = isRecord(packet.sourceSignal.content) ? packet.sourceSignal.content : {}
   return {
     canonical_packet_id: packet.packetId,
     canonical_work_id: packet.workId,
@@ -828,6 +1390,11 @@ function traceContext(
     canonical_claim_ids: [...claimIds],
     canonical_evidence_ids: [...evidenceIds],
     canonical_source_provenance: packet.sourceSignal.provenance,
+    canonical_source_item_id: packet.sourceSignal.sourceId,
+    canonical_source_url: packet.sourceSignal.canonicalUrl,
+    canonical_source_content_hash: typeof sourceContent.contentHash === 'string'
+      ? sourceContent.contentHash
+      : null,
     canonical_source_media: isRecord(packet.sourceSignal.media) ? packet.sourceSignal.media : {},
     ...sourceMediaContext(packet),
     priority_class: work.priorityClass,
@@ -932,10 +1499,10 @@ function timestamp(value: unknown, field: string): string {
   return new Date(value).toISOString()
 }
 
-function confidenceValue(value: unknown, index: number): number | null {
+function confidenceValue(value: unknown, field: string): number | null {
   if (value === undefined || value === null) return null
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
-    throw new CanonicalEntityProcessorValidationError(`memories[${index}].confidence must be between 0 and 1.`)
+    throw new CanonicalEntityProcessorValidationError(`${field} must be between 0 and 1.`)
   }
   return value
 }

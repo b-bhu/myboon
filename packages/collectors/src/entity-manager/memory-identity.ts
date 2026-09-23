@@ -16,7 +16,10 @@ const MEMORY_TYPES = new Set<EntityKnowledgeMemoryType>([
 export interface MemoryIdentityPacketRef {
   packetId: ResearchPacketV1['packetId']
   workId: ResearchPacketV1['workId']
+  signalId: ResearchPacketV1['signalId']
   researchContractVersion: ResearchPacketV1['researchContractVersion'] | string
+  sourceType: ResearchPacketV1['sourceType']
+  sourceSignal: { [key: string]: unknown }
 }
 
 export interface MemoryIdentityInput {
@@ -29,7 +32,8 @@ export interface MemoryIdentityInput {
 }
 
 /**
- * Derives an opaque replay-stable key. Generated title, summary, and body are
+ * Derives one opaque replay-stable key per canonical packet/article and Entity.
+ * Model-authored memory shape and wording are validated where applicable but
  * intentionally absent from the canonical hash payload.
  */
 export function deriveMemoryIdentityKey(input: MemoryIdentityInput): string {
@@ -38,20 +42,32 @@ export function deriveMemoryIdentityKey(input: MemoryIdentityInput): string {
   if (representedClaimIds.length === 0 && representedEvidenceIds.length === 0) {
     throw new MemoryIdentityValidationError('At least one represented claim or evidence ID is required.')
   }
+  memoryType(input.memoryType)
+  nonEmpty(input.memoryRole, 'memoryRole')
 
   const canonical = JSON.stringify({
     identityVersion: MEMORY_IDENTITY_VERSION,
-    packetId: nonEmpty(input.packet.packetId, 'packet.packetId'),
-    workId: nonEmpty(input.packet.workId, 'packet.workId'),
-    researchContractVersion: nonEmpty(input.packet.researchContractVersion, 'packet.researchContractVersion'),
+    scope: input.packet.sourceType === 'news'
+      ? {
+        sourceType: 'news',
+        sourceItemId: sourceItemIdentity(input.packet),
+      }
+      : {
+        packetId: nonEmpty(input.packet.packetId, 'packet.packetId'),
+        workId: nonEmpty(input.packet.workId, 'packet.workId'),
+        researchContractVersion: nonEmpty(input.packet.researchContractVersion, 'packet.researchContractVersion'),
+      },
     canonicalEntityId: nonEmpty(input.canonicalEntityId, 'canonicalEntityId'),
-    memoryType: memoryType(input.memoryType),
-    memoryRole: nonEmpty(input.memoryRole, 'memoryRole'),
-    representedClaimIds,
-    representedEvidenceIds,
   })
   const digest = createHash('sha256').update(canonical, 'utf8').digest('hex')
   return `${MEMORY_IDENTITY_VERSION}:${digest}`
+}
+
+function sourceItemIdentity(packet: MemoryIdentityPacketRef): string {
+  const explicit = packet.sourceSignal.sourceId
+  return typeof explicit === 'string' && explicit.trim() !== ''
+    ? explicit.trim()
+    : nonEmpty(packet.signalId, 'packet.signalId')
 }
 
 export class MemoryIdentityValidationError extends Error {

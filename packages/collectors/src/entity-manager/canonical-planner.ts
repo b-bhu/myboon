@@ -15,7 +15,7 @@ import {
   withCanonicalEntityTelemetry,
 } from './canonical-processor'
 
-export const CANONICAL_ENTITY_PROMPT_VERSION = 'myboon.entity_planner_prompt.v2' as const
+export const CANONICAL_ENTITY_PROMPT_VERSION = 'myboon.entity_planner_prompt.v3' as const
 export const CANONICAL_ENTITY_WORKLOAD = 'entity.extract' as const
 
 const MAX_PROMPT_CHARS = 160_000
@@ -90,19 +90,30 @@ export class GatewayCanonicalEntityPlanner implements CanonicalEntityPlanningPor
 export function entityPlanningPrompt(input: CanonicalEntityPlanningInput): string {
   const hasReviewedKnowledge = input.admission.canonicalEntityShortlist.some((entity) => entity.knowledge !== undefined)
   return [
-    'Create a canonical Entity admission decision and durable memory plan.',
-    'Return only one JSON object with exactly these top-level keys: schemaVersion, decision, memories.',
+    'Create one canonical Entity admission decision and one explicit durable-memory decision.',
+    'Return only one JSON object with exactly these top-level keys: schemaVersion, decision, memory.',
     `Set schemaVersion to ${CANONICAL_ENTITY_PLAN_SCHEMA_VERSION}.`,
-    'Choose exactly one primary entity for this packet. Every memory in the response belongs to that entity.',
-    'Select only an entityId in canonicalEntityShortlist, or use create_new.',
+    'Choose one evidence-backed primary subject, or explicitly choose no_relevant_subject.',
+    'Select only an entityId in canonicalEntityShortlist, use create_new for a durable new subject, or return {"action":"no_relevant_subject","reasonCode":"<code>","reason":"<bounded explanation>"}.',
+    'An Entity alias, source/publisher/venue role, broad category, lexical mention, or relationship alone is not authority to select that Entity.',
+    'For select_existing, cite the exact supplied claim/evidence IDs that establish the selected Entity as the primary subject.',
     ...(hasReviewedKnowledge ? [
       'Some shortlisted entities include reviewed knowledge. Use it as structural context only.',
       'Shared classifications or relationships improve context but never make a broad parent the primary subject by themselves.',
       'Do not return or invent classification/relationship writes; this scoped contract only informs the existing Entity decision.',
     ] : []),
-    'decision must be either {"action":"select_existing","entityId":"<supplied entityId>","supportingClaimIds":[],"supportingEvidenceIds":[]} or {"action":"create_new","proposal":{"slug":"<slug>","name":"<name>","type":"<type>","aliases":[],"summary":null},"supportingClaimIds":[],"supportingEvidenceIds":[]}.',
-    'Each memory must use: memoryType, memoryRole, representedClaimIds, representedEvidenceIds, title, and summary. memoryType must be one of research_note, market_signal, news_event, social_signal, timeline_event, metric_change.',
-    'Every create_new decision and every memory must cite supplied claim/evidence IDs using the exact field names above.',
+    'decision must be select_existing, create_new, or no_relevant_subject. no_relevant_subject reasonCode must be one of no_evidence_backed_subject, ambiguous_identity, source_only_subject, no_durable_subject.',
+    'memory.action must be exactly one of keep, update, or drop. One packet cannot fan out into multiple durable memories.',
+    'keep uses {"action":"keep","memory":{...}} for one new durable observation.',
+    'update uses {"action":"update","subtype":"material_update|duplicate_source","existingMemoryId":"<supplied recent ID>","confidence":0.8,"reason":"...","memory":{...}}.',
+    'drop uses {"action":"drop","reasonCode":"no_relevant_subject|no_material_change|duplicate_without_new_evidence|low_durable_value","reason":"..."} and never deletes an existing row.',
+    'no_relevant_subject must pair with a no_relevant_subject drop. create_new cannot pair with drop or update.',
+    'For news, a retained memory must be one news_event. Do not turn article sections, paragraphs, or claim chunks into separate memories.',
+    'A retained memory uses: memoryType, memoryRole, representedClaimIds, representedEvidenceIds, title, and summary.',
+    'The retained memory must concern the selected primary Entity and cite at least one claim ID from that Entity hint; shared article evidence alone is insufficient.',
+    'Every create_new decision and retained memory must cite supplied claim/evidence IDs using the exact field names above.',
+    'Use recentMemories only as bounded prior knowledge. update may target only an exact supplied recent memory ID and requires confidence >= 0.8.',
+    'Use duplicate_source when another publisher covers the same underlying event without a material development; use material_update only for a real continuation.',
     'memoryRole is a stable semantic identifier; title and prose are presentation only.',
     'Do not use tools, browse, invent evidence, or expose internal reasoning.',
     '',
@@ -124,6 +135,7 @@ export function entityPlanningPrompt(input: CanonicalEntityPlanningInput): strin
         observedAt: input.packet.observedAt,
         eventAt: input.packet.eventAt ?? null,
       },
+      recentMemories: input.recentMemories,
     }),
   ].join('\n')
 }
@@ -134,11 +146,12 @@ function validatePlanEnvelope(value: unknown) {
     issues.push(`schemaVersion must be ${CANONICAL_ENTITY_PLAN_SCHEMA_VERSION}`)
   }
   const decision = isRecord(value) && isRecord(value.decision) ? value.decision : null
-  if (!decision || (decision.action !== 'select_existing' && decision.action !== 'create_new')) {
-    issues.push('decision.action must be select_existing or create_new')
+  if (!decision || !['select_existing', 'create_new', 'no_relevant_subject'].includes(String(decision.action))) {
+    issues.push('decision.action must be select_existing, create_new, or no_relevant_subject')
   }
-  if (!isRecord(value) || !Array.isArray(value.memories) || value.memories.length === 0) {
-    issues.push('memories must be a non-empty array')
+  const memory = isRecord(value) && isRecord(value.memory) ? value.memory : null
+  if (!memory || !['keep', 'update', 'drop'].includes(String(memory.action))) {
+    issues.push('memory.action must be keep, update, or drop')
   }
   return issues.length === 0
     ? { valid: true as const, value: value as unknown as CanonicalEntityPlan }

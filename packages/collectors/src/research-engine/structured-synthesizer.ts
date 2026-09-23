@@ -14,6 +14,7 @@ import {
   type ResearchWorkItem,
   type Signal,
 } from '../signal-platform/contracts'
+import { deriveEntityHintClaimRefs } from '../signal-platform/entity-hint-claims'
 import { validateResearchPacket } from '../signal-platform/validation'
 import type { RetrievedEvidenceArtifact } from './deterministic-retrieval'
 
@@ -137,6 +138,12 @@ export class StructuredResearchSynthesizer {
       ?? result.telemetry.configuredPrimaryProvider
     const actualModel = result.telemetry.actualModel
       ?? result.telemetry.configuredPrimaryModel
+    const claims = result.value.claims.map((claim, index) => ({
+      claimId: deterministicClaimId(packetId, index, claim.claim),
+      claim: claim.claim,
+      attributedTo: claim.attributedTo,
+      evidenceRefs: [...claim.evidenceRefs],
+    }))
     const packet: ResearchPacketV1 = {
       schemaVersion: RESEARCH_PACKET_SCHEMA_VERSION,
       packetId,
@@ -160,12 +167,7 @@ export class StructuredResearchSynthesizer {
           assets: [...input.signal.sourceHints.assets],
         },
       },
-      claims: result.value.claims.map((claim, index) => ({
-        claimId: deterministicClaimId(packetId, index, claim.claim),
-        claim: claim.claim,
-        attributedTo: claim.attributedTo,
-        evidenceRefs: [...claim.evidenceRefs],
-      })),
+      claims,
       verifiedFacts: result.value.verifiedFacts.map((fact) => ({
         fact: fact.fact,
         evidenceRefs: [...fact.evidenceRefs],
@@ -183,7 +185,7 @@ export class StructuredResearchSynthesizer {
         observedAt: artifact.retrievedAt,
         note: artifact.truncated ? 'Deterministic retrieval output was truncated.' : null,
       })),
-      entityHints: result.value.entityHints.map((hint) => ({
+      entityHints: deriveEntityHintClaimRefs(result.value.entityHints.map((hint) => ({
         name: hint.name,
         type: hint.type,
         role: hint.role,
@@ -191,7 +193,7 @@ export class StructuredResearchSynthesizer {
         source: hint.source,
         claimRefs: [],
         evidenceRefs: [...hint.evidenceRefs],
-      })),
+      })), claims),
       limitations,
       openQuestions: [...result.value.openQuestions],
       completion: result.value.completion,
@@ -428,11 +430,13 @@ function buildPrompt(input: StructuredSynthesisInput, sourceOnlyLight: boolean):
     'Do not use tools, browsing, search, terminal/code execution, trading, publishing, or external knowledge.',
     'Use only the supplied material. Evidence references must exactly match an allowed evidenceId.',
     'Every entityHints item must contain at least one allowed evidenceId in evidenceRefs. Do not emit claimRefs; code owns claim IDs.',
+    'Classify every entityHints role explicitly when evidence permits: use subject or primary_subject only for a true report subject; use publisher, source, venue, mentioned, or context for non-subject entities. Use null only when the role is genuinely indeterminate.',
+    'For every subject Entity, explicitly use its canonical name in at least one claim text; attributedTo, an alias, or a ticker alone cannot establish the durable memory owner.',
     sourceOnlyLight
       ? 'This is light source-only research. Keep source statements in claims/unresolvedClaims; verifiedFacts MUST be empty because there is no independent evidence.'
       : 'Use verifiedFacts only for facts supported by the supplied evidence.',
     'Return JSON only, with exactly these top-level keys and no envelope metadata:',
-    '{"claims":[{"claim":"...","attributedTo":null,"evidenceRefs":["evidence_id"]}],"verifiedFacts":[{"fact":"...","evidenceRefs":["evidence_id"]}],"unresolvedClaims":[{"claim":"...","reason":"...","evidenceRefs":["evidence_id"]}],"entityHints":[{"name":"...","type":null,"role":null,"aliases":[],"source":null,"evidenceRefs":["evidence_id"]}],"limitations":[],"openQuestions":[],"completion":"complete|partial|failed"}',
+    '{"claims":[{"claim":"...","attributedTo":null,"evidenceRefs":["evidence_id"]}],"verifiedFacts":[{"fact":"...","evidenceRefs":["evidence_id"]}],"unresolvedClaims":[{"claim":"...","reason":"...","evidenceRefs":["evidence_id"]}],"entityHints":[{"name":"...","type":null,"role":"subject","aliases":[],"source":null,"evidenceRefs":["evidence_id"]}],"limitations":[],"openQuestions":[],"completion":"complete|partial|failed"}',
     `Allowed evidence IDs: ${JSON.stringify(input.evidence.map((item) => item.evidenceId))}`,
     '',
     '<UNTRUSTED_SIGNAL_JSON>',

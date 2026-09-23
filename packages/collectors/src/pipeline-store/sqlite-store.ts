@@ -392,6 +392,20 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS pipeline_editor_drafts_source_idx
       ON pipeline_editor_drafts (source, source_area, created_at DESC);
 
+    -- Entity catalogue cleanup acquires a short-lived row here before it
+    -- checks actionable drafts and calls the remote merge transaction. Draft
+    -- upserts check the same table inside their SQLite transaction, closing
+    -- the cross-database count-then-merge race without blocking readers.
+    CREATE TABLE IF NOT EXISTS pipeline_entity_cleanup_leases (
+      entity_id TEXT PRIMARY KEY,
+      lease_owner TEXT NOT NULL,
+      lease_expires_at_ms INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS pipeline_entity_cleanup_leases_expiry_idx
+      ON pipeline_entity_cleanup_leases (lease_expires_at_ms);
+
     CREATE TABLE IF NOT EXISTS pipeline_runs (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
@@ -1308,6 +1322,21 @@ export class SqlitePipelineStore implements PipelineStore {
     if (drafts.length === 0) return []
 
     this.tx(() => {
+      const entityIds = [...new Set(drafts.map((draft) => draft.entityId))]
+      // Writers never clear a fence: doing so could let a long-running remote
+      // merge and a local draft insert overlap after a lease-clock boundary.
+      // Only the maintenance owner recovers expired rows while acquiring the
+      // next fenced attempt under BEGIN IMMEDIATE.
+      const activeFence = this.db.prepare(`
+        SELECT entity_id
+        FROM pipeline_entity_cleanup_leases
+        WHERE entity_id IN (${placeholders(entityIds.length)})
+        LIMIT 1
+      `).get(...entityIds) as { entity_id?: unknown } | undefined
+      if (activeFence) {
+        throw new Error(`Entity draft write is temporarily fenced for catalogue cleanup: ${String(activeFence.entity_id)}`)
+      }
+
       const stmt = this.db.prepare(`
         INSERT INTO pipeline_editor_drafts (
           id, entity_id, entity_slug, entity_name, entity_type, bundle_key,

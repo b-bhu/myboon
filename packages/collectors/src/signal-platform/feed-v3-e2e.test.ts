@@ -248,14 +248,17 @@ test('active Signal intake reaches stable entity memory and full replay is idemp
               },
               supportingClaimIds: [claimId], supportingEvidenceIds: [evidenceId],
             },
-            memories: [{
-              memoryType: 'news_event', memoryRole: 'primary_event',
-              representedClaimIds: [claimId], representedEvidenceIds: [evidenceId],
-              title: 'Example Protocol version 2 guidance',
-              summary: 'Example Protocol published version 2 launch guidance.',
-              body: 'The canonical source announcement describes the launch guidance.',
-              eventAt: item.publishedAt, confidence: 0.9, mentions: ['Example Protocol'],
-            }],
+            memory: {
+              action: 'keep',
+              memory: {
+                memoryType: 'news_event', memoryRole: 'primary_event',
+                representedClaimIds: [claimId], representedEvidenceIds: [evidenceId],
+                title: 'Example Protocol version 2 guidance',
+                summary: 'Example Protocol published version 2 launch guidance.',
+                body: 'The canonical source announcement describes the launch guidance.',
+                eventAt: item.publishedAt, confidence: 0.9, mentions: ['Example Protocol'],
+              },
+            },
           }
         },
       },

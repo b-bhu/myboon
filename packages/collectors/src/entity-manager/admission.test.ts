@@ -181,6 +181,10 @@ test('decision can select only a canonical entity supplied in the shortlist', ()
   })
   assert.equal(selected.action, 'select_existing')
   assert.throws(
+    () => validateEntityAdmissionDecision(admission, { action: 'select_existing', entityId: 'entity-1' }),
+    /requires supporting packet claim or evidence references/,
+  )
+  assert.throws(
     () => validateEntityAdmissionDecision(admission, { action: 'select_existing', entityId: 'entity-unknown' }),
     /Unknown canonical entity ID/,
   )

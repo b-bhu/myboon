@@ -452,6 +452,26 @@ test('successful processing appends immutable entity and memory execution events
   assert.equal(events.find((event) => event.stage === 'memory_write')?.queueWaitMs, 0)
 })
 
+test('explicit skipped memory outcome completes work without claiming a memory write', async () => {
+  const ledger = new FakeExecutionLedger()
+  const port = new FakePort('news', [work('news')])
+  const result = await fixture({
+    ports: [port], ownership: { news: 'shared' }, executionLedger: ledger,
+    processor: {
+      async process() {
+        return { entityTelemetry: entityTelemetry(), memoryOutcome: 'skipped' }
+      },
+    },
+  }).worker.runActiveCycle()
+
+  assert.equal(result.completed, 1)
+  assert.equal(port.transitions.length, 1)
+  assert.equal(port.transitions[0].nextStatus, 'complete')
+  const terminalEvents = [...ledger.events.values()].filter((event) => event.status !== 'started')
+  assert.equal(terminalEvents.find((event) => event.stage === 'entity_manager')?.status, 'succeeded')
+  assert.equal(terminalEvents.find((event) => event.stage === 'memory_write')?.status, 'skipped')
+})
+
 test('execution event appends are replay-idempotent and conflicts cannot corrupt queue outcome', async () => {
   const ledger = new FakeExecutionLedger()
   const port = new FakePort('news', [work('news')])

@@ -69,6 +69,7 @@ export interface ExtractionCanon {
 export const ENTITY_TYPE_VOCABULARY = [
   'person',
   'organization',
+  'network',
   'asset',
   'commodity',
   'topic',
@@ -82,6 +83,12 @@ export const ENTITY_TYPE_VOCABULARY = [
 const TYPE_SYNONYMS: Record<string, string> = {
   company: 'organization',
   platform: 'organization',
+  blockchain: 'network',
+  blockchain_network: 'network',
+  chain: 'network',
+  layer_1: 'network',
+  layer1: 'network',
+  l1: 'network',
   nation: 'country',
   geo: 'country',
   currency: 'asset',

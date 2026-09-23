@@ -72,6 +72,9 @@ class FakeCanonicalSupabase {
       this.createCalls += 1
       return { data: null, error: { message: 'unexpected canonical creation' } }
     }
+    if (fn === 'resolve_entity_redirect_v1') {
+      return { data: args.p_entity_id, error: null }
+    }
     return { data: null, error: { message: `unexpected RPC ${fn}` } }
   }
 
@@ -136,6 +139,16 @@ class MemoryQuery implements PromiseLike<{ data: EntityMemoryRecord[]; error: nu
   }
   lte(column: string, value: string) {
     this.rows = this.rows.filter((row) => String((row as unknown as Record<string, unknown>)[column]) <= value)
+    return this
+  }
+  contains(column: string, value: Record<string, unknown>) {
+    this.rows = this.rows.filter((row) => {
+      const candidate = (row as unknown as Record<string, unknown>)[column]
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false
+      return Object.entries(value).every(([key, expected]) => (
+        (candidate as Record<string, unknown>)[key] === expected
+      ))
+    })
     return this
   }
   order(column: string, options: { ascending: boolean }) {
@@ -203,6 +216,12 @@ function packet(source: CanonicalSource, id: string, observedAt = '2026-08-26T10
   const label = SOURCE_ENTITY[source].label
   return operatorPacket(source, id, {
     observedAt,
+    claims: [{
+      claimId: `claim-${id}`,
+      claim: `${label} reported a durable development.`,
+      attributedTo: label,
+      evidenceRefs: [`evidence-${id}`],
+    }],
     entityHints: [{
       name: label, type: 'organization', role: 'subject', aliases: [], source: 'canonical',
       claimRefs: [`claim-${id}`], evidenceRefs: [`evidence-${id}`],
@@ -227,14 +246,17 @@ function plannerGateway(titles: Record<CanonicalSource, string>) {
           supportingClaimIds: [`claim-${id}`],
           supportingEvidenceIds: [`evidence-${id}`],
         },
-        memories: [{
-          memoryType: SOURCE_ENTITY[source].memoryType,
-          memoryRole: 'primary_event',
-          title: titles[source],
-          summary: `${source} canonical summary for ${id}`,
-          representedClaimIds: [`claim-${id}`],
-          representedEvidenceIds: [`evidence-${id}`],
-        }],
+        memory: {
+          action: 'keep',
+          memory: {
+            memoryType: SOURCE_ENTITY[source].memoryType,
+            memoryRole: 'primary_event',
+            title: titles[source],
+            summary: `${source} canonical summary for ${id}`,
+            representedClaimIds: [`claim-${id}`],
+            representedEvidenceIds: [`evidence-${id}`],
+          },
+        },
       }
       const validated = request.validate(value)
       assert.equal(validated.valid, true)

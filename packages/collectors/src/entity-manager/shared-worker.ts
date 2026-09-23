@@ -48,6 +48,8 @@ export interface CanonicalPacketProcessor {
 export interface CanonicalPacketProcessorResult {
   /** Measured Entity-stage inference only. Never upstream Research usage. */
   entityTelemetry: InferenceTelemetry | null
+  /** Explicit durable memory-write outcome. Omitted results preserve legacy written semantics. */
+  memoryOutcome?: 'written' | 'skipped'
 }
 
 export interface ShadowEntityObservation {
@@ -385,7 +387,9 @@ export class SharedEntityWorker {
         })
       }
       return this.finishLease('completed', lease, canonicalPacket, {
-        entityStatus: 'succeeded', memoryStatus: 'succeeded', failure: null,
+        entityStatus: 'succeeded',
+        memoryStatus: processorResult?.memoryOutcome === 'skipped' ? 'skipped' : 'succeeded',
+        failure: null,
         entityStartedAt, memoryStartedAt, processingStarted, entityTelemetry,
       })
     } catch (error) {
