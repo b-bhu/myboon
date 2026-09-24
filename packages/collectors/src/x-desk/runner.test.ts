@@ -5,7 +5,7 @@ import type {
   EntityMemoryChangePage,
 } from '../entity-manager/entity-knowledge-reader'
 import { ENTITY_MEMORY_CHANGES_START_CURSOR } from '../entity-manager/entity-knowledge-reader'
-import { isNewsMemory, runXDesk, xDeskCliConfig } from './runner'
+import { isNewsMemory, runXDesk, xDeskCliConfig, xDeskReviewBatchSize } from './runner'
 import { XDeskStore } from './store'
 import type { XDeskDecision, XDeskProvider, XDeskSource } from './types'
 
@@ -116,6 +116,12 @@ test('CLI defaults to a five-post, 24-hour on-demand review', () => {
   const config = xDeskCliConfig({} as NodeJS.ProcessEnv)
   assert.equal(config.maxRecommendations, 5)
   assert.equal(config.initialLookbackHours, 24)
+  assert.equal(config.batchSize, 20)
+})
+
+test('X desk caps one editorial model call at 20 candidates', () => {
+  assert.equal(xDeskReviewBatchSize(20), 20)
+  assert.equal(xDeskReviewBatchSize(40), 20)
 })
 
 test('first initialization starts the change feed at the lookback boundary', () => {

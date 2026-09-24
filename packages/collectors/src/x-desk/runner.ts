@@ -3,6 +3,7 @@ import type { XDeskProvider, XDeskReviewInput, XDeskRunResult, XDeskSource } fro
 import { XDeskStore } from './store'
 
 const DEFAULT_BATCH_SIZE = 20
+export const X_DESK_REVIEW_BATCH_CAP = 20
 const DEFAULT_CHANGE_PAGE_SIZE = 100
 const DEFAULT_MAX_INTAKE_PAGES = 100
 const DEFAULT_INITIAL_LOOKBACK_HOURS = 24
@@ -53,6 +54,10 @@ export function xDeskCliConfig(env: NodeJS.ProcessEnv = process.env): XDeskCliCo
   }
 }
 
+export function xDeskReviewBatchSize(value: number): number {
+  return Math.min(value, X_DESK_REVIEW_BATCH_CAP)
+}
+
 export function isNewsMemory(change: Parameters<XDeskStore['enqueuePage']>[0][number]): boolean {
   const provenance = change.memory.provenance
   return provenance.provider === 'news'
@@ -66,7 +71,7 @@ function safeError(error: unknown): string {
 
 export async function runXDesk(options: RunXDeskOptions): Promise<XDeskRunResult> {
   const observedAt = options.now ?? new Date().toISOString()
-  const batchSize = Math.min(options.batchSize ?? DEFAULT_BATCH_SIZE, 50)
+  const batchSize = xDeskReviewBatchSize(options.batchSize ?? DEFAULT_BATCH_SIZE)
   const changePageSize = Math.min(options.changePageSize ?? DEFAULT_CHANGE_PAGE_SIZE, 100)
   const maxIntakePages = options.maxIntakePages ?? DEFAULT_MAX_INTAKE_PAGES
   const initialLookbackHours = options.initialLookbackHours ?? DEFAULT_INITIAL_LOOKBACK_HOURS

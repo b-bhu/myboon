@@ -27,7 +27,7 @@ async function main(): Promise<void> {
       store,
       provider,
       now: observedAt,
-      batchSize: Math.max(config.batchSize, requested * 8),
+      batchSize: config.batchSize,
       changePageSize: config.changePageSize,
       maxIntakePages: config.maxIntakePages,
       initialLookbackHours: config.initialLookbackHours,
