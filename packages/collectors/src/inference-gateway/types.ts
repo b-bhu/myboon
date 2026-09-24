@@ -62,14 +62,16 @@ export interface InferenceCircuitStatusSnapshot {
 }
 
 /**
- * Every limit is enforced by the gateway. Structured modes deliberately make
- * the zero-tool requirement a literal rather than an arbitrary number.
+ * Operational limits enforced by the gateway. Token ceilings are optional:
+ * callers that omit them delegate context and generation bounds to the
+ * selected provider while token usage remains measured for telemetry.
+ * Structured modes deliberately make the zero-tool requirement a literal.
  */
 export interface InferenceBudget {
   maxProviderCalls: number
   maxRepairCalls: number
-  maxInputTokens: number
-  maxOutputTokens: number
+  maxInputTokens?: number
+  maxOutputTokens?: number
   maxWallTimeMs: number
   maxToolCalls: 0
   /** Enforced only against provider-measured cost. Missing measurements fail closed when set. */
@@ -88,7 +90,7 @@ export interface StructuredProviderRequest {
   prompt: string
   target: InferenceProviderTarget
   timeoutMs: number
-  maxOutputTokens: number
+  maxOutputTokens?: number
   signal: AbortSignal
   reasoningEffort?: 'low' | 'medium' | 'high'
 }

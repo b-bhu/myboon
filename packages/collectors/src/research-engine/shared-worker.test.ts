@@ -80,7 +80,7 @@ function work(input: {
       sourceUrl: `https://${sourceType}.example/item`, allowedDomains: [`${sourceType}.example`], maxExternalSources: 0,
     },
     budget: {
-      maxProviderCalls: 2, maxRepairCalls: 1, maxInputTokens: 2_000, maxOutputTokens: 500,
+      maxProviderCalls: 2, maxRepairCalls: 1,
       maxToolCalls: 0, maxWallTimeMs: 30_000,
     },
     status: input.status ?? 'research_pending', attemptCount: input.attemptCount ?? 0,

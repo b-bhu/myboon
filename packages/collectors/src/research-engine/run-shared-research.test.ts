@@ -662,7 +662,7 @@ function researchWork(
     priorityClass: 'P2', priorityScore: 0.5, freshnessDeadline: '2026-08-27T12:00:00.000Z',
     policyVersion: 'policy.v1', researchContractVersion: 'myboon.research_packet.v1',
     retrievalPlan: { sourceUrl: 'https://example.com/item', allowedDomains: ['example.com'], maxExternalSources: 1 },
-    budget: { maxProviderCalls: 2, maxRepairCalls: 1, maxInputTokens: 1000, maxOutputTokens: 500, maxToolCalls: 0, maxWallTimeMs: 10000 },
+    budget: { maxProviderCalls: 2, maxRepairCalls: 1, maxToolCalls: 0, maxWallTimeMs: 10000 },
     status: 'research_pending', attemptCount: 0, nextAttemptAt: null, leaseOwner: null, leaseId: null,
     leaseExpiresAt: null, failureCategory: null, failureDetail: null, traceId: `trace-${workId}`,
     createdAt: '2026-08-26T12:00:00.000Z', updatedAt: '2026-08-26T12:00:00.000Z',

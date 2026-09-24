@@ -350,7 +350,7 @@ function validateRetrievalPlan(value: unknown, path: string): void {
 
 function validateResearchBudget(value: unknown, path: string): asserts value is ResearchBudget {
   const record = object(value, path)
-  for (const key of ['maxProviderCalls', 'maxRepairCalls', 'maxInputTokens', 'maxOutputTokens', 'maxToolCalls', 'maxWallTimeMs'] as const) {
+  for (const key of ['maxProviderCalls', 'maxRepairCalls', 'maxToolCalls', 'maxWallTimeMs'] as const) {
     integer(record[key], `${path}.${key}`, 0)
   }
 }

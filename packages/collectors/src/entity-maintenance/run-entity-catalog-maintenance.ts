@@ -55,7 +55,7 @@ async function main(): Promise<void> {
     || 'ollama-cloud'
   const model = process.env.ENTITY_CATALOG_MAINTENANCE_MODEL?.trim()
     || process.env.INFERENCE_GATEWAY_PRIMARY_MODEL?.trim()
-    || 'glm-5.3-flash'
+    || 'deepseek-v4.1-flash'
   const db = createClient(requiredEnv('SUPABASE_URL'), requiredEnv('SUPABASE_SERVICE_ROLE_KEY'))
   const store = new SupabaseEntityCatalogMaintenanceStore(db)
   const draftInventory = new SqliteEntityDraftInventory(resolve(

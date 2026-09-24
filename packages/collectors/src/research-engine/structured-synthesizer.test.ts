@@ -63,8 +63,6 @@ const WORK: ResearchWorkItem = {
   budget: {
     maxProviderCalls: 2,
     maxRepairCalls: 1,
-    maxInputTokens: 15_000,
-    maxOutputTokens: 3_000,
     maxToolCalls: 0,
     maxWallTimeMs: 90_000,
   },
@@ -301,7 +299,7 @@ test('light source-only claims cannot be promoted to independently verified fact
   assert.ok(packet.limitations.includes('light_research_has_source_claims_only_and_no_independent_verification'))
 })
 
-test('passes an exact zero-tool budget and exposes no tool request surface', async () => {
+test('passes operational limits without token ceilings and exposes no tool request surface', async () => {
   const gateway = new CapturingGateway(body())
   await synthesizer(gateway).synthesize({ signal: SIGNAL, workItem: WORK, evidence: [artifact()] })
 
@@ -309,8 +307,8 @@ test('passes an exact zero-tool budget and exposes no tool request surface', asy
   assert.equal(request.budget.maxToolCalls, 0)
   assert.equal(request.budget.maxProviderCalls, WORK.budget.maxProviderCalls)
   assert.equal(request.budget.maxRepairCalls, WORK.budget.maxRepairCalls)
-  assert.equal(request.budget.maxInputTokens, WORK.budget.maxInputTokens)
-  assert.equal(request.budget.maxOutputTokens, WORK.budget.maxOutputTokens)
+  assert.equal(request.budget.maxInputTokens, undefined)
+  assert.equal(request.budget.maxOutputTokens, undefined)
   assert.equal(request.budget.maxWallTimeMs, WORK.budget.maxWallTimeMs)
   assert.equal('tools' in request, false)
   assert.equal('toolsets' in request, false)

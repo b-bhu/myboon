@@ -340,8 +340,8 @@ function fixtureWork(ordinal: number, now: string, logicalStart: string): Resear
       sourceUrl: `https://fixture.invalid/load/${id}`, allowedDomains: ['fixture.invalid'], maxExternalSources: 0,
     },
     budget: {
-      maxProviderCalls: 0, maxRepairCalls: 0, maxInputTokens: 0,
-      maxOutputTokens: 0, maxToolCalls: 0, maxWallTimeMs: 1_000,
+      maxProviderCalls: 0, maxRepairCalls: 0,
+      maxToolCalls: 0, maxWallTimeMs: 1_000,
     },
     status: 'research_pending',
     attemptCount: 0,

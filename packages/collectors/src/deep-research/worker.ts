@@ -480,8 +480,6 @@ export function buildDeepResearchJob(input: {
   const maxToolCalls = workItem.budget.maxToolCalls
   const budget: DeepResearchBudget = {
     maxProviderCalls: workItem.budget.maxProviderCalls,
-    maxInputTokens: workItem.budget.maxInputTokens,
-    maxOutputTokens: workItem.budget.maxOutputTokens,
     maxToolCalls,
     maxBrowserNavigations: policy.capabilities.includes('browser_navigation') ? Math.min(policy.maxBrowserNavigations, maxToolCalls) : 0,
     maxSearchQueries: policy.capabilities.includes('registered_search') ? Math.min(policy.maxSearchQueries, maxToolCalls) : 0,

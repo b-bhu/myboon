@@ -16,8 +16,8 @@ const workPolicy: LegacyWorkMigrationPolicy = {
   freshnessDeadline: '2026-08-26T13:00:00.000Z',
   retrievalPlan: { sourceUrl: 'https://example.com/article', allowedDomains: ['example.com'], maxExternalSources: 2 },
   budget: {
-    maxProviderCalls: 1, maxRepairCalls: 1, maxInputTokens: 2000,
-    maxOutputTokens: 1000, maxToolCalls: 0, maxWallTimeMs: 60_000,
+    maxProviderCalls: 1, maxRepairCalls: 1,
+    maxToolCalls: 0, maxWallTimeMs: 60_000,
   },
   status: 'research_pending',
   attemptCount: 0,

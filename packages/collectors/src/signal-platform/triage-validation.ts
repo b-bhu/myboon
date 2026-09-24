@@ -154,7 +154,7 @@ export function validateBoundedClassifierResult(value: unknown): BoundedTriageCl
 
 function validateBudget(value: unknown, path: string): asserts value is ResearchBudget {
   const budget = record(value, path)
-  for (const key of ['maxProviderCalls', 'maxRepairCalls', 'maxInputTokens', 'maxOutputTokens', 'maxToolCalls', 'maxWallTimeMs'] as const) {
+  for (const key of ['maxProviderCalls', 'maxRepairCalls', 'maxToolCalls', 'maxWallTimeMs'] as const) {
     if (!Number.isInteger(budget[key]) || Number(budget[key]) < 0) {
       throw new ContractValidationError(`${path}.${key}`, 'must be a non-negative integer')
     }

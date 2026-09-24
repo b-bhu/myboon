@@ -45,8 +45,6 @@ export class DeepResearchGatewayPort implements ContainedInvestigationPort {
     }
     if (request.budget.maxRepairCalls !== 0
       || request.budget.maxProviderCalls !== job.budget.maxProviderCalls
-      || request.budget.maxInputTokens !== job.budget.maxInputTokens
-      || request.budget.maxOutputTokens !== job.budget.maxOutputTokens
       || request.budget.maxToolCalls !== job.budget.maxToolCalls
       || request.budget.maxWallTimeMs !== job.budget.maxWallTimeMs) {
       throw new DeepResearchError('Gateway and contained job budgets must match exactly', {

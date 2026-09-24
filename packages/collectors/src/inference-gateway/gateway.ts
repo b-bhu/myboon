@@ -119,8 +119,8 @@ function assertNonNegativeInteger(name: string, value: number): void {
 function assertBudget(budget: InferenceBudget): void {
   assertNonNegativeInteger('maxProviderCalls', budget.maxProviderCalls)
   assertNonNegativeInteger('maxRepairCalls', budget.maxRepairCalls)
-  assertNonNegativeInteger('maxInputTokens', budget.maxInputTokens)
-  assertNonNegativeInteger('maxOutputTokens', budget.maxOutputTokens)
+  if (budget.maxInputTokens !== undefined) assertNonNegativeInteger('maxInputTokens', budget.maxInputTokens)
+  if (budget.maxOutputTokens !== undefined) assertNonNegativeInteger('maxOutputTokens', budget.maxOutputTokens)
   assertNonNegativeInteger('maxWallTimeMs', budget.maxWallTimeMs)
   if (budget.maxCostUsdMicros !== undefined) assertNonNegativeInteger('maxCostUsdMicros', budget.maxCostUsdMicros)
   if (budget.maxToolCalls !== 0) {
@@ -459,11 +459,16 @@ export class InferenceGateway {
       if (!Number.isInteger(estimatedInput) || estimatedInput < 0) {
         throw new Error('estimateTokens must return a non-negative integer')
       }
-      if (state.inputTokens + estimatedInput > request.budget.maxInputTokens) {
+      if (request.budget.maxInputTokens !== undefined
+        && state.inputTokens + estimatedInput > request.budget.maxInputTokens) {
         throw budgetError('Input-token budget exhausted')
       }
-      const remainingOutput = request.budget.maxOutputTokens - state.outputTokens
-      if (remainingOutput <= 0) throw budgetError('Output-token budget exhausted')
+      const remainingOutput = request.budget.maxOutputTokens === undefined
+        ? undefined
+        : request.budget.maxOutputTokens - state.outputTokens
+      if (remainingOutput !== undefined && remainingOutput <= 0) {
+        throw budgetError('Output-token budget exhausted')
+      }
 
       state.providerCalls += 1
       if (callMode === 'repairStructured') state.repairCalls += 1
@@ -552,8 +557,14 @@ export class InferenceGateway {
         record.status = 'succeeded'
         record.durationMs = Math.max(0, this.now() - callStartedAt)
 
-        if (state.inputTokens > request.budget.maxInputTokens) throw budgetError('Provider exceeded input-token budget')
-        if (state.outputTokens > request.budget.maxOutputTokens) throw budgetError('Provider exceeded output-token budget')
+        if (request.budget.maxInputTokens !== undefined
+          && state.inputTokens > request.budget.maxInputTokens) {
+          throw budgetError('Provider exceeded input-token budget')
+        }
+        if (request.budget.maxOutputTokens !== undefined
+          && state.outputTokens > request.budget.maxOutputTokens) {
+          throw budgetError('Provider exceeded output-token budget')
+        }
         if (remainingWallTime() < 0) throw budgetError('Provider exceeded wall-time budget')
         this.circuitBlockedUntil.delete(targetKey(target))
         return { result, callIndex }
@@ -707,21 +718,33 @@ export class InferenceGateway {
       ['promptVersion', request.promptVersion], ['policyVersion', request.policyVersion]] as const) {
       if (!safeConfigValue(value)) throw new InferenceGatewayError(`${name} is unsafe`, { category: 'provider_unavailable', retryable: false })
     }
-    for (const key of ['maxProviderCalls', 'maxRepairCalls', 'maxInputTokens', 'maxOutputTokens', 'maxToolCalls', 'maxWallTimeMs'] as const) {
+    for (const key of ['maxProviderCalls', 'maxRepairCalls', 'maxToolCalls', 'maxWallTimeMs'] as const) {
       assertNonNegativeInteger(key, request.budget[key])
     }
+    if (request.budget.maxInputTokens !== undefined) assertNonNegativeInteger('maxInputTokens', request.budget.maxInputTokens)
+    if (request.budget.maxOutputTokens !== undefined) assertNonNegativeInteger('maxOutputTokens', request.budget.maxOutputTokens)
     if (request.budget.maxRepairCalls !== 0) throw new InferenceGatewayError('Investigate does not permit repair calls', { category: 'budget_exceeded', retryable: false })
   }
 
   private assertInvestigateUsage(request: InvestigateRequest, usage: import('./types').ContainedInvestigationResult['usage']): void {
     for (const [field, limit] of [
-      ['providerCalls', request.budget.maxProviderCalls], ['inputTokens', request.budget.maxInputTokens],
-      ['outputTokens', request.budget.maxOutputTokens], ['toolCalls', request.budget.maxToolCalls],
+      ['providerCalls', request.budget.maxProviderCalls], ['toolCalls', request.budget.maxToolCalls],
       ['wallTimeMs', request.budget.maxWallTimeMs],
     ] as const) {
       if (!Number.isInteger(usage[field]) || usage[field] < 0 || usage[field] > limit) {
         throw new InferenceGatewayError(`Contained measured ${field} exceeded budget`, { category: 'budget_exceeded', retryable: false })
       }
+    }
+    for (const field of ['inputTokens', 'outputTokens'] as const) {
+      if (!Number.isInteger(usage[field]) || usage[field] < 0) {
+        throw new InferenceGatewayError(`Contained measured ${field} is invalid`, { category: 'budget_exceeded', retryable: false })
+      }
+    }
+    if (request.budget.maxInputTokens !== undefined && usage.inputTokens > request.budget.maxInputTokens) {
+      throw new InferenceGatewayError('Contained measured inputTokens exceeded budget', { category: 'budget_exceeded', retryable: false })
+    }
+    if (request.budget.maxOutputTokens !== undefined && usage.outputTokens > request.budget.maxOutputTokens) {
+      throw new InferenceGatewayError('Contained measured outputTokens exceeded budget', { category: 'budget_exceeded', retryable: false })
     }
     if (request.budget.maxCostUsdMicros !== undefined) {
       if (!Number.isInteger(usage.costUsdMicros) || usage.costUsdMicros! < 0 || usage.costUsdMicros! > request.budget.maxCostUsdMicros) {

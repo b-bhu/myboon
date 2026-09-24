@@ -408,13 +408,17 @@ export class DeepResearchExecutor {
     }
     const limits = {
       providerCalls: job.budget.maxProviderCalls,
-      inputTokens: job.budget.maxInputTokens,
-      outputTokens: job.budget.maxOutputTokens,
       toolCalls: job.budget.maxToolCalls,
       browserNavigations: job.budget.maxBrowserNavigations,
       searchQueries: job.budget.maxSearchQueries,
       httpFetches: job.budget.maxHttpFetches,
     } as const
+    for (const field of ['inputTokens', 'outputTokens'] as const) {
+      const measured = record[field]
+      if (!Number.isInteger(measured) || (measured as number) < 0) {
+        throw deepError('invalid_job', `Contained measured ${field} is invalid`, false)
+      }
+    }
     for (const [field, limit] of Object.entries(limits) as Array<[keyof typeof limits, number]>) {
       const measured = record[field]
       if (!Number.isInteger(measured) || (measured as number) < 0) {
@@ -676,7 +680,7 @@ export function validateDeepResearchJob(job: DeepResearchJob): void {
 
 function validateBudgets(budget: DeepResearchBudget, capabilities: ReadonlySet<DeepResearchCapability>): void {
   for (const field of [
-    'maxProviderCalls', 'maxInputTokens', 'maxOutputTokens', 'maxToolCalls',
+    'maxProviderCalls', 'maxToolCalls',
     'maxBrowserNavigations', 'maxSearchQueries', 'maxHttpFetches', 'maxWallTimeMs',
     'maxOutputBytes', 'memoryMaxBytes', 'tasksMax',
   ] as const) {
@@ -684,7 +688,7 @@ function validateBudgets(budget: DeepResearchBudget, capabilities: ReadonlySet<D
       throw deepError('invalid_job', `${field} must be a non-negative integer`, false)
     }
   }
-  for (const field of ['maxProviderCalls', 'maxInputTokens', 'maxOutputTokens', 'maxWallTimeMs', 'maxOutputBytes', 'memoryMaxBytes', 'tasksMax'] as const) {
+  for (const field of ['maxProviderCalls', 'maxWallTimeMs', 'maxOutputBytes', 'memoryMaxBytes', 'tasksMax'] as const) {
     if (budget[field] === 0) throw deepError('invalid_job', `${field} must be positive`, false)
   }
   if (!Number.isInteger(budget.cpuQuotaPercent) || budget.cpuQuotaPercent < 1 || budget.cpuQuotaPercent > 100) {

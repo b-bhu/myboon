@@ -181,6 +181,9 @@ function planningFailure(error: unknown): PlatformFailure {
 }
 
 function entityBudget(value: InferenceBudget): InferenceBudget {
+  if (value.maxInputTokens === undefined || value.maxOutputTokens === undefined) {
+    throw new RangeError('Entity planning requires explicit input and output token ceilings')
+  }
   const entries = Object.entries(value) as Array<[keyof InferenceBudget, number]>
   for (const [field, amount] of entries) {
     if (!Number.isInteger(amount) || amount < 0) throw new RangeError(`${field} must be a non-negative integer`)

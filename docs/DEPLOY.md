@@ -318,7 +318,7 @@ FEED_V3_TRIAGE_PROVIDER_HEALTH=healthy
 NEWS_SQLITE_PATH=.data/news.sqlite
 PIPELINE_SQLITE_PATH=.data/pipeline.sqlite
 INFERENCE_GATEWAY_PRIMARY_PROVIDER=ollama-cloud
-INFERENCE_GATEWAY_PRIMARY_MODEL=deepseek-v4-flash
+INFERENCE_GATEWAY_PRIMARY_MODEL=deepseek-v4.1-flash
 ```
 
 Contract notes:
@@ -331,7 +331,7 @@ Contract notes:
   contract: `news.sqlite` for News and `pipeline.sqlite` for Polymarket. No
   third Feed V3 SQLite path is introduced.
 - The gateway provider/model are explicit (`ollama-cloud` /
-  `deepseek-v4-flash`); the shared workers never fall back to an unapproved
+  `deepseek-v4.1-flash`); the shared workers never fall back to an unapproved
   route.
 - The full policy still requires the existing reviewed receipt and the
   1000-row evaluation / rollback-rehearsal artifacts. Phase 1 does not
@@ -350,7 +350,7 @@ Contract notes:
    sudo -n hermes --version
    sudo -n hermes profile list
    sudo -n hermes --ignore-rules --provider ollama-cloud \
-     --model deepseek-v4-flash -z 'Return exactly this JSON: {"ok":true}'
+     --model deepseek-v4.1-flash -z 'Return exactly this JSON: {"ok":true}'
    pnpm --filter @myboon/collectors feed-v3:verify-entity-migration
    ```
    (The verifier reports readiness only; it never prints credentials.)
@@ -776,6 +776,11 @@ pnpm --filter @myboon/collectors feed-v3:evaluate-triage -- \
   --min-blind-attribution-quality 3 \
   > /absolute/path/feed-v3-evaluation-artifact.json
 ```
+
+The input/output token thresholds above are offline efficiency and quality
+gates over observed telemetry. They do not cap or reject live Research
+generation; the configured Hermes provider/model owns its supported context
+and generation limits.
 
 The artifact records the input SHA-256 digest, thresholds, aggregate metrics,
 source, stage, exact sample size, and pass/fail reasons. Blind review rows must

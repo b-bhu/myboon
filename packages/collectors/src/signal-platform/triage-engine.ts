@@ -181,8 +181,6 @@ export function createPriorityPolicyV1(input: {
   const budget = (overrides: Partial<ResearchBudget>): ResearchBudget => ({
     maxProviderCalls: 1,
     maxRepairCalls: 1,
-    maxInputTokens: 15_000,
-    maxOutputTokens: 3_000,
     maxToolCalls: 0,
     maxWallTimeMs: 90_000,
     ...overrides,
@@ -198,9 +196,9 @@ export function createPriorityPolicyV1(input: {
       P3: { meaning: COMMON_PRIORITY_SEMANTICS.P3, freshnessMs: 24 * 60 * 60_000 },
     },
     budgets: {
-      light: budget({ maxInputTokens: 8_000, maxOutputTokens: 1_500, maxWallTimeMs: 90_000 }),
+      light: budget({ maxWallTimeMs: 90_000 }),
       standard: budget({ maxWallTimeMs: 120_000 }),
-      deep: budget({ maxProviderCalls: 2, maxInputTokens: 30_000, maxOutputTokens: 5_000, maxToolCalls: 8, maxWallTimeMs: 10 * 60_000 }),
+      deep: budget({ maxProviderCalls: 2, maxToolCalls: 8, maxWallTimeMs: 10 * 60_000 }),
     },
     p0DeadlineWindowMs: 30 * 60_000,
     p1DeadlineWindowMs: 24 * 60 * 60_000,

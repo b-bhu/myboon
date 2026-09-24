@@ -321,8 +321,6 @@ function approvedUrl(value: unknown, domains: readonly string[], path: string): 
 function validateMeasuredUsage(result: DeepResearchResult, job: DeepResearchJob): void {
   const limits = {
     providerCalls: job.budget.maxProviderCalls,
-    inputTokens: job.budget.maxInputTokens,
-    outputTokens: job.budget.maxOutputTokens,
     toolCalls: job.budget.maxToolCalls,
     browserNavigations: job.budget.maxBrowserNavigations,
     searchQueries: job.budget.maxSearchQueries,
@@ -331,6 +329,11 @@ function validateMeasuredUsage(result: DeepResearchResult, job: DeepResearchJob)
     outputBytes: job.budget.maxOutputBytes,
   } as const
   const usage = result.budgetUsed as unknown as Record<string, unknown>
+  for (const field of ['inputTokens', 'outputTokens'] as const) {
+    if (!Number.isInteger(usage[field]) || (usage[field] as number) < 0) {
+      throw invalidOutput(`Contained measured ${field} is missing or invalid`)
+    }
+  }
   for (const [field, limit] of Object.entries(limits)) {
     const measured = usage[field]
     if (!Number.isInteger(measured) || (measured as number) < 0) {

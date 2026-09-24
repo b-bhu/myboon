@@ -29,7 +29,7 @@ export const INFERENCE_GATEWAY_ENV = Object.freeze({
 } as const)
 
 const DEFAULT_PRIMARY_PROVIDER = 'ollama-cloud'
-const DEFAULT_PRIMARY_MODEL = 'deepseek-v4-flash'
+const DEFAULT_PRIMARY_MODEL = 'deepseek-v4.1-flash'
 const OPENROUTER_PROVIDER = 'openrouter'
 const MAX_CONFIG_VALUE_CHARS = 200
 

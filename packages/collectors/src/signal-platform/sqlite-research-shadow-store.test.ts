@@ -20,7 +20,7 @@ const WORK = {
   researchContractVersion: RESEARCH_PACKET_SCHEMA_VERSION,
   retrievalPlan: { sourceUrl: 'https://news.example/item', allowedDomains: ['news.example'], maxExternalSources: 0 },
   budget: {
-    maxProviderCalls: 2, maxRepairCalls: 1, maxInputTokens: 100, maxOutputTokens: 100,
+    maxProviderCalls: 2, maxRepairCalls: 1,
     maxToolCalls: 0, maxWallTimeMs: 10_000,
   },
   status: 'research_pending', attemptCount: 0, nextAttemptAt: null,

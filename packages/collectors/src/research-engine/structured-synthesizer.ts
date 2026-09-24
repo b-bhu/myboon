@@ -113,8 +113,6 @@ export class StructuredResearchSynthesizer {
       budget: {
         maxProviderCalls: input.workItem.budget.maxProviderCalls,
         maxRepairCalls: input.workItem.budget.maxRepairCalls,
-        maxInputTokens: input.workItem.budget.maxInputTokens,
-        maxOutputTokens: input.workItem.budget.maxOutputTokens,
         maxWallTimeMs: input.workItem.budget.maxWallTimeMs,
         maxToolCalls: 0,
       },

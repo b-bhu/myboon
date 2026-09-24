@@ -92,8 +92,6 @@ export interface TriageEvaluationReport {
   }
   budgetProjection: {
     maxProviderCalls: number
-    maxInputTokens: number
-    maxOutputTokens: number
     maxToolCalls: number
     maxWallTimeMs: number
     averageMaxWallTimeMsPerAdmission: number
@@ -215,8 +213,6 @@ export function evaluateTriageRecords(records: TriageEvaluationRecord[]): Triage
     },
     budgetProjection: {
       maxProviderCalls: sum(admitted.map((record) => (record.decision.budget?.maxProviderCalls ?? 0) * record.weight)),
-      maxInputTokens: sum(admitted.map((record) => (record.decision.budget?.maxInputTokens ?? 0) * record.weight)),
-      maxOutputTokens: sum(admitted.map((record) => (record.decision.budget?.maxOutputTokens ?? 0) * record.weight)),
       maxToolCalls: sum(admitted.map((record) => (record.decision.budget?.maxToolCalls ?? 0) * record.weight)),
       maxWallTimeMs: sum(admitted.map((record) => (record.decision.budget?.maxWallTimeMs ?? 0) * record.weight)),
       averageMaxWallTimeMsPerAdmission: weightedAdmissions === 0 ? 0

@@ -77,7 +77,7 @@ function makeWork(sourceType: Signal['sourceType'], workId: string, overrides: P
     freshnessDeadline: '2026-08-26T13:00:00.000Z', policyVersion: 'triage-v1',
     researchContractVersion: 'myboon.research_packet.v1',
     retrievalPlan: { sourceUrl: 'https://example.com', allowedDomains: ['example.com'], maxExternalSources: 1 },
-    budget: { maxProviderCalls: 1, maxRepairCalls: 1, maxInputTokens: 2_000, maxOutputTokens: 500, maxToolCalls: 0, maxWallTimeMs: 30_000 },
+    budget: { maxProviderCalls: 1, maxRepairCalls: 1, maxToolCalls: 0, maxWallTimeMs: 30_000 },
     status: 'research_pending', attemptCount: 0, nextAttemptAt: null, leaseOwner: null, leaseId: null,
     leaseExpiresAt: null, failureCategory: null, failureDetail: null, traceId: `trace-${workId}`,
     createdAt: NOW, updatedAt: NOW, ...overrides,

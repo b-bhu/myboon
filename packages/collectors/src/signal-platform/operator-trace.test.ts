@@ -29,8 +29,8 @@ function decision(signalId: string): TriageDecisionV1 {
     freshnessDeadline: '2026-08-27T10:00:00.000Z',
     budgetPolicyVersion: 'budget-v1',
     budget: {
-      maxProviderCalls: 1, maxRepairCalls: 1, maxInputTokens: 1000,
-      maxOutputTokens: 500, maxToolCalls: 0, maxWallTimeMs: 60_000,
+      maxProviderCalls: 1, maxRepairCalls: 1,
+      maxToolCalls: 0, maxWallTimeMs: 60_000,
     },
     deepEscalationReason: null,
     priorityPolicyVersion: 'policy-v1',

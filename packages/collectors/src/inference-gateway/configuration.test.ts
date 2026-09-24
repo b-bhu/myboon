@@ -33,7 +33,7 @@ test('configuration defaults every registered workload to the approved primary w
   assert.equal(configuration.hermesProfile, undefined)
   assert.deepEqual(Object.keys(configuration.routes), CONFIGURED_INFERENCE_WORKLOADS)
   for (const route of Object.values(configuration.routes)) {
-    assert.deepEqual(route.primary, { provider: 'ollama-cloud', model: 'deepseek-v4-flash' })
+    assert.deepEqual(route.primary, { provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' })
     assert.equal(route.fallback, undefined)
   }
 })

@@ -64,7 +64,7 @@ export const DEEP_CONTAINMENT_VERIFICATION_CONFIGURATION = Object.freeze({
   systemdRunMode: Object.freeze(['--wait', '--collect', '--pipe']),
   staticSystemdProperties: DEEP_RESEARCH_STATIC_SYSTEMD_PROPERTIES,
   jobBudget: Object.freeze({
-    maxProviderCalls: 1, maxInputTokens: 1, maxOutputTokens: 1, maxToolCalls: 1,
+    maxProviderCalls: 1, maxToolCalls: 1,
     maxBrowserNavigations: 0, maxSearchQueries: 0, maxHttpFetches: 1,
     maxWallTimeMs: 500, maxOutputBytes: 16_384,
     cpuQuotaPercent: 25, memoryMaxBytes: 128 * 1024 * 1024, tasksMax: 16,
@@ -310,7 +310,7 @@ function syntheticTimeoutJob(): DeepResearchJob {
     freshnessDeadline: '2099-01-01T00:00:00.000Z', policyVersion: 'containment-verification.v1',
     researchContractVersion: RESEARCH_PACKET_SCHEMA_VERSION,
     retrievalPlan: { sourceUrl: signal.canonicalUrl, allowedDomains: ['example.com'], maxExternalSources: 1 },
-    budget: { maxProviderCalls: 1, maxRepairCalls: 0, maxInputTokens: 1, maxOutputTokens: 1, maxToolCalls: 1, maxWallTimeMs: 500 },
+    budget: { maxProviderCalls: 1, maxRepairCalls: 0, maxToolCalls: 1, maxWallTimeMs: 500 },
     status: 'deep_pending', attemptCount: 0, nextAttemptAt: null, leaseOwner: null, leaseId: null,
     leaseExpiresAt: null, failureCategory: null, failureDetail: null, traceId: 'containment-verification-trace',
     createdAt: '2026-08-26T00:00:00.000Z', updatedAt: '2026-08-26T00:00:00.000Z',

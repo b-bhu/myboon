@@ -240,7 +240,7 @@ module.exports = {
         ENTITY_CATALOG_MAINTENANCE_HERMES_TIMEOUT_MS: '120000',
         ENTITY_CATALOG_MAINTENANCE_LEASE_MS: '1800000',
         ENTITY_CATALOG_MAINTENANCE_PROVIDER: 'ollama-cloud',
-        ENTITY_CATALOG_MAINTENANCE_MODEL: 'glm-5.3-flash',
+        ENTITY_CATALOG_MAINTENANCE_MODEL: 'deepseek-v4.1-flash',
       },
     },
     {

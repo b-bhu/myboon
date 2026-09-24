@@ -17,8 +17,6 @@ export type DeepResearchCapability =
 
 export interface DeepResearchBudget {
   maxProviderCalls: number
-  maxInputTokens: number
-  maxOutputTokens: number
   maxToolCalls: number
   maxBrowserNavigations: number
   maxSearchQueries: number

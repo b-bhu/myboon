@@ -67,7 +67,7 @@ function probes(overrides: Partial<Phase2ReadinessInput['databaseProbes']> = {})
 function route(overrides: Partial<Phase2ReadinessInput['route']> = {}): Phase2ReadinessInput['route'] {
   return {
     provider: 'ollama-cloud',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-v4.1-flash',
     explicit: true,
     fallbackConfigured: false,
     ...overrides,
@@ -252,7 +252,7 @@ function withOpenResearchCircuit(): ReturnType<typeof researchSnapshot> {
         capturedAt: NOW,
         workloads: [
           { workload: 'research.synthesis', ready: false, targets: [
-            { provider: 'ollama-cloud', model: 'deepseek-v4-flash', circuitOpen: true, retryAfterMs: 1000 },
+            { provider: 'ollama-cloud', model: 'deepseek-v4.1-flash', circuitOpen: true, retryAfterMs: 1000 },
           ] },
         ],
       },
@@ -428,7 +428,7 @@ test('runtime lifecycle/mode/source/circuit failures block', () => {
 test('runtime open circuit targets block for research and entity', () => {
   const openEntity = entitySnapshot()
   openEntity.circuit.targets = [
-    { provider: 'ollama-cloud', model: 'deepseek-v4-flash', circuitOpen: true, nextProbeAt: null },
+    { provider: 'ollama-cloud', model: 'deepseek-v4.1-flash', circuitOpen: true, nextProbeAt: null },
   ]
   const report = evaluatePhase2Readiness(baseInput({
     mode: 'runtime',
@@ -589,7 +589,7 @@ test('output is deterministic and redacted', () => {
   const second = evaluatePhase2Readiness(input)
   assert.deepEqual(first, second)
   const serialized = JSON.stringify(first)
-  for (const forbidden of ['/home', 'ollama-cloud', 'deepseek-v4-flash', '.db', 'sk-', 'secret', 'authorization']) {
+  for (const forbidden of ['/home', 'ollama-cloud', 'deepseek-v4.1-flash', '.db', 'sk-', 'secret', 'authorization']) {
     assert.ok(!serialized.includes(forbidden), `output leaked: ${forbidden}`)
   }
 })

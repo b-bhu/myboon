@@ -58,7 +58,7 @@ function work(depth: ResearchWorkItem['researchDepth'] = 'light'): ResearchWorkI
       sourceUrl: 'https://news.example/shadow', allowedDomains: ['news.example'], maxExternalSources: 0,
     },
     budget: {
-      maxProviderCalls: 2, maxRepairCalls: 1, maxInputTokens: 2_000, maxOutputTokens: 500,
+      maxProviderCalls: 2, maxRepairCalls: 1,
       maxToolCalls: 0, maxWallTimeMs: 30_000,
     },
     status: 'research_pending', attemptCount: 0, nextAttemptAt: null,

@@ -149,10 +149,9 @@ export interface RetrievalPlan extends ExtensibleContract {
 }
 
 export interface ResearchBudget extends ExtensibleContract {
+  /** Provider-call, tool, and wall-time safeguards only; model token limits are provider-owned. */
   maxProviderCalls: number
   maxRepairCalls: number
-  maxInputTokens: number
-  maxOutputTokens: number
   maxToolCalls: number
   maxWallTimeMs: number
 }

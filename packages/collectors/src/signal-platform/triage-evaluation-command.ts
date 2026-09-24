@@ -10,6 +10,7 @@ export interface TriageEvaluationThresholds {
   minimumObservedCompletionRate: number
   maxFalseNegativeRate: number
   maxProviderCallsPerObservedCompletion: number
+  /** Offline efficiency/quality gates over observed telemetry, never live generation budgets. */
   maxInputTokensPerObservedCompletion: number
   maxOutputTokensPerObservedCompletion: number
   maxP95LatencyMs: number

@@ -19,7 +19,7 @@ export const RESEARCH_NOVELTY_WORKLOAD = 'research.novelty' as const
 export const RESEARCH_NOVELTY_VERSION = 'research.novelty.v1' as const
 
 const JEV_TARGET = Object.freeze({ provider: 'typesafe', model: 'jev-1.13.0' })
-const DEFAULT_HERMES_TARGET = Object.freeze({ provider: 'ollama-cloud', model: 'glm-5.3-flash' })
+const DEFAULT_HERMES_TARGET = Object.freeze({ provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' })
 const DEFAULT_CAPACITY = Object.freeze({
   liveConcurrency: 4,
   shadowConcurrency: 1,

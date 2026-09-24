@@ -373,6 +373,27 @@ test('input and output token budgets are enforced', async () => {
   })
 })
 
+test('omitted token ceilings delegate context and generation limits while preserving measured usage', async () => {
+  const adapter = new QueueAdapter([{
+    value: { answer: 'complete research packet' },
+    usage: { inputTokens: 250_000, outputTokens: 75_000 },
+  }])
+  const result = await gateway(adapter).generateStructured(request({
+    budget: {
+      maxProviderCalls: 1,
+      maxRepairCalls: 0,
+      maxWallTimeMs: 1_000,
+      maxToolCalls: 0,
+    },
+  }))
+
+  assert.deepEqual(result.value, { answer: 'complete research packet' })
+  assert.equal(adapter.requests[0]?.maxOutputTokens, undefined)
+  assert.equal(result.telemetry.inputTokens, 250_000)
+  assert.equal(result.telemetry.outputTokens, 75_000)
+  assert.equal(result.telemetry.budgetExceeded, false)
+})
+
 test('wall-time budget aborts an adapter which does not settle', async () => {
   let aborted = false
   const adapter: StructuredProviderAdapter = {

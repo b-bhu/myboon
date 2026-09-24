@@ -33,7 +33,7 @@ function phase2Env(overrides: Record<string, string | undefined> = {}): Record<s
     FEED_V3_TRIAGE_CLASSIFIER_ENABLED: '0',
     FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
     INFERENCE_GATEWAY_PRIMARY_PROVIDER: 'ollama-cloud',
-    INFERENCE_GATEWAY_PRIMARY_MODEL: 'deepseek-v4-flash',
+    INFERENCE_GATEWAY_PRIMARY_MODEL: 'deepseek-v4.1-flash',
     TOKENS_API_KEY: 'tokens-secret-value',
     SUPABASE_URL: 'https://secret-project.example',
     SUPABASE_SERVICE_ROLE_KEY: 'service-secret-value',

@@ -70,8 +70,6 @@ const WORK: ResearchWorkItem = {
   budget: {
     maxProviderCalls: 5,
     maxRepairCalls: 0,
-    maxInputTokens: 20_000,
-    maxOutputTokens: 4_000,
     maxToolCalls: 10,
     maxWallTimeMs: 300_000,
   },
@@ -123,8 +121,6 @@ function job(overrides: Partial<DeepResearchJob> = {}): DeepResearchJob {
     inference: { provider: 'primary', model: 'deep', reasoningEffort: 'low' },
     budget: {
       maxProviderCalls: 5,
-      maxInputTokens: 20_000,
-      maxOutputTokens: 4_000,
       maxToolCalls: 5,
       maxBrowserNavigations: 3,
       maxSearchQueries: 2,
@@ -311,6 +307,32 @@ test('successful units require strict measured usage and reject over-budget mete
     assert.equal(context.fileSystem.removed, true, name)
     assert.deepEqual(context.registry.list(), [], name)
   }
+})
+
+test('measured token usage is telemetry and does not reject an otherwise valid contained result', async () => {
+  const systemd = new FakeSystemd()
+  systemd.onSpawn = (child) => {
+    child.stdout.emit('data', Buffer.from('{"answer":"ok"}'))
+    systemd.active = false
+    child.emit('close', 0, null)
+  }
+  const context = executor(systemd)
+  context.fileSystem.files.set('/tmp/deep-fixture/usage.json', JSON.stringify({
+    schemaVersion: DEEP_RESEARCH_USAGE_SCHEMA_VERSION,
+    providerCalls: 2,
+    inputTokens: 1_200_000,
+    outputTokens: 300_000,
+    toolCalls: 3,
+    browserNavigations: 1,
+    searchQueries: 1,
+    httpFetches: 1,
+  }))
+
+  const result = await context.value.execute(job())
+
+  assert.equal(result.status, 'succeeded')
+  assert.equal(result.budgetUsed.inputTokens, 1_200_000)
+  assert.equal(result.budgetUsed.outputTokens, 300_000)
 })
 
 test('successful units require a strict trusted fetched-evidence manifest', async () => {
@@ -514,8 +536,6 @@ test('gateway investigate delegates only to the contained port and never resolve
     budget: {
       maxProviderCalls: job().budget.maxProviderCalls,
       maxRepairCalls: 0,
-      maxInputTokens: job().budget.maxInputTokens,
-      maxOutputTokens: job().budget.maxOutputTokens,
       maxToolCalls: job().budget.maxToolCalls,
       maxWallTimeMs: job().budget.maxWallTimeMs,
     },

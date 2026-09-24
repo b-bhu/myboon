@@ -29,6 +29,7 @@ export const CLASSIFICATION_ENV = Object.freeze({
 const APPROVED_HERMES_ROUTES = new Set([
   'ollama-cloud/glm-5.3-flash',
   'ollama-cloud/deepseek-v4-flash',
+  'ollama-cloud/deepseek-v4.1-flash',
 ])
 const APPROVED_JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
 
@@ -48,7 +49,7 @@ export function createConfiguredClassificationRuntime(options: {
   const modes = lifecycleModes(env[CLASSIFICATION_ENV.lifecycleJson])
   const hermesTarget = {
     provider: env[CLASSIFICATION_ENV.hermesProvider]?.trim() || 'ollama-cloud',
-    model: env[CLASSIFICATION_ENV.hermesModel]?.trim() || 'glm-5.3-flash',
+    model: env[CLASSIFICATION_ENV.hermesModel]?.trim() || 'deepseek-v4.1-flash',
   }
   if (!APPROVED_HERMES_ROUTES.has(`${hermesTarget.provider}/${hermesTarget.model}`)) {
     throw new Error(`Unapproved classification Hermes route ${hermesTarget.provider}/${hermesTarget.model}`)

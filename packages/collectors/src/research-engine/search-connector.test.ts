@@ -20,7 +20,7 @@ function work(overrides: Partial<ResearchWorkItem> = {}): ResearchWorkItem {
     freshnessDeadline: '2026-08-26T14:00:00.000Z', policyVersion: 'policy-v1',
     researchContractVersion: 'myboon.research_packet.v1',
     retrievalPlan: { sourceUrl: signal.canonicalUrl, allowedDomains: ['source.example', 'sec.gov'], maxExternalSources: 3 },
-    budget: { maxProviderCalls: 1, maxRepairCalls: 1, maxInputTokens: 10_000, maxOutputTokens: 2_000, maxToolCalls: 0, maxWallTimeMs: 60_000 },
+    budget: { maxProviderCalls: 1, maxRepairCalls: 1, maxToolCalls: 0, maxWallTimeMs: 60_000 },
     status: 'research_pending', attemptCount: 0, nextAttemptAt: null, leaseOwner: null, leaseId: null,
     leaseExpiresAt: null, failureCategory: null, failureDetail: null, traceId: 'trace-1',
     createdAt: signal.observedAt, updatedAt: signal.observedAt, ...overrides,

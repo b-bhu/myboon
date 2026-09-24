@@ -16,7 +16,7 @@ export type Phase2DatabaseProbeSource = 'news' | 'polymarket'
 
 /** Expected Phase 2 route facts. Values are checked verbatim and never surfaced in messages. */
 export const PHASE2_EXPECTED_PROVIDER = 'ollama-cloud' as const
-export const PHASE2_EXPECTED_MODEL = 'deepseek-v4-flash' as const
+export const PHASE2_EXPECTED_MODEL = 'deepseek-v4.1-flash' as const
 export const PHASE2_EXPECTED_SOURCES: readonly FeedV3Source[] = Object.freeze(['news', 'polymarket'])
 
 export const PHASE2_READINESS_CHECK_CODES = Object.freeze({

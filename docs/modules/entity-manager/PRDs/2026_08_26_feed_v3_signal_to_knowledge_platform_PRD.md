@@ -476,8 +476,6 @@ Research Work Item v1:
   "budget": {
     "maxProviderCalls": 1,
     "maxRepairCalls": 1,
-    "maxInputTokens": 15000,
-    "maxOutputTokens": 3000,
     "maxToolCalls": 0,
     "maxWallTimeMs": 90000
   },
@@ -486,6 +484,13 @@ Research Work Item v1:
   "traceId": "trace_..."
 }
 ```
+
+Research work budgets bound provider calls, tools, and wall time. They do not
+impose product-level input or output token ceilings; Hermes and the selected
+model own supported context and generation limits. Token usage remains measured
+for telemetry and offline efficiency evaluation. Structured one-shot output is
+still protected by Hermes' 10 MiB transport buffer, and every accepted response
+must pass the Research Packet JSON/schema validation.
 
 Minimum durable fields:
 

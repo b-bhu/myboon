@@ -89,7 +89,7 @@ function work(overrides: Partial<ResearchWorkItem> = {}): ResearchWorkItem {
     researchContractVersion: RESEARCH_PACKET_SCHEMA_VERSION,
     retrievalPlan: { sourceUrl: 'https://news.example/item', allowedDomains: ['news.example', 'primary.example'], maxExternalSources: 2 },
     budget: {
-      maxProviderCalls: 2, maxRepairCalls: 0, maxInputTokens: 5_000, maxOutputTokens: 2_000,
+      maxProviderCalls: 2, maxRepairCalls: 0,
       maxToolCalls: 3, maxWallTimeMs: 30_000,
     },
     status: 'deep_pending', attemptCount: 0, nextAttemptAt: null,
