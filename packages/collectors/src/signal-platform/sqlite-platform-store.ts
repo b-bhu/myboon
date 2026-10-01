@@ -17,9 +17,12 @@ import {
   ImmutableRecordConflictError,
   type CanonicalPlatformStore,
   type ImmutableAppendResult,
+  type IntakeUnit,
+  type IntakeUnitAppendResult,
   type SignalObservationRecord,
   type SignalObservationAppendResult,
 } from './platform-store'
+import { validateAdmissionDisposition, type AdmissionDispositionV1 } from './intake-admission'
 import {
   assertLeasedTransition,
   leasedStatusFor,
@@ -73,6 +76,7 @@ export const SIGNAL_PLATFORM_TABLES = [
   'signal_platform_signals',
   'signal_platform_signal_observations',
   'signal_platform_triage_decisions',
+  'signal_platform_admission_dispositions',
   'signal_platform_research_work',
   'signal_platform_evidence',
   'signal_platform_research_packets',
@@ -160,6 +164,31 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         ON signal_platform_triage_decisions(source_type, outcome, decided_at, decision_id);
       CREATE INDEX IF NOT EXISTS idx_signal_platform_triage_signal
         ON signal_platform_triage_decisions(signal_id, decided_at, decision_id);
+
+      CREATE TABLE IF NOT EXISTS signal_platform_admission_dispositions (
+        disposition_id TEXT PRIMARY KEY,
+        schema_version TEXT NOT NULL,
+        signal_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        decision_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        authorization TEXT NOT NULL,
+        work_id TEXT,
+        work_payload_digest TEXT,
+        retrieval_policy_version TEXT,
+        recorded_at TEXT NOT NULL,
+        canonical_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(signal_id) REFERENCES signal_platform_signals(signal_id),
+        FOREIGN KEY(decision_id) REFERENCES signal_platform_triage_decisions(decision_id),
+        UNIQUE(decision_id, mode)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_admission_owed
+        ON signal_platform_admission_dispositions(
+          source_type, authorization, recorded_at, disposition_id
+        );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_admission_signal
+        ON signal_platform_admission_dispositions(signal_id, recorded_at, disposition_id);
 
       CREATE TABLE IF NOT EXISTS signal_platform_research_work (
         work_id TEXT PRIMARY KEY,
@@ -329,8 +358,14 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       throw new Error(`Triage decision ${decision.decisionId} references an unknown source signal`)
     }
     const json = canonicalJson(decision)
-    return this.inImmediateTransaction(() => {
-      const existing = this.db.prepare(`
+    return this.inImmediateTransaction(() => this.appendTriageDecisionInTransaction(decision, json))
+  }
+
+  private appendTriageDecisionInTransaction(
+    decision: TriageDecisionV1,
+    json: string,
+  ): ImmutableAppendResult<TriageDecisionV1> {
+    const existing = this.db.prepare(`
         SELECT canonical_json FROM signal_platform_triage_decisions
         WHERE decision_id = ? OR (
           signal_id = ? AND priority_policy_version = ? AND budget_policy_version = ?
@@ -339,13 +374,13 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         decision.decisionId, decision.signalId,
         decision.priorityPolicyVersion, decision.budgetPolicyVersion,
       ) as Array<Record<string, unknown>>
-      if (existing.length > 0) {
-        if (existing.length !== 1 || existing[0]?.canonical_json !== json) {
-          throw new ImmutableRecordConflictError('triage', decision.decisionId)
-        }
-        return { inserted: false, value: decision }
+    if (existing.length > 0) {
+      if (existing.length !== 1 || existing[0]?.canonical_json !== json) {
+        throw new ImmutableRecordConflictError('triage', decision.decisionId)
       }
-      this.db.prepare(`
+      return { inserted: false, value: decision }
+    }
+    this.db.prepare(`
         INSERT INTO signal_platform_triage_decisions (
           decision_id, schema_version, signal_id, source_type, outcome,
           priority_class, priority_policy_version, budget_policy_version,
@@ -356,8 +391,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         decision.outcome, decision.priorityClass, decision.priorityPolicyVersion,
         decision.budgetPolicyVersion, decision.decidedAt, json, decision.decidedAt,
       )
-      return { inserted: true, value: decision }
-    })
+    return { inserted: true, value: decision }
   }
 
   getTriageDecision(decisionId: string): TriageDecisionV1 | null {
@@ -376,6 +410,159 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     )
   }
 
+  /**
+   * Single transaction owner for the intake decision/disposition/work unit.
+   * Every insert goes through the transaction-neutral helpers, so a failure
+   * after any one of them rolls the whole unit back.
+   */
+  appendIntakeUnit(input: IntakeUnit): IntakeUnitAppendResult {
+    this.assertOpen()
+    const decision = validateTriageDecision(input.decision)
+    const disposition = validateAdmissionDisposition(input.disposition)
+    const work = input.work === null ? null : validateResearchWorkItem(input.work)
+    this.assertSource(decision.sourceType)
+    this.assertSource(disposition.sourceType)
+    if (disposition.decisionId !== decision.decisionId
+      || disposition.signalId !== decision.signalId
+      || disposition.sourceType !== decision.sourceType) {
+      throw new Error(`Admission disposition ${disposition.dispositionId} does not match its decision identity`)
+    }
+    if (disposition.mode === 'shadow') {
+      throw new Error('Shadow intake is a no-write mode and cannot record an admission disposition')
+    }
+    if (disposition.requiresWork !== (work !== null)) {
+      throw new Error('Admission disposition and required research work disagree about admission')
+    }
+    if (disposition.authorization === 'active_intake'
+      && !['light', 'standard', 'deep'].includes(decision.outcome)) {
+      throw new Error('An active admission requires a research triage outcome')
+    }
+    if (disposition.authorization === 'no_work_outcome'
+      && ['light', 'standard', 'deep'].includes(decision.outcome)) {
+      throw new Error('A research triage outcome cannot be recorded as a deliberate no-work result')
+    }
+    if (work && (work.workId !== disposition.workId
+      || work.signalId !== disposition.signalId
+      || work.sourceType !== disposition.sourceType
+      || work.triageDecisionId !== decision.decisionId
+      || canonicalJson(work) !== canonicalJson(disposition.workPayload))) {
+      throw new Error('Research work must exactly match the frozen active-admission payload')
+    }
+    if (work && !this.getSignal(work.signalId)) {
+      throw new Error('Research work references an unknown source signal')
+    }
+    const decisionJson = canonicalJson(decision)
+    const dispositionJson = canonicalJson(disposition)
+    const workJson = work ? canonicalJson(work) : null
+    return this.inImmediateTransaction(() => {
+      const decisionResult = this.appendTriageDecisionInTransaction(decision, decisionJson)
+      const dispositionResult = this.appendAdmissionDispositionInTransaction(disposition, dispositionJson)
+      const workResult = work && workJson !== null
+        ? this.admitResearchWorkInTransaction(work, workJson)
+        : null
+      return { decision: decisionResult, disposition: dispositionResult, work: workResult }
+    })
+  }
+
+  private appendAdmissionDispositionInTransaction(
+    disposition: AdmissionDispositionV1,
+    json: string,
+  ): ImmutableAppendResult<AdmissionDispositionV1> {
+    const existing = this.db.prepare(`
+      SELECT canonical_json FROM signal_platform_admission_dispositions
+      WHERE disposition_id = ? OR (decision_id = ? AND mode = ?)
+    `).all(disposition.dispositionId, disposition.decisionId, disposition.mode) as Array<Record<string, unknown>>
+    if (existing.length > 0) {
+      if (existing.length !== 1 || existing[0]?.canonical_json !== json) {
+        throw new ImmutableRecordConflictError('admission', disposition.dispositionId)
+      }
+      return { inserted: false, value: disposition }
+    }
+    this.db.prepare(`
+      INSERT INTO signal_platform_admission_dispositions (
+        disposition_id, schema_version, signal_id, source_type, decision_id, mode,
+        authorization, work_id, work_payload_digest, retrieval_policy_version,
+        recorded_at, canonical_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      disposition.dispositionId, disposition.schemaVersion, disposition.signalId,
+      disposition.sourceType, disposition.decisionId, disposition.mode,
+      disposition.authorization, disposition.workId, disposition.workPayloadDigest,
+      disposition.retrievalPolicyVersion, disposition.recordedAt, json, disposition.recordedAt,
+    )
+    return { inserted: true, value: disposition }
+  }
+
+  findIntakeUnit(input: {
+    signalId: string
+    priorityPolicyVersion?: string
+    budgetPolicyVersion?: string
+  }): { decision: TriageDecisionV1; disposition: AdmissionDispositionV1 | null; work: ResearchWorkItem | null } | null {
+    this.assertOpen()
+    const clauses = ['d.signal_id = ?', 'd.source_type = ?']
+    const params: unknown[] = [input.signalId, this.sourceType]
+    if (input.priorityPolicyVersion) {
+      clauses.push('d.priority_policy_version = ?')
+      params.push(input.priorityPolicyVersion)
+    }
+    if (input.budgetPolicyVersion) {
+      clauses.push('d.budget_policy_version = ?')
+      params.push(input.budgetPolicyVersion)
+    }
+    const row = this.db.prepare(`
+      SELECT d.canonical_json AS decision_json, a.canonical_json AS admission_json
+      FROM signal_platform_triage_decisions d
+      LEFT JOIN signal_platform_admission_dispositions a ON a.decision_id = d.decision_id
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY d.decided_at DESC, d.decision_id ASC LIMIT 1
+    `).get(...params) as Record<string, unknown> | undefined
+    if (!row) return null
+    const decision = parseJson(row.decision_json, validateTriageDecision)
+    const disposition = typeof row.admission_json === 'string'
+      ? parseJson(row.admission_json, validateAdmissionDisposition)
+      : null
+    const work = disposition?.workId ? this.getResearchWork(disposition.workId) : null
+    return { decision, disposition, work }
+  }
+
+  listOwedActiveAdmissions(input: { limit: number }): Array<{
+    decision: TriageDecisionV1
+    disposition: AdmissionDispositionV1
+  }> {
+    this.assertOpen()
+    const rows = this.db.prepare(`
+      SELECT d.canonical_json AS decision_json, a.canonical_json AS admission_json
+      FROM signal_platform_admission_dispositions a
+      JOIN signal_platform_triage_decisions d ON d.decision_id = a.decision_id
+      WHERE a.source_type = ? AND a.authorization = 'active_intake' AND a.work_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM signal_platform_research_work w WHERE w.work_id = a.work_id
+        )
+      ORDER BY a.recorded_at ASC, a.disposition_id ASC LIMIT ?
+    `).all(this.sourceType, boundedLimit(input.limit)) as Array<Record<string, unknown>>
+    return rows.map((row) => ({
+      decision: parseJson(row.decision_json, validateTriageDecision),
+      disposition: parseJson(row.admission_json, validateAdmissionDisposition),
+    }))
+  }
+
+  listAmbiguousAdmissionCandidates(input: { limit: number }): TriageDecisionV1[] {
+    this.assertOpen()
+    return this.readJsonList(
+      `SELECT d.canonical_json FROM signal_platform_triage_decisions d
+       WHERE d.source_type = ? AND d.outcome IN ('light', 'standard', 'deep')
+         AND NOT EXISTS (
+           SELECT 1 FROM signal_platform_admission_dispositions a WHERE a.decision_id = d.decision_id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM signal_platform_research_work w WHERE w.signal_id = d.signal_id
+         )
+       ORDER BY d.decided_at ASC, d.decision_id ASC LIMIT ?`,
+      [this.sourceType, boundedLimit(input.limit)],
+      validateTriageDecision,
+    )
+  }
+
   admitResearchWork(input: ResearchWorkItem): ImmutableAppendResult<ResearchWorkItem> {
     this.assertOpen()
     const work = validateResearchWorkItem(input)
@@ -384,15 +571,21 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       throw new Error(`Research work ${work.workId} references an unknown source signal`)
     }
     const json = canonicalJson(work)
-    return this.inImmediateTransaction(() => {
-      const existing = this.db.prepare(
-        `SELECT admission_json FROM signal_platform_research_work WHERE work_id = ?`,
-      ).get(work.workId) as Record<string, unknown> | undefined
-      if (existing) {
-        if (existing.admission_json !== json) throw new ImmutableRecordConflictError('work', work.workId)
-        return { inserted: false, value: work }
-      }
-      this.db.prepare(`
+    return this.inImmediateTransaction(() => this.admitResearchWorkInTransaction(work, json))
+  }
+
+  private admitResearchWorkInTransaction(
+    work: ResearchWorkItem,
+    json: string,
+  ): ImmutableAppendResult<ResearchWorkItem> {
+    const existing = this.db.prepare(
+      `SELECT admission_json FROM signal_platform_research_work WHERE work_id = ?`,
+    ).get(work.workId) as Record<string, unknown> | undefined
+    if (existing) {
+      if (existing.admission_json !== json) throw new ImmutableRecordConflictError('work', work.workId)
+      return { inserted: false, value: work }
+    }
+    this.db.prepare(`
         INSERT INTO signal_platform_research_work (
           work_id, schema_version, signal_id, source_type, research_contract_version,
           priority_class, priority_score, freshness_deadline, status, attempt_count,
@@ -405,8 +598,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         work.nextAttemptAt, work.leaseOwner, work.leaseId, work.leaseExpiresAt, work.failureCategory,
         work.failureDetail, work.traceId, work.createdAt, work.updatedAt, json, json,
       )
-      return { inserted: true, value: work }
-    })
+    return { inserted: true, value: work }
   }
 
   getResearchWork(workId: string): ResearchWorkItem | null {

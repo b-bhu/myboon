@@ -52,7 +52,8 @@ test('observe mode appends a Signal idempotently and cannot create queue work', 
     const report = await deliverCanonicalSignals(intake, [signal(), structuredClone(signal())])
     assert.deepEqual(report, {
       mode: 'observe', attempted: 2, insertedSignals: 1, duplicateSignals: 1,
-      insertedDecisions: 0, admittedWorkItems: 0, failures: [],
+      insertedDecisions: 0, admittedWorkItems: 0, repairedWorkIds: [], alreadyPresentWorkIds: [],
+      heldAdmissions: [], repairFailure: null, failures: [],
     })
     assert.equal((await store.getSchedulerStatus({ now: NOW })).total, 0)
     const laterPoll = { ...signal(), observedAt: '2026-08-26T12:01:00.000Z' }

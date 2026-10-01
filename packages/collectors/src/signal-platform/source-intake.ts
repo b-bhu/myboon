@@ -1,11 +1,12 @@
-import type { Signal } from './contracts'
+import type { ResearchWorkItem, Signal } from './contracts'
 import { canonicalJson } from './canonical-json'
-import type { CanonicalPlatformStore } from './platform-store'
+import type { CanonicalPlatformStore, IntakeUnit } from './platform-store'
 import {
   SignalIntakeCoordinator,
   type SignalIntakeResult,
   type SignalTriagePort,
 } from './signal-intake'
+import { isActiveAdmissionIntake, type AdmissionDispositionV1 } from './intake-admission'
 import type { RulesFirstTriageInput, TriageDecisionV1 } from './triage-contracts'
 import type { ResearchWorkCreationPolicy } from './triage-engine'
 import { validateSignal } from './validation'
@@ -20,6 +21,12 @@ export interface SourceSignalIntakeResult {
   decisionInserted: boolean
   workInserted: boolean
   decision: TriageDecisionV1 | null
+  /** The admitted work item; null whenever no work was admitted. */
+  work: ResearchWorkItem | null
+  /** True when the decision/disposition/work came from the store, not from triage. */
+  recovered: boolean
+  /** Set when a saved record was deliberately not turned into work. */
+  held: string | null
 }
 
 export interface SourceSignalIntakePort {
@@ -28,12 +35,39 @@ export interface SourceSignalIntakePort {
   /** Pure decision preview; implementations must not append Signal/work state. */
   preview?(signal: Signal): Promise<TriageDecisionV1>
   retryUntriaged?(limit: number): Promise<SourceIntakeBatchReport>
+  repairAdmissions?(limit: number): Promise<AdmissionRepairReport>
 }
 
 export interface SourceIntakeFailure {
   signalId: string
   sourceType: Signal['sourceType']
   code: 'CANONICAL_SIGNAL_INTAKE_FAILED'
+}
+
+/**
+ * Redacted marker for a repair pass that could not complete. The underlying
+ * storage error stays out of the source batch report, which legacy collection
+ * hooks log verbatim.
+ */
+export interface SourceIntakeRepairFailure {
+  code: 'CANONICAL_ADMISSION_REPAIR_FAILED'
+}
+
+/** A decision whose admission intent cannot be proven from the record. */
+export interface HeldAdmissionRecord {
+  decisionId: string
+  signalId: string
+  sourceType: Signal['sourceType']
+  reason: string
+}
+
+export interface AdmissionRepairReport {
+  /** Work rows created from an already frozen, proven active-admission payload. */
+  repairedWorkIds: string[]
+  /** Proven active admissions whose work row already existed; left untouched. */
+  alreadyPresentWorkIds: string[]
+  /** Research-shaped decisions with no provable admission intent. */
+  held: HeldAdmissionRecord[]
 }
 
 export interface SourceIntakeBatchReport {
@@ -43,6 +77,14 @@ export interface SourceIntakeBatchReport {
   duplicateSignals: number
   insertedDecisions: number
   admittedWorkItems: number
+  /** Work rows re-created from a proven active disposition's frozen payload. */
+  repairedWorkIds: string[]
+  /** Proven active admissions whose work row already existed; left untouched. */
+  alreadyPresentWorkIds: string[]
+  /** Research-shaped decisions with no provable admission intent. */
+  heldAdmissions: HeldAdmissionRecord[]
+  /** Set when the repair pass failed; the raw storage error is not reported. */
+  repairFailure: SourceIntakeRepairFailure | null
   failures: SourceIntakeFailure[]
 }
 
@@ -106,6 +148,7 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
       triage: this.options.triage!,
       retrievalPolicy,
       mode: this.mode === 'active' ? 'active' : 'observe',
+      decisionPolicy: this.options.decisionPolicy,
     })
     const result = await coordinator.process({ ...triageInput, signal })
     return fromCoordinator(result, this.mode, appended.inserted)
@@ -171,8 +214,68 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
         })
       }
     }
+    // The bounded retry cycle also settles admissions that were owed a work row.
+    // Only active mode repairs; observe and off never touch queue state.
+    if (this.mode === 'active') {
+      try {
+        const repair = await this.repairAdmissions(limit)
+        report.repairedWorkIds.push(...repair.repairedWorkIds)
+        report.alreadyPresentWorkIds.push(...repair.alreadyPresentWorkIds)
+        report.heldAdmissions.push(...repair.held)
+      } catch {
+        // Best-effort source hook: report a redacted code, never the raw error.
+        report.repairFailure = { code: 'CANONICAL_ADMISSION_REPAIR_FAILED' }
+      }
+    }
     return report
   }
+
+  /**
+   * Proven-admission-only repair. A work row is re-created solely from the
+   * payload already frozen in an active-admission disposition, so no triage,
+   * clock, capacity, or current retrieval policy is consulted. Research-shaped
+   * decisions with no disposition are reported as held, never guessed into work.
+   */
+  async repairAdmissions(limit: number): Promise<AdmissionRepairReport> {
+    if (this.mode !== 'active') throw new Error('Admission repair requires an active intake mode')
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('repairAdmissions limit must be 1-500')
+    const report: AdmissionRepairReport = { repairedWorkIds: [], alreadyPresentWorkIds: [], held: [] }
+    for (const owed of this.options.store.listOwedActiveAdmissions({ limit })) {
+      const result = this.options.store.appendIntakeUnit(owedIntakeUnit(owed.decision, owed.disposition))
+      const admitted = result.work
+      if (!admitted) continue
+      // A concurrent writer may have admitted the same frozen payload first.
+      if (admitted.inserted) report.repairedWorkIds.push(admitted.value.workId)
+      else report.alreadyPresentWorkIds.push(admitted.value.workId)
+    }
+    for (const decision of this.options.store.listAmbiguousAdmissionCandidates({ limit })) {
+      report.held.push({
+        decisionId: decision.decisionId,
+        signalId: decision.signalId,
+        sourceType: decision.sourceType,
+        reason: 'No admission disposition proves whether this decision was an active admission or a deliberate no-work outcome.',
+      })
+    }
+    return report
+  }
+}
+
+/**
+ * Rebuild the intake unit for an owed admission from its own saved record only.
+ * The decision and the frozen work payload are replayed verbatim; nothing is
+ * re-derived from the current clock, capacity, or retrieval policy.
+ */
+function owedIntakeUnit(
+  decision: TriageDecisionV1,
+  disposition: AdmissionDispositionV1,
+): IntakeUnit {
+  if (!isActiveAdmissionIntake(disposition) || !disposition.workPayload || !disposition.workId) {
+    throw new Error(`Admission ${disposition.dispositionId} is not a proven active admission with a frozen payload`)
+  }
+  if (disposition.workPayload.workId !== disposition.workId) {
+    throw new Error(`Admission ${disposition.dispositionId} has a conflicting frozen work identity`)
+  }
+  return { decision, disposition, work: disposition.workPayload }
 }
 
 function equivalentSourceObservation(existing: Signal, incoming: Signal): boolean {
@@ -216,6 +319,10 @@ function mergeReport(target: SourceIntakeBatchReport, source: SourceIntakeBatchR
   target.duplicateSignals += source.duplicateSignals
   target.insertedDecisions += source.insertedDecisions
   target.admittedWorkItems += source.admittedWorkItems
+  target.repairedWorkIds.push(...source.repairedWorkIds)
+  target.alreadyPresentWorkIds.push(...source.alreadyPresentWorkIds)
+  target.heldAdmissions.push(...source.heldAdmissions)
+  target.repairFailure = source.repairFailure ?? target.repairFailure
   target.failures.push(...source.failures)
 }
 
@@ -227,6 +334,10 @@ export function emptySourceIntakeReport(mode: SourceIntakeMode = 'off'): SourceI
     duplicateSignals: 0,
     insertedDecisions: 0,
     admittedWorkItems: 0,
+    repairedWorkIds: [],
+    alreadyPresentWorkIds: [],
+    heldAdmissions: [],
+    repairFailure: null,
     failures: [],
   }
 }
@@ -239,6 +350,9 @@ function outcome(mode: SourceIntakeMode, signalId: string): SourceSignalIntakeRe
     decisionInserted: false,
     workInserted: false,
     decision: null,
+    work: null,
+    recovered: false,
+    held: null,
   }
 }
 
@@ -254,5 +368,8 @@ function fromCoordinator(
     decisionInserted: result.persisted.decisionInserted,
     workInserted: result.persisted.workInserted,
     decision: result.decision,
+    work: result.work,
+    recovered: result.recovered,
+    held: result.held,
   }
 }

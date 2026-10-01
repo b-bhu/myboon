@@ -177,7 +177,7 @@ test('active Signal intake reaches stable entity memory and full replay is idemp
     const admitted = await intake.process(triageInput(item))
     assert.equal(admitted.decision.outcome, 'light')
     assert.deepEqual(admitted.persisted, {
-      signalInserted: true, decisionInserted: true, workInserted: true,
+      signalInserted: true, decisionInserted: true, dispositionInserted: true, workInserted: true,
     })
     assert.ok(admitted.work)
     assert.equal(store.getResearchWork(admitted.work.workId)?.status, 'research_pending')
@@ -290,7 +290,7 @@ test('active Signal intake reaches stable entity memory and full replay is idemp
 
     const replayed = await intake.process(triageInput(item))
     assert.deepEqual(replayed.persisted, {
-      signalInserted: false, decisionInserted: false, workInserted: false,
+      signalInserted: false, decisionInserted: false, dispositionInserted: false, workInserted: false,
     })
     assert.deepEqual(await researchWorker.runOnce(), { kind: 'idle' })
     const entityReplay = await entityWorker.runActiveCycle()
