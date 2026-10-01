@@ -1,7 +1,18 @@
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { canonicalJson } from './canonical-json'
+import {
+  ARTIFACT_ELIGIBILITY_POLICY_VERSION,
+  ARTIFACT_USAGE_SCHEMA_VERSION,
+  artifactPinId,
+  artifactRefMatchesArtifact,
+  artifactUsageId,
+  type ArtifactPin,
+  type ArtifactRef,
+  type ArtifactUsage,
+} from '../research-engine/artifact-repository'
 import type {
   ResearchPacketV1,
   ResearchWorkItem,
@@ -19,10 +30,28 @@ import {
   type ImmutableAppendResult,
   type IntakeUnit,
   type IntakeUnitAppendResult,
+  type ResearchHandoffCommitResult,
+  type ResearchHandoffUnit,
+  type RetrievalCheckpointCommitResult,
+  type RetrievalCheckpointUnit,
   type SignalObservationRecord,
   type SignalObservationAppendResult,
 } from './platform-store'
 import { validateAdmissionDisposition, type AdmissionDispositionV1 } from './intake-admission'
+import {
+  validateRetrievalManifest,
+  validateRetrievalManifestLinkage,
+  type RetrievalManifestV1,
+} from './retrieval-manifest'
+import {
+  isNonClaimableReadiness,
+  researchHandoffEntityClaim,
+  researchHandoffTerminalStatus,
+  validateResearchReadiness,
+  validateResearchReadinessLinkage,
+  type ResearchHandoffRetryPolicy,
+  type ResearchReadinessV1,
+} from './research-readiness'
 import {
   assertLeasedTransition,
   leasedStatusFor,
@@ -73,6 +102,7 @@ export interface SqliteSignalPlatformStoreOptions {
 }
 
 export const SIGNAL_PLATFORM_TABLES = [
+  'signal_platform_store_identity',
   'signal_platform_signals',
   'signal_platform_signal_observations',
   'signal_platform_triage_decisions',
@@ -80,6 +110,10 @@ export const SIGNAL_PLATFORM_TABLES = [
   'signal_platform_research_work',
   'signal_platform_evidence',
   'signal_platform_research_packets',
+  'signal_platform_research_readiness',
+  'signal_platform_retrieval_manifests',
+  'signal_platform_artifact_pins',
+  'signal_platform_artifact_usages',
 ] as const
 
 const PENDING_STATUSES = ['research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending'] as const
@@ -119,6 +153,11 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       PRAGMA journal_mode = WAL;
       PRAGMA busy_timeout = 5000;
       PRAGMA foreign_keys = ON;
+
+      CREATE TABLE IF NOT EXISTS signal_platform_store_identity (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        store_id TEXT NOT NULL UNIQUE
+      );
 
       CREATE TABLE IF NOT EXISTS signal_platform_signals (
         signal_id TEXT PRIMARY KEY,
@@ -245,6 +284,29 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       CREATE INDEX IF NOT EXISTS idx_signal_platform_evidence_work
         ON signal_platform_evidence(work_id, retrieved_at, evidence_id);
 
+      CREATE TABLE IF NOT EXISTS signal_platform_artifact_pins (
+        pin_id TEXT PRIMARY KEY,
+        artifact_id TEXT NOT NULL,
+        consumer_store_id TEXT NOT NULL,
+        consumer_work_id TEXT NOT NULL,
+        canonical_json TEXT NOT NULL,
+        FOREIGN KEY(artifact_id) REFERENCES signal_platform_evidence(evidence_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_artifact_pins_artifact
+        ON signal_platform_artifact_pins(artifact_id, consumer_store_id, consumer_work_id);
+
+      CREATE TABLE IF NOT EXISTS signal_platform_artifact_usages (
+        usage_id TEXT PRIMARY KEY,
+        consumer_work_id TEXT NOT NULL,
+        owner_store_id TEXT NOT NULL,
+        artifact_id TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        canonical_json TEXT NOT NULL,
+        FOREIGN KEY(consumer_work_id) REFERENCES signal_platform_research_work(work_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_artifact_usages_work
+        ON signal_platform_artifact_usages(consumer_work_id, usage_id);
+
       CREATE TABLE IF NOT EXISTS signal_platform_research_packets (
         packet_id TEXT PRIMARY KEY,
         schema_version TEXT NOT NULL,
@@ -264,7 +326,58 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         ON signal_platform_research_packets(signal_id, created_at, packet_id);
       CREATE INDEX IF NOT EXISTS idx_signal_platform_packets_trace
         ON signal_platform_research_packets(trace_id, created_at, packet_id);
-    `) } catch (error) {
+
+      CREATE TABLE IF NOT EXISTS signal_platform_research_readiness (
+        readiness_id TEXT PRIMARY KEY,
+        schema_version TEXT NOT NULL,
+        work_id TEXT NOT NULL,
+        signal_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        packet_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        readiness_policy_version TEXT NOT NULL,
+        assessed_at TEXT NOT NULL,
+        canonical_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(work_id) REFERENCES signal_platform_research_work(work_id),
+        FOREIGN KEY(packet_id) REFERENCES signal_platform_research_packets(packet_id),
+        UNIQUE(work_id),
+        UNIQUE(packet_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_readiness_outcome
+        ON signal_platform_research_readiness(source_type, outcome, assessed_at, readiness_id);
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_readiness_packet
+        ON signal_platform_research_readiness(packet_id);
+
+      CREATE TABLE IF NOT EXISTS signal_platform_retrieval_manifests (
+        manifest_id TEXT PRIMARY KEY,
+        schema_version TEXT NOT NULL,
+        work_id TEXT NOT NULL,
+        signal_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        research_contract_version TEXT NOT NULL,
+        retrieval_plan_id TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        decision TEXT NOT NULL,
+        manifest_policy_version TEXT NOT NULL,
+        recorded_at TEXT NOT NULL,
+        canonical_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(work_id) REFERENCES signal_platform_research_work(work_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_manifests_work_plan
+        ON signal_platform_retrieval_manifests(
+          work_id, retrieval_plan_id, attempt, recorded_at, manifest_id
+        );
+      CREATE INDEX IF NOT EXISTS idx_signal_platform_manifests_decision
+        ON signal_platform_retrieval_manifests(
+          source_type, decision, recorded_at, manifest_id
+        );
+    `)
+      this.db.prepare(
+        'INSERT OR IGNORE INTO signal_platform_store_identity (singleton, store_id) VALUES (1, ?)',
+      ).run(randomUUID())
+    } catch (error) {
       this.observeWriteFailure('initialize', error)
       throw error
     }
@@ -1081,14 +1194,27 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     if (!this.getResearchWork(evidence.workId)) {
       throw new Error(`Evidence ${evidence.evidenceId} references unknown work for ${this.sourceType}`)
     }
-    return this.appendImmutable(
-      'evidence', evidence.evidenceId, canonicalJson(evidence),
+    return this.inImmediateTransaction(
+      () => this.appendEvidenceInTransaction(evidence, canonicalJson(evidence)),
+    )
+  }
+
+  /** Transaction-neutral body so the retrieval checkpoint can commit both halves. */
+  private appendEvidenceInTransaction(
+    evidence: RetrievedEvidence,
+    json: string,
+  ): ImmutableAppendResult<RetrievedEvidence> {
+    if (!this.getResearchWork(evidence.workId)) {
+      throw new Error(`Evidence ${evidence.evidenceId} references unknown work for ${this.sourceType}`)
+    }
+    return this.appendImmutableInTransaction(
+      'evidence', evidence.evidenceId, json,
       `SELECT canonical_json FROM signal_platform_evidence WHERE evidence_id = ?`,
       `INSERT INTO signal_platform_evidence (
         evidence_id, schema_version, work_id, retrieved_at, content_hash, canonical_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [evidence.evidenceId, evidence.schemaVersion, evidence.workId, evidence.retrievedAt,
-        evidence.contentHash, canonicalJson(evidence), evidence.retrievedAt],
+        evidence.contentHash, json, evidence.retrievedAt],
       evidence,
     )
   }
@@ -1112,17 +1238,281 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     )
   }
 
+  /** Persisted identity follows the source database through a backup restore. */
+  artifactStoreId(): string {
+    this.assertOpen()
+    const row = this.db.prepare(
+      'SELECT store_id FROM signal_platform_store_identity WHERE singleton = 1',
+    ).get() as { store_id?: unknown } | undefined
+    if (typeof row?.store_id !== 'string' || !row.store_id) {
+      throw new Error('Artifact store identity is unavailable')
+    }
+    return row.store_id
+  }
+
+  pinArtifact(ref: ArtifactRef, consumerStoreId: string, consumerWorkId: string, now: string): ArtifactPin {
+    this.assertOpen()
+    if (ref.ownerStoreId !== this.artifactStoreId() || ref.ownerSourceType !== this.sourceType
+      || !consumerStoreId.trim() || !consumerWorkId.trim() || !Number.isFinite(Date.parse(now))) {
+      throw new Error('Artifact pin has invalid owner, consumer, or timestamp')
+    }
+    return this.inImmediateTransaction(() => {
+      const artifact = this.getEvidence(ref.artifactId)
+      if (!artifact || !artifactRefMatchesArtifact(ref, artifact)) {
+        throw new Error('Artifact pin does not match the immutable producer capture')
+      }
+      const pinId = artifactPinId(ref, consumerStoreId, consumerWorkId)
+      const existing = this.db.prepare(
+        'SELECT canonical_json FROM signal_platform_artifact_pins WHERE pin_id = ?',
+      ).get(pinId) as { canonical_json?: unknown } | undefined
+      if (typeof existing?.canonical_json === 'string') {
+        const pin = JSON.parse(existing.canonical_json) as ArtifactPin
+        if (canonicalJson(pin.ref) !== canonicalJson(ref)
+          || pin.consumerStoreId !== consumerStoreId || pin.consumerWorkId !== consumerWorkId) {
+          throw new Error('Existing artifact pin conflicts with its immutable identity')
+        }
+        return pin
+      }
+      const pin: ArtifactPin = { pinId, ref, consumerStoreId, consumerWorkId, pinnedAt: now }
+      this.db.prepare(`
+        INSERT INTO signal_platform_artifact_pins
+          (pin_id, artifact_id, consumer_store_id, consumer_work_id, canonical_json)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(pinId, ref.artifactId, consumerStoreId, consumerWorkId, canonicalJson(pin))
+      return pin
+    })
+  }
+
+  /** A missing pin or changed producer bytes is an explicit miss for the consumer. */
+  getArtifactPin(pinId: string): ArtifactPin | null {
+    this.assertOpen()
+    const row = this.db.prepare(
+      'SELECT canonical_json FROM signal_platform_artifact_pins WHERE pin_id = ?',
+    ).get(pinId) as { canonical_json?: unknown } | undefined
+    return typeof row?.canonical_json === 'string' ? JSON.parse(row.canonical_json) as ArtifactPin : null
+  }
+
+  /** A missing pin or changed producer bytes is an explicit miss for the consumer. */
+  resolvePinnedArtifact(pin: ArtifactPin): RetrievedEvidence | null {
+    this.assertOpen()
+    if (pin.ref.ownerStoreId !== this.artifactStoreId() || pin.ref.ownerSourceType !== this.sourceType) return null
+    const saved = this.getArtifactPin(pin.pinId)
+    if (!saved || canonicalJson(saved) !== canonicalJson(pin)) return null
+    const artifact = this.getEvidence(pin.ref.artifactId)
+    return artifact && artifactRefMatchesArtifact(pin.ref, artifact) ? artifact : null
+  }
+
+  recordArtifactUsage(usage: ArtifactUsage, pin: ArtifactPin | null): ArtifactUsage {
+    this.assertOpen()
+    if (usage.schemaVersion !== ARTIFACT_USAGE_SCHEMA_VERSION
+      || usage.eligibilityPolicyVersion !== ARTIFACT_ELIGIBILITY_POLICY_VERSION
+      || usage.consumerSourceType !== this.sourceType
+      || usage.consumerStoreId !== this.artifactStoreId()
+      || usage.usageId !== artifactUsageId(usage.ref, usage.consumerStoreId, usage.consumerWorkId)
+      || (usage.decision !== 'background_only' && usage.decision !== 'rejected')
+      || !usage.ref.ownerStoreId.trim() || !usage.ref.artifactId.trim()
+      || !usage.ref.captureVersion.trim() || !usage.ref.digest.trim()
+      || (usage.decision === 'background_only' && usage.reason !== 'relevant_context')
+      || (usage.decision === 'rejected' && usage.reason === 'relevant_context')
+      || !Number.isFinite(Date.parse(usage.decidedAt))
+      || (usage.decision === 'background_only' && (
+        pin === null || usage.pinId !== pin.pinId
+        || pin.consumerStoreId !== this.artifactStoreId()
+        || pin.consumerWorkId !== usage.consumerWorkId
+        || canonicalJson(pin.ref) !== canonicalJson(usage.ref)
+      ))
+      || (usage.decision === 'rejected' && (pin !== null || usage.pinId !== null))) {
+      throw new Error('Artifact usage is missing a matching producer pin or consumer identity')
+    }
+    return this.inImmediateTransaction(() => {
+      const work = this.getResearchWork(usage.consumerWorkId)
+      if (!work || work.sourceType !== this.sourceType) throw new Error('Artifact consumer work is unavailable')
+      const existing = this.getArtifactUsage(usage.usageId)
+      if (existing) {
+        const { decidedAt: _oldTime, ...saved } = existing
+        const { decidedAt: _newTime, ...proposed } = usage
+        if (canonicalJson(saved) !== canonicalJson(proposed)) {
+          throw new Error('Existing artifact usage conflicts with its immutable identity')
+        }
+        return existing
+      }
+      this.db.prepare(`
+        INSERT INTO signal_platform_artifact_usages
+          (usage_id, consumer_work_id, owner_store_id, artifact_id, decision, canonical_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(usage.usageId, usage.consumerWorkId, usage.ref.ownerStoreId, usage.ref.artifactId,
+        usage.decision, canonicalJson(usage))
+      return usage
+    })
+  }
+
+  getArtifactUsage(usageId: string): ArtifactUsage | null {
+    this.assertOpen()
+    const row = this.db.prepare(
+      'SELECT canonical_json FROM signal_platform_artifact_usages WHERE usage_id = ?',
+    ).get(usageId) as { canonical_json?: unknown } | undefined
+    return typeof row?.canonical_json === 'string' ? JSON.parse(row.canonical_json) as ArtifactUsage : null
+  }
+
+  listArtifactUsagesByWork(workId: string, limit: number): ArtifactUsage[] {
+    this.assertOpen()
+    const rows = this.db.prepare(`
+      SELECT canonical_json FROM signal_platform_artifact_usages
+      WHERE consumer_work_id = ? ORDER BY usage_id LIMIT ?
+    `).all(workId, boundedLimit(limit)) as Array<{ canonical_json: string }>
+    return rows.map((row) => JSON.parse(row.canonical_json) as ArtifactUsage)
+  }
+
+  /**
+   * One transaction owns the retrieval manifest and the evidence batch it
+   * describes. Any failure after the first insert rolls both back, so a
+   * persisted evidence cache can never exist without the checkpoint that says
+   * what was and was not checked.
+   *
+   * The manifest is also checked against what this store actually holds before
+   * anything is written: it may not claim evidence that is neither in the batch
+   * nor already persisted, and it may not re-home a producer artifact onto
+   * another work item.
+   */
+  commitRetrievalCheckpoint(unit: RetrievalCheckpointUnit): RetrievalCheckpointCommitResult {
+    this.assertOpen()
+    const manifest = validateRetrievalManifest(unit.manifest)
+    this.assertSource(manifest.sourceType)
+    if (manifest.workId !== unit.fence.workId) {
+      throw new Error('Retrieval manifest does not match the fenced work item')
+    }
+    const evidence = unit.evidence.map((artifact) => validateRetrievedEvidence(artifact))
+    const manifestJson = canonicalJson(manifest)
+    return this.inImmediateTransaction(() => {
+      const row = this.readWorkRow(unit.fence.workId)
+      if (!row || row.sourceType !== this.sourceType
+        || (row.status !== 'retrieval_leased' && row.status !== 'deep_leased')
+        || row.leaseOwner !== unit.fence.leaseOwner || row.leaseId !== unit.fence.leaseId
+        || (row.leaseExpiresAt ?? '') <= unit.now) {
+        // Losing the fence writes nothing: the checkpoint and its evidence stay
+        // atomic, and a stale owner cannot leave a manifest behind.
+        return {
+          manifest: { inserted: false, value: manifest },
+          evidence: [],
+          workStatus: row?.status ?? null,
+          committed: false,
+        }
+      }
+      this.assertRetrievalCheckpointLinkage(manifest, evidence, row)
+      const evidenceResults = evidence.map(
+        (artifact) => this.appendEvidenceInTransaction(artifact, canonicalJson(artifact)),
+      )
+      const manifestResult = this.appendRetrievalManifestInTransaction(manifest, manifestJson)
+      return { manifest: manifestResult, evidence: evidenceResults, workStatus: row.status, committed: true }
+    })
+  }
+
+  private assertRetrievalCheckpointLinkage(
+    manifest: RetrievalManifestV1,
+    evidence: readonly RetrievedEvidence[],
+    work: ResearchWorkItem,
+  ): void {
+    const inBatch = new Map(evidence.map((artifact) => [artifact.evidenceId, artifact]))
+    const persisted = new Map(this.listEvidenceByWork(work.workId, 1_000).map(
+      (artifact) => [artifact.evidenceId, artifact],
+    ))
+    for (const artifact of evidence) {
+      // An artifact keeps identifying its originating work. A consumer work
+      // identity is never written onto a producer's immutable capture.
+      if (artifact.workId !== manifest.workId) {
+        throw new Error(
+          `Retrieval checkpoint evidence ${artifact.evidenceId} originates from ${artifact.workId}, not ${manifest.workId}`,
+        )
+      }
+      if (!manifest.evidenceIds.includes(artifact.evidenceId)) {
+        throw new Error(`Retrieval checkpoint evidence ${artifact.evidenceId} is not in its manifest`)
+      }
+    }
+    const recorded = new Map(
+      manifest.sources.filter((source) => source.evidenceId !== null)
+        .map((source) => [source.evidenceId!, source] as const),
+    )
+    const merged = new Map([...persisted, ...inBatch])
+    const issue = validateRetrievalManifestLinkage({
+      manifest, work, persistedEvidence: [...merged.values()],
+    })
+    if (issue !== null) throw new Error(`Retrieval manifest ${manifest.manifestId} does not match its stored records: ${issue}`)
+    for (const [evidenceId, source] of recorded) {
+      const artifact = merged.get(evidenceId)
+      if (!artifact || artifact.contentHash !== source.contentHash) {
+        throw new Error(`Retrieval manifest ${manifest.manifestId} content hash does not match stored evidence ${evidenceId}`)
+      }
+    }
+  }
+
+  private appendRetrievalManifestInTransaction(
+    manifest: RetrievalManifestV1,
+    json: string,
+  ): ImmutableAppendResult<RetrievalManifestV1> {
+    const existing = this.db.prepare(
+      `SELECT canonical_json FROM signal_platform_retrieval_manifests WHERE manifest_id = ?`,
+    ).all(manifest.manifestId) as Array<Record<string, unknown>>
+    if (existing.length > 0) {
+      if (existing.length !== 1 || existing[0]?.canonical_json !== json) {
+        throw new ImmutableRecordConflictError('manifest', manifest.manifestId)
+      }
+      return { inserted: false, value: manifest }
+    }
+    this.db.prepare(`
+        INSERT INTO signal_platform_retrieval_manifests (
+          manifest_id, schema_version, work_id, signal_id, source_type,
+          research_contract_version, retrieval_plan_id, attempt, decision,
+          manifest_policy_version, recorded_at, canonical_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        manifest.manifestId, manifest.schemaVersion, manifest.workId, manifest.signalId,
+        manifest.sourceType, manifest.researchContractVersion, manifest.retrievalPlanId,
+        manifest.attempt, manifest.decision, manifest.manifestPolicyVersion,
+        manifest.recordedAt, json, manifest.createdAt,
+      )
+    return { inserted: true, value: manifest }
+  }
+
+  getLatestRetrievalManifest(workId: string, retrievalPlanId: string): RetrievalManifestV1 | null {
+    return this.readJson(
+      `SELECT canonical_json FROM signal_platform_retrieval_manifests
+       WHERE work_id = ? AND retrieval_plan_id = ? AND source_type = ?
+       ORDER BY attempt DESC, recorded_at DESC, manifest_id DESC LIMIT 1`,
+      [workId, retrievalPlanId, this.sourceType], validateRetrievalManifest,
+    )
+  }
+
+  listRetrievalManifestsByWork(workId: string, limit: number): RetrievalManifestV1[] {
+    return this.readJsonList(
+      `SELECT canonical_json FROM signal_platform_retrieval_manifests
+       WHERE work_id = ? AND source_type = ?
+       ORDER BY attempt, recorded_at, manifest_id LIMIT ?`,
+      [workId, this.sourceType, boundedLimit(limit)], validateRetrievalManifest,
+    )
+  }
+
   appendResearchPacket(input: ResearchPacketV1): ImmutableAppendResult<ResearchPacketV1> {
     this.assertOpen()
     const packet = validateResearchPacket(input)
     this.assertSource(packet.sourceType)
+    this.assertPacketLinkage(packet)
+    const json = canonicalJson(packet)
+    return this.inImmediateTransaction(() => this.appendResearchPacketInTransaction(packet, json))
+  }
+
+  private assertPacketLinkage(packet: ResearchPacketV1): void {
     const work = this.getResearchWork(packet.workId)
     if (!work || work.signalId !== packet.signalId
       || work.researchContractVersion !== packet.researchContractVersion) {
       throw new Error(`Packet ${packet.packetId} does not match its work/signal/contract linkage`)
     }
-    const json = canonicalJson(packet)
-    return this.appendImmutable(
+  }
+
+  private appendResearchPacketInTransaction(
+    packet: ResearchPacketV1,
+    json: string,
+  ): ImmutableAppendResult<ResearchPacketV1> {
+    return this.appendImmutableInTransaction(
       'packet', packet.packetId, json,
       `SELECT canonical_json FROM signal_platform_research_packets
        WHERE packet_id = ? OR (work_id = ? AND research_contract_version = ?)`,
@@ -1174,6 +1564,243 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       return changed(this.updateWorkWithFence(updated, `
         work_id = ? AND source_type = ? AND status = 'research_ready' AND lease_id IS NULL
       `, [workId, this.sourceType], 0))
+    })
+  }
+
+  /**
+ * Readiness has no standalone public write.
+ *
+ * Persisting a decision outside the atomic handoff could leave one saved with
+ * no work status admitting it, so this is reachable only from inside the
+ * handoff and bridge transactions below.
+ */
+private appendResearchReadinessInTransaction(
+    readiness: ResearchReadinessV1,
+    json: string,
+  ): ImmutableAppendResult<ResearchReadinessV1> {
+    const existing = this.db.prepare(`
+        SELECT canonical_json FROM signal_platform_research_readiness
+        WHERE readiness_id = ? OR work_id = ? OR packet_id = ?
+      `).all(readiness.readinessId, readiness.workId, readiness.packetId) as Array<Record<string, unknown>>
+    if (existing.length > 0) {
+      if (existing.length !== 1 || existing[0]?.canonical_json !== json) {
+        throw new ImmutableRecordConflictError('readiness', readiness.readinessId)
+      }
+      return { inserted: false, value: readiness }
+    }
+    if (!this.getResearchWork(readiness.workId)) {
+      throw new Error(`Research readiness ${readiness.readinessId} references unknown work`)
+    }
+    if (!this.getResearchPacket(readiness.packetId)) {
+      throw new Error(`Research readiness ${readiness.readinessId} references unknown packet`)
+    }
+    this.db.prepare(`
+        INSERT INTO signal_platform_research_readiness (
+          readiness_id, schema_version, work_id, signal_id, source_type, packet_id,
+          outcome, readiness_policy_version, assessed_at, canonical_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        readiness.readinessId, readiness.schemaVersion, readiness.workId, readiness.signalId,
+        readiness.sourceType, readiness.packetId, readiness.outcome,
+        readiness.readinessPolicyVersion, readiness.assessedAt, json, readiness.createdAt,
+      )
+    return { inserted: true, value: readiness }
+  }
+
+  /**
+   * Reject a readiness decision that does not describe the persisted records.
+   *
+   * `work` is the row this transaction just read, `packet` is the packet being
+   * committed (or the one already stored for the bridge), and the signal and
+   * evidence are loaded from this store rather than trusted from the caller.
+   * Running this before any write keeps a decision that was assessed against a
+   * different signal or evidence set from ever being saved.
+   */
+  private assertHandoffLinkage(
+    readiness: ResearchReadinessV1,
+    packet: ResearchPacketV1,
+    work: ResearchWorkItem,
+  ): void {
+    const signal = this.getSignal(readiness.signalId)
+    if (!signal) {
+      throw new Error(
+        `Research readiness ${readiness.readinessId} references signal ${readiness.signalId} that is not stored for ${this.sourceType}`,
+      )
+    }
+    const issue = validateResearchReadinessLinkage({
+      readiness,
+      work,
+      signal,
+      packet,
+      persistedEvidence: this.listEvidenceByWork(work.workId, 1_000),
+    })
+    if (issue !== null) {
+      throw new Error(`Research readiness ${readiness.readinessId} does not match its stored records: ${issue}`)
+    }
+  }
+
+  getResearchReadinessByWork(workId: string): ResearchReadinessV1 | null {
+    return this.readJson(
+      `SELECT canonical_json FROM signal_platform_research_readiness
+       WHERE work_id = ? AND source_type = ?`,
+      [workId, this.sourceType], validateResearchReadiness,
+    )
+  }
+
+  getResearchReadinessByPacket(packetId: string): ResearchReadinessV1 | null {
+    return this.readJson(
+      `SELECT canonical_json FROM signal_platform_research_readiness
+       WHERE packet_id = ? AND source_type = ?`,
+      [packetId, this.sourceType], validateResearchReadiness,
+    )
+  }
+
+  /**
+   * One transaction owns the packet, the readiness decision, and the work
+   * status the decision requires. Any failure after the first insert rolls the
+   * whole handoff back, so a saved decision can never exist without its work
+   * status or a saved packet without its decision.
+   *
+   * A non-claimable outcome persists its bounded retry transition and deadline
+   * here too, so the saved decision and the work status it requires are never
+   * left disconnected.
+   */
+  commitResearchHandoff(unit: ResearchHandoffUnit): ResearchHandoffCommitResult {
+    this.assertOpen()
+    const packet = validateResearchPacket(unit.packet)
+    const readiness = validateResearchReadiness(unit.readiness)
+    this.assertSource(packet.sourceType)
+    this.assertSource(readiness.sourceType)
+    if (readiness.packetId !== packet.packetId || readiness.workId !== packet.workId
+      || readiness.signalId !== packet.signalId || readiness.sourceType !== packet.sourceType
+      || readiness.researchContractVersion !== packet.researchContractVersion) {
+      throw new Error('Research readiness does not match its packet linkage')
+    }
+    if (readiness.workId !== unit.fence.workId) {
+      throw new Error('Research readiness does not match the fenced work item')
+    }
+    const packetJson = canonicalJson(packet)
+    const readinessJson = canonicalJson(readiness)
+    return this.inImmediateTransaction(() => {
+      const row = this.readWorkRow(unit.fence.workId)
+      if (!row || row.sourceType !== this.sourceType || row.status !== 'synthesis_leased'
+        || row.leaseOwner !== unit.fence.leaseOwner || row.leaseId !== unit.fence.leaseId
+        || (row.leaseExpiresAt ?? '') <= unit.now) {
+        // Losing the fence writes nothing: the packet and the decision stay
+        // atomic with the work status that admits them.
+        return {
+          packet: { inserted: false, value: packet },
+          readiness: { inserted: false, value: readiness },
+          workStatus: row?.status ?? null,
+          committed: false,
+          replayed: false,
+        }
+      }
+      // The decision was assessed against caller-supplied records. Before any
+      // insert, re-check it against what this store actually holds, so a saved
+      // decision can never describe a signal, packet, or evidence set that is
+      // not the persisted one.
+      this.assertHandoffLinkage(readiness, packet, row)
+      const target = handoffTargetStatus(readiness, row, unit.now, unit.retry)
+      const packetResult = this.appendResearchPacketInTransaction(packet, packetJson)
+      const readinessResult = this.appendResearchReadinessInTransaction(readiness, readinessJson)
+      const updated = validateResearchWorkItem({
+        ...row,
+        status: target.status,
+        nextAttemptAt: target.nextAttemptAt,
+        retryTargetStatus: target.status === 'retry_wait' ? 'synthesis_pending' : null,
+        leaseOwner: null,
+        leaseId: null,
+        leaseExpiresAt: null,
+        failureCategory: readiness.failureCategory,
+        failureDetail: target.failureDetail,
+        updatedAt: unit.now,
+      })
+      const transitioned = changed(this.updateWorkWithFence(updated, `
+        work_id = ? AND source_type = ? AND status = 'synthesis_leased'
+          AND lease_owner = ? AND lease_id = ? AND lease_expires_at > ?
+      `, [unit.fence.workId, this.sourceType, unit.fence.leaseOwner, unit.fence.leaseId, unit.now], 0))
+      if (!transitioned) {
+        // The fenced update is the last write, so rolling the whole unit back is
+        // the only way to keep packet, decision, and status consistent.
+        throw new Error(`Research handoff for ${unit.fence.workId} lost its lease fence`)
+      }
+      return {
+        packet: packetResult,
+        readiness: readinessResult,
+        workStatus: target.status,
+        committed: true,
+        replayed: !readinessResult.inserted,
+      }
+    })
+  }
+
+  /**
+   * Bounded, explicit bridge for a handoff whose synthesis completion was saved
+   * before the atomic transition existed. It only replays the fenced promotion
+   * of an already-saved `research_ready` result; it never assesses old packets
+   * and never reclaims the historical backlog.
+   */
+  promoteResearchReadyWithReadiness(input: {
+    workId: string
+    readiness: ResearchReadinessV1
+    now: string
+  }): ResearchHandoffCommitResult | null {
+    this.assertOpen()
+    const readiness = validateResearchReadiness(input.readiness)
+    this.assertSource(readiness.sourceType)
+    if (readiness.workId !== input.workId) {
+      throw new Error('Research readiness does not match the bridged work item')
+    }
+    const readinessJson = canonicalJson(readiness)
+    return this.inImmediateTransaction(() => {
+      const row = this.readWorkRow(input.workId)
+      // An expired deadline must not erase an already-saved research result, so
+      // freshness is deliberately not part of this fence.
+      if (!row || row.sourceType !== this.sourceType || row.status !== 'research_ready'
+        || row.leaseId !== null) return null
+      const saved = this.getResearchReadinessByWork(input.workId)
+      if (saved && canonicalJson(saved) !== readinessJson) {
+        throw new ImmutableRecordConflictError('readiness', readiness.readinessId)
+      }
+      const packetRow = this.db.prepare(`
+          SELECT packet_id, canonical_json FROM signal_platform_research_packets
+          WHERE packet_id = ? AND work_id = ?
+        `).get(readiness.packetId, input.workId) as Record<string, unknown> | undefined
+      if (!packetRow) return null
+      const packet = parseJson(packetRow.canonical_json, validateResearchPacket)
+      // A packet row existing is not evidence that the caller's decision
+      // describes it. The bridge validates the same persisted linkage the
+      // atomic handoff does, before it saves or transitions anything.
+      this.assertHandoffLinkage(readiness, packet, row)
+      // The bridge deliberately takes no retry policy: promoting historical
+      // bridge rows must not schedule new deferred retries. A non-claimable
+      // assessment therefore lands as an explicit held, non-claimable row.
+      const target = handoffTargetStatus(readiness, row, input.now)
+      const readinessResult = this.appendResearchReadinessInTransaction(readiness, readinessJson)
+      const updated = validateResearchWorkItem({
+        ...row,
+        status: target.status,
+        nextAttemptAt: null,
+        retryTargetStatus: null,
+        leaseOwner: null,
+        leaseId: null,
+        leaseExpiresAt: null,
+        failureCategory: readiness.failureCategory,
+        failureDetail: target.failureDetail,
+        updatedAt: input.now,
+      })
+      const transitioned = changed(this.updateWorkWithFence(updated, `
+        work_id = ? AND source_type = ? AND status = 'research_ready' AND lease_id IS NULL
+      `, [input.workId, this.sourceType], 0))
+      if (!transitioned) throw new Error(`Research handoff bridge for ${input.workId} lost its fence`)
+      return {
+        packet: { inserted: false, value: packet },
+        readiness: readinessResult,
+        workStatus: target.status,
+        committed: true,
+        replayed: !readinessResult.inserted,
+      }
     })
   }
 
@@ -1251,22 +1878,21 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     }
   }
 
-  private appendImmutable<T>(
+  /** Transaction-neutral body so a larger atomic unit can compose this append. */
+  private appendImmutableInTransaction<T>(
     kind: 'evidence' | 'packet', identity: string, json: string,
     selectSql: string, insertSql: string, insertParams: unknown[], value: T,
     selectParams: unknown[] = [identity],
   ): ImmutableAppendResult<T> {
-    return this.inImmediateTransaction(() => {
-      const existing = this.db.prepare(selectSql).all(...selectParams) as Array<Record<string, unknown>>
-      if (existing.length > 0) {
-        if (existing.length !== 1 || existing[0]?.canonical_json !== json) {
-          throw new ImmutableRecordConflictError(kind, identity)
-        }
-        return { inserted: false, value }
+    const existing = this.db.prepare(selectSql).all(...selectParams) as Array<Record<string, unknown>>
+    if (existing.length > 0) {
+      if (existing.length !== 1 || existing[0]?.canonical_json !== json) {
+        throw new ImmutableRecordConflictError(kind, identity)
       }
-      this.db.prepare(insertSql).run(...insertParams)
-      return { inserted: true, value }
-    })
+      return { inserted: false, value }
+    }
+    this.db.prepare(insertSql).run(...insertParams)
+    return { inserted: true, value }
   }
 
   private readWorkRow(workId: string): ResearchWorkItem | null {
@@ -1364,6 +1990,49 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
 
 function parseWork(value: unknown): ResearchWorkItem {
   return parseJson(value, validateResearchWorkItem)
+}
+
+/**
+ * Work status owed by a readiness outcome, plus the safe redacted detail and the
+ * retry deadline the work row may retain.
+ *
+ * A ready result and a no-item result that still owes an Entity action are both
+ * claimable; only a deliberate no-action result completes. Every non-claimable
+ * outcome routes through the existing bounded retry/dead-letter handling, using
+ * the caller's retry policy so no automatic deferred wakeup is introduced. The
+ * category itself already lives on the readiness record; the row carries no
+ * provider prose.
+ */
+function handoffTargetStatus(
+  readiness: ResearchReadinessV1,
+  row: ResearchWorkItem,
+  now: string,
+  retry?: ResearchHandoffRetryPolicy,
+): {
+  status: ResearchWorkItem['status']
+  failureDetail: string | null
+  nextAttemptAt: string | null
+} {
+  const entityClaim = researchHandoffEntityClaim(readiness)
+  if (entityClaim !== null) {
+    return { status: 'entity_pending', failureDetail: null, nextAttemptAt: null }
+  }
+  if (readiness.outcome === 'resolved_without_new_item') {
+    return { status: 'complete', failureDetail: null, nextAttemptAt: null }
+  }
+  const status = researchHandoffTerminalStatus(readiness, {
+    attemptCount: row.attemptCount,
+    maxAttempts: retry?.maxAttempts ?? row.attemptCount,
+    expired: Date.parse(row.freshnessDeadline) <= Date.parse(now),
+    nextAttemptAt: retry?.nextAttemptAt ?? null,
+  })
+  return {
+    status,
+    failureDetail: `readiness:${readiness.outcome}`,
+    // The retry deadline is persisted in this same transaction, so the saved
+    // decision and the status that admits it stay connected.
+    nextAttemptAt: status === 'retry_wait' ? retry!.nextAttemptAt! : null,
+  }
 }
 
 function parseJson<T>(value: unknown, validate: (input: unknown) => T): T {

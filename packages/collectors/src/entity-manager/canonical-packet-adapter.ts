@@ -1,6 +1,12 @@
-import type { ResearchPacketV1, Signal } from '../signal-platform/contracts'
+import type { ResearchPacketV1, ResearchWorkItem, RetrievedEvidence, Signal } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { validateResearchPacket } from '../signal-platform/validation'
+import {
+  researchHandoffEntityClaim,
+  validateResearchReadiness,
+  validateResearchReadinessLinkage,
+  type ResearchReadinessV1,
+} from '../signal-platform/research-readiness'
 import type { ResearchPacket } from './types'
 
 export const CANONICAL_PACKET_ADAPTER_VERSION = 'myboon.entity_packet_adapter.v1' as const
@@ -18,11 +24,29 @@ export interface CanonicalPacketSourcePolicy {
 }
 
 export class CanonicalPacketAdapterError extends PlatformFailure {
-  constructor(message: string, category: 'invalid_structured_output' | 'schema_version_mismatch' = 'invalid_structured_output') {
+  constructor(
+    message: string,
+    category: 'invalid_structured_output' | 'schema_version_mismatch' = 'invalid_structured_output',
+  ) {
     super({ category, message, retryable: false })
     this.name = 'CanonicalPacketAdapterError'
   }
 }
+
+/**
+ * Everything Entity Manager needs in order to trust a Research readiness
+ * decision. Entity validates linkage and consumes the decision; it never runs
+ * a second sufficiency judgment.
+ */
+export interface EntityHandoffContext {
+  work: ResearchWorkItem
+  signal: Signal
+  persistedEvidence: readonly RetrievedEvidence[]
+  /** Null for a packet saved before the readiness contract existed. */
+  readiness: ResearchReadinessV1 | null
+}
+
+const ADAPTER_VERSION_V2 = 'myboon.entity_packet_adapter.v2' as const
 
 export class CanonicalPacketSourcePolicyRegistry {
   private readonly policies: ReadonlyMap<string, CanonicalPacketSourcePolicy>
@@ -68,20 +92,29 @@ export const canonicalPacketSourcePolicies = new CanonicalPacketSourcePolicyRegi
  * Pure bridge from the canonical packet into the legacy EntityService input.
  * The complete canonical packet remains under context.canonical_packet while
  * policies expose only explicitly permitted convenience fields.
+ *
+ * With a v2 `context`, the readiness decision is Research's to make: this
+ * adapter validates the decision's linkage and consumes it, and it does not
+ * re-judge sufficiency. Without one, it falls back to the legacy v1 rule that
+ * only a `complete` packet is admissible.
  */
 export function adaptCanonicalResearchPacket(
   value: unknown,
   registry: CanonicalPacketSourcePolicyRegistry = canonicalPacketSourcePolicies,
+  context?: EntityHandoffContext,
 ): ResearchPacket {
   const packet = canonicalPacket(value)
   const sourcePolicy = registry.policyFor(packet.sourceType)
   validateLinkage(packet)
   validateEvidenceLinkage(packet)
-  if (packet.completion === 'failed') {
-    throw new CanonicalPacketAdapterError(`Failed Research Packet cannot enter Entity Manager: ${packet.packetId}`)
-  }
-  if (packet.completion === 'partial' && !sourcePolicy.allowPartial) {
-    throw new CanonicalPacketAdapterError(`Partial Research Packet is disallowed by ${packet.sourceType} policy.`)
+  const readiness = context ? resolveReadiness(packet, context) : null
+  if (readiness === null) {
+    if (packet.completion === 'failed') {
+      throw new CanonicalPacketAdapterError(`Failed Research Packet cannot enter Entity Manager: ${packet.packetId}`)
+    }
+    if (packet.completion === 'partial' && !sourcePolicy.allowPartial) {
+      throw new CanonicalPacketAdapterError(`Partial Research Packet is disallowed by ${packet.sourceType} policy.`)
+    }
   }
 
   const additions = sourcePolicy.contextAdditions(packet)
@@ -120,7 +153,7 @@ export function adaptCanonicalResearchPacket(
       budgetUsed: clone(packet.budgetUsed),
     },
     context: {
-      adapter_version: CANONICAL_PACKET_ADAPTER_VERSION,
+      adapter_version: readiness === null ? CANONICAL_PACKET_ADAPTER_VERSION : ADAPTER_VERSION_V2,
       packet_id: packet.packetId,
       work_id: packet.workId,
       signal_id: packet.signalId,
@@ -148,6 +181,9 @@ export function adaptCanonicalResearchPacket(
         source_research_id: sourcePolicy.sourceResearchId,
         source_ref_id: sourcePolicy.sourceRefId,
       },
+      // The consumed Research decision travels with the packet so every
+      // downstream reader can see why this handoff was admitted.
+      research_readiness: readiness === null ? null : clone(readiness),
       ...clone(additions),
     },
   }
@@ -179,6 +215,38 @@ function policy(input: Pick<
       return packet.sourceSignal.publishedAt ?? packet.observedAt
     },
   }
+}
+
+/**
+ * Consume a Research readiness decision.
+ *
+ * Returns the validated decision when Entity may proceed, or null when there is
+ * no v2 decision and the caller must fall back to the v1 completion rule. A
+ * recorded outcome that owes no Entity action is a deliberate Research result,
+ * not an Entity re-judgement, so it is surfaced as an explicit refusal rather
+ * than retried. Sufficiency itself is never reassessed here: Entity validates
+ * the decision's schema, linkage, provenance, and explicit action only.
+ */
+function resolveReadiness(packet: ResearchPacketV1, context: EntityHandoffContext): ResearchReadinessV1 | null {
+  if (context.readiness === null) return null
+  const readiness = validateResearchReadiness(context.readiness)
+  const issue = validateResearchReadinessLinkage({
+    readiness,
+    work: context.work,
+    signal: context.signal,
+    packet,
+    persistedEvidence: context.persistedEvidence,
+  })
+  if (issue !== null) throw new CanonicalPacketAdapterError(issue, 'schema_version_mismatch')
+  // A no-new-item result that still owes a required attachment or reuse action
+  // must reach the validated Entity writer, exactly as a ready result does. A
+  // deliberate no-action result owes nothing and has no work to perform here.
+  if (researchHandoffEntityClaim(readiness) === null) {
+    throw new CanonicalPacketAdapterError(
+      `Research readiness for ${packet.packetId} is ${readiness.outcome}; Entity Manager does not reassess sufficiency.`,
+    )
+  }
+  return readiness
 }
 
 function canonicalPacket(value: unknown): ResearchPacketV1 {

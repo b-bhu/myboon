@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { InferenceTelemetry } from '../inference-gateway/types'
+import type { ResearchPacket } from './types'
 import type { ResearchPacketV1, ResearchWorkItem } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { adaptCanonicalResearchPacket } from './canonical-packet-adapter'
+import {
+  NO_RESEARCH_ENTITY_ACTION,
+  assessResearchReadiness,
+  createResolvedWithoutNewItemReadiness,
+  validateResearchReadiness,
+  type ResearchReadinessV1,
+} from '../signal-platform/research-readiness'
+import { operatorEvidence, operatorSignal } from '../signal-platform/operator-fixtures.test-support'
 import {
   CANONICAL_ENTITY_PLAN_SCHEMA_VERSION,
   EntityServiceCanonicalPacketProcessor,
@@ -1599,4 +1608,189 @@ test('planner result rejects malformed telemetry before any Entity or memory wri
   ))
   assert.equal(store.entityWrites, 0)
   assert.equal(store.memoryWrites, 0)
+})
+
+/**
+ * The real processor, not a stub: a Research-ready attributed partial packet
+ * must reach planning and writing with its readiness preserved through every
+ * adaptation the processor performs.
+ */
+test('the real processor accepts a Research-ready partial packet and keeps readiness through re-adaptation', async () => {
+  const store = new FakeStore([entity()])
+  const item = work()
+  // The Ethena shape: attributed, evidence-linked, useful, and partial.
+  const partial = packet({
+    completion: 'partial',
+    verifiedFacts: [],
+    limitations: ['No independent verification of the guidance change.'],
+    openQuestions: ['Which meeting approved the change?'],
+  })
+  const readiness = assessResearchReadiness({
+    work: item,
+    signal: operatorSignal('news', '1'),
+    packet: partial,
+    persistedEvidence: [operatorEvidence('1')],
+    assessedAt: NOW,
+  })
+  assert.equal(readiness.outcome, 'ready_for_entity')
+
+  const planned: ResearchPacket[] = []
+  const subject = processor(store, {
+    async plan({ packet: adapted }) {
+      planned.push(adapted)
+      return {
+        plan: plan({
+          action: 'select_existing', entityId: 'entity-fed',
+          supportingClaimIds: ['claim-1'], supportingEvidenceIds: ['evidence-1'],
+        }),
+        telemetry: entityTelemetry(),
+      }
+    },
+  })
+
+  const result = await subject.process({
+    work: item,
+    canonicalPacket: partial,
+    packet: adaptCanonicalResearchPacket(partial, undefined, {
+      work: item, signal: operatorSignal('news', '1'),
+      persistedEvidence: [operatorEvidence('1')], readiness,
+    }),
+    signal: new AbortController().signal,
+    handoffContext: {
+      work: item, signal: operatorSignal('news', '1'),
+      persistedEvidence: [operatorEvidence('1')], readiness,
+    },
+  })
+
+  // It reached planning rather than being rejected as partial.
+  assert.equal(planned.length, 1, 'the planner was called exactly once')
+  assert.equal(result.memoryOutcome, 'written')
+  // Readiness survived the processor's own re-adaptation of the grounded packet.
+  assert.equal(planned[0]!.context.adapter_version, 'myboon.entity_packet_adapter.v2')
+  const carried = planned[0]!.context.research_readiness as ResearchReadinessV1
+  assert.equal(carried.outcome, 'ready_for_entity')
+  assert.equal(carried.entityAction.kind, 'entity_item')
+  // The limitations and open questions the decision retained are preserved.
+  assert.deepEqual(planned[0]!.context.limitations, ['No independent verification of the guidance change.'])
+  assert.deepEqual(planned[0]!.context.open_questions, ['Which meeting approved the change?'])
+  // And the knowledge was actually written.
+  assert.equal(store.memories.length, 1)
+  assert.equal(store.memories[0].entity_id, 'entity-fed')
+})
+
+test('the real processor rejects a partial packet that has no Research decision at all', async () => {
+  const store = new FakeStore([entity()])
+  const partial = packet({ completion: 'partial', verifiedFacts: [] })
+  const subject = processor(store, { async plan() { throw new Error('must not plan') } })
+
+  await assert.rejects(
+    subject.process(input(partial)),
+    (error: unknown) => /Partial Research Packet is disallowed|complete Research Packet/.test(
+      (error as Error).message,
+    ),
+  )
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+test('the real processor refuses a recorded non-ready decision without reassessing it', async () => {
+  const store = new FakeStore([entity()])
+  const item = work()
+  const complete = packet()
+  const base = assessResearchReadiness({
+    work: item, signal: operatorSignal('news', '1'), packet: complete,
+    persistedEvidence: [operatorEvidence('1')], assessedAt: NOW,
+  })
+  const readiness = validateResearchReadiness({
+    ...base,
+    outcome: 'blocked',
+    entityAction: NO_RESEARCH_ENTITY_ACTION,
+    failureCategory: 'retrieval_blocked',
+  })
+  const subject = processor(store, { async plan() { throw new Error('must not plan') } })
+
+  await assert.rejects(subject.process({
+    work: item,
+    canonicalPacket: complete,
+    packet: adaptCanonicalResearchPacket(complete),
+    signal: new AbortController().signal,
+    handoffContext: {
+      work: item, signal: operatorSignal('news', '1'),
+      persistedEvidence: [operatorEvidence('1')], readiness,
+    },
+  }), (error: unknown) => /is blocked/.test((error as Error).message))
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+})
+
+/**
+ * A required `evidence_attachment` has no writer yet, so the real processor
+ * must fail closed rather than silently treating it as a normal entity item.
+ *
+ * This runs the real processor and store path: a rejection here proves no
+ * planner call, no Entity write, and no memory write happened, rather than only
+ * proving the action was transported. The readiness record keeps the owed
+ * action and target either way, so the future managed writer can perform it.
+ */
+test('the real processor refuses an owed evidence attachment with zero writes', async () => {
+  const store = new FakeStore([entity()])
+  const item = work()
+  const partial = packet({
+    completion: 'partial',
+    verifiedFacts: [],
+    limitations: ['No independent verification of the guidance change.'],
+  })
+  const readiness = createResolvedWithoutNewItemReadiness({
+    work: item,
+    signal: operatorSignal('news', '1'),
+    packet: partial,
+    persistedEvidence: [operatorEvidence('1')],
+    assessedAt: NOW,
+    reason: 'Already covered by a managed item, but the source must be attached.',
+    owedAttachment: { targetId: 'managed-item-42' },
+  })
+  assert.equal(readiness.entityAction.kind, 'evidence_attachment')
+  const handoffContext = {
+    work: item, signal: operatorSignal('news', '1'),
+    persistedEvidence: [operatorEvidence('1')], readiness,
+  }
+  let planned = 0
+  const subject = processor(store, {
+    async plan() {
+      planned += 1
+      // A plan that would otherwise write, so the assertion below proves the
+      // refusal happens before planning rather than after it.
+      return {
+        plan: plan({
+          action: 'select_existing', entityId: 'entity-fed',
+          supportingClaimIds: ['claim-1'], supportingEvidenceIds: ['evidence-1'],
+        }),
+        telemetry: entityTelemetry(),
+      }
+    },
+  })
+
+  await assert.rejects(subject.process({
+    work: item,
+    canonicalPacket: partial,
+    packet: adaptCanonicalResearchPacket(partial, undefined, handoffContext),
+    signal: new AbortController().signal,
+    handoffContext,
+  }), (error: unknown) => (
+    error instanceof PlatformFailure
+    // Held, not retried: there is no writer to wait for on this path.
+    && error.category === 'entity_resolution_failed'
+    && error.retryable === false
+    && /managed-item-42/.test(error.message)
+  ))
+
+  // Zero writes: no planner call, no Entity row, no memory row.
+  assert.equal(planned, 0)
+  assert.equal(store.entityWrites, 0)
+  assert.equal(store.memoryWrites, 0)
+  assert.equal(store.memories.length, 0)
+  assert.deepEqual(store.entities.map((row) => row.id), ['entity-fed'])
+  // The owed action and target are preserved on the decision, not erased.
+  const action = readiness.entityAction as { targetId: string }
+  assert.equal(action.targetId, 'managed-item-42')
 })

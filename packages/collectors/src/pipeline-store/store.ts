@@ -25,6 +25,9 @@
  * This file is types and an interface only. No implementation.
  */
 
+import type { Signal } from '../signal-platform/contracts'
+import type { SourceDeliveryOutbox } from '../signal-platform/source-delivery-outbox'
+
 // ---------------------------------------------------------------------------
 // Status unions
 // ---------------------------------------------------------------------------
@@ -608,10 +611,20 @@ export interface PipelineBacklogDepth {
 // PipelineStore
 // ---------------------------------------------------------------------------
 
-export interface PipelineStore {
+export interface PipelineSourceDeliveryInput {
+  signal: Signal
+  observedAt: string
+}
+
+export interface PipelineStore extends SourceDeliveryOutbox {
   // Watchlist
   getWatchlistSnapshots(area: string, slugs: string[]): Promise<PipelineWatchlistSnapshotRow[]>
   upsertWatchlist(rows: PipelineWatchlistUpsertInput[]): Promise<void>
+  /** Atomically saves the new market baseline and its immutable source delivery obligations. */
+  commitWatchlistAndSourceDeliveries(
+    rows: PipelineWatchlistUpsertInput[],
+    deliveries: PipelineSourceDeliveryInput[],
+  ): Promise<void>
   /**
    * Marks watchlist rows inactive when they were not seen in the run at
    * `observedAt`. This is a status write ONLY: deactivated rows must remain

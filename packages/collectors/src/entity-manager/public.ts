@@ -107,7 +107,7 @@ export {
   adaptCanonicalResearchPacket,
   canonicalPacketSourcePolicies,
 } from './canonical-packet-adapter'
-export type { CanonicalPacketSourcePolicy } from './canonical-packet-adapter'
+export type { CanonicalPacketSourcePolicy, EntityHandoffContext } from './canonical-packet-adapter'
 export {
   ENTITY_WORKER_SOURCE_TYPES,
   SharedEntityWorkerConfigError,
@@ -126,6 +126,7 @@ export type {
   CanonicalPacketProcessor,
   CanonicalPacketProcessorInput,
   CanonicalPacketProcessorResult,
+  EntityHandoffSource,
   EntityPacketWorkPort,
   HeartbeatScheduler,
   ShadowCycleResult,

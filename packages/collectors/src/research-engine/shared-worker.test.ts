@@ -18,7 +18,7 @@ import {
 import type { ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { adaptRetrievedEvidenceArtifact } from '../signal-platform/retrieved-evidence-adapter'
-import { DeterministicRetriever } from './deterministic-retrieval'
+import { DeterministicRetriever, type RetrievedEvidenceArtifact } from './deterministic-retrieval'
 import {
   EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION,
   sourceMaterialHash,
@@ -28,6 +28,8 @@ import { BoundedStandardSearch, SearchConnectorRegistry } from './search-connect
 import {
   SharedResearchWorker,
   SharedResearchWorkerConfigurationError,
+  buildRetrievalManifest,
+  buildRetrievalPlan,
   type SharedResearchWorkPort,
   type SharedWorkerClock,
   type ResearchExecutionLedgerPort,
@@ -480,12 +482,12 @@ test('packet replay emits one idempotent skipped event and never charges packet 
     fx.store.appendEvidence(artifact)
     fx.store.appendResearchPacket(packet(item, source, artifact))
     const ledger = new CapturingExecutionLedger()
+    // Losing the handoff fence must leave the saved packet and any saved
+    // decision untouched, so only the fenced transition is ever replayed.
     const port = new Proxy(fx.store, {
       get(target, property, receiver) {
-        if (property === 'transitionLeased') {
-          return async (command: Parameters<SharedResearchWorkPort['transitionLeased']>[0]) => (
-            command.nextStatus === 'research_ready' ? false : target.transitionLeased(command)
-          )
+        if (property === 'commitResearchHandoff') {
+          return () => { throw new Error('handoff unavailable') }
         }
         const value = Reflect.get(target, property, receiver) as unknown
         return typeof value === 'function' ? (value as Function).bind(target) : value
@@ -494,13 +496,16 @@ test('packet replay emits one idempotent skipped event and never charges packet 
     const first = new SharedResearchWorker(workerOptions([port], {
       stages: ['synthesis'], executionLedger: ledger,
     }))
-    assert.equal((await first.runOnce()).kind, 'lease_lost')
+    assert.equal((await first.runOnce()).kind, 'handoff_pending')
+    assert.equal(fx.store.getResearchReadinessByWork(item.workId), null)
     await fx.store.recoverExpiredLeases({ now: '2026-08-26T12:12:00.000Z', limit: 10 })
-    const second = new SharedResearchWorker(workerOptions([port], {
+    const second = new SharedResearchWorker(workerOptions([fx.store], {
       stages: ['synthesis'], executionLedger: ledger,
       clock: new FixedClock(new Date('2026-08-26T12:12:00.000Z')),
     }))
-    assert.equal((await second.runOnce()).kind, 'lease_lost')
+    assert.deepEqual(await second.runOnce(), {
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: item.workId,
+    })
     assert.equal(ledger.appendCalls, 2)
     assert.equal(ledger.events.size, 1)
     const event = [...ledger.events.values()][0]!
@@ -514,6 +519,7 @@ test('packet replay emits one idempotent skipped event and never charges packet 
     assert.equal(event.configuredPrimaryProvider, 'configured-primary')
     assert.equal(event.configuredPrimaryModel, 'configured-model')
     assert.equal(event.outputSchemaValid, true)
+    assert.equal(event.researchReadinessOutcome, 'ready_for_entity')
   } finally { fx.close() }
 })
 
@@ -693,20 +699,38 @@ test('immutable synthesis and handoff are replay-safe, and active topology fails
     fx.store.appendSignal(signal())
     fx.store.admitResearchWork(item)
     fx.store.appendEvidence(evidence(item))
-    let promoteCalls = 0
+    let handoffCalls = 0
+    // The packet, the readiness decision, and the work status are one
+    // transaction, so a failed commit must persist none of them.
     const port = new Proxy(fx.store, {
       get(target, property, receiver) {
-        if (property === 'promoteResearchReady') return () => { promoteCalls += 1; return false }
+        if (property === 'commitResearchHandoff') {
+          return () => { handoffCalls += 1; throw new Error('handoff unavailable') }
+        }
         const value = Reflect.get(target, property, receiver) as unknown
         return typeof value === 'function' ? (value as Function).bind(target) : value
       },
     }) as SharedResearchWorkPort
     const worker = new SharedResearchWorker(workerOptions([port], { stages: ['synthesis'] }))
     assert.equal((await worker.runOnce()).kind, 'handoff_pending')
-    assert.equal(fx.store.listResearchPacketsByWork(item.workId, 10).length, 1)
+    assert.equal(fx.store.listResearchPacketsByWork(item.workId, 10).length, 0)
+    assert.equal(fx.store.getResearchReadinessByWork(item.workId), null)
+    assert.equal(fx.store.getResearchWork(item.workId)?.status, 'synthesis_leased')
     assert.equal((await worker.runOnce()).kind, 'idle')
+    assert.equal(fx.store.listResearchPacketsByWork(item.workId, 10).length, 0)
+    assert.equal(handoffCalls, 1)
+
+    // Once the fence is healthy the handoff commits exactly one packet and one
+    // decision together, and a replay of that saved decision adds no second.
+    await fx.store.recoverExpiredLeases({ now: '2026-08-26T12:12:00.000Z', limit: 10 })
+    const replayClock = new FixedClock(new Date('2026-08-26T12:12:00.000Z'))
+    const healthy = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['synthesis'], clock: replayClock,
+    }))
+    assert.equal((await healthy.runOnce()).kind, 'succeeded')
     assert.equal(fx.store.listResearchPacketsByWork(item.workId, 10).length, 1)
-    assert.equal(promoteCalls, 1)
+    assert.equal(fx.store.getResearchReadinessByWork(item.workId)?.outcome, 'ready_for_entity')
+    assert.equal(fx.store.getResearchWork(item.workId)?.status, 'entity_pending')
 
     assert.throws(() => new SharedResearchWorker({
       ...workerOptions([fx.store]), ownership: 'legacy', legacyClaimersActive: false,
@@ -832,7 +856,7 @@ test('fresh evidence with matching persisted reuse context advances without retr
     const item = work()
     fx.store.appendSignal(source)
     fx.store.admitResearchWork(item)
-    fx.store.appendEvidence(withPersistedReuse(evidence(item), source))
+    await seedRetrievalCheckpoint(fx.store, item, [withPersistedReuse(evidence(item), source)])
     let retrievalCalls = 0
     const worker = new SharedResearchWorker(workerOptions([fx.store], {
       stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
@@ -841,6 +865,29 @@ test('fresh evidence with matching persisted reuse context advances without retr
     assert.equal(retrievalCalls, 0)
     assert.equal(fx.store.getResearchWork(item.workId)?.attemptCount, 0)
     assert.equal(fx.store.listEvidenceByWork(item.workId, 10).length, 1)
+    // The checkpoint is reused as saved, never rewritten with a fresh verdict.
+    assert.equal(fx.store.listRetrievalManifestsByWork(item.workId, 10).length, 1)
+  } finally { fx.close() }
+})
+
+test('an evidence cache with no manifest is not treated as a completed retrieval', async () => {
+  const fx = fixture()
+  try {
+    const source = signal()
+    const item = work()
+    fx.store.appendSignal(source)
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(withPersistedReuse(evidence(item), source))
+    let retrievalCalls = 0
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
+    }))
+    assert.equal((await worker.runOnce()).kind, 'succeeded')
+    // The cache alone says nothing about what was checked, so retrieval runs
+    // again and the completed run is recorded as its own checkpoint.
+    assert.equal(retrievalCalls, 1)
+    assert.equal(fx.store.getResearchWork(item.workId)?.attemptCount, 1)
+    assert.equal(fx.store.listRetrievalManifestsByWork(item.workId, 10).length, 1)
   } finally { fx.close() }
 })
 
@@ -857,7 +904,7 @@ test('upstream Signal content hash is not mistaken for retrieved document bytes'
     const artifact = withPersistedReuse(evidence(item), source)
     fx.store.appendSignal(source)
     fx.store.admitResearchWork(item)
-    fx.store.appendEvidence(artifact)
+    await seedRetrievalCheckpoint(fx.store, item, [artifact])
     let retrievalCalls = 0
     const worker = new SharedResearchWorker(workerOptions([fx.store], {
       stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
@@ -935,6 +982,75 @@ function withReuseState(item: ResearchWorkItem, state: Record<string, unknown>):
       evidenceReuseState: { schemaVersion: EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION, ...state },
     },
   }
+}
+
+/** The worker's default retrieval limits, which the plan identity covers. */
+const RETRIEVAL_LIMITS = {
+  maxSources: 5, maxBytesPerSource: 1_000_000, maxTotalBytes: 3_000_000,
+  maxTextCharsPerSource: 100_000, maxRedirects: 3, timeoutMs: 30_000,
+}
+
+function asRetrievedArtifact(artifact: RetrievedEvidence): RetrievedEvidenceArtifact {
+  return {
+    schemaVersion: artifact.schemaVersion,
+    evidenceId: artifact.evidenceId,
+    workId: artifact.workId,
+    requestedUrl: artifact.requestedUrl,
+    finalUrl: artifact.finalUrl,
+    authority: artifact.authority,
+    authorityId: artifact.authorityId,
+    contentHash: artifact.contentHash,
+    contentType: artifact.contentType,
+    httpStatus: artifact.httpStatus,
+    retrievalMethod: 'safe_http',
+    retrievedAt: artifact.retrievedAt,
+    text: artifact.text,
+    byteLength: artifact.byteLength,
+    truncated: artifact.truncated,
+  }
+}
+
+/**
+ * Commits a retrieval checkpoint and then abandons its lease, which is exactly
+ * the state a crashed retrieval leaves behind: the manifest and its evidence
+ * batch are durable, and the work row is claimable again.
+ *
+ * Seeding a bare evidence cache is deliberately not enough. Evidence without a
+ * manifest says nothing about which sources were checked, so the worker must
+ * not treat it as a completed retrieval.
+ */
+async function seedRetrievalCheckpoint(
+  store: SqliteSignalPlatformStore,
+  item: ResearchWorkItem,
+  artifacts: RetrievedEvidence[],
+): Promise<void> {
+  const leaseOwner = 'seed-worker'
+  const leaseId = 'seed-lease'
+  const lease = await store.claimWithLease({
+    workId: item.workId, expectedStatus: 'research_pending', leaseOwner, leaseId,
+    leaseExpiresAt: '2026-08-26T12:10:30.000Z', now: NOW,
+  })
+  assert.ok(lease)
+  const manifest = buildRetrievalManifest({
+    work: item,
+    plan: buildRetrievalPlan(item, RETRIEVAL_LIMITS),
+    batch: {
+      workId: item.workId,
+      artifacts: artifacts.map(asRetrievedArtifact),
+      failures: [],
+      skippedUrlCount: 0,
+      totalBytes: artifacts.reduce((total, artifact) => total + artifact.byteLength, 0),
+    },
+    attempt: 1,
+    recordedAt: NOW,
+  })
+  assert.equal(store.commitRetrievalCheckpoint({
+    manifest, evidence: artifacts, fence: { workId: item.workId, leaseOwner, leaseId }, now: NOW,
+  }).committed, true)
+  assert.deepEqual(
+    await store.recoverExpiredLeases({ now: '2026-08-26T12:11:00.000Z', limit: 10 }),
+    { recoveredWorkIds: [item.workId] },
+  )
 }
 
 function withPersistedReuse(artifact: RetrievedEvidence, source: Signal): RetrievedEvidence {

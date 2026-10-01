@@ -13,8 +13,13 @@ const NORMAL_TRANSITIONS: Readonly<Record<WorkStatus, readonly WorkStatus[]>> = 
   deep_pending: ['deep_leased', 'expired'],
   deep_leased: ['research_ready', 'deep_pending', 'retry_wait', 'expired', 'dead_letter'],
   synthesis_pending: ['synthesis_leased', 'expired'],
-  synthesis_leased: ['research_ready', 'synthesis_pending', 'retry_wait', 'expired', 'dead_letter'],
-  research_ready: ['entity_pending'],
+  // The Research handoff is one atomic commit, so synthesis terminates directly
+  // into the status its readiness outcome requires. `complete` is a deliberate
+  // no-item result; `dead_letter` is a non-claimable held or failed result.
+  synthesis_leased: ['research_ready', 'entity_pending', 'complete', 'synthesis_pending', 'retry_wait', 'expired', 'dead_letter'],
+  // The bounded bridge may also finish a saved research_ready result as a
+  // deliberate no-item or a non-claimable held result.
+  research_ready: ['entity_pending', 'complete', 'dead_letter'],
   entity_pending: ['entity_leased', 'expired'],
   entity_leased: ['complete', 'entity_pending', 'retry_wait', 'expired', 'dead_letter'],
   complete: [],

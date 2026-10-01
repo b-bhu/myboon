@@ -38,15 +38,29 @@ export interface PolymarketLiveSignalInput {
 export function adaptLivePolymarketSignal(input: PolymarketLiveSignalInput): PolymarketSignal {
   const materialFacts = canonicalJson({
     marketId: input.market.marketId,
-    candidateType: input.observation.candidateType,
-    whatChanged: input.observation.whatChanged,
-    score: input.observation.score,
-    metrics: input.observation.metrics,
+    slug: input.market.slug,
+    title: input.market.title,
+    tagSlug: input.market.tagSlug,
+    tagLabel: input.market.tagLabel,
+    endDate: input.market.endDate,
+    sourceUpdatedAt: input.market.sourceUpdatedAt,
+    observation: {
+      candidateType: input.observation.candidateType,
+      whatChanged: input.observation.whatChanged,
+      whyFlagged: input.observation.whyFlagged,
+      score: input.observation.score,
+      scoreBreakdown: input.observation.scoreBreakdown,
+      metrics: withoutPollTimes(input.observation.metrics),
+      evidenceRefs: stableEvidenceRefs(input.observation.evidenceRefs, input.market.sourceUpdatedAt),
+    },
   })
   const materialFingerprint = stableContractId('market_material', materialFacts)
   const materialObservedAt = input.market.sourceUpdatedAt ?? input.observedAt
   const observationIdentity = stableContractId(
-    'polymarket_observation', input.market.marketId, materialObservedAt, materialFingerprint,
+    'polymarket_observation',
+    input.market.marketId,
+    input.market.sourceUpdatedAt ?? 'upstream_revision_unavailable',
+    materialFingerprint,
   )
   return validateSignal({
     schemaVersion: SIGNAL_SCHEMA_VERSION,
@@ -62,8 +76,8 @@ export function adaptLivePolymarketSignal(input: PolymarketLiveSignalInput): Pol
       whyFlagged: input.observation.whyFlagged,
       score: input.observation.score,
       scoreBreakdown: input.observation.scoreBreakdown,
-      metrics: input.observation.metrics,
-      evidenceRefs: input.observation.evidenceRefs,
+      metrics: withoutPollTimes(input.observation.metrics),
+      evidenceRefs: stableEvidenceRefs(input.observation.evidenceRefs, input.market.sourceUpdatedAt),
       materialFingerprint,
     },
     sourceId: `polymarket:market:${input.market.marketId}`,
@@ -82,8 +96,33 @@ export function adaptLivePolymarketSignal(input: PolymarketLiveSignalInput): Pol
     provenance: {
       provider: 'polymarket',
       upstreamSource: input.area,
-      rawPayloadRef: `pipeline_watchlist:${input.area}:${input.market.slug}:${materialObservedAt}`,
+      rawPayloadRef: `pipeline_watchlist:${input.area}:${input.market.slug}:${observationIdentity}`,
     },
     idempotencyKey: observationIdentity,
   }) as PolymarketSignal
+}
+
+/** Poll clocks describe when we saw a row, not a new source-material version. */
+function withoutPollTimes(
+  metrics: Record<string, number | string | boolean | null>,
+): Record<string, number | string | boolean | null> {
+  return Object.fromEntries(Object.entries(metrics).filter(([key]) => (
+    key !== 'currentObservedAt' && key !== 'previousObservedAt'
+  )))
+}
+
+/** Keep evidence identity stable across polls while retaining upstream revision time when available. */
+function stableEvidenceRefs(
+  evidenceRefs: Array<Record<string, string | null>>,
+  sourceUpdatedAt: string | null,
+): Array<Record<string, string | null>> {
+  return evidenceRefs.map((reference) => {
+    const stable: Record<string, string | null> = {}
+    for (const [key, value] of Object.entries(reference)) {
+      if (key !== 'observed_at' && key !== 'observedAt') stable[key] = value
+    }
+    if ('observed_at' in reference) stable.observed_at = sourceUpdatedAt
+    if ('observedAt' in reference) stable.observedAt = sourceUpdatedAt
+    return stable
+  })
 }

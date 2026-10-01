@@ -126,6 +126,49 @@ test('live Polymarket identity ignores polling time but changes for material fac
   assert.equal(first.observedAt, input.market.sourceUpdatedAt)
 })
 
+test('live Polymarket identity and payload ignore collector-only timestamps in metrics and evidence', () => {
+  const input: PolymarketLiveSignalInput = {
+    observedAt: '2026-08-26T12:00:00.000Z', area: 'markets',
+    market: {
+      marketId: 'market-1', slug: 'market-one', title: 'Market one?', tagSlug: 'crypto',
+      tagLabel: 'Crypto', endDate: null, sourceUpdatedAt: '2026-08-26T11:59:00.000Z',
+    },
+    observation: {
+      candidateType: 'odds_moved', whatChanged: 'Odds moved six points', whyFlagged: 'material move',
+      score: 72, scoreBreakdown: {},
+      metrics: { oddsDelta: 0.06, previousObservedAt: '2026-08-26T11:58:00.000Z', currentObservedAt: '2026-08-26T12:00:00.000Z' },
+      evidenceRefs: [{ kind: 'market', observed_at: '2026-08-26T12:00:00.000Z' }],
+    },
+  }
+  const later = adaptLivePolymarketSignal({
+    ...input,
+    observedAt: '2026-08-26T12:05:00.000Z',
+    observation: {
+      ...input.observation,
+      metrics: { oddsDelta: 0.06, previousObservedAt: '2026-08-26T12:00:00.000Z', currentObservedAt: '2026-08-26T12:05:00.000Z' },
+      evidenceRefs: [{ kind: 'market', observed_at: '2026-08-26T12:05:00.000Z' }],
+    },
+  })
+
+  assert.deepEqual(later, adaptLivePolymarketSignal(input))
+
+  const noUpstreamRevision = adaptLivePolymarketSignal({
+    ...input,
+    market: { ...input.market, sourceUpdatedAt: null },
+  })
+  const noUpstreamRevisionLater = adaptLivePolymarketSignal({
+    ...input,
+    observedAt: '2026-08-26T12:05:00.000Z',
+    market: { ...input.market, sourceUpdatedAt: null },
+    observation: {
+      ...input.observation,
+      metrics: { oddsDelta: 0.06, previousObservedAt: null, currentObservedAt: '2026-08-26T12:05:00.000Z' },
+      evidenceRefs: [{ kind: 'market', observed_at: '2026-08-26T12:05:00.000Z' }],
+    },
+  })
+  assert.equal(noUpstreamRevisionLater.signalId, noUpstreamRevision.signalId)
+})
+
 test('News packet maps structured fields and explicitly records invalid legacy evidence', () => {
   const work = adaptLegacyNewsWork(newsCandidate, workPolicy)
   const rawResponse = {

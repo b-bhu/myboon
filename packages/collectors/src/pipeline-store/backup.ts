@@ -75,6 +75,7 @@ const DEFAULT_BACKUP_DIR = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'backups')
 // schema in sqlite-store.ts must be added here too.
 const PIPELINE_TABLES = [
   'pipeline_watchlist',
+  'pipeline_source_delivery_outbox',
   'pipeline_candidates',
   'pipeline_research',
   'pipeline_editor_decisions',
@@ -97,6 +98,7 @@ const NEWS_TABLES = [
   'news_source_runs',
   'news_candidate_observations',
   'news_research_results',
+  'news_source_delivery_outbox',
   'signal_platform_signals',
   'signal_platform_signal_observations',
   'signal_platform_triage_decisions',
@@ -113,6 +115,8 @@ const NEWS_TABLES = [
 // The shared signal ledger is additive and may live in either legacy DB. Old
 // databases remain valid until a SqliteExecutionLedger first opens them.
 const OPTIONAL_TABLES = new Set<string>([
+  'pipeline_source_delivery_outbox',
+  'news_source_delivery_outbox',
   'signal_platform_signals',
   'signal_platform_signal_observations',
   'signal_platform_triage_decisions',

@@ -226,7 +226,7 @@ test('canonical observe hook is replay-safe and preserves same-URL material chan
     assert.equal(changed.candidatesUnchanged, 1)
     assert.equal(changed.candidateObservationsInserted, 0)
     assert.equal(changed.canonicalIntake.insertedSignals, 1)
-    assert.equal(changedReplay.canonicalIntake.duplicateSignals, 1)
+    assert.equal(changedReplay.canonicalIntake.attempted, 0, 'an acknowledged immutable observation is not redelivered on every poll')
     const observations = await store.fetchPendingCandidateObservations(10)
     assert.equal(observations.length, 1)
     const count = (await canonical.readWorkObservability({

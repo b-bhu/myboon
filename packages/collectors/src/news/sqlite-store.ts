@@ -3,6 +3,15 @@ import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import type { PriorNewsObservation } from './types'
+import type { Signal } from '../signal-platform/contracts'
+import { validateSignal } from '../signal-platform/validation'
+import { ImmutableRecordConflictError } from '../signal-platform/platform-store'
+import {
+  buildSourceDeliveryObligation,
+  parseSourceDeliveryObligation,
+  type SourceDeliveryFailureCode,
+  type SourceDeliveryObligation,
+} from '../signal-platform/source-delivery-outbox'
 import {
   initialNewsResearchResultStatus,
   type NewsCandidateObservationInput,
@@ -238,6 +247,26 @@ function ensureNewsSqliteSchema(db: SqliteDatabase): void {
 
     CREATE INDEX IF NOT EXISTS news_research_results_candidate_idx
       ON news_research_results (candidate_observation_id);
+
+    -- Additive local delivery outbox. Immutable obligation keyed by canonical
+    -- signalId; migration creates no obligations from historical observations
+    -- and performs no historical replay.
+    CREATE TABLE IF NOT EXISTS news_source_delivery_outbox (
+      signal_id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL CHECK (source_type IN ('news')),
+      payload_digest TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'delivered')),
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_error_code TEXT,
+      observation_dedupe_key TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      delivered_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS news_source_delivery_outbox_pending_idx
+      ON news_source_delivery_outbox (state, created_at);
   `)
   ensureNewsSqliteMigrations(db)
 }
@@ -398,6 +427,13 @@ export class SqliteNewsStore implements NewsStore {
             input.status ?? 'pending_research',
             json(input.candidate)
           )
+          if (input.deliverySignal) {
+            this.appendDeliveryObligation(
+              input.deliverySignal,
+              input.fingerprint.observationDedupeKey,
+              input.observedAt,
+            )
+          }
         }
         this.db.exec('COMMIT')
       } catch (error) {
@@ -407,6 +443,7 @@ export class SqliteNewsStore implements NewsStore {
 
       return this.candidateRowsByDedupeKeys(persistedInputs.map((input) => input.fingerprint.observationDedupeKey))
     } catch (error) {
+      if (error instanceof ImmutableRecordConflictError) throw error
       throw new Error(`news_candidate_observations insert failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
@@ -743,6 +780,150 @@ export class SqliteNewsStore implements NewsStore {
         // Ignore rollback errors so the original failure is preserved.
       }
       throw new Error(`news_research_results status update failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Immutable obligation insert. Called only inside the observation
+   * transaction, so a rollback leaves neither half. Reusing a signalId with a
+   * different canonical digest is a hard conflict, not an overwrite.
+   */
+  private appendDeliveryObligation(
+    inputSignal: Signal,
+    observationDedupeKey: string,
+    observedAt: string,
+  ): void {
+    const signal = validateSignal(inputSignal)
+    if (signal.sourceType !== 'news') {
+      throw new Error(`news delivery obligation cannot carry a ${signal.sourceType} signal`)
+    }
+    const obligation = buildSourceDeliveryObligation(signal)
+    const existing = this.db.prepare(`
+      SELECT payload_digest FROM news_source_delivery_outbox WHERE signal_id = ?
+    `).get(obligation.signalId) as Record<string, unknown> | undefined
+    if (existing) {
+      if (String(existing.payload_digest) !== obligation.payloadDigest) {
+        throw new ImmutableRecordConflictError('delivery', obligation.signalId)
+      }
+      return
+    }
+    this.db.prepare(`
+      INSERT INTO news_source_delivery_outbox (
+        signal_id,
+        source_type,
+        payload_digest,
+        payload_json,
+        state,
+        observation_dedupe_key,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+    `).run(
+      obligation.signalId,
+      obligation.sourceType,
+      obligation.payloadDigest,
+      obligation.payloadJson,
+      observationDedupeKey,
+      observedAt,
+      observedAt,
+    )
+  }
+
+  /** Persists material source observations that legacy candidate dedupe omits. */
+  async insertSourceDeliveryObservations(
+    inputs: Array<{ signal: Signal; observedAt: string }>,
+  ): Promise<void> {
+    if (inputs.length === 0) return
+    try {
+      this.db.exec('BEGIN')
+      try {
+        for (const input of inputs) {
+          const signal = validateSignal(input.signal)
+          this.appendDeliveryObligation(signal, signal.idempotencyKey, input.observedAt)
+        }
+        this.db.exec('COMMIT')
+      } catch (error) {
+        this.db.exec('ROLLBACK')
+        throw error
+      }
+    } catch (error) {
+      if (error instanceof ImmutableRecordConflictError) throw error
+      throw new Error(`news source delivery observation insert failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async listPendingSourceDeliveries(limit: number): Promise<SourceDeliveryObligation[]> {
+    const boundedLimit = Math.max(0, limit)
+    if (boundedLimit === 0) return []
+    try {
+      const rows = this.db.prepare(`
+        SELECT
+          signal_id,
+          source_type,
+          payload_digest,
+          payload_json,
+          state,
+          attempt_count,
+          last_error_code,
+          created_at,
+          updated_at,
+          delivered_at
+        FROM news_source_delivery_outbox
+        WHERE state = 'pending'
+        ORDER BY created_at ASC, signal_id ASC
+        LIMIT ?
+      `).all(boundedLimit) as Array<Record<string, unknown>>
+      return rows.map((row) => parseSourceDeliveryObligation({
+        signalId: String(row.signal_id),
+        sourceType: String(row.source_type),
+        payloadDigest: String(row.payload_digest),
+        payloadJson: String(row.payload_json),
+        state: String(row.state),
+        attemptCount: numberValue(row.attempt_count),
+        lastErrorCode: stringOrNull(row.last_error_code),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+        deliveredAt: stringOrNull(row.delivered_at),
+      }))
+    } catch (error) {
+      throw new Error(`news_source_delivery_outbox pending fetch failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** Acknowledgement only. Never called before canonical intake returns. */
+  async markSourceDeliveryDelivered(signalId: string): Promise<void> {
+    try {
+      this.db.prepare(`
+        UPDATE news_source_delivery_outbox
+        SET state = 'delivered',
+            attempt_count = attempt_count + 1,
+            delivered_at = CURRENT_TIMESTAMP,
+            last_error_code = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE signal_id = ?
+          AND state = 'pending'
+      `).run(signalId)
+    } catch (error) {
+      throw new Error(`news_source_delivery_outbox acknowledgement failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async recordSourceDeliveryFailure(
+    signalId: string,
+    code: SourceDeliveryFailureCode,
+  ): Promise<void> {
+    try {
+      this.db.prepare(`
+        UPDATE news_source_delivery_outbox
+        SET attempt_count = attempt_count + 1,
+            last_error_code = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE signal_id = ?
+          AND state = 'pending'
+      `).run(code, signalId)
+    } catch (error) {
+      throw new Error(`news_source_delivery_outbox failure record failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

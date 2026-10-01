@@ -2,6 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
+import type { Signal } from '../signal-platform/contracts'
+import { validateSignal } from '../signal-platform/validation'
+import { ImmutableRecordConflictError } from '../signal-platform/platform-store'
+import {
+  buildSourceDeliveryObligation,
+  parseSourceDeliveryObligation,
+  type SourceDeliveryFailureCode,
+  type SourceDeliveryObligation,
+} from '../signal-platform/source-delivery-outbox'
 import type {
   PipelineBacklogDepth,
   PipelineBacklogDepthInput,
@@ -47,6 +56,7 @@ import type {
   PipelineTopicConfidence,
   PipelineWatchlistSnapshotRow,
   PipelineWatchlistUpsertInput,
+  PipelineSourceDeliveryInput,
 } from './store'
 
 const nodeRequire = createRequire(__filename)
@@ -187,6 +197,28 @@ function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
 
     CREATE INDEX IF NOT EXISTS pipeline_watchlist_score_idx
       ON pipeline_watchlist (area, watch_score DESC);
+
+    -- Source-local, immutable obligations written atomically with market
+    -- baselines. Older pipeline files gain an empty table; no historical
+    -- watchlist or candidate rows are replayed.
+    CREATE TABLE IF NOT EXISTS pipeline_source_delivery_outbox (
+      signal_id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL CHECK (source_type IN ('polymarket')),
+      payload_digest TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'delivered')),
+      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+      last_error_code TEXT CHECK (
+        last_error_code IS NULL OR last_error_code = 'SOURCE_SIGNAL_INTAKE_FAILED'
+      ),
+      observed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      delivered_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS pipeline_source_delivery_outbox_pending_idx
+      ON pipeline_source_delivery_outbox (state, created_at, signal_id);
 
     CREATE TABLE IF NOT EXISTS pipeline_candidates (
       id TEXT PRIMARY KEY,
@@ -520,66 +552,151 @@ export class SqlitePipelineStore implements PipelineStore {
 
   async upsertWatchlist(rows: PipelineWatchlistUpsertInput[]): Promise<void> {
     if (rows.length === 0) return
+    this.tx(() => this.writeWatchlistRows(rows))
+  }
 
+  async commitWatchlistAndSourceDeliveries(
+    rows: PipelineWatchlistUpsertInput[],
+    deliveries: PipelineSourceDeliveryInput[],
+  ): Promise<void> {
+    if (rows.length === 0 && deliveries.length === 0) return
     this.tx(() => {
-      const stmt = this.db.prepare(`
-        INSERT INTO pipeline_watchlist (
-          id, source, area, tag_slug, tag_label, market_id, slug, title,
-          event_slug, event_title, end_date, is_manual_pin, rank_in_area,
-          watch_score, score_breakdown, selection_reason, latest_observed_at,
-          latest_yes_price, latest_volume, latest_volume_24h, latest_liquidity,
-          status
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (area, slug) DO UPDATE SET
-          source = excluded.source,
-          tag_slug = excluded.tag_slug,
-          tag_label = excluded.tag_label,
-          market_id = excluded.market_id,
-          title = excluded.title,
-          event_slug = excluded.event_slug,
-          event_title = excluded.event_title,
-          end_date = excluded.end_date,
-          is_manual_pin = excluded.is_manual_pin,
-          rank_in_area = excluded.rank_in_area,
-          watch_score = excluded.watch_score,
-          score_breakdown = excluded.score_breakdown,
-          selection_reason = excluded.selection_reason,
-          latest_observed_at = excluded.latest_observed_at,
-          latest_yes_price = excluded.latest_yes_price,
-          latest_volume = excluded.latest_volume,
-          latest_volume_24h = excluded.latest_volume_24h,
-          latest_liquidity = excluded.latest_liquidity,
-          status = excluded.status,
-          updated_at = CURRENT_TIMESTAMP
-      `)
-      for (const row of rows) {
-        stmt.run(
-          randomUUID(),
-          row.source,
-          row.area,
-          row.tagSlug,
-          row.tagLabel,
-          row.marketId,
-          row.slug,
-          row.title,
-          row.eventSlug,
-          row.eventTitle,
-          row.endDate,
-          toIntFlag(row.isManualPin),
-          row.rankInArea,
-          row.watchScore,
-          json(row.scoreBreakdown),
-          row.selectionReason,
-          row.latestObservedAt,
-          row.latestYesPrice,
-          row.latestVolume,
-          row.latestVolume24h,
-          row.latestLiquidity,
-          row.status ?? 'active'
-        )
-      }
+      this.writeWatchlistRows(rows)
+      for (const delivery of deliveries) this.appendSourceDeliveryObligation(delivery)
     })
+  }
+
+  private writeWatchlistRows(rows: PipelineWatchlistUpsertInput[]): void {
+    if (rows.length === 0) return
+    const stmt = this.db.prepare(`
+      INSERT INTO pipeline_watchlist (
+        id, source, area, tag_slug, tag_label, market_id, slug, title,
+        event_slug, event_title, end_date, is_manual_pin, rank_in_area,
+        watch_score, score_breakdown, selection_reason, latest_observed_at,
+        latest_yes_price, latest_volume, latest_volume_24h, latest_liquidity,
+        status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (area, slug) DO UPDATE SET
+        source = excluded.source,
+        tag_slug = excluded.tag_slug,
+        tag_label = excluded.tag_label,
+        market_id = excluded.market_id,
+        title = excluded.title,
+        event_slug = excluded.event_slug,
+        event_title = excluded.event_title,
+        end_date = excluded.end_date,
+        is_manual_pin = excluded.is_manual_pin,
+        rank_in_area = excluded.rank_in_area,
+        watch_score = excluded.watch_score,
+        score_breakdown = excluded.score_breakdown,
+        selection_reason = excluded.selection_reason,
+        latest_observed_at = excluded.latest_observed_at,
+        latest_yes_price = excluded.latest_yes_price,
+        latest_volume = excluded.latest_volume,
+        latest_volume_24h = excluded.latest_volume_24h,
+        latest_liquidity = excluded.latest_liquidity,
+        status = excluded.status,
+        updated_at = CURRENT_TIMESTAMP
+    `)
+    for (const row of rows) {
+      stmt.run(
+        randomUUID(),
+        row.source,
+        row.area,
+        row.tagSlug,
+        row.tagLabel,
+        row.marketId,
+        row.slug,
+        row.title,
+        row.eventSlug,
+        row.eventTitle,
+        row.endDate,
+        toIntFlag(row.isManualPin),
+        row.rankInArea,
+        row.watchScore,
+        json(row.scoreBreakdown),
+        row.selectionReason,
+        row.latestObservedAt,
+        row.latestYesPrice,
+        row.latestVolume,
+        row.latestVolume24h,
+        row.latestLiquidity,
+        row.status ?? 'active',
+      )
+    }
+  }
+
+  private appendSourceDeliveryObligation(input: PipelineSourceDeliveryInput): void {
+    const signal = validateSignal(input.signal)
+    if (signal.sourceType !== 'polymarket') {
+      throw new Error(`Polymarket source outbox cannot carry a ${signal.sourceType} signal`)
+    }
+    const obligation = buildSourceDeliveryObligation(signal)
+    const existing = this.db.prepare(`
+      SELECT payload_digest FROM pipeline_source_delivery_outbox WHERE signal_id = ?
+    `).get(obligation.signalId) as Record<string, unknown> | undefined
+    if (existing) {
+      if (String(existing.payload_digest) !== obligation.payloadDigest) {
+        throw new ImmutableRecordConflictError('delivery', obligation.signalId)
+      }
+      return
+    }
+    this.db.prepare(`
+      INSERT INTO pipeline_source_delivery_outbox (
+        signal_id, source_type, payload_digest, payload_json, state, observed_at
+      ) VALUES (?, ?, ?, ?, 'pending', ?)
+    `).run(
+      obligation.signalId,
+      obligation.sourceType,
+      obligation.payloadDigest,
+      obligation.payloadJson,
+      input.observedAt,
+    )
+  }
+
+  async listPendingSourceDeliveries(limit: number): Promise<SourceDeliveryObligation[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error('Source delivery outbox limit must be 1-500')
+    }
+    const rows = this.db.prepare(`
+      SELECT signal_id, source_type, payload_digest, payload_json, state,
+             attempt_count, last_error_code, created_at, updated_at, delivered_at
+      FROM pipeline_source_delivery_outbox
+      WHERE state = 'pending'
+      ORDER BY created_at ASC, signal_id ASC
+      LIMIT ?
+    `).all(limit) as Array<Record<string, unknown>>
+    return rows.map((row) => parseSourceDeliveryObligation({
+      signalId: String(row.signal_id),
+      sourceType: String(row.source_type),
+      payloadDigest: String(row.payload_digest),
+      payloadJson: String(row.payload_json),
+      state: String(row.state),
+      attemptCount: numberValue(row.attempt_count),
+      lastErrorCode: stringOrNull(row.last_error_code),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      deliveredAt: stringOrNull(row.delivered_at),
+    }))
+  }
+
+  async markSourceDeliveryDelivered(signalId: string): Promise<void> {
+    this.db.prepare(`
+      UPDATE pipeline_source_delivery_outbox
+      SET state = 'delivered', attempt_count = attempt_count + 1,
+          delivered_at = CURRENT_TIMESTAMP, last_error_code = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE signal_id = ? AND state = 'pending'
+    `).run(signalId)
+  }
+
+  async recordSourceDeliveryFailure(signalId: string, code: SourceDeliveryFailureCode): Promise<void> {
+    this.db.prepare(`
+      UPDATE pipeline_source_delivery_outbox
+      SET attempt_count = attempt_count + 1, last_error_code = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE signal_id = ? AND state = 'pending'
+    `).run(code, signalId)
   }
 
   async deactivateStaleWatchlist(area: string, observedAt: string): Promise<void> {

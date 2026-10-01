@@ -4,7 +4,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import type { InferenceTelemetry } from '../inference-gateway/types'
-import type { ExecutionTraceEvent, ResearchDepth, ResearchPacketV1, ResearchWorkItem, Signal } from '../signal-platform/contracts'
+import type {
+  ExecutionTraceEvent,
+  ResearchDepth,
+  ResearchPacketV1,
+  ResearchWorkItem,
+  RetrievedEvidence,
+  Signal,
+} from '../signal-platform/contracts'
+import {
+  assessResearchReadiness,
+  createResolvedWithoutNewItemReadiness,
+  validateResearchReadiness,
+  NO_RESEARCH_ENTITY_ACTION,
+  type ResearchReadinessV1,
+} from '../signal-platform/research-readiness'
 import { ExecutionEventConflictError, type ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
 import { PlatformFailure } from '../signal-platform/failures'
 import type {
@@ -23,6 +37,8 @@ import {
   SharedEntityWorker,
   __sharedEntityWorkerTesting,
   type CanonicalPacketProcessor,
+  type CanonicalPacketProcessorInput,
+  type EntityHandoffSource,
   type EntityPacketWorkPort,
   type HeartbeatScheduler,
   type ShadowEntityObservation,
@@ -117,7 +133,7 @@ function entityTelemetry(overrides: Partial<InferenceTelemetry> = {}): Inference
 }
 
 class FakePort implements EntityPacketWorkPort {
-  readonly calls = { peek: 0, claim: 0, read: 0, heartbeat: 0, transition: 0, release: 0 }
+  readonly calls = { peek: 0, claim: 0, read: 0, heartbeat: 0, transition: 0, release: 0, readiness: 0 }
   readonly transitions: LeasedTransitionCommand[] = []
   readonly releases: ReleaseLeaseCommand[] = []
   claimAccepted = true
@@ -125,6 +141,9 @@ class FakePort implements EntityPacketWorkPort {
   transitionAccepted = true
   peekError: unknown = null
   packetOverride: unknown | undefined
+  /** A saved Research readiness decision, or null for a pre-v2 packet. */
+  readiness: ResearchReadinessV1 | null = null
+  readinessReader: 'none' | 'decision' | 'source' = 'none'
   afterPeek?: () => void
 
   constructor(readonly sourceType: EntityWorkerSourceType, readonly items: ResearchWorkItem[]) {}
@@ -167,6 +186,52 @@ class FakePort implements EntityPacketWorkPort {
     const item = this.items.find((candidate) => candidate.workId === workId)
     return item ? packet(item) : null
   }
+
+  /**
+   * One read returns the saved decision plus the records it describes, matching
+   * the single concrete-port method the worker actually calls.
+   */
+  async readHandoffContext(workId: string): Promise<EntityHandoffSource> {
+    this.calls.readiness += 1
+    if (this.readinessReader === 'none') {
+      // A pre-v2 port: no decision is available at all.
+      return { work: null, signal: null, persistedEvidence: [], readiness: null }
+    }
+    if (this.readiness === null) {
+      // Null is a real answer: the packet predates the readiness contract.
+      return { work: null, signal: null, persistedEvidence: [], readiness: null }
+    }
+    const item = this.items.find((candidate) => candidate.workId === workId)!
+    return {
+      work: { ...item, status: 'entity_leased' },
+      signal: signalFor(item),
+      persistedEvidence: [evidenceFor(item)],
+      readiness: this.readiness,
+    }
+  }
+}
+
+function signalFor(item: ResearchWorkItem): Signal {
+  return {
+    schemaVersion: 'myboon.signal.v1', signalId: item.signalId, sourceType: item.sourceType,
+    sourceId: `${item.sourceType}-source`, contentKind: 'article',
+    content: { schemaVersion: 'myboon.signal_content.article.v1' },
+    observedAt: NOW, publishedAt: NOW, canonicalUrl: 'https://example.com/item',
+    title: 'title', visibleSummary: null, media: { imageUrl: null, attribution: null },
+    sourceHints: { entities: [], assets: [], eventId: null, deadline: null },
+    provenance: { provider: 'test', upstreamSource: null, rawPayloadRef: 'raw-1' },
+    idempotencyKey: `${item.signalId}-key`,
+  } as Signal
+}
+
+function evidenceFor(item: ResearchWorkItem): RetrievedEvidence {
+  return {
+    schemaVersion: 'myboon.evidence.v1', evidenceId: 'evidence-1', workId: item.workId,
+    requestedUrl: 'https://example.com/evidence', finalUrl: 'https://example.com/evidence',
+    authority: 'source_url', authorityId: item.signalId, contentHash: 'hash-1',
+    contentType: 'text/html', httpStatus: 200, retrievalMethod: 'safe_http',
+    retrievedAt: NOW, text: 'text', truncated: false, byteLength: 4,
+  }
 }
 
 function fixture(input: {
@@ -183,8 +248,14 @@ function fixture(input: {
   researchDepths?: ReadonlySet<ResearchDepth>
 }) {
   const observations: ShadowEntityObservation[] = []
+  const inputs: CanonicalPacketProcessorInput[] = []
   let processed = 0
-  const processor = input.processor ?? { async process() { processed += 1 } }
+  const processor = input.processor ?? {
+    async process(value: CanonicalPacketProcessorInput) {
+      processed += 1
+      inputs.push(value)
+    },
+  }
   const worker = new SharedEntityWorker({
     config: sharedEntityWorkerConfig({
       ownership: input.ownership,
@@ -203,7 +274,7 @@ function fixture(input: {
     claimsEnabled: input.claimsEnabled,
     researchDepths: input.researchDepths,
   })
-  return { worker, observations, processed: () => processed }
+  return { worker, observations, inputs, processed: () => processed }
 }
 
 class FakeExecutionLedger {
@@ -739,4 +810,132 @@ test('stop prevents new claims, abort option signals active work, and drain awai
   assert.equal(drained, true)
   assert.equal(cycleResult.released, 1)
   assert.equal(port.releases[0].targetStatus, 'entity_pending')
+})
+
+/** The saved Research decision for a partial packet, produced by the real assessor. */
+function readyDecision(item: ResearchWorkItem, canonical: ResearchPacketV1): ResearchReadinessV1 {
+  return assessResearchReadiness({
+    work: item, signal: signalFor(item), packet: canonical,
+    persistedEvidence: [evidenceFor(item)], assessedAt: NOW,
+  })
+}
+
+test('Entity consumes a saved ready decision and admits an attributed partial packet', async () => {
+  const item = work('news')
+  const canonical = packet(item, 'partial')
+  const port = new FakePort('news', [item])
+  port.readinessReader = 'source'
+  port.packetOverride = canonical
+  port.readiness = readyDecision(item, canonical)
+  assert.equal(port.readiness.outcome, 'ready_for_entity')
+
+  const f = fixture({ ports: [port], ownership: { news: 'shared' } })
+  const result = await f.worker.runActiveCycle()
+  // The processor runs, so Entity did not turn the decision into a rejection.
+  assert.equal(result.completed, 1)
+  assert.equal(f.processed(), 1)
+  assert.equal(port.transitions[0].nextStatus, 'complete')
+})
+
+test('Entity refuses a recorded non-ready outcome without retrying it as its own judgment', async () => {
+  for (const [outcome, category] of [
+    ['blocked', 'retrieval_blocked'],
+    ['failed', 'invalid_structured_output'],
+    ['readiness_unknown', 'schema_version_mismatch'],
+  ] as const) {
+    const item = work('news')
+    const canonical = packet(item, 'complete')
+    const port = new FakePort('news', [item])
+    port.readinessReader = 'source'
+    port.packetOverride = canonical
+    port.readiness = validateResearchReadiness({
+      ...readyDecision(item, canonical),
+      outcome,
+      entityAction: NO_RESEARCH_ENTITY_ACTION,
+      failureCategory: category,
+    })
+
+    const f = fixture({ ports: [port], ownership: { news: 'shared' } })
+    const result = await f.worker.runActiveCycle()
+    // The packet alone would be admissible, so the refusal came from the decision.
+    assert.equal(f.processed(), 0, outcome)
+    // A non-retryable refusal dead-letters rather than looping.
+    assert.equal(result.deadLettered, 1, outcome)
+    assert.equal(result.retryWait, 0, outcome)
+    assert.equal(port.transitions[0].failureCategory, 'invalid_structured_output')
+  }
+})
+
+test('a no-new-item result that owes an attachment is delivered to the processor input', async () => {
+  const item = work('news')
+  const canonical = packet(item, 'partial')
+  const port = new FakePort('news', [item])
+  port.readinessReader = 'source'
+  port.packetOverride = canonical
+  // No new note, but a required source attachment must still be preserved, so
+  // the work stays claimable and the processor is invoked. This is a transport
+  // assertion only: the attachment writer does not exist yet, so the real
+  // processor rejects the action rather than performing it.
+  port.readiness = createResolvedWithoutNewItemReadiness({
+    work: item, signal: signalFor(item), packet: canonical,
+    persistedEvidence: [evidenceFor(item)], assessedAt: NOW,
+    reason: 'Already covered by a managed item, but the source must be attached.',
+    owedAttachment: { targetId: 'managed-item-42' },
+  })
+  const decision = port.readiness
+  assert.equal(decision?.outcome, 'resolved_without_new_item')
+  assert.equal(decision?.entityAction.kind, 'evidence_attachment')
+
+  const f = fixture({ ports: [port], ownership: { news: 'shared' } })
+  const result = await f.worker.runActiveCycle()
+  // The action reached the processor input instead of being discarded; whether
+  // the attachment is performed is the real processor's concern, not this one.
+  assert.equal(result.completed, 1)
+  assert.equal(f.processed(), 1)
+  const processed = f.inputs[0]!
+  assert.equal((processed.packet.context.research_readiness as ResearchReadinessV1).outcome, 'resolved_without_new_item')
+})
+
+test('an old partial packet with no saved decision is never auto-admitted', async () => {
+  const item = work('news')
+  const port = new FakePort('news', [item])
+  // A port with no readiness capability at all: the worker cannot even ask.
+  port.readinessReader = 'none'
+  port.packetOverride = packet(item, 'partial')
+  const f = fixture({ ports: [port], ownership: { news: 'shared' } })
+  const result = await f.worker.runActiveCycle()
+  assert.equal(f.processed(), 0)
+  assert.equal(result.deadLettered, 1)
+})
+
+test('a saved complete packet on the legacy v1 path still completes unchanged', async () => {
+  const item = work('news')
+  const port = new FakePort('news', [item])
+  // The decision is asked for and the store answers null: the packet predates
+  // the readiness contract, so it continues on the supported legacy path.
+  port.readinessReader = 'decision'
+  port.readiness = null
+  port.packetOverride = packet(item, 'complete')
+  const f = fixture({ ports: [port], ownership: { news: 'shared' } })
+  const result = await f.worker.runActiveCycle()
+  assert.equal(result.completed, 1)
+  assert.equal(f.processed(), 1)
+  assert.equal(port.calls.readiness, 1)
+  // No decision means the v1 adapter path, which carries no readiness context.
+  assert.equal(f.inputs[0]?.handoffContext, undefined)
+  assert.equal(f.inputs[0]?.packet.context.research_readiness, null)
+  assert.equal(f.inputs[0]?.packet.context.adapter_version, 'myboon.entity_packet_adapter.v1')
+})
+
+test('shadow observation consumes the same decision without writing knowledge', async () => {
+  const item = work('news')
+  const canonical = packet(item, 'partial')
+  const port = new FakePort('news', [item])
+  port.readinessReader = 'source'
+  port.packetOverride = canonical
+  port.readiness = readyDecision(item, canonical)
+  const f = fixture({ ports: [port], shadowSources: ['news'], sampleBasisPoints: 10_000 })
+  const result = await f.worker.runShadowCycle()
+  assert.deepEqual(result, { inspected: 1, sampled: 1, accepted: 1, rejected: 0 })
+  assert.equal(f.observations[0].outcome, 'accepted')
 })

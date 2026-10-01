@@ -8,7 +8,7 @@ import type {
   SchedulerQuery,
   WorkLease,
 } from '../signal-platform/store-adapter'
-import type { EntityPacketWorkPort } from './shared-worker'
+import type { EntityHandoffSource, EntityPacketWorkPort } from './shared-worker'
 
 type EntityWorkStore = Pick<
   CanonicalPlatformStore,
@@ -19,6 +19,10 @@ type EntityWorkStore = Pick<
   | 'transitionLeased'
   | 'releaseLease'
   | 'listResearchPacketsByWork'
+  | 'getResearchReadinessByWork'
+  | 'getSignal'
+  | 'getResearchWork'
+  | 'listEvidenceByWork'
 >
 
 /** Concrete Entity worker port over an existing canonical SQLite store. */
@@ -41,5 +45,20 @@ export class SqliteEntityPacketWorkPort implements EntityPacketWorkPort {
       throw new Error(`Canonical store returned multiple Research Packets for work ${workId}`)
     }
     return packets[0] ?? null
+  }
+
+  /**
+   * The saved Research decision together with the records it describes, read
+   * from the same source-local store so the decision stays verifiable against
+   * the exact work, signal, packet, and evidence it was assessed against.
+   */
+  async readHandoffContext(workId: string): Promise<EntityHandoffSource> {
+    const work = this.store.getResearchWork(workId)
+    return {
+      work,
+      signal: work ? this.store.getSignal(work.signalId) : null,
+      persistedEvidence: this.store.listEvidenceByWork(workId, 1000),
+      readiness: this.store.getResearchReadinessByWork(workId),
+    }
   }
 }

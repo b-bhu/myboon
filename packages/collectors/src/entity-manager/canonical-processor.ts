@@ -5,6 +5,7 @@ import {
 } from '../signal-platform/entity-hint-claims'
 import type { InferenceTelemetry } from '../inference-gateway/types'
 import { PlatformFailure } from '../signal-platform/failures'
+import type { ResearchReadinessV1 } from '../signal-platform/research-readiness'
 import {
   buildEntityAdmissionInput,
   EntityCanonUnavailableError,
@@ -260,7 +261,11 @@ export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketPro
       ...canonicalPacket,
       entityHints: deriveEntityHintClaimRefs(canonicalPacket.entityHints, canonicalPacket.claims),
     }
-    const adaptedPacket = adaptCanonicalResearchPacket(groundedPacket)
+    // The grounded packet is re-adapted through the same Research decision.
+    // Dropping readiness here would re-admit the packet under the legacy v1
+    // completion rule and reject the valid partial packet this path exists to
+    // accept, so the decision is preserved and revalidated here.
+    const adaptedPacket = adaptCanonicalResearchPacket(groundedPacket, undefined, input.handoffContext)
     const packet: ResearchPacket = {
       ...adaptedPacket,
       context: { ...adaptedPacket.context, ...sourceMediaContext(groundedPacket) },
@@ -1318,10 +1323,12 @@ function canonicalSourceItemIdentity(packet: ResearchPacketV1): string {
 
 function validateProcessorInput(input: CanonicalPacketProcessorInput): ResearchPacketV1 {
   const packet = input.canonicalPacket
-  // The adapter performs schema, completion policy, linkage, and all canonical
+  // The adapter performs schema, readiness policy, linkage, and all canonical
   // evidence-reference validation before any catalog or write operation.
-  const adapted = adaptCanonicalResearchPacket(packet)
-  if (packet.completion !== 'complete') {
+  const adapted = adaptCanonicalResearchPacket(packet, undefined, input.handoffContext)
+  // Sufficiency belongs to Research. A v2 ready decision admits a partial
+  // packet; only the legacy path with no decision still requires `complete`.
+  if (packet.completion !== 'complete' && input.handoffContext === undefined) {
     throw new CanonicalEntityProcessorValidationError('Canonical Entity processing requires a complete Research Packet.')
   }
   if (packet.evidence.length === 0) {
@@ -1344,7 +1351,30 @@ function validateProcessorInput(input: CanonicalPacketProcessorInput): ResearchP
   ) {
     throw new CanonicalEntityProcessorValidationError('Adapted Research Packet linkage does not match canonical input.')
   }
+  rejectUnsupportedEntityAction(input.handoffContext?.readiness ?? null)
   return packet
+}
+
+/**
+ * A required `evidence_attachment` has no writer yet.
+ *
+ * The ordinary item planning flow below has no notion of `entityAction.targetId`,
+ * so accepting the action here would silently write a normal Entity item and
+ * report success for an attachment that never happened. Until the dedicated
+ * managed writer exists, fail closed before any planner, Entity, or memory
+ * write. The failure is non-retryable, so the work becomes a held row rather
+ * than a retry loop, and the readiness record keeps the owed action and target
+ * for whoever performs it.
+ */
+function rejectUnsupportedEntityAction(readiness: ResearchReadinessV1 | null): void {
+  if (readiness?.entityAction.kind !== 'evidence_attachment') return
+  throw new PlatformFailure({
+    category: 'entity_resolution_failed',
+    message:
+      `Research owes an evidence attachment to ${readiness.entityAction.targetId}, `
+      + 'and no managed attachment writer is available on this path.',
+    retryable: false,
+  })
 }
 
 function evidenceSpans(packet: ResearchPacketV1): EvidenceSpan[] {

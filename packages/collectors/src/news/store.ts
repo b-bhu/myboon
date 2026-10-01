@@ -1,3 +1,5 @@
+import type { Signal } from '../signal-platform/contracts'
+import type { SourceDeliveryOutbox } from '../signal-platform/source-delivery-outbox'
 import type {
   NewsCandidateFingerprint,
   NewsDedupeOutcome,
@@ -40,6 +42,12 @@ export interface NewsCandidateObservationInput {
   dedupeOutcome: NewsDedupeOutcome
   observedAt: string
   status?: NewsCandidateObservationStatus
+  /**
+   * Exact validated adapted Signal payload owed to canonical intake. Stored as
+   * an immutable delivery obligation in the same transaction as the
+   * observation row. Omitted when source intake is off.
+   */
+  deliverySignal?: Signal
 }
 
 export interface NewsCandidateObservationRow {
@@ -136,7 +144,7 @@ export interface PendingNewsResearchResult {
   candidate: NewsCandidateObservationRow
 }
 
-export interface NewsStore {
+export interface NewsStore extends SourceDeliveryOutbox {
   fetchPriorObservations(
     sourceId: string,
     canonicalArticleUrls: string[]
@@ -144,6 +152,10 @@ export interface NewsStore {
   insertCandidateObservations(
     inputs: NewsCandidateObservationInput[]
   ): Promise<NewsCandidateObservationRow[]>
+  /** Persists a source-only material observation that legacy candidate dedupe does not research. */
+  insertSourceDeliveryObservations(
+    inputs: Array<{ signal: Signal; observedAt: string }>
+  ): Promise<void>
   fetchCandidateObservation(id: string): Promise<NewsCandidateObservationRow | null>
   fetchPendingCandidateObservations(limit: number): Promise<NewsCandidateObservationRow[]>
   /**

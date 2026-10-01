@@ -311,6 +311,14 @@ export function validateExecutionTraceEvent(value: unknown): ExecutionTraceEvent
   if (record.outputSchemaValid !== undefined && record.outputSchemaValid !== null) {
     boolean(record.outputSchemaValid, 'event.outputSchemaValid')
   }
+  if (record.researchReadinessOutcome !== undefined && record.researchReadinessOutcome !== null) {
+    oneOf(record.researchReadinessOutcome, [
+      'ready_for_entity', 'resolved_without_new_item', 'blocked', 'failed', 'readiness_unknown',
+    ], 'event.researchReadinessOutcome')
+  }
+  for (const key of ['researchReadinessId', 'researchReadinessPolicyVersion'] as const) {
+    if (record[key] !== undefined) nullableString(record[key], `event.${key}`)
+  }
   boolean(record.budgetExceeded, 'event.budgetExceeded')
   if (record.costUsdMicros !== undefined && record.costUsdMicros !== null) {
     if (typeof record.costUsdMicros !== 'number'
@@ -328,7 +336,10 @@ export function validateExecutionTraceEvent(value: unknown): ExecutionTraceEvent
   if (record.configuredPrimaryProvider === undefined
     || record.configuredPrimaryModel === undefined
     || record.fallbackReason === undefined
-    || record.outputSchemaValid === undefined || record.costUsdMicros === undefined) {
+    || record.outputSchemaValid === undefined || record.costUsdMicros === undefined
+    || record.researchReadinessId === undefined
+    || record.researchReadinessOutcome === undefined
+    || record.researchReadinessPolicyVersion === undefined) {
     return {
       ...record,
       configuredPrimaryProvider: record.configuredPrimaryProvider ?? null,
@@ -336,6 +347,9 @@ export function validateExecutionTraceEvent(value: unknown): ExecutionTraceEvent
       fallbackReason: record.fallbackReason ?? null,
       outputSchemaValid: record.outputSchemaValid ?? null,
       costUsdMicros: record.costUsdMicros ?? null,
+      researchReadinessId: record.researchReadinessId ?? null,
+      researchReadinessOutcome: record.researchReadinessOutcome ?? null,
+      researchReadinessPolicyVersion: record.researchReadinessPolicyVersion ?? null,
     } as unknown as ExecutionTraceEvent
   }
   return value as ExecutionTraceEvent

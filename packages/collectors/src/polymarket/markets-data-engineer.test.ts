@@ -6,7 +6,10 @@ import test from 'node:test'
 import type { PolymarketMarketsDataEngineerOptions } from './markets-data-engineer'
 import { __testing, runPolymarketMarketsDataEngineer } from './markets-data-engineer'
 import { CanonicalSourceSignalIntake } from '../signal-platform/source-intake'
+import type { SourceSignalIntakePort } from '../signal-platform/source-intake'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import type { PipelineWatchlistUpsertInput } from '../pipeline-store/store'
 
 const options: Required<PolymarketMarketsDataEngineerOptions> = {
   now: '2026-06-10T00:00:00.000Z',
@@ -283,17 +286,32 @@ test('the Gamma events fetch pins order=volume24hr (regression guard for the ren
   assert.ok(!source.includes('order=volume_24hr'), 'the 422-producing spelling must not reappear in any URL')
 })
 
-test('canonical Polymarket Signal survives legacy backlog throttling without legacy queue mutation', async () => {
+test('Polymarket delivery survives backlog throttling and recovers the exact obligation after intake failure', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'poly-live-signal-'))
-  const canonical = new SqliteSignalPlatformStore(join(dir, 'pipeline.sqlite'), 'polymarket')
+  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const sourceStore = new SqlitePipelineStore(pipelinePath)
+  const canonical = new SqliteSignalPlatformStore(pipelinePath, 'polymarket')
+  await sourceStore.upsertWatchlist([{
+    source: 'polymarket', area: 'markets', tagSlug: 'crypto', tagLabel: 'Crypto',
+    marketId: 'market-1', slug: 'market-one', title: 'Market one?', eventSlug: null,
+    eventTitle: null, endDate: null, isManualPin: false, rankInArea: 1, watchScore: 55,
+    scoreBreakdown: {}, selectionReason: 'test baseline', latestObservedAt: '2026-08-26T11:00:00.000Z',
+    latestYesPrice: 0.5, latestVolume: 1_000, latestVolume24h: 100, latestLiquidity: 100,
+    status: 'active',
+  } satisfies PipelineWatchlistUpsertInput])
   const writes = { candidates: 0, updates: 0 }
   const fakeStore = {
-    async getWatchlistSnapshots() {
-      return [{ slug: 'market-one', latestObservedAt: '2026-08-26T11:00:00.000Z', latestYesPrice: 0.5,
-        latestVolume: 1_000, latestVolume24h: 100, latestLiquidity: 100 }]
+    async getWatchlistSnapshots(area: string, slugs: string[]) {
+      return sourceStore.getWatchlistSnapshots(area, slugs)
     },
     async upsertWatchlist() {},
     async deactivateStaleWatchlist() {},
+    async commitWatchlistAndSourceDeliveries(rows: Parameters<SqlitePipelineStore['commitWatchlistAndSourceDeliveries']>[0], deliveries: Parameters<SqlitePipelineStore['commitWatchlistAndSourceDeliveries']>[1]) {
+      return sourceStore.commitWatchlistAndSourceDeliveries(rows, deliveries)
+    },
+    listPendingSourceDeliveries: sourceStore.listPendingSourceDeliveries.bind(sourceStore),
+    markSourceDeliveryDelivered: sourceStore.markSourceDeliveryDelivered.bind(sourceStore),
+    recordSourceDeliveryFailure: sourceStore.recordSourceDeliveryFailure.bind(sourceStore),
     async findExistingDedupeKeys() { return new Set<string>() },
     async findCandidateThreadsByFamilyKey() { return [] },
     async findCandidatesForBacklog() { return [] },
@@ -312,6 +330,18 @@ test('canonical Polymarket Signal survives legacy backlog throttling without leg
     async limit() { return { data: [], error: null } },
   }
   const fakeSupabase = { from() { return chain } }
+  const healthyIntake = new CanonicalSourceSignalIntake({ mode: 'observe', store: canonical })
+  let failNext = true
+  const flakyIntake: SourceSignalIntakePort = {
+    mode: 'observe',
+    async ingest(signal) {
+      if (failNext) {
+        failNext = false
+        throw new Error('simulated canonical-store outage')
+      }
+      return healthyIntake.ingest(signal)
+    },
+  }
   const originalFetch = globalThis.fetch
   globalThis.fetch = (async (url: string | URL | Request) => {
     const value = String(url)
@@ -338,19 +368,49 @@ test('canonical Polymarket Signal survives legacy backlog throttling without leg
         fetchLimitPerTag: 10, includeManualPins: false, backlogThreshold: 1,
         backlogHardCeiling: 10, candidateMaterialMoveMultiplier: 10,
       },
-      new CanonicalSourceSignalIntake({ mode: 'observe', store: canonical }),
+      flakyIntake,
     )
     assert.equal(result.candidatesThrottledByBackpressure, 1)
     assert.equal(result.candidatesWritten, 0)
     assert.equal(writes.candidates, 0)
     assert.equal(writes.updates, 0)
-    assert.equal(result.canonicalIntake.insertedSignals, 1)
+    assert.equal(result.canonicalIntake.failures.length, 1)
+    assert.equal((await sourceStore.listPendingSourceDeliveries(10)).length, 1)
     assert.equal((await canonical.readWorkObservability({
       now: '2026-08-26T12:00:00.000Z', recentFailureSince: '2026-08-01T00:00:00.000Z', failureLimit: 10,
+    })).signalCount, 0)
+
+    const recovered = await runPolymarketMarketsDataEngineer(
+      fakeStore as never,
+      fakeSupabase as never,
+      {
+        now: '2026-08-26T12:02:00.000Z', tagSlugs: ['crypto'], topMarketsPerTag: 1,
+        fetchLimitPerTag: 10, includeManualPins: false, backlogThreshold: 1,
+        backlogHardCeiling: 10, candidateMaterialMoveMultiplier: 10,
+      },
+      healthyIntake,
+    )
+    assert.equal(recovered.canonicalIntake.insertedSignals, 1)
+    assert.equal(recovered.delivery.delivered, 1)
+    assert.deepEqual(await sourceStore.listPendingSourceDeliveries(10), [])
+
+    const replay = await runPolymarketMarketsDataEngineer(
+      fakeStore as never,
+      fakeSupabase as never,
+      {
+        now: '2026-08-26T12:04:00.000Z', tagSlugs: ['crypto'], topMarketsPerTag: 1,
+        fetchLimitPerTag: 10, includeManualPins: false, backlogThreshold: 1,
+        backlogHardCeiling: 10, candidateMaterialMoveMultiplier: 10,
+      },
+      healthyIntake,
+    )
+    assert.equal(replay.delivery.attempted, 0, 'the acknowledged immutable observation is not delivered again')
+    assert.equal((await canonical.readWorkObservability({
+      now: '2026-08-26T12:04:00.000Z', recentFailureSince: '2026-08-01T00:00:00.000Z', failureLimit: 10,
     })).signalCount, 1)
     assert.equal((await canonical.getSchedulerStatus({ now: '2026-08-26T12:00:00.000Z' })).total, 0)
   } finally {
     globalThis.fetch = originalFetch
-    canonical.close(); rmSync(dir, { recursive: true, force: true })
+    canonical.close(); sourceStore.close(); rmSync(dir, { recursive: true, force: true })
   }
 })

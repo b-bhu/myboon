@@ -190,6 +190,7 @@ test('backupPipelineStore: backup of a store with real data has tableCounts matc
     const result = await backupPipelineStore({ sourcePath, backupDir, now: '2026-07-28T12:00:00.000Z' })
 
     assert.equal(result.tableCounts.pipeline_watchlist, seeded.watchlistCount)
+    assert.equal(result.tableCounts.pipeline_source_delivery_outbox, 0)
     assert.equal(result.tableCounts.pipeline_candidates, seeded.candidateCount)
     assert.equal(result.tableCounts.pipeline_runs, seeded.runCount)
     assert.equal(result.tableCounts.pipeline_research, 0)
@@ -233,6 +234,7 @@ test('backupNewsStore: creates and verifies an independent news.sqlite backup', 
       news_source_runs: 0,
       news_candidate_observations: 0,
       news_research_results: 0,
+      news_source_delivery_outbox: 0,
     })
     assert.equal(verification.ok, true)
   } finally {

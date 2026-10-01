@@ -6,6 +6,8 @@ import {
   type ResearchDepth,
   type ResearchPacketV1,
   type ResearchWorkItem,
+  type RetrievedEvidence,
+  type Signal,
 } from '../signal-platform/contracts'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import type { InferenceTelemetry } from '../inference-gateway/types'
@@ -20,15 +22,33 @@ import type {
   WorkLease,
 } from '../signal-platform/store-adapter'
 import { validateExecutionTraceEvent, validateResearchPacket } from '../signal-platform/validation'
-import { adaptCanonicalResearchPacket } from './canonical-packet-adapter'
+import { adaptCanonicalResearchPacket, type EntityHandoffContext } from './canonical-packet-adapter'
+import type { ResearchReadinessV1 } from '../signal-platform/research-readiness'
 import type { ResearchPacket } from './types'
 import type { EntityWorkerSourceType, SharedEntityWorkerConfig } from './shared-worker-config'
+
+export interface EntityHandoffSource {
+  work: ResearchWorkItem | null
+  signal: Signal | null
+  persistedEvidence: readonly RetrievedEvidence[]
+  readiness: ResearchReadinessV1 | null
+}
 
 export interface EntityPacketWorkPort extends Pick<
   ResearchWorkStoreAdapter,
   'sourceType' | 'peekSchedulable' | 'claimWithLease' | 'heartbeatLease' | 'transitionLeased' | 'releaseLease'
 > {
   readResearchPacket(workId: string): Promise<unknown | null>
+  /**
+   * The saved Research readiness decision together with the stored records it
+   * describes: work, signal, and persisted evidence.
+   *
+   * Both the decision and its linkage come from one read so Entity Manager
+   * validates a decision against the exact records it was saved against. A null
+   * decision means the packet predates the readiness contract and must be
+   * treated as `readiness_unknown` rather than auto-admitted.
+   */
+  readHandoffContext?(workId: string): EntityHandoffSource | Promise<EntityHandoffSource>
 }
 
 export interface CanonicalPacketProcessorInput {
@@ -36,6 +56,11 @@ export interface CanonicalPacketProcessorInput {
   canonicalPacket: ResearchPacketV1
   packet: ResearchPacket
   signal: AbortSignal
+  /**
+   * The saved Research readiness decision and the records it describes. Absent
+   * means the legacy path, where only a complete packet is admissible.
+   */
+  handoffContext?: EntityHandoffContext
 }
 
 export interface CanonicalPacketProcessor {
@@ -184,7 +209,7 @@ export class SharedEntityWorker {
           const value = await port.readResearchPacket(item.workId)
           if (value === null) throw failure('storage_transient', `Research Packet not found for ${item.workId}`, true)
           canonicalPacket = canonicalPacketOrNull(value)
-          const adapted = adaptCanonicalResearchPacket(value)
+          const adapted = adaptCanonicalResearchPacket(value, undefined, await this.handoffContext(port, item))
           canonicalPacket ??= value as ResearchPacketV1
           validateWorkPacketLinkage(item, canonicalPacket)
           await this.options.shadowObservations.observe({
@@ -315,6 +340,31 @@ export class SharedEntityWorker {
     }
   }
 
+  /**
+   * Read the saved Research decision and the records it describes, in one read.
+   *
+   * Returns undefined when no decision exists, so the caller falls back to the
+   * legacy v1 completion rule. An unassessed packet is never auto-admitted, and
+   * the linkage records are only loaded when a decision actually needs them.
+   */
+  private async handoffContext(
+    port: EntityPacketWorkPort,
+    work: ResearchWorkItem,
+  ): Promise<EntityHandoffContext | undefined> {
+    if (port.readHandoffContext === undefined) return undefined
+    const source = await port.readHandoffContext(work.workId)
+    if (source.readiness === null) return undefined
+    if (!source.work || !source.signal) {
+      throw failure('storage_transient', `Cannot verify Research readiness linkage for ${work.workId}`, true)
+    }
+    return {
+      work: source.work,
+      signal: source.signal,
+      persistedEvidence: source.persistedEvidence,
+      readiness: source.readiness,
+    }
+  }
+
   private async processLease(
     port: EntityPacketWorkPort,
     lease: WorkLease,
@@ -343,10 +393,11 @@ export class SharedEntityWorker {
       const rawPacket = await port.readResearchPacket(lease.work.workId)
       if (rawPacket === null) throw failure('storage_transient', `Research Packet not found for ${lease.work.workId}`, true)
       canonicalPacket = canonicalPacketOrNull(rawPacket)
-      const packet = adaptCanonicalResearchPacket(rawPacket)
+      const handoffContext = await this.handoffContext(port, lease.work)
+      const packet = adaptCanonicalResearchPacket(rawPacket, undefined, handoffContext)
       canonicalPacket ??= rawPacket as ResearchPacketV1
       validateWorkPacketLinkage(lease.work, canonicalPacket)
-      const input = { work: lease.work, canonicalPacket, packet, signal: controller.signal }
+      const input = { work: lease.work, canonicalPacket, packet, signal: controller.signal, handoffContext }
       await this.options.processor.preflight?.(input)
       if (leaseLost) {
         return this.finishLease('staleLeases', lease, canonicalPacket, {

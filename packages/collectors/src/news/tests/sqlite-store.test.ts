@@ -130,6 +130,7 @@ test('news SQLite schema creates source run, candidate observation, and research
     assert.deepEqual(rows.map((row) => row.name), [
       'news_candidate_observations',
       'news_research_results',
+      'news_source_delivery_outbox',
       'news_source_runs',
     ])
 

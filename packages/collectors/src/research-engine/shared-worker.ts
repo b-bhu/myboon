@@ -15,6 +15,29 @@ import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import type { CanonicalPlatformStore } from '../signal-platform/platform-store'
 import { adaptRetrievedEvidenceArtifact } from '../signal-platform/retrieved-evidence-adapter'
 import {
+  assessRetrievalManifest,
+  retrievalManifestHoldFailure,
+  retrievalManifestMayProceed,
+  retrievalPlanDigest,
+  retrievalPlanId,
+  validateRetrievalManifestLinkage,
+  type RetrievalCapture,
+  type RetrievalManifestV1,
+  type RetrievalPlannedSource,
+  type RetrievalPlanIdentityInput,
+  type RetrievalSkipReason,
+  type RetrievalSourceFailure,
+} from '../signal-platform/retrieval-manifest'
+import {
+  assessResearchReadiness,
+  isNonClaimableReadiness,
+  researchHandoffEntityClaim,
+  researchHandoffTerminalStatus,
+  type ResearchHandoffRetryPolicy,
+  type ResearchReadinessOutcome,
+  type ResearchReadinessV1,
+} from '../signal-platform/research-readiness'
+import {
   SharedResearchScheduler,
   type ClaimNextCommand,
   type GlobalSchedulerQuery,
@@ -25,7 +48,6 @@ import {
   RetrievalPlanError,
   type DeterministicRetrievalPlan,
   type RetrievalBatch,
-  type RetrievalFailure,
   type RetrievedEvidenceArtifact,
 } from './deterministic-retrieval'
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
@@ -128,6 +150,7 @@ export type SharedResearchRunOutcome =
   | { kind: 'released', stage: ResearchWorkerStage, sourceType: ResearchWorkItem['sourceType'], workId: string, category: 'circuit_open' }
   | { kind: 'retry_wait' | 'dead_letter' | 'expired', stage: ResearchWorkerStage, sourceType: ResearchWorkItem['sourceType'], workId: string, category: FailureCategory }
   | { kind: 'lease_lost' | 'handoff_pending', stage: ResearchWorkerStage, sourceType: ResearchWorkItem['sourceType'], workId: string }
+  | { kind: 'readiness_held', sourceType: ResearchWorkItem['sourceType'], workId: string, outcome: ResearchReadinessOutcome, category: FailureCategory }
 
 export class SharedResearchWorkerConfigurationError extends Error {
   constructor(message: string) {
@@ -291,6 +314,16 @@ export class SharedResearchWorker {
       : this.processSynthesis(store, lease)
   }
 
+  /**
+   * Retrieval is checkpointed, not inferred.
+   *
+   * A saved evidence cache is never on its own a completion marker: evidence can
+   * exist for sources that were never checked, for a plan cut short, or for
+   * content that came back truncated. Only a saved retrieval manifest states
+   * what was and was not evaluated, so re-entry reuses a checkpoint and nothing
+   * else. When there is no usable checkpoint the plan runs again and a new
+   * manifest is committed with its evidence batch in one transaction.
+   */
   private async processRetrieval(store: SharedResearchWorkPort, lease: WorkLease): Promise<SharedResearchRunOutcome> {
     const stage = 'retrieval' as const
     const timing = stageTiming(lease, this.nowIso())
@@ -300,22 +333,6 @@ export class SharedResearchWorker {
     const linkageIssue = validateLinkage(lease.work, signal, store)
     if (linkageIssue !== null) {
       return this.failWithoutExecution(store, lease, stage, 'permanent_source_error', linkageIssue, timing)
-    }
-
-    const existingEvidence = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit)
-    const reusableEvidence = existingEvidence.filter((artifact) => this.evidenceReusePolicy.evaluate({
-      artifact, workItem: lease.work, signal: signal!, now: this.nowIso(),
-    }).reusable)
-    if (reusableEvidence.length > 0) {
-      try {
-        const outcome = await this.advanceRetrievedWork(store, lease, signal!, reusableEvidence)
-        this.recordArtifactReplay(lease, stage, reusableEvidence[0]!.retrievedAt, reusableEvidence.map((item) => item.evidenceId))
-        return outcome
-      } catch (error) {
-        return this.failWithoutExecution(
-          store, lease, stage, failureCategory(error, stage), errorMessage(error), timing,
-        )
-      }
     }
 
     let plan: DeterministicRetrievalPlan
@@ -330,13 +347,24 @@ export class SharedResearchWorker {
         'Standard research requires a registered bounded search connector', timing,
       )
     }
+
+    const identity = retrievalPlanIdentity(lease.work, plan)
+    const savedCheckpoint = store.getLatestRetrievalManifest(lease.work.workId, identity.retrievalPlanId)
+    const replayed = await this.reuseSavedCheckpoint(store, lease, signal!, savedCheckpoint, timing)
+    if (replayed !== null) return replayed
+
+    const heldResume = savedCheckpoint?.decision === 'hold_and_retry'
+      ? this.prepareHeldCheckpointRetry(store, lease, signal!, plan, savedCheckpoint)
+      : null
+    if (heldResume !== null) plan = heldResume.plan
+
     if (!await this.beginAttempt(store, lease, 'retrieval_leased')) return leaseLost(stage, lease.work)
 
     const heartbeat = this.startHeartbeat(store, lease)
     try {
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
       this.recordExecutionStarted(lease, stage, timing, lease.work.attemptCount + 1)
-      if (lease.work.researchDepth === 'standard') {
+      if (heldResume === null && lease.work.researchDepth === 'standard') {
         const discovery = await this.standardSearch!.discover({
           signal: signal!, work: lease.work, queries: buildStandardSearchQueries(signal!),
         })
@@ -344,24 +372,153 @@ export class SharedResearchWorker {
       }
       const batch = await this.retriever.retrieve(plan)
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
-      if (batch.artifacts.length === 0) {
-        const failure = selectRetrievalFailure(batch)
-        return await this.failAfterExecution(store, lease, stage, failure.category, failure.message, failure.retryable, timing)
-      }
       const evidence = batch.artifacts.map((artifact) => withEvidenceReuseContext(
         adaptRetrievedEvidenceArtifact(artifact), { signal: signal!, workItem: lease.work },
       ))
-      for (const artifact of evidence) store.appendEvidence(artifact)
+      const reusedEvidence = heldResume?.reusedEvidence ?? []
+      const manifest = buildRetrievalManifest({
+        work: lease.work,
+        plan,
+        batch,
+        attempt: lease.work.attemptCount + 1,
+        recordedAt: this.nowIso(),
+        ...(heldResume === null ? {} : {
+          previous: {
+            manifest: heldResume.manifest,
+            reusedEvidence,
+            preservedSkippedSources: heldResume.preservedSkippedSources,
+          },
+        }),
+      })
+      let checkpoint
+      try {
+        checkpoint = store.commitRetrievalCheckpoint({
+          manifest, evidence, fence: leaseFence(lease), now: this.nowIso(),
+        })
+      } catch (error) {
+        // Nothing was written, so the evidence batch is still absent and the
+        // work row is still recoverable. A later attempt retries the retrieval
+        // rather than resuming from a half-written checkpoint.
+        return this.failAfterExecution(
+          store, lease, stage, failureCategory(error, stage), errorMessage(error), false, timing,
+        )
+      }
+      if (!checkpoint.committed) return leaseLost(stage, lease.work)
+      // A held checkpoint is not a retrieval failure to be papered over: the
+      // required source is missing, so the existing bounded retry policy routes
+      // it and the recorded limitations stay with the work item.
+      const hold = retrievalManifestHoldFailure(manifest)
+      if (hold !== null) {
+        return await this.failAfterExecution(store, lease, stage, hold.category, manifest.reason, hold.retryable, timing)
+      }
       this.recordExecution(lease, stage, timing, {
         status: 'succeeded', attempt: lease.work.attemptCount + 1,
       })
-      return await this.advanceRetrievedWork(store, lease, signal!, evidence)
+      return await this.advanceRetrievedWork(store, lease, signal!, [...reusedEvidence, ...evidence])
     } catch (error) {
       return this.failAfterExecution(
         store, lease, stage, failureCategory(error, stage), errorMessage(error), retryable(error), timing,
       )
     } finally {
       heartbeat.stop()
+    }
+  }
+
+  /**
+   * Re-entry against a saved checkpoint.
+   *
+   * The manifest is validated against the persisted evidence before it is
+   * trusted, and the evidence it names must still pass the ordinary reuse
+   * policy. A checkpoint that cannot be validated, or that holds, returns null
+   * so the retrieval simply runs again under a new attempt; it is never
+   * synthesized from whatever happens to be in the evidence cache.
+   */
+  private async reuseSavedCheckpoint(
+    store: SharedResearchWorkPort,
+    lease: WorkLease,
+    signal: Signal,
+    saved: RetrievalManifestV1 | null,
+    timing: StageTiming,
+  ): Promise<SharedResearchRunOutcome | null> {
+    if (saved === null || !retrievalManifestMayProceed(saved)) return null
+    const persisted = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit)
+    const issue = validateRetrievalManifestLinkage({ manifest: saved, work: lease.work, persistedEvidence: persisted })
+    if (issue !== null) return null
+    const byId = new Map(persisted.map((artifact) => [artifact.evidenceId, artifact]))
+    const evidence: RetrievedEvidence[] = []
+    for (const evidenceId of saved.evidenceIds) {
+      const artifact = byId.get(evidenceId)
+      if (!artifact) return null
+      if (!this.evidenceReusePolicy.evaluate({
+        artifact, workItem: lease.work, signal, now: this.nowIso(),
+      }).reusable) return null
+      evidence.push(artifact)
+    }
+    if (evidence.length === 0) return null
+    this.recordManifestReplay(lease, saved, evidence)
+    try {
+      return await this.advanceRetrievedWork(store, lease, signal, evidence)
+    } catch (error) {
+      return this.failWithoutExecution(
+        store, lease, 'retrieval', failureCategory(error, 'retrieval'), errorMessage(error), timing,
+      )
+    }
+  }
+
+  /**
+   * A held checkpoint may contain successful optional captures alongside the
+   * required source that failed. On bounded retry, reuse eligible saved
+   * captures and fetch only unresolved sources from that exact saved coverage;
+   * do not repeat discovery or successful retrievals.
+   */
+  private prepareHeldCheckpointRetry(
+    store: SharedResearchWorkPort,
+    lease: WorkLease,
+    signal: Signal,
+    basePlan: DeterministicRetrievalPlan,
+    manifest: RetrievalManifestV1,
+  ): {
+    plan: DeterministicRetrievalPlan
+    manifest: RetrievalManifestV1
+    reusedEvidence: RetrievedEvidence[]
+    preservedSkippedSources: (RetrievalPlannedSource & { skipReason: RetrievalSkipReason })[]
+  } | null {
+    const persisted = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit)
+    if (validateRetrievalManifestLinkage({ manifest, work: lease.work, persistedEvidence: persisted }) !== null) {
+      return null
+    }
+    const byId = new Map(persisted.map((artifact) => [artifact.evidenceId, artifact]))
+    const reusedEvidence: RetrievedEvidence[] = []
+    const retrySources: RetrievalPlannedSource[] = []
+    const preservedSkippedSources: (RetrievalPlannedSource & { skipReason: RetrievalSkipReason })[] = []
+    for (const source of manifest.sources) {
+      if (source.outcome === 'succeeded') {
+        const artifact = byId.get(source.evidenceId!)
+        if (!artifact) return null
+        if (this.evidenceReusePolicy.evaluate({
+          artifact, workItem: lease.work, signal, now: this.nowIso(),
+        }).reusable) {
+          reusedEvidence.push(artifact)
+        } else {
+          retrySources.push({ url: source.url, authority: source.authority, authorityId: source.authorityId })
+        }
+      } else if (source.outcome === 'skipped' && source.skipReason === 'source_limit') {
+        // A configured source cap is policy, not an interrupted fetch. Keep it
+        // visible and do not bypass it during retry.
+        preservedSkippedSources.push({
+          url: source.url, authority: source.authority, authorityId: source.authorityId,
+          skipReason: 'source_limit',
+        })
+      } else {
+        retrySources.push({ url: source.url, authority: source.authority, authorityId: source.authorityId })
+      }
+    }
+    if (retrySources.length === 0) return null
+    return {
+      plan: { ...basePlan, urls: retrySources },
+      manifest,
+      reusedEvidence,
+      preservedSkippedSources,
     }
   }
 
@@ -417,9 +574,17 @@ export class SharedResearchWorker {
           store, lease, stage, 'schema_version_mismatch', 'Existing Research Packet linkage is invalid', timing,
         )
       }
-      const outcome = await this.completeSynthesisHandoff(store, lease)
-      this.recordPacketReplay(lease, existing)
-      return outcome
+      // A saved decision is authoritative and is reused as-is. Re-entry must not
+      // repeat synthesis or re-judge sufficiency.
+      const savedReadiness = store.getResearchReadinessByWork(lease.work.workId)
+      if (savedReadiness !== null) {
+        const replayed = await this.completeSavedHandoff(store, lease, savedReadiness)
+        this.recordPacketReplay(lease, existing, savedReadiness)
+        return replayed
+      }
+      const handoff = await this.commitResearchHandoff(store, lease, signal, existing)
+      this.recordPacketReplay(lease, existing, handoff.readiness)
+      return handoff.run
     }
     const evidence = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit).filter((artifact) =>
       this.evidenceReusePolicy.evaluate({
@@ -445,9 +610,9 @@ export class SharedResearchWorker {
         evidence: evidence.map(toDeterministicEvidence),
       })
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
-      store.appendResearchPacket(packet)
       this.recordSynthesisSuccess(lease, packet, timing)
-      return this.completeSynthesisHandoff(store, lease)
+      const handoff = await this.commitResearchHandoff(store, lease, signal, packet)
+      return handoff.run
     } catch (error) {
       return this.failAfterExecution(
         store, lease, stage, failureCategory(error, stage), errorMessage(error), retryable(error), timing,
@@ -460,23 +625,94 @@ export class SharedResearchWorker {
     }
   }
 
-  private async completeSynthesisHandoff(
+  /**
+   * Research owns the sufficiency decision. The packet, that decision, and the
+   * work status it requires are committed in one store transaction, so a saved
+   * decision can never exist without the work state that admits it and a
+   * synthesis result can never be promoted without a decision.
+   *
+   * A `blocked` or `failed` decision is not successful completion: it carries
+   * the existing bounded retry policy into the same transaction, so the retry
+   * deadline is persisted together with the decision rather than being left
+   * disconnected from it.
+   */
+  private async commitResearchHandoff(
     store: SharedResearchWorkPort,
     lease: WorkLease,
+    signal: Signal,
+    packet: ResearchPacketV1,
+  ): Promise<{ readiness: ResearchReadinessV1, run: SharedResearchRunOutcome }> {
+    const readiness = assessResearchReadiness({
+      work: lease.work,
+      signal,
+      packet,
+      persistedEvidence: store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit),
+      assessedAt: this.nowIso(),
+    })
+    let committed
+    try {
+      committed = store.commitResearchHandoff({
+        packet,
+        readiness,
+        fence: leaseFence(lease),
+        now: this.nowIso(),
+        retry: this.handoffRetryPolicy(lease),
+      })
+    } catch {
+      // The decision is only durable together with the work status. A failure
+      // here leaves the synthesis lease recoverable, so a later attempt reuses
+      // the immutable packet instead of repeating synthesis.
+      return { readiness, run: handoffPending('synthesis', lease.work) }
+    }
+    return {
+      readiness,
+      run: committed.committed
+        ? handoffRun(lease.work, readiness, committed.workStatus)
+        : handoffPending('synthesis', lease.work),
+    }
+  }
+
+  /**
+   * The existing bounded retry policy, offered to the atomic handoff so it can
+   * persist the transition and its deadline in the same transaction. This adds
+   * no automatic deferred wakeup: the deadline is the ordinary `retry_wait`
+   * row the existing recovery sweep already advances.
+   */
+  private handoffRetryPolicy(lease: WorkLease): ResearchHandoffRetryPolicy {
+    const now = this.clock.now()
+    const attempts = lease.work.attemptCount
+    const expired = Date.parse(lease.work.freshnessDeadline) <= now.getTime()
+    const bounded = attempts < this.maxAttempts && !expired
+    return {
+      attemptCount: attempts,
+      maxAttempts: this.maxAttempts,
+      expired,
+      nextAttemptAt: bounded
+        ? new Date(now.getTime() + this.backoffMs(Math.max(1, attempts))).toISOString()
+        : null,
+    }
+  }
+
+  /**
+   * Re-entry after a committed handoff. The saved decision is reused verbatim;
+   * only the fenced work transition is replayed, never synthesis and never a
+   * second sufficiency judgment.
+   */
+  private async completeSavedHandoff(
+    store: SharedResearchWorkPort,
+    lease: WorkLease,
+    readiness: ResearchReadinessV1,
   ): Promise<SharedResearchRunOutcome> {
+    const retry = this.handoffRetryPolicy(lease)
+    const nextStatus = readinessHandoffStatus(readiness, lease.work, this.nowIso(), retry)
     const transitioned = await store.transitionLeased({
-      ...leaseFence(lease), expectedStatus: 'synthesis_leased', nextStatus: 'research_ready',
-      now: this.nowIso(), attemptDelta: 0, failureCategory: null, failureDetail: null, nextAttemptAt: null,
+      ...leaseFence(lease), expectedStatus: 'synthesis_leased', nextStatus,
+      now: this.nowIso(), attemptDelta: 0,
+      failureCategory: readiness.failureCategory, failureDetail: readinessDetail(readiness),
+      nextAttemptAt: nextStatus === 'retry_wait' ? retry.nextAttemptAt : null,
     })
     if (!transitioned) return leaseLost('synthesis', lease.work)
-    try {
-      const promoted = await store.promoteResearchReady(lease.work.workId, this.nowIso())
-      return promoted ? success('synthesis', lease.work) : handoffPending('synthesis', lease.work)
-    } catch {
-      // The fenced synthesis completion is already durable. A dispatcher may
-      // safely replay only this CAS handoff; it must not rerun inference.
-      return handoffPending('synthesis', lease.work)
-    }
+    return handoffRun(lease.work, readiness, nextStatus)
   }
 
   private async preflight(
@@ -665,12 +901,17 @@ export class SharedResearchWorker {
     })
   }
 
-  private recordPacketReplay(lease: WorkLease, packet: ResearchPacketV1): void {
+  private recordPacketReplay(
+    lease: WorkLease,
+    packet: ResearchPacketV1,
+    readiness: ResearchReadinessV1,
+  ): void {
     const timing = { startedAt: packet.createdAt, queueWaitMs: 0 }
     this.appendExecutionEvent({
       ...baseExecutionEvent({
         lease, stage: 'synthesis', timing, finishedAt: packet.createdAt,
-        status: 'skipped', attempt: packet.execution.attempt, failureCategory: null,
+        status: 'skipped', attempt: packet.execution.attempt,
+        failureCategory: readiness.failureCategory,
         discriminator: `packet_replay:${packet.packetId}`, packetId: packet.packetId,
       }),
       configuredPrimaryProvider: packet.execution.configuredPrimaryProvider ?? null,
@@ -679,6 +920,9 @@ export class SharedResearchWorker {
       outputSchemaValid: packet.execution.outputSchemaValid ?? null,
       promptVersion: packet.execution.promptVersion,
       policyVersion: packet.execution.policyVersion,
+      researchReadinessId: readiness.readinessId,
+      researchReadinessOutcome: readiness.outcome,
+      researchReadinessPolicyVersion: readiness.readinessPolicyVersion,
     })
   }
 
@@ -692,6 +936,20 @@ export class SharedResearchWorker {
       lease, stage, timing: { startedAt: anchor, queueWaitMs: 0 }, finishedAt: anchor,
       status: 'skipped', attempt: lease.work.attemptCount, failureCategory: null,
       discriminator: `evidence_replay:${stableContractId('evidence_set', ...[...evidenceIds].sort())}`,
+    }))
+  }
+
+  /** Re-entry is reported against the checkpoint that was reused, not the cache. */
+  private recordManifestReplay(
+    lease: WorkLease,
+    manifest: RetrievalManifestV1,
+    evidence: readonly RetrievedEvidence[],
+  ): void {
+    const anchor = evidence[0]?.retrievedAt ?? manifest.recordedAt
+    this.appendExecutionEvent(baseExecutionEvent({
+      lease, stage: 'retrieval', timing: { startedAt: anchor, queueWaitMs: 0 }, finishedAt: anchor,
+      status: 'skipped', attempt: lease.work.attemptCount, failureCategory: null,
+      discriminator: `retrieval_manifest_replay:${manifest.manifestId}:${manifest.decision}`,
     }))
   }
 
@@ -732,6 +990,149 @@ export function buildRetrievalPlan(
     maxRedirects: limits.maxRedirects,
     timeoutMs: Math.min(limits.timeoutMs, work.budget.maxWallTimeMs),
     freshnessDeadline: work.freshnessDeadline,
+  }
+}
+
+/**
+ * Stable identity of the code-owned retrieval plan.
+ *
+ * The identity covers the work item's own plan, the effective limits, the
+ * freshness deadline, and the contract/policy versions, so a changed plan is a
+ * different checkpoint rather than a silently reused one. Search discovery is
+ * deliberately excluded: discovered corroboration URLs belong to one execution
+ * and are recorded inside the manifest as coverage.
+ */
+export function retrievalPlanIdentity(
+  work: ResearchWorkItem,
+  plan: DeterministicRetrievalPlan,
+): { retrievalPlanId: string, retrievalPlanDigest: string } {
+  const identity: RetrievalPlanIdentityInput = {
+    workId: work.workId,
+    researchContractVersion: work.researchContractVersion,
+    policyVersion: work.policyVersion,
+    sourceUrl: work.retrievalPlan.sourceUrl,
+    allowedDomains: plan.allowedDomains,
+    maxExternalSources: work.retrievalPlan.maxExternalSources,
+    maxSources: plan.maxSources,
+    maxBytesPerSource: plan.maxBytesPerSource,
+    maxTotalBytes: plan.maxTotalBytes,
+    maxTextCharsPerSource: plan.maxTextCharsPerSource,
+    maxRedirects: plan.maxRedirects,
+    timeoutMs: plan.timeoutMs,
+    freshnessDeadline: plan.freshnessDeadline ?? work.freshnessDeadline,
+  }
+  return {
+    retrievalPlanId: retrievalPlanId(identity),
+    retrievalPlanDigest: retrievalPlanDigest(identity),
+  }
+}
+
+/**
+ * Builds the immutable checkpoint for one retrieval execution from the plan
+ * that ran and the batch it produced.
+ *
+ * Every source the plan selected is accounted for: captured, failed, dropped by
+ * the source cap, or left unevaluated when the executor stopped first. Only the
+ * captures become evidence identities, and a source that was never evaluated is
+ * never reported as checked.
+ */
+export function buildRetrievalManifest(input: {
+  work: ResearchWorkItem
+  plan: DeterministicRetrievalPlan
+  batch: RetrievalBatch
+  attempt: number
+  recordedAt: string
+  manifestPolicyVersion?: string
+  previous?: {
+    manifest: RetrievalManifestV1
+    reusedEvidence: readonly RetrievedEvidence[]
+    preservedSkippedSources: readonly (RetrievalPlannedSource & { skipReason: RetrievalSkipReason })[]
+  }
+}): RetrievalManifestV1 {
+  const identity = retrievalPlanIdentity(input.work, input.plan)
+  const coverage = describeRetrievalCoverage(input.plan, input.batch)
+  if (input.previous !== undefined) {
+    const reusedById = new Map(input.previous.reusedEvidence.map((artifact) => [artifact.evidenceId, artifact]))
+    const reusedSources = input.previous.manifest.sources.filter(
+      (source) => source.outcome === 'succeeded' && reusedById.has(source.evidenceId!),
+    )
+    coverage.plannedSources.unshift(...reusedSources.map(({ url, authority, authorityId }) => ({
+      url, authority, authorityId,
+    })))
+    coverage.skippedSources.push(...input.previous.preservedSkippedSources)
+    coverage.captures.unshift(...reusedSources.map((source) => {
+      const artifact = reusedById.get(source.evidenceId!)!
+      return {
+        evidenceId: artifact.evidenceId,
+        contentHash: artifact.contentHash,
+        requestedUrl: artifact.requestedUrl,
+        finalUrl: artifact.finalUrl,
+        truncated: artifact.truncated,
+        reused: true,
+      }
+    }))
+  }
+  return assessRetrievalManifest({
+    work: input.work,
+    planId: identity.retrievalPlanId,
+    planDigest: identity.retrievalPlanDigest,
+    planPolicyVersion: input.work.policyVersion,
+    attempt: input.attempt,
+    ...coverage,
+    recordedAt: input.recordedAt,
+    ...(input.manifestPolicyVersion === undefined
+      ? {} : { manifestPolicyVersion: input.manifestPolicyVersion }),
+  })
+}
+
+function describeRetrievalCoverage(
+  plan: DeterministicRetrievalPlan,
+  batch: RetrievalBatch,
+): {
+  plannedSources: RetrievalPlannedSource[]
+  skippedSources: (RetrievalPlannedSource & { skipReason: RetrievalSkipReason })[]
+  captures: RetrievalCapture[]
+  failures: RetrievalSourceFailure[]
+} {
+  const selected = plan.urls.slice(0, plan.maxSources)
+  const overLimit = plan.urls.slice(plan.maxSources)
+  const evaluated = new Set([
+    ...batch.artifacts.map((artifact) => normalizeUrl(artifact.requestedUrl)),
+    ...batch.failures.map((failure) => normalizeUrl(failure.requestedUrl)),
+  ])
+  const plannedSources: RetrievalPlannedSource[] = []
+  const stoppedEarly: (RetrievalPlannedSource & { skipReason: RetrievalSkipReason })[] = []
+  for (const approved of selected) {
+    const source: RetrievalPlannedSource = {
+      url: normalizeUrl(approved.url), authority: approved.authority, authorityId: approved.authorityId,
+    }
+    // The executor breaks out on a byte budget, deadline, or earlier failure, so
+    // a selected source can end up with neither a capture nor a failure. That is
+    // explicitly unevaluated, not a silent omission.
+    if (evaluated.has(source.url)) plannedSources.push(source)
+    else stoppedEarly.push({ ...source, skipReason: 'execution_stopped' })
+  }
+  return {
+    plannedSources,
+    skippedSources: [
+      ...overLimit.map((approved) => ({
+        url: normalizeUrl(approved.url), authority: approved.authority, authorityId: approved.authorityId,
+        skipReason: 'source_limit' as const,
+      })),
+      ...stoppedEarly,
+    ],
+    captures: batch.artifacts.map((artifact) => ({
+      evidenceId: artifact.evidenceId,
+      contentHash: artifact.contentHash,
+      requestedUrl: normalizeUrl(artifact.requestedUrl),
+      finalUrl: normalizeUrl(artifact.finalUrl),
+      truncated: artifact.truncated,
+    })),
+    failures: batch.failures.map((failure) => ({
+      requestedUrl: normalizeUrl(failure.requestedUrl),
+      category: failure.category,
+      retryable: failure.retryable,
+    })),
   }
 }
 
@@ -901,13 +1302,6 @@ function validateLinkage(
   return null
 }
 
-function selectRetrievalFailure(batch: RetrievalBatch): RetrievalFailure {
-  return batch.failures[0] ?? {
-    requestedUrl: '', category: 'permanent_source_error', retryable: false,
-    message: 'Deterministic retrieval returned no evidence',
-  }
-}
-
 function toDeterministicEvidence(evidence: RetrievedEvidence): RetrievedEvidenceArtifact {
   if (evidence.retrievalMethod !== 'safe_http') {
     throw new RetrievalPlanError('Structured synthesis accepts only deterministic safe_http evidence')
@@ -976,6 +1370,60 @@ function handoffPending(stage: ResearchWorkerStage, work: ResearchWorkItem): Sha
   return { kind: 'handoff_pending', stage, sourceType: work.sourceType, workId: work.workId }
 }
 
+/**
+ * The work status a saved decision owes, resolved with the same policy the
+ * atomic handoff used. Replaying a saved decision must not invent a different
+ * terminal status than the one originally committed.
+ */
+function readinessHandoffStatus(
+  readiness: ResearchReadinessV1,
+  work: ResearchWorkItem,
+  now: string,
+  retry: ResearchHandoffRetryPolicy,
+): ResearchWorkItem['status'] {
+  if (researchHandoffEntityClaim(readiness) !== null) return 'entity_pending'
+  if (readiness.outcome === 'resolved_without_new_item') return 'complete'
+  return researchHandoffTerminalStatus(readiness, {
+    attemptCount: retry.attemptCount,
+    maxAttempts: retry.maxAttempts,
+    expired: Date.parse(work.freshnessDeadline) <= Date.parse(now),
+    nextAttemptAt: retry.nextAttemptAt,
+  })
+}
+
+/** Only the typed readiness outcome reaches the work row, never prose. */
+function readinessDetail(readiness: ResearchReadinessV1): string | null {
+  return isNonClaimableReadiness(readiness.outcome) ? `readiness:${readiness.outcome}` : null
+}
+
+/**
+ * Report the outcome a committed handoff produced.
+ *
+ * A claimable decision is successful completion, including a no-new-item result
+ * that still owes an Entity attachment or reuse action. A deliberate no-action
+ * result completes without one. Everything else is routed to the existing
+ * bounded retry/dead-letter reporting rather than being reported as success.
+ */
+function handoffRun(
+  work: ResearchWorkItem,
+  readiness: ResearchReadinessV1,
+  workStatus: ResearchWorkItem['status'] | null,
+): SharedResearchRunOutcome {
+  // `entity_pending` covers a ready result and a no-new-item result that still
+  // owes an Entity attachment; `complete` is a deliberate no-action result.
+  // Both are successful completion of the Research stage.
+  if (workStatus === 'entity_pending' || workStatus === 'complete') return success('synthesis', work)
+  return {
+    kind: 'readiness_held',
+    sourceType: work.sourceType,
+    workId: work.workId,
+    outcome: readiness.outcome,
+    // A validation-backed non-claimable outcome always carries a category; the
+    // fallback only guards an externally constructed record.
+    category: readiness.failureCategory ?? 'storage_permanent',
+  }
+}
+
 function terminal(
   kind: 'retry_wait' | 'dead_letter' | 'expired',
   stage: ResearchWorkerStage,
@@ -983,6 +1431,10 @@ function terminal(
   category: FailureCategory,
 ): SharedResearchRunOutcome {
   return { kind, stage, sourceType: work.sourceType, workId: work.workId, category }
+}
+
+function normalizeUrl(value: string): string {
+  try { return new URL(value).toString() } catch { return value }
 }
 
 function uniqueStages(stages: ResearchWorkerStage[]): ResearchWorkerStage[] {

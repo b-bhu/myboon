@@ -361,6 +361,10 @@ export interface ExecutionTraceEvent extends ExtensibleContract {
   configuredPrimaryModel?: string | null
   fallbackReason?: FailureCategory | null
   outputSchemaValid?: boolean | null
+  /** Additive Research-readiness provenance; legacy v1 events omit these keys. */
+  researchReadinessId?: string | null
+  researchReadinessOutcome?: string | null
+  researchReadinessPolicyVersion?: string | null
   promptVersion: string | null
   policyVersion: string | null
   researchContractVersion: string | null

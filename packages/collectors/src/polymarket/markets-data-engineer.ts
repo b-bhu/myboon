@@ -4,6 +4,7 @@ import type {
   PipelineCandidateThreadUpdate,
   PipelineStore,
   PipelineStoreCandidateStatus,
+  PipelineWatchlistUpsertInput,
 } from '../pipeline-store/store'
 import { adaptLivePolymarketSignal } from '../signal-platform/adapters/polymarket-live'
 import {
@@ -11,6 +12,11 @@ import {
   type SourceIntakeBatchReport,
   type SourceSignalIntakePort,
 } from '../signal-platform/source-intake'
+import {
+  drainSourceDeliveries,
+  emptySourceDeliveryDrainReport,
+  type SourceDeliveryDrainReport,
+} from '../signal-platform/source-delivery-outbox'
 import pinnedSlugs from './pinned.json'
 import defaultConfig from './markets-data-engineer-config.json'
 
@@ -199,6 +205,7 @@ export interface PolymarketMarketsDataEngineerResult {
    */
   candidatesThrottledAtHardCeiling: number
   canonicalIntake: SourceIntakeBatchReport
+  delivery: SourceDeliveryDrainReport
   backlogDepthAtRun: {
     candidatesPending: number
     candidatesInFlight: number
@@ -721,10 +728,10 @@ async function fetchPreviousWatchlist(store: PipelineStore, slugs: string[]): Pr
   return previousBySlug
 }
 
-async function upsertWatchlist(store: PipelineStore, watchlist: NormalizedMarket[], observedAt: string): Promise<void> {
+function watchlistInputs(watchlist: NormalizedMarket[], observedAt: string): PipelineWatchlistUpsertInput[] {
   const rankBySlug = new Map(watchlist.map((market, index) => [market.slug, index + 1]))
 
-  await store.upsertWatchlist(watchlist.map((market) => ({
+  return watchlist.map((market) => ({
     source: SOURCE,
     area: AREA,
     tagSlug: market.tagSlug,
@@ -746,7 +753,7 @@ async function upsertWatchlist(store: PipelineStore, watchlist: NormalizedMarket
     latestVolume24h: market.volume24h,
     latestLiquidity: market.liquidity,
     status: 'active',
-  })))
+  }))
 }
 
 async function deactivateStaleWatchlist(store: PipelineStore, observedAt: string): Promise<void> {
@@ -1477,6 +1484,10 @@ export async function runPolymarketMarketsDataEngineer(
   const options = selectedOptions(partialOptions)
   const observedAt = options.now
   const nowMs = new Date(observedAt).getTime()
+  const intakeEnabled = signalIntake !== undefined && signalIntake.mode !== 'off'
+  const drainedBeforeFetch = intakeEnabled
+    ? await drainSourceDeliveries({ store, intake: signalIntake! })
+    : emptySourceDeliveryDrainReport()
 
   const byTag = await Promise.all(options.tagSlugs.map((tag) => fetchMarketsForTag(tag, options, nowMs)))
   const manualPins = options.includeManualPins
@@ -1487,8 +1498,6 @@ export async function runPolymarketMarketsDataEngineer(
   const watchlist = chooseWatchlist([...byTag.flat(), ...manualPins], options)
 
   const previousBySlug = await fetchPreviousWatchlist(store, watchlist.map((market) => market.slug))
-  await upsertWatchlist(store, watchlist, observedAt)
-  await deactivateStaleWatchlist(store, observedAt)
 
   const candidateInserts: CandidateInsert[] = []
   for (const market of watchlist) {
@@ -1508,11 +1517,7 @@ export async function runPolymarketMarketsDataEngineer(
   }
 
   const familyDedupedCandidateInserts = dedupeCandidateInserts(candidateInserts)
-  // Canonical observation precedes every legacy backlog gate. A throttled
-  // legacy candidate therefore remains durably visible to Feed V3.
-  const canonicalIntake = await deliverCanonicalSignals(
-    signalIntake,
-    familyDedupedCandidateInserts.map(({ market, draft }) => adaptLivePolymarketSignal({
+  const liveSignals = familyDedupedCandidateInserts.map(({ market, draft }) => adaptLivePolymarketSignal({
       observedAt,
       area: AREA,
       market: {
@@ -1533,8 +1538,42 @@ export async function runPolymarketMarketsDataEngineer(
         metrics: draft.metrics,
         evidenceRefs: draft.evidenceRefs,
       },
-    })),
+    }))
+  // Persist the previous-baseline-derived observation obligations and the new
+  // baseline on one SQLite connection/transaction before intake or any legacy
+  // backlog/thread gate. A failed canonical delivery leaves the exact Signal
+  // payload available to the next run even if the next poll no longer detects
+  // a price move.
+  await store.commitWatchlistAndSourceDeliveries(
+    watchlistInputs(watchlist, observedAt),
+    intakeEnabled
+      ? liveSignals.map((signal) => ({ signal, observedAt }))
+      : [],
   )
+  await deactivateStaleWatchlist(store, observedAt)
+
+  const deliveredAfterCommit = intakeEnabled
+    ? await drainSourceDeliveries({
+      store,
+      intake: signalIntake!,
+      skipSignalIds: new Set(drainedBeforeFetch.failures.map((failure) => failure.signalId)),
+    })
+    : emptySourceDeliveryDrainReport()
+  const delivery: SourceDeliveryDrainReport = {
+    attempted: drainedBeforeFetch.attempted + deliveredAfterCommit.attempted,
+    delivered: drainedBeforeFetch.delivered + deliveredAfterCommit.delivered,
+    duplicateDeliveries: drainedBeforeFetch.duplicateDeliveries + deliveredAfterCommit.duplicateDeliveries,
+    failures: [...drainedBeforeFetch.failures, ...deliveredAfterCommit.failures],
+  }
+  const canonicalIntake = await deliverCanonicalSignals(signalIntake, [])
+  canonicalIntake.attempted += delivery.attempted
+  canonicalIntake.insertedSignals += delivery.delivered
+  canonicalIntake.duplicateSignals += delivery.duplicateDeliveries
+  canonicalIntake.failures.push(...delivery.failures.map((failure) => ({
+    signalId: failure.signalId,
+    sourceType: failure.sourceType,
+    code: 'CANONICAL_SIGNAL_INTAKE_FAILED' as const,
+  })))
   const existingCandidateKeys = await fetchExistingCandidateKeys(store, familyDedupedCandidateInserts.map((candidate) => candidate.dedupeKey))
   const existingThreads = await fetchExistingCandidateThreads(store, familyDedupedCandidateInserts.map((candidate) => candidate.familyKey))
   const threadUpdates: CandidateThreadUpdate[] = []
@@ -1617,6 +1656,7 @@ export async function runPolymarketMarketsDataEngineer(
     candidatesThrottledByBackpressure,
     candidatesThrottledAtHardCeiling,
     canonicalIntake,
+    delivery,
     backlogDepthAtRun: {
       candidatesPending: backlogDepth.candidatesPending,
       candidatesInFlight: backlogDepth.candidatesInFlight,

@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { ResearchPacketV1, Signal } from '../signal-platform/contracts'
+import type { ResearchPacketV1, ResearchWorkItem, RetrievedEvidence, Signal } from '../signal-platform/contracts'
 import {
   CanonicalPacketAdapterError,
   adaptCanonicalResearchPacket,
 } from './canonical-packet-adapter'
+import type { ResearchReadinessV1 } from '../signal-platform/research-readiness'
+import {
+  NO_RESEARCH_ENTITY_ACTION,
+  assessResearchReadiness,
+  createResolvedWithoutNewItemReadiness,
+} from '../signal-platform/research-readiness'
+import {
+  operatorEvidence,
+  operatorPacket,
+  operatorSignal,
+  operatorWork,
+} from '../signal-platform/operator-fixtures.test-support'
+
+const HANDOFF_ID = 'handoff-1'
 
 const SOURCE_EXPECTATIONS: Record<Signal['sourceType'], { area: string, legacyType: string, contentKind: string }> = {
   news: { area: 'feed', legacyType: 'article', contentKind: 'article' },
@@ -193,6 +207,168 @@ test('failed packets and policy-disallowed partial packets are rejected', () => 
   assert.throws(
     () => adaptCanonicalResearchPacket(packet('market_calendar', { completion: 'partial' })),
     /Partial Research Packet is disallowed by market_calendar policy/,
+  )
+})
+
+/**
+ * A Research readiness decision plus the stored records it describes, all
+ * produced by the real assessor so the test exercises the shipped contract.
+ */
+function readinessHandoff(overrides: {
+  completion?: ResearchPacketV1['completion']
+  readinessOverrides?: Record<string, unknown>
+  persistedEvidence?: RetrievedEvidence[]
+  workOverrides?: Partial<ResearchWorkItem>
+} = {}) {
+  const canonical = operatorPacket('news', HANDOFF_ID, {
+    completion: overrides.completion ?? 'partial',
+    claims: [{
+      claimId: 'claim-handoff', claim: 'Ethena expanded USDe backing beyond crypto.',
+      attributedTo: 'Ethena', evidenceRefs: [`evidence-${HANDOFF_ID}`],
+    }],
+    limitations: ['No independent verification of the backing claim.'],
+    openQuestions: ['Which US enterprise payments partner is named?'],
+  })
+  const workItem = operatorWork('news', HANDOFF_ID, {
+    status: 'entity_pending', ...overrides.workOverrides,
+  })
+  const persisted = overrides.persistedEvidence ?? [operatorEvidence(HANDOFF_ID)]
+  const readiness = assessResearchReadiness({
+    work: workItem,
+    signal: operatorSignal('news', HANDOFF_ID),
+    packet: canonical,
+    persistedEvidence: persisted,
+    assessedAt: '2026-08-26T10:46:00.000Z',
+  })
+  return {
+    canonical,
+    context: {
+      work: workItem,
+      signal: operatorSignal('news', HANDOFF_ID),
+      persistedEvidence: persisted,
+      readiness: { ...readiness, ...overrides.readinessOverrides } as ResearchReadinessV1,
+    },
+  }
+}
+
+test('a ready decision admits an attributed partial packet without a second sufficiency judgment', () => {
+  const { canonical, context } = readinessHandoff()
+  assert.equal(context.readiness.outcome, 'ready_for_entity')
+  const adapted = adaptCanonicalResearchPacket(canonical, undefined, context)
+
+  // The partial packet is preserved whole, including its limitations.
+  assert.deepEqual(adapted.context.canonical_packet, canonical)
+  assert.deepEqual(adapted.context.limitations, canonical.limitations)
+  assert.deepEqual(adapted.context.open_questions, canonical.openQuestions)
+  assert.equal(adapted.context.completion, 'partial')
+  // The consumed decision travels with the packet.
+  assert.equal((adapted.context.research_readiness as ResearchReadinessV1).outcome, 'ready_for_entity')
+  assert.equal(adapted.context.adapter_version, 'myboon.entity_packet_adapter.v2')
+})
+
+test('a recorded non-ready outcome is refused as a Research decision, not reassessed', () => {
+  for (const [outcome, category] of [
+    ['blocked', 'retrieval_blocked'],
+    ['failed', 'invalid_structured_output'],
+    ['readiness_unknown', 'schema_version_mismatch'],
+  ] as const) {
+    // The packet is complete and admissible under the v1 rule, so a refusal here
+    // can only come from consuming the decision.
+    const { canonical, context } = readinessHandoff({
+      completion: 'complete',
+      readinessOverrides: { outcome, entityAction: NO_RESEARCH_ENTITY_ACTION, failureCategory: category },
+    })
+    assert.doesNotThrow(() => adaptCanonicalResearchPacket(canonical))
+    assert.throws(
+      () => adaptCanonicalResearchPacket(canonical, undefined, context),
+      (error: unknown) => error instanceof CanonicalPacketAdapterError
+        && new RegExp(`is ${outcome}`).test(error.message),
+      outcome,
+    )
+  }
+})
+
+test('a no-new-item result that owes an attachment is admitted, and one that owes nothing is not', () => {
+  const { canonical, context } = readinessHandoff()
+
+  // No new note, but a required source attachment must still reach Entity, so the
+  // decision is consumed and the partial packet is admitted as-is.
+  const owed = createResolvedWithoutNewItemReadiness({
+    work: context.work, signal: context.signal, packet: canonical,
+    persistedEvidence: context.persistedEvidence, assessedAt: '2026-08-26T10:46:00.000Z',
+    reason: 'Already covered, but the source must still be attached.',
+    owedAttachment: { targetId: 'managed-item-42' },
+  })
+  assert.equal(owed.outcome, 'resolved_without_new_item')
+  const adapted = adaptCanonicalResearchPacket(canonical, undefined, { ...context, readiness: owed })
+  assert.equal(adapted.context.completion, 'partial')
+  const carried = adapted.context.research_readiness as ResearchReadinessV1
+  assert.equal(carried.outcome, 'resolved_without_new_item')
+  assert.equal(carried.entityAction.kind, 'evidence_attachment')
+
+  // A deliberate no-action result owes nothing, so there is no Entity work here.
+  const none = createResolvedWithoutNewItemReadiness({
+    work: context.work, signal: context.signal, packet: canonical,
+    persistedEvidence: context.persistedEvidence, assessedAt: '2026-08-26T10:46:00.000Z',
+    reason: 'Already represented by an accepted managed item.',
+  })
+  assert.throws(
+    () => adaptCanonicalResearchPacket(canonical, undefined, { ...context, readiness: none }),
+    /is resolved_without_new_item/,
+  )
+})
+
+test('a decision whose linkage does not match the stored records is rejected', () => {
+  const { canonical, context } = readinessHandoff()
+  // A decision claiming readiness without a useful contribution is invalid on
+  // its own terms, before linkage is even considered.
+  assert.throws(
+    () => adaptCanonicalResearchPacket(canonical, undefined, {
+      ...context,
+      readiness: { ...context.readiness, coverage: { ...context.readiness.coverage, useful: false } } as ResearchReadinessV1,
+    }),
+    /useful contribution/,
+  )
+  // Dropping the persisted evidence is a real linkage failure: the decision
+  // cites evidence the store no longer holds for this work item.
+  assert.throws(
+    () => adaptCanonicalResearchPacket(canonical, undefined, { ...context, persistedEvidence: [] }),
+    /not persisted for this work item/,
+  )
+  // Limitations that no longer match the packet are a linkage failure too.
+  assert.throws(
+    () => adaptCanonicalResearchPacket(canonical, undefined, {
+      ...context, readiness: { ...context.readiness, limitations: [] } as ResearchReadinessV1,
+    }),
+    /limitations/,
+  )
+  // A decision whose identity does not cover its own work is forged.
+  assert.throws(
+    () => adaptCanonicalResearchPacket(canonical, undefined, {
+      ...context, readiness: { ...context.readiness, workId: 'work-other' } as ResearchReadinessV1,
+    }),
+    /readinessId/,
+  )
+  // A signal that belongs to a different identity cannot validate the decision.
+  assert.throws(
+    () => adaptCanonicalResearchPacket(canonical, undefined, {
+      ...context, signal: operatorSignal('news', 'other-signal'),
+    }),
+    /does not match its signal/,
+  )
+})
+
+test('an old partial packet with no v2 decision is never auto-admitted', () => {
+  // The validated-complete v1 path is preserved exactly.
+  const legacy = adaptCanonicalResearchPacket(packet('news'))
+  assert.equal(legacy.context.adapter_version, 'myboon.entity_packet_adapter.v1')
+  assert.equal(legacy.context.research_readiness, null)
+  // With no decision, a partial packet stays held rather than auto-admitted.
+  const { canonical, context } = readinessHandoff()
+  assert.equal(context.readiness.outcome, 'ready_for_entity')
+  assert.throws(
+    () => adaptCanonicalResearchPacket(canonical, undefined, { ...context, readiness: null }),
+    /Partial Research Packet is disallowed/,
   )
 })
 
