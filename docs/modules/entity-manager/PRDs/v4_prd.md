@@ -3,16 +3,16 @@
 Date: 2026-10-01
 Status: working implementation record. Local implementation authorized in this session; activation gates remain closed.
 Parent: [#299 — Entity Manager V4 implementation](https://github.com/b-bhu/myboon/issues/299)
-Branch / worktree: `codex/issue-299-v4` in `/home/ubuntu/myboon-issue-299-v4`
+Local implementation: `main` in `/home/ubuntu/myboon` (prepared on `codex/issue-299-v4` in `/home/ubuntu/myboon-issue-299-v4`)
 Owner: myboon product / Entity Manager
 
-This is the canonical working document for V4. It consolidates the #299 issue body, the reviewed PRD snapshot embedded in it, the four chronological issue comments (investigation, owner decisions D1/D2, phase labels, preparation checkpoint), and the actual state of the current isolated worktree. Where older text conflicts with this document, this document defines V4.
+This is the canonical working document for V4. It consolidates the #299 issue body, the reviewed PRD snapshot embedded in it, the four chronological issue comments (investigation, owner decisions D1/D2, phase labels, preparation checkpoint), and the current local implementation. Where older text conflicts with this document, this document defines V4.
 
 ---
 
 ## 0. Authorization state and what this document is not
 
-**Authorized on 2026-10-01, by the issue owner directly in the current Codex/Hermes session: full local implementation inside this isolated worktree.**
+**Authorized on 2026-10-01, by the issue owner directly in the current Codex/Hermes session: full local implementation.** The owner subsequently requested that the issue changes be committed into the local main worktree and that an implementation handoff be posted to #299.
 
 That supersedes the earlier comments which said implementation was not authorized (2026-09-30 preparation checkpoint: "Implementation: Not started or authorized").
 
@@ -24,14 +24,14 @@ It does **not** authorize:
 - worker restarts;
 - historical backlog replay;
 - deletion of any data;
-- GitHub label changes, PR, merge, or issue edits;
+- GitHub label changes, PR creation or remote merge, or issue edits beyond the requested handoff comment;
 - pushing branches or publishing work externally.
 
-The owner previously authorized an **isolated compatibility/database rehearsal**. It is not yet run. It must use a disposable local/isolated database with synthetic fixtures only; that authorization does not extend to production schema inspection or data access.
+The owner separately authorized an **isolated compatibility/database rehearsal**. A partial synthetic PostgreSQL 15 experiment was run and its disposable database removed (§6.5). That authorization did not extend to production schema inspection or data access.
 
-Local commits may be used to keep implementation slices reviewable. Existing local commit `efc12ae` is already on this branch; all work remains unpushed.
+Local commits keep implementation slices reviewable. Commits `efc12ae` and `44f02d4` are on local `main`; all work remains unpushed.
 
-Root checkout `/home/ubuntu/myboon` (branch `main`) holds unrelated user changes — modified `.codex/agents/{leo,maya,nora}.toml`, untracked `.github/` and `news.sqlite`. Those are untouched. All V4 work stays in `codex/issue-299-v4`.
+Root checkout `/home/ubuntu/myboon` (branch `main`) also holds unrelated user changes — modified `.codex/agents/{leo,maya,nora}.toml`, untracked `.github/` and `news.sqlite`. Those remain untouched. V4 commits were fast-forwarded into local `main`; the isolated worktree remains available.
 
 Every "not authorized" statement elsewhere in this issue or its comments describes a *different, earlier* authorization moment. Where those conflict, this section is the current one and the other text is retained only as history. The three failing tests in §6.4 are unrelated to authorization; they are an expired review policy.
 
@@ -133,7 +133,7 @@ Older validated complete packets retain the supported legacy path. Older **incom
 
 Explicitly forbidden: auto-promoting to ready, permanently rejecting, or bulk-rerunning the historical backlog. Some older work may remain waiting for assessment indefinitely. D1 does not change the supported validation path for older complete results, and it does not authorize replay.
 
-A bounded, explicitly admitted assessment reads retained material and its provenance, validates linkage and evidence availability, records assessment identity/reason/version atomically with a new action or hold, and never rewrites the original packet. It may conclude ready-with-limitations, resolved-without-item, blocked, or failed. An absent capture or inability to assess stays unknown/held — never a fabricated result. Local implementation status: `createReadinessUnknownReadiness` and the non-claimable hold routing exist in the uncommitted work; the *admitted assessment runner* does not.
+A bounded, explicitly admitted assessment reads retained material and its provenance, validates linkage and evidence availability, records assessment identity/reason/version atomically with a new action or hold, and never rewrites the original packet. It may conclude ready-with-limitations, resolved-without-item, blocked, or failed. An absent capture or inability to assess stays unknown/held — never a fabricated result. Local implementation status: `createReadinessUnknownReadiness` and the non-claimable hold routing are committed; the *admitted assessment runner* does not exist yet.
 
 ### 3.2 D2 — Unknown outcome of a paid provider dispatch: recover or hold, never auto-replace
 
@@ -197,8 +197,8 @@ Stage numbering follows the 2026-09-30 preparation checkpoint, which is the most
 | Stage | Concrete repo seams | Depends on | Gate to start | Rollback |
 |---|---|---|---|---|
 | **0 — contracts / compatibility** | `signal-platform/platform-store.ts`, `store-adapter-contract.ts`, `triage-contracts.ts`; `entity-manager/types.ts`, `canonical-packet-adapter.ts`, `entity-knowledge-reader.ts`. Rehearsal covers `supabase/migrations/*`, `entity-manager/supabase-store.ts`, `entity-knowledge-reader.ts`, `publisher/supabase-store.ts`, `editor-draft/supabase-store.ts`, `x-desk/source.ts`. | Technical decisions only | **Synthetic PostgreSQL 15 rehearsal run locally** (§6.5). It rules out replacing the legacy memory table/index in a rolling deployment and points to additive managed tables plus a read-only V1 projection. Migration-specific rehearsal remains to be added. | No production changes. Keep the legacy table/index; managed data stays in separate tables behind the controlled writer. |
-| **1 — observation / intake durability** | `news/ingestion.ts` (observation + outstanding delivery obligation); `polymarket/markets-data-engineer.ts` (prior-baseline-derived observation, atomic baseline+observation+delivery); `signal-platform/signal-intake.ts`, `source-intake.ts`, `sqlite-platform-store.ts`, `store-adapter.ts`. | Minimal result/action contract | **Intake + both local collector outboxes implemented and passing focused tests locally; uncommitted.** | Disable new source composition with a compatible binary; retain obligation tables and pending deliveries; never run two intake owners. |
-| **2 — Research checkpoints / readiness / reuse** | `research-engine/shared-worker.ts`, `run-shared-research.ts`; `signal-platform/research-readiness.ts` (new, local); discovery/retrieval manifests; producer-owned artifact references. | Stage 0 readiness/artifact contract; stage 1 for integrated admission | **Readiness, retrieval checkpoints, and source-owned artifact links are implemented locally and uncommitted.** Candidate discovery and synthesis use are outstanding, so cross-source reuse is not active. | Turn cross-work reuse and v2 admission off for new jobs; keep version-aware readers and reconciliation for saved outcomes; retain all artifacts/refs and legacy packet readability; no replay of historical partials. |
+| **1 — observation / intake durability** | `news/ingestion.ts` (observation + outstanding delivery obligation); `polymarket/markets-data-engineer.ts` (prior-baseline-derived observation, atomic baseline+observation+delivery); `signal-platform/signal-intake.ts`, `source-intake.ts`, `sqlite-platform-store.ts`, `store-adapter.ts`. | Minimal result/action contract | **Intake + both local collector outboxes implemented, committed locally, and passing focused tests.** | Disable new source composition with a compatible binary; retain obligation tables and pending deliveries; never run two intake owners. |
+| **2 — Research checkpoints / readiness / reuse** | `research-engine/shared-worker.ts`, `run-shared-research.ts`; `signal-platform/research-readiness.ts` (new, local); discovery/retrieval manifests; producer-owned artifact references. | Stage 0 readiness/artifact contract; stage 1 for integrated admission | **Readiness, retrieval checkpoints, and source-owned artifact links are committed locally.** Candidate discovery and synthesis use are outstanding, so cross-source reuse is not active. | Turn cross-work reuse and v2 admission off for new jobs; keep version-aware readers and reconciliation for saved outcomes; retain all artifacts/refs and legacy packet readability; no replay of historical partials. |
 | **3 — novelty / controlled spend** | `research-gate/gate.ts`, `types.ts`, `supabase-reader.ts`; `research-engine/shared-worker.ts`, `run-shared-research.ts`; `inference-gateway/classification-definitions.ts`, `classification-types.ts`, `classification-configuration.ts`; `signal-platform/active-triage.ts`; `news/run-news-feed-ingestor.ts`; `polymarket/run-markets-data-engineer.ts`. | Stage 2 | **Not started.** Conservative `uncertain` and no-addition behavior is selected (§3.3); exact numerical limits and measured activation gates remain open. Implement disabled-by-default and test without paid dispatch. | Disable the new workload/reuse gate, return to bounded direct Research. Keep outcome/budget audit and reservations; config rollback does not reset an assignment's allowance. |
 | **4 — saved plans / managed writer** | `entity-manager/canonical-planner.ts`, `canonical-processor.ts`; `entity-manager/supabase-store.ts`, `entity-service.ts`, `resolver.ts`; reviewed `supabase/migrations/`; private writer schema/function. | Stage 0 isolated compatibility rehearsal + stage 2 readiness | **Physical direction selected from the synthetic rehearsal:** additive managed-item storage and a safe read-only V1 projection; exact DDL/function grants and migration rehearsal remain to implement. Managed production stays off regardless. | Stop managed writes and fence authority; keep receipts, data, guards, readers. Revert to a compatible V4 binary or pause claims. Never restore legacy mutation over managed rows, never drop history, never recreate an incompatible full-tuple index over managed duplicates. |
 | **5 — readers / consumers** | `entity-manager/entity-knowledge-reader.ts`, `supabase-entity-knowledge-reader.ts`; `packages/api/src/entity-knowledge.ts`; `editor-draft/supabase-store.ts`; `publisher/supabase-store.ts`; `x-desk/source.ts`. | Stage 4 commit contract; fixture work may overlap | **Not started.** Consumer support is a managed-exposure gate. | Keep publishing paths on their prior supported inputs or pause them. Never reconnect an incompatible publishing reader; never hide existing receipts/corrections. |
@@ -364,7 +364,7 @@ Stage 7 inventories `news_candidate_observations`, `news_research_results`, `pip
 
 ## 6. Exact current implementation state in this worktree
 
-Recorded 2026-10-01 from `codex/issue-299-v4`. Everything below is uncommitted unless marked otherwise.
+Recorded 2026-10-01 from `codex/issue-299-v4`. The slices below are now committed on local `main`; headings retain their original commit boundary.
 
 ### 6.1 Committed: `efc12ae` "Make signal intake decisions and work recoverable"
 
@@ -375,9 +375,9 @@ The **first intake/admission durability slice only**. Its boundaries:
 - `sqlite-platform-store.ts` — one SQLite transaction owner with transaction-neutral internal helpers; the existing transaction-owning append/admit methods are not nested.
 - `feed-v3-e2e.test.ts`, `signal-intake.test.ts`, `source-intake.test.ts`, new `intake-durability.test.ts` (694 lines).
 
-What `efc12ae` does **not** do: it is not stage 1 in full. The uncommitted collector slice in this worktree now adds News and Polymarket source-local delivery obligations; the end-to-end Stage 1 work is implemented locally but is not yet committed. Source-local artifact federation, managed items/writer, readers, cutover, and evaluation remain outstanding.
+What `efc12ae` does **not** do: it is not stage 1 in full. The subsequent `44f02d4` collector slice adds News and Polymarket source-local delivery obligations; the end-to-end Stage 1 work is implemented and committed locally. Active cross-source artifact reuse, managed items/writer, readers, cutover, and evaluation remain outstanding.
 
-### 6.2 Uncommitted: research readiness / atomic handoff and Entity handoff
+### 6.2 Committed in `44f02d4`: research readiness / atomic handoff and Entity handoff
 
 18 modified files, 3 new files, +1521/−69.
 
@@ -408,7 +408,7 @@ What `efc12ae` does **not** do: it is not stage 1 in full. The uncommitted colle
 
 Also incomplete in this slice: no cross-source artifact federation, no D1 admitted assessment runner, no Jev work, no managed writer, no reader change.
 
-### 6.3 Uncommitted: retrieval checkpoint / manifest
+### 6.3 Committed in `44f02d4`: retrieval checkpoint / manifest
 
 New `signal-platform/retrieval-manifest.ts` records each bounded retrieval attempt with its work/signal/source/contract linkage, plan identity and digest, planned and search-discovered URL coverage, successful/failed/skipped outcomes, evidence IDs/content hashes/final URLs/truncation, explicit limitations, and a proceed-or-hold verdict. `commitRetrievalCheckpoint` saves the evidence batch and immutable manifest in one source-local SQLite transaction. It is additive for existing databases and fabricates no historical manifest. The worker never infers completion from an evidence cache; it validates a saved manifest before replay. A held retry reuses eligible successful captures and only fetches unresolved URLs; reused captures are marked as such. Evidence retains its producer work ID.
 
@@ -450,7 +450,7 @@ Direction: keep legacy `entity_memories`, its full unique index, and its guard a
 
 ### 6.6 Isolation
 
-`efc12ae` is a local commit on `codex/issue-299-v4`; the readiness/handoff work is uncommitted and left that way. Nothing has been pushed. The root checkout's unrelated user changes are untouched. No deployment, database write, worker restart, paid provider call, historical replay, deletion, or GitHub label change occurred.
+`efc12ae` and `44f02d4` were fast-forwarded to local `main`; the documentation handoff update is a further local commit. Nothing has been pushed. The root checkout's unrelated user changes are untouched. No deployment, production database write, worker restart, paid provider call, historical replay, production deletion, or GitHub label change occurred.
 
 ---
 
