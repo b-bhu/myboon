@@ -17,6 +17,8 @@ export const ENTITY_CATALOG_IDENTITY_WORKLOAD = 'entity.catalog_identity' as con
 export const ENTITY_CATALOG_IDENTITY_VERSION = 'entity.catalog_identity.v1' as const
 export const RESEARCH_NOVELTY_WORKLOAD = 'research.novelty' as const
 export const RESEARCH_NOVELTY_VERSION = 'research.novelty.v1' as const
+export const RESEARCH_FOLLOWUP_VALUE_WORKLOAD = 'research.followup_value' as const
+export const RESEARCH_FOLLOWUP_VALUE_VERSION = 'research.followup_value.v1' as const
 
 const JEV_TARGET = Object.freeze({ provider: 'typesafe', model: 'jev-1.13.0' })
 const DEFAULT_HERMES_TARGET = Object.freeze({ provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' })
@@ -77,13 +79,26 @@ export interface ResearchNoveltyDecision {
   reason: string
 }
 
+export interface ResearchFollowupValueState {
+  signal: GateSignal
+  context: GateEntityContext
+}
+
+export interface ResearchFollowupValueDecision {
+  direction: 'worthwhile' | 'not_worthwhile' | 'uncertain'
+  reason: string
+}
+
+const FOLLOWUP_VALUE_DECISION_DESCRIPTION = 'Assess whether one bounded follow-up could add information material to this research assignment beyond the supplied source and relevant saved knowledge. Unanswered details alone are not sufficient. Do not assert that any supplied claim is true. If the supplied context is insufficient to judge, return uncertain.'
+
 const ENTITY_DECISIONS = ['same_entity', 'different_entities', 'unsure', 'polluted_alias'] as const
 const NOVELTY_DECISIONS = ['already_known', 'new_information', 'contradicts_prior'] as const
+const FOLLOWUP_VALUE_DECISIONS = ['worthwhile', 'not_worthwhile', 'uncertain'] as const
 
 export function approvedClassificationDefinitions(
   hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
 ): readonly ClassificationDefinition[] {
-  return Object.freeze([entityCatalogIdentityDefinition(hermesTarget), researchNoveltyDefinition(hermesTarget)])
+  return Object.freeze([entityCatalogIdentityDefinition(hermesTarget), researchNoveltyDefinition(hermesTarget), researchFollowupValueDefinition(hermesTarget)])
 }
 
 export function entityCatalogIdentityDefinition(
@@ -190,6 +205,66 @@ export function researchNoveltyDefinition(
       JSON.stringify(state),
     ].join('\n'),
     validateHermes: (value) => validateNoveltyDecision(value),
+  }
+}
+
+export function researchFollowupValueDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+): ClassificationDefinition<ResearchFollowupValueState, ResearchFollowupValueDecision> {
+  return {
+    workload: RESEARCH_FOLLOWUP_VALUE_WORKLOAD,
+    decisionVersion: RESEARCH_FOLLOWUP_VALUE_VERSION,
+    maximumLifecycleMode: 'canary',
+    defaultLifecycleMode: 'disabled',
+    shadowPercent: 10,
+    canaryPercent: 10,
+    jevTarget: JEV_TARGET,
+    hermesTarget,
+    budget: { deadlineMs: 30_000, maxStateBytes: 48_000, maxInputTokens: 10_000, maxOutputTokens: 1_000 },
+    capacity: DEFAULT_CAPACITY,
+    validateState: validateNoveltyState,
+    questions: () => ({
+      followup_value: {
+        type: 'choice',
+        instructions: {
+          question: 'Does one bounded follow-up add information material to this research assignment?',
+          rules: [
+            FOLLOWUP_VALUE_DECISION_DESCRIPTION,
+            'Judge follow-up value only, never importance or publish-worthiness.',
+          ],
+        },
+        criteria: {
+          worthwhile: 'A bounded follow-up could plausibly add information material to the assignment beyond the supplied source and saved knowledge.',
+          not_worthwhile: 'The supplied source plus saved knowledge already covers what one bounded follow-up could add; remaining gaps do not justify spending it.',
+          uncertain: 'The supplied context is insufficient to judge whether a bounded follow-up would add material information.',
+        },
+      },
+    }),
+    decodeJev: (answers) => {
+      const answer = answers.followup_value
+      if (!isChoice(answer) || !FOLLOWUP_VALUE_DECISIONS.includes(answer.choice as typeof FOLLOWUP_VALUE_DECISIONS[number])) {
+        return { valid: false, issues: ['followup_value must be a registry-defined Choice'] }
+      }
+      return { valid: true, value: {
+        direction: answer.choice as ResearchFollowupValueDecision['direction'],
+        reason: `Jev classified the bounded follow-up as ${answer.choice}.`,
+      } }
+    },
+    acceptJev: (answers) => {
+      const answer = answers.followup_value
+      if (!isChoice(answer)) return { accepted: false, reason: 'followup_value answer is not Choice' }
+      const selected = answer.probabilities[answer.choice] ?? 0
+      return selected >= 0.80 && answer.confidence >= 0.80
+        ? { accepted: true, reason: 'followup_value Choice passed registry thresholds' }
+        : { accepted: false, reason: 'followup_value Choice did not pass registry thresholds' }
+    },
+    renderHermes: (state) => [
+      FOLLOWUP_VALUE_DECISION_DESCRIPTION,
+      'Do not judge importance, newsworthiness, or evidence quality, and never assert that a supplied claim is true.',
+      'Return strict JSON only: {"direction":"worthwhile|not_worthwhile|uncertain","reason":"one short sentence"}',
+      JSON.stringify(state),
+    ].join('\n'),
+    validateHermes: (value) => validateFollowupValueDecision(value),
   }
 }
 
@@ -312,6 +387,16 @@ function validateNoveltyDecision(value: unknown): ClassificationDecisionValidati
   const reason = typeof value.reason === 'string' && value.reason.trim()
     ? value.reason.trim().slice(0, 500) : `Classification verdict ${value.verdict}.`
   return { valid: true, value: { verdict: value.verdict as ResearchNoveltyDecision['verdict'], reason } }
+}
+
+function validateFollowupValueDecision(value: unknown): ClassificationDecisionValidation<ResearchFollowupValueDecision> {
+  if (!record(value) || typeof value.direction !== 'string'
+    || !FOLLOWUP_VALUE_DECISIONS.includes(value.direction as typeof FOLLOWUP_VALUE_DECISIONS[number])) {
+    return { valid: false, issues: ['direction is invalid'] }
+  }
+  const reason = typeof value.reason === 'string' && value.reason.trim()
+    ? value.reason.trim().slice(0, 500) : `Follow-up value ${value.direction}.`
+  return { valid: true, value: { direction: value.direction as ResearchFollowupValueDecision['direction'], reason } }
 }
 
 function validateEntityHermesDecision(

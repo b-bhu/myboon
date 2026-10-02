@@ -11,6 +11,7 @@ import type {
   EntityMemoryReader,
   GateDecision,
   GateEntityContext,
+  GateNoveltyLookup,
   GateSignal,
   GateVerdict,
 } from './types'
@@ -99,12 +100,150 @@ function buildGatePrompt(signal: GateSignal, context: GateEntityContext): string
   ].join('\n')
 }
 
+function earliestTimestamp(a: string | null, b: string | null): string | null {
+  if (a === null) return b
+  if (b === null) return a
+  return a < b ? a : b
+}
+
+function latestTimestamp(a: string | null, b: string | null): string | null {
+  if (a === null) return b
+  if (b === null) return a
+  return a > b ? a : b
+}
+
+/**
+ * What the novelty comparison consulted, built from the basic timeline
+ * lookups and (when the reader offers it) the optional richer evidence
+ * lookup: bounded relevant context per PRD v4 stage-3 - identities, refs,
+ * time coverage, truncation, failures, digest. The evidence merge never
+ * throws and never fails the gate: its errors are recorded in
+ * lookupFailures so an incomplete lookup suppresses already_known instead.
+ */
+async function buildNoveltyLookup(
+  reader: EntityMemoryReader,
+  signal: GateSignal,
+  entityIds: string[],
+  context: GateEntityContext,
+  memoryLimit: number,
+): Promise<GateNoveltyLookup> {
+  const times = context.recentMemories.map((memory) => memory.eventAt)
+  const record: GateNoveltyLookup = {
+    resolvedCandidateRefs: entityIds,
+    itemRefs: [],
+    timeCoverage: {
+      oldestEventAt: times.reduce(earliestTimestamp, null),
+      newestEventAt: times.reduce(latestTimestamp, null),
+    },
+    // Conservative bound inference: when the timeline lookup returned its
+    // full limit there were probably more entries, so the comparison may
+    // have seen less than everything and cannot claim it (see
+    // lookupIncompleteness).
+    truncated: context.recentMemories.length >= memoryLimit,
+    unrelated: false,
+    evidenceRan: false,
+    lookupFailures: [],
+    digest: `sha256:${createHash('sha256')
+      .update(JSON.stringify([context.entities, context.recentMemories]))
+      .digest('hex')}`,
+  }
+  const evidenceCall = reader.noveltyEvidence
+  if (!evidenceCall) return record
+  record.evidenceRan = true
+  try {
+    const evidence = await evidenceCall(signal.source, signal.sourceRefId)
+    record.itemRefs = evidence.itemRefs
+    record.timeCoverage = {
+      oldestEventAt: earliestTimestamp(record.timeCoverage.oldestEventAt, evidence.timeCoverage?.oldestEventAt ?? null),
+      newestEventAt: latestTimestamp(record.timeCoverage.newestEventAt, evidence.timeCoverage?.newestEventAt ?? null),
+    }
+    if (evidence.truncated) record.truncated = true
+    if (evidence.unrelated) record.unrelated = true
+    record.lookupFailures.push(...evidence.failures)
+    if (evidence.digest) record.digest = `${record.digest}+evidence:${evidence.digest}`
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    record.lookupFailures.push(`novelty evidence lookup failed: ${message.slice(0, 300)}`)
+  }
+  return record
+}
+
+/**
+ * The one PRD v4 stage-3 rule for novelty lookups: an empty, failed,
+ * truncated, or unrelated lookup can NEVER justify already_known - the
+ * cheap title/summary comparison that did not see everything must
+ * proceed, because the unseen body may hold new information.
+ */
+function lookupIncompleteness(lookup: GateNoveltyLookup): string | null {
+  if (lookup.resolvedCandidateRefs.length === 0) {
+    return 'no candidate identities were resolved'
+  }
+  if (lookup.truncated) {
+    return 'the consulted set was truncated - unseen entries may already record this signal'
+  }
+  if (lookup.unrelated) {
+    return 'the consulted evidence concerns a different subject'
+  }
+  if (lookup.lookupFailures.length > 0) {
+    return `lookups failed - ${lookup.lookupFailures.join('; ').slice(0, 300)}`
+  }
+  if (lookup.evidenceRan && lookup.itemRefs.length === 0) {
+    return 'the evidence lookup returned no related references - nothing beyond the bounded timeline was consulted'
+  }
+  return null
+}
+
+/**
+ * Verdict finalizer: attaches the bounded novelty record to completed
+ * comparisons and applies the one suppression rule. Attaching is additive
+ * bookkeeping (GateDecision.noveltyContext); suppression only downgrades
+ * the skip verdict to a proceed verdict, never the reverse.
+ */
+function finalizeVerdict(
+  verdict: GateVerdict,
+  reason: string,
+  entityIds: string[],
+  memoriesConsulted: number,
+  entityContext: GateEntityContext | null,
+  noveltyLookup: GateNoveltyLookup | undefined,
+): GateDecision {
+  if (noveltyLookup) {
+    if (verdict === 'already_known') {
+      const incompleteness = lookupIncompleteness(noveltyLookup)
+      if (incompleteness) {
+        return {
+          ...decision(
+            'new_information',
+            `Suppressed already_known ("${reason.slice(0, 160)}") - ${incompleteness}.`,
+            entityIds,
+            memoriesConsulted,
+            entityContext,
+          ),
+          noveltyContext: noveltyLookup,
+        }
+      }
+    }
+    return {
+      ...decision(verdict, reason, entityIds, memoriesConsulted, entityContext),
+      noveltyContext: noveltyLookup,
+    }
+  }
+  return decision(verdict, reason, entityIds, memoriesConsulted, entityContext)
+}
+
 /**
  * Run the pre-research novelty gate for one signal. See types.ts for the
  * full design rationale. Invariants:
  *
  *  - Only 'already_known' stops research. Every other verdict - including
  *    every failure mode of the gate itself - proceeds (fail open).
+ *  - An empty, failed, truncated, or unrelated novelty lookup can never
+ *    justify already_known (PRD v4 stage-3): finalizeVerdict downgrades it
+ *    to new_information, so a signal is never dropped on incomplete
+ *    comparison evidence.
+ *  - The evidence merge records failures inside the record and never fails
+ *    the gate; a reader without the optional noveltyEvidence port keeps the
+ *    legacy comparison shape.
  *  - The hermes call is only paid when there is an actual timeline to
  *    compare against: unknown subjects and empty timelines short-circuit.
  *  - The resolved timeline is returned to the caller on every proceed
@@ -142,8 +281,9 @@ export async function gateSignal(signal: GateSignal, options: ResearchGateOption
   }
 
   try {
+    const noveltyLookup = await buildNoveltyLookup(options.reader, signal, entityIds, context, memoryLimit)
     if (options.classification) {
-      return await classifyWithGateway(signal, context, entityIds, options)
+      return await classifyWithGateway(signal, context, entityIds, options, noveltyLookup)
     }
     if (!options.hermes) throw new Error('Research gate classification gateway is not configured')
     const { value } = await options.hermes.structured<GateModelAnswer>({
@@ -165,7 +305,7 @@ export async function gateSignal(signal: GateSignal, options: ResearchGateOption
     const reason = typeof value?.reason === 'string' && value.reason.trim()
       ? value.reason.trim().slice(0, 500)
       : `Gate verdict ${verdict} with no stated reason.`
-    return decision(verdict as GateVerdict, reason, entityIds, context.recentMemories.length, context)
+    return finalizeVerdict(verdict as GateVerdict, reason, entityIds, context.recentMemories.length, context, noveltyLookup)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return decision(
@@ -183,6 +323,7 @@ async function classifyWithGateway(
   context: GateEntityContext,
   entityIds: string[],
   options: ResearchGateOptions,
+  noveltyLookup: GateNoveltyLookup,
 ): Promise<GateDecision> {
   const classification = options.classification!
   try {
@@ -197,7 +338,7 @@ async function classifyWithGateway(
       ...(options.timeoutMs ? { tighterDeadlineMs: options.timeoutMs } : {}),
     })
     const verdict = result.value.verdict
-    const output = decision(verdict, result.value.reason, entityIds, context.recentMemories.length, context)
+    const output = finalizeVerdict(verdict, result.value.reason, entityIds, context.recentMemories.length, context, noveltyLookup)
     await classification.recordPolicyOutcome({
       decisionId: result.decisionId,
       consumer: 'research-gate',

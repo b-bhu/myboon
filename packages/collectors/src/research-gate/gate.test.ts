@@ -4,7 +4,7 @@ import { HermesService } from '../hermes'
 import { ClassificationDoubleFailureError, type ClassificationRequest } from '../inference-gateway'
 import { InferenceGatewayError } from '../inference-gateway/errors'
 import { gateSignal } from './gate'
-import type { EntityMemoryReader, GateEntity, GateMemory, GateSignal } from './types'
+import type { EntityMemoryReader, GateEntity, GateMemory, GateNoveltyEvidence, GateSignal } from './types'
 
 const SIGNAL: GateSignal = {
   source: 'polymarket',
@@ -199,4 +199,153 @@ test('classification double failure records fail-open and never loses the signal
   assert.equal(decision.verdict, 'gate_unavailable')
   assert.equal(decision.proceed, true)
   assert.equal((outcomes[0] as { reasonCode: string }).reasonCode, 'classification_double_failure_fail_open')
+})
+
+// --- Stage-3 novelty context rules (PRD v4 §5.2): an empty, failed,
+// --- truncated, or unrelated novelty lookup can NEVER justify
+// --- already_known; the suppression lives in gate.ts finalizeVerdict.
+
+const EVIDENCE: GateNoveltyEvidence = {
+  itemRefs: ['item-1', 'item-2'],
+  timeCoverage: { oldestEventAt: '2026-07-01T00:00:00.000Z', newestEventAt: '2026-07-29T00:00:00.000Z' },
+  digest: 'ev-digest-1',
+  failures: [],
+}
+
+/** Legacy reader plus the optional stage-3 richer evidence lookup. */
+function readerWithEvidence(evidence: GateNoveltyEvidence): EntityMemoryReader {
+  return { ...reader(), noveltyEvidence: async () => evidence }
+}
+
+test('an evidence lookup that returned no references can never justify already_known', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const decision = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: readerWithEvidence({ ...EVIDENCE, itemRefs: [], digest: 'ev-empty' }),
+  })
+
+  assert.equal(decision.proceed, true, 'suppression: an empty lookup cannot drop the signal')
+  assert.match(decision.reason, /Suppressed already_known/)
+  assert.match(decision.reason, /no related references/)
+  assert.equal(decision.noveltyContext?.evidenceRan, true)
+})
+
+test('a truncated evidence lookup can never justify already_known', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const decision = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: readerWithEvidence({ ...EVIDENCE, itemRefs: ['item-1'], truncated: true, digest: 'ev-trunc' }),
+  })
+
+  assert.equal(decision.proceed, true, 'the unseen body may hold new information')
+  assert.match(decision.reason, /truncated/)
+  assert.equal(decision.noveltyContext?.truncated, true)
+})
+
+test('a failed evidence lookup is recorded and never justifies already_known (nor fails the gate)', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const decision = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: { ...reader(), noveltyEvidence: async () => { throw new Error('evidence db down') } },
+  })
+
+  assert.equal(decision.verdict, 'new_information')
+  assert.equal(decision.proceed, true)
+  assert.match(decision.reason, /Suppressed already_known/)
+  assert.match(decision.reason, /evidence db down/)
+  assert.equal(decision.noveltyContext?.lookupFailures.length, 1)
+  assert.match(decision.noveltyContext?.digest ?? '', /^sha256:/, 'base digest still present')
+})
+
+test('an unrelated evidence lookup can never justify already_known', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const decision = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: readerWithEvidence({ ...EVIDENCE, itemRefs: ['elsewhere-1'], unrelated: true, digest: 'ev-unrel' }),
+  })
+
+  assert.equal(decision.proceed, true)
+  assert.match(decision.reason, /different subject/)
+  assert.equal(decision.noveltyContext?.unrelated, true)
+})
+
+test('recorded lookup failures suppress already_known even when references are present', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const decision = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: readerWithEvidence({ ...EVIDENCE, itemRefs: ['item-1'], failures: ['evidence search timed out'], digest: 'ev-fail' }),
+  })
+
+  assert.equal(decision.proceed, true)
+  assert.match(decision.reason, /evidence search timed out/)
+  assert.deepEqual(decision.noveltyContext?.lookupFailures, ['evidence search timed out'])
+})
+
+test('legacy shape: a reader without the evidence port keeps the plain already_known verdict', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const decision = await gateSignal(SIGNAL, { hermes: service, reader: reader() })
+
+  assert.equal(decision.verdict, 'already_known', 'suppression must not fire for a complete basic comparison')
+  assert.equal(decision.proceed, false)
+  assert.equal(decision.noveltyContext?.evidenceRan, false, 'record rests on the basic timeline lookups only')
+  assert.equal(decision.noveltyContext?.truncated, false)
+  assert.deepEqual(decision.noveltyContext?.lookupFailures, [])
+})
+
+test('no novelty record attaches when no comparison completed (short-circuit paths)', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"would never be called"}')
+
+  const unknownSubject = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: reader({ entityIdsForSourceRef: async () => [] }),
+  })
+  assert.ok(!('noveltyContext' in unknownSubject), 'no entities: no comparison ran')
+
+  const emptyTimeline = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: reader({ recentMemories: async () => [] }),
+  })
+  assert.ok(!('noveltyContext' in emptyTimeline), 'empty timeline: no comparison ran')
+})
+
+test('a complete evidence lookup still lets already_known hold and attaches the bounded record', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const decision = await gateSignal(SIGNAL, { hermes: service, reader: readerWithEvidence(EVIDENCE) })
+
+  assert.equal(decision.verdict, 'already_known', 'suppression is bounded: complete evidence does not fire')
+  assert.equal(decision.proceed, false)
+  assert.deepEqual(decision.noveltyContext?.resolvedCandidateRefs, ['entity-1'])
+  assert.deepEqual(decision.noveltyContext?.itemRefs, ['item-1', 'item-2'])
+  assert.deepEqual(decision.noveltyContext?.timeCoverage, {
+    oldestEventAt: '2026-07-01T00:00:00.000Z',
+    newestEventAt: '2026-07-29T00:00:00.000Z',
+  })
+  assert.equal(decision.noveltyContext?.truncated, false)
+  assert.equal(decision.noveltyContext?.unrelated, false)
+  assert.deepEqual(decision.noveltyContext?.lookupFailures, [])
+  assert.match(decision.noveltyContext?.digest ?? '', /\+evidence:ev-digest-1$/, 'digest covers consulted content')
+})
+
+test('noveltyContext is attached to proceed verdicts too, for downstream reporting', async () => {
+  const { service } = fakeHermes('{"verdict":"new_information","reason":"The timeline stops at 41%."}')
+  const decision = await gateSignal(SIGNAL, { hermes: service, reader: readerWithEvidence(EVIDENCE) })
+
+  assert.equal(decision.verdict, 'new_information')
+  assert.equal(decision.proceed, true)
+  assert.ok(decision.noveltyContext)
+  assert.equal(decision.noveltyContext?.evidenceRan, true)
+})
+
+test('a timeline lookup that hit its limit counts as truncated (no evidence port needed)', async () => {
+  const { service } = fakeHermes('{"verdict":"already_known","reason":"Timeline already records it."}')
+  const fullTimeline = Array.from({ length: 12 }, (_, i) => ({ ...MEMORY, title: `Repricing ${i}` }))
+  const decision = await gateSignal(SIGNAL, {
+    hermes: service,
+    reader: reader({ recentMemories: async () => fullTimeline }),
+  })
+
+  assert.equal(decision.proceed, true, 'a bounded timeline cannot prove everything was seen')
+  assert.match(decision.reason, /truncated/)
+  assert.equal(decision.noveltyContext?.truncated, true)
+  assert.equal(decision.noveltyContext?.evidenceRan, false, 'basic lookups still build a record')
 })

@@ -58,6 +58,65 @@ export interface GateEntityContext {
   recentMemories: GateMemory[]
 }
 
+/**
+ * OPTIONAL richer comparison evidence a reader may offer beyond the three
+ * basic entity-memory lookups (PRD v4 stage-3 seam): item/citation/research
+ * references, the filter/time coverage its search actually spanned,
+ * truncation, per-lookup failures, and a digest/watermark over consulted
+ * rows. Failures live inside the record and never fail the gate; an
+ * implementation that does not supply this method simply keeps the legacy
+ * shape (the gate builds its lookup record from the basic lookups only).
+ */
+export interface GateNoveltyEvidence {
+  /** Item/citation/research references related to this subject. */
+  itemRefs: string[]
+  /** Filter/time coverage of the evidence search (null where unknown — the
+   * absence of a bound is never evidence that everything was seen). */
+  timeCoverage?: { oldestEventAt: string | null; newestEventAt: string | null }
+  /** True when the evidence search was bounded before draining its source. */
+  truncated?: boolean
+  /** True when the provider can tell its returned references concern a
+   * different subject - never evidence for already_known. */
+  unrelated?: boolean
+  /** Descriptions of what the evidence lookups could not answer. */
+  failures: string[]
+  /** Digest/watermark over the rows the evidence search consulted. */
+  digest: string
+}
+
+/**
+ * Bounded relevant-context record behind a gate verdict (PRD §5.2): what
+ * the novelty comparison actually consulted and where it was incomplete.
+ * It is evidence-of-comparison bookkeeping, never a verdict input beyond
+ * `finalizeVerdict`'s one rule: an empty, failed, truncated, or unrelated
+ * lookup can NEVER justify `already_known`.
+ */
+export interface GateNoveltyLookup {
+  /** Durable candidate identities resolved and consulted (entity ids). */
+  resolvedCandidateRefs: string[]
+  /** Item/citation/research references available in the consulted context
+   * (populated via novelty evidence; empty when none were available). */
+  itemRefs: string[]
+  /** Time span of what was consulted (null where unknown). */
+  timeCoverage: { oldestEventAt: string | null; newestEventAt: string | null }
+  /** True when a lookup bound (e.g. memoryLimit) cut the consulted set, or
+   * the evidence search reported truncation. */
+  truncated: boolean
+  /** True when the consulted evidence is known to concern a different
+   * subject (from GateNoveltyEvidence.unrelated) - suppression evidence
+   * against already_known. */
+  unrelated: boolean
+  /** True when the reader's richer evidence lookup actually ran; false
+   * means the record rests on the basic timeline lookups only (readers
+   * without the optional noveltyEvidence port keep that legacy shape). */
+  evidenceRan: boolean
+  /** Descriptions of lookup/evidence failures; empty when all lookups ran
+   * clean. Non-empty is always suppression evidence against already_known. */
+  lookupFailures: string[]
+  /** Digest/watermark over the consulted content. */
+  digest: string
+}
+
 export type GateVerdict =
   /** No entity has ever filed a memory under this subject - a genuinely new
    * subject. Research proceeds exactly as it did before the gate existed. */
@@ -86,6 +145,14 @@ export interface GateDecision {
   /** Present whenever entities resolved, so research (and reporting) can use
    * the timeline even on fail-open verdicts. */
   entityContext: GateEntityContext | null
+  /** OPTIONAL bounded novelty-context record (what the comparison actually
+   * consulted and where it was incomplete; PRD v4 stage-3). Attached
+   * whenever the gate's novelty comparison ran - built from the basic
+   * timeline lookups alone when the reader offers no richer evidence port
+   * - and absent when no comparison completed (no entities, empty
+   * timeline, fail-open gate failure). Callers must treat its presence as
+   * additive, never load-bearing. */
+  noveltyContext?: GateNoveltyLookup
 }
 
 /**
@@ -99,4 +166,8 @@ export interface EntityMemoryReader {
   entitiesByIds(ids: string[]): Promise<GateEntity[]>
   /** Newest first, bounded by limit across all requested entities. */
   recentMemories(entityIds: string[], limit: number): Promise<GateMemory[]>
+  /** OPTIONAL stage-3 richer evidence port (item/citation/research refs,
+   * time coverage, truncation, failures, digest). Implementations that do
+   * not provide it keep the legacy three-lookup shape. */
+  noveltyEvidence?(source: string, sourceRefId: string): Promise<GateNoveltyEvidence>
 }
