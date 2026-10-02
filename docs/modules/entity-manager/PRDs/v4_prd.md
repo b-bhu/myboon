@@ -281,15 +281,15 @@ Story matching, entity identity, roles, and broad importance are **not** activat
 
 ### 5.4 Stage 4 — managed items/writer and operation receipts
 
-*Status: proposed names/schema, not yet reviewed, and physically conditional on the rehearsal. Update before coding.*
+*Status: logical contract implementation draft is local and under review. Production storage remains unapproved and physically conditional on the rehearsal; this draft grants no rollout authority.*
 
 Proposed files:
 
 - `packages/collectors/src/entity-manager/progression-plan.ts` — bounded plan + validator.
 - `packages/collectors/src/entity-manager/progression-processor.ts` — plan execution against the managed writer.
-- `packages/collectors/src/entity-manager/knowledge-operation-store.ts` — private-writer client, operation receipt, fencing.
+- `packages/collectors/src/entity-manager/knowledge-operation-store.ts` — writer port, in-memory reference/test store, operation receipt, and fencing; production private-writer client is not built.
 
-Logical contract (from the reviewed snapshot; `ItemDraft` and `ExistingItemOperation` remain placeholders to be specified in the implementation contract):
+Logical contract (implementation draft; `ItemDraft` and `ExistingItemOperation` are specified by the local TypeScript contract, pending review):
 
 ```ts
 type ProgressionPlanV1 = {
@@ -312,7 +312,13 @@ type ProgressionPlanV1 = {
 
 One ordinary structured planner call should produce the bounded plan — not a call per entity, field, or stage. The model proposes supplied candidate IDs or validated local keys; **code assigns persisted identities**. Unresolved identity prevents apply; unresolved research details alone do not.
 
-Caps: the previously proposed four items per packet, eight entity links per item, four outgoing continuity links, thirty-two evidence references, and six thousand characters per note remain **provisional evaluation inputs**, not approved calibrated limits and not targets to fill. Versioned caps must be explicit before rollout. Any output repair must fit the existing provider-call and cost allowance.
+The reference store fails closed for new commits when an existing-item operation or managed-item entity link lacks a matching expected revision in `targetRevisions`; supplied revisions are checked against the current target at commit. Accepted receipt replays return before these write checks. This is a local contract check, not proof of production database CAS behavior.
+
+Implementation contract details: `ProgressionSourcePacketEvidenceReader` now reads the immutable Research packet by code-owned work ID, validates the full canonical packet digest, and derives allowable `(claimId, evidenceId, sourceRef)` tuples from saved claim/evidence links. The processor now constructs this verifier around a raw saved-packet read port, so its normal API cannot accept pre-resolved evidence references; no production raw-packet adapter/caller or SQL writer is wired yet. Entity and existing-item identities are code-resolved, never copied from model-proposed persisted IDs. Stable logical operation identity is derived solely from normalized code-owned `workId`. All material fingerprints—including packet/context, policy, prompt, decision, and target revisions—are retained in immutable plan-attempt records and never change the operation key. An accepted receipt is terminal and replays before model/configuration checks; if no accepted receipt exists, a changed prompt/input may append a new plan revision while earlier holds remain in attempt history. A matching unheld checkpoint resumes after a failed commit; a held attempt is not terminal and may be retried. Changes to accepted knowledge require a separate explicitly linked correction/successor flow, which is not implemented in this slice. Existing entity/item targets require code-owned expected revisions; newly derived managed-item IDs carry an explicit expected-absent condition that the writer must check at commit. The in-memory reference implements that condition but does not prove database locking. Live leases are exclusive even for repeated calls by the same owner; each invocation renews its owner/epoch while work is pending and attempts to release only that exact fence on exit. Release failure does not mask the operation result; lease expiry is the recovery path, and a successful release preserves later epoch increments. Checkpoints/commits remain fenced. Validated plans and payloads are canonical, bounded snapshots. Receipt replay returns the original receipt/effects; conflicting IDs, digests, saved-plan metadata, status transitions, stale revisions, absent-ID collisions, and owner/epoch mismatches fail closed in the reference store. Provider/prompt metadata is immutable per plan revision and audit-only for logical identity; accepted work never reprocesses silently under a changed prompt.
+
+Caps: the previously proposed four items per packet, eight entity links per item, four outgoing continuity links, thirty-two evidence references, and six thousand characters per note remain **provisional evaluation inputs**, not approved calibrated limits and not targets to fill. The implementation also uses provisional safety caps of four existing-item operations per packet, 16 KiB per operation payload, 32 version entries, 1 MiB per plan/commit payload, eight committed effects, JSON nesting depth 32, 7 MiB per retained hold payload, and 8 MiB per serialized hold record. These are not calibrated limits; the saved-packet adapter and eventual SQL writer must enforce compatible bounds. Versioned caps must be explicitly reviewed before rollout. Any output repair must fit the existing provider-call and cost allowance.
+
+The local reference keeps plan revisions and hold attempts append-only with no attempt-count pruning. Production storage must define bounded/paginated history without silently overwriting or discarding earlier attempts.
 
 Overflow: durable hold, all unprocessed groups preserved, **zero partial knowledge commits from that plan**. No silent truncation, no parent completion while material overflow remains. A separately reviewed/admitted bounded continuation processes retained groups under an explicit revised work plan, retaining root assignment/allowance and allocated contribution identities. V4 has **no automatic deferred-work wakeup service**; operators resolve through supported controls. Continuations and retries cannot duplicate accepted contributions or reset follow-up limits.
 
@@ -320,17 +326,19 @@ Ordering rules:
 
 1. Checkpoint the normalized validated plan and hash **before** downstream writes.
 2. Keep immutable plan content separate from append-only execution outcomes.
-3. Resolve an existing receipt for the logical operation **before** model/configuration-version checks — changing a provider or prompt cannot cause accepted knowledge to be written again.
-4. For an uncommitted plan, changed material inputs, decision/policy versions, or target revisions require explicit targeted revalidation or a new validated plan revision. Never overwrite an accepted plan or repurpose its operation identity.
+3. Resolve an accepted terminal receipt for the logical operation **before** model/configuration-version checks — prompt/config fingerprints are audit metadata, not logical identity; accepted work replays its receipt regardless of those fingerprints.
+4. For unfinished work, the supplied prompt/input fingerprints define an immutable plan attempt. Changed inputs may create a new plan revision under the same work ID; keep earlier plans/holds as history and resume only an unheld matching checkpoint after a failed commit. Never overwrite an attempt or repurpose accepted knowledge.
 5. Serialize against any earlier in-flight attempt first: an already accepted receipt wins, a stale revision cannot commit later.
-6. Lock target entities/items in deterministic order, check target/authority revisions at **commit** time, commit all effects plus the receipt in one transaction, then acknowledge local completion.
+6. Lock target entities/items in deterministic order, check target/authority revisions and expected absence for newly derived item IDs at **commit** time, commit all effects plus the receipt in one transaction, then acknowledge local completion.
 7. Stable operation identity + digest rejects conflicting replays. A stale target leads to targeted revalidation or a hold, never unconditional overwrite.
 
 Semantic cross-source deduplication is a grounded validated decision, not an entity ID or prose hash.
 
 ### 5.5 Stage 5 — readers and consumers
 
-*Status: proposed, not yet reviewed. Update before coding.*
+*Status: proposed, not yet reviewed. Local, disabled reference contracts below are not production reader/consumer adoption.*
+
+Local code-only preparation: `knowledge-reader-v2.ts` models change IDs, revisions, status, affected memberships, bounded fixture paging, exact-hydration outcomes, and in-memory **fixture-only** consumer positions. `editor-draft/managed-change-invalidation.ts` and `publisher/managed-reference-preflight.ts` implement pure change invalidation and exact-reference checks. None is wired to a live worker or API. They do not provide the Stage 4 transactional clock, durable change rows/checkpoints, Supabase projection, historical/as-known reader, X Desk adoption, or publication-commit recheck. Those remain required before exposing managed items.
 
 Proposed: `entity-manager/knowledge-reader-v2.ts` plus a Supabase adapter, or additive v2 capabilities on `entity-manager/entity-knowledge-reader.ts` directly.
 
@@ -355,6 +363,8 @@ Start with a read-only internal research consumer and reviewed fixtures. Adopt p
 ### 5.6 Stages 6 and 7 — evaluation, cutover, retirement
 
 Stage 6 must produce a reviewed direct-processing baseline and cover the whole crash/replay suite before any activation. Measure total provider calls, input/output usage, fallback/repair rates, repeated inference on retry, median/tail completion time, and cost where available. Track **both cost per correctly resolved input and cost per useful accepted item**, so cheap false discards are not disguised as efficiency. Charge shadow evaluation expense separately from production cost.
+
+Local code-only preparation: `signal-platform/v4-evaluation.ts` aggregates supplied direct/shadow fixture measurements and reports pairing, coverage, costs and nearest-rank p95 latency. It does not gather real measurements, establish a reviewed baseline or decide activation. `v4-source-cutover-preflight.ts` reports **advisory** source-scoped checks; its result never authorizes an ownership change. A distinct source-level receipt, writer-fence verification and execution-time evidence binding are still needed; no queues or runtime flags are changed by this code.
 
 The sample sizes, quality thresholds, cost-reduction targets, and latency targets proposed in the older comments are **proposals awaiting product approval, not measured results**. Require a reviewed baseline, explicit thresholds, and stated sample sizes before enabling Jev or managed production. If the savings target fails, retain correct direct processing and leave the classifier off. News first, then Polymarket. A source starts at a small bounded selection only after the gates pass, with its evaluation/canary allowance bounded separately.
 
