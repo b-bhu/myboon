@@ -57,6 +57,15 @@ import {
   type EvidenceReusePolicyPort,
   withEvidenceReuseContext,
 } from './evidence-reuse-policy'
+import {
+  linkArtifact,
+  resolveArtifactUsage,
+  type ArtifactConsumerPort,
+  type ArtifactOwnerPort,
+  type ArtifactPin,
+  type ArtifactRef,
+  type ArtifactUsage,
+} from './artifact-repository'
 
 export type SharedResearchWorkerMode = 'off' | 'shadow' | 'active'
 export type SharedResearchWorkerOwnership = 'legacy' | 'shared'
@@ -65,6 +74,46 @@ export type ResearchWorkerStage = Extract<SchedulerStage, 'retrieval' | 'synthes
 export interface SharedResearchWorkPort extends CanonicalPlatformStore {
   /** Atomic CAS from research_ready to entity_pending. */
   promoteResearchReady(workId: string, now: string): boolean
+  /**
+   * Cross-source artifact-reuse surface (PRD §5.2). SQLite-backed stores
+   * implement it; test fakes and non-SQLite stores stay valid without it.
+   * The worker guards every call behind supportsArtifactReuse().
+   */
+  listRecentEvidence?(limit: number): RetrievedEvidence[]
+  artifactStoreId?(): string
+  pinArtifact?(ref: ArtifactRef, consumerStoreId: string, consumerWorkId: string, now: string): ArtifactPin
+  getArtifactPin?(pinId: string): ArtifactPin | null
+  resolvePinnedArtifact?(pin: ArtifactPin): RetrievedEvidence | null
+  recordArtifactUsage?(usage: ArtifactUsage, pin: ArtifactPin | null): ArtifactUsage
+}
+
+/** Upper bound on cross-work background artifacts attached to one synthesis. */
+const BACKGROUND_CONTEXT_LIMIT = 20
+
+/**
+ * The artifact-reuse surface SQLite-backed stores implement: the shared work
+ * port plus the required owner/consumer artifact operations. Re-declaring the
+ * optional port members as required makes post-narrowing calls direct.
+ */
+export type ArtifactReuseStore = SharedResearchWorkPort
+  & ArtifactOwnerPort
+  & ArtifactConsumerPort
+  & {
+    listRecentEvidence(limit: number): RetrievedEvidence[]
+    artifactStoreId(): string
+    pinArtifact(ref: ArtifactRef, consumerStoreId: string, consumerWorkId: string, now: string): ArtifactPin
+    getArtifactPin(pinId: string): ArtifactPin | null
+    resolvePinnedArtifact(pin: ArtifactPin): RetrievedEvidence | null
+    recordArtifactUsage(usage: ArtifactUsage, pin: ArtifactPin | null): ArtifactUsage
+  }
+
+function supportsArtifactReuse(store: SharedResearchWorkPort): store is ArtifactReuseStore {
+  return typeof store.artifactStoreId === 'function'
+    && typeof store.listRecentEvidence === 'function'
+    && typeof store.pinArtifact === 'function'
+    && typeof store.getArtifactPin === 'function'
+    && typeof store.resolvePinnedArtifact === 'function'
+    && typeof store.recordArtifactUsage === 'function'
 }
 
 export interface SharedResearchSchedulerPort {
@@ -604,10 +653,14 @@ export class SharedResearchWorker {
     try {
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
       this.recordExecutionStarted(lease, stage, timing, lease.work.attemptCount + 1)
+      const citableEvidenceIds = new Set(evidence.map((artifact) => artifact.evidenceId))
+      const backgroundContext = this.discoverBackgroundContext(store, lease, citableEvidenceIds)
+      this.recordBackgroundReuse(lease, backgroundContext)
       const packet = await this.synthesizer.synthesize({
         signal,
         workItem: lease.work,
         evidence: evidence.map(toDeterministicEvidence),
+        ...(backgroundContext.length ? { backgroundContext } : {}),
       })
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
       this.recordSynthesisSuccess(lease, packet, timing)
@@ -623,6 +676,51 @@ export class SharedResearchWorker {
     } finally {
       heartbeat.stop()
     }
+  }
+
+  /**
+   * Cross-work background context (PRD §5.2): newest evidence from OTHER
+   * sources' stores, each recorded through one idempotent artifact link, kept
+   * only when eligibility says background_only and the owner still resolves the
+   * pinned bytes. This is orientation context, never citable evidence, and
+   * every candidate failure is absorbed so reuse can never block synthesis.
+   */
+  private discoverBackgroundContext(
+    consumer: SharedResearchWorkPort,
+    lease: WorkLease,
+    citableEvidenceIds: ReadonlySet<string>,
+  ): RetrievedEvidenceArtifact[] {
+    const background: RetrievedEvidenceArtifact[] = []
+    if (!supportsArtifactReuse(consumer)) return background
+    const now = this.nowIso()
+    for (const [sourceType, owner] of this.stores) {
+      if (background.length >= BACKGROUND_CONTEXT_LIMIT) break
+      if (sourceType === lease.work.sourceType) continue
+      if (!supportsArtifactReuse(owner)) continue
+      if (owner.artifactStoreId() === consumer.artifactStoreId()) continue
+      for (const candidate of owner.listRecentEvidence(BACKGROUND_CONTEXT_LIMIT)) {
+        if (background.length >= BACKGROUND_CONTEXT_LIMIT) break
+        if (citableEvidenceIds.has(candidate.evidenceId)) continue
+        try {
+          const usage = linkArtifact({
+            owner,
+            consumer,
+            artifactId: candidate.evidenceId,
+            consumerWorkId: lease.work.workId,
+            now,
+          })
+          if (usage.decision !== 'background_only') continue
+          const resolved = resolveArtifactUsage(owner, usage)
+          if (!resolved || citableEvidenceIds.has(resolved.evidenceId)) continue
+          if (background.some((artifact) => artifact.evidenceId === resolved.evidenceId)) continue
+          background.push(toDeterministicEvidence(resolved))
+        } catch {
+          // Rejected or conflicting candidates are absorbed: background reuse
+          // is best-effort orientation context, never a gate on synthesis.
+        }
+      }
+    }
+    return background
   }
 
   /**
@@ -936,6 +1034,17 @@ export class SharedResearchWorker {
       lease, stage, timing: { startedAt: anchor, queueWaitMs: 0 }, finishedAt: anchor,
       status: 'skipped', attempt: lease.work.attemptCount, failureCategory: null,
       discriminator: `evidence_replay:${stableContractId('evidence_set', ...[...evidenceIds].sort())}`,
+    }))
+  }
+
+  private recordBackgroundReuse(lease: WorkLease, backgroundContext: readonly RetrievedEvidenceArtifact[]): void {
+    if (backgroundContext.length === 0) return
+    const anchor = this.nowIso()
+    const evidenceIds = backgroundContext.map((artifact) => artifact.evidenceId)
+    this.appendExecutionEvent(baseExecutionEvent({
+      lease, stage: 'synthesis', timing: { startedAt: anchor, queueWaitMs: 0 }, finishedAt: anchor,
+      status: 'skipped', attempt: lease.work.attemptCount, failureCategory: null,
+      discriminator: `background_reuse:${stableContractId('background_set', ...[...evidenceIds].sort())}`,
     }))
   }
 

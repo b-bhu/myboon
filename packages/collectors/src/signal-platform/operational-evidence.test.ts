@@ -41,7 +41,7 @@ function policy(kind: 'rollback' | 'live-load' | 'live-soak' | 'provider-outage'
   return validateOperationalEvidencePolicy({
     schemaVersion: 'myboon.feed_v3_operational_evidence_policy.v1', policyId: `${kind}.policy.v1`,
     evidenceKind: kind, attestationMode: 'manual_review', reviewedAt: '2026-08-24T00:00:00.000Z', reviewedBySha256: HASH_A,
-    expiresAt: '2026-09-30T00:00:00.000Z', thresholds: perKind[kind],
+    expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60_000).toISOString(), thresholds: perKind[kind],
   })
 }
 

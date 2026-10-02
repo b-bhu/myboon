@@ -395,6 +395,108 @@ test('gateway typed failures bubble unchanged and schema mismatches are typed lo
   )
 })
 
+test('background context must use the deterministic evidence schema version', async () => {
+  const gateway = new CapturingGateway(body())
+  const corrupt = {
+    ...artifact({ evidenceId: 'bg_evidence', workId: 'work_background' }),
+    schemaVersion: 'myboon.evidence.v99',
+  } as unknown as RetrievedEvidenceArtifact
+  await assert.rejects(
+    synthesizer(gateway).synthesize({
+      signal: SIGNAL,
+      workItem: WORK,
+      evidence: [artifact()],
+      backgroundContext: [corrupt],
+    }),
+    (error: unknown) => error instanceof InferenceGatewayError && error.category === 'schema_version_mismatch',
+  )
+  assert.equal(gateway.requests.length, 0)
+})
+
+test('background context may not belong to the current work item', async () => {
+  const gateway = new CapturingGateway(body())
+  await assert.rejects(
+    synthesizer(gateway).synthesize({
+      signal: SIGNAL,
+      workItem: WORK,
+      evidence: [artifact()],
+      backgroundContext: [artifact({ evidenceId: 'bg_current_work' })],
+    }),
+    (error: unknown) => error instanceof InferenceGatewayError
+      && error.category === 'invalid_structured_output'
+      && error.message.includes('bg_current_work'),
+  )
+  assert.equal(gateway.requests.length, 0)
+})
+
+test('background context IDs must be non-empty and unique', async () => {
+  const gateway = new CapturingGateway(body())
+  const background = (overrides: Partial<RetrievedEvidenceArtifact> = {}) => artifact({
+    evidenceId: 'bg_duplicate',
+    workId: 'work_background',
+    ...overrides,
+  })
+  await assert.rejects(
+    synthesizer(gateway).synthesize({
+      signal: SIGNAL,
+      workItem: WORK,
+      evidence: [artifact()],
+      backgroundContext: [background(), background()],
+    }),
+    (error: unknown) => error instanceof InferenceGatewayError && error.message.includes('non-empty and unique'),
+  )
+  await assert.rejects(
+    synthesizer(gateway).synthesize({
+      signal: SIGNAL,
+      workItem: WORK,
+      evidence: [artifact()],
+      backgroundContext: [background({ evidenceId: '   ' })],
+    }),
+    (error: unknown) => error instanceof InferenceGatewayError && error.message.includes('non-empty and unique'),
+  )
+  assert.equal(gateway.requests.length, 0)
+})
+
+test('background context may not overlap the citable evidence list', async () => {
+  const gateway = new CapturingGateway(body())
+  await assert.rejects(
+    synthesizer(gateway).synthesize({
+      signal: SIGNAL,
+      workItem: WORK,
+      evidence: [artifact()],
+      backgroundContext: [artifact({ evidenceId: 'evidence_source', workId: 'work_background' })],
+    }),
+    (error: unknown) => error instanceof InferenceGatewayError && error.message.includes('overlaps the citable evidence list'),
+  )
+  assert.equal(gateway.requests.length, 0)
+})
+
+test('background context renders as delimited orientation data only when present', async () => {
+  const gateway = new CapturingGateway(body())
+  const withoutBackground = await synthesizer(gateway).synthesize({
+    signal: SIGNAL,
+    workItem: WORK,
+    evidence: [artifact()],
+    backgroundContext: [],
+  })
+  assert.equal(withoutBackground.schemaVersion, RESEARCH_PACKET_SCHEMA_VERSION)
+  assert.equal(gateway.requests.length, 1)
+  assert.ok(!gateway.requests[0].prompt.includes('<UNTRUSTED_BACKGROUND_JSON>'))
+
+  const withBackground = await synthesizer(gateway).synthesize({
+    signal: SIGNAL,
+    workItem: WORK,
+    evidence: [artifact()],
+    backgroundContext: [artifact({ evidenceId: 'bg_evidence', workId: 'work_background' })],
+  })
+  assert.equal(gateway.requests.length, 2)
+  const prompt = gateway.requests[1].prompt
+  assert.ok(prompt.includes('<UNTRUSTED_BACKGROUND_JSON>'))
+  assert.ok(prompt.includes('bg_evidence'))
+  assert.equal(withBackground.evidence.length, 1)
+  assert.equal(withBackground.evidence[0].evidenceId, 'evidence_source')
+})
+
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object') {
     Object.freeze(value)

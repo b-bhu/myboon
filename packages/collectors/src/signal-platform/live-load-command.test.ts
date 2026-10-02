@@ -46,7 +46,7 @@ function liveLoadPolicy() {
   return {
     schemaVersion: 'myboon.feed_v3_operational_evidence_policy.v1', policyId: 'live-load.policy.v1',
     evidenceKind: 'live-load', attestationMode: 'manual_review', reviewedAt: '2026-08-24T00:00:00.000Z', reviewedBySha256: HASH,
-    expiresAt: '2026-09-30T00:00:00.000Z', thresholds: {
+    expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60_000).toISOString(), thresholds: {
       minimumDurationMs: 300_000, minimumArrivalMultiplier: 2, minimumCompletionRatio: 0.99,
       maximumQueueP95Ms: 1_000, maximumQueueDepth: 25, maximumTerminalFailures: 0,
       maximumDuplicateArtifacts: 0, maximumSqliteWriteErrors: 0,

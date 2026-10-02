@@ -18,6 +18,7 @@ import {
 import type { ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { adaptRetrievedEvidenceArtifact } from '../signal-platform/retrieved-evidence-adapter'
+import { stableContractId } from '../signal-platform/adapters/identity'
 import { DeterministicRetriever, type RetrievedEvidenceArtifact } from './deterministic-retrieval'
 import {
   EVIDENCE_REUSE_CONTEXT_SCHEMA_VERSION,
@@ -1067,3 +1068,138 @@ function persistedReuse(artifact: RetrievedEvidence, materialHash: string) {
     retrievalState: 'succeeded' as const,
   }
 }
+
+function hintedSignal(sourceType: Signal['sourceType'], entities: string[]): Signal {
+  const base = signal(sourceType)
+  return { ...base, sourceHints: { ...base.sourceHints, entities } } as Signal
+}
+
+function backgroundCapturingSynthesizer(
+  onNewsSynthesis: (background: readonly RetrievedEvidenceArtifact[] | undefined) => void,
+): StructuredResearchSynthesizer {
+  return {
+    async synthesize(input) {
+      if (input.workItem.sourceType === 'news') onNewsSynthesis(input.backgroundContext)
+      return packet(input.workItem, input.signal, adaptRetrievedEvidenceArtifact(input.evidence[0]!))
+    },
+  } as StructuredResearchSynthesizer
+}
+
+async function runUntilNewsSynthesis(worker: SharedResearchWorker) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const result = await worker.runOnce()
+    assert.equal(result.kind, 'succeeded')
+    if (result.stage === 'synthesis' && result.sourceType === 'news') return result
+  }
+  assert.fail('news synthesis never completed')
+}
+
+test('cross-source background context reaches synthesis and is durably recorded', async () => {
+  const consumer = fixture('news')
+  const producer = fixture('polymarket')
+  try {
+    consumer.store.appendSignal(hintedSignal('news', ['acme']))
+    consumer.store.admitResearchWork(work())
+    const producerWork = work({ sourceType: 'polymarket' })
+    producer.store.appendSignal(hintedSignal('polymarket', ['acme']))
+    producer.store.admitResearchWork(producerWork)
+    producer.store.appendEvidence(evidence(producerWork))
+    let observed: readonly RetrievedEvidenceArtifact[] | undefined
+    const ledger = new CapturingExecutionLedger()
+    const worker = new SharedResearchWorker(workerOptions([consumer.store, producer.store], {
+      executionLedger: ledger,
+      synthesizer: backgroundCapturingSynthesizer((background) => { observed = background }),
+    }))
+    assert.deepEqual(await runUntilNewsSynthesis(worker), {
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: 'work-news',
+    })
+    assert.equal(observed?.length, 1)
+    assert.equal(observed?.[0]?.evidenceId, 'evidence-polymarket')
+    const usages = consumer.store.listArtifactUsagesByWork('work-news', 10)
+    assert.equal(usages.length, 1)
+    assert.equal(usages[0]!.decision, 'background_only')
+    assert.equal(usages[0]!.reason, 'relevant_context')
+    assert.ok(usages[0]!.pinId)
+    const reuseEvent = [...ledger.events.values()].find((event) => event.eventId === stableContractId(
+      'execution_event', 'trace-news', 'synthesis',
+      `background_reuse:${stableContractId('background_set', 'evidence-polymarket')}`,
+    ))
+    assert.ok(reuseEvent)
+    assert.equal(reuseEvent.status, 'skipped')
+    assert.equal(reuseEvent.stage, 'synthesis')
+    assert.equal(consumer.store.getResearchWork('work-news')?.status, 'entity_pending')
+  } finally {
+    consumer.close()
+    producer.close()
+  }
+})
+
+test('unrelated cross-source evidence is rejected durably and never blocks synthesis', async () => {
+  const consumer = fixture('news')
+  const producer = fixture('polymarket')
+  try {
+    consumer.store.appendSignal(hintedSignal('news', ['acme']))
+    consumer.store.admitResearchWork(work())
+    const producerWork = work({ sourceType: 'polymarket' })
+    producer.store.appendSignal(hintedSignal('polymarket', ['globex']))
+    producer.store.admitResearchWork(producerWork)
+    producer.store.appendEvidence(evidence(producerWork))
+    let observed: readonly RetrievedEvidenceArtifact[] | undefined
+    const ledger = new CapturingExecutionLedger()
+    const worker = new SharedResearchWorker(workerOptions([consumer.store, producer.store], {
+      executionLedger: ledger,
+      synthesizer: backgroundCapturingSynthesizer((background) => { observed = background }),
+    }))
+    assert.deepEqual(await runUntilNewsSynthesis(worker), {
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: 'work-news',
+    })
+    assert.equal(observed, undefined)
+    const usages = consumer.store.listArtifactUsagesByWork('work-news', 10)
+    assert.equal(usages.length, 1)
+    assert.equal(usages[0]!.decision, 'rejected')
+    assert.equal(usages[0]!.reason, 'unrelated')
+    assert.equal(usages[0]!.pinId, null)
+    assert.ok([...ledger.events.values()].every((event) => event.eventId !== stableContractId(
+      'execution_event', 'trace-news', 'synthesis',
+      `background_reuse:${stableContractId('background_set', 'evidence-polymarket')}`,
+    )))
+  } finally {
+    consumer.close()
+    producer.close()
+  }
+})
+
+test('a failing artifact link is absorbed and synthesis proceeds without background context', async () => {
+  const consumer = fixture('news')
+  const producer = fixture('polymarket')
+  try {
+    consumer.store.appendSignal(hintedSignal('news', ['acme']))
+    consumer.store.admitResearchWork(work())
+    const producerWork = work({ sourceType: 'polymarket' })
+    producer.store.appendSignal(hintedSignal('polymarket', ['acme']))
+    producer.store.admitResearchWork(producerWork)
+    producer.store.appendEvidence(evidence(producerWork))
+    ;(producer.store as unknown as { pinArtifact: () => never }).pinArtifact = () => {
+      throw new Error('pin store unavailable')
+    }
+    let observed: readonly RetrievedEvidenceArtifact[] | undefined
+    const ledger = new CapturingExecutionLedger()
+    const worker = new SharedResearchWorker(workerOptions([consumer.store, producer.store], {
+      executionLedger: ledger,
+      synthesizer: backgroundCapturingSynthesizer((background) => { observed = background }),
+    }))
+    assert.deepEqual(await runUntilNewsSynthesis(worker), {
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: 'work-news',
+    })
+    assert.equal(observed, undefined)
+    assert.equal(consumer.store.listArtifactUsagesByWork('work-news', 10).length, 0)
+    assert.ok([...ledger.events.values()].every((event) => event.eventId !== stableContractId(
+      'execution_event', 'trace-news', 'synthesis',
+      `background_reuse:${stableContractId('background_set', 'evidence-polymarket')}`,
+    )))
+    assert.equal(consumer.store.getResearchWork('work-news')?.status, 'entity_pending')
+  } finally {
+    consumer.close()
+    producer.close()
+  }
+})

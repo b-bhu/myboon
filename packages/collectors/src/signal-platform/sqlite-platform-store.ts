@@ -1238,6 +1238,17 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     )
   }
 
+  /** Most recent evidence across all works for this source, newest first. */
+  listRecentEvidence(limit: number): RetrievedEvidence[] {
+    return this.readJsonList(
+      `SELECT e.canonical_json FROM signal_platform_evidence e
+       JOIN signal_platform_research_work w ON w.work_id = e.work_id
+       WHERE w.source_type = ?
+       ORDER BY e.retrieved_at DESC, e.evidence_id DESC LIMIT ?`,
+      [this.sourceType, boundedLimit(limit)], validateRetrievedEvidence,
+    )
+  }
+
   /** Persisted identity follows the source database through a backup restore. */
   artifactStoreId(): string {
     this.assertOpen()
