@@ -13,7 +13,7 @@ import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import { useWallet } from '@/hooks/useWallet';
 import { semantic, tokens } from '@/theme';
 
-export function AvatarTrigger({ onPress }: { onPress?: () => void }) {
+export function AvatarTrigger({ onPress, onBeforeOpen, tone }: { onPress?: () => void; onBeforeOpen?: () => void; tone?: 'wallet' }) {
   const { open } = useWalletSheet();
   const { connected, shortAddress } = useWallet();
 
@@ -22,10 +22,13 @@ export function AvatarTrigger({ onPress }: { onPress?: () => void }) {
   return (
     <Pressable
       onPress={() => {
+        onBeforeOpen?.();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         (onPress ?? open)();
       }}
-      style={styles.trigger}
+      accessibilityRole="button"
+      accessibilityLabel="Wallet account and connection"
+      style={[styles.trigger, tone === 'wallet' && styles.walletTrigger]}
     >
       <View style={[styles.ring, !connected && styles.ringDisconnected]}>
         <View style={styles.inner}>
@@ -47,6 +50,7 @@ const styles = StyleSheet.create({
     height: 30,
     position: 'relative',
   },
+  walletTrigger: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   ring: {
     width: 30,
     height: 30,

@@ -1,0 +1,288 @@
+TAP version 13
+# Subtest: TC-MODAL-001/002: option filtering per chain
+    # Subtest: Solana offers the external wallet row
+    ok 1 - Solana offers the external wallet row
+      ---
+      duration_ms: 0.612541
+      type: 'test'
+      ...
+    # Subtest: EVM drops the external wallet row and nothing else
+    ok 2 - EVM drops the external wallet row and nothing else
+      ---
+      duration_ms: 0.486792
+      type: 'test'
+      ...
+    # Subtest: the external wallet option is absent, not present-and-disabled
+    ok 3 - the external wallet option is absent, not present-and-disabled
+      ---
+      duration_ms: 0.079583
+      type: 'test'
+      ...
+    # Subtest: Privy is offered on every chain
+    ok 4 - Privy is offered on every chain
+      ---
+      duration_ms: 0.163792
+      type: 'test'
+      ...
+    # Subtest: every chain offers at least one option — no dead-end modal
+    ok 5 - every chain offers at least one option — no dead-end modal
+      ---
+      duration_ms: 0.103792
+      type: 'test'
+      ...
+    # Subtest: returns no duplicate options
+    ok 6 - returns no duplicate options
+      ---
+      duration_ms: 0.072958
+      type: 'test'
+      ...
+    1..6
+ok 1 - TC-MODAL-001/002: option filtering per chain
+  ---
+  duration_ms: 2.146833
+  type: 'suite'
+  ...
+# Subtest: TC-MODAL-003: one modal, driven by data
+    # Subtest: the option list is fully derived from CHAIN_BACKENDS
+    ok 1 - the option list is fully derived from CHAIN_BACKENDS
+      ---
+      duration_ms: 0.268875
+      type: 'test'
+      ...
+    # Subtest: every backend contributes at least one option
+    ok 2 - every backend contributes at least one option
+      ---
+      duration_ms: 0.305167
+      type: 'test'
+      ...
+    # Subtest: option order is stable across chains and calls
+    ok 3 - option order is stable across chains and calls
+      ---
+      duration_ms: 0.131542
+      type: 'test'
+      ...
+    1..3
+ok 2 - TC-MODAL-003: one modal, driven by data
+  ---
+  duration_ms: 1.061167
+  type: 'suite'
+  ...
+# Subtest: TC-MODAL-004: adding an external EVM transport is a rule change only
+    # Subtest: flipping external support on for EVM yields the external row
+    ok 1 - flipping external support on for EVM yields the external row
+      ---
+      duration_ms: 0.204584
+      type: 'test'
+      ...
+    # Subtest: the shipped table is unchanged by that exercise — no residue
+    ok 2 - the shipped table is unchanged by that exercise — no residue
+      ---
+      duration_ms: 0.234917
+      type: 'test'
+      ...
+    # Subtest: the derivation, not the sheet, is what changes
+    ok 3 - the derivation, not the sheet, is what changes
+      ---
+      duration_ms: 0.330084
+      type: 'test'
+      ...
+    1..3
+ok 3 - TC-MODAL-004: adding an external EVM transport is a rule change only
+  ---
+  duration_ms: 1.923167
+  type: 'suite'
+  ...
+# Subtest: availableOptions
+    # Subtest: offers external wallet, email and google on Solana
+    ok 1 - offers external wallet, email and google on Solana
+      ---
+      duration_ms: 1.074792
+      type: 'test'
+      ...
+    # Subtest: drops only the external wallet row on EVM
+    ok 2 - drops only the external wallet row on EVM
+      ---
+      duration_ms: 0.092459
+      type: 'test'
+      ...
+    # Subtest: offers Privy as two auth methods on every chain
+    ok 3 - offers Privy as two auth methods on every chain
+      ---
+      duration_ms: 0.22225
+      type: 'test'
+      ...
+    # Subtest: derives availability from CHAIN_BACKENDS rather than a hardcoded list
+    ok 4 - derives availability from CHAIN_BACKENDS rather than a hardcoded list
+      ---
+      duration_ms: 0.198959
+      type: 'test'
+      ...
+    # Subtest: returns options in a stable order across calls
+    ok 5 - returns options in a stable order across calls
+      ---
+      duration_ms: 0.153583
+      type: 'test'
+      ...
+    1..5
+ok 4 - availableOptions
+  ---
+  duration_ms: 2.359792
+  type: 'suite'
+  ...
+# Subtest: findFundedDormantChains — the detection branch table
+    # Subtest: flags a provisioned, dormant chain holding a measured balance
+    ok 1 - flags a provisioned, dormant chain holding a measured balance
+      ---
+      duration_ms: 0.645583
+      type: 'test'
+      ...
+    # Subtest: ignores an active chain — it already renders in the normal ChainRow
+    ok 2 - ignores an active chain — it already renders in the normal ChainRow
+      ---
+      duration_ms: 0.338667
+      type: 'test'
+      ...
+    # Subtest: ignores a chain that is not provisioned
+    ok 3 - ignores a chain that is not provisioned
+      ---
+      duration_ms: 0.061709
+      type: 'test'
+      ...
+    # Subtest: ignores a provisioned chain with no address — nothing can be concealed
+    ok 4 - ignores a provisioned chain with no address — nothing can be concealed
+      ---
+      duration_ms: 0.058791
+      type: 'test'
+      ...
+    # Subtest: ignores a dormant chain whose balance is zero
+    ok 5 - ignores a dormant chain whose balance is zero
+      ---
+      duration_ms: 0.0515
+      type: 'test'
+      ...
+    # Subtest: treats a null balance as unknown, not as funds
+    ok 6 - treats a null balance as unknown, not as funds
+      ---
+      duration_ms: 0.048458
+      type: 'test'
+      ...
+    # Subtest: ignores non-finite and negative balances rather than reporting them as funds
+    ok 7 - ignores non-finite and negative balances rather than reporting them as funds
+      ---
+      duration_ms: 0.126125
+      type: 'test'
+      ...
+    # Subtest: reports every funded dormant chain, not just the first
+    ok 8 - reports every funded dormant chain, not just the first
+      ---
+      duration_ms: 0.214542
+      type: 'test'
+      ...
+    # Subtest: returns nothing for an empty observation list
+    ok 9 - returns nothing for an empty observation list
+      ---
+      duration_ms: 0.173083
+      type: 'test'
+      ...
+    1..9
+ok 5 - findFundedDormantChains — the detection branch table
+  ---
+  duration_ms: 2.641792
+  type: 'suite'
+  ...
+# Subtest: the invariant: normal deferred provisioning never fires the check
+    # Subtest: finds nothing when dormant chains have no wallet and no address
+    ok 1 - finds nothing when dormant chains have no wallet and no address
+      ---
+      duration_ms: 0.141
+      type: 'test'
+      ...
+    # Subtest: finds nothing when no chain is active or provisioned at all
+    ok 2 - finds nothing when no chain is active or provisioned at all
+      ---
+      duration_ms: 0.05825
+      type: 'test'
+      ...
+    # Subtest: fires when provisioning leaked: a dormant chain has an address and funds
+    ok 3 - fires when provisioning leaked: a dormant chain has an address and funds
+      ---
+      duration_ms: 0.111833
+      type: 'test'
+      ...
+    # Subtest: activating the flagged chain clears it from the detection result
+    ok 4 - activating the flagged chain clears it from the detection result
+      ---
+      duration_ms: 0.05525
+      type: 'test'
+      ...
+    # Subtest: cannot flag EVM today — no client-side EVM balance source exists (\#261)
+    ok 5 - cannot flag EVM today — no client-side EVM balance source exists (\#261)
+      ---
+      duration_ms: 0.041125
+      type: 'test'
+      ...
+    1..5
+ok 6 - the invariant: normal deferred provisioning never fires the check
+  ---
+  duration_ms: 0.5015
+  type: 'suite'
+  ...
+# Subtest: observeChains
+    # Subtest: produces one observation per chain, carrying the observed values through
+    ok 1 - produces one observation per chain, carrying the observed values through
+      ---
+      duration_ms: 0.065917
+      type: 'test'
+      ...
+    1..1
+ok 7 - observeChains
+  ---
+  duration_ms: 0.092083
+  type: 'suite'
+  ...
+# Subtest: reportFundedDormantChains — observability
+    # Subtest: logs a line identifying the fired check as a provisioning bug
+    ok 1 - logs a line identifying the fired check as a provisioning bug
+      ---
+      duration_ms: 0.645333
+      type: 'test'
+      ...
+    # Subtest: truncates the address and logs no key material
+    ok 2 - truncates the address and logs no key material
+      ---
+      duration_ms: 0.110667
+      type: 'test'
+      ...
+    # Subtest: logs one line per funded chain
+    ok 3 - logs one line per funded chain
+      ---
+      duration_ms: 0.078125
+      type: 'test'
+      ...
+    # Subtest: logs nothing when the check did not fire
+    ok 4 - logs nothing when the check did not fire
+      ---
+      duration_ms: 0.045417
+      type: 'test'
+      ...
+    1..4
+ok 8 - reportFundedDormantChains — observability
+  ---
+  duration_ms: 0.939667
+  type: 'suite'
+  ...
+# Subtest: wallet refresh notifications are scoped, removable, and failure-isolated
+ok 9 - wallet refresh notifications are scoped, removable, and failure-isolated
+  ---
+  duration_ms: 0.699667
+  type: 'test'
+  ...
+1..9
+# tests 37
+# suites 8
+# pass 37
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 463.362625

@@ -1,0 +1,252 @@
+TAP version 13
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: inline and routed modes start empty; quote resolves without preparing/signing/submitting
+ok 1 - inline and routed modes start empty; quote resolves without preparing/signing/submitting
+  ---
+  duration_ms: 1699.795917
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: explicit review validates/simulates, approval executes once, and confirmed refreshes
+ok 2 - explicit review validates/simulates, approval executes once, and confirmed refreshes
+  ---
+  duration_ms: 52.552333
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: same-tick review blocks reverse/input and leaving Wallet discards a late preparation
+not ok 3 - same-tick review blocks reverse/input and leaving Wallet discards a late preparation
+  ---
+  duration_ms: 31.855417
+  type: 'test'
+  location: '/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:2:2911'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'ordering'
+    - 'compose'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'compose'
+  actual: 'ordering'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:58:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: a stale quote cannot overwrite a newer input, including clearing invalid input
+ok 4 - a stale quote cannot overwrite a newer input, including clearing invalid input
+  ---
+  duration_ms: 972.6665
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: elevated slippage and acknowledgements reset across sessions without restoring a prepared order
+ok 5 - elevated slippage and acknowledgements reset across sessions without restoring a prepared order
+  ---
+  duration_ms: 51.722417
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: invalidation makes an old confirmation callback unable to sign
+ok 6 - invalidation makes an old confirmation callback unable to sign
+  ---
+  duration_ms: 24.969417
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: balance failure and fee reserve block review; retry keeps safe input
+ok 7 - balance failure and fee reserve block review; retry keeps safe input
+  ---
+  duration_ms: 26.059666
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: simulation refusal blocks signing; unavailable simulation requires acknowledgement
+ok 8 - simulation refusal blocks signing; unavailable simulation requires acknowledgement
+  ---
+  duration_ms: 20.792417
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: wallet rejection and definite execution failure never report confirmed
+ok 9 - wallet rejection and definite execution failure never report confirmed
+  ---
+  duration_ms: 18.249208
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: unknown execution persists reviewed parameters across navigation and reconciles on resume
+ok 10 - unknown execution persists reviewed parameters across navigation and reconciles on resume
+  ---
+  duration_ms: 20.457833
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: guest entry offers Solana connection; locked routed sides cannot open pickers
+ok 11 - guest entry offers Solana connection; locked routed sides cannot open pickers
+  ---
+  duration_ms: 57.342834
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: blocked mutations during preparation leave the in-flight review intact
+ok 12 - blocked mutations during preparation leave the in-flight review intact
+  ---
+  duration_ms: 18.001375
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: same-tick confirmation blocks changes to reviewed composition
+ok 13 - same-tick confirmation blocks changes to reviewed composition
+  ---
+  duration_ms: 15.811917
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: wallet change discards old balances, prepared review and old signing callback
+ok 14 - wallet change discards old balances, prepared review and old signing callback
+  ---
+  duration_ms: 17.292542
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: previous wallet balance response cannot replace current wallet balances
+ok 15 - previous wallet balance response cannot replace current wallet balances
+  ---
+  duration_ms: 17.582042
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: pending startup blocks fresh preparation, expiry reconciliation releases the gate
+ok 16 - pending startup blocks fresh preparation, expiry reconciliation releases the gate
+  ---
+  duration_ms: 14.856
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: quote expiry becomes an explicit stale state without authorizing signing
+ok 17 - quote expiry becomes an explicit stale state without authorizing signing
+  ---
+  duration_ms: 531.323958
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: picker search ignores late responses; same-mint selection reverses identity and clears amount
+ok 18 - picker search ignores late responses; same-mint selection reverses identity and clears amount
+  ---
+  duration_ms: 725.855875
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: strict effect remount keeps balance and quote requests functional
+ok 19 - strict effect remount keeps balance and quote requests functional
+  ---
+  duration_ms: 510.496208
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: previous wallet balance rejection cannot clear current resolved balances
+ok 20 - previous wallet balance rejection cannot clear current resolved balances
+  ---
+  duration_ms: 48.957375
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: leaving during wallet approval cannot submit a late signature and releases the draft
+not ok 21 - leaving during wallet approval cannot submit a late signature and releases the draft
+  ---
+  duration_ms: 27.749084
+  type: 'test'
+  location: '/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:2:17955'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'awaiting_signature'
+    - 'compose'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'compose'
+  actual: 'awaiting_signature'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:316:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: leaving after submission preserves recovery and return never resubmits
+not ok 22 - leaving after submission preserves recovery and return never resubmits
+  ---
+  duration_ms: 19.16125
+  type: 'test'
+  location: '/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:2:18898'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'executing'
+    - 'unknown'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'unknown'
+  actual: 'executing'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:336:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: a context change during pending persistence cannot start submission
+not ok 23 - a context change during pending persistence cannot start submission
+  ---
+  duration_ms: 21.323792
+  type: 'test'
+  location: '/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:2:20480'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    1 !== 0
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo/features/swap/swap.controller.integration.test.ts:360:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: pending-store read failure is visible and a manual status check safely retries
+ok 24 - pending-store read failure is visible and a manual status check safely retries
+  ---
+  duration_ms: 22.776333
+  type: 'test'
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 20
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5560.156166

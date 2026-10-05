@@ -91,9 +91,11 @@
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@types/react": "~19.1.0",
+    "@types/react-test-renderer": "19.1.0",
     "eas-cli": "^16.18.2",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "react-test-renderer": "19.1.0",
     "tweetnacl": "^1.0.3",
     "typescript": "~5.9.2"
   },

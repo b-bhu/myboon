@@ -1,0 +1,184 @@
+TAP version 13
+# Subtest: refuses a wrong fee payer
+ok 1 - refuses a wrong fee payer
+  ---
+  duration_ms: 7.063667
+  type: 'test'
+  ...
+# Subtest: refuses an unresolved address lookup table
+ok 2 - refuses an unresolved address lookup table
+  ---
+  duration_ms: 7.999584
+  type: 'test'
+  ...
+# Subtest: refuses a disallowed program
+ok 3 - refuses a disallowed program
+  ---
+  duration_ms: 2.106875
+  type: 'test'
+  ...
+# Subtest: refuses token Approve
+ok 4 - refuses token Approve
+  ---
+  duration_ms: 5.781833
+  type: 'test'
+  ...
+# Subtest: refuses token ApproveChecked
+ok 5 - refuses token ApproveChecked
+  ---
+  duration_ms: 4.927417
+  type: 'test'
+  ...
+# Subtest: refuses token SetAuthority
+ok 6 - refuses token SetAuthority
+  ---
+  duration_ms: 9.545833
+  type: 'test'
+  ...
+# Subtest: refuses unsafe close account destination
+ok 7 - refuses unsafe close account destination
+  ---
+  duration_ms: 3.877584
+  type: 'test'
+  ...
+# Subtest: refuses an unexpected required signer
+ok 8 - refuses an unexpected required signer
+  ---
+  duration_ms: 3.704208
+  type: 'test'
+  ...
+# Subtest: refuses a compute-budget priority fee above the reviewed network bound
+ok 9 - refuses a compute-budget priority fee above the reviewed network bound
+  ---
+  duration_ms: 4.487667
+  type: 'test'
+  ...
+# Subtest: simulation failure and insufficient output are deterministic
+ok 10 - simulation failure and insufficient output are deterministic
+  ---
+  duration_ms: 2.108792
+  type: 'test'
+  ...
+# Subtest: simulation infrastructure outage is distinguished from a simulated failure
+ok 11 - simulation infrastructure outage is distinguished from a simulated failure
+  ---
+  duration_ms: 0.641583
+  type: 'test'
+  ...
+# Subtest: accepts an allowlisted Jupiter transaction and exact simulation output
+ok 12 - accepts an allowlisted Jupiter transaction and exact simulation output
+  ---
+  duration_ms: 16.313
+  type: 'test'
+  ...
+# Subtest: simulation bounds cover SOL-to-token and token-to-SOL reviews
+ok 13 - simulation bounds cover SOL-to-token and token-to-SOL reviews
+  ---
+  duration_ms: 2.661
+  type: 'test'
+  ...
+# Subtest: simulation bounds native SOL loss for SPL-to-SPL swaps
+ok 14 - simulation bounds native SOL loss for SPL-to-SPL swaps
+  ---
+  duration_ms: 1.005334
+  type: 'test'
+  ...
+# Subtest: fails closed when reviewed output ownership evidence is absent
+ok 15 - fails closed when reviewed output ownership evidence is absent
+  ---
+  duration_ms: 2.379875
+  type: 'test'
+  ...
+# Subtest: fails closed when token account RPC evidence is unavailable
+ok 16 - fails closed when token account RPC evidence is unavailable
+  ---
+  duration_ms: 3.12825
+  type: 'test'
+  ...
+# Subtest: public signing adapter enforces the reviewed writable-account set
+ok 17 - public signing adapter enforces the reviewed writable-account set
+  ---
+  duration_ms: 3.953125
+  type: 'test'
+  ...
+# Subtest: production adapter rejects writable accounts with unknown RPC evidence
+ok 18 - production adapter rejects writable accounts with unknown RPC evidence
+  ---
+  duration_ms: 3.172291
+  type: 'test'
+  ...
+# Subtest: accepts a program-owned Jupiter intermediary vault with a third mint
+ok 19 - accepts a program-owned Jupiter intermediary vault with a third mint
+  ---
+  duration_ms: 11.215208
+  type: 'test'
+  ...
+# Subtest: revalidates and simulates a safe wallet-reconstructed transaction
+ok 20 - revalidates and simulates a safe wallet-reconstructed transaction
+  ---
+  duration_ms: 76.232625
+  type: 'test'
+  ...
+# Subtest: rejects a wallet-reconstructed transaction that misses the reviewed output
+ok 21 - rejects a wallet-reconstructed transaction that misses the reviewed output
+  ---
+  duration_ms: 26.997167
+  type: 'test'
+  ...
+# Subtest: allows a Jupiter intermediary mint only when simulation proves no wallet loss
+ok 22 - allows a Jupiter intermediary mint only when simulation proves no wallet loss
+  ---
+  duration_ms: 6.055041
+  type: 'test'
+  ...
+# Subtest: production adapter rejects route state with absent or non-executable owner
+ok 23 - production adapter rejects route state with absent or non-executable owner
+  ---
+  duration_ms: 11.089208
+  type: 'test'
+  ...
+# Subtest: parses decimal UI amounts without floating point
+ok 24 - parses decimal UI amounts without floating point
+  ---
+  duration_ms: 1.967333
+  type: 'test'
+  ...
+# Subtest: formats atomic amounts and preserves exact sell presets
+ok 25 - formats atomic amounts and preserves exact sell presets
+  ---
+  duration_ms: 0.657583
+  type: 'test'
+  ...
+# Subtest: converts bounded custom slippage to basis points exactly
+ok 26 - converts bounded custom slippage to basis points exactly
+  ---
+  duration_ms: 0.201
+  type: 'test'
+  ...
+# Subtest: persists, scopes, updates, and removes pending swaps
+ok 27 - persists, scopes, updates, and removes pending swaps
+  ---
+  duration_ms: 3.685292
+  type: 'test'
+  ...
+# Subtest: pending swap expiry is strict and rejects malformed validity windows
+ok 28 - pending swap expiry is strict and rejects malformed validity windows
+  ---
+  duration_ms: 0.245042
+  type: 'test'
+  ...
+# Subtest: only discards an expired pending swap that Solana has never observed
+ok 29 - only discards an expired pending swap that Solana has never observed
+  ---
+  duration_ms: 0.092167
+  type: 'test'
+  ...
+1..29
+# tests 29
+# suites 0
+# pass 29
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2973.0195

@@ -1,0 +1,296 @@
+TAP version 13
+# Subtest: ending a swap session clears elevated slippage and prepared review while preserving request sequencing
+ok 1 - ending a swap session clears elevated slippage and prepared review while preserving request sequencing
+  ---
+  duration_ms: 2.4045
+  type: 'test'
+  ...
+# Subtest: prepared review invalidation advances the stale async boundary
+ok 2 - prepared review invalidation advances the stale async boundary
+  ---
+  duration_ms: 0.194417
+  type: 'test'
+  ...
+# Subtest: exchange rate normalizes atomic amounts and decimals
+ok 3 - exchange rate normalizes atomic amounts and decimals
+  ---
+  duration_ms: 33.61875
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: inline and routed modes start empty; quote resolves without preparing/signing/submitting
+ok 4 - inline and routed modes start empty; quote resolves without preparing/signing/submitting
+  ---
+  duration_ms: 1954.700583
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: explicit review validates/simulates, approval executes once, and confirmed refreshes
+ok 5 - explicit review validates/simulates, approval executes once, and confirmed refreshes
+  ---
+  duration_ms: 51.834375
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: same-tick review blocks reverse/input and leaving Wallet discards a late preparation
+ok 6 - same-tick review blocks reverse/input and leaving Wallet discards a late preparation
+  ---
+  duration_ms: 48.76925
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: a stale quote cannot overwrite a newer input, including clearing invalid input
+ok 7 - a stale quote cannot overwrite a newer input, including clearing invalid input
+  ---
+  duration_ms: 1003.966167
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: elevated slippage and acknowledgements reset across sessions without restoring a prepared order
+ok 8 - elevated slippage and acknowledgements reset across sessions without restoring a prepared order
+  ---
+  duration_ms: 60.826833
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: invalidation makes an old confirmation callback unable to sign
+ok 9 - invalidation makes an old confirmation callback unable to sign
+  ---
+  duration_ms: 47.961459
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: balance failure and fee reserve block review; retry keeps safe input
+ok 10 - balance failure and fee reserve block review; retry keeps safe input
+  ---
+  duration_ms: 35.484292
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: simulation refusal blocks signing; unavailable simulation requires acknowledgement
+ok 11 - simulation refusal blocks signing; unavailable simulation requires acknowledgement
+  ---
+  duration_ms: 34.167917
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: wallet rejection and definite execution failure never report confirmed
+ok 12 - wallet rejection and definite execution failure never report confirmed
+  ---
+  duration_ms: 40.130292
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: unknown execution persists reviewed parameters across navigation and reconciles on resume
+ok 13 - unknown execution persists reviewed parameters across navigation and reconciles on resume
+  ---
+  duration_ms: 34.389041
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: guest entry offers Solana connection; locked routed sides cannot open pickers
+ok 14 - guest entry offers Solana connection; locked routed sides cannot open pickers
+  ---
+  duration_ms: 96.692375
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: blocked mutations during preparation leave the in-flight review intact
+ok 15 - blocked mutations during preparation leave the in-flight review intact
+  ---
+  duration_ms: 21.147375
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: same-tick confirmation blocks changes to reviewed composition
+ok 16 - same-tick confirmation blocks changes to reviewed composition
+  ---
+  duration_ms: 40.099958
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: wallet change discards old balances, prepared review and old signing callback
+ok 17 - wallet change discards old balances, prepared review and old signing callback
+  ---
+  duration_ms: 43.684
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: previous wallet balance response cannot replace current wallet balances
+ok 18 - previous wallet balance response cannot replace current wallet balances
+  ---
+  duration_ms: 56.775959
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: pending startup blocks fresh preparation, expiry reconciliation releases the gate
+ok 19 - pending startup blocks fresh preparation, expiry reconciliation releases the gate
+  ---
+  duration_ms: 54.579417
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: quote expiry becomes an explicit stale state without authorizing signing
+ok 20 - quote expiry becomes an explicit stale state without authorizing signing
+  ---
+  duration_ms: 555.200333
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: picker search ignores late responses; same-mint selection reverses identity and clears amount
+ok 21 - picker search ignores late responses; same-mint selection reverses identity and clears amount
+  ---
+  duration_ms: 731.925542
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: strict effect remount keeps balance and quote requests functional
+ok 22 - strict effect remount keeps balance and quote requests functional
+  ---
+  duration_ms: 505.541292
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: previous wallet balance rejection cannot clear current resolved balances
+ok 23 - previous wallet balance rejection cannot clear current resolved balances
+  ---
+  duration_ms: 27.689917
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: leaving during wallet approval cannot submit a late signature and releases the draft
+ok 24 - leaving during wallet approval cannot submit a late signature and releases the draft
+  ---
+  duration_ms: 26.949375
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: leaving after submission preserves recovery and return never resubmits
+ok 25 - leaving after submission preserves recovery and return never resubmits
+  ---
+  duration_ms: 38.228709
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: a context change during pending persistence cannot start submission
+ok 26 - a context change during pending persistence cannot start submission
+  ---
+  duration_ms: 26.705291
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: pending-store read failure is visible and a manual status check safely retries
+ok 27 - pending-store read failure is visible and a manual status check safely retries
+  ---
+  duration_ms: 20.818041
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: unmount during wallet approval cannot submit a late signature
+ok 28 - unmount during wallet approval cannot submit a late signature
+  ---
+  duration_ms: 18.543625
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: switching wallet during execution isolates recovery and a late response cannot block the new wallet
+ok 29 - switching wallet during execution isolates recovery and a late response cannot block the new wallet
+  ---
+  duration_ms: 17.494875
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: changing the routed token invalidates locked-side review before any old callback can sign
+ok 30 - changing the routed token invalidates locked-side review before any old callback can sign
+  ---
+  duration_ms: 19.800958
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: a cancelled preparation can stay unresolved without locking the next compose session
+ok 31 - a cancelled preparation can stay unresolved without locking the next compose session
+  ---
+  duration_ms: 19.910083
+  type: 'test'
+  ...
+# react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+# Subtest: manual pending-status storage failure is reported without rejecting or authorizing a trade
+ok 32 - manual pending-status storage failure is reported without rejecting or authorizing a trade
+  ---
+  duration_ms: 18.550625
+  type: 'test'
+  ...
+# Subtest: an unresolved swap belongs to its original wallet and cannot restore a review into another wallet
+ok 33 - an unresolved swap belongs to its original wallet and cannot restore a review into another wallet
+  ---
+  duration_ms: 23.14925
+  type: 'test'
+  ...
+# Subtest: a single tap is deferred once, then reverses after 300ms
+ok 34 - a single tap is deferred once, then reverses after 300ms
+  ---
+  duration_ms: 2.64325
+  type: 'test'
+  ...
+# Subtest: a second tap within the window cancels the single and opens the menu
+ok 35 - a second tap within the window cancels the single and opens the menu
+  ---
+  duration_ms: 0.17825
+  type: 'test'
+  ...
+# Subtest: three taps resolve as one double tap followed by a fresh single tap
+ok 36 - three taps resolve as one double tap followed by a fresh single tap
+  ---
+  duration_ms: 0.296708
+  type: 'test'
+  ...
+# Subtest: cancel resets the tap window and leaves no queued reversal
+ok 37 - cancel resets the tap window and leaves no queued reversal
+  ---
+  duration_ms: 0.236917
+  type: 'test'
+  ...
+# Subtest: disabled state is checked synchronously before a delayed callback
+ok 38 - disabled state is checked synchronously before a delayed callback
+  ---
+  duration_ms: 0.089708
+  type: 'test'
+  ...
+# Subtest: disabled state prevents a double callback and clears its pending single
+ok 39 - disabled state prevents a double callback and clears its pending single
+  ---
+  duration_ms: 0.063708
+  type: 'test'
+  ...
+# Subtest: dispose cancels a pending tap and ignores future taps
+ok 40 - dispose cancels a pending tap and ignores future taps
+  ---
+  duration_ms: 0.763542
+  type: 'test'
+  ...
+# Subtest: update supplies the latest callbacks without replacing the recognizer
+ok 41 - update supplies the latest callbacks without replacing the recognizer
+  ---
+  duration_ms: 0.367042
+  type: 'test'
+  ...
+# Subtest: menu ids expose the four discoverable Wallet actions
+ok 42 - menu ids expose the four discoverable Wallet actions
+  ---
+  duration_ms: 1.162958
+  type: 'test'
+  ...
+1..42
+# tests 42
+# suites 0
+# pass 42
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6719.098333

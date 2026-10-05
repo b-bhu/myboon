@@ -1,0 +1,11 @@
+Scoped typecheck
+Exit: 0
+(no diagnostics)
+
+ESLint
+Exit: 0
+(no diagnostics)
+
+git diff --check
+Exit: 0
+(no diagnostics)

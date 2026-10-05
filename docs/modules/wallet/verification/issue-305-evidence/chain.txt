@@ -1,0 +1,558 @@
+
+> hybrid-expo@1.0.0 test:chain /Users/bibhu/Desktop/projects/myboon/apps/hybrid-expo
+> tsx --test features/chain/chain.test.ts features/chain/activation.test.ts features/chain/deferredCreation.test.ts
+
+TAP version 13
+# Subtest: activation — a fresh install
+    # Subtest: starts with no chain active
+    ok 1 - starts with no chain active
+      ---
+      duration_ms: 18.519333
+      type: 'test'
+      ...
+    # Subtest: reports nothing active before hydration rather than guessing
+    ok 2 - reports nothing active before hydration rather than guessing
+      ---
+      duration_ms: 0.907042
+      type: 'test'
+      ...
+    1..2
+ok 1 - activation — a fresh install
+  ---
+  duration_ms: 20.303667
+  type: 'suite'
+  ...
+# Subtest: activation — stickiness (TC-SESSION-001, TC-SESSION-002)
+    # Subtest: activating a chain makes it active for every application on that chain
+    ok 1 - activating a chain makes it active for every application on that chain
+      ---
+      duration_ms: 1.441542
+      type: 'test'
+      ...
+    # Subtest: activation does not leak across chains
+    ok 2 - activation does not leak across chains
+      ---
+      duration_ms: 1.563917
+      type: 'test'
+      ...
+    # Subtest: is idempotent — activating twice changes nothing and writes no second record
+    ok 3 - is idempotent — activating twice changes nothing and writes no second record
+      ---
+      duration_ms: 1.046667
+      type: 'test'
+      ...
+    # Subtest: holds both chains active independently
+    ok 4 - holds both chains active independently
+      ---
+      duration_ms: 0.931042
+      type: 'test'
+      ...
+    1..4
+ok 2 - activation — stickiness (TC-SESSION-001, TC-SESSION-002)
+  ---
+  duration_ms: 5.225875
+  type: 'suite'
+  ...
+# Subtest: activation — survives process death (TC-SESSION-006)
+    # Subtest: an activated chain is still active after a restart
+    ok 1 - an activated chain is still active after a restart
+      ---
+      duration_ms: 2.464209
+      type: 'test'
+      ...
+    # Subtest: a chain that was dormant before the restart is still dormant after it
+    ok 2 - a chain that was dormant before the restart is still dormant after it
+      ---
+      duration_ms: 8.2655
+      type: 'test'
+      ...
+    # Subtest: both chains survive a restart when both were activated
+    ok 3 - both chains survive a restart when both were activated
+      ---
+      duration_ms: 6.1315
+      type: 'test'
+      ...
+    # Subtest: survives repeated restarts, not just the first
+    ok 4 - survives repeated restarts, not just the first
+      ---
+      duration_ms: 4.250958
+      type: 'test'
+      ...
+    1..4
+ok 3 - activation — survives process death (TC-SESSION-006)
+  ---
+  duration_ms: 22.377542
+  type: 'suite'
+  ...
+# Subtest: activation — the session boundary (TC-SESSION-007)
+    # Subtest: logout clears every chain, in memory and on disk
+    ok 1 - logout clears every chain, in memory and on disk
+      ---
+      duration_ms: 3.172458
+      type: 'test'
+      ...
+    # Subtest: disconnecting one chain leaves the other untouched (TC-WALLET-006)
+    ok 2 - disconnecting one chain leaves the other untouched (TC-WALLET-006)
+      ---
+      duration_ms: 1.453292
+      type: 'test'
+      ...
+    # Subtest: deactivating a chain that was never active is a no-op
+    ok 3 - deactivating a chain that was never active is a no-op
+      ---
+      duration_ms: 3.104292
+      type: 'test'
+      ...
+    # Subtest: a chain can be re-activated after being disconnected
+    ok 4 - a chain can be re-activated after being disconnected
+      ---
+      duration_ms: 1.095625
+      type: 'test'
+      ...
+    1..4
+ok 4 - activation — the session boundary (TC-SESSION-007)
+  ---
+  duration_ms: 9.159
+  type: 'suite'
+  ...
+# Subtest: activation — corrupt and hostile stored state
+    # Subtest: treats unparseable JSON as nothing active rather than throwing
+    ok 1 - treats unparseable JSON as nothing active rather than throwing
+      ---
+      duration_ms: 1.341916
+      type: 'test'
+      ...
+    # Subtest: ignores junk field types instead of coercing them to active
+    ok 2 - ignores junk field types instead of coercing them to active
+      ---
+      duration_ms: 0.700625
+      type: 'test'
+      ...
+    # Subtest: ignores unknown chains in stored state
+    ok 3 - ignores unknown chains in stored state
+      ---
+      duration_ms: 0.707333
+      type: 'test'
+      ...
+    # Subtest: falls back to nothing-active when the read fails, rather than wedging
+    ok 4 - falls back to nothing-active when the read fails, rather than wedging
+      ---
+      duration_ms: 0.673375
+      type: 'test'
+      ...
+    # Subtest: a failed write still reflects intent in memory for this session
+    ok 5 - a failed write still reflects intent in memory for this session
+      ---
+      duration_ms: 0.521917
+      type: 'test'
+      ...
+    1..5
+ok 5 - activation — corrupt and hostile stored state
+  ---
+  duration_ms: 4.116458
+  type: 'suite'
+  ...
+# Subtest: activation — subscribers
+    # Subtest: notifies subscribers on activation
+    ok 1 - notifies subscribers on activation
+      ---
+      duration_ms: 0.55325
+      type: 'test'
+      ...
+    # Subtest: stops notifying after unsubscribe
+    ok 2 - stops notifying after unsubscribe
+      ---
+      duration_ms: 0.953333
+      type: 'test'
+      ...
+    # Subtest: every consumer observes the same state — one record, not one per caller
+    ok 3 - every consumer observes the same state — one record, not one per caller
+      ---
+      duration_ms: 0.668916
+      type: 'test'
+      ...
+    1..3
+ok 6 - activation — subscribers
+  ---
+  duration_ms: 2.256417
+  type: 'suite'
+  ...
+# Subtest: resolveChainSigner — the four branches
+    # Subtest: branch 1: chain active and provisioned -> ready
+    ok 1 - branch 1: chain active and provisioned -> ready
+      ---
+      duration_ms: 0.695375
+      type: 'test'
+      ...
+    # Subtest: branch 2: provisioned but dormant -> needs_connection flagged for activation
+    ok 2 - branch 2: provisioned but dormant -> needs_connection flagged for activation
+      ---
+      duration_ms: 0.077417
+      type: 'test'
+      ...
+    # Subtest: branch 2: activating the dormant chain makes the same input ready
+    ok 3 - branch 2: activating the dormant chain makes the same input ready
+      ---
+      duration_ms: 0.176708
+      type: 'test'
+      ...
+    # Subtest: branch 3: neither active nor provisioned -> needs_connection
+    ok 4 - branch 3: neither active nor provisioned -> needs_connection
+      ---
+      duration_ms: 0.087792
+      type: 'test'
+      ...
+    # Subtest: branch 4: no backend can satisfy -> unsupported with a non-null reason
+    ok 5 - branch 4: no backend can satisfy -> unsupported with a non-null reason
+      ---
+      duration_ms: 0.139417
+      type: 'test'
+      ...
+    # Subtest: branch 4 does not throw, and wins over session state
+    ok 6 - branch 4 does not throw, and wins over session state
+      ---
+      duration_ms: 0.109917
+      type: 'test'
+      ...
+    # Subtest: reports preparing until activation is hydrated, never needs_connection
+    ok 7 - reports preparing until activation is hydrated, never needs_connection
+      ---
+      duration_ms: 0.257584
+      type: 'test'
+      ...
+    # Subtest: reports preparing while a create()/authorize() call is in flight
+    ok 8 - reports preparing while a create()/authorize() call is in flight
+      ---
+      duration_ms: 0.251333
+      type: 'test'
+      ...
+    # Subtest: active with nothing provisioned: preparing for a Privy user who can provision
+    ok 9 - active with nothing provisioned: preparing for a Privy user who can provision
+      ---
+      duration_ms: 0.243542
+      type: 'test'
+      ...
+    # Subtest: active with nothing provisioned: needs_connection when nothing can provision
+    ok 10 - active with nothing provisioned: needs_connection when nothing can provision
+      ---
+      duration_ms: 0.380166
+      type: 'test'
+      ...
+    # Subtest: prefers an external Solana wallet over Privy when both are provisioned
+    ok 11 - prefers an external Solana wallet over Privy when both are provisioned
+      ---
+      duration_ms: 0.180333
+      type: 'test'
+      ...
+    # Subtest: a second EVM application resolves with no resolver change
+    ok 12 - a second EVM application resolves with no resolver change
+      ---
+      duration_ms: 0.321542
+      type: 'test'
+      ...
+    1..12
+ok 7 - resolveChainSigner — the four branches
+  ---
+  duration_ms: 3.779833
+  type: 'suite'
+  ...
+# Subtest: backend eligibility
+    # Subtest: MWA cannot reach EVM — Privy is the only EVM backend
+    ok 1 - MWA cannot reach EVM — Privy is the only EVM backend
+      ---
+      duration_ms: 0.685167
+      type: 'test'
+      ...
+    # Subtest: both backends can satisfy a plain Solana requirement
+    ok 2 - both backends can satisfy a plain Solana requirement
+      ---
+      duration_ms: 0.062708
+      type: 'test'
+      ...
+    # Subtest: no Solana backend can satisfy a typed-data requirement
+    ok 3 - no Solana backend can satisfy a typed-data requirement
+      ---
+      duration_ms: 0.046125
+      type: 'test'
+      ...
+    # Subtest: unsupportedReason returns a non-empty human-readable string
+    ok 4 - unsupportedReason returns a non-empty human-readable string
+      ---
+      duration_ms: 0.049834
+      type: 'test'
+      ...
+    1..4
+ok 8 - backend eligibility
+  ---
+  duration_ms: 0.936708
+  type: 'suite'
+  ...
+# Subtest: SignerDescriptor flags per backend
+    # Subtest: privy_embedded on evm: full capability, survives reinstall and device loss
+    ok 1 - privy_embedded on evm: full capability, survives reinstall and device loss
+      ---
+      duration_ms: 0.219583
+      type: 'test'
+      ...
+    # Subtest: privy_embedded is survivesReinstall and survivesDeviceLoss on every chain it supports
+    ok 2 - privy_embedded is survivesReinstall and survivesDeviceLoss on every chain it supports
+      ---
+      duration_ms: 0.146042
+      type: 'test'
+      ...
+    # Subtest: solana descriptors cannot sign typed data — EIP-712 is an EVM concept
+    ok 3 - solana descriptors cannot sign typed data — EIP-712 is an EVM concept
+      ---
+      duration_ms: 0.076625
+      type: 'test'
+      ...
+    # Subtest: omits chainId entirely when none is given, rather than setting undefined
+    ok 4 - omits chainId entirely when none is given, rather than setting undefined
+      ---
+      duration_ms: 0.046458
+      type: 'test'
+      ...
+    # Subtest: throws when a backend does not support the chain at all
+    ok 5 - throws when a backend does not support the chain at all
+      ---
+      duration_ms: 0.252583
+      type: 'test'
+      ...
+    1..5
+ok 9 - SignerDescriptor flags per backend
+  ---
+  duration_ms: 0.827459
+  type: 'suite'
+  ...
+# Subtest: signer construction
+    # Subtest: EVM signMessage issues personal_sign with a hex message and the address
+    ok 1 - EVM signMessage issues personal_sign with a hex message and the address
+      ---
+      duration_ms: 0.263209
+      type: 'test'
+      ...
+    # Subtest: EVM signTypedData issues eth_signTypedData_v4 with the inferred primary type
+    ok 2 - EVM signTypedData issues eth_signTypedData_v4 with the inferred primary type
+      ---
+      duration_ms: 0.212875
+      type: 'test'
+      ...
+    # Subtest: Solana signTypedData throws rather than pretending EIP-712 works
+    ok 3 - Solana signTypedData throws rather than pretending EIP-712 works
+      ---
+      duration_ms: 0.200417
+      type: 'test'
+      ...
+    # Subtest: Solana signTransaction throws when the backend supplied no implementation
+    ok 4 - Solana signTransaction throws when the backend supplied no implementation
+      ---
+      duration_ms: 0.084584
+      type: 'test'
+      ...
+    # Subtest: getAddress resolves to the descriptor address
+    ok 5 - getAddress resolves to the descriptor address
+      ---
+      duration_ms: 0.164834
+      type: 'test'
+      ...
+    1..5
+ok 10 - signer construction
+  ---
+  duration_ms: 0.999917
+  type: 'suite'
+  ...
+# Subtest: POLYMARKET_REQUIREMENT
+    # Subtest: declares Polygon EIP-712 signing without raw transactions
+    ok 1 - declares Polygon EIP-712 signing without raw transactions
+      ---
+      duration_ms: 0.054583
+      type: 'test'
+      ...
+    1..1
+ok 11 - POLYMARKET_REQUIREMENT
+  ---
+  duration_ms: 0.164
+  type: 'suite'
+  ...
+# Subtest: TC-DORMANT: a dormant chain has no wallet in existence
+    # Subtest: a logged-in Privy user with no activation has provisioned nothing
+    ok 1 - a logged-in Privy user with no activation has provisioned nothing
+      ---
+      duration_ms: 2.549208
+      type: 'test'
+      ...
+    # Subtest: merely resolving a requirement provisions nothing
+    ok 2 - merely resolving a requirement provisions nothing
+      ---
+      duration_ms: 0.618083
+      type: 'test'
+      ...
+    # Subtest: activation is what provisions the chain, and it creates exactly one wallet
+    ok 3 - activation is what provisions the chain, and it creates exactly one wallet
+      ---
+      duration_ms: 1.403208
+      type: 'test'
+      ...
+    # Subtest: TC-RESOLVE-011: concurrent consumers produce exactly one create() call
+    ok 4 - TC-RESOLVE-011: concurrent consumers produce exactly one create() call
+      ---
+      duration_ms: 0.121959
+      type: 'test'
+      ...
+    # Subtest: TC-DORMANT-006: a failed create() leaves the chain unprovisioned and retryable
+    ok 5 - TC-DORMANT-006: a failed create() leaves the chain unprovisioned and retryable
+      ---
+      duration_ms: 0.628042
+      type: 'test'
+      ...
+    # Subtest: TC-DORMANT-006: never ends in "active with no wallet behind it"
+    ok 6 - TC-DORMANT-006: never ends in "active with no wallet behind it"
+      ---
+      duration_ms: 0.276667
+      type: 'test'
+      ...
+    1..6
+ok 12 - TC-DORMANT: a dormant chain has no wallet in existence
+  ---
+  duration_ms: 7.683709
+  type: 'suite'
+  ...
+# Subtest: TC-RESOLVE-005: the full resolution matrix
+    # Subtest: every cell settles at exactly one of the four statuses
+    ok 1 - every cell settles at exactly one of the four statuses
+      ---
+      duration_ms: 0.833583
+      type: 'test'
+      ...
+    # Subtest: resolution is deterministic — the same input always gives the same status
+    ok 2 - resolution is deterministic — the same input always gives the same status
+      ---
+      duration_ms: 1.068666
+      type: 'test'
+      ...
+    # Subtest: unsupported wins over needs_connection regardless of session state
+    ok 3 - unsupported wins over needs_connection regardless of session state
+      ---
+      duration_ms: 0.408
+      type: 'test'
+      ...
+    # Subtest: never throws for any registered chain in the matrix
+    ok 4 - never throws for any registered chain in the matrix
+      ---
+      duration_ms: 0.392375
+      type: 'test'
+      ...
+    # Subtest: an unregistered chain resolves unsupported rather than throwing
+    ok 5 - an unregistered chain resolves unsupported rather than throwing
+      ---
+      duration_ms: 0.366458
+      type: 'test'
+      ...
+    1..5
+ok 13 - TC-RESOLVE-005: the full resolution matrix
+  ---
+  duration_ms: 3.437167
+  type: 'suite'
+  ...
+# Subtest: TC-RESOLVE-010: a capability mismatch does not silently downgrade
+    # Subtest: a Solana requirement needing typed data is unsupported, not ready
+    ok 1 - a Solana requirement needing typed data is unsupported, not ready
+      ---
+      duration_ms: 0.265666
+      type: 'test'
+      ...
+    # Subtest: the reason names the application and the chain, readable as a sentence
+    ok 2 - the reason names the application and the chain, readable as a sentence
+      ---
+      duration_ms: 0.101708
+      type: 'test'
+      ...
+    1..2
+ok 14 - TC-RESOLVE-010: a capability mismatch does not silently downgrade
+  ---
+  duration_ms: 0.441375
+  type: 'suite'
+  ...
+# Subtest: TC-SESSION-003: per-chain backends coexist
+    # Subtest: an external Solana wallet and a Privy EVM wallet resolve independently
+    ok 1 - an external Solana wallet and a Privy EVM wallet resolve independently
+      ---
+      duration_ms: 0.162833
+      type: 'test'
+      ...
+    # Subtest: an external Solana connection keeps precedence when Privy is also present
+    ok 2 - an external Solana connection keeps precedence when Privy is also present
+      ---
+      duration_ms: 0.052166
+      type: 'test'
+      ...
+    # Subtest: EVM resolves to Privy even when an external Solana wallet is connected
+    ok 3 - EVM resolves to Privy even when an external Solana wallet is connected
+      ---
+      duration_ms: 0.081291
+      type: 'test'
+      ...
+    1..3
+ok 15 - TC-SESSION-003: per-chain backends coexist
+  ---
+  duration_ms: 0.360208
+  type: 'suite'
+  ...
+# Subtest: TC-DORMANT-007/008/009: the funded-dormant safety net
+    # Subtest: TC-DORMANT-009: normal deferred provisioning never fires the check
+    ok 1 - TC-DORMANT-009: normal deferred provisioning never fires the check
+      ---
+      duration_ms: 0.155542
+      type: 'test'
+      ...
+    # Subtest: TC-DORMANT-007: an injected funded dormant chain is surfaced
+    ok 2 - TC-DORMANT-007: an injected funded dormant chain is surfaced
+      ---
+      duration_ms: 0.06575
+      type: 'test'
+      ...
+    # Subtest: TC-DORMANT-008: a zero-balance dormant chain is not surfaced
+    ok 3 - TC-DORMANT-008: a zero-balance dormant chain is not surfaced
+      ---
+      duration_ms: 0.046208
+      type: 'test'
+      ...
+    # Subtest: TC-DORMANT-008 boundary: the smallest representable balance does surface
+    ok 4 - TC-DORMANT-008 boundary: the smallest representable balance does surface
+      ---
+      duration_ms: 0.105
+      type: 'test'
+      ...
+    # Subtest: an active chain is never reported as dormant-funded
+    ok 5 - an active chain is never reported as dormant-funded
+      ---
+      duration_ms: 0.119291
+      type: 'test'
+      ...
+    # Subtest: an unresolved balance is not reported as funds
+    ok 6 - an unresolved balance is not reported as funds
+      ---
+      duration_ms: 0.055208
+      type: 'test'
+      ...
+    # Subtest: a provisioned chain with no address is not reported
+    ok 7 - a provisioned chain with no address is not reported
+      ---
+      duration_ms: 0.0425
+      type: 'test'
+      ...
+    1..7
+ok 16 - TC-DORMANT-007/008/009: the funded-dormant safety net
+  ---
+  duration_ms: 0.724416
+  type: 'suite'
+  ...
+1..16
+# tests 72
+# suites 16
+# pass 72
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 703.373667

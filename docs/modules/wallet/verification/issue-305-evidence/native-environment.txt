@@ -1,0 +1,18 @@
+$ adb devices -l
+Exit: 0
+List of devices attached
+
+
+$ xcrun simctl list devices available
+Exit: 0
+== Devices ==
+
+$ lsof -nP -iTCP:8081 -sTCP:LISTEN
+Exit: 1
+(no output)
+
+$ curl -sS --max-time 3 http://localhost:3000/health
+Exit: 0
+{"status":"ok"}
+Android SDK emulator directory entries: .installer
+No emulator executable found.
