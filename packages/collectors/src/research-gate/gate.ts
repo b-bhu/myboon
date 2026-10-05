@@ -81,6 +81,8 @@ function buildGatePrompt(signal: GateSignal, context: GateEntityContext): string
       title: signal.title,
       what_changed: signal.whatChanged,
       observed_at: signal.observedAt,
+      source_material: signal.sourceMaterial,
+      source_material_complete: signal.sourceMaterialComplete,
     }, null, 2),
     '',
     'Entities this subject files under:',
@@ -120,7 +122,7 @@ function latestTimestamp(a: string | null, b: string | null): string | null {
  * throws and never fails the gate: its errors are recorded in
  * lookupFailures so an incomplete lookup suppresses already_known instead.
  */
-async function buildNoveltyLookup(
+export async function buildNoveltyLookup(
   reader: EntityMemoryReader,
   signal: GateSignal,
   entityIds: string[],
@@ -151,7 +153,7 @@ async function buildNoveltyLookup(
   if (!evidenceCall) return record
   record.evidenceRan = true
   try {
-    const evidence = await evidenceCall(signal.source, signal.sourceRefId)
+    const evidence = await evidenceCall.call(reader, signal.source, signal.sourceRefId)
     record.itemRefs = evidence.itemRefs
     record.timeCoverage = {
       oldestEventAt: earliestTimestamp(record.timeCoverage.oldestEventAt, evidence.timeCoverage?.oldestEventAt ?? null),
@@ -206,7 +208,12 @@ function finalizeVerdict(
   memoriesConsulted: number,
   entityContext: GateEntityContext | null,
   noveltyLookup: GateNoveltyLookup | undefined,
+  sourceMaterialComplete = true,
 ): GateDecision {
+  if (verdict === 'already_known' && !sourceMaterialComplete) {
+    verdict = 'new_information'
+    reason = 'The novelty comparison did not cover the complete source material; unseen information is retained for Research.'
+  }
   if (noveltyLookup) {
     if (verdict === 'already_known') {
       const incompleteness = lookupIncompleteness(noveltyLookup)
@@ -258,6 +265,12 @@ export async function gateSignal(signal: GateSignal, options: ResearchGateOption
   try {
     entityIds = [...new Set(await options.reader.entityIdsForSourceRef(signal.source, signal.sourceRefId))]
     if (entityIds.length === 0) {
+      if (options.reader.noveltyEvidence) {
+        const evidence = await options.reader.noveltyEvidence(signal.source, signal.sourceRefId)
+        if (evidence.failures.length > 0 || evidence.truncated || evidence.unrelated) {
+          return decision('gate_unavailable', `Candidate lookup coverage is incomplete: ${evidence.failures.join('; ').slice(0, 300)}`, [], 0, null)
+        }
+      }
       return decision('no_prior_entity', 'No entity has filed a memory under this subject before.', [], 0, null)
     }
     const [entities, recentMemories] = await Promise.all([
@@ -305,7 +318,8 @@ export async function gateSignal(signal: GateSignal, options: ResearchGateOption
     const reason = typeof value?.reason === 'string' && value.reason.trim()
       ? value.reason.trim().slice(0, 500)
       : `Gate verdict ${verdict} with no stated reason.`
-    return finalizeVerdict(verdict as GateVerdict, reason, entityIds, context.recentMemories.length, context, noveltyLookup)
+    return finalizeVerdict(verdict as GateVerdict, reason, entityIds, context.recentMemories.length, context, noveltyLookup,
+      signal.sourceMaterialComplete !== false)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return decision(
@@ -338,13 +352,14 @@ async function classifyWithGateway(
       ...(options.timeoutMs ? { tighterDeadlineMs: options.timeoutMs } : {}),
     })
     const verdict = result.value.verdict
-    const output = finalizeVerdict(verdict, result.value.reason, entityIds, context.recentMemories.length, context, noveltyLookup)
+    const output = finalizeVerdict(verdict, result.value.reason, entityIds, context.recentMemories.length, context, noveltyLookup,
+      signal.sourceMaterialComplete !== false)
     await classification.recordPolicyOutcome({
       decisionId: result.decisionId,
       consumer: 'research-gate',
       policyVersion: 'research-gate.novelty-policy.v1',
       outcome: output.proceed ? 'proceed' : 'hold',
-      reasonCode: verdict,
+      reasonCode: output.verdict,
     })
     return output
   } catch (error) {

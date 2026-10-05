@@ -13,6 +13,10 @@ export interface ClassificationRequest {
   }
   /** May only make the registry deadline smaller. */
   tighterDeadlineMs?: number
+  /** Tightens the existing two-provider path; a one-call reservation forbids fallback/shadow spend. */
+  maxProviderCalls?: 1 | 2
+  /** V4 D2: an unknown primary dispatch outcome must not trigger replacement spending. */
+  holdOnUnknownOutcome?: boolean
 }
 
 export type JevQuestion =
@@ -124,6 +128,8 @@ export interface ClassificationDefinition<TState = unknown, TDecision = unknown>
   decisionVersion: string
   maximumLifecycleMode: ClassificationLifecycleMode
   defaultLifecycleMode: ClassificationLifecycleMode
+  /** Semantic placement/relationship decisions may never fall back to Hermes. */
+  requiresJev?: boolean
   shadowPercent: number
   canaryPercent: number
   jevTarget: InferenceProviderTarget

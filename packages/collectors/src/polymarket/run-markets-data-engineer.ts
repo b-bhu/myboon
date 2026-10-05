@@ -12,6 +12,8 @@ import { CanonicalSourceSignalIntake } from '../signal-platform/source-intake'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { createActiveSourceTriageIntake } from '../signal-platform/active-triage'
 import { SqliteLocalCapacitySnapshot } from '../signal-platform/local-capacity'
+import { withSourceIntakeOwnership } from '../signal-platform/source-intake-ownership'
+import { sourceOwnershipAllows, sourceOwnershipEnabled, withSourceOwnershipOperation } from '../signal-platform/source-ownership'
 import {
   FileSqliteWriteHealthJournal,
   resolveSqliteWriteHealthJournalPath,
@@ -48,7 +50,7 @@ async function runOnce(): Promise<void> {
     ? new SqliteSignalPlatformStore(pipelinePath, 'polymarket', { writeHealthJournal })
     : null
   try {
-    const signalIntake = canonicalStore
+    const configuredIntake = canonicalStore
       ? intakeMode === 'active'
         ? createActiveSourceTriageIntake({
           store: canonicalStore,
@@ -56,9 +58,14 @@ async function runOnce(): Promise<void> {
           providerHealth: runtime.triageProviderHealth,
           classifierEnabled: runtime.triageClassifierEnabled,
           allowedDepths: [...runtime.triageAllowedDepths],
+          mayAdmit:() => sourceOwnershipAllows({databasePath:pipelinePath,source:'polymarket',domain:'intake',owner:'shared'}),
         })
         : new CanonicalSourceSignalIntake({ mode: 'observe', store: canonicalStore })
       : undefined
+    const signalIntake = configuredIntake && canonicalStore ? withSourceIntakeOwnership({
+      intake:configuredIntake,observationIntake:new CanonicalSourceSignalIntake({mode:'observe',store:canonicalStore}),
+      source:'polymarket',databasePath:pipelinePath,
+    }) : undefined
     const result = await withPipelineRun(
       new PipelineStoreLedgerStore(store),
       {
@@ -66,12 +73,14 @@ async function runOnce(): Promise<void> {
         sourceArea: 'markets',
         stage: 'polymarket.data_engineer',
       },
-      () => runPolymarketMarketsDataEngineer(
+      () => withSourceOwnershipOperation({databasePath:pipelinePath,source:'polymarket',domain:'collector',owner:'legacy',observationsOnly:true},() => runPolymarketMarketsDataEngineer(
         store,
         supabase,
         {},
         signalIntake,
-      )
+        () => sourceOwnershipAllows({databasePath:pipelinePath,source:'polymarket',domain:'collector',owner:'legacy'}),
+        () => sourceOwnershipEnabled(),
+      ))
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {

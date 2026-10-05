@@ -77,7 +77,31 @@ and passed to structured Hermes. Invalid, private, short, timed-out, or
 incompletely vetted destinations fail closed in Phase 1; they do not trigger a
 source-specific browser or `web` fallback.
 
-All programmatic Hermes calls go through `HermesService`. Browser chat and
+For the current V4 article workflow through Entity Manager, use the
+[checkpoint handoff](modules/entity-manager/operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md).
+It records active News-only sources, private managed storage, provider routing
+and protected API operation; downstream integration is excluded.
+
+All programmatic Hermes calls go through `HermesService`. Inference calls always
+pass a profile explicitly: `INFERENCE_GATEWAY_HERMES_PROFILE`, or
+`myboon-codex-production` when that variable is absent. Per-call overrides support
+isolated validation. News and legacy research clients prefer the shared profile
+over their stage-specific environment overrides. Every profile and pipeline
+defaults to `ollama-cloud/glm-5.3-flash`. Each profile's native `fallback_model`
+is `openai-codex/gpt-5.6-luna`, used only when the primary cannot serve the call;
+there is no additional provider chain. The production profile's name does not
+select its model. Changing only the interactive `default` profile does not
+redirect explicitly routed pipeline calls. Both production memory stores are
+disabled; article and entity context comes from Myboon's request data.
+
+Native one-shot usage receipts supply the provider/model actually used and
+measured token counts to both inference adapters. Structured gateway telemetry
+reports native fallback, and an admitted repair stays with the provider that
+answered. Temporary receipt directories are private and removed after each
+call. Configured primary and actual provider can differ while Ollama billing
+or availability prevents primary inference.
+
+Browser chat and
 structured one-shot work have independent cross-process budgets, controlled by
 `HERMES_BROWSER_MAX_CONCURRENCY` and `HERMES_STRUCTURED_MAX_CONCURRENCY`, so a
 long browser queue cannot starve entity/editor calls. Chat calls are tagged

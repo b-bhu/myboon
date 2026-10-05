@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isArticleResearchPacket } from '../signal-platform/contracts'
 import { InferenceGatewayError } from '../inference-gateway'
 import type {
   FailureCategory,
@@ -9,7 +10,7 @@ import type {
 } from '../signal-platform/contracts'
 import { adaptRetrievedEvidenceArtifact } from '../signal-platform/retrieved-evidence-adapter'
 import type { GlobalSchedulerQuery } from '../signal-platform/shared-scheduler'
-import { validateResearchPacket, validateRetrievedEvidence } from '../signal-platform/validation'
+import { validateLegacyResearchPacket, validateRetrievedEvidence } from '../signal-platform/validation'
 import type { RetrievedEvidenceArtifact, RetrievalBatch } from './deterministic-retrieval'
 import { DeterministicRetriever } from './deterministic-retrieval'
 import type { StandardSearchPlan } from './search-connector'
@@ -26,7 +27,7 @@ import { StructuredResearchSynthesizer } from './structured-synthesizer'
 export const SHADOW_RESEARCH_RESULT_SCHEMA_VERSION = 'myboon.research_shadow_result.v1' as const
 export const SHADOW_RESEARCH_EVALUATOR_VERSION = 'myboon.research_shadow_evaluator.v1' as const
 
-export type ShadowResearchSkipReason = 'deep_not_supported' | 'circuit_open' | 'not_sampled'
+export type ShadowResearchSkipReason = 'deep_not_supported' | 'article_preparation_required' | 'circuit_open' | 'not_sampled'
 
 export interface ShadowResearchResult {
   schemaVersion: typeof SHADOW_RESEARCH_RESULT_SCHEMA_VERSION
@@ -166,6 +167,13 @@ export class ResearchShadowEvaluator {
         status: 'failed', skipReason: null, failureCategory: 'permanent_source_error',
       }))
     }
+    // This historical evaluator has no Jev placement/history preparation.
+    // Article work belongs to the prepared captured-source workflow.
+    if (signal.contentKind === 'article') {
+      return this.persist(baseResult(workItem, evaluationId, startedAt, this.nowIso(), {
+        status: 'skipped', skipReason: 'article_preparation_required', failureCategory: null,
+      }))
+    }
     if (Date.parse(workItem.freshnessDeadline) <= this.clock.now().getTime()) {
       return this.persist(baseResult(workItem, evaluationId, startedAt, this.nowIso(), {
         status: 'failed', skipReason: null, failureCategory: 'budget_exceeded',
@@ -202,6 +210,7 @@ export class ResearchShadowEvaluator {
       const packet = await this.synthesizer.synthesize({
         signal, workItem, evidence: batch.artifacts,
       })
+      if (isArticleResearchPacket(packet)) throw new Error('Legacy shadow research requires a legacy packet')
       const evidence = batch.artifacts.map(adaptRetrievedEvidenceArtifact)
       return this.persist({
         ...baseResult(workItem, evaluationId, startedAt, this.nowIso(), {
@@ -270,7 +279,7 @@ export function validateShadowResearchResult(value: ShadowResearchResult): Shado
     throw new Error('Successful shadow research requires evidence and a packet')
   }
   if (value.packet !== null) {
-    const packet = validateResearchPacket(value.packet)
+    const packet = validateLegacyResearchPacket(value.packet)
     if (packet.workId !== value.workId || packet.signalId !== value.signalId
       || packet.budgetUsed.providerCalls !== value.providerCalls
       || packet.budgetUsed.repairCalls !== value.repairCalls

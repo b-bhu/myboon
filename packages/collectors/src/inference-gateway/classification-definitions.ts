@@ -19,9 +19,19 @@ export const RESEARCH_NOVELTY_WORKLOAD = 'research.novelty' as const
 export const RESEARCH_NOVELTY_VERSION = 'research.novelty.v1' as const
 export const RESEARCH_FOLLOWUP_VALUE_WORKLOAD = 'research.followup_value' as const
 export const RESEARCH_FOLLOWUP_VALUE_VERSION = 'research.followup_value.v1' as const
+export const ARTICLE_ENTITY_PLACEMENT_WORKLOAD = 'research.article_entity_placement' as const
+export const ARTICLE_ENTITY_PLACEMENT_VERSION = 'research.article_entity_placement.v2' as const
+export const ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD = 'research.article_entity_proposal_validation' as const
+export const ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION = 'research.article_entity_proposal_validation.v1' as const
+export const ARTICLE_STORY_RELATIONSHIP_WORKLOAD = 'research.article_story_relationship' as const
+export const ARTICLE_STORY_RELATIONSHIP_VERSION = 'research.article_story_relationship.v1' as const
+export const ARTICLE_RELATED_MEMBERSHIP_WORKLOAD = 'research.article_related_membership' as const
+export const ARTICLE_RELATED_MEMBERSHIP_VERSION = 'research.article_related_membership.v1' as const
+export const ARTICLE_NOVELTY_WORKLOAD = 'research.article_novelty' as const
+export const ARTICLE_NOVELTY_VERSION = 'research.article_novelty.v1' as const
 
 const JEV_TARGET = Object.freeze({ provider: 'typesafe', model: 'jev-1.13.0' })
-const DEFAULT_HERMES_TARGET = Object.freeze({ provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' })
+const DEFAULT_HERMES_TARGET = Object.freeze({ provider: 'ollama-cloud', model: 'glm-5.3-flash' })
 const DEFAULT_CAPACITY = Object.freeze({
   liveConcurrency: 4,
   shadowConcurrency: 1,
@@ -89,16 +99,147 @@ export interface ResearchFollowupValueDecision {
   reason: string
 }
 
+export interface ArticleEntityPlacementState { article: { title: string, text: string }, candidates: Array<{ id: string, name: string, aliases: string[], summary: string | null, scope: Record<string, unknown> }> }
+export interface ArticleEntityPlacementDecision { entityId: string | null, disposition: 'selected' | 'no_match' | 'uncertain' }
+export interface ArticleEntityProposalValidationState { article: { title: string, text: string }, proposal: { name: string, type: string, aliases: string[], summary: string, scope: Record<string, unknown> } }
+export interface ArticleEntityProposalValidationDecision { disposition: 'accept' | 'reject' | 'uncertain' }
+export interface ArticleStoryRelationshipState { article: { title: string, sourceText: string, publishedAt: string | null, observedAt: string }, entity: { id: string, name: string }, recentItems: Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }> }
+export interface ArticleStoryRelationshipDecision { relationship: 'duplicate' | 'direct_continuation' | 'related_story_branch' | 'same_topic_only' | 'unrelated' | 'uncertain', priorItemId: string | null }
+export interface ArticleRelatedMembershipState { article: { title: string, text: string }, primary: { id: string, name: string }, candidates: Array<{ id: string, name: string, aliases: string[], summary: string | null, scope: Record<string, unknown> }> }
+export interface ArticleRelatedMembershipDecision { dispositions: Record<string, 'related' | 'not_related' | 'uncertain'> }
+export interface ArticleNoveltyState { article: { title: string, text: string, publishedAt: string | null, observedAt: string }, histories: Array<{ entityId: string, items: Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }> }>, selectedTargets: Array<{ entityId: string, role: 'primary' | 'related', id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }> }
+export interface ArticleNoveltyDecision { verdict: 'new_information' | 'already_known' | 'contradicts_prior' | 'uncertain' }
+
 const FOLLOWUP_VALUE_DECISION_DESCRIPTION = 'Assess whether one bounded follow-up could add information material to this research assignment beyond the supplied source and relevant saved knowledge. Unanswered details alone are not sufficient. Do not assert that any supplied claim is true. If the supplied context is insufficient to judge, return uncertain.'
 
 const ENTITY_DECISIONS = ['same_entity', 'different_entities', 'unsure', 'polluted_alias'] as const
 const NOVELTY_DECISIONS = ['already_known', 'new_information', 'contradicts_prior'] as const
 const FOLLOWUP_VALUE_DECISIONS = ['worthwhile', 'not_worthwhile', 'uncertain'] as const
+const ARTICLE_RELATIONSHIPS = ['duplicate', 'direct_continuation', 'related_story_branch', 'same_topic_only', 'unrelated', 'uncertain'] as const
+
+function articleCandidateState(value: unknown, path: string): { id: string, name: string, aliases: string[], summary: string | null, scope: Record<string, unknown> } {
+  const candidate = requiredRecord(value, path)
+  return {
+    id: boundedText(candidate.id, `${path}.id`, 200),
+    name: boundedText(candidate.name, `${path}.name`, 300),
+    aliases: Array.isArray(candidate.aliases)
+      ? candidate.aliases.slice(0, 25).map((item, index) => boundedText(item, `${path}.aliases[${index}]`, 200))
+      : (() => { throw new Error(`${path}.aliases must be an array`) })(),
+    summary: nullableText(candidate.summary, `${path}.summary`, 128_000),
+    scope: requiredRecord(candidate.scope, `${path}.scope`),
+  }
+}
 
 export function approvedClassificationDefinitions(
   hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
 ): readonly ClassificationDefinition[] {
-  return Object.freeze([entityCatalogIdentityDefinition(hermesTarget), researchNoveltyDefinition(hermesTarget), researchFollowupValueDefinition(hermesTarget)])
+  return Object.freeze([entityCatalogIdentityDefinition(hermesTarget), researchNoveltyDefinition(hermesTarget), researchFollowupValueDefinition(hermesTarget), articleEntityPlacementDefinition(hermesTarget), articleEntityProposalValidationDefinition(hermesTarget), articleRelatedMembershipDefinition(hermesTarget), articleStoryRelationshipDefinition(hermesTarget), articleNoveltyDefinition(hermesTarget)])
+}
+
+export function articleEntityProposalValidationDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleEntityProposalValidationState, ArticleEntityProposalValidationDecision> {
+  return {
+    workload: ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION, maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, shadowPercent: 0, canaryPercent: 100,
+    jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 500 }, capacity: DEFAULT_CAPACITY,
+    validateState: (value) => { if (!record(value) || !record(value.article) || !record(value.proposal)) return { valid: false, issues: ['article and proposal are required'] }; try { const proposal = value.proposal; return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', 16_000) }, proposal: { name: boundedText(proposal.name, 'proposal.name', 300), type: boundedText(proposal.type, 'proposal.type', 100), aliases: Array.isArray(proposal.aliases) ? proposal.aliases.slice(0, 25).map((item, index) => boundedText(item, `proposal.aliases[${index}]`, 200)) : [], summary: boundedText(proposal.summary, 'proposal.summary', 128_000), scope: requiredRecord(proposal.scope, 'proposal.scope') } } } } catch (error) { return invalid(error) } },
+    questions: () => ({ proposal: { type: 'choice', instructions: { question: 'Does this source-grounded proposed identity validly describe the article subject after no existing catalogue candidate matched?', rules: ['Accept only when name, type, aliases and scope are supported by the captured article.', 'Do not decide whether it duplicates an existing catalogue entity; Entity Manager performs equivalence checks.', 'Choose uncertain when the article does not support a safe identity proposal.'] }, criteria: { accept: 'A meaningful article-subject identity suitable for bounded Entity Manager equivalence checking.', reject: 'The proposed identity is unsupported, generic, or materially wrong.', uncertain: 'The captured article does not safely support or reject this proposal.' } } }),
+    decodeJev: (answers) => { const answer = answers.proposal; return isChoice(answer) && ['accept', 'reject', 'uncertain'].includes(answer.choice) ? { valid: true, value: { disposition: answer.choice as ArticleEntityProposalValidationDecision['disposition'] } } : { valid: false, issues: ['proposal validation is invalid'] } },
+    acceptJev: (answers) => isChoice(answers.proposal) ? { accepted: true, reason: 'Jev proposal validation distribution retained' } : { accepted: false, reason: 'proposal validation is not Choice' }, renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article proposal validation is Jev-only'] }),
+  }
+}
+
+export function articleRelatedMembershipDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleRelatedMembershipState, ArticleRelatedMembershipDecision> {
+  return {
+    workload: ARTICLE_RELATED_MEMBERSHIP_WORKLOAD, decisionVersion: ARTICLE_RELATED_MEMBERSHIP_VERSION, maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, shadowPercent: 0, canaryPercent: 100,
+    jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 8_000 }, capacity: DEFAULT_CAPACITY,
+    validateState: (value) => { if (!record(value) || !record(value.article) || !record(value.primary) || !Array.isArray(value.candidates) || value.candidates.length > 31) return { valid: false, issues: ['article, primary and up to 31 candidates are required'] }; try { return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', 16_000) }, primary: { id: boundedText(value.primary.id, 'primary.id', 200), name: boundedText(value.primary.name, 'primary.name', 300) }, candidates: value.candidates.map((candidate, index) => articleCandidateState(candidate, `candidates[${index}]`)) } } } catch (error) { return invalid(error) } },
+    questions: (state) => Object.fromEntries(state.candidates.map((candidate) => [`related_${candidate.id}`, { type: 'choice' as const, instructions: { question: `Should ${candidate.name} receive an independent related membership for this article?`, rules: ['Decide each candidate independently of the primary placement.', 'A co-mention, publisher, desk, venue, or generic context is not enough.', 'Bitcoin holding news can file Bitcoin primary and BlackRock related when the article materially concerns both.'] }, criteria: { related: 'The article materially concerns this candidate as an independent participant or subject.', not_related: 'The candidate is only incidental, contextual, a publisher, or absent.', uncertain: 'The captured article does not resolve an independent membership safely.' } }])),
+    decodeJev: (answers, state) => { const dispositions: ArticleRelatedMembershipDecision['dispositions'] = {}; for (const candidate of state.candidates) { const answer = answers[`related_${candidate.id}`]; if (!isChoice(answer) || !['related', 'not_related', 'uncertain'].includes(answer.choice)) return { valid: false, issues: [`related membership for ${candidate.id} is invalid`] }; dispositions[candidate.id] = answer.choice as ArticleRelatedMembershipDecision['dispositions'][string] } return { valid: true, value: { dispositions } } },
+    acceptJev: (answers, _decision, state) => state.candidates.every((candidate) => isChoice(answers[`related_${candidate.id}`])) ? { accepted: true, reason: 'Jev independent related-membership distributions retained' } : { accepted: false, reason: 'one or more membership answers are not Choice' }, renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article related membership is Jev-only'] }),
+  }
+}
+
+export function articleNoveltyDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleNoveltyState, ArticleNoveltyDecision> {
+  return {
+    workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_VERSION, maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, shadowPercent: 0, canaryPercent: 100,
+    // At most 32 selected entities × five 500-character history excerpts plus
+    // 32 exact duplicate targets and the admitted full capture fit this bound.
+    jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 500 }, capacity: DEFAULT_CAPACITY,
+    validateState: (value) => {
+      if (!record(value) || !record(value.article) || !Array.isArray(value.histories) || value.histories.length > 32
+        || !Array.isArray(value.selectedTargets) || value.selectedTargets.length > 32) {
+        return { valid: false, issues: ['article novelty requires up to 32 selected-entity histories and up to 32 exact duplicate targets'] }
+      }
+      try {
+        return { valid: true, value: {
+          article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', 16_000), publishedAt: nullableText(value.article.publishedAt, 'article.publishedAt', 64), observedAt: boundedText(value.article.observedAt, 'article.observedAt', 64) },
+          histories: value.histories.map((raw, index) => articleNoveltyHistory(raw, `histories[${index}]`)),
+          selectedTargets: value.selectedTargets.map((raw, index) => articleNoveltyTarget(raw, `selectedTargets[${index}]`)),
+        } }
+      } catch (error) { return invalid(error) }
+    },
+    questions: () => ({ novelty: { type: 'choice', instructions: { question: 'Does the captured article add a development beyond the supplied entity histories and any exact duplicate targets?', rules: ['Novelty is separate from narrative relationship.', 'The five latest items are context, not proof that older history is absent.', 'An exact duplicate target for the primary entity normally supports already_known; choose uncertain if it conflicts with the captured article.', 'An exact duplicate for a related entity does not by itself make a new primary development already known.', 'Choose uncertain where bounded history cannot safely decide.'] }, criteria: { new_information: 'The article reports a materially new development.', already_known: 'The same development is already recorded by the supplied exact target or history.', contradicts_prior: 'The article conflicts with recorded history.', uncertain: 'The bounded history does not support a safe novelty decision.' } } }),
+    decodeJev: (answers) => { const answer = answers.novelty; return isChoice(answer) && ['new_information', 'already_known', 'contradicts_prior', 'uncertain'].includes(answer.choice) ? { valid: true, value: { verdict: answer.choice as ArticleNoveltyDecision['verdict'] } } : { valid: false, issues: ['novelty is invalid'] } },
+    acceptJev: (answers) => isChoice(answers.novelty) ? { accepted: true, reason: 'Jev novelty distribution retained' } : { accepted: false, reason: 'novelty is not Choice' }, renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article novelty is Jev-only'] }),
+  }
+}
+
+function articleNoveltyHistory(value: unknown, path: string): ArticleNoveltyState['histories'][number] {
+  const history = requiredRecord(value, path)
+  if (!Array.isArray(history.items) || history.items.length > 5) throw new Error(`${path}.items must contain at most five entries`)
+  return { entityId: boundedText(history.entityId, `${path}.entityId`, 200), items: history.items.map((item, index) => articleNoveltyItem(item, `${path}.items[${index}]`)) }
+}
+
+function articleNoveltyTarget(value: unknown, path: string): ArticleNoveltyState['selectedTargets'][number] {
+  const target = requiredRecord(value, path)
+  const role = boundedText(target.role, `${path}.role`, 20)
+  if (role !== 'primary' && role !== 'related') throw new Error(`${path}.role must be primary or related`)
+  return { entityId: boundedText(target.entityId, `${path}.entityId`, 200), role, ...articleNoveltyItem(target, path) }
+}
+
+function articleNoveltyItem(value: unknown, path: string): { id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string } {
+  const item = requiredRecord(value, path)
+  const source = boundedText(item.source, `${path}.source`, 20)
+  if (source !== 'legacy' && source !== 'managed') throw new Error(`${path}.source is invalid`)
+  return { id: boundedText(item.id, `${path}.id`, 200), source, title: boundedText(item.title, `${path}.title`, 500), summary: boundedText(item.summary, `${path}.summary`, 500), eventAt: boundedText(item.eventAt, `${path}.eventAt`, 64) }
+}
+
+export function articleEntityPlacementDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleEntityPlacementState, ArticleEntityPlacementDecision> {
+  return {
+    workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PLACEMENT_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, shadowPercent: 0, canaryPercent: 100,
+    jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 4_000 }, capacity: DEFAULT_CAPACITY,
+    validateState: (value) => {
+      if (!record(value) || !record(value.article) || !Array.isArray(value.candidates) || value.candidates.length > 32) return { valid: false, issues: ['bounded article and candidate catalogue are required'] }
+      try { return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', 16_000) }, candidates: value.candidates.map((candidate, index) => { const item = requiredRecord(candidate, `candidates[${index}]`); return { id: boundedText(item.id, `candidates[${index}].id`, 200), name: boundedText(item.name, `candidates[${index}].name`, 300), aliases: Array.isArray(item.aliases) ? item.aliases.slice(0, 25).map((alias, aliasIndex) => boundedText(alias, `candidates[${index}].aliases[${aliasIndex}]`, 200)) : (() => { throw new Error('aliases must be an array') })(), summary: nullableText(item.summary, `candidates[${index}].summary`, 1_000), scope: requiredRecord(item.scope, `candidates[${index}].scope`) } }) } } } catch (error) { return invalid(error) }
+    },
+    questions: (state) => ({ placement: { type: 'choice', instructions: { question: 'Which supplied candidate is the primary entity for this article?', rules: ['Choose a candidate only when the article is substantively about it.', 'Choose no_match when no supplied candidate fits.', 'Choose uncertain for unresolved ambiguity.', 'Policy: proposal news concerning U.S.–Iran belongs primarily to U.S.–Iran Conflict. Bitcoin holding news belongs primarily to Bitcoin; BlackRock may be independently related.'] }, criteria: Object.fromEntries([...state.candidates.map((candidate, index) => [candidate.id, `${candidate.name}: the entity described by candidates[${index}] in the supplied state, including its aliases, summary and scope.`]), ['no_match', 'No supplied candidate is a meaningful primary placement.'], ['uncertain', 'The bounded candidates do not resolve placement safely.']]) } }),
+    decodeJev: (answers) => { const answer = answers.placement; if (!isChoice(answer)) return { valid: false, issues: ['placement must be Choice'] }; if (answer.choice === 'no_match') return { valid: true, value: { entityId: null, disposition: 'no_match' } }; if (answer.choice === 'uncertain') return { valid: true, value: { entityId: null, disposition: 'uncertain' } }; return { valid: true, value: { entityId: answer.choice, disposition: 'selected' } } },
+    acceptJev: (answers, decision, state) => { const answer = answers.placement; return isChoice(answer) && (decision.entityId === null || state.candidates.some((candidate) => candidate.id === decision.entityId)) ? { accepted: true, reason: 'Jev placement retained with raw probabilities' } : { accepted: false, reason: 'placement candidate is outside supplied catalogue' } },
+    renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article placement is Jev-only'] }),
+  }
+}
+
+export function articleStoryRelationshipDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleStoryRelationshipState, ArticleStoryRelationshipDecision> {
+  return {
+    workload: ARTICLE_STORY_RELATIONSHIP_WORKLOAD, decisionVersion: ARTICLE_STORY_RELATIONSHIP_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, shadowPercent: 0, canaryPercent: 100,
+    jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 4_000 }, capacity: DEFAULT_CAPACITY,
+    validateState: (value) => {
+      if (!record(value) || !record(value.article) || !record(value.entity) || !Array.isArray(value.recentItems) || value.recentItems.length > 5) return { valid: false, issues: ['article, entity and at most five recent items are required'] }
+      try { return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), sourceText: boundedText(value.article.sourceText, 'article.sourceText', 16_000), publishedAt: nullableText(value.article.publishedAt, 'article.publishedAt', 64), observedAt: boundedText(value.article.observedAt, 'article.observedAt', 64) }, entity: { id: boundedText(value.entity.id, 'entity.id', 200), name: boundedText(value.entity.name, 'entity.name', 300) }, recentItems: value.recentItems.map((raw, index) => { const item = requiredRecord(raw, `recentItems[${index}]`); const source = boundedText(item.source, `recentItems[${index}].source`, 20); if (source !== 'legacy' && source !== 'managed') throw new Error('item source is invalid'); return { id: boundedText(item.id, `recentItems[${index}].id`, 200), source, title: boundedText(item.title, `recentItems[${index}].title`, 500), summary: boundedText(item.summary, `recentItems[${index}].summary`, 128_000), eventAt: boundedText(item.eventAt, `recentItems[${index}].eventAt`, 64) } }) } } } catch (error) { return invalid(error) }
+    },
+    questions: (state) => ({ relationship: { type: 'choice', instructions: { question: 'What is this article\'s relationship to the supplied entity history?', rules: ['The five items are story context, not the only deduplication coverage.', 'Do not call a related branch a direct continuation or resolution.', 'Choose uncertain when no safe relation follows.'] }, criteria: {
+      duplicate: 'Reports the same already-recorded development without a material new fact.',
+      direct_continuation: 'A later step, update, outcome, or explicit continuation of one prior development.',
+      related_story_branch: 'A distinct development in the same evolving narrative, without being its direct next step or resolution.',
+      same_topic_only: 'Shares a broad topic or entity but no meaningful narrative connection is established.',
+      unrelated: 'Does not concern the prior developments.',
+      uncertain: 'The captured article and bounded history do not support a safe relationship.',
+    } }, prior_item: { type: 'choice', instructions: { question: 'Which supplied prior item is the relevant relationship target?', rule: 'Choose none for unrelated, uncertain, or when no supplied item is the valid target.' }, criteria: Object.fromEntries([['none', 'No prior target.'], ...state.recentItems.map((item) => [item.id, { source: item.source, title: item.title, summary: item.summary, eventAt: item.eventAt }])]) } }),
+    decodeJev: (answers) => { const relationship = answers.relationship; const prior = answers.prior_item; if (!isChoice(relationship) || !isChoice(prior) || !ARTICLE_RELATIONSHIPS.includes(relationship.choice as typeof ARTICLE_RELATIONSHIPS[number])) return { valid: false, issues: ['relationship answers are invalid'] }; return { valid: true, value: { relationship: relationship.choice as ArticleStoryRelationshipDecision['relationship'], priorItemId: prior.choice === 'none' ? null : prior.choice } } },
+    acceptJev: (answers, decision, state) => isChoice(answers.relationship) && isChoice(answers.prior_item) && (decision.priorItemId === null || state.recentItems.some((item) => item.id === decision.priorItemId)) ? { accepted: true, reason: 'Jev relationship retained with raw probabilities' } : { accepted: false, reason: 'prior item is outside supplied history' },
+    renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article relationship is Jev-only'] }),
+  }
 }
 
 export function entityCatalogIdentityDefinition(
@@ -353,6 +494,11 @@ function validateNoveltyState(value: unknown) {
         title: boundedText(signal.title, 'signal.title', 500),
         whatChanged: boundedText(signal.whatChanged, 'signal.whatChanged', 2_000),
         observedAt: boundedText(signal.observedAt, 'signal.observedAt', 64),
+        ...(signal.sourceMaterial === undefined ? {} : {
+          sourceMaterial: boundedText(signal.sourceMaterial, 'signal.sourceMaterial', 12_000),
+          sourceMaterialDigest: boundedText(signal.sourceMaterialDigest, 'signal.sourceMaterialDigest', 100),
+          sourceMaterialComplete: signal.sourceMaterialComplete === true,
+        }),
       },
       context: {
         entities: entities.map((item, index) => {
@@ -532,8 +678,18 @@ function boundedScore(value: unknown, field: string): number {
   return value
 }
 
+/** Defensive even when a test/durable adapter bypasses the normal raw parser. */
 function isChoice(value: JevAnswer | undefined): value is JevChoiceAnswer {
-  return value?.type === 'choice'
+  if (value?.type !== 'choice' || !value.choice.trim() || !Number.isFinite(value.confidence)
+    || value.confidence < 0 || value.confidence > 1) return false
+  const entries = Object.entries(value.probabilities)
+  if (entries.length === 0 || !Object.prototype.hasOwnProperty.call(value.probabilities, value.choice)) return false
+  let total = 0
+  for (const [key, probability] of entries) {
+    if (!key.trim() || !Number.isFinite(probability) || probability < 0 || probability > 1) return false
+    total += probability
+  }
+  return Math.abs(total - 1) <= 0.02
 }
 
 function record(value: unknown): value is Record<string, unknown> {

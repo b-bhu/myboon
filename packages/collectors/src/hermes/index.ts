@@ -1,4 +1,5 @@
 export { extractJson } from './json'
+export { DEFAULT_HERMES_PROFILE, resolveHermesProfile } from './profile'
 export {
   HermesConcurrencyLimiter,
   type HermesConcurrencyLease,

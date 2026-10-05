@@ -5,11 +5,12 @@ import type {
   FailureCategory,
   PriorityClass,
   ResearchPacketV1,
+  ResearchPacket,
   ResearchWorkItem,
   RetrievedEvidence,
   Signal,
 } from '../signal-platform/contracts'
-import { EXECUTION_EVENT_SCHEMA_VERSION } from '../signal-platform/contracts'
+import { EXECUTION_EVENT_SCHEMA_VERSION, isArticleResearchPacket } from '../signal-platform/contracts'
 import { stableContractId } from '../signal-platform/adapters/identity'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import type { CanonicalPlatformStore } from '../signal-platform/platform-store'
@@ -30,12 +31,13 @@ import {
 } from '../signal-platform/retrieval-manifest'
 import {
   assessResearchReadiness,
+  createResolvedWithoutNewItemReadiness,
   isNonClaimableReadiness,
   researchHandoffEntityClaim,
   researchHandoffTerminalStatus,
   type ResearchHandoffRetryPolicy,
   type ResearchReadinessOutcome,
-  type ResearchReadinessV1,
+  type ResearchReadiness,
 } from '../signal-platform/research-readiness'
 import {
   SharedResearchScheduler,
@@ -51,6 +53,23 @@ import {
   type RetrievedEvidenceArtifact,
 } from './deterministic-retrieval'
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
+import { gateSignal, type ResearchGateOptions } from '../research-gate/gate'
+import type { EntityMemoryReader, GateDecision, GateSignal } from '../research-gate/types'
+import { canonicalJson } from '../signal-platform/canonical-json'
+import { createHash } from 'node:crypto'
+import { sourceMaterialHash } from './evidence-reuse-policy'
+import { supportsResearchV4Store, type ResearchV4StorePort } from './v4-store'
+import { reuseCompatibleResearchResult, structuredAssignmentReuseContract, type ResearchReusePolicy } from './research-result-reuse'
+import { reusePlannedSourceEvidence } from './cross-source-evidence-reuse'
+import { runBoundedFollowup, ResearchFollowupHold, type BoundedFollowupPolicy } from './bounded-followup'
+import { durableResearchClassification } from './durable-classification'
+import { durablePrimarySynthesis, type PrimarySynthesisPolicy } from './durable-synthesis'
+import { durableArticleEntityProposal } from './durable-article-proposal'
+import type { ClassificationGateway } from '../inference-gateway'
+import { ArticleResearchHold, prepareArticlePlacement, articleLookupTerms } from './article-placement'
+import type { ArticleResearchContext } from '../research-gate/managed-context-reader'
+import type { D2AssignmentLimitsSnapshot } from './assignment-budget'
+import { capturedObservationDigest, resolveKnownObservation, assertKnownObservationResolution } from './known-observation'
 import type { BoundedStandardSearch, StandardSearchPlan } from './search-connector'
 import {
   WorkContractEvidenceReusePolicy,
@@ -178,7 +197,30 @@ export interface SharedResearchWorkerOptions {
   retrieval?: Partial<ResearchRetrievalLimits>
   evidenceReadLimit?: number
   evidenceReusePolicy?: EvidenceReusePolicyPort
+  /** V4 capabilities are explicitly composed; absent means the existing path. */
+  v4?: SharedResearchV4Options
+  mayExecuteWork?: (work: ResearchWorkItem) => boolean
   clock?: SharedWorkerClock
+}
+
+export interface SharedResearchV4Options {
+  policyVersion: string
+  synthesisPolicy: PrimarySynthesisPolicy
+  assignmentPolicy: D2AssignmentLimitsSnapshot
+  sources?: ReadonlySet<Signal['sourceType']>
+  contextReader?: (signal: Signal, work: ResearchWorkItem) => EntityMemoryReader
+  novelty?: Omit<ResearchGateOptions, 'reader'> & {
+    reader(signal: Signal, work: ResearchWorkItem): EntityMemoryReader
+  }
+  reusePolicy?: ResearchReusePolicy
+  followup?: {
+    classification: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
+    policy: BoundedFollowupPolicy
+  }
+  article?: {
+    classification: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
+    contextReader(signal: Signal, work: ResearchWorkItem): EntityMemoryReader
+  }
 }
 
 export interface ResearchRetrievalLimits {
@@ -200,6 +242,7 @@ export type SharedResearchRunOutcome =
   | { kind: 'retry_wait' | 'dead_letter' | 'expired', stage: ResearchWorkerStage, sourceType: ResearchWorkItem['sourceType'], workId: string, category: FailureCategory }
   | { kind: 'lease_lost' | 'handoff_pending', stage: ResearchWorkerStage, sourceType: ResearchWorkItem['sourceType'], workId: string }
   | { kind: 'readiness_held', sourceType: ResearchWorkItem['sourceType'], workId: string, outcome: ResearchReadinessOutcome, category: FailureCategory }
+  | { kind: 'ownership_held', stage: ResearchWorkerStage, sourceType: ResearchWorkItem['sourceType'], workId: string }
 
 export class SharedResearchWorkerConfigurationError extends Error {
   constructor(message: string) {
@@ -230,6 +273,8 @@ export class SharedResearchWorker {
   private readonly evidenceReadLimit: number
   private readonly evidenceReusePolicy: EvidenceReusePolicyPort
   private readonly clock: SharedWorkerClock
+  private readonly v4?: SharedResearchV4Options
+  private readonly mayExecuteWork: (work: ResearchWorkItem) => boolean
   private stopping = false
   private readonly active = new Set<Promise<SharedResearchRunOutcome>>()
 
@@ -284,6 +329,12 @@ export class SharedResearchWorker {
       maxArtifactBytes: this.retrievalLimits.maxBytesPerSource,
     })
     this.clock = options.clock ?? SYSTEM_CLOCK
+    this.v4 = options.v4
+    this.mayExecuteWork = options.mayExecuteWork ?? (() => true)
+    if (this.v4 && (!this.v4.policyVersion.trim()
+      || options.stores.some((store) => !supportsResearchV4Store(store)))) {
+      throw new SharedResearchWorkerConfigurationError('V4 Research requires a versioned policy and durable checkpoints/reservations on every source store')
+    }
   }
 
   runOnce(): Promise<SharedResearchRunOutcome> {
@@ -390,7 +441,16 @@ export class SharedResearchWorker {
     } catch (error) {
       return this.failWithoutExecution(store, lease, stage, 'permanent_source_error', errorMessage(error), timing)
     }
-    if (lease.work.researchDepth === 'standard' && !this.standardSearch) {
+    const capturedSourceWorkflow = this.usesCapturedSourceWorkflow(lease.work)
+    if (capturedSourceWorkflow) {
+      const sourceUrls = plan.urls.filter((item) => item.authority === 'source_url').slice(0, 1)
+      if (sourceUrls.length !== 1) {
+        return this.failWithoutExecution(store, lease, stage, 'permanent_source_error',
+          'Captured-source Research requires one immutable source URL; web search and unsupported source inputs are held.', timing)
+      }
+      plan = { ...plan, urls: sourceUrls, maxSources: 1 }
+    }
+    if (lease.work.researchDepth === 'standard' && !capturedSourceWorkflow && !this.standardSearch) {
       return this.failWithoutExecution(
         store, lease, stage, 'retrieval_blocked',
         'Standard research requires a registered bounded search connector', timing,
@@ -413,16 +473,35 @@ export class SharedResearchWorker {
     try {
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
       this.recordExecutionStarted(lease, stage, timing, lease.work.attemptCount + 1)
-      if (heldResume === null && lease.work.researchDepth === 'standard') {
+      if (heldResume === null && lease.work.researchDepth === 'standard' && !capturedSourceWorkflow) {
         const discovery = await this.standardSearch!.discover({
           signal: signal!, work: lease.work, queries: buildStandardSearchQueries(signal!),
         })
         plan = mergeStandardSearchPlan(plan, discovery)
       }
-      const batch = await this.retriever.retrieve(plan)
+      const reusable = this.v4?.reusePolicy && (!this.v4.sources || this.v4.sources.has(lease.work.sourceType))
+        && supportsResearchV4Store(store) && supportsArtifactReuse(store)
+        ? reusePlannedSourceEvidence({
+          owners: [...this.stores.values()].filter(supportsArtifactReuse), consumer: store,
+          signal: signal!, work: lease.work, urls: plan.urls.slice(0, plan.maxSources).map((item) => item.url),
+          policy: this.v4.reusePolicy, now: this.nowIso(),
+          maxBytesPerSource: plan.maxBytesPerSource, maxTotalBytes: plan.maxTotalBytes,
+        }) : []
+      const reusableUrls = new Set(reusable.map((artifact) => artifact.requestedUrl))
+      const reusedBytes = reusable.reduce((sum, artifact) => sum + artifact.byteLength, 0)
+      const remainingPlan = { ...plan, urls: plan.urls.filter((item) => !reusableUrls.has(item.url)),
+        maxSources: plan.maxSources - reusable.length, maxTotalBytes: plan.maxTotalBytes - reusedBytes }
+      const freshBatch = remainingPlan.urls.length > 0 && remainingPlan.maxSources > 0 && remainingPlan.maxTotalBytes > 0
+        ? await this.retriever.retrieve(remainingPlan)
+        : { workId: plan.workId, artifacts: [], failures: [], skippedUrlCount: 0, totalBytes: 0 }
+      const batch: RetrievalBatch = {
+        ...freshBatch, artifacts: [...freshBatch.artifacts, ...reusable.map(toDeterministicEvidence)],
+        totalBytes: freshBatch.totalBytes + reusedBytes,
+      }
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
       const evidence = batch.artifacts.map((artifact) => withEvidenceReuseContext(
-        adaptRetrievedEvidenceArtifact(artifact), { signal: signal!, workItem: lease.work },
+        reusable.find((candidate) => candidate.evidenceId === artifact.evidenceId)
+          ?? adaptRetrievedEvidenceArtifact(artifact), { signal: signal!, workItem: lease.work },
       ))
       const reusedEvidence = heldResume?.reusedEvidence ?? []
       const manifest = buildRetrievalManifest({
@@ -500,7 +579,7 @@ export class SharedResearchWorker {
       if (!artifact) return null
       if (!this.evidenceReusePolicy.evaluate({
         artifact, workItem: lease.work, signal, now: this.nowIso(),
-      }).reusable) return null
+      }).reusable || !this.resolvesProducerCapture(artifact)) return null
       evidence.push(artifact)
     }
     if (evidence.length === 0) return null
@@ -577,7 +656,8 @@ export class SharedResearchWorker {
     signal: Signal,
     evidence: readonly RetrievedEvidence[],
   ): Promise<SharedResearchRunOutcome> {
-    if (lease.work.researchDepth === 'deep') {
+    const capturedSourceWorkflow = this.usesCapturedSourceWorkflow(lease.work)
+    if (lease.work.researchDepth === 'deep' && !capturedSourceWorkflow) {
       if (this.deepResearch === undefined) {
         throw new ResearchStageFailure('provider_unavailable', true, 'Deep research side-queue port is not configured')
       }
@@ -585,11 +665,11 @@ export class SharedResearchWorker {
     }
     const transitioned = await store.transitionLeased({
       ...leaseFence(lease), expectedStatus: 'retrieval_leased',
-      nextStatus: lease.work.researchDepth === 'deep' ? 'deep_pending' : 'synthesis_pending',
+      nextStatus: lease.work.researchDepth === 'deep' && !capturedSourceWorkflow ? 'deep_pending' : 'synthesis_pending',
       now: this.nowIso(), attemptDelta: 0, failureCategory: null, failureDetail: null, nextAttemptAt: null,
     })
     if (!transitioned) return leaseLost('retrieval', lease.work)
-    return lease.work.researchDepth === 'deep'
+    return lease.work.researchDepth === 'deep' && !capturedSourceWorkflow
       ? { kind: 'deep_routed', sourceType: lease.work.sourceType, workId: lease.work.workId }
       : success('retrieval', lease.work)
   }
@@ -597,7 +677,7 @@ export class SharedResearchWorker {
   private async processSynthesis(store: SharedResearchWorkPort, lease: WorkLease): Promise<SharedResearchRunOutcome> {
     const stage = 'synthesis' as const
     const timing = stageTiming(lease, this.nowIso())
-    if (lease.work.researchDepth === 'deep') {
+    if (lease.work.researchDepth === 'deep' && !this.usesCapturedSourceWorkflow(lease.work)) {
       return this.failWithoutExecution(
         store, lease, stage, 'schema_version_mismatch',
         'Deep work cannot enter the shared structured-synthesis stage', timing,
@@ -631,14 +711,19 @@ export class SharedResearchWorker {
         this.recordPacketReplay(lease, existing, savedReadiness)
         return replayed
       }
-      const handoff = await this.commitResearchHandoff(store, lease, signal, existing)
-      this.recordPacketReplay(lease, existing, handoff.readiness)
-      return handoff.run
+      try {
+        const handoff = await this.commitResearchHandoff(store, lease, signal, existing)
+        this.recordPacketReplay(lease, existing, handoff.readiness)
+        return handoff.run
+      } catch (error) {
+        return this.failWithoutExecution(store, lease, stage,
+          error instanceof ArticleResearchHold ? articleHoldFailureCategory(error) : error instanceof ResearchFollowupHold ? 'budget_exceeded' : failureCategory(error, stage), errorMessage(error), timing)
+      }
     }
     const evidence = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit).filter((artifact) =>
       this.evidenceReusePolicy.evaluate({
         artifact, workItem: lease.work, signal, now: this.nowIso(),
-      }).reusable)
+      }).reusable && this.resolvesProducerCapture(artifact))
     if (evidence.length === 0) {
       return this.failWithoutExecution(
         store, lease, stage, 'permanent_source_error',
@@ -656,19 +741,16 @@ export class SharedResearchWorker {
       const citableEvidenceIds = new Set(evidence.map((artifact) => artifact.evidenceId))
       const backgroundContext = this.discoverBackgroundContext(store, lease, citableEvidenceIds)
       this.recordBackgroundReuse(lease, backgroundContext)
-      const packet = await this.synthesizer.synthesize({
-        signal,
-        workItem: lease.work,
-        evidence: evidence.map(toDeterministicEvidence),
-        ...(backgroundContext.length ? { backgroundContext } : {}),
-      })
+      const packet = await this.synthesizeWithV4({ store, lease, signal, evidence, backgroundContext,
+        stillOwnsLease: async () => await heartbeat.check() && this.mayExecuteWork(lease.work) })
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
       this.recordSynthesisSuccess(lease, packet, timing)
       const handoff = await this.commitResearchHandoff(store, lease, signal, packet)
       return handoff.run
     } catch (error) {
       return this.failAfterExecution(
-        store, lease, stage, failureCategory(error, stage), errorMessage(error), retryable(error), timing,
+        store, lease, stage, error instanceof ArticleResearchHold ? articleHoldFailureCategory(error) : error instanceof ResearchFollowupHold ? 'budget_exceeded' : failureCategory(error, stage),
+        errorMessage(error), error instanceof ResearchFollowupHold || error instanceof ArticleResearchHold ? false : retryable(error), timing,
         error instanceof InferenceGatewayError && error.telemetry
           ? telemetryExecutionProvenance(error.telemetry)
           : undefined,
@@ -676,6 +758,216 @@ export class SharedResearchWorker {
     } finally {
       heartbeat.stop()
     }
+  }
+
+  private async synthesizeWithV4(input: {
+    store: SharedResearchWorkPort, lease: WorkLease, signal: Signal,
+    evidence: RetrievedEvidence[], backgroundContext: RetrievedEvidenceArtifact[],
+    stillOwnsLease(): Promise<boolean>,
+  }): Promise<ResearchPacket> {
+    const { store, lease, signal, evidence } = input
+    const ordinary = async () => {
+      if (signal.contentKind === 'article' || this.v4?.article) {
+        throw new ArticleResearchHold('required_jev_disabled', 'Article synthesis requires the active durable Jev article workflow.')
+      }
+      return this.synthesizer.synthesize({
+        signal, workItem: lease.work, evidence: evidence.map(toDeterministicEvidence),
+        ...(input.backgroundContext.length ? { backgroundContext: input.backgroundContext } : {}),
+      })
+    }
+    const v4 = this.v4
+    if (!v4 || (v4.sources && !v4.sources.has(lease.work.sourceType)) || !supportsResearchV4Store(store)) return ordinary()
+    // Article packets have a different, Jev-prepared handoff contract. They
+    // do not use generic legacy novelty/result reuse, while Hermes remains
+    // protected by the same durable root-assignment reservation.
+    if (v4.article) return this.synthesizeArticleWithV4(input, v4)
+    const gateInput = researchGateSignal(signal, evidence)
+    let novelty = store.getResearchV4Record<GateDecision>('novelty', lease.work.workId, 'decision')
+    if (!novelty && !v4.novelty && v4.contextReader) {
+      const reader = v4.contextReader(signal, lease.work)
+      try {
+        const entityIds = await reader.entityIdsForSourceRef(gateInput.source, gateInput.sourceRefId)
+        const [entities, recentMemories, contextEvidence] = await Promise.all([
+          reader.entitiesByIds(entityIds), reader.recentMemories(entityIds, 12),
+          reader.noveltyEvidence?.(gateInput.source, gateInput.sourceRefId),
+        ])
+        const failures = contextEvidence?.failures ?? ['Reader did not supply evidence/coverage bookkeeping.']
+        novelty = {
+          verdict: failures.length ? 'gate_unavailable' : 'new_information', proceed: true,
+          reason: 'Bounded relevant knowledge consulted without a paid novelty decision or automatic suppression.',
+          entityIds, memoriesConsulted: recentMemories.length, entityContext: { entities, recentMemories },
+          noveltyContext: { resolvedCandidateRefs: entityIds, itemRefs: contextEvidence?.itemRefs ?? [],
+            timeCoverage: contextEvidence?.timeCoverage ?? { oldestEventAt: null, newestEventAt: null },
+            truncated: contextEvidence?.truncated === true || recentMemories.length >= 12,
+            unrelated: contextEvidence?.unrelated === true, evidenceRan: contextEvidence !== undefined,
+            lookupFailures: failures, digest: contextEvidence?.digest ?? sourceMaterialHash(signal) },
+        }
+      } catch (error) {
+        novelty = { verdict: 'gate_unavailable', proceed: true, reason: `Relevant knowledge unavailable: ${String(error).slice(0, 300)}`,
+          entityIds: [], memoriesConsulted: 0, entityContext: null }
+      }
+      novelty = store.putResearchV4Record('novelty', lease.work.workId, 'decision', novelty)
+    }
+    if (!novelty && v4.novelty) {
+      const classification = v4.novelty.classification
+        ? durableResearchClassification({ gateway: v4.novelty.classification, store, work: lease.work,
+          assignmentPolicy: v4.assignmentPolicy, stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso() })
+        : undefined
+      novelty = await gateSignal(gateInput, {
+        ...v4.novelty, reader: v4.novelty.reader(signal, lease.work), classification,
+      })
+      novelty = store.putResearchV4Record('novelty', lease.work.workId, 'decision', {
+        ...novelty, sourceMaterialDigest: sourceMaterialHash(signal), policyVersion: v4.policyVersion,
+        capturedEvidenceDigest: capturedObservationDigest(evidence),
+      })
+    }
+    // Novelty or title similarity alone never suppresses unseen source material
+    // or manufactures a no-item/attachment target. Exact compatible results can
+    // avoid synthesis; otherwise preserve the source through ordinary Research.
+    let packet = store.getResearchV4Record<ResearchPacket>('baseline', lease.work.workId, 'packet')
+    if (packet?.knownObservationResolution) return packet
+    if (!packet && novelty && v4.novelty) {
+      packet = await resolveKnownObservation({ store, work: lease.work, signal, evidence, gateSignal: gateInput,
+        decision: novelty, reader: v4.novelty.reader(signal, lease.work), policyVersion: v4.policyVersion,
+        stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso() })
+      if (packet) return store.putResearchV4Record('baseline', lease.work.workId, 'packet', packet)
+    }
+    const knowledgeDigest = novelty && novelty.verdict !== 'gate_unavailable'
+      && !novelty.noveltyContext?.truncated && !novelty.noveltyContext?.lookupFailures.length
+      ? novelty.noveltyContext?.digest ?? createHash('sha256').update(canonicalJson({ verdict: novelty.verdict,
+        entityIds: novelty.entityIds, context: novelty.entityContext })).digest('hex') : null
+    const assignmentContract = structuredAssignmentReuseContract({ work: lease.work, signal, evidence,
+      promptVersion: this.synthesizer.contractPromptVersion(), knowledgeDigest })
+    if (!packet && v4.reusePolicy) {
+      packet = reuseCompatibleResearchResult({
+        owners: [...this.stores.values()].filter((owner): owner is ArtifactReuseStore & ResearchV4StorePort =>
+          supportsResearchV4Store(owner) && supportsArtifactReuse(owner)),
+        consumer: store, signal, work: lease.work, evidence,
+        policy: v4.reusePolicy, now: this.nowIso(),
+        currentKnowledgeDigest: knowledgeDigest,
+        assignmentContract,
+      })
+    }
+    if (!packet?.execution.reusedResult) {
+      packet = await durablePrimarySynthesis({
+        store, work: lease.work, policy: v4.synthesisPolicy, saved: packet,
+        assignmentPolicy: v4.assignmentPolicy,
+        requestMaterial: { signal, evidence, backgroundContext: input.backgroundContext },
+        stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
+        generate: (work) => this.synthesizer.synthesize({
+          signal, workItem: work, evidence: evidence.map(toDeterministicEvidence), holdOnUnknownOutcome: true,
+          ...(input.backgroundContext.length ? { backgroundContext: input.backgroundContext } : {}),
+        }),
+        transform: (generated) => {
+        if (isArticleResearchPacket(generated)) throw new Error('Legacy synthesis cannot transform an article packet')
+        return {
+        ...generated, reuseSnapshot: {
+          policyVersion: v4.reusePolicy?.policyVersion ?? null,
+          knowledgeDigest,
+          assignmentContract,
+          limitations: novelty?.verdict === 'gate_unavailable' ? ['Relevant knowledge lookup was unavailable.'] : [],
+        },
+        novelty: novelty ?? null,
+        }
+        },
+      })
+    }
+    const savedBaseline = store.getResearchV4Record<ResearchPacket>('baseline', lease.work.workId, 'packet')
+    if (!savedBaseline && packet.execution.reusedResult && v4.contextReader) {
+      const reused = packet.execution.reusedResult as { packetId?: string }
+      const reader = v4.contextReader(signal, lease.work)
+      const target = reused.packetId && await reader.attachmentTargetForPacket?.(reused.packetId)
+      if (target) packet = { ...packet,
+        requiredEntityAction: { kind: 'evidence_attachment', targetId: target.targetId,
+          producerPacketId: target.producerPacketId, proofKind: 'managed_packet_ref_exact' },
+        managedAttachmentTargetRevision: target.revision,
+      }
+    }
+    packet = store.putResearchV4Record('baseline', lease.work.workId, 'packet', packet)
+    if (!v4.followup || packet.execution.reusedResult) return packet
+    if (isArticleResearchPacket(packet)) {
+      throw new ArticleResearchHold('incompatible_article_checkpoint',
+        'An article packet reached the legacy bounded-followup path; the checkpoint is held rather than reinterpreted as claim/evidence research.')
+    }
+    return runBoundedFollowup({
+      store, signal, work: lease.work, baseline: packet, gateSignal: gateInput,
+      entityContext: novelty?.entityContext ?? null,
+      classification: durableResearchClassification({ gateway: v4.followup.classification, store,
+        work: lease.work, assignmentPolicy: v4.assignmentPolicy, stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso() }),
+      policy: v4.followup.policy, retriever: this.retriever, synthesizer: this.synthesizer,
+      assignmentPolicy: v4.assignmentPolicy,
+      stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
+    })
+  }
+
+  private usesCapturedSourceWorkflow(work: ResearchWorkItem): boolean {
+    return this.v4?.article !== undefined
+      && (!this.v4.sources || this.v4.sources.has(work.sourceType))
+  }
+
+  /**
+   * Article prose uses the ordinary primary-synthesis reservation and result
+   * reconciliation, but its request is prepared by Jev first. This prevents a
+   * legacy novelty/reuse path from replacing placement or story decisions.
+   */
+  private async synthesizeArticleWithV4(input: {
+    store: SharedResearchWorkPort, lease: WorkLease, signal: Signal,
+    evidence: RetrievedEvidence[], backgroundContext: RetrievedEvidenceArtifact[],
+    stillOwnsLease(): Promise<boolean>,
+  }, v4: SharedResearchV4Options): Promise<ResearchPacket> {
+    if (!supportsResearchV4Store(input.store)) throw new Error('Article synthesis requires a durable V4 store')
+    const articleStore = input.store
+    if (!v4.article) throw new ArticleResearchHold('required_jev_disabled', 'Article synthesis is held because the required Jev article workflow is not configured.')
+    const source = input.evidence.find((artifact) => artifact.authority === 'source_url')
+    const reader = v4.article.contextReader(input.signal, input.lease.work) as EntityMemoryReader & {
+      articleContext?(input?: { sourceUrl: string | null, terms: readonly string[] }): Promise<ArticleResearchContext>
+    }
+    if (!source || !reader.articleContext) throw new ArticleResearchHold('source_capture_missing', 'Article workflow requires immutable source capture and managed catalogue context.')
+    const durableClassification = durableResearchClassification({
+      gateway: v4.article.classification, store: articleStore,
+      work: input.lease.work, assignmentPolicy: v4.assignmentPolicy,
+      stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
+    })
+    let preparation: { memberships: import('../signal-platform/contracts').ArticleEntityProposal[], novelty: import('../signal-platform/contracts').ArticleChoiceDecision, contextualHistory: string }
+    try {
+      preparation = await prepareArticlePlacement({
+        gateway: durableClassification, stableDecisionKey: input.lease.work.workId,
+        signal: input.signal, sourceText: source.text,
+        context: await reader.articleContext({ sourceUrl: source.finalUrl, terms: articleLookupTerms(input.signal) }),
+        proposeCreation: async () => (await durableArticleEntityProposal({
+          store: articleStore, work: input.lease.work,
+          assignmentPolicy: v4.assignmentPolicy,
+          requestMaterial: { sourceUrl: source.finalUrl, contentHash: source.contentHash, signal: input.signal },
+          stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
+          generate: () => this.synthesizer.proposeArticleEntity({
+            signal: input.signal, workItem: input.lease.work, sourceText: source.text, sourceUrl: source.finalUrl,
+          }),
+        })).proposal,
+      })
+    } catch (error) {
+      if (error instanceof InferenceGatewayError && /requires an explicitly active Jev lifecycle/.test(error.message)) {
+        throw new ArticleResearchHold('required_jev_disabled', 'Article placement is held because its required Jev lifecycle is disabled.')
+      }
+      throw error
+    }
+    const saved = (articleStore).getResearchV4Record<ResearchPacket>('baseline', input.lease.work.workId, 'packet')
+    if (saved && !isArticleResearchPacket(saved)) throw new Error('Article work has an incompatible legacy synthesis checkpoint')
+    return durablePrimarySynthesis({
+      store: articleStore, work: input.lease.work, policy: v4.synthesisPolicy,
+      assignmentPolicy: v4.assignmentPolicy,
+      requestMaterial: { article: { signal: input.signal, source: { finalUrl: source.finalUrl, contentHash: source.contentHash } }, preparation, backgroundContext: input.backgroundContext },
+      saved, stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
+      generate: async (work) => {
+        const generated = await this.synthesizer.synthesize({
+          signal: input.signal, workItem: work, evidence: input.evidence.map(toDeterministicEvidence),
+          articlePreparation: preparation, holdOnUnknownOutcome: true,
+          ...(input.backgroundContext.length ? { backgroundContext: input.backgroundContext } : {}),
+        })
+        if (!isArticleResearchPacket(generated)) throw new Error('Article synthesis returned a legacy claim/evidence packet')
+        return generated
+      },
+      transform: (packet) => packet,
+    })
   }
 
   /**
@@ -723,6 +1015,22 @@ export class SharedResearchWorker {
     return background
   }
 
+  private resolvesProducerCapture(evidence: RetrievedEvidence): boolean {
+    const approval = evidence.reuseApproval as { ref?: ArtifactRef, pinId?: string } | undefined
+    if (!approval) return true
+    if (!approval.ref || !approval.pinId) return false
+    for (const owner of this.stores.values()) {
+      if (!supportsArtifactReuse(owner) || owner.sourceType !== approval.ref.ownerSourceType
+        || owner.artifactStoreId() !== approval.ref.ownerStoreId) continue
+      const pin = owner.getArtifactPin(approval.pinId)
+      const capture = pin && owner.resolvePinnedArtifact(pin)
+      return capture !== null && capture !== undefined && capture.contentHash === evidence.contentHash
+        && capture.requestedUrl === evidence.requestedUrl && capture.finalUrl === evidence.finalUrl
+        && capture.text === evidence.text
+    }
+    return false
+  }
+
   /**
    * Research owns the sufficiency decision. The packet, that decision, and the
    * work status it requires are committed in one store transaction, so a saved
@@ -738,15 +1046,41 @@ export class SharedResearchWorker {
     store: SharedResearchWorkPort,
     lease: WorkLease,
     signal: Signal,
-    packet: ResearchPacketV1,
-  ): Promise<{ readiness: ResearchReadinessV1, run: SharedResearchRunOutcome }> {
-    const readiness = assessResearchReadiness({
+    packet: ResearchPacket,
+  ): Promise<{ readiness: ResearchReadiness, run: SharedResearchRunOutcome }> {
+    const assessment = {
       work: lease.work,
       signal,
       packet,
       persistedEvidence: store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit),
       assessedAt: this.nowIso(),
+    }
+    const required = packet.requiredEntityAction as { kind?: string, targetId?: string, proofKind?: string } | undefined
+    const knownObservation = !isArticleResearchPacket(packet) && supportsResearchV4Store(store) && assertKnownObservationResolution({
+      store, work: lease.work, packet, signal, evidence: assessment.persistedEvidence,
     })
+    if (knownObservation) {
+      const novelty = supportsResearchV4Store(store) && store.getResearchV4Record<GateDecision>('novelty', lease.work.workId, 'decision')
+      const readerFactory = this.v4?.novelty?.reader
+      if (!supportsResearchV4Store(store) || !novelty || !readerFactory || !await resolveKnownObservation({
+        store, work: lease.work, signal, evidence: assessment.persistedEvidence,
+        gateSignal: researchGateSignal(signal, assessment.persistedEvidence), decision: novelty,
+        reader: readerFactory(signal, lease.work), policyVersion: this.v4!.policyVersion,
+        stillOwnsLease: async () => {
+          const current = store.getResearchWork(lease.work.workId)
+          return current?.leaseId === lease.leaseId && current.leaseOwner === lease.leaseOwner
+            && Date.parse(current.leaseExpiresAt ?? '') > this.clock.now().getTime() && this.mayExecuteWork(lease.work)
+        }, now: () => this.nowIso(),
+      })) throw new ResearchFollowupHold('Saved known observation comparison changed or became unavailable; retained observation requires review before no-item handoff.')
+    }
+    const readiness = knownObservation ? createResolvedWithoutNewItemReadiness({ ...assessment,
+      reason: 'Complete captured observation is represented in bounded current knowledge; source evidence is retained and no new item action is owed.',
+    }) : required?.kind === 'evidence_attachment' && required.proofKind === 'managed_packet_ref_exact'
+      && required.targetId
+      ? createResolvedWithoutNewItemReadiness({ ...assessment,
+        owedAttachment: { targetId: required.targetId },
+        reason: 'Compatible saved Research resolves this assignment without a new note; current source evidence is owed to the exact accepted producer-packet target.',
+      }) : assessResearchReadiness(assessment)
     let committed
     try {
       committed = store.commitResearchHandoff({
@@ -799,7 +1133,7 @@ export class SharedResearchWorker {
   private async completeSavedHandoff(
     store: SharedResearchWorkPort,
     lease: WorkLease,
-    readiness: ResearchReadinessV1,
+    readiness: ResearchReadiness,
   ): Promise<SharedResearchRunOutcome> {
     const retry = this.handoffRetryPolicy(lease)
     const nextStatus = readinessHandoffStatus(readiness, lease.work, this.nowIso(), retry)
@@ -819,6 +1153,14 @@ export class SharedResearchWorker {
     lease: WorkLease,
     timing: StageTiming,
   ): Promise<SharedResearchRunOutcome | null> {
+    if (!this.mayExecuteWork(lease.work)) {
+      const workerStage = stage === 'deep_research' ? 'synthesis' : stage
+      const released = await store.releaseLease({
+        ...leaseFence(lease), expectedStatus: leasedStatus(workerStage), targetStatus: pendingStatus(workerStage), now: this.nowIso(),
+      })
+      return released ? { kind: 'ownership_held', stage: workerStage, sourceType: lease.work.sourceType, workId: lease.work.workId }
+        : leaseLost(workerStage, lease.work)
+    }
     if (Date.parse(lease.work.freshnessDeadline) <= this.clock.now().getTime()) {
       const workerStage = stage === 'deep_research' ? 'synthesis' : stage
       const transitioned = await store.transitionLeased({
@@ -967,7 +1309,7 @@ export class SharedResearchWorker {
     }))
   }
 
-  private recordSynthesisSuccess(lease: WorkLease, packet: ResearchPacketV1, timing: StageTiming): void {
+  private recordSynthesisSuccess(lease: WorkLease, packet: ResearchPacket, timing: StageTiming): void {
     const finishedAt = packet.createdAt
     const startedAt = subtractMs(finishedAt, packet.budgetUsed.wallTimeMs)
     this.appendExecutionEvent({
@@ -1001,8 +1343,8 @@ export class SharedResearchWorker {
 
   private recordPacketReplay(
     lease: WorkLease,
-    packet: ResearchPacketV1,
-    readiness: ResearchReadinessV1,
+    packet: ResearchPacket,
+    readiness: ResearchReadiness,
   ): void {
     const timing = { startedAt: packet.createdAt, queueWaitMs: 0 }
     this.appendExecutionEvent({
@@ -1256,6 +1598,19 @@ export function buildStandardSearchQueries(signal: Signal): string[] {
   return [...new Set([identity, summary].filter(Boolean))]
 }
 
+export function researchGateSignal(signal: Signal, evidence: readonly RetrievedEvidence[]): GateSignal {
+  const material = canonicalJson({ content: signal.content, evidence: evidence.map((artifact) => ({
+    requestedUrl: artifact.requestedUrl, finalUrl: artifact.finalUrl, contentHash: artifact.contentHash,
+    text: artifact.text, capturedAt: artifact.retrievedAt, truncated: artifact.truncated,
+  })) })
+  return {
+    source: signal.sourceType, sourceRefId: signal.sourceId.slice(0, 300), title: signal.title.slice(0, 500),
+    whatChanged: (signal.visibleSummary ?? signal.title).slice(0, 2_000), observedAt: signal.observedAt,
+    sourceMaterial: material.slice(0, 12_000), sourceMaterialDigest: sourceMaterialHash(signal),
+    sourceMaterialComplete: material.length <= 12_000 && evidence.length > 0 && evidence.every((artifact) => !artifact.truncated),
+  }
+}
+
 function mergeStandardSearchPlan(
   retrieval: DeterministicRetrievalPlan,
   discovery: StandardSearchPlan,
@@ -1441,6 +1796,12 @@ function failureCategory(error: unknown, stage: ResearchWorkerStage): FailureCat
   return stage === 'retrieval' ? 'permanent_source_error' : 'provider_unavailable'
 }
 
+function articleHoldFailureCategory(error: ArticleResearchHold): FailureCategory {
+  if (error.code === 'source_capture_missing' || error.code === 'source_input_too_large') return 'permanent_source_error'
+  if (error.code === 'required_jev_disabled') return 'provider_unavailable'
+  return 'entity_resolution_failed'
+}
+
 function retryable(error: unknown): boolean {
   return isTypedFailure(error) ? error.retryable : false
 }
@@ -1485,7 +1846,7 @@ function handoffPending(stage: ResearchWorkerStage, work: ResearchWorkItem): Sha
  * terminal status than the one originally committed.
  */
 function readinessHandoffStatus(
-  readiness: ResearchReadinessV1,
+  readiness: ResearchReadiness,
   work: ResearchWorkItem,
   now: string,
   retry: ResearchHandoffRetryPolicy,
@@ -1501,7 +1862,7 @@ function readinessHandoffStatus(
 }
 
 /** Only the typed readiness outcome reaches the work row, never prose. */
-function readinessDetail(readiness: ResearchReadinessV1): string | null {
+function readinessDetail(readiness: ResearchReadiness): string | null {
   return isNonClaimableReadiness(readiness.outcome) ? `readiness:${readiness.outcome}` : null
 }
 
@@ -1515,7 +1876,7 @@ function readinessDetail(readiness: ResearchReadinessV1): string | null {
  */
 function handoffRun(
   work: ResearchWorkItem,
-  readiness: ResearchReadinessV1,
+  readiness: ResearchReadiness,
   workStatus: ResearchWorkItem['status'] | null,
 ): SharedResearchRunOutcome {
   // `entity_pending` covers a ready result and a no-new-item result that still
@@ -1545,6 +1906,9 @@ function terminal(
 function normalizeUrl(value: string): string {
   try { return new URL(value).toString() } catch { return value }
 }
+
+/** Bounded lexical hints complement named entities without becoming a broad search. */
+
 
 function uniqueStages(stages: ResearchWorkerStage[]): ResearchWorkerStage[] {
   const result = [...new Set(stages)]

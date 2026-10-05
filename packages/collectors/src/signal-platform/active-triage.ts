@@ -44,6 +44,8 @@ export interface ActiveSourceTriageOptions {
   mode?: 'observe' | 'active'
   /** Defaults to light only; standard/deep require explicit capability enablement. */
   allowedDepths?: readonly ResearchDepth[]
+  /** Re-read durable source authority before classifier spending and queue admission. */
+  mayAdmit?: () => boolean
 }
 
 /**
@@ -66,6 +68,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
   const allowedDepths = validateAllowedDepths(options.allowedDepths ?? ['light'])
   const triage = {
     decide: async (input: RulesFirstTriageInput) => {
+      if (options.mayAdmit && !options.mayAdmit()) throw new Error('Source ownership fences triage execution')
       const selected = await rules.decide(input)
       if (selected.outcome !== 'light' && selected.outcome !== 'standard' && selected.outcome !== 'deep') return selected
       if (allowedDepths.has(selected.outcome)) return selected
@@ -91,6 +94,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
     mode,
     evaluate: mode === 'observe',
     store: options.store,
+    mayAdmit: options.mayAdmit,
     triage,
     retrievalPolicy: retrievalPolicyForSignal,
     decisionPolicy: {

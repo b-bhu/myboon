@@ -24,6 +24,6 @@ export class SqliteLocalCapacitySnapshot implements LocalCapacitySnapshotPort {
       throw new Error(`Capacity store ${this.store.sourceType} cannot report ${input.sourceType}`)
     }
     if (!Number.isFinite(Date.parse(input.now))) throw new Error('Capacity snapshot now must be a timestamp')
-    return this.store.readTriageCapacitySnapshot(this.limits)
+    return this.store.readTriageCapacitySnapshot(this.limits, input.now)
   }
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { HermesOneshotRequest } from '../hermes'
+import { DEFAULT_HERMES_PROFILE } from '../hermes'
 import {
   CONFIGURED_INFERENCE_WORKLOADS,
   HermesStructuredAdapter,
@@ -30,10 +31,10 @@ function valid(value: unknown) {
 test('configuration defaults every registered workload to the approved primary with fallback disabled', () => {
   const configuration = loadInferenceGatewayConfiguration({})
 
-  assert.equal(configuration.hermesProfile, undefined)
+  assert.equal(configuration.hermesProfile, DEFAULT_HERMES_PROFILE)
   assert.deepEqual(Object.keys(configuration.routes), CONFIGURED_INFERENCE_WORKLOADS)
   for (const route of Object.values(configuration.routes)) {
-    assert.deepEqual(route.primary, { provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' })
+    assert.deepEqual(route.primary, { provider: 'ollama-cloud', model: 'glm-5.3-flash' })
     assert.equal(route.fallback, undefined)
   }
 })

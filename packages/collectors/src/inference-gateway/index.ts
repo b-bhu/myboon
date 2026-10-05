@@ -25,6 +25,7 @@ export {
 export { InferenceGatewayStageReadiness } from './readiness'
 export {
   ClassificationDoubleFailureError,
+  ClassificationOutcomeUnknownError,
   ClassificationGateway,
   InMemoryClassificationPorts,
   type ClassificationGatewayOptions,
@@ -60,13 +61,18 @@ export {
   ENTITY_CATALOG_IDENTITY_WORKLOAD,
   RESEARCH_NOVELTY_VERSION,
   RESEARCH_NOVELTY_WORKLOAD,
+  RESEARCH_FOLLOWUP_VALUE_VERSION,
+  RESEARCH_FOLLOWUP_VALUE_WORKLOAD,
   approvedClassificationDefinitions,
   entityCatalogIdentityDefinition,
   researchNoveltyDefinition,
+  researchFollowupValueDefinition,
   type EntityCatalogIdentityDecision,
   type EntityCatalogIdentityState,
   type ResearchNoveltyDecision,
   type ResearchNoveltyState,
+  type ResearchFollowupValueDecision,
+  type ResearchFollowupValueState,
 } from './classification-definitions'
 export type {
   ClassificationAttemptCall,

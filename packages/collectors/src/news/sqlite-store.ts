@@ -6,6 +6,8 @@ import type { PriorNewsObservation } from './types'
 import type { Signal } from '../signal-platform/contracts'
 import { validateSignal } from '../signal-platform/validation'
 import { ImmutableRecordConflictError } from '../signal-platform/platform-store'
+import { sourceOwnershipAllowsOnDatabase, type OwnershipSqliteDatabase } from '../signal-platform/source-ownership'
+import { adaptLiveNewsSignal } from '../signal-platform/adapters/news-live'
 import {
   buildSourceDeliveryObligation,
   parseSourceDeliveryObligation,
@@ -164,6 +166,7 @@ function ensureNewsSqliteSchema(db: SqliteDatabase): void {
       status TEXT NOT NULL DEFAULT 'pending_research' CHECK (
         status IN (
           'pending_research',
+          'observed_only',
           'research_queued',
           'researching',
           'researched',
@@ -298,6 +301,38 @@ function ensureNewsSqliteMigrations(db: SqliteDatabase): void {
   for (const [name, definition] of researchAdditions) {
     if (!researchColumns.has(name)) db.exec(`ALTER TABLE news_research_results ADD COLUMN ${name} ${definition};`)
   }
+  ensureObservedOnlyStatus(db)
+}
+
+/** Preserve original columns, indexes, triggers and foreign-key references when widening the status CHECK. */
+function ensureObservedOnlyStatus(db: SqliteDatabase): void {
+  const definition = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='news_candidate_observations'").get() as { sql: string }
+  if (definition.sql.includes("'observed_only'")) return
+  // Earliest source stores had no status constraint and already accept the
+  // new retained-observation value. They need no destructive table rewrite.
+  if (!/CHECK\s*\(\s*["`\[]?status["`\]]?\b/i.test(definition.sql)) return
+  if (!definition.sql.includes("'failed_research'")) throw new Error('Cannot safely extend unknown News observation schema')
+  const dependentDefinitions = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='news_candidate_observations' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as Array<{sql:string}>
+  const foreignKeys = db.prepare('PRAGMA foreign_keys').get() as {foreign_keys:number}
+  db.exec('PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;')
+  try {
+    const creation = definition.sql
+      .replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`\[]?news_candidate_observations["`\]]?/i, 'CREATE TABLE news_candidate_observations_v4_migration')
+      .replace("'failed_research'", "'failed_research', 'observed_only'")
+    db.exec(creation)
+    const columns = (db.prepare('PRAGMA table_info(news_candidate_observations)').all() as Array<{name:string}>)
+      .map((column)=>`"${column.name.replace(/"/g,'""')}"`).join(',')
+    db.exec(`INSERT INTO news_candidate_observations_v4_migration (${columns}) SELECT ${columns} FROM news_candidate_observations;
+      DROP TABLE news_candidate_observations;
+      ALTER TABLE news_candidate_observations_v4_migration RENAME TO news_candidate_observations;`)
+    for (const row of dependentDefinitions) db.exec(row.sql)
+    const brokenReferences = db.prepare('PRAGMA foreign_key_check').all()
+    if (brokenReferences.length > 0) throw new Error('News status migration would leave broken foreign-key references')
+    db.exec('COMMIT')
+  } catch (error) {
+    try { db.exec('ROLLBACK') } catch { /* preserve original migration error */ }
+    throw error
+  } finally { db.exec(`PRAGMA foreign_keys=${foreignKeys.foreign_keys ? 'ON' : 'OFF'};`) }
 }
 
 export class SqliteNewsStore implements NewsStore {
@@ -310,6 +345,10 @@ export class SqliteNewsStore implements NewsStore {
 
   close(): void {
     this.db.close()
+  }
+
+  allowsLegacyQueueAdmission(): boolean {
+    return sourceOwnershipAllowsOnDatabase({db:this.db as unknown as OwnershipSqliteDatabase,source:'news',domain:'collector',owner:'legacy'})
   }
 
   getOperationalStatus(): {
@@ -424,12 +463,17 @@ export class SqliteNewsStore implements NewsStore {
             input.fingerprint.articleIdentityKey,
             input.fingerprint.observationDedupeKey,
             input.dedupeOutcome,
-            input.status ?? 'pending_research',
+            this.allowsLegacyQueueAdmission()
+              ? input.status ?? 'pending_research' : 'observed_only',
             json(input.candidate)
           )
-          if (input.deliverySignal) {
+          const deliverySignal=input.deliverySignal ?? (!this.allowsLegacyQueueAdmission() ? adaptLiveNewsSignal({
+            discovery:{source:input.source,sourceUrl:input.sourceUrl,candidate:input.candidate,observedAt:input.observedAt},
+            fingerprint:input.fingerprint,materialChange:input.dedupeOutcome==='known_materially_changed',
+          }) : undefined)
+          if (deliverySignal) {
             this.appendDeliveryObligation(
-              input.deliverySignal,
+              deliverySignal,
               input.fingerprint.observationDedupeKey,
               input.observedAt,
             )

@@ -17,6 +17,11 @@ the current documents below take precedence.
 
 ## Technical And Operational References
 
+- [Entity Manager V4](modules/entity-manager/README.md) — current article
+  workflow through Entity Manager, with downstream integration excluded
+- [V4 checkpoint handoff](modules/entity-manager/operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md)
+  — implementation, validation, runtime configuration and remaining work as of
+  5 October 2026
 - [`DEPLOY.md`](DEPLOY.md) — VPS and worker operations
 - [`FEED_SOURCE_BLUEPRINT.md`](FEED_SOURCE_BLUEPRINT.md) — source-connector rules
 - [`modules/`](modules/) — implementation PRDs, ADRs, specifications, and tests
@@ -29,6 +34,11 @@ Files under `PRDs/`, `modules/*/PRDs/`, `test cases/`, `mockups/`, and
 `articles/` preserve the decisions and product state at the date written. They
 should not be silently rewritten to make an old plan look current. Add a dated
 status note when later implementation materially changes an old conclusion.
+
+`modules/entity-manager/PRDs/v4_prd.md` is explicitly maintained as the current
+working specification. Its 5 October checkpoint revision preserves the earlier
+text in a linked historical snapshot; the module index identifies which records
+describe current scope and which preserve earlier contracts.
 
 ## Messaging Rules
 

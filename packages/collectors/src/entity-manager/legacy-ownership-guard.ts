@@ -1,4 +1,6 @@
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
+import { sourceOwnershipAllows } from '../signal-platform/source-ownership'
+import { legacyEntitySourcePath } from './source-ownership-write-guard'
 import {
   loadFeedV3RuntimeConfig,
   type FeedV3Source,
@@ -24,6 +26,11 @@ export function legacyEntityOwnership(
   env: Readonly<Record<string, string | undefined>> = process.env,
   now?: Date,
 ): LegacyEntityOwnershipDecision {
+  const authority = {databasePath: legacyEntitySourcePath(sourceType,env),source: sourceType,domain:'entity' as const,env}
+  if (!sourceOwnershipAllows({...authority,owner:'legacy'})) {
+    if (sourceOwnershipAllows({...authority,owner:'shared'})) return Object.freeze({sourceType,owner:'shared'})
+    throw new Error(`Persistent Entity ownership for ${sourceType} is paused or unavailable; refusing claims`)
+  }
   const config = loadFeedV3RuntimeConfig(env)
   if (!config.legacyEntityDisabledSources.has(sourceType)) {
     return Object.freeze({ sourceType, owner: 'legacy' })

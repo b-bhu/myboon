@@ -27,6 +27,8 @@ const DEFAULT_ENTITY_BUDGET: InferenceBudget = Object.freeze({
   maxWallTimeMs: 90_000,
   maxToolCalls: 0,
 })
+/** Existing Entity execution ceilings shared by the private managed branch. */
+export const CANONICAL_ENTITY_PLANNING_BUDGET: Readonly<InferenceBudget> = DEFAULT_ENTITY_BUDGET
 
 export interface CanonicalEntityPlanningGateway {
   resolveRoute?(workload: string, mode: 'generateStructured'): unknown

@@ -52,6 +52,20 @@ export class ClassificationDoubleFailureError extends InferenceGatewayError {
   }
 }
 
+/** A caller must reconcile its durable reservation instead of retrying this dispatch. */
+export class ClassificationOutcomeUnknownError extends InferenceGatewayError {
+  constructor(readonly decisionId: string, cause: InferenceGatewayError) {
+    super('Classification dispatch outcome is unknown; preserve its reservation and hold for reconciliation', {
+      category: cause.category,
+      retryable: false,
+      provider: cause.provider,
+      model: cause.model,
+      cause,
+    })
+    this.name = 'ClassificationOutcomeUnknownError'
+  }
+}
+
 export class ClassificationGateway {
   private readonly registry: ClassificationRegistry
   private readonly jev: JevClassificationAdapter
@@ -99,8 +113,19 @@ export class ClassificationGateway {
     )
     const envelope = immutableEnvelope(request, state, stateDigest, decisionId, deadlineMs, this.now())
 
+    // Placement and story relationships are System One decisions.  A disabled
+    // lifecycle is an actionable hold for their caller, never permission to
+    // substitute Hermes prose generation for a typed Jev decision.
+    if (definition.requiresJev && (mode === 'disabled' || mode === 'shadow'
+      || (mode === 'canary' && !selectedForPercent(envelope, definition.canaryPercent)))) {
+      throw new InferenceGatewayError('This classification workload requires an explicitly active Jev lifecycle', {
+        category: 'provider_unavailable', retryable: false,
+        provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+      })
+    }
+
     if (mode === 'shadow') {
-      if (selectedForPercent(envelope, definition.shadowPercent)) {
+      if (request.maxProviderCalls !== 1 && selectedForPercent(envelope, definition.shadowPercent)) {
         try { this.shadowOutbox?.enqueue(envelope) } catch (error) {
           // Production composition uses a dedicated zero-wait SQLite connection,
           // so lock contention is observed and dropped without stalling Hermes.
@@ -117,6 +142,7 @@ export class ClassificationGateway {
     }
     return this.runJevWithFallback<TDecision>(
       definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs,
+      request,
     )
   }
 
@@ -207,16 +233,20 @@ export class ClassificationGateway {
     stateDigest: string,
     stableDecisionKey: string,
     deadlineMs: number,
+    dispatchPolicy: Pick<ClassificationRequest, 'maxProviderCalls' | 'holdOnUnknownOutcome'>,
   ): Promise<ClassificationResult<TDecision>> {
     const startedAt = this.now()
     const startedAtIso = new Date(startedAt).toISOString()
     const calls: ClassificationAttemptCall[] = []
     let answers: Readonly<Record<string, JevAnswer>> | null = null
     let jevFailure: string | null = null
+    let primaryFailure: InferenceGatewayError | null = null
     try {
-      // Jev may consume at most half the logical deadline so a complete
-      // Hermes fallback always has a real execution slice.
-      const result = await this.callJev(definition, state, Math.max(1, Math.floor(deadlineMs / 2)), 'live')
+      // Single-call and hold-on-unknown requests can use the full deadline.
+      // The ordinary two-call path reserves a slice for timeout fallback.
+      const primaryDeadline = dispatchPolicy.maxProviderCalls === 1 || dispatchPolicy.holdOnUnknownOutcome === true
+        ? deadlineMs : Math.max(1, Math.floor(deadlineMs / 2))
+      const result = await this.callJev(definition, state, primaryDeadline, 'live')
       answers = result.response.answers
       const decoded = safeDecodeJev(definition, answers, state)
       const accepted = decoded.valid ? safeAcceptJev(definition, answers, decoded.value, state) : {
@@ -238,8 +268,38 @@ export class ClassificationGateway {
       jevFailure = accepted.reason
     } catch (error) {
       const failure = mapFailure(error, definition.jevTarget)
+      primaryFailure = failure
       jevFailure = failure.category
       if (calls.length === 0) calls.push(failedCall(definition.jevTarget, failure, Math.max(0, this.now() - startedAt)))
+    }
+
+    // The caller's durable reservation is authoritative over internal fallback.
+    // Transport failures cannot establish non-execution or absence of charges.
+    const unknownDispatch = primaryFailure !== null
+      && dispatchPolicy.holdOnUnknownOutcome === true
+      && (primaryFailure.category === 'provider_timeout' || primaryFailure.category === 'provider_unavailable')
+    if (unknownDispatch || dispatchPolicy.maxProviderCalls === 1 || definition.requiresJev) {
+      const failure = unknownDispatch
+        ? new ClassificationOutcomeUnknownError(decisionId, primaryFailure!)
+        : definition.requiresJev
+          ? primaryFailure ?? new InferenceGatewayError(`Required Jev decision was rejected: ${jevFailure ?? 'invalid typed answer'}`, {
+            category: 'invalid_structured_output', retryable: false,
+            provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+          })
+        : new InferenceGatewayError('Classification fallback exceeds the reserved provider-call allowance', {
+          category: 'budget_exceeded', retryable: false,
+          provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+          cause: primaryFailure ?? undefined,
+        })
+      const finishedAt = this.now()
+      await this.audit.recordAttempt(attemptRecord({
+        decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
+        configuredPrimary: definition.jevTarget, configuredFallback: definition.hermesTarget,
+        actualProvider: definition.jevTarget.provider, actualModel: definition.jevTarget.model,
+        fallbackUsed: false, fallbackReason: jevFailure, decision: null, answers, calls,
+        failure, startedAt, finishedAt, startedAtIso,
+      }))
+      throw failure
     }
 
     try {
@@ -393,8 +453,14 @@ export class ClassificationGateway {
 function assertPublicRequest(request: ClassificationRequest): void {
   if (!request || typeof request !== 'object') throw invalidInput('Classification request must be an object')
   const keys = Object.keys(request as unknown as Record<string, unknown>).sort()
-  if (keys.some((key) => !['decisionVersion', 'state', 'tighterDeadlineMs', 'trace', 'workload'].includes(key))) {
+  if (keys.some((key) => !['decisionVersion', 'state', 'tighterDeadlineMs', 'trace', 'workload', 'maxProviderCalls', 'holdOnUnknownOutcome'].includes(key))) {
     throw invalidInput('Classification request contains caller-owned policy fields')
+  }
+  if (request.maxProviderCalls !== undefined && request.maxProviderCalls !== 1 && request.maxProviderCalls !== 2) {
+    throw invalidInput('maxProviderCalls must tighten the existing one-or-two-provider path')
+  }
+  if (request.holdOnUnknownOutcome !== undefined && typeof request.holdOnUnknownOutcome !== 'boolean') {
+    throw invalidInput('holdOnUnknownOutcome must be boolean')
   }
   for (const [field, value] of [['workload', request.workload], ['decisionVersion', request.decisionVersion], ['stableDecisionKey', request.trace?.stableDecisionKey]]) {
     if (typeof value !== 'string' || value.length < 1 || value.length > 200 || value.includes('\0')) throw invalidInput(`Invalid ${field}`)
@@ -509,7 +575,7 @@ function assertUsage(usage: { inputTokens: number; outputTokens: number; costUsd
     || !Number.isInteger(usage.outputTokens) || usage.outputTokens < 0 || usage.outputTokens > definition.budget.maxOutputTokens
     || (definition.budget.maxCostUsdMicros !== undefined
       && (!Number.isInteger(usage.costUsdMicros) || usage.costUsdMicros! > definition.budget.maxCostUsdMicros))) {
-    throw new InferenceGatewayError('Classification provider exceeded registry budget', {
+    throw new InferenceGatewayError(`Classification provider exceeded registry budget (input ${usage.inputTokens}/${definition.budget.maxInputTokens}, output ${usage.outputTokens}/${definition.budget.maxOutputTokens})`, {
       category: 'budget_exceeded', retryable: false,
     })
   }
@@ -567,6 +633,7 @@ function attemptRecord(input: {
     fallbackUsed: input.fallbackUsed, fallbackReason: input.fallbackReason,
     status: input.failure ? 'failed' as const : 'succeeded' as const,
     failureCategory: input.failure?.category ?? null,
+    ...(input.failure ? { failureDetail: input.failure.message } : {}),
     decision: input.decision,
     answers: input.answers,
     calls: Object.freeze([...input.calls]),

@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { EntityMemoryReader, GateEntity, GateMemory } from './types'
 
+const ENTITY_PROFILE_SELECT = 'id, slug, name, type, aliases, summary, metadata'
+const MEMORY_SELECT = 'id, entity_id, memory_type, title, summary, event_at, observed_at, context'
+
 /**
  * Production EntityMemoryReader over the Supabase entity tables.
  *
@@ -35,40 +38,108 @@ export class SupabaseEntityMemoryReader implements EntityMemoryReader {
     if (ids.length === 0) return []
     const { data, error } = await this.db
       .from('entities')
-      .select('id, slug, name, summary')
+      .select(ENTITY_PROFILE_SELECT)
       .in('id', ids)
     if (error) throw new Error(`entities lookup failed: ${error.message}`)
-    return (data ?? []).map((row) => {
-      const record = row as { id: string, slug: string, name: string, summary: string | null }
-      return { id: record.id, slug: record.slug, name: record.name, summary: record.summary ?? null }
+    return (data ?? []).map(entityProfile)
+  }
+
+  async searchEntities(labels: string[], limit: number): Promise<GateEntity[]> {
+    const terms = searchTerms(labels)
+    if (terms.length === 0) return []
+    const filters = terms.flatMap((term) => {
+      const pattern = filterValue(`%${term}%`)
+      return [`name.ilike.${pattern}`, `summary.ilike.${pattern}`,
+        `metadata->>routing_rule.ilike.${pattern}`, `metadata->>category.ilike.${pattern}`,
+        `aliases.cs.${filterValue(JSON.stringify([term]))}`]
     })
+    const { data, error } = await this.db.from('entities')
+      .select(ENTITY_PROFILE_SELECT)
+      .eq('status', 'active')
+      .or(filters.join(','))
+      .order('id', { ascending: true })
+      .limit(queryLimit(limit))
+    if (error) throw new Error(`article entity lookup failed: ${error.message}`)
+    return (data ?? []).map(entityProfile)
   }
 
   async recentMemories(entityIds: string[], limit: number): Promise<GateMemory[]> {
     if (entityIds.length === 0) return []
     const { data, error } = await this.db
       .from('entity_memories')
-      .select('entity_id, memory_type, title, summary, event_at, observed_at')
+      .select(MEMORY_SELECT)
       .in('entity_id', entityIds)
-      .order('event_at', { ascending: false })
-      .limit(limit)
+      .order('event_at', { ascending: false, nullsFirst: false })
+      .order('observed_at', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: false })
+      .limit(queryLimit(limit))
     if (error) throw new Error(`entity_memories timeline lookup failed: ${error.message}`)
-    return (data ?? []).map((row) => {
-      const record = row as {
-        entity_id: string
-        memory_type: string
-        title: string
-        summary: string
-        event_at: string | null
-        observed_at: string | null
-      }
-      return {
-        entityId: record.entity_id,
-        memoryType: record.memory_type,
-        title: record.title,
-        summary: record.summary,
-        eventAt: record.event_at ?? record.observed_at ?? '',
-      }
-    })
+    return (data ?? []).map(memoryProfile)
   }
+
+  async findMemoriesForArticle(input: {
+    entityIds: string[], terms: string[], sourceUrl: string | null, limit: number,
+  }): Promise<GateMemory[]> {
+    if (input.entityIds.length === 0) return []
+    const filters = searchTerms(input.terms).flatMap((term) => {
+      const pattern = filterValue(`%${term}%`)
+      return [`title.ilike.${pattern}`, `summary.ilike.${pattern}`]
+    })
+    if (input.sourceUrl) {
+      const url = filterValue(input.sourceUrl)
+      filters.push(`context->>url.eq.${url}`, `context->>source_url.eq.${url}`,
+        `context->source_signal->>canonicalUrl.eq.${url}`,
+        `context->canonical_packet->sourceSignal->>canonicalUrl.eq.${url}`)
+    }
+    if (filters.length === 0) return []
+    const { data, error } = await this.db.from('entity_memories')
+      .select(MEMORY_SELECT)
+      .in('entity_id', [...new Set(input.entityIds)].slice(0, 32))
+      .or(filters.join(','))
+      .order('observed_at', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: false })
+      .limit(queryLimit(input.limit))
+    if (error) throw new Error(`article historical lookup failed: ${error.message}`)
+    return (data ?? []).map(memoryProfile)
+  }
+}
+
+function entityProfile(value: unknown): GateEntity {
+  const row = value as { id: string, slug: string, name: string, type?: string,
+    summary: string | null, aliases?: unknown, metadata?: unknown }
+  return { id: row.id, slug: row.slug, name: row.name, type: row.type,
+    summary: row.summary ?? null,
+    aliases: Array.isArray(row.aliases) ? row.aliases.filter((alias): alias is string => typeof alias === 'string') : [],
+    metadata: object(row.metadata) }
+}
+
+function memoryProfile(value: unknown): GateMemory {
+  const row = value as { id: string, entity_id: string, memory_type: string, title: string,
+    summary: string, event_at: string | null, observed_at: string | null, context?: unknown }
+  const context = object(row.context)
+  const signal = object(context.source_signal)
+  const packetSignal = object(object(context.canonical_packet).sourceSignal)
+  const url = [context.url, context.source_url, signal.canonicalUrl, packetSignal.canonicalUrl]
+    .find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0)
+  return { id: row.id, entityId: row.entity_id, memoryType: row.memory_type,
+    title: row.title, summary: row.summary, eventAt: row.event_at ?? row.observed_at ?? '', sourceUrl: url ?? null }
+}
+
+function object(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
+function searchTerms(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.replace(/[%_*\\]/g, '').trim())
+    .filter((value) => value.length >= 2 && value.length <= 100))].slice(0, 16)
+}
+
+function filterValue(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+function queryLimit(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1) throw new TypeError('article lookup limit must be a positive integer')
+  return Math.min(value, 200)
 }

@@ -11,6 +11,8 @@ import { polymarketResearchToPacket, type PolymarketCandidateContext, type Polym
 import { EntityService } from './entity-service'
 import { SupabaseEntityMemoryStore } from './supabase-store'
 import { legacyEntityOwnership, runLegacyEntityWhenOwned } from './legacy-ownership-guard'
+import { withSourceOwnershipOperation } from '../signal-platform/source-ownership'
+import { legacyEntitySourcePath, legacyEntityWriteGuard, ownershipGuardedEntityStore } from './source-ownership-write-guard'
 import type { EntityMemoryStore, ExtractionProvider, ResearchPacket, WriteExtractionResult } from './types'
 
 const SOURCE = 'polymarket'
@@ -196,12 +198,14 @@ export async function runPolymarketEntityManager(
   db: SupabaseClient,
   options: RunPolymarketEntityManagerOptions = {}
 ): Promise<PolymarketEntityManagerResult> {
+  const assertOwned = legacyEntityWriteGuard('polymarket')
+  assertOwned()
   const batchSize = options.batchSize ?? 20
   const now = options.now ?? new Date()
   const leaseOwner = options.leaseOwner ?? `${process.pid}:${randomUUID()}`
   const extractionProvider = options.extractionProvider ?? new HermesEntityExtractionProvider()
   const entityStore = options.entityStore ?? new SupabaseEntityMemoryStore(db)
-  const entityService = new EntityService(entityStore)
+  const entityService = new EntityService(ownershipGuardedEntityStore(entityStore,assertOwned))
   const packets = await fetchUnprocessedPolymarketPackets(store, batchSize, {
     now,
     leaseOwner,
@@ -296,6 +300,7 @@ async function runAndLog(
   db: SupabaseClient,
   config: PolymarketEntityManagerCliConfig
 ): Promise<void> {
+  await withSourceOwnershipOperation({databasePath: legacyEntitySourcePath('polymarket'),source:'polymarket',domain:'entity',owner:'legacy'},async () => {
   const result = await withPipelineRun(
     new SupabasePipelineLedgerStore(db),
     {
@@ -316,6 +321,7 @@ async function runAndLog(
     })
   )
   console.log(JSON.stringify(result, null, 2))
+  })
 }
 
 function retryDelayMs(attemptCount: number, baseMs: number): number {
@@ -355,7 +361,7 @@ async function runOwnedPolymarketRunner(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const store = new SqlitePipelineStore()
+  const store = new SqlitePipelineStore(legacyEntitySourcePath('polymarket'))
 
   try {
     await runAndLog(store, supabase, config)

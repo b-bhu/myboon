@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { canonicalJson } from '../signal-platform/canonical-json'
 import type { ResearchPacketV1 } from '../signal-platform/contracts'
-import { validateResearchPacket } from '../signal-platform/validation'
+import { validateLegacyResearchPacket, validateResearchPacket } from '../signal-platform/validation'
 import type { ProgressionSourcePacketReadPort, SavedProgressionSourcePacket } from './progression-processor'
 
 /** Digest the complete validated packet, not only the references used by a plan. */
@@ -28,7 +28,7 @@ export class ProgressionSourcePacketEvidenceReader {
 
     let packet: ResearchPacketV1
     try {
-      packet = validateResearchPacket(raw)
+      packet = validateLegacyResearchPacket(raw)
       if (packet.workId !== input.workId || progressionSourcePacketDigest(packet) !== input.packetDigest) return null
     } catch {
       return null

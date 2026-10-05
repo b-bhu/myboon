@@ -65,7 +65,8 @@ export class JevSystemOneAdapter implements JevClassificationAdapter {
         : response.status === 401 || response.status === 403 ? 'provider_authentication'
           : response.status >= 500 ? 'provider_unavailable' : 'invalid_structured_output'
       const retryable = category === 'provider_rate_limited' || category === 'provider_unavailable'
-      throw new InferenceGatewayError(`Jev classification failed with HTTP ${response.status}`, {
+      const detail = await jevFailureDetail(response, this.apiToken)
+      throw new InferenceGatewayError(`Jev classification failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`, {
         category,
         retryable,
         ...(retryable ? { retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after'), Date.now()) } : {}),
@@ -110,6 +111,14 @@ export class JevSystemOneAdapter implements JevClassificationAdapter {
   }
 }
 
+async function jevFailureDetail(response: Response, token: string): Promise<string | null> {
+  try {
+    const value = await response.json() as { detail?: unknown, message?: unknown, error?: { message?: unknown } }
+    const message = [value.detail, value.message, value.error?.message].find((candidate): candidate is string => typeof candidate === 'string')
+    return message ? message.split(token).join('[redacted]').replace(/[\r\n]+/g, ' ').slice(0, 500) : null
+  } catch { return null }
+}
+
 function parseRetryAfterMs(value: string | null, nowMs: number): number | undefined {
   const retryAfter = value?.trim()
   if (!retryAfter) return undefined
@@ -151,14 +160,16 @@ export class HermesDecisionAdapter implements HermesClassificationAdapter {
         profile: this.profile,
         provider: request.target.provider,
         model: request.target.model,
+        toolsets: 'none',
+        ignoreRules: true,
       })
       return {
-        actualProvider: request.target.provider,
-        actualModel: request.target.model,
+        actualProvider: result.usage?.provider ?? request.target.provider,
+        actualModel: result.usage?.model ?? request.target.model,
         value: extractJson<unknown>(result.stdout),
         usage: {
-          inputTokens: this.estimateTokens(request.prompt),
-          outputTokens: this.estimateTokens(result.stdout),
+          inputTokens: result.usage?.inputTokens ?? this.estimateTokens(request.prompt),
+          outputTokens: result.usage?.outputTokens ?? this.estimateTokens(result.stdout),
         },
         durationMs: Math.max(0, Date.now() - startedAt),
       }
@@ -234,7 +245,7 @@ function probability(value: unknown, field: string, request: JevClassificationCa
 }
 
 function nonNegativeInteger(value: unknown, field: string, request: JevClassificationCall): number {
-  if (!Number.isInteger(value) || Number(value) < 0) throw invalidJev(`${field} must be a non-negative integer`, request)
+  if (!Number.isSafeInteger(value) || Number(value) < 0) throw invalidJev(`${field} must be a non-negative safe integer`, request)
   return Number(value)
 }
 

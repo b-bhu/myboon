@@ -1,4 +1,4 @@
-import { HermesService, extractJson } from '../hermes'
+import { HermesService, extractJson, resolveHermesProfile } from '../hermes'
 import type {
   ResearchConclusion,
   ResearchEvidence,
@@ -13,7 +13,7 @@ const BROWSER_ONLY_TOOL_POLICY = 'Tool policy: use browser_* tools only. Never c
 
 export interface ResearchEngineOptions {
   hermes: HermesService
-  /** hermes chat profile; default RESEARCH_ENGINE_HERMES_PROFILE when set. */
+  /** Overrides the shared production Hermes profile for isolated runs. */
   profile?: string
   /** Toolsets the agent runs with. Default browser-only; RESEARCH_ENGINE_TOOLSETS may override it. */
   toolsets?: string[]
@@ -164,7 +164,9 @@ export class ResearchEngine {
 
   constructor(options: ResearchEngineOptions) {
     this.hermes = options.hermes
-    this.profile = options.profile ?? process.env.RESEARCH_ENGINE_HERMES_PROFILE ?? undefined
+    this.profile = resolveHermesProfile(options.profile
+      ?? process.env.INFERENCE_GATEWAY_HERMES_PROFILE
+      ?? process.env.RESEARCH_ENGINE_HERMES_PROFILE)
     this.toolsets = normalizedToolsets(options.toolsets)
       ?? toolsetsFromEnv(process.env.RESEARCH_ENGINE_TOOLSETS)
       ?? DEFAULT_TOOLSETS

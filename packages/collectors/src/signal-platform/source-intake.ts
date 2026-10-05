@@ -97,6 +97,7 @@ export interface CanonicalSourceSignalIntakeOptions {
   retrievalPolicy?: ResearchWorkCreationPolicy | ((signal: Signal) => ResearchWorkCreationPolicy)
   buildTriageInput?: (signal: Signal) => RulesFirstTriageInput | Promise<RulesFirstTriageInput>
   decisionPolicy?: { priorityPolicyVersion: string; budgetPolicyVersion: string }
+  mayAdmit?: () => boolean
 }
 
 /**
@@ -138,6 +139,9 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
     // classifiers, or policy evaluation. A failure in any of those components
     // can prevent admission, but can never erase the observed Signal.
     const appended = this.persistObservation(signal, deliveredSignal, duplicateObservation)
+    if (this.options.mayAdmit && !this.options.mayAdmit()) {
+      return {...outcome(this.mode,signal.signalId),signalInserted:appended.inserted,held:'source_ownership_fenced'}
+    }
     const triageInput = await this.options.buildTriageInput!(signal)
     const configuredPolicy = this.options.retrievalPolicy!
     const retrievalPolicy = typeof configuredPolicy === 'function'
@@ -184,6 +188,7 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
       throw new Error(`Source intake store ${this.options.store.sourceType} cannot preview ${signal.sourceType}`)
     }
     if (!this.evaluates) throw new Error('Source intake is not configured for triage evaluation')
+    if (this.options.mayAdmit && !this.options.mayAdmit()) throw new Error('Source ownership fences intake preview')
     const triageInput = await this.options.buildTriageInput!(signal)
     return this.options.triage!.decide({ ...triageInput, signal })
   }
@@ -241,6 +246,10 @@ export class CanonicalSourceSignalIntake implements SourceSignalIntakePort {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('repairAdmissions limit must be 1-500')
     const report: AdmissionRepairReport = { repairedWorkIds: [], alreadyPresentWorkIds: [], held: [] }
     for (const owed of this.options.store.listOwedActiveAdmissions({ limit })) {
+      if (this.options.mayAdmit && !this.options.mayAdmit()) {
+        report.held.push({decisionId:owed.decision.decisionId,signalId:owed.decision.signalId,sourceType:owed.decision.sourceType,reason:'Source ownership fences admission repair.'})
+        continue
+      }
       const result = this.options.store.appendIntakeUnit(owedIntakeUnit(owed.decision, owed.disposition))
       const admitted = result.work
       if (!admitted) continue

@@ -1480,11 +1480,14 @@ export async function runPolymarketMarketsDataEngineer(
   db: SupabaseClient,
   partialOptions: PolymarketMarketsDataEngineerOptions = {},
   signalIntake?: SourceSignalIntakePort,
+  legacyQueueAllowed: () => boolean = () => true,
+  sourceObservationsRequired: () => boolean = () => false,
 ): Promise<PolymarketMarketsDataEngineerResult> {
   const options = selectedOptions(partialOptions)
   const observedAt = options.now
   const nowMs = new Date(observedAt).getTime()
   const intakeEnabled = signalIntake !== undefined && signalIntake.mode !== 'off'
+  const retainSourceObservations = intakeEnabled || sourceObservationsRequired() || !legacyQueueAllowed()
   const drainedBeforeFetch = intakeEnabled
     ? await drainSourceDeliveries({ store, intake: signalIntake! })
     : emptySourceDeliveryDrainReport()
@@ -1546,7 +1549,7 @@ export async function runPolymarketMarketsDataEngineer(
   // a price move.
   await store.commitWatchlistAndSourceDeliveries(
     watchlistInputs(watchlist, observedAt),
-    intakeEnabled
+    retainSourceObservations
       ? liveSignals.map((signal) => ({ signal, observedAt }))
       : [],
   )
@@ -1563,12 +1566,16 @@ export async function runPolymarketMarketsDataEngineer(
     attempted: drainedBeforeFetch.attempted + deliveredAfterCommit.attempted,
     delivered: drainedBeforeFetch.delivered + deliveredAfterCommit.delivered,
     duplicateDeliveries: drainedBeforeFetch.duplicateDeliveries + deliveredAfterCommit.duplicateDeliveries,
+    insertedDecisions: drainedBeforeFetch.insertedDecisions + deliveredAfterCommit.insertedDecisions,
+    admittedWorkItems: drainedBeforeFetch.admittedWorkItems + deliveredAfterCommit.admittedWorkItems,
     failures: [...drainedBeforeFetch.failures, ...deliveredAfterCommit.failures],
   }
   const canonicalIntake = await deliverCanonicalSignals(signalIntake, [])
   canonicalIntake.attempted += delivery.attempted
   canonicalIntake.insertedSignals += delivery.delivered
   canonicalIntake.duplicateSignals += delivery.duplicateDeliveries
+  canonicalIntake.insertedDecisions += delivery.insertedDecisions
+  canonicalIntake.admittedWorkItems += delivery.admittedWorkItems
   canonicalIntake.failures.push(...delivery.failures.map((failure) => ({
     signalId: failure.signalId,
     sourceType: failure.sourceType,
@@ -1635,8 +1642,14 @@ export async function runPolymarketMarketsDataEngineer(
     )
   }
 
-  await updateCandidateThreads(store, threadUpdates)
-  await insertCandidates(store, newCandidateInserts, observedAt)
+  // The source baseline and immutable delivery obligations above remain saved
+  // when legacy queue ownership is fenced. Recheck after the network work;
+  // source-native DB triggers also fence a concurrent ownership change.
+  const admitLegacyQueue = legacyQueueAllowed()
+  if (admitLegacyQueue) {
+    await updateCandidateThreads(store, threadUpdates)
+    await insertCandidates(store, newCandidateInserts, observedAt)
+  }
 
   return {
     observedAt,
@@ -1644,13 +1657,13 @@ export async function runPolymarketMarketsDataEngineer(
     fetchedMarkets,
     selectedWatchlist: watchlist.length,
     watchlistUpdated: watchlist.length,
-    candidatesWritten: newCandidateInserts.length,
-    candidateThreadsUpdated: threadUpdates.length,
-    candidateThreadsReopened: threadUpdates.filter((update) => (
+    candidatesWritten: admitLegacyQueue ? newCandidateInserts.length : 0,
+    candidateThreadsUpdated: admitLegacyQueue ? threadUpdates.length : 0,
+    candidateThreadsReopened: admitLegacyQueue ? threadUpdates.filter((update) => (
       update.payload.status === 'pending_research'
       && update.existing.status !== 'pending_research'
       && update.existing.status !== 'researching'
-    )).length,
+    )).length : 0,
     candidatesSkippedAsDuplicates: candidateInserts.length - familyDedupedCandidateInserts.length + familyDedupedCandidateInserts.filter((candidate) => existingCandidateKeys.has(candidate.dedupeKey) && !existingThreads.has(candidate.familyKey)).length,
     candidatesSkippedForBacklog,
     candidatesThrottledByBackpressure,
@@ -1671,7 +1684,7 @@ export async function runPolymarketMarketsDataEngineer(
       watchScore: market.watchScore,
       selectionReason: market.selectionReason,
     })),
-    candidates: newCandidateInserts.map(({ market, draft }) => ({
+    candidates: (admitLegacyQueue ? newCandidateInserts : []).map(({ market, draft }) => ({
       slug: market.slug,
       candidateType: draft.candidateType,
       whatChanged: draft.whatChanged,

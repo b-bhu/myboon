@@ -1,9 +1,11 @@
 import { stableContractId } from './adapters/identity'
 import { canonicalJson } from './canonical-json'
+import { isArticleResearchPacket } from './contracts'
 import type {
   FailureCategory,
   ResearchCompletion,
   ResearchPacketV1,
+  ResearchPacket,
   ResearchWorkItem,
   RetrievedEvidence,
   Signal,
@@ -111,6 +113,34 @@ export interface ResearchReadinessV1 extends Record<string, unknown> {
   createdAt: string
 }
 
+/** New article handoff carries source provenance and prepared placement only. */
+export interface ArticleResearchReadinessV1 extends Record<string, unknown> {
+  schemaVersion: typeof RESEARCH_READINESS_SCHEMA_VERSION
+  packetKind: 'article'
+  readinessId: string
+  workId: string
+  signalId: string
+  sourceType: Signal['sourceType']
+  packetId: string
+  researchContractVersion: ResearchWorkItem['researchContractVersion']
+  readinessPolicyVersion: string
+  outcome: ResearchReadinessOutcome
+  entityAction: ResearchEntityAction
+  packetCompletion: ResearchCompletion
+  sourceCoverage: { sourceUrl: string, capturedAt: string, contentHash: string, placementCount: number }
+  limitations: string[]
+  openQuestions: string[]
+  reason: string
+  failureCategory: FailureCategory | null
+  assessedBy: string
+  assessedAt: string
+  createdAt: string
+}
+export type ResearchReadiness = ResearchReadinessV1 | ArticleResearchReadinessV1
+export function isArticleResearchReadiness(value: ResearchReadiness): value is ArticleResearchReadinessV1 {
+  return value.packetKind === 'article'
+}
+
 const OUTCOMES: readonly ResearchReadinessOutcome[] = [
   'ready_for_entity', 'resolved_without_new_item', 'blocked', 'failed', 'readiness_unknown',
 ]
@@ -178,7 +208,7 @@ export function isNonClaimableReadiness(outcome: ResearchReadinessOutcome): bool
 export interface ResearchReadinessAssessmentInput {
   work: ResearchWorkItem
   signal: Signal
-  packet: ResearchPacketV1
+  packet: ResearchPacket
   /** Evidence already persisted for this work item. */
   persistedEvidence: readonly RetrievedEvidence[]
   assessedAt: string
@@ -194,9 +224,11 @@ export interface ResearchReadinessAssessmentInput {
  * Entity Manager, and it is deliberately not the Jev follow-up decision, which
  * stays a separate later slice.
  */
+export function assessResearchReadiness(input: ResearchReadinessAssessmentInput & { packet: ResearchPacketV1 }): ResearchReadinessV1
+export function assessResearchReadiness(input: ResearchReadinessAssessmentInput): ResearchReadiness
 export function assessResearchReadiness(
   input: ResearchReadinessAssessmentInput,
-): ResearchReadinessV1 {
+): ResearchReadiness {
   const work = validateResearchWorkItem(input.work)
   const packet = validateResearchPacket(input.packet)
   const assessedAt = input.assessedAt
@@ -205,8 +237,45 @@ export function assessResearchReadiness(
   }
   const readinessPolicyVersion = input.readinessPolicyVersion ?? RESEARCH_READINESS_POLICY_VERSION
   const assessedBy = input.assessedBy ?? RESEARCH_READINESS_ASSESSOR_ID
-
   const linkage = linkageIssue(work, input.signal, packet)
+
+  // Article readiness is a different handoff contract.  It is intentionally
+  // assessed before legacy claim/evidence coverage is even constructed.
+  if (isArticleResearchPacket(packet)) {
+    const articleBase = {
+      schemaVersion: RESEARCH_READINESS_SCHEMA_VERSION, packetKind: 'article' as const,
+      readinessId: researchReadinessId(work.workId, packet.packetId, readinessPolicyVersion), workId: work.workId,
+      signalId: work.signalId, sourceType: packet.sourceType, packetId: packet.packetId,
+      researchContractVersion: work.researchContractVersion, readinessPolicyVersion, packetCompletion: packet.completion,
+      sourceCoverage: { sourceUrl: packet.article.sourceUrl, capturedAt: packet.article.capturedAt,
+        contentHash: packet.article.contentHash, placementCount: packet.memberships.length },
+      limitations: [...packet.limitations], openQuestions: [...packet.openQuestions], assessedBy, assessedAt, createdAt: assessedAt,
+    }
+    if (linkage !== null) {
+      return validateResearchReadiness({
+        ...articleBase, outcome: 'failed', entityAction: NO_RESEARCH_ENTITY_ACTION,
+        reason: linkage, failureCategory: 'schema_version_mismatch',
+      })
+    }
+    if (packet.completion === 'failed') {
+      return validateResearchReadiness({
+        ...articleBase, outcome: 'failed', entityAction: NO_RESEARCH_ENTITY_ACTION,
+        reason: 'Research recorded a failed article packet; no handoff is attempted.',
+        failureCategory: 'invalid_structured_output',
+      })
+    }
+    return validateResearchReadiness({
+      ...articleBase, outcome: 'ready_for_entity',
+      entityAction: { kind: 'entity_item', actionId: researchEntityActionId({
+        workId: work.workId, packetId: packet.packetId, readinessPolicyVersion, kind: 'entity_item', targetId: null,
+      }), targetId: null },
+      reason: packet.completion === 'partial'
+        ? 'partial article retains immutable captured source provenance and prepared placement'
+        : 'article retains immutable captured source provenance and prepared placement',
+      failureCategory: null,
+    })
+  }
+
   const coverage = measureCoverage(packet, input.persistedEvidence)
   const base = {
     schemaVersion: RESEARCH_READINESS_SCHEMA_VERSION,
@@ -277,12 +346,9 @@ export function assessResearchReadiness(
       failureCategory: 'invalid_structured_output',
     })
   }
-  // Both a partial and a complete packet qualify here. What qualifies is the
-  // attributable, evidence-resolving contribution, not the label.
   return validateResearchReadiness({
     ...base,
     outcome: 'ready_for_entity',
-    // A ready result always owes its normal Entity item action.
     entityAction: {
       kind: 'entity_item',
       actionId: researchEntityActionId({
@@ -313,7 +379,7 @@ export function createBlockedReadiness(input: ResearchReadinessAssessmentInput &
   blockedDependency?: string | null
 }): ResearchReadinessV1 {
   const work = validateResearchWorkItem(input.work)
-  const packet = validateResearchPacket(input.packet)
+  const packet = legacyReadinessPacket(validateResearchPacket(input.packet))
   if (!input.reason.trim()) {
     throw new ContractValidationError('researchReadiness.reason', 'must explain the blocked decision')
   }
@@ -370,7 +436,7 @@ export function createResolvedWithoutNewItemReadiness(input: ResearchReadinessAs
   owedAttachment?: { targetId: string } | null
 }): ResearchReadinessV1 {
   const work = validateResearchWorkItem(input.work)
-  const packet = validateResearchPacket(input.packet)
+  const packet = legacyReadinessPacket(validateResearchPacket(input.packet))
   if (!input.reason.trim()) {
     throw new ContractValidationError('researchReadiness.reason', 'must explain the no-item decision')
   }
@@ -438,7 +504,7 @@ export function createReadinessUnknownReadiness(input: ResearchReadinessAssessme
   reason: string
 }): ResearchReadinessV1 {
   const work = validateResearchWorkItem(input.work)
-  const packet = validateResearchPacket(input.packet)
+  const packet = legacyReadinessPacket(validateResearchPacket(input.packet))
   const assessedAt = input.assessedAt
   const readinessPolicyVersion = input.readinessPolicyVersion ?? RESEARCH_READINESS_POLICY_VERSION
   return validateResearchReadiness({
@@ -477,7 +543,7 @@ export function createReadinessUnknownReadiness(input: ResearchReadinessAssessme
  * `readiness_unknown` is always held, never retried and never automatically
  * re-assessed, because an absent capture cannot justify re-deciding old material.
  */
-export function researchHandoffWorkStatus(readiness: ResearchReadinessV1): WorkStatus {
+export function researchHandoffWorkStatus(readiness: ResearchReadiness): WorkStatus {
   if (researchHandoffEntityClaim(readiness)) return 'entity_pending'
   if (readiness.outcome === 'resolved_without_new_item') return 'complete'
   return 'dead_letter'
@@ -491,7 +557,7 @@ export function researchHandoffWorkStatus(readiness: ResearchReadinessV1): WorkS
  * processor, while a deliberate no-action result does not.
  */
 export function researchHandoffEntityClaim(
-  readiness: ResearchReadinessV1,
+  readiness: ResearchReadiness,
 ): Exclude<ResearchEntityAction, { kind: 'none' }> | null {
   if (isNonClaimableReadiness(readiness.outcome)) return null
   const action = readiness.entityAction
@@ -519,7 +585,7 @@ export interface ResearchHandoffRetryPolicy {
  * `readiness_unknown` never retries and is never re-assessed automatically.
  */
 export function researchHandoffTerminalStatus(
-  readiness: ResearchReadinessV1,
+  readiness: ResearchReadiness,
   policy: ResearchHandoffRetryPolicy,
 ): Extract<WorkStatus, 'retry_wait' | 'dead_letter'> {
   const category = readiness.failureCategory
@@ -535,8 +601,12 @@ export function researchHandoffTerminalStatus(
   return 'retry_wait'
 }
 
-export function validateResearchReadiness(value: unknown): ResearchReadinessV1 {
+export function validateResearchReadiness(value: ResearchReadinessV1): ResearchReadinessV1
+export function validateResearchReadiness(value: ArticleResearchReadinessV1): ArticleResearchReadinessV1
+export function validateResearchReadiness(value: unknown): ResearchReadiness
+export function validateResearchReadiness(value: unknown): ResearchReadiness {
   const record = object(value, 'researchReadiness')
+  if (record.packetKind === 'article') return validateArticleReadiness(record)
   literal(record.schemaVersion, RESEARCH_READINESS_SCHEMA_VERSION, 'researchReadiness.schemaVersion')
   for (const key of [
     'readinessId', 'workId', 'signalId', 'packetId', 'researchContractVersion',
@@ -619,16 +689,64 @@ export function validateResearchReadiness(value: unknown): ResearchReadinessV1 {
   return value as ResearchReadinessV1
 }
 
+export function validateLegacyResearchReadiness(value: unknown): ResearchReadinessV1 {
+  const readiness = validateResearchReadiness(value)
+  if (isArticleResearchReadiness(readiness)) throw new ContractValidationError('researchReadiness.packetKind', 'legacy readiness required')
+  return readiness
+}
+
+function validateArticleReadiness(record: Record<string, unknown>): ArticleResearchReadinessV1 {
+  literal(record.schemaVersion, RESEARCH_READINESS_SCHEMA_VERSION, 'researchReadiness.schemaVersion')
+  literal(record.packetKind, 'article', 'researchReadiness.packetKind')
+  for (const key of ['readinessId', 'workId', 'signalId', 'packetId', 'researchContractVersion', 'readinessPolicyVersion', 'reason', 'assessedBy'] as const) {
+    nonEmpty(record[key], `researchReadiness.${key}`)
+  }
+  oneOf(record.sourceType, ['news', 'polymarket', 'market_calendar', 'x'], 'researchReadiness.sourceType')
+  const outcome = oneOf(record.outcome, OUTCOMES, 'researchReadiness.outcome')
+  const entityAction = validateEntityAction(record.entityAction)
+  oneOf(record.packetCompletion, ['complete', 'partial', 'failed'], 'researchReadiness.packetCompletion')
+  const source = object(record.sourceCoverage, 'researchReadiness.sourceCoverage')
+  nonEmpty(source.sourceUrl, 'researchReadiness.sourceCoverage.sourceUrl')
+  timestamp(source.capturedAt, 'researchReadiness.sourceCoverage.capturedAt')
+  nonEmpty(source.contentHash, 'researchReadiness.sourceCoverage.contentHash')
+  nonNegativeInteger(source.placementCount, 'researchReadiness.sourceCoverage.placementCount')
+  assertedStringArray(record.limitations, 'researchReadiness.limitations')
+  assertedStringArray(record.openQuestions, 'researchReadiness.openQuestions')
+  if (record.failureCategory !== null && (typeof record.failureCategory !== 'string' || !FAILURE_CATEGORIES.has(record.failureCategory))) {
+    throw new ContractValidationError('researchReadiness.failureCategory', 'must be a known failure category or null')
+  }
+  timestamp(record.assessedAt, 'researchReadiness.assessedAt')
+  timestamp(record.createdAt, 'researchReadiness.createdAt')
+  if (record.readinessId !== researchReadinessId(
+    record.workId as string, record.packetId as string, record.readinessPolicyVersion as string,
+  )) {
+    throw new ContractValidationError('researchReadiness.readinessId', 'must be stable for its work, packet, and readiness policy version')
+  }
+  if (isNonClaimableReadiness(outcome) && record.failureCategory === null) {
+    throw new ContractValidationError('researchReadiness.failureCategory', `is required for a ${outcome} outcome`)
+  }
+  if (isNonClaimableReadiness(outcome) && entityAction.kind !== 'none') {
+    throw new ContractValidationError('researchReadiness.entityAction', `must be none for a ${outcome} outcome`)
+  }
+  if (outcome === 'ready_for_entity' && entityAction.kind !== 'entity_item') {
+    throw new ContractValidationError('researchReadiness.entityAction', 'must be an entity_item action for a ready_for_entity outcome')
+  }
+  if (outcome === 'resolved_without_new_item' && entityAction.kind === 'entity_item') {
+    throw new ContractValidationError('researchReadiness.entityAction', 'must not create an entity_item action for a resolved_without_new_item outcome')
+  }
+  return record as ArticleResearchReadinessV1
+}
+
 /**
  * Validates a saved readiness record against the stored work, signal, packet,
  * and evidence it claims to describe. Entity Manager uses this to trust the
  * decision's linkage, never its sufficiency.
  */
 export function validateResearchReadinessLinkage(input: {
-  readiness: ResearchReadinessV1
+  readiness: ResearchReadiness
   work: ResearchWorkItem
   signal: Signal
-  packet: ResearchPacketV1
+  packet: ResearchPacket
   persistedEvidence: readonly RetrievedEvidence[]
 }): string | null {
   const readiness = validateResearchReadiness(input.readiness)
@@ -652,6 +770,17 @@ export function validateResearchReadinessLinkage(input: {
   if (readiness.packetCompletion !== packet.completion) {
     return 'readiness completion provenance does not match its packet'
   }
+  if (isArticleResearchReadiness(readiness)) {
+    if (!isArticleResearchPacket(packet)) return 'article readiness does not match legacy packet'
+    if (readiness.sourceCoverage.sourceUrl !== packet.article.sourceUrl
+      || readiness.sourceCoverage.capturedAt !== packet.article.capturedAt
+      || readiness.sourceCoverage.contentHash !== packet.article.contentHash
+      || readiness.sourceCoverage.placementCount !== packet.memberships.length) {
+      return 'article readiness source provenance does not match its packet'
+    }
+    return null
+  }
+  if (isArticleResearchPacket(packet)) return 'legacy readiness does not match article packet'
   if (canonicalJson(readiness.limitations) !== canonicalJson(packet.limitations)
     || canonicalJson(readiness.openQuestions) !== canonicalJson(packet.openQuestions)) {
     return 'readiness does not retain the packet limitations and open questions'
@@ -674,7 +803,7 @@ export function validateResearchReadinessLinkage(input: {
 function linkageIssue(
   work: ResearchWorkItem,
   signal: Signal,
-  packet: ResearchPacketV1,
+  packet: ResearchPacket,
 ): string | null {
   if (packet.workId !== work.workId || packet.signalId !== work.signalId
     || packet.sourceType !== work.sourceType) {
@@ -687,6 +816,13 @@ function linkageIssue(
     return 'signal linkage does not match its work item'
   }
   return null
+}
+
+function legacyReadinessPacket(packet: ResearchPacket): ResearchPacketV1 {
+  if (isArticleResearchPacket(packet)) {
+    throw new ContractValidationError('researchReadiness.packet', 'article packets require the article readiness branch')
+  }
+  return packet
 }
 
 function measureCoverage(

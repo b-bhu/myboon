@@ -1,11 +1,11 @@
-import type { ResearchPacketV1, ResearchWorkItem, RetrievedEvidence, Signal } from '../signal-platform/contracts'
+import { isArticleResearchPacket, type ResearchPacket as SourceResearchPacket, type ResearchPacketV1, type ResearchWorkItem, type RetrievedEvidence, type Signal } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { validateResearchPacket } from '../signal-platform/validation'
 import {
   researchHandoffEntityClaim,
   validateResearchReadiness,
   validateResearchReadinessLinkage,
-  type ResearchReadinessV1,
+  type ResearchReadiness,
 } from '../signal-platform/research-readiness'
 import type { ResearchPacket } from './types'
 
@@ -43,7 +43,7 @@ export interface EntityHandoffContext {
   signal: Signal
   persistedEvidence: readonly RetrievedEvidence[]
   /** Null for a packet saved before the readiness contract existed. */
-  readiness: ResearchReadinessV1 | null
+  readiness: ResearchReadiness | null
 }
 
 const ADAPTER_VERSION_V2 = 'myboon.entity_packet_adapter.v2' as const
@@ -104,6 +104,7 @@ export function adaptCanonicalResearchPacket(
   context?: EntityHandoffContext,
 ): ResearchPacket {
   const packet = canonicalPacket(value)
+  if (isArticleResearchPacket(packet)) return adaptArticlePacket(packet, context)
   const sourcePolicy = registry.policyFor(packet.sourceType)
   validateLinkage(packet)
   validateEvidenceLinkage(packet)
@@ -227,7 +228,7 @@ function policy(input: Pick<
  * than retried. Sufficiency itself is never reassessed here: Entity validates
  * the decision's schema, linkage, provenance, and explicit action only.
  */
-function resolveReadiness(packet: ResearchPacketV1, context: EntityHandoffContext): ResearchReadinessV1 | null {
+function resolveReadiness(packet: SourceResearchPacket, context: EntityHandoffContext): ResearchReadiness | null {
   if (context.readiness === null) return null
   const readiness = validateResearchReadiness(context.readiness)
   const issue = validateResearchReadinessLinkage({
@@ -249,7 +250,7 @@ function resolveReadiness(packet: ResearchPacketV1, context: EntityHandoffContex
   return readiness
 }
 
-function canonicalPacket(value: unknown): ResearchPacketV1 {
+function canonicalPacket(value: unknown): SourceResearchPacket {
   try {
     return validateResearchPacket(value)
   } catch (error) {
@@ -258,6 +259,23 @@ function canonicalPacket(value: unknown): ResearchPacketV1 {
       ? 'schema_version_mismatch' as const
       : 'invalid_structured_output' as const
     throw new CanonicalPacketAdapterError(message, category)
+  }
+}
+
+function adaptArticlePacket(packet: Extract<SourceResearchPacket, { packetKind: 'article' }>, context?: EntityHandoffContext): ResearchPacket {
+  const readiness = context ? resolveReadiness(packet, context) : null
+  if (!readiness) throw new CanonicalPacketAdapterError('Article packet requires explicit article readiness before Entity processing.')
+  return {
+    id: `canonical-packet:${packet.packetId}`, source: packet.sourceType, sourceArea: 'feed', sourceResearchId: packet.packetId,
+    sourceType: 'article', sourceRefId: packet.signalId, title: packet.article.title, summary: packet.article.timelineSummary,
+    body: packet.article.body ?? packet.article.timelineSummary, observedAt: packet.observedAt,
+    eventAt: packet.article.eventAt ?? packet.sourceSignal.publishedAt ?? packet.observedAt, url: packet.article.sourceUrl,
+    evidence: [], metrics: { membershipCount: packet.memberships.length, budgetUsed: clone(packet.budgetUsed) },
+    context: { adapter_version: ADAPTER_VERSION_V2, packet_kind: 'article', packet_id: packet.packetId,
+      work_id: packet.workId, signal_id: packet.signalId, trace_id: packet.execution.traceId,
+      published_at: packet.sourceSignal.publishedAt, event_at: packet.article.eventAt,
+      article: clone(packet.article), memberships: clone(packet.memberships), research_readiness: clone(readiness),
+      canonical_packet: clone(packet), limitations: clone(packet.limitations), open_questions: clone(packet.openQuestions) },
   }
 }
 

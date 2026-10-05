@@ -6,6 +6,8 @@ import { EntityService } from './entity-service'
 import { HermesEntityExtractionProvider } from './extractor'
 import { SupabaseEntityMemoryStore } from './supabase-store'
 import { legacyEntityOwnership, runLegacyEntityWhenOwned } from './legacy-ownership-guard'
+import { withSourceOwnershipOperation } from '../signal-platform/source-ownership'
+import { legacyEntitySourcePath, legacyEntityWriteGuard, ownershipGuardedEntityStore } from './source-ownership-write-guard'
 import { SqliteNewsStore } from '../news/sqlite-store'
 import type {
   NewsCandidateObservationRow,
@@ -64,6 +66,8 @@ export async function fetchUnprocessedNewsPackets(input: {
 }
 
 export async function runNewsEntityManager(input: RunNewsEntityManagerInput): Promise<NewsEntityManagerResult> {
+  const assertOwned = legacyEntityWriteGuard('news')
+  assertOwned()
   const fetched = await fetchNewsPackets({
     newsStore: input.newsStore,
     entityStore: input.entityStore,
@@ -73,9 +77,10 @@ export async function runNewsEntityManager(input: RunNewsEntityManagerInput): Pr
   const failures: NewsEntityManagerResult['failures'] = []
   let memoriesWritten = 0
   let extractionFailures = 0
-  const entityService = new EntityService(input.entityStore)
+  const entityService = new EntityService(ownershipGuardedEntityStore(input.entityStore,assertOwned))
 
   for (const item of fetched.packets) {
+    assertOwned()
     let extractionResult: WriteExtractionResult
     try {
       extractionResult = await entityService.writeExtraction(item.packet, input.extractionProvider)
@@ -172,7 +177,9 @@ function entityManagerFailureCategory(message: string): string {
 }
 
 async function runOnce(): Promise<void> {
-  const newsStore = new SqliteNewsStore(process.env.NEWS_SQLITE_PATH)
+  const databasePath = legacyEntitySourcePath('news')
+  await withSourceOwnershipOperation({databasePath,source:'news',domain:'entity',owner:'legacy'},async () => {
+  const newsStore = new SqliteNewsStore(databasePath)
   try {
     const supabase = createClient(
       requiredEnv('SUPABASE_URL'),
@@ -190,6 +197,7 @@ async function runOnce(): Promise<void> {
   } finally {
     newsStore.close()
   }
+  })
 }
 
 async function main(): Promise<void> {

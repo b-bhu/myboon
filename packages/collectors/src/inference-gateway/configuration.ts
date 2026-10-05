@@ -1,4 +1,4 @@
-import { HermesService } from '../hermes'
+import { DEFAULT_HERMES_PROFILE, HermesService } from '../hermes'
 import { InferenceGateway, type InferenceGatewayOptions } from './gateway'
 import { InferenceGatewayError } from './errors'
 import { HermesStructuredAdapter } from './hermes-adapter'
@@ -29,7 +29,7 @@ export const INFERENCE_GATEWAY_ENV = Object.freeze({
 } as const)
 
 const DEFAULT_PRIMARY_PROVIDER = 'ollama-cloud'
-const DEFAULT_PRIMARY_MODEL = 'deepseek-v4.1-flash'
+const DEFAULT_PRIMARY_MODEL = 'glm-5.3-flash'
 const OPENROUTER_PROVIDER = 'openrouter'
 const MAX_CONFIG_VALUE_CHARS = 200
 
@@ -88,9 +88,10 @@ export function loadInferenceGatewayConfiguration(
     env[INFERENCE_GATEWAY_ENV.primaryModel],
     DEFAULT_PRIMARY_MODEL,
   )
-  const hermesProfile = optionalConfiguredValue(
+  const hermesProfile = configuredValue(
     'Hermes profile',
     env[INFERENCE_GATEWAY_ENV.hermesProfile],
+    DEFAULT_HERMES_PROFILE,
   )
   // The fallback is deliberately opt-in. Merely having OpenRouter credentials
   // in the environment never enables it and credentials are never read here.

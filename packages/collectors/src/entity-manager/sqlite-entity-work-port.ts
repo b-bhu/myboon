@@ -1,4 +1,4 @@
-import type { ResearchPacketV1 } from '../signal-platform/contracts'
+import type { ResearchPacket } from '../signal-platform/contracts'
 import type { CanonicalPlatformStore } from '../signal-platform/platform-store'
 import type {
   HeartbeatCommand,
@@ -29,17 +29,21 @@ type EntityWorkStore = Pick<
 export class SqliteEntityPacketWorkPort implements EntityPacketWorkPort {
   readonly sourceType: EntityWorkStore['sourceType']
 
-  constructor(private readonly store: EntityWorkStore) {
+  constructor(private readonly store: EntityWorkStore, private readonly options: { claimsEnabled?: () => boolean } = {}) {
     this.sourceType = store.sourceType
   }
 
-  peekSchedulable(query: SchedulerQuery) { return this.store.peekSchedulable(query) }
-  claimWithLease(command: LeaseCommand): Promise<WorkLease | null> { return this.store.claimWithLease(command) }
+  peekSchedulable(query: SchedulerQuery) { return this.claimsEnabled() ? this.store.peekSchedulable(query) : Promise.resolve([]) }
+  claimWithLease(command: LeaseCommand): Promise<WorkLease | null> { return this.claimsEnabled() ? this.store.claimWithLease(command) : Promise.resolve(null) }
   heartbeatLease(command: HeartbeatCommand): Promise<boolean> { return this.store.heartbeatLease(command) }
   transitionLeased(command: LeasedTransitionCommand): Promise<boolean> { return this.store.transitionLeased(command) }
   releaseLease(command: ReleaseLeaseCommand): Promise<boolean> { return this.store.releaseLease(command) }
 
-  async readResearchPacket(workId: string): Promise<ResearchPacketV1 | null> {
+  private claimsEnabled(): boolean {
+    try { return this.options.claimsEnabled?.() ?? true } catch { return false }
+  }
+
+  async readResearchPacket(workId: string): Promise<ResearchPacket | null> {
     const packets = this.store.listResearchPacketsByWork(workId, 2)
     if (packets.length > 1) {
       throw new Error(`Canonical store returned multiple Research Packets for work ${workId}`)

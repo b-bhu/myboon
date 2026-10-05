@@ -5,7 +5,7 @@ import {
   type ResearchPacketV1,
 } from '../signal-platform/contracts'
 import { deriveEntityHintClaimRefs } from '../signal-platform/entity-hint-claims'
-import { validateResearchPacket } from '../signal-platform/validation'
+import { validateLegacyResearchPacket } from '../signal-platform/validation'
 import { DeepResearchError } from './errors'
 import {
   DEEP_RESEARCH_RESULT_SCHEMA_VERSION,
@@ -294,7 +294,7 @@ export function assembleDeepResearchPacket(input: {
     createdAt: input.createdAt,
   }
   try {
-    return validateResearchPacket(packet)
+    return validateLegacyResearchPacket(packet)
   } catch (error) {
     throw invalidOutput('Code-assembled deep research packet failed canonical validation', error)
   }

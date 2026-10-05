@@ -6,7 +6,7 @@ import {
   type ResearchPacketV1,
   type ResearchWorkItem,
 } from '../contracts'
-import { validateResearchPacket, validateSignal } from '../validation'
+import { validateLegacyResearchPacket, validateSignal } from '../validation'
 import { asRecord, asStringArray, isPublicHttpUrl, stableContractId } from './identity'
 import type { LegacyPacketMigrationPolicy, LegacyWorkMigrationPolicy } from './migration-policy'
 import { legacySignalToResearchWork } from './work'
@@ -124,7 +124,7 @@ export function adaptLegacyPolymarketPacket(
   if (evidence.length !== evidenceLinks.length) limitations.push('legacy_evidence_with_invalid_or_unstructured_url_omitted')
   if (row.uncertainty.trim()) limitations.push(row.uncertainty.trim())
 
-  return validateResearchPacket({
+  return validateLegacyResearchPacket({
     schemaVersion: RESEARCH_PACKET_SCHEMA_VERSION,
     packetId: stableContractId('packet', 'polymarket', row.id, work.workId),
     workId: work.workId,

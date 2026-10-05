@@ -26,6 +26,7 @@ test('configured classification defaults safe-off and uses the approved Hermes p
       trace: { stableDecisionKey: 'signal-1' },
     })
     assert.equal(result.actualProvider, 'ollama-cloud')
+    assert.equal(result.actualModel, 'glm-5.3-flash')
     assert.equal(result.fallbackUsed, false)
     assert.equal(hermesCalls, 1)
   } finally { runtime.close() }

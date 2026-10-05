@@ -6,7 +6,7 @@ import {
   type ResearchPacketV1,
   type ResearchWorkItem,
 } from '../contracts'
-import { validateResearchPacket, validateSignal } from '../validation'
+import { validateLegacyResearchPacket, validateSignal } from '../validation'
 import { isPublicHttpUrl, stableContractId } from './identity'
 import type { LegacyPacketMigrationPolicy, LegacyWorkMigrationPolicy } from './migration-policy'
 import { legacySignalToResearchWork } from './work'
@@ -91,7 +91,7 @@ export function adaptLegacyNewsPacket(
   if (validEvidence.length !== row.evidence.length) limitations.push('legacy_evidence_with_invalid_url_omitted')
   if (row.errors.length > 0) limitations.push(...row.errors.map((error) => `legacy_error: ${error}`))
 
-  return validateResearchPacket({
+  return validateLegacyResearchPacket({
     schemaVersion: RESEARCH_PACKET_SCHEMA_VERSION,
     packetId: stableContractId('packet', 'news', row.id, work.workId),
     workId: work.workId,

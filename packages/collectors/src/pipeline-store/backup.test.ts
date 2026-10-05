@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import test from 'node:test'
 
 import {
@@ -240,6 +241,45 @@ test('backupNewsStore: creates and verifies an independent news.sqlite backup', 
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('online backup works with a read-only rollback-journal source file and directory, preserving source bytes and write timestamps', async () => {
+  const dir=makeTmpDir('pipeline-read-only-backup-'),sourceDir=join(dir,'source')
+  const {mkdirSync}=await import('node:fs')
+  mkdirSync(sourceDir)
+  const sourcePath=join(sourceDir,'pipeline.sqlite')
+  try {
+    await seedStore(sourcePath)
+    // WAL may need a shared-memory sidecar for a consistent reader. This
+    // fixture represents a fully read-only snapshot using rollback journaling.
+    const {DatabaseSync}=createRequire(__filename)('node:sqlite') as {
+      DatabaseSync:new(path:string)=>{exec(sql:string):void;close():void}
+    }
+    const snapshot=new DatabaseSync(sourcePath)
+    snapshot.exec('PRAGMA journal_mode=DELETE');snapshot.close()
+    const before=readFileSync(sourcePath),metadata=statSync(sourcePath)
+    chmodSync(sourcePath,0o444);chmodSync(sourceDir,0o555)
+    const result=await backupPipelineStore({sourcePath,backupDir:join(dir,'backups'),now:'2026-10-03T05:00:00.000Z'})
+    assert.equal((await verifyPipelineBackup(result.path,result.sourceTableCounts)).ok,true)
+    assert.equal(result.sourceTableCounts.pipeline_candidates,3)
+    assert.deepEqual(readFileSync(sourcePath),before)
+    assert.equal(statSync(sourcePath).mtimeMs,metadata.mtimeMs)
+  } finally {
+    chmodSync(sourceDir,0o755)
+    if(existsSync(sourcePath))chmodSync(sourcePath,0o644)
+    rmSync(dir,{recursive:true,force:true})
+  }
+})
+
+test('backup refuses a nonexistent News or pipeline source without creating a database',async()=>{
+  const dir=makeTmpDir('missing-backup-source-')
+  try {
+    for(const [kind,backup]of [['news',backupNewsStore],['pipeline',backupPipelineStore]] as const){
+      const sourcePath=join(dir,`${kind}-missing.sqlite`)
+      await assert.rejects(()=>backup({sourcePath,backupDir:join(dir,`${kind}-backups`),now:'2026-10-03T05:00:00.000Z'}),/unable to open database/)
+      assert.equal(existsSync(sourcePath),false)
+    }
+  } finally {rmSync(dir,{recursive:true,force:true})}
 })
 
 test('backupNewsStore: inventories additive Feed V3 shadow and deep registry tables when present', async () => {

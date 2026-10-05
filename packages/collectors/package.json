@@ -16,6 +16,11 @@
     }
   },
   "scripts": {
+    "entity-v4:ownership": "tsx src/signal-platform/run-v4-ownership.ts",
+    "entity-v4:status": "tsx src/signal-platform/run-v4-status.ts",
+    "entity-v4:research-assess-partial": "tsx src/research-engine/run-retained-partial-assessment.ts",
+    "entity-v4:research-reconcile": "tsx src/research-engine/run-reconcile-research-reservation.ts",
+    "entity-v4:planning-reconcile": "tsx src/entity-manager/run-reconcile-planning-dispatch.ts",
     "polymarket:markets-data-engineer": "tsx src/polymarket/run-markets-data-engineer.ts",
     "polymarket:researcher": "tsx src/polymarket/run-researcher.ts",
     "polymarket:doctor": "tsx src/polymarket/run-doctor.ts",
@@ -89,10 +94,12 @@
     "@myboon/shared": "workspace:*",
     "@supabase/supabase-js": "^2.39.0",
     "agent-browser": "0.34.0",
-    "dotenv": "^16.4.1"
+    "dotenv": "^16.4.1",
+    "pg": "8.16.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/pg": "8.15.5",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }

@@ -1,11 +1,11 @@
-import type { ResearchPacketV1, ResearchWorkItem } from '../signal-platform/contracts'
+import { isArticleResearchPacket, type ResearchPacketV1, type ResearchWorkItem } from '../signal-platform/contracts'
 import {
   claimRefsForIdentityLabels,
   deriveEntityHintClaimRefs,
 } from '../signal-platform/entity-hint-claims'
 import type { InferenceTelemetry } from '../inference-gateway/types'
 import { PlatformFailure } from '../signal-platform/failures'
-import type { ResearchReadinessV1 } from '../signal-platform/research-readiness'
+import { isArticleResearchReadiness, type ResearchReadiness } from '../signal-platform/research-readiness'
 import {
   buildEntityAdmissionInput,
   EntityCanonUnavailableError,
@@ -1323,6 +1323,9 @@ function canonicalSourceItemIdentity(packet: ResearchPacketV1): string {
 
 function validateProcessorInput(input: CanonicalPacketProcessorInput): ResearchPacketV1 {
   const packet = input.canonicalPacket
+  if (isArticleResearchPacket(packet)) {
+    throw new CanonicalEntityProcessorValidationError('Article Research Packets must use the managed article persistence processor.')
+  }
   // The adapter performs schema, readiness policy, linkage, and all canonical
   // evidence-reference validation before any catalog or write operation.
   const adapted = adaptCanonicalResearchPacket(packet, undefined, input.handoffContext)
@@ -1366,7 +1369,10 @@ function validateProcessorInput(input: CanonicalPacketProcessorInput): ResearchP
  * than a retry loop, and the readiness record keeps the owed action and target
  * for whoever performs it.
  */
-function rejectUnsupportedEntityAction(readiness: ResearchReadinessV1 | null): void {
+function rejectUnsupportedEntityAction(readiness: ResearchReadiness | null): void {
+  if (readiness && isArticleResearchReadiness(readiness)) {
+    throw new CanonicalEntityProcessorValidationError('Article readiness must use the managed article persistence processor.')
+  }
   if (readiness?.entityAction.kind !== 'evidence_attachment') return
   throw new PlatformFailure({
     category: 'entity_resolution_failed',

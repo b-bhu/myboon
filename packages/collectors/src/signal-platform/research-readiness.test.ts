@@ -1,3 +1,4 @@
+import { validateLegacyResearchReadiness } from './research-readiness'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -346,35 +347,35 @@ test('blocked and failed outcomes use the existing bounded retry handling', () =
 test('a decision cannot claim readiness without a useful contribution or evidence', () => {
   const ready = assess()
   assert.throws(
-    () => validateResearchReadiness({ ...ready, coverage: { ...ready.coverage, useful: false } }),
+    () => validateLegacyResearchReadiness({ ...ready, coverage: { ...ready.coverage, useful: false } }),
     /useful contribution/,
   )
   assert.throws(
-    () => validateResearchReadiness({ ...ready, evidenceIds: [] }),
+    () => validateLegacyResearchReadiness({ ...ready, evidenceIds: [] }),
     /must reference persisted evidence/,
   )
   assert.throws(
-    () => validateResearchReadiness({ ...ready, entityAction: NO_RESEARCH_ENTITY_ACTION }),
+    () => validateLegacyResearchReadiness({ ...ready, entityAction: NO_RESEARCH_ENTITY_ACTION }),
     /entityAction/,
   )
   assert.throws(
-    () => validateResearchReadiness({ ...ready, readinessId: 'readiness_forged' }),
+    () => validateLegacyResearchReadiness({ ...ready, readinessId: 'readiness_forged' }),
     /readinessId/,
   )
   // A non-claimable outcome must carry a typed category.
   const failed = assess({ packet: packet({ completion: 'failed' }) })
   assert.throws(
-    () => validateResearchReadiness({ ...failed, failureCategory: null }),
+    () => validateLegacyResearchReadiness({ ...failed, failureCategory: null }),
     /failureCategory/,
   )
   assert.throws(
-    () => validateResearchReadiness({ ...ready, outcome: 'not_an_outcome' }),
+    () => validateLegacyResearchReadiness({ ...ready, outcome: 'not_an_outcome' }),
     /outcome/,
   )
   // A non-claimable outcome may never smuggle in an Entity action.
   for (const outcome of ['blocked', 'failed', 'readiness_unknown'] as const) {
     assert.throws(
-      () => validateResearchReadiness({
+      () => validateLegacyResearchReadiness({
         ...failed, outcome,
         entityAction: { kind: 'entity_item', actionId: 'action-1', targetId: null },
       }),
@@ -388,28 +389,28 @@ test('a decision cannot claim readiness without a useful contribution or evidenc
     assessedAt: ASSESSED_AT, reason: 'No new note.',
   })
   assert.throws(
-    () => validateResearchReadiness({
+    () => validateLegacyResearchReadiness({
       ...noItem, entityAction: { kind: 'entity_item', actionId: 'action-1', targetId: null },
     }),
     /must not create an entity_item action/,
   )
   // A required action must be addressable: an attachment needs a target.
   assert.throws(
-    () => validateResearchReadiness({
+    () => validateLegacyResearchReadiness({
       ...noItem, entityAction: { kind: 'evidence_attachment', actionId: 'action-1', targetId: null },
     }),
     /targetId/,
   )
   // A required action needs a stable identity.
   assert.throws(
-    () => validateResearchReadiness({
+    () => validateLegacyResearchReadiness({
       ...noItem, entityAction: { kind: 'evidence_attachment', targetId: 'managed-item-42' },
     }),
     /actionId/,
   )
   // A none action carries no identity at all.
   assert.throws(
-    () => validateResearchReadiness({
+    () => validateLegacyResearchReadiness({
       ...noItem, entityAction: { kind: 'none', actionId: 'action-1' },
     }),
     /entityAction/,

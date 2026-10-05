@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ClassificationDoubleFailureError, ClassificationGateway, InMemoryClassificationPorts } from './classification-gateway'
+import { ClassificationDoubleFailureError, ClassificationOutcomeUnknownError, ClassificationGateway, InMemoryClassificationPorts } from './classification-gateway'
 import { StaticClassificationRegistry } from './classification-registry'
 import { InferenceGatewayError } from './errors'
 import type {
@@ -177,4 +177,78 @@ test('consumer policy outcome is a second linked record', async () => {
   })
   assert.equal(setup.ports.outcomes[0]?.decisionId, result.decisionId)
   assert.equal(setup.ports.outcomes[0]?.outcome, 'held')
+})
+
+test('one reserved classification call accepts Jev without fallback or shadow spend', async () => {
+  const setup = gateway({})
+  const result = await setup.instance.classify<Decision>({ ...request(), maxProviderCalls: 1, holdOnUnknownOutcome: true })
+  assert.deepEqual(result.value, { label: 'keep' })
+  assert.deepEqual(setup.calls(), { jevCalls: 1, hermesCalls: 0 })
+  assert.equal(setup.ports.shadows.length, 0)
+  assert.equal(setup.ports.attempts[0]?.calls.length, 1)
+})
+
+test('a low-confidence Jev answer cannot buy Hermes under a one-call reservation', async () => {
+  let jevCalls = 0
+  const setup = gateway({ jev: { async classify() { jevCalls += 1; return jevAnswer(0.6) } } })
+  await assert.rejects(setup.instance.classify({ ...request(), maxProviderCalls: 1 }), (error: unknown) => {
+    assert.ok(error instanceof InferenceGatewayError)
+    assert.equal(error.category, 'budget_exceeded')
+    assert.equal(error.retryable, false)
+    return true
+  })
+  assert.equal(jevCalls, 1)
+  assert.equal(setup.calls().hermesCalls, 0)
+  assert.equal(setup.ports.attempts[0]?.status, 'failed')
+  assert.equal(setup.ports.attempts[0]?.calls[0]?.status, 'not_accepted')
+})
+
+test('one-call shadow mode keeps its authoritative Hermes call and does not enqueue a paid Jev sample', async () => {
+  const setup = gateway({ mode: 'shadow' })
+  const result = await setup.instance.classify<Decision>({ ...request(), maxProviderCalls: 1, holdOnUnknownOutcome: true })
+  assert.equal(result.actualProvider, 'ollama-cloud')
+  assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 1 })
+  assert.equal(setup.ports.shadows.length, 0)
+})
+
+for (const category of ['provider_timeout', 'provider_unavailable'] as const) {
+  test(`unknown Jev ${category} cannot dispatch fallback even when two calls fit`, async () => {
+    let jevCalls = 0
+    const setup = gateway({ jev: { async classify() {
+      jevCalls += 1
+      throw new InferenceGatewayError('remote outcome unavailable', { category, retryable: true })
+    } } })
+    await assert.rejects(setup.instance.classify({ ...request(), maxProviderCalls: 2, holdOnUnknownOutcome: true }), (error: unknown) => {
+      assert.ok(error instanceof ClassificationOutcomeUnknownError)
+      assert.equal(error.retryable, false)
+      assert.match(error.decisionId, /^classification_/)
+      return true
+    })
+    assert.equal(jevCalls, 1)
+    assert.equal(setup.calls().hermesCalls, 0)
+    assert.equal(setup.ports.attempts[0]?.status, 'failed')
+    assert.equal(setup.ports.attempts[0]?.calls.length, 1)
+    assert.equal(setup.ports.attempts[0]?.fallbackUsed, false)
+  })
+}
+
+test('a single reserved Jev call receives the full logical deadline', async () => {
+  let observedDeadline = 0
+  const setup = gateway({ jev: { async classify(call) { observedDeadline = call.deadlineMs; return jevAnswer() } } })
+  await setup.instance.classify({ ...request(), maxProviderCalls: 1, tighterDeadlineMs: 800 })
+  assert.equal(observedDeadline, 800)
+})
+
+test('Jev can use the full deadline when unknown dispatch outcomes forbid replacement', async () => {
+  let observedDeadline = 0
+  const setup = gateway({ jev: { async classify(call) { observedDeadline = call.deadlineMs; return jevAnswer() } } })
+  await setup.instance.classify({ ...request(), maxProviderCalls: 2, holdOnUnknownOutcome: true, tighterDeadlineMs: 800 })
+  assert.equal(observedDeadline, 800)
+})
+
+test('invalid dispatch tightening fails before reaching any provider', async () => {
+  const setup = gateway({})
+  await assert.rejects(setup.instance.classify({ ...request(), maxProviderCalls: 3 } as never), /one-or-two-provider/)
+  await assert.rejects(setup.instance.classify({ ...request(), holdOnUnknownOutcome: 'yes' } as never), /must be boolean/)
+  assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 0 })
 })

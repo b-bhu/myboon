@@ -19,9 +19,16 @@
  * because Node 22 has ERR_REQUIRE_CYCLE_MODULE bugs with the ESM loader.
  */
 const ROOT = __dirname
+const RUNTIME_HOME = require('node:os').homedir()
 const TSX = `${ROOT}/node_modules/.bin/tsx`
 const TSX_CLI = `${ROOT}/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/cli.mjs`
 const HERMES_ENV = {
+  INFERENCE_GATEWAY_HERMES_PROFILE: process.env.INFERENCE_GATEWAY_HERMES_PROFILE
+    ?? 'myboon-codex-production',
+  INFERENCE_GATEWAY_PRIMARY_PROVIDER: process.env.INFERENCE_GATEWAY_PRIMARY_PROVIDER
+    ?? 'ollama-cloud',
+  INFERENCE_GATEWAY_PRIMARY_MODEL: process.env.INFERENCE_GATEWAY_PRIMARY_MODEL
+    ?? 'glm-5.3-flash',
   // Browser sessions are long and expensive; structured calls are short.
   // Separate pools prevent browser research from starving entity/editor work.
   HERMES_BROWSER_MAX_CONCURRENCY: '2',
@@ -104,6 +111,34 @@ const RESEARCH_RUNTIME_ENV = Object.fromEntries(
     .map((key) => [key, process.env[key]]),
 )
 
+// V4 remains explicitly opted in. Numeric spending limits have no production
+// defaults here; runners require a reviewed policy when follow-up is enabled.
+const ENTITY_V4_RUNTIME_KEYS = [
+  'ENTITY_V4_ARTICLE_WORKFLOW_ENABLED',
+  'ENTITY_V4_MANAGED_WRITER_ENABLED', 'ENTITY_V4_NOVELTY_ENABLED',
+  'ENTITY_V4_RESEARCH_REUSE_ENABLED', 'ENTITY_V4_FOLLOWUP_ENABLED',
+  'ENTITY_V4_SOURCE_OWNERSHIP_ENABLED', 'ENTITY_V4_ACTIVE_SOURCES', 'ENTITY_V4_POLICY_VERSION',
+  'MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL', 'MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA',
+  'ENTITY_V4_REUSE_POLICY_VERSION', 'ENTITY_V4_REUSE_MAX_EVIDENCE_AGE_MS', 'ENTITY_V4_REUSE_MAX_RESEARCH_AGE_MS',
+  'ENTITY_V4_SYNTHESIS_POLICY_VERSION', 'ENTITY_V4_SYNTHESIS_MAX_INPUT_TOKENS',
+  'ENTITY_V4_SYNTHESIS_MAX_OUTPUT_TOKENS', 'ENTITY_V4_SYNTHESIS_MAX_COST_USD_MICROS',
+  'ENTITY_V4_ASSIGNMENT_POLICY_VERSION', 'ENTITY_V4_ASSIGNMENT_MAX_PROVIDER_CALLS',
+  'ENTITY_V4_ASSIGNMENT_MAX_INPUT_TOKENS', 'ENTITY_V4_ASSIGNMENT_MAX_OUTPUT_TOKENS', 'ENTITY_V4_ASSIGNMENT_MAX_COST_USD_MICROS',
+  'ENTITY_V4_FOLLOWUP_POLICY_VERSION', 'ENTITY_V4_FOLLOWUP_MAX_PROVIDER_CALLS',
+  'ENTITY_V4_FOLLOWUP_MAX_INPUT_TOKENS', 'ENTITY_V4_FOLLOWUP_MAX_OUTPUT_TOKENS',
+  'ENTITY_V4_FOLLOWUP_MAX_COST_USD_MICROS', 'ENTITY_V4_FOLLOWUP_MAX_SOURCES',
+  'ENTITY_V4_FOLLOWUP_MAX_TOTAL_BYTES', 'ENTITY_V4_FOLLOWUP_MAX_BYTES_PER_SOURCE', 'ENTITY_V4_FOLLOWUP_MAX_WALL_TIME_MS',
+]
+const ENTITY_V4_RUNTIME_ENV = Object.fromEntries(ENTITY_V4_RUNTIME_KEYS
+  .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
+const COLLECTOR_OWNERSHIP_KEYS = [
+  'ENTITY_V4_SOURCE_OWNERSHIP_ENABLED', 'FEED_V3_INTAKE_MODE',
+  'FEED_V3_INTAKE_ACTIVE_SOURCES', 'FEED_V3_INTAKE_SHADOW_SOURCES',
+  ...FEED_V3_POLICY_KEYS,
+]
+const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
+  .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
+
 module.exports = {
   apps: [
     {
@@ -132,6 +167,8 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         POLYMARKET_MARKETS_RUN_ONCE: '0',
+        ...HERMES_ENV,
+        ...COLLECTOR_OWNERSHIP_ENV,
         POLYMARKET_MARKETS_PREVIEW_ONLY: '0',
         POLYMARKET_MARKETS_RUN_INTERVAL_MS: '7200000',
         // Backpressure: throttle candidate creation once pending_research
@@ -154,6 +191,8 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         NEWS_SQLITE_PATH: '.data/news.sqlite',
+        ...HERMES_ENV,
+        ...COLLECTOR_OWNERSHIP_ENV,
         NEWS_FEED_RUN_ONCE: '0',
         NEWS_FEED_INTERVAL_MS: '600000',
       },
@@ -170,7 +209,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
-        HERMES_COMMAND: '/root/.local/bin/mybooneditor',
+        HERMES_COMMAND: `${RUNTIME_HOME}/.local/bin/mybooneditor`,
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',
@@ -240,7 +279,7 @@ module.exports = {
         ENTITY_CATALOG_MAINTENANCE_HERMES_TIMEOUT_MS: '120000',
         ENTITY_CATALOG_MAINTENANCE_LEASE_MS: '1800000',
         ENTITY_CATALOG_MAINTENANCE_PROVIDER: 'ollama-cloud',
-        ENTITY_CATALOG_MAINTENANCE_MODEL: 'deepseek-v4.1-flash',
+        ENTITY_CATALOG_MAINTENANCE_MODEL: 'glm-5.3-flash',
       },
     },
     {
@@ -284,6 +323,7 @@ module.exports = {
         // remain safe-off when neither source defines them.
         ...RESEARCH_RUNTIME_ENV,
         FEED_V3_RESEARCH_RUN_ONCE: '0',
+        ...ENTITY_V4_RUNTIME_ENV,
         FEED_V3_RESEARCH_INTERVAL_MS: '5000',
         FEED_V3_RESEARCH_BATCH_SIZE: '10',
         FEED_V3_RESEARCH_PROMPT_VERSION: 'research.synthesis.prompt.v2',
@@ -316,6 +356,7 @@ module.exports = {
         ...FEED_V3_POLICY_ENV,
         FEED_V3_RUNTIME_CONTROL_PATH: '.data/feed-v3-runtime-control.json',
         FEED_V3_ENTITY_RUN_ONCE: '0',
+        ...ENTITY_V4_RUNTIME_ENV,
         FEED_V3_ENTITY_INTERVAL_MS: '30000',
         FEED_V3_ENTITY_BATCH_SIZE: '10',
         FEED_V3_ENTITY_RUNTIME_STATUS_PATH: '.data/feed-v3-entity-runtime-status.json',

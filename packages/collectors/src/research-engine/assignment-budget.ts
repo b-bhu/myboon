@@ -2,7 +2,9 @@
 // dispatch holds a reservation whose outcome is never guessed. A timeout is not
 // evidence that the provider did no work, so the module refuses to release or
 // re-spend without a provider-supported finding. Pure logic only: persistence
-// goes through BudgetStorePort (source-local SQLite wiring is a later slice).
+// goes through BudgetStorePort and the source-local SQLite implementation.
+
+import { canonicalJson } from '../signal-platform/canonical-json'
 
 export type D2ReservationState =
   | 'reserved_not_dispatched'
@@ -12,8 +14,7 @@ export type D2ReservationState =
   | 'released'
 
 // Recorded proposals awaiting product approval (PRD §3.3 invents no numbers).
-// PROVISIONAL gut-call values used only as a conservative default snapshot,
-// not as calibrated limits or targets.
+// Informational proposal only. Admission must supply approved limits explicitly.
 export const PROVISIONAL_FOLLOWUP_LIMITS = {
   maxProviderCalls: 1,
   maxInputTokens: 15_000,
@@ -26,6 +27,10 @@ export interface D2FollowupLimitsSnapshot {
   readonly maxInputTokens: number
   readonly maxOutputTokens: number
   readonly maxIncrementalCostUsdMicros: number | null
+}
+
+export interface D2AssignmentLimitsSnapshot extends D2FollowupLimitsSnapshot {
+  readonly policyVersion: string
 }
 
 export type D2ReservationStatus =
@@ -49,8 +54,8 @@ export interface D2Settlement {
 }
 
 export type D2Usage =
-  | { readonly status: 'measured', readonly costUsdMicros: number | null, readonly inputTokens: number | null, readonly outputTokens: number | null }
-  | { readonly status: 'unknown', readonly costUsdMicros: null, readonly inputTokens: null, readonly outputTokens: null }
+  | { readonly status: 'measured', readonly costUsdMicros: number | null, readonly inputTokens: number | null, readonly outputTokens: number | null, readonly providerCalls?: number | null }
+  | { readonly status: 'unknown', readonly costUsdMicros: null, readonly inputTokens: number | null, readonly outputTokens: number | null, readonly providerCalls?: number | null }
 
 export interface D2ReservationKey {
   readonly rootAssignmentId: string
@@ -66,6 +71,7 @@ export interface D2ReservationRecord {
   readonly requestDigest: string
   readonly providerRoute: string
   readonly approvedLimits: D2FollowupLimitsSnapshot
+  readonly assignmentLimits?: D2AssignmentLimitsSnapshot
   readonly reservationStatus: D2ReservationStatus
   readonly ownershipEpoch: number
   readonly noDispatchFact: D2NoDispatchFact | null
@@ -120,6 +126,8 @@ export type D2RefusalCode =
   | 'fence_epoch_not_higher'
   | 'terminal_reservation'
   | 'exclusivity_not_provable'
+  | 'limits_not_configured'
+  | 'allowance_consumed'
 
 export type D2Outcome<RecordT> =
   | { readonly ok: true, readonly record: RecordT }
@@ -151,9 +159,14 @@ export async function claimReservation(
     requestDigest: string
     providerRoute: string
     approvedLimits?: D2FollowupLimitsSnapshot
+    assignmentLimits?: D2AssignmentLimitsSnapshot
     nowMs: number
   },
 ): Promise<D2Outcome<D2ReservationRecord>> {
+  if (!input.approvedLimits || !validLimits(input.approvedLimits)
+    || (input.assignmentLimits && (!input.assignmentLimits.policyVersion.trim() || !validLimits(input.assignmentLimits)))) {
+    return { ok: false, code: 'limits_not_configured', record: null }
+  }
   const key = {
     rootAssignmentId: input.rootAssignmentId,
     allowanceId: input.allowanceId,
@@ -162,8 +175,16 @@ export async function claimReservation(
   const existing = await port.listByAllowance(key)
   for (const record of existing) {
     if (record.attemptId === input.attemptId) {
+      if (record.requestDigest !== input.requestDigest || record.providerRoute !== input.providerRoute) {
+        return { ok: false, code: 'attempt_identity_mismatch', record }
+      }
+      if (canonicalJson(record.approvedLimits) !== canonicalJson(input.approvedLimits)
+        || canonicalJson(record.assignmentLimits ?? null) !== canonicalJson(input.assignmentLimits ?? null)) {
+        return { ok: false, code: 'attempt_identity_mismatch', record }
+      }
       return { ok: true, record }
     }
+    if (record.state === 'settled') return { ok: false, code: 'allowance_consumed', record }
     if (!isTerminalD2State(record.state)) {
       return { ok: false, code: 'active_attempt_exists', record }
     }
@@ -175,15 +196,8 @@ export async function claimReservation(
     state: 'reserved_not_dispatched' as const,
     requestDigest: input.requestDigest,
     providerRoute: input.providerRoute,
-    approvedLimits: Object.freeze(
-      input.approvedLimits
-        ?? {
-          maxProviderCalls: PROVISIONAL_FOLLOWUP_LIMITS.maxProviderCalls,
-          maxInputTokens: PROVISIONAL_FOLLOWUP_LIMITS.maxInputTokens,
-          maxOutputTokens: PROVISIONAL_FOLLOWUP_LIMITS.maxOutputTokens,
-          maxIncrementalCostUsdMicros: PROVISIONAL_FOLLOWUP_LIMITS.maxIncrementalCostUsdMicros as number | null,
-        }
-    ),
+    approvedLimits: Object.freeze({ ...input.approvedLimits }),
+    ...(input.assignmentLimits ? { assignmentLimits: Object.freeze({ ...input.assignmentLimits }) } : {}),
     reservationStatus: 'reserved_max_exposure' as const,
     ownershipEpoch: 1,
     noDispatchFact: null,
@@ -300,19 +314,24 @@ export async function acquireLeaseFence(
 // Cost reporting fails closed: cost must be a positive measured value or the
 // usage must be declared unknown — never zero, never null cost labeled
 // measured (both traced historical executions reported no usable cost).
-const settleOutcomeShape = (
-  usage: D2Usage,
-): 'measured_requires_nonzero_cost' | 'unknown_only_when_cost_absent' | 'valid' => {
-  if (usage.status === 'unknown') return 'valid'
-  if (usage.costUsdMicros === null || usage.costUsdMicros <= 0) {
-    return 'measured_requires_nonzero_cost'
-  }
-  return 'valid'
+function validLimits(limits: D2FollowupLimitsSnapshot): boolean {
+  return [limits.maxProviderCalls, limits.maxInputTokens, limits.maxOutputTokens]
+    .every((value) => Number.isSafeInteger(value) && value > 0)
+    && (limits.maxIncrementalCostUsdMicros === null
+      || (Number.isSafeInteger(limits.maxIncrementalCostUsdMicros) && limits.maxIncrementalCostUsdMicros > 0))
+}
+
+const settleOutcomeShape = (usage: D2Usage): 'invalid' | 'valid' => {
+  if (![usage.inputTokens, usage.outputTokens, usage.providerCalls ?? null]
+    .every((value) => value === null || (Number.isSafeInteger(value) && value >= 0))) return 'invalid'
+  if (usage.status === 'unknown') return usage.costUsdMicros === null ? 'valid' : 'invalid'
+  return Number.isSafeInteger(usage.costUsdMicros) && usage.costUsdMicros! > 0 ? 'valid' : 'invalid'
 }
 
 export type D2SettleVerification =
   | { readonly kind: 'transport_response_saved' }
   | { readonly kind: 'provider_supported', readonly sourceHandle: string }
+  | { readonly kind: 'durable_matching_response', readonly savedResultRef: string, readonly providerResultDigest: string }
 
 // Saved result identity: settled exactly once against the same attempt,
 // request digest, and provider result digest. Epoch-neutral late save is
@@ -360,7 +379,11 @@ export async function settleReservation(
     return { ok: false, code: 'invalid_d2_usage_report', record }
   }
   if (record.state === 'execution_outcome_unknown'
-    && input.verification.kind !== 'provider_supported') {
+    && input.verification.kind !== 'provider_supported'
+    && !(input.verification.kind === 'durable_matching_response'
+      && input.verification.savedResultRef === input.savedResultRef
+      && input.verification.providerResultDigest === input.providerResultDigest
+      && Boolean(input.providerResultDigest) && Boolean(input.savedResultRef))) {
     return { ok: false, code: 'requires_provider_supported_handle', record }
   }
   const settlement: D2Settlement = Object.freeze({

@@ -353,6 +353,7 @@ test('maps budget and provider telemetry into the packet without model control',
     toolCalls: 0,
     wallTimeMs: 4567,
     budgetExceeded: false,
+    costUsdMicros: null,
   })
   assert.equal(packet.execution.provider, 'fallback-provider')
   assert.equal(packet.execution.model, 'fallback-model')

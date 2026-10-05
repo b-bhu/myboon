@@ -1,5 +1,5 @@
 import type {
-  ResearchPacketV1,
+  ResearchPacket,
   ResearchWorkItem,
   RetrievedEvidence,
   Signal,
@@ -8,7 +8,7 @@ import type { TriageDecisionV1 } from './triage-contracts'
 import type { ResearchWorkStoreAdapter } from './store-adapter'
 import type { AdmissionDispositionV1 } from './intake-admission'
 import type { RetrievalManifestV1 } from './retrieval-manifest'
-import type { ResearchReadinessV1, ResearchHandoffRetryPolicy } from './research-readiness'
+import type { ResearchReadiness, ResearchHandoffRetryPolicy } from './research-readiness'
 
 export interface ImmutableAppendResult<T> {
   inserted: boolean
@@ -32,7 +32,7 @@ export class ImmutableRecordConflictError extends Error {
   readonly code = 'IMMUTABLE_RECORD_CONFLICT'
 
   constructor(
-    readonly recordType: 'signal' | 'triage' | 'work' | 'evidence' | 'packet' | 'admission' | 'readiness' | 'delivery' | 'manifest',
+    readonly recordType: 'signal' | 'triage' | 'work' | 'evidence' | 'packet' | 'admission' | 'readiness' | 'delivery' | 'manifest' | 'research_v4_record',
     readonly identity: string,
   ) {
     super(`${recordType} ${identity} already exists with a different canonical payload`)
@@ -124,11 +124,11 @@ export interface CanonicalPlatformStore extends ResearchWorkStoreAdapter {
   /** Every checkpoint for a work item, oldest first. Never synthesised. */
   listRetrievalManifestsByWork(workId: string, limit: number): RetrievalManifestV1[]
 
-  appendResearchPacket(packet: ResearchPacketV1): ImmutableAppendResult<ResearchPacketV1>
-  getResearchPacket(packetId: string): ResearchPacketV1 | null
-  listResearchPacketsByWork(workId: string, limit: number): ResearchPacketV1[]
-  listResearchPacketsBySignal(signalId: string, limit: number): ResearchPacketV1[]
-  listResearchPacketsByTrace(traceId: string, limit: number): ResearchPacketV1[]
+  appendResearchPacket(packet: ResearchPacket): ImmutableAppendResult<ResearchPacket>
+  getResearchPacket(packetId: string): ResearchPacket | null
+  listResearchPacketsByWork(workId: string, limit: number): ResearchPacket[]
+  listResearchPacketsBySignal(signalId: string, limit: number): ResearchPacket[]
+  listResearchPacketsByTrace(traceId: string, limit: number): ResearchPacket[]
 
   /** Atomic, idempotent packet handoff; false means another worker won or the work is not ready. */
   promoteResearchReady(workId: string, now: string): boolean
@@ -141,8 +141,8 @@ export interface CanonicalPlatformStore extends ResearchWorkStoreAdapter {
    * persist one, so a decision can never exist without the work status that
    * admits it.
    */
-  getResearchReadinessByWork(workId: string): ResearchReadinessV1 | null
-  getResearchReadinessByPacket(packetId: string): ResearchReadinessV1 | null
+  getResearchReadinessByWork(workId: string): ResearchReadiness | null
+  getResearchReadinessByPacket(packetId: string): ResearchReadiness | null
 
   /**
    * Single-transaction Research handoff: the packet, the readiness decision,
@@ -161,15 +161,15 @@ export interface CanonicalPlatformStore extends ResearchWorkStoreAdapter {
    */
   promoteResearchReadyWithReadiness(input: {
     workId: string
-    readiness: ResearchReadinessV1
+    readiness: ResearchReadiness
     now: string
   }): ResearchHandoffCommitResult | null
 }
 
 /** Everything one Research handoff must persist together. */
 export interface ResearchHandoffUnit {
-  packet: ResearchPacketV1
-  readiness: ResearchReadinessV1
+  packet: ResearchPacket
+  readiness: ResearchReadiness
   /** Fenced owner/lease of the synthesis stage committing the handoff. */
   fence: { workId: string, leaseOwner: string, leaseId: string }
   now: string
@@ -183,8 +183,8 @@ export interface ResearchHandoffUnit {
 }
 
 export interface ResearchHandoffCommitResult {
-  packet: ImmutableAppendResult<ResearchPacketV1>
-  readiness: ImmutableAppendResult<ResearchReadinessV1>
+  packet: ImmutableAppendResult<ResearchPacket>
+  readiness: ImmutableAppendResult<ResearchReadiness>
   workStatus: ResearchWorkItem['status'] | null
   /** False when the fence lost; nothing was written in that case. */
   committed: boolean

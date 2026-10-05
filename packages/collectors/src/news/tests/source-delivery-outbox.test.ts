@@ -13,6 +13,7 @@ import {
 import { ImmutableRecordConflictError } from '../../signal-platform/platform-store'
 import { SqliteSignalPlatformStore } from '../../signal-platform/sqlite-platform-store'
 import { drainSourceDeliveries, sourceDeliveryDigest } from '../../signal-platform/source-delivery-outbox'
+import { createActiveSourceTriageIntake } from '../../signal-platform/active-triage'
 import { backupNewsStore, restoreNewsStore } from '../../pipeline-store/backup'
 import { adaptLiveNewsSignal } from '../../signal-platform/adapters/news-live'
 import type { NewsSignal } from '../../signal-platform/contracts'
@@ -128,6 +129,61 @@ class FlakyIntake implements SourceSignalIntakePort {
   async retryUntriaged(limit: number) {
     return this.inner.retryUntriaged?.(limit) ?? emptySourceIntakeReport(this.mode)
   }
+}
+
+for (const loseAcknowledgement of [false, true]) {
+  test(`active News delivery reports saved decision/work once${loseAcknowledgement ? ' when acknowledgement is lost' : ''}`, async () => {
+    await withTempDb(async (path) => {
+      const store = new SqliteNewsStore(path)
+      const canonical = new SqliteSignalPlatformStore(path, 'news')
+      const bucket = { available: 100, reservedAvailable: 10, utilization: 0 }
+      const intake = createActiveSourceTriageIntake({
+        store: canonical,
+        providerHealth: 'healthy',
+        clock: () => observedAt,
+        allowedDepths: ['light', 'standard'],
+        capacity: { snapshot: () => ({
+          byPriority: { P0: { ...bucket }, P1: { ...bucket }, P2: { ...bucket }, P3: { ...bucket } },
+          byDepth: { light: { ...bucket }, standard: { ...bucket }, deep: { ...bucket } },
+        }) },
+      })
+      const item = discovery({ headline: 'Quarterly earnings guidance rises' })
+      item.candidate.published_at = observedAt
+      const originalAck = store.markSourceDeliveryDelivered.bind(store)
+      let lostAck = false
+      store.markSourceDeliveryDelivered = async (signalId) => {
+        if (loseAcknowledgement && !lostAck) {
+          lostAck = true
+          throw new Error('simulated interruption after confirmed canonical writes')
+        }
+        await originalAck(signalId)
+      }
+      try {
+        const first = await ingestDiscoveredNewsCandidates({ store, discoveries: [item], signalIntake: intake })
+        assert.equal(first.delivery.insertedDecisions, 1)
+        assert.equal(first.delivery.admittedWorkItems, 1)
+        assert.equal(first.canonicalIntake.insertedDecisions, 1)
+        assert.equal(first.canonicalIntake.admittedWorkItems, 1)
+        assert.equal(first.delivery.failures.length, loseAcknowledgement ? 1 : 0)
+
+        const repeated = await ingestDiscoveredNewsCandidates({ store, discoveries: [item], signalIntake: intake })
+        assert.equal(repeated.delivery.insertedDecisions, 0)
+        assert.equal(repeated.delivery.admittedWorkItems, 0)
+        assert.equal(repeated.canonicalIntake.insertedDecisions, 0)
+        assert.equal(repeated.canonicalIntake.admittedWorkItems, 0)
+        assert.equal(repeated.drainedBeforeFeed.duplicateDeliveries, loseAcknowledgement ? 1 : 0)
+        assert.deepEqual(await store.listPendingSourceDeliveries(10), [])
+        const state = await canonical.readWorkObservability({ now: observedAt, recentFailureSince: observedAt, failureLimit: 10 })
+        assert.equal(state.signalCount, 1)
+        assert.equal(state.triageDecisionCount, 1)
+        assert.ok(state.queueAge)
+        assert.equal(state.queueAge.filter((row) => row.status === 'research_pending').reduce((count, row) => count + row.count, 0), 1)
+      } finally {
+        canonical.close()
+        store.close()
+      }
+    })
+  })
 }
 
 test('pre-migration observations gain no obligations and are never replayed', async () => {
