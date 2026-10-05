@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MyBoon — Home</title>
+<link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="swap.css">
+</head>
+<body>
+<div class="review-shell">
+ <aside class="review">
+  <div class="label">SELECTED DIRECTION · C</div>
+  <h1>One feed.<br>Room to explore.</h1>
+  <p>Stories, latest updates, calendar, smart wallet activities and token stats.</p>
+  <div class="reason"><strong>The opening order</strong><p>Developing stories, an illustrated latest update, an open Calendar agenda, smart wallet activity and token stats. Calendar and activity each take a full row. Home ends after token stats.</p></div>
+  <div class="reason"><strong>Keep your place</strong><p>Incoming information waits behind “New updates” until you choose to load it. All updates opens the reporting list. The header bell opens Notifications.</p></div>
+  <div class="reason"><strong>The color theme</strong><p>Darker teal holds developing stories; greener teal holds latest updates. Calendar uses a navy background, a teal date panel and soft white event titles. Small gold accents mark reading and selection; green and pink show direction.</p></div>
+  <div class="reason"><strong>Wallet from the app</strong><p>The current Wallet overview is reproduced here: total and allocation, four action tiles, chain controls and compact protocol rows. Choose a preview state below.</p></div>
+  <a class="concept-link concept-primary" href="wallet-inline.html">Try Wallet with inline Swap <span aria-hidden="true">↗</span></a>
+  <a class="concept-link" href="swap-concepts.html">Compare three Swap designs <span aria-hidden="true">↗</span></a>
+  <div class="demo"><select id="wallet-preview" aria-label="Wallet preview state"><option value="guest">Guest</option><option value="solana">Solana connected</option><option value="evm">Polygon connected</option><option value="both">Both connected</option><option value="loading">Solana · syncing</option><option value="stale">Solana · stale balance</option><option value="failed">Solana · failed balance</option></select></div>
+  <button class="queue-demo" id="queue-updates">Queue 2 sample updates</button>
+  <p class="disclosure">All headlines, dates, transactions, token data and balances are illustrative. Calendar and smart wallet activities are planned features represented here with samples. BTC and SOL illustrate a limited starting set. No live services or accounts.</p>
+ </aside>
+ <section class="app" aria-label="MyBoon prototype">
+  <header class="masthead"><img class="wordmark" src="assets/wordmark.png" alt="MyBoon"><div class="header-actions"><button class="notifications" id="notifications" aria-label="Notifications"></button><button class="profile" id="profile" aria-label="Account and connection options"></button></div></header>
+  <main class="scroll" id="scroll" tabindex="-1" aria-live="off"></main>
+  <button class="arrival" id="new-arrivals" hidden aria-live="polite"></button>
+  <nav class="nav" aria-label="Main navigation"><button data-nav="feed" aria-current="page"></button><button data-nav="apps"></button><button data-nav="wallet"></button></nav>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <div class="swap-sheet-layer" id="swap-sheet-layer" hidden>
+   <button class="swap-sheet-backdrop" id="swap-sheet-backdrop" tabindex="-1" aria-label="Close Swap"></button>
+   <section class="swap-sheet" id="swap-sheet" role="dialog" aria-modal="true" aria-labelledby="swap-title" tabindex="-1">
+    <div class="swap-sheet-grabber" aria-hidden="true"><span></span></div>
+    <div class="detail swap-sheet-scroll" id="swap-sheet-content"></div>
+   </section>
+  </div>
+ </section>
+</div>
+<p class="mobile-note">All headlines, events, wallet activity, token data and balances are illustrative sample data. Calendar and smart wallet activity are planned features. No live services or transactions. <a class="concept-link concept-primary" href="wallet-inline.html">Try Wallet with inline Swap <span aria-hidden="true">↗</span></a><a class="concept-link" href="swap-concepts.html">Compare three Swap designs <span aria-hidden="true">↗</span></a></p>
+<script src="swap.js"></script>
+<script src="home.js"></script>
+</body></html>
