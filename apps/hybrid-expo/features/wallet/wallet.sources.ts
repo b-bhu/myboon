@@ -9,7 +9,7 @@
  * resolves or throws, so `useProtocolAccounts` can isolate failures per
  * source (PRD "fetch orchestration").
  */
-import { SpotDataApiClient } from '@myboon/shared/spot';
+import { walletBalanceClient as spotClient } from '@/features/wallet/wallet.balance-client';
 import { meteoraClient } from '@/features/meteora/meteora.client';
 import { fetchPhoenixTraderState } from '@/features/perps/phoenix.api';
 import { fetchPerpsAccount, fetchPerpsPositions } from '@/features/perps/perps.public-api';
@@ -20,8 +20,6 @@ import type {
   SpotChipToken,
   SpotRowDetail,
 } from '@/features/wallet/wallet.types';
-
-const spotClient = new SpotDataApiClient();
 
 export function invalidateSpotWalletSourceCache(): void {
   spotClient.clearCache();

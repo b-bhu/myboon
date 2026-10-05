@@ -9,7 +9,9 @@ import {
   Text,
   View,
 } from 'react-native';
-import { InlineNotice, METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
+import { InlineNotice } from '@/features/meteora/components/MeteoraExecutionControls';
+import { METEORA_COLORS, METEORA_TINTS } from '@/features/meteora/meteora.theme';
+import { tokens } from '@/theme/tokens';
 import { meteoraClient } from '@/features/meteora/meteora.client';
 import type { MeteoraExecutionUpdate, MeteoraOperationState } from '@/features/meteora/meteora.form';
 import { meteoraPositionActionsAdapter } from '@/features/meteora/meteora.position-actions';
@@ -297,12 +299,12 @@ export function MeteoraPositionActionSheet({
 
           {step.kind === 'loading' ? (
             <View style={styles.centerBlock}>
-              <ActivityIndicator color={METEORA_COLORS.cyan} />
+              <ActivityIndicator color={METEORA_COLORS.accent} />
               <Text style={styles.centerText}>Loading position…</Text>
             </View>
           ) : step.kind === 'error' ? (
             <View style={styles.centerBlock}>
-              <MaterialIcons name="error-outline" size={22} color={METEORA_COLORS.red} />
+              <MaterialIcons name="error-outline" size={22} color={METEORA_COLORS.negative} />
               <Text style={styles.centerText}>{step.message}</Text>
             </View>
           ) : step.kind === 'picker' ? (
@@ -435,7 +437,7 @@ function ActionMenu({
           <MaterialIcons
             name={position.isOutOfRange ? 'error-outline' : 'check-circle'}
             size={15}
-            color={position.isOutOfRange ? METEORA_COLORS.amber : METEORA_COLORS.green}
+            color={position.isOutOfRange ? METEORA_COLORS.warning : METEORA_COLORS.positive}
           />
           <Text style={styles.rangeContextText}>
             {formatRange(position.minPrice, position.maxPrice)} · {position.isOutOfRange === null ? 'Status unavailable' : position.isOutOfRange ? 'Out of range' : 'In range'}
@@ -492,7 +494,7 @@ function ActionRow({
       accessibilityHint={description}
       style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
     >
-      <MaterialIcons name={icon} size={20} color={destructive ? METEORA_COLORS.red : METEORA_COLORS.cyan} />
+      <MaterialIcons name={icon} size={20} color={destructive ? METEORA_COLORS.negative : METEORA_COLORS.accent} />
       <View style={styles.menuItemCopy}>
         <Text style={[styles.menuItemTitle, destructive && styles.menuItemTitleDestructive]}>{label}</Text>
         <Text style={styles.menuItemSubtitle}>{description}</Text>
@@ -547,7 +549,7 @@ function ClaimFlow({
             disabled={busy}
           >
             {busy ? (
-              <ActivityIndicator size="small" color={METEORA_COLORS.text} />
+              <ActivityIndicator size="small" color={METEORA_COLORS.onAccent} />
             ) : (
               <Text style={styles.primaryButtonText}>Claim</Text>
             )}
@@ -657,7 +659,7 @@ function RemoveFlow({
             disabled={busy || !preview}
           >
             {busy ? (
-              <ActivityIndicator size="small" color={METEORA_COLORS.text} />
+              <ActivityIndicator size="small" color={METEORA_COLORS.onAccent} />
             ) : (
               <Text style={styles.primaryButtonText}>{closing ? 'Close position' : 'Remove liquidity'}</Text>
             )}
@@ -728,7 +730,7 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(6,10,22,0.62)',
+    backgroundColor: METEORA_TINTS.backdrop,
   },
   sheet: {
     maxHeight: '82%',
@@ -811,7 +813,7 @@ const styles = StyleSheet.create({
     borderBottomColor: METEORA_COLORS.border,
   },
   menuItemPressed: {
-    backgroundColor: 'rgba(122,108,255,0.08)',
+    backgroundColor: METEORA_TINTS.pressed,
   },
   menuItemCopy: {
     flex: 1,
@@ -824,7 +826,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   menuItemTitleDestructive: {
-    color: METEORA_COLORS.red,
+    color: METEORA_COLORS.negative,
   },
   menuItemSubtitle: {
     marginTop: 2,
@@ -845,14 +847,14 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 10,
+    borderRadius: tokens.radius.md,
     borderWidth: 1,
     borderColor: METEORA_COLORS.border,
     backgroundColor: METEORA_COLORS.surfaceLift,
   },
   presetChipActive: {
-    borderColor: METEORA_COLORS.violet,
-    backgroundColor: 'rgba(122,108,255,0.16)',
+    borderColor: METEORA_COLORS.primary,
+    backgroundColor: METEORA_TINTS.selected,
   },
   presetChipText: {
     color: METEORA_COLORS.textDim,
@@ -866,8 +868,8 @@ const styles = StyleSheet.create({
   previewBox: {
     gap: 4,
     padding: 12,
-    borderRadius: 12,
-    backgroundColor: 'rgba(21,27,48,0.58)',
+    borderRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.surface,
   },
   previewLabel: {
     color: METEORA_COLORS.textFaint,
@@ -892,7 +894,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
+    borderRadius: tokens.radius.md,
     backgroundColor: METEORA_COLORS.surfaceLift,
   },
   secondaryButtonText: {
@@ -906,17 +908,17 @@ const styles = StyleSheet.create({
     minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
-    backgroundColor: METEORA_COLORS.coral,
+    borderRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.accent,
   },
   primaryButtonDisabled: {
     opacity: 0.6,
   },
   primaryButtonDestructive: {
-    backgroundColor: '#793144',
+    backgroundColor: METEORA_COLORS.negative,
   },
   primaryButtonText: {
-    color: METEORA_COLORS.text,
+    color: METEORA_COLORS.onAccent,
     fontSize: 13,
     lineHeight: 17,
     fontWeight: '800',
@@ -926,11 +928,11 @@ const styles = StyleSheet.create({
     marginTop: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
-    backgroundColor: '#16765B',
+    borderRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.positive,
   },
   doneButtonText: {
-    color: METEORA_COLORS.text,
+    color: METEORA_COLORS.onAccent,
     fontSize: 13,
     lineHeight: 17,
     fontWeight: '800',

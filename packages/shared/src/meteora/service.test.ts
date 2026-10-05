@@ -207,6 +207,29 @@ function testValidation(): void {
   )
 }
 
+async function testDefaultFetchKeepsGlobalReceiver(): Promise<void> {
+  const originalFetch = globalThis.fetch
+  let receiver: unknown = null
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: function receiverSensitiveFetch(this: unknown) {
+      receiver = this
+      if (this !== globalThis) throw new TypeError('Illegal invocation')
+      return Promise.resolve(new Response(JSON.stringify({ total: 0, pages: 0, current_page: 1, page_size: 20, data: [] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      }))
+    },
+  })
+  try {
+    await new MeteoraDataApiClient({ maxRetries: 0 }).listPools()
+    assert.equal(receiver, globalThis)
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, writable: true, value: originalFetch })
+  }
+}
+
+await testDefaultFetchKeepsGlobalReceiver()
 await testPoolNormalizationAndCache()
 await testUnverifiedPoolsAreHidden()
 await testPortfolioTokensCarryHonestNulls()

@@ -262,7 +262,9 @@ export class MeteoraDataApiClient {
 
   constructor(config: MeteoraClientConfig = {}) {
     this.baseUrl = (config.dataApiUrl ?? METEORA_DATA_API_URL).replace(/\/+$/, '')
-    this.fetcher = config.fetch ?? fetch
+    // Keep the browser Fetch receiver. Storing `fetch` directly then calling it
+    // as a property of this client can throw Illegal invocation in WebKit/CDP.
+    this.fetcher = config.fetch ?? ((input, init) => globalThis.fetch(input, init))
     this.timeoutMs = config.requestTimeoutMs ?? 12_000
     this.maxRetries = config.maxRetries ?? 2
   }

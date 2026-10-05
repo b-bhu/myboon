@@ -9,9 +9,8 @@
  * when not. That is the only signal — the icon itself never changes, so the
  * control keeps a stable shape and position across states.
  *
- * Apps with their own palette (Meteora) pass `borderColor` / `iconColor` to
- * match their surface. The connected treatment overrides `borderColor` so the
- * signal is consistent everywhere.
+ * Optional color overrides support different surfaces. The connected treatment
+ * overrides `borderColor` so the signal is consistent everywhere.
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';

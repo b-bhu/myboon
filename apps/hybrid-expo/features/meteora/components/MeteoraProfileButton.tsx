@@ -1,6 +1,6 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
+import { METEORA_COLORS } from '@/features/meteora/meteora.theme';
 
 export function MeteoraProfileButton({ onPress }: { onPress: () => void }) {
   return (
@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     borderWidth: 1,
     borderColor: METEORA_COLORS.border,
-    backgroundColor: 'rgba(21,27,48,0.72)',
+    backgroundColor: METEORA_COLORS.surfaceRaised,
   },
   pressed: {
     opacity: 0.68,

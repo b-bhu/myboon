@@ -11,6 +11,7 @@ import {
   createZapInPreview,
   resolveExecutionDefaults,
   resolveMeteoraPreset,
+  resolveManualRangeForDisplay,
   snapRangeToPoolState,
 } from './execution.js'
 import {
@@ -139,6 +140,11 @@ function testRangeSnappingAndBoundary(): void {
   })
   assert.equal(seventyBins.binCount, 70)
 
+  const overWideDisplay = resolveManualRangeForDisplay(state, priceAt(-35), priceAt(35))
+  assert.equal(overWideDisplay.binCount, 71)
+  assert.equal(overWideDisplay.minBinId, 965)
+  assert.equal(overWideDisplay.maxBinId, 1_035)
+
   throwsCode('RANGE_TOO_WIDE', () =>
     snapRangeToPoolState(state, {
       kind: 'manual',
@@ -151,6 +157,29 @@ function testRangeSnappingAndBoundary(): void {
     snapRangeToPoolState(state, { kind: 'manual', minPrice: '0', maxPrice: '100' }))
   throwsCode('AMOUNT_FORMAT_INVALID', () =>
     snapRangeToPoolState(state, { kind: 'manual', minPrice: '1e2', maxPrice: '101' }))
+}
+
+function testRoundedSdkActivePriceRetainsCanonicalGrid(): void {
+  const movedState: MeteoraExecutionPoolState = {
+    ...state,
+    activeBinId: 1,
+    // This is the decimal emitted after JS-number multiplication by 1.0004.
+    activePrice: '76.36081728166029',
+    binStep: 4,
+  }
+  const originalMin = '76.33028516759326'
+  const originalMax = '78.46591002409725'
+  const recovered = resolveManualRangeForDisplay(movedState, originalMin, originalMax)
+  assert.equal(recovered.minBinId, 0)
+  assert.equal(recovered.maxBinId, 69)
+  assert.equal(recovered.binCount, 70)
+
+  // A genuine off-grid price remains outward-snapped, rather than absorbed by
+  // the narrow API serialization tolerance.
+  const justAboveMaxBin = new Decimal(originalMax).mul(new Decimal('1.0004').pow('0.00001')).toString()
+  const offGrid = resolveManualRangeForDisplay(movedState, originalMin, justAboveMaxBin)
+  assert.equal(offGrid.minBinId, 0)
+  assert.equal(offGrid.maxBinId, 70)
 }
 
 function testCreatePositionModes(): void {
@@ -178,6 +207,16 @@ function testCreatePositionModes(): void {
   }, { now: NOW })
   assert.deepEqual(xOnly.amounts, { tokenXAtomic: '500000000', tokenYAtomic: '0' })
 
+  const xOnlyStraddling = createPositionPreview(state, {
+    poolAddress: state.poolAddress,
+    strategy: 'spot',
+    range: { kind: 'manual', minPrice: priceAt(-2), maxPrice: priceAt(2) },
+    depositMode: 'single_sided',
+    inputToken: 'x',
+    amount: '0.5',
+  }, { now: NOW })
+  assert.deepEqual(xOnlyStraddling.amounts, { tokenXAtomic: '500000000', tokenYAtomic: '0' })
+
   const yOnly = createPositionPreview(state, {
     poolAddress: state.poolAddress,
     strategy: 'bid_ask',
@@ -188,13 +227,32 @@ function testCreatePositionModes(): void {
   }, { now: NOW })
   assert.deepEqual(yOnly.amounts, { tokenXAtomic: '0', tokenYAtomic: '20000000' })
 
+  const yOnlyStraddling = createPositionPreview(state, {
+    poolAddress: state.poolAddress,
+    strategy: 'bid_ask',
+    range: { kind: 'manual', minPrice: priceAt(-2), maxPrice: priceAt(2) },
+    depositMode: 'single_sided',
+    inputToken: 'y',
+    amount: '20',
+  }, { now: NOW })
+  assert.deepEqual(yOnlyStraddling.amounts, { tokenXAtomic: '0', tokenYAtomic: '20000000' })
+
   throwsCode('INVALID_DEPOSIT_COMBINATION', () =>
     createPositionPreview(state, {
       poolAddress: state.poolAddress,
       strategy: 'spot',
-      range: { kind: 'manual', minPrice: '99', maxPrice: '103' },
+      range: { kind: 'manual', minPrice: priceAt(-2), maxPrice: priceAt(-1) },
       depositMode: 'single_sided',
       inputToken: 'x',
+      amount: '1',
+    }))
+  throwsCode('INVALID_DEPOSIT_COMBINATION', () =>
+    createPositionPreview(state, {
+      poolAddress: state.poolAddress,
+      strategy: 'curve',
+      range: { kind: 'manual', minPrice: priceAt(1), maxPrice: priceAt(2) },
+      depositMode: 'single_sided',
+      inputToken: 'y',
       amount: '1',
     }))
   throwsCode('INVALID_DEPOSIT_COMBINATION', () =>
@@ -304,6 +362,7 @@ function testZapInContractAndDefaults(): void {
 testDecimalBoundaries()
 testMeteoraPresetContract()
 testRangeSnappingAndBoundary()
+testRoundedSdkActivePriceRetainsCanonicalGrid()
 testCreatePositionModes()
 testLimitOrders()
 testPreviewIntegrityExpiryAndPoolMovement()

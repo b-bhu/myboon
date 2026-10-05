@@ -1,6 +1,8 @@
 import { MeteoraDataApiClient, MeteoraSdkClient, type MeteoraTransactionBundle } from '@myboon/shared/meteora';
 import type { Connection, Transaction } from '@solana/web3.js';
 import { METEORA_RPC_URL } from './meteora.config';
+import { PACIFIC_ENV } from '@/features/perps/pacific.config';
+import { assertMeteoraWalletNetwork } from './meteora.network';
 import {
   createMeteoraExecutionController,
   createMeteoraPendingStore,
@@ -153,6 +155,7 @@ async function runExecution(
     completeMessage: string;
   },
 ): Promise<MeteoraExecuteResult> {
+  assertMeteoraWalletNetwork(PACIFIC_ENV === 'testnet' ? 'devnet' : 'mainnet-beta');
   if (!context.walletAddress) throw new Error('Connect a Solana wallet before continuing.');
   const wallet = {
     connected: context.wallet.connected,

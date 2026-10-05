@@ -1,7 +1,10 @@
 import DLMM, {
   MAX_BINS_PER_POSITION,
+  TOKEN_ACCOUNT_FEE_BN,
+  getPositionRentExemption,
   MAX_BIN_PER_LIMIT_ORDER,
   StrategyType,
+  toAmountsBothSideByStrategy,
   autoFillXByStrategy,
   autoFillYByStrategy,
   isSupportLimitOrder,
@@ -18,6 +21,7 @@ import BN from 'bn.js'
 import Decimal from 'decimal.js'
 import { METEORA_DLMM_PROGRAM_IDS } from './config.js'
 import { MeteoraClientError } from './errors.js'
+import { createMeteoraPoolLoader } from './pool-loader.js'
 import {
   assertPoolStateCompatible,
   assertPreviewUsable,
@@ -46,13 +50,17 @@ import type {
   MeteoraAutoFillRequest,
   MeteoraClientConfig,
   MeteoraCreatePositionPreview,
+  MeteoraCreatePositionCostEstimate,
   MeteoraCreatePositionRequest,
   MeteoraExecutionDefaults,
   MeteoraExecutionPoolState,
   MeteoraLimitOrderPreview,
   MeteoraLimitOrderRequest,
   MeteoraRangeQuote,
+  MeteoraPoolBinLiquidity,
   MeteoraTransactionBundle,
+  MeteoraStrategyBinAllocation,
+  MeteoraStrategy,
   MeteoraTransactionPlan,
   MeteoraTransactionPlanStep,
   MeteoraZapInPreview,
@@ -61,13 +69,52 @@ import type {
 
 type DlmmPool = Awaited<ReturnType<typeof DLMM.create>>
 
+/**
+ * Exact official strategy allocation for the dev fixture's legacy SPL test
+ * mints. It is intentionally pure: no wallet, RPC, signing, or submission.
+ * Production allocations use the pool's actual mints in `getStrategyAllocation`.
+ */
+export function getMeteoraLegacyMintStrategyAllocation(input: {
+  activeBinId: number
+  binStep: number
+  minBinId: number
+  maxBinId: number
+  amountXAtomic: string
+  amountYAtomic: string
+  strategy: MeteoraStrategy
+}): MeteoraStrategyBinAllocation[] {
+  const legacyMint = { tlvData: new Uint8Array() } as never
+  const clock = { epoch: new BN(0) } as never
+  return toAmountsBothSideByStrategy(
+    input.activeBinId,
+    input.binStep,
+    input.minBinId,
+    input.maxBinId,
+    new BN(input.amountXAtomic),
+    new BN(input.amountYAtomic),
+    new BN(0),
+    new BN(0),
+    strategyToSdkValue(input.strategy) as StrategyType,
+    legacyMint,
+    legacyMint,
+    clock,
+  ).map((amount) => ({
+    binId: amount.binId,
+    xAtomic: amount.amountX.toString(),
+    yAtomic: amount.amountY.toString(),
+  }))
+}
+
 export class MeteoraSdkClient {
   readonly connection: Connection
   readonly programId: string
   private readonly network: 'mainnet-beta' | 'devnet'
   private readonly executionDefaults: MeteoraExecutionDefaults
   private readonly zap: Zap
-  private readonly pools = new Map<string, Promise<DlmmPool>>()
+  private readonly positionCostEstimates = new Map<string, Promise<MeteoraCreatePositionCostEstimate>>()
+  private readonly pools = createMeteoraPoolLoader<DlmmPool>((poolAddress) => (
+    DLMM.create(this.connection, assertPublicKey(poolAddress, 'poolAddress'), { cluster: this.network })
+  ))
 
   constructor(config: MeteoraClientConfig) {
     if (!config.rpcUrl) {
@@ -82,6 +129,7 @@ export class MeteoraSdkClient {
 
   clearPoolCache(): void {
     this.pools.clear()
+    this.positionCostEstimates.clear()
   }
 
   async quoteRange(
@@ -217,6 +265,90 @@ export class MeteoraSdkClient {
     return this.poolState(pool)
   }
 
+  /**
+   * Fetch a bounded, real liquidity window from DLMM. This intentionally uses
+   * the SDK bin read rather than deriving a second chart series from a user's
+   * deposit values.
+   */
+  async getBinsAroundActiveBin(
+    poolAddress: string,
+    binsToLeft: number,
+    binsToRight: number,
+  ): Promise<{ activeBinId: number; bins: MeteoraPoolBinLiquidity[] }> {
+    if (!Number.isInteger(binsToLeft) || !Number.isInteger(binsToRight)
+      || binsToLeft < 0 || binsToRight < 0 || binsToLeft + binsToRight > 256) {
+      throw new MeteoraClientError('INVALID_ARGUMENT', 'Requested liquidity bin window must be between 0 and 256 bins')
+    }
+    const pool = await this.getFreshPool(poolAddress)
+    const result = await pool.getBinsAroundActiveBin(binsToLeft, binsToRight)
+    return {
+      activeBinId: result.activeBin,
+      bins: result.bins.map((bin) => ({
+        binId: bin.binId,
+        price: new Decimal(bin.pricePerToken).toString(),
+        xAtomic: bin.xAmount.toString(),
+        yAtomic: bin.yAmount.toString(),
+      })),
+    }
+  }
+
+  /** Read exactly the chart's selected canonical bin window. */
+  /**
+   * The exact allocator used by `initializePositionAndAddLiquidityByStrategy`.
+   * If the active bin moved since the preview snapshot, return null rather
+   * than presenting a misleading mixed-bin chart.
+   */
+  async getStrategyAllocation(
+    preview: MeteoraCreatePositionPreview,
+  ): Promise<MeteoraStrategyBinAllocation[] | null> {
+    const pool = await this.getFreshPool(preview.poolState.poolAddress)
+    const activeBin = await pool.getActiveBin()
+    if (activeBin.binId !== preview.poolState.activeBinId) return null
+    const amounts = toAmountsBothSideByStrategy(
+      preview.poolState.activeBinId,
+      preview.poolState.binStep,
+      preview.range.minBinId,
+      preview.range.maxBinId,
+      new BN(preview.amounts.tokenXAtomic),
+      new BN(preview.amounts.tokenYAtomic),
+      activeBin.xAmount,
+      activeBin.yAmount,
+      strategyToSdkValue(preview.strategy) as StrategyType,
+      pool.tokenX.mint,
+      pool.tokenY.mint,
+      pool.clock,
+    )
+    return amounts.map((amount) => ({
+      binId: amount.binId,
+      xAtomic: amount.amountX.toString(),
+      yAtomic: amount.amountY.toString(),
+    }))
+  }
+
+  async getBinsBetweenBounds(
+    poolAddress: string,
+    minBinId: number,
+    maxBinId: number,
+  ): Promise<{ activeBinId: number; activePrice: string; bins: MeteoraPoolBinLiquidity[] }> {
+    if (!Number.isInteger(minBinId) || !Number.isInteger(maxBinId) || minBinId > maxBinId
+      || maxBinId - minBinId + 1 > 128) {
+      throw new MeteoraClientError('INVALID_ARGUMENT', 'Requested liquidity window must be an ordered range of at most 128 bins')
+    }
+    const pool = await this.getFreshPool(poolAddress)
+    const state = await this.poolState(pool)
+    const result = await pool.getBinsBetweenLowerAndUpperBound(minBinId, maxBinId)
+    return {
+      activeBinId: state.activeBinId,
+      activePrice: state.activePrice,
+      bins: result.bins.map((bin) => ({
+        binId: bin.binId,
+        price: new Decimal(bin.pricePerToken).toString(),
+        xAtomic: bin.xAmount.toString(),
+        yAtomic: bin.yAmount.toString(),
+      })),
+    }
+  }
+
   async getExecutionCapabilities(poolAddress: string): Promise<{
     createPosition: true
     zapIn: true
@@ -340,6 +472,118 @@ export class MeteoraSdkClient {
       [position],
       input.preview,
     )
+  }
+
+  /**
+   * Read-only estimate for the review/MAX reserve. It constructs no signed
+   * transaction and never submits one. The official SDK may perform an
+   * unsigned compute-unit simulation while assembling its estimate. Account-creation rent is
+   * intentionally not guessed here; the build message gives us a concrete
+   * position rent and maximum base network fee only.
+   */
+  async estimateCreatePositionCosts(input: {
+    walletAddress: string
+    preview: MeteoraCreatePositionPreview
+  }): Promise<MeteoraCreatePositionCostEstimate> {
+    const [positionRentLamports, bundle, pool] = await Promise.all([
+      getPositionRentExemption(this.connection, new BN(input.preview.range.binCount)),
+      this.buildCreatePositionFromPreview(input),
+      this.getFreshPool(input.preview.poolState.poolAddress),
+    ])
+    const quote = await pool.quoteCreatePosition({
+      strategy: {
+        minBinId: input.preview.range.minBinId,
+        maxBinId: input.preview.range.maxBinId,
+        strategyType: strategyToSdkValue(input.preview.strategy) as StrategyType,
+        ...(input.preview.depositMode === 'single_sided'
+          ? { singleSidedX: input.preview.amounts.tokenXAtomic !== '0' }
+          : {}),
+      },
+    })
+    const blockhash = await this.connection.getLatestBlockhash('confirmed')
+    const payer = assertPublicKey(input.walletAddress, 'walletAddress')
+    const fees = await Promise.all(bundle.transactions.map(async (transaction) => {
+      transaction.recentBlockhash = blockhash.blockhash
+      transaction.feePayer = payer
+      const value = await this.connection.getFeeForMessage(transaction.compileMessage(), 'confirmed')
+      return value.value
+    }))
+    const ataProgram = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
+    const ataCreations = bundle.transactions.flatMap((transaction) => transaction.instructions)
+      .filter((instruction) => instruction.programId.toBase58() === ataProgram).length
+    // The SDK's token-account constant is exact for legacy SPL accounts. A
+    // Token-2022 account may have extensions, so preserve an unavailable
+    // result instead of understating its rent.
+    const mintAccounts = ataCreations > 0
+      ? await this.connection.getMultipleAccountsInfo([pool.tokenX.publicKey, pool.tokenY.publicKey], 'confirmed')
+      : []
+    const token2022 = mintAccounts.some((account) => account?.owner.toBase58() === 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
+    const tokenAccountRentLamports = ataCreations === 0 ? '0'
+      : token2022 ? null : (BigInt(TOKEN_ACCOUNT_FEE_BN.toString()) * BigInt(ataCreations)).toString()
+    return {
+      positionRentLamports: String(positionRentLamports),
+      positionReallocRentLamports: decimalSolToLamports(quote.positionReallocCost),
+      binArrayRentLamports: decimalSolToLamports(quote.binArrayCost),
+      bitmapExtensionRentLamports: decimalSolToLamports(quote.bitmapExtensionCost),
+      tokenAccountRentLamports,
+      maximumNetworkFeeLamports: fees.some((fee) => fee === null)
+        ? null
+        : fees.reduce((total, fee) => total + BigInt(fee ?? 0), 0n).toString(),
+      transactionCount: bundle.transactions.length,
+      complete: tokenAccountRentLamports !== null,
+    }
+  }
+
+  /**
+   * Build a minimal one-atomic-unit position solely to quote account rent and
+   * fees for an editable range. It never becomes an executable UI preview.
+   */
+  async estimatePositionCostsForRange(input: {
+    poolAddress: string
+    walletAddress: string
+    strategy: MeteoraCreatePositionRequest['strategy']
+    minPrice: string
+    maxPrice: string
+    /** Empty forms conservatively quote two token accounts; edited drafts match their deposit shape. */
+    depositMode?: 'two_token' | 'single_sided'
+    inputToken?: 'x' | 'y'
+    cacheKey?: string
+  }): Promise<MeteoraCreatePositionCostEstimate> {
+    const key = JSON.stringify(input)
+    const existing = this.positionCostEstimates.get(key)
+    if (existing) return existing
+    let estimate: Promise<MeteoraCreatePositionCostEstimate>
+    estimate = this.getExecutionPoolState(input.poolAddress).then((state) => {
+      const preview = createPositionPreview(state, input.depositMode === 'single_sided'
+        ? {
+          poolAddress: input.poolAddress,
+          strategy: input.strategy,
+          range: { kind: 'manual', minPrice: input.minPrice, maxPrice: input.maxPrice },
+          depositMode: 'single_sided',
+          inputToken: input.inputToken ?? 'x',
+          amount: atomicToDecimal('1', (input.inputToken ?? 'x') === 'x' ? state.tokenX.decimals : state.tokenY.decimals),
+        }
+        : {
+          poolAddress: input.poolAddress,
+          strategy: input.strategy,
+          range: { kind: 'manual', minPrice: input.minPrice, maxPrice: input.maxPrice },
+          depositMode: 'two_token',
+          tokenXAmount: atomicToDecimal('1', state.tokenX.decimals),
+          tokenYAmount: atomicToDecimal('1', state.tokenY.decimals),
+        })
+      return this.estimateCreatePositionCosts({ walletAddress: input.walletAddress, preview })
+    }).then((result) => {
+      // An unavailable fee or rent is retryable; keep concurrent reads joined
+      // but do not make a later Retry reuse the same incomplete result.
+      if ((!result.complete || result.maximumNetworkFeeLamports === null)
+        && this.positionCostEstimates.get(key) === estimate) this.positionCostEstimates.delete(key)
+      return result
+    }).catch((cause) => {
+      if (this.positionCostEstimates.get(key) === estimate) this.positionCostEstimates.delete(key)
+      throw cause
+    })
+    this.positionCostEstimates.set(key, estimate)
+    return estimate
   }
 
   async previewLimitOrder(
@@ -559,26 +803,17 @@ export class MeteoraSdkClient {
   }
 
   private getPool(poolAddress: string): Promise<DlmmPool> {
-    const publicKey = assertPublicKey(poolAddress, 'poolAddress')
-    const cached = this.pools.get(poolAddress)
-    if (cached) return cached
-
-    const pool = DLMM.create(this.connection, publicKey, { cluster: this.network }).catch((cause) => {
-      this.pools.delete(poolAddress)
+    assertPublicKey(poolAddress, 'poolAddress')
+    return this.pools.get(poolAddress).catch((cause) => {
       throw new MeteoraClientError('SDK_ERROR', 'Failed to load Meteora pool state', null, cause)
     })
-    this.pools.set(poolAddress, pool)
-    return pool
   }
 
   private getFreshPool(poolAddress: string): Promise<DlmmPool> {
-    const publicKey = assertPublicKey(poolAddress, 'poolAddress')
-    this.pools.delete(poolAddress)
-    const pool = DLMM.create(this.connection, publicKey, { cluster: this.network }).catch((cause) => {
+    assertPublicKey(poolAddress, 'poolAddress')
+    return this.pools.getFresh(poolAddress).catch((cause) => {
       throw new MeteoraClientError('SDK_ERROR', 'Failed to refresh Meteora pool state', null, cause)
     })
-    this.pools.set(poolAddress, pool)
-    return pool
   }
 
   private async poolState(pool: DlmmPool): Promise<MeteoraExecutionPoolState> {
@@ -699,10 +934,14 @@ export class MeteoraSdkClient {
   }
 }
 
+function decimalSolToLamports(value: Decimal.Value): string {
+  return new Decimal(value).mul(1_000_000_000).toDecimalPlaces(0, Decimal.ROUND_CEIL).toFixed(0)
+}
+
 function atomicToDecimal(value: string, decimals: number): string {
+  if (decimals === 0) return value
   const padded = value.padStart(decimals + 1, '0')
   const whole = padded.slice(0, -decimals) || '0'
-  if (decimals === 0) return whole
   const fraction = padded.slice(-decimals).replace(/0+$/, '')
   return fraction ? `${whole}.${fraction}` : whole
 }

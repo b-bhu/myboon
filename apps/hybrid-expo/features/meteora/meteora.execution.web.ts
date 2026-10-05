@@ -24,18 +24,15 @@ export function createWebMeteoraPendingStorage(): MeteoraPendingStorage {
       }
     },
     async setItem(key, value) {
-      try {
-        window.localStorage.setItem(key, value);
-      } catch {
-        // Best-effort only — a private-browsing quota error must never break
-        // a submission that has already reached the network.
-      }
+      // The controller requires this save before opening the wallet. It
+      // handles later, already-submitted writes as best effort itself.
+      window.localStorage.setItem(key, value);
     },
     async removeItem(key) {
       try {
         window.localStorage.removeItem(key);
       } catch {
-        // Ignore — see setItem.
+        // A completed transaction does not need a successful cleanup write.
       }
     },
   };

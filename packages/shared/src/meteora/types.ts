@@ -332,6 +332,13 @@ export interface MeteoraExecutionDefaults {
   favorXInActiveId: boolean
 }
 
+/** Exact per-bin amount split returned by Meteora's official strategy allocator. */
+export interface MeteoraStrategyBinAllocation {
+  binId: number
+  xAtomic: string
+  yAtomic: string
+}
+
 export interface MeteoraExecutionPoolState {
   poolAddress: string
   activeBinId: number
@@ -340,6 +347,26 @@ export interface MeteoraExecutionPoolState {
   tokenX: Pick<MeteoraTokenSummary, 'address' | 'symbol' | 'decimals'>
   tokenY: Pick<MeteoraTokenSummary, 'address' | 'symbol' | 'decimals'>
   refreshedAt: string
+}
+
+/** Read-only DLMM bin liquidity used by the position range chart. */
+export interface MeteoraPoolBinLiquidity {
+  binId: number
+  price: string
+  xAtomic: string
+  yAtomic: string
+}
+
+export interface MeteoraCreatePositionCostEstimate {
+  positionRentLamports: string
+  positionReallocRentLamports: string
+  binArrayRentLamports: string
+  bitmapExtensionRentLamports: string
+  tokenAccountRentLamports: string | null
+  maximumNetworkFeeLamports: string | null
+  transactionCount: number
+  /** False when a token-account extension prevents an exact ATA rent quote. */
+  complete: boolean
 }
 
 export type MeteoraRangeRequest =

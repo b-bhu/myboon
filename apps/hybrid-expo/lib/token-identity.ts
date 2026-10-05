@@ -21,7 +21,7 @@
  * map) and let callers re-render when identities land in the background.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
 
@@ -33,12 +33,9 @@ export type { TokenIdentity } from '@/lib/token-identity.core';
 export { mintRef, perpRef } from '@/lib/token-identity.core';
 
 import type { TokenIdentity } from '@/lib/token-identity.core';
+import { TokenIdentityStore } from '@/lib/token-identity.store';
 
 const GET_BATCH_LIMIT = 15;
-const POST_BATCH_LIMIT = 500;
-
-/** How long a network failure suppresses re-fetching the same ref. */
-const NEGATIVE_CACHE_MS = 30_000;
 
 // There is deliberately NO client-side kill switch here. Acceptance criterion 9
 // is "the entire Tokens integration sits behind ONE feature flag and ONE env
@@ -48,12 +45,7 @@ const NEGATIVE_CACHE_MS = 30_000;
 // well-formed identities with null icons, and every consumer already degrades
 // to venue-supplied icons and the letter box, so nothing here needs to branch.
 
-/** Module-level cache shared by every caller — one fetch serves the whole app. */
-const identityCache = new Map<string, TokenIdentity>();
-/** refs currently in flight, so concurrent callers share one request. */
-const inFlight = new Map<string, Promise<void>>();
-/** refs whose last fetch failed; skip re-requesting until this expires. */
-const negativeCache = new Map<string, number>();
+const identityStore = new TokenIdentityStore(fetchBatch);
 
 function unresolvedIdentity(ref: string): TokenIdentity {
   const bareSymbol = ref.startsWith('perp:')
@@ -77,27 +69,20 @@ function unresolvedIdentity(ref: string): TokenIdentity {
   };
 }
 
-function chunk<T>(items: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
-
-async function fetchBatch(refs: readonly string[]): Promise<void> {
+async function fetchBatch(refs: readonly string[]): Promise<readonly TokenIdentity[]> {
   const base = resolveApiBaseUrl();
   try {
     let identities: TokenIdentity[];
     if (refs.length <= GET_BATCH_LIMIT) {
       const url = `${base}/tokens/resolve?refs=${encodeURIComponent(refs.join(','))}`;
-      const response = await fetchWithTimeout(url);
+      const response = await fetchWithTimeout(url, { cache: 'no-store' });
       if (!response.ok) throw new Error(`token identity resolve failed (${response.status})`);
       const payload = (await response.json()) as { identities: TokenIdentity[] };
       identities = payload.identities ?? [];
     } else {
       const response = await fetchWithTimeout(`${base}/tokens/resolve`, {
         method: 'POST',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refs }),
       });
@@ -106,13 +91,9 @@ async function fetchBatch(refs: readonly string[]): Promise<void> {
       identities = payload.identities ?? [];
     }
 
-    identities.forEach((identity) => {
-      identityCache.set(identity.key, identity);
-      negativeCache.delete(identity.key);
-    });
+    if (!Array.isArray(identities)) throw new Error('Invalid token identity response');
+    return identities;
   } catch (error) {
-    const expiresAt = Date.now() + NEGATIVE_CACHE_MS;
-    refs.forEach((ref) => negativeCache.set(ref, expiresAt));
     throw error;
   }
 }
@@ -125,10 +106,8 @@ async function fetchBatch(refs: readonly string[]): Promise<void> {
  * resolves, `resolveTokenIdentities` is a pure cache read for every token the
  * app knows about, so no market row ever waits on the network for its icon.
  *
- * Cheap to call more than once: the response carries a multi-day `max-age` and
- * an ETag, so a warm platform HTTP cache turns repeat calls into a local read
- * or a bodyless 304. That is deliberately all the caching there is — no
- * AsyncStorage mirror, no timestamps, nothing on the device to invalidate.
+ * The HTTP cache uses max-age and ETag. The shared in-memory store also
+ * expires missing icons, and notifies mounted screens when the catalog lands.
  *
  * Never throws. A failure leaves the cache as it was and rows fall back to the
  * venue icon or the letter box, exactly as they do before this resolves.
@@ -139,10 +118,8 @@ export async function warmTokenIdentityCatalog(): Promise<number> {
     if (!response.ok) return 0;
     const payload = (await response.json()) as { identities?: TokenIdentity[] };
     const identities = payload.identities ?? [];
-    identities.forEach((identity) => {
-      identityCache.set(identity.key, identity);
-      negativeCache.delete(identity.key);
-    });
+    if (!Array.isArray(identities)) return 0;
+    identityStore.seed(identities);
     return identities.length;
   } catch {
     return 0;
@@ -160,51 +137,9 @@ export async function warmTokenIdentityCatalog(): Promise<number> {
  */
 export async function resolveTokenIdentities(
   refs: readonly string[],
+  options: { force?: boolean } = {},
 ): Promise<ReadonlyMap<string, TokenIdentity>> {
-  const result = new Map<string, TokenIdentity>();
-  if (refs.length === 0) return result;
-
-  const now = Date.now();
-  const uniqueRefs = Array.from(new Set(refs));
-  const toFetch: string[] = [];
-
-  for (const ref of uniqueRefs) {
-    const cached = identityCache.get(ref);
-    if (cached) {
-      result.set(ref, cached);
-      continue;
-    }
-    const negativeUntil = negativeCache.get(ref);
-    if (negativeUntil && negativeUntil > now) continue;
-    toFetch.push(ref);
-  }
-
-  if (toFetch.length === 0) return result;
-
-  const batches = chunk(toFetch, POST_BATCH_LIMIT);
-  await Promise.all(
-    batches.map(async (batch) => {
-      // Dedupe in-flight requests per ref-batch key so concurrent callers share one fetch.
-      const dedupeKey = batch.join(',');
-      let pending = inFlight.get(dedupeKey);
-      if (!pending) {
-        pending = fetchBatch(batch).finally(() => inFlight.delete(dedupeKey));
-        inFlight.set(dedupeKey, pending);
-      }
-      try {
-        await pending;
-      } catch {
-        // Swallow — negative cache already recorded, caller gets a partial map.
-      }
-    }),
-  );
-
-  for (const ref of toFetch) {
-    const cached = identityCache.get(ref);
-    if (cached) result.set(ref, cached);
-  }
-
-  return result;
+  return identityStore.resolve(refs, options);
 }
 
 /** Resolve an origin-relative icon URL (e.g. `/tokens/icon/sol`) against the API base. */
@@ -223,38 +158,20 @@ export function tokenIconUrl(iconUrl: string | null | undefined): string | null 
  */
 export function useTokenIdentities(refs: readonly string[]): ReadonlyMap<string, TokenIdentity> {
   const refsKey = refs.join(',');
-  const [map, setMap] = useState<ReadonlyMap<string, TokenIdentity>>(() => {
-    const initial = new Map<string, TokenIdentity>();
-    for (const ref of refs) {
-      const cached = identityCache.get(ref);
-      if (cached) initial.set(ref, cached);
-    }
-    return initial;
-  });
+  const revision = useSyncExternalStore(identityStore.subscribe, identityStore.getRevision, identityStore.getRevision);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- refsKey is the stable identity of refs
   const stableRefs = useMemo(() => refs, [refsKey]);
 
   useEffect(() => {
     if (stableRefs.length === 0) return;
-    let cancelled = false;
+    void resolveTokenIdentities(stableRefs);
+  }, [stableRefs]);
 
-    resolveTokenIdentities(stableRefs).then((resolved) => {
-      if (cancelled || resolved.size === 0) return;
-      setMap((prev) => {
-        const next = new Map(prev);
-        resolved.forEach((identity, key) => next.set(key, identity));
-        return next;
-      });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refsKey is the stable identity of refs
-  }, [refsKey]);
-
-  return map;
+  return useMemo(() => {
+    void revision;
+    return identityStore.snapshot(stableRefs);
+  }, [revision, stableRefs]);
 }
 
 /** Compute the same server-style fallback locally, for immediate (pre-fetch) rendering. */

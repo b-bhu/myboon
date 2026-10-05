@@ -82,6 +82,48 @@ export function resolveMeteoraPreset(
   }
 }
 
+/**
+ * Exact bin snapping for UI display and local validation. Unlike executable
+ * previews, this intentionally reports ranges wider than Meteora's 70-bin
+ * create limit so the form can show the actual count and validation error.
+ */
+export interface MeteoraResolvedManualRange {
+  requestedMinPrice: string
+  requestedMaxPrice: string
+  executableMinPrice: string
+  executableMaxPrice: string
+  minBinId: number
+  maxBinId: number
+  binCount: number
+}
+
+export function resolveManualRangeForDisplay(
+  poolState: MeteoraExecutionPoolState,
+  minPrice: string,
+  maxPrice: string,
+): MeteoraResolvedManualRange {
+  assertPoolState(poolState)
+  const requestedMinPrice = assertFinitePositiveDecimal(minPrice, 'range.minPrice')
+  const requestedMaxPrice = assertFinitePositiveDecimal(maxPrice, 'range.maxPrice')
+  if (requestedMinPrice.gte(requestedMaxPrice)) {
+    throw new MeteoraClientError('INVALID_RANGE', 'Minimum price must be below maximum price')
+  }
+  const minBinId = binIdAtOrBelowPrice(poolState, requestedMinPrice)
+  const maxBinId = binIdAtOrAbovePrice(poolState, requestedMaxPrice)
+  if (minBinId > maxBinId) {
+    throw new MeteoraClientError('INVALID_RANGE', 'The requested prices do not contain an executable bin')
+  }
+  return {
+    requestedMinPrice: requestedMinPrice.toString(),
+    requestedMaxPrice: requestedMaxPrice.toString(),
+    executableMinPrice: priceForBin(poolState, minBinId).toString(),
+    executableMaxPrice: priceForBin(poolState, maxBinId).toString(),
+    minBinId,
+    maxBinId,
+    binCount: maxBinId - minBinId + 1,
+  }
+}
+
 export function snapRangeToPoolState(
   poolState: MeteoraExecutionPoolState,
   request: MeteoraRangeRequest,
@@ -106,16 +148,11 @@ export function snapRangeToPoolState(
     requestedMinPrice = priceForBin(poolState, minBinId)
     requestedMaxPrice = priceForBin(poolState, maxBinId)
   } else {
-    requestedMinPrice = assertFinitePositiveDecimal(request.minPrice, 'range.minPrice')
-    requestedMaxPrice = assertFinitePositiveDecimal(request.maxPrice, 'range.maxPrice')
-    if (requestedMinPrice.gte(requestedMaxPrice)) {
-      throw new MeteoraClientError('INVALID_RANGE', 'Minimum price must be below maximum price')
-    }
-    minBinId = binIdAtOrBelowPrice(poolState, requestedMinPrice)
-    maxBinId = binIdAtOrAbovePrice(poolState, requestedMaxPrice)
-    if (minBinId > maxBinId) {
-      throw new MeteoraClientError('INVALID_RANGE', 'The requested prices do not contain an executable bin')
-    }
+    const resolved = resolveManualRangeForDisplay(poolState, request.minPrice, request.maxPrice)
+    requestedMinPrice = new Decimal(resolved.requestedMinPrice)
+    requestedMaxPrice = new Decimal(resolved.requestedMaxPrice)
+    minBinId = resolved.minBinId
+    maxBinId = resolved.maxBinId
   }
 
   const binCount = maxBinId - minBinId + 1
@@ -136,6 +173,53 @@ export function snapRangeToPoolState(
     maxBinId,
     binCount,
   }
+}
+
+/**
+ * Produces a range from already-resolved bin ids.  UI defaults use this for
+ * one-sided positions so the active bin is an actual endpoint, rather than a
+ * rounded display price that is snapped again later.
+ */
+export function rangeForPoolBins(
+  poolState: MeteoraExecutionPoolState,
+  minBinId: number,
+  maxBinId: number,
+): MeteoraSnappedRange {
+  assertPoolState(poolState)
+  if (!Number.isInteger(minBinId) || !Number.isInteger(maxBinId) || minBinId > maxBinId) {
+    throw new MeteoraClientError('INVALID_RANGE', 'Position bins must define an ordered integer range')
+  }
+  const binCount = maxBinId - minBinId + 1
+  if (binCount > METEORA_BETA_MAX_POSITION_BINS) {
+    throw new MeteoraClientError(
+      'RANGE_TOO_WIDE',
+      `Position range exceeds the ${METEORA_BETA_MAX_POSITION_BINS}-bin beta limit`,
+    )
+  }
+  const minPrice = priceForBin(poolState, minBinId).toString()
+  const maxPrice = priceForBin(poolState, maxBinId).toString()
+  return {
+    source: 'manual',
+    requestedMinPrice: minPrice,
+    requestedMaxPrice: maxPrice,
+    executableMinPrice: minPrice,
+    executableMaxPrice: maxPrice,
+    minBinId,
+    maxBinId,
+    binCount,
+  }
+}
+
+/** Exact decimal price for a canonical bin, suitable for UI gesture recovery. */
+export function priceForPoolBin(
+  poolState: MeteoraExecutionPoolState,
+  binId: number,
+): string {
+  assertPoolState(poolState)
+  if (!Number.isInteger(binId)) {
+    throw new MeteoraClientError('INVALID_RANGE', 'binId must be an integer')
+  }
+  return priceForBin(poolState, binId).toString()
 }
 
 export function createPositionPreview(
@@ -174,19 +258,19 @@ export function createPositionPreview(
     if (request.inputToken === 'x') {
       tokenXAtomic = decimalToAtomicAmount(amount, poolState.tokenX.decimals, 'amount')
       tokenYAtomic = '0'
-      if (range.minBinId < poolState.activeBinId) {
+      if (range.maxBinId < poolState.activeBinId) {
         throw new MeteoraClientError(
           'INVALID_DEPOSIT_COMBINATION',
-          `A ${poolState.tokenX.symbol}-only position must start at or above the active bin`,
+          `A ${poolState.tokenX.symbol}-only position range must overlap the active bin or bins above it`,
         )
       }
     } else {
       tokenXAtomic = '0'
       tokenYAtomic = decimalToAtomicAmount(amount, poolState.tokenY.decimals, 'amount')
-      if (range.maxBinId > poolState.activeBinId) {
+      if (range.minBinId > poolState.activeBinId) {
         throw new MeteoraClientError(
           'INVALID_DEPOSIT_COMBINATION',
-          `A ${poolState.tokenY.symbol}-only position must end at or below the active bin`,
+          `A ${poolState.tokenY.symbol}-only position range must overlap the active bin or bins below it`,
         )
       }
     }
@@ -412,10 +496,21 @@ function nearestBinForPrice(state: MeteoraExecutionPoolState, price: Decimal): n
   return state.activeBinId + Math.round(relativeBin(state, price))
 }
 
+// Meteora's API snapshots active prices through JS numeric serialization. A
+// canonical neighbour can therefore arrive ~2.4e-13 bins from its integer.
+// This tolerance is still one millionth of a bin, so manual off-grid prices
+// retain their required outward floor/ceiling snapping.
+const SDK_PRICE_GRID_TOLERANCE_BINS = new Decimal('0.000000001')
+
 function relativeBin(state: MeteoraExecutionPoolState, price: Decimal): number {
   const activePrice = new Decimal(state.activePrice)
   const step = new Decimal(1).plus(new Decimal(state.binStep).div(10_000))
-  const delta = price.div(activePrice).ln().div(step.ln()).toNumber()
+  const relative = price.div(activePrice).ln().div(step.ln())
+  const nearest = relative.toNearest(1)
+  const normalized = relative.minus(nearest).abs().lte(SDK_PRICE_GRID_TOLERANCE_BINS)
+    ? nearest
+    : relative
+  const delta = normalized.toNumber()
   if (!Number.isFinite(delta)) {
     throw new MeteoraClientError('INVALID_RANGE', 'Price is outside the supported bin range')
   }

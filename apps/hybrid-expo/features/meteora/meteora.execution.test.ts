@@ -657,6 +657,40 @@ async function testWebPendingStorageIsBrowserBacked(): Promise<void> {
   }
 }
 
+async function testWebStorageWriteFailureBlocksWalletPrompt(): Promise<void> {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  let walletCalls = 0;
+  (globalThis as { window?: unknown }).window = {
+    localStorage: {
+      getItem: () => null,
+      setItem: () => { throw new Error('Browser storage quota exceeded'); },
+      removeItem: () => {},
+    },
+  };
+  try {
+    const response = await createWebExecutionController({
+      connection: new FakeConnection(),
+      pendingStorage: createWebMeteoraPendingStorage(),
+      now: () => 20_000,
+    }).execute(request({
+      wallet: {
+        connected: true,
+        address: walletKeypair.publicKey.toBase58(),
+        source: 'web',
+        signAndSendTransaction: async () => {
+          walletCalls += 1;
+          return 'must-not-send';
+        },
+      },
+    }));
+    assert.equal(response.error?.code, 'PENDING_PERSIST_FAILED');
+    assert.equal(walletCalls, 0);
+    assert.deepEqual(response.signatures, []);
+  } finally {
+    (globalThis as { window?: unknown }).window = originalWindow;
+  }
+}
+
 async function main(): Promise<void> {
   testReadinessBoundaries();
   await testSequentialHappyPathAndRequiredSigner();
@@ -673,6 +707,7 @@ async function main(): Promise<void> {
   await testOnchainFailureAndSyncPending();
   await testWebExecutionRunsTheRealEngine();
   await testWebPendingStorageIsBrowserBacked();
+  await testWebStorageWriteFailureBlocksWalletPrompt();
   console.log('Meteora mobile execution tests passed');
 }
 

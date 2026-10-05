@@ -3,8 +3,8 @@
  * error / empty states, pull-to-refresh, and the optional bottom search
  * bar. Replaces the ~85%-byte-identical bodies of PacificaMarketListScreen
  * and PhoenixMarketListScreen, and is what MeteoraPoolsScreen's row list
- * renders through too (Meteora keeps its own header/filter chips/sort sheet
- * via the `header` slot — those aren't part of the row list itself). See
+ * renders through too (Meteora keeps its search and sort toolbar outside
+ * the list, directly above the table headings). See
  * docs/modules/wallet/PRDs/2026_08_11_token_identity_and_venue_adapters_PRD.md,
  * "Shared market list shell".
  *
@@ -69,6 +69,8 @@ export interface MarketListEmpty {
 export interface MarketListProps {
   rows: MarketListRow[];
   columns: [ColumnSpec, ColumnSpec, ColumnSpec];
+  /** Heading for the icon/title area, separate from the three data columns. */
+  leadColumnLabel?: string;
   theme?: MarketListTheme;
   loading: boolean;
   refreshing: boolean;
@@ -81,6 +83,7 @@ export interface MarketListProps {
   onEndReached?: () => void;
   onPressRow: (row: MarketListRow) => void;
   displayName: string;
+  iconReloadKey?: string | number;
 }
 
 const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
@@ -88,6 +91,7 @@ const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 export function MarketList({
   rows,
   columns,
+  leadColumnLabel = 'Market',
   theme = DEFAULT_MARKET_LIST_THEME,
   loading,
   refreshing,
@@ -100,15 +104,16 @@ export function MarketList({
   onEndReached,
   onPressRow,
   displayName,
+  iconReloadKey,
 }: MarketListProps) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const renderItem = useMemo(
     () =>
       ({ item }: ListRenderItemInfo<MarketListRow>) => (
-        <MarketRow row={item} styles={styles} theme={theme} onPress={onPressRow} />
+        <MarketRow row={item} styles={styles} theme={theme} onPress={onPressRow} iconReloadKey={iconReloadKey} />
       ),
-    [styles, theme, onPressRow],
+    [styles, theme, onPressRow, iconReloadKey],
   );
 
   const keyExtractor = useMemo(() => (row: MarketListRow) => row.key, []);
@@ -126,14 +131,16 @@ export function MarketList({
   return (
     <View style={styles.container}>
       <View style={styles.tableHeader}>
-        {columns.map((column, index) => (
+        <Text style={[styles.th, styles.thLead]} numberOfLines={1}>
+          {leadColumnLabel}
+        </Text>
+        {columns.map((column) => (
           <Text
             key={column.key}
             style={[
               styles.th,
-              index === 0 ? styles.thLead : styles.thRight,
-              { width: index === 0 ? undefined : column.width },
-              index === 0 && styles.thLeadFlex,
+              styles.thRight,
+              { width: column.width },
               column.active && styles.thActive,
             ]}
           >
@@ -177,11 +184,13 @@ const MarketRow = memo(function MarketRow({
   styles,
   theme,
   onPress,
+  iconReloadKey,
 }: {
   row: MarketListRow;
   styles: Styles;
   theme: MarketListTheme;
   onPress: (row: MarketListRow) => void;
+  iconReloadKey?: string | number;
 }) {
   return (
     <Pressable
@@ -190,7 +199,7 @@ const MarketRow = memo(function MarketRow({
       accessibilityLabel={row.a11yLabel}
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
     >
-      <RowLead lead={row.lead} styles={styles} />
+      <RowLead lead={row.lead} styles={styles} iconReloadKey={iconReloadKey} />
 
       <View style={styles.titleColumn}>
         <Text style={styles.title} numberOfLines={1}>
@@ -211,11 +220,12 @@ const MarketRow = memo(function MarketRow({
   );
 });
 
-function RowLead({ lead, styles }: { lead: MarketListRow['lead']; styles: Styles }) {
+function RowLead({ lead, styles, iconReloadKey }: { lead: MarketListRow['lead']; styles: Styles; iconReloadKey?: string | number }) {
   if (lead.kind === 'pair') {
     return (
       <View style={styles.leadSlot}>
         <TokenPairIcon
+          reloadKey={iconReloadKey}
           x={{
             // identity first — for a Meteora pool leg this is the ONLY icon
             // source, since their API carries no icon field of its own.
@@ -238,6 +248,7 @@ function RowLead({ lead, styles }: { lead: MarketListRow['lead']; styles: Styles
   return (
     <View style={styles.leadSlot}>
       <TokenIcon
+        reloadKey={iconReloadKey}
         identity={lead.identityIconUrl ? { iconUrl: lead.identityIconUrl } : null}
         venueIconUrl={lead.venueIconUrl}
         letter={lead.letter}
@@ -430,15 +441,13 @@ function makeStyles(theme: MarketListTheme) {
     },
     th: {
       fontFamily: 'monospace',
-      fontSize: tokens.fontSize.xxs,
+      fontSize: tokens.fontSize.xs,
+      fontWeight: '700',
       letterSpacing: 1.2,
       textTransform: 'uppercase',
-      color: theme.textFaint,
+      color: theme.textDim,
     },
     thLead: {
-      flex: 1,
-    },
-    thLeadFlex: {
       flex: 1,
     },
     thRight: {

@@ -53,6 +53,8 @@ export interface TokenIconProps {
   letter: string;
   size?: number;
   tint?: string;
+  /** Changes only on an explicit screen data reload, to retry a failed image. */
+  reloadKey?: string | number;
 }
 
 const DEFAULT_SIZE = 28;
@@ -72,6 +74,7 @@ export const TokenIcon = memo(function TokenIcon({
   letter,
   size = DEFAULT_SIZE,
   tint,
+  reloadKey,
 }: TokenIconProps) {
   const identityUrl = useMemo(() => tokenIconUrl(identity?.iconUrl), [identity?.iconUrl]);
   // BOTH tiers go through tokenIconUrl. Venue icon paths from our own API
@@ -83,10 +86,10 @@ export const TokenIcon = memo(function TokenIcon({
   const venueUrl = useMemo(() => tokenIconUrl(venueIconUrl), [venueIconUrl]);
   const resolvedLetter = (identity?.fallbackLetter || letter || '?').charAt(0).toUpperCase() || '?';
 
-  // Reset which tier we're attempting whenever the source URLs change (new row data).
+  // Retry only when a URL or screen reload changes, never on each parent render.
   const [tier, setTier] = useState<Tier>(() => firstTier(identityUrl, venueUrl));
-  const [tierKey, setTierKey] = useState(`${identityUrl ?? ''}|${venueUrl ?? ''}`);
-  const nextKey = `${identityUrl ?? ''}|${venueUrl ?? ''}`;
+  const nextKey = `${identityUrl ?? ''}|${venueUrl ?? ''}|${reloadKey ?? ''}`;
+  const [tierKey, setTierKey] = useState(nextKey);
   if (nextKey !== tierKey) {
     setTierKey(nextKey);
     setTier(firstTier(identityUrl, venueUrl));
@@ -151,12 +154,13 @@ export const TokenIcon = memo(function TokenIcon({
  * ported from MeteoraPoolsScreen.tsx:119-136. Each leg goes through the
  * same three-tier TokenIcon so the fallback letter box stays visually
  * identical to every single-token row — `tint` is the one sanctioned
- * override, letting Meteora keep its cyan/violet pair tinting.
+ * override for distinguishing the pair's fallback icons.
  */
 export interface TokenPairIconProps {
   x: { identity?: TokenIconIdentity | null; venueIconUrl: string | null; letter: string; tint?: string };
   y: { identity?: TokenIconIdentity | null; venueIconUrl: string | null; letter: string; tint?: string };
   size?: number;
+  reloadKey?: string | number;
 }
 
 const PAIR_ICON_SIZE = 26;
@@ -165,6 +169,7 @@ export const TokenPairIcon = memo(function TokenPairIcon({
   x,
   y,
   size = PAIR_ICON_SIZE,
+  reloadKey,
 }: TokenPairIconProps) {
   const wrapperSize = size + 12;
   return (
@@ -175,6 +180,7 @@ export const TokenPairIcon = memo(function TokenPairIcon({
         letter={x.letter}
         tint={x.tint}
         size={size}
+        reloadKey={reloadKey}
       />
       <View style={styles.pairSecond}>
         <TokenIcon
@@ -183,6 +189,7 @@ export const TokenPairIcon = memo(function TokenPairIcon({
           letter={y.letter}
           tint={y.tint}
           size={size}
+          reloadKey={reloadKey}
         />
       </View>
     </View>

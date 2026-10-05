@@ -9,28 +9,19 @@
  * lib/token-identity.ts's React hook surface — only the pure `mintRef`
  * helper via meteora.rows.ts.
  *
- * Does NOT import `MeteoraExecutionControls.tsx` for `METEORA_COLORS`
- * either — that file imports `@expo/vector-icons` and `react-native` (it's
- * a component file), which would break `tsx --test`. The expected color
- * values are inlined here instead, matching meteora.rows.ts's local copy.
+ * Theme expectations use the shared pure MyBoon tokens rather than a
+ * component import or a duplicate feature palette.
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { METEORA_COLUMNS, METEORA_THEME, meteoraToRow } from './meteora.rows';
+import { DEFAULT_MARKET_LIST_THEME } from '@/features/markets/venue.theme';
+import { tokens } from '@/theme/tokens';
 
 import type { MeteoraPoolSummary, MeteoraTokenSummary } from '@myboon/shared/meteora';
 import type { TokenIdentity } from '@/lib/token-identity';
-
-/** Matches `METEORA_COLORS` in `MeteoraExecutionControls.tsx` and the local copy in `meteora.rows.ts`. */
-const METEORA_COLORS = {
-  screen: '#103D4C',
-  violet: '#7A6CFF',
-  cyan: '#29C6D1',
-  green: '#34D399',
-  red: '#FF627D',
-} as const;
 
 function token(overrides: Partial<MeteoraTokenSummary> = {}): MeteoraTokenSummary {
   return {
@@ -99,8 +90,8 @@ describe('meteoraToRow', () => {
     if (row.lead.kind === 'pair') {
       assert.equal(row.lead.x.identityRef, 'mint:So11111111111111111111111111111111111111112');
       assert.equal(row.lead.x.letter, 'S');
-      assert.equal(row.lead.x.tint, METEORA_COLORS.cyan);
-      assert.equal(row.lead.y.tint, METEORA_COLORS.violet);
+      assert.equal(row.lead.x.tint, tokens.colors.textDim);
+      assert.equal(row.lead.y.tint, tokens.colors.accent);
     }
   });
 
@@ -145,11 +136,8 @@ describe('meteoraToRow', () => {
 });
 
 describe('METEORA_THEME', () => {
-  it('keeps its own palette rather than the shared default (acceptance criterion 8)', () => {
-    assert.equal(METEORA_THEME.screen, METEORA_COLORS.screen);
-    assert.equal(METEORA_THEME.accent, METEORA_COLORS.violet);
-    assert.equal(METEORA_THEME.pos, METEORA_COLORS.green);
-    assert.equal(METEORA_THEME.neg, METEORA_COLORS.red);
+  it('uses the shared MyBoon market palette', () => {
+    assert.deepEqual(METEORA_THEME, DEFAULT_MARKET_LIST_THEME);
   });
 });
 

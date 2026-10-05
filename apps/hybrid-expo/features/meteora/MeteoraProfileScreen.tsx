@@ -18,13 +18,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AvatarTrigger } from '@/components/AvatarTrigger';
-import { METEORA_COLORS } from '@/features/meteora/components/MeteoraExecutionControls';
+import { METEORA_COLORS, METEORA_TINTS } from '@/features/meteora/meteora.theme';
 import { MeteoraPositionActionSheet } from '@/features/meteora/components/MeteoraPositionActionSheet';
 import { meteoraClient } from '@/features/meteora/meteora.client';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { mintRef, useTokenIdentities } from '@/lib/token-identity';
 import { useWallet } from '@/hooks/useWallet';
+import { tokens } from '@/theme/tokens';
 
 type ProfileTab = 'positions' | 'history';
 
@@ -277,8 +278,8 @@ export function MeteoraProfileScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => void loadProfile({ refresh: true })}
-              tintColor={METEORA_COLORS.cyan}
-              colors={[METEORA_COLORS.cyan]}
+              tintColor={METEORA_COLORS.primary}
+              colors={[METEORA_COLORS.primary]}
             />
           )}
           contentContainerStyle={[
@@ -288,13 +289,13 @@ export function MeteoraProfileScreen() {
         >
           {freshness?.state === 'stale' ? (
             <View style={styles.inlineNotice}>
-              <MaterialIcons name="schedule" size={15} color={METEORA_COLORS.coral} />
+              <MaterialIcons name="schedule" size={15} color={METEORA_COLORS.warning} />
               <Text style={styles.inlineNoticeText}>Showing the latest cached Meteora data.</Text>
             </View>
           ) : null}
           {partialMessage ? (
             <View style={styles.inlineNotice}>
-              <MaterialIcons name="info-outline" size={15} color={METEORA_COLORS.cyan} />
+              <MaterialIcons name="info-outline" size={15} color={METEORA_COLORS.primary} />
               <Text style={styles.inlineNoticeText}>{partialMessage}</Text>
             </View>
           ) : null}
@@ -488,7 +489,7 @@ function HistoryList({
   if (loading) {
     return (
       <View style={styles.inlineLoading}>
-        <ActivityIndicator size="small" color={METEORA_COLORS.cyan} />
+        <ActivityIndicator size="small" color={METEORA_COLORS.primary} />
         <Text style={styles.stateMessage}>Loading recent activity…</Text>
       </View>
     );
@@ -509,7 +510,7 @@ function HistoryList({
         return (
           <View key={`${event.signature}:${event.instructionIndex}`} style={styles.historyRow}>
             <View style={styles.historyIcon}>
-              <MaterialIcons name={historyIcon(event.eventType)} size={16} color={METEORA_COLORS.cyan} />
+              <MaterialIcons name={historyIcon(event.eventType)} size={16} color={METEORA_COLORS.primary} />
             </View>
             <View style={styles.historyCopy}>
               <Text style={styles.rowTitle}>{formatEventType(event.eventType)}</Text>
@@ -576,7 +577,7 @@ function RowFact({ label, value }: { label: string; value: string }) {
 function DisconnectedState({ onConnect, onBrowse }: { onConnect: () => void; onBrowse: () => void }) {
   return (
     <View style={styles.fullState}>
-      <MaterialIcons name="account-balance-wallet" size={34} color={METEORA_COLORS.cyan} />
+      <MaterialIcons name="account-balance-wallet" size={34} color={METEORA_COLORS.primary} />
       <Text style={styles.stateTitle}>Connect wallet</Text>
       <Text style={styles.stateMessage}>Your address is needed to load Meteora positions, orders, and history.</Text>
       <Pressable onPress={onConnect} style={styles.primaryAction} accessibilityRole="button">
@@ -592,7 +593,7 @@ function DisconnectedState({ onConnect, onBrowse }: { onConnect: () => void; onB
 function UnsupportedWalletState({ onBrowse }: { onBrowse: () => void }) {
   return (
     <View style={styles.fullState}>
-      <MaterialIcons name="info-outline" size={34} color={METEORA_COLORS.cyan} />
+      <MaterialIcons name="info-outline" size={34} color={METEORA_COLORS.primary} />
       <Text style={styles.stateTitle}>Solana wallet required</Text>
       <Text style={styles.stateMessage}>Choose a Solana wallet from the account menu to view this Meteora profile.</Text>
       <Pressable onPress={onBrowse} style={styles.secondaryAction} accessibilityRole="button">
@@ -605,7 +606,7 @@ function UnsupportedWalletState({ onBrowse }: { onBrowse: () => void }) {
 function LoadingState() {
   return (
     <View style={styles.fullState}>
-      <ActivityIndicator size="small" color={METEORA_COLORS.cyan} />
+      <ActivityIndicator size="small" color={METEORA_COLORS.primary} />
       <Text style={styles.stateMessage}>Loading Meteora profile…</Text>
     </View>
   );
@@ -614,7 +615,7 @@ function LoadingState() {
 function FailureState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <View style={styles.fullState}>
-      <MaterialIcons name="cloud-off" size={34} color={METEORA_COLORS.coral} />
+      <MaterialIcons name="cloud-off" size={34} color={METEORA_COLORS.negative} />
       <Text style={styles.stateTitle}>Profile unavailable</Text>
       <Text style={styles.stateMessage}>{message}</Text>
       <Pressable onPress={onRetry} style={styles.primaryAction} accessibilityRole="button">
@@ -639,7 +640,7 @@ function InlineFailure({ message, onRetry }: { message: string; onRetry: () => v
       <Text style={styles.inlineStateTitle}>Activity unavailable</Text>
       <Text style={styles.stateMessage}>{message}</Text>
       <Pressable onPress={onRetry} style={styles.inlineRetry} accessibilityRole="button">
-        <MaterialIcons name="refresh" size={16} color={METEORA_COLORS.cyan} />
+        <MaterialIcons name="refresh" size={16} color={METEORA_COLORS.accent} />
         <Text style={styles.inlineRetryText}>Retry</Text>
       </Pressable>
     </View>
@@ -718,7 +719,7 @@ function formatDate(blockTime: number, createdAt: string): string {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#103D4C',
+    backgroundColor: METEORA_COLORS.screen,
   },
   header: {
     minHeight: 48,
@@ -739,7 +740,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 15,
-    backgroundColor: 'rgba(21,27,48,0.72)',
+    backgroundColor: METEORA_COLORS.surfaceRaised,
   },
   headerTitle: {
     color: METEORA_COLORS.text,
@@ -821,7 +822,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabActive: {
-    borderBottomColor: METEORA_COLORS.coral,
+    borderBottomColor: METEORA_COLORS.accent,
   },
   tabText: {
     color: METEORA_COLORS.textDim,
@@ -844,7 +845,7 @@ const styles = StyleSheet.create({
     borderBottomColor: METEORA_COLORS.border,
   },
   sectionHeadingText: {
-    color: METEORA_COLORS.cyan,
+    color: METEORA_COLORS.accent,
     fontFamily: 'monospace',
     fontSize: 9,
     lineHeight: 12,
@@ -863,7 +864,7 @@ const styles = StyleSheet.create({
     borderBottomColor: METEORA_COLORS.border,
   },
   dataRowPressed: {
-    backgroundColor: 'rgba(122,108,255,0.08)',
+    backgroundColor: METEORA_TINTS.pressed,
   },
   rowTop: {
     flexDirection: 'row',
@@ -924,10 +925,10 @@ const styles = StyleSheet.create({
     lineHeight: 13,
   },
   positive: {
-    color: '#34D399',
+    color: METEORA_COLORS.positive,
   },
   negative: {
-    color: METEORA_COLORS.coral,
+    color: METEORA_COLORS.negative,
   },
   listFootnote: {
     paddingVertical: 12,
@@ -944,7 +945,7 @@ const styles = StyleSheet.create({
   },
   historyWarning: {
     paddingVertical: 10,
-    color: METEORA_COLORS.coral,
+    color: METEORA_COLORS.negative,
     fontSize: 10,
     lineHeight: 14,
   },
@@ -1003,11 +1004,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
-    borderRadius: 12,
-    backgroundColor: METEORA_COLORS.coral,
+    borderRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.accent,
   },
   primaryActionText: {
-    color: METEORA_COLORS.text,
+    color: METEORA_COLORS.onAccent,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '800',
@@ -1019,7 +1020,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   secondaryActionText: {
-    color: METEORA_COLORS.cyan,
+    color: METEORA_COLORS.accent,
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '700',
@@ -1045,7 +1046,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   inlineRetryText: {
-    color: METEORA_COLORS.cyan,
+    color: METEORA_COLORS.accent,
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '700',

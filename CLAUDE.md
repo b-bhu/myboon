@@ -10,3 +10,17 @@ Talk like we're in a meeting room, debugging together out loud. Not like a repor
 - Short is better than thorough. If it can be one sentence, make it one sentence.
 
 This is a general communication preference, not specific to any one topic (debugging, planning, whatever) — it applies to how you talk to me across the board in this repo.
+
+# Local servers require permission
+
+- Never start, restart, or launch any local server without the user's explicit permission. This includes Expo/Metro, web previews, development servers, API servers, and local database servers.
+- A request to review, inspect, test, or fix something does not grant permission to start a local server. Ask first unless the user has explicitly authorized it in the current conversation.
+- Prefer source inspection and lightweight checks. The user's laptop has limited resources.
+- When asked to stop a server, stop only the server and child processes you started. Leave the user's existing servers running.
+
+# Keep tests and typechecks scoped
+
+- Run tests and typechecks only when needed to verify the work at hand. Do not run them routinely after every action or for documentation-only edits.
+- Use the smallest valid, isolated scope: the affected tests for the behavior being changed, and the relevant module or package for typechecks.
+- Never run full-repository test suites or broad typechecks unless the user explicitly requests or permits them. If a scoped check is unavailable, explain that and ask before running a broader one.
+- Once relevant checks pass, do not repeat them unless new changes, failures, or unresolved concerns justify another run.

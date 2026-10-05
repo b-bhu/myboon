@@ -1,7 +1,10 @@
 import type {
+  MeteoraExecutionPoolState,
   MeteoraFreshness,
+  MeteoraPoolBinLiquidity,
   MeteoraPoolDetail,
   MeteoraStrategy,
+  MeteoraStrategyBinAllocation,
 } from '@myboon/shared/meteora';
 
 export type MeteoraExecutionTab = 'position' | 'limit';
@@ -46,6 +49,17 @@ export interface MeteoraPreviewCost {
   refundable?: boolean;
 }
 
+export interface MeteoraPositionCostEstimate {
+  costs: MeteoraPreviewCost[];
+  nativeReserve: string | null;
+  transactionCount: number;
+}
+
+export interface MeteoraAutoFillAmounts {
+  amountX: string;
+  amountY: string;
+}
+
 export interface MeteoraExecutionWarning {
   code: string;
   message: string;
@@ -59,6 +73,10 @@ export interface MeteoraPhaseTwoPreview {
   expiresAt: string;
   currentPrice: string;
   activeBinId?: number;
+  /** Exact SDK snapshot used for this preview's snapped range. */
+  poolState?: MeteoraExecutionPoolState;
+  /** Exact official SDK strategy allocation, available only after a live preview. */
+  strategyAllocation?: readonly MeteoraStrategyBinAllocation[];
   requestedMinPrice?: string;
   requestedMaxPrice?: string;
   executableMinPrice?: string;
@@ -83,6 +101,8 @@ export interface MeteoraPhaseTwoPreview {
   spendableBalanceY?: string;
   transactionCount: number;
   costs: MeteoraPreviewCost[];
+  /** Exact read-only lamport reserve when the SDK/RPC could determine it. */
+  nativeReserve?: string | null;
   warnings: MeteoraExecutionWarning[];
   canExecute: boolean;
   walletAddress: string | null;
@@ -128,6 +148,11 @@ export interface MeteoraPhaseTwoAdapter {
     requestedMinPrice: string;
     requestedMaxPrice: string;
     binCount: number;
+    currentPrice?: string;
+    /** Exact SDK-aligned 70-bin defaults for a single deposited token. */
+    xOnlyMaxPrice?: string;
+    yOnlyMinPrice?: string;
+    activeBinId?: number;
   }>;
   getCapabilities?(poolAddress: string): Promise<{
     createPosition: boolean;
@@ -146,6 +171,23 @@ export interface MeteoraPhaseTwoAdapter {
     pool: MeteoraPoolDetail,
     walletAddress: string,
   ): Promise<{ x: string | null; y: string | null }>;
+  /** Real SDK bins for the selected canonical display window. */
+  getPoolLiquidity?(
+    poolAddress: string,
+    minBinId: number,
+    maxBinId: number,
+  ): Promise<{ activeBinId: number; activePrice?: string; bins: MeteoraPoolBinLiquidity[] }>;
+  getPositionCostEstimate?(
+    context: MeteoraPrepareContext,
+    input: {
+      minPrice: string;
+      maxPrice: string;
+      strategy: MeteoraStrategy;
+      depositMode: 'two_token' | 'single_sided';
+      inputToken: 'x' | 'y';
+    },
+  ): Promise<MeteoraPositionCostEstimate>;
+  getNativeBalance?(walletAddress: string): Promise<string>;
   recoverPending?(
     context: MeteoraPrepareContext,
     onProgress?: (update: MeteoraExecutionUpdate) => void,
@@ -153,6 +195,7 @@ export interface MeteoraPhaseTwoAdapter {
   preparePosition(
     context: MeteoraPrepareContext,
     draft: MeteoraPositionDraft,
+    onAutoFillQuote?: (amounts: MeteoraAutoFillAmounts) => void,
   ): Promise<MeteoraPhaseTwoPreview>;
   prepareLimitOrder(
     context: MeteoraPrepareContext,
@@ -210,8 +253,8 @@ export function createCenteredRange(
   const factor = 1 + Math.max(1, binStep) / 10_000;
   return {
     requestedMinPrice: formatCalculatedPrice(price / (factor ** binDelta)),
-    requestedMaxPrice: formatCalculatedPrice(price * (factor ** binDelta)),
-    binCount: (binDelta * 2) + 1,
+    requestedMaxPrice: formatCalculatedPrice(price * (factor ** (binDelta + 1))),
+    binCount: (binDelta * 2) + 2,
   };
 }
 
@@ -321,11 +364,17 @@ export function validateAmount(
 ): string | null {
   if (!touched) return null;
   if (!value) return 'Enter an amount';
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return 'Token precision is unavailable';
   if (value.length > 40) return 'Amount is too long';
-  if (!/^\d+(?:\.\d+)?$/.test(value)) return 'Use a positive decimal amount';
+  if (!/^(0|[1-9]\d*)(?:\.\d+)?$/.test(value)) return 'Use a positive decimal amount';
   const [, fraction = ''] = value.split('.');
   if (fraction.length > decimals) return `Use no more than ${decimals} decimal places`;
   if (!isPositiveDecimal(value)) return 'Amount must be greater than zero';
+  try {
+    decimalToAtomic(value, decimals);
+  } catch {
+    return 'Amount is too large';
+  }
   return null;
 }
 
@@ -336,6 +385,9 @@ export function validateRange(
 ): string | null {
   if (!touched) return null;
   if (!minPrice || !maxPrice) return 'Enter both minimum and maximum prices';
+  if (![minPrice, maxPrice].every((value) => /^(0|[1-9]\d*)(?:\.\d+)?$/.test(value))) {
+    return 'Use positive decimal prices';
+  }
   if (!isPositiveDecimal(minPrice) || !isPositiveDecimal(maxPrice)) {
     return 'Prices must be greater than zero';
   }
@@ -361,7 +413,10 @@ export function validateLimitPrice(
 }
 
 export function decimalToAtomic(value: string, decimals: number): string {
-  if (!/^\d+(?:\.\d+)?$/.test(value) || !isPositiveDecimal(value)) {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+    throw new Error('Token decimals must be between 0 and 18');
+  }
+  if (!/^(0|[1-9]\d*)(?:\.\d+)?$/.test(value) || !isPositiveDecimal(value)) {
     throw new Error('Amount must be a positive decimal');
   }
   const [whole, fraction = ''] = value.split('.');
@@ -369,6 +424,7 @@ export function decimalToAtomic(value: string, decimals: number): string {
     throw new Error(`Amount exceeds ${decimals} decimal places`);
   }
   const atomic = `${whole}${fraction.padEnd(decimals, '0')}`.replace(/^0+(?=\d)/, '');
+  if (BigInt(atomic) > ((1n << 64n) - 1n)) throw new Error('Amount is too large');
   return atomic || '0';
 }
 
@@ -395,7 +451,9 @@ export function formatPoolPrice(value: string | null, maximumFractionDigits = 8)
   if (!value || !Number.isFinite(Number(value))) return '—';
   const number = Number(value);
   if (number === 0) return '0';
-  if (Math.abs(number) < 0.000001) return number.toExponential(4);
+  if (Math.abs(number) < Math.max(0.000001, 10 ** -maximumFractionDigits)) {
+    return number.toExponential(Math.min(4, maximumFractionDigits));
+  }
   return number.toLocaleString('en-US', {
     maximumFractionDigits,
     minimumFractionDigits: 0,
@@ -426,7 +484,17 @@ function normalizeDecimal(value: string): string {
   return normalizedFraction ? `${normalizedWhole}.${normalizedFraction}` : normalizedWhole;
 }
 
-function formatCalculatedPrice(value: number): string {
+/** Expand API prices without rounding their significant digits. */
+export function normalizePoolPrice(value: string | null): string | null {
+  if (!value || value.length > 128 || !/^\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(value)) return null;
+  const exponent = Number(value.toLowerCase().split('e')[1] ?? 0);
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 100) return null;
+  const expanded = value.toLowerCase().includes('e') ? expandScientificNotation(value) : value;
+  const normalized = normalizeDecimal(expanded);
+  return normalized.length <= 128 && isPositiveDecimal(normalized) ? normalized : null;
+}
+
+export function formatCalculatedPrice(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '';
   const precision = value.toPrecision(12);
   const expanded = precision.includes('e')
@@ -450,4 +518,23 @@ function expandScientificNotation(value: string): string {
       ? `${digits}${'0'.repeat(decimalIndex - digits.length)}`
       : `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
   return negative ? `-${expanded}` : expanded;
+}
+
+/** Keep sub-unit reciprocal prices distinguishable at a one-bin step. */
+export function formatMeteoraRangePrice(value: string | null, inverted = false): string {
+  const displayed = inverted ? reciprocalPriceForFormat(value) : value;
+  const number = Number(displayed);
+  if (!displayed || !Number.isFinite(number) || number <= 0) return formatPoolPrice(displayed, 3);
+  const digits = number < 1 ? Math.min(12, Math.max(3, Math.ceil(-Math.log10(number)) + 3)) : 3;
+  return formatPoolPrice(displayed, digits);
+}
+
+function reciprocalPriceForFormat(value: string | null): string {
+  if (!value || !/^(0|[1-9]\d*)(?:\.\d+)?$/.test(value) || Number(value) <= 0) return '';
+  const [whole, fraction = ''] = value.split('.');
+  const precision = Math.max(18, whole.length + 12);
+  const quotient = (10n ** BigInt(precision + fraction.length)) / BigInt(`${whole}${fraction}`);
+  const padded = quotient.toString().padStart(precision + 1, '0');
+  const decimal = padded.slice(-precision).replace(/0+$/, '');
+  return decimal ? `${padded.slice(0, -precision)}.${decimal}` : padded.slice(0, -precision);
 }

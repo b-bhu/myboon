@@ -2,7 +2,8 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import type { MeteoraStrategy } from '@myboon/shared/meteora';
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Image,
+  Keyboard,
+  KeyboardAvoidingView,
   PanResponder,
   Platform,
   Pressable,
@@ -11,28 +12,21 @@ import {
   Text,
   TextInput,
   View,
+  Modal,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TokenIcon } from '@/components/TokenIcon';
 import {
-  dragPixelsToBinDelta,
   liquidityDistributionWeight,
 } from '@/features/meteora/meteora.form';
-
-export const METEORA_COLORS = {
-  screen: '#103D4C',
-  surface: '#151B30',
-  surfaceLift: '#1D2540',
-  surfaceQuiet: '#11162A',
-  border: '#2B3453',
-  text: '#F6F3FF',
-  textDim: '#9AA3BD',
-  textFaint: '#68728E',
-  violet: '#7A6CFF',
-  cyan: '#29C6D1',
-  coral: '#FF6B4A',
-  green: '#34D399',
-  red: '#FF627D',
-  amber: '#F6B94A',
-} as const;
+import {
+  type MeteoraPositionTokenMode,
+} from '@/features/meteora/meteora.position-range';
+import type { MeteoraLiquidityDistributionBar } from '@/features/meteora/meteora.liquidity-distribution';
+import { rangeHandleGeometry } from '@/features/meteora/meteora.position-form';
+import { rangeDragDelta } from '@/features/meteora/meteora.range-drag';
+import { METEORA_COLORS, METEORA_TINTS } from '@/features/meteora/meteora.theme';
+import { tokens } from '@/theme/tokens';
 
 export function FormSection({
   title,
@@ -64,11 +58,19 @@ export function SegmentedControl<T extends string>({
   options,
   onChange,
   accessibilityLabel,
+  disabled = false,
 }: {
   value: T;
-  options: { id: T; label: string; description?: string; icon?: keyof typeof MaterialIcons.glyphMap }[];
+  options: {
+    id: T;
+    label: string;
+    description?: string;
+    icon?: keyof typeof MaterialIcons.glyphMap;
+    strategy?: MeteoraStrategy;
+  }[];
   onChange: (value: T) => void;
   accessibilityLabel: string;
+  disabled?: boolean;
 }) {
   return (
     <View
@@ -82,17 +84,21 @@ export function SegmentedControl<T extends string>({
           <Pressable
             key={option.id}
             onPress={() => onChange(option.id)}
+            disabled={disabled}
             accessibilityRole="radio"
-            accessibilityState={{ selected }}
+            accessibilityState={{ selected, disabled }}
             accessibilityLabel={option.label}
             accessibilityHint={option.description}
             style={({ pressed }) => [
               styles.segment,
               selected && styles.segmentSelected,
+              disabled && styles.disabled,
               pressed && styles.pressed,
             ]}
           >
-            {option.icon ? (
+            {option.strategy ? (
+              <StrategyGlyph strategy={option.strategy} selected={selected} />
+            ) : option.icon ? (
               <MaterialIcons
                 name={option.icon}
                 size={17}
@@ -103,6 +109,31 @@ export function SegmentedControl<T extends string>({
               {option.label}
             </Text>
           </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function StrategyGlyph({ strategy, selected }: { strategy: MeteoraStrategy; selected: boolean }) {
+  return (
+    <View style={styles.strategyGlyph} importantForAccessibility="no-hide-descendants">
+      {Array.from({ length: 7 }, (_, index) => {
+        const position = index / 6;
+        const weight = liquidityDistributionWeight(strategy, position);
+        const height = Math.min(14, 4 + Math.round(weight * 10));
+        const firstHalf = index < 3;
+        return (
+          <View
+            key={index}
+            style={[
+              styles.strategyGlyphBar,
+              { height },
+              selected && firstHalf ? styles.strategyGlyphPrimary : null,
+              selected && !firstHalf ? styles.strategyGlyphAccent : null,
+              !selected ? styles.strategyGlyphMuted : null,
+            ]}
+          />
         );
       })}
     </View>
@@ -162,40 +193,89 @@ export function ChoiceChips<T extends string>({
 export function TokenAmountField({
   symbol,
   iconUrl,
+  iconReloadKey,
   value,
   balance,
   error,
+  hideErrorMessage,
   onChangeText,
   onBlur,
   onMax,
+  secondaryValue,
+  calculated,
+  estimated = false,
+  onHalf,
+  venueIconUrl,
+  compact = false,
   disabled,
   accent,
 }: {
   symbol: string;
   iconUrl: string | null;
+  iconReloadKey?: string | number;
   value: string;
-  balance: string;
+  balance?: string | null;
   error?: string | null;
+  hideErrorMessage?: boolean;
   onChangeText: (value: string) => void;
   onBlur: () => void;
   onMax?: () => void;
+  secondaryValue?: string;
+  calculated?: boolean;
+  estimated?: boolean;
+  onHalf?: () => void;
+  venueIconUrl?: string | null;
+  compact?: boolean;
   disabled?: boolean;
   accent: string;
 }) {
+  const hasBalance = balance !== undefined && balance !== null;
+  const hasAmountActions = !!onHalf || !!onMax;
   return (
     <View>
-      <View style={[styles.amountField, error && styles.fieldError, disabled && styles.disabled]}>
+      <View style={[
+        styles.amountField,
+        compact && styles.amountFieldCompact,
+        error && styles.fieldError,
+        disabled && styles.disabled,
+      ]}>
         <View style={styles.tokenIdentity}>
-          {iconUrl ? (
-            <Image source={{ uri: iconUrl }} style={styles.tokenIcon} />
-          ) : (
-            <View style={[styles.tokenFallback, { backgroundColor: accent }]}>
-              <Text style={styles.tokenFallbackText}>{symbol.charAt(0) || '?'}</Text>
-            </View>
-          )}
-          <View>
+          <TokenIcon
+            reloadKey={iconReloadKey}
+            identity={{ iconUrl }}
+            venueIconUrl={venueIconUrl}
+            letter={symbol}
+            size={28}
+            tint={accent}
+          />
+          <View style={styles.tokenIdentityCopy}>
             <Text style={styles.tokenSymbol}>{symbol}</Text>
-            <Text style={styles.balanceText}>Balance {balance}</Text>
+            {hasAmountActions ? <View style={styles.amountActions}>
+              {onHalf ? (
+                <Pressable
+                  onPress={onHalf}
+                  disabled={disabled}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use half of available ${symbol}`}
+                  hitSlop={{ top: 8, bottom: 8 }}
+                  style={styles.amountAction}
+                >
+                  <Text style={styles.maxText}>50%</Text>
+                </Pressable>
+              ) : null}
+              {onMax ? (
+                <Pressable
+                  onPress={onMax}
+                  disabled={disabled}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use maximum spendable ${symbol}`}
+                  hitSlop={{ top: 8, bottom: 8 }}
+                  style={styles.amountAction}
+                >
+                  <Text style={styles.maxText}>MAX</Text>
+                </Pressable>
+              ) : null}
+            </View> : null}
           </View>
         </View>
         <View style={styles.amountInputWrap}>
@@ -208,24 +288,36 @@ export function TokenAmountField({
             placeholder="0.00"
             placeholderTextColor={METEORA_COLORS.textFaint}
             accessibilityLabel={`${symbol} amount`}
-            accessibilityHint={`Enter the amount of ${symbol} to use`}
+            accessibilityHint={estimated
+              ? `Estimated ${symbol} amount for the selected range and strategy. A live Auto-Fill quote is required before review.`
+              : `Enter the amount of ${symbol} to use`}
             accessibilityState={{ disabled: !!disabled }}
-            style={styles.amountInput}
+            style={[styles.amountInput, error && styles.amountInputError]}
           />
-          {onMax ? (
-            <Pressable
-              onPress={onMax}
-              accessibilityRole="button"
-              accessibilityLabel={`Use maximum spendable ${symbol}`}
-              hitSlop={6}
-              style={styles.maxButton}
-            >
-              <Text style={styles.maxText}>MAX</Text>
-            </Pressable>
+          {secondaryValue || calculated ? (
+            <Text style={styles.amountSecondary} numberOfLines={1}>
+              {estimated ? 'Estimated · Auto-Fill' : calculated
+                ? secondaryValue
+                  ? `${secondaryValue} · Auto-filled`
+                  : 'Auto-filled'
+                : secondaryValue}
+            </Text>
+          ) : null}
+          {hasBalance ? (
+            <View style={styles.amountBalance}>
+              <MaterialIcons name="account-balance-wallet" size={11} color={METEORA_COLORS.textFaint} />
+              <Text
+                style={styles.balanceText}
+                numberOfLines={1}
+                accessibilityLabel={`Available ${symbol} balance: ${balance}`}
+              >
+                Balance: {balance}
+              </Text>
+            </View>
           ) : null}
         </View>
       </View>
-      {error ? (
+      {error && !hideErrorMessage ? (
         <Text style={styles.errorText} accessibilityRole="alert">
           {error}
         </Text>
@@ -237,59 +329,121 @@ export function TokenAmountField({
 export function AutoFillControl({
   value,
   onChange,
+  compact = false,
+  disabled = false,
 }: {
   value: boolean;
   onChange: (value: boolean) => void;
+  compact?: boolean;
+  disabled?: boolean;
 }) {
   return (
-    <View style={styles.autoFill}>
-      <View style={styles.autoFillCopy}>
-        <Text style={styles.autoFillTitle}>Auto-Fill</Text>
-        <Text style={styles.autoFillCaption}>Calculate the other pool token</Text>
+    <View style={[styles.autoFill, compact && styles.autoFillCompact, disabled && styles.disabled]}>
+      <View style={[styles.autoFillCopy, compact && styles.autoFillCopyCompact]}>
+        <Text style={styles.autoFillTitle} numberOfLines={1}>Auto-Fill</Text>
+        {!compact ? <Text style={styles.autoFillCaption}>Calculate the other pool token</Text> : null}
       </View>
       <Switch
         value={value}
         onValueChange={onChange}
+        disabled={disabled}
         accessibilityLabel="Auto-Fill the other pool token"
         trackColor={{
           false: METEORA_COLORS.border,
-          true: 'rgba(122,108,255,0.56)',
+          true: METEORA_TINTS.selected,
         }}
-        thumbColor={value ? METEORA_COLORS.violet : METEORA_COLORS.textDim}
+        thumbColor={value ? METEORA_COLORS.accent : METEORA_COLORS.textDim}
       />
     </View>
   );
 }
 
 export function RangeVisualization({
-  strategy,
+  bars,
+  poolLiquidityBars = [],
+  poolLiquidityState,
   minLabel,
   maxLabel,
   currentLabel,
+  quoteLabel,
+  tokenXSymbol,
+  tokenYSymbol,
+  tokenXColor = METEORA_COLORS.primary,
+  tokenYColor = METEORA_COLORS.accent,
+  leftColor,
+  rightColor,
+  leftTokenSymbol,
+  rightTokenSymbol,
   minPercent = 22,
   maxPercent = 78,
+  currentPercent = 50,
+  dragBinSpan = 68,
+  axisMinLabel,
+  axisMaxLabel,
+  tokenMode = 'both',
+  priceInverted = false,
   onAdjustMin,
   onAdjustMax,
+  onShiftRange,
   interactive = true,
 }: {
-  strategy: MeteoraStrategy;
+  bars: readonly MeteoraLiquidityDistributionBar[];
+  /** Real SDK pool-bin liquidity; deliberately separate from deposit bars. */
+  poolLiquidityBars?: readonly number[];
+  /** Never present a pending/failed SDK read as a zero-liquidity histogram. */
+  poolLiquidityState?: 'loading' | 'error';
   minLabel: string;
   maxLabel: string;
   currentLabel: string;
+  quoteLabel?: string;
+  tokenXSymbol?: string;
+  tokenYSymbol?: string;
+  tokenXColor?: string;
+  tokenYColor?: string;
+  leftColor?: string;
+  rightColor?: string;
+  leftTokenSymbol?: string;
+  rightTokenSymbol?: string;
   minPercent?: number;
   maxPercent?: number;
-  onAdjustMin?: (deltaBins: number) => void;
-  onAdjustMax?: (deltaBins: number) => void;
-  /**
-   * Beta ships one server-calculated default range with no drag or manual
-   * entry (see the PRD's Beta Scope Amendment). Set false to render the
-   * range as fixed, read-only context — no draggable handles, and the
-   * accessible label states the range is calculated rather than adjustable.
-   */
+  currentPercent?: number;
+  dragBinSpan?: number;
+  axisMinLabel?: string;
+  axisMaxLabel?: string;
+  tokenMode?: MeteoraPositionTokenMode;
+  priceInverted?: boolean;
+  onAdjustMin?: (deltaBins: number) => number | void;
+  onAdjustMax?: (deltaBins: number) => number | void;
+  onShiftRange?: (deltaBins: number) => number | void;
   interactive?: boolean;
 }) {
-  const safeMin = Math.max(3, Math.min(95.5, minPercent));
-  const safeMax = Math.max(safeMin + 1.5, Math.min(97, maxPercent));
+  const { minPercent: safeMin, maxPercent: safeMax, currentPercent: safeCurrent }
+    = rangeHandleGeometry(minPercent, maxPercent, currentPercent);
+  // Do not clamp the real pool marker to an endpoint. A one-sided/far range
+  // should show that the active price lies outside its retained viewport.
+  const currentInViewport = Number.isFinite(currentPercent) && currentPercent >= 3 && currentPercent <= 97;
+  const currentOffRangeSide = currentPercent < 3 ? 'below' : currentPercent > 97 ? 'above' : null;
+  const resolvedXColor = priceInverted
+    ? leftColor ?? tokenXColor
+    : rightColor ?? tokenXColor;
+  const resolvedYColor = priceInverted
+    ? rightColor ?? tokenYColor
+    : leftColor ?? tokenYColor;
+  const resolvedLeftColor = priceInverted ? resolvedXColor : resolvedYColor;
+  const resolvedRightColor = priceInverted ? resolvedYColor : resolvedXColor;
+  const leftToken = priceInverted ? 'x' : 'y';
+  const rightToken = priceInverted ? 'y' : 'x';
+  const leftFunded = tokenMode === 'both'
+    || tokenMode === 'x_only' && leftToken === 'x'
+    || tokenMode === 'y_only' && leftToken === 'y';
+  const rightFunded = tokenMode === 'both'
+    || tokenMode === 'x_only' && rightToken === 'x'
+    || tokenMode === 'y_only' && rightToken === 'y';
+  const interactiveMin = interactive && !!onAdjustMin;
+  const interactiveMax = interactive && !!onAdjustMax;
+  const interactiveCenter = interactive && !!onShiftRange;
+  const hasInteractiveHandle = interactiveMin || interactiveMax;
+  const bubbleShift = safeCurrent < 20 ? 48 : safeCurrent > 80 ? -48 : 0;
   const [trackWidth, setTrackWidth] = useState(0);
 
   return (
@@ -297,37 +451,112 @@ export function RangeVisualization({
       style={styles.rangeCard}
       testID="meteora-range-selector"
       accessibilityLabel={
-        interactive
-          ? `Liquidity range. Minimum ${minLabel}. Current ${currentLabel}. Maximum ${maxLabel}.`
-          : `Calculated liquidity range. Minimum ${minLabel}. Current ${currentLabel}. Maximum ${maxLabel}.`
+        `${hasInteractiveHandle ? 'Price range' : 'Fixed price range'}. `
+        + `${tokenMode === 'x_only' ? `${tokenXSymbol ?? 'Token X'}-only deposit. ` : ''}`
+        + `${tokenMode === 'y_only' ? `${tokenYSymbol ?? 'Token Y'}-only deposit. ` : ''}`
+        + `Minimum ${minLabel}. Current ${currentLabel}. Maximum ${maxLabel}.`
       }
     >
-      <View style={styles.histogram} importantForAccessibility="no-hide-descendants">
-        {Array.from({ length: 24 }, (_, index) => {
-          const center = ((index + 0.5) / 24) * 100;
-          const barStart = (index / 24) * 100;
-          const barEnd = ((index + 1) / 24) * 100;
-          const active = barEnd >= safeMin && barStart <= safeMax;
-          const selectedPosition = (center - safeMin) / (safeMax - safeMin);
-          const height = 13 + Math.round(
-            liquidityDistributionWeight(strategy, selectedPosition) * 31,
-          );
+      <View style={styles.rangeLegend}>
+        <View style={[styles.rangeLegendItem, !leftFunded && styles.rangeLegendUnused]}>
+          <View style={[styles.rangeLegendDot, { backgroundColor: resolvedLeftColor }, !leftFunded && styles.rangeLegendDotUnused]} />
+          <Text style={[styles.rangeLegendText, !leftFunded && styles.rangeLegendTextUnused]} numberOfLines={1}>
+            {leftTokenSymbol ?? (priceInverted ? tokenXSymbol : tokenYSymbol) ?? (priceInverted ? 'Token X' : 'Token Y')}
+          </Text>
+        </View>
+        <View style={[styles.rangeLegendItem, !rightFunded && styles.rangeLegendUnused]}>
+          <Text style={[styles.rangeLegendText, !rightFunded && styles.rangeLegendTextUnused]} numberOfLines={1}>
+            {rightTokenSymbol ?? (priceInverted ? tokenYSymbol : tokenXSymbol) ?? (priceInverted ? 'Token Y' : 'Token X')}
+          </Text>
+          <View style={[styles.rangeLegendDot, { backgroundColor: resolvedRightColor }, !rightFunded && styles.rangeLegendDotUnused]} />
+        </View>
+      </View>
+      <View style={styles.combinedChart} importantForAccessibility="no-hide-descendants">
+        {bars.map((bar, index) => {
+          const allocated = bar.height > 0;
           return (
             <View
               key={index}
               testID={`meteora-liquidity-bar-${index}`}
               style={[
                 styles.histogramBar,
-                { height },
-                active ? styles.histogramBarActive : styles.histogramBarMuted,
+                {
+                  height: allocated ? Math.max(1, bar.height * 48) : 2,
+                },
+                !allocated && styles.histogramBarMuted,
               ]}
+            >
+              {allocated && bar.xFraction > 0 ? (
+                <View style={{ height: `${bar.xFraction * 100}%`, backgroundColor: resolvedXColor }} />
+              ) : null}
+              {allocated && bar.yFraction > 0 ? (
+                <View style={{ height: `${bar.yFraction * 100}%`, backgroundColor: resolvedYColor }} />
+              ) : null}
+            </View>
+          );
+        })}
+        {currentInViewport ? (
+          <>
+            <View style={[styles.allocationMarker, { left: `${currentPercent}%` }]} />
+            <View
+              style={[
+                styles.allocationPriceBubble,
+                { left: `${currentPercent}%` },
+                bubbleShift !== 0 && { transform: [{ translateX: bubbleShift }] },
+              ]}
+            >
+              <Text style={styles.allocationPriceTitle}>Pool Price</Text>
+              <Text style={styles.allocationPriceValue} numberOfLines={1}>
+                {currentLabel}{quoteLabel ? ` ${quoteLabel}` : ''}
+              </Text>
+            </View>
+          </>
+        ) : (
+          <Text style={styles.offRangePrice} testID="meteora-off-range-price">
+            Pool price {currentLabel} is {currentOffRangeSide} this range
+          </Text>
+        )}
+      </View>
+      <View
+        style={styles.allocationTrack}
+        testID="meteora-allocation-track"
+        onLayout={({ nativeEvent }) => {
+          setTrackWidth(nativeEvent.layout.width);
+        }}
+      >
+        {interactiveCenter ? (
+          <AdjustableHandle
+            label="Move liquidity range"
+            testID="meteora-center-handle"
+            value={`${minLabel} to ${maxLabel}`}
+            percent={(safeMin + safeMax) / 2}
+            trackWidth={trackWidth}
+            onAdjust={onShiftRange!}
+            dragBinSpan={dragBinSpan}
+            center
+          />
+        ) : null}
+      </View>
+      <View style={styles.poolLiquidityChart} importantForAccessibility="no-hide-descendants">
+        {poolLiquidityState ? (
+          <Text style={styles.poolLiquidityPlaceholder} testID="meteora-pool-liquidity-status">
+            {poolLiquidityState === 'loading' ? 'Loading real pool liquidity…' : 'Real pool liquidity unavailable'}
+          </Text>
+        ) : bars.map((_, index) => {
+          const height = poolLiquidityBars[index] ?? 0;
+          return (
+            <View
+              key={`pool-${index}`}
+              testID={`meteora-pool-liquidity-bar-${index}`}
+              style={[styles.poolLiquidityBar, { height: height > 0 ? Math.max(1, height * 34) : 1 }]}
             />
           );
         })}
+        {!poolLiquidityState && currentInViewport ? <View style={[styles.poolLiquidityMarker, { left: `${currentPercent}%` }]} /> : null}
       </View>
       <View
         style={styles.rangeTrack}
-        testID="meteora-range-track"
+        testID="meteora-pool-range-track"
         onLayout={({ nativeEvent }) => {
           setTrackWidth(nativeEvent.layout.width);
         }}
@@ -338,28 +567,30 @@ export function RangeVisualization({
             { left: `${safeMin}%`, right: `${100 - safeMax}%` },
           ]}
         />
-        <View style={styles.currentMarker}>
-          <View style={styles.currentMarkerLine} />
-          <Text style={styles.currentMarkerText}>NOW</Text>
-        </View>
-        {interactive ? (
+        {hasInteractiveHandle ? (
           <>
-            <AdjustableHandle
-              label="Minimum price"
-              testID="meteora-min-handle"
-              value={minLabel}
-              percent={safeMin}
-              trackWidth={trackWidth}
-              onAdjust={onAdjustMin ?? noop}
-            />
-            <AdjustableHandle
-              label="Maximum price"
-              testID="meteora-max-handle"
-              value={maxLabel}
-              percent={safeMax}
-              trackWidth={trackWidth}
-              onAdjust={onAdjustMax ?? noop}
-            />
+            {interactiveMin ? (
+              <AdjustableHandle
+                label="Minimum price"
+                testID="meteora-min-handle"
+                value={minLabel}
+                percent={safeMin}
+                trackWidth={trackWidth}
+                onAdjust={onAdjustMin!}
+                dragBinSpan={dragBinSpan}
+              />
+            ) : null}
+            {interactiveMax ? (
+              <AdjustableHandle
+                label="Maximum price"
+                testID="meteora-max-handle"
+                value={maxLabel}
+                percent={safeMax}
+                trackWidth={trackWidth}
+                onAdjust={onAdjustMax!}
+                dragBinSpan={dragBinSpan}
+              />
+            ) : null}
           </>
         ) : (
           <>
@@ -374,22 +605,20 @@ export function RangeVisualization({
           </>
         )}
       </View>
-      <View style={styles.rangeLabels}>
-        <Text style={styles.rangeEdgeText}>{minLabel}</Text>
-        <Text style={styles.rangeCurrentText}>{currentLabel}</Text>
-        <Text style={[styles.rangeEdgeText, styles.rangeRight]}>{maxLabel}</Text>
+      <View style={styles.allocationAxis}>
+        <Text style={styles.rangeAxisText}>{axisMinLabel ?? minLabel}</Text>
+        {currentInViewport && currentPercent > 15 && currentPercent < 85 ? (
+          <Text style={[styles.rangeAxisText, styles.rangeAxisCenter, { left: `${currentPercent}%` }]}>{currentLabel}</Text>
+        ) : null}
+        <Text style={[styles.rangeAxisText, styles.rangeRight]}>{axisMaxLabel ?? maxLabel}</Text>
       </View>
       <Text style={styles.rangeInstruction}>
-        {interactive
-          ? 'Adjust either handle or enter exact prices below.'
-          : 'This range is calculated automatically for beta and cannot be edited.'}
+        {hasInteractiveHandle
+          ? `${tokenMode === 'x_only' ? `${tokenXSymbol ?? 'Token X'}-only deposit. ` : ''}${tokenMode === 'y_only' ? `${tokenYSymbol ?? 'Token Y'}-only deposit. ` : ''}Drag the center to move the range, or either end to resize it.`
+          : 'Range is fixed at the current position.'}
       </Text>
     </View>
   );
-}
-
-function noop() {
-  // Range editing is disabled for beta; handles render as static context.
 }
 
 function AdjustableHandle({
@@ -399,26 +628,37 @@ function AdjustableHandle({
   percent,
   trackWidth,
   onAdjust,
+  dragBinSpan,
+  center = false,
 }: {
   label: string;
   testID: string;
   value: string;
   percent: number;
   trackWidth: number;
-  onAdjust: (deltaBins: number) => void;
+  onAdjust: (deltaBins: number) => number | void;
+  dragBinSpan?: number;
+  center?: boolean;
 }) {
   const previousStep = useRef(0);
   const pointerStartX = useRef<number | null>(null);
   const onAdjustRef = useRef(onAdjust);
   onAdjustRef.current = onAdjust;
+  const currentMetricsRef = useRef({ trackWidth, binSpan: dragBinSpan ?? 68 });
+  currentMetricsRef.current = { trackWidth, binSpan: dragBinSpan ?? 68 };
+  const dragMetricsRef = useRef(currentMetricsRef.current);
+  const beginDrag = useCallback(() => {
+    previousStep.current = 0;
+    dragMetricsRef.current = currentMetricsRef.current;
+  }, []);
   const applyHorizontalDrag = useCallback((horizontalPixels: number) => {
-    const step = dragPixelsToBinDelta(horizontalPixels, trackWidth);
-    const delta = step - previousStep.current;
+    const metrics = dragMetricsRef.current;
+    const delta = rangeDragDelta(horizontalPixels, metrics.trackWidth, metrics.binSpan, previousStep.current);
     if (delta !== 0) {
-      onAdjustRef.current(delta);
-      previousStep.current = step;
+      const accepted = onAdjustRef.current(delta);
+      previousStep.current += accepted ?? delta;
     }
-  }, [trackWidth]);
+  }, []);
   const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: (_, gesture) => (
@@ -426,7 +666,7 @@ function AdjustableHandle({
     ),
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => {
-      previousStep.current = 0;
+      beginDrag();
     },
     onPanResponderMove: (_, gesture) => {
       applyHorizontalDrag(gesture.dx);
@@ -437,14 +677,14 @@ function AdjustableHandle({
     onPanResponderTerminate: () => {
       previousStep.current = 0;
     },
-  }), [applyHorizontalDrag]);
+  }), [applyHorizontalDrag, beginDrag]);
 
   return (
     <View
       {...(Platform.OS === 'web' ? {} : panResponder.panHandlers)}
       onPointerDown={Platform.OS === 'web' ? (event) => {
         pointerStartX.current = event.nativeEvent.pageX;
-        previousStep.current = 0;
+        beginDrag();
         const target = event.currentTarget as unknown as {
           setPointerCapture?: (pointerId: number) => void;
         };
@@ -480,11 +720,11 @@ function AdjustableHandle({
           onAdjustRef.current(nativeEvent.actionName === 'increment' ? 1 : -1);
         }
       }}
-      style={[styles.handleTouch, { left: `${percent}%` }]}
+      style={[styles.handleTouch, center && styles.centerHandleTouch, { left: `${percent}%` }]}
     >
-      <View style={styles.handleStem} />
-      <View style={styles.handleKnob}>
-        <View style={styles.handleGrip} />
+      {!center ? <View style={styles.handleStem} /> : null}
+      <View style={[styles.handleKnob, center && styles.centerHandleKnob]}>
+        <View style={[styles.handleGrip, center && styles.centerHandleGrip]} />
       </View>
     </View>
   );
@@ -493,28 +733,143 @@ function AdjustableHandle({
 export function PriceField({
   label,
   value,
+  displayValue,
   suffix,
   error,
+  hideErrorMessage = false,
+  compact = false,
+  disabled = false,
   onChangeText,
   onBlur,
   onStep,
 }: {
   label: string;
   value: string;
+  /** Compact label only; the editor keeps the unrounded value. */
+  displayValue?: string;
   suffix: string;
   error?: string | null;
+  hideErrorMessage?: boolean;
+  compact?: boolean;
+  disabled?: boolean;
   onChangeText: (value: string) => void;
   onBlur: () => void;
   onStep: (direction: 'decrement' | 'increment') => void;
 }) {
+  const insets = useSafeAreaInsets();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const finishEditing = useCallback(() => {
+    Keyboard.dismiss();
+    setEditorOpen(false);
+    onBlur();
+  }, [onBlur]);
+
+  if (compact) {
+    return (
+      <View style={[styles.priceFieldWrap, styles.priceFieldWrapCompact, disabled && styles.disabled]}>
+        <Pressable
+          onPress={() => setEditorOpen(true)}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${label}`}
+          accessibilityState={{ disabled }}
+          style={[styles.compactPriceCell, error && styles.fieldError]}
+        >
+          <Text style={styles.inputLabel}>{label}</Text>
+          <Text style={[styles.compactPriceValue, error && styles.amountInputError]} numberOfLines={1}>
+            {displayValue ?? (value || '0.00')}
+          </Text>
+          <Text style={styles.compactPriceSuffix}>{suffix}</Text>
+          <MaterialIcons
+            name="edit"
+            size={15}
+            color={METEORA_COLORS.textDim}
+            style={styles.compactPriceEditIcon}
+          />
+        </Pressable>
+        {error && !hideErrorMessage ? <Text style={styles.errorText} accessibilityRole="alert">{error}</Text> : null}
+        <Modal
+          visible={editorOpen}
+          transparent
+          animationType="slide"
+          onRequestClose={finishEditing}
+          accessibilityViewIsModal
+        >
+          <KeyboardAvoidingView
+            style={styles.editorKeyboardAvoiding}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={styles.editorOverlay}>
+              <View style={[styles.editorSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+              <View style={styles.editorHeader}>
+                <Text style={styles.editorTitle}>{label}</Text>
+                <Pressable
+                  onPress={finishEditing}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Close ${label} editor`}
+                  style={styles.editorClose}
+                >
+                  <MaterialIcons name="close" size={20} color={METEORA_COLORS.textDim} />
+                </Pressable>
+              </View>
+              <TextInput
+                value={value}
+                onChangeText={onChangeText}
+                onBlur={onBlur}
+                editable={!disabled}
+                keyboardType="decimal-pad"
+                autoFocus
+                placeholder="0.00"
+                placeholderTextColor={METEORA_COLORS.textFaint}
+                accessibilityLabel={`${label} exact price`}
+                style={[styles.editorInput, error && styles.amountInputError]}
+              />
+              <Text style={styles.editorSuffix}>{suffix}</Text>
+              <View style={styles.editorSteps}>
+                <Pressable
+                  onPress={() => onStep('decrement')}
+                  disabled={disabled}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Decrease ${label}`}
+                  style={styles.editorStepButton}
+                >
+                  <MaterialIcons name="remove" size={21} color={METEORA_COLORS.text} />
+                </Pressable>
+                <Pressable
+                  onPress={() => onStep('increment')}
+                  disabled={disabled}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Increase ${label}`}
+                  style={styles.editorStepButton}
+                >
+                  <MaterialIcons name="add" size={21} color={METEORA_COLORS.text} />
+                </Pressable>
+              </View>
+              <Pressable
+                onPress={finishEditing}
+                accessibilityRole="button"
+                accessibilityLabel={`Done editing ${label}`}
+                style={styles.editorDone}
+              >
+                <Text style={styles.editorDoneText}>Done</Text>
+              </Pressable>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.priceFieldWrap}>
+    <View style={[styles.priceFieldWrap, disabled && styles.disabled]}>
       <Text style={styles.inputLabel}>{label}</Text>
       <View style={[styles.priceField, error && styles.fieldError]}>
         <TextInput
           value={value}
           onChangeText={onChangeText}
           onBlur={onBlur}
+          editable={!disabled}
           keyboardType="decimal-pad"
           placeholder="0.00"
           placeholderTextColor={METEORA_COLORS.textFaint}
@@ -525,6 +880,7 @@ export function PriceField({
         <View style={styles.stepper}>
           <Pressable
             onPress={() => onStep('increment')}
+            disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel={`Increase ${label.toLowerCase()} by one bin`}
             style={styles.stepButton}
@@ -534,6 +890,7 @@ export function PriceField({
           <View style={styles.stepDivider} />
           <Pressable
             onPress={() => onStep('decrement')}
+            disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel={`Decrease ${label.toLowerCase()} by one bin`}
             style={styles.stepButton}
@@ -542,6 +899,7 @@ export function PriceField({
           </Pressable>
         </View>
       </View>
+      {error && !hideErrorMessage ? <Text style={styles.errorText} accessibilityRole="alert">{error}</Text> : null}
     </View>
   );
 }
@@ -581,12 +939,12 @@ export function InlineNotice({
         size={18}
         color={
           tone === 'error'
-            ? METEORA_COLORS.red
+            ? METEORA_COLORS.negative
             : tone === 'warning'
-              ? METEORA_COLORS.amber
+              ? METEORA_COLORS.warning
               : tone === 'success'
-                ? METEORA_COLORS.green
-                : METEORA_COLORS.cyan
+                ? METEORA_COLORS.positive
+                : METEORA_COLORS.accent
         }
       />
       <View style={styles.noticeCopy}>
@@ -599,15 +957,15 @@ export function InlineNotice({
 
 const styles = StyleSheet.create({
   section: {
-    gap: 12,
-    paddingVertical: 20,
+    gap: 8,
+    paddingVertical: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: METEORA_COLORS.border,
   },
   sectionHeading: {
     minHeight: 28,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
   },
@@ -617,8 +975,8 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: METEORA_COLORS.text,
-    fontSize: 16,
-    lineHeight: 21,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '800',
   },
   sectionCaption: {
@@ -627,26 +985,26 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   segmented: {
-    minHeight: 48,
+    minHeight: 44,
     flexDirection: 'row',
     padding: 4,
-    borderRadius: 13,
+    borderRadius: tokens.radius.md,
     backgroundColor: METEORA_COLORS.surfaceQuiet,
   },
   segment: {
-    minHeight: 44,
+    minHeight: 36,
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    borderRadius: 10,
+    borderRadius: tokens.radius.md,
     paddingHorizontal: 7,
   },
   segmentSelected: {
     backgroundColor: METEORA_COLORS.surfaceLift,
     borderWidth: 1,
-    borderColor: 'rgba(122,108,255,0.42)',
+    borderColor: METEORA_TINTS.selectedBorder,
   },
   segmentText: {
     color: METEORA_COLORS.textDim,
@@ -656,6 +1014,26 @@ const styles = StyleSheet.create({
   },
   segmentTextSelected: {
     color: METEORA_COLORS.text,
+  },
+  strategyGlyph: {
+    height: 14,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 1,
+  },
+  strategyGlyphBar: {
+    width: 2,
+    minHeight: 5,
+    borderRadius: 1,
+  },
+  strategyGlyphPrimary: {
+    backgroundColor: METEORA_COLORS.primary,
+  },
+  strategyGlyphAccent: {
+    backgroundColor: METEORA_COLORS.accent,
+  },
+  strategyGlyphMuted: {
+    backgroundColor: METEORA_COLORS.textFaint,
   },
   chips: {
     flexDirection: 'row',
@@ -671,11 +1049,11 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     borderWidth: 1,
     borderColor: METEORA_COLORS.border,
-    backgroundColor: 'rgba(21,27,48,0.58)',
+    backgroundColor: METEORA_COLORS.surface,
   },
   chipSelected: {
-    borderColor: METEORA_COLORS.violet,
-    backgroundColor: 'rgba(122,108,255,0.18)',
+    borderColor: METEORA_COLORS.primary,
+    backgroundColor: METEORA_TINTS.selected,
   },
   chipText: {
     color: METEORA_COLORS.textDim,
@@ -690,41 +1068,33 @@ const styles = StyleSheet.create({
     color: METEORA_COLORS.textFaint,
   },
   amountField: {
-    minHeight: 76,
+    minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: tokens.radius.md,
     borderWidth: 1,
     borderColor: METEORA_COLORS.border,
     backgroundColor: METEORA_COLORS.surfaceLift,
   },
+  amountFieldCompact: {
+    minHeight: 76,
+    paddingVertical: 8,
+  },
   tokenIdentity: {
-    minWidth: 112,
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
-  tokenIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: METEORA_COLORS.surfaceQuiet,
-  },
-  tokenFallback: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tokenFallbackText: {
-    color: '#081219',
-    fontSize: 13,
-    fontWeight: '900',
+  tokenIdentityCopy: {
+    minWidth: 0,
+    flex: 1,
+    gap: 1,
   },
   tokenSymbol: {
     color: METEORA_COLORS.text,
@@ -733,33 +1103,61 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   balanceText: {
+    flexShrink: 1,
     color: METEORA_COLORS.textFaint,
     fontFamily: 'monospace',
-    fontSize: 9,
-    lineHeight: 13,
+    fontSize: 10,
+    lineHeight: 14,
   },
   amountInputWrap: {
     flex: 1,
     alignItems: 'flex-end',
+    justifyContent: 'center',
+    minWidth: 90,
   },
   amountInput: {
     width: '100%',
-    minHeight: 36,
+    minHeight: 26,
     paddingVertical: 0,
     color: METEORA_COLORS.text,
     fontFamily: 'monospace',
-    fontSize: 22,
-    lineHeight: 28,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
     textAlign: 'right',
   },
-  maxButton: {
-    minWidth: 44,
-    minHeight: 24,
+  amountInputError: {
+    color: METEORA_COLORS.negative,
+  },
+  amountSecondary: {
+    maxWidth: '100%',
+    color: METEORA_COLORS.textDim,
+    fontFamily: 'monospace',
+    fontSize: 9,
+    lineHeight: 13,
+    textAlign: 'right',
+  },
+  amountBalance: {
+    maxWidth: '100%',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
+    marginTop: 4,
+  },
+  amountActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 1,
+  },
+  amountAction: {
+    minHeight: 28,
+    minWidth: 44,
     justifyContent: 'center',
   },
   maxText: {
-    color: METEORA_COLORS.cyan,
+    color: METEORA_COLORS.accent,
     fontSize: 10,
     lineHeight: 13,
     fontWeight: '900',
@@ -773,8 +1171,21 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 2,
   },
+  autoFillCompact: {
+    minHeight: 32,
+    flexDirection: 'row-reverse',
+    justifyContent: 'flex-start',
+    gap: 7,
+    flexShrink: 0,
+  },
   autoFillCopy: {
     flex: 1,
+  },
+  autoFillCopyCompact: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    minWidth: 54,
   },
   autoFillTitle: {
     color: METEORA_COLORS.text,
@@ -788,71 +1199,185 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   rangeCard: {
-    paddingTop: 12,
-    paddingHorizontal: 12,
-    paddingBottom: 11,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: METEORA_COLORS.border,
-    backgroundColor: METEORA_COLORS.surfaceQuiet,
-    overflow: 'hidden',
+    paddingTop: 2,
+    paddingBottom: 2,
+    overflow: 'visible',
   },
-  histogram: {
-    height: 50,
+  rangeLegend: {
+    minHeight: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  rangeLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: '48%',
+    flexShrink: 1,
+  },
+  rangeLegendDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  rangeLegendText: {
+    color: METEORA_COLORS.textDim,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  rangeLegendUnused: {
+    opacity: 0.52,
+  },
+  rangeLegendDotUnused: {
+    opacity: 0.45,
+  },
+  rangeLegendTextUnused: {
+    color: METEORA_COLORS.textFaint,
+  },
+  combinedChart: {
+    height: 48,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 3,
-    opacity: 0.92,
+    gap: 2,
+    position: 'relative',
+  },
+  allocationTrack: {
+    height: 24,
+    justifyContent: 'center',
+  },
+  poolLiquidityChart: {
+    height: 38,
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: METEORA_COLORS.border,
+    paddingTop: 4,
+    position: 'relative',
+  },
+  poolLiquidityBar: {
+    flex: 1,
+    minWidth: 1,
+    borderTopLeftRadius: 1,
+    borderTopRightRadius: 1,
+    backgroundColor: METEORA_COLORS.textDim,
+    opacity: 0.5,
+  },
+  poolLiquidityMarker: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: METEORA_COLORS.text,
+  },
+  poolLiquidityPlaceholder: {
+    position: 'absolute',
+    top: 11,
+    left: 8,
+    right: 8,
+    color: METEORA_COLORS.textDim,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: 'center',
+  },
+  allocationMarker: {
+    position: 'absolute',
+    top: 29,
+    bottom: 7,
+    width: 1,
+    marginLeft: -0.5,
+    borderLeftWidth: 1,
+    borderLeftColor: METEORA_COLORS.text,
+    borderStyle: 'dashed',
+    opacity: 0.8,
+  },
+  allocationPriceBubble: {
+    position: 'absolute',
+    top: 0,
+    width: 96,
+    marginLeft: -48,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 5,
+    alignItems: 'center',
+    backgroundColor: METEORA_COLORS.surfaceLift,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: METEORA_TINTS.selectedBorder,
+  },
+  allocationPriceTitle: {
+    color: METEORA_COLORS.textDim,
+    fontSize: 8,
+    lineHeight: 10,
+    fontWeight: '800',
+  },
+  offRangePrice: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    top: 8,
+    color: METEORA_COLORS.textDim,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: 'center',
+  },
+  allocationPriceValue: {
+    maxWidth: 84,
+    color: METEORA_COLORS.accent,
+    fontFamily: 'monospace',
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  allocationAxis: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 1,
+    marginBottom: 2,
+  },
+  rangeAxisText: {
+    flex: 1,
+    color: METEORA_COLORS.textFaint,
+    fontFamily: 'monospace',
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  rangeAxisCenter: {
+    position: 'absolute',
+    width: 80,
+    marginLeft: -40,
+    textAlign: 'center',
   },
   histogramBar: {
     flex: 1,
     minWidth: 2,
+    overflow: 'hidden',
     borderTopLeftRadius: 2,
     borderTopRightRadius: 2,
   },
-  histogramBarActive: {
-    backgroundColor: METEORA_COLORS.coral,
-  },
   histogramBarMuted: {
-    backgroundColor: '#343A55',
+    backgroundColor: METEORA_COLORS.border,
   },
   rangeTrack: {
-    height: 46,
-    marginTop: -1,
+    height: 24,
+    marginTop: -12,
     justifyContent: 'center',
   },
   rangeSelected: {
     position: 'absolute',
     height: 4,
     borderRadius: 2,
-    backgroundColor: METEORA_COLORS.coral,
-  },
-  currentMarker: {
-    position: 'absolute',
-    left: '50%',
-    top: 3,
-    bottom: 3,
-    width: 30,
-    marginLeft: -15,
-    alignItems: 'center',
-  },
-  currentMarkerLine: {
-    width: 1,
-    flex: 1,
-    backgroundColor: METEORA_COLORS.cyan,
-    opacity: 0.8,
-  },
-  currentMarkerText: {
-    marginTop: 2,
-    color: METEORA_COLORS.cyan,
-    fontSize: 8,
-    lineHeight: 10,
-    fontWeight: '900',
-    letterSpacing: 0.8,
+    backgroundColor: METEORA_COLORS.accent,
   },
   handleTouch: {
     position: 'absolute',
-    top: 1,
+    top: -10,
     width: 44,
     height: 44,
     marginLeft: -22,
@@ -864,7 +1389,7 @@ const styles = StyleSheet.create({
     top: 7,
     bottom: 7,
     width: 2,
-    backgroundColor: METEORA_COLORS.coral,
+    backgroundColor: METEORA_COLORS.accent,
   },
   handleKnob: {
     width: 24,
@@ -873,8 +1398,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#FF8B70',
-    backgroundColor: METEORA_COLORS.coral,
+    borderColor: METEORA_COLORS.accent,
+    backgroundColor: METEORA_COLORS.accent,
   },
   handleGrip: {
     width: 2,
@@ -882,6 +1407,25 @@ const styles = StyleSheet.create({
     borderRadius: 1,
     backgroundColor: METEORA_COLORS.surfaceQuiet,
     opacity: 0.75,
+  },
+  centerHandleKnob: {
+    width: 24,
+    height: 14,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: METEORA_COLORS.text,
+    backgroundColor: METEORA_COLORS.primary,
+  },
+  centerHandleTouch: {
+    zIndex: 3,
+  },
+  centerHandleGrip: {
+    width: 8,
+    height: 6,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: METEORA_COLORS.text,
+    backgroundColor: 'transparent',
   },
   handleTouchStatic: {
     width: 16,
@@ -892,35 +1436,15 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: '#FF8B70',
-    backgroundColor: METEORA_COLORS.coral,
+    borderColor: METEORA_COLORS.accent,
+    backgroundColor: METEORA_COLORS.accent,
     opacity: 0.85,
-  },
-  rangeLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  rangeEdgeText: {
-    flex: 1,
-    color: METEORA_COLORS.textDim,
-    fontFamily: 'monospace',
-    fontSize: 9,
-    lineHeight: 13,
-  },
-  rangeCurrentText: {
-    flex: 1,
-    color: METEORA_COLORS.cyan,
-    fontFamily: 'monospace',
-    fontSize: 9,
-    lineHeight: 13,
-    textAlign: 'center',
   },
   rangeRight: {
     textAlign: 'right',
   },
   rangeInstruction: {
-    marginTop: 9,
+    marginTop: 4,
     color: METEORA_COLORS.textFaint,
     fontSize: 10,
     lineHeight: 14,
@@ -930,6 +1454,117 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 6,
   },
+  priceFieldWrapCompact: {
+    gap: 2,
+  },
+  compactPriceCell: {
+    position: 'relative',
+    minHeight: 60,
+    justifyContent: 'center',
+    paddingVertical: 4,
+    paddingLeft: 8,
+    paddingRight: 30,
+    borderRadius: tokens.radius.sm,
+    backgroundColor: METEORA_COLORS.surfaceLift,
+  },
+  compactPriceEditIcon: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+  },
+  compactPriceValue: {
+    color: METEORA_COLORS.text,
+    fontFamily: 'monospace',
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+  },
+  compactPriceSuffix: {
+    color: METEORA_COLORS.textDim,
+    fontFamily: 'monospace',
+    fontSize: 10,
+    lineHeight: 13,
+  },
+  editorOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.46)',
+  },
+  editorKeyboardAvoiding: {
+    flex: 1,
+  },
+  editorSheet: {
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    borderTopLeftRadius: tokens.radius.md,
+    borderTopRightRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.surfaceRaised,
+  },
+  editorHeader: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  editorTitle: {
+    color: METEORA_COLORS.text,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '800',
+  },
+  editorClose: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editorInput: {
+    minHeight: 54,
+    paddingHorizontal: 12,
+    color: METEORA_COLORS.text,
+    fontFamily: 'monospace',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '700',
+    borderWidth: 1,
+    borderColor: METEORA_COLORS.border,
+    borderRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.surfaceLift,
+  },
+  editorSuffix: {
+    marginTop: 6,
+    color: METEORA_COLORS.textDim,
+    fontFamily: 'monospace',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  editorSteps: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  editorStepButton: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.surfaceLift,
+  },
+  editorDone: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+    borderRadius: tokens.radius.md,
+    backgroundColor: METEORA_COLORS.accent,
+  },
+  editorDoneText: {
+    color: METEORA_COLORS.onAccent,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900',
+  },
   inputLabel: {
     color: METEORA_COLORS.textDim,
     fontSize: 11,
@@ -937,31 +1572,35 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   priceField: {
-    minHeight: 58,
+    minHeight: 54,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: METEORA_COLORS.border,
-    borderRadius: 12,
+    borderRadius: tokens.radius.md,
     backgroundColor: METEORA_COLORS.surfaceLift,
     overflow: 'hidden',
   },
   priceInput: {
     flex: 1,
     minWidth: 0,
-    minHeight: 56,
+    minHeight: 52,
     paddingHorizontal: 11,
     paddingVertical: 8,
     color: METEORA_COLORS.text,
     fontFamily: 'monospace',
-    fontSize: 13,
+    fontSize: 14,
     lineHeight: 18,
   },
   priceSuffix: {
-    maxWidth: 55,
+    minWidth: 48,
+    paddingHorizontal: 7,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: METEORA_COLORS.border,
     color: METEORA_COLORS.textFaint,
-    fontSize: 8,
-    lineHeight: 11,
+    fontSize: 14,
+    lineHeight: 18,
+    textAlign: 'center',
   },
   stepper: {
     width: 44,
@@ -970,7 +1609,7 @@ const styles = StyleSheet.create({
     borderLeftColor: METEORA_COLORS.border,
   },
   stepButton: {
-    minHeight: 44,
+    minHeight: 26,
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -984,26 +1623,26 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 10,
     padding: 12,
-    borderRadius: 12,
+    borderRadius: tokens.radius.md,
     borderWidth: 1,
-    borderColor: 'rgba(41,198,209,0.32)',
-    backgroundColor: 'rgba(41,198,209,0.08)',
+    borderColor: METEORA_TINTS.infoBorder,
+    backgroundColor: METEORA_TINTS.info,
   },
   noticeError: {
-    borderColor: 'rgba(255,98,125,0.34)',
-    backgroundColor: 'rgba(255,98,125,0.08)',
+    borderColor: METEORA_TINTS.negativeBorder,
+    backgroundColor: METEORA_TINTS.negative,
   },
   noticeWarning: {
-    borderColor: 'rgba(246,185,74,0.34)',
-    backgroundColor: 'rgba(246,185,74,0.08)',
+    borderColor: METEORA_TINTS.warningBorder,
+    backgroundColor: METEORA_TINTS.warning,
   },
   noticeSuccess: {
-    borderColor: 'rgba(52,211,153,0.34)',
-    backgroundColor: 'rgba(52,211,153,0.08)',
+    borderColor: METEORA_TINTS.positiveBorder,
+    backgroundColor: METEORA_TINTS.positive,
   },
   noticePending: {
-    borderColor: 'rgba(122,108,255,0.34)',
-    backgroundColor: 'rgba(122,108,255,0.08)',
+    borderColor: METEORA_TINTS.infoBorder,
+    backgroundColor: METEORA_TINTS.info,
   },
   noticeCopy: {
     flex: 1,
@@ -1021,12 +1660,12 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   fieldError: {
-    borderColor: METEORA_COLORS.red,
+    borderColor: METEORA_COLORS.negative,
   },
   errorText: {
     marginTop: 5,
     marginLeft: 3,
-    color: METEORA_COLORS.red,
+    color: METEORA_COLORS.negative,
     fontSize: 11,
     lineHeight: 15,
   },

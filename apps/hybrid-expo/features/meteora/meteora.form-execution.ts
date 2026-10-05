@@ -5,6 +5,8 @@ import type {
   MeteoraPositionDraft,
   MeteoraPrepareContext,
 } from './meteora.form';
+import { walletBalanceClient } from '@/features/wallet/wallet.balance-client';
+import { readMeteoraWalletBalances } from './meteora.wallet-balances';
 
 /**
  * UI boundary for the product-level Meteora preview/build service.
@@ -23,8 +25,9 @@ export const meteoraPhaseTwoAdapter: MeteoraPhaseTwoAdapter = {
   async execute() {
     throw new Error('Meteora execution is not available on this device yet');
   },
-  async getWalletBalances() {
-    return { x: null, y: null };
+  async getWalletBalances(pool, walletAddress) {
+    const balances = await readMeteoraWalletBalances(walletBalanceClient, walletAddress, pool);
+    return { x: balances.x.display, y: balances.y.display };
   },
 };
 

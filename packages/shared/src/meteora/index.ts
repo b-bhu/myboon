@@ -1,6 +1,6 @@
 export { MeteoraClient } from './service.js'
 export { MeteoraDataApiClient } from './data-api.js'
-export { MeteoraSdkClient } from './sdk-client.js'
+export { MeteoraSdkClient, getMeteoraLegacyMintStrategyAllocation } from './sdk-client.js'
 export { MeteoraClientError } from './errors.js'
 export {
   METEORA_BETA_MAX_POSITION_BINS,
@@ -13,6 +13,9 @@ export {
   createZapInPreview,
   resolveExecutionDefaults,
   resolveMeteoraPreset,
+  rangeForPoolBins,
+  priceForPoolBin,
+  resolveManualRangeForDisplay,
   snapRangeToPoolState,
 } from './execution.js'
 export {
@@ -46,9 +49,11 @@ export type {
   MeteoraAutoFillRequest,
   MeteoraClientConfig,
   MeteoraCreatePositionPreview,
+  MeteoraCreatePositionCostEstimate,
   MeteoraCreatePositionRequest,
   MeteoraExecutionDefaults,
   MeteoraExecutionPoolState,
+  MeteoraPoolBinLiquidity,
   MeteoraFreshness,
   MeteoraLimitOrderPool,
   MeteoraLimitOrderSummary,
@@ -77,6 +82,7 @@ export type {
   MeteoraResult,
   MeteoraSortDirection,
   MeteoraStrategy,
+  MeteoraStrategyBinAllocation,
   MeteoraSnappedRange,
   MeteoraTimeframe,
   MeteoraTokenRef,

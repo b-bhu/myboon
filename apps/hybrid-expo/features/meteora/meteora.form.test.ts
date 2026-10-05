@@ -5,6 +5,7 @@ import {
   compareDecimalStrings,
   decimalToAtomic,
   dragPixelsToBinDelta,
+  formatMeteoraRangePrice,
   liquidityDistributionWeight,
   movePriceByBins,
   relativeBinToRangePercent,
@@ -24,9 +25,13 @@ function testAmountBoundaries(): void {
   assert.equal(validateAmount('1e3', 9, true), 'Use a positive decimal amount');
   assert.equal(validateAmount('1.', 9, true), 'Use a positive decimal amount');
   assert.equal(validateAmount('18446744073.709551615', 9, true), null);
+  assert.equal(validateAmount('18446744073.709551616', 9, true), 'Amount is too large');
+  assert.equal(validateAmount('01.25', 9, true), 'Use a positive decimal amount');
   assert.equal(decimalToAtomic('0.000000001', 9), '1');
   assert.equal(decimalToAtomic('1.25', 6), '1250000');
   assert.throws(() => decimalToAtomic('1e3', 9));
+  assert.throws(() => decimalToAtomic('01.25', 9));
+  assert.throws(() => decimalToAtomic('18446744073.709551616', 9));
 }
 
 function testRangeBoundaries(): void {
@@ -39,6 +44,7 @@ function testRangeBoundaries(): void {
   assert.equal(validateRange('1', '1', true), 'Minimum price must be below maximum price');
   assert.equal(validateRange('1.000000001', '1.000000002', true), null);
   assert.equal(validateRange('2', '1', true), 'Minimum price must be below maximum price');
+  assert.equal(validateRange('01', '2', true), 'Use positive decimal prices');
 }
 
 function testLimitBoundaries(): void {
@@ -65,7 +71,7 @@ function testInputAndComparisonBoundaries(): void {
 function testDefaultRangeAndHandleMovement(): void {
   const range = createCenteredRange('100', 100);
   assert.ok(range);
-  assert.equal(range.binCount, 69);
+  assert.equal(range.binCount, 70);
   assert.equal(compareDecimalStrings(range.requestedMinPrice, '100'), -1);
   assert.equal(compareDecimalStrings(range.requestedMaxPrice, '100'), 1);
   assert.equal(movePriceByBins('100', 100, 1), '101');
@@ -139,4 +145,11 @@ testInputAndComparisonBoundaries();
 testDefaultRangeAndHandleMovement();
 testStrategyShapes();
 
+function testAdaptiveRangeFormatter(): void {
+  assert.equal(formatMeteoraRangePrice('121.678', false), '121.678');
+  assert.notEqual(formatMeteoraRangePrice('123.4', true), formatMeteoraRangePrice('121.6', true));
+  assert.match(formatMeteoraRangePrice('123.4', true), /^0\.008/);
+}
+
+testAdaptiveRangeFormatter();
 console.log('Meteora form boundary tests passed');
