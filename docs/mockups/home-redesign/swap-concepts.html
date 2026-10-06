@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>MyBoon — Swap designs</title>
+<style>
+:root { color-scheme: dark; --core: #031F2C; --card: #083D50; --border: #185A70; --ink: #F5FAFC; --dim: #9CB8C2; --gold: #FFD166; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--core); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+a:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+.page { max-width: 1354px; padding: 24px 32px 40px; margin: auto; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.back { display: inline-flex; align-items: center; min-height: 44px; gap: 8px; text-decoration: none; color: var(--dim); font-size: 13px; }
+.sample { color: var(--dim); font: 11px/1.5 ui-monospace, "SFMono-Regular", monospace; text-align: right; }
+.intro { margin: 20px 0 30px; }
+h1 { margin: 0 0 10px; font: 650 clamp(28px, 3vw, 38px)/1.15 "Avenir Next", -apple-system, sans-serif; letter-spacing: -1px; }
+.intro p { margin: 0; max-width: 600px; color: var(--dim); font-size: 14px; line-height: 1.65; }
+.options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 30px; align-items: start; }
+.option { min-width: 0; }
+.caption { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.letter { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 8px; color: var(--dim); font: 12px ui-monospace, monospace; }
+h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.3px; }
+.open { margin-left: auto; min-height: 44px; display: grid; place-items: center; font-size: 12px; text-decoration: none; color: var(--dim); white-space: nowrap; }
+.rationale { color: var(--dim); font-size: 13px; line-height: 1.55; min-height: 61px; margin: 0 0 16px; }
+.phone { width: 100%; height: 844px; display: block; border: 1px solid var(--border); border-radius: 24px; background: var(--core); overflow: hidden; }
+.footer { color: var(--dim); margin: 28px 0 0; font-size: 12px; line-height: 1.6; }
+@media (max-width: 1099px) { .options { grid-template-columns: repeat(2,minmax(0,390px)); justify-content: center; row-gap: 36px; } }
+@media (max-width: 739px) { .page { padding: 16px 16px 28px; } .top { align-items: start; } .sample { max-width: 140px; } .intro { margin-top: 16px; } .options { grid-template-columns: minmax(0,390px); } .rationale { min-height: 0; } .phone { height: min(844px,calc(100svh - 32px)); min-height: 480px; } }
+</style>
+</head>
+<body>
+<main class="page">
+ <div class="top"><a class="back" href="index.html?nav=wallet&amp;wallet=both"><span aria-hidden="true">←</span> Selected Wallet mock</a><span class="sample">Interactive samples<br>No transactions</span></div>
+ <header class="intro"><h1>Three ways to swap.</h1><p>Explore the cards, change the tokens and open the review. Each design uses our palette and opens as a bottom sheet over Wallet.</p></header>
+ <div class="options">
+  <section class="option" aria-labelledby="concept-a-title"><div class="caption"><span class="letter" aria-hidden="true">A</span><h2 id="concept-a-title">Paired cards</h2><a class="open" href="swap-concept-a.html" aria-label="Open design A separately">Open ↗</a></div><p class="rationale" id="concept-a-description">Separate Pay and Receive cards, with full-width amounts and the rate and reversal between them.</p><iframe class="phone" src="swap-concept-a.html?embed=1" title="Interactive Swap design A"></iframe></section>
+  <section class="option" aria-labelledby="concept-b-title"><div class="caption"><span class="letter" aria-hidden="true">B</span><h2 id="concept-b-title">Pay first</h2><a class="open" href="swap-concept-b.html" aria-label="Open design B separately">Open ↗</a></div><p class="rationale" id="concept-b-description">One surface gives Pay more space, with a compact Receive summary and an anchored review button.</p><iframe class="phone" src="swap-concept-b.html?embed=1" title="Interactive Swap design B"></iframe></section>
+  <section class="option" aria-labelledby="concept-c-title"><div class="caption"><span class="letter" aria-hidden="true">C</span><h2 id="concept-c-title">Asset first</h2><a class="open" href="swap-concept-c.html" aria-label="Open design C separately">Open ↗</a></div><p class="rationale" id="concept-c-description">Token identity on the left, equal-weight amounts on the right. Reverse sits in the sheet header.</p><iframe class="phone" src="swap-concept-c.html?embed=1" title="Interactive Swap design C"></iframe></section>
+ </div>
+ <p class="footer">The selected mock keeps its current Swap while these concepts are reviewed. Balances and conversions are illustrative; reviews do not sign or submit anything.</p>
+</main>
+</body>
+</html>
