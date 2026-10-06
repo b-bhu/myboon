@@ -66,20 +66,27 @@ function defaultOnError(error: unknown, info: { label: string }): void {
  */
 export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRunnerHandle {
   const { label, intervalMs, run } = options
-  const onOverlap = options.onOverlap ?? defaultOnOverlap
   const onError = options.onError ?? defaultOnError
 
   let running = false
   let startedAt = 0
+  let lastOverlapWarningAt = 0
+  const overlapWarningAfterMs = Math.max(5 * 60_000, intervalMs * 2)
 
   const timer = setInterval(() => {
     if (running) {
-      onOverlap({ label, runningForMs: Date.now() - startedAt })
+      const runningForMs = Date.now() - startedAt
+      if (options.onOverlap) options.onOverlap({ label, runningForMs })
+      else if (runningForMs >= overlapWarningAfterMs && runningForMs - lastOverlapWarningAt >= overlapWarningAfterMs) {
+        defaultOnOverlap({ label, runningForMs })
+        lastOverlapWarningAt = runningForMs
+      }
       return
     }
 
     running = true
     startedAt = Date.now()
+    lastOverlapWarningAt = 0
     run()
       .catch((error) => onError(error, { label }))
       .finally(() => {

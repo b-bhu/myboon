@@ -13,8 +13,6 @@ import type {
   ClassificationRegistry,
   ClassificationRequest,
   ClassificationResult,
-  ClassificationShadowEnvelope,
-  ClassificationShadowOutbox,
   HermesClassificationAdapter,
   JevAnswer,
   JevClassificationAdapter,
@@ -28,9 +26,7 @@ export interface ClassificationGatewayOptions {
   hermes: HermesClassificationAdapter
   capacity: ClassificationCapacityCoordinator
   audit: ClassificationAuditSink
-  shadowOutbox?: ClassificationShadowOutbox
   lifecycleMode?: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
-  onShadowEnqueueFailure?: (error: unknown, envelope: ClassificationShadowEnvelope) => void
   now?: () => number
 }
 
@@ -72,9 +68,7 @@ export class ClassificationGateway {
   private readonly hermes: HermesClassificationAdapter
   private readonly capacity: ClassificationCapacityCoordinator
   private readonly audit: ClassificationAuditSink
-  private readonly shadowOutbox?: ClassificationShadowOutbox
   private readonly lifecycleMode: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
-  private readonly onShadowEnqueueFailure: (error: unknown, envelope: ClassificationShadowEnvelope) => void
   private readonly now: () => number
 
   constructor(options: ClassificationGatewayOptions) {
@@ -83,12 +77,7 @@ export class ClassificationGateway {
     this.hermes = options.hermes
     this.capacity = options.capacity
     this.audit = options.audit
-    this.shadowOutbox = options.shadowOutbox
     this.lifecycleMode = options.lifecycleMode ?? (() => undefined)
-    this.onShadowEnqueueFailure = options.onShadowEnqueueFailure ?? ((error, envelope) => {
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn(`[classification-shadow] enqueue failed for ${envelope.workload}/${envelope.decisionId}: ${message}`)
-    })
     this.now = options.now ?? Date.now
   }
 
@@ -111,111 +100,26 @@ export class ClassificationGateway {
       this.lifecycleMode(definition),
       definition.defaultLifecycleMode,
     )
-    const envelope = immutableEnvelope(request, state, stateDigest, decisionId, deadlineMs, this.now())
+    const samplingKey = { workload: request.workload, decisionVersion: request.decisionVersion, stableDecisionKey: request.trace.stableDecisionKey }
 
     // Placement and story relationships are System One decisions.  A disabled
     // lifecycle is an actionable hold for their caller, never permission to
     // substitute Hermes prose generation for a typed Jev decision.
-    if (definition.requiresJev && (mode === 'disabled' || mode === 'shadow'
-      || (mode === 'canary' && !selectedForPercent(envelope, definition.canaryPercent)))) {
+    if (definition.requiresJev && (mode === 'disabled'
+      || (mode === 'canary' && !selectedForPercent(samplingKey, definition.canaryPercent)))) {
       throw new InferenceGatewayError('This classification workload requires an explicitly active Jev lifecycle', {
         category: 'provider_unavailable', retryable: false,
         provider: definition.jevTarget.provider, model: definition.jevTarget.model,
       })
     }
 
-    if (mode === 'shadow') {
-      if (request.maxProviderCalls !== 1 && selectedForPercent(envelope, definition.shadowPercent)) {
-        try { this.shadowOutbox?.enqueue(envelope) } catch (error) {
-          // Production composition uses a dedicated zero-wait SQLite connection,
-          // so lock contention is observed and dropped without stalling Hermes.
-          try { this.onShadowEnqueueFailure(error, envelope) } catch {
-            // Observability is best-effort at this boundary too; a broken sink
-            // must not turn non-authoritative shadow work into a live failure.
-          }
-        }
-      }
-      return this.runHermes<TDecision>(definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs, null)
-    }
-    if (mode === 'disabled' || (mode === 'canary' && !selectedForPercent(envelope, definition.canaryPercent))) {
+    if (mode === 'disabled' || (mode === 'canary' && !selectedForPercent(samplingKey, definition.canaryPercent))) {
       return this.runHermes<TDecision>(definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs, null)
     }
     return this.runJevWithFallback<TDecision>(
       definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs,
       request,
     )
-  }
-
-  /** Called only by the isolated outbox worker. Shadow never invokes Hermes. */
-  async executeShadow(envelope: ClassificationShadowEnvelope, attemptNumber = 1): Promise<void> {
-    if (!Number.isInteger(attemptNumber) || attemptNumber < 1) throw invalidInput('Shadow attempt number is invalid')
-    const definition = this.registry.resolve(envelope.workload, envelope.decisionVersion)
-    const lifecycle = tightenLifecycleMode(
-      definition.maximumLifecycleMode,
-      this.lifecycleMode(definition),
-      definition.defaultLifecycleMode,
-    )
-    if (lifecycle !== 'shadow') {
-      throw new InferenceGatewayError('Classification shadow execution is disabled by lifecycle policy', {
-        category: 'provider_unavailable', retryable: false,
-      })
-    }
-    const validated = safeValidateState(definition, envelope.state)
-    if (!validated.valid || digest(canonicalJson(validated.valid ? validated.value : envelope.state)) !== envelope.stateDigest) {
-      throw invalidInput('Classification shadow snapshot failed validation or digest verification')
-    }
-    const startedAt = this.now()
-    const startedAtIso = new Date(startedAt).toISOString()
-    const calls: ClassificationAttemptCall[] = []
-    let decision: unknown | null = null
-    let answers: Readonly<Record<string, JevAnswer>> | null = null
-    let actualProvider: string | null = null
-    let actualModel: string | null = null
-    let failure: InferenceGatewayError | null = null
-    try {
-      const result = await this.callJev(definition, validated.value, envelope.deadlineMs, 'shadow')
-      actualProvider = result.response.actualProvider
-      actualModel = result.response.actualModel
-      answers = result.response.answers
-      const decoded = safeDecodeJev(definition, answers, validated.value)
-      const accepted = decoded.valid ? safeAcceptJev(definition, answers, decoded.value, validated.value) : {
-        accepted: false, reason: decoded.issues.join('; '),
-      }
-      calls.push(providerCall(result.response, accepted.accepted ? 'succeeded' : 'not_accepted', null))
-      if (!decoded.valid) {
-        throw new InferenceGatewayError(`Shadow Jev answer is invalid: ${accepted.reason}`, {
-          category: 'invalid_structured_output', retryable: false,
-          provider: actualProvider, model: actualModel,
-        })
-      }
-      decision = decoded.value
-    } catch (error) {
-      failure = mapFailure(error, definition.jevTarget)
-      if (calls.length === 0) calls.push(failedCall(definition.jevTarget, failure, Math.max(0, this.now() - startedAt)))
-    }
-    const finishedAt = this.now()
-    await this.audit.recordAttempt(attemptRecord({
-      decisionId: envelope.decisionId,
-      executionMode: 'shadow',
-      attemptNumber,
-      definition,
-      stateDigest: envelope.stateDigest,
-      stableDecisionKey: envelope.stableDecisionKey,
-      configuredPrimary: definition.jevTarget,
-      configuredFallback: null,
-      actualProvider,
-      actualModel,
-      fallbackUsed: false,
-      fallbackReason: null,
-      decision,
-      answers,
-      calls,
-      failure,
-      startedAt,
-      finishedAt,
-      startedAtIso,
-    }))
-    if (failure) throw failure
   }
 
   async recordPolicyOutcome(input: Omit<ClassificationPolicyOutcomeRecord, 'schemaVersion' | 'recordedAt'>): Promise<void> {
@@ -393,7 +297,7 @@ export class ClassificationGateway {
     definition: ClassificationDefinition,
     state: unknown,
     deadlineMs: number,
-    mode: 'live' | 'shadow',
+    mode: 'live',
   ) {
     let questions: Readonly<Record<string, JevQuestion>>
     try { questions = definition.questions(state) } catch (error) {
@@ -520,25 +424,13 @@ function tightenedDeadline(maximum: number, requested: number | undefined): numb
   return requested
 }
 
-function immutableEnvelope(
-  request: ClassificationRequest, state: unknown, stateDigest: string,
-  decisionId: string, deadlineMs: number, now: number,
-): ClassificationShadowEnvelope {
-  return Object.freeze({
-    decisionId, workload: request.workload, decisionVersion: request.decisionVersion,
-    state, stateDigest, stableDecisionKey: request.trace.stableDecisionKey,
-    correlationIds: Object.freeze({ ...(request.trace.correlationIds ?? {}) }),
-    deadlineMs, createdAt: new Date(now).toISOString(),
-  })
-}
-
-function selectedForPercent(envelope: ClassificationShadowEnvelope, percent: number): boolean {
+function selectedForPercent(key: { workload: string, decisionVersion: string, stableDecisionKey: string }, percent: number): boolean {
   if (percent <= 0) return false
   if (percent >= 100) return true
   const value = Number.parseInt(digest(canonicalJson({
-    workload: envelope.workload,
-    decisionVersion: envelope.decisionVersion,
-    stableDecisionKey: envelope.stableDecisionKey,
+    workload: key.workload,
+    decisionVersion: key.decisionVersion,
+    stableDecisionKey: key.stableDecisionKey,
   })).slice(0, 8), 16) / 0x1_0000_0000
   return value * 100 < percent
 }
@@ -603,7 +495,7 @@ function failedCall(target: InferenceProviderTarget, failure: InferenceGatewayEr
 
 function attemptRecord(input: {
   decisionId: string
-  executionMode: 'authoritative' | 'shadow'
+  executionMode: 'authoritative'
   attemptNumber: number
   definition: ClassificationDefinition
   stateDigest: string
@@ -659,12 +551,10 @@ function resultEnvelope<T>(
   })
 }
 
-export class InMemoryClassificationPorts implements ClassificationCapacityCoordinator, ClassificationAuditSink, ClassificationShadowOutbox {
+export class InMemoryClassificationPorts implements ClassificationCapacityCoordinator, ClassificationAuditSink {
   readonly attempts: ClassificationAttemptRecord[] = []
   readonly outcomes: ClassificationPolicyOutcomeRecord[] = []
-  readonly shadows: ClassificationShadowEnvelope[] = []
   acquire(): { token: string; release(): void } { return { token: randomUUID(), release() {} } }
   recordAttempt(value: ClassificationAttemptRecord): void { this.attempts.push(value) }
   recordPolicyOutcome(value: ClassificationPolicyOutcomeRecord): void { this.outcomes.push(value) }
-  enqueue(value: ClassificationShadowEnvelope): void { this.shadows.push(value) }
 }

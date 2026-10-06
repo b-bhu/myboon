@@ -43,11 +43,6 @@ export {
 } from './classification-registry'
 export {
   SqliteClassificationControlPlane,
-  SqliteClassificationShadowWriter,
-  DEFAULT_CLASSIFICATION_SHADOW_RETENTION,
-  type ClaimedClassificationShadow,
-  type ClassificationShadowOutboxStats,
-  type ClassificationShadowRetentionPolicy,
 } from './classification-store'
 export {
   CLASSIFICATION_ENV,
@@ -57,18 +52,13 @@ export {
   type ConfiguredClassificationRuntime,
 } from './classification-configuration'
 export {
-  ENTITY_CATALOG_IDENTITY_VERSION,
-  ENTITY_CATALOG_IDENTITY_WORKLOAD,
   RESEARCH_NOVELTY_VERSION,
   RESEARCH_NOVELTY_WORKLOAD,
   RESEARCH_FOLLOWUP_VALUE_VERSION,
   RESEARCH_FOLLOWUP_VALUE_WORKLOAD,
   approvedClassificationDefinitions,
-  entityCatalogIdentityDefinition,
   researchNoveltyDefinition,
   researchFollowupValueDefinition,
-  type EntityCatalogIdentityDecision,
-  type EntityCatalogIdentityState,
   type ResearchNoveltyDecision,
   type ResearchNoveltyState,
   type ResearchFollowupValueDecision,
@@ -91,8 +81,6 @@ export type {
   ClassificationRegistry,
   ClassificationRequest,
   ClassificationResult,
-  ClassificationShadowEnvelope,
-  ClassificationShadowOutbox,
   ClassificationStateValidation,
   HermesClassificationAdapter,
   HermesClassificationCall,

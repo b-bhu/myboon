@@ -29,26 +29,28 @@ import {
   type StructuredSynthesisGateway,
 } from './structured-synthesizer'
 
+// Shadow's generic claim/evidence checks use a non-article source. Article
+// requests are separately checked for the required Jev preparation guard.
 const NOW = '2026-08-26T12:10:00.000Z'
 
 function source(): Signal {
   return {
     schemaVersion: SIGNAL_SCHEMA_VERSION,
-    signalId: 'signal-news-shadow', sourceType: 'news', sourceId: 'news:shadow',
-    contentKind: 'article', content: { schemaVersion: 'myboon.signal_content.article.v1' },
+    signalId: 'signal-calendar-shadow', sourceType: 'market_calendar', sourceId: 'calendar:shadow',
+    contentKind: 'calendar_event', content: { schemaVersion: 'myboon.signal_content.calendar_event.v1' },
     observedAt: '2026-08-26T12:00:00.000Z', publishedAt: '2026-08-26T11:59:00.000Z',
     canonicalUrl: 'https://news.example/shadow', title: 'Shadow signal', visibleSummary: 'Summary',
     media: { imageUrl: null, attribution: null },
     sourceHints: { entities: ['Example'], assets: [], eventId: null, deadline: null },
     provenance: { provider: 'fixture', upstreamSource: null, rawPayloadRef: 'fixture:shadow' },
-    idempotencyKey: 'news:shadow:key',
+    idempotencyKey: 'calendar:shadow:key',
   }
 }
 
 function work(depth: ResearchWorkItem['researchDepth'] = 'light'): ResearchWorkItem {
   return {
     schemaVersion: RESEARCH_WORK_SCHEMA_VERSION,
-    workId: `work-shadow-${depth}`, signalId: 'signal-news-shadow', sourceType: 'news',
+    workId: `work-shadow-${depth}`, signalId: 'signal-calendar-shadow', sourceType: 'market_calendar',
     researchDepth: depth,
     deepReason: depth === 'deep' ? 'insufficient_primary_evidence' : null,
     priorityClass: 'P1', priorityScore: 0.8,
@@ -114,7 +116,7 @@ function telemetry(promptVersion: string, policyVersion: string): InferenceTelem
 
 function setup(item: ResearchWorkItem) {
   const dir = mkdtempSync(join(tmpdir(), 'shadow-evaluator-'))
-  const canonical = new SqliteSignalPlatformStore(join(dir, 'canonical.sqlite'), 'news')
+  const canonical = new SqliteSignalPlatformStore(join(dir, 'canonical.sqlite'), 'market_calendar')
   canonical.appendSignal(source())
   canonical.admitResearchWork(item)
   const results = new MemoryResults()
@@ -142,6 +144,24 @@ function setup(item: ResearchWorkItem) {
     close: () => { canonical.close(); rmSync(dir, { recursive: true, force: true }) },
   }
 }
+
+test('historical shadow evaluator skips News articles before retrieval or unprepared prose generation', async () => {
+  const item = { ...work('light'), sourceType: 'news' as const }
+  const fx = setup(work('light'))
+  const article: Signal = { ...source(), sourceType: 'news', contentKind: 'article', content: { schemaVersion: 'myboon.signal_content.article.v1' } }
+  const evaluator = new ResearchShadowEvaluator({
+    scheduler: { peekGlobal: async () => [item] },
+    stores: [{ sourceType: 'news', getSignal: () => article }], results: fx.results,
+    retriever: new DeterministicRetriever({ fetchDocument: async () => { throw new Error('must not retrieve') } }),
+    synthesizer: new StructuredResearchSynthesizer({ gateway: fx.gateway, promptVersion: 'shadow.prompt.v1' }),
+    clock: { now: () => new Date(NOW) },
+  })
+  try {
+    assert.equal((await evaluator.evaluate(item)).kind, 'skipped')
+    assert.equal(fx.results.get(shadowResearchEvaluationId(item))?.skipReason, 'article_preparation_required')
+    assert.equal(fx.gateway.calls, 0)
+  } finally { fx.close() }
+})
 
 test('shadow light research executes retrieval and tool-less synthesis without canonical writes or claims', async () => {
   const item = work('light')

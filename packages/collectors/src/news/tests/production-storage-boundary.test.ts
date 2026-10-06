@@ -12,7 +12,6 @@ test('PM2 keeps both scouts and registers only the shared Research/Entity owners
   assert.match(ecosystem, /name: 'myboon-polymarket-data-engineer'[\s\S]*?script: 'src\/polymarket\/run-markets-data-engineer\.ts'/)
   assert.match(ecosystem, /name: 'myboon-feed-v3-research'[\s\S]*?script: 'src\/research-engine\/run-shared-research\.ts'/)
   assert.match(ecosystem, /name: 'myboon-feed-v3-entity-manager'[\s\S]*?script: 'src\/entity-manager\/run-shared\.ts'/)
-  assert.match(ecosystem, /name: 'myboon-hermes-orphan-sweeper'[\s\S]*?script: 'src\/hermes\/run-orphan-sweeper\.ts'/)
 
   for (const legacyName of [
     'myboon-news-researcher', 'myboon-polymarket-researcher',

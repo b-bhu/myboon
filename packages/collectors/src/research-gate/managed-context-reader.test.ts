@@ -53,3 +53,29 @@ test('exact accepted producer packet target requires one active immutable manage
   assert.equal(await privateReader({ items: [{ itemId: 'old', entityIds: ['entity-atlas'], note: 'Corrected prior item', status: 'superseded',
     revision: '1', observedAt: V4_NOW, packetRefs: ['producer-packet'], evidenceRefs: [] }] }).attachmentTargetForPacket('producer-packet'), null)
 })
+
+test('article candidate merge prioritizes an exact private identity over more than 32 broad matches', async () => {
+  const exact = { id: 'z-raoul', slug: 'raoul-pal', name: 'Raoul Pal', aliases: ['Raoul'], summary: 'Macro commentator.' }
+  const noise = Array.from({ length: 40 }, (_, i) => ({ id: `a-noise-${i}`, slug: `noise-${i}`, name: `Topic ${i}`, summary: 'Raoul Pal is mentioned in broad market coverage.' }))
+  const legacy = { ...v4ContextReader(), searchEntities: async (_labels: string[], _limit: number, options?: {exactOnly?: boolean}) => options?.exactOnly ? [] : noise }
+  const managed: ManagedResearchContextPort = { researchContext: async () => ({ entities: [], items: [], digest: 'fixture', watermark: '0', truncated: false }),
+    articleContext: async input => {
+      if (input.identityOnly) assert.deepEqual(input.sourceRefs, [])
+      return { entities: [exact], items: [], articleItems: [], digest: 'fixture', watermark: '0', truncated: false, candidateTruncated: false }
+    } }
+  const reader = new InternalResearchEntityMemoryReader({ legacy, managed, source: 'news', sourceRefs: [], labels: [] })
+  const context = await reader.articleContext({ sourceUrl: null, terms: ['Raoul Pal'] })
+  assert.equal(context.candidates.length, 32)
+  assert.equal(context.candidates[0].id, exact.id)
+  assert.deepEqual((await context.findExactEntities!(['Raoul Pal'])).map(e => e.id), [exact.id])
+})
+
+test('article creation cannot assume complete exact identity coverage from an old or truncated managed context', async () => {
+  for (const candidateTruncated of [undefined, true]) {
+    const response = { entities: [], items: [], articleItems: [], digest: 'fixture', watermark: '0', truncated: false, candidateTruncated }
+    const reader = new InternalResearchEntityMemoryReader({ legacy: v4ContextReader(), source: 'news', sourceRefs: [], labels: [],
+      managed: { researchContext: async () => response, articleContext: async () => response } })
+    const context = await reader.articleContext()
+    await assert.rejects(context.findExactEntities!(['Missing identity']), /migration|candidate bound/)
+  }
+})

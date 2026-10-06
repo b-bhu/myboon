@@ -2,6 +2,12 @@
 
 Date: 5 October 2026. Current routing activated at 06:48 UTC.
 
+Runtime update, 6 October: [Ollama hold and pipeline diagnostics](2026_10_06_pipeline_diagnostics_and_ollama_hold.md).
+Automatic GPT fallback is now disabled in every profile, and Research is paused.
+Ollama billing is restored: the [6 October fix verification](2026_10_06_article_failure_fixes.md)
+includes a successful production-profile structured Ollama request without backup.
+The details below describe the historical 5 October activation.
+
 The production Hermes profile was renamed from `myboonv4codex20261003` to
 `myboon-codex-production` using the installed `hermes profile rename` command.
 The 697 sessions, 1,393 messages and 696 model-usage rows present at the rename

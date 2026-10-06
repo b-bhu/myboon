@@ -1614,7 +1614,11 @@ export async function runPolymarketMarketsDataEngineer(
   let candidatesSkippedForBacklog = 0
   let candidatesThrottledByBackpressure = 0
   let candidatesThrottledAtHardCeiling = 0
-  for (const candidate of insertableCandidateInserts) {
+  // Observations have already been retained and delivered above. A retired
+  // legacy Research queue must not produce throttling errors for that separate
+  // collection path. Keep its backlog visible, but gate only actual admissions.
+  const processLegacyQueue = legacyQueueAllowed()
+  for (const candidate of processLegacyQueue ? insertableCandidateInserts : []) {
     const blocks = candidateBacklogBlocks(backlog, candidate.market)
     if (blocksCandidate(candidate, blocks, observedAt, options)) {
       candidatesSkippedForBacklog += 1
@@ -1645,7 +1649,7 @@ export async function runPolymarketMarketsDataEngineer(
   // The source baseline and immutable delivery obligations above remain saved
   // when legacy queue ownership is fenced. Recheck after the network work;
   // source-native DB triggers also fence a concurrent ownership change.
-  const admitLegacyQueue = legacyQueueAllowed()
+  const admitLegacyQueue = processLegacyQueue && legacyQueueAllowed()
   if (admitLegacyQueue) {
     await updateCandidateThreads(store, threadUpdates)
     await insertCandidates(store, newCandidateInserts, observedAt)

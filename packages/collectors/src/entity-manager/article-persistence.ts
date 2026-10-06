@@ -49,9 +49,10 @@ export class ArticlePersistenceProcessor {
       entityIds,
       itemIds,
       historyMode: 'targeted',
+      identityOnly: packet.memberships.some(proposal => proposal.placementDisposition === 'no_match'),
       limit: 32,
     })
-    if (context.truncated && packet.memberships.some((proposal) => proposal.placementDisposition === 'no_match')) {
+    if ((context.candidateTruncated ?? context.truncated) && packet.memberships.some((proposal) => proposal.placementDisposition === 'no_match')) {
       await this.raiseHold(packet, input.owner, 'Article creation proposal cannot be resolved while candidate context is truncated', 'entity_resolution')
     }
     const resolved = resolveMemberships(packet, context)

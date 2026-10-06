@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { Readability } from '@mozilla/readability'
+import { JSDOM, VirtualConsole } from 'jsdom'
 import {
   fetchPublicDocument,
   parseHttpUrl,
@@ -260,14 +262,76 @@ function convertDocument(document: SafePublicDocument, maxChars: number): { text
     throw new Error(`Unsupported retrieval content type: ${mediaType}`)
   }
   const raw = document.body.toString('utf8')
-  const readable = mediaType === 'text/html' || mediaType === 'application/xhtml+xml' || /<html[\s>]/i.test(raw)
-    ? htmlToText(raw)
-    : raw.replace(/\u0000/g, '').trim()
+  const structuredBody = publisherArticleBody(raw, document.finalUrl)
+  const readable = structuredBody ?? (mediaType === 'text/html' || mediaType === 'application/xhtml+xml' || /<html[\s>]/i.test(raw)
+    ? readableArticle(raw, document.finalUrl)
+    : raw.replace(/\u0000/g, '').trim())
   if (!readable) throw new Error('Retrieved document contained no readable text')
   return {
     text: readable.slice(0, maxChars),
     truncated: readable.length > maxChars,
   }
+}
+
+/** Publishers can serve Markdown with navigation and duplicate JSON-LD. Copy
+ * the complete publisher-authored articleBody only when its identity matches
+ * this exact page. No model, substring cap, or neighbouring article is used. */
+function publisherArticleBody(raw: string, pageUrl: string): string | null {
+  const blocks = [
+    ...Array.from(raw.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi), match => match[1]),
+    ...Array.from(raw.matchAll(/```(?:json|jsonld)\s*\n([\s\S]*?)\n```/gi), match => match[1]),
+  ]
+  const bodies = new Set<string>()
+  const pageIdentity = urlIdentity(pageUrl)
+  function visit(value: unknown): void {
+    if (Array.isArray(value)) { value.forEach(visit); return }
+    if (!value || typeof value !== 'object') return
+    const node = value as Record<string, unknown>
+    const types = Array.isArray(node['@type']) ? node['@type'] : [node['@type']]
+    const main = node.mainEntityOfPage
+    const identity = node.url ?? (typeof main === 'string' ? main
+      : main && typeof main === 'object' ? (main as Record<string, unknown>)['@id'] : null)
+    if (types.some(type => ['Article', 'NewsArticle', 'ReportageNewsArticle', 'BlogPosting'].includes(String(type)))
+      && typeof identity === 'string' && urlIdentity(identity) === pageIdentity
+      && typeof node.articleBody === 'string' && node.articleBody.trim()) {
+      bodies.add(htmlToText(node.articleBody))
+    }
+    if (node['@graph']) visit(node['@graph'])
+  }
+  for (const block of blocks) {
+    try { visit(JSON.parse(block)) }
+    catch {
+      // Some Markdown renderers emit one independent JSON-LD object per line.
+      for (const line of block.split('\n')) {
+        try { visit(JSON.parse(line)) } catch { /* malformed metadata is not source text authority */ }
+      }
+    }
+  }
+  return bodies.size === 1 ? [...bodies][0] || null : null
+}
+
+function urlIdentity(value: string): string | null {
+  try { const url = parseHttpUrl(value); url.hash = ''; return url.toString().replace(/\/$/, '') }
+  catch { return null }
+}
+
+function readableArticle(html: string, url: string): string {
+  // Parsing is local only: jsdom's scripts and resource fetching stay disabled.
+  // Keep the response-byte hash while capturing the article, not site menus or
+  // unrelated feed cards. Never turn the capture into an LLM summary.
+  const dom = new JSDOM(html, { url, virtualConsole: new VirtualConsole() })
+  try {
+    dom.window.document.querySelectorAll('nav, footer, aside, form, script, style, noscript, svg').forEach(node => node.remove())
+    // Some publishers explicitly mark the article body, including multiple
+    // sections around ads. Preserve all such sections in document order rather
+    // than letting a short article be joined to neighbouring recommendation cards.
+    const bodies = [...dom.window.document.querySelectorAll('[itemprop="articleBody"], article.article-content, .entry-content, .document-body')]
+    const outerBodies = bodies.filter(node => !bodies.some(other => other !== node && other.contains(node)))
+    const bodyText = outerBodies.map(node => htmlToText(node.innerHTML)).filter(Boolean).join('\n\n')
+    if (bodyText) return bodyText
+    const parsed = new Readability(dom.window.document, { charThreshold: 0, maxElemsToParse: 60_000 }).parse()
+    return parsed?.content ? htmlToText(parsed.content) : htmlToText(dom.window.document.body.innerHTML)
+  } finally { dom.window.close() }
 }
 
 function htmlToText(html: string): string {

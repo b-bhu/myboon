@@ -1,6 +1,7 @@
 import type { ManagedArticleContext } from '../entity-manager/postgres-knowledge-writer'
 import { createHash } from 'node:crypto'
 import type { EntityMemoryReader, GateEntity, GateMemory, GateNoveltyEvidence } from './types'
+import { rankEntityCandidates } from './entity-candidates'
 
 /** Internal Research context only; this is not a downstream reader API. */
 export interface ManagedResearchContextPort {
@@ -34,6 +35,7 @@ export interface ManagedResearchContextPort {
     limit?: number
     /** Recent reads ignore source/term filters; targeted reads use them for dedup. */
     historyMode?: 'recent' | 'targeted'
+    identityOnly?: boolean
   }): Promise<{
     entities: Array<{
       id: string, slug: string, name: string, summary: string | null,
@@ -50,6 +52,7 @@ export interface ManagedResearchContextPort {
     digest: string
     watermark: string | number | null
     truncated: boolean
+    candidateTruncated?: boolean
   }>
 }
 
@@ -63,6 +66,8 @@ export interface ArticleResearchContext {
   coverageFailures: readonly string[]
   /** One expanded catalogue pass after an initial no-match/uncertain placement. */
   widenCandidates?(terms: readonly string[]): Promise<Array<{ id: string, name: string, aliases: string[], summary: string | null, scope: Record<string, unknown> }>>
+  /** Exact name/alias coverage before creation, across legacy and private identities. */
+  findExactEntities?(labels: readonly string[]): Promise<ArticleResearchContext['candidates']>
   /** Separate bounded source/development lookup; never replaces latest-five story context. */
   lookupOlderDuplicate?(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>
 }
@@ -159,7 +164,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
     for (const entity of [...searchedManaged, ...exactLegacy, ...searchedLegacy]) {
       if (!candidateProfiles.has(entity.id)) candidateProfiles.set(entity.id, entity)
     }
-    const candidates = [...candidateProfiles.values()].slice(0, 32).map(articleCandidate)
+    const candidates = rankEntityCandidates([...candidateProfiles.values()], labels).map(articleCandidate)
     const historyByEntity = new Map<string, Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>()
     const historyMemo = new Map<string, Promise<ArticleHistory[]>>()
     const targetMemo = new Map<string, Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>>()
@@ -188,8 +193,18 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
         for (const entity of [...legacy, ...managed, ...candidateProfiles.values()]) {
           if (!profiles.has(entity.id)) profiles.set(entity.id, entity)
         }
-        const widened = [...profiles.values()].slice(0, 32).map(articleCandidate)
+        const widened = rankEntityCandidates([...profiles.values()], labels).map(articleCandidate)
         return widened
+      },
+      findExactEntities: async (terms) => {
+        const labels = articleLabels(terms)
+        if (!this.options.managed?.articleContext) throw new Error('Exact identity coverage requires the managed article context reader')
+        const legacy = this.options.legacy.searchEntities
+          ? await this.options.legacy.searchEntities(labels, 33, { exactOnly: true }) : []
+        const managed = await this.options.managed.articleContext({ source: this.options.source, sourceRefs: [], labels, identityOnly: true, limit: 32, historyMode: 'targeted' })
+        if (typeof managed.candidateTruncated !== 'boolean') throw new Error('Exact identity coverage requires the current article context migration')
+        if (legacy.length > 32 || managed.candidateTruncated) throw new Error('Exact article identity lookup is ambiguous beyond its candidate bound')
+        return rankEntityCandidates([...legacy, ...managed.entities], labels).map(articleCandidate)
       },
       lookupOlderDuplicate: (entityId) => {
         let pending = targetMemo.get(entityId)

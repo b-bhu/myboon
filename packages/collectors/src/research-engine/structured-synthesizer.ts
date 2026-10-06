@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { latestArticleCapture } from './article-capture'
 import {
   InferenceGatewayError,
   type GenerateStructuredRequest,
@@ -338,7 +339,7 @@ export class StructuredResearchSynthesizer {
   private async synthesizeArticle(input: StructuredSynthesisInput): Promise<ArticleResearchPacketV1> {
     const preparation = input.articlePreparation
     if (!preparation) throw localError('Article synthesis requires prepared Jev decisions')
-    const source = input.evidence.find((artifact) => artifact.authority === 'source_url')
+    const source = latestArticleCapture(input.evidence)
     if (!source) throw localError('Article synthesis requires the immutable source-url capture')
     const result = await this.gateway.generateStructured<StructuredArticleSynthesisBody>({
       workload: this.workload,
@@ -350,6 +351,9 @@ export class StructuredResearchSynthesizer {
       budget: {
         maxProviderCalls: input.workItem.budget.maxProviderCalls, maxRepairCalls: input.workItem.budget.maxRepairCalls,
         maxWallTimeMs: input.workItem.budget.maxWallTimeMs, maxToolCalls: 0,
+        ...(typeof input.workItem.budget.maxInputTokens === 'number' ? { maxInputTokens: input.workItem.budget.maxInputTokens } : {}),
+        ...(typeof input.workItem.budget.maxOutputTokens === 'number' ? { maxOutputTokens: input.workItem.budget.maxOutputTokens } : {}),
+        ...(typeof input.workItem.budget.maxCostUsdMicros === 'number' ? { maxCostUsdMicros: input.workItem.budget.maxCostUsdMicros } : {}),
       },
       validate: validateArticleBody,
     })

@@ -8,7 +8,7 @@ import {
   StaticClassificationRegistry,
   tightenLifecycleMode,
 } from './classification-registry'
-import { SqliteClassificationControlPlane, SqliteClassificationShadowWriter } from './classification-store'
+import { SqliteClassificationControlPlane } from './classification-store'
 import type {
   ClassificationDefinition,
   ClassificationLifecycleMode,
@@ -76,10 +76,6 @@ export function createConfiguredClassificationRuntime(options: {
   }
   const sqlitePath = resolve(env[CLASSIFICATION_ENV.sqlitePath]?.trim() || '.data/classification.sqlite')
   const store = new SqliteClassificationControlPlane(sqlitePath, { now: options.now })
-  // Live requests never enqueue through the control connection's 5-second
-  // busy timeout. This separate handoff connection fails immediately on lock
-  // contention and the gateway emits a bounded warning without delaying Hermes.
-  const shadowWriter = new SqliteClassificationShadowWriter(sqlitePath, { now: options.now })
   const jev = options.jevAdapter ?? (env[CLASSIFICATION_ENV.jevToken]?.trim()
     ? new JevSystemOneAdapter({
       apiToken: env[CLASSIFICATION_ENV.jevToken]!,
@@ -95,12 +91,11 @@ export function createConfiguredClassificationRuntime(options: {
     }),
     capacity: store,
     audit: store,
-    shadowOutbox: shadowWriter,
     lifecycleMode: (definition) => modes.get(definition.workload)
       ?? (explicitEmptyLifecycle && definition.requiresJev ? 'disabled' : undefined),
     now: options.now,
   })
-  return { gateway, store, close: () => { shadowWriter.close(); store.close() } }
+  return { gateway, store, close: () => store.close() }
 }
 
 export function configuredClassificationModes(

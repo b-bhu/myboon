@@ -1,10 +1,10 @@
 # Entity Manager V4 — Working PRD
 
-Updated: 5 October 2026 (IST).
+Updated: 6 October 2026 (UTC).
 
 Issue: [#299 — Entity Manager V4](https://github.com/b-bhu/myboon/issues/299).
 
-Status: article workflow implemented, validated for the affected changes and activated for News; remaining reliability and semantic-quality work is recorded in the [checkpoint handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md).
+Status: article checkpoint implemented; the [6 October failure fixes](../operations/2026_10_06_article_failure_fixes.md) are implemented and verified locally. Research remains paused; their additive migration and runtime activation are pending. The [checkpoint handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md) records the operating boundary and remaining work.
 
 This is the current specification. It replaces the earlier claim/evidence requirements for new articles. The [pre-checkpoint PRD snapshot](2026_10_05_v4_prd_pre_checkpoint_snapshot.md) preserves the original issue mapping, earlier contracts and dated implementation/authorization history. Historical validation results apply to the contract and date they tested.
 
@@ -31,11 +31,11 @@ Also excluded: new collectors, deep research or web-search activation, automatic
 ### Researcher, in sequence
 
 1. Validate that the captured article and its provenance are available; retain an explicit failure when they are missing, unsafe, incomplete or outside admission limits.
-2. Retrieve bounded entity candidates using names, aliases, summaries and scope metadata. Include narrative and asset candidates, not only organisations or countries named in the headline.
+2. Retrieve entity candidates using names, aliases, summaries and scope metadata; rank exact/relevant identities before the 32-candidate bound. Include narrative and asset candidates, not only organisations or countries named in the headline.
 3. Ask **Jev** to select one primary entity and independently judge meaningful related memberships. Preserve typed choices, probabilities, confidence and decision identity/version. Required article decisions use Jev; Hermes is not their semantic fallback.
-4. If no entity matches, perform bounded wider catalogue lookup. A remaining no-match can request a source-grounded entity proposal from Hermes, which Jev must validate. Uncertain or rejected outcomes remain explicit holds/failures.
+4. If no entity matches, perform bounded wider catalogue lookup. A remaining no-match can request a source-grounded entity proposal from Hermes. Check its exact name/aliases across public and private identities before admitting creation; Jev must confirm an existing identity when found, or validate a genuinely new proposal. Incomplete or ambiguous identity coverage, uncertain decisions and rejected proposals remain explicit holds/failures.
 5. Retrieve **up to the latest five items per selected entity**, from supported legacy and private history. Load history only for selected entities; preserve item IDs and storage origins. Separate targeted older-item lookup and source idempotency protect against duplicates outside the five-item window.
-6. Ask Jev for novelty and story relationships: `duplicate`, `direct_continuation`, `related_story_branch`, `same_topic_only`, `unrelated` or `uncertain`. A continuation or branch needs a valid supplied historical target. Raw probabilities are internal data, not prose.
+6. Ask Jev for novelty and story relationships: `duplicate`, `direct_continuation`, `related_story_branch`, `same_topic_only`, `unrelated` or `uncertain`. Choose the relationship and its supplied item/origin together; a continuation or branch cannot be offered without a valid target. One bounded Jev reconciliation may resolve a primary duplicate versus new-information conflict; unresolved cases remain held. Already-known requires an exact target. Raw probabilities are internal data, not prose.
 7. **Researcher uses Hermes to write** the development's title, contextual `timelineSummary` and optional body from the article, selected entity scope and connected history. Describe what happened with natural source attribution; do not invent causes, resolutions or event dates.
 8. Save and hand off the article packet, prepared memberships, historical references, source capture, dates and Research-owned readiness outcome. Saved decisions/results are reused on recovery where their identity remains valid.
 
@@ -85,7 +85,7 @@ Existing legacy packets and memories retain their explicit compatibility paths. 
 - **D2:** an unknown paid dispatch outcome retains the same reservation and logical allowance. Recover only using supported retained proof; otherwise hold for intervention. Timeout does not authorise a replacement call or reset limits.
 - Known primary-provider authentication/billing failure may invoke the configured native backup. This is distinct from automatically replacing an unknown paid outcome.
 - Source ownership and writer fences prevent concurrent legacy/V4 effects. Retirement and rollback must preserve observations, accepted knowledge, history and receipts.
-- Calls, tokens, output size and wall time have configured operational limits. The owner authorised real provider/database validation without a USD approval gate; this PRD adds none. Unknown monetary cost must remain unknown.
+- Calls, tokens, output size and wall time have configured operational limits. The 6 October code admits new light/standard work with 180 seconds, captures at most 3 MB per source/9 MB total, and enforces a 30-second fetch deadline. Jev source input remains bounded to 16,000 characters without silent truncation. Historical work retains its saved allowances and retrieval plan. The owner authorised real provider/database validation without a USD approval gate; this PRD adds none. Unknown monetary cost must remain unknown.
 
 ## 5. Acceptance and checkpoint status
 
@@ -98,21 +98,23 @@ Existing legacy packets and memories retain their explicit compatibility paths. 
 | One item, multiple memberships, valid history links, duplicate attribution | Implemented; five isolated PostgreSQL article tests and live accepted-item checks passed. |
 | Receipt-first replay, restricted writer, leases/fences and unknown-outcome holds | Earlier database/recovery validation plus article persistence checks; retained holds/failures are not automatically cleared. |
 | Legacy compatibility and public-memory isolation | Affected compatibility checks passed; activation verified existing public counts were unchanged. Downstream exposure is excluded. |
-| Runtime activation and provider routing | Four internal pipelines online at the latest checkpoint; News-only Research/Entity. API protected. Twelve Hermes profiles use Ollama primary and Codex backup. |
+| Runtime activation and provider routing | Research, Entity Manager and collectors are running. News-only Research/Entity authority, API protected. Twelve Hermes profiles use Ollama primary with automatic GPT fallback disabled. |
 
 The [activation record](../operations/2026_10_05_article_pipeline_activation.md) records affected test groups, migration/permission/restore checks, real accepted items and retained failures. Counts from overlapping test runs must not be summed into a unique total. The later [profile-routing record](../operations/2026_10_05_hermes_profile_routing.md) records 159 focused tests, a passing collectors TypeScript check and live native/typed backup probes.
 
-This is an implemented and operating checkpoint through Entity Manager, not a claim that every input succeeds, all historical tests were rerun, model quality is proven or #299 was closed on GitHub. Source-fetch/admission, entity-resolution, structured-output and configured-limit failures remain. Exact follow-up work and operational constraints are in the [handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md).
+The [6 October verification](../operations/2026_10_06_article_failure_fixes.md) records 328 passing regressions, six isolated PostgreSQL article tests, actual Jev/Ollama decisions and isolated persistence of a real model-authored packet. The candidate-resolution migration and runtime fixes were activated on 6 October; see the [restart record](../operations/2026_10_06_service_retirement_and_restart.md). This checkpoint does not establish universal completion or model accuracy. Source-fetch/admission, entity-resolution, structured-output and configured-limit failures remain. Exact follow-up work and operational constraints are in the [handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md).
 
 ## 6. Current operating configuration
 
-- Research and Entity active sources: `news`. Polymarket is collection-only.
+- Research and Entity configured sources: `news`. Research, Entity Manager and the collectors are running. Polymarket is collection-only.
 - Article workflow, managed writer and persistent source ownership are enabled for the active source. Older generic V4 novelty/reuse/follow-up flags remain off; required article Jev workloads have their own active lifecycle.
 - Jev: `jev-1.13.0`.
 - Hermes primary everywhere: `ollama-cloud/glm-5.3-flash`.
-- Hermes native backup only: `openai-codex/gpt-5.6-luna`; no extra active provider chain.
+- Automatic native GPT fallback is disabled in every profile at the owner's request. Codex credentials remain installed; normal pipeline calls use Ollama only.
 - Every programmatic inference call selects a profile explicitly. Shared default: `myboon-codex-production`; its name does not make Codex primary. Both production memory stores are disabled; article/entity context is request-owned.
-- Latest direct Ollama probe, **12:22 IST on 5 October**, returned HTTP 403 with a subscription-past-due diagnostic. Default and production live probes succeeded through Codex. Ollama primary success remains blocked by billing.
-- Editor, Publisher, classification shadow, orphan sweeper and daily entity maintenance are not running. The 24-hour entity-maintenance process is defined but not enabled by this checkpoint.
+- Ollama billing was restored on 6 October. A real typed article-writing request through `myboon-codex-production` succeeded on GLM-5.3 Flash with one dispatch, zero repairs/tools and no fallback. Research was not resumed by that isolated validation.
+- Publisher was started on 6 October at the owner's request. It runs the existing editor-draft publication path every five minutes, with up to ten drafts per cycle. Its first cycle completed with zero eligible drafts; this does not add downstream integration for V4 managed items. See the [Publisher startup record](../operations/2026_10_06_publisher_restart.md).
+- Editor is running hourly on the existing legacy public-memory path, with two bundles per cycle, up to three new memories and ten lane memories. It uses the standard Hermes launcher with the explicit production profile.
+- Orphan sweeper, catalogue maintenance and classification-shadow services, commands and dedicated code are removed. Required live Jev decisions and per-call Hermes cleanup remain enabled. Historical migrations and audit records remain intact.
 
-Delivery branch: `main`, with `3e750f3` as the base preceding this checkpoint. The checkpoint includes the implementation and current documentation together; use its commit or the updated `origin/main`, not the base commit alone. Host-local credentials, runtime configuration and temporary receipts are outside Git. The handoff is the entry point for another maintainer; historical records and the archived PRD preserve the earlier implementation detail.
+Delivery branch: `main`; `124f565` is the delivered article checkpoint. The 6 October fixes and service removals are subsequent uncommitted working-tree changes; the candidate-resolution migration is applied to production. The delivered checkpoint and its historical documentation are on `origin/main`; the restart record describes runtime activation and the changes still awaiting repository delivery. Host-local credentials, runtime configuration and temporary receipts are outside Git. The handoff is the entry point for another maintainer; historical records and the archived PRD preserve the earlier implementation detail.

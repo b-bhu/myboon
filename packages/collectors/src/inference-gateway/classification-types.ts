@@ -1,6 +1,7 @@
 import type { InferenceFailureCategory, InferenceProviderTarget, InferenceUsage } from './types'
 
-export type ClassificationLifecycleMode = 'disabled' | 'shadow' | 'canary' | 'active'
+export type ClassificationLifecycleMode = 'disabled' | 'canary' | 'active'
+/** Historical shadow audit rows remain readable; no shadow execution is supported. */
 export type ClassificationExecutionMode = 'authoritative' | 'shadow'
 
 export interface ClassificationRequest {
@@ -13,7 +14,7 @@ export interface ClassificationRequest {
   }
   /** May only make the registry deadline smaller. */
   tighterDeadlineMs?: number
-  /** Tightens the existing two-provider path; a one-call reservation forbids fallback/shadow spend. */
+  /** Tightens the existing two-provider path; a one-call reservation forbids fallback spend. */
   maxProviderCalls?: 1 | 2
   /** V4 D2: an unknown primary dispatch outcome must not trigger replacement spending. */
   holdOnUnknownOutcome?: boolean
@@ -112,7 +113,6 @@ export interface ClassificationBudget {
 
 export interface ClassificationCapacityPolicy {
   liveConcurrency: number
-  shadowConcurrency: number
   /** Ceiling shared by every workload using the same provider/model/lane. */
   providerMaxCalls: number
   /** Independent ceiling for this workload within the provider window. */
@@ -130,7 +130,6 @@ export interface ClassificationDefinition<TState = unknown, TDecision = unknown>
   defaultLifecycleMode: ClassificationLifecycleMode
   /** Semantic placement/relationship decisions may never fall back to Hermes. */
   requiresJev?: boolean
-  shadowPercent: number
   canaryPercent: number
   jevTarget: InferenceProviderTarget
   hermesTarget: InferenceProviderTarget
@@ -170,7 +169,7 @@ export interface ClassificationAttemptRecord {
   schemaVersion: 'myboon.classification_attempt.v2'
   decisionId: string
   executionMode: ClassificationExecutionMode
-  /** One for authoritative calls; monotonically increasing for shadow retries. */
+  /** One for live calls; older audit records can contain historical retry numbers. */
   attemptNumber: number
   workload: string
   decisionVersion: string
@@ -232,23 +231,7 @@ export interface ClassificationCapacityCoordinator {
   acquire(input: {
     workload: string
     target: InferenceProviderTarget
-    mode: 'live' | 'shadow'
+    mode: 'live'
     policy: ClassificationCapacityPolicy
   }): ClassificationLease
-}
-
-export interface ClassificationShadowEnvelope {
-  decisionId: string
-  workload: string
-  decisionVersion: string
-  state: unknown
-  stateDigest: string
-  stableDecisionKey: string
-  correlationIds: Readonly<Record<string, string>>
-  deadlineMs: number
-  createdAt: string
-}
-
-export interface ClassificationShadowOutbox {
-  enqueue(value: ClassificationShadowEnvelope): void
 }

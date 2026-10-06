@@ -2,13 +2,22 @@
 
 Date: 5 October 2026 (IST).
 
+Latest update: [6 October operational cleanup and overnight baseline](2026_10_06_operational_cleanup_and_overnight_baseline.md).
+Research has resumed on Ollama GLM-5.3 Flash; automatic GPT fallback remains disabled.
+The candidate-resolution migration is applied and the article fixes are loaded
+in News intake, Research and Entity Manager. Editor and Publisher use the existing
+legacy publication path. The orphan sweeper, catalogue maintenance and classification
+shadow services and dedicated code are retired. The source fixes and retirement
+changes are included in the cleanup commit on `main`. The dated snapshots below
+describe earlier operating states.
+
 Current specification: [V4 working PRD](../PRDs/v4_prd.md).
 
 Boundary: **Scout → Intake → Researcher → Entity Manager → private durable knowledge.**
 
 ## Read this first
 
-The article workflow is implemented and running for News. It organises captured articles into entity timelines: Jev decides placement, related memberships, novelty and relationships; Researcher uses Hermes to write the dated development; Entity Manager validates identities and durably saves the prepared item. New article packets have no formal claims/evidence arrays or evidence-reference admission requirement.
+The article workflow is implemented and running for News; the dated operating snapshot below records its earlier activation. It organises captured articles into entity timelines: Jev decides placement, related memberships, novelty and relationships; Researcher uses Hermes to write the dated development; Entity Manager validates identities and durably saves the prepared item. New article packets have no formal claims/evidence arrays or evidence-reference admission requirement.
 
 **There is no downstream integration in this checkpoint.** Do not add reader/consumer adapters, consumer checkpoints, V1 projections, API/UI changes, Editor, Publisher or X Desk work to the remaining #299 list. Internal entity/history lookup is required for organisation. New managed items remain private and are not already connected to the current story UI.
 
@@ -106,14 +115,15 @@ Active source configuration is `ENTITY_V4_ACTIVE_SOURCES=news`, `FEED_V3_RESEARC
 
 - Jev decision model: `jev-1.13.0`.
 - Hermes primary in every profile and pipeline: `ollama-cloud/glm-5.3-flash`.
-- Native backup only: `openai-codex/gpt-5.6-luna`; no additional active provider chain.
+- Automatic GPT fallback is now disabled in every profile. Codex credentials remain installed; normal calls use Ollama only.
 - Shared explicit profile: `myboon-codex-production`. The name does not make Codex primary. Per-call overrides remain available for isolated validation.
 - Production memory and user-profile memory are disabled; article/entity context is supplied by Myboon.
 
-The direct Ollama request at **12:22 IST** returned HTTP 403, subscription past due. The credential was present. Default and typed production probes succeeded through the Codex backup; telemetry correctly distinguishes configured primary from actual provider and measures receipt token usage. **Successful Ollama primary inference remains unverified until billing is restored.** All twelve profile routes were configuration-checked; live inference was probed on default and production, not on every profile.
+The 5 October request at **12:22 IST** returned a subscription-past-due HTTP 403, and the earlier successful probes used Codex backup. On 6 October, billing was restored and an actual structured article request succeeded on Ollama GLM-5.3 Flash through the production profile, with no fallback. All twelve profiles remain configured for Ollama; live inference was not probed separately on every profile.
 
 ## Validation already completed
 
+- 6 October fixes: 328 regressions, six isolated PostgreSQL article tests, collectors TypeScript and actual Jev/Ollama plus isolated writer verification passed. See the linked fix record for evidence boundaries and the later cleanup baseline for runtime activation.
 - Article activation: 73 contract regressions, 68 startup/compatibility regressions, five isolated PostgreSQL article tests, 30 Jev/gateway/context regressions and seven final placement regressions passed. Groups overlap; do not add their counts as unique coverage.
 - Private writer/context permissions, verified TLS, additive migration application, source SQLite integrity and restored-copy checks passed as recorded in the activation/database reports.
 - Live activation accepted real News items with captured-text hashes and zero formal evidence rows. It also exposed a Bitwise article placed under a narrow ETF entity: persistence works, but semantic placement quality is not established by that fact.
@@ -123,8 +133,8 @@ These results do not establish a clean historical full-suite run, broad Jev accu
 
 ## Remaining work inside this boundary
 
-1. Restore Ollama billing, then verify actual GLM-5.3 Flash inference through the production profile/gateway. Preserve Codex strictly as backup.
-2. Sample source-fetch/unsafe-URL/time-out failures and captures exceeding the current 16,000-character admission limit; distinguish permanent source problems from recoverable retrieval failures. No silent truncation or web-search fallback.
+1. Check overnight progress against the 6 October cleanup baseline. The source fixes are included in the cleanup commit on `main`, the candidate-resolution migration is applied, and News intake/Entity Manager/Research have loaded the fixes. Do not reapply or bulk-recover historical failures. Ollama is primary and automatic GPT fallback stays off. Exclude `myboon-api` from every process action.
+2. Observe the repaired PANews redirects, IPv4/deadline handling and article extraction on fresh jobs. Continue reviewing inaccessible sources and genuinely long captures exceeding the unchanged 16,000-character admission bound. No silent truncation or web-search fallback.
 3. Review candidate scope and meaningful related memberships with labelled examples, including conflict narratives, Bitcoin/BlackRock, AI outlooks and the observed narrow Bitwise placement. Evaluate latest-five relationships and older-duplicate behaviour separately from prose quality.
 4. Inspect no-match, ambiguous-identity, creation-proposal and Entity-resolution holds. Validate improvements on bounded cases before any explicit single-item recovery; do not silently merge or create duplicate entities.
 5. Inspect invalid structured output and configured call/token/wall-limit failures. Tune evidenced workload limits where appropriate; do not reset an assignment or resend an unknown paid attempt to make it pass.
@@ -136,7 +146,7 @@ Do not automatically replay old dead letters or incomplete packets. D1 retains o
 
 1. [Current PRD](../PRDs/v4_prd.md) — trimmed requirements and acceptance boundary.
 2. [Article activation](2026_10_05_article_pipeline_activation.md) — migration/permission tests, activation fixes, accepted examples and retained failures.
-3. [Hermes routing](2026_10_05_hermes_profile_routing.md) — all-profile Ollama primary, Codex backup and actual-provider validation.
+3. [6 October cleanup baseline](2026_10_06_operational_cleanup_and_overnight_baseline.md) — current operating state, recovery and quarantine receipts; [fix validation](2026_10_06_article_failure_fixes.md) and [Hermes routing](2026_10_05_hermes_profile_routing.md) record the preceding changes.
 4. [Historical PRD snapshot](../PRDs/2026_10_05_v4_prd_pre_checkpoint_snapshot.md), [4 October implementation](2026_10_04_article_researcher_implementation.md) and the 3 October reports — earlier design/contract detail, not current activation instructions.
 
 Host-local receipts: `/tmp/myboon-article-activation-20261005/activation-evidence-manifest.json`, `/tmp/myboon-all-ollama-primary-result-20261005.json` and `/tmp/myboon-ollama-fallback-probes-20261005/`. These `/tmp` artifacts are not a portable handoff and may disappear. These docs record their conclusions without copying credentials or private prompts. Credentials and VPS runtime state remain host-local, outside Git.

@@ -54,6 +54,7 @@ export interface ManagedResearchContext {
 
 /** Private context used only to validate Researcher's prepared article placement. */
 export interface ManagedArticleContext extends ManagedResearchContext {
+  candidateTruncated?: boolean
   /** Story entries retain their physical origin; legacy IDs never become managed IDs. */
   articleItems: Array<{
     itemId: string
@@ -105,6 +106,7 @@ export interface ManagedResearchContextQuery {
   itemIds?: readonly string[]
   /** Recent ignores lexical/source filters; targeted searches bounded older history. */
   historyMode?: 'recent' | 'targeted'
+  identityOnly?: boolean
   limit?: number
 }
 
@@ -288,6 +290,7 @@ export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWrite
         entityIds: boundedStrings(input.entityIds ?? [], 32),
         itemIds: boundedStrings(input.itemIds ?? [], 32),
         historyMode: input.historyMode ?? 'targeted',
+        identityOnly: input.identityOnly ?? false,
         limit: Math.min(32, Math.max(1, input.limit ?? 24)),
       })],
     )

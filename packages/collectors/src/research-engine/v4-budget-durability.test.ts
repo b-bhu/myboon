@@ -14,6 +14,24 @@ const claim = (port: BudgetStorePort, allowanceId: string, root = ROOT, stage = 
   claimReservation(port, { rootAssignmentId: 'root-shared', allowanceId, attemptId, requestDigest: 'request-digest',
     providerRoute: 'mock-only', approvedLimits: stage, assignmentLimits: root, nowMs: 1 })
 
+test('operational hold totals include a paid outcome beyond the first 1000 historical reservations', async () => {
+  const fx = v4Database()
+  try {
+    const port = fx.store.researchBudgetStore()
+    for (let index = 0; index < 1_001; index++) {
+      assert.equal((await claimReservation(port, {
+        rootAssignmentId: `root-${String(index).padStart(4, '0')}`, allowanceId: 'primary', attemptId: 'attempt',
+        requestDigest: 'digest', providerRoute: 'offline', approvedLimits: STAGE, assignmentLimits: ROOT, nowMs: 1,
+      })).ok, true)
+    }
+    const key = { rootAssignmentId: 'root-1000', allowanceId: 'primary', attemptId: 'attempt' }
+    assert.equal((await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2 })).ok, true)
+    assert.equal((await recordUnknownOutcome(port, key, { ownedEpoch: 1, nowMs: 3 })).ok, true)
+    assert.equal(fx.store.listResearchReservations(1_000).filter(row => row.state === 'execution_outcome_unknown').length, 0)
+    assert.equal(fx.store.countUnresolvedResearchReservations(), 1)
+  } finally { fx.close() }
+})
+
 async function settle(port: BudgetStorePort, allowanceId: string, usage: D2Usage) {
   const key = { rootAssignmentId: 'root-shared', allowanceId, attemptId: 'attempt-1' }
   assert.equal((await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2 })).ok, true)

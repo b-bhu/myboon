@@ -10,8 +10,6 @@ import type {
   ClassificationCapacityCoordinator,
   ClassificationLease,
   ClassificationPolicyOutcomeRecord,
-  ClassificationShadowEnvelope,
-  ClassificationShadowOutbox,
 } from './classification-types'
 import type { InferenceProviderTarget } from './types'
 
@@ -24,53 +22,24 @@ interface Database { exec(sql: string): void; prepare(sql: string): Statement; c
 const nodeRequire = createRequire(__filename)
 const { DatabaseSync } = nodeRequire('node:sqlite') as { DatabaseSync: new(path: string) => Database }
 
-export interface ClaimedClassificationShadow {
-  envelope: ClassificationShadowEnvelope
-  leaseToken: string
-  attempt: number
-}
-
-export interface ClassificationShadowRetentionPolicy {
-  terminalRetentionMs: number
-  maxRows: number
-  maxBytes: number
-}
-
-export const DEFAULT_CLASSIFICATION_SHADOW_RETENTION = Object.freeze({
-  terminalRetentionMs: 7 * 24 * 60 * 60_000,
-  maxRows: 10_000,
-  maxBytes: 64 * 1024 * 1024,
-})
-
-export interface ClassificationShadowOutboxStats {
-  rows: number
-  bytes: number
-  pending: number
-  leased: number
-  terminal: number
-}
-
 /**
  * One crash-safe SQLite control plane shared by every PM2 process on the VPS.
  * It owns capacity leases, provider circuit/rate state, immutable audit rows,
- * and the best-effort shadow outbox.
+ * and policy-outcome records.
  */
 export class SqliteClassificationControlPlane implements
-ClassificationCapacityCoordinator, ClassificationAuditSink, ClassificationShadowOutbox {
+ClassificationCapacityCoordinator, ClassificationAuditSink {
   private readonly db: Database
   private readonly now: () => number
-  private readonly shadowRetention: ClassificationShadowRetentionPolicy
   private closed = false
 
   constructor(path: string, options: {
     now?: () => number
-    shadowRetention?: Partial<ClassificationShadowRetentionPolicy>
   } = {}) {
     const resolved = resolve(path)
     mkdirSync(dirname(resolved), { recursive: true })
     this.db = new DatabaseSync(resolved)
     this.now = options.now ?? Date.now
-    this.shadowRetention = retentionPolicy(options.shadowRetention)
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA busy_timeout = 5000;
@@ -122,23 +91,6 @@ ClassificationCapacityCoordinator, ClassificationAuditSink, ClassificationShadow
         created_at TEXT NOT NULL,
         PRIMARY KEY(decision_id, consumer, policy_version)
       );
-      CREATE TABLE IF NOT EXISTS classification_shadow_outbox (
-        decision_id TEXT PRIMARY KEY,
-        workload TEXT NOT NULL,
-        decision_version TEXT NOT NULL,
-        state_digest TEXT NOT NULL,
-        envelope_json TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('pending', 'leased', 'completed', 'failed')),
-        attempt INTEGER NOT NULL DEFAULT 0,
-        available_at_ms INTEGER NOT NULL,
-        lease_token TEXT,
-        lease_expires_at_ms INTEGER,
-        last_error TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_classification_shadow_ready
-        ON classification_shadow_outbox(status, available_at_ms, lease_expires_at_ms);
     `)
     migrateClassificationAttempts(this.db)
     const rateColumns = this.db.prepare('PRAGMA table_info(classification_rate_events)').all() as Array<{ name?: unknown }>
@@ -188,7 +140,7 @@ ClassificationCapacityCoordinator, ClassificationAuditSink, ClassificationShadow
         this.db.prepare(`UPDATE classification_circuits SET probe_token = ?
           WHERE provider = ? AND model = ?`).run(token, target.provider, target.model)
       }
-      const concurrencyLimit = mode === 'live' ? policy.liveConcurrency : policy.shadowConcurrency
+      const concurrencyLimit = policy.liveConcurrency
       const active = this.db.prepare(`
         SELECT COUNT(*) AS count FROM classification_capacity_leases
         WHERE provider = ? AND model = ? AND lane = ? AND expires_at_ms > ?
@@ -289,67 +241,6 @@ ClassificationCapacityCoordinator, ClassificationAuditSink, ClassificationShadow
     }
   }
 
-  enqueue(value: ClassificationShadowEnvelope): void {
-    this.assertOpen()
-    enqueueShadow(this.db, value, this.now(), this.shadowRetention)
-  }
-
-  claimShadow(leaseMs = 60_000): ClaimedClassificationShadow | null {
-    this.assertOpen()
-    const now = this.now()
-    const token = randomUUID()
-    this.db.exec('BEGIN IMMEDIATE')
-    try {
-      this.db.prepare(`UPDATE classification_shadow_outbox
-        SET status = 'pending', lease_token = NULL, lease_expires_at_ms = NULL, updated_at = ?
-        WHERE status = 'leased' AND lease_expires_at_ms <= ?`).run(new Date(now).toISOString(), now)
-      const row = this.db.prepare(`SELECT decision_id, envelope_json, attempt
-        FROM classification_shadow_outbox WHERE status = 'pending' AND available_at_ms <= ?
-        ORDER BY available_at_ms, decision_id LIMIT 1`).get(now) as {
-          decision_id: string; envelope_json: string; attempt: number
-        } | undefined
-      if (!row) {
-        this.db.exec('COMMIT')
-        return null
-      }
-      this.db.prepare(`UPDATE classification_shadow_outbox SET status = 'leased', attempt = attempt + 1,
-        lease_token = ?, lease_expires_at_ms = ?, updated_at = ? WHERE decision_id = ?`)
-        .run(token, now + leaseMs, new Date(now).toISOString(), row.decision_id)
-      this.db.exec('COMMIT')
-      return { envelope: parseEnvelope(row.envelope_json), leaseToken: token, attempt: row.attempt + 1 }
-    } catch (error) {
-      this.db.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  completeShadow(decisionId: string, leaseToken: string): void {
-    this.finishShadow(decisionId, leaseToken, 'completed', null, this.now())
-    this.pruneShadowOutbox()
-  }
-
-  failShadow(decisionId: string, leaseToken: string, error: string, retryAtMs: number | null): void {
-    this.finishShadow(decisionId, leaseToken, retryAtMs === null ? 'failed' : 'pending', error.slice(0, 1_000), retryAtMs ?? this.now())
-    if (retryAtMs === null) this.pruneShadowOutbox()
-  }
-
-  pruneShadowOutbox(): void {
-    this.assertOpen()
-    this.db.exec('BEGIN IMMEDIATE')
-    try {
-      pruneShadowRows(this.db, this.now(), this.shadowRetention, 0, 0)
-      this.db.exec('COMMIT')
-    } catch (error) {
-      this.db.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  shadowOutboxStats(): ClassificationShadowOutboxStats {
-    this.assertOpen()
-    return shadowStats(this.db)
-  }
-
   close(): void {
     if (this.closed) return
     this.closed = true
@@ -400,62 +291,9 @@ ClassificationCapacityCoordinator, ClassificationAuditSink, ClassificationShadow
     }
   }
 
-  private finishShadow(
-    decisionId: string, token: string, status: 'pending' | 'completed' | 'failed',
-    error: string | null, availableAtMs: number,
-  ): void {
-    const result = this.db.prepare(`UPDATE classification_shadow_outbox SET status = ?,
-      available_at_ms = ?, lease_token = NULL, lease_expires_at_ms = NULL,
-      last_error = ?, updated_at = ? WHERE decision_id = ? AND lease_token = ? AND status = 'leased'`)
-      .run(status, availableAtMs, error, new Date(this.now()).toISOString(), decisionId, token)
-    if (Number(result.changes) !== 1) throw new Error(`Lost classification shadow lease ${decisionId}`)
-  }
-
   private assertOpen(): void {
     if (this.closed) throw new Error('Classification control plane is closed')
   }
-}
-
-/**
- * Dedicated live-path handoff. It never waits for SQLite's writer lock; a
- * contended enqueue fails immediately and is reported by ClassificationGateway.
- */
-export class SqliteClassificationShadowWriter implements ClassificationShadowOutbox {
-  private readonly db: Database
-  private readonly now: () => number
-  private readonly retention: ClassificationShadowRetentionPolicy
-  private closed = false
-
-  constructor(path: string, options: {
-    now?: () => number
-    retention?: Partial<ClassificationShadowRetentionPolicy>
-  } = {}) {
-    this.db = new DatabaseSync(resolve(path))
-    this.now = options.now ?? Date.now
-    this.retention = retentionPolicy(options.retention)
-    this.db.exec('PRAGMA busy_timeout = 0; PRAGMA foreign_keys = ON;')
-  }
-
-  enqueue(value: ClassificationShadowEnvelope): void {
-    if (this.closed) throw new Error('Classification shadow writer is closed')
-    enqueueShadow(this.db, value, this.now(), this.retention)
-  }
-
-  close(): void {
-    if (this.closed) return
-    this.closed = true
-    this.db.close()
-  }
-}
-
-function parseEnvelope(value: string): ClassificationShadowEnvelope {
-  const parsed = JSON.parse(value) as ClassificationShadowEnvelope
-  if (!parsed || typeof parsed !== 'object' || typeof parsed.decisionId !== 'string'
-    || typeof parsed.workload !== 'string' || typeof parsed.decisionVersion !== 'string'
-    || typeof parsed.stateDigest !== 'string' || typeof parsed.stableDecisionKey !== 'string') {
-    throw new Error('Stored classification shadow envelope is invalid')
-  }
-  return parsed
 }
 
 function migrateClassificationAttempts(db: Database): void {
@@ -484,93 +322,4 @@ function migrateClassificationAttempts(db: Database): void {
     DROP TABLE classification_attempts_v1;
     COMMIT;
   `)
-}
-
-function retentionPolicy(
-  override: Partial<ClassificationShadowRetentionPolicy> | undefined,
-): ClassificationShadowRetentionPolicy {
-  const policy = { ...DEFAULT_CLASSIFICATION_SHADOW_RETENTION, ...override }
-  if (!Number.isInteger(policy.terminalRetentionMs) || policy.terminalRetentionMs < 1
-    || !Number.isInteger(policy.maxRows) || policy.maxRows < 1
-    || !Number.isInteger(policy.maxBytes) || policy.maxBytes < 1) {
-    throw new Error('Classification shadow retention policy must contain positive integers')
-  }
-  return policy
-}
-
-function enqueueShadow(
-  db: Database,
-  value: ClassificationShadowEnvelope,
-  nowMs: number,
-  retention: ClassificationShadowRetentionPolicy,
-): void {
-  const encoded = canonicalJson(value)
-  const encodedBytes = Buffer.byteLength(encoded)
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    const existing = db.prepare('SELECT envelope_json FROM classification_shadow_outbox WHERE decision_id = ?')
-      .get(value.decisionId) as { envelope_json: string } | undefined
-    if (existing) {
-      if (existing.envelope_json !== encoded) throw new Error(`Conflicting classification shadow envelope ${value.decisionId}`)
-      db.exec('COMMIT')
-      return
-    }
-    pruneShadowRows(db, nowMs, retention, 1, encodedBytes)
-    const stats = shadowStats(db)
-    if (stats.rows + 1 > retention.maxRows || stats.bytes + encodedBytes > retention.maxBytes) {
-      throw new Error('Classification shadow outbox admission limit reached')
-    }
-    const nowIso = new Date(nowMs).toISOString()
-    db.prepare(`INSERT INTO classification_shadow_outbox
-      (decision_id, workload, decision_version, state_digest, envelope_json, status,
-       available_at_ms, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`)
-      .run(value.decisionId, value.workload, value.decisionVersion, value.stateDigest,
-        encoded, nowMs, value.createdAt, nowIso)
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
-}
-
-function pruneShadowRows(
-  db: Database,
-  nowMs: number,
-  retention: ClassificationShadowRetentionPolicy,
-  incomingRows: number,
-  incomingBytes: number,
-): void {
-  db.prepare(`DELETE FROM classification_shadow_outbox
-    WHERE status IN ('completed', 'failed') AND updated_at < ?`)
-    .run(new Date(nowMs - retention.terminalRetentionMs).toISOString())
-  const stats = shadowStats(db)
-  const rowsToReclaim = Math.max(0, stats.rows + incomingRows - retention.maxRows)
-  const bytesToReclaim = Math.max(0, stats.bytes + incomingBytes - retention.maxBytes)
-  if (rowsToReclaim === 0 && bytesToReclaim === 0) return
-  db.prepare(`WITH ordered AS (
-      SELECT decision_id,
-        ROW_NUMBER() OVER (ORDER BY updated_at, decision_id) AS row_number,
-        COALESCE(SUM(LENGTH(CAST(envelope_json AS BLOB))) OVER (
-          ORDER BY updated_at, decision_id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-        ), 0) AS bytes_before
-      FROM classification_shadow_outbox
-      WHERE status IN ('completed', 'failed')
-    )
-    DELETE FROM classification_shadow_outbox WHERE decision_id IN (
-      SELECT decision_id FROM ordered WHERE row_number <= ? OR bytes_before < ?
-    )`).run(rowsToReclaim, bytesToReclaim)
-}
-
-function shadowStats(db: Database): ClassificationShadowOutboxStats {
-  const row = db.prepare(`SELECT COUNT(*) AS rows,
-      COALESCE(SUM(LENGTH(CAST(envelope_json AS BLOB))), 0) AS bytes,
-      COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending,
-      COALESCE(SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END), 0) AS leased,
-      COALESCE(SUM(CASE WHEN status IN ('completed', 'failed') THEN 1 ELSE 0 END), 0) AS terminal
-    FROM classification_shadow_outbox`).get() as ClassificationShadowOutboxStats
-  return {
-    rows: Number(row.rows), bytes: Number(row.bytes), pending: Number(row.pending),
-    leased: Number(row.leased), terminal: Number(row.terminal),
-  }
 }

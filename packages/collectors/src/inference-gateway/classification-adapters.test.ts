@@ -4,7 +4,6 @@ import { HermesDecisionAdapter, JevSystemOneAdapter } from './classification-ada
 import { HermesStructuredAdapter } from './hermes-adapter'
 import { HermesService } from '../hermes'
 import { InferenceGatewayError } from './errors'
-import { classificationShadowRetryAt } from './run-classification-shadow'
 
 test('real Hermes CLI composition disables all tools and ambient rules for both semantic adapters', async () => {
   const calls: string[][] = []
@@ -137,7 +136,7 @@ test('Jev adapter rejects unsafe native token and monetary usage before settleme
   }
 })
 
-test('Jev retry headers reach the bounded shadow retry scheduler', async () => {
+test('Jev retry headers remain available to live callers', async () => {
   const request = {
     workload: 'test', decisionVersion: 'v1', state: {},
     questions: { relevant: { type: 'noul' as const, instructions: 'x' } },
@@ -163,10 +162,6 @@ test('Jev retry headers reach the bounded shadow retry scheduler', async () => {
 
   const delta = await failureFor('45')
   assert.equal(delta.retryAfterMs, 45_000)
-  assert.equal(classificationShadowRetryAt({
-    error: delta, attempt: 1, nowMs: 10_000, maxAttempts: 3,
-    baseBackoffMs: 5_000, maxBackoffMs: 60_000,
-  }), 55_000)
 
   const date = await failureFor(new Date(Date.now() + 60_000).toUTCString())
   assert.ok((date.retryAfterMs ?? 0) >= 58_000 && (date.retryAfterMs ?? 0) <= 60_000)

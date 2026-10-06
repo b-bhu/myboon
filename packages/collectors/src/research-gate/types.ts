@@ -178,7 +178,7 @@ export interface EntityMemoryReader {
   /** Newest first, bounded by limit across all requested entities. */
   recentMemories(entityIds: string[], limit: number): Promise<GateMemory[]>
   /** Internal article placement: retrieve profiles beyond exact source subjects. */
-  searchEntities?(labels: string[], limit: number): Promise<GateEntity[]>
+  searchEntities?(labels: string[], limit: number, options?: { exactOnly?: boolean }): Promise<GateEntity[]>
   /** Targeted historical lookup without the latest-five story-context boundary. */
   findMemoriesForArticle?(input: {
     entityIds: string[]

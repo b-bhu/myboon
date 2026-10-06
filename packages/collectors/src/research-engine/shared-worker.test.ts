@@ -38,6 +38,8 @@ import {
 } from './shared-worker'
 import type { StructuredResearchSynthesizer } from './structured-synthesizer'
 
+// Generic worker/retry fixtures use a calendar signal. News articles require
+// the separate durable Jev article preparation path.
 const NOW = '2026-08-26T12:10:00.000Z'
 
 class FixedClock implements SharedWorkerClock {
@@ -47,7 +49,7 @@ class FixedClock implements SharedWorkerClock {
   clearInterval(): void {}
 }
 
-function signal(sourceType: Signal['sourceType'] = 'news', id = `signal-${sourceType}`): Signal {
+function signal(sourceType: Signal['sourceType'] = 'market_calendar', id = `signal-${sourceType}`): Signal {
   const variants = {
     news: ['article', 'myboon.signal_content.article.v1'],
     polymarket: ['market_event', 'myboon.signal_content.market_event.v1'],
@@ -58,7 +60,7 @@ function signal(sourceType: Signal['sourceType'] = 'news', id = `signal-${source
   return {
     schemaVersion: SIGNAL_SCHEMA_VERSION, signalId: id, sourceType, sourceId: `${sourceType}:1`,
     contentKind, content: { schemaVersion }, observedAt: '2026-08-26T12:00:00.000Z',
-    publishedAt: '2026-08-26T11:59:00.000Z', canonicalUrl: `https://${sourceType}.example/item`,
+    publishedAt: '2026-08-26T11:59:00.000Z', canonicalUrl: `https://${sourceType.replace('_', '-')}.example/item`,
     title: `${sourceType} signal`, visibleSummary: null, media: { imageUrl: null, attribution: null },
     sourceHints: { entities: [], assets: [], eventId: null, deadline: null },
     provenance: { provider: 'fixture', upstreamSource: null, rawPayloadRef: `${sourceType}:raw:1` },
@@ -70,7 +72,7 @@ function work(input: {
   sourceType?: Signal['sourceType'], id?: string, status?: ResearchWorkItem['status'],
   depth?: ResearchWorkItem['researchDepth'], attemptCount?: number, priorityScore?: number,
 } = {}): ResearchWorkItem {
-  const sourceType = input.sourceType ?? 'news'
+  const sourceType = input.sourceType ?? 'market_calendar'
   const id = input.id ?? `work-${sourceType}`
   return {
     schemaVersion: RESEARCH_WORK_SCHEMA_VERSION, workId: id, signalId: `signal-${sourceType}`, sourceType,
@@ -80,7 +82,7 @@ function work(input: {
     freshnessDeadline: '2026-08-26T13:00:00.000Z', policyVersion: 'policy.v1',
     researchContractVersion: RESEARCH_PACKET_SCHEMA_VERSION,
     retrievalPlan: {
-      sourceUrl: `https://${sourceType}.example/item`, allowedDomains: [`${sourceType}.example`], maxExternalSources: 0,
+      sourceUrl: `https://${sourceType.replace('_', '-')}.example/item`, allowedDomains: [`${sourceType.replace('_', '-')}.example`], maxExternalSources: 0,
     },
     budget: {
       maxProviderCalls: 2, maxRepairCalls: 1,
@@ -133,7 +135,7 @@ function packet(item: ResearchWorkItem, source: Signal, artifact: RetrievedEvide
   }
 }
 
-function fixture(sourceType: Signal['sourceType'] = 'news'): {
+function fixture(sourceType: Signal['sourceType'] = 'market_calendar'): {
   store: SqliteSignalPlatformStore, close(): void,
 } {
   const dir = mkdtempSync(join(tmpdir(), `shared-worker-${sourceType}-`))
@@ -201,6 +203,25 @@ class CapturingExecutionLedger implements ResearchExecutionLedgerPort {
   }
 }
 
+test('News article synthesis cannot bypass Jev through the generic worker path', async () => {
+  const fx = fixture('news')
+  let synthesisCalls = 0
+  try {
+    const item = work({ sourceType: 'news', status: 'synthesis_pending' })
+    fx.store.appendSignal(signal('news'))
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(evidence(item))
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['synthesis'], synthesizer: synthesizer(() => { synthesisCalls++ }),
+    }))
+    const result = await worker.runOnce()
+    assert.equal(result.kind, 'dead_letter')
+    if (result.kind === 'dead_letter') assert.equal(result.category, 'provider_unavailable')
+    assert.equal(synthesisCalls, 0)
+    assert.equal(fx.store.listResearchPacketsByWork(item.workId, 10).length, 0)
+  } finally { fx.close() }
+})
+
 test('retrieval and structured synthesis complete fenced happy stages and entity handoff', async () => {
   const fx = fixture()
   try {
@@ -209,16 +230,16 @@ test('retrieval and structured synthesis complete fenced happy stages and entity
     const ledger = new CapturingExecutionLedger()
     const worker = new SharedResearchWorker(workerOptions([fx.store], { executionLedger: ledger }))
     assert.deepEqual(await worker.runOnce(), {
-      kind: 'succeeded', stage: 'retrieval', sourceType: 'news', workId: 'work-news',
+      kind: 'succeeded', stage: 'retrieval', sourceType: 'market_calendar', workId: 'work-market_calendar',
     })
-    assert.equal(fx.store.getResearchWork('work-news')?.status, 'synthesis_pending')
-    assert.equal(fx.store.listEvidenceByWork('work-news', 10).length, 1)
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.status, 'synthesis_pending')
+    assert.equal(fx.store.listEvidenceByWork('work-market_calendar', 10).length, 1)
     assert.deepEqual(await worker.runOnce(), {
-      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: 'work-news',
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'market_calendar', workId: 'work-market_calendar',
     })
-    assert.equal(fx.store.getResearchWork('work-news')?.status, 'entity_pending')
-    assert.equal(fx.store.getResearchWork('work-news')?.attemptCount, 2)
-    assert.equal(fx.store.listResearchPacketsByWork('work-news', 10).length, 1)
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.status, 'entity_pending')
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.attemptCount, 2)
+    assert.equal(fx.store.listResearchPacketsByWork('work-market_calendar', 10).length, 1)
     const events = [...ledger.events.values()].filter((event) => event.status !== 'started').sort((left, right) => left.stage.localeCompare(right.stage))
     const retrievalEvent = events.find((event) => event.stage === 'retrieval')!
     const synthesisEvent = events.find((event) => event.stage === 'synthesis')!
@@ -232,7 +253,7 @@ test('retrieval and structured synthesis complete fenced happy stages and entity
       outputTokens: retrievalEvent.outputTokens, toolCalls: retrievalEvent.toolCalls,
     }, { provider: null, model: null, providerCalls: 0, inputTokens: 0, outputTokens: 0, toolCalls: 0 })
     assert.equal(synthesisEvent.status, 'succeeded')
-    assert.equal(synthesisEvent.packetId, 'packet-work-news')
+    assert.equal(synthesisEvent.packetId, 'packet-work-market_calendar')
     assert.equal(synthesisEvent.provider, 'fixture')
     assert.equal(synthesisEvent.model, 'fixture')
     assert.equal(synthesisEvent.providerCalls, 1)
@@ -354,7 +375,7 @@ test('standard retrieval discovers bounded corroboration URLs before determinist
     const item = work()
     item.retrievalPlan = {
       sourceUrl: source.canonicalUrl,
-      allowedDomains: ['news.example', 'corroboration.example'],
+      allowedDomains: ['market-calendar.example', 'corroboration.example'],
       maxExternalSources: 1,
     }
     fx.store.appendSignal(source)
@@ -385,10 +406,10 @@ test('standard retrieval discovers bounded corroboration URLs before determinist
     }))
     assert.equal((await subject.runOnce()).kind, 'succeeded')
     assert.equal(searchCalls.length, 1)
-    assert.match(searchCalls[0]!.query, /news signal/)
+    assert.match(searchCalls[0]!.query, /market_calendar signal/)
     assert.equal(searchCalls[0]!.limit, 1)
     assert.deepEqual(fetched, [
-      'https://news.example/item', 'https://corroboration.example/report',
+      'https://market-calendar.example/item', 'https://corroboration.example/report',
     ])
     assert.equal(fx.store.listEvidenceByWork(item.workId, 10).length, 2)
     assert.equal(fx.store.getResearchWork(item.workId)?.attemptCount, 1)
@@ -462,7 +483,7 @@ test('an existing canonical packet replays only the entity handoff without provi
     }))
 
     assert.deepEqual(await worker.runOnce(), {
-      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: item.workId,
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'market_calendar', workId: item.workId,
     })
     assert.equal(fx.store.getResearchWork(item.workId)?.status, 'entity_pending')
     assert.equal(fx.store.getResearchWork(item.workId)?.attemptCount, 0)
@@ -505,7 +526,7 @@ test('packet replay emits one idempotent skipped event and never charges packet 
       clock: new FixedClock(new Date('2026-08-26T12:12:00.000Z')),
     }))
     assert.deepEqual(await second.runOnce(), {
-      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: item.workId,
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'market_calendar', workId: item.workId,
     })
     assert.equal(ledger.appendCalls, 2)
     assert.equal(ledger.events.size, 1)
@@ -601,8 +622,8 @@ test('ledger failure cannot change a successful fenced queue outcome', async () 
       executionLedger: { append() { throw new Error('ledger offline') } },
     }))
     assert.equal((await worker.runOnce()).kind, 'succeeded')
-    assert.equal(fx.store.getResearchWork('work-news')?.status, 'synthesis_pending')
-    assert.equal(fx.store.listEvidenceByWork('work-news', 10).length, 1)
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.status, 'synthesis_pending')
+    assert.equal(fx.store.listEvidenceByWork('work-market_calendar', 10).length, 1)
   } finally { fx.close() }
 })
 
@@ -644,16 +665,16 @@ test('lease loss after execution prevents immutable evidence append and completi
     }) as SharedResearchWorkPort
     const worker = new SharedResearchWorker(workerOptions([port], { stages: ['retrieval'] }))
     assert.equal((await worker.runOnce()).kind, 'lease_lost')
-    assert.equal(fx.store.listEvidenceByWork('work-news', 10).length, 0)
-    assert.equal(fx.store.getResearchWork('work-news')?.status, 'retrieval_leased')
+    assert.equal(fx.store.listEvidenceByWork('work-market_calendar', 10).length, 0)
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.status, 'retrieval_leased')
   } finally { fx.close() }
 })
 
 test('a source failure does not block another source in the bounded global batch', async () => {
-  const news = fixture('news')
+  const news = fixture('market_calendar')
   const x = fixture('x')
   try {
-    for (const [fx, sourceType, score] of [[news, 'news', 0.9], [x, 'x', 0.8]] as const) {
+    for (const [fx, sourceType, score] of [[news, 'market_calendar', 0.9], [x, 'x', 0.8]] as const) {
       const item = work({ sourceType, status: 'synthesis_pending', priorityScore: score })
       fx.store.appendSignal(signal(sourceType))
       fx.store.admitResearchWork(item)
@@ -661,7 +682,7 @@ test('a source failure does not block another source in the bounded global batch
     }
     const mixed = {
       async synthesize(input: Parameters<StructuredResearchSynthesizer['synthesize']>[0]) {
-        if (input.workItem.sourceType === 'news') {
+        if (input.workItem.sourceType === 'market_calendar') {
           throw new InferenceGatewayError('rate', { category: 'provider_rate_limited', retryable: true })
         }
         return packet(input.workItem, input.signal, adaptRetrievedEvidenceArtifact(input.evidence[0]!))
@@ -669,7 +690,7 @@ test('a source failure does not block another source in the bounded global batch
     } as StructuredResearchSynthesizer
     const worker = new SharedResearchWorker(workerOptions([news.store, x.store], { stages: ['synthesis'], synthesizer: mixed }))
     assert.deepEqual((await worker.runBatch(2)).map((outcome) => outcome.kind), ['retry_wait', 'succeeded'])
-    assert.equal(news.store.getResearchWork('work-news')?.status, 'retry_wait')
+    assert.equal(news.store.getResearchWork('work-market_calendar')?.status, 'retry_wait')
     assert.equal(x.store.getResearchWork('work-x')?.status, 'entity_pending')
   } finally { news.close(); x.close() }
 })
@@ -686,8 +707,8 @@ test('shadow mode samples readiness without claims, mutation, retrieval, or synt
       retriever: retriever(() => { retrievalCalls += 1 }), synthesizer: synthesizer(() => { synthesisCalls += 1 }),
     })
     assert.deepEqual(await worker.runOnce(), { kind: 'shadow', sampled: 1, ready: 1, issues: [] })
-    assert.equal(fx.store.getResearchWork('work-news')?.status, 'research_pending')
-    assert.equal(fx.store.getResearchWork('work-news')?.attemptCount, 0)
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.status, 'research_pending')
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.attemptCount, 0)
     assert.equal(retrievalCalls, 0)
     assert.equal(synthesisCalls, 0)
   } finally { fx.close() }
@@ -801,7 +822,7 @@ test('retrieval replay reuses immutable evidence after a lost completion fence',
       stages: ['retrieval'], retriever: retriever(() => { retrievalCalls += 1 }),
     }))
     assert.equal((await first.runOnce()).kind, 'lease_lost')
-    const firstArtifacts = fx.store.listEvidenceByWork('work-news', 10)
+    const firstArtifacts = fx.store.listEvidenceByWork('work-market_calendar', 10)
     assert.equal(firstArtifacts.length, 1)
     assert.equal(
       (firstArtifacts[0]?.evidenceReuseContext as { schemaVersion?: unknown } | undefined)?.schemaVersion,
@@ -824,8 +845,8 @@ test('retrieval replay reuses immutable evidence after a lost completion fence',
     assert.equal((await second.runOnce()).kind, 'succeeded')
     assert.equal(retrievalCalls, 1)
     assert.equal(policyCalls.length, 1)
-    assert.equal(fx.store.listEvidenceByWork('work-news', 10).length, 1)
-    assert.equal(fx.store.getResearchWork('work-news')?.attemptCount, 1)
+    assert.equal(fx.store.listEvidenceByWork('work-market_calendar', 10).length, 1)
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.attemptCount, 1)
   } finally { fx.close() }
 })
 
@@ -895,8 +916,8 @@ test('an evidence cache with no manifest is not treated as a completed retrieval
 test('upstream Signal content hash is not mistaken for retrieved document bytes', async () => {
   const fx = fixture()
   try {
-    const base = signal('news')
-    if (base.sourceType !== 'news') throw new Error('expected News fixture')
+    const base = signal('market_calendar')
+    if (base.sourceType !== 'market_calendar') throw new Error('expected calendar fixture')
     const source: Signal = {
       ...base,
       content: { ...base.content, contentHash: 'upstream-headline-hash' },
@@ -927,7 +948,7 @@ for (const scenario of [
   {
     name: 'final URL changed',
     state: (item: ResearchWorkItem, artifact: RetrievedEvidence, source: Signal) => ({
-      item: withReuseState(item, { finalUrlByRequestedUrl: { [artifact.requestedUrl]: 'https://news.example/redirected' } }),
+      item: withReuseState(item, { finalUrlByRequestedUrl: { [artifact.requestedUrl]: 'https://market-calendar.example/redirected' } }),
       artifact: withPersistedReuse(artifact, source),
     }),
   },
@@ -987,7 +1008,7 @@ function withReuseState(item: ResearchWorkItem, state: Record<string, unknown>):
 
 /** The worker's default retrieval limits, which the plan identity covers. */
 const RETRIEVAL_LIMITS = {
-  maxSources: 5, maxBytesPerSource: 1_000_000, maxTotalBytes: 3_000_000,
+  maxSources: 5, maxBytesPerSource: 3_000_000, maxTotalBytes: 9_000_000,
   maxTextCharsPerSource: 100_000, maxRedirects: 3, timeoutMs: 30_000,
 }
 
@@ -1079,7 +1100,7 @@ function backgroundCapturingSynthesizer(
 ): StructuredResearchSynthesizer {
   return {
     async synthesize(input) {
-      if (input.workItem.sourceType === 'news') onNewsSynthesis(input.backgroundContext)
+      if (input.workItem.sourceType === 'market_calendar') onNewsSynthesis(input.backgroundContext)
       return packet(input.workItem, input.signal, adaptRetrievedEvidenceArtifact(input.evidence[0]!))
     },
   } as StructuredResearchSynthesizer
@@ -1089,16 +1110,16 @@ async function runUntilNewsSynthesis(worker: SharedResearchWorker) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const result = await worker.runOnce()
     assert.equal(result.kind, 'succeeded')
-    if (result.stage === 'synthesis' && result.sourceType === 'news') return result
+    if (result.stage === 'synthesis' && result.sourceType === 'market_calendar') return result
   }
-  assert.fail('news synthesis never completed')
+  assert.fail('calendar synthesis never completed')
 }
 
 test('cross-source background context reaches synthesis and is durably recorded', async () => {
-  const consumer = fixture('news')
+  const consumer = fixture('market_calendar')
   const producer = fixture('polymarket')
   try {
-    consumer.store.appendSignal(hintedSignal('news', ['acme']))
+    consumer.store.appendSignal(hintedSignal('market_calendar', ['acme']))
     consumer.store.admitResearchWork(work())
     const producerWork = work({ sourceType: 'polymarket' })
     producer.store.appendSignal(hintedSignal('polymarket', ['acme']))
@@ -1111,23 +1132,23 @@ test('cross-source background context reaches synthesis and is durably recorded'
       synthesizer: backgroundCapturingSynthesizer((background) => { observed = background }),
     }))
     assert.deepEqual(await runUntilNewsSynthesis(worker), {
-      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: 'work-news',
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'market_calendar', workId: 'work-market_calendar',
     })
     assert.equal(observed?.length, 1)
     assert.equal(observed?.[0]?.evidenceId, 'evidence-polymarket')
-    const usages = consumer.store.listArtifactUsagesByWork('work-news', 10)
+    const usages = consumer.store.listArtifactUsagesByWork('work-market_calendar', 10)
     assert.equal(usages.length, 1)
     assert.equal(usages[0]!.decision, 'background_only')
     assert.equal(usages[0]!.reason, 'relevant_context')
     assert.ok(usages[0]!.pinId)
     const reuseEvent = [...ledger.events.values()].find((event) => event.eventId === stableContractId(
-      'execution_event', 'trace-news', 'synthesis',
+      'execution_event', 'trace-market_calendar', 'synthesis',
       `background_reuse:${stableContractId('background_set', 'evidence-polymarket')}`,
     ))
     assert.ok(reuseEvent)
     assert.equal(reuseEvent.status, 'skipped')
     assert.equal(reuseEvent.stage, 'synthesis')
-    assert.equal(consumer.store.getResearchWork('work-news')?.status, 'entity_pending')
+    assert.equal(consumer.store.getResearchWork('work-market_calendar')?.status, 'entity_pending')
   } finally {
     consumer.close()
     producer.close()
@@ -1135,10 +1156,10 @@ test('cross-source background context reaches synthesis and is durably recorded'
 })
 
 test('unrelated cross-source evidence is rejected durably and never blocks synthesis', async () => {
-  const consumer = fixture('news')
+  const consumer = fixture('market_calendar')
   const producer = fixture('polymarket')
   try {
-    consumer.store.appendSignal(hintedSignal('news', ['acme']))
+    consumer.store.appendSignal(hintedSignal('market_calendar', ['acme']))
     consumer.store.admitResearchWork(work())
     const producerWork = work({ sourceType: 'polymarket' })
     producer.store.appendSignal(hintedSignal('polymarket', ['globex']))
@@ -1151,16 +1172,16 @@ test('unrelated cross-source evidence is rejected durably and never blocks synth
       synthesizer: backgroundCapturingSynthesizer((background) => { observed = background }),
     }))
     assert.deepEqual(await runUntilNewsSynthesis(worker), {
-      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: 'work-news',
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'market_calendar', workId: 'work-market_calendar',
     })
     assert.equal(observed, undefined)
-    const usages = consumer.store.listArtifactUsagesByWork('work-news', 10)
+    const usages = consumer.store.listArtifactUsagesByWork('work-market_calendar', 10)
     assert.equal(usages.length, 1)
     assert.equal(usages[0]!.decision, 'rejected')
     assert.equal(usages[0]!.reason, 'unrelated')
     assert.equal(usages[0]!.pinId, null)
     assert.ok([...ledger.events.values()].every((event) => event.eventId !== stableContractId(
-      'execution_event', 'trace-news', 'synthesis',
+      'execution_event', 'trace-market_calendar', 'synthesis',
       `background_reuse:${stableContractId('background_set', 'evidence-polymarket')}`,
     )))
   } finally {
@@ -1170,10 +1191,10 @@ test('unrelated cross-source evidence is rejected durably and never blocks synth
 })
 
 test('a failing artifact link is absorbed and synthesis proceeds without background context', async () => {
-  const consumer = fixture('news')
+  const consumer = fixture('market_calendar')
   const producer = fixture('polymarket')
   try {
-    consumer.store.appendSignal(hintedSignal('news', ['acme']))
+    consumer.store.appendSignal(hintedSignal('market_calendar', ['acme']))
     consumer.store.admitResearchWork(work())
     const producerWork = work({ sourceType: 'polymarket' })
     producer.store.appendSignal(hintedSignal('polymarket', ['acme']))
@@ -1189,15 +1210,15 @@ test('a failing artifact link is absorbed and synthesis proceeds without backgro
       synthesizer: backgroundCapturingSynthesizer((background) => { observed = background }),
     }))
     assert.deepEqual(await runUntilNewsSynthesis(worker), {
-      kind: 'succeeded', stage: 'synthesis', sourceType: 'news', workId: 'work-news',
+      kind: 'succeeded', stage: 'synthesis', sourceType: 'market_calendar', workId: 'work-market_calendar',
     })
     assert.equal(observed, undefined)
-    assert.equal(consumer.store.listArtifactUsagesByWork('work-news', 10).length, 0)
+    assert.equal(consumer.store.listArtifactUsagesByWork('work-market_calendar', 10).length, 0)
     assert.ok([...ledger.events.values()].every((event) => event.eventId !== stableContractId(
-      'execution_event', 'trace-news', 'synthesis',
+      'execution_event', 'trace-market_calendar', 'synthesis',
       `background_reuse:${stableContractId('background_set', 'evidence-polymarket')}`,
     )))
-    assert.equal(consumer.store.getResearchWork('work-news')?.status, 'entity_pending')
+    assert.equal(consumer.store.getResearchWork('work-market_calendar')?.status, 'entity_pending')
   } finally {
     consumer.close()
     producer.close()

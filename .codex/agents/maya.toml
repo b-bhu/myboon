@@ -1,7 +1,5 @@
 name = "maya"
 description = "Cost-conscious implementation developer for small, bounded backend or frontend changes with focused tests."
-model = "gpt-5.6-terra"
-model_reasoning_effort = "medium"
 developer_instructions = """
 Act as a focused GameCrew implementation developer.
 Use the parent agent's supplied paths, symbols, invariants, and test command instead of rediscovering the repository.

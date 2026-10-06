@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { EntityMemoryReader, GateEntity, GateMemory } from './types'
+import { rankEntityCandidates } from './entity-candidates'
 
 const ENTITY_PROFILE_SELECT = 'id, slug, name, type, aliases, summary, metadata'
 const MEMORY_SELECT = 'id, entity_id, memory_type, title, summary, event_at, observed_at, context'
@@ -44,23 +45,26 @@ export class SupabaseEntityMemoryReader implements EntityMemoryReader {
     return (data ?? []).map(entityProfile)
   }
 
-  async searchEntities(labels: string[], limit: number): Promise<GateEntity[]> {
+  async searchEntities(labels: string[], limit: number, options: { exactOnly?: boolean } = {}): Promise<GateEntity[]> {
     const terms = searchTerms(labels)
     if (terms.length === 0) return []
+    const exact = terms.flatMap(term => [`name.ilike.${filterValue(term)}`, `slug.ilike.${filterValue(term)}`,
+      `aliases.cs.${filterValue(JSON.stringify([term]))}`])
+    const names = terms.flatMap(term => [`name.ilike.${filterValue(`%${term}%`)}`])
     const filters = terms.flatMap((term) => {
       const pattern = filterValue(`%${term}%`)
       return [`name.ilike.${pattern}`, `summary.ilike.${pattern}`,
         `metadata->>routing_rule.ilike.${pattern}`, `metadata->>category.ilike.${pattern}`,
         `aliases.cs.${filterValue(JSON.stringify([term]))}`]
     })
-    const { data, error } = await this.db.from('entities')
-      .select(ENTITY_PROFILE_SELECT)
-      .eq('status', 'active')
-      .or(filters.join(','))
-      .order('id', { ascending: true })
-      .limit(queryLimit(limit))
-    if (error) throw new Error(`article entity lookup failed: ${error.message}`)
-    return (data ?? []).map(entityProfile)
+    const read = async (conditions: string[]) => {
+      const { data, error } = await this.db.from('entities').select(ENTITY_PROFILE_SELECT)
+        .eq('status', 'active').or(conditions.join(',')).order('id', { ascending: true }).limit(200)
+      if (error) throw new Error(`article entity lookup failed: ${error.message}`)
+      return (data ?? []).map(entityProfile)
+    }
+    const batches = await Promise.all((options.exactOnly ? [exact] : [exact, names, filters]).map(read))
+    return rankEntityCandidates(batches.flat(), terms, queryLimit(limit))
   }
 
   async recentMemories(entityIds: string[], limit: number): Promise<GateMemory[]> {

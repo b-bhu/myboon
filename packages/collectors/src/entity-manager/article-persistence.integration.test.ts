@@ -61,6 +61,7 @@ test('article migration and deterministic persistence preserve shared membership
           throw error
         }
       }
+      await client.query(readFileSync(resolve(__dirname, '../../../../supabase/migrations/20261006112717_article_entity_candidate_resolution.sql'), 'utf8'))
       await client.query('COMMIT')
     } catch (error) { await client.query('ROLLBACK'); throw error }
     finally { client.release(); await deployer.end() }
@@ -125,6 +126,32 @@ test('article migration and deterministic persistence preserve shared membership
         await assert.rejects(api.query('select * from managed_knowledge_private.article_items'), (e: unknown) => (e as { code: string }).code === '42501')
       } finally { await reader.end(); await api.end() }
       assert.deepEqual((await database.admin.query('select * from public.entity_memories order by id')).rows, before)
+    })
+    await t.test('exact identities survive more than 32 broad matches and creation ignores irrelevant candidate overflow', async () => {
+      await database.admin.query(`INSERT INTO public.entities(id,slug,name,type,aliases,summary)
+        SELECT ('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'noise-'||n,'Background '||n,'topic','[]','Bitcoin and general finance news'
+        FROM generate_series(1,40) n`)
+      const ranked = await writer!.articleContext({ labels: ['Bitcoin', 'finance'], historyMode: 'targeted', limit: 32 })
+      assert.equal(ranked.entities[0].id, SECOND_ID)
+      assert.equal(ranked.candidateTruncated, true)
+      const exact = await writer!.articleContext({ labels: ['BTC'], identityOnly: true, historyMode: 'targeted', limit: 32 })
+      assert.deepEqual(exact.entities.map(e => e.id), [SECOND_ID])
+      assert.equal(exact.candidateTruncated, false)
+      const rankedPrivate = await writer!.articleContext({ labels: ['Novel Research Narrative', 'finance'], historyMode: 'targeted', limit: 32 })
+      assert.equal(rankedPrivate.entities[0].name, 'Novel Research Narrative')
+      assert.equal(rankedPrivate.candidateTruncated, true)
+      const exactPrivate = await writer!.articleContext({ labels: ['novel narrative'], identityOnly: true, historyMode: 'targeted', limit: 32 })
+      assert.deepEqual(exactPrivate.entities.map(e => e.name), ['Novel Research Narrative'])
+      assert.equal(exactPrivate.candidateTruncated, false)
+      const proposal = { name: 'Finance Chronicle New Story', type: 'story', aliases: [], summary: 'A distinct finance development.', scope: {} }
+      const prepared = { ...membership(), entityId: null, name: proposal.name, placementDisposition: 'no_match' as const,
+        placement: choice('no_match'), creationProposal: proposal, creationDecision: choice('accept') }
+      assert.equal(await persist(article('creation-with-broad-noise', [prepared])), 'written')
+      assert.equal((await database.admin.query("select count(*)::int count from managed_knowledge_private.entities where binding->>'name'=$1", [proposal.name])).rows[0].count, 1)
+      // The replacement retains function ownership, its restricted grants and
+      // the deployer's original inability to assume the data owner.
+      const privileges = await database.admin.query("select pg_has_role('fixture_deployer','myboon_knowledge_owner','SET') can_set,has_schema_privilege('myboon_knowledge_owner','managed_knowledge_private','CREATE') can_create")
+      assert.deepEqual(privileges.rows[0], { can_set: false, can_create: false })
     })
   } finally { await writer?.close(); await database.close() }
 })

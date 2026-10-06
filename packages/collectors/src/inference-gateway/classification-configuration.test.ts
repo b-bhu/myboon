@@ -36,7 +36,7 @@ test('configuration rejects unknown workloads and unapproved model promotion', (
   assert.throws(() => createConfiguredClassificationRuntime({
     env: {
       CLASSIFICATION_SQLITE_PATH: sqlitePath(),
-      CLASSIFICATION_LIFECYCLE_JSON: '{"unknown.workload":"shadow"}',
+      CLASSIFICATION_LIFECYCLE_JSON: '{"unknown.workload":"active"}',
     },
   }), /Unknown classification workload/)
   assert.throws(() => createConfiguredClassificationRuntime({
@@ -55,11 +55,11 @@ test('configuration rejects unknown workloads and unapproved model promotion', (
   }), /approved TypeSafe System One endpoint/)
 })
 
-test('environment cannot promote Entity identity beyond its shadow-only maximum', () => {
+test('retired identity workload and shadow lifecycle cannot be enabled', () => {
   assert.throws(() => createConfiguredClassificationRuntime({
-    env: {
-      CLASSIFICATION_SQLITE_PATH: sqlitePath(),
-      CLASSIFICATION_LIFECYCLE_JSON: '{"entity.catalog_identity":"active"}',
-    },
-  }), /exceeds source-controlled maximum/)
+    env: { CLASSIFICATION_LIFECYCLE_JSON: '{"entity.catalog_identity":"active"}' },
+  }), /Unknown classification workload/)
+  assert.throws(() => createConfiguredClassificationRuntime({
+    env: { CLASSIFICATION_LIFECYCLE_JSON: '{"research.novelty":"shadow"}' },
+  }), /Unsupported classification lifecycle mode/)
 })

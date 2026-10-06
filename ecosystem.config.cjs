@@ -19,7 +19,6 @@
  * because Node 22 has ERR_REQUIRE_CYCLE_MODULE bugs with the ESM loader.
  */
 const ROOT = __dirname
-const RUNTIME_HOME = require('node:os').homedir()
 const TSX = `${ROOT}/node_modules/.bin/tsx`
 const TSX_CLI = `${ROOT}/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/cli.mjs`
 const HERMES_ENV = {
@@ -209,12 +208,12 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
-        HERMES_COMMAND: `${RUNTIME_HOME}/.local/bin/mybooneditor`,
+        HERMES_COMMAND: 'hermes',
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',
         EDITOR_DRAFT_RECENT_MEMORY_LIMIT: '3',
-        EDITOR_DRAFT_LANE_MEMORY_LIMIT: '20',
+        EDITOR_DRAFT_LANE_MEMORY_LIMIT: '10',
         EDITOR_DRAFT_PRIOR_DRAFT_LIMIT: '10',
         EDITOR_DRAFT_PUBLISHED_HISTORY_LIMIT: '10',
       },
@@ -234,70 +233,6 @@ module.exports = {
         PUBLISHER_INTERVAL_MS: '300000',
         PUBLISHER_BATCH_SIZE: '10',
         PUBLISHER_PREVIEW_ONLY: '0',
-      },
-    },
-    {
-      name: 'myboon-hermes-orphan-sweeper',
-      script: 'src/hermes/run-orphan-sweeper.ts',
-      interpreter: TSX,
-      cwd: `${ROOT}/packages/collectors`,
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      env: {
-        HERMES_ORPHAN_SWEEP_INTERVAL_MS: '300000',
-        HERMES_ORPHAN_MAX_AGE_MS: '900000',
-        HERMES_ORPHAN_KILL_GRACE_MS: '5000',
-        HERMES_ORPHAN_WORKSPACE_ROOT: ROOT,
-      },
-    },
-    {
-      // Daily, overlap-guarded Entity catalogue maintenance. Model findings
-      // remain proposals; only deterministic, database-revalidated and
-      // reversible cleanups receive mutation authority.
-      name: 'myboon-entity-catalog-maintenance',
-      script: 'src/entity-maintenance/run-entity-catalog-maintenance.ts',
-      interpreter: TSX,
-      cwd: `${ROOT}/packages/collectors`,
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      // Shutdown stops after the active bounded Hermes batch (120s max) and
-      // releases the database lease before PM2 may force-kill the process.
-      kill_timeout: 300000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      env: {
-        ...HERMES_ENV,
-        ENTITY_CATALOG_MAINTENANCE_RUN_ONCE: '0',
-        ENTITY_CATALOG_MAINTENANCE_MODE: 'apply',
-        ENTITY_CATALOG_MAINTENANCE_INTERVAL_MS: '86400000',
-        ENTITY_CATALOG_MAINTENANCE_SCOPE: 'auto',
-        ENTITY_CATALOG_MAINTENANCE_BATCH_SIZE: '8',
-        ENTITY_CATALOG_MAINTENANCE_HERMES_TIMEOUT_MS: '120000',
-        ENTITY_CATALOG_MAINTENANCE_LEASE_MS: '1800000',
-        ENTITY_CATALOG_MAINTENANCE_PROVIDER: 'ollama-cloud',
-        ENTITY_CATALOG_MAINTENANCE_MODEL: 'glm-5.3-flash',
-      },
-    },
-    {
-      // Best-effort Jev shadow execution is isolated from every authoritative
-      // pipeline. Workloads are safe-off unless CLASSIFICATION_LIFECYCLE_JSON
-      // enables a source-controlled shadow definition.
-      name: 'myboon-classification-shadow',
-      script: 'src/inference-gateway/run-classification-shadow.ts',
-      interpreter: TSX,
-      cwd: `${ROOT}/packages/collectors`,
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      kill_timeout: 30000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      env: {
-        CLASSIFICATION_SHADOW_INTERVAL_MS: '2000',
       },
     },
     {

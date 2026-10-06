@@ -10,7 +10,7 @@ import { createConfiguredClassificationRuntime } from '../inference-gateway/clas
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
 import type { ClassificationRequest, ClassificationResult, JevAnswer } from '../inference-gateway/classification-types'
 import { InferenceGatewayError } from '../inference-gateway/errors'
-import { articleStoryRelationshipDefinition } from '../inference-gateway/classification-definitions'
+import { articleNoveltyDefinition, articleStoryRelationshipDefinition } from '../inference-gateway/classification-definitions'
 
 const answer = (key: string): JevAnswer => ({ type: 'choice', choice: key, confidence: .95, probabilities: { [key]: .95, alternative: .05 } })
 const signal = managedFixture('article-decision').handoffContext.signal
@@ -140,4 +140,73 @@ test('required article Jev preserves provider failure and never relabels it as a
     (error: unknown) => error instanceof InferenceGatewayError && error.category === 'invalid_structured_output' && /HTTP 400/.test(error.message))
     assert.equal(fallbackCalls, 0)
   } finally { runtime.close(); rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('joint historical outcomes cannot declare continuation without a real target, even with empty history', () => {
+  const definition = articleStoryRelationshipDefinition()
+  const state = { article: { title: 'CertiK AI tracing', sourceText: 'CertiK adds an AI tracing capability.', publishedAt: null, observedAt: signal.observedAt },
+    entity: { id: 'certik', name: 'CertiK' }, recentItems: [] }
+  const questions = definition.questions(state)
+  assert.deepEqual(Object.keys(questions.relationship_target.criteria!), ['same_topic_only', 'unrelated', 'uncertain'])
+  assert.equal(definition.decodeJev({ relationship_target: answer('direct_continuation:legacy:missing') }, state).valid, false)
+  assert.equal(definition.decodeJev({ relationship_target: answer('same_topic_only:unknown') }, state).valid, false)
+  const withHistory = { ...state, recentItems: [{ id: 'earlier', source: 'legacy' as const, title: 'Earlier update', summary: 'Earlier development.', eventAt: signal.observedAt }] }
+  assert.equal(definition.decodeJev({ relationship_target: answer('same_topic_only:legacy:earlier') }, withHistory).valid, false)
+  assert.equal(definition.decodeJev({ relationship_target: answer('direct_continuation:managed:earlier') }, withHistory).valid, false)
+  assert.equal(definition.decodeJev({ relationship_target: answer('direct_continuation:legacy:earlier') }, withHistory).valid, true)
+  const standalone = definition.decodeJev({ relationship_target: answer('same_topic_only') }, state)
+  assert.equal(standalone.valid, true)
+  if (standalone.valid) assert.equal(standalone.value.priorItemId, null)
+})
+
+test('an exact existing identity is confirmed by Jev instead of creating a duplicate after a no-match shortlist', async () => {
+  let placementCalls = 0, creationChecks = 0
+  const exact = { id: 'raoul-pal', name: 'Raoul Pal', aliases: [], summary: 'Macro commentator', scope: {} }
+  const gateway = { async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload.endsWith('entity_placement')) {
+      placementCalls++
+      const present = (request.state as { candidates: typeof exact[] }).candidates.some(e => e.id === exact.id)
+      value = present ? { entityId: exact.id, disposition: 'selected' } : { entityId: null, disposition: 'no_match' }
+      answers = { placement: answer(present ? exact.id : 'no_match') }
+    } else if (request.workload.endsWith('entity_proposal_validation')) { creationChecks++; throw new Error('must use the existing identity') }
+    else if (request.workload.endsWith('story_relationship')) { value = { relationship: 'same_topic_only', priorItemId: null }; answers = { relationship_target: answer('same_topic_only') } }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  const result = await prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'missing-raoul', sourceText: 'Raoul Pal predicts a crypto bull run.',
+    context: { candidates: [], historyByEntity: new Map(), coverageFailures: [], findExactEntities: async labels => { assert.ok(labels.includes('Raoul Pal')); return [exact] } },
+    proposeCreation: async () => ({ ...exact, type: 'person', summary: exact.summary }) })
+  assert.equal(result.memberships[0].entityId, exact.id)
+  assert.equal(result.memberships[0].creationProposal, null)
+  assert.equal(placementCalls, 2); assert.equal(creationChecks, 0)
+})
+
+test('one bounded duplicate recheck can preserve a new narrative development without suppressing it', async () => {
+  let noveltyCalls = 0
+  const c = context(); c.candidates = c.candidates.slice(0, 1)
+  const gateway = { async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: answer('bitcoin') } }
+    else if (request.workload.endsWith('story_relationship')) { value = { relationship: 'duplicate', priorItemId: 'bitcoin-0', priorItemSource: 'legacy' }; answers = { relationship_target: answer('duplicate:legacy:bitcoin-0') } }
+    else {
+      noveltyCalls++
+      if (noveltyCalls === 1) { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+      else {
+        assert.equal((request.state as {selectedTargets: unknown[]}).selectedTargets.length, 1)
+        const validated = articleNoveltyDefinition().validateState(request.state)
+        assert.equal(validated.valid, true)
+        if (validated.valid) assert.ok(validated.value.reconciliation)
+        value = { verdict: 'new_information', primaryRelationship: 'related_story_branch' }
+        answers = { novelty: answer('new_information:related_story_branch') }
+      }
+    }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'recheck', signal, sourceText: 'A new Bitcoin development.', context: c })
+  assert.equal(noveltyCalls, 2)
+  assert.equal(result.novelty.choice, 'new_information')
+  assert.equal(result.memberships[0].relationship, 'related_story_branch')
+  assert.equal(result.memberships[0].priorItemId, 'bitcoin-0')
+  assert.equal(result.memberships[0].duplicateTarget, null)
 })

@@ -1366,6 +1366,15 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     return rows.map((row) => JSON.parse(row.canonical_json) as D2ReservationRecord)
   }
 
+  /** Operational totals must include reservations beyond the bounded browser. */
+  countUnresolvedResearchReservations(): number {
+    this.assertOpen()
+    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM signal_platform_research_reservations
+      WHERE source_type = ? AND state IN ('dispatch_intent', 'execution_outcome_unknown')`)
+      .get(this.sourceType) as { count: number }
+    return Number(row.count)
+  }
+
   /** SQLite uniqueness owns allowance exclusivity; list-then-insert alone does not. */
   researchBudgetStore(): BudgetStorePort {
     const read = (key: D2ReservationKey): D2ReservationRecord | null => {

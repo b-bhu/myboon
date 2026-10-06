@@ -1,4 +1,5 @@
 import { InferenceGatewayError, type InferenceTelemetry } from '../inference-gateway'
+import { latestArticleCapture } from './article-capture'
 import type {
   ExecutionEventStatus,
   ExecutionTraceEvent,
@@ -318,8 +319,8 @@ export class SharedResearchWorker {
     this.evidenceReadLimit = boundedInteger(options.evidenceReadLimit ?? 100, 'evidenceReadLimit', 1, 1_000)
     this.retrievalLimits = validateRetrievalLimits({
       maxSources: 5,
-      maxBytesPerSource: 1_000_000,
-      maxTotalBytes: 3_000_000,
+      maxBytesPerSource: 3_000_000,
+      maxTotalBytes: 9_000_000,
       maxTextCharsPerSource: 100_000,
       maxRedirects: 3,
       timeoutMs: 30_000,
@@ -918,7 +919,7 @@ export class SharedResearchWorker {
     if (!supportsResearchV4Store(input.store)) throw new Error('Article synthesis requires a durable V4 store')
     const articleStore = input.store
     if (!v4.article) throw new ArticleResearchHold('required_jev_disabled', 'Article synthesis is held because the required Jev article workflow is not configured.')
-    const source = input.evidence.find((artifact) => artifact.authority === 'source_url')
+    const source = latestArticleCapture(input.evidence)
     const reader = v4.article.contextReader(input.signal, input.lease.work) as EntityMemoryReader & {
       articleContext?(input?: { sourceUrl: string | null, terms: readonly string[] }): Promise<ArticleResearchContext>
     }

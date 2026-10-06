@@ -19,6 +19,7 @@ import {
   type ArticleStoryRelationshipDecision,
 } from '../inference-gateway/classification-definitions'
 import type { ArticleResearchContext } from '../research-gate/managed-context-reader'
+import { rankEntityCandidates } from '../research-gate/entity-candidates'
 
 /**
  * Code retrieves a bounded catalogue first. Jev then selects placement and
@@ -40,7 +41,7 @@ export async function prepareArticlePlacement(input: {
     throw new ArticleResearchHold('source_input_too_large', `Captured article exceeds the ${ARTICLE_DECISION_SOURCE_MAX_CHARS}-character Jev source-input bound.`)
   }
   assertContextCoverage(input.context)
-  let candidates = input.context.candidates.slice(0, 32)
+  let candidates = rankEntityCandidates(input.context.candidates, articleLookupTerms(input.signal))
   let placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
     workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PLACEMENT_VERSION,
     state: articleDecisionState('placement', { article: { title: input.signal.title, text: input.sourceText }, candidates }),
@@ -49,7 +50,7 @@ export async function prepareArticlePlacement(input: {
   if (!placement.value.entityId && input.context.widenCandidates) {
     const widened = await input.context.widenCandidates(articleLookupTerms(input.signal, input.sourceText))
     assertContextCoverage(input.context)
-    const merged = [...new Map([...widened, ...candidates].map((candidate) => [candidate.id, candidate])).values()].slice(0, 32)
+    const merged = rankEntityCandidates([...widened, ...candidates], articleLookupTerms(input.signal, input.sourceText))
     if (merged.some((candidate, index) => candidate.id !== candidates[index]?.id) || merged.length !== candidates.length) {
       candidates = merged
       placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
@@ -59,26 +60,44 @@ export async function prepareArticlePlacement(input: {
       })
     }
   }
-  const selected = placement.value.entityId
+  let selected = placement.value.entityId
   if (!selected) {
     if (placement.value.disposition === 'uncertain') {
       throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev could not safely resolve article placement after bounded catalogue retrieval.')
     }
     if (!input.proposeCreation) throw new ArticleResearchHold('entity_resolution_no_match', 'Jev found no matching entity and no durable source-grounded creation proposal is configured.')
     const creationProposal = await input.proposeCreation()
-    const creationValidation = await input.gateway.classify<ArticleEntityProposalValidationDecision>({
-      workload: ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION,
-      state: articleDecisionState('creation proposal validation', { article: { title: input.signal.title, text: input.sourceText }, proposal: creationProposal }),
-      trace: { stableDecisionKey: `${input.stableDecisionKey}:creation-proposal`, correlationIds: { signalId: input.signal.signalId } },
-    })
-    if (creationValidation.value.disposition === 'uncertain') throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev could not safely validate the source-grounded new-entity proposal.')
-    if (creationValidation.value.disposition === 'reject') throw new ArticleResearchHold('entity_resolution_no_match', 'Jev rejected the source-grounded new-entity proposal; an actionable identity is required.')
-    return { memberships: [{
-      entityId: null, placementDisposition: placement.value.disposition, role: 'primary', name: creationProposal.name, type: creationProposal.type, aliases: [...creationProposal.aliases],
-      summary: creationProposal.summary, scope: { ...creationProposal.scope }, creationProposal, creationDecision: choice(creationValidation, 'proposal'),
-      placement: choice(placement, 'placement'), relationship: null, relationshipDecision: null, priorItemDecision: null,
-      priorItemId: null, priorItemSource: null, duplicateTarget: null,
-    }], novelty: await novelty(input, [], []), contextualHistory: 'No existing entity placement was selected; Entity Manager must assess the bounded creation proposal.' }
+    if (input.context.findExactEntities) {
+      let exact: ArticleResearchContext['candidates']
+      try { exact = await input.context.findExactEntities([creationProposal.name, ...creationProposal.aliases]) }
+      catch { throw new ArticleResearchHold('context_coverage_unavailable', 'Exact entity identity lookup failed; no creation is allowed without complete identity coverage.') }
+      assertContextCoverage(input.context)
+      if (exact.length > 0) {
+        candidates = rankEntityCandidates([...exact, ...candidates], [creationProposal.name, ...creationProposal.aliases])
+        placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
+          workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PLACEMENT_VERSION,
+          state: articleDecisionState('exact identity placement', { article: { title: input.signal.title, text: input.sourceText }, candidates }),
+          trace: { stableDecisionKey: `${input.stableDecisionKey}:placement:exact-identity`, correlationIds: { signalId: input.signal.signalId } },
+        })
+        selected = placement.value.entityId
+        if (!selected) throw new ArticleResearchHold('entity_resolution_uncertain', 'An existing exact entity identity was found but Jev could not resolve placement; the identity will not be duplicated.')
+      }
+    }
+    if (!selected) {
+      const creationValidation = await input.gateway.classify<ArticleEntityProposalValidationDecision>({
+        workload: ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION,
+        state: articleDecisionState('creation proposal validation', { article: { title: input.signal.title, text: input.sourceText }, proposal: creationProposal }),
+        trace: { stableDecisionKey: `${input.stableDecisionKey}:creation-proposal`, correlationIds: { signalId: input.signal.signalId } },
+      })
+      if (creationValidation.value.disposition === 'uncertain') throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev could not safely validate the source-grounded new-entity proposal.')
+      if (creationValidation.value.disposition === 'reject') throw new ArticleResearchHold('entity_resolution_no_match', 'Jev rejected the source-grounded new-entity proposal; an actionable identity is required.')
+      return { memberships: [{
+        entityId: null, placementDisposition: placement.value.disposition, role: 'primary', name: creationProposal.name, type: creationProposal.type, aliases: [...creationProposal.aliases],
+        summary: creationProposal.summary, scope: { ...creationProposal.scope }, creationProposal, creationDecision: choice(creationValidation, 'proposal'),
+        placement: choice(placement, 'placement'), relationship: null, relationshipDecision: null, priorItemDecision: null,
+        priorItemId: null, priorItemSource: null, duplicateTarget: null,
+      }], novelty: await novelty(input, [], []), contextualHistory: 'No existing entity placement was selected; Entity Manager must assess the bounded creation proposal.' }
+    }
   }
   const entity = candidates.find((candidate) => candidate.id === selected)
   if (!entity) throw new Error('Jev selected an entity outside the bounded candidate catalogue')
@@ -146,7 +165,8 @@ async function membership(
       if (targeted.value.relationship === 'duplicate') { relationship = targeted; relationshipHistory = older }
     }
   }
-  const prior = relationship.value.priorItemId === null ? null : relationshipHistory.find((item) => item.id === relationship.value.priorItemId) ?? null
+  const prior = relationship.value.priorItemId === null ? null : relationshipHistory.find((item) => item.id === relationship.value.priorItemId
+    && (!relationship.value.priorItemSource || item.source === relationship.value.priorItemSource)) ?? null
   if (relationship.value.relationship === 'duplicate' && !prior) {
     throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev marked a duplicate without a valid durable historical target.')
   }
@@ -177,7 +197,27 @@ async function novelty(
     state: articleDecisionState('novelty', { article: { title: input.signal.title, text: input.sourceText, publishedAt: input.signal.publishedAt, observedAt: input.signal.observedAt }, histories, selectedTargets }),
     trace: { stableDecisionKey: `${input.stableDecisionKey}:novelty`, correlationIds: { signalId: input.signal.signalId } },
   })
-  const decision = choice(result, 'novelty')
+  let decision = choice(result, 'novelty')
+  const primary = memberships.find(membership => membership.role === 'primary' && membership.duplicateTarget)
+  if (primary && ['new_information', 'contradicts_prior', 'uncertain'].includes(decision.choice)) {
+    const target = selectedTargets.find(target => target.role === 'primary' && target.id === primary.duplicateTarget!.itemId && target.source === primary.duplicateTarget!.source)
+    if (!target) throw new ArticleResearchHold('entity_resolution_uncertain', 'The primary duplicate target is unavailable for reconciliation.')
+    const reconciled = await input.gateway.classify<ArticleNoveltyDecision>({
+      workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_VERSION,
+      state: articleDecisionState('duplicate reconciliation', { article: { title: input.signal.title, text: input.sourceText, publishedAt: input.signal.publishedAt, observedAt: input.signal.observedAt }, histories,
+        selectedTargets: [target], reconciliation: { priorVerdict: decision.choice } }),
+      trace: { stableDecisionKey: `${input.stableDecisionKey}:novelty:reconcile`, correlationIds: { signalId: input.signal.signalId } },
+    })
+    decision = choice(reconciled, 'novelty', key => key.split(':')[0])
+    if (['new_information', 'contradicts_prior'].includes(decision.choice) && reconciled.value.primaryRelationship && reconciled.value.primaryRelationship !== 'duplicate') {
+      primary.relationship = reconciled.value.primaryRelationship
+      primary.relationshipDecision = choice(reconciled, 'novelty', key => key.split(':')[1] ?? (key === 'already_known' ? 'duplicate' : 'uncertain'))
+      primary.duplicateTarget = null
+      if (primary.relationship === 'same_topic_only' || primary.relationship === 'uncertain') {
+        primary.priorItemId = null; primary.priorItemSource = null; primary.priorItemDecision = null
+      }
+    }
+  }
   const duplicateTargets = memberships.flatMap((membership) => membership.duplicateTarget ? [membership.duplicateTarget] : [])
   if (decision.choice === 'already_known' && duplicateTargets.length === 0) {
     throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev marked the article already known without an exact durable duplicate target.')
@@ -222,8 +262,15 @@ async function noveltyTargets(
   return targets
 }
 
-function choice<T>(result: ClassificationResult<T>, question: string): ArticleChoiceDecision {
-  const answer = result.answers?.[question]
+function choice<T>(result: ClassificationResult<T>, question: string, project?: (key: string) => string): ArticleChoiceDecision {
+  let answer = result.answers?.[question]
+  // New relationship questions choose one valid (relationship, origin, item)
+  // combination. Marginals retain that distribution in the existing packet
+  // fields; the full joint answer remains in the durable classification record.
+  if (!answer && ['relationship', 'prior_item'].includes(question)) {
+    answer = result.answers?.relationship_target
+    project = key => question === 'relationship' ? key.split(':')[0] : key.includes(':') ? key.split(':').slice(2).join(':') : 'none'
+  }
   if (!answer || answer.type !== 'choice') throw new Error(`Jev ${question} result lacks its raw Choice distribution`)
   const entries = Object.entries(answer.probabilities)
   if (entries.length === 0 || !Object.prototype.hasOwnProperty.call(answer.probabilities, answer.choice)) {
@@ -239,8 +286,10 @@ function choice<T>(result: ClassificationResult<T>, question: string): ArticleCh
     || answer.confidence < 0 || answer.confidence > 1) {
     throw new Error(`Jev ${question} result has invalid raw Choice confidence or total`)
   }
+  const probabilities: Record<string, number> = {}
+  for (const [key, probability] of entries) { const label = project ? project(key) : key; probabilities[label] = (probabilities[label] ?? 0) + probability }
   return {
-    choice: answer.choice, probabilities: { ...answer.probabilities }, confidence: answer.confidence,
+    choice: project ? project(answer.choice) : answer.choice, probabilities, confidence: answer.confidence,
     decisionId: result.decisionId, decisionVersion: result.decisionVersion,
   }
 }
@@ -248,7 +297,10 @@ function choice<T>(result: ClassificationResult<T>, question: string): ArticleCh
 export function articleLookupTerms(signal: Signal, sourceText = ''): string[] {
   const stopWords = new Set(['the','and','for','with','from','into','this','that','are','was','were','has','have','its','their','our','your','you','will','can','could','would','should','which','what','how','why','who','when','where','not','but','all','any','now','new','after','before','about','than','over','under','out','off','one','more','most','they','them','been','said','says','https','http','com','co','to','of','on','in','at','is','as','by','it','an','be','or','we','he','she'])
   const words = (`${signal.title}\n${sourceText}`.match(/[A-Za-z0-9][A-Za-z0-9.'-]{2,}/g) ?? []).filter(word => !stopWords.has(word.toLocaleLowerCase('en-US')))
-  return [...new Set([...signal.sourceHints.entities, ...signal.sourceHints.assets, ...words].map((value) => value.trim()).filter(Boolean))].slice(0, 64)
+  const titleWords = signal.title.match(/[A-Za-z0-9][A-Za-z0-9.'-]*/g) ?? []
+  const phrases = titleWords.slice(0, 25).flatMap((_, index) => [2, 3].flatMap(size =>
+    index + size <= titleWords.length ? [titleWords.slice(index, index + size).join(' ')] : []))
+  return [...new Set([...signal.sourceHints.entities, ...signal.sourceHints.assets, ...phrases.slice(0, 24), ...words].map((value) => value.trim()).filter(Boolean))].slice(0, 64)
 }
 
 function relatedQuestion(entityId: string): string { return `related_${entityId}` }

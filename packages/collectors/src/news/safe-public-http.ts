@@ -5,6 +5,14 @@ import { isIP, type LookupFunction } from 'node:net'
 
 const DEFAULT_MAX_REDIRECTS = 5
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
+const CONNECT_TIMEOUT_MS = 5_000
+
+/** Explicit publisher migrations; never approve a redirect merely because it occurred. */
+export function approvedArticleDomains(rawUrl: string): string[] {
+  const hostname = normalizedHostname(parseHttpUrl(rawUrl))
+  return hostname === 'panewslab.com' || hostname === 'www.panewslab.com'
+    ? [hostname, 'panews.io'] : [hostname]
+}
 
 export type ResolveHost = (hostname: string) => Promise<string[]>
 
@@ -54,24 +62,46 @@ export async function fetchPublicDocument(
   const requestImpl = options.requestImpl ?? requestPinned
   const deadline = Date.now() + options.timeoutMs
   let current = parseHttpUrl(rawUrl)
+  // Queued plans may predate a publisher's reviewed domain migration. Apply
+  // only the explicit alias of an already-approved starting host; arbitrary
+  // redirects and starting hosts still require the caller's original policy.
+  const startingHost = normalizedHostname(current)
+  const allowedDomains = options.allowedDomains && isAllowedHostname(startingHost, options.allowedDomains)
+    ? [...new Set([...options.allowedDomains, ...approvedArticleDomains(rawUrl)])]
+    : options.allowedDomains
   const visitedHosts: string[] = []
 
   for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
     const remainingMs = deadline - Date.now()
     if (remainingMs <= 0) throw timeoutError('Safe article fetch timed out')
     const hostname = normalizedHostname(current)
-    if (options.allowedDomains && !isAllowedHostname(hostname, options.allowedDomains)) {
+    if (allowedDomains && !isAllowedHostname(hostname, allowedDomains)) {
       throw new Error(`Article URL host is outside the approved domain policy: ${hostname}`)
     }
-    const addresses = isIP(hostname) ? [hostname] : await resolveHost(hostname)
+    const addresses = isIP(hostname) ? [hostname] : await beforeDeadline(resolveHost(hostname), deadline)
     const publicAddresses = addresses.filter(isPublicAddress)
     if (addresses.length === 0 || publicAddresses.length !== addresses.length) {
       throw new Error('Article URL resolved to a non-public address')
     }
-    const address = publicAddresses[0]
     if (!visitedHosts.includes(hostname)) visitedHosts.push(hostname)
-
-    const response = await requestImpl(current, address, remainingMs, maxBytes)
+    // Validate the entire DNS answer before contacting anything. Prefer IPv4
+    // on hosts with broken IPv6 connectivity, then try another validated
+    // address only for connection/timeout failures, within the same deadline.
+    const ordered = [...new Set(publicAddresses)].sort((a, b) => Number(isIP(b) === 4) - Number(isIP(a) === 4))
+    let response: SafePublicHopResponse | undefined
+    for (let index = 0; index < ordered.length; index++) {
+      const timeLeft = deadline - Date.now()
+      if (timeLeft <= 0) throw timeoutError('Safe article fetch timed out')
+      try {
+        response = await beforeDeadline(requestImpl(current, ordered[index], timeLeft, maxBytes), deadline)
+        break
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
+        if (!['ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED', 'ECONNRESET'].includes(code)
+          || index === ordered.length - 1 || Date.now() >= deadline) throw error
+      }
+    }
+    if (!response) throw new Error('Article URL has no usable public address')
     if (!response.redirectUrl) {
       return {
         body: response.body,
@@ -134,13 +164,32 @@ function requestPinned(url: URL, address: string, timeoutMs: number, maxBytes: n
         'user-agent': 'myboon-news-research/1.0',
       },
       lookup: pinnedLookup,
+      // Reusing an agent socket can bypass this hop's validated DNS pin and
+      // inherit the agent's five-second timeout. Each hop owns its connection.
+      agent: false,
     }, (response) => {
       void consumeResponse(response, url, maxBytes).then(resolve, reject)
     })
-    request.setTimeout(timeoutMs, () => request.destroy(timeoutError('Safe article fetch timed out')))
+    const deadlineTimer = setTimeout(() => request.destroy(timeoutError('Safe article fetch timed out')), timeoutMs)
+    const connectTimer = setTimeout(() => request.destroy(timeoutError('Safe article connection timed out')), Math.min(CONNECT_TIMEOUT_MS, timeoutMs))
+    request.once('socket', (socket) => {
+      socket.once(url.protocol === 'https:' ? 'secureConnect' : 'connect', () => clearTimeout(connectTimer))
+    })
+    request.once('close', () => { clearTimeout(deadlineTimer); clearTimeout(connectTimer) })
     request.once('error', reject)
     request.end()
   })
+}
+
+async function beforeDeadline<T>(operation: Promise<T>, deadline: number): Promise<T> {
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) throw timeoutError('Safe article fetch timed out')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([operation, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(timeoutError('Safe article fetch timed out')), remaining)
+    })])
+  } finally { if (timer) clearTimeout(timer) }
 }
 
 async function consumeResponse(response: IncomingMessage, requestUrl: URL, maxBytes: number): Promise<SafePublicHopResponse> {

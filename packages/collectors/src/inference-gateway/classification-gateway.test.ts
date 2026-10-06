@@ -17,12 +17,12 @@ interface Decision { label: 'keep' | 'drop' }
 function definition(mode: ClassificationDefinition['maximumLifecycleMode'] = 'active'): ClassificationDefinition<State, Decision> {
   return {
     workload: 'test.decision', decisionVersion: 'test.decision.v1',
-    maximumLifecycleMode: mode, defaultLifecycleMode: mode, shadowPercent: 100, canaryPercent: 100,
+    maximumLifecycleMode: mode, defaultLifecycleMode: mode, canaryPercent: 100,
     jevTarget: { provider: 'typesafe', model: 'jev-1.13.0' },
     hermesTarget: { provider: 'ollama-cloud', model: 'glm-5.3-flash' },
     budget: { deadlineMs: 1_000, maxStateBytes: 1_000, maxInputTokens: 100, maxOutputTokens: 100 },
     capacity: {
-      liveConcurrency: 2, shadowConcurrency: 1, providerMaxCalls: 40, workloadMaxCalls: 20, windowMs: 1_000,
+      liveConcurrency: 2, providerMaxCalls: 40, workloadMaxCalls: 20, windowMs: 1_000,
       circuitFailureThreshold: 3, circuitCooldownMs: 1_000, leaseMs: 1_000,
     },
     validateState(value) {
@@ -70,8 +70,6 @@ function gateway(input: {
   mode?: ClassificationDefinition['maximumLifecycleMode']
   jev?: JevClassificationAdapter
   hermes?: HermesClassificationAdapter
-  shadowOutbox?: { enqueue(value: unknown): void }
-  onShadowEnqueueFailure?: (error: unknown) => void
 }) {
   const ports = new InMemoryClassificationPorts()
   let jevCalls = 0
@@ -84,8 +82,7 @@ function gateway(input: {
       return { actualProvider: call.target.provider, actualModel: call.target.model, value: { label: 'drop' },
         durationMs: 10, usage: { inputTokens: 5, outputTokens: 2 } }
     } },
-    capacity: ports, audit: ports, shadowOutbox: (input.shadowOutbox ?? ports) as never,
-    onShadowEnqueueFailure: input.onShadowEnqueueFailure,
+    capacity: ports, audit: ports,
   })
   return { instance, ports, calls: () => ({ jevCalls, hermesCalls }) }
 }
@@ -138,29 +135,6 @@ test('invalid Jev output goes directly to Hermes and double failure carries deci
   assert.equal(setup.ports.attempts[0]?.calls.length, 2)
 })
 
-test('shadow mode returns Hermes immediately and only enqueues immutable Jev work', async () => {
-  const setup = gateway({ mode: 'shadow' })
-  const result = await setup.instance.classify<Decision>(request())
-  assert.deepEqual(result.value, { label: 'drop' })
-  assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 1 })
-  assert.equal(setup.ports.shadows.length, 1)
-  assert.equal(setup.ports.shadows[0]?.decisionId, result.decisionId)
-  assert.deepEqual(setup.ports.shadows[0]?.state, { subject: 'SEC' })
-})
-
-test('shadow enqueue failure is observable and cannot change the authoritative Hermes result', async () => {
-  const observed: unknown[] = []
-  const setup = gateway({
-    mode: 'shadow',
-    shadowOutbox: { enqueue() { throw new Error('database is locked') } },
-    onShadowEnqueueFailure: (error) => observed.push(error),
-  })
-  const result = await setup.instance.classify<Decision>(request())
-  assert.deepEqual(result.value, { label: 'drop' })
-  assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 1 })
-  assert.equal((observed[0] as Error).message, 'database is locked')
-})
-
 test('caller cannot inject questions, schema, confidence policy, or budget', async () => {
   const setup = gateway({})
   await assert.rejects(setup.instance.classify({ ...request(), questions: {} } as never), /caller-owned policy fields/)
@@ -179,12 +153,11 @@ test('consumer policy outcome is a second linked record', async () => {
   assert.equal(setup.ports.outcomes[0]?.outcome, 'held')
 })
 
-test('one reserved classification call accepts Jev without fallback or shadow spend', async () => {
+test('one reserved classification call accepts Jev without fallback spend', async () => {
   const setup = gateway({})
   const result = await setup.instance.classify<Decision>({ ...request(), maxProviderCalls: 1, holdOnUnknownOutcome: true })
   assert.deepEqual(result.value, { label: 'keep' })
   assert.deepEqual(setup.calls(), { jevCalls: 1, hermesCalls: 0 })
-  assert.equal(setup.ports.shadows.length, 0)
   assert.equal(setup.ports.attempts[0]?.calls.length, 1)
 })
 
@@ -201,14 +174,6 @@ test('a low-confidence Jev answer cannot buy Hermes under a one-call reservation
   assert.equal(setup.calls().hermesCalls, 0)
   assert.equal(setup.ports.attempts[0]?.status, 'failed')
   assert.equal(setup.ports.attempts[0]?.calls[0]?.status, 'not_accepted')
-})
-
-test('one-call shadow mode keeps its authoritative Hermes call and does not enqueue a paid Jev sample', async () => {
-  const setup = gateway({ mode: 'shadow' })
-  const result = await setup.instance.classify<Decision>({ ...request(), maxProviderCalls: 1, holdOnUnknownOutcome: true })
-  assert.equal(result.actualProvider, 'ollama-cloud')
-  assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 1 })
-  assert.equal(setup.ports.shadows.length, 0)
 })
 
 for (const category of ['provider_timeout', 'provider_unavailable'] as const) {

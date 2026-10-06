@@ -462,8 +462,7 @@ export function createLiveSharedResearchRuntime(
         followupEnabled: v4Configuration.followupEnabled,
         sources: [...v4Configuration.activeSources], managedContextConfigured: v4Configuration.databaseUrl !== null,
         paidOutcomeHoldsBySource: Object.fromEntries(stores.map((store) => [store.sourceType,
-          runtimeMode === 'active' ? store.listResearchReservations(1_000).filter((row) =>
-            row.state === 'dispatch_intent' || row.state === 'execution_outcome_unknown').length : 0])),
+          runtimeMode === 'active' ? store.countUnresolvedResearchReservations() : 0])),
       },
     })
   }
