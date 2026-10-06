@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-10-06T16:50:16.930Z",
+  "wallet": "7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C",
+  "httpStatus": 200,
+  "usdcAccountCount": 1,
+  "usdcAmountsAtomic": [
+    "0"
+  ],
+  "nativeObservation": "USDC -> SOL 1 USDC quote available; Review disabled by insufficient input balance",
+  "preparation": "unverified"
+}

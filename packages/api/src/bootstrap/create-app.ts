@@ -31,9 +31,10 @@ import {
   warmMintIdentities,
 } from '../tokens/identity-service.js'
 import { createTokenRoutes } from '../tokens/routes.js'
+import { createRpcRoutes, createRpcRateLimiter, type RpcRateLimiter } from '../rpc/routes.js'
 import type { ApiConfig } from './config.js'
 
-export function createApp(config: ApiConfig): Hono {
+export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRateLimiter } = {}): Hono {
   const { SupabaseEntityKnowledgeReader } = entityManager
   const app = new Hono()
   const polymarketCatalogStore = new SupabasePolymarketCatalogStore(
@@ -106,6 +107,13 @@ export function createApp(config: ApiConfig): Hono {
   app.route('/perps/pacifica', pacificaRoutes)
   app.route('/perps/phoenix', phoenixRoutes)
   app.route('/spot', spotRoutes)
+  app.route('/rpc', createRpcRoutes({
+    solanaRpcUrl: config.solanaRpcUrl ?? 'https://api.mainnet-beta.solana.com',
+    solanaDevnetRpcUrl: config.solanaDevnetRpcUrl ?? 'https://api.devnet.solana.com',
+    polygonRpcUrl: config.polygonRpcUrl ?? 'https://polygon-rpc.com',
+    trustForwardedHeaders: config.trustProxyHeaders,
+    rateLimiter: options.rpcRateLimiter ?? createRpcRateLimiter(),
+  }))
   app.route('/tokens', createTokenRoutes({
     enabled: config.tokenIdentityEnabled,
     service: {

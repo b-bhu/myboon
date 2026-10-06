@@ -258,7 +258,10 @@ export async function createControllerFixture(
         calls.refresh++;
       },
     },
-    '@/features/perps/pacific.config': { SOLANA_RPC: 'http://fixture.invalid' },
+    '@/features/perps/pacific.config': {
+      SOLANA_RPC: 'http://fixture.invalid/rpc/solana',
+      SOLANA_RPC_WS: 'ws://fixture.invalid/rpc/solana',
+    },
     '@/hooks/useWallet': { useWallet: () => fixture.wallet },
     '@/lib/api': { resolveApiBaseUrl: () => 'http://fixture.invalid' },
   };

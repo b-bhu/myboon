@@ -1,6 +1,6 @@
 import { MeteoraDataApiClient, MeteoraSdkClient, type MeteoraTransactionBundle } from '@myboon/shared/meteora';
 import type { Connection, Transaction } from '@solana/web3.js';
-import { METEORA_RPC_URL } from './meteora.config';
+import { METEORA_RPC_URL, METEORA_RPC_WS_URL } from './meteora.config';
 import { PACIFIC_ENV } from '@/features/perps/pacific.config';
 import { assertMeteoraWalletNetwork } from './meteora.network';
 import {
@@ -21,6 +21,7 @@ import type {
 
 const sdk = new MeteoraSdkClient({
   rpcUrl: METEORA_RPC_URL,
+  rpcWsUrl: METEORA_RPC_WS_URL,
   network: 'mainnet-beta',
 });
 const approvalClient = new MeteoraDataApiClient();

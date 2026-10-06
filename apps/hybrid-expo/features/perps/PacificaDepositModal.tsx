@@ -15,7 +15,13 @@ import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { useWallet } from '@/hooks/useWallet';
 import { fetchPerpsAccount } from '@/features/perps/perps.public-api';
 import { buildDepositInstruction } from '@/features/perps/perps.deposit-api';
-import { SOLANA_RPC, USDC_MINT, USDC_LABEL, PACIFIC_MIN_DEPOSIT } from '@/features/perps/pacific.config';
+import {
+  SOLANA_RPC,
+  SOLANA_RPC_WS,
+  USDC_MINT,
+  USDC_LABEL,
+  PACIFIC_MIN_DEPOSIT,
+} from '@/features/perps/pacific.config';
 import { semantic, tokens } from '@/theme';
 import { fetchWithTimeout } from '@/lib/api';
 
@@ -65,7 +71,10 @@ async function fetchTokenBalance(owner: string): Promise<number> {
 
 export function PacificaDepositModal({ visible, onClose, onRequestConnect }: PacificaDepositModalProps) {
   const { connected, address, signAndSendTransaction } = useWallet();
-  const connection = new Connection(SOLANA_RPC);
+  const connection = new Connection(SOLANA_RPC, {
+    commitment: 'confirmed',
+    wsEndpoint: SOLANA_RPC_WS,
+  });
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [pacificBalance, setPacificBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);

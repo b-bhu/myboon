@@ -1,7 +1,8 @@
 import type { MeteoraRangePresetDefinition } from '@myboon/shared/meteora';
+import { resolveSolanaRpcUrl, resolveSolanaRpcWsUrl } from '@/lib/rpc';
 
-export const METEORA_RPC_URL = process.env.EXPO_PUBLIC_SOLANA_RPC_URL?.trim()
-  || 'https://api.mainnet-beta.solana.com';
+export const METEORA_RPC_URL = resolveSolanaRpcUrl();
+export const METEORA_RPC_WS_URL = resolveSolanaRpcWsUrl();
 
 /**
  * Keep multi-step Zap submission gated until a process restart can reconstruct

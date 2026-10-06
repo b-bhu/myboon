@@ -44,7 +44,7 @@ import {
 } from '@/features/swap/swap.controller.core';
 import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import { notifyWalletDataChanged } from '@/features/wallet/wallet.refresh';
-import { SOLANA_RPC } from '@/features/perps/pacific.config';
+import { SOLANA_RPC, SOLANA_RPC_WS } from '@/features/perps/pacific.config';
 import { useWallet } from '@/hooks/useWallet';
 import { resolveApiBaseUrl } from '@/lib/api';
 
@@ -214,7 +214,10 @@ export function useSwapController({
   const wallet = controllerOptions?.wallet ?? runtimeWallet;
   const walletSheet = controllerOptions?.walletSheet ?? runtimeWalletSheet;
   const rpc = useMemo(
-    () => controllerOptions?.rpc ?? wallet.connection ?? new Connection(SOLANA_RPC, 'confirmed'),
+    () => controllerOptions?.rpc ?? wallet.connection ?? new Connection(SOLANA_RPC, {
+      commitment: 'confirmed',
+      wsEndpoint: SOLANA_RPC_WS,
+    }),
     [controllerOptions?.rpc, wallet.connection],
   );
   const spotClient = useMemo(() => new SpotDataApiClient({ apiBaseUrl: resolveApiBaseUrl() }), []);

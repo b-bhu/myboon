@@ -26,6 +26,7 @@ import {
 import {
   METEORA_RANGE_PRESETS,
   METEORA_RPC_URL,
+  METEORA_RPC_WS_URL,
   METEORA_ZAP_EXECUTION_ENABLED,
 } from './meteora.config';
 import {
@@ -51,6 +52,7 @@ type SharedPreview =
 
 const sdk = new MeteoraSdkClient({
   rpcUrl: METEORA_RPC_URL,
+  rpcWsUrl: METEORA_RPC_WS_URL,
   network: 'mainnet-beta',
 });
 const approvalClient = new MeteoraDataApiClient();

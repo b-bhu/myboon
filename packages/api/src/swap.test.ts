@@ -432,6 +432,70 @@ test('Jupiter key is server-only and upstream failures use the stable envelope',
   assert.equal(typeof error.error.code, 'string')
 })
 
+test('discovery, quote, order and execute use only the backend Jupiter credential', async () => {
+  const requests: { path: string; method: string; key: string | null; authorization: string | null }[] = []
+  const serverKey = 'fixture-server-jupiter-key'
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = new Headers(init?.headers)
+    requests.push({ path: url.pathname, method: init?.method ?? 'GET', key: headers.get('x-api-key'), authorization: headers.get('authorization') })
+    assert.equal(url.searchParams.has('apiKey'), false)
+    assert.equal(url.searchParams.has('x-api-key'), false)
+    if (url.pathname.startsWith('/tokens/')) return Response.json([providerToken(USDC)])
+    if (url.pathname === '/price/v3') return Response.json({ [SOL]: { usdPrice: 150, providerSecret: serverKey } })
+    if (url.pathname === '/swap/v2/order') {
+      assert.equal(url.searchParams.get('excludeRouters'), 'jupiterz')
+      const taker = url.searchParams.get('taker')
+      return Response.json({
+        requestId: 'backend-key-order', inputMint: SOL, outputMint: USDC,
+        inAmount: '100', outAmount: '200', otherAmountThreshold: '190', slippageBps: 25,
+        router: 'metis', gasless: false, providerSecret: serverKey,
+        ...(taker ? { taker, transaction: 'AA==', lastValidBlockHeight: '123' } : { transaction: null }),
+      })
+    }
+    assert.equal(url.pathname, '/swap/v2/execute')
+    assert.deepEqual(JSON.parse(String(init?.body)), { signedTransaction: 'AA==', requestId: 'backend-key-order', lastValidBlockHeight: '123' })
+    return Response.json({ status: 'Success', code: 0, signature: 'fixture-signature', providerSecret: serverKey })
+  }) as typeof fetch
+  const app = buildApp({ fetchImpl, jupApiKey: serverKey })
+  const headers = { 'content-type': 'application/json', 'x-api-key': 'untrusted-client-key', authorization: 'Bearer untrusted-client-token' }
+  for (const path of ['/swap/tokens?limit=1', '/swap/tokens/search?query=USDC', `/swap/prices?ids=${SOL}`]) {
+    const response = await app.request(path, { headers })
+    assert.equal(response.status, 200)
+    assert.equal((await response.text()).includes(serverKey), false)
+  }
+  for (const taker of [undefined, WALLET]) {
+    const response = await app.request('/swap/order', {
+      method: 'POST', headers,
+      body: JSON.stringify({ inputMint: SOL, outputMint: USDC, amountAtomic: '100', ...(taker ? { taker } : {}) }),
+    })
+    assert.equal(response.status, 200)
+    assert.equal((await response.text()).includes(serverKey), false)
+  }
+  const response = await app.request('/swap/execute', {
+    method: 'POST', headers,
+    body: JSON.stringify({ signedTransaction: 'AA==', requestId: 'backend-key-order', lastValidBlockHeight: '123' }),
+  })
+  assert.equal(response.status, 200)
+  assert.equal((await response.text()).includes(serverKey), false)
+  assert.equal(requests.length, 6)
+  assert.ok(requests.every((request) => request.key === serverKey && request.authorization === null))
+  assert.equal(requests.at(-1)?.method, 'POST')
+})
+
+test('clients cannot supply Jupiter credentials or routing policy in an order payload', async () => {
+  let calls = 0
+  const app = buildApp({ fetchImpl: (async () => { calls++; return Response.json({}) }) as typeof fetch })
+  for (const extra of [{ apiKey: 'fixture-client-key' }, { jupApiKey: 'fixture-client-key' }, { excludeRouters: 'metis' }]) {
+    const response = await app.request('/swap/order', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ inputMint: SOL, outputMint: USDC, amountAtomic: '100', ...extra }),
+    })
+    assert.equal(response.status, 400)
+  }
+  assert.equal(calls, 0)
+})
+
 test('SQLite execution metadata survives a store reopen without persisting transaction bytes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'myboon-swap-'))
   const path = join(dir, 'swap.sqlite')

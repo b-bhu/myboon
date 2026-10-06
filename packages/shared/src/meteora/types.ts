@@ -9,6 +9,7 @@ export type MeteoraSortDirection = 'asc' | 'desc'
 
 export interface MeteoraClientConfig {
   rpcUrl?: string
+  rpcWsUrl?: string
   network?: MeteoraNetwork
   dataApiUrl?: string
   fetch?: typeof fetch

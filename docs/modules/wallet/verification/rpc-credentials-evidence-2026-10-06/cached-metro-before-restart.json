@@ -1,0 +1,12 @@
+{
+  "runDate": "2026-10-06",
+  "source": "Actual in-memory Android development bundle inspection before the user-approved Metro restart; no bundle or credential values saved",
+  "bundleHTTP": 200,
+  "bundleBytes": 44000503,
+  "jupiterKeyPresent": false,
+  "heliusCredentialPresent": true,
+  "alchemyCredentialPresent": true,
+  "manifestHTTP": 500,
+  "manifestClientCredentialFenceRejectedRetiredVariables": true,
+  "resolution": "One approved restart after removing public RPC environment variables; see android-bundle-credentials.json for the fresh bundle"
+}

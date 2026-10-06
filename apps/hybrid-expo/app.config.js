@@ -1,8 +1,8 @@
 // Dynamic Expo config.
 //
 // The static app.json remains the source of truth for every field. Expo reads it
-// first and passes the parsed result in as `config`; this file exists only to run
-// the release fence below before returning that config untouched.
+// first and passes the parsed result in as `config`; this file runs the release
+// and client-credential fences before returning that config untouched.
 //
 // Fence: `EXPO_PUBLIC_PREDICT_E2E=1` swaps the wallet layer for a stub that hands
 // every caller the same fixed keypair and a constant 64-byte signature
@@ -88,9 +88,61 @@ const REQUIRED_PUBLIC_ENV = [
   ['EXPO_PUBLIC_API_BASE_URL', 'the API every screen reads from'],
   ['EXPO_PUBLIC_PRIVY_APP_ID', 'Privy auth — login and embedded wallets'],
   ['EXPO_PUBLIC_PRIVY_CLIENT_ID', 'Privy auth — required for mobile clients'],
-  ['EXPO_PUBLIC_SOLANA_RPC_URL', 'Solana reads; the public fallback is rate-limited'],
-  ['EXPO_PUBLIC_POLYGON_RPC_URL', 'Polygon reads and Predict transaction confirmation'],
 ];
+
+// RPC credentials belong to the API, including keys embedded in URL paths or
+// queries. The app derives its RPC endpoints from EXPO_PUBLIC_API_BASE_URL.
+const RETIRED_RPC_ENV = new Set([
+  'EXPO_PUBLIC_SOLANA_RPC_URL',
+  'EXPO_PUBLIC_POLYGON_RPC_URL',
+]);
+
+function credentialName(name) {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return /(?:apikey|apisecret|privatekey|secret|password|accesstoken)$/.test(normalized)
+    || /(?:jup(?:iter)?|helius|alchemy|quicknode|quiknode)(?:rpc)?(?:key|token|apitoken)$/.test(normalized);
+}
+
+function credentialUrl(value) {
+  if (typeof value !== 'string' || !/^(?:https?|wss?):\/\//i.test(value)) return false;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return true;
+    for (const name of url.searchParams.keys()) {
+      if (credentialName(name) || ['key', 'token', 'auth'].includes(name.toLowerCase())) return true;
+    }
+    // These providers encode credentials in paths, so query-only checks miss
+    // an Alchemy URL such as /v2/<key>. No provider RPC URL belongs in the app.
+    return /(?:^|\.)(?:helius-rpc\.com|helius\.xyz|alchemy\.com|alchemyapi\.io|quiknode\.pro)$/.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function assertClientCredentialsAreAbsent(env, config) {
+  const forbidden = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (!name.startsWith('EXPO_PUBLIC_') || !value?.trim()) continue;
+    if (RETIRED_RPC_ENV.has(name) || credentialName(name) || credentialUrl(value)) forbidden.push(name);
+  }
+  const seen = new Set();
+  function inspect(value, path) {
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    for (const [name, item] of Object.entries(value)) {
+      const itemPath = `${path}.${name}`;
+      if (item && (credentialName(name) || credentialUrl(item))) forbidden.push(itemPath);
+      else inspect(item, itemPath);
+    }
+  }
+  inspect(config.extra, 'extra');
+  if (forbidden.length === 0) return;
+  throw new Error(
+    `Client credentials are forbidden: ${forbidden.join(', ')}. `
+    + 'Keep Jupiter and RPC credentials in the API environment; the app uses the backend gateway. '
+    + 'Remove retired public RPC overrides. Credential values are intentionally omitted.',
+  );
+}
 
 /**
  * Enforced only for builds that can reach a user, matching the E2E fence above.
@@ -122,6 +174,7 @@ function assertRequiredEnvIsPresent(env) {
 }
 
 module.exports = ({ config }) => {
+  assertClientCredentialsAreAbsent(process.env, config);
   assertE2EStubIsFencedOff(process.env);
   assertRequiredEnvIsPresent(process.env);
   return config;

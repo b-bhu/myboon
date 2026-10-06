@@ -1,0 +1,9 @@
+{"time": 1791305215.5221581, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791305248.111238, "action": "type", "label": "You pay amount", "value": "0.0089374"}
+{"time": 1791305261.828403, "action": "tap", "label": "Review swap", "point": [540, 1231]}
+{"time": 1791305339.7891169, "action": "tap", "label": "Reverse pair", "point": [540, 736]}
+{"time": 1791305343.2347012, "action": "type", "label": "You pay amount", "value": "1"}
+{"time": 1791305419.87079, "action": "tap", "label": "Reverse pair", "point": [540, 736]}
+{"time": 1791305423.599614, "action": "type", "label": "You pay amount", "value": "0.0089374"}
+{"time": 1791305675.082499, "action": "tap", "label": "Reverse pair", "point": [540, 736]}
+{"time": 1791305730.1069708, "action": "type", "label": "You pay amount", "value": "0.0089374"}

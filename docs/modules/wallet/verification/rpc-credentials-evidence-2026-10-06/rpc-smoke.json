@@ -1,0 +1,55 @@
+{
+  "checkedAt": "2026-10-06T16:48:56.844Z",
+  "results": [
+    {
+      "check": "Custodial signing method rejected",
+      "status": "pass",
+      "detail": {
+        "httpStatus": 400,
+        "rpcCode": -32601
+      }
+    },
+    {
+      "check": "Solana mainnet blockhash and account reads",
+      "status": "pass",
+      "detail": {
+        "blockhashAvailable": true,
+        "wrappedSolMintOwnerMatches": true
+      }
+    },
+    {
+      "check": "Wallet balance agrees with independent direct provider read",
+      "status": "pass",
+      "detail": {
+        "wallet": "7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C",
+        "lamports": 40749602,
+        "matched": true
+      }
+    },
+    {
+      "check": "Solana devnet gateway",
+      "status": "pass",
+      "detail": {
+        "blockhashAvailable": true
+      }
+    },
+    {
+      "check": "Polygon chain, block and read-only contract call",
+      "status": "pass",
+      "detail": {
+        "chainId": 137,
+        "blockAvailable": true,
+        "usdcDecimals": 6
+      }
+    },
+    {
+      "check": "Same-port Solana subscribe, notification and unsubscribe",
+      "status": "pass",
+      "detail": {
+        "samePort": true,
+        "slotNotificationReceived": true,
+        "unsubscribed": true
+      }
+    }
+  ]
+}

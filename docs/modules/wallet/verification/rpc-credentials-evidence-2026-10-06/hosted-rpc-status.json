@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-10-06T16:46:54.640Z",
+  "hostedApi": "https://api.myboon.tech",
+  "routes": [
+    {
+      "network": "solana",
+      "httpStatus": 404
+    },
+    {
+      "network": "solana-devnet",
+      "httpStatus": 404
+    },
+    {
+      "network": "polygon",
+      "httpStatus": 404
+    }
+  ]
+}

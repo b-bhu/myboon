@@ -122,7 +122,10 @@ export class MeteoraSdkClient {
     }
     this.network = config.network ?? 'mainnet-beta'
     this.programId = METEORA_DLMM_PROGRAM_IDS[this.network]
-    this.connection = new Connection(config.rpcUrl, 'confirmed')
+    this.connection = new Connection(
+      config.rpcUrl,
+      config.rpcWsUrl ? { commitment: 'confirmed', wsEndpoint: config.rpcWsUrl } : 'confirmed',
+    )
     this.executionDefaults = resolveExecutionDefaults(config.execution)
     this.zap = new Zap(this.connection)
   }

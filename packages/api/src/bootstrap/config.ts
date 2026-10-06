@@ -17,6 +17,12 @@ export type ApiConfig = {
   swapPriorityFeeMaxLamports?: string
   swapSqlitePath?: string
   swapTradingEnabled?: boolean
+  solanaRpcUrl?: string
+  solanaDevnetRpcUrl?: string
+  polygonRpcUrl?: string
+  solanaWsRpcUrl?: string
+  solanaDevnetWsRpcUrl?: string
+  trustProxyHeaders?: boolean
 }
 
 export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -49,6 +55,9 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       : (env.OPENAI_API_KEY ? 'gpt-4o-mini' : (env.XAI_MODEL ?? 'grok-3-mini')))
 
   const tokenIdentityEnabled = env.TOKEN_IDENTITY_ENABLED === '1' || env.TOKEN_IDENTITY_ENABLED === 'true'
+  const solanaRpcUrl = env.SOLANA_RPC_URL?.trim() || env.HELIUS_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com'
+  const solanaDevnetRpcUrl = env.SOLANA_DEVNET_RPC_URL?.trim() || 'https://api.devnet.solana.com'
+  const polygonRpcUrl = env.POLYGON_RPC_URL?.trim() || 'https://polygon-rpc.com'
 
   // Keep the server-owned fee ceiling bounded even when deployment config is
   // incomplete. Invalid values fall back to a conservative one-million
@@ -79,5 +88,11 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     swapPriorityFeeMaxLamports: priorityFee,
     swapSqlitePath: env.SWAP_SQLITE_PATH?.trim() || '.data/swap.sqlite',
     swapTradingEnabled: env.SWAP_TRADING_KILL_SWITCH !== '1' && env.SWAP_TRADING_KILL_SWITCH !== 'true',
+    solanaRpcUrl,
+    solanaDevnetRpcUrl,
+    polygonRpcUrl,
+    solanaWsRpcUrl: env.SOLANA_WS_RPC_URL?.trim() || undefined,
+    solanaDevnetWsRpcUrl: env.SOLANA_DEVNET_WS_RPC_URL?.trim() || undefined,
+    trustProxyHeaders: env.TRUST_PROXY_HEADERS === '1' || env.TRUST_PROXY_HEADERS === 'true',
   }
 }

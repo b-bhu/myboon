@@ -19,6 +19,7 @@ import type {
 import * as Crypto from 'expo-crypto';
 import type { Signer } from '@/features/chain/chain.contract';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
+import { resolvePolygonRpcUrl } from '@/lib/rpc';
 
 type ApiKeyCreds = SecureClient['credentials'];
 
@@ -27,8 +28,7 @@ const CLOB_HOST = process.env.EXPO_PUBLIC_CLOB_HOST?.trim()
 const RELAYER_HOST = process.env.EXPO_PUBLIC_RELAYER_HOST?.trim()
   || `${resolveApiBaseUrl()}/clob/relayer-proxy`;
 const BUILDER_SIGN_URL = `${resolveApiBaseUrl()}/clob/builder/sign`;
-const POLYGON_RPC_URL = process.env.EXPO_PUBLIC_POLYGON_RPC_URL?.trim()
-  || 'https://polygon-rpc.com';
+const POLYGON_RPC_URL = resolvePolygonRpcUrl();
 const BUILDER_PROOF_TTL_MS = 3 * 60 * 1000;
 
 export const POLYMARKET_BUILDER_CODE =

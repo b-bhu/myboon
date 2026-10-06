@@ -1,0 +1,8 @@
+{
+  "checkedAt": "2026-10-06T17:01:39.561Z",
+  "status": "pass",
+  "method": "getMinimumBalanceForRentExemption",
+  "accountBytes": 165,
+  "gatewayLamports": 1488440,
+  "directProviderLamports": 1488440
+}

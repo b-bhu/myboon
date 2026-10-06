@@ -3,12 +3,16 @@ const REQUEST_TIMEOUT_MS = 20_000;
 
 function productionApiBaseUrl() {
   const value = (process.env.RELEASE_API_BASE_URL ?? DEFAULT_API_BASE_URL).trim();
-  const parsed = new URL(value);
+  let parsed;
+  try { parsed = new URL(value); } catch {
+    throw new Error('Release API must be a valid public HTTPS endpoint.');
+  }
   const hostname = parsed.hostname.toLowerCase();
   const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
 
-  if (parsed.protocol !== 'https:' || localHostnames.has(hostname)) {
-    throw new Error(`Release API must be a public HTTPS endpoint, received ${value}`);
+  if (parsed.protocol !== 'https:' || localHostnames.has(hostname)
+      || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('Release API must be a public HTTPS endpoint without credentials or query parameters.');
   }
 
   return value.replace(/\/$/, '');
@@ -16,13 +20,14 @@ function productionApiBaseUrl() {
 
 const API_BASE_URL = productionApiBaseUrl();
 
-async function request(path) {
+async function request(path, init = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
-      headers: { Accept: 'application/json' },
+      ...init,
+      headers: { Accept: 'application/json', ...init.headers },
       signal: controller.signal,
     });
     const text = await response.text();
@@ -59,11 +64,33 @@ async function check(label, run) {
 }
 
 async function run() {
-  console.log(`Production endpoint check → ${API_BASE_URL}\n`);
+  console.log(`Production endpoint check → ${new URL(API_BASE_URL).origin}\n`);
 
   await check('API health', async () => {
     const body = await request('/health');
     assert(body?.status === 'ok', 'expected { status: "ok" }');
+  });
+
+  // Deploy the credential-owning RPC gateway before publishing a client that
+  // depends on it. These reads never sign or broadcast a transaction.
+  for (const network of ['solana', 'solana-devnet']) {
+    await check(`${network} RPC gateway`, async () => {
+      const body = await request(`/rpc/${network}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestBlockhash', params: [] }),
+      });
+      assert(typeof body?.result?.value?.blockhash === 'string', 'expected a recent Solana blockhash');
+    });
+  }
+
+  await check('Polygon RPC gateway', async () => {
+    const body = await request('/rpc/polygon', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+    });
+    assert(body?.result === '0x89', 'expected Polygon mainnet chain ID 137');
   });
 
   const narratives = await check('Feed narratives', async () => {

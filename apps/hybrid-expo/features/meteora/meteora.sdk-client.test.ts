@@ -33,6 +33,17 @@ function client() {
   return sdk
 }
 
+test('uses an explicit RPC WebSocket endpoint when configured', () => {
+  const sdk = new MeteoraSdkClient({
+    rpcUrl: 'http://localhost:3000/rpc/solana',
+    rpcWsUrl: 'ws://localhost:3000/rpc/solana',
+  });
+  assert.equal(
+    (sdk.connection as unknown as { _rpcWsEndpoint: string })._rpcWsEndpoint,
+    'ws://localhost:3000/rpc/solana',
+  );
+});
+
 test('Retry re-estimates an unavailable fee or incomplete token rent', async () => {
   for (const unavailable of [
     { ...complete, maximumNetworkFeeLamports: null },
