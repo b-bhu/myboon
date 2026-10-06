@@ -1,0 +1,7 @@
+{
+  "mobileApiUrlRestored": true,
+  "adbReverse": "UsbFfs tcp:8081 tcp:8081",
+  "serversManuallyStartedOrRestarted": false,
+  "nativeSettings": "font_scale1.0; TalkBack off; all animation scales1; physical display unchanged",
+  "runtimeReload": "native app process restarted after fixture testing; existing Metro retained"
+}

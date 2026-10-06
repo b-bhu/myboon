@@ -1,0 +1,142 @@
+{"time": 1791295907.646652, "action": "tap", "label": "Wallet account and connection", "point": [966, 198]}
+{"time": 1791295965.8831291, "action": "tap", "label": "Close", "point": [1005, 1747]}
+{"time": 1791295971.642555, "action": "tap", "label": "Reverse pair", "point": [540, 682]}
+{"time": 1791296066.730788, "action": "tap", "label": "Reverse pair", "point": [540, 682]}
+{"time": 1791296275.532747, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791296279.549587, "action": "tap", "label": "Review swap", "point": [540, 1231]}
+{"time": 1791296815.793198, "action": "tap", "label": "Close Review swap", "point": [987, 1923]}
+{"time": 1791296985.4700449, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791296993.1301608, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791296996.6353421, "action": "tap", "label": "Review swap", "point": [540, 1231]}
+{"time": 1791297031.988771, "action": "tap", "label": "Close Review swap", "point": [987, 1983]}
+{"time": 1791297067.4037602, "action": "tap", "label": "Review swap", "point": [540, 1231]}
+{"time": 1791297124.653492, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791297153.374794, "action": "tap", "label": "Reverse pair", "point": [540, 736]}
+{"time": 1791297157.170937, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791297180.291351, "action": "tap", "label": "Close Wallet actions", "point": [987, 1245]}
+{"time": 1791297221.369816, "action": "tap", "label": "Modify the settings order.", "point": [954, 267]}
+{"time": 1791297244.575517, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791297268.434019, "action": "type", "label": "You pay amount", "value": "0"}
+{"time": 1791297274.570981, "action": "type", "label": "You pay amount", "value": "0.0000000001"}
+{"time": 1791297280.6375182, "action": "type", "label": "You pay amount", "value": "0.05"}
+{"time": 1791297287.6873689, "action": "type", "label": "You pay amount", "value": "0.036"}
+{"time": 1791297311.197653, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791297314.608974, "action": "tap", "label": "Swap, choose wallet action", "point": [157, 352]}
+{"time": 1791297317.295586, "action": "tap", "label": "Send", "point": [540, 1695]}
+{"time": 1791297323.626983, "action": "tap", "label": "Swap, choose wallet action", "point": [157, 352]}
+{"time": 1791297326.050526, "action": "tap", "label": "Receive", "point": [540, 1947]}
+{"time": 1791297332.4563682, "action": "tap", "label": "Swap, choose wallet action", "point": [157, 352]}
+{"time": 1791297334.966584, "action": "tap", "label": "Transfer", "point": [540, 2162]}
+{"time": 1791297348.200803, "action": "tap", "label": "Slippage settings", "point": [540, 1436]}
+{"time": 1791297358.337116, "action": "tap", "label": "custom slippage", "point": [868, 2061]}
+{"time": 1791297361.222891, "action": "type", "label": "Custom slippage percentage", "value": "16"}
+{"time": 1791297421.608317, "action": "tap", "label": "Return to Swap", "point": [540, 2069]}
+{"time": 1791297450.519244, "action": "tap", "label": "Perps accounts", "point": [540, 1840]}
+{"time": 1791297456.0248342, "action": "tap", "label": "Meteora accounts", "point": [822, 1840]}
+{"time": 1791297461.9521952, "action": "tap", "label": "Feed", "point": [200, 2221]}
+{"time": 1791297464.5546298, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791297545.7128232, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791297549.019318, "action": "tap", "label": "Choose Receive asset, USDC", "point": [309, 940]}
+{"time": 1791297567.3244102, "action": "tap", "label": "Choose Receive asset, USDC", "point": [309, 940]}
+{"time": 1791297580.94204, "action": "type", "label": "Search tokens by name or mint", "value": "USDC"}
+{"time": 1791297652.45338, "action": "tap", "label": "Close Choose Receive asset", "point": [987, 316]}
+{"time": 1791297659.0934432, "action": "tap", "label": "Choose Receive asset, USDC", "point": [309, 940]}
+{"time": 1791297665.0406241, "action": "type", "label": "Search tokens by name or mint", "value": "So11111111111111111111111111111111111111112"}
+{"time": 1791297678.204776, "action": "tap", "label": "SOL, Solana, mint So11111111111111111111111111111111111111112", "point": [540, 2051]}
+{"time": 1791297684.27898, "action": "tap", "label": "Reverse pair", "point": [540, 736]}
+{"time": 1791297837.1451368, "action": "tap", "label": "Retry balance", "point": [540, 2185]}
+{"time": 1791297843.671675, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791297887.831088, "action": "tap", "label": "Refresh quote", "point": [540, 1726]}
+{"time": 1791297930.334346, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791297981.45888, "action": "tap", "label": "Refresh quote", "point": [540, 1726]}
+{"time": 1791298029.977875, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298033.627764, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298038.658478, "action": "tap", "label": "Close Review swap", "point": [987, 1983]}
+{"time": 1791298041.916363, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298045.4749389, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298110.51439, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298114.111247, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298164.338101, "action": "tap", "label": "Acknowledge simulation unavailable", "point": [540, 2198]}
+{"time": 1791298208.105809, "action": "tap", "label": "Close Review swap", "point": [987, 1983]}
+{"time": 1791298215.4908512, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298219.230884, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298283.414256, "action": "tap", "label": "Close Review swap", "point": [987, 333]}
+{"time": 1791298352.2724638, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298358.906224, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298463.789147, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298469.9518762, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298485.186172, "action": "tap", "label": "Close Review swap", "point": [987, 1893]}
+{"time": 1791298523.227926, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298529.808696, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298546.9786508, "action": "tap", "label": "Close Review swap", "point": [987, 333]}
+{"time": 1791298598.9964852, "action": "tap", "label": "Suspend fixture surface", "point": [220, 814]}
+{"time": 1791298604.5057049, "action": "tap", "label": "Resume fixture surface", "point": [218, 814]}
+{"time": 1791298610.368308, "action": "tap", "label": "Mark fixture pending swap confirmed and check status", "point": [649, 814]}
+{"time": 1791298661.514903, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298666.284001, "action": "tap", "label": "Reverse pair", "point": [540, 1372]}
+{"time": 1791298671.99439, "action": "tap", "label": "Reverse pair", "point": [540, 1372]}
+{"time": 1791298675.029147, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298713.971264, "action": "tap", "label": "Close Wallet actions", "point": [987, 1245]}
+{"time": 1791298716.5431418, "action": "tap", "label": "Swap, choose wallet action", "point": [163, 988]}
+{"time": 1791298718.972855, "action": "tap", "label": "Swap", "point": [540, 1443]}
+{"time": 1791298721.606279, "action": "tap", "label": "Choose Receive asset, USDC", "point": [312, 1576]}
+{"time": 1791298727.638898, "action": "tap", "label": "Reverse pair", "point": [540, 1372]}
+{"time": 1791298730.856008, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298733.786668, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298739.2195442, "action": "tap", "label": "Close Review swap", "point": [987, 333]}
+{"time": 1791298852.469275, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298856.167084, "action": "tap", "label": "Choose Receive asset, USDC", "point": [312, 1576]}
+{"time": 1791298893.19679, "action": "tap", "label": "Close Choose Receive asset", "point": [987, 1653]}
+{"time": 1791298896.9161541, "action": "tap", "label": "Reverse pair", "point": [540, 1372]}
+{"time": 1791298902.627627, "action": "tap", "label": "Reverse pair", "point": [540, 1372]}
+{"time": 1791298905.699763, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298930.934685, "action": "tap", "label": "Close Wallet actions", "point": [987, 1245]}
+{"time": 1791298933.5410151, "action": "tap", "label": "Swap, choose wallet action", "point": [163, 988]}
+{"time": 1791298935.967152, "action": "tap", "label": "Swap", "point": [540, 1443]}
+{"time": 1791298938.5847208, "action": "tap", "label": "Choose Receive asset, USDC", "point": [312, 1576]}
+{"time": 1791298941.2748091, "action": "tap", "label": "SOL, Fixture SOL, mint So11111111111111111111111111111111111111112", "point": [540, 2007]}
+{"time": 1791298946.602684, "action": "tap", "label": "Reverse pair", "point": [540, 1372]}
+{"time": 1791298949.544839, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791298952.322876, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791298957.7195258, "action": "tap", "label": "Close Review swap", "point": [987, 333]}
+{"time": 1791299008.880148, "action": "tap", "label": "Navigate up", "point": [84, 202]}
+{"time": 1791299013.09328, "action": "tap", "label": "Spot accounts", "point": [258, 1840]}
+{"time": 1791299015.850137, "action": "tap", "label": "Open Spot", "point": [540, 2067]}
+{"time": 1791299028.657016, "action": "tap", "label": "Open JUP Jupiter", "point": [540, 895]}
+{"time": 1791299045.334454, "action": "tap", "label": "Buy JUP", "point": [286, 1290]}
+{"time": 1791299264.403324, "action": "type", "label": "You pay amount", "value": "0.001"}
+{"time": 1791299284.9351559, "action": "tap", "label": "Review swap", "point": [540, 2188]}
+{"time": 1791299313.759916, "action": "tap", "label": "Sell JUP", "point": [790, 1290]}
+{"time": 1791299317.350328, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791299331.1561449, "action": "tap", "label": "Review swap", "point": [540, 2188]}
+{"time": 1791299356.245398, "action": "tap", "label": "Collapse token", "point": [90, 190]}
+{"time": 1791299359.101078, "action": "tap", "label": "Back to Wallet", "point": [90, 190]}
+{"time": 1791299379.676147, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791299383.198873, "action": "tap", "label": "Slippage settings", "point": [540, 1436]}
+{"time": 1791299385.499118, "action": "tap", "label": "custom slippage", "point": [868, 2061]}
+{"time": 1791299388.371638, "action": "type", "label": "Custom slippage percentage", "value": "16"}
+{"time": 1791299391.353055, "action": "type", "label": "Type CONFIRM for slippage above 15 percent", "value": "CONFIRM"}
+{"time": 1791299406.6646059, "action": "tap", "label": "Return to Swap", "point": [540, 2069]}
+{"time": 1791299409.904705, "action": "tap", "label": "Perps accounts", "point": [540, 1860]}
+{"time": 1791299415.848416, "action": "tap", "label": "Meteora accounts", "point": [822, 1860]}
+{"time": 1791299421.793246, "action": "tap", "label": "Feed", "point": [200, 2221]}
+{"time": 1791299424.500515, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791299557.535721, "action": "tap", "label": "Close this tip", "point": [902, 1001]}
+{"time": 1791299577.3840692, "action": "tap", "label": "Apply", "point": [540, 2215]}
+{"time": 1791299597.1967611, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791299659.1139462, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791299679.047682, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791299685.9253361, "action": "tap", "label": "Swap, choose wallet action", "point": [201, 352]}
+{"time": 1791299704.54553, "action": "tap", "label": "Close Wallet actions", "point": [987, 1044]}
+{"time": 1791299734.6004028, "action": "tap", "label": "Apply", "point": [540, 2215]}
+{"time": 1791300017.818136, "action": "tap", "label": "Navigate up", "point": [96, 223]}
+{"time": 1791300264.329033, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791300270.970044, "action": "tap", "label": "Review swap", "point": [540, 1867]}
+{"time": 1791300287.8140311, "action": "tap", "label": "Close Review swap", "point": [987, 333]}
+{"time": 1791300341.98611, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791300348.640652, "action": "tap", "label": "Review swap", "point": [540, 1828]}
+{"time": 1791300364.7544389, "action": "tap", "label": "Close Review swap", "point": [987, 333]}
+{"time": 1791300565.575525, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791301285.539037, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791301315.84354, "action": "tap", "label": "Close Wallet actions", "point": [987, 1245]}
+{"time": 1791301378.784332, "action": "tap", "label": "Wallet", "point": [880, 2221]}

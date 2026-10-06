@@ -28,6 +28,7 @@ import {
   simulateValidatedSwap,
   validateSwapTransactionForSigning,
 } from '@/features/swap/swap-transaction-validation';
+import type { SwapControllerDependencies } from '@/features/swap/swap.controller.dependencies';
 import type {
   PendingSwapExecution,
   SwapEntryMode,
@@ -130,6 +131,8 @@ export interface SwapControllerOptions {
   mode?: SwapEntryMode;
   active?: boolean;
   requestedMint?: string;
+  /** Explicit disposable seams used only by the native verification fixture. */
+  controllerOptions?: SwapControllerDependencies;
 }
 
 export interface SwapController {
@@ -201,14 +204,40 @@ export function useSwapController({
   mode = 'swap',
   active = true,
   requestedMint,
+  controllerOptions,
 }: SwapControllerOptions = {}): SwapController {
-  const wallet = useWallet();
-  const walletSheet = useWalletSheet();
+  // Call the real hooks on every render so hook ordering and production context
+  // behavior remain unchanged. The fixture may then replace their returned
+  // values with an explicitly supplied, disposable context.
+  const runtimeWallet = useWallet();
+  const runtimeWalletSheet = useWalletSheet();
+  const wallet = controllerOptions?.wallet ?? runtimeWallet;
+  const walletSheet = controllerOptions?.walletSheet ?? runtimeWalletSheet;
   const rpc = useMemo(
-    () => wallet.connection ?? new Connection(SOLANA_RPC, 'confirmed'),
-    [wallet.connection],
+    () => controllerOptions?.rpc ?? wallet.connection ?? new Connection(SOLANA_RPC, 'confirmed'),
+    [controllerOptions?.rpc, wallet.connection],
   );
   const spotClient = useMemo(() => new SpotDataApiClient({ apiBaseUrl: resolveApiBaseUrl() }), []);
+  const getWalletBalances = controllerOptions?.getWalletBalances;
+  const swapPendingStore = controllerOptions?.pendingStore ?? pendingStore;
+  const requestSwapOrder = controllerOptions?.createSwapOrder ?? createSwapOrder;
+  const requestExecuteSwap = controllerOptions?.executeSwap ?? executeSwap;
+  const requestSearchTokens = controllerOptions?.searchSwapTokens ?? searchSwapTokens;
+  const requestTokenPrices = controllerOptions?.fetchTokenPrices ?? fetchTokenPrices;
+  const requestValidateTransaction =
+    controllerOptions?.validateSwapTransactionForSigning ?? validateSwapTransactionForSigning;
+  const requestSimulateTransaction =
+    controllerOptions?.simulateValidatedSwap ?? simulateValidatedSwap;
+  const requestFinalizeTransaction =
+    controllerOptions?.finalizeWalletSignedSwapTransaction ??
+    finalizeWalletSignedSwapTransaction;
+  const refreshWalletData = controllerOptions?.notifyWalletDataChanged ?? notifyWalletDataChanged;
+  const notifySuccess = useMemo(
+    () =>
+      controllerOptions?.notifySuccess ??
+      (() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
+    [controllerOptions?.notifySuccess],
+  );
   const [selectedToken, setSelectedToken] = useState<SwapToken | null>(null);
   const [inputToken, setInputToken] = useState<SwapToken>(SOL);
   const [outputToken, setOutputToken] = useState<SwapToken>(USDC);
@@ -364,9 +393,14 @@ export function useSwapController({
       }
       if (force) spotClient.clearCache();
       try {
-        const result = await spotClient.getWalletBalances(address);
-        const next: Record<string, string> = {};
-        for (const token of result.data.tokens) next[token.mint] = token.amount;
+        const next = getWalletBalances
+          ? await getWalletBalances(address)
+          : Object.fromEntries(
+              (await spotClient.getWalletBalances(address)).data.tokens.map((token) => [
+                token.mint,
+                token.amount,
+              ]),
+            );
         if (
           mountedRef.current &&
           activeRef.current &&
@@ -399,7 +433,7 @@ export function useSwapController({
         throw error;
       }
     },
-    [spotClient, wallet.address, wallet.connected, wallet.sessionKey],
+    [getWalletBalances, spotClient, wallet.address, wallet.connected, wallet.sessionKey],
   );
 
   useEffect(() => {
@@ -424,7 +458,7 @@ export function useSwapController({
       return;
     }
     let cancelled = false;
-    void searchSwapTokens(requestedMint)
+    void requestSearchTokens(requestedMint)
       .then((found) => {
         if (!cancelled)
           setSelectedToken(found.find((token) => token.address === requestedMint) ?? null);
@@ -435,7 +469,7 @@ export function useSwapController({
     return () => {
       cancelled = true;
     };
-  }, [active, mode, requestedMint]);
+  }, [active, mode, requestedMint, requestSearchTokens]);
   useEffect(() => {
     if (!selectedToken) return;
     if (mode === 'buy') {
@@ -449,7 +483,7 @@ export function useSwapController({
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
-    void fetchTokenPrices([inputToken.address, outputToken.address])
+    void requestTokenPrices([inputToken.address, outputToken.address])
       .then((response) => {
         if (!cancelled)
           setPrices(
@@ -462,7 +496,7 @@ export function useSwapController({
     return () => {
       cancelled = true;
     };
-  }, [active, inputToken.address, outputToken.address]);
+  }, [active, inputToken.address, outputToken.address, requestTokenPrices]);
   useEffect(() => {
     if (!active || phase !== 'compose') return;
     const sequence = ++quoteSequence.current;
@@ -489,7 +523,7 @@ export function useSwapController({
     setFailure(null);
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      void createSwapOrder(
+      void requestSwapOrder(
         {
           inputMint: inputToken.address,
           outputMint: outputToken.address,
@@ -527,6 +561,7 @@ export function useSwapController({
     outputToken.address,
     phase,
     quoteRefreshKey,
+    requestSwapOrder,
     slippageBps,
   ]);
 
@@ -574,7 +609,7 @@ export function useSwapController({
       walletSessionRef.current === sessionKey &&
       mountedRef.current;
     try {
-      const pending = await pendingStore.list(address);
+      const pending = await swapPendingStore.list(address);
       if (!isCurrent()) return;
       const currentBlockHeight = await rpc.getBlockHeight('confirmed').catch(() => null);
       if (!isCurrent()) return;
@@ -584,7 +619,7 @@ export function useSwapController({
           currentBlockHeight !== null && isPendingSwapExpired(item, currentBlockHeight);
         if (!item.signature) {
           if (expired) {
-            await pendingStore.remove(item.requestId);
+            await swapPendingStore.remove(item.requestId);
             continue;
           }
           setUnknownRequestId(item.requestId);
@@ -601,7 +636,7 @@ export function useSwapController({
           ).value[0];
           if (!isCurrent()) return;
           if (status?.err) {
-            await pendingStore.remove(item.requestId);
+            await swapPendingStore.remove(item.requestId);
             if (!isCurrent()) return;
             setPendingReady(true);
             setTerminalSignature(item.signature);
@@ -616,14 +651,14 @@ export function useSwapController({
             status?.confirmationStatus === 'confirmed' ||
             status?.confirmationStatus === 'finalized'
           ) {
-            await pendingStore.remove(item.requestId);
+            await swapPendingStore.remove(item.requestId);
             if (!isCurrent()) return;
             spotClient.clearCache();
             const refreshed = await loadBalances(true)
               .then((next) => next !== null)
               .catch(() => false);
             if (!isCurrent()) return;
-            notifyWalletDataChanged();
+            refreshWalletData();
             setPendingReady(true);
             setTerminalSignature(item.signature);
             setResultMessage(
@@ -635,7 +670,7 @@ export function useSwapController({
             return;
           }
           if (shouldDiscardExpiredPendingSwap(item, currentBlockHeight, status !== null)) {
-            await pendingStore.remove(item.requestId);
+            await swapPendingStore.remove(item.requestId);
             continue;
           }
           setPendingReady(false);
@@ -664,7 +699,16 @@ export function useSwapController({
         setPendingError(errorMessage(error));
       }
     }
-  }, [active, loadBalances, rpc, spotClient, wallet.address, wallet.sessionKey]);
+  }, [
+    active,
+    loadBalances,
+    refreshWalletData,
+    rpc,
+    spotClient,
+    swapPendingStore,
+    wallet.address,
+    wallet.sessionKey,
+  ]);
   useEffect(() => {
     void reconcilePending().catch((error) => {
       if (activeRef.current) {
@@ -785,7 +829,7 @@ export function useSwapController({
         BigInt(latestBalance ?? '0') - BigInt(amountAtomic) < SOL_FEE_RESERVE_LAMPORTS
       )
         throw new Error('Keep at least 0.005 SOL for network and account-creation costs.');
-      const order = await createSwapOrder({
+      const order = await requestSwapOrder({
         inputMint: inputToken.address,
         outputMint: outputToken.address,
         amountAtomic,
@@ -797,7 +841,7 @@ export function useSwapController({
         throw new Error('The server did not return a signable transaction.');
       setQuote(order);
       movePreparationPhase('validating');
-      const validated = await validateSwapTransactionForSigning({
+      const validated = await requestValidateTransaction({
         transactionBase64: order.transaction,
         walletAddress: wallet.address,
         inputMint: order.inputMint,
@@ -809,7 +853,7 @@ export function useSwapController({
       });
       if (!isCurrentPreparation()) return;
       movePreparationPhase('simulating');
-      const simulation = await simulateValidatedSwap({
+      const simulation = await requestSimulateTransaction({
         transaction: validated.transaction,
         connection: rpc,
         walletAddress: wallet.address,
@@ -858,6 +902,9 @@ export function useSwapController({
     outputToken.decimals,
     pendingReady,
     quoteExpired,
+    requestSimulateTransaction,
+    requestSwapOrder,
+    requestValidateTransaction,
     rpc,
     slippageBps,
     tradeInteractionBusy,
@@ -943,7 +990,7 @@ export function useSwapController({
       phaseRef.current = 'validating';
       tradeBusyRef.current = true;
       setPhase('validating');
-      const signed = await finalizeWalletSignedSwapTransaction({
+      const signed = await requestFinalizeTransaction({
         reviewedTransactionBase64: reviewOrder.transaction,
         signedTransaction: walletSigned,
         walletAddress: executionWalletAddress,
@@ -963,9 +1010,9 @@ export function useSwapController({
         signature: localSignature,
         updatedAt: new Date().toISOString(),
       };
-      await pendingStore.save(submittedPending);
+      await swapPendingStore.save(submittedPending);
       if (!isCurrentExecution()) {
-        if (!executionStarted) await pendingStore.remove(reviewOrder.requestId).catch(() => null);
+        if (!executionStarted) await swapPendingStore.remove(reviewOrder.requestId).catch(() => null);
         return;
       }
       setTerminalSignature(localSignature);
@@ -973,13 +1020,13 @@ export function useSwapController({
       phaseRef.current = 'executing';
       tradeBusyRef.current = true;
       executionStarted = true;
-      const result = await executeSwap({
+      const result = await requestExecuteSwap({
         signedTransaction: signedBase64,
         requestId: reviewOrder.requestId,
         lastValidBlockHeight: reviewOrder.lastValidBlockHeight,
       });
       if (!isCurrentExecution()) {
-        await pendingStore
+        await swapPendingStore
           .save({ ...submittedPending, outcome: 'unknown', updatedAt: new Date().toISOString() })
           .catch(() => null);
         return;
@@ -987,32 +1034,32 @@ export function useSwapController({
       setTerminalSignature(result.signature ?? localSignature);
       setResultMessage(result.message);
       if (result.outcome === 'confirmed') {
-        await pendingStore.remove(reviewOrder.requestId);
+        await swapPendingStore.remove(reviewOrder.requestId);
         if (!isCurrentExecution()) return;
         spotClient.clearCache();
         const refreshed = await loadBalances(true)
           .then((next) => next !== null)
           .catch(() => false);
         if (!isCurrentExecution()) return;
-        notifyWalletDataChanged();
+        refreshWalletData();
         setResultMessage(
           refreshed
             ? 'Balances have been refreshed.'
             : 'Swap confirmed. Refresh Wallet to update balances.',
         );
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => null);
+        await Promise.resolve(notifySuccess()).catch(() => null);
         if (!isCurrentExecution()) return;
         setPendingReady(true);
         setPhase('confirmed');
       } else if (result.outcome === 'failed') {
-        await pendingStore.remove(reviewOrder.requestId);
+        await swapPendingStore.remove(reviewOrder.requestId);
         if (!isCurrentExecution()) return;
         setPendingReady(true);
         setFailure(result.message ?? 'The transaction failed on Solana.');
         setReviewOrder(null);
         setPhase('failed');
       } else {
-        await pendingStore.save({
+        await swapPendingStore.save({
           ...submittedPending,
           signature: result.signature ?? localSignature,
           outcome: 'unknown',
@@ -1025,14 +1072,14 @@ export function useSwapController({
         );
         if (!isCurrentExecution()) return;
         if (reconciled === 'confirmed') {
-          await pendingStore.remove(reviewOrder.requestId);
+          await swapPendingStore.remove(reviewOrder.requestId);
           if (!isCurrentExecution()) return;
           spotClient.clearCache();
           const refreshed = await loadBalances(true)
             .then((next) => next !== null)
             .catch(() => false);
           if (!isCurrentExecution()) return;
-          notifyWalletDataChanged();
+          refreshWalletData();
           setResultMessage(
             refreshed
               ? 'The transaction was confirmed and balances have been refreshed.'
@@ -1041,7 +1088,7 @@ export function useSwapController({
           setPendingReady(true);
           setPhase('confirmed');
         } else if (reconciled === 'failed') {
-          await pendingStore.remove(reviewOrder.requestId);
+          await swapPendingStore.remove(reviewOrder.requestId);
           if (!isCurrentExecution()) return;
           setPendingReady(true);
           setFailure('The transaction failed on Solana. Review a fresh quote before trying again.');
@@ -1056,14 +1103,14 @@ export function useSwapController({
     } catch (error) {
       if (!isCurrentExecution()) {
         if (executionStarted) {
-          await pendingStore
+          await swapPendingStore
             .save({ ...submittedPending, outcome: 'unknown', updatedAt: new Date().toISOString() })
             .catch(() => null);
         }
         return;
       }
       if (executionStarted) {
-        await pendingStore
+        await swapPendingStore
           .save({ ...submittedPending, outcome: 'unknown', updatedAt: new Date().toISOString() })
           .catch(() => null);
         setPendingReady(false);
@@ -1090,7 +1137,12 @@ export function useSwapController({
     rpc,
     simulationWarning,
     simulationWarningAccepted,
+    refreshWalletData,
+    requestExecuteSwap,
+    requestFinalizeTransaction,
     spotClient,
+    swapPendingStore,
+    notifySuccess,
     wallet.address,
     wallet.sessionKey,
     wallet.signTransaction,
@@ -1210,7 +1262,7 @@ export function useSwapController({
     const timer = setTimeout(() => {
       setTokenLoading(true);
       setTokenError(null);
-      void searchSwapTokens(tokenQuery)
+      void requestSearchTokens(tokenQuery)
         .then((results) => {
           if (!cancelled) setTokenResults(results);
         })
@@ -1225,7 +1277,7 @@ export function useSwapController({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [active, phase, tokenQuery]);
+  }, [active, phase, requestSearchTokens, tokenQuery]);
 
   const amountAtomic = useMemo(() => {
     try {

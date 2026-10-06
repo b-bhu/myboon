@@ -17,7 +17,11 @@ import { formatAtomicAmount, parseUiAmountToAtomic } from '@/features/swap/swap.
 import { exchangeRate } from '@/features/swap/swap.display';
 import { swapTheme as color } from '@/features/swap/swap.theme';
 import type { SwapSide } from '@/features/swap/swap.types';
-import { useSwapController } from '@/features/swap/useSwapController';
+import {
+  useSwapController,
+  type SwapController,
+  type SwapControllerOptions,
+} from '@/features/swap/useSwapController';
 import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import { WalletSecondarySheet } from '@/features/wallet/WalletSecondarySheet';
 import {
@@ -35,17 +39,50 @@ const actionIcons = {
   transfer: 'swap-horiz',
 } as const;
 
+type WalletSheet = Pick<ReturnType<typeof useWalletSheet>, 'isOpen' | 'open' | 'close'>;
+
+type WalletActionPanelViewProps = {
+  active: boolean;
+  surfaceKey: string;
+  onBusyChange: (busy: boolean) => void;
+  controller: SwapController;
+  walletSheet?: WalletSheet;
+};
+
+/** Production wrapper. Fixtures supply one controller to WalletActionPanelView instead. */
 export function WalletActionPanel({
   active,
   surfaceKey,
   onBusyChange,
+  controllerOptions,
 }: {
   active: boolean;
   surfaceKey: string;
   onBusyChange: (busy: boolean) => void;
+  /** Explicit controller seams for the disposable native verification fixture. */
+  controllerOptions?: SwapControllerOptions['controllerOptions'];
 }) {
-  const c = useSwapController({ mode: 'swap', active });
-  const walletSheet = useWalletSheet();
+  const controller = useSwapController({ mode: 'swap', active, controllerOptions });
+  return (
+    <WalletActionPanelView
+      active={active}
+      surfaceKey={surfaceKey}
+      onBusyChange={onBusyChange}
+      controller={controller}
+      walletSheet={controllerOptions?.walletSheet}
+    />
+  );
+}
+
+export function WalletActionPanelView({
+  active,
+  surfaceKey,
+  onBusyChange,
+  controller: c,
+  walletSheet: walletSheetOverride,
+}: WalletActionPanelViewProps) {
+  const runtimeWalletSheet = useWalletSheet();
+  const walletSheet = walletSheetOverride ?? runtimeWalletSheet;
   const [surface, setSurface] = useState<Surface>(null);
   const [comingSoon, setComingSoon] = useState<string | null>(null);
   const payInputRef = useRef<TextInput>(null);

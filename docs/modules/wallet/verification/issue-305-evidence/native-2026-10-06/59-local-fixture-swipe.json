@@ -1,0 +1,14 @@
+{
+  "time": 1791298260.961887,
+  "case": "confirmed",
+  "guard": "verified disposable fixture route; generated wallet only",
+  "start": [
+    142,
+    2178
+  ],
+  "end": [
+    958,
+    2178
+  ],
+  "durationMs": 600
+}

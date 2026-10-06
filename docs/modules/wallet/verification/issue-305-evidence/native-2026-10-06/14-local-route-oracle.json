@@ -1,0 +1,40 @@
+{
+  "requestId": "01a1119c-38d2-7583-8678-23e16b83066c",
+  "inputMint": "So11111111111111111111111111111111111111112",
+  "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "inAmountAtomic": "10000000",
+  "outAmountAtomic": "1209472",
+  "minimumOutAmountAtomic": "1206206",
+  "inUsdValue": 1.2093323767194653,
+  "outUsdValue": 1.2093534146549179,
+  "priceImpactPct": 0.0017396322018331332,
+  "slippageBps": 27,
+  "router": "metis",
+  "route": [
+    {
+      "label": "BisonFi",
+      "percent": 100
+    },
+    {
+      "label": "AlphaQ",
+      "percent": 100
+    }
+  ],
+  "fees": {
+    "providerFeeBps": 2,
+    "providerFeeAtomic": null,
+    "providerFeeMint": "So11111111111111111111111111111111111111112",
+    "signatureFeeLamports": "5000",
+    "priorityFeeLamports": "141707",
+    "rentFeeLamports": "1488440",
+    "myboonFeeAtomic": "0",
+    "gasless": false
+  },
+  "expiresAt": null,
+  "kind": "signable",
+  "taker": "7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C",
+  "lastValidBlockHeight": "431966070",
+  "transactionPresent": true,
+  "observedAt": "2026-10-06T14:29:26.979826+00:00",
+  "environment": "existing local API; unsigned prepare only; never signed/executed"
+}

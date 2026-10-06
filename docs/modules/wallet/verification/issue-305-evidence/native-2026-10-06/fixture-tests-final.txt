@@ -1,0 +1,34 @@
+TAP version 13
+# Subtest: native verification fixtures provide every I/O seam without production fallbacks
+ok 1 - native verification fixtures provide every I/O seam without production fallbacks
+  ---
+  duration_ms: 2483.518875
+  type: 'test'
+  ...
+# Subtest: fixture approval and pending recovery remain local and deterministic
+ok 2 - fixture approval and pending recovery remain local and deterministic
+  ---
+  duration_ms: 4.189834
+  type: 'test'
+  ...
+# Subtest: fixture telemetry publishes quote, signing and execution updates and disposes cleanly
+ok 3 - fixture telemetry publishes quote, signing and execution updates and disposes cleanly
+  ---
+  duration_ms: 7.324791
+  type: 'test'
+  ...
+# Subtest: fixture confirmed totals preserve exact reviewed amounts in either pair direction
+ok 4 - fixture confirmed totals preserve exact reviewed amounts in either pair direction
+  ---
+  duration_ms: 2.096916
+  type: 'test'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2883.552834

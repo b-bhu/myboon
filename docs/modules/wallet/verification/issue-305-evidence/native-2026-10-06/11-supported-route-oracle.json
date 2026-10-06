@@ -1,0 +1,12 @@
+{
+  "at": "2026-10-06T14:20:47.328Z",
+  "http": 200,
+  "excludedRouters": "jupiterz",
+  "router": "metis",
+  "gasless": false,
+  "signerCount": 1,
+  "walletIsOnlySigner": true,
+  "transactionPresent": true,
+  "lastValidBlockHeight": "431964732",
+  "providerErrorCode": null
+}

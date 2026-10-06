@@ -1,0 +1,5 @@
+{
+  "system:font_scale": "1.0",
+  "secure:enabled_accessibility_services": "com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService",
+  "secure:accessibility_enabled": "1"
+}

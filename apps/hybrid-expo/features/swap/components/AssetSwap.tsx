@@ -123,7 +123,7 @@ export function AssetSwap({
           style={styles.reverse}
           accessibilityRole="button"
           accessibilityLabel="Reverse pair"
-          accessibilityHint="Tap once to reverse. Tap twice to open wallet actions."
+          accessibilityHint="Reverses the selected swap pair. Wallet actions are also available from the Swap menu."
           accessibilityState={{ disabled: busy }}
         >
           <MaterialIcons name="swap-vert" size={21} color={color.navy} />
@@ -201,13 +201,13 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   fiat: { color: color.dim, fontSize: 11, fontVariant: ['tabular-nums'] },
-  seam: { height: 12, alignItems: 'center', justifyContent: 'center', zIndex: 1 },
+  seam: { height: 48, alignItems: 'center', justifyContent: 'center', zIndex: 1 },
   line: { height: 1, width: '100%', backgroundColor: color.border },
   reverse: {
     position: 'absolute',
-    minWidth: 44,
-    minHeight: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     borderWidth: 5,
     borderColor: color.navy,
     backgroundColor: color.gold,

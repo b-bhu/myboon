@@ -1,0 +1,9 @@
+{
+  "firstTapStartMonotonic": 746123.645831208,
+  "menuTapStartMonotonic": 746123.724766,
+  "menuTapReturnMonotonic": 746123.787426125,
+  "startIntervalMs": 78.93479207996279,
+  "bothCommandsCompletedMs": 141.59491704776883,
+  "resolutionWindowMs": 300,
+  "scope": "Disposable fixture; no approval/signing/execution"
+}

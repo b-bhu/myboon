@@ -814,6 +814,10 @@ export function createSwapRoutes(config: CreateSwapRoutesConfig): Hono {
         inputMint: request.inputMint,
         outputMint: request.outputMint,
         amount: request.amountAtomic,
+        // JupiterZ orders can require a signer layout that the app cannot safely
+        // validate or submit. Keep route policy server-owned for both previews
+        // and signable orders; callers cannot opt back into JupiterZ.
+        excludeRouters: 'jupiterz',
       })
       if (request.taker) params.set('taker', request.taker)
       if (request.slippageBps !== undefined) params.set('slippageBps', String(request.slippageBps))

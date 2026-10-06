@@ -1,0 +1,13 @@
+Read-only investigation, 2026-10-06. No native files modified or client rebuilt.
+Installed: React Native 0.81.5, Expo SDK 54, New Architecture/Fabric enabled.
+
+ReactAndroid/src/main/java/com/facebook/react/internal/featureflags/ReactNativeFeatureFlagsDefaults.kt:64
+  enableFontScaleChangesUpdatingLayout(): Boolean = false
+ReactAndroid/src/main/java/com/facebook/react/runtime/ReactSurfaceImpl.kt:212
+  getFontScale() uses DisplayMetricsHolder font metrics only when that feature flag is enabled; otherwise 1f.
+ReactAndroid/src/main/java/com/facebook/react/runtime/ReactHostImpl.kt:622
+  onConfigurationChanged() refreshes DisplayMetrics only when the same flag is enabled.
+
+Native observation: changing the running app from 1.0 to 1.6 produced enlarged glyphs in stale measured bounds across Feed, navigation and Wallet. Reload repaired the layout. The stale Swap label bounds were [42,311][189,392]; after reload at 1.6 [42,287][277,416].
+
+This evidence points to the installed Fabric font-scale update behavior. It does not certify an upgrade or feature-flag patch. A safe repair requires a separate early-native initialization experiment and rebuilt-client verification at 1.0↔1.6, preserving controller/pending sessions. Changing release channel alone does not target this flag; remounting trade controllers is not an acceptable workaround.

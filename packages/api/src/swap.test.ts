@@ -189,6 +189,8 @@ test('auto orders use Jupiter defaults while explicit slippage opts into manual 
   assert.ok(urls.every((url) => url.includes('/swap/v2/order')))
   const quoteUrl = new URL(urls[0])
   const signableUrl = new URL(urls[1])
+  assert.equal(quoteUrl.searchParams.get('excludeRouters'), 'jupiterz')
+  assert.equal(signableUrl.searchParams.get('excludeRouters'), 'jupiterz')
   assert.equal(quoteUrl.searchParams.get('slippageBps'), '25')
   assert.equal(signableUrl.searchParams.has('slippageBps'), false)
   assert.equal(signableUrl.searchParams.has('priorityFeeLamports'), false)
@@ -258,23 +260,28 @@ test('signable provider refusal maps stable codes and status', async () => {
 
 test('signable orders refuse unsupported gasless and JupiterZ signer layouts at the gateway', async () => {
   for (const unsupported of [{ gasless: true, router: 'metis' }, { gasless: false, router: 'jupiterz' }]) {
-    const fetchImpl = (async () => Response.json({
-      requestId: `unsupported-${unsupported.router}`,
-      inputMint: SOL,
-      outputMint: USDC,
-      taker: WALLET,
-      inAmount: '100',
-      outAmount: '200',
-      otherAmountThreshold: '190',
-      slippageBps: 25,
-      transaction: 'AA==',
-      lastValidBlockHeight: '123',
-      ...unsupported,
-    })) as typeof fetch
+    let requestedUrl = ''
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      requestedUrl = String(input)
+      return Response.json({
+        requestId: `unsupported-${unsupported.router}`,
+        inputMint: SOL,
+        outputMint: USDC,
+        taker: WALLET,
+        inAmount: '100',
+        outAmount: '200',
+        otherAmountThreshold: '190',
+        slippageBps: 25,
+        transaction: 'AA==',
+        lastValidBlockHeight: '123',
+        ...unsupported,
+      })
+    }) as typeof fetch
     const response = await buildApp({ fetchImpl }).request('/swap/order', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ inputMint: SOL, outputMint: USDC, amountAtomic: '100', taker: WALLET }),
     })
+    assert.equal(new URL(requestedUrl).searchParams.get('excludeRouters'), 'jupiterz')
     assert.equal(response.status, 422)
     assert.equal((await response.json() as any).error.code, 'UNSUPPORTED_SIGNER_LAYOUT')
   }

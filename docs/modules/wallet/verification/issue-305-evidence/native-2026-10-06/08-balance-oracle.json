@@ -1,0 +1,424 @@
+{
+  "wallet": "7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C",
+  "at": "2026-10-06T14:12:44.823Z",
+  "configured_rpc": {
+    "http": 200,
+    "lamports": 40749602
+  },
+  "hosted_spot": {
+    "http": 200,
+    "response": {
+      "wallet": "7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C",
+      "totalValueUsd": 6.497903848116435,
+      "tokens": [
+        {
+          "mint": "So11111111111111111111111111111111111111112",
+          "symbol": "SOL",
+          "name": "Solana",
+          "icon": null,
+          "decimals": 9,
+          "amount": "40749602",
+          "uiAmount": 0.040749602,
+          "priceUsd": 120.75704956054688,
+          "valueUsd": 4.92080170828656
+        },
+        {
+          "mint": "JuprjznTrTSp2UFa3ZBUFgwdAmtZCq4MQCwysN55USD",
+          "symbol": "JupUSD",
+          "name": "Jupiter USD",
+          "icon": "https://static.jup.ag/jupUSD/icon.png",
+          "decimals": 6,
+          "amount": "1557738",
+          "uiAmount": 1.557738,
+          "priceUsd": 0.9995656,
+          "valueUsd": 1.557061320713997
+        },
+        {
+          "mint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+          "symbol": "JUP",
+          "name": "Jupiter",
+          "icon": "https://static.jup.ag/jup/icon.png",
+          "decimals": 6,
+          "amount": "53738",
+          "uiAmount": 0.053738,
+          "priceUsd": 0.34057072,
+          "valueUsd": 0.018301589246571066
+        },
+        {
+          "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+          "symbol": "USDT",
+          "name": "USDT",
+          "icon": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg",
+          "decimals": 6,
+          "amount": "1200",
+          "uiAmount": 0.0012,
+          "priceUsd": 0.9997982,
+          "valueUsd": 0.0011997578144073487
+        },
+        {
+          "mint": "61V8vBaqAGMpgDQi4JcAwo1dmBGHsyhzodcPqnEVpump",
+          "symbol": "arc",
+          "name": "AI Rig Complex",
+          "icon": "https://ipfs.io/ipfs/QmPDJuEobBcLZihjFCvkWA8c1FiW7UzM2ctFdiffSLxf1d",
+          "decimals": 6,
+          "amount": "7578",
+          "uiAmount": 0.007578,
+          "priceUsd": 0.0711841,
+          "valueUsd": 0.000539433100104332
+        },
+        {
+          "mint": "CGEDT9QZDvvH5GmVkWJH2BXiMJqMJySC9ihWyr7Spump",
+          "symbol": "BURNIE",
+          "name": "Burnie Senders",
+          "icon": "https://ipfs.io/ipfs/bafybeiet7ko4w3nk2aeh2m7bsrbnlgs6tqz3vmmfgxu7ieesq75e2pup44",
+          "decimals": 6,
+          "amount": "25",
+          "uiAmount": 0.000025,
+          "priceUsd": 0.0015581918,
+          "valueUsd": 3.8954796036705374e-8
+        },
+        {
+          "mint": "Gs8eKboeFyCKW2QHGQmyK1tC3HeTJcNh3kr2zGmbNqRn",
+          "symbol": "ANSEMM",
+          "name": "The Black Bull",
+          "icon": "https://edge.uxento.io/image/Cx83EqERns2VuiKrkwHegTuECVqZebsNhJ3dCU8CucWG",
+          "decimals": 6,
+          "amount": "11940000",
+          "uiAmount": 11.94,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "GaZb3DE2U3Jcjx7ddAVwobsBKnCaDoJWLbzTvJYhpump",
+          "symbol": "ANSUM",
+          "name": "the bleck bull",
+          "icon": "https://ipfs.io/ipfs/bafkreiakkywsmemvdszjxvg6jn63qb5xwlbg52szzyioqusdwbi4u2ouby",
+          "decimals": 6,
+          "amount": "5417935",
+          "uiAmount": 5.417935,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "GEcqNxrpRrUvY25AWNey1BoVWmkMnuRaYQKogxfQtvu1",
+          "symbol": "wUSD*",
+          "name": "Exponent Wrapped USD*",
+          "icon": null,
+          "decimals": 6,
+          "amount": "2",
+          "uiAmount": 0.000002,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "FuiJTGj4GkLP3nSfwk2KzhUFpBczDUwjU1KLv2JxbTM6",
+          "symbol": "‮SNIK",
+          "name": "‮aratniK",
+          "icon": "https://ipfs.io/ipfs/bafybeicincod6gebb2wkef7mtlibmz6scduj25lxjlk75qv3o4mpxwdfau",
+          "decimals": 6,
+          "amount": "675320000",
+          "uiAmount": 675.32,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "FpRjVoh2iDfEZpSDms98qmDw4vFhvHq19UsWkMM9U2Ma",
+          "symbol": "ZALA ",
+          "name": "Z△L△ △Iㅤ",
+          "icon": "https://ipfs.io/ipfs/QmUaDbuzVdFZy4uvH4tNsFq8byXnq2SiCfM1zudfQs1EhZ",
+          "decimals": 6,
+          "amount": "162241371052",
+          "uiAmount": 162241.371052,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "EcHFuuKvF18up2yuhjVDhSDXJ16xC9QRg2NNPKtCGt5C",
+          "symbol": "mɔ",
+          "name": "The Black Bull",
+          "icon": "https://edge.uxento.io/image/Cx83EqERns2VuiKrkwHegTuECVqZebsNhJ3dCU8CucWG",
+          "decimals": 6,
+          "amount": "9027513",
+          "uiAmount": 9.027513,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "DRwcgSYF53LmijHuMKqvtBV7CZRkTW8RPKB2G8epKiyi",
+          "symbol": "oneXSOL",
+          "name": "xSOL ONE",
+          "icon": "https://hylo-token-metadata.s3.us-east-2.amazonaws.com/xSOL/icon.png",
+          "decimals": 6,
+          "amount": "1",
+          "uiAmount": 0.000001,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "CvKP9y6UBskJv6pqGWsztXPd1u18YhyV7hp7QWjwG1oP",
+          "symbol": "DOGEX",
+          "name": "DOGEX",
+          "icon": "https://ipfs.io/ipfs/bafkreiblunfcctwjd3hnlnowepsad6cg3iz3rsjbdvzl2utbtcuqq53yfm",
+          "decimals": 9,
+          "amount": "15350120000000",
+          "uiAmount": 15350.12,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "CCLVY5VzmCZYbasagAKctG32JDNzNhSZKcaajRKFpump",
+          "symbol": "gork ",
+          "name": "New XAI gorkㅤ",
+          "icon": "https://ipfs.io/ipfs/QmXkHvTBRFMyY5ozYHXcF7JHqqLBTorca3dXAdF3ooD5e3",
+          "decimals": 6,
+          "amount": "27283698862",
+          "uiAmount": 27283.698862,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "BmfGaarVdLxKW5WXFtwPmtYCkWnJh55kHPXU8ExGfgV7",
+          "symbol": "‮SNIK",
+          "name": "‮aratniK",
+          "icon": "https://ipfs.io/ipfs/bafybeicincod6gebb2wkef7mtlibmz6scduj25lxjlk75qv3o4mpxwdfau",
+          "decimals": 6,
+          "amount": "595617953",
+          "uiAmount": 595.617953,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "BmXfbamFqrBzrqihr9hbSmEsfQUXMVaqshAjgvZupump",
+          "symbol": "LUX",
+          "name": "Lux Token",
+          "icon": "https://ipfs.io/ipfs/QmbyGqbDnihx1rcXw3UxE5S3JsBC73vJPEFzbB6QzsD4oa",
+          "decimals": 6,
+          "amount": "412028",
+          "uiAmount": 0.412028,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "B1aHFyLNzm1y24gkhASHiBU7LH6xXV2V785S4MrtY777",
+          "symbol": "SLIMECOIN",
+          "name": "Slimecoin",
+          "icon": "https://ipfs.io/ipfs/bafybeifnygn6ozhgonbzwzh4f2hzqeib32enruw2jncq74sm27bucrhfe4",
+          "decimals": 9,
+          "amount": "383",
+          "uiAmount": 3.83e-7,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "A1q8YNdzM78CrQd9rzgEj2Y1ovnJvZGtNb91XsLDwiYw",
+          "symbol": "0",
+          "name": "ANSEM ARMY",
+          "icon": "https://axiomtrading-v2.axiom-cdn.io/G1GR5UTit6UMtq9S27CsRAJ9CTqsrjGn41Yvh9UmXmfe.webp",
+          "decimals": 6,
+          "amount": "1675090000",
+          "uiAmount": 1675.09,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "9y2LJ6czqfgNVb61iW7NDAmK7vR51WUK167bhYTRoAPK",
+          "symbol": "jv2",
+          "name": "jupiter vault 2",
+          "icon": "https://cdn.instadapp.io/solana/vaults/nfts/2.png",
+          "decimals": 0,
+          "amount": "1",
+          "uiAmount": 1,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "9uAVQsZX2uY6PcDyuykugUBLUVYsP4B3nFf2DW2Zp6NQ",
+          "symbol": "USDT",
+          "name": "USDT",
+          "icon": "https://gateway.irys.xyz/J9ssif9Ly3TyER4J335PmC3SzaKtmUEQLH8X21YV4zP",
+          "decimals": 6,
+          "amount": "89000",
+          "uiAmount": 0.089,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "9RjwNo6hBPkxayWHCqQD1VjaH8igSizEseNZNbddpump",
+          "symbol": "Stupid",
+          "name": "StupidCoin",
+          "icon": "https://ipfs.io/ipfs/QmQnRqSSD9E3Ripqoy3b3BNfxomfSbXjBKwDihVhsDWmk5",
+          "decimals": 6,
+          "amount": "2890976",
+          "uiAmount": 2.890976,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "7ELwTR9BPkuiTJrx2ygfAW4DgPXvLdXY7HPEYReUVGNr",
+          "symbol": "ㅤ",
+          "name": "Jimothy The Raccoon",
+          "icon": "https://axiomtrading-v2.axiom-cdn.io/A3NqdmPtu9Qa6nRqcZWJ969ePUWNA1Fb4SgmQ7Ldpump.webp",
+          "decimals": 6,
+          "amount": "29760000",
+          "uiAmount": 29.76,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "6wFC2UEuJfa5hQFbyyP6anJ8ZhWvDens6pexNRdTK2ZA",
+          "symbol": "METMB",
+          "name": "Meteora x Moonbirds",
+          "icon": "https://95a7b7ed6dcc93099b459dddedb39cd9.ipfscdn.io/ipfs/QmQf9yoRiTd5ZX7pWHbKqFdpgtuRrPWDnszYtixDPAoqHZ/Meteora-Birb-Gif-HQ.gif",
+          "decimals": 0,
+          "amount": "1",
+          "uiAmount": 1,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "6HgJHzGpq3fSLmkepsaC8F3VtpUWfXcG4hmUaf4Vpump",
+          "symbol": "REGENT",
+          "name": "REGENT of the North Winds",
+          "icon": "https://ipfs.io/ipfs/Qmcuyx6zorvLEpK9U8K1SPutqoBdmQeL3uPr11fzjscjSn",
+          "decimals": 6,
+          "amount": "5131237",
+          "uiAmount": 5.131237,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "5kUUdkxWrfA8F6XMcfgnAiiYQcdTDTw5uZjXienUmgga",
+          "symbol": "CryptoGuy",
+          "name": "The Crypto Guy",
+          "icon": "https://ipfs.io/ipfs/bafkreihvt2lryywn24gjorm4mm3o4muwptdnx4qypcbyxzxgxuz4j46dia",
+          "decimals": 9,
+          "amount": "117000000000",
+          "uiAmount": 117,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "5EGrkTurV4BvhSA352pTQhPUcpQv3tVvrwNJ2pgH1avr",
+          "symbol": "VINE",
+          "name": "VINE",
+          "icon": "https://gateway.irys.xyz/6CEdLqHUMozmkG2scPJU85z8T9kmRjihXVgGd81kDR1N",
+          "decimals": 9,
+          "amount": "355250000000",
+          "uiAmount": 355.25,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "56p5QhsnrzahcK54N4RQNLkL4oEQgxMSDK77ph4hXW5L",
+          "symbol": "ANSEM",
+          "name": "The Black Bull",
+          "icon": "https://edge.uxento.io/image/Cx83EqERns2VuiKrkwHegTuECVqZebsNhJ3dCU8CucWG",
+          "decimals": 6,
+          "amount": "121000000",
+          "uiAmount": 121,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "53ahRprzk6oT8agy29ivaBvQY7vYotDL1kXW8QkDrVPq",
+          "symbol": "LAUNCHㅤ",
+          "name": "Launch On Pumpㅤ",
+          "icon": "https://gateway.irys.xyz/tCmlvbfvOOz-sAqP_QSIjnjovhuqEAjOjFtm3PlQLlE",
+          "decimals": 6,
+          "amount": "631502400",
+          "uiAmount": 631.5024,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "4fSWEw2wbYEUCcMtitzmeGUfqinoafXxkhqZrA9Gpump",
+          "symbol": "Pigeon",
+          "name": "level941",
+          "icon": "https://ipfs.io/ipfs/bafkreiglrmn6svlzf3l5ql22xu6y46pbczolq6y5cqpn4dwodhef3p7msa",
+          "decimals": 6,
+          "amount": "5631865",
+          "uiAmount": 5.631865,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "4PYijC1Xas63cxdoYnUg7SQgcg23UgNNcPmvbj6KNUSz",
+          "symbol": "BSCREENER",
+          "name": "BelieveScreener",
+          "icon": "https://ipfs.io/ipfs/bafkreige7pjt5rz64dmtnwsza5kaqb73qniq6dsoxtwhrc3dmdfqzzylze",
+          "decimals": 9,
+          "amount": "141138905318",
+          "uiAmount": 141.138905318,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "4HoTFzoyAtGBtVjZNn3Jwc6JC7gdCin5HM9uX1sske2y",
+          "symbol": "FAINZ",
+          "name": "FAINANZ SOURCE",
+          "icon": "https://ipfs.io/ipfs/bafkreicznusmmdcs7yfsbhqhrumbrf7ilevdfh4vd47rinwlelummfku64",
+          "decimals": 9,
+          "amount": "77995419179492",
+          "uiAmount": 77995.419179492,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "42zm66xAJyLRQEQ8e6ddR11nKpFmEXiQRfJkWWzQbQ6p",
+          "symbol": "ANSEMM",
+          "name": "The Black Bull",
+          "icon": "https://edge.uxento.io/image/Cx83EqERns2VuiKrkwHegTuECVqZebsNhJ3dCU8CucWG",
+          "decimals": 6,
+          "amount": "11688770",
+          "uiAmount": 11.68877,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "3neRnXpVyihdqrVDS1z9JxzWBuYB2qeHCk2ZpCPVP633",
+          "symbol": "SOLMOON",
+          "name": "SOLMOON",
+          "icon": null,
+          "decimals": 9,
+          "amount": "179000000000",
+          "uiAmount": 179,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "2eXamy7t3kvKhfV6aJ6Uwe3eh8cuREFcTKs1mFKZpump",
+          "symbol": "nuit",
+          "name": "nuit",
+          "icon": "https://ipfs.io/ipfs/QmXVLXErjusKBA7ULADdKNFmkLtNxYb1KLmfwhUTaqGmS4",
+          "decimals": 6,
+          "amount": "1139169",
+          "uiAmount": 1.139169,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "susdabGDNbhrnCa6ncrYo81u4s9GM8ecK2UwMyZiq4X",
+          "symbol": "sUSD",
+          "name": "Solayer USD",
+          "icon": "https://raw.githubusercontent.com/solayer-labs/token-metadata/main/susd/image.png",
+          "decimals": 6,
+          "amount": "1",
+          "uiAmount": 0.000001,
+          "priceUsd": null,
+          "valueUsd": null
+        },
+        {
+          "mint": "E8w9wEaahupMs48b96KFmzS9A1nb4obgDXo2CmH1hXj",
+          "symbol": "ARSE-Y",
+          "name": "Arsenal (Yes)",
+          "icon": "https://m.world.xyz/epl/arse.png",
+          "decimals": 6,
+          "amount": "2693488",
+          "uiAmount": 2.693488,
+          "priceUsd": null,
+          "valueUsd": null
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+Working directory: apps/hybrid-expo
+
+$ pnpm exec tsc --noEmit --pretty false -p tsconfig.swap.json
+Exit: 0
+(no diagnostics)
+
+$ pnpm exec eslint features/swap/useSwapController.ts features/swap/components/AssetSwap.tsx features/wallet/WalletActionPanel.tsx features/swap/swap.controller.dependencies.ts features/swap/swap.native-fixture.ts features/swap/swap.native-fixture.test.ts features/swap/SwapVerificationScreen.tsx app/dev-swap-verification.tsx
+Exit: 0
+(no errors or warnings)
+
+After fixture execution totals and refresh telemetry changed:
+$ pnpm exec eslint features/swap/SwapVerificationScreen.tsx features/swap/swap.native-fixture.ts features/swap/swap.native-fixture.test.ts
+Exit: 0
+(no errors or warnings)
+
+After final fixture totals/telemetry changes:
+$ pnpm exec tsc --noEmit --pretty false -p tsconfig.swap.json
+Exit: 0
+(no diagnostics; observed 2026-10-06)
