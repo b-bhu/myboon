@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { IsolatedEntityPostgres } from './isolated-postgres.test-support'
-import { ArticlePersistenceProcessor } from './article-persistence'
+import { ArticlePersistenceProcessor, retainPrimaryDuplicateTarget } from './article-persistence'
 import { managedFixture, ACME_ID, MANAGED_TEST_NOW } from './managed-v4.test-support'
 import { assessResearchReadiness } from '../signal-platform/research-readiness'
 import { validateResearchPacket } from '../signal-platform/validation'
@@ -68,12 +68,16 @@ test('article migration and deterministic persistence preserve shared membership
     writer = database.writer()
     const processor = new ArticlePersistenceProcessor(writer)
     const persist = async (input: ReturnType<typeof article>) => {
-      validateResearchPacket(input.packet)
+      // Related exact matches are retained as contextual packet history before
+      // the immutable source checkpoint is written. The SQL writer must see
+      // the same normalized packet as the later progression plan.
+      const packet = retainPrimaryDuplicateTarget(input.packet)
+      validateResearchPacket(packet)
       const readiness = assessResearchReadiness({ work: input.fixture.work, signal: input.fixture.handoffContext.signal,
-        packet: input.packet, persistedEvidence: [], assessedAt: MANAGED_TEST_NOW })
+        packet, persistedEvidence: [], assessedAt: MANAGED_TEST_NOW })
       assert.equal(readiness.outcome, 'ready_for_entity'); assert.ok(!('evidenceIds' in readiness)); assert.ok(!('coverage' in readiness))
-      await writer!.saveResearchSource(input.packet, { ...input.fixture.handoffContext, readiness })
-      return processor.persist({ packet: input.packet, source: 'news', owner: 'article-test', signal: new AbortController().signal })
+      await writer!.saveResearchSource(packet, { ...input.fixture.handoffContext, readiness })
+      return processor.persist({ packet, source: 'news', owner: 'article-test', signal: new AbortController().signal })
     }
     let itemId = ''
     await t.test('one immutable article belongs to two entities and links to a real legacy development', async () => {
@@ -104,6 +108,66 @@ test('article migration and deterministic persistence preserve shared membership
       assert.equal(await persist(input), 'reused')
       assert.equal((await database.admin.query('select count(*)::int count from managed_knowledge_private.items')).rows[0].count, 1)
       assert.equal((await database.admin.query('select count(*)::int count from managed_knowledge_private.article_source_attachments')).rows[0].count, 2)
+    })
+    await t.test('primary duplicate reuses one item while related history remains contextual and replay is idempotent', async () => {
+      const relatedPrior = article('article-related-prior', [membership(SECOND_ID)])
+      assert.equal(await persist(relatedPrior), 'written')
+      const relatedItemRows = (await database.admin.query(
+        'select item_id from managed_knowledge_private.article_items where item_id <> $1', [itemId],
+      )).rows
+      assert.equal(relatedItemRows.length, 1)
+      const relatedItemId = relatedItemRows[0].item_id as string
+      const proseBefore = (await database.admin.query(
+        'select item_id,title,timeline_summary,body,captured_text,content_hash,captured_text_hash from managed_knowledge_private.article_items order by item_id',
+      )).rows
+      const membershipsBefore = (await database.admin.query(
+        'select item_id,entity_id,role from managed_knowledge_private.memberships order by item_id,entity_id',
+      )).rows
+
+      const primary = membership()
+      Object.assign(primary, { relationship: 'duplicate', relationshipDecision: choice('duplicate'), priorItemDecision: choice(itemId),
+        priorItemId: itemId, priorItemSource: 'managed', duplicateTarget: { itemId, source: 'managed', entityId: ACME_ID } })
+      const related = membership(SECOND_ID, 'related')
+      Object.assign(related, { relationship: 'duplicate', relationshipDecision: choice('duplicate'), priorItemDecision: choice(relatedItemId),
+        priorItemId: relatedItemId, priorItemSource: 'managed', duplicateTarget: { itemId: relatedItemId, source: 'managed', entityId: SECOND_ID } })
+      const input = article('article-distinct-related-prior', [primary, related]); input.packet.novelty = choice('already_known')
+      const normalized = retainPrimaryDuplicateTarget(input.packet)
+      assert.equal(normalized.memberships[0]!.duplicateTarget?.itemId, itemId)
+      assert.equal(normalized.memberships[1]!.duplicateTarget, null)
+      assert.deepEqual(normalized.memberships[1]!.contextualDuplicateTarget, { itemId: relatedItemId, source: 'managed', entityId: SECOND_ID })
+      assert.equal(await persist(input), 'reused')
+
+      const attachmentRows = (await database.admin.query(
+        'select target_origin,target_item_id,entity_id from managed_knowledge_private.article_source_attachments where work_id=$1 order by entity_id',
+        [input.packet.workId],
+      )).rows
+      assert.equal(attachmentRows.length, 2)
+      assert.ok(attachmentRows.every((row) => row.target_origin === 'managed' && row.target_item_id === itemId))
+      assert.deepEqual((await database.admin.query(
+        'select item_id,entity_id,role from managed_knowledge_private.memberships order by item_id,entity_id',
+      )).rows, membershipsBefore)
+      assert.deepEqual((await database.admin.query(
+        'select item_id,entity_id,role from managed_knowledge_private.memberships where item_id=$1', [relatedItemId],
+      )).rows, [{ item_id: relatedItemId, entity_id: SECOND_ID, role: 'primary' }])
+      assert.deepEqual((await database.admin.query(
+        'select item_id,title,timeline_summary,body,captured_text,content_hash,captured_text_hash from managed_knowledge_private.article_items order by item_id',
+      )).rows, proseBefore)
+      assert.equal((await database.admin.query(
+        'select count(*)::int count from managed_knowledge_private.receipts where work_id=$1', [input.packet.workId],
+      )).rows[0].count, 1)
+
+      // Receipt-first replay reports the terminal operation as written even
+      // when the original effect was a reuse.
+      assert.equal(await persist(input), 'written')
+      assert.equal((await database.admin.query(
+        'select count(*)::int count from managed_knowledge_private.receipts where work_id=$1', [input.packet.workId],
+      )).rows[0].count, 1)
+      assert.equal((await database.admin.query(
+        'select count(*)::int count from managed_knowledge_private.article_source_attachments where work_id=$1', [input.packet.workId],
+      )).rows[0].count, 2)
+      assert.deepEqual((await database.admin.query(
+        'select item_id,title,timeline_summary,body,captured_text,content_hash,captured_text_hash from managed_knowledge_private.article_items order by item_id',
+      )).rows, proseBefore)
     })
     await t.test('source-grounded new identity is persisted privately and reused by later articles', async () => {
       const proposal = { name: 'Novel Research Narrative', type: 'story', aliases: ['Novel Narrative'], summary: 'A new source-grounded narrative.', scope: { category: 'research' } }

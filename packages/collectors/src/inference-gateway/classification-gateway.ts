@@ -42,6 +42,8 @@ export class ClassificationDoubleFailureError extends InferenceGatewayError {
       retryAfterMs: cause.retryAfterMs,
       provider: cause.provider,
       model: cause.model,
+      telemetry: cause.telemetry,
+      providerResponseReceived: cause.providerResponseReceived,
       cause,
     })
     this.name = 'ClassificationDoubleFailureError'
@@ -79,6 +81,48 @@ export class ClassificationGateway {
     this.audit = options.audit
     this.lifecycleMode = options.lifecycleMode ?? (() => undefined)
     this.now = options.now ?? Date.now
+  }
+
+  /**
+   * Validate all caller-owned classification input before a durable caller
+   * reserves a paid attempt. This deliberately performs no provider work.
+   *
+   * The dispatch path repeats these checks because callers may use classify()
+   * directly. Keeping this as a public preflight lets a durable reservation
+   * fence local input failures before it records a dispatch intent.
+   */
+  preflight(request: ClassificationRequest): void {
+    assertPublicRequest(request)
+    const definition = this.registry.resolve(request.workload, request.decisionVersion)
+    const validated = safeValidateState(definition, request.state)
+    if (!validated.valid) throw invalidInput(validated.issues.join('; '))
+    let state: unknown
+    try { state = structuredClone(validated.value) } catch { throw invalidInput('Classification state must be cloneable data') }
+    let stateJson: string
+    try { stateJson = canonicalJson(state) } catch { throw invalidInput('Classification state must be acyclic JSON data') }
+    if (Buffer.byteLength(stateJson) > definition.budget.maxStateBytes) throw invalidInput('Classification state exceeds registry budget')
+    const mode = tightenLifecycleMode(
+      definition.maximumLifecycleMode,
+      this.lifecycleMode(definition),
+      definition.defaultLifecycleMode,
+    )
+    const samplingKey = { workload: request.workload, decisionVersion: request.decisionVersion, stableDecisionKey: request.trace.stableDecisionKey }
+    if (definition.requiresJev && (mode === 'disabled'
+      || (mode === 'canary' && !selectedForPercent(samplingKey, definition.canaryPercent)))) {
+      throw new InferenceGatewayError('This classification workload requires an explicitly active Jev lifecycle', {
+        category: 'provider_unavailable', retryable: false,
+        provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+      })
+    }
+    try {
+      if (mode === 'disabled' || (mode === 'canary' && !selectedForPercent(samplingKey, definition.canaryPercent))) {
+        definition.renderHermes(validated.value)
+      } else {
+        definition.questions(validated.value)
+      }
+    } catch (error) {
+      throw invalidInput(`Classification registry failed to prepare dispatch: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   async classify<TDecision = unknown>(request: ClassificationRequest): Promise<ClassificationResult<TDecision>> {
@@ -142,6 +186,7 @@ export class ClassificationGateway {
     const startedAt = this.now()
     const startedAtIso = new Date(startedAt).toISOString()
     const calls: ClassificationAttemptCall[] = []
+    let providerResponseReceived = false
     let answers: Readonly<Record<string, JevAnswer>> | null = null
     let jevFailure: string | null = null
     let primaryFailure: InferenceGatewayError | null = null
@@ -151,6 +196,7 @@ export class ClassificationGateway {
       const primaryDeadline = dispatchPolicy.maxProviderCalls === 1 || dispatchPolicy.holdOnUnknownOutcome === true
         ? deadlineMs : Math.max(1, Math.floor(deadlineMs / 2))
       const result = await this.callJev(definition, state, primaryDeadline, 'live')
+      providerResponseReceived = true
       answers = result.response.answers
       const decoded = safeDecodeJev(definition, answers, state)
       const accepted = decoded.valid ? safeAcceptJev(definition, answers, decoded.value, state) : {
@@ -173,6 +219,7 @@ export class ClassificationGateway {
     } catch (error) {
       const failure = mapFailure(error, definition.jevTarget)
       primaryFailure = failure
+      providerResponseReceived ||= failure.providerResponseReceived
       jevFailure = failure.category
       if (calls.length === 0) calls.push(failedCall(definition.jevTarget, failure, Math.max(0, this.now() - startedAt)))
     }
@@ -189,10 +236,12 @@ export class ClassificationGateway {
           ? primaryFailure ?? new InferenceGatewayError(`Required Jev decision was rejected: ${jevFailure ?? 'invalid typed answer'}`, {
             category: 'invalid_structured_output', retryable: false,
             provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+            providerResponseReceived,
           })
         : new InferenceGatewayError('Classification fallback exceeds the reserved provider-call allowance', {
           category: 'budget_exceeded', retryable: false,
           provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+          providerResponseReceived,
           cause: primaryFailure ?? undefined,
         })
       const finishedAt = this.now()
@@ -213,6 +262,7 @@ export class ClassificationGateway {
         provider: definition.hermesTarget.provider, model: definition.hermesTarget.model,
       })
       const hermes = await this.callHermes(definition, state, remainingMs)
+      providerResponseReceived = true
       const validated = safeValidateHermes(definition, hermes.response.value, state)
       if (!validated.valid) {
         throw new InferenceGatewayError(`Hermes classification output is invalid: ${validated.issues.join('; ')}`, {
@@ -243,7 +293,8 @@ export class ClassificationGateway {
         fallbackUsed: true, fallbackReason: jevFailure, decision: null, answers, calls,
         failure, startedAt, finishedAt, startedAtIso,
       }))
-      throw new ClassificationDoubleFailureError(decisionId, jevFailure, failure)
+      throw new ClassificationDoubleFailureError(decisionId, jevFailure,
+        providerResponseReceived ? withProviderResponse(failure) : failure)
     }
   }
 
@@ -259,8 +310,10 @@ export class ClassificationGateway {
     const startedAt = this.now()
     const startedAtIso = new Date(startedAt).toISOString()
     const calls: ClassificationAttemptCall[] = []
+    let providerResponseReceived = false
     try {
       const result = await this.callHermes(definition, state, deadlineMs)
+      providerResponseReceived = true
       const validated = safeValidateHermes(definition, result.response.value, state)
       if (!validated.valid) throw new InferenceGatewayError(validated.issues.join('; '), {
         category: 'invalid_structured_output', retryable: false,
@@ -289,7 +342,8 @@ export class ClassificationGateway {
         fallbackUsed: false, fallbackReason, decision: null, answers: null, calls,
         failure, startedAt, finishedAt, startedAtIso,
       }))
-      throw new ClassificationDoubleFailureError(decisionId, null, failure)
+      throw new ClassificationDoubleFailureError(decisionId, null,
+        providerResponseReceived ? withProviderResponse(failure) : failure)
     }
   }
 
@@ -306,6 +360,7 @@ export class ClassificationGateway {
       })
     }
     const lease = this.capacity.acquire({ workload: definition.workload, target: definition.jevTarget, mode, policy: definition.capacity })
+    let providerResponseReceived = false
     try {
       const response = await withDeadline(deadlineMs, (signal) => this.jev.classify({
         workload: definition.workload,
@@ -316,13 +371,14 @@ export class ClassificationGateway {
         deadlineMs,
         signal,
       }), definition.jevTarget)
+      providerResponseReceived = true
       assertUsage(response.usage, definition)
       lease.release({ success: true, retryableFailure: false })
       return { response }
     } catch (error) {
       const failure = mapFailure(error, definition.jevTarget)
       lease.release({ success: false, retryableFailure: failure.retryable })
-      throw failure
+      throw providerResponseReceived ? withProviderResponse(failure) : failure
     }
   }
 
@@ -334,6 +390,7 @@ export class ClassificationGateway {
       })
     }
     const lease = this.capacity.acquire({ workload: definition.workload, target: definition.hermesTarget, mode: 'live', policy: definition.capacity })
+    let providerResponseReceived = false
     try {
       const response = await withDeadline(deadlineMs, (signal) => this.hermes.classify({
         workload: definition.workload,
@@ -343,13 +400,14 @@ export class ClassificationGateway {
         deadlineMs,
         signal,
       }), definition.hermesTarget)
+      providerResponseReceived = true
       assertUsage(response.usage, definition)
       lease.release({ success: true, retryableFailure: false })
       return { response }
     } catch (error) {
       const failure = mapFailure(error, definition.hermesTarget)
       lease.release({ success: false, retryableFailure: failure.retryable })
-      throw failure
+      throw providerResponseReceived ? withProviderResponse(failure) : failure
     }
   }
 }
@@ -459,6 +517,19 @@ function mapFailure(error: unknown, target: InferenceProviderTarget): InferenceG
   return error instanceof InferenceGatewayError ? error : new InferenceGatewayError('Classification provider failed', {
     category: 'provider_unavailable', retryable: true,
     provider: target.provider, model: target.model, cause: error,
+  })
+}
+
+function withProviderResponse(error: InferenceGatewayError): InferenceGatewayError {
+  return new InferenceGatewayError(error.message, {
+    category: error.category,
+    retryable: error.retryable,
+    retryAfterMs: error.retryAfterMs,
+    provider: error.provider,
+    model: error.model,
+    telemetry: error.telemetry,
+    providerResponseReceived: true,
+    cause: error.cause,
   })
 }
 

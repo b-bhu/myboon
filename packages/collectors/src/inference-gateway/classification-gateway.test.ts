@@ -135,6 +135,17 @@ test('invalid Jev output goes directly to Hermes and double failure carries deci
   assert.equal(setup.ports.attempts[0]?.calls.length, 2)
 })
 
+test('a received but rejected Jev answer is marked as a provider response under one-call policy', async () => {
+  const setup = gateway({ jev: { async classify() { return jevAnswer(0.6) } } })
+  await assert.rejects(setup.instance.classify({ ...request(), maxProviderCalls: 1 }), (error: unknown) => {
+    assert.ok(error instanceof InferenceGatewayError)
+    assert.equal(error.category, 'budget_exceeded')
+    assert.equal(error.providerResponseReceived, true)
+    return true
+  })
+  assert.equal(setup.ports.attempts[0]?.calls[0]?.status, 'not_accepted')
+})
+
 test('caller cannot inject questions, schema, confidence policy, or budget', async () => {
   const setup = gateway({})
   await assert.rejects(setup.instance.classify({ ...request(), questions: {} } as never), /caller-owned policy fields/)
@@ -215,5 +226,11 @@ test('invalid dispatch tightening fails before reaching any provider', async () 
   const setup = gateway({})
   await assert.rejects(setup.instance.classify({ ...request(), maxProviderCalls: 3 } as never), /one-or-two-provider/)
   await assert.rejects(setup.instance.classify({ ...request(), holdOnUnknownOutcome: 'yes' } as never), /must be boolean/)
+  assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 0 })
+})
+
+test('preflight rejects invalid state without reaching any provider', () => {
+  const setup = gateway({})
+  assert.throws(() => setup.instance.preflight({ ...request(), state: { subject: 42 } }), /subject required/)
   assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 0 })
 })

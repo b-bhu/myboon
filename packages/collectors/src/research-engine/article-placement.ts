@@ -20,6 +20,13 @@ import {
 } from '../inference-gateway/classification-definitions'
 import type { ArticleResearchContext } from '../research-gate/managed-context-reader'
 import { rankEntityCandidates } from '../research-gate/entity-candidates'
+import {
+  ARTICLE_DECISION_SOURCE_MAX_CHARS,
+  ARTICLE_DECISION_STATE_MAX_BYTES,
+  articleCandidateDecisionSummary,
+  articleHistoryDecisionTitle,
+} from './article-input-bounds'
+export { ARTICLE_DECISION_SOURCE_MAX_CHARS, ARTICLE_DECISION_STATE_MAX_BYTES } from './article-input-bounds'
 
 /**
  * Code retrieves a bounded catalogue first. Jev then selects placement and
@@ -44,7 +51,7 @@ export async function prepareArticlePlacement(input: {
   let candidates = rankEntityCandidates(input.context.candidates, articleLookupTerms(input.signal))
   let placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
     workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PLACEMENT_VERSION,
-    state: articleDecisionState('placement', { article: { title: input.signal.title, text: input.sourceText }, candidates }),
+    state: articleDecisionState('placement', { article: { title: input.signal.title, text: input.sourceText }, candidates: decisionCandidates(candidates) }),
     trace: { stableDecisionKey: `${input.stableDecisionKey}:placement`, correlationIds: { signalId: input.signal.signalId } },
   })
   if (!placement.value.entityId && input.context.widenCandidates) {
@@ -55,7 +62,7 @@ export async function prepareArticlePlacement(input: {
       candidates = merged
       placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
         workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PLACEMENT_VERSION,
-        state: articleDecisionState('placement', { article: { title: input.signal.title, text: input.sourceText }, candidates }),
+        state: articleDecisionState('placement', { article: { title: input.signal.title, text: input.sourceText }, candidates: decisionCandidates(candidates) }),
         trace: { stableDecisionKey: `${input.stableDecisionKey}:placement:widened`, correlationIds: { signalId: input.signal.signalId } },
       })
     }
@@ -76,7 +83,7 @@ export async function prepareArticlePlacement(input: {
         candidates = rankEntityCandidates([...exact, ...candidates], [creationProposal.name, ...creationProposal.aliases])
         placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
           workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PLACEMENT_VERSION,
-          state: articleDecisionState('exact identity placement', { article: { title: input.signal.title, text: input.sourceText }, candidates }),
+          state: articleDecisionState('exact identity placement', { article: { title: input.signal.title, text: input.sourceText }, candidates: decisionCandidates(candidates) }),
           trace: { stableDecisionKey: `${input.stableDecisionKey}:placement:exact-identity`, correlationIds: { signalId: input.signal.signalId } },
         })
         selected = placement.value.entityId
@@ -104,7 +111,7 @@ export async function prepareArticlePlacement(input: {
   const relatedCandidates = candidates.filter((candidate) => candidate.id !== entity.id)
   const related = relatedCandidates.length === 0 ? null : await input.gateway.classify<ArticleRelatedMembershipDecision>({
     workload: ARTICLE_RELATED_MEMBERSHIP_WORKLOAD, decisionVersion: ARTICLE_RELATED_MEMBERSHIP_VERSION,
-    state: articleDecisionState('related memberships', { article: { title: input.signal.title, text: input.sourceText }, primary: { id: entity.id, name: entity.name }, candidates: relatedCandidates }),
+    state: articleDecisionState('related memberships', { article: { title: input.signal.title, text: input.sourceText }, primary: { id: entity.id, name: entity.name }, candidates: decisionCandidates(relatedCandidates) }),
     trace: { stableDecisionKey: `${input.stableDecisionKey}:related-memberships`, correlationIds: { signalId: input.signal.signalId, entityId: entity.id } },
   })
   const memberships: ArticleEntityProposal[] = []
@@ -128,11 +135,6 @@ export async function prepareArticlePlacement(input: {
 export class ArticleResearchHold extends Error {
   constructor(readonly code: 'entity_resolution_no_match' | 'entity_resolution_uncertain' | 'required_jev_disabled' | 'source_capture_missing' | 'source_input_too_large' | 'decision_state_too_large' | 'context_coverage_unavailable' | 'incompatible_article_checkpoint', message: string) { super(message); this.name = 'ArticleResearchHold' }
 }
-
-/** All decision definitions share this explicit immutable-capture admission bound. */
-export const ARTICLE_DECISION_SOURCE_MAX_CHARS = 16_000
-/** State carries whole source plus bounded catalogue/history context. */
-export const ARTICLE_DECISION_STATE_MAX_BYTES = 96_000
 
 async function membership(
   input: Parameters<typeof prepareArticlePlacement>[0],
@@ -199,7 +201,10 @@ async function novelty(
   })
   let decision = choice(result, 'novelty')
   const primary = memberships.find(membership => membership.role === 'primary' && membership.duplicateTarget)
-  if (primary && ['new_information', 'contradicts_prior', 'uncertain'].includes(decision.choice)) {
+  // A contradictory known/new judgment gets one bounded primary-target
+  // reconciliation. An uncertain result is already an explicit hold outcome;
+  // do not spend another provider call trying to turn unknown into reuse.
+  if (primary && ['new_information', 'contradicts_prior'].includes(decision.choice)) {
     const target = selectedTargets.find(target => target.role === 'primary' && target.id === primary.duplicateTarget!.itemId && target.source === primary.duplicateTarget!.source)
     if (!target) throw new ArticleResearchHold('entity_resolution_uncertain', 'The primary duplicate target is unavailable for reconciliation.')
     const reconciled = await input.gateway.classify<ArticleNoveltyDecision>({
@@ -225,9 +230,25 @@ async function novelty(
   if (decision.choice === 'uncertain' && duplicateTargets.length > 0) {
     throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev novelty is uncertain despite a duplicate target; reuse requires a resolved decision.')
   }
-  if (decision.choice === 'already_known'
-    && new Set(duplicateTargets.map((target) => `${target.source}:${target.itemId}`)).size > 1) {
-    throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev duplicate judgments disagree on the shared item to reuse.')
+  if (decision.choice === 'already_known') {
+    // The primary exact duplicate is the only authoritative reuse decision for
+    // one incoming article. A related entity can have an independent historical
+    // match without proving that its item is the same shared development. Keep
+    // that raw relationship/prior-item judgment as context, but do not let it
+    // force a merge or make the article appear to have two durable targets.
+    const primary = memberships.find((membership) => membership.role === 'primary' && membership.duplicateTarget)
+    if (!primary?.duplicateTarget) {
+      throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev marked the article already known without a primary exact durable duplicate target.')
+    }
+    for (const membership of memberships) {
+      if (membership === primary || !membership.duplicateTarget) continue
+      membership.contextualDuplicateTarget = membership.duplicateTarget
+      membership.duplicateTarget = null
+    }
+    const resolvedTargets = memberships.flatMap((membership) => membership.duplicateTarget ? [membership.duplicateTarget] : [])
+    if (new Set(resolvedTargets.map((target) => `${target.source}:${target.itemId}`)).size > 1) {
+      throw new ArticleResearchHold('entity_resolution_uncertain', 'Jev duplicate judgments disagree on the shared item to reuse.')
+    }
   }
   // A related-entity duplicate can coexist with a new primary development.
   // An exact duplicate selected for the primary, however, materially conflicts
@@ -315,6 +336,13 @@ function articleDecisionState<T>(label: string, state: T): T {
   return state
 }
 
+function decisionCandidates(candidates: ArticleResearchContext['candidates']): ArticleResearchContext['candidates'] {
+  return candidates.map((candidate) => {
+    const { decisionSummary, ...profile } = candidate
+    return { ...profile, summary: decisionSummary ?? articleCandidateDecisionSummary(candidate.summary) }
+  })
+}
+
 function assertContextCoverage(context: ArticleResearchContext): void {
   if (context.coverageFailures.length > 0) {
     throw new ArticleResearchHold('context_coverage_unavailable', `Article placement is held because catalogue/history coverage failed: ${context.coverageFailures.join('; ')}`)
@@ -324,11 +352,11 @@ function assertContextCoverage(context: ArticleResearchContext): void {
 function relationshipHistoryItem(item: { id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }) {
   // Legacy records can use their full summary as a title. Bound only the
   // decision's title field; preserve the stored item and full writing context.
-  return { ...item, title: excerpt(item.title, 500) }
+  return { ...item, title: articleHistoryDecisionTitle(item.title) }
 }
 
 function noveltyHistoryItem(item: { id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }) {
-  return { ...item, title: excerpt(item.title, 500), summary: excerpt(item.summary, 500) }
+  return { ...item, title: articleHistoryDecisionTitle(item.title), summary: excerpt(item.summary, 500) }
 }
 
 function excerpt(value: string, limit: number): string {

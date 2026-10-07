@@ -26,6 +26,7 @@ import { deriveEntityHintClaimRefs } from '../signal-platform/entity-hint-claims
 import { canonicalJson } from '../signal-platform/canonical-json'
 import { validateResearchPacket } from '../signal-platform/validation'
 import type { RetrievedEvidenceArtifact } from './deterministic-retrieval'
+import { ARTICLE_DECISION_SOURCE_MAX_CHARS } from './article-input-bounds'
 
 export interface StructuredSynthesisClaim {
   claim: string
@@ -172,6 +173,10 @@ export class StructuredResearchSynthesizer {
       budget: {
         maxProviderCalls: 1, maxRepairCalls: input.workItem.budget.maxRepairCalls,
         maxWallTimeMs: input.workItem.budget.maxWallTimeMs, maxToolCalls: 0,
+        ...(typeof input.workItem.budget.maxInputTokens === 'number'
+          ? { maxInputTokens: input.workItem.budget.maxInputTokens } : {}),
+        ...(typeof input.workItem.budget.maxOutputTokens === 'number'
+          ? { maxOutputTokens: input.workItem.budget.maxOutputTokens } : {}),
       },
       validate: validateArticleEntityProposalBody,
     })
@@ -716,7 +721,7 @@ function promptJson(value: unknown): string {
 
 /** Proposal identity is only safe when Hermes receives the whole capture. */
 function articleProposalSource(sourceText: string): string {
-  if (sourceText.length > 16_000) {
+  if (sourceText.length > ARTICLE_DECISION_SOURCE_MAX_CHARS) {
     throw localError('Article entity proposal exceeds the configured immutable source-input bound')
   }
   return sourceText

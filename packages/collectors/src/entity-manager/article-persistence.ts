@@ -58,11 +58,29 @@ export class ArticlePersistenceProcessor {
     const resolved = resolveMemberships(packet, context)
     if (resolved.kind === 'hold') return this.raiseHold(packet, input.owner, resolved.reason, 'entity_resolution')
 
-    const duplicate = resolveDuplicate(packet, context)
+    // Research may have produced one exact primary reuse target plus related
+    // entity history matches. The primary target is authoritative for the
+    // shared managed item; retain secondary judgments in the saved source
+    // packet, but omit them from the writer effect so the SQL boundary sees
+    // exactly one durable reuse target. Without a primary target this helper
+    // leaves the packet untouched and resolveDuplicate holds ambiguity.
+    const packetForCommit = retainPrimaryDuplicateTarget(packet)
+    const duplicate = resolveDuplicate(packetForCommit, context)
     if (duplicate.kind === 'hold') return this.raiseHold(packet, input.owner, duplicate.reason, 'duplicate_target_resolution')
+    // The Research source checkpoint is immutable. A legacy caller that saved
+    // the raw multi-target packet before entering Entity cannot silently swap
+    // in a normalized membership shape at the SQL commit boundary: the writer
+    // would reject the plan/source proof, and rewriting the checkpoint would
+    // erase the paid source provenance. New packets should be normalized before
+    // saveResearchSource; retain the old one for explicit reconciliation.
+    if (packetForCommit !== packet) {
+      return this.raiseHold(packet, input.owner,
+        'article packet requires duplicate-target normalization before its immutable source checkpoint is saved',
+        'immutable_article_source_checkpoint')
+    }
     const contextDigest = knowledgeOperationSemanticDigest({
       baseDigest: context.digest,
-      packetDigest: digest(packet),
+      packetDigest: digest(packetForCommit),
       entities: resolved.entities,
       duplicateTarget: duplicate.target,
     })
@@ -95,7 +113,7 @@ export class ArticlePersistenceProcessor {
       if (input.signal.aborted) throw hold('entity lease is no longer live', 'lease_fence')
       const itemId = duplicate.target ? null : deriveManagedItemId(operationId, 'article')
       const committed = await this.writer.commitArticle({
-        operationId, workId: packet.workId, owner: lease.owner, epoch: lease.epoch, packet,
+        operationId, workId: packetForCommit.workId, owner: lease.owner, epoch: lease.epoch, packet: packetForCommit,
         contextDigest, contextWatermark: context.watermark, targetRevisions,
         entities: resolved.entities, itemId, duplicateTarget: duplicate.target,
       })
@@ -176,7 +194,14 @@ function resolveDuplicate(packet: ArticleResearchPacketV1, context: ManagedArtic
   | { kind: 'hold', reason: string } {
   const proposals = packet.memberships
   const targets = proposals.map(duplicateTarget).filter((value): value is NonNullable<ReturnType<typeof duplicateTarget>> => value !== null)
+  const contextualTargets = proposals.map(contextualDuplicateTarget).filter((value): value is NonNullable<ReturnType<typeof contextualDuplicateTarget>> => value !== null)
   const novelty = packet.novelty.choice
+  const contextualTargetsAreGrounded = contextualTargets.every((candidate) => context.articleItems.some((item) =>
+    item.itemId === candidate.itemId && item.origin === candidate.source && item.entityId === candidate.entityId,
+  ))
+  if (!contextualTargetsAreGrounded) {
+    return { kind: 'hold', reason: 'contextual duplicate target is not a valid durable history reference' }
+  }
   if (novelty === 'uncertain') {
     return targets.length > 0
       ? { kind: 'hold', reason: 'prepared article novelty remains uncertain despite an exact duplicate target' }
@@ -184,6 +209,10 @@ function resolveDuplicate(packet: ArticleResearchPacketV1, context: ManagedArtic
   }
   if (novelty === 'already_known' && targets.length === 0) {
     return { kind: 'hold', reason: 'already-known article requires an exact durable duplicate target' }
+  }
+  const primaryTargets = proposals.filter((proposal) => proposal.role === 'primary' && duplicateTarget(proposal) !== null)
+  if (novelty === 'already_known' && primaryTargets.length !== 1) {
+    return { kind: 'hold', reason: 'already-known article requires exactly one primary exact durable duplicate target' }
   }
   if (novelty === 'new_information' || novelty === 'contradicts_prior') {
     if (proposals.some((proposal) => proposal.role === 'primary' && duplicateTarget(proposal) !== null)) {
@@ -214,6 +243,36 @@ function duplicateTarget(proposal: ArticleEntityProposal): { itemId: string, sou
   return typeof value.itemId === 'string' && typeof value.entityId === 'string' && (value.source === 'legacy' || value.source === 'managed')
     ? { itemId: value.itemId, source: value.source, entityId: value.entityId }
     : null
+}
+
+function contextualDuplicateTarget(proposal: ArticleEntityProposal): { itemId: string, source: 'legacy' | 'managed', entityId: string } | null {
+  const target = (proposal as ArticleEntityProposal & { contextualDuplicateTarget?: unknown }).contextualDuplicateTarget
+  if (!target || typeof target !== 'object') return null
+  const value = target as { itemId?: unknown, source?: unknown, entityId?: unknown }
+  return typeof value.itemId === 'string' && typeof value.entityId === 'string' && (value.source === 'legacy' || value.source === 'managed')
+    ? { itemId: value.itemId, source: value.source, entityId: value.entityId } : null
+}
+
+/**
+ * Reduce a replayable already-known packet to the one source-grounded item
+ * that the primary exact duplicate selected. Related duplicate judgments are
+ * retained as packet history, but they are not additional writer effects.
+ */
+export function retainPrimaryDuplicateTarget(packet: ArticleResearchPacketV1): ArticleResearchPacketV1 {
+  if (packet.novelty.choice !== 'already_known') return packet
+  const primary = packet.memberships.find((proposal) => proposal.role === 'primary' && duplicateTarget(proposal) !== null)
+  const authoritative = primary ? duplicateTarget(primary) : null
+  if (!authoritative) return packet
+  let changed = false
+  const memberships = packet.memberships.map((proposal) => {
+    const target = duplicateTarget(proposal)
+    if (!target || proposal === primary) return proposal
+    changed = true
+    // Keep the exact secondary target and raw relationship decision as
+    // contextual history. Only the primary exact duplicate is a writer effect.
+    return { ...proposal, duplicateTarget: null, contextualDuplicateTarget: target }
+  })
+  return changed ? { ...packet, memberships } : packet
 }
 
 function receiptOutcome(receipt: KnowledgeOperationReceipt, operationId: string, workId: string): void {

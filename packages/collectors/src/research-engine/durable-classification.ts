@@ -5,16 +5,20 @@ import type { ResearchWorkItem } from '../signal-platform/contracts'
 import {
   approvedClassificationDefinitions, type ClassificationGateway, type ClassificationResult,
 } from '../inference-gateway'
+import { InferenceGatewayError } from '../inference-gateway/errors'
 import {
   claimReservation, recordDispatchIntent, recordUnknownOutcome, settleReservation,
-  type D2AssignmentLimitsSnapshot,
+  type D2AssignmentLimitsSnapshot, type D2Usage,
 } from './assignment-budget'
 import { researchRootAssignmentId, ResearchFollowupHold } from './bounded-followup'
 import type { ResearchV4StorePort } from './v4-store'
 
 /** Each classified paid dispatch gets a durable one-call reservation too. */
 export function durableResearchClassification(input: {
-  gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
+  gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'> & {
+    /** Optional on test/dumb ports; the real gateway exposes paid-call preflight. */
+    preflight?: (request: Parameters<ClassificationGateway['classify']>[0]) => void
+  }
   store: ResearchV4StorePort
   work: ResearchWorkItem
   assignmentPolicy: D2AssignmentLimitsSnapshot
@@ -24,6 +28,10 @@ export function durableResearchClassification(input: {
   const port: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'> = {
     recordPolicyOutcome: (outcome) => input.gateway.recordPolicyOutcome(outcome),
     async classify<Value>(request: Parameters<ClassificationGateway['classify']>[0]) {
+      // Local validation must happen before a reservation or dispatch intent.
+      // Otherwise a caller-owned malformed state is indistinguishable from a
+      // provider timeout and leaves an unjustified paid-outcome hold.
+      input.gateway.preflight?.(request)
       const definition = approvedClassificationDefinitions().find((item) => item.workload === request.workload)
       if (!definition) throw new ResearchFollowupHold('Research classification workload has no approved budget definition.')
       const rootAssignmentId = researchRootAssignmentId(input.work)
@@ -48,6 +56,24 @@ export function durableResearchClassification(input: {
         'classification_result', input.work.workId, attemptId,
       )
       const record = reservation.record
+      const rejected = input.store.getResearchV4Record<{
+        key: typeof key, requestDigest: string, status: string,
+        usage?: D2Usage,
+      }>('rejected_response', input.work.workId, attemptId)
+      if (rejected && rejected.status === 'received_response_rejected'
+        && rejected.requestDigest === requestDigest
+        && canonicalJson(rejected.key) === canonicalJson(key)) {
+        const receiptRef = `rejected_response:${input.work.workId}:${attemptId}`
+        const receiptDigest = createHash('sha256').update(canonicalJson(rejected)).digest('hex')
+        const settled = await settleReservation(store, key, {
+          requestDigest, providerResultDigest: receiptDigest, savedResultRef: receiptRef,
+          usage: rejected.usage ?? { status: 'unknown', costUsdMicros: null, inputTokens: null, outputTokens: null, providerCalls: 1 },
+          savedResultSavedAtMs: Date.parse(input.now()),
+          verification: { kind: 'durable_matching_response', savedResultRef: receiptRef, providerResultDigest: receiptDigest },
+        })
+        if (!settled.ok) throw new ResearchFollowupHold(`Persisted rejected classification receipt settlement refused: ${settled.code}.`)
+        throw new ResearchFollowupHold('Classification response was received but rejected; the paid attempt is terminal and will not be redispatched.')
+      }
       if (saved && (record.state === 'settled' || record.state === 'dispatch_intent')) {
         if (record.state === 'dispatch_intent') await settle(saved)
         return saved
@@ -69,6 +95,27 @@ export function durableResearchClassification(input: {
         await settle(result)
         return result
       } catch (error) {
+        if (hasReceivedClassificationResponse(error)) {
+          const receiptRef = `rejected_response:${input.work.workId}:${attemptId}`
+          const receipt = {
+            key, requestDigest, status: 'received_response_rejected' as const,
+            observedAt: input.now(), failureCategory: error.category,
+            provider: error.provider ?? null, model: error.model ?? null,
+            detail: String(error).slice(0, 400), providerResponseReceived: true,
+            usage: classificationRejectedUsage(error),
+          }
+          const savedReceipt = input.store.getResearchV4Record<typeof receipt>('rejected_response', input.work.workId, attemptId)
+            ?? input.store.putResearchV4Record('rejected_response', input.work.workId, attemptId, receipt)
+          const receiptDigest = createHash('sha256').update(canonicalJson(savedReceipt)).digest('hex')
+          const settled = await settleReservation(store, key, {
+            requestDigest, providerResultDigest: receiptDigest, savedResultRef: receiptRef,
+            usage: savedReceipt.usage,
+            savedResultSavedAtMs: Date.parse(input.now()),
+            verification: { kind: 'durable_matching_response', savedResultRef: receiptRef, providerResultDigest: receiptDigest },
+          })
+          if (!settled.ok) throw new ResearchFollowupHold(`Rejected classification response settlement refused: ${settled.code}.`)
+          throw new ResearchFollowupHold(`Classification response was received but rejected: ${String(error).slice(0, 400)}.`)
+        }
         await recordUnknownOutcome(store, key, { ownedEpoch: record.ownershipEpoch, nowMs: Date.parse(input.now()) })
         throw error
       }
@@ -89,4 +136,18 @@ export function durableResearchClassification(input: {
     },
   }
   return port
+}
+
+function hasReceivedClassificationResponse(error: unknown): error is InferenceGatewayError {
+  return error instanceof InferenceGatewayError && error.providerResponseReceived
+}
+
+function classificationRejectedUsage(error: InferenceGatewayError): D2Usage {
+  const telemetry = error.telemetry
+  const cost = telemetry?.costUsdMicros
+  return telemetry && typeof cost === 'number' && cost > 0
+    ? { status: 'measured', costUsdMicros: cost, inputTokens: telemetry.inputTokens,
+      outputTokens: telemetry.outputTokens, providerCalls: telemetry.providerCalls }
+    : { status: 'unknown', costUsdMicros: null, inputTokens: telemetry?.inputTokens ?? null,
+      outputTokens: telemetry?.outputTokens ?? null, providerCalls: telemetry?.providerCalls ?? 1 }
 }

@@ -70,6 +70,27 @@ test('article candidate merge prioritizes an exact private identity over more th
   assert.deepEqual((await context.findExactEntities!(['Raoul Pal'])).map(e => e.id), [exact.id])
 })
 
+test('article candidate projection bounds descriptions while retaining the original profile summary', async () => {
+  const longSummary = 'Profile detail '.repeat(120)
+  const emptySummary = '   '
+  const managed: ManagedResearchContextPort = {
+    researchContext: async () => ({ entities: [], items: [], digest: 'fixture', watermark: '0', truncated: false }),
+    articleContext: async () => ({ entities: [
+      { id: 'long', slug: 'long', name: 'Long Profile', summary: longSummary },
+      { id: 'empty', slug: 'empty', name: 'Empty Profile', summary: emptySummary },
+    ], items: [], articleItems: [], digest: 'fixture', watermark: '0', truncated: false, candidateTruncated: false }),
+  }
+  const reader = new InternalResearchEntityMemoryReader({ legacy: v4ContextReader(), managed, source: 'news', sourceRefs: [], labels: [] })
+  const context = await reader.articleContext()
+  const long = context.candidates.find(candidate => candidate.id === 'long')!
+  const empty = context.candidates.find(candidate => candidate.id === 'empty')!
+  assert.equal(long.summary, longSummary)
+  assert.ok((long.decisionSummary?.length ?? 0) <= 1_000)
+  assert.match(long.decisionSummary!, /\[excerpted\]$/)
+  assert.equal(empty.summary, emptySummary)
+  assert.equal(empty.decisionSummary, null)
+})
+
 test('article creation cannot assume complete exact identity coverage from an old or truncated managed context', async () => {
   for (const candidateTruncated of [undefined, true]) {
     const response = { entities: [], items: [], articleItems: [], digest: 'fixture', watermark: '0', truncated: false, candidateTruncated }

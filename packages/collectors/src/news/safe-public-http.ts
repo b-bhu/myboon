@@ -10,8 +10,13 @@ const CONNECT_TIMEOUT_MS = 5_000
 /** Explicit publisher migrations; never approve a redirect merely because it occurred. */
 export function approvedArticleDomains(rawUrl: string): string[] {
   const hostname = normalizedHostname(parseHttpUrl(rawUrl))
-  return hostname === 'panewslab.com' || hostname === 'www.panewslab.com'
-    ? [hostname, 'panews.io'] : [hostname]
+  const reviewedAliases: Record<string, readonly string[]> = {
+    'panewslab.com': ['panews.io'],
+    'www.panewslab.com': ['panews.io'],
+    // Publisher canonicalization observed on the original article endpoint.
+    'www.monad.xyz': ['monad.xyz'],
+  }
+  return [hostname, ...(reviewedAliases[hostname] ?? [])]
 }
 
 export type ResolveHost = (hostname: string) => Promise<string[]>
@@ -243,7 +248,9 @@ function isPublicAddress(address: string): boolean {
       || (a === 100 && b >= 64 && b <= 127)
       || (a === 169 && b === 254)
       || (a === 172 && b >= 16 && b <= 31)
-      || (a === 192 && b === 0)
+      // IANA reserves 192.0.0/24 and 192.0.2/24, not all of 192.0/16.
+      // Public publisher infrastructure such as 192.0.66 must remain reachable.
+      || (a === 192 && b === 0 && (c === 0 || c === 2))
       || (a === 192 && b === 168)
       || (a === 198 && (b === 18 || b === 19))
       || (a === 198 && b === 51 && c === 100)

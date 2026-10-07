@@ -940,8 +940,11 @@ export class SharedResearchWorker {
           assignmentPolicy: v4.assignmentPolicy,
           requestMaterial: { sourceUrl: source.finalUrl, contentHash: source.contentHash, signal: input.signal },
           stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
-          generate: () => this.synthesizer.proposeArticleEntity({
-            signal: input.signal, workItem: input.lease.work, sourceText: source.text, sourceUrl: source.finalUrl,
+          generate: (budget) => this.synthesizer.proposeArticleEntity({
+            signal: input.signal,
+            workItem: { ...input.lease.work, budget: { ...input.lease.work.budget,
+              maxInputTokens: budget.maxInputTokens, maxOutputTokens: budget.maxOutputTokens } },
+            sourceText: source.text, sourceUrl: source.finalUrl,
           }),
         })).proposal,
       })

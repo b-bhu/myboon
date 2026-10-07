@@ -162,6 +162,24 @@ export async function runBoundedFollowup(input: {
   })
   if (!claimed.ok) throw new ResearchFollowupHold(`Follow-up allowance is held: ${claimed.code}.`)
   let record = claimed.record
+  const rejected = store.getResearchV4Record<{
+    key: typeof key, requestDigest: string, status: string,
+    telemetry: InferenceGatewayError['telemetry'] | null, response: ResearchPacketV1 | null,
+  }>('rejected_response', work.workId, attemptId)
+  if (rejected && rejected.status === 'received_response_rejected'
+    && rejected.requestDigest === requestDigest
+    && canonicalJson(rejected.key) === canonicalJson(key)) {
+    const receiptRef = `rejected_response:${work.workId}:${attemptId}`
+    const receiptDigest = digest(canonicalJson(rejected))
+    const settled = await settleReservation(budgetStore, key, {
+      requestDigest, providerResultDigest: receiptDigest, savedResultRef: receiptRef,
+      usage: rejected.response ? usageFromPacket(rejected.response) : usageFromTelemetry(rejected.telemetry),
+      settlementEpoch: record.ownershipEpoch, savedResultSavedAtMs: Date.parse(input.now()),
+      verification: { kind: 'durable_matching_response', savedResultRef: receiptRef, providerResultDigest: receiptDigest },
+    })
+    if (!settled.ok) throw new ResearchFollowupHold(`Persisted rejected follow-up receipt settlement refused: ${settled.code}.`)
+    throw new ResearchFollowupHold('Paid follow-up response was received but rejected; the paid attempt is terminal and will not be redispatched.')
+  }
   const result = store.getResearchV4Record<ResearchPacketV1>('followup_result', work.workId, attemptId)
   if (result && (record.state === 'settled' || record.state === 'dispatch_intent')) {
     if (record.state !== 'settled') await settleSaved(result)
@@ -177,7 +195,8 @@ export async function runBoundedFollowup(input: {
   const intent = await recordDispatchIntent(budgetStore, key, { ownedEpoch: record.ownershipEpoch, nowMs: Date.parse(input.now()) })
   if (!intent.ok) throw new ResearchFollowupHold(`Follow-up dispatch fence refused: ${intent.code}.`)
   record = intent.record
-  let generated: ResearchPacketV1
+  let generated: ResearchPacketV1 | null = null
+  let received: unknown = null
   try {
     const synthesized = await input.synthesizer.synthesize({
       signal: input.signal,
@@ -190,6 +209,7 @@ export async function runBoundedFollowup(input: {
       } },
       evidence: [...baselineEvidence, ...additions] as RetrievedEvidenceArtifact[],
     })
+    received = synthesized
     if (isArticleResearchPacket(synthesized)) {
       throw new ResearchFollowupHold('Legacy follow-up cannot accept an article synthesis result; prepared article work requires its own workflow.')
     }
@@ -197,8 +217,28 @@ export async function runBoundedFollowup(input: {
     // Save the response before budget settlement and before handing anything off.
     generated = store.putResearchV4Record('followup_result', work.workId, attemptId, generated)
   } catch (error) {
-    await recordUnknownOutcome(budgetStore, key, { ownedEpoch: record.ownershipEpoch, nowMs: Date.parse(input.now()) })
     const telemetry = error instanceof InferenceGatewayError ? error.telemetry : undefined
+    if (received !== null || hasReceivedProviderResponse(telemetry)) {
+      const receiptRef = `rejected_response:${work.workId}:${attemptId}`
+      const receipt = {
+        key, requestDigest, status: 'received_response_rejected' as const,
+        observedAt: input.now(), failureCategory: telemetry?.failureCategory
+          ?? (error instanceof InferenceGatewayError ? error.category : 'invalid_structured_output'),
+        detail: String(error).slice(0, 400), telemetry: telemetry ?? null, response: received,
+      }
+      const savedReceipt = store.getResearchV4Record<typeof receipt>('rejected_response', work.workId, attemptId)
+        ?? store.putResearchV4Record('rejected_response', work.workId, attemptId, receipt)
+      const receiptDigest = digest(canonicalJson(savedReceipt))
+      const settled = await settleReservation(budgetStore, key, {
+        requestDigest, providerResultDigest: receiptDigest, savedResultRef: receiptRef,
+        usage: generated ? usageFromPacket(generated) : usageFromTelemetry(telemetry),
+        settlementEpoch: record.ownershipEpoch, savedResultSavedAtMs: Date.parse(input.now()),
+        verification: { kind: 'durable_matching_response', savedResultRef: receiptRef, providerResultDigest: receiptDigest },
+      })
+      if (!settled.ok) throw new ResearchFollowupHold(`Rejected follow-up response settlement refused: ${settled.code}.`)
+      throw new ResearchFollowupHold(`Paid follow-up response was received but rejected: ${String(error).slice(0, 400)}. Original Research is retained.`)
+    }
+    await recordUnknownOutcome(budgetStore, key, { ownedEpoch: record.ownershipEpoch, nowMs: Date.parse(input.now()) })
     if (!store.getResearchV4Record('followup_result', work.workId, `${attemptId}:unknown_outcome`)) {
       store.putResearchV4Record('followup_result', work.workId, `${attemptId}:unknown_outcome`, {
         key, requestDigest, status: 'execution_outcome_unknown', observedAt: input.now(),
@@ -251,6 +291,25 @@ export async function runBoundedFollowup(input: {
     }
     return saveFinal(store, work.workId, combined)
   }
+}
+
+function hasReceivedProviderResponse(telemetry: InferenceGatewayError['telemetry']): boolean {
+  return telemetry?.calls.some((call) => call.status === 'succeeded') === true
+    && (telemetry?.failureCategory === 'budget_exceeded' || telemetry?.failureCategory === 'invalid_structured_output')
+}
+
+function usageFromTelemetry(telemetry: InferenceGatewayError['telemetry'] | null): D2Usage {
+  return { status: 'unknown', costUsdMicros: null, inputTokens: telemetry?.inputTokens ?? null,
+    outputTokens: telemetry?.outputTokens ?? null, providerCalls: telemetry?.providerCalls ?? null }
+}
+
+function usageFromPacket(packet: ResearchPacketV1): D2Usage {
+  const cost = packet.budgetUsed.costUsdMicros
+  return typeof cost === 'number' && cost > 0
+    ? { status: 'measured', costUsdMicros: cost, inputTokens: packet.budgetUsed.inputTokens,
+      outputTokens: packet.budgetUsed.outputTokens, providerCalls: packet.budgetUsed.providerCalls }
+    : { status: 'unknown', costUsdMicros: null, inputTokens: packet.budgetUsed.inputTokens,
+      outputTokens: packet.budgetUsed.outputTokens, providerCalls: packet.budgetUsed.providerCalls }
 }
 
 function approvedFollowupUrls(work: ResearchWorkItem, evidence: readonly RetrievedEvidence[]): string[] {

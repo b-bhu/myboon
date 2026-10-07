@@ -18,6 +18,7 @@ import {
   type Signal,
 } from '../signal-platform/contracts'
 import type { RetrievedEvidenceArtifact } from './deterministic-retrieval'
+import { ARTICLE_DECISION_SOURCE_MAX_CHARS } from './article-input-bounds'
 import {
   StructuredResearchSynthesizer,
   deterministicPacketId,
@@ -210,6 +211,18 @@ test('assembles canonical packet linkage, provenance, and code-owned metadata', 
   assert.equal(packet.execution.traceId, WORK.traceId)
   assert.equal(packet.execution.policyVersion, WORK.policyVersion)
   assert.equal(packet.execution.attempt, WORK.attemptCount)
+})
+
+test('article entity proposal retains a complete source above the former 16k bound', async () => {
+  const sourceText = 'Captured source paragraph. '.repeat(1_000)
+  assert.ok(sourceText.length > 16_000)
+  assert.ok(sourceText.length <= ARTICLE_DECISION_SOURCE_MAX_CHARS)
+  const gateway = new CapturingGateway({ name: 'Example Protocol', type: 'protocol', aliases: [], summary: 'A source-grounded protocol.', scope: {} })
+  const workItem = { ...WORK, budget: { ...WORK.budget, maxInputTokens: 16_000, maxOutputTokens: 2_000 } }
+  await synthesizer(gateway).proposeArticleEntity({ signal: SIGNAL, workItem, sourceText, sourceUrl: SIGNAL.canonicalUrl ?? 'https://source.example/story' })
+  assert.ok(gateway.requests[0].prompt.includes(sourceText))
+  assert.equal(gateway.requests[0].budget.maxInputTokens, 16_000)
+  assert.equal(gateway.requests[0].budget.maxOutputTokens, 2_000)
 })
 
 test('malicious evidence remains delimited data and cannot set packet IDs or policy', async () => {

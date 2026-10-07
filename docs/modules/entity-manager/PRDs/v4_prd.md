@@ -1,10 +1,10 @@
 # Entity Manager V4 — Working PRD
 
-Updated: 6 October 2026 (UTC).
+Updated: 7 October 2026 (UTC).
 
 Issue: [#299 — Entity Manager V4](https://github.com/b-bhu/myboon/issues/299).
 
-Status: article checkpoint implemented; the [6 October failure fixes](../operations/2026_10_06_article_failure_fixes.md) are implemented and verified locally. Research remains paused; their additive migration and runtime activation are pending. The [checkpoint handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md) records the operating boundary and remaining work.
+Status: article checkpoint implemented and running for News. The [7 October recovery record](../operations/2026_10_07_article_pipeline_recovery.md) records the latest input, URL, duplicate and paid-outcome repairs, scoped verification and operating policy. The [checkpoint handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md) records the boundary and remaining work.
 
 This is the current specification. It replaces the earlier claim/evidence requirements for new articles. The [pre-checkpoint PRD snapshot](2026_10_05_v4_prd_pre_checkpoint_snapshot.md) preserves the original issue mapping, earlier contracts and dated implementation/authorization history. Historical validation results apply to the contract and date they tested.
 
@@ -35,7 +35,7 @@ Also excluded: new collectors, deep research or web-search activation, automatic
 3. Ask **Jev** to select one primary entity and independently judge meaningful related memberships. Preserve typed choices, probabilities, confidence and decision identity/version. Required article decisions use Jev; Hermes is not their semantic fallback.
 4. If no entity matches, perform bounded wider catalogue lookup. A remaining no-match can request a source-grounded entity proposal from Hermes. Check its exact name/aliases across public and private identities before admitting creation; Jev must confirm an existing identity when found, or validate a genuinely new proposal. Incomplete or ambiguous identity coverage, uncertain decisions and rejected proposals remain explicit holds/failures.
 5. Retrieve **up to the latest five items per selected entity**, from supported legacy and private history. Load history only for selected entities; preserve item IDs and storage origins. Separate targeted older-item lookup and source idempotency protect against duplicates outside the five-item window.
-6. Ask Jev for novelty and story relationships: `duplicate`, `direct_continuation`, `related_story_branch`, `same_topic_only`, `unrelated` or `uncertain`. Choose the relationship and its supplied item/origin together; a continuation or branch cannot be offered without a valid target. One bounded Jev reconciliation may resolve a primary duplicate versus new-information conflict; unresolved cases remain held. Already-known requires an exact target. Raw probabilities are internal data, not prose.
+6. Ask Jev for novelty and story relationships: `duplicate`, `direct_continuation`, `related_story_branch`, `same_topic_only`, `unrelated` or `uncertain`. Choose the relationship and its supplied item/origin together; a continuation or branch cannot be offered without a valid target. One bounded Jev reconciliation may resolve a primary duplicate versus new-information conflict; unresolved cases remain held. Already-known requires one primary exact target. Related exact matches can remain contextual history without competing for that shared reuse effect. Raw probabilities are internal data, not prose.
 7. **Researcher uses Hermes to write** the development's title, contextual `timelineSummary` and optional body from the article, selected entity scope and connected history. Describe what happened with natural source attribution; do not invent causes, resolutions or event dates.
 8. Save and hand off the article packet, prepared memberships, historical references, source capture, dates and Research-owned readiness outcome. Saved decisions/results are reused on recovery where their identity remains valid.
 
@@ -64,6 +64,7 @@ New handoffs use `schemaVersion: myboon.research_packet.article.v1` and `packetK
 | `sourceSignal.publishedAt`, packet `observedAt`, `article.capturedAt` | Separate publication, observation and capture timestamps. Never relabel them as a known event time. |
 | Source URLs, captured text and hashes | Immutable provenance. Original URL and captured/final URL are retained where available; HTTP-response hash and extracted-text hash are distinct. |
 | `memberships` | One primary plus meaningful related entities, Jev decisions and any exact prior/duplicate target with its `legacy` or `managed` origin. |
+| `memberships[].contextualDuplicateTarget` | Optional related exact match retained for audit under already-known novelty and one primary reuse target. It does not authorize another writer effect or an entity/item merge. |
 | `novelty`, limitations and open questions | Internal decision/audit material and explicit uncertainty; not fabricated claims. |
 
 Internal history orders by known event time, otherwise publication time, otherwise observation time. A new development appends history; it does not overwrite earlier accepted prose. Source attribution is retained even though formal claims/evidence edges are removed.
@@ -85,7 +86,9 @@ Existing legacy packets and memories retain their explicit compatibility paths. 
 - **D2:** an unknown paid dispatch outcome retains the same reservation and logical allowance. Recover only using supported retained proof; otherwise hold for intervention. Timeout does not authorise a replacement call or reset limits.
 - Known primary-provider authentication/billing failure may invoke the configured native backup. This is distinct from automatically replacing an unknown paid outcome.
 - Source ownership and writer fences prevent concurrent legacy/V4 effects. Retirement and rollback must preserve observations, accepted knowledge, history and receipts.
-- Calls, tokens, output size and wall time have configured operational limits. The 6 October code admits new light/standard work with 180 seconds, captures at most 3 MB per source/9 MB total, and enforces a 30-second fetch deadline. Jev source input remains bounded to 16,000 characters without silent truncation. Historical work retains its saved allowances and retrieval plan. The owner authorised real provider/database validation without a USD approval gate; this PRD adds none. Unknown monetary cost must remain unknown.
+- Calls, tokens, output size and wall time have configured operational limits. New light/standard work has 180 seconds, capture is bounded to 3 MB per source/9 MB total, and fetch has a 30-second deadline. Jev receives the whole source up to 48,000 characters, with a separate 96,000-byte serialized-state bound; larger inputs hold without truncation. Candidate decision summaries are bounded to 1,000 characters and historical decision titles to 500, while stored profiles/history remain intact. New source-grounded entity proposals bind 16,000 input/4,000 output token allowances into the actual request; historical attempts retain their saved limits. The owner authorised real provider/database validation without a USD approval gate; this PRD adds none. Unknown monetary cost must remain unknown.
+- Classification input validation precedes paid reservation/dispatch intent. A confirmed received-but-rejected response gets a durable rejection receipt and exact settlement; crash recovery consumes matching saved proof without redispatch. A genuine unknown transport outcome remains held. Historical validation-shaped errors are not proof that no dispatch happened.
+- News can use explicit bounded P3/light capacity overrides to admit fresh work while counting retained unknown paid exposure. Defaults, urgent reservations and per-assignment budgets remain intact. The temporary 7 October operating policy and its reversal conditions are in the recovery record; this does not authorize replay of uncertain attempts.
 
 ## 5. Acceptance and checkpoint status
 
