@@ -277,6 +277,16 @@ export function useSwapController({
   const preparingReviewRef = useRef(false);
   const preparationSequenceRef = useRef(0);
   const sessionRef = useRef(createSwapSession());
+  const preparedWalletRef = useRef<{ address: string; sessionKey?: string } | null>(null);
+  const reviewOrderRef = useRef<Extract<SwapOrderResponse, { kind: 'signable' }> | null>(null);
+  const draftRef = useRef({
+    inputMint: inputToken.address,
+    outputMint: outputToken.address,
+    amount,
+    inputDecimals: inputToken.decimals,
+  });
+  const pendingReadyRef = useRef(pendingReady);
+  const pendingErrorRef = useRef(pendingError);
   const quoteSequence = useRef(0);
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
@@ -309,6 +319,15 @@ export function useSwapController({
   walletAddressRef.current = wallet.address;
   walletSessionRef.current = wallet.sessionKey;
   phaseRef.current = phase;
+  reviewOrderRef.current = reviewOrder;
+  draftRef.current = {
+    inputMint: inputToken.address,
+    outputMint: outputToken.address,
+    amount,
+    inputDecimals: inputToken.decimals,
+  };
+  pendingReadyRef.current = pendingReady;
+  pendingErrorRef.current = pendingError;
   tradeBusyRef.current =
     phase === 'ordering' ||
     phase === 'validating' ||
@@ -323,6 +342,7 @@ export function useSwapController({
       if (!forceBoundary && (tradeInteractionBusy() || preparingReviewRef.current)) return false;
       preparationSequenceRef.current += 1;
       sessionRef.current = invalidatePreparedSession(sessionRef.current);
+      preparedWalletRef.current = null;
       if (forceBoundary) {
         setSimulationWarning(null);
         setSimulationWarningAccepted(false);
@@ -872,6 +892,10 @@ export function useSwapController({
       if (!isCurrentPreparation()) return;
       setSimulationWarning(simulation.unavailableWarning ?? null);
       sessionRef.current = { ...sessionRef.current, preparedRequestId: order.requestId };
+      preparedWalletRef.current = {
+        address: preparationWalletAddress,
+        sessionKey: preparationWalletSession,
+      };
       setReviewOrder(order);
       movePreparationPhase('reviewing');
     } catch (error) {
@@ -924,15 +948,42 @@ export function useSwapController({
 
   const confirmTrade = useCallback(async () => {
     if (!activeRef.current || phaseRef.current !== 'reviewing') return;
+    if (!pendingReadyRef.current || pendingErrorRef.current) return;
+    const currentDraft = draftRef.current;
+    let currentAmountAtomic: string | null = null;
+    try {
+      currentAmountAtomic = parseUiAmountToAtomic(currentDraft.amount, currentDraft.inputDecimals);
+    } catch {
+      currentAmountAtomic = null;
+    }
     if (
       !reviewOrder ||
-      sessionRef.current.preparedRequestId !== reviewOrder.requestId ||
+      reviewOrderRef.current !== reviewOrder ||
+      sessionRef.current.preparedRequestId !== reviewOrder.requestId
+    )
+      return;
+    if (
       !wallet.address ||
       reviewOrder.taker !== wallet.address ||
       !wallet.signTransaction
     ) {
       setFailure('The active Solana wallet cannot sign this transaction.');
       setPhase('failed');
+      return;
+    }
+    const preparedWallet = preparedWalletRef.current;
+    const reviewMatchesDraft =
+      reviewOrder.inputMint === currentDraft.inputMint &&
+      reviewOrder.outputMint === currentDraft.outputMint &&
+      reviewOrder.inAmountAtomic === currentAmountAtomic;
+    const reviewMatchesWallet =
+      !!wallet.address &&
+      wallet.address === walletAddressRef.current &&
+      wallet.sessionKey === walletSessionRef.current &&
+      preparedWallet?.address === wallet.address &&
+      preparedWallet.sessionKey === wallet.sessionKey;
+    if (!reviewMatchesDraft || !reviewMatchesWallet) {
+      clearPrepared('compose');
       return;
     }
     if (simulationWarning && !simulationWarningAccepted) {
@@ -1135,6 +1186,7 @@ export function useSwapController({
     }
   }, [
     acknowledgeSimulationWarning,
+    clearPrepared,
     loadBalances,
     reviewOrder,
     rpc,

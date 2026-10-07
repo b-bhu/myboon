@@ -1,7 +1,8 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AccessibilityInfo,
+  findNodeHandle,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -20,15 +21,19 @@ export function WalletSecondarySheet({
   onClose,
   children,
   busy = false,
+  presentation = 'sheet',
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
   busy?: boolean;
+  presentation?: 'sheet' | 'dialog';
 }) {
   const insets = useSafeAreaInsets();
   const [reducedMotion, setReducedMotion] = useState(true);
+  const headingRef = useRef<Text>(null);
+  const dialog = presentation === 'dialog';
   useEffect(() => {
     let mounted = true;
     void AccessibilityInfo.isReduceMotionEnabled().then((value) => {
@@ -50,30 +55,38 @@ export function WalletSecondarySheet({
     <Modal
       visible={visible}
       transparent
-      animationType={reducedMotion ? 'none' : 'slide'}
+      animationType={reducedMotion ? 'none' : dialog ? 'fade' : 'slide'}
       onRequestClose={close}
+      onShow={() => {
+        if (!dialog) return;
+        const heading = findNodeHandle(headingRef.current);
+        if (heading !== null) AccessibilityInfo.setAccessibilityFocus(heading);
+      }}
     >
       <KeyboardAvoidingView
-        style={styles.overlay}
+        style={[styles.overlay, dialog && styles.dialogOverlay]}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <Pressable
           style={styles.backdrop}
           onPress={close}
-          accessibilityRole="button"
-          accessibilityLabel={`Close ${title}`}
+          accessibilityRole={dialog ? undefined : 'button'}
+          accessibilityLabel={dialog ? undefined : `Close ${title}`}
           accessibilityState={{ disabled: busy }}
           disabled={busy}
+          accessible={!dialog}
+          importantForAccessibility={dialog ? 'no' : 'auto'}
         />
         <View
           style={[
             styles.sheet,
             { paddingBottom: Math.max(insets.bottom, 14), marginTop: insets.top + 12 },
+            dialog && styles.dialog,
           ]}
           accessibilityViewIsModal
         >
           <View style={styles.heading}>
-            <Text accessibilityRole="header" style={styles.title}>
+            <Text ref={headingRef} accessibilityRole="header" style={styles.title}>
               {title}
             </Text>
             <Pressable
@@ -103,6 +116,7 @@ export function WalletSecondarySheet({
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
+  dialogOverlay: { justifyContent: 'center', paddingHorizontal: 20 },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(3,31,44,0.75)' },
   sheet: {
     maxHeight: '90%',
@@ -113,6 +127,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.border,
   },
+  dialog: { maxHeight: '85%', borderRadius: 22, marginTop: 0 },
   heading: {
     flexDirection: 'row',
     alignItems: 'center',

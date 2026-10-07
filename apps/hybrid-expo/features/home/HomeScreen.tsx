@@ -473,19 +473,6 @@ export default function HomeScreen() {
       </View>
 
       <View style={[styles.destination, destination !== 'wallet' && styles.hiddenDestination]}>
-        <Animated.ScrollView
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          contentContainerStyle={styles.walletContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={walletRefreshing}
-              onRefresh={handleWalletRefresh}
-              tintColor={tokens.colors.walletCore}
-            />
-          }
-        >
           <HomeWalletOverview
             active={walletSectionVisible}
             surfaceVersion={surfaceVersion}
@@ -517,7 +504,6 @@ export default function HomeScreen() {
               />
             ))}
           />
-        </Animated.ScrollView>
       </View>
       <HomeNavigation
         selected={destination}
