@@ -6,6 +6,27 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+test('normal overlapping polls stay quiet while a genuinely long run still warns without flooding logs', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 0 })
+  const warnings = t.mock.method(console, 'warn', () => {})
+  let release: (() => void) | undefined
+  const handle = startIntervalRunner({ label: 'slow-worker', intervalMs: 5_000,
+    run: () => new Promise<void>(resolve => { release = resolve }) })
+  try {
+    t.mock.timers.tick(5_000)
+    t.mock.timers.tick(35_000)
+    assert.equal(warnings.mock.callCount(), 0)
+    t.mock.timers.tick(270_000)
+    assert.equal(warnings.mock.callCount(), 1)
+    t.mock.timers.tick(20_000)
+    assert.equal(warnings.mock.callCount(), 1)
+  } finally {
+    handle.stop()
+    release?.()
+    await Promise.resolve()
+  }
+})
+
 test('interval runner: skips an overlapping tick and logs it instead of starting a second run', async () => {
   let runCount = 0
   let concurrentRuns = 0

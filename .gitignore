@@ -45,6 +45,11 @@ packages/*/artifacts/
 packages/collectors/.data/
 packages/collectors/logs/
 
+# Host-local collector database and SQLite sidecars
+/news.sqlite
+/news.sqlite-wal
+/news.sqlite-shm
+
 # Cache
 .cache/
 .turbo/

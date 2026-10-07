@@ -1,5 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
-import { HermesService } from '../hermes'
+import { HermesService, resolveHermesProfile } from '../hermes'
 import { AgentBrowserReader, type AgentBrowserReadResult } from './agent-browser-reader'
 import { appendRetrievedSourceToResearchPrompt } from './research-contract'
 import type {
@@ -9,7 +9,6 @@ import type {
   HermesWorkerStatus,
 } from './types'
 
-const DEFAULT_HERMES_PROFILE = 'myboonfeed'
 const DEFAULT_HERMES_TOOLSETS = ['browser']
 const BROWSER_ONLY_TOOL_POLICY = 'Tool policy: use browser_* tools only. Never call web_search, web_extract, or any Firecrawl-backed tool.'
 const DEFAULT_AGENT_BROWSER_READ_TIMEOUT_MS = 30_000
@@ -54,7 +53,9 @@ export class HermesWorkerClient {
 
   constructor(options: HermesWorkerClientConstructorOptions = {}) {
     const command = options.command ?? process.env.NEWS_HERMES_COMMAND
-    this.profile = options.profile ?? process.env.NEWS_HERMES_PROFILE ?? DEFAULT_HERMES_PROFILE
+    this.profile = resolveHermesProfile(options.profile
+      ?? process.env.INFERENCE_GATEWAY_HERMES_PROFILE
+      ?? process.env.NEWS_HERMES_PROFILE)
     this.toolsets = normalizedToolsets(options.toolsets)
       ?? toolsetsFromEnv(process.env.NEWS_HERMES_TOOLSETS)
       ?? DEFAULT_HERMES_TOOLSETS

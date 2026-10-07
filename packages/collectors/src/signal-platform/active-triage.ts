@@ -15,10 +15,11 @@ import {
   type ResearchWorkCreationPolicy,
 } from './triage-engine'
 import { validateTriageDecision } from './triage-validation'
+import { approvedArticleDomains } from '../news/safe-public-http'
 
 export const ACTIVE_TRIAGE_POLICY_VERSION = 'feed-v3.rules-first.v1' as const
-export const ACTIVE_BUDGET_POLICY_VERSION = 'feed-v3.research-budget.v1' as const
-export const ACTIVE_RETRIEVAL_POLICY_VERSION = 'feed-v3.retrieval.v1' as const
+export const ACTIVE_BUDGET_POLICY_VERSION = 'feed-v3.research-budget.v3' as const
+export const ACTIVE_RETRIEVAL_POLICY_VERSION = 'feed-v3.retrieval.v2' as const
 
 export interface LocalCapacitySnapshotPort {
   snapshot(input: { sourceType: Signal['sourceType']; now: string }):
@@ -44,6 +45,8 @@ export interface ActiveSourceTriageOptions {
   mode?: 'observe' | 'active'
   /** Defaults to light only; standard/deep require explicit capability enablement. */
   allowedDepths?: readonly ResearchDepth[]
+  /** Re-read durable source authority before classifier spending and queue admission. */
+  mayAdmit?: () => boolean
 }
 
 /**
@@ -66,6 +69,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
   const allowedDepths = validateAllowedDepths(options.allowedDepths ?? ['light'])
   const triage = {
     decide: async (input: RulesFirstTriageInput) => {
+      if (options.mayAdmit && !options.mayAdmit()) throw new Error('Source ownership fences triage execution')
       const selected = await rules.decide(input)
       if (selected.outcome !== 'light' && selected.outcome !== 'standard' && selected.outcome !== 'deep') return selected
       if (allowedDepths.has(selected.outcome)) return selected
@@ -91,6 +95,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
     mode,
     evaluate: mode === 'observe',
     store: options.store,
+    mayAdmit: options.mayAdmit,
     triage,
     retrievalPolicy: retrievalPolicyForSignal,
     decisionPolicy: {
@@ -178,7 +183,7 @@ export function buildPolymarketTriageFacts(
 export function retrievalPolicyForSignal(signal: Signal): ResearchWorkCreationPolicy {
   let allowedDomains: string[] = []
   if (signal.canonicalUrl) {
-    try { allowedDomains = [new URL(signal.canonicalUrl).hostname.toLowerCase()] } catch { allowedDomains = [] }
+    try { allowedDomains = approvedArticleDomains(signal.canonicalUrl) } catch { allowedDomains = [] }
   }
   return {
     policyVersion: ACTIVE_RETRIEVAL_POLICY_VERSION,

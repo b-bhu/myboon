@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { latestArticleCapture } from './article-capture'
 import {
   InferenceGatewayError,
   type GenerateStructuredRequest,
@@ -7,14 +8,22 @@ import {
 } from '../inference-gateway'
 import {
   RESEARCH_PACKET_SCHEMA_VERSION,
+  ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
   SIGNAL_SCHEMA_VERSION,
+  isArticleResearchPacket,
   type ResearchCompletion,
   type ResearchPacketV1,
+  type ResearchPacket,
+  type ArticleResearchPacketV1,
+  type ArticleEntityProposal,
+  type ArticleEntityCreationProposal,
+  type ArticleChoiceDecision,
   type ResearchWorkItem,
   type Signal,
 } from '../signal-platform/contracts'
 import { deriveEntityHintClaimRefs } from '../signal-platform/entity-hint-claims'
+import { canonicalJson } from '../signal-platform/canonical-json'
 import { validateResearchPacket } from '../signal-platform/validation'
 import type { RetrievedEvidenceArtifact } from './deterministic-retrieval'
 
@@ -56,6 +65,29 @@ export interface StructuredSynthesisBody {
   completion: ResearchCompletion
 }
 
+interface StructuredArticleSynthesisBody {
+  title: string
+  timelineSummary: string
+  body: string | null
+  eventAt: string | null
+  limitations: string[]
+  openQuestions: string[]
+  completion: ResearchCompletion
+}
+
+interface StructuredArticleEntityProposalBody {
+  name: string
+  type: string
+  aliases: string[]
+  summary: string
+  scope: Record<string, unknown>
+}
+
+export interface ArticleEntityProposalResult {
+  proposal: ArticleEntityCreationProposal
+  budgetUsed: ArticleResearchPacketV1['budgetUsed']
+}
+
 export interface StructuredSynthesisInput {
   signal: Signal
   workItem: ResearchWorkItem
@@ -66,6 +98,10 @@ export interface StructuredSynthesisInput {
    * validated for zero overlap with `evidence`.
    */
   backgroundContext?: readonly RetrievedEvidenceArtifact[]
+  /** V4 holds ambiguous paid outcomes instead of buying a replacement. */
+  holdOnUnknownOutcome?: boolean
+  /** Jev decisions are prepared before Hermes writes reader-facing prose. */
+  articlePreparation?: { memberships: ArticleEntityProposal[], novelty: ArticleChoiceDecision, contextualHistory: string }
 }
 
 export interface StructuredSynthesisGateway {
@@ -77,6 +113,7 @@ export interface StructuredResearchSynthesizerOptions {
   workload?: string
   promptVersion: string
   now?: () => Date
+  requireArticlePreparation?: boolean
 }
 
 const BODY_KEYS = [
@@ -95,8 +132,10 @@ export class StructuredResearchSynthesizer {
   private readonly workload: string
   private readonly promptVersion: string
   private readonly now: () => Date
+  private readonly requireArticlePreparation: boolean
 
   constructor(options: StructuredResearchSynthesizerOptions) {
+    this.requireArticlePreparation = options.requireArticlePreparation ?? false
     this.gateway = options.gateway
     this.workload = options.workload ?? 'research.synthesis'
     this.promptVersion = options.promptVersion
@@ -104,8 +143,60 @@ export class StructuredResearchSynthesizer {
     if (!this.promptVersion.trim()) throw localError('promptVersion is required')
   }
 
-  async synthesize(input: StructuredSynthesisInput): Promise<ResearchPacketV1> {
+  contractPromptVersion(): string { return this.promptVersion }
+
+  /** Hermes may describe a source-grounded new identity, never decide placement. */
+  async proposeArticleEntity(input: {
+    signal: Signal
+    workItem: ResearchWorkItem
+    sourceText: string
+    sourceUrl: string
+  }): Promise<ArticleEntityProposalResult> {
+    const result = await this.gateway.generateStructured<StructuredArticleEntityProposalBody>({
+      workload: this.workload,
+      purpose: 'research.article-entity-proposal',
+      prompt: [
+        'Read the captured source and propose one meaningful new entity or narrative identity only when it is a real subject of the article.',
+        'Do not decide placement, relationships, novelty, evidence, or claims. Do not invent aliases or facts.',
+        'Use a concrete type such as asset, organization, person, protocol, event, or conflict. Scope should preserve source context.',
+        `Signal title: ${input.signal.title}`,
+        `Source URL: ${input.sourceUrl}`,
+        `Published at: ${input.signal.publishedAt ?? 'unknown'}; observed at: ${input.signal.observedAt}`,
+        `Captured source text:\n${articleProposalSource(input.sourceText)}`,
+        'Return exactly one JSON object with exactly these keys: {"name":"source-supported identity","type":"asset or organization or person or protocol or event or conflict","aliases":[],"summary":"source-grounded description","scope":{}}.',
+        'name, type and summary must be non-empty strings; aliases must be an array of strings; scope must be an object.',
+      ].join('\n\n'),
+      promptVersion: this.promptVersion,
+      policyVersion: input.workItem.policyVersion,
+      holdOnUnknownOutcome: true,
+      budget: {
+        maxProviderCalls: 1, maxRepairCalls: input.workItem.budget.maxRepairCalls,
+        maxWallTimeMs: input.workItem.budget.maxWallTimeMs, maxToolCalls: 0,
+      },
+      validate: validateArticleEntityProposalBody,
+    })
+    return {
+      proposal: { ...result.value, aliases: [...result.value.aliases], scope: { ...result.value.scope } },
+      budgetUsed: {
+        providerCalls: result.telemetry.providerCalls, repairCalls: result.telemetry.repairCalls,
+        inputTokens: result.telemetry.inputTokens, outputTokens: result.telemetry.outputTokens,
+        toolCalls: result.telemetry.toolCalls, wallTimeMs: result.telemetry.durationMs,
+        budgetExceeded: result.telemetry.budgetExceeded, costUsdMicros: result.telemetry.costUsdMicros ?? null,
+      },
+    }
+  }
+
+  async synthesize(input: StructuredSynthesisInput & { articlePreparation: NonNullable<StructuredSynthesisInput['articlePreparation']> }): Promise<ArticleResearchPacketV1>
+  async synthesize(input: StructuredSynthesisInput & { articlePreparation?: undefined }): Promise<ResearchPacketV1>
+  async synthesize(input: StructuredSynthesisInput): Promise<ResearchPacket>
+  async synthesize(input: StructuredSynthesisInput): Promise<ResearchPacket> {
     validateInput(input)
+    if (input.articlePreparation) {
+      return this.synthesizeArticle(input)
+    }
+    if (this.requireArticlePreparation && input.signal.contentKind === 'article') {
+      throw localError('Article synthesis is held until required Jev placement, relationship, and novelty preparation is available')
+    }
     const evidenceIds = new Set(input.evidence.map((artifact) => artifact.evidenceId))
     const sourceOnlyLight = input.workItem.researchDepth === 'light'
       && !input.evidence.some((artifact) => artifact.authority !== 'source_url')
@@ -116,11 +207,18 @@ export class StructuredResearchSynthesizer {
       prompt: buildPrompt(input, sourceOnlyLight),
       promptVersion: this.promptVersion,
       policyVersion: input.workItem.policyVersion,
+      holdOnUnknownOutcome: input.holdOnUnknownOutcome,
       budget: {
         maxProviderCalls: input.workItem.budget.maxProviderCalls,
         maxRepairCalls: input.workItem.budget.maxRepairCalls,
         maxWallTimeMs: input.workItem.budget.maxWallTimeMs,
         maxToolCalls: 0,
+        ...(typeof input.workItem.budget.maxInputTokens === 'number'
+          ? { maxInputTokens: input.workItem.budget.maxInputTokens } : {}),
+        ...(typeof input.workItem.budget.maxOutputTokens === 'number'
+          ? { maxOutputTokens: input.workItem.budget.maxOutputTokens } : {}),
+        ...(typeof input.workItem.budget.maxCostUsdMicros === 'number'
+          ? { maxCostUsdMicros: input.workItem.budget.maxCostUsdMicros } : {}),
       },
       validate: (value) => validateBody(value, evidenceIds, sourceOnlyLight),
     })
@@ -209,6 +307,7 @@ export class StructuredResearchSynthesizer {
         toolCalls: result.telemetry.toolCalls,
         wallTimeMs: result.telemetry.durationMs,
         budgetExceeded: result.telemetry.budgetExceeded,
+        costUsdMicros: result.telemetry.costUsdMicros ?? null,
       },
       execution: {
         provider: actualProvider,
@@ -234,6 +333,70 @@ export class StructuredResearchSynthesizer {
     } catch (error) {
       throw localError('Code-assembled research packet failed contract validation', error)
     }
+  }
+
+  /** Hermes writes reader prose only. Placement and relationships are prepared separately by Jev. */
+  private async synthesizeArticle(input: StructuredSynthesisInput): Promise<ArticleResearchPacketV1> {
+    const preparation = input.articlePreparation
+    if (!preparation) throw localError('Article synthesis requires prepared Jev decisions')
+    const source = latestArticleCapture(input.evidence)
+    if (!source) throw localError('Article synthesis requires the immutable source-url capture')
+    const result = await this.gateway.generateStructured<StructuredArticleSynthesisBody>({
+      workload: this.workload,
+      purpose: 'research.article-timeline-prose',
+      prompt: buildArticlePrompt(input, source),
+      promptVersion: this.promptVersion,
+      policyVersion: input.workItem.policyVersion,
+      holdOnUnknownOutcome: input.holdOnUnknownOutcome,
+      budget: {
+        maxProviderCalls: input.workItem.budget.maxProviderCalls, maxRepairCalls: input.workItem.budget.maxRepairCalls,
+        maxWallTimeMs: input.workItem.budget.maxWallTimeMs, maxToolCalls: 0,
+        ...(typeof input.workItem.budget.maxInputTokens === 'number' ? { maxInputTokens: input.workItem.budget.maxInputTokens } : {}),
+        ...(typeof input.workItem.budget.maxOutputTokens === 'number' ? { maxOutputTokens: input.workItem.budget.maxOutputTokens } : {}),
+        ...(typeof input.workItem.budget.maxCostUsdMicros === 'number' ? { maxCostUsdMicros: input.workItem.budget.maxCostUsdMicros } : {}),
+      },
+      validate: validateArticleBody,
+    })
+    const provider = result.telemetry.actualProvider ?? result.telemetry.configuredPrimaryProvider
+    const model = result.telemetry.actualModel ?? result.telemetry.configuredPrimaryModel
+    const packet: ArticleResearchPacketV1 = {
+      schemaVersion: ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION, packetKind: 'article',
+      packetId: deterministicPacketId(input.workItem.workId, input.workItem.researchContractVersion),
+      workId: input.workItem.workId, signalId: input.signal.signalId, sourceType: input.signal.sourceType, observedAt: input.signal.observedAt,
+      sourceSignal: {
+        sourceId: input.signal.sourceId, title: input.signal.title, canonicalUrl: source.finalUrl,
+        originalCanonicalUrl: input.signal.canonicalUrl, capturedUrl: source.finalUrl,
+        publishedAt: input.signal.publishedAt, provenance: { ...input.signal.provenance },
+      },
+      article: {
+        title: result.value.title, timelineSummary: result.value.timelineSummary, body: result.value.body,
+        eventAt: result.value.eventAt, sourceUrl: source.finalUrl, capturedText: source.text,
+        capturedAt: source.retrievedAt, contentHash: source.contentHash, truncated: source.truncated,
+      },
+      memberships: preparation.memberships, novelty: preparation.novelty,
+      limitations: [...result.value.limitations], openQuestions: [...result.value.openQuestions],
+      completion: result.value.completion,
+      budgetUsed: {
+        providerCalls: result.telemetry.providerCalls, repairCalls: result.telemetry.repairCalls,
+        inputTokens: result.telemetry.inputTokens, outputTokens: result.telemetry.outputTokens,
+        toolCalls: result.telemetry.toolCalls, wallTimeMs: result.telemetry.durationMs,
+        budgetExceeded: result.telemetry.budgetExceeded, costUsdMicros: result.telemetry.costUsdMicros ?? null,
+      },
+      execution: {
+        provider, model, fallbackProvider: result.telemetry.fallbackInvoked ? provider : null,
+        fallbackModel: result.telemetry.fallbackInvoked ? model : null, fallbackUsed: result.telemetry.fallbackInvoked,
+        promptVersion: this.promptVersion, policyVersion: input.workItem.policyVersion, traceId: input.workItem.traceId,
+        attempt: input.workItem.attemptCount, configuredPrimaryProvider: result.telemetry.configuredPrimaryProvider,
+        configuredPrimaryModel: result.telemetry.configuredPrimaryModel, fallbackReason: result.telemetry.fallbackReason,
+        outputSchemaValid: result.telemetry.schemaValid,
+      }, researchContractVersion: input.workItem.researchContractVersion, createdAt: this.now().toISOString(),
+    }
+    try {
+      const validated = validateResearchPacket(packet)
+      if (!isArticleResearchPacket(validated)) throw localError('Article packet validated as a legacy packet')
+      return validated
+    }
+    catch (error) { throw localError('Code-assembled article packet failed contract validation', error) }
   }
 }
 
@@ -356,6 +519,35 @@ function validateBody(
   return issues.length === 0
     ? { valid: true, value: value as StructuredSynthesisBody }
     : { valid: false, issues }
+}
+
+function validateArticleBody(value: unknown): StructuredOutputValidation<StructuredArticleSynthesisBody> {
+  const issues: string[] = []
+  const body = record(value)
+  if (!body) return { valid: false, issues: ['Article body must be an object'] }
+  exactKeys(body, ['title', 'timelineSummary', 'body', 'eventAt', 'limitations', 'openQuestions', 'completion'], 'body', issues)
+  nonEmptyString(body.title, 'title', issues)
+  nonEmptyString(body.timelineSummary, 'timelineSummary', issues)
+  nullableString(body.body, 'body', issues)
+  if (body.eventAt !== null && (typeof body.eventAt !== 'string' || !Number.isFinite(Date.parse(body.eventAt)))) {
+    issues.push('eventAt must be an ISO timestamp or null')
+  }
+  stringArray(body.limitations, 'limitations', issues); stringArray(body.openQuestions, 'openQuestions', issues)
+  if (!['complete', 'partial', 'failed'].includes(String(body.completion))) issues.push('completion is invalid')
+  return issues.length ? { valid: false, issues } : { valid: true, value: value as StructuredArticleSynthesisBody }
+}
+
+function validateArticleEntityProposalBody(value: unknown): StructuredOutputValidation<StructuredArticleEntityProposalBody> {
+  const issues: string[] = []
+  const body = record(value)
+  if (!body) return { valid: false, issues: ['Article entity proposal must be an object'] }
+  exactKeys(body, ['name', 'type', 'aliases', 'summary', 'scope'], 'proposal', issues)
+  nonEmptyString(body.name, 'proposal.name', issues)
+  nonEmptyString(body.type, 'proposal.type', issues)
+  stringArray(body.aliases, 'proposal.aliases', issues)
+  nonEmptyString(body.summary, 'proposal.summary', issues)
+  if (!record(body.scope)) issues.push('proposal.scope must be an object')
+  return issues.length ? { valid: false, issues } : { valid: true, value: body as unknown as StructuredArticleEntityProposalBody }
 }
 
 function validateObjectArray(
@@ -494,11 +686,40 @@ function buildPrompt(input: StructuredSynthesisInput, sourceOnlyLight: boolean):
   ].join('\n')
 }
 
+function buildArticlePrompt(input: StructuredSynthesisInput, source: RetrievedEvidenceArtifact): string {
+  return [
+    'Write the reader-facing article timeline prose from the immutable captured article below.',
+    'Return exactly one JSON object with exactly these keys: {"title":"development title","timelineSummary":"what happened in context","body":null,"eventAt":null,"limitations":[],"openQuestions":[],"completion":"complete"}.',
+    'title and timelineSummary must be non-empty strings (at most 1000 and 6000 characters respectively). body is a string or null. eventAt is an ISO timestamp or null. limitations and openQuestions are arrays of strings. completion is complete, partial, or failed.',
+    'timelineSummary describes what happened with natural attribution. Do not fabricate causal links.',
+    'Do not imply a related story branch resolves or directly continues another story.',
+    'eventAt is the actual event time only when the article states it; otherwise null. Never substitute the publication time.',
+    'Do not output claims, facts, evidence IDs, citations, entity IDs, placement decisions, or connected_story fields.',
+    canonicalJson({
+      source: { title: input.signal.title, url: source.finalUrl, publishedAt: input.signal.publishedAt,
+        observedAt: input.signal.observedAt, capturedAt: source.retrievedAt, truncated: source.truncated, text: source.text },
+      preparedPlacement: input.articlePreparation ? {
+        memberships: input.articlePreparation.memberships.map((membership) => ({ name: membership.name, role: membership.role, relationship: membership.relationship })),
+        novelty: input.articlePreparation.novelty.choice,
+        contextualHistory: input.articlePreparation.contextualHistory,
+      } : null,
+    }),
+  ].join('\n')
+}
+
 function promptJson(value: unknown): string {
   return JSON.stringify(value)
     .replace(/&/g, '\\u0026')
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
+}
+
+/** Proposal identity is only safe when Hermes receives the whole capture. */
+function articleProposalSource(sourceText: string): string {
+  if (sourceText.length > 16_000) {
+    throw localError('Article entity proposal exceeds the configured immutable source-input bound')
+  }
+  return sourceText
 }
 
 function localError(message: string, cause?: unknown): InferenceGatewayError {

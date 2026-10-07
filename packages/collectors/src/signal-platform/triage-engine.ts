@@ -179,10 +179,12 @@ export function createPriorityPolicyV1(input: {
   budgetPolicyVersion: string
 }): PriorityPolicyV1 {
   const budget = (overrides: Partial<ResearchBudget>): ResearchBudget => ({
-    maxProviderCalls: 1,
+    // A second call is reserved only for one schema repair after an actual
+    // response. Transport timeouts still retain their outcome hold.
+    maxProviderCalls: 2,
     maxRepairCalls: 1,
     maxToolCalls: 0,
-    maxWallTimeMs: 90_000,
+    maxWallTimeMs: 180_000,
     ...overrides,
   })
   return validatePriorityPolicy({
@@ -196,8 +198,8 @@ export function createPriorityPolicyV1(input: {
       P3: { meaning: COMMON_PRIORITY_SEMANTICS.P3, freshnessMs: 24 * 60 * 60_000 },
     },
     budgets: {
-      light: budget({ maxWallTimeMs: 90_000 }),
-      standard: budget({ maxWallTimeMs: 120_000 }),
+      light: budget({ maxWallTimeMs: 180_000 }),
+      standard: budget({ maxWallTimeMs: 180_000 }),
       deep: budget({ maxProviderCalls: 2, maxToolCalls: 8, maxWallTimeMs: 10 * 60_000 }),
     },
     p0DeadlineWindowMs: 30 * 60_000,

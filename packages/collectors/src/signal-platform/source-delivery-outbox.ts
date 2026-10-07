@@ -59,6 +59,9 @@ export interface SourceDeliveryDrainReport {
   attempted: number
   delivered: number
   duplicateDeliveries: number
+  /** Confirmed intake writes, including writes whose source acknowledgement was lost. */
+  insertedDecisions: number
+  admittedWorkItems: number
   failures: SourceDeliveryFailure[]
 }
 
@@ -75,7 +78,7 @@ export function sourceDeliveryDigest(signal: Signal): string {
 }
 
 export function emptySourceDeliveryDrainReport(): SourceDeliveryDrainReport {
-  return { attempted: 0, delivered: 0, duplicateDeliveries: 0, failures: [] }
+  return { attempted: 0, delivered: 0, duplicateDeliveries: 0, insertedDecisions: 0, admittedWorkItems: 0, failures: [] }
 }
 
 export function mergeSourceDeliveryDrainReports(
@@ -86,6 +89,8 @@ export function mergeSourceDeliveryDrainReports(
     target.attempted += source.attempted
     target.delivered += source.delivered
     target.duplicateDeliveries += source.duplicateDeliveries
+    target.insertedDecisions += source.insertedDecisions
+    target.admittedWorkItems += source.admittedWorkItems
     target.failures.push(...source.failures)
   }
   return target
@@ -178,6 +183,8 @@ export async function drainSourceDeliveries(input: {
       if (result.mode !== input.intake.mode || result.signalId !== obligation.signalId) {
         throw new Error('Source intake did not acknowledge the expected active observation')
       }
+      if (result.decisionInserted) report.insertedDecisions += 1
+      if (result.workInserted) report.admittedWorkItems += 1
       await input.store.markSourceDeliveryDelivered(obligation.signalId)
       if (result.signalInserted) report.delivered += 1
       else report.duplicateDeliveries += 1

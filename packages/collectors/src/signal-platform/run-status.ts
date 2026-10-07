@@ -8,6 +8,7 @@ import { readFeedV3RuntimeStatusAvailability } from './runtime-status'
 import { evaluateOperationalAlerts, parseOperationalAlertPolicy } from './runtime-alerts'
 import { readSqliteControlPlaneStatus } from './status-sqlite-composition'
 import { resolveSqliteWriteHealthJournalPath } from './sqlite-write-error-journal'
+import { readManagedV4OperationalStatus, readV4OperationalStatus } from './v4-operational-status'
 import {
   parseStatusArgs,
   readStatusPolicy,
@@ -79,7 +80,9 @@ async function main(): Promise<void> {
       status, runtime, operationalAlerts, policy: reviewedPolicy.policy, policySha256: reviewedPolicy.sha256,
     })
     : null
-  process.stdout.write(`${formatControlPlaneStatusJson({ ...status, ...runtime, operationalAlerts, verification })}\n`)
+  const entityV4=readV4OperationalStatus({newsPath,pipelinePath,now})
+  const managed=await readManagedV4OperationalStatus()
+  process.stdout.write(`${formatControlPlaneStatusJson({ ...status, ...runtime, operationalAlerts, verification, entityV4:{...entityV4,managed} })}\n`)
   if (verification && !verification.passed) process.exitCode = 2
 }
 

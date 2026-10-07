@@ -259,6 +259,7 @@ test('ResearchWorkItem creation has deterministic identity, trace, budgets, fres
   assert.equal(first.policyVersion, policy.policyVersion)
   assert.equal(first.budgetPolicyVersion, policy.budgetPolicyVersion)
   assert.deepEqual(first.budget, triage.budget)
+  assert.equal(first.budget.maxWallTimeMs, 180_000)
   assert.equal('maxInputTokens' in first.budget, false)
   assert.equal('maxOutputTokens' in first.budget, false)
   assert.equal(first.freshnessDeadline, triage.freshnessDeadline)
@@ -268,8 +269,9 @@ test('ResearchWorkItem creation has deterministic identity, trace, budgets, fres
   // token fields remains readable while new admissions stop producing them.
   assert.doesNotThrow(() => validateResearchWorkItem({
     ...first,
-    budget: { ...first.budget, maxInputTokens: 8_000, maxOutputTokens: 1_500 },
+    budget: { ...first.budget, maxWallTimeMs: 90_000, maxInputTokens: 8_000, maxOutputTokens: 1_500 },
   }))
+  assert.equal(validateResearchWorkItem({ ...first, budget: { ...first.budget, maxWallTimeMs: 90_000 } }).budget.maxWallTimeMs, 90_000)
 })
 
 test('historical/shadow evaluation reports distributions, false negatives, capacity, latency, budgets, source and priority outcomes', async () => {

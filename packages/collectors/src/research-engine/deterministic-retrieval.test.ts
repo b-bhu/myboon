@@ -95,6 +95,29 @@ test('retrieval honors source and text caps without discovering extra URLs', asy
   assert.equal(result.artifacts[0].truncated, true)
 })
 
+test('publisher Markdown JSON-LD captures the full matching article without duplicated metadata or navigation', async () => {
+  const body = '<p>First reported development.</p><p>The complete final paragraph.</p>'
+  const unrelated = { '@type': 'NewsArticle', url: 'https://news.example/other', articleBody: 'Unrelated recommendation' }
+  const matching = { '@type': ['NewsArticle'], mainEntityOfPage: { '@id': 'https://news.example/article' }, articleBody: body }
+  const raw = `Navigation ${'menu '.repeat(4_000)}\n\n# Headline\nFirst reported development.\n\n\`\`\`json\n${JSON.stringify(unrelated)}\n${JSON.stringify(matching)}\n\`\`\``
+  const result = await new DeterministicRetriever({ fetchDocument: async () => document({ body: Buffer.from(raw), contentType: 'text/markdown' }) })
+    .retrieve(plan({ maxBytesPerSource: 100_000, maxTotalBytes: 100_000 }))
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.artifacts[0].text, 'First reported development.\nThe complete final paragraph.')
+  assert.equal(result.artifacts[0].truncated, false)
+})
+
+test('HTML JSON-LD requires a matching article URL and conflicting bodies fall back to visible article text', async () => {
+  for (const nodes of [
+    [{ '@type': 'NewsArticle', url: 'https://news.example/other', articleBody: 'Wrong article' }],
+    ['First', 'Second'].map(articleBody => ({ '@type': 'NewsArticle', url: 'https://news.example/article', articleBody })),
+  ]) {
+    const raw = `<html><body><div itemprop="articleBody"><p>Complete visible article.</p></div><script type="application/ld+json">${JSON.stringify({ '@graph': nodes })}</script></body></html>`
+    const result = await new DeterministicRetriever({ fetchDocument: async () => document({ body: Buffer.from(raw) }) }).retrieve(plan())
+    assert.equal(result.artifacts[0].text, 'Complete visible article.')
+  }
+})
+
 test('retrieval records typed timeout, unsafe, HTTP, and byte-budget failures', async () => {
   const cases: Array<{
     error?: Error & { code?: string }
@@ -200,4 +223,40 @@ test('evidence reuse applies TTL, byte cap, and configured invalidation triggers
     now: NOW,
     manuallyInvalidated: true,
   }), false)
+})
+
+test('article extraction retains the full development while removing site navigation and executable content', async () => {
+  const html = '<html><head><title>Source development</title></head><body><nav>' + 'SITE MENU '.repeat(3_000)
+    + '</nav><article><h1>Source development</h1><p>The opening factual development.</p><p>'
+    + 'Additional source detail. '.repeat(30) + '</p><p>The final factual development.</p></article>'
+    + '<footer>UNRELATED FOOTER</footer><script>throw new Error("must not execute")</script></body></html>'
+  const retriever = new DeterministicRetriever({ fetchDocument: async () => ({
+    body: Buffer.from(html), contentType: 'text/html', finalUrl: 'https://example.com/article', status: 200, visitedHosts: ['example.com'],
+  }) })
+  const result = await retriever.retrieve(plan({ maxBytesPerSource: 100_000, maxTotalBytes: 100_000, maxTextCharsPerSource: 10_000 }))
+  assert.equal(result.artifacts.length, 1)
+  assert.match(result.artifacts[0].text, /opening factual development/)
+  assert.match(result.artifacts[0].text, /final factual development/)
+  assert.doesNotMatch(result.artifacts[0].text, /SITE MENU|UNRELATED FOOTER|must not execute/)
+  assert.equal(result.artifacts[0].truncated, false)
+})
+
+test('short and split article bodies exclude neighbouring recommendation cards without losing later paragraphs', async () => {
+  for (const body of [
+    '<article class="article-content"><p>The first factual development.</p><p>The final factual development.</p></article>',
+    '<div class="document-body"><p>The first factual development.</p></div><aside>ADVERTISEMENT</aside>'
+      + '<div class="document-body"><p>The final factual development.</p></div>',
+  ]) {
+    const html = '<html><body><h1>Source development</h1>' + body
+      + '<section><h2>Recommended news</h2><p>' + 'UNRELATED NEWS '.repeat(30) + '</p></section></body></html>'
+    const retriever = new DeterministicRetriever({ fetchDocument: async () => ({
+      body: Buffer.from(html), contentType: 'text/html', finalUrl: 'https://example.com/article', status: 200, visitedHosts: ['example.com'],
+    }) })
+    const result = await retriever.retrieve(plan({ maxBytesPerSource: 100_000, maxTotalBytes: 100_000, maxTextCharsPerSource: 10_000 }))
+    assert.equal(result.artifacts.length, 1)
+    assert.match(result.artifacts[0].text, /first factual development/)
+    assert.match(result.artifacts[0].text, /final factual development/)
+    assert.doesNotMatch(result.artifacts[0].text, /UNRELATED NEWS|Recommended news|ADVERTISEMENT/)
+    assert.equal(result.artifacts[0].truncated, false)
+  }
 })

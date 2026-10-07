@@ -2,12 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
   HermesProviderCircuitBreaker,
   HermesProviderCircuitOpenError,
   HermesService,
   type HermesCallRecord,
 } from './service'
+import { DEFAULT_HERMES_PROFILE } from './profile'
 
 interface RecordedExec {
   command: string
@@ -116,18 +120,28 @@ test('oneshot builds --ignore-rules, -t and -z args in the legacy order', async 
 
   await service.oneshot({ purpose: 'test.args', prompt: 'PROMPT', timeoutMs: 1000, toolsets: 'browser,web', ignoreRules: true })
 
-  assert.deepEqual(calls[0].args, ['--ignore-rules', '-t', 'browser,web', '-z', 'PROMPT'])
+  assert.deepEqual(calls[0].args, ['--ignore-rules', '-t', 'browser,web', '-p', DEFAULT_HERMES_PROFILE, '-z', 'PROMPT'])
   assert.equal(calls[0].command, 'hermes')
   assert.equal(calls[0].options.timeout, 1000)
 })
 
-test('oneshot omits optional flags when not requested', async () => {
+test('oneshot selects the production profile when no profile is requested', async () => {
   const { calls, impl } = fakeExec({ stdout: 'ok' })
   const service = new HermesService({ command: 'hermes', execFileImpl: impl })
 
   await service.oneshot({ purpose: 'test.bare', prompt: 'P', timeoutMs: 500 })
 
-  assert.deepEqual(calls[0].args, ['-z', 'P'])
+  assert.deepEqual(calls[0].args, ['-p', DEFAULT_HERMES_PROFILE, '-z', 'P'])
+})
+
+test('oneshot passes a usage receipt path as one CLI argument and rejects relative paths before dispatch', async () => {
+  const { calls, impl } = fakeExec({ stdout: 'ok' })
+  const service = new HermesService({ command: 'hermes', execFileImpl: impl })
+  const path = '/tmp/private evaluation/usage.json'
+  await service.oneshot({ purpose: 'test.usage', prompt: 'P', timeoutMs: 500, usageFilePath: path })
+  assert.deepEqual(calls[0].args, ['-p', DEFAULT_HERMES_PROFILE, '--usage-file', path, '-z', 'P'])
+  await assert.rejects(service.oneshot({ purpose: 'test.usage', prompt: 'P', timeoutMs: 500, usageFilePath: 'usage.json' }), /absolute path/)
+  assert.equal(calls.length, 1)
 })
 
 test('oneshot routes profile, provider, and model before the prompt and records requested metadata', async () => {
@@ -158,6 +172,36 @@ test('oneshot routes profile, provider, and model before the prompt and records 
   assert.equal(JSON.stringify(records[0]).includes('PROMPT'), false)
 })
 
+test('a usage receipt reports the actual backup while the request retains the Ollama primary', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'myboon-hermes-receipt-test-'))
+  const usageFilePath = join(directory, 'usage.json')
+  const records: HermesCallRecord[] = []
+  try {
+    const service = new HermesService({
+      observer: record => records.push(record),
+      async execFileImpl(_command, args) {
+        assert.equal(args[args.indexOf('--usage-file') + 1], usageFilePath)
+        await writeFile(usageFilePath, JSON.stringify({
+          provider: 'openai-codex', model: 'gpt-5.6-luna',
+          input_tokens: 10, output_tokens: 3, api_calls: 1,
+        }))
+        return { stdout: '{"ok":true}', stderr: '' }
+      },
+    })
+    const result = await service.structured({
+      purpose: 'test.native-backup', prompt: 'P', timeoutMs: 1000,
+      provider: 'ollama-cloud', model: 'glm-5.3-flash', usageFilePath,
+    })
+    assert.deepEqual(result.usage, {
+      provider: 'openai-codex', model: 'gpt-5.6-luna', inputTokens: 10, outputTokens: 3, apiCalls: 1,
+    })
+    assert.equal(records[0].requestedProvider, 'ollama-cloud')
+    assert.equal(records[0].requestedModel, 'glm-5.3-flash')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('oneshot rejects empty, untrimmed, control-bearing, and oversized route values', async () => {
   const { calls, impl } = fakeExec({ stdout: 'unused' })
   const service = new HermesService({ command: 'hermes', execFileImpl: impl })
@@ -184,7 +228,7 @@ test('production oneshot uses a dedicated process group and captures output', as
     timeoutMs: 1000,
   })
 
-  assert.deepEqual(calls[0].args, ['-z', 'P'])
+  assert.deepEqual(calls[0].args, ['-p', DEFAULT_HERMES_PROFILE, '-z', 'P'])
   assert.equal(calls[0].options?.detached, process.platform !== 'win32')
   assert.deepEqual(result, { stdout: '{"ok":true}', stderr: 'warning' })
 })
@@ -361,13 +405,38 @@ test('chat builds the chat-mode argument list', async () => {
   assert.equal(calls[0].options?.detached, process.platform !== 'win32')
 })
 
-test('chat omits profile and toolsets when not provided', async () => {
+test('chat selects the production profile when no profile is requested', async () => {
   const { calls, impl } = fakeSpawn((child) => child.emit('close', 0))
   const service = new HermesService({ command: 'hermes', spawnImpl: impl })
 
   await service.chat({ purpose: 'news.worker', prompt: 'Q', timeoutMs: 1000 })
 
-  assert.deepEqual(calls[0].args, ['chat', '--source', 'tool', '--quiet', '--query', 'Q'])
+  assert.deepEqual(calls[0].args, ['chat', '--profile', DEFAULT_HERMES_PROFILE, '--source', 'tool', '--quiet', '--query', 'Q'])
+})
+
+test('the configured profile is used for inference and exact chat-session cleanup', async () => {
+  const previous = process.env.INFERENCE_GATEWAY_HERMES_PROFILE
+  const exec = fakeExec({ stdout: 'ok' })
+  const spawned = fakeSpawn((child) => {
+    child.stderr.emit('data', Buffer.from('session_id: profile-test-session\n'))
+    child.emit('close', 0)
+  })
+  try {
+    process.env.INFERENCE_GATEWAY_HERMES_PROFILE = 'isolated-configured-profile'
+    const service = new HermesService({ command: 'hermes', execFileImpl: exec.impl, spawnImpl: spawned.impl })
+    await service.oneshot({ purpose: 'test.configured-profile', prompt: 'P', timeoutMs: 1000 })
+    const result = await service.chat({ purpose: 'test.configured-profile', prompt: 'Q', timeoutMs: 1000 })
+
+    assert.deepEqual(exec.calls[0].args.slice(0, 2), ['-p', 'isolated-configured-profile'])
+    assert.deepEqual(spawned.calls[0].args.slice(0, 3), ['chat', '--profile', 'isolated-configured-profile'])
+    assert.deepEqual(exec.calls[1].args, [
+      '--profile', 'isolated-configured-profile', 'sessions', 'delete', 'profile-test-session', '--yes',
+    ])
+    assert.equal(result.sessionDeleted, true)
+  } finally {
+    if (previous === undefined) delete process.env.INFERENCE_GATEWAY_HERMES_PROFILE
+    else process.env.INFERENCE_GATEWAY_HERMES_PROFILE = previous
+  }
 })
 
 test('chat resolves succeeded with captured stdout on exit 0', async () => {

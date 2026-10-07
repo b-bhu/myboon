@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import type { ResearchDepth, ResearchPacketV1, Signal } from './contracts'
 import { canonicalJson } from './canonical-json'
-import { validateResearchPacket } from './validation'
+import { validateLegacyResearchPacket } from './validation'
 
 export const PACKET_PAIR_SCHEMA_VERSION = 'myboon.research_packet_pair.v1' as const
 export const BLIND_PACKET_ASSIGNMENT_SCHEMA_VERSION = 'myboon.blind_packet_assignment.v1' as const
@@ -272,8 +272,8 @@ function validatePair(value: ResearchPacketPairV1): ResearchPacketPairV1 {
   if (value.researchDepth !== 'light' && value.researchDepth !== 'standard') {
     throw new Error('researchDepth must be light or standard')
   }
-  const currentPacket = validateResearchPacket(value.currentPacket)
-  const proposedPacket = validateResearchPacket(value.proposedPacket)
+  const currentPacket = validateLegacyResearchPacket(value.currentPacket)
+  const proposedPacket = validateLegacyResearchPacket(value.proposedPacket)
   if (currentPacket.signalId !== proposedPacket.signalId || currentPacket.sourceType !== proposedPacket.sourceType) {
     throw new Error(`Packet pair ${pairId} does not share signal identity`)
   }

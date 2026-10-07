@@ -6,9 +6,8 @@ import type {
 
 const LIFECYCLE_RANK: Record<ClassificationLifecycleMode, number> = {
   disabled: 0,
-  shadow: 1,
-  canary: 2,
-  active: 3,
+  canary: 1,
+  active: 2,
 }
 
 export class StaticClassificationRegistry implements ClassificationRegistry {
@@ -49,6 +48,9 @@ export function tightenLifecycleMode(
   fallback: ClassificationLifecycleMode,
 ): ClassificationLifecycleMode {
   const requested = configured ?? fallback
+  if (!(maximum in LIFECYCLE_RANK) || !(requested in LIFECYCLE_RANK)) {
+    throw new Error(`Unsupported classification lifecycle mode ${requested}`)
+  }
   if (LIFECYCLE_RANK[requested] > LIFECYCLE_RANK[maximum]) {
     throw new Error(`Classification lifecycle ${requested} exceeds source-controlled maximum ${maximum}`)
   }
@@ -60,8 +62,7 @@ export function classificationLifecycleFromEnv(
 ): ClassificationLifecycleMode | undefined {
   if (value === undefined || value.trim() === '') return undefined
   const normalized = value.trim().toLowerCase()
-  if (normalized === 'disabled' || normalized === 'shadow'
-    || normalized === 'canary' || normalized === 'active') return normalized
+  if (normalized === 'disabled' || normalized === 'canary' || normalized === 'active') return normalized
   throw new Error(`Unsupported classification lifecycle mode ${value}`)
 }
 
@@ -82,9 +83,7 @@ function validateDefinition(definition: ClassificationDefinition): void {
   if (LIFECYCLE_RANK[definition.defaultLifecycleMode] > LIFECYCLE_RANK[definition.maximumLifecycleMode]) {
     throw new Error(`Default lifecycle exceeds maximum for ${definition.workload}`)
   }
-  if ([definition.shadowPercent, definition.canaryPercent].some((value) => (
-    !Number.isFinite(value) || value < 0 || value > 100
-  ))) {
+  if (!Number.isFinite(definition.canaryPercent) || definition.canaryPercent < 0 || definition.canaryPercent > 100) {
     throw new Error(`Invalid sampling percentage for ${definition.workload}`)
   }
   for (const value of Object.values(definition.budget)) {

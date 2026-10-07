@@ -1,4 +1,9 @@
 export { ResearchEngine, type ResearchEngineOptions } from './engine'
+export { assessRetainedPartialResearch, type RetainedPartialAssessment } from './retained-partial-assessment'
+export type { ResearchV4StorePort, ResearchV4RecordKind } from './v4-store'
+export { researchRootAssignmentId, ResearchFollowupHold } from './bounded-followup'
+export type { BoundedFollowupPolicy } from './bounded-followup'
+export type { ResearchReuseContract, ResearchReusePolicy } from './research-result-reuse'
 export {
   DeterministicRetriever,
   RetrievalPlanError,
@@ -125,6 +130,7 @@ export {
   createReadinessUnknownReadiness,
   createResolvedWithoutNewItemReadiness,
   isNonClaimableReadiness,
+  isArticleResearchReadiness,
   owesResearchEntityAction,
   researchEntityActionId,
   researchHandoffEntityClaim,
@@ -142,6 +148,8 @@ export type {
   ResearchHandoffRetryPolicy,
   ResearchReadinessAssessmentInput,
   ResearchReadinessOutcome,
+  ResearchReadiness,
+  ArticleResearchReadinessV1,
   ResearchReadinessV1,
 } from '../signal-platform/research-readiness'
 export {

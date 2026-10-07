@@ -1,6 +1,6 @@
 import type {
   ExecutionTraceEvent,
-  ResearchPacketV1,
+  ResearchPacket,
   ResearchWorkItem,
   RetrievedEvidence,
   Signal,
@@ -53,7 +53,7 @@ export interface TraceInspectionResult {
   triageDecisions: TriageDecisionV1[]
   workItems: ResearchWorkItem[]
   evidence: RetrievedEvidence[]
-  packets: ResearchPacketV1[]
+  packets: ResearchPacket[]
   executionEvents: ExecutionTraceEvent[]
   truncated: {
     triageDecisions: boolean
@@ -95,7 +95,7 @@ export class CanonicalTraceInspector {
       store: TraceInspectionCanonicalReadPort
       signal: Signal | null
       work: ResearchWorkItem | null
-      packet: ResearchPacketV1 | null
+      packet: ResearchPacket | null
     }> = []
     for (const store of this.stores) {
       try {
@@ -124,7 +124,7 @@ export class CanonicalTraceInspector {
         : root.store.listResearchWorkBySignal(signal.signalId, this.limits.workItems + 1)
     const workItems = workRaw.slice(0, this.limits.workItems)
     const evidence: RetrievedEvidence[] = []
-    const packets: ResearchPacketV1[] = []
+    const packets: ResearchPacket[] = []
     let evidenceTruncated = false
     let packetsTruncated = false
     for (const work of workItems) {
@@ -206,7 +206,7 @@ export function formatTraceInspectionJson(
 function resolveRoot(store: TraceInspectionCanonicalReadPort, query: TraceInspectionQuery): {
   signal: Signal | null
   work: ResearchWorkItem | null
-  packet: ResearchPacketV1 | null
+  packet: ResearchPacket | null
 } {
   if (query.signalId) return { signal: store.getSignal(query.signalId), work: null, packet: null }
   if (query.workId) return { signal: null, work: store.getResearchWork(query.workId), packet: null }

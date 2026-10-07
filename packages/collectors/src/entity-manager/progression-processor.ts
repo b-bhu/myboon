@@ -317,7 +317,7 @@ export class ProgressionProcessor {
     }
 
     const effects = saved.plan.outcome.kind === 'apply'
-      ? buildEffects(operationId, saved.plan.outcome.drafts, saved.plan.outcome.operations)
+      ? buildProgressionEffects(operationId, saved.plan.outcome.drafts, saved.plan.outcome.operations)
       : []
     const expectedAbsentItemIds = effects
       .filter((effect) => effect.kind === 'managed_item')
@@ -468,7 +468,7 @@ export class ProgressionProcessor {
   }
 }
 
-function buildEffects(
+export function buildProgressionEffects(
   operationId: string,
   drafts: ItemDraft[],
   operations: ExistingItemOperation[],
@@ -497,9 +497,14 @@ function buildEffects(
     itemId: operation.itemId,
     kind: 'existing_item_operation',
     payload: {
+      ...operation.payload,
+      // Operation identity/kind and successor IDs remain code-owned even if
+      // a proposal embeds identically named fields in its payload.
       candidateItemRef: operation.candidateItemRef,
       kind: operation.kind,
-      ...operation.payload,
+      ...(typeof operation.payload.successorLocalKey === 'string'
+        ? { successorItemId: itemIds.get(operation.payload.successorLocalKey)! }
+        : {}),
     },
   }))
   return [...draftEffects, ...existingItemEffects]

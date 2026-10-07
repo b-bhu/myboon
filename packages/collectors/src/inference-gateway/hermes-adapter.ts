@@ -126,7 +126,8 @@ export class HermesStructuredAdapter implements StructuredProviderAdapter {
   async generate(request: StructuredProviderRequest): Promise<StructuredProviderResult> {
     const target = request.target
     try {
-      // Never pass toolsets or call chat: structured inference is ephemeral and tool-less.
+      // Hermes enables ambient tools unless explicitly disabled. Structured
+      // inference only consumes the code-owned prompt and authors JSON.
       const result = await this.service.oneshot({
         purpose: request.purpose,
         prompt: request.prompt,
@@ -134,16 +135,21 @@ export class HermesStructuredAdapter implements StructuredProviderAdapter {
         profile: this.profile,
         provider: target.provider,
         model: target.model,
+        toolsets: 'none',
+        ignoreRules: true,
       })
       return {
         value: extractJson<unknown>(result.stdout),
         rawOutput: result.stdout,
         usage: {
-          inputTokens: this.estimateTokens(request.prompt),
-          outputTokens: this.estimateTokens(result.stdout),
+          inputTokens: result.usage?.inputTokens ?? this.estimateTokens(request.prompt),
+          outputTokens: result.usage?.outputTokens ?? this.estimateTokens(result.stdout),
         },
-        actualProvider: target.provider,
-        actualModel: target.model,
+        actualProvider: result.usage?.provider ?? target.provider,
+        actualModel: result.usage?.model ?? target.model,
+        ...(result.usage !== undefined
+          && (result.usage.provider !== target.provider || result.usage.model !== target.model)
+          ? { fallbackInvoked: true } : {}),
       }
     } catch (error) {
       throw mapHermesInferenceError(error, target)

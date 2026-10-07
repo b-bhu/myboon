@@ -12,7 +12,6 @@ test('PM2 keeps both scouts and registers only the shared Research/Entity owners
   assert.match(ecosystem, /name: 'myboon-polymarket-data-engineer'[\s\S]*?script: 'src\/polymarket\/run-markets-data-engineer\.ts'/)
   assert.match(ecosystem, /name: 'myboon-feed-v3-research'[\s\S]*?script: 'src\/research-engine\/run-shared-research\.ts'/)
   assert.match(ecosystem, /name: 'myboon-feed-v3-entity-manager'[\s\S]*?script: 'src\/entity-manager\/run-shared\.ts'/)
-  assert.match(ecosystem, /name: 'myboon-hermes-orphan-sweeper'[\s\S]*?script: 'src\/hermes\/run-orphan-sweeper\.ts'/)
 
   for (const legacyName of [
     'myboon-news-researcher', 'myboon-polymarket-researcher',
@@ -31,7 +30,9 @@ test('continuous local news workers schedule their configured intervals', () => 
   assert.match(researcher, /startIntervalRunner\([\s\S]*?NEWS_RESEARCHER_INTERVAL_MS|newsResearchIntervalMs\(\)/)
   assert.match(entityManager, /startIntervalRunner\([\s\S]*?ENTITY_MANAGER_NEWS_INTERVAL_MS/)
   assert.match(researcher, /new SqliteNewsStore\(process\.env\.NEWS_SQLITE_PATH\)/)
-  assert.match(entityManager, /new SqliteNewsStore\(process\.env\.NEWS_SQLITE_PATH\)/)
+  assert.match(entityManager, /const databasePath = legacyEntitySourcePath\('news'\)/)
+  assert.match(entityManager, /new SqliteNewsStore\(databasePath\)/)
+  assert.match(entityManager, /withSourceOwnershipOperation\(\{databasePath,source:'news',domain:'entity',owner:'legacy'\}/)
   assert.match(entityManager, /new SupabaseEntityMemoryStore\(supabase\)/)
 })
 

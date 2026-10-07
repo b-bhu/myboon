@@ -11,6 +11,7 @@ import type {
 } from './types'
 
 export type NewsCandidateObservationStatus =
+  | 'observed_only'
   | 'pending_research'
   | 'research_queued'
   | 'researching'
@@ -145,6 +146,8 @@ export interface PendingNewsResearchResult {
 }
 
 export interface NewsStore extends SourceDeliveryOutbox {
+  /** Collector queue fencing never disables observation retention. */
+  allowsLegacyQueueAdmission?(): boolean
   fetchPriorObservations(
     sourceId: string,
     canonicalArticleUrls: string[]

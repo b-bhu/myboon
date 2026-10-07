@@ -76,6 +76,63 @@ function providerError(category: InferenceGatewayError['category'], retryable = 
   return new InferenceGatewayError(category, { category, retryable })
 }
 
+for (const category of ['provider_timeout', 'provider_unavailable'] as const) {
+  test(`a V4 unknown structured ${category} holds after one call without fallback`, async () => {
+    const adapter = new QueueAdapter([providerError(category), { value: { answer: 'must not run' } }])
+    await assert.rejects(gateway(adapter).generateStructured(request({ holdOnUnknownOutcome: true })), (error: unknown) => {
+      assert.ok(error instanceof InferenceGatewayError)
+      assert.equal(error.category, category)
+      assert.equal(error.retryable, false)
+      assert.equal(error.telemetry?.providerCalls, 1)
+      assert.equal(error.telemetry?.fallbackInvoked, false)
+      assert.equal(error.telemetry?.calls.length, 1)
+      return true
+    })
+    assert.equal(adapter.requests.length, 1)
+  })
+}
+
+test('V4 structured generation can use the full deadline when unknown-outcome fallback is forbidden', async () => {
+  let currentTime = 0
+  let suppliedTimeout = 0
+  const instance = new InferenceGateway({
+    adapter: { async generate(input) {
+      suppliedTimeout = input.timeoutMs
+      currentTime = 60
+      return { value: { answer: 'saved result' } }
+    } },
+    routes: { 'research.standard': { primary: PRIMARY, fallback: FALLBACK } },
+    estimateTokens: () => 10, now: () => currentTime,
+  })
+  const result = await instance.generateStructured(request({
+    holdOnUnknownOutcome: true, budget: { ...DEFAULT_BUDGET, maxWallTimeMs: 100 },
+  }))
+  assert.equal(suppliedTimeout, 100)
+  assert.equal(result.value.answer, 'saved result')
+  assert.equal(result.telemetry.providerCalls, 1)
+})
+
+test('V4 known invalid output can use its admitted repair and then holds an unknown repair outcome', async () => {
+  const adapter = new QueueAdapter([
+    { value: null }, providerError('provider_timeout'), { value: { answer: 'must not run' } },
+  ])
+  await assert.rejects(gateway(adapter).generateStructured(request({ holdOnUnknownOutcome: true })), (error: unknown) => {
+    assert.ok(error instanceof InferenceGatewayError)
+    assert.equal(error.retryable, false)
+    assert.equal(error.telemetry?.providerCalls, 2)
+    assert.equal(error.telemetry?.repairCalls, 1)
+    assert.equal(error.telemetry?.fallbackInvoked, false)
+    return true
+  })
+  assert.deepEqual(adapter.requests.map((call) => call.mode), ['generateStructured', 'repairStructured'])
+})
+
+test('invalid unknown-outcome policy fails before structured dispatch', async () => {
+  const adapter = new QueueAdapter([{ value: { answer: 'must not run' } }])
+  await assert.rejects(gateway(adapter).generateStructured(request({ holdOnUnknownOutcome: 'yes' } as never)), /must be boolean/)
+  assert.equal(adapter.requests.length, 0)
+})
+
 test('generateStructured succeeds with one tool-less provider call and complete telemetry', async () => {
   const adapter = new QueueAdapter([{
     value: { answer: 'yes' },
@@ -102,6 +159,23 @@ test('generateStructured succeeds with one tool-less provider call and complete 
   assert.equal(result.telemetry.promptVersion, 'prompt.v1')
   assert.equal(result.telemetry.policyVersion, 'policy.v1')
   assert.equal(events.length, 1)
+})
+
+test('native backup is reported and a repair stays on the backup that answered', async () => {
+  const backup = { provider: 'openai-codex', model: 'gpt-5.6-luna' }
+  const adapter = new QueueAdapter([
+    { value: null, actualProvider: backup.provider, actualModel: backup.model, fallbackInvoked: true },
+    { value: { answer: 'repaired' }, actualProvider: backup.provider, actualModel: backup.model },
+  ])
+  const result = await gateway(adapter).generateStructured(request())
+  assert.deepEqual(adapter.requests.map(call => call.target), [PRIMARY, backup])
+  assert.equal(result.telemetry.configuredPrimaryProvider, PRIMARY.provider)
+  assert.equal(result.telemetry.actualProvider, backup.provider)
+  assert.equal(result.telemetry.actualModel, backup.model)
+  assert.equal(result.telemetry.fallbackInvoked, true)
+  assert.equal(result.telemetry.providerCalls, 2)
+  assert.equal(result.telemetry.repairCalls, 1)
+  assert.equal(result.value.answer, 'repaired')
 })
 
 test('investigate fails closed without invoking the structured adapter', async () => {
@@ -229,7 +303,7 @@ test('structured modes reject runtime tool properties and nonzero tool budgets b
   assert.equal(adapter.requests.length, 0)
 })
 
-test('Hermes adapter routes its target through oneshot without chat, sessions, or toolsets', async () => {
+test('Hermes adapter routes its target through oneshot with tools and ambient rules disabled', async () => {
   const calls: unknown[] = []
   let chatCalls = 0
   const service = {
@@ -259,9 +333,10 @@ test('Hermes adapter routes its target through oneshot without chat, sessions, o
     profile: 'structured-profile',
     provider: PRIMARY.provider,
     model: PRIMARY.model,
+    toolsets: 'none',
+    ignoreRules: true,
   })
   assert.equal(chatCalls, 0)
-  assert.equal(JSON.stringify(calls[0]).includes('toolsets'), false)
   assert.equal(JSON.stringify(calls[0]).includes('session'), false)
 })
 
@@ -287,10 +362,10 @@ test('Hermes-backed gateway invokes primary and fallback CLI targets', async () 
 
   assert.equal(result.value.answer, 'fallback')
   assert.deepEqual(calls.map((args) => args.slice(0, -2)), [
-    ['-p', 'gateway-profile', '--provider', PRIMARY.provider, '-m', PRIMARY.model],
-    ['-p', 'gateway-profile', '--provider', FALLBACK.provider, '-m', FALLBACK.model],
+    ['--ignore-rules', '-t', 'context_engine', '-p', 'gateway-profile', '--provider', PRIMARY.provider, '-m', PRIMARY.model],
+    ['--ignore-rules', '-t', 'context_engine', '-p', 'gateway-profile', '--provider', FALLBACK.provider, '-m', FALLBACK.model],
   ])
-  assert.equal(calls.every((args) => !args.includes('-t') && !args.includes('chat')), true)
+  assert.equal(calls.every((args) => args[args.indexOf('-t') + 1] === 'context_engine' && !args.includes('chat')), true)
   assert.equal(result.telemetry.actualProvider, FALLBACK.provider)
   assert.equal(result.telemetry.actualModel, FALLBACK.model)
 })

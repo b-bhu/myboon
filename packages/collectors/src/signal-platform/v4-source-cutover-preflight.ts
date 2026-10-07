@@ -21,7 +21,8 @@ export interface V4CutoverPreflightInput {
   ownerApprovedEvaluation: boolean
   backupRestoreVerified: boolean
   outboxReconciled: boolean
-  cursorReconciled: boolean
+  /** Deferred downstream work: retained for caller compatibility, not a #299 activation gate. */
+  cursorReconciled?: boolean
   inflightReconciled: boolean
   canonicalPathHealthy?: boolean
   residualReferencesAccounted?: boolean
@@ -62,7 +63,6 @@ export function evaluateV4SourceCutoverPreflight(input: V4CutoverPreflightInput)
   if (!input.ownerApprovedEvaluation) reasons.push('owner-approved evaluation is required')
   if (!input.backupRestoreVerified) reasons.push('backup and restore verification is required')
   if (!input.outboxReconciled) reasons.push('outbox obligations must be reconciled')
-  if (!input.cursorReconciled) reasons.push('consumer cursors must be reconciled')
   if (!input.inflightReconciled) reasons.push('in-flight work must be reconciled')
   if (input.action === 'retire_legacy' && (!input.canonicalPathHealthy || !input.residualReferencesAccounted)) {
     reasons.push('legacy retirement requires a healthy canonical path and accounted residual references')

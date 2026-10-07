@@ -22,6 +22,12 @@ const ROOT = __dirname
 const TSX = `${ROOT}/node_modules/.bin/tsx`
 const TSX_CLI = `${ROOT}/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/cli.mjs`
 const HERMES_ENV = {
+  INFERENCE_GATEWAY_HERMES_PROFILE: process.env.INFERENCE_GATEWAY_HERMES_PROFILE
+    ?? 'myboon-codex-production',
+  INFERENCE_GATEWAY_PRIMARY_PROVIDER: process.env.INFERENCE_GATEWAY_PRIMARY_PROVIDER
+    ?? 'ollama-cloud',
+  INFERENCE_GATEWAY_PRIMARY_MODEL: process.env.INFERENCE_GATEWAY_PRIMARY_MODEL
+    ?? 'glm-5.3-flash',
   // Browser sessions are long and expensive; structured calls are short.
   // Separate pools prevent browser research from starving entity/editor work.
   HERMES_BROWSER_MAX_CONCURRENCY: '2',
@@ -104,6 +110,34 @@ const RESEARCH_RUNTIME_ENV = Object.fromEntries(
     .map((key) => [key, process.env[key]]),
 )
 
+// V4 remains explicitly opted in. Numeric spending limits have no production
+// defaults here; runners require a reviewed policy when follow-up is enabled.
+const ENTITY_V4_RUNTIME_KEYS = [
+  'ENTITY_V4_ARTICLE_WORKFLOW_ENABLED',
+  'ENTITY_V4_MANAGED_WRITER_ENABLED', 'ENTITY_V4_NOVELTY_ENABLED',
+  'ENTITY_V4_RESEARCH_REUSE_ENABLED', 'ENTITY_V4_FOLLOWUP_ENABLED',
+  'ENTITY_V4_SOURCE_OWNERSHIP_ENABLED', 'ENTITY_V4_ACTIVE_SOURCES', 'ENTITY_V4_POLICY_VERSION',
+  'MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL', 'MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA',
+  'ENTITY_V4_REUSE_POLICY_VERSION', 'ENTITY_V4_REUSE_MAX_EVIDENCE_AGE_MS', 'ENTITY_V4_REUSE_MAX_RESEARCH_AGE_MS',
+  'ENTITY_V4_SYNTHESIS_POLICY_VERSION', 'ENTITY_V4_SYNTHESIS_MAX_INPUT_TOKENS',
+  'ENTITY_V4_SYNTHESIS_MAX_OUTPUT_TOKENS', 'ENTITY_V4_SYNTHESIS_MAX_COST_USD_MICROS',
+  'ENTITY_V4_ASSIGNMENT_POLICY_VERSION', 'ENTITY_V4_ASSIGNMENT_MAX_PROVIDER_CALLS',
+  'ENTITY_V4_ASSIGNMENT_MAX_INPUT_TOKENS', 'ENTITY_V4_ASSIGNMENT_MAX_OUTPUT_TOKENS', 'ENTITY_V4_ASSIGNMENT_MAX_COST_USD_MICROS',
+  'ENTITY_V4_FOLLOWUP_POLICY_VERSION', 'ENTITY_V4_FOLLOWUP_MAX_PROVIDER_CALLS',
+  'ENTITY_V4_FOLLOWUP_MAX_INPUT_TOKENS', 'ENTITY_V4_FOLLOWUP_MAX_OUTPUT_TOKENS',
+  'ENTITY_V4_FOLLOWUP_MAX_COST_USD_MICROS', 'ENTITY_V4_FOLLOWUP_MAX_SOURCES',
+  'ENTITY_V4_FOLLOWUP_MAX_TOTAL_BYTES', 'ENTITY_V4_FOLLOWUP_MAX_BYTES_PER_SOURCE', 'ENTITY_V4_FOLLOWUP_MAX_WALL_TIME_MS',
+]
+const ENTITY_V4_RUNTIME_ENV = Object.fromEntries(ENTITY_V4_RUNTIME_KEYS
+  .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
+const COLLECTOR_OWNERSHIP_KEYS = [
+  'ENTITY_V4_SOURCE_OWNERSHIP_ENABLED', 'FEED_V3_INTAKE_MODE',
+  'FEED_V3_INTAKE_ACTIVE_SOURCES', 'FEED_V3_INTAKE_SHADOW_SOURCES',
+  ...FEED_V3_POLICY_KEYS,
+]
+const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
+  .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
+
 module.exports = {
   apps: [
     {
@@ -132,6 +166,8 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         POLYMARKET_MARKETS_RUN_ONCE: '0',
+        ...HERMES_ENV,
+        ...COLLECTOR_OWNERSHIP_ENV,
         POLYMARKET_MARKETS_PREVIEW_ONLY: '0',
         POLYMARKET_MARKETS_RUN_INTERVAL_MS: '7200000',
         // Backpressure: throttle candidate creation once pending_research
@@ -154,6 +190,8 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         NEWS_SQLITE_PATH: '.data/news.sqlite',
+        ...HERMES_ENV,
+        ...COLLECTOR_OWNERSHIP_ENV,
         NEWS_FEED_RUN_ONCE: '0',
         NEWS_FEED_INTERVAL_MS: '600000',
       },
@@ -170,12 +208,12 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         ...HERMES_ENV,
-        HERMES_COMMAND: '/root/.local/bin/mybooneditor',
+        HERMES_COMMAND: 'hermes',
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',
         EDITOR_DRAFT_RECENT_MEMORY_LIMIT: '3',
-        EDITOR_DRAFT_LANE_MEMORY_LIMIT: '20',
+        EDITOR_DRAFT_LANE_MEMORY_LIMIT: '10',
         EDITOR_DRAFT_PRIOR_DRAFT_LIMIT: '10',
         EDITOR_DRAFT_PUBLISHED_HISTORY_LIMIT: '10',
       },
@@ -195,70 +233,6 @@ module.exports = {
         PUBLISHER_INTERVAL_MS: '300000',
         PUBLISHER_BATCH_SIZE: '10',
         PUBLISHER_PREVIEW_ONLY: '0',
-      },
-    },
-    {
-      name: 'myboon-hermes-orphan-sweeper',
-      script: 'src/hermes/run-orphan-sweeper.ts',
-      interpreter: TSX,
-      cwd: `${ROOT}/packages/collectors`,
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      env: {
-        HERMES_ORPHAN_SWEEP_INTERVAL_MS: '300000',
-        HERMES_ORPHAN_MAX_AGE_MS: '900000',
-        HERMES_ORPHAN_KILL_GRACE_MS: '5000',
-        HERMES_ORPHAN_WORKSPACE_ROOT: ROOT,
-      },
-    },
-    {
-      // Daily, overlap-guarded Entity catalogue maintenance. Model findings
-      // remain proposals; only deterministic, database-revalidated and
-      // reversible cleanups receive mutation authority.
-      name: 'myboon-entity-catalog-maintenance',
-      script: 'src/entity-maintenance/run-entity-catalog-maintenance.ts',
-      interpreter: TSX,
-      cwd: `${ROOT}/packages/collectors`,
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      // Shutdown stops after the active bounded Hermes batch (120s max) and
-      // releases the database lease before PM2 may force-kill the process.
-      kill_timeout: 300000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      env: {
-        ...HERMES_ENV,
-        ENTITY_CATALOG_MAINTENANCE_RUN_ONCE: '0',
-        ENTITY_CATALOG_MAINTENANCE_MODE: 'apply',
-        ENTITY_CATALOG_MAINTENANCE_INTERVAL_MS: '86400000',
-        ENTITY_CATALOG_MAINTENANCE_SCOPE: 'auto',
-        ENTITY_CATALOG_MAINTENANCE_BATCH_SIZE: '8',
-        ENTITY_CATALOG_MAINTENANCE_HERMES_TIMEOUT_MS: '120000',
-        ENTITY_CATALOG_MAINTENANCE_LEASE_MS: '1800000',
-        ENTITY_CATALOG_MAINTENANCE_PROVIDER: 'ollama-cloud',
-        ENTITY_CATALOG_MAINTENANCE_MODEL: 'deepseek-v4.1-flash',
-      },
-    },
-    {
-      // Best-effort Jev shadow execution is isolated from every authoritative
-      // pipeline. Workloads are safe-off unless CLASSIFICATION_LIFECYCLE_JSON
-      // enables a source-controlled shadow definition.
-      name: 'myboon-classification-shadow',
-      script: 'src/inference-gateway/run-classification-shadow.ts',
-      interpreter: TSX,
-      cwd: `${ROOT}/packages/collectors`,
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      kill_timeout: 30000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      env: {
-        CLASSIFICATION_SHADOW_INTERVAL_MS: '2000',
       },
     },
     {
@@ -284,6 +258,7 @@ module.exports = {
         // remain safe-off when neither source defines them.
         ...RESEARCH_RUNTIME_ENV,
         FEED_V3_RESEARCH_RUN_ONCE: '0',
+        ...ENTITY_V4_RUNTIME_ENV,
         FEED_V3_RESEARCH_INTERVAL_MS: '5000',
         FEED_V3_RESEARCH_BATCH_SIZE: '10',
         FEED_V3_RESEARCH_PROMPT_VERSION: 'research.synthesis.prompt.v2',
@@ -316,6 +291,7 @@ module.exports = {
         ...FEED_V3_POLICY_ENV,
         FEED_V3_RUNTIME_CONTROL_PATH: '.data/feed-v3-runtime-control.json',
         FEED_V3_ENTITY_RUN_ONCE: '0',
+        ...ENTITY_V4_RUNTIME_ENV,
         FEED_V3_ENTITY_INTERVAL_MS: '30000',
         FEED_V3_ENTITY_BATCH_SIZE: '10',
         FEED_V3_ENTITY_RUNTIME_STATUS_PATH: '.data/feed-v3-entity-runtime-status.json',

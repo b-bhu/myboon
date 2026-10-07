@@ -4,7 +4,7 @@ import {
   type ExecutionEventStatus,
   type ExecutionTraceEvent,
   type ResearchDepth,
-  type ResearchPacketV1,
+  type ResearchPacket as ResearchSourcePacket,
   type ResearchWorkItem,
   type RetrievedEvidence,
   type Signal,
@@ -23,7 +23,7 @@ import type {
 } from '../signal-platform/store-adapter'
 import { validateExecutionTraceEvent, validateResearchPacket } from '../signal-platform/validation'
 import { adaptCanonicalResearchPacket, type EntityHandoffContext } from './canonical-packet-adapter'
-import type { ResearchReadinessV1 } from '../signal-platform/research-readiness'
+import type { ResearchReadiness } from '../signal-platform/research-readiness'
 import type { ResearchPacket } from './types'
 import type { EntityWorkerSourceType, SharedEntityWorkerConfig } from './shared-worker-config'
 
@@ -31,7 +31,7 @@ export interface EntityHandoffSource {
   work: ResearchWorkItem | null
   signal: Signal | null
   persistedEvidence: readonly RetrievedEvidence[]
-  readiness: ResearchReadinessV1 | null
+  readiness: ResearchReadiness | null
 }
 
 export interface EntityPacketWorkPort extends Pick<
@@ -53,7 +53,7 @@ export interface EntityPacketWorkPort extends Pick<
 
 export interface CanonicalPacketProcessorInput {
   work: ResearchWorkItem
-  canonicalPacket: ResearchPacketV1
+  canonicalPacket: ResearchSourcePacket
   packet: ResearchPacket
   signal: AbortSignal
   /**
@@ -64,6 +64,8 @@ export interface CanonicalPacketProcessorInput {
 }
 
 export interface CanonicalPacketProcessor {
+  /** Terminal managed receipts recover before packet/provider/config reads. */
+  recoverAccepted?(work: ResearchWorkItem): Promise<CanonicalPacketProcessorResult | null>
   /** Availability/circuit checks only. Must not perform durable processing. */
   preflight?(input: CanonicalPacketProcessorInput): Promise<void>
   /** Later composition may invoke EntityService and its Supabase write port. */
@@ -204,13 +206,13 @@ export class SharedEntityWorker {
         if (!sampled(item.workId, sourceType, this.options.config.shadowSampleBasisPoints)) continue
         result.sampled += 1
         const shadowStartedAt = this.now()
-        let canonicalPacket: ResearchPacketV1 | null = null
+        let canonicalPacket: ResearchSourcePacket | null = null
         try {
           const value = await port.readResearchPacket(item.workId)
           if (value === null) throw failure('storage_transient', `Research Packet not found for ${item.workId}`, true)
           canonicalPacket = canonicalPacketOrNull(value)
+          if (!canonicalPacket) throw failure('invalid_structured_output', `Research Packet is invalid for ${item.workId}`, false)
           const adapted = adaptCanonicalResearchPacket(value, undefined, await this.handoffContext(port, item))
-          canonicalPacket ??= value as ResearchPacketV1
           validateWorkPacketLinkage(item, canonicalPacket)
           await this.options.shadowObservations.observe({
             sourceType,
@@ -373,7 +375,7 @@ export class SharedEntityWorker {
     this.controllers.add(controller)
     let leaseLost = false
     let processingStarted = false
-    let canonicalPacket: ResearchPacketV1 | null = null
+    let canonicalPacket: ResearchSourcePacket | null = null
     let entityTelemetry: InferenceTelemetry | null = null
     const entityStartedAt = this.now()
     let memoryStartedAt: string | null = null
@@ -390,12 +392,29 @@ export class SharedEntityWorker {
     }, bounded(this.options.heartbeatIntervalMs ?? 20_000, 10, 60_000))
 
     try {
+      const recovered = await this.options.processor.recoverAccepted?.(lease.work)
+      if (recovered) {
+        if (leaseLost || controller.signal.aborted) {
+          return this.finishLease('staleLeases',lease,null,{
+            entityStatus: 'failed',memoryStatus: 'skipped',failure: leaseFailure(),
+            entityStartedAt,memoryStartedAt,processingStarted,
+          })
+        }
+        const completed = await port.transitionLeased({
+          ...this.fence(lease),expectedStatus: 'entity_leased',nextStatus: 'complete',now: this.now(),attemptDelta: 0,
+        })
+        return this.finishLease(completed ? 'completed' : 'staleLeases',lease,null,{
+          entityStatus: completed ? 'succeeded' : 'failed',memoryStatus: completed ? 'succeeded' : 'skipped',
+          failure: completed ? null : leaseFailure(),entityStartedAt,memoryStartedAt,processingStarted,
+          entityTelemetry: recovered.entityTelemetry,
+        })
+      }
       const rawPacket = await port.readResearchPacket(lease.work.workId)
       if (rawPacket === null) throw failure('storage_transient', `Research Packet not found for ${lease.work.workId}`, true)
       canonicalPacket = canonicalPacketOrNull(rawPacket)
+      if (!canonicalPacket) throw failure('invalid_structured_output', `Research Packet is invalid for ${lease.work.workId}`, false)
       const handoffContext = await this.handoffContext(port, lease.work)
       const packet = adaptCanonicalResearchPacket(rawPacket, undefined, handoffContext)
-      canonicalPacket ??= rawPacket as ResearchPacketV1
       validateWorkPacketLinkage(lease.work, canonicalPacket)
       const input = { work: lease.work, canonicalPacket, packet, signal: controller.signal, handoffContext }
       await this.options.processor.preflight?.(input)
@@ -504,7 +523,7 @@ export class SharedEntityWorker {
   private finishLease(
     outcome: 'completed' | 'retryWait' | 'deadLettered' | 'released' | 'staleLeases',
     lease: WorkLease,
-    packet: ResearchPacketV1 | null,
+    packet: ResearchSourcePacket | null,
     input: LeaseEventOutcome,
   ): typeof outcome {
     if (!this.options.executionLedger) return outcome
@@ -532,7 +551,7 @@ export class SharedEntityWorker {
     return outcome
   }
 
-  private recordExecutionStarted(lease: WorkLease, packet: ResearchPacketV1, startedAt: string): void {
+  private recordExecutionStarted(lease: WorkLease, packet: ResearchSourcePacket, startedAt: string): void {
     if (!this.options.executionLedger) return
     const event = executionEvent({
       mode: 'active', work: lease.work, packet, stage: 'entity_manager', status: 'started',
@@ -606,7 +625,7 @@ export class SharedEntityWorker {
 interface ExecutionEventInput {
   mode: 'active' | 'shadow'
   work: ResearchWorkItem
-  packet: ResearchPacketV1 | null
+  packet: ResearchSourcePacket | null
   stage: 'entity_manager' | 'memory_write'
   status: ExecutionEventStatus
   failure: PlatformFailure | null
@@ -736,7 +755,7 @@ function abortedFailure(): PlatformFailure {
   })
 }
 
-function canonicalPacketOrNull(value: unknown): ResearchPacketV1 | null {
+function canonicalPacketOrNull(value: unknown): ResearchSourcePacket | null {
   try {
     return validateResearchPacket(value)
   } catch {
@@ -749,7 +768,7 @@ function sampled(workId: string, source: EntityWorkerSourceType, basisPoints: nu
   return digest.readUInt32BE(0) % 10_000 < basisPoints
 }
 
-function validateWorkPacketLinkage(work: ResearchWorkItem, packet: ResearchPacketV1): void {
+function validateWorkPacketLinkage(work: ResearchWorkItem, packet: ResearchSourcePacket): void {
   if (packet.workId !== work.workId || packet.signalId !== work.signalId || packet.sourceType !== work.sourceType) {
     throw failure('invalid_structured_output', `Research Packet linkage does not match work item ${work.workId}.`, false)
   }

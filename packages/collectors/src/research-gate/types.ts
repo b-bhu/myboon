@@ -34,6 +34,11 @@ export interface GateSignal {
   /** What the collector observed, e.g. 'Yes odds moved from 41% to 58%'. */
   whatChanged: string
   observedAt: string
+  /** Present only when the caller supplies the actual bounded source material. */
+  sourceMaterial?: string
+  sourceMaterialDigest?: string
+  /** False prevents a title/summary-only comparison from suppressing work. */
+  sourceMaterialComplete?: boolean
 }
 
 export interface GateEntity {
@@ -41,14 +46,20 @@ export interface GateEntity {
   slug: string
   name: string
   summary: string | null
+  type?: string
+  aliases?: string[]
+  metadata?: Record<string, unknown>
 }
 
 export interface GateMemory {
+  /** Durable legacy memory identity, when the reader provides it. */
+  id?: string
   entityId: string
   memoryType: string
   title: string
   summary: string
   eventAt: string
+  sourceUrl?: string | null
 }
 
 /** The entity timeline handed to research as "what we already know". */
@@ -166,8 +177,19 @@ export interface EntityMemoryReader {
   entitiesByIds(ids: string[]): Promise<GateEntity[]>
   /** Newest first, bounded by limit across all requested entities. */
   recentMemories(entityIds: string[], limit: number): Promise<GateMemory[]>
+  /** Internal article placement: retrieve profiles beyond exact source subjects. */
+  searchEntities?(labels: string[], limit: number, options?: { exactOnly?: boolean }): Promise<GateEntity[]>
+  /** Targeted historical lookup without the latest-five story-context boundary. */
+  findMemoriesForArticle?(input: {
+    entityIds: string[]
+    terms: string[]
+    sourceUrl: string | null
+    limit: number
+  }): Promise<GateMemory[]>
   /** OPTIONAL stage-3 richer evidence port (item/citation/research refs,
    * time coverage, truncation, failures, digest). Implementations that do
    * not provide it keep the legacy three-lookup shape. */
   noveltyEvidence?(source: string, sourceRefId: string): Promise<GateNoveltyEvidence>
+  /** Research-internal exact accepted packet target; never a label similarity match. */
+  attachmentTargetForPacket?(packetId: string): Promise<{ targetId: string, revision: string | number, producerPacketId: string } | null>
 }

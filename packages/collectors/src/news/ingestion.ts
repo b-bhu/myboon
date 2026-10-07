@@ -61,6 +61,7 @@ export async function ingestDiscoveredNewsCandidates(input: {
   signalIntake?: SourceSignalIntakePort
 }): Promise<IngestDiscoveredNewsCandidatesResult> {
   const intakeEnabled = input.signalIntake !== undefined && input.signalIntake.mode !== 'off'
+  const retainSourceObservations = intakeEnabled || input.store.allowsLegacyQueueAdmission?.() === false
   // Older pending obligations are settled before the new feed is classified,
   // so a failed earlier delivery can never be hidden behind a fresh poll.
   const drainedBeforeFeed = intakeEnabled
@@ -124,7 +125,7 @@ export async function ingestDiscoveredNewsCandidates(input: {
       const fingerprint = decision.fingerprint!
       // Off intake enqueues nothing; observe/active owes every persisted
       // observation a delivery obligation.
-      const deliverySignal = intakeEnabled ? signalByDedupeKey.get(fingerprint.observationDedupeKey) : undefined
+      const deliverySignal = retainSourceObservations ? signalByDedupeKey.get(fingerprint.observationDedupeKey) : undefined
       return {
         source: discovery.source,
         sourceUrl: discovery.sourceUrl,
@@ -146,7 +147,7 @@ export async function ingestDiscoveredNewsCandidates(input: {
   // research candidates (legacy dedupe has broader semantics than V4's
   // immutable source identity). Persist those payloads as source observations
   // in their own local outbox transaction so they are not silently discarded.
-  if (intakeEnabled) {
+  if (retainSourceObservations) {
     await input.store.insertSourceDeliveryObservations(
       [...signalByDedupeKey.entries()]
         .filter(([dedupeKey]) => !atomicallyRecordedDeliveryKeys.has(dedupeKey))
@@ -191,6 +192,8 @@ function mergeDeliveryIntoIntakeReport(
   report.attempted += merged.attempted
   report.insertedSignals += merged.delivered
   report.duplicateSignals += merged.duplicateDeliveries
+  report.insertedDecisions += merged.insertedDecisions
+  report.admittedWorkItems += merged.admittedWorkItems
   report.failures.push(...merged.failures.map((failure) => ({
     signalId: failure.signalId,
     sourceType: failure.sourceType,

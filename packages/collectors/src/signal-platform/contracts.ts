@@ -2,6 +2,13 @@ export const SIGNAL_SCHEMA_VERSION = 'myboon.signal.v1' as const
 export const RESEARCH_WORK_SCHEMA_VERSION = 'myboon.research_work.v1' as const
 export const RETRIEVED_EVIDENCE_SCHEMA_VERSION = 'myboon.evidence.v1' as const
 export const RESEARCH_PACKET_SCHEMA_VERSION = 'myboon.research_packet.v1' as const
+/**
+ * Article packets deliberately use a separate shape.  The legacy packet is a
+ * claim/evidence contract; an article is one immutable captured source plus
+ * Researcher's prepared placement decisions.  Do not populate the legacy
+ * fields with empty values for articles: absence is the compatibility marker.
+ */
+export const ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION = 'myboon.research_packet.article.v1' as const
 export const EXECUTION_EVENT_SCHEMA_VERSION = 'myboon.execution_event.v1' as const
 
 export type SignalSchemaVersion = typeof SIGNAL_SCHEMA_VERSION
@@ -312,6 +319,114 @@ export interface ResearchPacketV1 extends ExtensibleContract {
   execution: ResearchExecution
   researchContractVersion: ResearchPacketSchemaVersion
   createdAt: string
+}
+
+export type ArticleMembershipRole = 'primary' | 'related'
+export type ArticleStoryRelationship =
+  | 'duplicate'
+  | 'direct_continuation'
+  | 'related_story_branch'
+  | 'same_topic_only'
+  | 'unrelated'
+  | 'uncertain'
+
+/** A raw TypeSafe Choice is retained for audit/replay; code decides its policy. */
+export interface ArticleChoiceDecision extends ExtensibleContract {
+  choice: string
+  probabilities: Record<string, number>
+  confidence: number
+  decisionId: string
+  decisionVersion: string
+}
+
+/** Source-grounded candidate identity awaiting Entity Manager equivalence checks. */
+export interface ArticleEntityCreationProposal extends ExtensibleContract {
+  name: string
+  type: string
+  aliases: string[]
+  summary: string
+  scope: Record<string, unknown>
+}
+
+export interface ArticleEntityProposal extends ExtensibleContract {
+  /** Existing durable entity ID, or null only for a bounded creation proposal. */
+  entityId: string | null
+  placementDisposition: 'selected' | 'no_match' | 'uncertain'
+  role: ArticleMembershipRole
+  name: string
+  type: string | null
+  aliases: string[]
+  summary: string | null
+  scope: Record<string, unknown>
+  /** Present only for a no-match candidate that Research asks Entity to check. */
+  creationProposal: ArticleEntityCreationProposal | null
+  /** Jev validates the Hermes source-grounded proposal before Entity review. */
+  creationDecision: ArticleChoiceDecision | null
+  placement: ArticleChoiceDecision
+  relationship: ArticleStoryRelationship | null
+  relationshipDecision: ArticleChoiceDecision | null
+  /** Raw Jev distribution over the supplied historical identity choices. */
+  priorItemDecision: ArticleChoiceDecision | null
+  /** Legacy or managed prior item ID; never a local draft key. */
+  priorItemId: string | null
+  priorItemSource: 'legacy' | 'managed' | null
+  /** Exact historical duplicate target, including a targeted older lookup. */
+  duplicateTarget: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
+}
+
+/**
+ * New article-only handoff.  Captured text and source timestamps are immutable
+ * provenance, while reader-facing prose lives in `timelineSummary`.
+ */
+export interface ArticleResearchPacketV1 extends ExtensibleContract {
+  schemaVersion: typeof ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION
+  packetKind: 'article'
+  packetId: string
+  workId: string
+  signalId: string
+  sourceType: Signal['sourceType']
+  observedAt: string
+  sourceSignal: {
+    sourceId: string
+    title: string
+    canonicalUrl: string
+    /** Input URL before retrieval redirects, retained with the captured URL. */
+    /** Optional only for article packets saved before redirect provenance. */
+    originalCanonicalUrl?: string | null
+    capturedUrl?: string
+    publishedAt: string | null
+    provenance: SignalProvenance
+    [key: string]: unknown
+  }
+  article: {
+    title: string
+    timelineSummary: string
+    body: string | null
+    /** Actual event time when stated; never substituted with publishedAt. */
+    eventAt: string | null
+    sourceUrl: string
+    capturedText: string
+    capturedAt: string
+    contentHash: string
+    truncated: boolean
+  }
+  memberships: ArticleEntityProposal[]
+  /** Every prepared article records Jev's separate novelty judgment. */
+  novelty: ArticleChoiceDecision
+  limitations: string[]
+  openQuestions: string[]
+  completion: ResearchCompletion
+  budgetUsed: BudgetUsage
+  execution: ResearchExecution
+  researchContractVersion: ResearchPacketSchemaVersion
+  createdAt: string
+}
+
+export type ResearchPacket = ResearchPacketV1 | ArticleResearchPacketV1
+
+export function isArticleResearchPacket(packet: ResearchPacket | Record<string, unknown>): packet is ArticleResearchPacketV1 {
+  return packet.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION
+    && packet.packetKind === 'article'
 }
 
 export type ExecutionStage =

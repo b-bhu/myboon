@@ -12,6 +12,8 @@ import { feedV3ModeForSource, loadFeedV3RuntimeConfig } from '../signal-platform
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { createActiveSourceTriageIntake } from '../signal-platform/active-triage'
 import { SqliteLocalCapacitySnapshot } from '../signal-platform/local-capacity'
+import { withSourceIntakeOwnership } from '../signal-platform/source-intake-ownership'
+import { sourceOwnershipAllows, withSourceOwnershipOperation } from '../signal-platform/source-ownership'
 import {
   FileSqliteWriteHealthJournal,
   resolveSqliteWriteHealthJournalPath,
@@ -28,7 +30,7 @@ async function runOnce(): Promise<void> {
     ? new SqliteSignalPlatformStore(newsPath, 'news', { writeHealthJournal })
     : null
   try {
-    const signalIntake = canonicalStore
+    const configuredIntake = canonicalStore
       ? intakeMode === 'active'
         ? createActiveSourceTriageIntake({
           store: canonicalStore,
@@ -36,13 +38,15 @@ async function runOnce(): Promise<void> {
           providerHealth: runtime.triageProviderHealth,
           classifierEnabled: runtime.triageClassifierEnabled,
           allowedDepths: [...runtime.triageAllowedDepths],
+          mayAdmit:() => sourceOwnershipAllows({databasePath:newsPath,source:'news',domain:'intake',owner:'shared'}),
         })
         : new CanonicalSourceSignalIntake({ mode: 'observe', store: canonicalStore })
       : undefined
-    const result = await runNewsFeedIngestionOnce({
-      store,
-      signalIntake,
-    })
+    const signalIntake = configuredIntake && canonicalStore ? withSourceIntakeOwnership({
+      intake:configuredIntake,observationIntake:new CanonicalSourceSignalIntake({mode:'observe',store:canonicalStore}),
+      source:'news',databasePath:newsPath,
+    }) : undefined
+    const result = await withSourceOwnershipOperation({databasePath:newsPath,source:'news',domain:'collector',owner:'legacy',observationsOnly:true},()=>runNewsFeedIngestionOnce({store,signalIntake}))
     console.log(JSON.stringify(result, null, 2))
   } finally {
     canonicalStore?.close()

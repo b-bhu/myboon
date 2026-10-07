@@ -3,6 +3,13 @@ import { mkdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { canonicalJson } from './canonical-json'
+import type { ResearchV4RecordKind } from '../research-engine/v4-store'
+import { assertKnownObservationResolution } from '../research-engine/known-observation'
+import { researchRootAssignmentId } from '../research-engine/bounded-followup'
+import { isArticleResearchPacket } from './contracts'
+import type {
+  BudgetStorePort, D2ReservationRecord, D2ReservationKey,
+} from '../research-engine/assignment-budget'
 import {
   ARTIFACT_ELIGIBILITY_POLICY_VERSION,
   ARTIFACT_USAGE_SCHEMA_VERSION,
@@ -14,7 +21,7 @@ import {
   type ArtifactUsage,
 } from '../research-engine/artifact-repository'
 import type {
-  ResearchPacketV1,
+  ResearchPacket,
   ResearchWorkItem,
   RetrievedEvidence,
   Signal,
@@ -50,7 +57,7 @@ import {
   validateResearchReadiness,
   validateResearchReadinessLinkage,
   type ResearchHandoffRetryPolicy,
-  type ResearchReadinessV1,
+  type ResearchReadiness,
 } from './research-readiness'
 import {
   assertLeasedTransition,
@@ -114,6 +121,9 @@ export const SIGNAL_PLATFORM_TABLES = [
   'signal_platform_retrieval_manifests',
   'signal_platform_artifact_pins',
   'signal_platform_artifact_usages',
+  'signal_platform_research_v4_records',
+  'signal_platform_research_reservations',
+  'signal_platform_research_assignment_limits',
 ] as const
 
 const PENDING_STATUSES = ['research_pending', 'deep_pending', 'synthesis_pending', 'entity_pending'] as const
@@ -373,6 +383,35 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         ON signal_platform_retrieval_manifests(
           source_type, decision, recorded_at, manifest_id
         );
+      CREATE TABLE IF NOT EXISTS signal_platform_research_v4_records (
+        source_type TEXT NOT NULL,
+        work_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        canonical_json TEXT NOT NULL,
+        PRIMARY KEY(source_type, work_id, kind, record_id),
+        FOREIGN KEY(work_id) REFERENCES signal_platform_research_work(work_id)
+      );
+      CREATE TABLE IF NOT EXISTS signal_platform_research_reservations (
+        source_type TEXT NOT NULL,
+        root_assignment_id TEXT NOT NULL,
+        allowance_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN (
+          'reserved_not_dispatched','dispatch_intent','execution_outcome_unknown','settled','released'
+        )),
+        ownership_epoch INTEGER NOT NULL,
+        canonical_json TEXT NOT NULL,
+        PRIMARY KEY(root_assignment_id, allowance_id, attempt_id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_signal_platform_one_research_exposure
+        ON signal_platform_research_reservations(root_assignment_id, allowance_id)
+        WHERE state <> 'released';
+      CREATE TABLE IF NOT EXISTS signal_platform_research_assignment_limits (
+        root_assignment_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        canonical_json TEXT NOT NULL
+      );
     `)
       this.db.prepare(
         'INSERT OR IGNORE INTO signal_platform_store_identity (singleton, store_id) VALUES (1, ?)',
@@ -983,26 +1022,55 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
   }
 
   /** Read-only local backlog snapshot used by deterministic admission policy. */
-  readTriageCapacitySnapshot(limits: TriageCapacityLimits): TriageCapacitySnapshot {
+  readTriageCapacitySnapshot(limits: TriageCapacityLimits, now: string): TriageCapacitySnapshot {
     this.assertOpen()
+    const nowMs = Date.parse(now)
+    if (!Number.isFinite(nowMs)) throw new Error('Capacity snapshot now must be a timestamp')
     const placeholders = CAPACITY_STATUSES.map(() => '?').join(', ')
+    const unresolvedRoots = new Set((this.db.prepare(`
+      SELECT DISTINCT root_assignment_id FROM signal_platform_research_reservations
+      WHERE source_type = ? AND state IN ('dispatch_intent', 'execution_outcome_unknown')
+    `).all(this.sourceType) as Array<{ root_assignment_id: string }>).map((row) => row.root_assignment_id))
+    const unmatchedRoots = new Set(unresolvedRoots)
     const rows = this.db.prepare(`
-      SELECT priority_class, work_json FROM signal_platform_research_work
+      SELECT priority_class, status, freshness_deadline, work_json FROM signal_platform_research_work
       WHERE source_type = ? AND status IN (${placeholders})
     `).all(this.sourceType, ...CAPACITY_STATUSES) as Array<Record<string, unknown>>
     const priorityCounts = { P0: 0, P1: 0, P2: 0, P3: 0 }
     const depthCounts = { light: 0, standard: 0, deep: 0 }
-    for (const row of rows) {
-      const priority = row.priority_class as keyof typeof priorityCounts
-      if (priority in priorityCounts) priorityCounts[priority] += 1
+    const count = (row: Record<string, unknown>, queued: boolean) => {
+      const leased = (LEASED_STATUSES as readonly unknown[]).includes(row.status)
+      const fresh = Date.parse(String(row.freshness_deadline)) > nowMs
+      // Retained expired work cannot be claimed and does not reserve intake
+      // capacity. A leased stage or an unresolved paid dispatch remains exposure
+      // even after freshness/lease expiry, until its durable state is resolved.
+      if (!leased && !fresh && unresolvedRoots.size === 0) return
       try {
-        const work = JSON.parse(String(row.work_json)) as { researchDepth?: string }
+        const work = JSON.parse(String(row.work_json)) as ResearchWorkItem
+        const root = researchRootAssignmentId(work)
+        const exposed = unresolvedRoots.has(root)
+        if (exposed) unmatchedRoots.delete(root)
+        if (!(queued && (leased || fresh)) && !exposed) return
         const depth = work.researchDepth as keyof typeof depthCounts
         if (!(depth in depthCounts)) throw new Error('unknown depth')
+        const priority = row.priority_class as keyof typeof priorityCounts
+        if (!(priority in priorityCounts)) throw new Error('unknown priority')
+        priorityCounts[priority] += 1
         depthCounts[depth] += 1
       } catch {
         throw new Error('Local triage capacity is unavailable because canonical work is invalid')
       }
+    }
+    for (const row of rows) count(row, true)
+    if (unmatchedRoots.size > 0) {
+      // A paid hold may have reached a terminal queue status. Only scan retained
+      // terminal rows when an unresolved root was not found in the live queue.
+      const terminal = this.db.prepare(`
+        SELECT priority_class, status, freshness_deadline, work_json FROM signal_platform_research_work
+        WHERE source_type = ? AND status NOT IN (${placeholders})
+      `).all(this.sourceType, ...CAPACITY_STATUSES) as Array<Record<string, unknown>>
+      for (const row of terminal) count(row, false)
+      if (unmatchedRoots.size > 0) throw new Error('Local triage capacity is unavailable because paid exposure has no canonical work binding')
     }
     const bucket = (used: number, maximum: number, reserved = 0) => {
       const boundedMaximum = Math.max(0, Math.trunc(maximum))
@@ -1247,6 +1315,132 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
        ORDER BY e.retrieved_at DESC, e.evidence_id DESC LIMIT ?`,
       [this.sourceType, boundedLimit(limit)], validateRetrievedEvidence,
     )
+  }
+
+  listRecentResearchPackets(limit: number): ResearchPacket[] {
+    return this.readJsonList(
+      `SELECT canonical_json FROM signal_platform_research_packets
+       WHERE source_type = ? ORDER BY created_at DESC, packet_id DESC LIMIT ?`,
+      [this.sourceType, boundedLimit(limit)], validateResearchPacket,
+    )
+  }
+
+  putResearchV4Record<T>(kind: ResearchV4RecordKind, workId: string, recordId: string, value: T): T {
+    this.assertOpen()
+    if (!recordId.trim() || !this.getResearchWork(workId)) throw new Error('Research V4 checkpoint requires existing source-local work')
+    const json = canonicalJson(value)
+    return this.inImmediateTransaction(() => {
+      const existing = this.getResearchV4Record<T>(kind, workId, recordId)
+      if (existing !== null) {
+        if (canonicalJson(existing) !== json) throw new ImmutableRecordConflictError('research_v4_record', recordId)
+        return existing
+      }
+      this.db.prepare(`INSERT INTO signal_platform_research_v4_records
+        (source_type, work_id, kind, record_id, canonical_json) VALUES (?, ?, ?, ?, ?)`)
+        .run(this.sourceType, workId, kind, recordId, json)
+      return value
+    })
+  }
+
+  getResearchV4Record<T>(kind: ResearchV4RecordKind, workId: string, recordId: string): T | null {
+    this.assertOpen()
+    const row = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_v4_records
+      WHERE source_type = ? AND work_id = ? AND kind = ? AND record_id = ?`)
+      .get(this.sourceType, workId, kind, recordId) as { canonical_json: string } | undefined
+    return row ? JSON.parse(row.canonical_json) as T : null
+  }
+
+  listResearchV4Records<T>(kind: ResearchV4RecordKind, workId: string, limit: number): T[] {
+    this.assertOpen()
+    const rows = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_v4_records
+      WHERE source_type = ? AND work_id = ? AND kind = ? ORDER BY record_id LIMIT ?`)
+      .all(this.sourceType, workId, kind, boundedLimit(limit)) as Array<{ canonical_json: string }>
+    return rows.map((row) => JSON.parse(row.canonical_json) as T)
+  }
+
+  listResearchReservations(limit: number): D2ReservationRecord[] {
+    this.assertOpen()
+    const rows = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_reservations
+      WHERE source_type = ? ORDER BY root_assignment_id, allowance_id, attempt_id LIMIT ?`)
+      .all(this.sourceType, boundedLimit(limit)) as Array<{ canonical_json: string }>
+    return rows.map((row) => JSON.parse(row.canonical_json) as D2ReservationRecord)
+  }
+
+  /** Operational totals must include reservations beyond the bounded browser. */
+  countUnresolvedResearchReservations(): number {
+    this.assertOpen()
+    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM signal_platform_research_reservations
+      WHERE source_type = ? AND state IN ('dispatch_intent', 'execution_outcome_unknown')`)
+      .get(this.sourceType) as { count: number }
+    return Number(row.count)
+  }
+
+  /** SQLite uniqueness owns allowance exclusivity; list-then-insert alone does not. */
+  researchBudgetStore(): BudgetStorePort {
+    const read = (key: D2ReservationKey): D2ReservationRecord | null => {
+      this.assertOpen()
+      const row = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_reservations
+        WHERE source_type = ? AND root_assignment_id = ? AND allowance_id = ? AND attempt_id = ?`)
+        .get(this.sourceType, key.rootAssignmentId, key.allowanceId, key.attemptId) as { canonical_json: string } | undefined
+      return row ? JSON.parse(row.canonical_json) as D2ReservationRecord : null
+    }
+    return {
+      get: async (key) => read(key),
+      listByAllowance: async (key) => {
+        this.assertOpen()
+        const rows = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_reservations
+          WHERE root_assignment_id = ? AND allowance_id = ? ORDER BY attempt_id`)
+          .all(key.rootAssignmentId, key.allowanceId) as Array<{ canonical_json: string }>
+        return rows.map((row) => JSON.parse(row.canonical_json) as D2ReservationRecord)
+      },
+      insert: async (record) => this.inImmediateTransaction(() => {
+        if (!record.assignmentLimits && this.db.prepare(`SELECT 1 FROM signal_platform_research_assignment_limits
+          WHERE root_assignment_id = ?`).get(record.rootAssignmentId)) return 'conflict' as const
+        if (record.assignmentLimits) {
+          const caps = record.assignmentLimits
+          const root = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_assignment_limits
+            WHERE root_assignment_id = ?`).get(record.rootAssignmentId) as { canonical_json: string } | undefined
+          if (root && root.canonical_json !== canonicalJson(caps)) return 'conflict' as const
+          const rows = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_reservations
+            WHERE root_assignment_id = ? AND state <> 'released'`).all(record.rootAssignmentId) as Array<{ canonical_json: string }>
+          const records = rows.map((row) => JSON.parse(row.canonical_json) as D2ReservationRecord)
+          // Unknown usage retains the reserved maximum. A settled response may
+          // release only measured unused capacity; absence is never free spend.
+          const exposures = [...records, record].map((entry) => ({
+            calls: entry.state === 'settled' ? entry.settlement?.usage.providerCalls ?? entry.approvedLimits.maxProviderCalls : entry.approvedLimits.maxProviderCalls,
+            input: entry.state === 'settled' ? entry.settlement?.usage.inputTokens ?? entry.approvedLimits.maxInputTokens : entry.approvedLimits.maxInputTokens,
+            output: entry.state === 'settled' ? entry.settlement?.usage.outputTokens ?? entry.approvedLimits.maxOutputTokens : entry.approvedLimits.maxOutputTokens,
+            cost: entry.state === 'settled' ? entry.settlement?.usage.costUsdMicros ?? entry.approvedLimits.maxIncrementalCostUsdMicros : entry.approvedLimits.maxIncrementalCostUsdMicros,
+          }))
+          if (exposures.reduce((sum, exposure) => sum + exposure.calls, 0) > caps.maxProviderCalls
+            || exposures.reduce((sum, exposure) => sum + exposure.input, 0) > caps.maxInputTokens
+            || exposures.reduce((sum, exposure) => sum + exposure.output, 0) > caps.maxOutputTokens
+            || (caps.maxIncrementalCostUsdMicros !== null && (exposures.some((exposure) => exposure.cost === null)
+              || exposures.reduce((sum, exposure) => sum + (exposure.cost ?? 0), 0) > caps.maxIncrementalCostUsdMicros))) return 'conflict' as const
+          if (!root) this.db.prepare(`INSERT INTO signal_platform_research_assignment_limits
+            (root_assignment_id,source_type,canonical_json) VALUES (?,?,?)`)
+            .run(record.rootAssignmentId, this.sourceType, canonicalJson(caps))
+        }
+        const inserted = this.db.prepare(`INSERT OR IGNORE INTO signal_platform_research_reservations
+          (source_type,root_assignment_id,allowance_id,attempt_id,state,ownership_epoch,canonical_json)
+          VALUES (?,?,?,?,?,?,?)`).run(this.sourceType, record.rootAssignmentId, record.allowanceId,
+            record.attemptId, record.state, record.ownershipEpoch, canonicalJson(record))
+        return changed(inserted) ? 'created' as const : 'conflict' as const
+      }),
+      update: async (key, expect, patch, nowMs) => this.inImmediateTransaction(() => {
+        const existing = read(key)
+        if (!existing || !expect.states.includes(existing.state)
+          || (expect.ownershipEpoch !== null && expect.ownershipEpoch !== existing.ownershipEpoch)) return null
+        const updated: D2ReservationRecord = { ...existing, ...patch, updatedAtMs: nowMs }
+        const result = this.db.prepare(`UPDATE signal_platform_research_reservations
+          SET state = ?, ownership_epoch = ?, canonical_json = ?
+          WHERE source_type = ? AND root_assignment_id = ? AND allowance_id = ? AND attempt_id = ?
+            AND state = ? AND ownership_epoch = ?`).run(updated.state, updated.ownershipEpoch,
+              canonicalJson(updated), this.sourceType, key.rootAssignmentId, key.allowanceId,
+              key.attemptId, existing.state, existing.ownershipEpoch)
+        return changed(result) ? updated : null
+      }),
+    }
   }
 
   /** Persisted identity follows the source database through a backup restore. */
@@ -1502,7 +1696,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     )
   }
 
-  appendResearchPacket(input: ResearchPacketV1): ImmutableAppendResult<ResearchPacketV1> {
+  appendResearchPacket(input: ResearchPacket): ImmutableAppendResult<ResearchPacket> {
     this.assertOpen()
     const packet = validateResearchPacket(input)
     this.assertSource(packet.sourceType)
@@ -1511,7 +1705,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     return this.inImmediateTransaction(() => this.appendResearchPacketInTransaction(packet, json))
   }
 
-  private assertPacketLinkage(packet: ResearchPacketV1): void {
+  private assertPacketLinkage(packet: ResearchPacket): void {
     const work = this.getResearchWork(packet.workId)
     if (!work || work.signalId !== packet.signalId
       || work.researchContractVersion !== packet.researchContractVersion) {
@@ -1520,9 +1714,9 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
   }
 
   private appendResearchPacketInTransaction(
-    packet: ResearchPacketV1,
+    packet: ResearchPacket,
     json: string,
-  ): ImmutableAppendResult<ResearchPacketV1> {
+  ): ImmutableAppendResult<ResearchPacket> {
     return this.appendImmutableInTransaction(
       'packet', packet.packetId, json,
       `SELECT canonical_json FROM signal_platform_research_packets
@@ -1538,22 +1732,22 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     )
   }
 
-  getResearchPacket(packetId: string): ResearchPacketV1 | null {
+  getResearchPacket(packetId: string): ResearchPacket | null {
     return this.readJson(
       `SELECT canonical_json FROM signal_platform_research_packets WHERE packet_id = ? AND source_type = ?`,
       [packetId, this.sourceType], validateResearchPacket,
     )
   }
 
-  listResearchPacketsByWork(workId: string, limit: number): ResearchPacketV1[] {
+  listResearchPacketsByWork(workId: string, limit: number): ResearchPacket[] {
     return this.listPackets('work_id = ?', [workId], limit)
   }
 
-  listResearchPacketsBySignal(signalId: string, limit: number): ResearchPacketV1[] {
+  listResearchPacketsBySignal(signalId: string, limit: number): ResearchPacket[] {
     return this.listPackets('signal_id = ?', [signalId], limit)
   }
 
-  listResearchPacketsByTrace(traceId: string, limit: number): ResearchPacketV1[] {
+  listResearchPacketsByTrace(traceId: string, limit: number): ResearchPacket[] {
     return this.listPackets('trace_id = ?', [traceId], limit)
   }
 
@@ -1586,9 +1780,9 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
  * handoff and bridge transactions below.
  */
 private appendResearchReadinessInTransaction(
-    readiness: ResearchReadinessV1,
+    readiness: ResearchReadiness,
     json: string,
-  ): ImmutableAppendResult<ResearchReadinessV1> {
+  ): ImmutableAppendResult<ResearchReadiness> {
     const existing = this.db.prepare(`
         SELECT canonical_json FROM signal_platform_research_readiness
         WHERE readiness_id = ? OR work_id = ? OR packet_id = ?
@@ -1628,8 +1822,8 @@ private appendResearchReadinessInTransaction(
    * different signal or evidence set from ever being saved.
    */
   private assertHandoffLinkage(
-    readiness: ResearchReadinessV1,
-    packet: ResearchPacketV1,
+    readiness: ResearchReadiness,
+    packet: ResearchPacket,
     work: ResearchWorkItem,
   ): void {
     const signal = this.getSignal(readiness.signalId)
@@ -1637,6 +1831,11 @@ private appendResearchReadinessInTransaction(
       throw new Error(
         `Research readiness ${readiness.readinessId} references signal ${readiness.signalId} that is not stored for ${this.sourceType}`,
       )
+    }
+    if (!isArticleResearchPacket(packet) && assertKnownObservationResolution({ store: this, packet, work, signal,
+      evidence: this.listEvidenceByWork(work.workId, 1_000) })
+      && (readiness.outcome !== 'resolved_without_new_item' || readiness.entityAction.kind !== 'none')) {
+      throw new Error('Known observation must retain its deliberate no-item readiness and owe no Entity action')
     }
     const issue = validateResearchReadinessLinkage({
       readiness,
@@ -1650,7 +1849,7 @@ private appendResearchReadinessInTransaction(
     }
   }
 
-  getResearchReadinessByWork(workId: string): ResearchReadinessV1 | null {
+  getResearchReadinessByWork(workId: string): ResearchReadiness | null {
     return this.readJson(
       `SELECT canonical_json FROM signal_platform_research_readiness
        WHERE work_id = ? AND source_type = ?`,
@@ -1658,7 +1857,7 @@ private appendResearchReadinessInTransaction(
     )
   }
 
-  getResearchReadinessByPacket(packetId: string): ResearchReadinessV1 | null {
+  getResearchReadinessByPacket(packetId: string): ResearchReadiness | null {
     return this.readJson(
       `SELECT canonical_json FROM signal_platform_research_readiness
        WHERE packet_id = ? AND source_type = ?`,
@@ -1754,7 +1953,7 @@ private appendResearchReadinessInTransaction(
    */
   promoteResearchReadyWithReadiness(input: {
     workId: string
-    readiness: ResearchReadinessV1
+    readiness: ResearchReadiness
     now: string
   }): ResearchHandoffCommitResult | null {
     this.assertOpen()
@@ -1821,7 +2020,7 @@ private appendResearchReadinessInTransaction(
     this.db.close()
   }
 
-  private listPackets(predicate: string, params: unknown[], limit: number): ResearchPacketV1[] {
+  private listPackets(predicate: string, params: unknown[], limit: number): ResearchPacket[] {
     return this.readJsonList(
       `SELECT canonical_json FROM signal_platform_research_packets
        WHERE source_type = ? AND ${predicate} ORDER BY created_at, packet_id LIMIT ?`,
@@ -2015,7 +2214,7 @@ function parseWork(value: unknown): ResearchWorkItem {
  * provider prose.
  */
 function handoffTargetStatus(
-  readiness: ResearchReadinessV1,
+  readiness: ResearchReadiness,
   row: ResearchWorkItem,
   now: string,
   retry?: ResearchHandoffRetryPolicy,

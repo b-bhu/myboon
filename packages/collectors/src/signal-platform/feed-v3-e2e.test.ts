@@ -224,7 +224,7 @@ test('active Signal intake reaches stable entity memory and full replay is idemp
     assert.equal(packet.execution.provider, 'fake-provider')
     assert.deepEqual(packet.budgetUsed, {
       providerCalls: 1, repairCalls: 0, inputTokens: 321, outputTokens: 87,
-      toolCalls: 0, wallTimeMs: 25, budgetExceeded: false,
+      toolCalls: 0, wallTimeMs: 25, budgetExceeded: false, costUsdMicros: null,
     })
     assert.equal(synthesisGateway.lastBudget?.maxProviderCalls, admitted.work.budget.maxProviderCalls)
     assert.equal(synthesisGateway.lastBudget?.maxToolCalls, 0)

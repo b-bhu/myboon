@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createClient } from '@supabase/supabase-js'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
@@ -13,6 +14,7 @@ import {
 import {
   InferenceGatewayStageReadiness,
   createConfiguredInferenceGateway,
+  createConfiguredClassificationRuntime,
   type InferenceCircuitStatusSnapshot,
   type InferenceGatewayStatusSnapshot,
   type InferenceTelemetry,
@@ -25,9 +27,16 @@ import { assertPhase1CutoverPolicy } from '../signal-platform/phase1-cutover'
 import { SqliteExecutionLedger } from '../signal-platform/sqlite-execution-ledger'
 import {
   loadFeedV3RuntimeConfig,
+  loadEntityManagerV4RuntimeConfig,
   type FeedV3RuntimeConfig,
   type FeedV3WorkerMode,
 } from '../signal-platform/runtime-config'
+import { sourceOwnershipAllows } from '../signal-platform/source-ownership'
+import { SupabaseEntityMemoryReader, InternalResearchEntityMemoryReader } from '../research-gate'
+import type { EntityMemoryReader } from '../research-gate/types'
+import type { ManagedResearchContextPort } from '../research-gate/managed-context-reader'
+import type { ClassificationGateway } from '../inference-gateway'
+import { PostgresKnowledgeOperationWriter, managedSignalSourceRefs } from '../entity-manager/postgres-knowledge-writer'
 import {
   SharedResearchScheduler,
   type ClaimNextCommand,
@@ -54,6 +63,8 @@ import {
   type SharedResearchRunOutcome,
   type SharedResearchSchedulerPort,
   type SharedResearchWorkPort,
+  type SharedResearchV4Options,
+  type SharedWorkerClock,
 } from './shared-worker'
 import {
   createConfiguredStandardSearch,
@@ -140,6 +151,17 @@ export interface SharedResearchRuntimeStatus {
   }
   deepEnabled: boolean
   deep?: DeepResearchRuntimeSnapshotV1
+  v4?: {
+    configured: boolean
+    composed: boolean
+    noveltyEnabled: boolean
+    articleWorkflowEnabled: boolean
+    reuseEnabled: boolean
+    followupEnabled: boolean
+    sources: string[]
+    managedContextConfigured: boolean
+    paidOutcomeHoldsBySource: Record<string, number>
+  }
 }
 
 export interface SharedResearchRunnerRuntime {
@@ -175,6 +197,15 @@ export type SharedResearchRunnerCycleResult =
 export interface CreateLiveSharedResearchRuntimeOptions {
   standardSearchFactories?: RegisteredSearchConnectorFactories
   runtimeControl?: RuntimeControlReadPort
+  /** Composition seams preserve the same configuration, ownership and budget gates. */
+  createInferenceRuntime?: typeof createConfiguredInferenceGateway
+  createClassificationRuntime?: (input: { env: Readonly<Record<string, string | undefined>> }) => {
+    gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
+    close(): void
+  }
+  createManagedContext?: (input: { connectionString: string, ca?: string | null }) => ManagedResearchContextPort & { close(): Promise<void> }
+  createLegacyReader?: (env: Readonly<Record<string, string | undefined>>) => EntityMemoryReader
+  workerClock?: SharedWorkerClock
   createDeepRuntime?: (input: {
     stores: SharedResearchWorkPort[]
     executionLedger: Pick<ExecutionLedger, 'append'>
@@ -334,6 +365,7 @@ export function createLiveSharedResearchRuntime(
   options: CreateLiveSharedResearchRuntimeOptions = {},
 ): SharedResearchRunnerRuntime {
   const runtimeMode = config.mode
+  const v4Configuration = loadEntityManagerV4RuntimeConfig(config.env)
   if (runtimeMode === 'off') throw new Error('Disabled research must not construct a live runtime')
   if (runtimeMode === 'active') {
     if (config.runtimeConfig.cutoverPolicy === 'phase1') {
@@ -370,13 +402,17 @@ export function createLiveSharedResearchRuntime(
     const observed = readResearchRuntimeControl(runtimeControl)
     return !observed.unreadable && observed.control.desiredState === 'running'
   }
+  const sourceClaimsEnabled = (source: Signal['sourceType']) => claimsEnabled()
+    && ((source !== 'news' && source !== 'polymarket') || sourceOwnershipAllows({
+      databasePath: paths.get(source)!, source, domain: 'research', owner: 'shared', env: config.env,
+    }))
   try {
     standardConfiguration = loadStandardSearchConfiguration(config.env)
     standardSearch = createConfiguredStandardSearch({
       configuration: standardConfiguration,
       factories: options.standardSearchFactories,
     })
-    gatewayRuntime = createConfiguredInferenceGateway({
+    gatewayRuntime = (options.createInferenceRuntime ?? createConfiguredInferenceGateway)({
       env: config.env,
       observer: (event) => providerObservation.observe(event),
     })
@@ -384,7 +420,7 @@ export function createLiveSharedResearchRuntime(
     stores.forEach((store) => store.close())
     throw error
   }
-  const synthesizer = new StructuredResearchSynthesizer({ gateway: gatewayRuntime.gateway, promptVersion: config.promptVersion })
+  const synthesizer = new StructuredResearchSynthesizer({ gateway: gatewayRuntime.gateway, promptVersion: config.promptVersion, requireArticlePreparation: v4Configuration.articleWorkflowEnabled })
   // Phase 1 intersects available capabilities with its exact light-only
   // admission policy. Full policy preserves the pre-Phase-1 capability set.
   const supportedDepths = resolveSupportedResearchDepths({
@@ -417,6 +453,17 @@ export function createLiveSharedResearchRuntime(
       providerObservation: providerObservation.snapshot(),
       deepEnabled: config.deepEnabled,
       deep: deepRuntime?.status ?? deepResearchRuntimeSnapshot({ enabled: false }),
+      v4: {
+        configured: v4Configuration.noveltyEnabled || v4Configuration.researchReuseEnabled || v4Configuration.followupEnabled || v4Configuration.articleWorkflowEnabled,
+        composed: runtimeMode === 'active' && (v4Configuration.noveltyEnabled || v4Configuration.researchReuseEnabled || v4Configuration.followupEnabled || v4Configuration.articleWorkflowEnabled),
+        noveltyEnabled: v4Configuration.noveltyEnabled,
+        articleWorkflowEnabled: v4Configuration.articleWorkflowEnabled,
+        reuseEnabled: v4Configuration.researchReuseEnabled,
+        followupEnabled: v4Configuration.followupEnabled,
+        sources: [...v4Configuration.activeSources], managedContextConfigured: v4Configuration.databaseUrl !== null,
+        paidOutcomeHoldsBySource: Object.fromEntries(stores.map((store) => [store.sourceType,
+          runtimeMode === 'active' ? store.countUnresolvedResearchReservations() : 0])),
+      },
     })
   }
   if (config.mode === 'shadow') {
@@ -457,8 +504,61 @@ export function createLiveSharedResearchRuntime(
   }
 
   const ledgers: Array<{ source: SupportedResearchSource, ledger: SqliteExecutionLedger }> = []
+  let classificationRuntime: { gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>, close(): void } | null = null
+  let managedResearchContext: (ManagedResearchContextPort & { close(): Promise<void> }) | null = null
   const deepRegistries = new Map<string, SqliteDeepResearchExecutionRegistry>()
   try {
+    const v4Enabled = v4Configuration.noveltyEnabled || v4Configuration.researchReuseEnabled || v4Configuration.followupEnabled || v4Configuration.articleWorkflowEnabled
+    let v4: SharedResearchV4Options | undefined
+    if (v4Enabled) {
+      if (!v4Configuration.synthesisPolicy || !v4Configuration.assignmentPolicy) throw new Error('Enabled V4 Research requires explicit synthesis and root assignment policies')
+      if (v4Configuration.noveltyEnabled || v4Configuration.followupEnabled || v4Configuration.articleWorkflowEnabled) {
+        classificationRuntime = (options.createClassificationRuntime ?? createConfiguredClassificationRuntime)({ env: config.env })
+      }
+      if (v4Configuration.databaseUrl) {
+        managedResearchContext = (options.createManagedContext ?? ((input) => new PostgresKnowledgeOperationWriter(input)))({
+          connectionString: v4Configuration.databaseUrl, ca: v4Configuration.databaseCa,
+        })
+      }
+      let legacyReader: EntityMemoryReader | undefined
+      if (v4Enabled) {
+        legacyReader = (options.createLegacyReader ?? ((env) => {
+          const url = env.SUPABASE_URL?.trim()
+          const key = env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+          if (!url || !key) throw new Error('Enabled V4 internal Research context requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY')
+          return new SupabaseEntityMemoryReader(createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }))
+        }))(config.env)
+      }
+      v4 = {
+        policyVersion: v4Configuration.policyVersion!, synthesisPolicy: v4Configuration.synthesisPolicy,
+        assignmentPolicy: v4Configuration.assignmentPolicy,
+        sources: v4Configuration.activeSources,
+        contextReader: (signal: Signal) => new InternalResearchEntityMemoryReader({
+          legacy: legacyReader!, managed: managedResearchContext ?? undefined, source: signal.sourceType,
+          sourceRefs: managedSignalSourceRefs(signal), labels: [...signal.sourceHints.entities, ...signal.sourceHints.assets],
+        }),
+        ...(v4Configuration.reusePolicy ? { reusePolicy: v4Configuration.reusePolicy } : {}),
+        ...(v4Configuration.noveltyEnabled && legacyReader ? { novelty: {
+          classification: classificationRuntime!.gateway,
+          reader: (signal: Signal) => new InternalResearchEntityMemoryReader({
+            legacy: legacyReader!, managed: managedResearchContext ?? undefined, source: signal.sourceType,
+            sourceRefs: managedSignalSourceRefs(signal),
+            labels: [...signal.sourceHints.entities, ...signal.sourceHints.assets],
+          }),
+        } } : {}),
+        ...(v4Configuration.followupPolicy ? { followup: {
+          classification: classificationRuntime!.gateway, policy: v4Configuration.followupPolicy,
+        } } : {}),
+        ...(v4Configuration.articleWorkflowEnabled ? { article: {
+          classification: classificationRuntime!.gateway,
+          contextReader: (signal: Signal) => new InternalResearchEntityMemoryReader({
+            legacy: legacyReader!, managed: managedResearchContext ?? undefined, source: signal.sourceType,
+            sourceRefs: managedSignalSourceRefs(signal),
+            labels: [...signal.sourceHints.entities, ...signal.sourceHints.assets, signal.title],
+          }),
+        } } : {}),
+      }
+    }
     for (const source of config.sources) ledgers.push({ source, ledger: new SqliteExecutionLedger(paths.get(source)!) })
     const executionLedger = new SourceExecutionLedger(ledgers)
     if (config.deepEnabled) {
@@ -476,7 +576,7 @@ export function createLiveSharedResearchRuntime(
       })
     }
     const scheduler = new ResearchDepthFilteredScheduler(
-      stores, supportedDepths, claimsEnabled, config.maxConsecutiveClaimsPerSource,
+      stores, supportedDepths, claimsEnabled, config.maxConsecutiveClaimsPerSource, sourceClaimsEnabled,
     )
     const recoveryScheduler = new SharedResearchScheduler(stores)
     const readiness = new InferenceGatewayStageReadiness(gatewayRuntime.gateway)
@@ -485,6 +585,9 @@ export function createLiveSharedResearchRuntime(
       stores, scheduler, retriever: new DeterministicRetriever(), synthesizer, standardSearch,
       deepResearch: deepRuntime?.enqueue, executionLedger, readiness, mode: 'active',
       ownership: 'shared', legacyClaimersActive: false, priorityClasses,
+      v4,
+      clock: options.workerClock,
+      mayExecuteWork: (work) => sourceClaimsEnabled(work.sourceType),
     })
     const workers = [makeWorker('urgent', config.urgentPriorities), makeWorker('background', config.backgroundPriorities)]
     let stopping = false
@@ -515,6 +618,8 @@ export function createLiveSharedResearchRuntime(
         deepRuntime?.close()
         ledgers.forEach(({ ledger }) => ledger.close())
         stores.forEach((store) => store.close())
+        classificationRuntime?.close()
+        void managedResearchContext?.close().catch(() => undefined)
       },
     }
   } catch (error) {
@@ -522,6 +627,8 @@ export function createLiveSharedResearchRuntime(
     else for (const registry of deepRegistries.values()) registry.close()
     ledgers.forEach(({ ledger }) => ledger.close())
     stores.forEach((store) => store.close())
+    classificationRuntime?.close()
+    void managedResearchContext?.close().catch(() => undefined)
     throw error
   }
 }
@@ -562,6 +669,7 @@ export class ResearchDepthFilteredScheduler implements SharedResearchSchedulerPo
     depths: ResearchWorkItem['researchDepth'][],
     private readonly claimsEnabled: () => boolean = () => true,
     private readonly maxConsecutiveClaimsPerSource = 2,
+    private readonly sourceClaimsEnabled: (source: Signal['sourceType']) => boolean = () => true,
   ) {
     this.stores = new Map(stores.map((store) => [store.sourceType, store]))
     this.depths = new Set(depths)
@@ -590,6 +698,7 @@ export class ResearchDepthFilteredScheduler implements SharedResearchSchedulerPo
       : candidates
     for (const work of ordered) {
       if (!this.claimsEnabled()) return null
+      if (!this.sourceClaimsEnabled(work.sourceType)) continue
       const expectedStatus = work.status === 'research_pending' ? 'research_pending'
         : work.status === 'synthesis_pending' ? 'synthesis_pending'
           : work.status === 'deep_pending' ? 'deep_pending' : null

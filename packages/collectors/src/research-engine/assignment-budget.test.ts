@@ -5,7 +5,6 @@ import {
   acquireLeaseFence,
   claimReservation,
   isHoldForIntervention,
-  PROVISIONAL_FOLLOWUP_LIMITS,
   recordDispatchIntent,
   recordUnknownOutcome,
   releaseNoDispatch,
@@ -18,7 +17,9 @@ import {
   type D2ReservationState,
 } from './assignment-budget'
 
-// In-memory compare-and-set fake of the future source-local SQLite wiring.
+const APPROVED_LIMITS = { maxProviderCalls: 1, maxInputTokens: 15_000, maxOutputTokens: 3_000, maxIncrementalCostUsdMicros: 100_000 }
+
+// In-memory compare-and-set fake of the source-local SQLite wiring.
 // Conditional update double-checks its expectation exactly like a guarded
 // UPDATE ... WHERE state = ... AND ownership_epoch = ... would.
 function createInMemoryBudgetStore(): BudgetStorePort {
@@ -68,7 +69,7 @@ function settleKey(): {
 
 test('claimReservation reserves max exposure once and replays the same attempt idempotently', async () => {
   const port = createInMemoryBudgetStore()
-  const claimed = await claimReservation(port, {
+  const claimed = await claimReservation(port, { approvedLimits: APPROVED_LIMITS,
     rootAssignmentId: 'root-1',
     allowanceId: 'fu-1',
     attemptId: 'a-1',
@@ -81,13 +82,13 @@ test('claimReservation reserves max exposure once and replays the same attempt i
   assert.equal(claimed.ok && claimed.record.reservationStatus, 'reserved_max_exposure')
   assert.equal(claimed.ok && claimed.record.ownershipEpoch, 1)
   assert.deepEqual(claimed.ok && claimed.record.approvedLimits, {
-    maxProviderCalls: PROVISIONAL_FOLLOWUP_LIMITS.maxProviderCalls,
-    maxInputTokens: PROVISIONAL_FOLLOWUP_LIMITS.maxInputTokens,
-    maxOutputTokens: PROVISIONAL_FOLLOWUP_LIMITS.maxOutputTokens,
-    maxIncrementalCostUsdMicros: PROVISIONAL_FOLLOWUP_LIMITS.maxIncrementalCostUsdMicros,
+    maxProviderCalls: APPROVED_LIMITS.maxProviderCalls,
+    maxInputTokens: APPROVED_LIMITS.maxInputTokens,
+    maxOutputTokens: APPROVED_LIMITS.maxOutputTokens,
+    maxIncrementalCostUsdMicros: APPROVED_LIMITS.maxIncrementalCostUsdMicros,
   })
 
-  const replay = await claimReservation(port, {
+  const replay = await claimReservation(port, { approvedLimits: APPROVED_LIMITS,
     rootAssignmentId: 'root-1',
     allowanceId: 'fu-1',
     attemptId: 'a-1',
@@ -101,7 +102,7 @@ test('claimReservation reserves max exposure once and replays the same attempt i
 
 test('open attempt blocks a fresh attempt under the same logical allowance', async () => {
   const port = createInMemoryBudgetStore()
-  await claimReservation(port, {
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS,
     rootAssignmentId: 'root-1',
     allowanceId: 'fu-1',
     attemptId: 'a-1',
@@ -109,7 +110,7 @@ test('open attempt blocks a fresh attempt under the same logical allowance', asy
     providerRoute: 'jev/systemone@1',
     nowMs: 1_000,
   })
-  const blocked = await claimReservation(port, {
+  const blocked = await claimReservation(port, { approvedLimits: APPROVED_LIMITS,
     rootAssignmentId: 'root-1',
     allowanceId: 'fu-1',
     attemptId: 'a-2',
@@ -123,21 +124,21 @@ test('open attempt blocks a fresh attempt under the same logical allowance', asy
 
 test('new attempt only after the prior attempt reaches a terminal state', async () => {
   const port = createInMemoryBudgetStore()
-  await claimReservation(port, { rootAssignmentId: 'r', allowanceId: 'fu', attemptId: 'a-1', requestDigest: 'd-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, rootAssignmentId: 'r', allowanceId: 'fu', attemptId: 'a-1', requestDigest: 'd-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   const released = await releaseNoDispatch(port, { rootAssignmentId: 'r', allowanceId: 'fu', attemptId: 'a-1' }, {
     ownedEpoch: 1,
     fact: { kind: 'no_dispatch', evidence: 'crash persisted before transport handoff' },
     nowMs: 2_000,
   })
   assert.equal(released.ok, true)
-  const allowed = await claimReservation(port, { rootAssignmentId: 'r', allowanceId: 'fu', attemptId: 'a-2', requestDigest: 'd-2', providerRoute: 'jev/systemone@1', nowMs: 3_000 })
+  const allowed = await claimReservation(port, { approvedLimits: APPROVED_LIMITS, rootAssignmentId: 'r', allowanceId: 'fu', attemptId: 'a-2', requestDigest: 'd-2', providerRoute: 'jev/systemone@1', nowMs: 3_000 })
   assert.equal(allowed.ok, true)
 })
 
 test('dispatch intent is persisted before handoff and unknown outcome is conservative evidence', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   const intent = await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
   assert.ok(intent.ok && intent.record.state === 'dispatch_intent')
 
@@ -150,7 +151,7 @@ test('dispatch intent is persisted before handoff and unknown outcome is conserv
 test('stale owner epoch is refused on dispatch intent', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   const bumped = await acquireLeaseFence(port, key, { newOwnershipEpoch: 2, nowMs: 1_500 })
   assert.ok(bumped.ok && bumped.record.ownershipEpoch === 2)
   const refused = await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
@@ -161,7 +162,7 @@ test('stale owner epoch is refused on dispatch intent', async () => {
 test('settle saves against exact attempt/request identity+digest and settles once', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
   const settled = await settleReservation(port, key, {
     requestDigest: 'digest-1',
@@ -200,7 +201,7 @@ test('settle saves against exact attempt/request identity+digest and settles onc
 test('wrong attempt/request identity never settles', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
   const mismatched = await settleReservation(port, key, {
     requestDigest: 'different-digest',
@@ -216,7 +217,7 @@ test('wrong attempt/request identity never settles', async () => {
 test('cost reporting fails closed: null measured cost or zero cost rejected, unknown declared usage accepted', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
 
   const nullCost = await settleReservation(port, key, {
@@ -253,7 +254,7 @@ test('cost reporting fails closed: null measured cost or zero cost rejected, unk
 test('hold-forever: unknown outcome keeps holding without a provider-supported handle, even after lease expiry', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
   const unknown = await recordUnknownOutcome(port, key, { ownedEpoch: 1, nowMs: 3_000 })
   assert.ok(unknown.ok && unknown.record.state === 'execution_outcome_unknown')
@@ -281,7 +282,7 @@ test('hold-forever: unknown outcome keeps holding without a provider-supported h
 test('release from reserved_not_dispatched requires ownership + persisted no-dispatch fact', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
 
   const wrongEpoch = await releaseNoDispatch(port, key, {
     ownedEpoch: 4,
@@ -309,7 +310,7 @@ test('release from reserved_not_dispatched requires ownership + persisted no-dis
 test('release path from dispatch_intent must go through execution_outcome_unknown first', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
 
   const direct = await releaseUnknownOutcome(port, key, {
@@ -332,7 +333,7 @@ test('release path from dispatch_intent must go through execution_outcome_unknow
 test('fence must strictly increase and never hides the in-flight call', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
 
   const equal = await acquireLeaseFence(port, key, { newOwnershipEpoch: 1, nowMs: 2_100 })
@@ -373,7 +374,7 @@ test('fence must strictly increase and never hides the in-flight call', async ()
 test('terminal reservations refuse every further transition', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()
-  await claimReservation(port, { ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1', providerRoute: 'jev/systemone@1', nowMs: 1_000 })
   await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
   const settled = await settleReservation(port, key, {
     requestDigest: 'digest-1',

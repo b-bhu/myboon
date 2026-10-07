@@ -70,7 +70,7 @@ export interface ExistingItemOperation {
   /** Code-resolved candidate reference; the model never supplies a persisted item ID. */
   candidateItemRef: string | null
   itemId: string
-  kind: 'annotate' | 'correct' | 'supersede'
+  kind: 'annotate' | 'correct' | 'supersede' | 'retract' | 'attach_evidence' | 'remove_membership'
   payload: Record<string, unknown>
 }
 
@@ -308,6 +308,9 @@ function validateApplyOutcome(
     )
   }
   for (const draft of drafts) {
+    if (draft.evidenceRefs.length === 0) {
+      throw new ProgressionPlanValidationError(`outcome.drafts[localKey=${draft.localKey}].evidenceRefs`, 'an accepted managed note must cite at least one saved Research edge')
+    }
     if (draft.entityLinks.length === 0) {
       throw new ProgressionPlanValidationError(
         `outcome.drafts[localKey=${draft.localKey}].entityLinks`,
@@ -402,7 +405,10 @@ function validateApplyOutcome(
     if (
       candidateOperation.kind !== 'annotate' &&
       candidateOperation.kind !== 'correct' &&
-      candidateOperation.kind !== 'supersede'
+      candidateOperation.kind !== 'supersede' &&
+      candidateOperation.kind !== 'retract' &&
+      candidateOperation.kind !== 'attach_evidence' &&
+      candidateOperation.kind !== 'remove_membership'
     ) {
       throw new ProgressionPlanValidationError(
         `outcome.operations[${index}].kind`,
@@ -447,6 +453,42 @@ function validateApplyOutcome(
         `outcome.operations[${index}].payload`,
         `exceeds the PROVISIONAL cap of ${PROVISIONAL_MAX_OPERATION_PAYLOAD_BYTES} bytes`,
       )
+    }
+    // Existing-item attachments owe the same exact saved claim/evidence edge
+    // proof as new drafts. Model-shaped citations cannot become provenance.
+    if (payload.evidenceRefs !== undefined) {
+      if (!Array.isArray(payload.evidenceRefs) || payload.evidenceRefs.length > PROVISIONAL_MAX_EVIDENCE_REFS_PER_ITEM) {
+        throw new ProgressionPlanValidationError(`outcome.operations[${index}].payload.evidenceRefs`, 'must be a bounded evidence array')
+      }
+      const resolverDraft: ItemDraft = { localKey: 'existing-operation', candidateId: null, note: 'Evidence attachment', entityLinks: [], continuityLinks: [], evidenceRefs: [] }
+      payload.evidenceRefs = payload.evidenceRefs.map((reference, referenceIndex) => {
+        const value = plainRecord(reference, 'operation evidence reference')
+        const candidate: ItemEvidenceRef = {
+          claimId: boundedString(value.claimId, 'operation evidence claimId'),
+          evidenceId: boundedString(value.evidenceId, 'operation evidence evidenceId'),
+          sourceRef: boundedString(value.sourceRef, 'operation evidence sourceRef'),
+        }
+        const resolved = evidenceRefResolver?.(candidate, resolverDraft)
+        if (!resolved) throw new ProgressionPlanValidationError(`outcome.operations[${index}].payload.evidenceRefs[${referenceIndex}]`, 'evidence reference is not present in the saved source packet')
+        return resolved
+      })
+    }
+    if (candidateOperation.kind === 'attach_evidence' && (!Array.isArray(payload.evidenceRefs) || payload.evidenceRefs.length === 0)) {
+      throw new ProgressionPlanValidationError(`outcome.operations[${index}].payload.evidenceRefs`, 'an attachment must preserve at least one saved evidence edge')
+    }
+    if (candidateOperation.kind === 'correct' || candidateOperation.kind === 'supersede') {
+      const localKey = boundedString(payload.successorLocalKey, `outcome.operations[${index}].payload.successorLocalKey`)
+      if (!localKeys.has(localKey)) throw new ProgressionPlanValidationError(`outcome.operations[${index}].payload.successorLocalKey`, 'successor must be a new draft in this same plan')
+      payload.successorLocalKey = localKey
+    }
+    if (candidateOperation.kind === 'retract' || candidateOperation.kind === 'remove_membership') {
+      payload.reason = boundedString(payload.reason, `outcome.operations[${index}].payload.reason`)
+    }
+    if (candidateOperation.kind === 'remove_membership') {
+      payload.entityId = boundedString(payload.entityId, `outcome.operations[${index}].payload.entityId`)
+      if (!identityResolver?.(payload.entityId as string, { localKey: 'membership-removal', candidateId: null, note: String(payload.reason), entityLinks: [], continuityLinks: [], evidenceRefs: [] })) {
+        throw new ProgressionPlanValidationError(`outcome.operations[${index}].payload.entityId`, 'membership identity is not in the grounded context')
+      }
     }
     return {
       candidateItemRef,
@@ -552,7 +594,7 @@ export function validateProgressionPlan(
   const requiredTargetIds = normalizedOutcome.kind === 'apply'
     ? [
         ...normalizedOutcome.drafts.flatMap((draft) => draft.entityLinks.map((link) => link.resolvedEntityRef)),
-        ...normalizedOutcome.operations.map((operation) => operation.itemId),
+        ...normalizedOutcome.operations.flatMap((operation) => operation.kind === 'remove_membership' ? [operation.itemId, String(operation.payload.entityId)] : [operation.itemId]),
       ]
     : []
   if (

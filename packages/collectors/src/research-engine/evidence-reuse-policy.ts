@@ -71,8 +71,17 @@ export class WorkContractEvidenceReusePolicy implements EvidenceReusePolicyPort 
     const deadline = Date.parse(input.workItem.freshnessDeadline)
     const retrievedAt = Date.parse(input.artifact.retrievedAt)
     const now = Date.parse(input.now)
+    const reuseApproval = record(input.artifact.reuseApproval)
+    const approvedReuse = reuseApproval !== null
+      && typeof reuseApproval.policyVersion === 'string' && reuseApproval.policyVersion.trim().length > 0
+      && typeof reuseApproval.maxAgeMs === 'number' && reuseApproval.maxAgeMs > 0
+      && typeof reuseApproval.pinId === 'string' && reuseApproval.pinId.trim().length > 0
+      && record(reuseApproval.ref) !== null
+      && Date.parse(String(reuseApproval.validatedAt)) >= createdAt
+      && Date.parse(String(reuseApproval.validatedAt)) <= now
+      && now - retrievedAt <= reuseApproval.maxAgeMs
     if (![createdAt, deadline, retrievedAt, now].every(Number.isFinite)
-      || retrievedAt < createdAt || now > deadline) {
+      || (retrievedAt < createdAt && !approvedReuse) || retrievedAt > now || now > deadline) {
       return {
         reusable: false,
         policyVersion: WORK_CONTRACT_EVIDENCE_REUSE_POLICY_VERSION,
@@ -81,7 +90,7 @@ export class WorkContractEvidenceReusePolicy implements EvidenceReusePolicyPort 
     }
     const policy: EvidenceFreshnessPolicy = {
       policyVersion: WORK_CONTRACT_EVIDENCE_REUSE_POLICY_VERSION,
-      maxAgeMs: Math.max(0, deadline - createdAt),
+      maxAgeMs: approvedReuse ? reuseApproval!.maxAgeMs as number : Math.max(0, deadline - createdAt),
       maxArtifactBytes: this.maxArtifactBytes,
       invalidateOn: [
         'content_hash_changed',

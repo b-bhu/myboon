@@ -272,3 +272,147 @@ function booleanFlag(raw: string | undefined, fallback: boolean, field: string):
   if (raw === '0') return false
   throw new FeedV3RuntimeConfigError(`${field} must be 0 or 1`)
 }
+
+/** V4 features stay isolated and disabled until their explicit source rollout. */
+export const ENTITY_V4_ENV = Object.freeze({
+  managedWriterEnabled: 'ENTITY_V4_MANAGED_WRITER_ENABLED',
+  noveltyEnabled: 'ENTITY_V4_NOVELTY_ENABLED',
+  researchReuseEnabled: 'ENTITY_V4_RESEARCH_REUSE_ENABLED',
+  followupEnabled: 'ENTITY_V4_FOLLOWUP_ENABLED',
+  articleWorkflowEnabled: 'ENTITY_V4_ARTICLE_WORKFLOW_ENABLED',
+  sourceOwnershipEnabled: 'ENTITY_V4_SOURCE_OWNERSHIP_ENABLED',
+  activeSources: 'ENTITY_V4_ACTIVE_SOURCES',
+  policyVersion: 'ENTITY_V4_POLICY_VERSION',
+  databaseUrl: 'MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL',
+  databaseCa: 'MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA',
+} as const)
+
+export type EntityManagerV4Source = 'news' | 'polymarket'
+
+export interface EntityManagerV4RuntimeConfig {
+  managedWriterEnabled: boolean
+  noveltyEnabled: boolean
+  researchReuseEnabled: boolean
+  followupEnabled: boolean
+  articleWorkflowEnabled: boolean
+  sourceOwnershipEnabled: boolean
+  activeSources: ReadonlySet<EntityManagerV4Source>
+  policyVersion: string | null
+  databaseUrl: string | null
+  databaseCa: string | null
+  assignmentPolicy: null | {
+    policyVersion: string
+    maxProviderCalls: number
+    maxInputTokens: number
+    maxOutputTokens: number
+    maxIncrementalCostUsdMicros: number | null
+  }
+  synthesisPolicy: null | {
+    policyVersion: string
+    maxInputTokens: number
+    maxOutputTokens: number
+    maxIncrementalCostUsdMicros: number | null
+  }
+  reusePolicy: null | { policyVersion: string; maxEvidenceAgeMs: number; maxResearchAgeMs: number }
+  followupPolicy: null | {
+    policyVersion: string
+    maxProviderCalls: 1
+    maxInputTokens: number
+    maxOutputTokens: number
+    maxIncrementalCostUsdMicros: number | null
+    maxSources: number
+    maxTotalBytes: number
+    maxBytesPerSource: number
+    maxWallTimeMs: number
+  }
+}
+
+export function loadEntityManagerV4RuntimeConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): EntityManagerV4RuntimeConfig {
+  const flag = (key: string) => booleanFlag(env[key], false, key)
+  const required = (key: string) => {
+    const value = env[key]?.trim()
+    if (!value) throw new FeedV3RuntimeConfigError(`${key} is required when its V4 feature is enabled`)
+    return value
+  }
+  const positive = (key: string) => {
+    const value = Number(required(key))
+    if (!Number.isSafeInteger(value) || value <= 0) throw new FeedV3RuntimeConfigError(`${key} must be a positive safe integer`)
+    return value
+  }
+  const managedWriterEnabled = flag(ENTITY_V4_ENV.managedWriterEnabled)
+  const noveltyEnabled = flag(ENTITY_V4_ENV.noveltyEnabled)
+  const researchReuseEnabled = flag(ENTITY_V4_ENV.researchReuseEnabled)
+  const followupEnabled = flag(ENTITY_V4_ENV.followupEnabled)
+  const articleWorkflowEnabled = flag(ENTITY_V4_ENV.articleWorkflowEnabled)
+  const sourceOwnershipEnabled = flag(ENTITY_V4_ENV.sourceOwnershipEnabled)
+  const activeSources = new Set<EntityManagerV4Source>()
+  for (const value of sources(env[ENTITY_V4_ENV.activeSources])) {
+    if (value !== 'news' && value !== 'polymarket') throw new FeedV3RuntimeConfigError(`V4 does not admit source ${value}`)
+    activeSources.add(value)
+  }
+  if (articleWorkflowEnabled && activeSources.has('polymarket')) {
+    throw new FeedV3RuntimeConfigError('ENTITY_V4_ARTICLE_WORKFLOW_ENABLED currently admits news captured sources only; Polymarket remains disabled')
+  }
+  const enabled = managedWriterEnabled || noveltyEnabled || researchReuseEnabled || followupEnabled || articleWorkflowEnabled
+  const researchEnabled = noveltyEnabled || researchReuseEnabled || followupEnabled || articleWorkflowEnabled
+  if (enabled && activeSources.size === 0) throw new FeedV3RuntimeConfigError('Enabled V4 features require ENTITY_V4_ACTIVE_SOURCES')
+  if (enabled && !sourceOwnershipEnabled) throw new FeedV3RuntimeConfigError('Enabled V4 features require persistent source ownership')
+  const policyVersion = enabled ? required(ENTITY_V4_ENV.policyVersion) : null
+  const databaseUrl = managedWriterEnabled ? required(ENTITY_V4_ENV.databaseUrl)
+    : researchEnabled ? env[ENTITY_V4_ENV.databaseUrl]?.trim() || null : null
+  const databaseCa = managedWriterEnabled || researchEnabled ? env[ENTITY_V4_ENV.databaseCa]?.trim() || null : null
+  const explicitCost = (key:string) => {
+    const raw=required(key)
+    const value=raw==='unknown'?null:Number(raw)
+    if(value!==null&&(!Number.isSafeInteger(value)||value<0))throw new FeedV3RuntimeConfigError(`${key} must be a non-negative safe integer or explicit unknown`)
+    return value
+  }
+  const synthesisPolicy = noveltyEnabled || researchReuseEnabled || followupEnabled || articleWorkflowEnabled ? {
+    policyVersion:required('ENTITY_V4_SYNTHESIS_POLICY_VERSION'),
+    maxInputTokens:positive('ENTITY_V4_SYNTHESIS_MAX_INPUT_TOKENS'),
+    maxOutputTokens:positive('ENTITY_V4_SYNTHESIS_MAX_OUTPUT_TOKENS'),
+    maxIncrementalCostUsdMicros:explicitCost('ENTITY_V4_SYNTHESIS_MAX_COST_USD_MICROS'),
+  } : null
+  const assignmentPolicy = noveltyEnabled || researchReuseEnabled || followupEnabled || articleWorkflowEnabled ? {
+    policyVersion:required('ENTITY_V4_ASSIGNMENT_POLICY_VERSION'),
+    maxProviderCalls:positive('ENTITY_V4_ASSIGNMENT_MAX_PROVIDER_CALLS'),
+    maxInputTokens:positive('ENTITY_V4_ASSIGNMENT_MAX_INPUT_TOKENS'),
+    maxOutputTokens:positive('ENTITY_V4_ASSIGNMENT_MAX_OUTPUT_TOKENS'),
+    maxIncrementalCostUsdMicros:explicitCost('ENTITY_V4_ASSIGNMENT_MAX_COST_USD_MICROS'),
+  } : null
+  const reusePolicy = researchReuseEnabled ? {
+    policyVersion: required('ENTITY_V4_REUSE_POLICY_VERSION'),
+    maxEvidenceAgeMs: positive('ENTITY_V4_REUSE_MAX_EVIDENCE_AGE_MS'),
+    maxResearchAgeMs: positive('ENTITY_V4_REUSE_MAX_RESEARCH_AGE_MS'),
+  } : null
+  let followupPolicy: EntityManagerV4RuntimeConfig['followupPolicy'] = null
+  if (followupEnabled) {
+    const maxProviderCalls = positive('ENTITY_V4_FOLLOWUP_MAX_PROVIDER_CALLS')
+    if (maxProviderCalls !== 1) throw new FeedV3RuntimeConfigError('V4 follow-up permits exactly one provider call')
+    const cost = required('ENTITY_V4_FOLLOWUP_MAX_COST_USD_MICROS')
+    const maxIncrementalCostUsdMicros = cost === 'unknown' ? null : Number(cost)
+    if (maxIncrementalCostUsdMicros !== null && (!Number.isSafeInteger(maxIncrementalCostUsdMicros) || maxIncrementalCostUsdMicros < 0)) {
+      throw new FeedV3RuntimeConfigError('ENTITY_V4_FOLLOWUP_MAX_COST_USD_MICROS must be a non-negative safe integer or explicit unknown')
+    }
+    followupPolicy = {
+      policyVersion: required('ENTITY_V4_FOLLOWUP_POLICY_VERSION'),
+      maxProviderCalls: 1,
+      maxInputTokens: positive('ENTITY_V4_FOLLOWUP_MAX_INPUT_TOKENS'),
+      maxOutputTokens: positive('ENTITY_V4_FOLLOWUP_MAX_OUTPUT_TOKENS'),
+      maxIncrementalCostUsdMicros,
+      maxSources: positive('ENTITY_V4_FOLLOWUP_MAX_SOURCES'),
+      maxTotalBytes: positive('ENTITY_V4_FOLLOWUP_MAX_TOTAL_BYTES'),
+      maxBytesPerSource: positive('ENTITY_V4_FOLLOWUP_MAX_BYTES_PER_SOURCE'),
+      maxWallTimeMs: positive('ENTITY_V4_FOLLOWUP_MAX_WALL_TIME_MS'),
+    }
+    if (followupPolicy.maxBytesPerSource > followupPolicy.maxTotalBytes) {
+      throw new FeedV3RuntimeConfigError('Follow-up per-source bytes cannot exceed total bytes')
+    }
+  }
+  return Object.freeze({
+    managedWriterEnabled, noveltyEnabled, researchReuseEnabled, followupEnabled, articleWorkflowEnabled, sourceOwnershipEnabled,
+    activeSources, policyVersion, databaseUrl, databaseCa, assignmentPolicy, synthesisPolicy, reusePolicy, followupPolicy,
+  })
+}

@@ -73,7 +73,23 @@ const DEFAULT_BACKUP_DIR = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'backups')
 // Every table the pipeline store owns. Kept in one place so backup and
 // verify agree on exactly what "the data" means; a table added to the
 // schema in sqlite-store.ts must be added here too.
+const V4_DURABILITY_TABLES = [
+  'signal_platform_store_identity',
+  'signal_platform_admission_dispositions',
+  'signal_platform_research_readiness',
+  'signal_platform_retrieval_manifests',
+  'signal_platform_artifact_pins',
+  'signal_platform_artifact_usages',
+  'signal_platform_research_v4_records',
+  'signal_platform_research_reservations',
+  'signal_platform_research_assignment_limits',
+  'entity_v4_source_ownership',
+  'entity_v4_source_ownership_receipts',
+  'entity_v4_source_operations',
+] as const
+
 const PIPELINE_TABLES = [
+  ...V4_DURABILITY_TABLES,
   'pipeline_watchlist',
   'pipeline_source_delivery_outbox',
   'pipeline_candidates',
@@ -95,6 +111,7 @@ const PIPELINE_TABLES = [
 ] as const
 
 const NEWS_TABLES = [
+  ...V4_DURABILITY_TABLES,
   'news_source_runs',
   'news_candidate_observations',
   'news_research_results',
@@ -115,6 +132,7 @@ const NEWS_TABLES = [
 // The shared signal ledger is additive and may live in either legacy DB. Old
 // databases remain valid until a SqliteExecutionLedger first opens them.
 const OPTIONAL_TABLES = new Set<string>([
+  ...V4_DURABILITY_TABLES,
   'pipeline_source_delivery_outbox',
   'news_source_delivery_outbox',
   'signal_platform_signals',
@@ -133,12 +151,13 @@ const OPTIONAL_TABLES = new Set<string>([
 const BACKUP_FILE_PREFIX = 'pipeline-'
 const BACKUP_FILE_SUFFIX = '.sqlite'
 const BACKUP_MANIFEST_SUFFIX = '.manifest.json'
-export const SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION = 'myboon.sqlite_backup_manifest.v1' as const
+export const SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION = 'myboon.sqlite_backup_manifest.v2' as const
+const LEGACY_SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION = 'myboon.sqlite_backup_manifest.v1' as const
 
 export type SqliteBackupStoreKind = 'pipeline' | 'news'
 
 export interface SqliteBackupManifest {
-  schemaVersion: typeof SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION
+  schemaVersion: typeof SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION | typeof LEGACY_SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION
   store: SqliteBackupStoreKind
   createdAt: string
   /** Identifies the source without disclosing its directory. */
@@ -194,10 +213,6 @@ function filenameSafeTimestamp(iso: string): string {
   return iso.replace(/:/g, '-').replace(/\./g, '-')
 }
 
-function openReadWrite(path: string): SqliteDatabase {
-  return new DatabaseSync(path)
-}
-
 function openReadOnly(path: string): SqliteDatabase {
   return new DatabaseSync(path, { readOnly: true, open: true })
 }
@@ -241,7 +256,9 @@ async function backupSqliteStore(options: {
   const temporaryPath = join(options.backupDir, `.${basename(backupPath)}.${process.pid}.${randomUUID()}.tmp`)
   const temporaryManifestPath = `${temporaryPath}${BACKUP_MANIFEST_SUFFIX}`
 
-  const source = openReadWrite(options.sourcePath)
+  // Online backup needs a readable source, never a writer or schema initializer.
+  // This also fails before fabricating an empty database for a mistyped path.
+  const source = openReadOnly(options.sourcePath)
   let sourceTableCounts: Record<string, number>
   try {
     await sqliteBackup(source, temporaryPath)
@@ -505,7 +522,12 @@ async function verifySqliteBackup(
     )) {
       mismatches.push('sqlite schema does not match manifest')
     }
-    compareTableCounts(tables, manifest.tableCounts, tableCounts, mismatches, 'manifest')
+    // Older digest-bound manifests did not count these additive tables. Keep
+    // them restorable; v2 receipts require explicit count coverage for every
+    // present durability table, in addition to the whole-file/schema digest.
+    const manifestTables=manifest.schemaVersion===LEGACY_SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION
+      ? tables.filter((name)=>!(V4_DURABILITY_TABLES as readonly string[]).includes(name)) : tables
+    compareTableCounts(manifestTables, manifest.tableCounts, tableCounts, mismatches, 'manifest')
   }
   if (expected) {
     compareTableCounts(tables, expected, tableCounts, mismatches, 'expected')
@@ -551,7 +573,7 @@ function parseBackupManifest(raw: string): SqliteBackupManifest {
   assertExactKeys(record, [
     'schemaVersion', 'store', 'createdAt', 'source', 'backup', 'integrity', 'sqliteSchema', 'tableCounts',
   ], 'manifest')
-  if (record.schemaVersion !== SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION) throw new Error('unsupported schemaVersion')
+  if (record.schemaVersion !== SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION && record.schemaVersion !== LEGACY_SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION) throw new Error('unsupported schemaVersion')
   if (record.store !== 'pipeline' && record.store !== 'news') throw new Error('store is invalid')
   if (typeof record.createdAt !== 'string' || !Number.isFinite(Date.parse(record.createdAt))) {
     throw new Error('createdAt is invalid')
@@ -589,7 +611,7 @@ function parseBackupManifest(raw: string): SqliteBackupManifest {
     validatedCounts[name] = Number(count)
   }
   return {
-    schemaVersion: SQLITE_BACKUP_MANIFEST_SCHEMA_VERSION,
+    schemaVersion: record.schemaVersion,
     store: record.store,
     createdAt: record.createdAt,
     source: { fileName: source.fileName, pathSha256: source.pathSha256 as string },

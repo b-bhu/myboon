@@ -1,3 +1,4 @@
+import { validateLegacyResearchPacket } from '../signal-platform/validation'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -201,11 +202,14 @@ test('contained success assembles code-owned packet and promotes the fenced work
     assert.deepEqual(job.approvedDomains, ['news.example', 'primary.example'])
     assert.deepEqual(job.escalation.supportingEvidenceRefs, ['evidence-source'])
     const packet = fx.store.listResearchPacketsByWork('work-deep', 10)[0]!
+    assert.equal(packet.schemaVersion, 'myboon.research_packet.v1')
+    assert.ok('claims' in packet && Array.isArray(packet.claims))
+    const legacyPacket = validateLegacyResearchPacket(packet)
     assert.equal(packet.packetId.startsWith('deep_research_'), true)
     assert.equal(packet.execution.policyVersion, 'deep-policy.v1')
     assert.equal(packet.execution.traceId, 'trace-deep')
-    assert.equal(packet.verifiedFacts[0]?.evidenceRefs[0]?.startsWith('deep_evidence_'), true)
-    assert.equal(packet.evidence[1]?.url, 'https://primary.example/confirmation')
+    assert.equal(legacyPacket.verifiedFacts[0]?.evidenceRefs[0]?.startsWith('deep_evidence_'), true)
+    assert.equal(legacyPacket.evidence[1]?.url, 'https://primary.example/confirmation')
     assert.deepEqual({
       providerCalls: packet.budgetUsed.providerCalls,
       inputTokens: packet.budgetUsed.inputTokens,

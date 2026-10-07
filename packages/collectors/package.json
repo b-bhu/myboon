@@ -2,6 +2,9 @@
   "name": "@myboon/collectors",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "main": "dist/index.js",
   "exports": {
     "./entity-manager": {
@@ -16,6 +19,11 @@
     }
   },
   "scripts": {
+    "entity-v4:ownership": "tsx src/signal-platform/run-v4-ownership.ts",
+    "entity-v4:status": "tsx src/signal-platform/run-v4-status.ts",
+    "entity-v4:research-assess-partial": "tsx src/research-engine/run-retained-partial-assessment.ts",
+    "entity-v4:research-reconcile": "tsx src/research-engine/run-reconcile-research-reservation.ts",
+    "entity-v4:planning-reconcile": "tsx src/entity-manager/run-reconcile-planning-dispatch.ts",
     "polymarket:markets-data-engineer": "tsx src/polymarket/run-markets-data-engineer.ts",
     "polymarket:researcher": "tsx src/polymarket/run-researcher.ts",
     "polymarket:doctor": "tsx src/polymarket/run-doctor.ts",
@@ -34,12 +42,6 @@
     "world-cup:pre-match": "tsx src/world-cup/run-pre-match.ts",
     "news:research": "tsx src/news/run-news.ts",
     "news:feed:ingest": "tsx src/news/run-news-feed-ingestor.ts",
-    "hermes:orphan-sweeper": "tsx src/hermes/run-orphan-sweeper.ts",
-    "entity-catalog:maintain": "tsx src/entity-maintenance/run-entity-catalog-maintenance.ts",
-    "entity-catalog:report": "tsx src/entity-maintenance/run-report.ts",
-    "entity-catalog:operate": "tsx src/entity-maintenance/run-operation.ts",
-    "entity-catalog:shadow:jev": "tsx src/entity-maintenance/run-entity-identity-shadow.ts",
-    "classification:shadow": "tsx src/inference-gateway/run-classification-shadow.ts",
     "build": "tsc",
     "pipeline-store:backup": "tsx src/pipeline-store/run-backup.ts",
     "pipeline-store:backup:prune": "tsx src/pipeline-store/run-prune.ts",
@@ -56,7 +58,6 @@
     "test:researcher": "tsx --test src/polymarket/researcher.test.ts src/polymarket/egress-guards.test.ts",
     "test:hyperliquid": "tsx --test src/hyperliquid/*.test.ts",
     "test:entity-manager": "tsx --test src/entity-manager/*.test.ts",
-    "test:entity-maintenance": "tsx --test src/entity-maintenance/*.test.ts",
     "test:editor-draft": "tsx --test src/editor-draft/*.test.ts",
     "test:publisher": "tsx --test src/publisher/*.test.ts",
     "test:x-desk": "tsx --test src/x-desk/*.test.ts",
@@ -86,13 +87,18 @@
     "feed-v3:verify-drain": "tsx src/signal-platform/run-verify-drain.ts"
   },
   "dependencies": {
+    "@mozilla/readability": "0.6.0",
     "@myboon/shared": "workspace:*",
     "@supabase/supabase-js": "^2.39.0",
     "agent-browser": "0.34.0",
-    "dotenv": "^16.4.1"
+    "dotenv": "^16.4.1",
+    "jsdom": "30.1.2",
+    "pg": "8.16.3"
   },
   "devDependencies": {
+    "@types/jsdom": "30.0.0",
     "@types/node": "^20.0.0",
+    "@types/pg": "8.15.5",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }

@@ -12,7 +12,8 @@ import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
 import type { ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
 import { assertPhase1CutoverPolicy } from '../signal-platform/phase1-cutover'
-import { loadFeedV3RuntimeConfig, type FeedV3RuntimeConfig } from '../signal-platform/runtime-config'
+import { loadEntityManagerV4RuntimeConfig, loadFeedV3RuntimeConfig, type FeedV3RuntimeConfig } from '../signal-platform/runtime-config'
+import { requireSourceOwnership, sourceOwnershipAllows, withSourceOwnershipOperation } from '../signal-platform/source-ownership'
 import {
   FileRuntimeControlStore,
   resolveRuntimeControlPath,
@@ -44,6 +45,9 @@ import { sharedEntityWorkerConfig } from './shared-worker-config'
 import { SqliteEntityPacketWorkPort } from './sqlite-entity-work-port'
 import { SqliteEntityShadowObservationStore } from './sqlite-shadow-observation-store'
 import { SupabaseEntityMemoryStore } from './supabase-store'
+import { ManagedCanonicalPacketProcessor } from './managed-canonical-processor'
+import { PostgresKnowledgeOperationWriter, type ManagedKnowledgeWriterOptions } from './postgres-knowledge-writer'
+import type { CanonicalPacketProcessor } from './shared-worker'
 
 const PACKAGE_DIR = resolve(__dirname, '..', '..')
 const DEFAULT_INTERVAL_MS = 30_000
@@ -74,7 +78,7 @@ interface WorkerRuntimePort {
   drain(): Promise<void>
 }
 
-interface Closable { close(): void }
+interface Closable { close(): void | Promise<void> }
 
 export interface SharedEntityShutdownSignalPort {
   once(signal: 'SIGTERM' | 'SIGINT', listener: () => void): unknown
@@ -96,6 +100,7 @@ export interface CreateSharedEntityRuntimeOptions {
   runtimeControl?: RuntimeControlReadPort
   healthWriter?: EntityRuntimeHealthWriter
   healthWriterFactory?: (path: string) => EntityRuntimeHealthWriter
+  managedWriterFactory?: (options: ManagedKnowledgeWriterOptions) => PostgresKnowledgeOperationWriter
   now?: () => Date
 }
 
@@ -107,6 +112,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
   const env = options.env ?? process.env
   const runtime = loadFeedV3RuntimeConfig(env)
   if (runtime.entityMode === 'off') return disabledRuntime()
+  const v4 = loadEntityManagerV4RuntimeConfig(env)
   const now = options.now ?? (() => new Date())
 
   const sources = runtime.entityMode === 'shadow'
@@ -114,6 +120,9 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
     : runtime.entityActiveSources
   if (sources.size === 0) throw new Error(`Shared Entity ${runtime.entityMode} mode has no configured sources.`)
   if (runtime.entityMode === 'active') {
+    if (v4.managedWriterEnabled && [...runtime.entityActiveSources].some((source) => !v4.activeSources.has(source as 'news' | 'polymarket'))) {
+      throw new Error('Every active shared Entity source must be admitted by ENTITY_V4_ACTIVE_SOURCES when the managed writer is enabled')
+    }
     if (runtime.cutoverPolicy === 'phase1') {
       // Phase 1 admits only news/polymarket with all invariants valid and
       // never evaluates active cutover receipts or dereferences a null path.
@@ -150,7 +159,11 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       ?? (options.healthWriterFactory ?? ((path) => new AtomicEntityRuntimeHealthFile(path)))(configuredPath(
         env.FEED_V3_ENTITY_RUNTIME_STATUS_PATH?.trim() || DEFAULT_ENTITY_RUNTIME_STATUS_PATH,
       ))
-    const ports = stores.map((store) => new SqliteEntityPacketWorkPort(store))
+    const ports = stores.map((store) => new SqliteEntityPacketWorkPort(store, {
+      claimsEnabled: runtime.entityMode !== 'active' ? undefined : () => store.sourceType !== 'news' && store.sourceType !== 'polymarket' ? true : sourceOwnershipAllows({
+        databasePath: sourcePaths.get(store.sourceType)!,source: store.sourceType,domain: 'entity',owner: 'shared',env,
+      }),
+    }))
     let shadowObservations = options.shadowObservations
     if (!shadowObservations && runtime.entityMode === 'shadow') {
       const byPath = new Map<string, SqliteEntityShadowObservationStore>()
@@ -174,13 +187,40 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       }
     }
     shadowObservations ??= noOpShadowObservations
-    let processor: EntityServiceCanonicalPacketProcessor
+    let processor: CanonicalPacketProcessor
     let executionLedger: SharedEntityWorkerOptions['executionLedger']
     let activePreflight: (() => Promise<void>) | undefined
-    let circuitSnapshot: (() => InferenceCircuitStatusSnapshot) | undefined
+    let circuitSnapshot: (() => InferenceCircuitStatusSnapshot | null) | undefined
     let inferenceClaimsReady = () => true
 
     if (runtime.entityMode === 'active') {
+      const observeInference: InferenceTelemetryObserver = (event) => healthTracker.observe(event, now().toISOString())
+      if (v4.managedWriterEnabled) {
+        const writer = (options.managedWriterFactory ?? ((input) => new PostgresKnowledgeOperationWriter(input)))({
+          connectionString: v4.databaseUrl!,ca: v4.databaseCa,
+        })
+        closables.push(writer)
+        let gateway: ReturnType<typeof createConfiguredInferenceGateway>['gateway'] | undefined
+        const lazyGateway = () => {
+          gateway ??= options.gatewayFactory
+            ? options.gatewayFactory(env,observeInference)
+            : createConfiguredInferenceGateway({env,observer: observeInference}).gateway
+          return gateway
+        }
+        circuitSnapshot = () => gateway?.circuitStatusSnapshot() ?? null
+        processor = new ManagedCanonicalPacketProcessor({
+          writer,ports,gatewayFactory: lazyGateway,policyVersion: v4.policyVersion!,
+          owner: safeWorkerId(env.FEED_V3_ENTITY_WORKER_ID),
+          assertOwnership(source) {
+            if (source !== 'news' && source !== 'polymarket') throw new Error('Managed Entity does not admit this source')
+            requireSourceOwnership({databasePath: sourcePaths.get(source)!,source,domain:'entity',owner:'shared',env})
+          },
+          executeOwned(source,action) {
+            if (source !== 'news' && source !== 'polymarket') throw new Error('Managed Entity does not admit this source')
+            return withSourceOwnershipOperation({databasePath: sourcePaths.get(source)!,source,domain:'entity',owner:'shared',env},action)
+          },
+        })
+      } else {
       const supabase = (options.supabaseFactory ?? createClient)(
         required(env, 'SUPABASE_URL'),
         required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
@@ -189,7 +229,6 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       if (!entityStore.createCanonicalEntity || !entityStore.findEntitiesByIdentity) {
         throw new Error('Active shared Entity processing requires atomic canonical identity store capabilities.')
       }
-      const observeInference: InferenceTelemetryObserver = (event) => healthTracker.observe(event, now().toISOString())
       const gateway = options.gatewayFactory
         ? options.gatewayFactory(env, observeInference)
         : createConfiguredInferenceGateway({ env, observer: observeInference }).gateway
@@ -201,6 +240,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
         planner: new GatewayCanonicalEntityPlanner({ gateway }),
       })
       activePreflight = async () => { await assertEntityMemoryMigrationReady(supabase) }
+      }
 
       const ledgerByPath = new Map<string, SqliteExecutionLedger>()
       const ledgerBySource = new Map<Signal['sourceType'], SqliteExecutionLedger>()
@@ -266,7 +306,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       now,
     })
   } catch (error) {
-    for (const resource of [...closables].reverse()) resource.close()
+    for (const resource of [...closables].reverse()) void Promise.resolve(resource.close()).catch(() => {})
     throw error
   }
 }
@@ -280,7 +320,7 @@ function managedRuntime(
   health?: {
     writer: EntityRuntimeHealthWriter
     tracker: EntityRuntimeHealthTracker
-    circuitSnapshot?: () => InferenceCircuitStatusSnapshot
+    circuitSnapshot?: () => InferenceCircuitStatusSnapshot | null
     now: () => Date
   },
 ): SharedEntityRuntime {
@@ -347,7 +387,7 @@ function managedRuntime(
         await worker.drain()
         await writeHealth('stopped')
       } finally {
-        for (const resource of [...resources].reverse()) resource.close()
+        for (const resource of [...resources].reverse()) await resource.close()
       }
     },
   }
@@ -373,7 +413,7 @@ function entityClaimControl(control: RuntimeControlReadPort): {
 }
 
 function safeCircuitSnapshot(
-  snapshot: (() => InferenceCircuitStatusSnapshot) | undefined,
+  snapshot: (() => InferenceCircuitStatusSnapshot | null) | undefined,
 ): InferenceCircuitStatusSnapshot | null {
   try {
     return snapshot?.() ?? null

@@ -102,6 +102,8 @@ export interface StructuredProviderResult {
   /** Providers which know the actual route may override configured metadata. */
   actualProvider?: string
   actualModel?: string
+  /** A provider-managed backup was used within the structured dispatch. */
+  fallbackInvoked?: boolean
   actualReasoningEffort?: 'low' | 'medium' | 'high'
   /** Provider-measured cost only. The gateway never estimates monetary cost. */
   costUsdMicros?: number
@@ -124,6 +126,8 @@ interface StructuredRequestBase<T> {
   promptVersion: string
   policyVersion: string
   budget: InferenceBudget
+  /** Preserve a V4 paid-call reservation when transport outcome is unknown; never auto-replace it. */
+  holdOnUnknownOutcome?: boolean
   validate: StructuredOutputValidator<T>
 }
 

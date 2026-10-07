@@ -13,8 +13,6 @@ import type {
   ClassificationRegistry,
   ClassificationRequest,
   ClassificationResult,
-  ClassificationShadowEnvelope,
-  ClassificationShadowOutbox,
   HermesClassificationAdapter,
   JevAnswer,
   JevClassificationAdapter,
@@ -28,9 +26,7 @@ export interface ClassificationGatewayOptions {
   hermes: HermesClassificationAdapter
   capacity: ClassificationCapacityCoordinator
   audit: ClassificationAuditSink
-  shadowOutbox?: ClassificationShadowOutbox
   lifecycleMode?: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
-  onShadowEnqueueFailure?: (error: unknown, envelope: ClassificationShadowEnvelope) => void
   now?: () => number
 }
 
@@ -52,15 +48,27 @@ export class ClassificationDoubleFailureError extends InferenceGatewayError {
   }
 }
 
+/** A caller must reconcile its durable reservation instead of retrying this dispatch. */
+export class ClassificationOutcomeUnknownError extends InferenceGatewayError {
+  constructor(readonly decisionId: string, cause: InferenceGatewayError) {
+    super('Classification dispatch outcome is unknown; preserve its reservation and hold for reconciliation', {
+      category: cause.category,
+      retryable: false,
+      provider: cause.provider,
+      model: cause.model,
+      cause,
+    })
+    this.name = 'ClassificationOutcomeUnknownError'
+  }
+}
+
 export class ClassificationGateway {
   private readonly registry: ClassificationRegistry
   private readonly jev: JevClassificationAdapter
   private readonly hermes: HermesClassificationAdapter
   private readonly capacity: ClassificationCapacityCoordinator
   private readonly audit: ClassificationAuditSink
-  private readonly shadowOutbox?: ClassificationShadowOutbox
   private readonly lifecycleMode: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
-  private readonly onShadowEnqueueFailure: (error: unknown, envelope: ClassificationShadowEnvelope) => void
   private readonly now: () => number
 
   constructor(options: ClassificationGatewayOptions) {
@@ -69,12 +77,7 @@ export class ClassificationGateway {
     this.hermes = options.hermes
     this.capacity = options.capacity
     this.audit = options.audit
-    this.shadowOutbox = options.shadowOutbox
     this.lifecycleMode = options.lifecycleMode ?? (() => undefined)
-    this.onShadowEnqueueFailure = options.onShadowEnqueueFailure ?? ((error, envelope) => {
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn(`[classification-shadow] enqueue failed for ${envelope.workload}/${envelope.decisionId}: ${message}`)
-    })
     this.now = options.now ?? Date.now
   }
 
@@ -97,99 +100,26 @@ export class ClassificationGateway {
       this.lifecycleMode(definition),
       definition.defaultLifecycleMode,
     )
-    const envelope = immutableEnvelope(request, state, stateDigest, decisionId, deadlineMs, this.now())
+    const samplingKey = { workload: request.workload, decisionVersion: request.decisionVersion, stableDecisionKey: request.trace.stableDecisionKey }
 
-    if (mode === 'shadow') {
-      if (selectedForPercent(envelope, definition.shadowPercent)) {
-        try { this.shadowOutbox?.enqueue(envelope) } catch (error) {
-          // Production composition uses a dedicated zero-wait SQLite connection,
-          // so lock contention is observed and dropped without stalling Hermes.
-          try { this.onShadowEnqueueFailure(error, envelope) } catch {
-            // Observability is best-effort at this boundary too; a broken sink
-            // must not turn non-authoritative shadow work into a live failure.
-          }
-        }
-      }
-      return this.runHermes<TDecision>(definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs, null)
+    // Placement and story relationships are System One decisions.  A disabled
+    // lifecycle is an actionable hold for their caller, never permission to
+    // substitute Hermes prose generation for a typed Jev decision.
+    if (definition.requiresJev && (mode === 'disabled'
+      || (mode === 'canary' && !selectedForPercent(samplingKey, definition.canaryPercent)))) {
+      throw new InferenceGatewayError('This classification workload requires an explicitly active Jev lifecycle', {
+        category: 'provider_unavailable', retryable: false,
+        provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+      })
     }
-    if (mode === 'disabled' || (mode === 'canary' && !selectedForPercent(envelope, definition.canaryPercent))) {
+
+    if (mode === 'disabled' || (mode === 'canary' && !selectedForPercent(samplingKey, definition.canaryPercent))) {
       return this.runHermes<TDecision>(definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs, null)
     }
     return this.runJevWithFallback<TDecision>(
       definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs,
+      request,
     )
-  }
-
-  /** Called only by the isolated outbox worker. Shadow never invokes Hermes. */
-  async executeShadow(envelope: ClassificationShadowEnvelope, attemptNumber = 1): Promise<void> {
-    if (!Number.isInteger(attemptNumber) || attemptNumber < 1) throw invalidInput('Shadow attempt number is invalid')
-    const definition = this.registry.resolve(envelope.workload, envelope.decisionVersion)
-    const lifecycle = tightenLifecycleMode(
-      definition.maximumLifecycleMode,
-      this.lifecycleMode(definition),
-      definition.defaultLifecycleMode,
-    )
-    if (lifecycle !== 'shadow') {
-      throw new InferenceGatewayError('Classification shadow execution is disabled by lifecycle policy', {
-        category: 'provider_unavailable', retryable: false,
-      })
-    }
-    const validated = safeValidateState(definition, envelope.state)
-    if (!validated.valid || digest(canonicalJson(validated.valid ? validated.value : envelope.state)) !== envelope.stateDigest) {
-      throw invalidInput('Classification shadow snapshot failed validation or digest verification')
-    }
-    const startedAt = this.now()
-    const startedAtIso = new Date(startedAt).toISOString()
-    const calls: ClassificationAttemptCall[] = []
-    let decision: unknown | null = null
-    let answers: Readonly<Record<string, JevAnswer>> | null = null
-    let actualProvider: string | null = null
-    let actualModel: string | null = null
-    let failure: InferenceGatewayError | null = null
-    try {
-      const result = await this.callJev(definition, validated.value, envelope.deadlineMs, 'shadow')
-      actualProvider = result.response.actualProvider
-      actualModel = result.response.actualModel
-      answers = result.response.answers
-      const decoded = safeDecodeJev(definition, answers, validated.value)
-      const accepted = decoded.valid ? safeAcceptJev(definition, answers, decoded.value, validated.value) : {
-        accepted: false, reason: decoded.issues.join('; '),
-      }
-      calls.push(providerCall(result.response, accepted.accepted ? 'succeeded' : 'not_accepted', null))
-      if (!decoded.valid) {
-        throw new InferenceGatewayError(`Shadow Jev answer is invalid: ${accepted.reason}`, {
-          category: 'invalid_structured_output', retryable: false,
-          provider: actualProvider, model: actualModel,
-        })
-      }
-      decision = decoded.value
-    } catch (error) {
-      failure = mapFailure(error, definition.jevTarget)
-      if (calls.length === 0) calls.push(failedCall(definition.jevTarget, failure, Math.max(0, this.now() - startedAt)))
-    }
-    const finishedAt = this.now()
-    await this.audit.recordAttempt(attemptRecord({
-      decisionId: envelope.decisionId,
-      executionMode: 'shadow',
-      attemptNumber,
-      definition,
-      stateDigest: envelope.stateDigest,
-      stableDecisionKey: envelope.stableDecisionKey,
-      configuredPrimary: definition.jevTarget,
-      configuredFallback: null,
-      actualProvider,
-      actualModel,
-      fallbackUsed: false,
-      fallbackReason: null,
-      decision,
-      answers,
-      calls,
-      failure,
-      startedAt,
-      finishedAt,
-      startedAtIso,
-    }))
-    if (failure) throw failure
   }
 
   async recordPolicyOutcome(input: Omit<ClassificationPolicyOutcomeRecord, 'schemaVersion' | 'recordedAt'>): Promise<void> {
@@ -207,16 +137,20 @@ export class ClassificationGateway {
     stateDigest: string,
     stableDecisionKey: string,
     deadlineMs: number,
+    dispatchPolicy: Pick<ClassificationRequest, 'maxProviderCalls' | 'holdOnUnknownOutcome'>,
   ): Promise<ClassificationResult<TDecision>> {
     const startedAt = this.now()
     const startedAtIso = new Date(startedAt).toISOString()
     const calls: ClassificationAttemptCall[] = []
     let answers: Readonly<Record<string, JevAnswer>> | null = null
     let jevFailure: string | null = null
+    let primaryFailure: InferenceGatewayError | null = null
     try {
-      // Jev may consume at most half the logical deadline so a complete
-      // Hermes fallback always has a real execution slice.
-      const result = await this.callJev(definition, state, Math.max(1, Math.floor(deadlineMs / 2)), 'live')
+      // Single-call and hold-on-unknown requests can use the full deadline.
+      // The ordinary two-call path reserves a slice for timeout fallback.
+      const primaryDeadline = dispatchPolicy.maxProviderCalls === 1 || dispatchPolicy.holdOnUnknownOutcome === true
+        ? deadlineMs : Math.max(1, Math.floor(deadlineMs / 2))
+      const result = await this.callJev(definition, state, primaryDeadline, 'live')
       answers = result.response.answers
       const decoded = safeDecodeJev(definition, answers, state)
       const accepted = decoded.valid ? safeAcceptJev(definition, answers, decoded.value, state) : {
@@ -238,8 +172,38 @@ export class ClassificationGateway {
       jevFailure = accepted.reason
     } catch (error) {
       const failure = mapFailure(error, definition.jevTarget)
+      primaryFailure = failure
       jevFailure = failure.category
       if (calls.length === 0) calls.push(failedCall(definition.jevTarget, failure, Math.max(0, this.now() - startedAt)))
+    }
+
+    // The caller's durable reservation is authoritative over internal fallback.
+    // Transport failures cannot establish non-execution or absence of charges.
+    const unknownDispatch = primaryFailure !== null
+      && dispatchPolicy.holdOnUnknownOutcome === true
+      && (primaryFailure.category === 'provider_timeout' || primaryFailure.category === 'provider_unavailable')
+    if (unknownDispatch || dispatchPolicy.maxProviderCalls === 1 || definition.requiresJev) {
+      const failure = unknownDispatch
+        ? new ClassificationOutcomeUnknownError(decisionId, primaryFailure!)
+        : definition.requiresJev
+          ? primaryFailure ?? new InferenceGatewayError(`Required Jev decision was rejected: ${jevFailure ?? 'invalid typed answer'}`, {
+            category: 'invalid_structured_output', retryable: false,
+            provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+          })
+        : new InferenceGatewayError('Classification fallback exceeds the reserved provider-call allowance', {
+          category: 'budget_exceeded', retryable: false,
+          provider: definition.jevTarget.provider, model: definition.jevTarget.model,
+          cause: primaryFailure ?? undefined,
+        })
+      const finishedAt = this.now()
+      await this.audit.recordAttempt(attemptRecord({
+        decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
+        configuredPrimary: definition.jevTarget, configuredFallback: definition.hermesTarget,
+        actualProvider: definition.jevTarget.provider, actualModel: definition.jevTarget.model,
+        fallbackUsed: false, fallbackReason: jevFailure, decision: null, answers, calls,
+        failure, startedAt, finishedAt, startedAtIso,
+      }))
+      throw failure
     }
 
     try {
@@ -333,7 +297,7 @@ export class ClassificationGateway {
     definition: ClassificationDefinition,
     state: unknown,
     deadlineMs: number,
-    mode: 'live' | 'shadow',
+    mode: 'live',
   ) {
     let questions: Readonly<Record<string, JevQuestion>>
     try { questions = definition.questions(state) } catch (error) {
@@ -393,8 +357,14 @@ export class ClassificationGateway {
 function assertPublicRequest(request: ClassificationRequest): void {
   if (!request || typeof request !== 'object') throw invalidInput('Classification request must be an object')
   const keys = Object.keys(request as unknown as Record<string, unknown>).sort()
-  if (keys.some((key) => !['decisionVersion', 'state', 'tighterDeadlineMs', 'trace', 'workload'].includes(key))) {
+  if (keys.some((key) => !['decisionVersion', 'state', 'tighterDeadlineMs', 'trace', 'workload', 'maxProviderCalls', 'holdOnUnknownOutcome'].includes(key))) {
     throw invalidInput('Classification request contains caller-owned policy fields')
+  }
+  if (request.maxProviderCalls !== undefined && request.maxProviderCalls !== 1 && request.maxProviderCalls !== 2) {
+    throw invalidInput('maxProviderCalls must tighten the existing one-or-two-provider path')
+  }
+  if (request.holdOnUnknownOutcome !== undefined && typeof request.holdOnUnknownOutcome !== 'boolean') {
+    throw invalidInput('holdOnUnknownOutcome must be boolean')
   }
   for (const [field, value] of [['workload', request.workload], ['decisionVersion', request.decisionVersion], ['stableDecisionKey', request.trace?.stableDecisionKey]]) {
     if (typeof value !== 'string' || value.length < 1 || value.length > 200 || value.includes('\0')) throw invalidInput(`Invalid ${field}`)
@@ -454,25 +424,13 @@ function tightenedDeadline(maximum: number, requested: number | undefined): numb
   return requested
 }
 
-function immutableEnvelope(
-  request: ClassificationRequest, state: unknown, stateDigest: string,
-  decisionId: string, deadlineMs: number, now: number,
-): ClassificationShadowEnvelope {
-  return Object.freeze({
-    decisionId, workload: request.workload, decisionVersion: request.decisionVersion,
-    state, stateDigest, stableDecisionKey: request.trace.stableDecisionKey,
-    correlationIds: Object.freeze({ ...(request.trace.correlationIds ?? {}) }),
-    deadlineMs, createdAt: new Date(now).toISOString(),
-  })
-}
-
-function selectedForPercent(envelope: ClassificationShadowEnvelope, percent: number): boolean {
+function selectedForPercent(key: { workload: string, decisionVersion: string, stableDecisionKey: string }, percent: number): boolean {
   if (percent <= 0) return false
   if (percent >= 100) return true
   const value = Number.parseInt(digest(canonicalJson({
-    workload: envelope.workload,
-    decisionVersion: envelope.decisionVersion,
-    stableDecisionKey: envelope.stableDecisionKey,
+    workload: key.workload,
+    decisionVersion: key.decisionVersion,
+    stableDecisionKey: key.stableDecisionKey,
   })).slice(0, 8), 16) / 0x1_0000_0000
   return value * 100 < percent
 }
@@ -509,7 +467,7 @@ function assertUsage(usage: { inputTokens: number; outputTokens: number; costUsd
     || !Number.isInteger(usage.outputTokens) || usage.outputTokens < 0 || usage.outputTokens > definition.budget.maxOutputTokens
     || (definition.budget.maxCostUsdMicros !== undefined
       && (!Number.isInteger(usage.costUsdMicros) || usage.costUsdMicros! > definition.budget.maxCostUsdMicros))) {
-    throw new InferenceGatewayError('Classification provider exceeded registry budget', {
+    throw new InferenceGatewayError(`Classification provider exceeded registry budget (input ${usage.inputTokens}/${definition.budget.maxInputTokens}, output ${usage.outputTokens}/${definition.budget.maxOutputTokens})`, {
       category: 'budget_exceeded', retryable: false,
     })
   }
@@ -537,7 +495,7 @@ function failedCall(target: InferenceProviderTarget, failure: InferenceGatewayEr
 
 function attemptRecord(input: {
   decisionId: string
-  executionMode: 'authoritative' | 'shadow'
+  executionMode: 'authoritative'
   attemptNumber: number
   definition: ClassificationDefinition
   stateDigest: string
@@ -567,6 +525,7 @@ function attemptRecord(input: {
     fallbackUsed: input.fallbackUsed, fallbackReason: input.fallbackReason,
     status: input.failure ? 'failed' as const : 'succeeded' as const,
     failureCategory: input.failure?.category ?? null,
+    ...(input.failure ? { failureDetail: input.failure.message } : {}),
     decision: input.decision,
     answers: input.answers,
     calls: Object.freeze([...input.calls]),
@@ -592,12 +551,10 @@ function resultEnvelope<T>(
   })
 }
 
-export class InMemoryClassificationPorts implements ClassificationCapacityCoordinator, ClassificationAuditSink, ClassificationShadowOutbox {
+export class InMemoryClassificationPorts implements ClassificationCapacityCoordinator, ClassificationAuditSink {
   readonly attempts: ClassificationAttemptRecord[] = []
   readonly outcomes: ClassificationPolicyOutcomeRecord[] = []
-  readonly shadows: ClassificationShadowEnvelope[] = []
   acquire(): { token: string; release(): void } { return { token: randomUUID(), release() {} } }
   recordAttempt(value: ClassificationAttemptRecord): void { this.attempts.push(value) }
   recordPolicyOutcome(value: ClassificationPolicyOutcomeRecord): void { this.outcomes.push(value) }
-  enqueue(value: ClassificationShadowEnvelope): void { this.shadows.push(value) }
 }

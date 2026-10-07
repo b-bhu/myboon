@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
-import { HermesService } from '../../hermes'
+import { DEFAULT_HERMES_PROFILE, HermesService } from '../../hermes'
 import { HermesWorkerClient } from '../hermes-client'
 
 class FakeChildProcess extends EventEmitter {
@@ -136,7 +136,7 @@ test('HermesWorkerClient returns failed for a non-zero exit code', async () => {
   assert.deepEqual(fake.calls[0].args.slice(0, 5), [
     'chat',
     '--profile',
-    'myboonfeed',
+    DEFAULT_HERMES_PROFILE,
     '--toolsets',
     'browser',
   ])
@@ -232,7 +232,7 @@ test('HermesWorkerClient uses direct article read plus structured Hermes without
   assert.equal(result.sourceReadStatus, 'succeeded')
   assert.equal(execCalls.length, 1)
   assert.equal(execCalls[0].command, 'fake-hermes')
-  assert.deepEqual(execCalls[0].args.slice(0, 2), ['--ignore-rules', '-z'])
+  assert.deepEqual(execCalls[0].args.slice(0, 4), ['--ignore-rules', '-p', DEFAULT_HERMES_PROFILE, '-z'])
   assert.equal(execCalls[0].args.includes('chat'), false)
   assert.match(execCalls[0].args.at(-1) ?? '', /untrusted_source_document/)
 })

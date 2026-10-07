@@ -387,7 +387,7 @@ export class DeepResearchSideQueueWorker {
     return outcome
   }
 
-  private recordPacketEvent(work: ResearchWorkItem, packet: ResearchPacketV1): void {
+  private recordPacketEvent(work: ResearchWorkItem, packet: import('../signal-platform/contracts').ResearchPacket): void {
     const execution = packet.execution
     const containedStartedAt = typeof execution.containedStartedAt === 'string'
       ? execution.containedStartedAt
@@ -613,7 +613,7 @@ const SYSTEM_CLOCK: DeepResearchWorkerClock = {
 
 interface DeepExecutionEventInput {
   work: ResearchWorkItem
-  packet?: ResearchPacketV1
+  packet?: import('../signal-platform/contracts').ResearchPacket
   status: ExecutionEventStatus
   attempt: number
   failureCategory: FailureCategory | null

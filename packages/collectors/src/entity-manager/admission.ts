@@ -1,6 +1,6 @@
 import type { EntityHint, ResearchPacketV1 } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
-import { validateResearchPacket } from '../signal-platform/validation'
+import { validateLegacyResearchPacket } from '../signal-platform/validation'
 import {
   EntityAdmissionKnowledgeValidationError,
   validateEntityAdmissionKnowledge,
@@ -107,7 +107,7 @@ export class EntityCanonUnavailableError extends PlatformFailure {
 export function buildEntityAdmissionInput(input: BuildEntityAdmissionInput): EntityAdmissionInput {
   let packet: ResearchPacketV1
   try {
-    packet = validateResearchPacket(input.packet)
+    packet = validateLegacyResearchPacket(input.packet)
   } catch (error) {
     throw new EntityAdmissionValidationError(error instanceof Error ? error.message : 'Invalid Research Packet.')
   }

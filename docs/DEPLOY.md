@@ -2,7 +2,7 @@
 
 ## Processes managed by PM2
 
-The reviewed ecosystem contains exactly nine registrations. The four retired
+The reviewed ecosystem contains exactly seven registrations. The four retired
 source-specific Research and Entity registrations must not remain alongside
 the two shared Feed V3 owners.
 
@@ -13,10 +13,10 @@ the two shared Feed V3 owners.
 | `myboon-news-feed-ingestor` | `packages/collectors` | Structured article/social collection every 10 minutes |
 | `myboon-feed-v3-research` | `packages/collectors` | Shared News + Polymarket Research worker |
 | `myboon-feed-v3-entity-manager` | `packages/collectors` | Shared ResearchPacket to Entity Memory worker |
-| `myboon-hermes-orphan-sweeper` | `packages/collectors` | Reaps aged, unowned Hermes/browser process groups |
-| `myboon-entity-catalog-maintenance` | `packages/collectors` | Daily dry-run Entity catalogue audit |
 | `myboon-editor-draft` | `packages/collectors` | Entity Memory to Editor Draft |
 | `myboon-publisher` | `packages/collectors` | Generic Editor Draft Publisher |
+
+The orphan sweeper, entity-catalogue maintenance and classification-shadow services were retired on 6 October 2026. Their dedicated application code and commands are removed. Historical migrations and audit records remain intact. Required live Jev decisions and per-call Hermes process cleanup remain enabled.
 
 PM2 is the source of truth for VPS runtime. `infra/vps/systemd/*` is deprecated and should not be installed for the current Feed pipeline.
 
@@ -77,7 +77,31 @@ and passed to structured Hermes. Invalid, private, short, timed-out, or
 incompletely vetted destinations fail closed in Phase 1; they do not trigger a
 source-specific browser or `web` fallback.
 
-All programmatic Hermes calls go through `HermesService`. Browser chat and
+For the current V4 article workflow through Entity Manager, use the
+[checkpoint handoff](modules/entity-manager/operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md).
+It records active News-only sources, private managed storage, provider routing
+and protected API operation; downstream integration is excluded.
+
+All programmatic Hermes calls go through `HermesService`. Inference calls always
+pass a profile explicitly: `INFERENCE_GATEWAY_HERMES_PROFILE`, or
+`myboon-codex-production` when that variable is absent. Per-call overrides support
+isolated validation. News and legacy research clients prefer the shared profile
+over their stage-specific environment overrides. Every profile and pipeline
+defaults to `ollama-cloud/glm-5.3-flash`. Each profile's native `fallback_model`
+is `openai-codex/gpt-5.6-luna`, used only when the primary cannot serve the call;
+there is no additional provider chain. The production profile's name does not
+select its model. Changing only the interactive `default` profile does not
+redirect explicitly routed pipeline calls. Both production memory stores are
+disabled; article and entity context comes from Myboon's request data.
+
+Native one-shot usage receipts supply the provider/model actually used and
+measured token counts to both inference adapters. Structured gateway telemetry
+reports native fallback, and an admitted repair stays with the provider that
+answered. Temporary receipt directories are private and removed after each
+call. Configured primary and actual provider can differ while Ollama billing
+or availability prevents primary inference.
+
+Browser chat and
 structured one-shot work have independent cross-process budgets, controlled by
 `HERMES_BROWSER_MAX_CONCURRENCY` and `HERMES_STRUCTURED_MAX_CONCURRENCY`, so a
 long browser queue cannot starve entity/editor calls. Chat calls are tagged
@@ -86,11 +110,6 @@ that session after the call. On timeout it signals the complete Unix process
 group, keeps the concurrency lease through the SIGKILL grace period, and confirms
 group exit so browser descendants do not survive as orphan Chrome processes.
 Interactive Hermes sessions are not selected or pruned by this lifecycle.
-`myboon-hermes-orphan-sweeper` is a second line of defense: every five minutes
-it gracefully closes browser sessions and reaps only process groups older than
-15 minutes with no live pipeline owner. It skips browser cleanup whenever a
-legitimate research call is active, and escalates survivors to `SIGKILL`.
-
 If a machine was interrupted before exact cleanup completed, inspect only the
 programmatic session lane first, then prune it explicitly:
 
@@ -101,48 +120,6 @@ hermes sessions prune --source tool --older-than 1h --yes
 
 Repeat with `--profile myboonfeed` for the news profile. Never run an
 unfiltered session prune on the production host.
-
----
-
-## Entity catalogue maintenance
-
-`myboon-entity-catalog-maintenance` performs one full scan on its first run,
-then checks changed Entities against the complete catalogue every 24 hours. It
-builds compact profiles in Supabase and sends only candidate pairs to the
-configured structured Hermes route. Memory bodies, summaries, evidence,
-metrics, and arbitrary context never enter this prompt.
-
-Automatic mode will not switch to incremental checks until a completed full
-catalogue baseline exists. One global database lease covers both full and
-incremental scopes. On shutdown, the worker stops future batches, fails the
-interrupted run so its watermark cannot advance, drains the bounded active
-Hermes call, and releases the lease before exiting.
-
-The scheduled process is dry-run only. It writes reviewable findings and has no
-Entity merge capability. An approved polluted alias can be quarantined through
-the separate operator command; that operation is atomic and reversible. Merge
-findings can produce an inventory manifest, but the database marks every merge
-plan ineligible to apply until local draft inventory and replacement memory
-identity keys are supplied.
-
-```bash
-# One full dry run (after applying the maintenance migration)
-ENTITY_CATALOG_MAINTENANCE_RUN_ONCE=1 \
-ENTITY_CATALOG_MAINTENANCE_SCOPE=full_catalog \
-pnpm --filter @myboon/collectors entity-catalog:maintain
-
-# Latest compact report
-pnpm --filter @myboon/collectors entity-catalog:report
-
-# Explicit review and reversible alias operation examples
-pnpm --filter @myboon/collectors entity-catalog:operate -- approve <finding-id> <actor>
-pnpm --filter @myboon/collectors entity-catalog:operate -- quarantine-alias <finding-id> <actor>
-pnpm --filter @myboon/collectors entity-catalog:operate -- rollback-alias <operation-id> <actor>
-```
-
-Do not start the PM2 process until
-`20260920151558_entity_catalog_maintenance.sql` is applied. Do not enable or
-invent an automatic merge path based only on model confidence.
 
 ---
 
@@ -1160,19 +1137,8 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 # HERMES_STRUCTURED_MAX_CONCURRENCY=4
 # HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR=/tmp/myboon-hermes-structured-slots
 # Legacy HERMES_MAX_CONCURRENCY/HERMES_CONCURRENCY_LOCK_DIR are browser fallbacks
-# HERMES_ORPHAN_SWEEP_INTERVAL_MS=300000
-# HERMES_ORPHAN_MAX_AGE_MS=900000
-# HERMES_ORPHAN_KILL_GRACE_MS=5000
 # EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
 
-# --- Entity catalogue maintenance (dry-run only) ---
-# ENTITY_CATALOG_MAINTENANCE_INTERVAL_MS=86400000
-# ENTITY_CATALOG_MAINTENANCE_SCOPE=auto
-# ENTITY_CATALOG_MAINTENANCE_BATCH_SIZE=8
-# ENTITY_CATALOG_MAINTENANCE_PROVIDER=ollama-cloud
-# ENTITY_CATALOG_MAINTENANCE_MODEL=glm-5.3-flash
-# ENTITY_CATALOG_MAINTENANCE_HERMES_TIMEOUT_MS=120000
-# ENTITY_CATALOG_MAINTENANCE_LEASE_MS=1800000
 
 # --- Shared Feed V3 Research + Entity ---
 # Use the exact Phase 1 contract above. There is no source-specific Research or

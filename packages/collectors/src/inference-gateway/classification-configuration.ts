@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { HermesService } from '../hermes'
+import { HermesService, resolveHermesProfile } from '../hermes'
 import { JevSystemOneAdapter, HermesDecisionAdapter } from './classification-adapters'
 import { approvedClassificationDefinitions } from './classification-definitions'
 import { ClassificationGateway } from './classification-gateway'
@@ -8,7 +8,7 @@ import {
   StaticClassificationRegistry,
   tightenLifecycleMode,
 } from './classification-registry'
-import { SqliteClassificationControlPlane, SqliteClassificationShadowWriter } from './classification-store'
+import { SqliteClassificationControlPlane } from './classification-store'
 import type {
   ClassificationDefinition,
   ClassificationLifecycleMode,
@@ -30,6 +30,8 @@ const APPROVED_HERMES_ROUTES = new Set([
   'ollama-cloud/glm-5.3-flash',
   'ollama-cloud/deepseek-v4-flash',
   'ollama-cloud/deepseek-v4.1-flash',
+  'ollama-cloud/nemotron-3-nano:30b',
+  'openai-codex/gpt-5.6-luna',
 ])
 const APPROVED_JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
 
@@ -46,10 +48,14 @@ export function createConfiguredClassificationRuntime(options: {
   now?: () => number
 } = {}): ConfiguredClassificationRuntime {
   const env = options.env ?? process.env
-  const modes = lifecycleModes(env[CLASSIFICATION_ENV.lifecycleJson])
+  const lifecycleRaw = env[CLASSIFICATION_ENV.lifecycleJson]
+  const modes = lifecycleModes(lifecycleRaw)
+  // An explicit empty object is an operator kill switch.  Omitted configuration
+  // uses the safe definition default; `{}` never quietly re-enables Jev.
+  const explicitEmptyLifecycle = lifecycleRaw !== undefined && lifecycleRaw.trim() === '{}'
   const hermesTarget = {
     provider: env[CLASSIFICATION_ENV.hermesProvider]?.trim() || 'ollama-cloud',
-    model: env[CLASSIFICATION_ENV.hermesModel]?.trim() || 'deepseek-v4.1-flash',
+    model: env[CLASSIFICATION_ENV.hermesModel]?.trim() || 'glm-5.3-flash',
   }
   if (!APPROVED_HERMES_ROUTES.has(`${hermesTarget.provider}/${hermesTarget.model}`)) {
     throw new Error(`Unapproved classification Hermes route ${hermesTarget.provider}/${hermesTarget.model}`)
@@ -70,10 +76,6 @@ export function createConfiguredClassificationRuntime(options: {
   }
   const sqlitePath = resolve(env[CLASSIFICATION_ENV.sqlitePath]?.trim() || '.data/classification.sqlite')
   const store = new SqliteClassificationControlPlane(sqlitePath, { now: options.now })
-  // Live requests never enqueue through the control connection's 5-second
-  // busy timeout. This separate handoff connection fails immediately on lock
-  // contention and the gateway emits a bounded warning without delaying Hermes.
-  const shadowWriter = new SqliteClassificationShadowWriter(sqlitePath, { now: options.now })
   const jev = options.jevAdapter ?? (env[CLASSIFICATION_ENV.jevToken]?.trim()
     ? new JevSystemOneAdapter({
       apiToken: env[CLASSIFICATION_ENV.jevToken]!,
@@ -85,15 +87,15 @@ export function createConfiguredClassificationRuntime(options: {
     jev,
     hermes: new HermesDecisionAdapter({
       service: options.hermesService ?? new HermesService(),
-      profile: env[CLASSIFICATION_ENV.hermesProfile]?.trim() || undefined,
+      profile: resolveHermesProfile(undefined, env),
     }),
     capacity: store,
     audit: store,
-    shadowOutbox: shadowWriter,
-    lifecycleMode: (definition) => modes.get(definition.workload),
+    lifecycleMode: (definition) => modes.get(definition.workload)
+      ?? (explicitEmptyLifecycle && definition.requiresJev ? 'disabled' : undefined),
     now: options.now,
   })
-  return { gateway, store, close: () => { shadowWriter.close(); store.close() } }
+  return { gateway, store, close: () => store.close() }
 }
 
 export function configuredClassificationModes(

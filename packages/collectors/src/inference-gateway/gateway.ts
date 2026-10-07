@@ -41,6 +41,7 @@ interface ExecutionRequest<T> {
   promptVersion: string
   policyVersion: string
   budget: InferenceBudget
+  holdOnUnknownOutcome?: boolean
   validate(value: unknown): StructuredOutputValidation<T>
 }
 
@@ -162,6 +163,11 @@ function safeConfigValue(value: string): boolean {
 }
 
 function assertRequestInputs(request: ExecutionRequest<unknown>): void {
+  if (request.holdOnUnknownOutcome !== undefined && typeof request.holdOnUnknownOutcome !== 'boolean') {
+    throw new InferenceGatewayError('holdOnUnknownOutcome must be boolean', {
+      category: 'invalid_structured_output', retryable: false,
+    })
+  }
   for (const [name, value] of [
     ['workload', request.workload],
     ['purpose', request.purpose],
@@ -442,14 +448,14 @@ export class InferenceGateway {
       }
       const wallTimeRemainingMs = Math.floor(remainingWallTime())
       const reserveForFallback = route.fallback !== undefined
+        && request.holdOnUnknownOutcome !== true
         && !state.fallbackInvoked
         && target.provider === route.primary.provider
         && target.model === route.primary.model
         && state.providerCalls + 1 < request.budget.maxProviderCalls
-      // A primary may not consume the complete logical-request deadline when
-      // a fallback call is still executable. Reserve half of the remaining
-      // wall budget so a real timed-out process (not only a synthetic early
-      // timeout) can reach the configured fallback.
+      // Reserve a timeout fallback slice only when unknown outcomes may use
+      // fallback. V4 holds instead, so a valid primary result can use the full
+      // logical deadline without being discarded at the halfway point.
       const timeoutMs = reserveForFallback
         ? Math.floor(wallTimeRemainingMs / 2)
         : wallTimeRemainingMs
@@ -528,6 +534,7 @@ export class InferenceGateway {
         const actualModel = result.actualModel ?? target.model
         state.actualProvider = actualProvider
         state.actualModel = actualModel
+        if (result.fallbackInvoked === true) state.fallbackInvoked = true
         state.actualReasoningEffort = result.actualReasoningEffort ?? null
         record.provider = actualProvider
         record.model = actualModel
@@ -612,13 +619,25 @@ export class InferenceGateway {
     ): Promise<AttemptResult> => {
       // Once a logical request moves to fallback it stays there. Never bounce
       // back to primary or build a nested fallback chain for a repair.
-      if (state.fallbackInvoked && route.fallback) {
-        return callTarget(callMode, prompt, route.fallback)
+      if (state.fallbackInvoked) {
+        const fallback = state.actualProvider && state.actualModel
+          ? { provider: state.actualProvider, model: state.actualModel } : route.fallback
+        if (fallback) return callTarget(callMode, prompt, fallback)
       }
       try {
         return await callTarget(callMode, prompt, route.primary)
       } catch (error) {
         const mapped = error as InferenceGatewayError
+        if (request.holdOnUnknownOutcome === true
+          && state.providerCalls > 0
+          && mapped instanceof InferenceGatewayError
+          && (mapped.category === 'provider_timeout' || mapped.category === 'provider_unavailable')) {
+          throw new InferenceGatewayError('Paid structured dispatch outcome is unknown; preserve the reservation and hold for reconciliation', {
+            category: mapped.category, retryable: false,
+            provider: mapped.provider, model: mapped.model,
+            cause: mapped,
+          })
+        }
         const canFallback = route.fallback
           && !state.fallbackInvoked
           && mapped instanceof InferenceGatewayError

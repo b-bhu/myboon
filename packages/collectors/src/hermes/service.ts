@@ -1,7 +1,11 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { promisify } from 'node:util'
+import { isAbsolute, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { extractJson } from './json'
 import { HermesConcurrencyLimiter } from './limiter'
+import { resolveHermesProfile } from './profile'
 
 /**
  * Central Hermes invocation service.
@@ -15,10 +19,10 @@ import { HermesConcurrencyLimiter } from './limiter'
  *
  * The CLI is invoked in two shapes:
  *
- *  - oneshot: `hermes [--ignore-rules] [-t <toolsets>] -z <prompt>` -
+ *  - oneshot: `hermes [--ignore-rules] [-t <toolsets>] -p <profile> -z <prompt>` -
  *    buffered execFile, one prompt in, stdout out. Used by every structured
  *    (JSON-answer) call site.
- *  - chat: `hermes chat [--profile <p>] [--toolsets <a,b>] --source tool
+ *  - chat: `hermes chat --profile <p> [--toolsets <a,b>] --source tool
  *    --quiet --query <prompt>` - streaming spawn with a caller-owned timeout, used where the
  *    model runs tools (browser/web) and takes minutes, historically only by
  *    the news worker. The research engine uses this mode too: it is the
@@ -30,6 +34,10 @@ import { HermesConcurrencyLimiter } from './limiter'
  * exactly, while timeout signals target the spawned Unix process group.
  *
  * Deliberate design decisions:
+ *  - every inference call explicitly selects a profile. Per-call overrides
+ *    allow isolated validation; otherwise INFERENCE_GATEWAY_HERMES_PROFILE
+ *    or myboon-codex-production is used, independently of the interactive
+ *    Hermes default provider and sticky profile.
  *  - oneshot RETHROWS the underlying execFile error untouched. Call sites
  *    have stage-specific error handling (the researcher planner falls back
  *    to a deterministic plan, the extractor wraps into a sanitized message,
@@ -261,7 +269,7 @@ export interface HermesOneshotRequest {
   timeoutMs: number
   /** Value for `-t` - comma-separated toolsets string, omitted when empty. */
   toolsets?: string
-  /** Hermes CLI profile (`-p`), when explicitly configured. */
+  /** Overrides the configured Myboon profile, e.g. for isolated validation. */
   profile?: string
   /** Hermes provider route (`--provider`). */
   provider?: string
@@ -269,6 +277,8 @@ export interface HermesOneshotRequest {
   model?: string
   /** Adds `--ignore-rules` (researcher/extractor legacy behavior). */
   ignoreRules?: boolean
+  /** Optional installed CLI usage receipt; the caller owns its private directory. */
+  usageFilePath?: string
   maxBufferBytes?: number
   commandOverride?: string
 }
@@ -276,6 +286,14 @@ export interface HermesOneshotRequest {
 export interface HermesOneshotResult {
   stdout: string
   stderr: string
+  /** Installed CLI receipt: includes the provider actually used after native failover. */
+  usage?: {
+    provider: string
+    model: string
+    inputTokens: number
+    outputTokens: number
+    apiCalls: number
+  }
 }
 
 export interface HermesStructuredResult<T> extends HermesOneshotResult {
@@ -408,6 +426,24 @@ function sessionIdFromStderr(stderr: string): string | null {
   return stderr.match(SESSION_ID_PATTERN)?.[1] ?? null
 }
 
+async function readUsageReceipt(path: string): Promise<NonNullable<HermesOneshotResult['usage']>> {
+  const value = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+  if (typeof value.provider !== 'string' || !value.provider.trim()
+    || typeof value.model !== 'string' || !value.model.trim()
+    || !Number.isInteger(value.input_tokens) || (value.input_tokens as number) < 0
+    || !Number.isInteger(value.output_tokens) || (value.output_tokens as number) < 0
+    || !Number.isInteger(value.api_calls) || (value.api_calls as number) < 0) {
+    throw new Error('Hermes returned an invalid usage receipt')
+  }
+  return {
+    provider: value.provider,
+    model: value.model,
+    inputTokens: value.input_tokens as number,
+    outputTokens: value.output_tokens as number,
+    apiCalls: value.api_calls as number,
+  }
+}
+
 function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (process.platform !== 'win32' && typeof child.pid === 'number' && child.pid > 0) {
     try {
@@ -459,6 +495,7 @@ export class HermesService {
   private readonly processGroupKillGraceMs: number
   private readonly injectedCircuitBreaker: HermesProviderCircuitBreaker | null
   private readonly chatCircuitBreaker: HermesProviderCircuitBreaker
+  private readonly captureUsageReceipts: boolean
 
   constructor(options: HermesServiceOptions = {}) {
     this.command = options.command ?? process.env.HERMES_COMMAND ?? DEFAULT_COMMAND
@@ -486,6 +523,7 @@ export class HermesService {
     this.processGroupKillGraceMs = options.processGroupKillGraceMs ?? PROCESS_GROUP_KILL_GRACE_MS
     this.injectedCircuitBreaker = options.circuitBreaker ?? null
     this.chatCircuitBreaker = options.circuitBreaker ?? processProviderCircuitBreaker
+    this.captureUsageReceipts = options.execFileImpl === undefined && options.spawnImpl === undefined
   }
 
   private record(record: HermesCallRecord): void {
@@ -521,15 +559,24 @@ export class HermesService {
 
   async oneshot(request: HermesOneshotRequest): Promise<HermesOneshotResult> {
     const command = request.commandOverride ?? this.command
-    const profile = routingValue('profile', request.profile)
+    const profile = routingValue('profile', resolveHermesProfile(request.profile))
     const provider = routingValue('provider', request.provider)
     const model = routingValue('model', request.model)
+    if (request.usageFilePath !== undefined && (!isAbsolute(request.usageFilePath) || request.usageFilePath.includes('\0'))) {
+      throw new Error('Hermes usageFilePath must be an absolute path')
+    }
+    // The installed CLI rejects the literal "none". Its context_engine
+    // toolset resolves to no tools; deployment preflight verifies that empty
+    // registry. Preserve callers' zero-tool intent instead of omitting -t,
+    // which would silently enable the configured CLI tools.
+    const toolsets = request.toolsets === 'none' ? 'context_engine' : request.toolsets
     const args = [
       ...(request.ignoreRules ? ['--ignore-rules'] : []),
-      ...(request.toolsets ? ['-t', request.toolsets] : []),
+      ...(toolsets ? ['-t', toolsets] : []),
       ...(profile ? ['-p', profile] : []),
       ...(provider ? ['--provider', provider] : []),
       ...(model ? ['-m', model] : []),
+      ...(request.usageFilePath ? ['--usage-file', request.usageFilePath] : []),
       '-z',
       request.prompt,
     ]
@@ -543,7 +590,14 @@ export class HermesService {
       circuitBreaker.abort(permit)
       throw error
     }
+    let ownedUsageDirectory: string | undefined
     try {
+      // Keep receipts private and temporary. Custom transports retain their
+      // existing contract unless the caller explicitly requests a receipt.
+      ownedUsageDirectory = request.usageFilePath === undefined && this.captureUsageReceipts
+        ? await mkdtemp(join(tmpdir(), 'myboon-hermes-usage-')) : undefined
+      const usageFilePath = request.usageFilePath ?? (ownedUsageDirectory ? join(ownedUsageDirectory, 'usage.json') : undefined)
+      if (ownedUsageDirectory) args.splice(args.length - 2, 0, '--usage-file', usageFilePath!)
       const { stdout, stderr } = this.oneshotExecOverride
         ? await this.oneshotExecOverride(command, args, {
           timeout: request.timeoutMs,
@@ -551,6 +605,16 @@ export class HermesService {
           env: { ...process.env },
         })
         : await this.runSpawnedOneshot(command, args, request)
+      let usage: HermesOneshotResult['usage']
+      if (usageFilePath) {
+        try {
+          usage = await readUsageReceipt(usageFilePath)
+        } catch (error) {
+          // An injected CLI seam may only inspect arguments. Actual production
+          // calls require their receipt before accepting any returned prose.
+          if (this.captureUsageReceipts || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+      }
       circuitBreaker.succeeded()
       const finishedAtMs = Date.now()
       this.record({
@@ -570,7 +634,7 @@ export class HermesService {
         exitCode: 0,
         error: null,
       })
-      return { stdout, stderr }
+      return { stdout, stderr, ...(usage ? { usage } : {}) }
     } catch (error) {
       circuitBreaker.failed(permit, retryableProviderFailure(error))
       const finishedAtMs = Date.now()
@@ -593,13 +657,17 @@ export class HermesService {
       })
       throw error
     } finally {
-      lease.release()
+      try {
+        if (ownedUsageDirectory) await rm(ownedUsageDirectory, { recursive: true, force: true })
+      } finally {
+        lease.release()
+      }
     }
   }
 
   async structured<T>(request: HermesOneshotRequest): Promise<HermesStructuredResult<T>> {
-    const { stdout, stderr } = await this.oneshot(request)
-    return { value: extractJson<T>(stdout), stdout, stderr }
+    const result = await this.oneshot(request)
+    return { ...result, value: extractJson<T>(result.stdout) }
   }
 
   private runSpawnedOneshot(
@@ -692,8 +760,12 @@ export class HermesService {
     if (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0) {
       throw new Error(`Hermes chat timeoutMs must be positive for purpose ${request.purpose}`)
     }
+    const routedRequest = {
+      ...request,
+      profile: routingValue('profile', resolveHermesProfile(request.profile)),
+    }
     const permit = this.chatCircuitBreaker.beforeCall()
-    return this.chatWithLease(request, permit)
+    return this.chatWithLease(routedRequest, permit)
   }
 
   private async chatWithLease(request: HermesChatRequest, permit: HermesCircuitPermit): Promise<HermesChatResult> {
