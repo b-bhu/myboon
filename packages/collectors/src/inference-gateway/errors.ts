@@ -7,6 +7,8 @@ export interface InferenceGatewayErrorOptions {
   provider?: string
   model?: string
   telemetry?: InferenceTelemetry
+  /** True only when an adapter returned a provider response that was rejected locally. */
+  providerResponseReceived?: boolean
   cause?: unknown
 }
 
@@ -20,6 +22,7 @@ export class InferenceGatewayError extends Error {
   readonly provider?: string
   readonly model?: string
   readonly telemetry?: InferenceTelemetry
+  readonly providerResponseReceived: boolean
 
   constructor(message: string, options: InferenceGatewayErrorOptions) {
     super(message, { cause: options.cause })
@@ -31,6 +34,7 @@ export class InferenceGatewayError extends Error {
     this.provider = options.provider
     this.model = options.model
     this.telemetry = options.telemetry
+    this.providerResponseReceived = options.providerResponseReceived === true
   }
 
   withTelemetry(telemetry: InferenceTelemetry): InferenceGatewayError {
@@ -41,6 +45,7 @@ export class InferenceGatewayError extends Error {
       provider: this.provider,
       model: this.model,
       telemetry,
+      providerResponseReceived: this.providerResponseReceived,
       cause: this.cause,
     })
   }

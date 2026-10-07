@@ -2,11 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   approvedClassificationDefinitions,
+  articleEntityPlacementDefinition,
+  articleRelatedMembershipDefinition,
+  articleNoveltyDefinition,
+  articleStoryRelationshipDefinition,
   researchFollowupValueDefinition,
   researchNoveltyDefinition,
   type ResearchFollowupValueState,
   type ResearchNoveltyState,
 } from './classification-definitions'
+import { ARTICLE_DECISION_SOURCE_MAX_CHARS } from '../research-engine/article-input-bounds'
 
 test('Research novelty definition is bounded to novelty and defaults fail-safe disabled', () => {
   const definition = researchNoveltyDefinition()
@@ -26,6 +31,17 @@ test('Research novelty definition is bounded to novelty and defaults fail-safe d
     probabilities: { already_known: 0.03, new_information: 0.95, contradicts_prior: 0.02 },
   } }, state)
   assert.deepEqual(decoded, { valid: true, value: { verdict: 'new_information', reason: 'Jev classified the signal as new_information.' } })
+})
+
+test('article Jev definitions accept the supported full captured-source bound', () => {
+  const sourceText = 'A complete captured article. '.repeat(900)
+  assert.ok(sourceText.length > 16_000)
+  assert.ok(sourceText.length <= ARTICLE_DECISION_SOURCE_MAX_CHARS)
+  const candidate = { id: 'bitcoin', name: 'Bitcoin', aliases: ['BTC'], summary: null, scope: {} }
+  assert.equal(articleEntityPlacementDefinition().validateState({ article: { title: 'Bitcoin update', text: sourceText }, candidates: [candidate] }).valid, true)
+  assert.equal(articleRelatedMembershipDefinition().validateState({ article: { title: 'Bitcoin update', text: sourceText }, primary: { id: 'bitcoin', name: 'Bitcoin' }, candidates: [] }).valid, true)
+  assert.equal(articleNoveltyDefinition().validateState({ article: { title: 'Bitcoin update', text: sourceText, publishedAt: null, observedAt: '2026-10-01T00:00:00.000Z' }, histories: [], selectedTargets: [] }).valid, true)
+  assert.equal(articleStoryRelationshipDefinition().validateState({ article: { title: 'Bitcoin update', sourceText, publishedAt: null, observedAt: '2026-10-01T00:00:00.000Z' }, entity: { id: 'bitcoin', name: 'Bitcoin' }, recentItems: [] }).valid, true)
 })
 
 test('definition validators create exact bounded projections and discard unknown caller data', () => {

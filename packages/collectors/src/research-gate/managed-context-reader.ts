@@ -2,6 +2,7 @@ import type { ManagedArticleContext } from '../entity-manager/postgres-knowledge
 import { createHash } from 'node:crypto'
 import type { EntityMemoryReader, GateEntity, GateMemory, GateNoveltyEvidence } from './types'
 import { rankEntityCandidates } from './entity-candidates'
+import { articleCandidateDecisionSummary } from '../research-engine/article-input-bounds'
 
 /** Internal Research context only; this is not a downstream reader API. */
 export interface ManagedResearchContextPort {
@@ -58,14 +59,15 @@ export interface ManagedResearchContextPort {
 
 /** Article workflow context stays internal and preserves source-specific item identities. */
 export interface ArticleResearchContext {
-  candidates: Array<{ id: string, name: string, aliases: string[], summary: string | null, scope: Record<string, unknown> }>
+  /** summary is the profile value retained for durable handoff; decisionSummary is Jev-only context. */
+  candidates: Array<{ id: string, name: string, aliases: string[], summary: string | null, decisionSummary?: string | null, scope: Record<string, unknown> }>
   historyByEntity: Map<string, Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>
   /** Fetch only selected entities after placement, then retain their latest five. */
   loadHistory?(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>
   /** Lookup failures make placement unsafe; callers must hold before deciding. */
   coverageFailures: readonly string[]
   /** One expanded catalogue pass after an initial no-match/uncertain placement. */
-  widenCandidates?(terms: readonly string[]): Promise<Array<{ id: string, name: string, aliases: string[], summary: string | null, scope: Record<string, unknown> }>>
+  widenCandidates?(terms: readonly string[]): Promise<Array<{ id: string, name: string, aliases: string[], summary: string | null, decisionSummary?: string | null, scope: Record<string, unknown> }>>
   /** Exact name/alias coverage before creation, across legacy and private identities. */
   findExactEntities?(labels: readonly string[]): Promise<ArticleResearchContext['candidates']>
   /** Separate bounded source/development lookup; never replaces latest-five story context. */
@@ -305,6 +307,7 @@ type ArticleHistory = { id: string, source: 'legacy' | 'managed', title: string,
 function articleCandidate(entity: GateEntity): ArticleResearchContext['candidates'][number] {
   return {
     id: entity.id, name: entity.name, aliases: [...(entity.aliases ?? [])], summary: entity.summary,
+    decisionSummary: articleCandidateDecisionSummary(entity.summary),
     scope: { slug: entity.slug, type: entity.type ?? null, metadata: articleScope(entity.metadata ?? {}), source: 'catalogue' },
   }
 }

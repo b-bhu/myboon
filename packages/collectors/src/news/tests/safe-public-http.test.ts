@@ -92,6 +92,46 @@ test('a retained PANews plan accepts the reviewed alias but cannot approve an un
   assert.deepEqual(contacts, [])
 })
 
+test('a retained Monad plan follows the reviewed apex redirect and still blocks unrelated destinations', async () => {
+  const contacts: string[] = []
+  const requestImpl = async (url: URL): Promise<SafePublicHopResponse> => {
+    contacts.push(url.hostname)
+    return url.hostname === 'www.monad.xyz'
+      ? { status: 308, contentType: null, body: Buffer.alloc(0), redirectUrl: 'https://monad.xyz/blog/development' }
+      : { status: 200, contentType: 'text/plain', body: Buffer.from('Original development'), redirectUrl: null }
+  }
+  const options = { timeoutMs: 1_000, allowedDomains: ['www.monad.xyz'], resolveHost: async () => ['216.230.86.1'], requestImpl }
+  const result = await fetchPublicDocument('https://www.monad.xyz/blog/development', options)
+  assert.equal(result.finalUrl, 'https://monad.xyz/blog/development')
+  assert.deepEqual(contacts, ['www.monad.xyz', 'monad.xyz'])
+  contacts.length = 0
+  await assert.rejects(fetchPublicDocument('https://monad.xyz/blog/development', options), /outside the approved/)
+  assert.deepEqual(contacts, [])
+  await assert.rejects(fetchPublicDocument('https://www.monad.xyz/blog/development', {
+    ...options, requestImpl: async () => ({ status: 302, contentType: null, body: Buffer.alloc(0), redirectUrl: 'https://unrelated.example/article' }),
+  }), /outside the approved/)
+})
+
+test('public publisher addresses in 192.0.66 are reachable while special-use 192.0 blocks remain forbidden', async () => {
+  const contacted: string[] = []
+  const requestImpl = async (_url: URL, address: string): Promise<SafePublicHopResponse> => {
+    contacted.push(address)
+    return { status: 200, contentType: 'text/plain', body: Buffer.from('Publisher article'), redirectUrl: null }
+  }
+  const result = await fetchPublicDocument('https://www.whitehouse.gov/article', {
+    timeoutMs: 1_000, allowedDomains: ['www.whitehouse.gov'], resolveHost: async () => ['192.0.66.51', '2a04:fa87:fffd::c000:4233'], requestImpl,
+  })
+  assert.equal(result.status, 200)
+  assert.deepEqual(contacted, ['192.0.66.51'])
+  for (const address of ['192.0.0.1', '192.0.2.1', '192.168.1.1', '::ffff:192.0.0.1', '::ffff:c000:0201']) {
+    contacted.length = 0
+    await assert.rejects(fetchPublicDocument('https://www.whitehouse.gov/article', {
+      timeoutMs: 1_000, resolveHost: async () => ['192.0.66.51', address], requestImpl,
+    }), /non-public/)
+    assert.deepEqual(contacted, [])
+  }
+})
+
 test('safe fetch prefers public IPv4 and fails over without contacting a private address', async () => {
   const contacts: string[] = []
   const result = await fetchPublicDocument('https://news.example/article', {

@@ -2,7 +2,7 @@
 
 Date: 5 October 2026 (IST).
 
-Latest update: [6 October operational cleanup and overnight baseline](2026_10_06_operational_cleanup_and_overnight_baseline.md).
+Latest update: [7 October article pipeline recovery](2026_10_07_article_pipeline_recovery.md).
 Research has resumed on Ollama GLM-5.3 Flash; automatic GPT fallback remains disabled.
 The candidate-resolution migration is applied and the article fixes are loaded
 in News intake, Research and Entity Manager. Editor and Publisher use the existing
@@ -134,10 +134,10 @@ These results do not establish a clean historical full-suite run, broad Jev accu
 ## Remaining work inside this boundary
 
 1. Check overnight progress against the 6 October cleanup baseline. The source fixes are included in the cleanup commit on `main`, the candidate-resolution migration is applied, and News intake/Entity Manager/Research have loaded the fixes. Do not reapply or bulk-recover historical failures. Ollama is primary and automatic GPT fallback stays off. Exclude `myboon-api` from every process action.
-2. Observe the repaired PANews redirects, IPv4/deadline handling and article extraction on fresh jobs. Continue reviewing inaccessible sources and genuinely long captures exceeding the unchanged 16,000-character admission bound. No silent truncation or web-search fallback.
+2. Observe the reviewed PANews/Monad redirects, public-IP handling and article extraction on fresh jobs. Full-source admission is now 48,000 characters with a 96,000-byte state bound. Candidate decision descriptions and historical titles are projected separately without rewriting stored data. Continue retaining genuinely oversized captures and unavailable sources; PANews upstream availability is not guaranteed. No silent source truncation or web-search fallback.
 3. Review candidate scope and meaningful related memberships with labelled examples, including conflict narratives, Bitcoin/BlackRock, AI outlooks and the observed narrow Bitwise placement. Evaluate latest-five relationships and older-duplicate behaviour separately from prose quality.
 4. Inspect no-match, ambiguous-identity, creation-proposal and Entity-resolution holds. Validate improvements on bounded cases before any explicit single-item recovery; do not silently merge or create duplicate entities.
-5. Inspect invalid structured output and configured call/token/wall-limit failures. Tune evidenced workload limits where appropriate; do not reset an assignment or resend an unknown paid attempt to make it pass.
+5. Inspect invalid structured output and configured call/token/wall-limit failures. Local classification preflight now precedes reservation, and confirmed received rejections have crash-replayable settlement receipts. The 82 historical unknown paid outcomes remain retained. News has temporary P3/light capacity overrides of 200, with unchanged per-assignment budgets; review the accounting and remove both overrides together when the original admission threshold permits. Do not reset an assignment or resend an unknown paid attempt to make it pass.
 6. Observe fresh article completion, dated prose, exact source attribution, duplicate attachment and receipt-based recovery after changes. Keep failures/unknown outcomes visible; process `online` is not proof every job succeeds.
 
 Do not automatically replay old dead letters or incomplete packets. D1 retains older incomplete work for explicit assessment; D2 retains unknown paid outcomes and reservations. Operator assessment/reconciliation commands are prepared tools, not permission to clear a backlog. There is no new USD budget approval gate.

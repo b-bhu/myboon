@@ -11,7 +11,7 @@ import { CanonicalSourceSignalIntake } from '../signal-platform/source-intake'
 import { feedV3ModeForSource, loadFeedV3RuntimeConfig } from '../signal-platform/runtime-config'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { createActiveSourceTriageIntake } from '../signal-platform/active-triage'
-import { SqliteLocalCapacitySnapshot } from '../signal-platform/local-capacity'
+import { loadLocalTriageCapacity, SqliteLocalCapacitySnapshot } from '../signal-platform/local-capacity'
 import { withSourceIntakeOwnership } from '../signal-platform/source-intake-ownership'
 import { sourceOwnershipAllows, withSourceOwnershipOperation } from '../signal-platform/source-ownership'
 import {
@@ -34,7 +34,7 @@ async function runOnce(): Promise<void> {
       ? intakeMode === 'active'
         ? createActiveSourceTriageIntake({
           store: canonicalStore,
-          capacity: new SqliteLocalCapacitySnapshot(canonicalStore),
+          capacity: new SqliteLocalCapacitySnapshot(canonicalStore, loadLocalTriageCapacity()),
           providerHealth: runtime.triageProviderHealth,
           classifierEnabled: runtime.triageClassifierEnabled,
           allowedDepths: [...runtime.triageAllowedDepths],

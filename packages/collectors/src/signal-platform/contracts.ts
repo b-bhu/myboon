@@ -372,6 +372,11 @@ export interface ArticleEntityProposal extends ExtensibleContract {
   priorItemSource: 'legacy' | 'managed' | null
   /** Exact historical duplicate target, including a targeted older lookup. */
   duplicateTarget: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
+  /**
+   * Related-entity duplicate context retained when the primary exact target
+   * owns the one shared reuse effect. This never authorizes a writer effect.
+   */
+  contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
 }
 
 /**

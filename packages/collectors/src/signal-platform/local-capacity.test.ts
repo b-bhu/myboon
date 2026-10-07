@@ -6,7 +6,7 @@ import test from 'node:test'
 import { claimReservation, recordDispatchIntent, recordUnknownOutcome, settleReservation } from '../research-engine/assignment-budget'
 import { researchRootAssignmentId } from '../research-engine/bounded-followup'
 import type { ResearchWorkItem, Signal } from './contracts'
-import { DEFAULT_LOCAL_TRIAGE_CAPACITY, SqliteLocalCapacitySnapshot } from './local-capacity'
+import { DEFAULT_LOCAL_TRIAGE_CAPACITY, LOCAL_TRIAGE_CAPACITY_ENV, loadLocalTriageCapacity, SqliteLocalCapacitySnapshot } from './local-capacity'
 import { operatorSignal, operatorWork } from './operator-fixtures.test-support'
 import { SqliteSignalPlatformStore } from './sqlite-platform-store'
 
@@ -14,10 +14,10 @@ const NOW = '2026-10-03T15:00:00.000Z'
 const EXPIRED = '2026-10-03T14:00:00.000Z'
 const FUTURE = '2026-10-03T16:00:00.000Z'
 
-function fixture(source: Signal['sourceType'] = 'polymarket') {
+function fixture(source: Signal['sourceType'] = 'polymarket', limits = DEFAULT_LOCAL_TRIAGE_CAPACITY) {
   const dir = mkdtempSync(join(tmpdir(), 'myboon-local-capacity-'))
   const store = new SqliteSignalPlatformStore(join(dir, 'store.sqlite'), source)
-  const capacity = new SqliteLocalCapacitySnapshot(store)
+  const capacity = new SqliteLocalCapacitySnapshot(store, limits)
   const seed = (id: string, overrides: Partial<ResearchWorkItem> = {}) => {
     store.appendSignal(operatorSignal(source, id))
     const work = operatorWork(source, id, { priorityClass: 'P1', researchDepth: 'light',
@@ -28,6 +28,23 @@ function fixture(source: Signal['sourceType'] = 'polymarket') {
   return { store, capacity, seed, snapshot: () => capacity.snapshot({ sourceType: source, now: NOW }),
     dispose() { store.close(); rmSync(dir, { recursive: true, force: true }) } }
 }
+
+test('capacity overrides are explicit, bounded, and preserve every other lane', () => {
+  const configured = loadLocalTriageCapacity({
+    [LOCAL_TRIAGE_CAPACITY_ENV.p3]: '200', [LOCAL_TRIAGE_CAPACITY_ENV.light]: '200',
+  })
+  assert.equal(configured.byPriority.P3, 200)
+  assert.equal(configured.byDepth.light, 200)
+  assert.equal(configured.byPriority.P2, DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority.P2)
+  assert.equal(configured.byPriority.P0, DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority.P0)
+  assert.equal(configured.byPriority.P1, DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority.P1)
+  assert.deepEqual(configured.reservedByPriority, DEFAULT_LOCAL_TRIAGE_CAPACITY.reservedByPriority)
+  assert.equal(configured.byDepth.standard, DEFAULT_LOCAL_TRIAGE_CAPACITY.byDepth.standard)
+  assert.equal(configured.byDepth.deep, DEFAULT_LOCAL_TRIAGE_CAPACITY.byDepth.deep)
+  for (const raw of ['0', '501', '1.5', 'unknown', '']) {
+    assert.throws(() => loadLocalTriageCapacity({ [LOCAL_TRIAGE_CAPACITY_ENV.p3]: raw }), /integer between 1 and 500/)
+  }
+})
 
 async function dispatched(fx: ReturnType<typeof fixture>, work: ResearchWorkItem, allowance: string, unknown = false) {
   const port = fx.store.researchBudgetStore()
@@ -96,6 +113,22 @@ test('unresolved paid exposure counts expired and terminal work once, then stops
     })).ok, true)
     assert.equal(fx.snapshot().byDepth.light.available, 99)
     assert.equal(fx.store.getResearchWork(terminal.workId)?.status, 'dead_letter')
+  } finally { fx.dispose() }
+})
+
+test('an unresolved paid hold remains counted under the explicit P3/light capacity override', async () => {
+  const limits = loadLocalTriageCapacity({
+    [LOCAL_TRIAGE_CAPACITY_ENV.p3]: '200', [LOCAL_TRIAGE_CAPACITY_ENV.light]: '200',
+  })
+  const fx = fixture('news', limits)
+  try {
+    const work = fx.seed('unknown-under-override', {
+      status: 'dead_letter', priorityClass: 'P3', researchDepth: 'light', freshnessDeadline: EXPIRED,
+    })
+    await dispatched(fx, work, 'unknown-under-override-primary', true)
+    const snapshot = fx.snapshot()
+    assert.equal(snapshot.byPriority.P3.available, 199)
+    assert.equal(snapshot.byDepth.light.available, 199)
   } finally { fx.dispose() }
 })
 

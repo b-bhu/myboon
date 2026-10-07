@@ -325,6 +325,7 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
   boolean(article.truncated, 'packet.article.truncated')
   let duplicateTargetCount = 0
   let primaryDuplicateTargetCount = 0
+  const contextualDuplicateTargets: Array<{ item: Record<string, unknown>, path: string, target: Record<string, unknown> }> = []
   objectArray(record.memberships, 'packet.memberships', (item, path) => {
     nullableString(item.entityId, `${path}.entityId`)
     oneOf(item.placementDisposition, ['selected', 'no_match', 'uncertain'], `${path}.placementDisposition`)
@@ -362,6 +363,13 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
       duplicateTargetCount += 1
       if (item.role === 'primary') primaryDuplicateTargetCount += 1
     }
+    if (item.contextualDuplicateTarget !== undefined && item.contextualDuplicateTarget !== null) {
+      const target = object(item.contextualDuplicateTarget, `${path}.contextualDuplicateTarget`)
+      nonEmpty(target.itemId, `${path}.contextualDuplicateTarget.itemId`)
+      oneOf(target.source, ['legacy', 'managed'], `${path}.contextualDuplicateTarget.source`)
+      nonEmpty(target.entityId, `${path}.contextualDuplicateTarget.entityId`)
+      contextualDuplicateTargets.push({ item, path, target })
+    }
     if (item.entityId === null && item.placementDisposition === 'selected') {
       throw new ContractValidationError(path, 'selected placement requires an existing entity ID')
     }
@@ -392,7 +400,8 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
     if ((item.relationship === null) !== (item.priorItemDecision === null)) {
       throw new ContractValidationError(path, 'relationship and its prior-item Jev decision must be present together')
     }
-    if (item.relationship === 'duplicate' && item.duplicateTarget === null) {
+    if (item.relationship === 'duplicate' && item.duplicateTarget === null
+      && (item.contextualDuplicateTarget === undefined || item.contextualDuplicateTarget === null)) {
       throw new ContractValidationError(path, 'duplicate relationship requires a durable duplicate target')
     }
     if ((item.relationship === 'direct_continuation' || item.relationship === 'related_story_branch')
@@ -405,11 +414,23 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
   }
   validateArticleChoice(record.novelty, 'packet.novelty')
   const novelty = object(record.novelty, 'packet.novelty')
+  for (const { item, path, target } of contextualDuplicateTargets) {
+    if (item.role !== 'related' || item.relationship !== 'duplicate') {
+      throw new ContractValidationError(path, 'contextual duplicate target requires a related duplicate relationship')
+    }
+    if (item.entityId === null || target.entityId !== item.entityId
+      || target.itemId !== item.priorItemId || target.source !== item.priorItemSource) {
+      throw new ContractValidationError(path, 'contextual duplicate target must match the related prior item identity and origin')
+    }
+    if (novelty.choice !== 'already_known' || primaryDuplicateTargetCount !== 1) {
+      throw new ContractValidationError(path, 'contextual duplicate target requires one primary exact duplicate under already_known novelty')
+    }
+  }
   // Reuse is only safe when Jev's separately retained novelty judgment agrees
   // with an exact durable duplicate target. A related-only duplicate may still
   // accompany a new primary development and must not suppress it.
-  if (duplicateTargetCount === 0 && novelty.choice === 'already_known') {
-    throw new ContractValidationError('packet.novelty', 'already_known requires an exact durable duplicate target')
+  if (novelty.choice === 'already_known' && primaryDuplicateTargetCount !== 1) {
+    throw new ContractValidationError('packet.novelty', 'already_known requires exactly one primary exact duplicate target')
   }
   if (duplicateTargetCount > 0 && novelty.choice === 'uncertain') {
     throw new ContractValidationError('packet.novelty', 'an exact duplicate target with uncertain novelty must be held, not persisted')

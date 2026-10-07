@@ -6,6 +6,7 @@ export type ResearchV4RecordKind =
   | 'followup_result' | 'followup_resolution' | 'research_reuse' | 'evidence_reuse'
   | 'retained_partial_assessment'
   | 'classification_result'
+  | 'rejected_response'
   | 'article_entity_proposal'
   | 'reservation_reconciliation'
 
