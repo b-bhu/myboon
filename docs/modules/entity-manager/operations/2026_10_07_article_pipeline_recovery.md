@@ -40,7 +40,7 @@ The serialized Jev state remains bounded to **96,000 UTF-8 bytes**. Over-limit
 inputs hold explicitly; there is no source truncation or web-search fallback.
 The source bound is shared by placement, relationships, novelty and the
 source-grounded entity-proposal path.
-New entity proposals bind 16,000 input and 2,000 output token limits into the
+New entity proposals bind 16,000 input and 4,000 output token limits into the
 actual Hermes request. Older reservations retain their recorded limits and
 attempt identity.
 
@@ -202,3 +202,59 @@ transport uncertainty still produce explicit failures or holds. The historical
 multi-target packets receive an immutable-checkpoint hold rather than a rewritten
 source. Broad Jev placement accuracy, editorial quality and a full overnight
 soak remain separate evaluation work.
+
+### Later observation and output-limit correction
+
+At **07:44 UTC / 13:14 IST**, seven jobs had completed since activation. The
+longer observation also found two received entity-proposal responses exceeding
+the initially configured 2,000 output tokens: the FNB crypto-banking article
+returned 2,800 and the Roman Storm/Bitcoin Fog article 2,086. Both attempts
+correctly saved rejection receipts and settled; historical unknown paid
+reservations remained at 82. Those confirmed paid rejections are terminal and
+were not repurchased to make the counters look clean.
+
+Based on those actual responses, the new proposal output ceiling was increased
+to 4,000, retaining one call and 16,000 input tokens. Existing attempts retain
+their recorded allowance. Seven targeted proposal/budget tests passed after
+this numerical policy correction (one durable proposal replay, two source-bound
+proposal and four inference budget/preflight tests); the previous package
+TypeScript result remains applicable because no type shape changed.
+
+Research was drained with zero active leases before this final reload and then
+resumed. The other five pipeline services continued running; the API identity
+remained unchanged. A separate The Block page was unavailable and remained an
+explicit source failure. These later observations qualify the earlier zero-new-
+failure snapshot; the pipeline is progressing, not universally failure-free.
+
+### Final checkpoint
+
+At **07:54:10 UTC / 13:24:10 IST**, all seven PM2 entries remained online, with
+no stderr growth since this run began. Research's final PID is `2331451`; the
+other five pipeline PIDs and API identity are unchanged from the table above.
+The final PM2 configuration was saved with private permissions. Both runtime
+stages report `running`.
+
+News had admitted 62 fresh jobs and completed 14 jobs since activation,
+including five completions after the final Research reload. There were 42
+pending jobs and one active synthesis lease. Unknown paid outcomes remained at
+82. Eight new dead letters were visible alongside the retained 137:
+
+- Three received proposal responses exceeded the original 2,000-token output
+  allowance before the final reload. The third returned 2,670 tokens. Each has
+  a settled rejection receipt; none was resent. New attempts now use 4,000.
+  No new proposal attempt under that ceiling had been observed at this snapshot;
+  its request wiring is covered by the targeted tests above.
+- Three original source pages were unavailable: The Block, Crypto Briefing and
+  BeInCrypto. They remain explicit retrieval failures.
+- Two articles reached the existing legacy duplicate guard: Ireland's
+  tax-advantaged investment accounts and OpenSea's restored Solana support.
+  Reusing their primary legacy item would add another entity membership. The
+  established policy forbids that effect. The Ireland packet already retains
+  its secondary duplicate as contextual history; neither case is a regression
+  in duplicate normalization. A separate explicit legacy-reference policy is
+  required to process them safely.
+
+Publisher's latest sampled run at 07:49 UTC succeeded with no eligible drafts.
+Editor and Polymarket's restarted runs also succeeded as recorded above. This
+checkpoint proves active processing and the recovered article outcomes, not a
+new overnight soak or removal of every retained failure.

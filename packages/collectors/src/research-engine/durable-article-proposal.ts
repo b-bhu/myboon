@@ -19,7 +19,7 @@ export interface ArticleEntityProposalGenerationBudget {
 /** The proposal call needs room for the bounded source head plus its JSON response. */
 export const ARTICLE_ENTITY_PROPOSAL_LIMITS: Readonly<ArticleEntityProposalGenerationBudget> = Object.freeze({
   maxInputTokens: 16_000,
-  maxOutputTokens: 2_000,
+  maxOutputTokens: 4_000,
 })
 
 /** Durable, one-call Hermes identity description for a Jev no-match outcome. */

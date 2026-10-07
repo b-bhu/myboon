@@ -314,11 +314,11 @@ test('received article proposal output settles with a rejection receipt instead 
         category: 'invalid_structured_output', retryable: false, telemetry,
       }) },
     }), ResearchFollowupHold)
-    assert.deepEqual(generationBudget, { maxInputTokens: 16_000, maxOutputTokens: 2_000 })
+    assert.deepEqual(generationBudget, { maxInputTokens: 16_000, maxOutputTokens: 4_000 })
     const reservation = fx.store.listResearchReservations(100).find((row) => row.allowanceId === 'research_article_entity_proposal.v1')
     assert.equal(reservation?.state, 'dispatch_intent')
     assert.deepEqual(reservation?.approvedLimits, {
-      maxProviderCalls: 1, maxInputTokens: 16_000, maxOutputTokens: 2_000, maxIncrementalCostUsdMicros: null,
+      maxProviderCalls: 1, maxInputTokens: 16_000, maxOutputTokens: 4_000, maxIncrementalCostUsdMicros: null,
     })
     assert.equal(fx.store.getResearchV4Record<{ status: string }>('rejected_response', work.workId, reservation!.attemptId)?.status, 'received_response_rejected')
     await assert.rejects(durableArticleEntityProposal({ store: fx.store, work,
