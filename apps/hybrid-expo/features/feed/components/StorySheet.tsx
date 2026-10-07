@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Image } from 'expo-image';
 import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { TakeActionApps } from '@/features/feed/components/TakeActionApps';
-import { fetchStoryDetail } from '@/features/feed/stories.api';
+import { useStoryDetail } from '../use-story-detail';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 import { toShortDate } from '@/features/feed/feed.api';
-import type { StoryDetail, StorySummary } from '@/features/feed/feed.types';
+import type { StorySummary } from '@/features/feed/feed.types';
+import { useReducedMotion } from '../use-reduced-motion';
 
-const STORY_PAGE_SIZE = 20;
 
 interface StorySheetProps {
   story: StorySummary | null;
@@ -15,71 +15,22 @@ interface StorySheetProps {
 }
 
 export function StorySheet({ story, onClose }: StorySheetProps) {
+  const reducedMotion = useReducedMotion();
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   const { height: screenHeight } = useWindowDimensions();
   const sheetHeight = Math.round(screenHeight * 0.88);
   const translateY = useRef(new Animated.Value(1000)).current;
-  const [detail, setDetail] = useState<StoryDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState(false);
   const storySlug = story?.storySlug;
+  const { detail, loading, error, loadingMore, loadMoreError, loadEarlierMemories, retry } = useStoryDetail(storySlug);
 
   useEffect(() => {
     Animated.timing(translateY, {
       toValue: story ? 0 : sheetHeight,
-      duration: story ? 260 : 220,
+      duration: reducedMotion ? 0 : story ? 260 : 220,
       useNativeDriver: true,
     }).start();
-  }, [sheetHeight, story, translateY]);
+  }, [sheetHeight, story, translateY, reducedMotion]);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!storySlug) {
-      setDetail(null);
-      setError(false);
-      setLoadMoreError(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(false);
-    setLoadingMore(false);
-    setLoadMoreError(false);
-    setDetail(null);
-    fetchStoryDetail(storySlug, STORY_PAGE_SIZE, 0)
-      .then((nextDetail) => {
-        if (!cancelled) setDetail(nextDetail);
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [storySlug]);
-
-  async function loadEarlierMemories() {
-    if (!storySlug || !detail?.pagination.hasMore || detail.pagination.nextOffset === null || loadingMore) return;
-    setLoadingMore(true);
-    setLoadMoreError(false);
-    try {
-      const nextDetail = await fetchStoryDetail(storySlug, STORY_PAGE_SIZE, detail.pagination.nextOffset);
-      setDetail((current) => current?.story.storySlug === storySlug ? {
-        story: nextDetail.story,
-        events: [...current.events, ...nextDetail.events],
-        pagination: nextDetail.pagination,
-      } : current);
-    } catch {
-      setLoadMoreError(true);
-    } finally {
-      setLoadingMore(false);
-    }
-  }
 
   return (
     <Modal
@@ -111,12 +62,13 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.content}
         >
-          {story?.imageUrl && story.imageKind === 'content' ? (
+          {story?.imageUrl && story.imageKind === 'content' && failedImage !== story.imageUrl ? (
             <Image
               source={story.imageUrl}
+              onError={() => setFailedImage(story.imageUrl)}
               style={styles.heroImage}
               contentFit="cover"
-              transition={180}
+              transition={reducedMotion ? 0 : 180}
               accessibilityLabel={story.imageAttribution ? `${story.name}, ${story.imageAttribution}` : story.name}
             />
           ) : null}
@@ -134,6 +86,7 @@ export function StorySheet({ story, onClose }: StorySheetProps) {
             <View style={styles.stateCard}>
               <Text style={styles.stateTitle}>Story unavailable</Text>
               <Text style={styles.stateText}>This timeline could not be loaded.</Text>
+              <Pressable accessibilityRole="button" onPress={retry} style={styles.loadMoreButton}><Text style={styles.loadMoreText}>Try again</Text></Pressable>
             </View>
           ) : null}
 
@@ -229,8 +182,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   closeButton: {
-    width: 30,
-    height: 30,
+    width: 44,
+    height: 44,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',

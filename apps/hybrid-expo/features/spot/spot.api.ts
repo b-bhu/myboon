@@ -43,12 +43,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-export function fetchSpotTokens(limit = 30): Promise<SpotTokenListResponse> {
-  return request<SpotTokenListResponse>(`/swap/tokens?limit=${Math.min(50, Math.max(1, Math.floor(limit)))}`);
+export function fetchSpotTokens(limit = 30, options?: { signal?: AbortSignal }): Promise<SpotTokenListResponse> {
+  return request<SpotTokenListResponse>(`/swap/tokens?limit=${Math.min(50, Math.max(1, Math.floor(limit)))}`, { signal: options?.signal });
 }
 
-export function searchSpotTokens(query: string): Promise<SpotTokenSearchResponse> {
-  return request<SpotTokenSearchResponse>(`/swap/tokens/search?query=${encodeURIComponent(query.trim())}`);
+export function searchSpotTokens(query: string, options?: { signal?: AbortSignal }): Promise<SpotTokenSearchResponse> {
+  return request<SpotTokenSearchResponse>(`/swap/tokens/search?query=${encodeURIComponent(query.trim())}`, { signal: options?.signal });
 }
 
 export async function fetchSpotPrices(mints: readonly string[]): Promise<SpotPriceResponse> {

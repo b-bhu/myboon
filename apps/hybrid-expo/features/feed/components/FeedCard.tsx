@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 import { toRelativeTime } from '@/features/feed/feed.api';
 import type { FeedItem } from '@/features/feed/feed.types';
@@ -10,8 +11,10 @@ interface FeedCardProps {
 }
 
 export function FeedCard({ item, onPress }: FeedCardProps) {
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const { fontScale } = useWindowDimensions();
   const date = toRelativeTime(item.createdAt);
-  const hasContentImage = item.imageKind === 'content' && Boolean(item.imageUrl);
+  const hasContentImage = item.imageKind === 'content' && Boolean(item.imageUrl) && failedImage !== item.imageUrl;
   const category = item.category === 'feed' ? 'Latest' : item.category;
 
   if (item.isTop) {
@@ -25,6 +28,7 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
         {hasContentImage ? (
           <Image
             source={item.imageUrl}
+            onError={() => setFailedImage(item.imageUrl ?? null)}
             style={styles.leadImage}
             contentFit="cover"
             transition={180}
@@ -36,8 +40,8 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
             <Text style={styles.category}>{category}</Text>
             <Text style={styles.dateText}>{date}</Text>
           </View>
-          <Text style={styles.leadHeadline} numberOfLines={3}>{item.headline}</Text>
-          <Text style={styles.leadBody} numberOfLines={3}>{item.description}</Text>
+          <Text style={styles.leadHeadline} numberOfLines={fontScale > 1.15 ? undefined : 3}>{item.headline}</Text>
+          <Text style={styles.leadBody} numberOfLines={fontScale > 1.15 ? undefined : 3}>{item.description}</Text>
           <View style={styles.leadFooter}>
             <Text style={styles.readLabel}>Open update</Text>
             <Text style={styles.readMore}>Read more →</Text>
@@ -59,12 +63,13 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
           <Text style={styles.category}>{category}</Text>
           <Text style={styles.dateText}>{date}</Text>
         </View>
-        <Text style={styles.headlineText} numberOfLines={3}>{item.headline}</Text>
-        <Text style={styles.bodyText} numberOfLines={2}>{item.description}</Text>
+        <Text style={styles.headlineText} numberOfLines={fontScale > 1.15 ? undefined : 3}>{item.headline}</Text>
+        <Text style={styles.bodyText} numberOfLines={fontScale > 1.15 ? undefined : 2}>{item.description}</Text>
       </View>
       {hasContentImage ? (
         <Image
           source={item.imageUrl}
+          onError={() => setFailedImage(item.imageUrl ?? null)}
           style={styles.thumbnail}
           contentFit="cover"
           transition={180}

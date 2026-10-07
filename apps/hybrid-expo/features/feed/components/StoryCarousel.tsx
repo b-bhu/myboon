@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Image } from 'expo-image';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import type { ViewStyle } from 'react-native';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 import { toShortDate } from '@/features/feed/feed.api';
 import type { StorySummary } from '@/features/feed/feed.types';
+import { selectedStorySlug } from '../feed-state';
 
 const CARD_WIDTH = 288;
 const CARD_GAP = 12;
@@ -13,21 +14,37 @@ interface StoryCarouselProps {
   stories: StorySummary[];
   onStoryPress: (story: StorySummary) => void;
   variant?: 'compact' | 'editorial';
+  selectedSlug?: string | null;
+  onSelectStory?: (slug: string) => void;
 }
 
-export function StoryCarousel({ stories, onStoryPress, variant = 'compact' }: StoryCarouselProps) {
+export function StoryCarousel({ stories, onStoryPress, variant = 'compact', selectedSlug = null, onSelectStory }: StoryCarouselProps) {
+  const scroll = useRef<ScrollView>(null);
+  const { fontScale } = useWindowDimensions();
+  const currentSlug = selectedStorySlug(stories, selectedSlug);
+  useEffect(() => {
+    const index = stories.findIndex((story) => story.storySlug === currentSlug);
+    scroll.current?.scrollTo({ x: Math.max(0, index) * (CARD_WIDTH + CARD_GAP), animated: false });
+  }, [stories, currentSlug]);
+  const rememberSelection = (offset: number) => {
+    const story = stories[Math.max(0, Math.min(stories.length - 1, Math.round(offset / (CARD_WIDTH + CARD_GAP))))];
+    if (story) onSelectStory?.(story.storySlug);
+  };
   return (
     <ScrollView
+      ref={scroll}
       horizontal
       showsHorizontalScrollIndicator={false}
       decelerationRate="fast"
       snapToInterval={CARD_WIDTH + CARD_GAP}
       contentContainerStyle={styles.content}
+      onMomentumScrollEnd={(event) => rememberSelection(event.nativeEvent.contentOffset.x)}
+      onScrollEndDrag={(event) => { if (!event.nativeEvent.velocity?.x) rememberSelection(event.nativeEvent.contentOffset.x); }}
     >
       {stories.map((story) => (
         variant === 'editorial'
           ? <EditorialStoryCard key={story.storySlug} story={story} onPress={onStoryPress} />
-          : <CompactStoryCard key={story.storySlug} story={story} onPress={onStoryPress} />
+          : <CompactStoryCard key={story.storySlug} story={story} onPress={(value) => { onSelectStory?.(value.storySlug); onStoryPress(value); }} largeText={fontScale > 1.15} />
       ))}
     </ScrollView>
   );
@@ -56,19 +73,19 @@ function StoryPressable({
   );
 }
 
-function CompactStoryCard({ story, onPress }: { story: StorySummary; onPress: (story: StorySummary) => void }) {
+function CompactStoryCard({ story, onPress, largeText }: { story: StorySummary; onPress: (story: StorySummary) => void; largeText: boolean }) {
   const markerCount = Math.min(3, Math.max(1, story.eventCount));
   return (
     <StoryPressable story={story} onPress={onPress} style={styles.compactCard}>
       <View style={styles.titleRow}>
-        <Text style={styles.compactTitle} numberOfLines={1}>{story.name}</Text>
+        <Text style={styles.compactTitle} numberOfLines={largeText ? 2 : 1}>{story.name}</Text>
         <Text style={styles.date}>{toShortDate(story.updatedAt)}</Text>
       </View>
       <View style={styles.compactDevelopmentRow}>
         <TimelineMini markerCount={markerCount} currentIndex={markerCount - 1} />
         <Text style={styles.compactDevelopment} numberOfLines={3}>{story.latestDevelopment}</Text>
       </View>
-      <Text style={styles.compactArrow} accessibilityElementsHidden>→</Text>
+      <Text style={styles.compactArrow}>Full story →</Text>
     </StoryPressable>
   );
 }
@@ -136,7 +153,7 @@ const styles = StyleSheet.create({
   },
   compactCard: {
     width: CARD_WIDTH,
-    height: 145,
+    minHeight: 145,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: FEED_COLORS.border,
@@ -260,11 +277,10 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   compactArrow: {
-    position: 'absolute',
-    right: 16,
-    bottom: 9,
+    alignSelf: 'flex-end',
+    marginTop: 8,
     color: FEED_COLORS.accent,
-    fontSize: 18,
+    fontSize: 11,
     lineHeight: 22,
     fontWeight: '900',
   },

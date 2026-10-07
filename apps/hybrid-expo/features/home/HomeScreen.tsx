@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  RefreshControl,
   StyleSheet,
   Text,
   View,
@@ -18,14 +17,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
 import { AppTopBarLogo } from '@/components/AppTopBar';
 import { AvatarTrigger } from '@/components/AvatarTrigger';
-import { FeedCard } from '@/features/feed/components/FeedCard';
-import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
-import { StoryCarousel, StoryCarouselSkeleton } from '@/features/feed/components/StoryCarousel';
-import { StorySheet } from '@/features/feed/components/StorySheet';
-import { fetchFeedItems } from '@/features/feed/feed.api';
-import { FEED_COLORS } from '@/features/feed/feed.constants';
-import { fetchStories } from '@/features/feed/stories.api';
-import type { FeedItem as NarrativeFeedItem, StorySummary } from '@/features/feed/feed.types';
 import {
   KAMINO_MARK_SVG,
   METEORA_MARK_SVG,
@@ -37,6 +28,7 @@ import {
 } from '@/features/home/marketBrandAssets';
 import { HomeWalletOverview } from '@/features/wallet/HomeWalletOverview';
 import { WalletSecondarySheet } from '@/features/wallet/WalletSecondarySheet';
+import { HomeFeedOverview } from '@/features/home/components/HomeFeedOverview';
 import { HomeNavigation, type HomeDestination } from '@/features/home/components/HomeNavigation';
 import { DormantChainNotice } from '@/features/wallet/components/DormantChainNotice';
 import {
@@ -54,7 +46,6 @@ import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { useWallet } from '@/hooks/useWallet';
 import { semantic, tokens } from '@/theme';
 
-const FEED_PREVIEW_LIMIT = 3;
 const HEADER_SCROLL_DISTANCE = 920;
 const MOCKUP_FEED_SOFT = '#28A9C9';
 
@@ -156,15 +147,6 @@ export default function HomeScreen() {
   const walletSectionVisible = focused && destination === 'wallet';
   const [walletRefreshing, setWalletRefreshing] = useState(false);
 
-  const [feedItems, setFeedItems] = useState<NarrativeFeedItem[]>([]);
-  const [stories, setStories] = useState<StorySummary[]>([]);
-  const [feedError, setFeedError] = useState<string | null>(null);
-  const [storiesError, setStoriesError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [sheetItem, setSheetItem] = useState<NarrativeSheetItem | null>(null);
-  const [storySheet, setStorySheet] = useState<StorySummary | null>(null);
-
   const backgroundColor = scrollY.interpolate({
     inputRange: [0, HEADER_SCROLL_DISTANCE],
     outputRange: [
@@ -174,50 +156,9 @@ export default function HomeScreen() {
     extrapolate: 'clamp',
   });
 
-  const loadHome = useCallback(async (showLoading = true) => {
-    if (showLoading) setLoading(true);
-    setFeedError(null);
-    setStoriesError(null);
-
-    const [storiesResult, feedResult] = await Promise.allSettled([
-      fetchStories(),
-      fetchFeedItems(FEED_PREVIEW_LIMIT, 0),
-    ]);
-
-    if (storiesResult.status === 'fulfilled') {
-      setStories(storiesResult.value);
-    } else {
-      setStoriesError(
-        storiesResult.reason instanceof Error
-          ? storiesResult.reason.message
-          : 'Unable to load Stories',
-      );
-    }
-
-    if (feedResult.status === 'fulfilled') {
-      setFeedItems(feedResult.value);
-    } else {
-      setFeedError(
-        feedResult.reason instanceof Error ? feedResult.reason.message : 'Unable to load feed',
-      );
-    }
-
-    if (showLoading) setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    void loadHome();
-  }, [loadHome]);
-
   useEffect(() => {
     notifyVisibility(walletSectionVisible);
   }, [walletSectionVisible, notifyVisibility]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadHome(false);
-    setRefreshing(false);
-  }, [loadHome]);
 
   const handleWalletRefresh = useCallback(() => {
     setWalletRefreshing(true);
@@ -227,15 +168,6 @@ export default function HomeScreen() {
     // source's settle.
     setTimeout(() => setWalletRefreshing(false), 700);
   }, [refreshWallet]);
-
-  const handleFeedPress = useCallback((item: NarrativeFeedItem) => {
-    setSheetItem({
-      id: item.id,
-      title: item.headline,
-      summary: item.description,
-      createdAt: item.createdAt,
-    });
-  }, []);
 
   const handleMarketAppPress = useCallback(
     (app: MarketHomeApp) => {
@@ -403,63 +335,11 @@ export default function HomeScreen() {
       </View>
 
       <View style={[styles.destination, destination !== 'feed' && styles.hiddenDestination]}>
-        <Animated.ScrollView
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={semantic.text.primary}
-              colors={[semantic.text.accent]}
-            />
-          }
-          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
-            useNativeDriver: false,
-          })}
-          contentContainerStyle={[
-            styles.content,
-            { paddingBottom: Math.max(insets.bottom, 18) + 24 },
-          ]}
-        >
-          <HomeSectionTitle title="Feed" />
-          <Text style={styles.developingLabel}>DEVELOPING STORIES</Text>
-          {loading ? <StoryCarouselSkeleton /> : null}
-          {!loading && stories.length > 0 ? (
-            <StoryCarousel stories={stories} onStoryPress={setStorySheet} />
-          ) : null}
-          {!loading && stories.length === 0 ? (
-            <InlineFeedState
-              title={storiesError ? 'Stories unavailable' : 'No developing Stories'}
-              text={storiesError ?? 'Selected Stories will appear here.'}
-              compact
-            />
-          ) : null}
-
-          <View style={styles.recentHeader}>
-            <Text style={styles.recentTitle}>Recent</Text>
-          </View>
-          {loading ? <FeedPreviewSkeleton /> : null}
-          {!loading && feedItems.length > 0 ? (
-            <View style={styles.feedStack}>
-              {feedItems.map((item) => (
-                <FeedCard key={item.id} item={item} onPress={handleFeedPress} />
-              ))}
-            </View>
-          ) : null}
-          {!loading && feedItems.length === 0 ? (
-            <InlineFeedState
-              title={feedError ? 'Feed unavailable' : 'No recent Feed items'}
-              text={feedError ?? 'Published Feed items will appear here.'}
-            />
-          ) : null}
-          <RouteCard
-            eyebrow="Show more"
-            title="Open the full Feed"
-            cta="Feed"
-            onPress={() => router.push('/feed')}
-          />
-        </Animated.ScrollView>
+        <HomeFeedOverview
+          active={focused && destination === 'feed'}
+          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+          bottomPadding={Math.max(insets.bottom, 18) + 24}
+        />
       </View>
 
       <View style={[styles.destination, destination !== 'apps' && styles.hiddenDestination]}>
@@ -522,8 +402,6 @@ export default function HomeScreen() {
         <Text style={styles.notificationText}>Notifications are not available yet.</Text>
       </WalletSecondarySheet>
 
-      <NarrativeSheet item={sheetItem} onClose={() => setSheetItem(null)} />
-      <StorySheet story={storySheet} onClose={() => setStorySheet(null)} />
     </KeyboardAvoidingView>
   );
 }
@@ -533,66 +411,6 @@ function HomeSectionTitle({ title }: { title: string }) {
     <View style={styles.sectionHead}>
       <Text style={styles.sectionTitle}>{title}</Text>
     </View>
-  );
-}
-
-function InlineFeedState({
-  title,
-  text,
-  compact = false,
-}: {
-  title: string;
-  text: string;
-  compact?: boolean;
-}) {
-  return (
-    <View style={[styles.inlineState, compact && styles.inlineStateCompact]}>
-      <Text style={styles.inlineStateTitle}>{title}</Text>
-      <Text style={styles.inlineStateText}>{text}</Text>
-    </View>
-  );
-}
-
-function FeedPreviewSkeleton() {
-  return (
-    <View style={styles.feedStack}>
-      {[0, 1, 2].map((index) => (
-        <View key={index} style={styles.feedSkeletonCard}>
-          <View style={styles.feedSkeletonTitle} />
-          <View style={styles.feedSkeletonBody} />
-          <View style={styles.feedSkeletonBodyShort} />
-        </View>
-      ))}
-    </View>
-  );
-}
-
-function RouteCard({
-  eyebrow,
-  title,
-  cta,
-  onPress,
-}: {
-  eyebrow: string;
-  title: string;
-  cta: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.routeCard, pressed && styles.pressed]}
-      accessibilityRole="button"
-      accessibilityLabel={title}
-    >
-      <View style={styles.routeCopy}>
-        <Text style={styles.routeEyebrow}>{eyebrow}</Text>
-        <Text style={styles.routeTitle}>{title}</Text>
-      </View>
-      <View style={styles.routePill}>
-        <Text style={styles.routePillText}>{cta}</Text>
-      </View>
-    </Pressable>
   );
 }
 
@@ -677,126 +495,6 @@ const styles = StyleSheet.create({
     lineHeight: 56,
     fontWeight: '800',
     letterSpacing: 0,
-  },
-  developingLabel: {
-    color: FEED_COLORS.accent,
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: '900',
-    letterSpacing: 1.1,
-    marginBottom: 14,
-  },
-  recentHeader: {
-    marginTop: 26,
-    marginBottom: 13,
-  },
-  recentTitle: {
-    color: FEED_COLORS.text,
-    fontSize: 18,
-    lineHeight: 22,
-    fontWeight: '900',
-  },
-  feedStack: {
-    gap: 10,
-  },
-  inlineState: {
-    minHeight: 118,
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: FEED_COLORS.border,
-    backgroundColor: FEED_COLORS.card,
-    padding: 14,
-    justifyContent: 'center',
-    gap: 6,
-  },
-  inlineStateCompact: {
-    minHeight: 145,
-  },
-  inlineStateTitle: {
-    color: FEED_COLORS.text,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  inlineStateText: {
-    color: FEED_COLORS.textDim,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  feedSkeletonCard: {
-    minHeight: 118,
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: FEED_COLORS.border,
-    backgroundColor: FEED_COLORS.card,
-    padding: 14,
-    gap: 11,
-    opacity: 0.68,
-  },
-  feedSkeletonTitle: {
-    width: '72%',
-    height: 32,
-    borderRadius: 4,
-    backgroundColor: FEED_COLORS.borderSoft,
-  },
-  feedSkeletonBody: {
-    width: '94%',
-    height: 11,
-    borderRadius: 3,
-    backgroundColor: FEED_COLORS.borderSoft,
-  },
-  feedSkeletonBodyShort: {
-    width: '62%',
-    height: 11,
-    borderRadius: 3,
-    backgroundColor: FEED_COLORS.borderSoft,
-  },
-  routeCard: {
-    minHeight: 68,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.md,
-    marginTop: 8,
-    padding: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(24,90,112,0.86)',
-    backgroundColor: 'rgba(6,51,67,0.82)',
-  },
-  routeCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  routeEyebrow: {
-    color: tokens.colors.accent,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 5,
-  },
-  routeTitle: {
-    color: semantic.text.primary,
-    fontSize: 17,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  routePill: {
-    minWidth: 58,
-    minHeight: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 19,
-    backgroundColor: tokens.colors.accent,
-    paddingHorizontal: tokens.spacing.md,
-  },
-  routePillText: {
-    color: semantic.background.screen,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
   },
   marketsLauncher: {
     borderRadius: 8,

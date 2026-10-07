@@ -57,10 +57,10 @@ function mapNarrativeToFeedItem(item: PublishedNarrativeListItem, index: number,
   };
 }
 
-export async function fetchFeedItems(limit = 20, offset = 0): Promise<FeedItem[]> {
+export async function fetchFeedItems(limit = 20, offset = 0, options?: { signal?: AbortSignal }): Promise<FeedItem[]> {
   const clamped = clamp(limit, 1, 50);
   const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/narratives?limit=${clamped}&offset=${offset}`);
+  const response = await fetchWithTimeout(`${baseUrl}/narratives?limit=${clamped}&offset=${offset}`, { signal: options?.signal });
 
   if (!response.ok) {
     throw new Error(`Feed request failed (${response.status})`);
@@ -105,9 +105,9 @@ export interface SimpleExplanation {
   createdAt?: string;
 }
 
-export async function fetchNarrativeDetail(id: string): Promise<NarrativeDetail> {
+export async function fetchNarrativeDetail(id: string, options?: { signal?: AbortSignal }): Promise<NarrativeDetail> {
   const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/narratives/${encodeURIComponent(id)}`);
+  const response = await fetchWithTimeout(`${baseUrl}/narratives/${encodeURIComponent(id)}`, { signal: options?.signal });
 
   if (!response.ok) {
     throw new Error(`Narrative detail request failed (${response.status})`);

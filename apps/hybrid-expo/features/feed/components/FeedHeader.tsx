@@ -21,7 +21,7 @@ export function FeedHeader({ onCalendarPress }: FeedHeaderProps) {
       >
         <MaterialIcons name="arrow-back" size={19} color={FEED_COLORS.text} />
       </Pressable>
-      <Text style={styles.title}>Feed</Text>
+      <Text accessibilityRole="header" style={styles.title}>All updates</Text>
       <View style={styles.actions}>
         {onCalendarPress ? (
           <Pressable
@@ -51,8 +51,8 @@ const styles = StyleSheet.create({
     backgroundColor: FEED_COLORS.screen,
   },
   backButton: {
-    width: 30,
-    height: 30,
+    width: 44,
+    height: 44,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',

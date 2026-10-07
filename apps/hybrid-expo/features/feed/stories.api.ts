@@ -13,8 +13,8 @@ interface StoryDetailResponse {
 
 const DEFAULT_STORY_EVENT_LIMIT = 20;
 
-export async function fetchStories(): Promise<StorySummary[]> {
-  const response = await fetchWithTimeout(`${resolveApiBaseUrl()}/stories`);
+export async function fetchStories(options?: { signal?: AbortSignal }): Promise<StorySummary[]> {
+  const response = await fetchWithTimeout(`${resolveApiBaseUrl()}/stories`, { signal: options?.signal });
   if (!response.ok) throw new Error(`Stories request failed (${response.status})`);
 
   const payload = (await response.json()) as StoriesResponse;

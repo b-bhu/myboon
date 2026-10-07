@@ -13,6 +13,7 @@ interface FeedListProps {
   loadingMore: boolean;
   header?: ReactElement | null;
   empty?: ReactElement | null;
+  footer?: ReactElement | null;
 }
 
 export function FeedList({
@@ -24,6 +25,7 @@ export function FeedList({
   loadingMore,
   header = null,
   empty = null,
+  footer = null,
 }: FeedListProps) {
   return (
     <FlatList
@@ -51,7 +53,7 @@ export function FeedList({
           <View style={styles.footer}>
             <ActivityIndicator size="small" color={FEED_COLORS.accent} />
           </View>
-        ) : null
+        ) : footer
       }
     />
   );

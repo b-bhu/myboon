@@ -4,6 +4,7 @@ import { logger } from 'hono/logger'
 import entityManager from '@myboon/collectors/entity-manager'
 import { createClient } from '@supabase/supabase-js'
 import { createAiRoutes } from '../ai/routes.js'
+import { createCalendarRoutes } from '../calendar/routes.js'
 import { clobRoutes } from '../clob.js'
 import { createInternalEntityCommandRoutes } from '../internal/entity-commands.js'
 import { createInternalEntityRoutes } from '../internal/entities.js'
@@ -104,6 +105,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   }))
 
   app.route('/clob', clobRoutes)
+  app.route('/calendar', createCalendarRoutes({ enabled: config.calendarBackpackEnabled }))
   app.route('/perps/pacifica', pacificaRoutes)
   app.route('/perps/phoenix', phoenixRoutes)
   app.route('/spot', spotRoutes)

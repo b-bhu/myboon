@@ -5,6 +5,7 @@ import { TakeActionApps } from '@/features/feed/components/TakeActionApps';
 import { fetchNarrativeDetail, toShortDate } from '@/features/feed/feed.api';
 import type { NarrativeDetail } from '@/features/feed/feed.api';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
+import { useReducedMotion } from '../use-reduced-motion';
 
 function normalizeArticleText(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\\n/g, '\n').trim();
@@ -70,6 +71,9 @@ interface NarrativeSheetProps {
 }
 
 export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
+  const reducedMotion = useReducedMotion();
+  const [retry, setRetry] = useState(0);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   const { height: screenHeight } = useWindowDimensions();
   const sheetHeight = Math.round(screenHeight * 0.88);
   const translateY = useRef(new Animated.Value(1000)).current;
@@ -81,13 +85,14 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   useEffect(() => {
     Animated.timing(translateY, {
       toValue: item ? 0 : sheetHeight,
-      duration: item ? 260 : 220,
+      duration: reducedMotion ? 0 : item ? 260 : 220,
       useNativeDriver: true,
     }).start();
-  }, [item, sheetHeight, translateY]);
+  }, [item, sheetHeight, translateY, reducedMotion]);
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     if (!itemId) {
       setDetail(null);
       setError(false);
@@ -97,7 +102,7 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
     setLoading(true);
     setError(false);
     setDetail(null);
-    fetchNarrativeDetail(itemId)
+    fetchNarrativeDetail(itemId, { signal: controller.signal })
       .then((nextDetail) => {
         if (!cancelled) setDetail(nextDetail);
       })
@@ -110,8 +115,9 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [itemId]);
+  }, [itemId, retry]);
 
   const title = detail?.title ?? item?.title ?? '';
   const summary = detail?.summary ?? item?.summary ?? '';
@@ -146,12 +152,13 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-          {imageUrl && imageKind === 'content' ? (
+          {imageUrl && imageKind === 'content' && failedImage !== imageUrl ? (
             <Image
               source={imageUrl}
+              onError={() => setFailedImage(imageUrl)}
               style={styles.heroImage}
               contentFit="cover"
-              transition={180}
+              transition={reducedMotion ? 0 : 180}
               accessibilityLabel={detail?.imageAttribution ?? item?.imageAttribution ?? title}
             />
           ) : null}
@@ -164,6 +171,7 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
             <View style={styles.stateCard}>
               <Text style={styles.stateTitle}>Full Feed item unavailable</Text>
               <Text style={styles.stateText}>The shorter update is still available above.</Text>
+              <Pressable accessibilityRole="button" onPress={() => setRetry((value) => value + 1)} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: FEED_COLORS.accent }}>Try again</Text></Pressable>
             </View>
           ) : null}
           {detail?.content ? (
@@ -227,8 +235,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   closeButton: {
-    width: 30,
-    height: 30,
+    width: 44,
+    height: 44,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',

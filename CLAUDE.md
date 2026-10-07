@@ -25,6 +25,13 @@ This is a general communication preference, not specific to any one topic (debug
 - Never run full-repository test suites or broad typechecks unless the user explicitly requests or permits them. If a scoped check is unavailable, explain that and ask before running a broader one.
 - Once relevant checks pass, do not repeat them unless new changes, failures, or unresolved concerns justify another run.
 
+# Keep device testing artifacts temporary
+
+- For USB, ADB, Maestro and other device checks, use a unique task-specific directory in the operating system's temporary storage, outside the repository.
+- Keep generated screenshots, recordings, UI dumps, API snapshots, logs, reference captures and helper scripts there. Do not add them to the checkout unless the user explicitly asks to retain specific artifacts.
+- Clean up the task's temporary directory and device-side temporary files when testing ends, including failed or interrupted runs where possible. Remove only files created for that task; leave other tasks' files alone.
+- Keep only a concise written verification summary in repository docs or issues when useful. Do not link deleted temporary captures as permanent evidence.
+
 # Writing GitHub issues
 
 - For every new issue or substantial issue rewrite, use the [implementation issue template](.github/ISSUE_TEMPLATE/implementation.md) and follow the [issue-writing skill](.agents/skills/write-issue/SKILL.md), unless the user explicitly requests another format.
