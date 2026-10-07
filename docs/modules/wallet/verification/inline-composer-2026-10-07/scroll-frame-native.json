@@ -1,0 +1,28 @@
+{
+  "scope": "Two automated Wallet account-panel scroll-up and Wallet-return cycles with native-driven transform and radius. Native frame counters reset before sample. No screenshot recording during sampling. Includes adb/uiautomator and return rendering overhead; small development build sample, not a release benchmark.",
+  "timestamp": "2026-10-07T10:42:58+0530",
+  "checks": [
+    {
+      "cycle": 1,
+      "upward_scrolls": 2,
+      "composer_hidden_when_covered": true,
+      "composer_visible_after_Wallet_return": true
+    },
+    {
+      "cycle": 2,
+      "upward_scrolls": 2,
+      "composer_hidden_when_covered": true,
+      "composer_visible_after_Wallet_return": true
+    }
+  ],
+  "metrics": {
+    "Total frames rendered": "201",
+    "Janky frames": "71 (35.32%)",
+    "50th percentile": "23ms",
+    "90th percentile": "44ms",
+    "95th percentile": "48ms",
+    "99th percentile": "73ms",
+    "Number Slow UI thread": "48",
+    "Number Slow issue draw commands": "71"
+  }
+}

@@ -15,8 +15,10 @@
   <h1>Your next move,<br>right here.</h1>
   <p>Yellow runs edge to edge behind Swap. A raised markets panel rounds into it below, keeping the account switcher and its details together.</p>
   <div class="note-block"><strong>One space for four actions</strong><p>Tap the action name to choose Swap, Send, Receive or Transfer. Double-tap the reverse button to open the same menu.</p></div>
-  <div class="note-block"><strong>Keep the details in reach</strong><p>Rate, slippage and minimum received sit below the card. A centered, rounded control switches between Spot, Perps and Meteora.</p></div>
-  <p class="sample-note">Interactive samples only. Prices, holdings, addresses and positions are illustrative. Reviews do not sign or submit transactions.</p>
+  <div class="note-block"><strong>Review where you compose</strong><p>Balances sit under their tokens. Max and percentage shortcuts stay beside You pay. Token icons keep the inline rate and minimum compact; swipe to preview confirmation and success.</p></div>
+  <div class="note-block"><strong>Scroll your accounts</strong><p>Swap stays in place. Scroll the account panel over it; its rounded top gradually flattens as it reaches the header. Spot, Perps and Meteora stay within reach.</p></div>
+  <div class="preview-controls"><label for="preview-outcome">After swiping</label><select id="preview-outcome"><option value="success">Successful swap</option><option value="rejected">Wallet declined</option><option value="pending">Stay pending</option></select><button id="reset-preview">Reset preview ↺</button></div>
+  <p class="sample-note">Interactive samples only. Prices, holdings, addresses and positions are illustrative. Swiping simulates confirmation locally; nothing is signed or submitted.</p>
   <a class="back-link" href="swap-concepts.html">Earlier Swap concepts ↗</a>
  </aside>
  <section class="phone" aria-label="MyBoon Wallet prototype">
@@ -28,17 +30,19 @@
    <main class="wallet-scroll" id="wallet-scroll">
     <div class="wallet-top">
     <section class="action-zone" aria-label="Wallet action">
-     <div class="action-heading"><h1><button class="action-select" id="action-select" aria-haspopup="dialog"><span id="action-name">Swap</span><span id="action-chevron" aria-hidden="true"></span></button></h1><span class="chain-label"><i aria-hidden="true"></i>Solana</span></div>
+     <div class="action-heading"><h1><button class="action-select" id="action-select" aria-haspopup="dialog"><span id="action-name">Swap</span><span id="action-chevron" aria-hidden="true"></span></button></h1></div>
      <div class="composer" id="composer"></div>
-     <p class="inline-error" id="inline-error" role="status" aria-live="polite" hidden></p>
-     <div class="quote-strip" id="quote-strip" aria-label="Action details"></div>
     </section>
-    <button class="portfolio-strip" id="portfolio" aria-haspopup="dialog"><span>Portfolio <span class="quiet">· Solana</span></span><strong>$12,482.56 <span class="portfolio-arrow" aria-hidden="true">↗</span></strong></button>
     </div>
+    <div class="market-scroll" id="market-scroll" aria-label="Scrollable wallet accounts">
+    <div class="market-spacer" aria-hidden="true"></div>
     <section class="market-panel" id="market-panel" aria-label="Markets and positions">
+     <div class="market-toolbar">
      <div class="market-tabs" role="tablist" aria-label="Wallet accounts"><button id="tab-spot" role="tab" data-tab="spot" aria-controls="market-content" aria-selected="true">Spot</button><button id="tab-perps" role="tab" data-tab="perps" aria-controls="market-content" aria-selected="false" tabindex="-1">Perps</button><button id="tab-meteora" role="tab" data-tab="meteora" aria-controls="market-content" aria-selected="false" tabindex="-1">Meteora</button></div>
+     </div>
      <div class="market-content" id="market-content" role="tabpanel" aria-labelledby="tab-spot" tabindex="0"></div>
     </section>
+    </div>
    </main>
    <nav class="nav" aria-label="Main navigation"><a href="index.html?nav=feed&amp;wallet-design=inline" data-nav-icon="feed">Feed</a><a href="index.html?nav=apps&amp;wallet-design=inline" data-nav-icon="apps">Apps</a><button aria-current="page" id="wallet-nav" data-nav-icon="wallet">Wallet</button></nav>
   </div>

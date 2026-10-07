@@ -1,0 +1,40 @@
+{"time": 1791347433.12013, "action": "tap", "label": "Show percentage shortcuts", "point": [379, 703]}
+{"time": 1791347515.7456691, "action": "tap", "label": "Close percentage shortcuts", "point": [661, 703]}
+{"time": 1791347519.1899369, "action": "type", "label": "You pay amount", "value": "0.001"}
+{"time": 1791347635.5289721, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791347677.331136, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791347874.8753548, "action": "type", "label": "You pay amount", "value": "0.001"}
+{"time": 1791347897.686839, "action": "tap", "label": "Perps accounts", "point": [540, 418]}
+{"time": 1791347931.225843, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791347947.5278761, "action": "tap", "label": "Spot accounts", "point": [258, 1954]}
+{"time": 1791347951.295625, "action": "tap", "label": "Open Spot", "point": [540, 2154]}
+{"time": 1791347970.200279, "action": "tap", "label": "Open SI Super Inu", "point": [540, 469]}
+{"time": 1791347979.656759, "action": "tap", "label": "Buy SI", "point": [286, 1111]}
+{"time": 1791347995.9692779, "action": "tap", "label": "Close trade sheet", "point": [961, 870]}
+{"time": 1791347999.2451131, "action": "tap", "label": "Open AUTON auton", "point": [540, 1309]}
+{"time": 1791348016.284802, "action": "tap", "label": "Sell AUTON", "point": [790, 1290]}
+{"time": 1791348023.284631, "action": "tap", "label": "Close trade sheet", "point": [961, 870]}
+{"time": 1791348057.6166961, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"utc": 1791348092.6233869, "action": "partial fixture swipe", "ready": "Do the swap to get 1.5 USDC", "bounds": [84, 1918, 996, 2080], "from": [162, 1999], "to": [342, 1999], "durationMs": 700, "bannerVerified": true}
+{"utc": 1791348099.0685241, "action": "full fixture swipe", "ready": "Do the swap to get 1.5 USDC", "bounds": [84, 1918, 996, 2080], "from": [162, 1999], "to": [918, 1999], "durationMs": 700, "bannerVerified": true}
+{"time": 1791348113.327181, "action": "type", "label": "You pay amount", "value": "0.02"}
+{"utc": 1791348119.232707, "action": "full fixture swipe", "ready": "Do the swap to get 3 USDC", "bounds": [84, 1918, 996, 2080], "from": [162, 1999], "to": [918, 1999], "durationMs": 700, "bannerVerified": true}
+{"time": 1791348169.6244018, "action": "tap", "label": "Show percentage shortcuts", "point": [385, 1150]}
+{"time": 1791348176.733258, "action": "tap", "label": "Use 50 percent of available SOL balance", "point": [385, 1150]}
+{"time": 1791348411.156217, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791348526.470165, "action": "type", "label": "You pay amount", "value": "0.01"}
+{"time": 1791348574.884544, "action": "tap", "label": "Reverse pair", "point": [540, 1318]}
+{"time": 1791348614.773897, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791348648.061974, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791348670.7777221, "action": "tap", "label": "Swap, choose wallet action", "point": [157, 352]}
+{"time": 1791348673.251285, "action": "tap", "label": "Send", "point": [540, 1695]}
+{"time": 1791348859.145347, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791349483.748329, "action": "type", "label": "You pay amount", "value": "0.001"}
+{"time": 1791349496.2980301, "action": "tap", "label": "Swap fees and route details", "point": [540, 1351]}
+{"time": 1791349509.024072, "action": "tap", "label": "Close Swap details", "point": [927, 673]}
+{"time": 1791349553.200515, "action": "tap", "label": "Swap fees and route details", "point": [540, 1351]}
+{"time": 1791349569.202539, "action": "tap", "label": "Swap fees and route details", "point": [540, 1351]}
+{"time": 1791349571.7424, "action": "tap", "label": "Close Swap details", "point": [927, 728]}
+{"time": 1791349601.067231, "action": "type", "label": "You pay amount", "value": ""}
+{"time": 1791349759.400408, "action": "tap", "label": "Wallet", "point": [880, 2221]}
+{"time": 1791350452.402473, "action": "type", "label": "You pay amount", "value": "0.01"}

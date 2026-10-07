@@ -225,14 +225,15 @@ export function SwapComposer({
     try { parseUiAmountToAtomic(c.amount, c.inputToken.decimals); }
     catch (failure) { amountError = failure instanceof Error ? failure.message : 'Enter a valid amount.'; }
   }
-  const error = c.phase === 'confirmed' ? null :
-    c.failure ?? amountError ?? c.balanceError ?? c.balancesError ?? c.quoteError ??
-    c.customSlippageError ?? c.pendingError;
   const pickerOpen = c.phase === 'picker';
   const order = c.reviewOrder ?? (!c.quoteExpired ? c.quote : null);
   const feeOrder = order?.kind === 'signable' ? order : null;
   const networkFees = feeOrder && [feeOrder.fees.signatureFeeLamports, feeOrder.fees.priorityFeeLamports, feeOrder.fees.rentFeeLamports].every((fee) => fee !== null)
     ? `${formatAtomicAmount(sumAtomicStrings(feeOrder.fees.signatureFeeLamports, feeOrder.fees.priorityFeeLamports, feeOrder.fees.rentFeeLamports), 9, 9)} SOL` : 'Unavailable';
+  const quotedProviderFee = feeOrder ? providerFee(feeOrder, c.inputToken, c.outputToken) : 'Unavailable';
+  const feeSummary = feeOrder
+    ? `Network ${networkFees}${quotedProviderFee === 'Unavailable' ? '' : ` · Provider ${quotedProviderFee}`}`
+    : 'Fees update with quote';
   const minimum = order ? formatAtomicAmount(order.minimumOutAmountAtomic, c.outputToken.decimals, 8) : '—';
   const numericRate = exchangeRateValue(order, c.inputToken, c.outputToken);
   const rate = numericRate === null ? '—' : numericRate.toLocaleString('en-US', { maximumSignificantDigits: 6 });
@@ -327,11 +328,12 @@ export function SwapComposer({
           accessibilityRole="button" accessibilityLabel="Swap fees and route details"
           accessibilityHint="Opens the swap details dialog"
           accessibilityState={{ disabled: c.interactionBusy, expanded: surface === 'details' }}>
-          <Text style={[styles.feeText, styles.feeSummary]}>{feeOrder ? `Network ${networkFees} · Provider ${providerFee(feeOrder, c.inputToken, c.outputToken)}` : 'Fees not quoted'}</Text>
+          <Text style={[styles.feeText, styles.feeSummary]}>{feeSummary}</Text>
           <Text style={styles.feeText}>Details ⌄</Text>
         </Pressable>
         </Animated.View> : null}
-        {error ? <Text selectable accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+        {/* Input validation and retry actions belong in the button. Keep raw
+            transaction/RPC diagnostics out of the composer. */}
         {c.simulationWarning ? <Text selectable accessibilityRole="alert" style={styles.inlineWarning}>{c.simulationWarning}</Text> : null}
         {c.phase === 'unknown' && c.resultMessage ? <Text selectable style={styles.inlineWarning}>{c.resultMessage}</Text> : null}
         {canConfirm ? <SwipeToConfirm key={c.reviewOrder?.requestId} receiveAmount={c.outputUi} outputToken={c.outputToken}
@@ -523,15 +525,6 @@ const styles = StyleSheet.create({
   statusLabel: { color: color.dim, fontSize: 11, textAlign: 'center' },
   successValue: { color: color.positive, fontSize: 12, fontWeight: '700', textAlign: 'center', fontVariant: ['tabular-nums'] },
   srStatus: { color: color.dim, fontSize: 10, lineHeight: 14 },
-  error: {
-    color: color.text,
-    backgroundColor: color.navy,
-    paddingVertical: 5,
-    borderRadius: 8,
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 19,
-  },
   feedback: { color: color.navy, paddingVertical: 8, fontSize: 14 },
   actionOption: {
     minHeight: 72,

@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated,
   Platform,
   Pressable,
   RefreshControl,
@@ -9,9 +8,14 @@ import {
   Text,
   View,
   useWindowDimensions,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
 } from 'react-native';
+import Animated, {
+  runOnJS,
+  useAnimatedReaction,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
 import type { Chain } from '@/features/chain/chain.contract';
 import { swapTheme as color } from '@/features/swap/swap.theme';
 import { WalletActionPanel } from '@/features/wallet/WalletActionPanel';
@@ -76,21 +80,26 @@ export function HomeWalletOverview({
   const [viewportHeight, setViewportHeight] = useState(0);
   const [composerContentHeight, setComposerContentHeight] = useState(0);
   const [panelCovered, setPanelCovered] = useState(false);
-  const scrollOffset = useRef(0);
   const coveredRef = useRef(false);
-  const scrollY = useRef(new Animated.Value(0)).current;
+  const scrollY = useSharedValue(0);
   const accountScrollRef = useRef<ScrollView | null>(null);
   const wasActive = useRef(active);
   const previousSurfaceVersion = useRef(surfaceVersion);
   const { width } = useWindowDimensions();
   const compactLayout = viewportHeight > 0 && composerContentHeight > viewportHeight - 120;
 
+  const handlePanelCoveredChange = useCallback((covered: boolean) => {
+    // The UI-thread reaction calls back only when the composer boundary changes.
+    if (covered !== coveredRef.current) {
+      coveredRef.current = covered;
+      setPanelCovered(covered);
+    }
+  }, []);
+
   useEffect(() => {
     if (!active || !wasActive.current || previousSurfaceVersion.current !== surfaceVersion) {
-      scrollY.stopAnimation();
-      scrollY.setValue(0);
+      scrollY.value = 0;
       accountScrollRef.current?.scrollTo({ y: 0, animated: false });
-      scrollOffset.current = 0;
       coveredRef.current = false;
       setPanelCovered(false);
     }
@@ -99,44 +108,43 @@ export function HomeWalletOverview({
   }, [active, surfaceVersion, scrollY]);
 
   const panelRest = Math.max(0, upperHeight - color.panelOverlap);
-  const panelTop = useMemo(() => scrollY.interpolate({
-    inputRange: [0, Math.max(panelRest, 1)],
-    outputRange: [panelRest, 0],
-    extrapolate: 'clamp',
-  }), [scrollY, panelRest]);
+  const panelStyle = useAnimatedStyle(() => {
+    const progress = Math.min(1, Math.max(0, scrollY.value / Math.max(panelRest, 1)));
+    return {
+      top: panelRest * (1 - progress),
+      borderTopLeftRadius: width * 0.14 * (1 - progress),
+      borderTopRightRadius: width * 0.14 * (1 - progress),
+    };
+  }, [panelRest, width]);
+
   // Account content travels with the rising panel before scrolling normally.
-  const panelLift = useMemo(() => scrollY.interpolate({
-    inputRange: [0, Math.max(panelRest, 1)],
-    outputRange: [0, panelRest],
-    extrapolate: 'clamp',
-  }), [scrollY, panelRest]);
-  const panelRadius = useMemo(() => scrollY.interpolate({
-    inputRange: [0, Math.max(panelRest, 1)],
-    outputRange: [width * 0.14, 0],
-    extrapolate: 'clamp',
-  }), [scrollY, panelRest, width]);
-  // Android can stop within a fractional pixel of the animated scroll boundary.
-  useEffect(() => {
-    const covered = panelRest > 0 && scrollOffset.current >= panelRest - 2;
-    coveredRef.current = covered;
-    setPanelCovered(covered);
+  const panelLiftStyle = useAnimatedStyle(() => {
+    // Keep the old interpolation's one-pixel range when panelRest is zero.
+    // This matters during the first layout pass and compact keyboard layouts.
+    const progress = Math.min(1, Math.max(0, scrollY.value / Math.max(panelRest, 1)));
+    return {
+      transform: [{
+        translateY: panelRest * progress,
+      }],
+    };
   }, [panelRest]);
-  const onAccountScroll = useMemo(() => Animated.event(
-    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-    {
-      useNativeDriver: false,
-      listener: (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-        scrollOffset.current = Math.max(0, event.nativeEvent.contentOffset.y);
-        const covered = panelRest > 0 && scrollOffset.current >= panelRest - 2;
-        // Only crossing the composer boundary needs a React render. Continuous
-        // scroll animation must not rerender the controller and account rows.
-        if (covered !== coveredRef.current) {
-          coveredRef.current = covered;
-          setPanelCovered(covered);
-        }
-      },
+
+  useAnimatedReaction(
+    () => panelRest > 0 && scrollY.value >= panelRest - 2,
+    (covered, previous) => {
+      // Android can stop within a fractional pixel of the animated scroll boundary.
+      if (covered !== previous) {
+        runOnJS(handlePanelCoveredChange)(covered);
+      }
     },
-  ), [scrollY, panelRest]);
+    [panelRest],
+  );
+
+  const onAccountScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollY.value = event.contentOffset.y;
+    },
+  });
   const actionActive = active && !panelCovered;
   const showSolana = solanaConnected && chains.includes('solana');
 
@@ -191,10 +199,8 @@ export function HomeWalletOverview({
       <Animated.View
         style={[
           styles.panel,
+          panelStyle,
           {
-            top: panelTop,
-            borderTopLeftRadius: panelRadius,
-            borderTopRightRadius: panelRadius,
             opacity: upperHeight > 0 ? 1 : 0,
           },
         ]}
@@ -239,7 +245,7 @@ export function HomeWalletOverview({
               ))}
             </View>
           </View>
-          <Animated.View style={[styles.accounts, { paddingBottom: 24 + panelRest, transform: [{ translateY: panelLift }] }]}>
+          <Animated.View style={[styles.accounts, { paddingBottom: 24 + panelRest }, panelLiftStyle]}>
             {dormantNotices}
             {showSolana ? (
               <>

@@ -2,14 +2,14 @@
 
 ## Start here for remote development
 
-Read [HANDOFF.md](HANDOFF.md) for GitHub references and fetch/extraction instructions that work on a VPS without the original laptop or a local ZIP.
+Read [HANDOFF.md](HANDOFF.md) for published references and fetch/extraction instructions that work from a fresh checkout or VPS.
 
 | Scope | Current reference |
 | --- | --- |
 | Shared shell, Feed and Apps (#301–#303) | `index.html`, `home.css`, `home.js` |
 | Wallet and Swap (#304–#305) | `wallet-inline.html`, `wallet-inline.css`, `wallet-inline.js` |
 
-The Wallet inside `index.html`, its older Swap sheet, and the A/B/C Swap alternatives are historical. Their files remain so reference links resolve; they are not the implementation target for #304/#305. Use the latest live GitHub issue for acceptance scope. All HTML content remains illustrative and non-executing.
+The Wallet inside `index.html`, its older Swap sheet, and the A/B/C Swap alternatives are historical. Use `wallet-inline.*` for the approved Wallet direction and the latest issue completion note for native scope. All HTML financial data remains illustrative and non-executing.
 
 Open `index.html`. This is the selected HTML prototype. Earlier Home concepts, screenshots and temporary design scripts have been removed. Three new Swap explorations are available in `swap-concepts.html`; the selected mock keeps its approved Swap while these alternatives are reviewed. This work does not implement the Expo screens or connect live services.
 
@@ -72,13 +72,33 @@ Wallet's Swap action now opens a bottom sheet over the mounted Wallet, with a di
 
 ### Wallet with inline Swap
 
-The latest experiment is `wallet-inline.html`, linked as **Try Wallet with inline Swap** from `index.html`. It takes the token-left/amount-right hierarchy from C and places the action directly on Wallet in place of the large total balance. The action heading and default Swap card are approximately 258px high by their CSS sizing, about 31% of the 844px reference screen; rendering has not been measured. Yellow `#FFD166` runs across the full width from the header through the swap and portfolio area, ending at the account switcher. The dark navy working card stays inset. The header wordmark, icons, heading, quote details and portfolio use navy on yellow; card amounts use soft white with secondary blue-white labels. Rate, editable slippage and minimum received remain immediately below the card.
+The existing `wallet-inline.html` remains the Wallet / Swap reference named by [issue #305](https://github.com/b-bhu/myboon/issues/305), with its existing `wallet-inline.css`, `wallet-inline.js` and `assets/wordmark.png`. This October 7 local design iteration updates those files in place; it does not create another HTML mock or change the native app. The published immutable handoff remains the earlier snapshot.
 
-Swap is the default. A single pointer click on Reverse waits 300ms before reversing; a second within that window cancels the reversal and opens Swap / Send / Receive / Transfer without clearing the amount. Keyboard activation reverses immediately. The visible action-name menu opens the same choices, so the gesture is optional. Drafts survive action changes. Send adds a recipient address, Receive shows account/address information, and Transfer uses source/destination accounts with a USDC amount. These are local sample forms and non-executing reviews; address validation is format-only and not chain validation.
+The token-left / amount-right composer retains the yellow `#FFD166` upper section and navy `#031F2C` working card. Both wallet balances sit below their tokens as numbers with three decimal places. You pay alone has **Max · %** beside its balance. Clicking % reveals **50% · 25% · Close** towards the right, without moving the balance or adding a row; closing restores the % control. These use the existing exact-decimal fixture helpers and keep the 0.005 SOL reserve.
 
-The portfolio total is a compact row that opens account details. Below it, the entire navy markets panel overlaps the yellow section by 24px and has 14% top-left and top-right corner radii with a soft upward shadow. The Spot / Perps / Meteora control sits inside this panel, centered at 80% width, with a 26px outer radius and 20px button radii. A separate inner tabpanel updates the market contents while keeping the account controls mounted. The selected item is a filled yellow pill. Spot shows markets and holdings totaling $8,420; Perps shows Phoenix/Pacifica positions and $1,650 of account equity; Meteora shows two liquidity positions totaling $2,412.56. Rows open details. A Spot detail can load that asset into Swap; a Perps detail can open Transfer for the corresponding account. The combined Solana total is $12,482.56, with Polygon shown separately. Feed and Apps open the selected reference screens, and their Wallet navigation returns to this experiment when entered from it.
+Rate, Auto / fixed / custom slippage, and minimum received now sit inside the composer above the swipe. Rate reads **1 [pay-token icon] = rate [receive-token icon]**, and minimum received uses the receive-token icon. Accessible labels retain the full token symbols. The separate review modal, outer quote strip, Portfolio / Solana row, and Solana badge beside Swap are removed. Fees remain explicitly unquoted in this fixture. A swipe or keyboard confirmation simulates approval, pending, declined, and success within the same control; no API, wallet, signing, or submission service is called.
 
-The experiment supports `?embed=1`, reduced motion, keyboard-operated account tabs, and dialog focus trapping/return. Its HTML, CSS and JS are isolated in `wallet-inline.*`. No native app implementation or wallet execution is connected.
+Swap stays in place while the account panel scrolls over it. The panel's upper corners progressively flatten to zero as it reaches the fixed header. The tabs travel with the panel, then pin under the header; bottom navigation stays in place. Covered Swap controls are removed from keyboard/accessibility focus at the fully raised position. Returning via Wallet restores the compose view.
+
+The existing Spot market rows, Phoenix / Pacifica position details, Meteora pool details, token search, account/profile/portfolio dialogs, dialog focus handling, Home navigation, and `?embed=1` integration remain. Send, Receive and Transfer now show Coming soon and keep Swap selected with its draft. Account-tab changes do not reset the draft. A single reverse clears the amount as before; double-tap opens the action menu without reversing. The mock's custom-slippage ceiling remains a fixture constraint, not a production rule.
+
+After a completed sample swap, both amounts stay visible and the updated balances remain. The success control stays disabled until the user edits the amount, applies a balance shortcut, or saves slippage; that interaction returns it to the ready state and recalculates the quote. Editing also clears the previous success announcement. The control does not reset or submit again automatically.
+
+The follow-up spacing adjustment brings the Max / dot / % text roughly 50% closer while preserving separate 44 px touch targets. `node --check docs/mockups/home-redesign/wallet-inline.js` and `node /tmp/myboon-wallet-success-check.cjs` passed; the latter uses a DOM stub to check retained amounts, edit-to-ready, refreshed output, duplicate prevention and a second sample swap. The follow-up has not been visually rechecked: Metro on 8081 is stopped and browser automation blocks file URLs. No server was launched. Screenshots below predate this spacing adjustment.
+
+#### Browser verification — October 7, 2026
+
+`node --check docs/mockups/home-redesign/wallet-inline.js` passed. The canonical files were served through the already-running Metro server; no server was launched or restarted.
+
+- 320 × 800, 360 × 800, and 390 × 844: no page/composer horizontal overflow; two token icons in the rate and one in minimum received.
+- At 320 px, expanded balance shortcuts stay on one row with 44 × 44 px buttons. The balance position is unchanged when expanding. Receive has no shortcuts.
+- 50%, 25%, and Max resolve to 9.9975, 4.99875, and 19.995 SOL respectively, from the unchanged 20 SOL fixture and reserve. Collapse restores focus to %.
+- At 360 px, the composer stays at y=104 while the account panel moves from y=487 / 50.4 px corners, through y=287 / 26.9 px corners, to the header at y=58 / 0 px corners. Tabs move with it and remain reachable. An early sticky-tab placement defect was repaired and retested in the browser.
+- Partial swipe cancels. Full swipe disables repeat confirmation, then shows pending and success in the same control; fixture balances update to 18.000 SOL / 5,058.440 USDC for the 2 SOL example.
+- Keyboard confirmation reaches declined without changing balances, allows retry, and keeps repeat confirmation disabled while pending. Feed navigation returns to the same `wallet-inline.html` through the existing Home link.
+- Send / Receive / Transfer preserve the 0.1 SOL draft. Transfer from an expanded Perps detail returns to visible Coming soon feedback with that same draft. The existing Meteora SOL / USDC detail still opens.
+
+Screenshots are in `evidence/wallet-inline-2026-10-07/`. These are rendered HTML mock checks, not native device verification. Native keyboard, wallet approval, actual execution/recovery, and production quote/slippage behavior are unchanged and outside this design pass. Local review URL: `http://localhost:8081/wallet-design-preview-305/wallet-inline.html`; direct file opening also works for the user. The ignored Metro preview directory contains copies of the existing reference files only.
 
 ### Earlier bottom-sheet alternatives
 
@@ -106,7 +126,7 @@ Files: `index.html` (review frame and app shell), `home.css` (selected design), 
 
 ## Verification
 
-The inline Wallet experiment passed scoped JavaScript syntax, static IDs/labels/local-link checks and offline fixture/state checks. These cover quote/minimum precision, balance and fee-reserve limits, single/double-tap distinction, unchanged amounts when opening the action menu, token collision, all four action modes, saved Swap drafts, Send/Transfer validation, non-executing reviews, dialog inert cleanup, account tabs and portfolio totals. Checks use a document stub, not a layout engine. Its rendered layout, keyboard overlap and touch timing still need visual/device review; local-file browser automation remains blocked. No server or screenshots were created.
+Earlier inline Wallet checks, before the October 7 iteration above, passed scoped JavaScript syntax, static IDs/labels/local-link checks and offline fixture/state checks. These cover quote/minimum precision, balance and fee-reserve limits, single/double-tap distinction, unchanged amounts when opening the action menu, token collision, all four action modes, saved Swap drafts, Send/Transfer validation, non-executing reviews, dialog inert cleanup, account tabs and portfolio totals. Checks use a document stub, not a layout engine. Its rendered layout, keyboard overlap and touch timing still need visual/device review; local-file browser automation remains blocked. No server or screenshots were created.
 
 The Wallet heading removal passed JavaScript syntax and scoped markup/spacing checks. All three new Swap alternatives passed script execution and fixture checks for quote/minimum precision, invalid amounts, balance limits, the SOL fee reserve and reversed pairs. Agent interaction checks also covered token selection/search, balance shortcuts, slippage, review and modal close/reopen/focus behavior. The comparison and all three alternatives passed checks for unique IDs, label references, local dependencies and dialog markup. These are offline checks with a lightweight document stub; rendered layout and animation remain unverified because local-file browser automation is blocked. No server, install or screenshots were involved.
 

@@ -160,7 +160,16 @@ export function createNativeSwapFixture(
     refreshCalls: 0,
     walletSheetCalls: 0,
     pendingConfirmed: false,
-    orders: new Map<string, { input: string; output: string }>(),
+    pendingRequestId: null as string | null,
+    balances: {
+      [NATIVE_FIXTURE_SOL]: '3000000000',
+      [NATIVE_FIXTURE_USDC]: '1000000000',
+    } as Record<string, string>,
+    appliedOrders: new Set<string>(),
+    orders: new Map<
+      string,
+      { inputMint: string; outputMint: string; input: string; output: string }
+    >(),
   };
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((listener) => listener());
@@ -170,6 +179,18 @@ export function createNativeSwapFixture(
   ];
   const disconnected = fixtureCase === 'guest' || fixtureCase === 'evm-only';
   const balancesUnavailable = fixtureCase === 'balances-failed';
+  const applyBalanceMovement = (requestId: string) => {
+    if (state.appliedOrders.has(requestId)) return;
+    const order = state.orders.get(requestId);
+    if (!order) return;
+    state.balances[order.inputMint] = (
+      BigInt(state.balances[order.inputMint] ?? '0') - BigInt(order.input)
+    ).toString();
+    state.balances[order.outputMint] = (
+      BigInt(state.balances[order.outputMint] ?? '0') + BigInt(order.output)
+    ).toString();
+    state.appliedOrders.add(requestId);
+  };
   const wallet = {
     connected: !disconnected,
     address: disconnected ? null : walletAddress,
@@ -227,6 +248,8 @@ export function createNativeSwapFixture(
     const response = responseFor(request, transaction, expiresAt, requestId);
     if (response.kind === 'signable') {
       state.orders.set(requestId, {
+        inputMint: response.inputMint,
+        outputMint: response.outputMint,
         input: response.inAmountAtomic,
         output: response.outAmountAtomic,
       });
@@ -251,6 +274,7 @@ export function createNativeSwapFixture(
       };
     }
     if (fixtureCase === 'unknown-recovery') {
+      state.pendingRequestId = request.requestId;
       return {
         outcome: 'unknown',
         signature: 'fixture-signature',
@@ -263,6 +287,7 @@ export function createNativeSwapFixture(
         outputAmountResultAtomic: null,
       };
     }
+    applyBalanceMovement(request.requestId);
     return {
       outcome: 'confirmed',
       signature: 'fixture-signature',
@@ -286,7 +311,7 @@ export function createNativeSwapFixture(
       if (fixtureCase === 'balances-loading') await new Promise((resolve) => setTimeout(resolve, 1_500));
       if (balancesUnavailable && state.balanceCalls === 1)
         throw new Error('Fixture balances are unavailable.');
-      return { [NATIVE_FIXTURE_SOL]: '3000000000', [NATIVE_FIXTURE_USDC]: '1000000000' };
+      return { ...state.balances };
     },
     createSwapOrder: createOrder,
     executeSwap: execute,
@@ -328,6 +353,7 @@ export function createNativeSwapFixture(
     walletAddress,
     setPendingConfirmed: () => {
       state.pendingConfirmed = true;
+      if (state.pendingRequestId) applyBalanceMovement(state.pendingRequestId);
       emit();
     },
     subscribe: (listener) => {

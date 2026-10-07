@@ -49,6 +49,64 @@ test('explicit review validates/simulates, approval executes once, and confirmed
   assert.deepEqual(await h.fixture.store.list(h.fixture.wallet.address!), []);
 });
 
+test('confirmation keeps the entered amount and completed receive visible after balance refresh', async (t) => {
+  const h = await createControllerFixture();
+  t.after(() => h.dispose());
+  await h.run((c) => c.setManualAmount('1'));
+  await h.run((c) => c.prepareReview());
+  const reviewedRequestId = h.current.reviewOrder?.requestId;
+  const reviewedReceive = h.current.outputUi;
+  const reviewedMinimum = h.current.receiveAtLeast;
+
+  h.fixture.balances = { [fixtureSol]: '1500000000', [fixtureUsdc]: '1200000000' };
+  await h.run((c) => c.confirmTrade());
+
+  assert.equal(h.current.phase, 'confirmed');
+  assert.equal(h.current.amount, '1');
+  assert.equal(h.current.reviewOrder?.requestId, reviewedRequestId);
+  assert.equal(h.current.outputUi, reviewedReceive);
+  assert.equal(h.current.receiveAtLeast, reviewedMinimum);
+  assert.equal(h.current.inputBalanceAtomic, '1500000000');
+  assert.equal(h.fixture.calls.sign, 1);
+  assert.equal(h.fixture.calls.execute, 1);
+  await h.run((c) => c.confirmTrade());
+  assert.equal(h.fixture.calls.sign, 1);
+  assert.equal(h.fixture.calls.execute, 1);
+});
+
+test('editing a confirmed amount creates a fresh order and waits for the next confirmation', async (t) => {
+  const h = await createControllerFixture();
+  t.after(() => h.dispose());
+  await h.run((c) => c.setManualAmount('1'));
+  await h.run((c) => c.prepareReview());
+  const firstRequestId = h.current.reviewOrder?.requestId;
+  await h.run((c) => c.confirmTrade());
+  assert.equal(h.current.phase, 'confirmed');
+  assert.equal(h.fixture.calls.sign, 1);
+  assert.equal(h.fixture.calls.execute, 1);
+
+  await h.run((c) => c.setManualAmount('2'));
+  assert.equal(h.current.phase, 'compose');
+  assert.equal(h.current.reviewOrder, null);
+  assert.equal(h.current.resultMessage, null);
+  assert.equal(h.fixture.calls.sign, 1);
+  assert.equal(h.fixture.calls.execute, 1);
+  await h.settle(470);
+  assert.equal(h.current.quote?.inAmountAtomic, '2000000000');
+
+  await h.run((c) => c.prepareReview());
+  assert.equal(h.current.phase, 'reviewing');
+  assert.notEqual((h.current.reviewOrder as SwapOrderResponse | null)?.requestId, firstRequestId);
+  assert.equal(h.fixture.calls.orders.at(-1)?.amountAtomic, '2000000000');
+  assert.equal(h.fixture.calls.sign, 1);
+  assert.equal(h.fixture.calls.execute, 1);
+  await h.run((c) => c.confirmTrade());
+  assert.equal(h.current.phase, 'confirmed');
+  assert.equal(h.current.amount, '2');
+  assert.equal(h.fixture.calls.sign, 2);
+  assert.equal(h.fixture.calls.execute, 2);
+});
+
 test('same-tick review blocks reverse/input and leaving Wallet discards a late preparation', async (t) => {
   const h = await createControllerFixture();
   t.after(() => h.dispose());
@@ -132,6 +190,39 @@ test('invalidation makes an old confirmation callback unable to sign', async (t)
   assert.equal(h.current.reviewOrder, null);
 });
 
+test('a pending status check cannot sign a visible review while reconciliation is unresolved', async (t) => {
+  const h = await createControllerFixture();
+  t.after(() => h.dispose());
+  await h.run((c) => c.setManualAmount('1'));
+  await h.run((c) => c.prepareReview());
+  h.fixture.storageReadError = new Error('Fixture pending status is still unavailable');
+  await h.run((c) => c.reconcilePending());
+  assert.equal(h.current.phase, 'reviewing');
+  assert.equal(h.current.pendingReady, false);
+  const review = h.current.reviewOrder;
+  await h.run((c) => c.confirmTrade());
+  assert.equal(h.current.reviewOrder?.requestId, review?.requestId);
+  assert.equal(h.fixture.calls.sign, 0);
+  assert.equal(h.fixture.calls.execute, 0);
+});
+
+test('a stale review callback cannot sign after a new prepared order replaces it', async (t) => {
+  const h = await createControllerFixture();
+  t.after(() => h.dispose());
+  await h.run((c) => c.setManualAmount('1'));
+  await h.run((c) => c.prepareReview());
+  const oldConfirm = h.current.confirmTrade;
+  await h.run((c) => c.setManualAmount('2'));
+  await h.run((c) => c.prepareReview());
+  assert.equal(h.current.phase, 'reviewing');
+  const currentRequestId = h.current.reviewOrder?.requestId;
+  await h.run(() => oldConfirm());
+  assert.equal(h.current.phase, 'reviewing');
+  assert.equal(h.current.reviewOrder?.requestId, currentRequestId);
+  assert.equal(h.fixture.calls.sign, 0);
+  assert.equal(h.fixture.calls.execute, 0);
+});
+
 test('balance failure and fee reserve block review; retry keeps safe input', async (t) => {
   const h = await createControllerFixture();
   t.after(() => h.dispose());
@@ -199,6 +290,7 @@ test('unknown execution persists reviewed parameters across navigation and recon
   await h.run((c) => c.prepareReview());
   await h.run((c) => c.confirmTrade());
   assert.equal(h.current.phase, 'unknown');
+  assert.equal(h.current.reviewOrder?.requestId, h.current.unknownRequestId);
   const before = await h.fixture.store.list(h.fixture.wallet.address!);
   assert.equal(before.length, 1);
   await h.update({ active: false });
@@ -208,6 +300,7 @@ test('unknown execution persists reviewed parameters across navigation and recon
     c.reversePair();
     c.setManualAmount('2');
   });
+  assert.equal(h.current.phase, 'unknown');
   assert.equal(h.fixture.calls.execute, 1);
   assert.equal(h.current.amount, '1');
   assert.deepEqual(await h.fixture.store.list(h.fixture.wallet.address!), before);
