@@ -131,6 +131,23 @@ The 5 October request at **12:22 IST** returned a subscription-past-due HTTP 403
 
 These results do not establish a clean historical full-suite run, broad Jev accuracy, universal article completion or production cost savings. The 3 October Jev/Hermes comparisons used the preceding contract and should not be presented as the new placement/relationship evaluation.
 
+## 8 October operational handoff
+
+The hosted Supabase database is unavailable; seven online PM2 entries do not
+mean the pipelines are completing work. Use the [8 October outage record](2026_10_08_database_outage_recovery.md)
+for dependency protection, the verified backup, exact recovery eligibility and
+remaining live proof. Temporary storage failures now wait instead of becoming
+permanent entity-resolution failures. Research must pass both configured
+storage readers before claiming articles. Retained identity/source failures
+and unknown paid outcomes remain separate investigations.
+
+Do not restart `myboon-api`. The API's current incident baseline differs from
+the dated 5–7 October snapshots; use the outage record for that identity. All
+earlier counts, PIDs and successful runs in this handoff are historical evidence.
+The 6–7 October changes are committed on `main`; they are no longer an
+uncommitted delivery dependency. Database recovery and a fresh accepted-item
+check remain necessary before claiming healthy operation.
+
 ## Remaining work inside this boundary
 
 1. Check overnight progress against the 6 October cleanup baseline. The source fixes are included in the cleanup commit on `main`, the candidate-resolution migration is applied, and News intake/Entity Manager/Research have loaded the fixes. Do not reapply or bulk-recover historical failures. Ollama is primary and automatic GPT fallback stays off. Exclude `myboon-api` from every process action.

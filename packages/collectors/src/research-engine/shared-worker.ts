@@ -68,7 +68,7 @@ import { durablePrimarySynthesis, type PrimarySynthesisPolicy } from './durable-
 import { durableArticleEntityProposal } from './durable-article-proposal'
 import type { ClassificationGateway } from '../inference-gateway'
 import { ArticleResearchHold, prepareArticlePlacement, articleLookupTerms } from './article-placement'
-import type { ArticleResearchContext } from '../research-gate/managed-context-reader'
+import { isTransientContextFailure, type ArticleResearchContext } from '../research-gate/managed-context-reader'
 import type { D2AssignmentLimitsSnapshot } from './assignment-budget'
 import { capturedObservationDigest, resolveKnownObservation, assertKnownObservationResolution } from './known-observation'
 import type { BoundedStandardSearch, StandardSearchPlan } from './search-connector'
@@ -222,6 +222,16 @@ export interface SharedResearchV4Options {
     classification: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
     contextReader(signal: Signal, work: ResearchWorkItem): EntityMemoryReader
   }
+}
+
+type ArticleContextReader = EntityMemoryReader & {
+  articleContext?(input?: { sourceUrl: string | null, terms: readonly string[] }): Promise<ArticleResearchContext>
+}
+
+interface PreparedArticleContext {
+  source: RetrievedEvidence
+  reader: ArticleContextReader
+  context: ArticleResearchContext
 }
 
 export interface ResearchRetrievalLimits {
@@ -733,16 +743,45 @@ export class SharedResearchWorker {
     }
     const preflight = await this.preflight(stage, store, lease, timing)
     if (preflight !== null) return preflight
-    if (!await this.beginAttempt(store, lease, 'synthesis_leased')) return leaseLost(stage, lease.work)
-
     const heartbeat = this.startHeartbeat(store, lease)
     try {
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
+      let articleContext: PreparedArticleContext | undefined
+      if (this.usesCapturedSourceWorkflow(lease.work)) {
+        try {
+          articleContext = await this.prepareArticleContext(signal!, lease, evidence)
+        } catch (error) {
+          if (error instanceof ArticleResearchHold && error.code === 'context_coverage_transient') {
+            return this.failWithoutExecution(store, lease, stage, articleHoldFailureCategory(error), errorMessage(error), timing, true)
+          }
+          // Permanent article holds retain the existing post-attempt behavior;
+          // only a dependency outage is allowed to leave the attempt untouched.
+        }
+      }
+      // The context read can outlive freshness, ownership, or the worker
+      // itself. Re-fence all of those conditions immediately before spending
+      // an attempt or creating any paid reservation.
+      if (!await heartbeat.check()) return leaseLost(stage, lease.work)
+      if (this.stopping) {
+        const released = await store.releaseLease({
+          ...leaseFence(lease), expectedStatus: 'synthesis_leased', targetStatus: 'synthesis_pending', now: this.nowIso(),
+        })
+        return released ? { kind: 'ownership_held', stage, sourceType: lease.work.sourceType, workId: lease.work.workId } : leaseLost(stage, lease.work)
+      }
+      const postContextPreflight = await this.preflight(stage, store, lease, timing)
+      if (postContextPreflight !== null) return postContextPreflight
+      if (this.stopping) {
+        const released = await store.releaseLease({
+          ...leaseFence(lease), expectedStatus: 'synthesis_leased', targetStatus: 'synthesis_pending', now: this.nowIso(),
+        })
+        return released ? { kind: 'ownership_held', stage, sourceType: lease.work.sourceType, workId: lease.work.workId } : leaseLost(stage, lease.work)
+      }
+      if (!await this.beginAttempt(store, lease, 'synthesis_leased')) return leaseLost(stage, lease.work)
       this.recordExecutionStarted(lease, stage, timing, lease.work.attemptCount + 1)
       const citableEvidenceIds = new Set(evidence.map((artifact) => artifact.evidenceId))
       const backgroundContext = this.discoverBackgroundContext(store, lease, citableEvidenceIds)
       this.recordBackgroundReuse(lease, backgroundContext)
-      const packet = await this.synthesizeWithV4({ store, lease, signal, evidence, backgroundContext,
+      const packet = await this.synthesizeWithV4({ store, lease, signal, evidence, backgroundContext, articleContext,
         stillOwnsLease: async () => await heartbeat.check() && this.mayExecuteWork(lease.work) })
       if (!await heartbeat.check()) return leaseLost(stage, lease.work)
       this.recordSynthesisSuccess(lease, packet, timing)
@@ -751,7 +790,7 @@ export class SharedResearchWorker {
     } catch (error) {
       return this.failAfterExecution(
         store, lease, stage, error instanceof ArticleResearchHold ? articleHoldFailureCategory(error) : error instanceof ResearchFollowupHold ? 'budget_exceeded' : failureCategory(error, stage),
-        errorMessage(error), error instanceof ResearchFollowupHold || error instanceof ArticleResearchHold ? false : retryable(error), timing,
+        errorMessage(error), error instanceof ArticleResearchHold ? articleHoldMayRetry(error) : error instanceof ResearchFollowupHold ? false : retryable(error), timing,
         error instanceof InferenceGatewayError && error.telemetry
           ? telemetryExecutionProvenance(error.telemetry)
           : undefined,
@@ -764,6 +803,7 @@ export class SharedResearchWorker {
   private async synthesizeWithV4(input: {
     store: SharedResearchWorkPort, lease: WorkLease, signal: Signal,
     evidence: RetrievedEvidence[], backgroundContext: RetrievedEvidenceArtifact[],
+    articleContext?: PreparedArticleContext,
     stillOwnsLease(): Promise<boolean>,
   }): Promise<ResearchPacket> {
     const { store, lease, signal, evidence } = input
@@ -907,6 +947,48 @@ export class SharedResearchWorker {
   }
 
   /**
+   * Article catalogue reads are dependency checks, not paid synthesis work.
+   * Resolve them before beginAttempt so a managed/legacy outage can wait
+   * without consuming the bounded execution-attempt budget.
+   */
+  private async prepareArticleContext(
+    signal: Signal,
+    lease: WorkLease,
+    evidence: readonly RetrievedEvidence[],
+  ): Promise<PreparedArticleContext | undefined> {
+    const source = latestArticleCapture(evidence)
+    if (!source) return undefined
+    const reader = this.v4?.article?.contextReader(signal, lease.work) as ArticleContextReader | undefined
+    if (!reader?.articleContext) return undefined
+    try {
+      const context = await reader.articleContext({ sourceUrl: source.finalUrl, terms: articleLookupTerms(signal) })
+      if (context.coverageFailures.length > 0 && context.coverageFailureKind === 'transient') {
+        throw new ArticleResearchHold(
+          'context_coverage_transient',
+          `Article placement is held while catalogue/history storage recovers: ${context.coverageFailures.join('; ')}`,
+        )
+      }
+      return { source, reader, context }
+    } catch (error) {
+      if (error instanceof ArticleResearchHold) throw error
+      if (isTransientContextFailure(error)) {
+        throw new ArticleResearchHold('context_coverage_transient', 'Article placement is held while catalogue/history storage recovers.')
+      }
+      // Keep a permanent reader failure as a held context so the synthesis
+      // path does not repeat the same unavailable lookup after beginAttempt.
+      return {
+        source,
+        reader,
+        context: {
+          candidates: [], historyByEntity: new Map(),
+          coverageFailures: [`Article context lookup failed: ${errorMessage(error)}`],
+          coverageFailureKind: 'permanent',
+        },
+      }
+    }
+  }
+
+  /**
    * Article prose uses the ordinary primary-synthesis reservation and result
    * reconciliation, but its request is prepared by Jev first. This prevents a
    * legacy novelty/reuse path from replacing placement or story decisions.
@@ -914,15 +996,15 @@ export class SharedResearchWorker {
   private async synthesizeArticleWithV4(input: {
     store: SharedResearchWorkPort, lease: WorkLease, signal: Signal,
     evidence: RetrievedEvidence[], backgroundContext: RetrievedEvidenceArtifact[],
+    articleContext?: PreparedArticleContext,
     stillOwnsLease(): Promise<boolean>,
   }, v4: SharedResearchV4Options): Promise<ResearchPacket> {
     if (!supportsResearchV4Store(input.store)) throw new Error('Article synthesis requires a durable V4 store')
     const articleStore = input.store
     if (!v4.article) throw new ArticleResearchHold('required_jev_disabled', 'Article synthesis is held because the required Jev article workflow is not configured.')
-    const source = latestArticleCapture(input.evidence)
-    const reader = v4.article.contextReader(input.signal, input.lease.work) as EntityMemoryReader & {
-      articleContext?(input?: { sourceUrl: string | null, terms: readonly string[] }): Promise<ArticleResearchContext>
-    }
+    const source = input.articleContext?.source ?? latestArticleCapture(input.evidence)
+    const reader = input.articleContext?.reader
+      ?? v4.article.contextReader(input.signal, input.lease.work) as ArticleContextReader
     if (!source || !reader.articleContext) throw new ArticleResearchHold('source_capture_missing', 'Article workflow requires immutable source capture and managed catalogue context.')
     const durableClassification = durableResearchClassification({
       gateway: v4.article.classification, store: articleStore,
@@ -934,7 +1016,8 @@ export class SharedResearchWorker {
       preparation = await prepareArticlePlacement({
         gateway: durableClassification, stableDecisionKey: input.lease.work.workId,
         signal: input.signal, sourceText: source.text,
-        context: await reader.articleContext({ sourceUrl: source.finalUrl, terms: articleLookupTerms(input.signal) }),
+        context: input.articleContext?.context
+          ?? await reader.articleContext({ sourceUrl: source.finalUrl, terms: articleLookupTerms(input.signal) }),
         proposeCreation: async () => (await durableArticleEntityProposal({
           store: articleStore, work: input.lease.work,
           assignmentPolicy: v4.assignmentPolicy,
@@ -1233,8 +1316,9 @@ export class SharedResearchWorker {
     category: FailureCategory,
     detail: string,
     timing: StageTiming,
+    mayRetry = false,
   ): Promise<SharedResearchRunOutcome> {
-    return this.transitionFailure(store, lease, stage, category, detail, false, false, timing)
+    return this.transitionFailure(store, lease, stage, category, detail, mayRetry, false, timing)
   }
 
   private async failAfterExecution(
@@ -1264,7 +1348,10 @@ export class SharedResearchWorker {
     const now = this.clock.now()
     const attempts = lease.work.attemptCount + (attemptBegan ? 1 : 0)
     const expired = Date.parse(lease.work.freshnessDeadline) <= now.getTime()
-    const kind = expired ? 'expired' : mayRetry && attempts < this.maxAttempts ? 'retry_wait' : 'dead_letter'
+    // A storage outage is independent of the provider execution budget. Keep
+    // the row retryable at the cap, while freshness still expires it normally.
+    const kind = expired ? 'expired' : mayRetry && (category === 'storage_transient' || attempts < this.maxAttempts)
+      ? 'retry_wait' : 'dead_letter'
     const nextAttemptAt = kind === 'retry_wait'
       ? new Date(now.getTime() + this.backoffMs(Math.max(1, attempts))).toISOString()
       : null
@@ -1802,8 +1889,13 @@ function failureCategory(error: unknown, stage: ResearchWorkerStage): FailureCat
 
 function articleHoldFailureCategory(error: ArticleResearchHold): FailureCategory {
   if (error.code === 'source_capture_missing' || error.code === 'source_input_too_large') return 'permanent_source_error'
+  if (error.code === 'context_coverage_transient') return 'storage_transient'
   if (error.code === 'required_jev_disabled') return 'provider_unavailable'
   return 'entity_resolution_failed'
+}
+
+function articleHoldMayRetry(error: ArticleResearchHold): boolean {
+  return error.code === 'context_coverage_transient'
 }
 
 function retryable(error: unknown): boolean {

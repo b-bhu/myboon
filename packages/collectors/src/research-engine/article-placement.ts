@@ -77,7 +77,12 @@ export async function prepareArticlePlacement(input: {
     if (input.context.findExactEntities) {
       let exact: ArticleResearchContext['candidates']
       try { exact = await input.context.findExactEntities([creationProposal.name, ...creationProposal.aliases]) }
-      catch { throw new ArticleResearchHold('context_coverage_unavailable', 'Exact entity identity lookup failed; no creation is allowed without complete identity coverage.') }
+      catch {
+        throw new ArticleResearchHold(
+          input.context.coverageFailureKind === 'transient' ? 'context_coverage_transient' : 'context_coverage_unavailable',
+          'Exact entity identity lookup failed; no creation is allowed without complete identity coverage.',
+        )
+      }
       assertContextCoverage(input.context)
       if (exact.length > 0) {
         candidates = rankEntityCandidates([...exact, ...candidates], [creationProposal.name, ...creationProposal.aliases])
@@ -133,7 +138,7 @@ export async function prepareArticlePlacement(input: {
 }
 
 export class ArticleResearchHold extends Error {
-  constructor(readonly code: 'entity_resolution_no_match' | 'entity_resolution_uncertain' | 'required_jev_disabled' | 'source_capture_missing' | 'source_input_too_large' | 'decision_state_too_large' | 'context_coverage_unavailable' | 'incompatible_article_checkpoint', message: string) { super(message); this.name = 'ArticleResearchHold' }
+  constructor(readonly code: 'entity_resolution_no_match' | 'entity_resolution_uncertain' | 'required_jev_disabled' | 'source_capture_missing' | 'source_input_too_large' | 'decision_state_too_large' | 'context_coverage_unavailable' | 'context_coverage_transient' | 'incompatible_article_checkpoint', message: string) { super(message); this.name = 'ArticleResearchHold' }
 }
 
 async function membership(
@@ -345,7 +350,10 @@ function decisionCandidates(candidates: ArticleResearchContext['candidates']): A
 
 function assertContextCoverage(context: ArticleResearchContext): void {
   if (context.coverageFailures.length > 0) {
-    throw new ArticleResearchHold('context_coverage_unavailable', `Article placement is held because catalogue/history coverage failed: ${context.coverageFailures.join('; ')}`)
+    throw new ArticleResearchHold(
+      context.coverageFailureKind === 'transient' ? 'context_coverage_transient' : 'context_coverage_unavailable',
+      `Article placement is held because catalogue/history coverage failed: ${context.coverageFailures.join('; ')}`,
+    )
   }
 }
 

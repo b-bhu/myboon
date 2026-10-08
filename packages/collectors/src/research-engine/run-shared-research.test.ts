@@ -651,6 +651,76 @@ test('recovery resumes expired leases and due retries once without inflating att
   }
 })
 
+test('article runtime checks both storage readers and waits between failed probes before recovering', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'article-context-availability-'))
+  const path = join(dir, 'news.sqlite')
+  new SqliteSignalPlatformStore(path, 'news').close()
+  let now = Date.parse('2026-10-08T12:00:00Z')
+  let healthy = false
+  let managedReads = 0
+  let legacyReads = 0
+  let providerCalls = 0
+  let live: SharedResearchRunnerRuntime | undefined
+  try {
+    const config = loadSharedResearchRunnerConfig({
+      NEWS_SQLITE_PATH: path,
+      FEED_V3_CUTOVER_POLICY: 'phase1',
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+      ENTITY_V4_ARTICLE_WORKFLOW_ENABLED: '1', ENTITY_V4_SOURCE_OWNERSHIP_ENABLED: '1',
+      ENTITY_V4_ACTIVE_SOURCES: 'news', ENTITY_V4_POLICY_VERSION: 'article.test.v1',
+      MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL: 'postgres://research:fixture@localhost/test',
+      ENTITY_V4_SYNTHESIS_POLICY_VERSION: 'synthesis.test.v1', ENTITY_V4_SYNTHESIS_MAX_INPUT_TOKENS: '16000',
+      ENTITY_V4_SYNTHESIS_MAX_OUTPUT_TOKENS: '4000', ENTITY_V4_SYNTHESIS_MAX_COST_USD_MICROS: 'unknown',
+      ENTITY_V4_ASSIGNMENT_POLICY_VERSION: 'assignment.test.v1', ENTITY_V4_ASSIGNMENT_MAX_PROVIDER_CALLS: '20',
+      ENTITY_V4_ASSIGNMENT_MAX_INPUT_TOKENS: '64000', ENTITY_V4_ASSIGNMENT_MAX_OUTPUT_TOKENS: '16000',
+      ENTITY_V4_ASSIGNMENT_MAX_COST_USD_MICROS: 'unknown',
+    })
+    live = createLiveSharedResearchRuntime(config, {
+      runtimeControl: { read: defaultRuntimeControl },
+      workerClock: { now: () => new Date(now), setInterval: () => 0, clearInterval: () => undefined },
+      createClassificationRuntime: () => ({
+        gateway: { classify: async () => { providerCalls += 1; throw new Error('must not call a provider') }, recordPolicyOutcome: async () => undefined },
+        close: () => undefined,
+      }),
+      createManagedContext: () => ({
+        researchContext: async () => { throw new Error('probe must use article context') },
+        articleContext: async input => {
+          managedReads += 1
+          assert.equal(input.identityOnly, true)
+          assert.equal(input.limit, 1)
+          if (!healthy) throw new Error('Connection terminated due to connection timeout')
+          return { entities: [], items: [], digest: 'fixture', watermark: null, truncated: false, candidateTruncated: false }
+        },
+        close: async () => undefined,
+      }),
+      createLegacyReader: () => ({
+        entityIdsForSourceRef: async () => [], entitiesByIds: async () => [], recentMemories: async () => [],
+        searchEntities: async (_terms, limit, options) => {
+          legacyReads += 1
+          assert.equal(limit, 1)
+          assert.equal(options?.exactOnly, true)
+          if (!healthy) throw new Error('Could not query the database for the schema cache. Retrying.')
+          return []
+        },
+      }),
+    })
+    assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
+    assert.equal(live.status.articleContextAvailability?.available, false)
+    healthy = true
+    assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
+    assert.deepEqual([managedReads, legacyReads], [1, 1])
+    now += 30_000
+    assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
+    assert.equal(live.status.articleContextAvailability?.available, true)
+    assert.deepEqual([managedReads, legacyReads, providerCalls], [2, 2, 0])
+  } finally {
+    await live?.stop()
+    live?.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function researchWork(
   workId: string,
   depth: ResearchWorkItem['researchDepth'],

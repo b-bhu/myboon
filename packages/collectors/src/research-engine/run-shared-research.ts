@@ -74,6 +74,7 @@ import {
   type StandardSearchStatusSnapshot,
 } from './standard-search-configuration'
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
+import { ArticleContextAvailabilityGate, type ArticleContextAvailabilitySnapshot } from './context-availability'
 import {
   AtomicResearchRuntimeStatusFile,
   awaitDrainWithin,
@@ -150,6 +151,7 @@ export interface SharedResearchRuntimeStatus {
     failureCategory: InferenceTelemetry['failureCategory']
   }
   deepEnabled: boolean
+  articleContextAvailability?: ArticleContextAvailabilitySnapshot
   deep?: DeepResearchRuntimeSnapshotV1
   v4?: {
     configured: boolean
@@ -394,6 +396,7 @@ export function createLiveSharedResearchRuntime(
   let standardSearch: ReturnType<typeof createConfiguredStandardSearch>
   let gatewayRuntime: ReturnType<typeof createConfiguredInferenceGateway>
   const providerObservation = new ProviderObservation()
+  let articleContextAvailability: ArticleContextAvailabilityGate | null = null
   const runtimeControl = options.runtimeControl ?? new FileRuntimeControlStore(config.runtimeControlPath)
   // A malformed or temporarily unreadable durable control file is a fail-closed
   // claim gate, not a process-fatal condition. The outer loop keeps polling so
@@ -402,7 +405,11 @@ export function createLiveSharedResearchRuntime(
     const observed = readResearchRuntimeControl(runtimeControl)
     return !observed.unreadable && observed.control.desiredState === 'running'
   }
+  const requiresArticleContext = (source: Signal['sourceType']) => v4Configuration.articleWorkflowEnabled
+    && (source === 'news' || source === 'polymarket')
+    && v4Configuration.activeSources.has(source)
   const sourceClaimsEnabled = (source: Signal['sourceType']) => claimsEnabled()
+    && (!requiresArticleContext(source) || articleContextAvailability?.claimsAllowed === true)
     && ((source !== 'news' && source !== 'polymarket') || sourceOwnershipAllows({
       databasePath: paths.get(source)!, source, domain: 'research', owner: 'shared', env: config.env,
     }))
@@ -452,6 +459,7 @@ export function createLiveSharedResearchRuntime(
       }))),
       providerObservation: providerObservation.snapshot(),
       deepEnabled: config.deepEnabled,
+      ...(articleContextAvailability ? { articleContextAvailability: articleContextAvailability.snapshot() } : {}),
       deep: deepRuntime?.status ?? deepResearchRuntimeSnapshot({ enabled: false }),
       v4: {
         configured: v4Configuration.noveltyEnabled || v4Configuration.researchReuseEnabled || v4Configuration.followupEnabled || v4Configuration.articleWorkflowEnabled,
@@ -526,8 +534,33 @@ export function createLiveSharedResearchRuntime(
           const url = env.SUPABASE_URL?.trim()
           const key = env.SUPABASE_SERVICE_ROLE_KEY?.trim()
           if (!url || !key) throw new Error('Enabled V4 internal Research context requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY')
-          return new SupabaseEntityMemoryReader(createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }))
+          return new SupabaseEntityMemoryReader(createClient(url, key, {
+            auth: { persistSession: false, autoRefreshToken: false },
+            global: { fetch: (input, init) => fetch(input, {
+              ...init,
+              signal: init?.signal
+                ? AbortSignal.any([init.signal, AbortSignal.timeout(15_000)])
+                : AbortSignal.timeout(15_000),
+            }) },
+          }))
         }))(config.env)
+      }
+      if (v4Configuration.articleWorkflowEnabled) {
+        const managed = managedResearchContext
+        const legacy = legacyReader
+        articleContextAvailability = new ArticleContextAvailabilityGate(async () => {
+          if (!managed?.articleContext || !legacy?.searchEntities) throw new Error('Article context dependencies are not configured')
+          const source = [...v4Configuration.activeSources][0]
+          if (!source) throw new Error('Article context source is not configured')
+          const labels = ['__myboon_database_availability_probe__']
+          // Probe both actual readers without loading article history or using
+          // a privileged/admin connection. Wait for both bounded requests.
+          const results = await Promise.allSettled([
+            managed.articleContext({ source, sourceRefs: [], labels, identityOnly: true, limit: 1, historyMode: 'targeted' }),
+            legacy.searchEntities(labels, 1, { exactOnly: true }),
+          ])
+          if (results.some(result => result.status === 'rejected')) throw new Error('Article context storage is unavailable')
+        }, options.workerClock ? () => options.workerClock!.now().getTime() : undefined)
       }
       v4 = {
         policyVersion: v4Configuration.policyVersion!, synthesisPolicy: v4Configuration.synthesisPolicy,
@@ -599,7 +632,23 @@ export function createLiveSharedResearchRuntime(
       }),
       async runCycle() {
         if (stopping || !claimsEnabled()) return []
-        const batches = await Promise.all(workers.map((worker) => worker.runBatch(config.batchSize)))
+        if (articleContextAvailability) await articleContextAvailability.check()
+        if (stopping || !claimsEnabled()) return []
+        const batches = await Promise.all(workers.map(async worker => {
+          const outcomes: SharedResearchRunOutcome[] = []
+          for (let index = 0; index < config.batchSize && !stopping && claimsEnabled(); index += 1) {
+            const batch = await worker.runBatch(1)
+            outcomes.push(...batch)
+            if (batch.some(outcome => 'category' in outcome && outcome.category === 'storage_transient')) {
+              articleContextAvailability?.invalidate()
+              break
+            }
+            if (batch.length === 0 || batch.some(outcome =>
+              outcome.kind === 'idle' || outcome.kind === 'disabled' || outcome.kind === 'shadow',
+            )) break
+          }
+          return outcomes
+        }))
         const deep = deepRuntime && !stopping && claimsEnabled() ? await deepRuntime.runCycle() : []
         return [...batches.flat(), ...deep]
       },

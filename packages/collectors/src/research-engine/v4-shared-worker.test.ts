@@ -2,7 +2,7 @@ import { validateLegacyResearchPacket } from '../signal-platform/validation'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
-import { SharedResearchWorker, researchGateSignal, type SharedResearchWorkPort, type SharedResearchV4Options } from './shared-worker'
+import { SharedResearchWorker, researchGateSignal, type SharedResearchWorkPort, type SharedResearchV4Options, type SharedWorkerClock } from './shared-worker'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { DeterministicRetriever } from './deterministic-retrieval'
 import { durableResearchClassification } from './durable-classification'
@@ -13,13 +13,15 @@ import { InferenceGatewayError, RESEARCH_NOVELTY_VERSION, RESEARCH_NOVELTY_WORKL
 import { resolveKnownObservation, assertKnownObservationResolution, type KnownObservationResolution } from './known-observation'
 import { createResolvedWithoutNewItemReadiness } from '../signal-platform/research-readiness'
 import type { GateDecision } from '../research-gate/types'
+import { InternalResearchEntityMemoryReader, type ManagedResearchContextPort } from '../research-gate/managed-context-reader'
 import { seedV4, V4_POLICY, V4_FOLLOWUP_POLICY, V4_NOW, V4_SOURCE_URL, V4_FOLLOWUP_URL, v4Signal, v4Work, v4Clock, v4Classifier,
   v4ContextReader, v4Database, v4Evidence, v4Packet, V4Synthesizer, v4ClassificationResult } from './v4-test-fixtures'
 
 function worker(store: SharedResearchWorkPort, synth: V4Synthesizer, v4: SharedResearchV4Options = V4_POLICY, instant = V4_NOW,
-  onFetch: () => void = () => undefined) {
+  onFetch: () => void = () => undefined, clock: SharedWorkerClock = v4Clock(instant), mayExecuteWork: () => boolean = () => true) {
   return new SharedResearchWorker({ workerId: 'offline-v4-worker', stores: [store], stages: ['synthesis'],
-    mode: 'active', ownership: 'shared', legacyClaimersActive: false, clock: v4Clock(instant),
+    mode: 'active', ownership: 'shared', legacyClaimersActive: false, clock,
+    mayExecuteWork,
     synthesizer: synth, retriever: new DeterministicRetriever({ now: () => new Date(instant),
       fetchDocument: async (url) => { onFetch(); return { body: Buffer.from('The regulator records Monday as the launch date.'),
         finalUrl: url, contentType: 'text/plain', status: 200, visitedHosts: [] } } }), v4 })
@@ -113,6 +115,140 @@ test('saved baseline and classifiers survive a failed handoff and database reope
     assert.equal(classifier.requests.length, 1)
     assert.equal(reopened.getResearchReadinessByWork(work.workId)?.outcome, 'ready_for_entity')
   } finally { reopened?.close(); fx.close() }
+})
+
+test('article context outage waits without spending an attempt and resumes after storage recovery', async () => {
+  const fx = v4Database('news')
+  try {
+    const { work } = seedV4(fx.store)
+    let outage = true
+    const error = Object.assign(new Error('PGRST002: connection timeout'), { code: 'PGRST002' })
+    const managed: ManagedResearchContextPort = {
+      researchContext: async () => {
+        if (outage) throw error
+        return { entities: [], items: [], digest: 'recovered', watermark: '1', truncated: false }
+      },
+      articleContext: async () => {
+        if (outage) throw error
+        return { entities: [], items: [], articleItems: [], digest: 'recovered', watermark: '1', truncated: false, candidateTruncated: false }
+      },
+    }
+    const reader = () => new InternalResearchEntityMemoryReader({
+      legacy: v4ContextReader(), managed, source: 'news', sourceRefs: [V4_SOURCE_URL], labels: ['Atlas'],
+    })
+    const article = { ...V4_POLICY, article: { classification: v4Classifier({}).port, contextReader: reader } }
+    const first = await worker(fx.store, new V4Synthesizer(), article).runOnce()
+    assert.equal(first.kind, 'retry_wait')
+    assert.equal(fx.store.getResearchWork(work.workId)?.attemptCount, 0)
+    assert.equal(fx.store.listResearchReservations(100).length, 0)
+
+    outage = false
+    await fx.store.recoverExpiredLeases({ now: '2026-10-03T08:20:00.000Z', limit: 10 })
+    const resumed = await worker(fx.store, new V4Synthesizer(), article, '2026-10-03T08:20:00.000Z').runOnce()
+    assert.equal(resumed.kind, 'dead_letter')
+    assert.equal(fx.store.getResearchWork(work.workId)?.attemptCount, 1)
+  } finally { fx.close() }
+})
+
+test('article context outage stays retryable at the execution-attempt cap', async () => {
+  const fx = v4Database('news')
+  try {
+    const { work } = seedV4(fx.store, undefined, { attemptCount: 3 })
+    const error = Object.assign(new Error('PGRST002: connection timeout'), { code: 'PGRST002' })
+    const managed: ManagedResearchContextPort = {
+      researchContext: async () => { throw error },
+      articleContext: async () => { throw error },
+    }
+    const reader = () => new InternalResearchEntityMemoryReader({
+      legacy: v4ContextReader(), managed, source: 'news', sourceRefs: [V4_SOURCE_URL], labels: ['Atlas'],
+    })
+    const article = { ...V4_POLICY, article: { classification: v4Classifier({}).port, contextReader: reader } }
+    const result = await worker(fx.store, new V4Synthesizer(), article).runOnce()
+    assert.equal(result.kind, 'retry_wait')
+    assert.equal(fx.store.getResearchWork(work.workId)?.attemptCount, 3)
+    assert.equal(fx.store.getResearchWork(work.workId)?.failureCategory, 'storage_transient')
+  } finally { fx.close() }
+})
+
+test('permanent article context failure is held once without repeating the pre-context read', async () => {
+  const fx = v4Database('news')
+  try {
+    const { work } = seedV4(fx.store)
+    let reads = 0
+    const reader = () => ({
+      ...v4ContextReader(),
+      articleContext: async () => {
+        reads += 1
+        throw new Error('article entity lookup failed: relation entities does not exist')
+      },
+    })
+    const article = { ...V4_POLICY, article: { classification: v4Classifier({}).port, contextReader: reader } }
+    const result = await worker(fx.store, new V4Synthesizer(), article).runOnce()
+    assert.equal(result.kind, 'dead_letter')
+    assert.equal(reads, 1)
+    assert.equal(fx.store.getResearchWork(work.workId)?.failureCategory, 'entity_resolution_failed')
+  } finally { fx.close() }
+})
+
+test('freshness expiry during article context read settles before attempt or paid reservation', async () => {
+  const fx = v4Database('news')
+  try {
+    const { work } = seedV4(fx.store, undefined, { freshnessDeadline: '2026-10-03T08:00:01.000Z' })
+    let now = Date.parse(V4_NOW)
+    let started!: () => void
+    let release!: () => void
+    const contextStarted = new Promise<void>(resolve => { started = resolve })
+    const contextRelease = new Promise<void>(resolve => { release = resolve })
+    const reader = () => ({
+      ...v4ContextReader(),
+      articleContext: async () => {
+        started()
+        await contextRelease
+        return { candidates: [], historyByEntity: new Map(), coverageFailures: [] }
+      },
+    })
+    const article = { ...V4_POLICY, article: { classification: v4Classifier({}).port, contextReader: reader } }
+    const clock: SharedWorkerClock = { now: () => new Date(now), setInterval: () => 1, clearInterval: () => undefined }
+    const running = worker(fx.store, new V4Synthesizer(), article, V4_NOW, () => undefined, clock).runOnce()
+    await contextStarted
+    now = Date.parse(work.freshnessDeadline) + 1
+    release()
+    const result = await running
+    assert.equal(result.kind, 'expired')
+    assert.equal(fx.store.getResearchWork(work.workId)?.status, 'expired')
+    assert.equal(fx.store.getResearchWork(work.workId)?.attemptCount, 0)
+    assert.equal(fx.store.listResearchReservations(100).length, 0)
+  } finally { fx.close() }
+})
+
+test('claim-gate revocation during article context read releases before attempt or paid reservation', async () => {
+  const fx = v4Database('news')
+  try {
+    const { work } = seedV4(fx.store)
+    let allowed = true
+    let started!: () => void
+    let release!: () => void
+    const contextStarted = new Promise<void>(resolve => { started = resolve })
+    const contextRelease = new Promise<void>(resolve => { release = resolve })
+    const reader = () => ({
+      ...v4ContextReader(),
+      articleContext: async () => {
+        started()
+        await contextRelease
+        return { candidates: [], historyByEntity: new Map(), coverageFailures: [] }
+      },
+    })
+    const article = { ...V4_POLICY, article: { classification: v4Classifier({}).port, contextReader: reader } }
+    const running = worker(fx.store, new V4Synthesizer(), article, V4_NOW, () => undefined, v4Clock(V4_NOW), () => allowed).runOnce()
+    await contextStarted
+    allowed = false
+    release()
+    const result = await running
+    assert.equal(result.kind, 'ownership_held')
+    assert.equal(fx.store.getResearchWork(work.workId)?.status, 'synthesis_pending')
+    assert.equal(fx.store.getResearchWork(work.workId)?.attemptCount, 0)
+    assert.equal(fx.store.listResearchReservations(100).length, 0)
+  } finally { fx.close() }
 })
 
 for (const source of ['news', 'polymarket'] as const) {

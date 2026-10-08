@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { InternalResearchEntityMemoryReader, type ManagedResearchContextPort } from './managed-context-reader'
+import { InternalResearchEntityMemoryReader, isTransientContextFailure, type ManagedResearchContextPort } from './managed-context-reader'
 import { gateSignal } from './gate'
 import { v4Classifier, v4ContextReader, V4_NOW } from '../research-engine/v4-test-fixtures'
 
@@ -36,6 +36,44 @@ test('missing, truncated or failed private context cannot suppress a signal as k
     assert.equal(result.proceed, true, variant)
     assert.notEqual(result.verdict, 'already_known', variant)
   }
+})
+
+test('PostgREST connection outages are typed as transient article coverage failures', async () => {
+  const outage = Object.assign(new Error('database connection timeout'), { code: 'PGRST002' })
+  const reader = new InternalResearchEntityMemoryReader({
+    legacy: v4ContextReader(), source: 'news', sourceRefs: ['Atlas-ref'], labels: ['Atlas'],
+    managed: { researchContext: async () => { throw outage } },
+  })
+  const context = await reader.articleContext({ sourceUrl: null, terms: ['Atlas'] })
+  assert.equal(context.coverageFailureKind, 'transient')
+  assert.match(context.coverageFailures[0]!, /PGRST002|connection timeout/)
+  for (const code of ['PGRST000', 'PGRST001', 'PGRST002', 'PGRST003', 'ECONNRESET', '57014']) {
+    assert.equal(isTransientContextFailure({ code, message: code }), true, code)
+  }
+  for (const message of ['connection refused', 'TimeoutError: The operation was aborted due to timeout']) {
+    assert.equal(isTransientContextFailure(new Error(message)), true, message)
+  }
+})
+
+test('wrapped Supabase schema-cache retry text remains transient while missing-schema text stays permanent', async () => {
+  const wrapped = {
+    ...v4ContextReader(),
+    searchEntities: async () => {
+      throw new Error('article entity lookup failed: Could not query the database for the schema cache. Retrying.')
+    },
+  }
+  const managed: ManagedResearchContextPort = {
+    researchContext: async () => ({ entities: [], items: [], digest: 'fixture', watermark: '0', truncated: false }),
+    articleContext: async () => ({ entities: [], items: [], articleItems: [], digest: 'fixture', watermark: '0', truncated: false, candidateTruncated: false }),
+  }
+  const transient = new InternalResearchEntityMemoryReader({ managed, legacy: wrapped, source: 'news', sourceRefs: [], labels: ['Atlas'] })
+  assert.equal((await transient.articleContext()).coverageFailureKind, 'transient')
+
+  const permanent = new InternalResearchEntityMemoryReader({
+    managed, legacy: { ...wrapped, searchEntities: async () => { throw new Error('article entity lookup failed: relation entities does not exist') } },
+    source: 'news', sourceRefs: [], labels: ['Atlas'],
+  })
+  assert.equal((await permanent.articleContext()).coverageFailureKind, 'permanent')
 })
 
 test('omitted private note body is incomplete comparison coverage even when every row was returned', async () => {

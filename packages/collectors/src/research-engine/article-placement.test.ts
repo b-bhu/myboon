@@ -89,6 +89,21 @@ test('incomplete context and oversized captures hold before any Jev call', async
   assert.equal(calls, 0)
 })
 
+test('transient context coverage is a retryable hold while ambiguous coverage stays terminal', async () => {
+  const gateway = { recordPolicyOutcome() {}, async classify<Value>(): Promise<ClassificationResult<Value>> {
+    throw new Error('must not call Jev while context is unavailable')
+  } }
+  const base = { gateway, stableDecisionKey: 'context-outage', signal, sourceText: 'Captured article.', context: context() }
+  await assert.rejects(
+    prepareArticlePlacement({ ...base, context: { ...context(), coverageFailures: ['PGRST002: connection timeout'], coverageFailureKind: 'transient' } }),
+    (error: unknown) => error instanceof Error && (error as { code?: string }).code === 'context_coverage_transient',
+  )
+  await assert.rejects(
+    prepareArticlePlacement({ ...base, context: { ...context(), coverageFailures: ['identity catalogue is ambiguous'] } }),
+    (error: unknown) => error instanceof Error && (error as { code?: string }).code === 'context_coverage_unavailable',
+  )
+})
+
 test('long legacy titles remain usable in recent and older relationship context without changing writing history', async () => {
   const fullTitle = 'Legacy history heading '.repeat(40)
   const historyContext = context()

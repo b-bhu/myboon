@@ -57,6 +57,27 @@ export interface ManagedResearchContextPort {
   }>
 }
 
+export type ArticleContextCoverageKind = 'transient' | 'permanent'
+
+/**
+ * Context lookups are normally converted into bounded coverage failures. Keep
+ * the storage availability signal alongside the redacted message so article
+ * placement can wait for an outage without treating identity ambiguity as a
+ * retryable provider result.
+ */
+export function isTransientContextFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const value = error as { code?: unknown, status?: unknown, message?: unknown }
+  const code = typeof value.code === 'string' ? value.code.toUpperCase() : ''
+  const status = typeof value.status === 'number' ? value.status : null
+  const message = typeof value.message === 'string' ? value.message : String(error)
+  return /^PGRST00[0-3]$/.test(code)
+    || /^ECONN[A-Z0-9_]+$/i.test(code)
+    || /^(?:ETIMEDOUT|ETIMEOUT|EHOSTUNREACH|EPIPE|ENET(?:DOWN|UNREACH)|SQLSTATE:?(?:57014|55P03|53300|57P0[13])|57014|55P03|53300|57P0[13])$/i.test(code)
+    || (status !== null && [408, 429, 500, 502, 503, 504].includes(status))
+    || /PGRST00[0-3]|could not query the database for the schema cache\.\s*retrying|connection (?:terminated|closed|timed out|timeout|refused|reset)|(?:socket hang up|fetch failed|network error|server closed the connection|request aborted)|(?:operation|request).*aborted.*timeout|(?:request|query|socket|network|database).*(?:timed out|timeout|unavailable)|timed out|ECONN[A-Z0-9_]+|E(?:TIMEDOUT|TIMEOUT|HOSTUNREACH|PIPE)|SQLSTATE:?(?:57014|55P03|53300|57P0[13])/i.test(message)
+}
+
 /** Article workflow context stays internal and preserves source-specific item identities. */
 export interface ArticleResearchContext {
   /** summary is the profile value retained for durable handoff; decisionSummary is Jev-only context. */
@@ -66,6 +87,8 @@ export interface ArticleResearchContext {
   loadHistory?(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>
   /** Lookup failures make placement unsafe; callers must hold before deciding. */
   coverageFailures: readonly string[]
+  /** Whether all recorded coverage failures are temporary storage outages. */
+  coverageFailureKind?: ArticleContextCoverageKind
   /** One expanded catalogue pass after an initial no-match/uncertain placement. */
   widenCandidates?(terms: readonly string[]): Promise<Array<{ id: string, name: string, aliases: string[], summary: string | null, decisionSummary?: string | null, scope: Record<string, unknown> }>>
   /** Exact name/alias coverage before creation, across legacy and private identities. */
@@ -76,6 +99,7 @@ export interface ArticleResearchContext {
 
 export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
   private readonly failures: string[] = []
+  private coverageFailureKind: ArticleContextCoverageKind | undefined
   private managed: Awaited<ReturnType<ManagedResearchContextPort['researchContext']>> | null = null
   constructor(private readonly options: {
     legacy: EntityMemoryReader
@@ -84,13 +108,21 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
     sourceRefs: readonly string[]
     labels: readonly string[]
   }) {
-    if (!options.managed) this.failures.push('Private managed knowledge lookup is not configured; managed history coverage is unknown.')
+    if (!options.managed) this.recordFailure('Private managed knowledge lookup is not configured; managed history coverage is unknown.', null)
+  }
+
+  private recordFailure(message: string, error: unknown): void {
+    this.failures.push(message)
+    const kind: ArticleContextCoverageKind = error !== null && isTransientContextFailure(error) ? 'transient' : 'permanent'
+    this.coverageFailureKind = this.coverageFailureKind === undefined
+      ? kind
+      : this.coverageFailureKind === kind ? kind : 'permanent'
   }
 
   async entityIdsForSourceRef(source: string, sourceRefId: string): Promise<string[]> {
     let legacy: string[] = []
     try { legacy = await this.options.legacy.entityIdsForSourceRef(source, sourceRefId) }
-    catch (error) { this.failures.push(`legacy identity lookup: ${String(error).slice(0, 200)}`) }
+    catch (error) { this.recordFailure(`legacy identity lookup: ${String(error).slice(0, 200)}`, error) }
     if (this.options.managed) {
       try {
         this.managed = await this.options.managed.researchContext({
@@ -99,7 +131,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
           labels: this.options.labels,
           limit: 20,
         })
-      } catch (error) { this.failures.push(`managed knowledge lookup: ${String(error).slice(0, 200)}`) }
+      } catch (error) { this.recordFailure(`managed knowledge lookup: ${String(error).slice(0, 200)}`, error) }
     }
     return [...new Set([...legacy, ...(this.managed?.entities.map((entity) => entity.id) ?? [])])]
   }
@@ -107,7 +139,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
   async entitiesByIds(ids: string[]): Promise<GateEntity[]> {
     let legacy: GateEntity[] = []
     try { legacy = await this.options.legacy.entitiesByIds(ids) }
-    catch (error) { this.failures.push(`legacy entity lookup: ${String(error).slice(0, 200)}`) }
+    catch (error) { this.recordFailure(`legacy entity lookup: ${String(error).slice(0, 200)}`, error) }
     const byId = new Map(legacy.map((entity) => [entity.id, entity]))
     for (const entity of this.managed?.entities ?? []) if (ids.includes(entity.id)) byId.set(entity.id, entity)
     return [...byId.values()]
@@ -116,7 +148,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
   async recentMemories(entityIds: string[], limit: number): Promise<GateMemory[]> {
     let legacy: GateMemory[] = []
     try { legacy = await this.options.legacy.recentMemories(entityIds, limit) }
-    catch (error) { this.failures.push(`legacy timeline lookup: ${String(error).slice(0, 200)}`) }
+    catch (error) { this.recordFailure(`legacy timeline lookup: ${String(error).slice(0, 200)}`, error) }
     const managed: GateMemory[] = (this.managed?.items ?? [])
       .filter((item) => item.status === 'active')
       .flatMap((item) => item.entityIds.filter((id) => entityIds.includes(id)).map((entityId) => ({
@@ -170,6 +202,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
     const historyByEntity = new Map<string, Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>()
     const historyMemo = new Map<string, Promise<ArticleHistory[]>>()
     const targetMemo = new Map<string, Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>>()
+    const reader = this
     return {
       candidates,
       historyByEntity,
@@ -185,6 +218,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
         return pending
       },
       coverageFailures: this.failures,
+      get coverageFailureKind() { return reader.coverageFailureKind },
       widenCandidates: async (terms) => {
         const labels = articleLabels(this.options.labels, terms)
         const [legacy, managed] = await Promise.all([
@@ -201,9 +235,21 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
       findExactEntities: async (terms) => {
         const labels = articleLabels(terms)
         if (!this.options.managed?.articleContext) throw new Error('Exact identity coverage requires the managed article context reader')
-        const legacy = this.options.legacy.searchEntities
-          ? await this.options.legacy.searchEntities(labels, 33, { exactOnly: true }) : []
-        const managed = await this.options.managed.articleContext({ source: this.options.source, sourceRefs: [], labels, identityOnly: true, limit: 32, historyMode: 'targeted' })
+        let legacy: GateEntity[] = []
+        try {
+          legacy = this.options.legacy.searchEntities
+            ? await this.options.legacy.searchEntities(labels, 33, { exactOnly: true }) : []
+        } catch (error) {
+          this.recordFailure(`article legacy exact identity lookup: ${String(error).slice(0, 200)}`, error)
+          throw error
+        }
+        let managed: Awaited<ReturnType<NonNullable<ManagedResearchContextPort['articleContext']>>>
+        try {
+          managed = await this.options.managed.articleContext({ source: this.options.source, sourceRefs: [], labels, identityOnly: true, limit: 32, historyMode: 'targeted' })
+        } catch (error) {
+          this.recordFailure(`article managed exact identity lookup: ${String(error).slice(0, 200)}`, error)
+          throw error
+        }
         if (typeof managed.candidateTruncated !== 'boolean') throw new Error('Exact identity coverage requires the current article context migration')
         if (legacy.length > 32 || managed.candidateTruncated) throw new Error('Exact article identity lookup is ambiguous beyond its candidate bound')
         return rankEntityCandidates([...legacy, ...managed.entities], labels).map(articleCandidate)
@@ -224,13 +270,13 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
     try {
       const ids = await this.options.legacy.entityIdsForSourceRef(this.options.source, this.options.sourceRefs[0] ?? '')
       return await this.options.legacy.entitiesByIds(ids)
-    } catch (error) { this.failures.push(`article legacy source entity lookup: ${String(error).slice(0, 200)}`); return [] }
+    } catch (error) { this.recordFailure(`article legacy source entity lookup: ${String(error).slice(0, 200)}`, error); return [] }
   }
 
   private async articleLegacySearch(labels: string[]): Promise<GateEntity[]> {
     if (!this.options.legacy.searchEntities) return []
     try { return await this.options.legacy.searchEntities(labels, 32) }
-    catch (error) { this.failures.push(`article legacy catalogue search: ${String(error).slice(0, 200)}`); return [] }
+    catch (error) { this.recordFailure(`article legacy catalogue search: ${String(error).slice(0, 200)}`, error); return [] }
   }
 
   private async articleManagedSearch(labels: string[]): Promise<GateEntity[]> {
@@ -240,7 +286,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
         ? await this.options.managed.articleContext({ source: this.options.source, sourceRefs: this.options.sourceRefs, labels, limit: 32, historyMode: 'targeted' })
         : await this.options.managed.researchContext({ source: this.options.source, sourceRefs: this.options.sourceRefs, labels, limit: 32 })
       return managed.entities
-    } catch (error) { this.failures.push(`article managed catalogue search: ${String(error).slice(0, 200)}`); return [] }
+    } catch (error) { this.recordFailure(`article managed catalogue search: ${String(error).slice(0, 200)}`, error); return [] }
   }
 
   private async articleLatestHistory(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>> {
@@ -265,7 +311,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
       const memories = await this.options.legacy.recentMemories([entityId], limit)
       return memories.flatMap((memory) => memory.id?.trim()
         ? [{ id: memory.id, source: 'legacy' as const, title: memory.title, summary: memory.summary, eventAt: memory.eventAt }] : [])
-    } catch (error) { this.failures.push(`article legacy history lookup: ${String(error).slice(0, 200)}`); return [] }
+    } catch (error) { this.recordFailure(`article legacy history lookup: ${String(error).slice(0, 200)}`, error); return [] }
   }
 
   private async targetedLegacyHistory(entityId: string, terms: string[], sourceUrl: string | null): Promise<ArticleHistory[]> {
@@ -274,7 +320,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
       const memories = await this.options.legacy.findMemoriesForArticle({ entityIds: [entityId], terms, sourceUrl, limit: 10 })
       return memories.flatMap((memory) => memory.id?.trim()
         ? [{ id: memory.id, source: 'legacy' as const, title: memory.title, summary: memory.summary, eventAt: memory.eventAt }] : [])
-    } catch (error) { this.failures.push(`article legacy targeted lookup: ${String(error).slice(0, 200)}`); return [] }
+    } catch (error) { this.recordFailure(`article legacy targeted lookup: ${String(error).slice(0, 200)}`, error); return [] }
   }
 
   private async managedArticleHistory(entityId: string, limit: number, labels: readonly string[], historyMode: 'recent' | 'targeted', sourceUrl: string | null = null): Promise<ArticleHistory[]> {
@@ -298,7 +344,7 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
       return managed.items.filter((item) => item.status === 'active' && item.entityIds.includes(entityId)).map((item) => ({
         id: item.itemId, source: 'managed' as const, title: item.note.slice(0, 500), summary: item.note.slice(0, 2_000), eventAt: item.observedAt,
       }))
-    } catch (error) { this.failures.push(`article managed history lookup: ${String(error).slice(0, 200)}`); return [] }
+    } catch (error) { this.recordFailure(`article managed history lookup: ${String(error).slice(0, 200)}`, error); return [] }
   }
 }
 

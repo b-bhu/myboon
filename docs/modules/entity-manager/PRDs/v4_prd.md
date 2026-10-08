@@ -1,10 +1,10 @@
 # Entity Manager V4 — Working PRD
 
-Updated: 7 October 2026 (UTC).
+Updated: 8 October 2026 (UTC).
 
 Issue: [#299 — Entity Manager V4](https://github.com/b-bhu/myboon/issues/299).
 
-Status: article checkpoint implemented and running for News. The [7 October recovery record](../operations/2026_10_07_article_pipeline_recovery.md) records the latest input, URL, duplicate and paid-outcome repairs, scoped verification and operating policy. The [checkpoint handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md) records the boundary and remaining work.
+Status: the News article checkpoint is implemented, but hosted database unavailability has stopped live progress. The [8 October outage record](../operations/2026_10_08_database_outage_recovery.md) records dependency checks, queue protections and the remaining live recovery requirement. The [7 October recovery record](../operations/2026_10_07_article_pipeline_recovery.md) retains the earlier input, URL, duplicate and paid-outcome validation. The [checkpoint handoff](../operations/2026_10_05_v4_entity_manager_checkpoint_handoff.md) records the boundary and remaining work.
 
 This is the current specification. It replaces the earlier claim/evidence requirements for new articles. The [pre-checkpoint PRD snapshot](2026_10_05_v4_prd_pre_checkpoint_snapshot.md) preserves the original issue mapping, earlier contracts and dated implementation/authorization history. Historical validation results apply to the contract and date they tested.
 
@@ -88,6 +88,7 @@ Existing legacy packets and memories retain their explicit compatibility paths. 
 - Source ownership and writer fences prevent concurrent legacy/V4 effects. Retirement and rollback must preserve observations, accepted knowledge, history and receipts.
 - Calls, tokens, output size and wall time have configured operational limits. New light/standard work has 180 seconds, capture is bounded to 3 MB per source/9 MB total, and fetch has a 30-second deadline. Jev receives the whole source up to 48,000 characters, with a separate 96,000-byte serialized-state bound; larger inputs hold without truncation. Candidate decision summaries are bounded to 1,000 characters and historical decision titles to 500, while stored profiles/history remain intact. New source-grounded entity proposals bind 16,000 input/4,000 output token allowances into the actual request; historical attempts retain their saved limits. The owner authorised real provider/database validation without a USD approval gate; this PRD adds none. Unknown monetary cost must remain unknown.
 - Classification input validation precedes paid reservation/dispatch intent. A confirmed received-but-rejected response gets a durable rejection receipt and exact settlement; crash recovery consumes matching saved proof without redispatch. A genuine unknown transport outcome remains held. Historical validation-shaped errors are not proof that no dispatch happened.
+- Temporary catalogue/history connection, schema-cache and network failures are storage availability failures, not evidence of an ambiguous entity. Article claims require both configured storage readers to pass a bounded availability probe. Failed probes back off from 30 seconds to five minutes. A failure discovered after a probe closes article admission for the rest of the batch. Pre-decision storage failures wait without consuming an execution attempt or making a paid call; later transient coverage failures retain their saved paid decisions and ordinary retry state. Freshness, lease ownership and operator controls still apply. Genuine missing-schema, identity and reference errors remain explicit holds/failures.
 - News can use explicit bounded P3/light capacity overrides to admit fresh work while counting retained unknown paid exposure. Defaults, urgent reservations and per-assignment budgets remain intact. The temporary 7 October operating policy and its reversal conditions are in the recovery record; this does not authorize replay of uncertain attempts.
 
 ## 5. Acceptance and checkpoint status
@@ -101,7 +102,7 @@ Existing legacy packets and memories retain their explicit compatibility paths. 
 | One item, multiple memberships, valid history links, duplicate attribution | Implemented; five isolated PostgreSQL article tests and live accepted-item checks passed. |
 | Receipt-first replay, restricted writer, leases/fences and unknown-outcome holds | Earlier database/recovery validation plus article persistence checks; retained holds/failures are not automatically cleared. |
 | Legacy compatibility and public-memory isolation | Affected compatibility checks passed; activation verified existing public counts were unchanged. Downstream exposure is excluded. |
-| Runtime activation and provider routing | Research, Entity Manager and collectors are running. News-only Research/Entity authority, API protected. Twelve Hermes profiles use Ollama primary with automatic GPT fallback disabled. |
+| Runtime activation and provider routing | Seven PM2 processes are online, but hosted database connections time out; process status is not completion evidence. Research admission is protected while the database is unavailable. News-only Research/Entity authority and Ollama routing are preserved; API excluded from process actions. See the dated outage record for activation and remaining proof. |
 
 The [activation record](../operations/2026_10_05_article_pipeline_activation.md) records affected test groups, migration/permission/restore checks, real accepted items and retained failures. Counts from overlapping test runs must not be summed into a unique total. The later [profile-routing record](../operations/2026_10_05_hermes_profile_routing.md) records 159 focused tests, a passing collectors TypeScript check and live native/typed backup probes.
 
@@ -109,7 +110,7 @@ The [6 October verification](../operations/2026_10_06_article_failure_fixes.md) 
 
 ## 6. Current operating configuration
 
-- Research and Entity configured sources: `news`. Research, Entity Manager and the collectors are running. Polymarket is collection-only.
+- Research and Entity configured sources: `news`. Hosted database availability currently blocks useful progress. Research must wait for both storage readers before claiming articles; Entity Manager retains pending items. Polymarket is collection-only.
 - Article workflow, managed writer and persistent source ownership are enabled for the active source. Older generic V4 novelty/reuse/follow-up flags remain off; required article Jev workloads have their own active lifecycle.
 - Jev: `jev-1.13.0`.
 - Hermes primary everywhere: `ollama-cloud/glm-5.3-flash`.
@@ -120,4 +121,4 @@ The [6 October verification](../operations/2026_10_06_article_failure_fixes.md) 
 - Editor is running hourly on the existing legacy public-memory path, with two bundles per cycle, up to three new memories and ten lane memories. It uses the standard Hermes launcher with the explicit production profile.
 - Orphan sweeper, catalogue maintenance and classification-shadow services, commands and dedicated code are removed. Required live Jev decisions and per-call Hermes cleanup remain enabled. Historical migrations and audit records remain intact.
 
-Delivery branch: `main`; `124f565` is the delivered article checkpoint. The 6 October fixes and service removals are subsequent uncommitted working-tree changes; the candidate-resolution migration is applied to production. The delivered checkpoint and its historical documentation are on `origin/main`; the restart record describes runtime activation and the changes still awaiting repository delivery. Host-local credentials, runtime configuration and temporary receipts are outside Git. The handoff is the entry point for another maintainer; historical records and the archived PRD preserve the earlier implementation detail.
+Delivery branch: `main`. The article checkpoint (`124f565`), 6 October fixes/service removals and 7 October repairs (`b63ecae`, `b50963a`) are delivered on `origin/main`; the candidate-resolution migration is applied to production. The 8 October outage record distinguishes code protection from live database recovery. Host-local credentials, runtime configuration and private operational receipts remain outside Git. The handoff is the entry point for another maintainer; historical records and the archived PRD preserve earlier implementation detail.

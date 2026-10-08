@@ -5,6 +5,14 @@ import { rankEntityCandidates } from './entity-candidates'
 const ENTITY_PROFILE_SELECT = 'id, slug, name, type, aliases, summary, metadata'
 const MEMORY_SELECT = 'id, entity_id, memory_type, title, summary, event_at, observed_at, context'
 
+interface SupabaseQueryError {
+  message: string
+  code?: string
+  status?: number
+  details?: string
+  hint?: string
+}
+
 /**
  * Production EntityMemoryReader over the Supabase entity tables.
  *
@@ -28,7 +36,7 @@ export class SupabaseEntityMemoryReader implements EntityMemoryReader {
       .eq('source', source)
       .eq('source_ref_id', sourceRefId)
       .limit(200)
-    if (error) throw new Error(`entity_memories lookup failed: ${error.message}`)
+    if (error) throw supabaseQueryError('entity_memories lookup failed', error)
     const ids = (data ?? [])
       .map((row) => (row as { entity_id: string | null }).entity_id)
       .filter((id): id is string => Boolean(id))
@@ -41,7 +49,7 @@ export class SupabaseEntityMemoryReader implements EntityMemoryReader {
       .from('entities')
       .select(ENTITY_PROFILE_SELECT)
       .in('id', ids)
-    if (error) throw new Error(`entities lookup failed: ${error.message}`)
+    if (error) throw supabaseQueryError('entities lookup failed', error)
     return (data ?? []).map(entityProfile)
   }
 
@@ -60,7 +68,7 @@ export class SupabaseEntityMemoryReader implements EntityMemoryReader {
     const read = async (conditions: string[]) => {
       const { data, error } = await this.db.from('entities').select(ENTITY_PROFILE_SELECT)
         .eq('status', 'active').or(conditions.join(',')).order('id', { ascending: true }).limit(200)
-      if (error) throw new Error(`article entity lookup failed: ${error.message}`)
+      if (error) throw supabaseQueryError('article entity lookup failed', error)
       return (data ?? []).map(entityProfile)
     }
     const batches = await Promise.all((options.exactOnly ? [exact] : [exact, names, filters]).map(read))
@@ -77,7 +85,7 @@ export class SupabaseEntityMemoryReader implements EntityMemoryReader {
       .order('observed_at', { ascending: false, nullsFirst: false })
       .order('id', { ascending: false })
       .limit(queryLimit(limit))
-    if (error) throw new Error(`entity_memories timeline lookup failed: ${error.message}`)
+    if (error) throw supabaseQueryError('entity_memories timeline lookup failed', error)
     return (data ?? []).map(memoryProfile)
   }
 
@@ -103,9 +111,22 @@ export class SupabaseEntityMemoryReader implements EntityMemoryReader {
       .order('observed_at', { ascending: false, nullsFirst: false })
       .order('id', { ascending: false })
       .limit(queryLimit(input.limit))
-    if (error) throw new Error(`article historical lookup failed: ${error.message}`)
+    if (error) throw supabaseQueryError('article historical lookup failed', error)
     return (data ?? []).map(memoryProfile)
   }
+}
+
+/** Preserve Supabase's machine-readable failure fields for outage recovery. */
+function supabaseQueryError(prefix: string, error: SupabaseQueryError): Error {
+  const wrapped = new Error(`${prefix}: ${error.message}`)
+  Object.assign(wrapped, {
+    code: error.code,
+    status: error.status,
+    details: error.details,
+    hint: error.hint,
+    cause: error,
+  })
+  return wrapped
 }
 
 function entityProfile(value: unknown): GateEntity {
