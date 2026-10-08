@@ -2,7 +2,7 @@
 
 Date: 5 October 2026 (IST).
 
-Latest update: [7 October article pipeline recovery](2026_10_07_article_pipeline_recovery.md).
+Latest update: [8 October Pro upgrade, cleanup and overnight baseline](2026_10_08_pro_upgrade_cleanup_and_overnight_baseline.md).
 Research has resumed on Ollama GLM-5.3 Flash; automatic GPT fallback remains disabled.
 The candidate-resolution migration is applied and the article fixes are loaded
 in News intake, Research and Entity Manager. Editor and Publisher use the existing
@@ -133,28 +133,31 @@ These results do not establish a clean historical full-suite run, broad Jev accu
 
 ## 8 October operational handoff
 
-The hosted Supabase database is unavailable; seven online PM2 entries do not
-mean the pipelines are completing work. Use the [8 October outage record](2026_10_08_database_outage_recovery.md)
-for dependency protection, the verified backup, exact recovery eligibility and
-remaining live proof. Temporary storage failures now wait instead of becoming
-permanent entity-resolution failures. Research must pass both configured
+The hosted Supabase database recovered after the owner's Pro upgrade. The
+selected Cardano article has an accepted private receipt with matching full
+capture hashes. Use the [fresh cleanup record](2026_10_08_pro_upgrade_cleanup_and_overnight_baseline.md)
+for 269 explicitly recovered outage jobs, 564 archived historical failures,
+the protected six-process restart and the overnight baseline. The
+[outage record](2026_10_08_database_outage_recovery.md) retains the preceding
+failure and protection evidence. Research must still pass both configured
 storage readers before claiming articles. Retained identity/source failures
-and unknown paid outcomes remain separate investigations.
+and all 87 historical unknown paid outcomes remain separate investigations.
 
 Do not restart `myboon-api`. The API's current incident baseline differs from
 the dated 5–7 October snapshots; use the outage record for that identity. All
 earlier counts, PIDs and successful runs in this handoff are historical evidence.
-The 6–7 October changes are committed on `main`; they are no longer an
-uncommitted delivery dependency. Database recovery and a fresh accepted-item
-check remain necessary before claiming healthy operation.
+The implementation and outage protections are committed on `main`; they are
+no longer an uncommitted delivery dependency. Actual scheduled-cycle and
+accepted-item proof are in the fresh cleanup record. The next overnight result
+and broad semantic/editorial accuracy remain unverified.
 
 ## Remaining work inside this boundary
 
-1. Check overnight progress against the 6 October cleanup baseline. The source fixes are included in the cleanup commit on `main`, the candidate-resolution migration is applied, and News intake/Entity Manager/Research have loaded the fixes. Do not reapply or bulk-recover historical failures. Ollama is primary and automatic GPT fallback stays off. Exclude `myboon-api` from every process action.
+1. Check overnight progress against the **8 October, 15:15:25.887 UTC / 20:45:25.887 IST** baseline in the fresh cleanup record. The candidate-resolution migration and outage protections are loaded. The authorised 269-job recovery is complete; do not repeat it or replay archived failures. Ollama is primary and automatic GPT fallback stays off. Exclude `myboon-api` from every process action.
 2. Observe the reviewed PANews/Monad redirects, public-IP handling and article extraction on fresh jobs. Full-source admission is now 48,000 characters with a 96,000-byte state bound. Candidate decision descriptions and historical titles are projected separately without rewriting stored data. Continue retaining genuinely oversized captures and unavailable sources; PANews upstream availability is not guaranteed. No silent source truncation or web-search fallback.
 3. Review candidate scope and meaningful related memberships with labelled examples, including conflict narratives, Bitcoin/BlackRock, AI outlooks and the observed narrow Bitwise placement. Evaluate latest-five relationships and older-duplicate behaviour separately from prose quality.
 4. Inspect no-match, ambiguous-identity, creation-proposal and Entity-resolution holds. Validate improvements on bounded cases before any explicit single-item recovery; do not silently merge or create duplicate entities.
-5. Inspect invalid structured output and configured call/token/wall-limit failures. Local classification preflight now precedes reservation, and confirmed received rejections have crash-replayable settlement receipts. The 82 historical unknown paid outcomes remain retained. News has temporary P3/light capacity overrides of 200, with unchanged per-assignment budgets; review the accounting and remove both overrides together when the original admission threshold permits. Do not reset an assignment or resend an unknown paid attempt to make it pass.
+5. Inspect invalid structured output and configured call/token/wall-limit failures. Local classification preflight now precedes reservation, and confirmed received rejections have crash-replayable settlement receipts. The 87 historical unknown paid outcomes remain retained at the 8 October baseline. News has temporary P3/light capacity overrides of 200, with unchanged per-assignment budgets; review the accounting and remove both overrides together when the original admission threshold permits. Do not reset an assignment or resend an unknown paid attempt to make it pass.
 6. Observe fresh article completion, dated prose, exact source attribution, duplicate attachment and receipt-based recovery after changes. Keep failures/unknown outcomes visible; process `online` is not proof every job succeeds.
 
 Do not automatically replay old dead letters or incomplete packets. D1 retains older incomplete work for explicit assessment; D2 retains unknown paid outcomes and reservations. Operator assessment/reconciliation commands are prepared tools, not permission to clear a backlog. There is no new USD budget approval gate.
@@ -163,7 +166,7 @@ Do not automatically replay old dead letters or incomplete packets. D1 retains o
 
 1. [Current PRD](../PRDs/v4_prd.md) — trimmed requirements and acceptance boundary.
 2. [Article activation](2026_10_05_article_pipeline_activation.md) — migration/permission tests, activation fixes, accepted examples and retained failures.
-3. [6 October cleanup baseline](2026_10_06_operational_cleanup_and_overnight_baseline.md) — current operating state, recovery and quarantine receipts; [fix validation](2026_10_06_article_failure_fixes.md) and [Hermes routing](2026_10_05_hermes_profile_routing.md) record the preceding changes.
+3. [8 October cleanup baseline](2026_10_08_pro_upgrade_cleanup_and_overnight_baseline.md) — current operating state, selected recovery, archive and actual fresh cycles. The [6 October baseline](2026_10_06_operational_cleanup_and_overnight_baseline.md), [fix validation](2026_10_06_article_failure_fixes.md) and [Hermes routing](2026_10_05_hermes_profile_routing.md) retain earlier evidence.
 4. [Historical PRD snapshot](../PRDs/2026_10_05_v4_prd_pre_checkpoint_snapshot.md), [4 October implementation](2026_10_04_article_researcher_implementation.md) and the 3 October reports — earlier design/contract detail, not current activation instructions.
 
 Host-local receipts: `/tmp/myboon-article-activation-20261005/activation-evidence-manifest.json`, `/tmp/myboon-all-ollama-primary-result-20261005.json` and `/tmp/myboon-ollama-fallback-probes-20261005/`. These `/tmp` artifacts are not a portable handoff and may disappear. These docs record their conclusions without copying credentials or private prompts. Credentials and VPS runtime state remain host-local, outside Git.

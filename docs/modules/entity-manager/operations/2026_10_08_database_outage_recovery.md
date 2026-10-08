@@ -1,5 +1,12 @@
 # 8 October — database outage and article queue protection
 
+**Later recovery:** the owner upgraded to Pro, database access recovered and
+the selected article received an accepted private receipt. The subsequent
+[cleanup and overnight baseline](2026_10_08_pro_upgrade_cleanup_and_overnight_baseline.md)
+records the 269-job selected recovery, historical archive and protected
+restart. The timestamps and blocked state below are the earlier incident
+evidence, not the current operating status.
+
 The News article code remains scoped through Entity Manager. This repair adds
 no downstream integration, provider fallback, web search or claim/evidence
 contract. Existing Editor, Publisher and Polymarket schedules have their own
