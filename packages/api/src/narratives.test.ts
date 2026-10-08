@@ -42,6 +42,7 @@ test('GET / applies public Feed gates, deterministic ordering, pagination, and a
       imageUrl: null,
       imageKind: null,
       imageAttribution: null,
+      sourceName: null,
     },
     {
       updateKey: secondId,
@@ -51,6 +52,7 @@ test('GET / applies public Feed gates, deterministic ordering, pagination, and a
       imageUrl: null,
       imageKind: null,
       imageAttribution: null,
+      sourceName: null,
     },
   ])
 
@@ -102,6 +104,7 @@ test('GET / skips malformed publications without taking down valid Feed items', 
     imageUrl: null,
     imageKind: null,
     imageAttribution: null,
+    sourceName: null,
   }])
 })
 
@@ -126,6 +129,7 @@ test('GET /:updateKey returns the full published Feed item and allowlists all ou
     imageUrl: null,
     imageKind: null,
     imageAttribution: null,
+    sourceName: null,
   })
   assert.equal(requestUrl?.searchParams.get('select'), 'id,title,content_small,content_full,published_at,source_memory_ids')
   assert.equal(requestUrl?.searchParams.get('id'), `eq.${firstId}`)
@@ -192,12 +196,100 @@ test('GET / enriches Feed items with the preferred source-memory image', async (
     imageUrl: 'https://pbs.twimg.com/media/story.jpg',
     imageKind: 'content',
     imageAttribution: '@tokens',
+    sourceName: '@tokens',
   }])
   assert.equal(requests.length, 1)
   assert.deepEqual(hydrationCalls, [{
     memoryIds: [avatarMemoryId, contentMemoryId],
     limit: 2,
   }])
+})
+
+test('GET / exposes the report outlet and hides a missing or placeholder source', async () => {
+  const outletMemoryId = '00000000-0000-4000-8000-000000000020'
+  const imageMemoryId = '00000000-0000-4000-8000-000000000021'
+  const placeholderMemoryId = '00000000-0000-4000-8000-000000000022'
+  const blankMemoryId = '00000000-0000-4000-8000-000000000023'
+  const legacyMemoryId = '00000000-0000-4000-8000-000000000024'
+  const longMemoryId = '00000000-0000-4000-8000-000000000025'
+  const thirdId = '00000000-0000-4000-8000-000000000003'
+  const fourthId = '00000000-0000-4000-8000-000000000004'
+  const fifthId = '00000000-0000-4000-8000-000000000005'
+  const app = createApp(async () => jsonResponse([
+    { ...narrativeRow(firstId, 'Desk report', 'Short update', 'Full update', '2026-07-14T12:00:00.000Z'), source_memory_ids: [outletMemoryId, imageMemoryId] },
+    { ...narrativeRow(secondId, 'Placeholder report', 'Short update', 'Full update', '2026-07-14T11:00:00.000Z'), source_memory_ids: [placeholderMemoryId] },
+    { ...narrativeRow(thirdId, 'Blank report', 'Short update', 'Full update', '2026-07-14T10:00:00.000Z'), source_memory_ids: [blankMemoryId] },
+    { ...narrativeRow(fourthId, 'Legacy image report', 'Short update', 'Full update', '2026-07-14T09:00:00.000Z'), source_memory_ids: [legacyMemoryId] },
+    { ...narrativeRow(fifthId, 'Oversized label', 'Short update', 'Full update', '2026-07-14T08:00:00.000Z'), source_memory_ids: [longMemoryId] },
+  ]), {
+    async getEntityMemoriesByIds() {
+      return [{
+        id: outletMemoryId,
+        media: { imageUrl: null, imageKind: null, attribution: null },
+        context: { source_name: '  ETF flow desk  ', image_attribution: 'Other desk' },
+      }, {
+        id: imageMemoryId,
+        media: {
+          imageUrl: 'https://cdn.example/story.jpg',
+          imageKind: 'content',
+          attribution: 'World desk',
+        },
+        context: { source_name: 'World desk' },
+      }, {
+        id: placeholderMemoryId,
+        media: { imageUrl: null, imageKind: null, attribution: null },
+        context: { source_name: 'Structured News Feed' },
+      }, {
+        id: blankMemoryId,
+        media: { imageUrl: null, imageKind: null, attribution: '   ' },
+        context: { source_name: '   ', upstream_source_name: '' },
+      }, {
+        id: legacyMemoryId,
+        media: {
+          imageUrl: 'https://cdn.example/legacy.jpg',
+          imageKind: 'content',
+          attribution: 'Maritime briefing',
+        },
+      }, {
+        id: longMemoryId,
+        media: { imageUrl: null, imageKind: null, attribution: null },
+        context: { source_name: 'A'.repeat(121) },
+      }]
+    },
+  })
+
+  const response = await app.request('/')
+  assert.equal(response.status, 200)
+  const body = await response.json() as Array<{ updateKey: string, sourceName: string | null, imageAttribution: string | null }>
+  assert.deepEqual(body.map((item) => ({ id: item.updateKey, sourceName: item.sourceName, imageAttribution: item.imageAttribution })), [
+    { id: firstId, sourceName: 'ETF flow desk', imageAttribution: 'World desk' },
+    { id: secondId, sourceName: null, imageAttribution: null },
+    { id: thirdId, sourceName: null, imageAttribution: null },
+    { id: fourthId, sourceName: 'Maritime briefing', imageAttribution: 'Maritime briefing' },
+    { id: fifthId, sourceName: null, imageAttribution: null },
+  ])
+})
+
+test('GET /:updateKey returns the outlet recorded on the source memory', async () => {
+  const memoryId = '00000000-0000-4000-8000-000000000030'
+  const app = createApp(async () => jsonResponse([{
+    ...narrativeRow(firstId, 'Desk report', 'Short update', 'The complete published update.', '2026-07-14T12:00:00.000Z'),
+    source_memory_ids: [memoryId],
+  }]), {
+    async getEntityMemoriesByIds() {
+      return [{
+        id: memoryId,
+        media: { imageUrl: null, imageKind: null, attribution: null },
+        context: { upstream_source_name: 'CoinDesk' },
+      }]
+    },
+  })
+
+  const response = await app.request(`/${firstId}`)
+  assert.equal(response.status, 200)
+  const body = await response.json() as { sourceName: string | null, content: string }
+  assert.equal(body.sourceName, 'CoinDesk')
+  assert.equal(body.content, 'The complete published update.')
 })
 
 test('GET / keeps optional media enrichment fail-open', async () => {
@@ -221,6 +313,7 @@ test('GET / keeps optional media enrichment fail-open', async () => {
     imageUrl: null,
     imageKind: null,
     imageAttribution: null,
+    sourceName: null,
   }])
 })
 

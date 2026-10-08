@@ -25,6 +25,7 @@ export interface FeedItem {
   imageUrl?: string | null;
   imageKind?: 'content' | 'source_avatar' | null;
   imageAttribution?: string | null;
+  sourceName?: string | null;
 }
 
 export interface StorySummary {
