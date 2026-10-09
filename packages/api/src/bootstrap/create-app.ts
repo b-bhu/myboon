@@ -5,6 +5,9 @@ import entityManager from '@myboon/collectors/entity-manager'
 import { createClient } from '@supabase/supabase-js'
 import { createAiRoutes } from '../ai/routes.js'
 import { createCalendarRoutes } from '../calendar/routes.js'
+import { createMarketHeatmapRoutes } from '../market-heatmap/routes.js'
+import { MarketHeatmapService } from '../market-heatmap/service.js'
+import { createWalletActivityRoutes, createWalletActivityService } from '../wallet-activity/index.js'
 import { clobRoutes } from '../clob.js'
 import { createInternalEntityCommandRoutes } from '../internal/entity-commands.js'
 import { createInternalEntityRoutes } from '../internal/entities.js'
@@ -106,6 +109,20 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
 
   app.route('/clob', clobRoutes)
   app.route('/calendar', createCalendarRoutes({ enabled: config.calendarBackpackEnabled }))
+  const heatmapService = new MarketHeatmapService({ jupApiKey: config.jupApiKey, jupApiBase: config.jupApiBase })
+  app.route('/market', createMarketHeatmapRoutes({ service: heatmapService }))
+  app.route('/market', createWalletActivityRoutes({ service: createWalletActivityService({
+    apiKey: config.birdeyeApiKey,
+    getSeedTokens: async () => {
+      const heatmap = await heatmapService.getHeatmap('24h')
+      if (heatmap.status === 'unavailable') throw new Error('Verified token sample unavailable')
+      return {
+        tokens: heatmap.tokens.map(({ address, symbol, name }) => ({ address, symbol, name })),
+        fetchedAt: heatmap.fetchedAt,
+        stale: heatmap.stale,
+      }
+    },
+  }) }))
   app.route('/perps/pacifica', pacificaRoutes)
   app.route('/perps/phoenix', phoenixRoutes)
   app.route('/spot', spotRoutes)

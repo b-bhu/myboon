@@ -8,6 +8,7 @@ import { StorySheet } from '@/features/feed/components/StorySheet';
 import { FeedSectionState } from '@/features/feed/components/feed-section-state';
 import { MarketCalendar } from '@/features/feed/components/market-calendar';
 import { TokenStats } from '@/features/feed/components/token-stats';
+import { SmartWalletActivity } from '@/features/feed/components/smart-wallet-activity';
 import { fetchFeedItems } from '@/features/feed/feed.api';
 import { fetchStories } from '@/features/feed/stories.api';
 import { FEED_COLORS as color } from '@/features/feed/feed.constants';
@@ -28,13 +29,13 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
   const [story, setStory] = useState<StorySummary | null>(null);
   const [report, setReport] = useState<NarrativeSheetItem | null>(null);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
-  const [calendarVersion, setCalendarVersion] = useState(0);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [, setClock] = useState(0);
   useFocusedAppStateInterval(() => Promise.all([stories.load(true), reports.load(true)]).then(() => undefined), 5 * 60_000, { enabled: active });
   useFocusedAppStateInterval(() => setClock((value) => value + 1), 60_000, { enabled: active });
   const refresh = useCallback(async () => {
     setRefreshing(true);
-    try { await Promise.all([stories.load(), reports.load()]); setCalendarVersion((value) => value + 1); }
+    try { await Promise.all([stories.load(), reports.load()]); setRefreshVersion((value) => value + 1); }
     finally { setRefreshing(false); }
   }, [stories.load, reports.load]);
   const openReport = (item: FeedItem) => setReport({ id: item.id, title: item.headline, summary: item.description, createdAt: item.createdAt, imageUrl: item.imageUrl, imageKind: item.imageKind, imageAttribution: item.imageAttribution });
@@ -55,12 +56,9 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
         {reports.data?.map((item) => <FeedCard key={item.id} item={item} onPress={openReport} />)}
         {reports.data && !reports.data.length && !reports.error ? <FeedSectionState title="No published updates yet" text="New reports will appear here." /> : null}
       </View>
-      <MarketCalendar active={active} refreshVersion={calendarVersion} />
-      <View style={styles.section}>
-        <Text accessibilityRole="header" style={styles.title}>Smart wallet activity</Text>
-        <FeedSectionState title="Activity unavailable" text="Watched wallet activity isn’t available yet." />
-      </View>
-      <TokenStats active={active} />
+      <MarketCalendar active={active} refreshVersion={refreshVersion} />
+      <SmartWalletActivity active={active} refreshVersion={refreshVersion} />
+      <TokenStats active={active} refreshVersion={refreshVersion} />
     </Animated.ScrollView>
 {stories.pending || reports.pending ? <Pressable accessibilityRole="button" accessibilityLabel="Apply new Feed updates" onPress={() => { stories.apply(); reports.apply(); }} style={styles.newUpdates}><Text style={styles.action}>New updates ↓</Text></Pressable> : null}
 

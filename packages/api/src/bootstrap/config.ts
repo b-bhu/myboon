@@ -18,6 +18,7 @@ export type ApiConfig = {
   swapSqlitePath?: string
   swapTradingEnabled?: boolean
   calendarBackpackEnabled?: boolean
+  birdeyeApiKey?: string
   solanaRpcUrl?: string
   solanaDevnetRpcUrl?: string
   polygonRpcUrl?: string
@@ -96,5 +97,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     solanaDevnetWsRpcUrl: env.SOLANA_DEVNET_WS_RPC_URL?.trim() || undefined,
     trustProxyHeaders: env.TRUST_PROXY_HEADERS === '1' || env.TRUST_PROXY_HEADERS === 'true',
     calendarBackpackEnabled: env.CALENDAR_BACKPACK_ENABLED !== '0' && env.CALENDAR_BACKPACK_ENABLED !== 'false',
+    birdeyeApiKey: env.BIRDEYE_API_KEY?.trim() || undefined,
   }
 }
