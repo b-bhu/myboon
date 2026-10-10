@@ -3,7 +3,10 @@ import type { EntityMemoryReader, GateEntity, GateMemory } from './types'
 import { rankEntityCandidates } from './entity-candidates'
 
 const ENTITY_PROFILE_SELECT = 'id, slug, name, type, aliases, summary, metadata'
-const MEMORY_SELECT = 'id, entity_id, memory_type, title, summary, event_at, observed_at, context'
+// History needs source URLs, not the captured packets stored inside context.
+const MEMORY_SELECT = 'id, entity_id, memory_type, title, summary, event_at, observed_at, '
+  + 'context_url:context->url, context_source_url:context->source_url, '
+  + 'signal_url:context->source_signal->canonicalUrl, packet_url:context->canonical_packet->sourceSignal->canonicalUrl'
 
 interface SupabaseQueryError {
   message: string
@@ -140,11 +143,9 @@ function entityProfile(value: unknown): GateEntity {
 
 function memoryProfile(value: unknown): GateMemory {
   const row = value as { id: string, entity_id: string, memory_type: string, title: string,
-    summary: string, event_at: string | null, observed_at: string | null, context?: unknown }
-  const context = object(row.context)
-  const signal = object(context.source_signal)
-  const packetSignal = object(object(context.canonical_packet).sourceSignal)
-  const url = [context.url, context.source_url, signal.canonicalUrl, packetSignal.canonicalUrl]
+    summary: string, event_at: string | null, observed_at: string | null,
+    context_url?: unknown, context_source_url?: unknown, signal_url?: unknown, packet_url?: unknown }
+  const url = [row.context_url, row.context_source_url, row.signal_url, row.packet_url]
     .find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0)
   return { id: row.id, entityId: row.entity_id, memoryType: row.memory_type,
     title: row.title, summary: row.summary, eventAt: row.event_at ?? row.observed_at ?? '', sourceUrl: url ?? null }

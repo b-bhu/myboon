@@ -75,6 +75,7 @@ import {
 } from './standard-search-configuration'
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
 import { ArticleContextAvailabilityGate, type ArticleContextAvailabilitySnapshot } from './context-availability'
+import { ArticleHistoryCache } from '../research-gate/article-history-cache'
 import {
   AtomicResearchRuntimeStatusFile,
   awaitDrainWithin,
@@ -94,6 +95,8 @@ export const SHARED_RESEARCH_ENV = Object.freeze({
   recoveryLimitPerSource: 'FEED_V3_RESEARCH_RECOVERY_LIMIT_PER_SOURCE',
   drainGraceMs: 'FEED_V3_RESEARCH_DRAIN_GRACE_MS',
   runtimeStatusPath: 'FEED_V3_RESEARCH_RUNTIME_STATUS_PATH',
+  contextHealthyProbeIntervalMs: 'FEED_V3_RESEARCH_CONTEXT_HEALTHY_PROBE_INTERVAL_MS',
+  historyCacheTtlMs: 'FEED_V3_RESEARCH_HISTORY_CACHE_TTL_MS',
 })
 
 type SupportedResearchSource = Signal['sourceType']
@@ -114,6 +117,8 @@ export interface SharedResearchRunnerConfig {
   recoveryLimitPerSource: number
   drainGraceMs: number
   runtimeStatusPath: string
+  contextHealthyProbeIntervalMs: number
+  historyCacheTtlMs: number
   runtimeControlPath: string
   cutoverReceiptPath: string | null
   runtimeConfig: FeedV3RuntimeConfig
@@ -247,6 +252,8 @@ export function loadSharedResearchRunnerConfig(
     recoveryLimitPerSource: integer(env[SHARED_RESEARCH_ENV.recoveryLimitPerSource], 1, 1_000, 100, 'research recovery limit'),
     drainGraceMs: integer(env[SHARED_RESEARCH_ENV.drainGraceMs], 100, 15 * 60_000, 150_000, 'research drain grace'),
     runtimeStatusPath: databasePath(env[SHARED_RESEARCH_ENV.runtimeStatusPath], '.data/feed-v3-research-runtime-status.json'),
+    contextHealthyProbeIntervalMs: integer(env[SHARED_RESEARCH_ENV.contextHealthyProbeIntervalMs], 30_000, 300_000, 300_000, 'healthy context probe interval'),
+    historyCacheTtlMs: integer(env[SHARED_RESEARCH_ENV.historyCacheTtlMs], 0, 60_000, 60_000, 'recent history cache TTL'),
     runtimeControlPath: resolveRuntimeControlPath(env, PACKAGE_DIR),
     cutoverReceiptPath: feed.cutoverReceiptPath,
     runtimeConfig: feed,
@@ -397,6 +404,7 @@ export function createLiveSharedResearchRuntime(
   let gatewayRuntime: ReturnType<typeof createConfiguredInferenceGateway>
   const providerObservation = new ProviderObservation()
   let articleContextAvailability: ArticleContextAvailabilityGate | null = null
+  let articleHistoryCache: ArticleHistoryCache | null = null
   const runtimeControl = options.runtimeControl ?? new FileRuntimeControlStore(config.runtimeControlPath)
   // A malformed or temporarily unreadable durable control file is a fail-closed
   // claim gate, not a process-fatal condition. The outer loop keeps polling so
@@ -548,6 +556,8 @@ export function createLiveSharedResearchRuntime(
       if (v4Configuration.articleWorkflowEnabled) {
         const managed = managedResearchContext
         const legacy = legacyReader
+        articleHistoryCache = new ArticleHistoryCache(config.historyCacheTtlMs,
+          options.workerClock ? () => options.workerClock!.now().getTime() : undefined)
         articleContextAvailability = new ArticleContextAvailabilityGate(async () => {
           if (!managed?.articleContext || !legacy?.searchEntities) throw new Error('Article context dependencies are not configured')
           const source = [...v4Configuration.activeSources][0]
@@ -559,8 +569,12 @@ export function createLiveSharedResearchRuntime(
             managed.articleContext({ source, sourceRefs: [], labels, identityOnly: true, limit: 1, historyMode: 'targeted' }),
             legacy.searchEntities(labels, 1, { exactOnly: true }),
           ])
-          if (results.some(result => result.status === 'rejected')) throw new Error('Article context storage is unavailable')
-        }, options.workerClock ? () => options.workerClock!.now().getTime() : undefined)
+          if (results.some(result => result.status === 'rejected')) {
+            articleHistoryCache?.clear()
+            throw new Error('Article context storage is unavailable')
+          }
+        }, options.workerClock ? () => options.workerClock!.now().getTime() : undefined,
+        config.contextHealthyProbeIntervalMs)
       }
       v4 = {
         policyVersion: v4Configuration.policyVersion!, synthesisPolicy: v4Configuration.synthesisPolicy,
@@ -588,6 +602,7 @@ export function createLiveSharedResearchRuntime(
             legacy: legacyReader!, managed: managedResearchContext ?? undefined, source: signal.sourceType,
             sourceRefs: managedSignalSourceRefs(signal),
             labels: [...signal.sourceHints.entities, ...signal.sourceHints.assets, signal.title],
+            historyCache: articleHistoryCache ?? undefined,
           }),
         } } : {}),
       }
@@ -640,6 +655,7 @@ export function createLiveSharedResearchRuntime(
             const batch = await worker.runBatch(1)
             outcomes.push(...batch)
             if (batch.some(outcome => 'category' in outcome && outcome.category === 'storage_transient')) {
+              articleHistoryCache?.clear()
               articleContextAvailability?.invalidate()
               break
             }
@@ -659,11 +675,13 @@ export function createLiveSharedResearchRuntime(
             const drains = workers.map((worker) => worker.stop({ drain: true }))
             const deepDrain = deepRuntime?.stop()
             await Promise.all([...drains, ...(deepDrain ? [deepDrain] : [])])
+            articleHistoryCache?.clear()
           })()
         }
         return stopPromise
       },
       close() {
+        articleHistoryCache?.clear()
         deepRuntime?.close()
         ledgers.forEach(({ ledger }) => ledger.close())
         stores.forEach((store) => store.close())
@@ -672,6 +690,7 @@ export function createLiveSharedResearchRuntime(
       },
     }
   } catch (error) {
+    articleHistoryCache?.clear()
     if (deepRuntime) deepRuntime.close()
     else for (const registry of deepRegistries.values()) registry.close()
     ledgers.forEach(({ ledger }) => ledger.close())

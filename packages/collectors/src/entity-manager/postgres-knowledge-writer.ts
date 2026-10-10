@@ -145,6 +145,11 @@ export interface ManagedKnowledgeOperationalStatus {
  * disabled, including when a connection string carries SSL parameters.
  */
 export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWriterPort {
+  private combinedArticleHistory = false
+  /** Advertise current combined coverage only after the deployed shape is read. */
+  get articleHistoryCoverage(): 'legacy_and_managed' | undefined {
+    return this.combinedArticleHistory ? 'legacy_and_managed' : undefined
+  }
   private readonly pool: Pool
   private readonly leaseTtlMs: number
 
@@ -294,7 +299,9 @@ export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWrite
         limit: Math.min(32, Math.max(1, input.limit ?? 24)),
       })],
     )
-    return result.rows[0].result
+    const context = result.rows[0].result
+    this.combinedArticleHistory = typeof context.candidateTruncated === 'boolean' && Array.isArray(context.articleItems)
+    return context
   }
 
   /**

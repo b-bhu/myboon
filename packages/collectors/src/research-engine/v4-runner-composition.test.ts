@@ -6,6 +6,7 @@ import { operationsFixture, withIsolatedV4Environment } from '../signal-platform
 import { createLiveSharedResearchRuntime, loadSharedResearchRunnerConfig, runSharedResearchLoop, SHARED_RESEARCH_ENV,
   type CreateLiveSharedResearchRuntimeOptions } from './run-shared-research'
 import { seedV4, v4Signal, v4Clock, v4Classifier, v4ContextReader, V4_NOW } from './v4-test-fixtures'
+import { defaultRuntimeControl } from '../signal-platform/runtime-control'
 
 export function offlineV4ResearchEnvironment(newsPath: string): Record<string, string> {
   return {
@@ -43,6 +44,7 @@ test('enabled actual runner composes approved V4 ports in both priority pools wi
     const classifier = v4Classifier((request) => request.workload === RESEARCH_NOVELTY_WORKLOAD
       ? { verdict: 'new_information', reason: 'New observed state.' } : { direction: 'not_worthwhile', reason: 'No bounded addition needed.' })
     const options: CreateLiveSharedResearchRuntimeOptions = {
+      runtimeControl: { read: defaultRuntimeControl },
       workerClock: v4Clock(),
       createInferenceRuntime: (input) => {
         calls.inferenceFactory++
@@ -68,7 +70,7 @@ test('enabled actual runner composes approved V4 ports in both priority pools wi
     }
     live = createLiveSharedResearchRuntime(loadSharedResearchRunnerConfig(offlineV4ResearchEnvironment(fx.path)), options)
     const outcomes = await live.runCycle()
-    assert.equal(outcomes.filter((outcome) => outcome.kind === 'succeeded').length, 2)
+    assert.equal(outcomes.filter((outcome) => outcome.kind === 'succeeded').length, 2, JSON.stringify({ outcomes, calls }))
     assert.equal(calls.synthesis, 2)
     assert.equal(classifier.requests.length, 4)
     assert.ok(classifier.requests.every((request) => request.maxProviderCalls === 1 && request.holdOnUnknownOutcome === true))
@@ -104,6 +106,7 @@ test('injected runner dependencies cannot bypass a missing durable source owners
     let transports = 0
     const classifier = v4Classifier({ verdict: 'new_information', reason: 'Should not run' })
     live = createLiveSharedResearchRuntime(loadSharedResearchRunnerConfig(offlineV4ResearchEnvironment(fx.path)), {
+      runtimeControl: { read: defaultRuntimeControl },
       workerClock: v4Clock(), createInferenceRuntime: (input) => createConfiguredInferenceGateway({ ...input,
         serviceFactory: () => ({ oneshot: async () => { throw new Error('No provider access') } }),
         adapterFactory: () => ({ generate: async () => { transports++; return { value: {} } } }) }),

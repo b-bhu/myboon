@@ -65,3 +65,49 @@ test('a successful old probe cannot reopen claims after a newer dependency failu
   now += 30_000
   assert.equal(await gate.check(), true)
 })
+
+test('healthy probes wait five minutes, but a newly observed outage retries after thirty seconds', async () => {
+  let now = 0
+  let probes = 0
+  const gate = new ArticleContextAvailabilityGate(async () => { probes += 1 }, () => now)
+  assert.equal(await gate.check(), true)
+  assert.equal(gate.snapshot().nextProbeAt, new Date(300_000).toISOString())
+  now = 299_999
+  assert.equal(await gate.check(), true)
+  assert.equal(probes, 1)
+  now = 300_000
+  assert.equal(await gate.check(), true)
+  assert.equal(probes, 2)
+  now += 1_000
+  gate.invalidate()
+  assert.equal(gate.claimsAllowed, false)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
+  now += 29_999
+  assert.equal(await gate.check(), false)
+  now += 1
+  assert.equal(await gate.check(), true)
+  assert.equal(probes, 3)
+})
+
+test('healthy cadence is bounded and configurable without changing outage backoff', async () => {
+  let now = 0
+  const gate = new ArticleContextAvailabilityGate(async () => undefined, () => now, 60_000)
+  assert.equal(await gate.check(), true)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!), 60_000)
+  for (const invalid of [0, 29_999, 300_001, 60_000.5, NaN]) {
+    assert.throws(() => new ArticleContextAvailabilityGate(async () => undefined, () => now, invalid), RangeError)
+  }
+})
+
+test('repeated invalidation preserves an already known outage backoff', async () => {
+  let now = 0
+  const gate = new ArticleContextAvailabilityGate(async () => { throw new Error('offline') }, () => now)
+  for (const delay of [0, 30_000, 60_000, 120_000, 240_000]) {
+    now += delay
+    assert.equal(await gate.check(), false)
+    const deadline = gate.snapshot().nextProbeAt
+    gate.invalidate()
+    assert.equal(gate.snapshot().nextProbeAt, deadline)
+  }
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 300_000)
+})

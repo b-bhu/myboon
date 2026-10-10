@@ -32,6 +32,23 @@ test('shared Research entrypoint runs both directly and through PM2', () => {
   assert.equal(isSharedResearchProcessEntrypoint({ direct: false, nodeAppInstance: undefined }), false)
 })
 
+test('context probe and recent-cache configuration stays bounded with explicit cache disablement', () => {
+  const defaults = loadSharedResearchRunnerConfig({})
+  assert.equal(defaults.contextHealthyProbeIntervalMs, 300_000)
+  assert.equal(defaults.historyCacheTtlMs, 60_000)
+  const configured = loadSharedResearchRunnerConfig({
+    [SHARED_RESEARCH_ENV.contextHealthyProbeIntervalMs]: '60000', [SHARED_RESEARCH_ENV.historyCacheTtlMs]: '0',
+  })
+  assert.equal(configured.contextHealthyProbeIntervalMs, 60_000)
+  assert.equal(configured.historyCacheTtlMs, 0)
+  for (const invalid of ['29999', '300001', 'NaN']) {
+    assert.throws(() => loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.contextHealthyProbeIntervalMs]: invalid }), /probe interval/)
+  }
+  for (const invalid of ['-1', '60001', '1.5']) {
+    assert.throws(() => loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.historyCacheTtlMs]: invalid }), /cache TTL/)
+  }
+})
+
 const nodeRequire = createRequire(__filename)
 const TEST_CUTOVER_RECEIPT_PATH = '/tmp/feed-v3-test-cutover-receipt.json'
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
@@ -714,6 +731,12 @@ test('article runtime checks both storage readers and waits between failed probe
     assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
     assert.equal(live.status.articleContextAvailability?.available, true)
     assert.deepEqual([managedReads, legacyReads, providerCalls], [2, 2, 0])
+    now += 30_000
+    await live.runCycle()
+    assert.deepEqual([managedReads, legacyReads], [2, 2], 'healthy probes do not repeat after thirty seconds')
+    now += 270_000
+    await live.runCycle()
+    assert.deepEqual([managedReads, legacyReads, providerCalls], [3, 3, 0])
   } finally {
     await live?.stop()
     live?.close()

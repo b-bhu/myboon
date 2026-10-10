@@ -14,7 +14,15 @@ export class ArticleContextAvailabilityGate {
   private pending: Promise<boolean> | null = null
   private generation = 0
 
-  constructor(private readonly probe: () => Promise<void>, private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly probe: () => Promise<void>,
+    private readonly now: () => number = Date.now,
+    private readonly healthyIntervalMs = 300_000,
+  ) {
+    if (!Number.isSafeInteger(healthyIntervalMs) || healthyIntervalMs < 30_000 || healthyIntervalMs > 300_000) {
+      throw new RangeError('Healthy storage probe interval must be between 30000 and 300000 milliseconds')
+    }
+  }
 
   get claimsAllowed(): boolean { return this.available === true }
 
@@ -36,9 +44,12 @@ export class ArticleContextAvailabilityGate {
 
   /** A dependency can fail after a successful probe; stop the rest of the batch. */
   invalidate(): void {
+    const wasAvailable = this.available === true
     this.generation += 1
     this.available = false
-    this.nextProbeAt = Math.max(this.nextProbeAt, this.now() + 30_000)
+    // A newly observed failure must not inherit the longer healthy deadline.
+    const retryAt = this.now() + 30_000
+    this.nextProbeAt = wasAvailable ? retryAt : Math.max(this.nextProbeAt, retryAt)
   }
 
   private async runProbe(): Promise<boolean> {
@@ -49,7 +60,7 @@ export class ArticleContextAvailabilityGate {
       this.available = true
       this.consecutiveFailures = 0
       this.lastCheckedAt = this.now()
-      this.nextProbeAt = this.lastCheckedAt + 30_000
+      this.nextProbeAt = this.lastCheckedAt + this.healthyIntervalMs
       return true
     } catch {
       if (generation !== this.generation) return false

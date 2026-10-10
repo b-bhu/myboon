@@ -3,9 +3,12 @@ import { createHash } from 'node:crypto'
 import type { EntityMemoryReader, GateEntity, GateMemory, GateNoveltyEvidence } from './types'
 import { rankEntityCandidates } from './entity-candidates'
 import { articleCandidateDecisionSummary } from '../research-engine/article-input-bounds'
+import { ArticleHistoryCache } from './article-history-cache'
 
 /** Internal Research context only; this is not a downstream reader API. */
 export interface ManagedResearchContextPort {
+  /** Explicit adapter guarantee; rich-looking results alone are not sufficient. */
+  readonly articleHistoryCoverage?: 'legacy_and_managed'
   researchContext(input: {
     source: string
     sourceRefs: readonly string[]
@@ -71,7 +74,8 @@ export function isTransientContextFailure(error: unknown): boolean {
   const code = typeof value.code === 'string' ? value.code.toUpperCase() : ''
   const status = typeof value.status === 'number' ? value.status : null
   const message = typeof value.message === 'string' ? value.message : String(error)
-  return /^PGRST00[0-3]$/.test(code)
+  return code === 'CONTEXT_CACHE_INVALIDATED'
+    || /^PGRST00[0-3]$/.test(code)
     || /^ECONN[A-Z0-9_]+$/i.test(code)
     || /^(?:ETIMEDOUT|ETIMEOUT|EHOSTUNREACH|EPIPE|ENET(?:DOWN|UNREACH)|SQLSTATE:?(?:57014|55P03|53300|57P0[13])|57014|55P03|53300|57P0[13])$/i.test(code)
     || (status !== null && [408, 429, 500, 502, 503, 504].includes(status))
@@ -100,6 +104,7 @@ export interface ArticleResearchContext {
 export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
   private readonly failures: string[] = []
   private coverageFailureKind: ArticleContextCoverageKind | undefined
+  private coverageFailureError: unknown
   private managed: Awaited<ReturnType<ManagedResearchContextPort['researchContext']>> | null = null
   constructor(private readonly options: {
     legacy: EntityMemoryReader
@@ -107,13 +112,19 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
     source: string
     sourceRefs: readonly string[]
     labels: readonly string[]
+    /** Shared only within this runner/environment; per-article memo stays local. */
+    historyCache?: ArticleHistoryCache
   }) {
     if (!options.managed) this.recordFailure('Private managed knowledge lookup is not configured; managed history coverage is unknown.', null)
   }
 
   private recordFailure(message: string, error: unknown): void {
+    this.options.historyCache?.clear()
     this.failures.push(message)
     const kind: ArticleContextCoverageKind = error !== null && isTransientContextFailure(error) ? 'transient' : 'permanent'
+    if (this.coverageFailureKind === undefined || (this.coverageFailureKind === 'transient' && kind === 'permanent')) {
+      this.coverageFailureError = error ?? new Error(message)
+    }
     this.coverageFailureKind = this.coverageFailureKind === undefined
       ? kind
       : this.coverageFailureKind === kind ? kind : 'permanent'
@@ -290,10 +301,45 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
   }
 
   private async articleLatestHistory(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>> {
-    const [legacy, managed] = await Promise.all([
+    const managed = this.options.managed
+    if (managed?.articleContext && managed.articleHistoryCoverage === 'legacy_and_managed') {
+      if (this.failures.length > 0) return []
+      try {
+        const load = async () => {
+          // Retain the existing merge and tie boundaries. The private function
+          // and REST can choose different equal-date rows at the five-item cap.
+          const [legacy, context] = await Promise.all([
+            this.legacyHistory(entityId, 5),
+            managed.articleContext!({
+              source: this.options.source, sourceRefs: [], labels: [], entityIds: [entityId], limit: 5, historyMode: 'recent',
+            }),
+          ])
+          // Never relabel an existing temporary reader failure as permanent.
+          if (this.failures.length > 0) throw this.coverageFailureError
+          // `truncated` also describes legacy planning items, not completeness
+          // of this intentionally bounded latest-five article timeline.
+          if (!Array.isArray(context.articleItems) || context.candidateTruncated !== false
+            || !context.entities.some(entity => entity.id === entityId)) {
+            throw new Error('Combined recent history coverage is incomplete; fresh context is required')
+          }
+          return uniqueHistory([...legacy, ...context.articleItems.filter(item => item.entityId === entityId).map(item => ({
+            id: item.itemId, source: item.origin, title: item.title, summary: item.summary,
+            eventAt: item.eventAt ?? item.publishedAt ?? item.observedAt,
+          }))]).slice(0, 5)
+        }
+        // Source and capability prevent accidental reuse across lookup semantics.
+        const key = JSON.stringify([this.options.source, entityId, managed.articleHistoryCoverage, 'recent', 5])
+        return this.options.historyCache && this.failures.length === 0
+          ? await this.options.historyCache.read(key, load) : await load()
+      } catch (error) {
+        this.recordFailure(`article combined recent history lookup: ${String(error).slice(0, 200)}`, error)
+        return []
+      }
+    }
+    const [legacy, managedHistory] = await Promise.all([
       this.legacyHistory(entityId, 5), this.managedArticleHistory(entityId, 5, [], 'recent'),
     ])
-    return uniqueHistory([...legacy, ...managed]).slice(0, 5)
+    return uniqueHistory([...legacy, ...managedHistory]).slice(0, 5)
   }
 
   private async articleTargetedHistory(entityId: string, input: { sourceUrl: string | null, terms: readonly string[] }, latest: readonly ArticleHistory[]): Promise<ArticleHistory[]> {
