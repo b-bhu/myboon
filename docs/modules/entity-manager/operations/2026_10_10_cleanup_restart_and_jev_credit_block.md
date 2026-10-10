@@ -2,9 +2,11 @@
 
 The owner authorised clearing old pipeline work and restarting the systems for
 an overnight observation. All six non-API PM2 processes were started using their
-existing saved settings. **Research claims are now paused because Jev has no
-API credits.** The other five pipelines remain running. The full Research →
-Entity Manager overnight test is blocked until Jev is restored.
+existing saved settings. Research initially paused because Jev had no API
+credits. **After the owner restored credits, Research resumed at 21:56 IST and
+two fresh articles were accepted by Entity Manager.** All six pipelines remain
+online. The initial blocker and the subsequent recovery are recorded below;
+the complete overnight observation is still pending.
 
 `myboon-api` remained online throughout: PID **2468463**, restart count **2**,
 uptime **1791458762801**. No API restart, request, log cleanup or source change
@@ -136,5 +138,44 @@ This operation ran backup/restore and isolated cleanup-safety checks, plus live
 read/process/run/queue observations. No application tests, broad TypeScript
 checks, API checks or new provider-routing changes were needed. The existing
 [read-efficiency validation](2026_10_10_research_read_efficiency.md) remains the
-implementation checkpoint. The complete overnight Research test remains
-unverified and blocked on Jev credits.
+implementation checkpoint. At the initial checkpoint, the complete overnight
+Research test was unverified and blocked on Jev credits.
+
+## Credits restored and Research resumed
+
+The owner restored TypeSafe credits. A bounded request with the configured
+`jev-1.13.0` model returned **HTTP 200** at **16:26:07 UTC / 21:56:07 IST**.
+Both private article-context and REST readers passed a fresh availability
+check at 16:26:11 UTC. The existing Research control was resumed at
+**16:26:20.744 UTC / 21:56:20.744 IST**, revision **40**. No process restart,
+provider change, queue replay or API action was needed.
+
+The two freshly admitted jobs waiting while Research was paused then completed:
+
+| Work | Development | Accepted UTC / IST | Item |
+| --- | --- | --- | --- |
+| `work_f0461983a025244ec7678ff74c8ca8b3` | Joao Wedson's altcoin-season outlook | 16:27:23 / 21:57:23 | `6de57bea-0150-524e-baf3-248b3f417366` |
+| `work_5bef39b4f2fda561659a4a62525fe27d` | Hyperliquid protocol revenue and HYPE buybacks | 16:28:21 / 21:58:21 | `0c5bf472-9229-5044-843f-7fb8d039f5d5` |
+
+Both have accepted PostgreSQL receipts. Their original full captures of
+**2,970** and **1,530** characters remain untruncated; local packet SHA-256
+hashes match the persisted article text hashes. PostgreSQL also confirms the
+stored capture and response-byte hash match the immutable source packet.
+Both writers used **Ollama Cloud / GLM-5.3 Flash**, valid structured output and
+no fallback. This proves two successful end-to-end processing/persistence
+examples, not independent accuracy of the articles or model judgements.
+
+At **16:28:29 UTC / 21:58:29 IST**, News completions increased to **12,157**.
+No pending/retry work or active leases remained, and no new dead letters or
+unknown provider outcomes appeared after resumption. The seven earlier restart
+failures and **154** uncertain outcomes remain preserved; they were not
+automatically replayed. All six pipelines and the protected API retained their
+same online identities and restart counts. Research and Entity Manager both
+reported `running`.
+
+Recovery diagnostics, before/after observations and accepted source-hash proof
+are retained privately under the existing archive's `credit-recovery/`
+directory. For the morning check, use the **21:56:20 IST resumption** and
+**12,157 completions / seven existing dead letters / 154 uncertain outcomes**
+checkpoint to identify subsequent work and failures. The full overnight result
+remains pending.
