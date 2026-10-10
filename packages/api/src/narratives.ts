@@ -7,10 +7,16 @@ import entityManager from '@myboon/collectors/entity-manager'
 
 const { ENTITY_KNOWLEDGE_MAX_PAGE_SIZE } = entityManager
 
+export interface NarrativeSourceMemory {
+  id: string
+  media: EntityKnowledgeMemoryV1['media']
+  context?: Record<string, unknown>
+}
+
 export interface NarrativeMemoryReader {
   getEntityMemoriesByIds(
     input: GetEntityMemoriesByIdsInput,
-  ): Promise<Array<Pick<EntityKnowledgeMemoryV1, 'id' | 'media'>>>
+  ): Promise<NarrativeSourceMemory[]>
 }
 
 export interface NarrativeRoutesConfig {
@@ -28,6 +34,7 @@ export interface FeedItemDto {
   imageUrl: string | null
   imageKind: NarrativeImageKind | null
   imageAttribution: string | null
+  sourceName: string | null
 }
 
 export interface FeedDetailDto extends FeedItemDto {
@@ -50,6 +57,14 @@ interface NarrativeImage {
   imageKind: NarrativeImageKind
   imageAttribution: string | null
 }
+
+interface NarrativeMemoryFacts {
+  image: NarrativeImage | null
+  sourceName: string | null
+}
+
+const MAX_SOURCE_NAME_LENGTH = 120
+const UNKNOWN_SOURCE_NAMES = new Set(['structured news feed'])
 
 const LIST_SELECT = 'id,title,content_small,published_at,source_memory_ids'
 const DETAIL_SELECT = 'id,title,content_small,content_full,published_at,source_memory_ids'
@@ -103,8 +118,8 @@ export function createNarrativeRoutes(config: NarrativeRoutesConfig): Hono {
         const narrative = narrativeRow(row, false)
         return narrative ? [narrative] : []
       })
-      const imagesByMemoryId = await readMemoryImages(narratives)
-      return c.json(narratives.map((row) => toFeedItem(row, imagesByMemoryId)))
+      const factsByMemoryId = await readMemoryFacts(narratives)
+      return c.json(narratives.map((row) => toFeedItem(row, factsByMemoryId)))
     } catch (error) {
       console.error('[api] Unexpected error in GET /narratives:', error)
       return c.json({ error: 'Internal server error' }, 500)
@@ -134,8 +149,8 @@ export function createNarrativeRoutes(config: NarrativeRoutesConfig): Hono {
 
       const narrative = narrativeRow(rows[0], true)
       if (!narrative) return c.json({ error: 'Not found' }, 404)
-      const imagesByMemoryId = await readMemoryImages([narrative])
-      const detail = toFeedDetail(narrative, imagesByMemoryId)
+      const factsByMemoryId = await readMemoryFacts([narrative])
+      const detail = toFeedDetail(narrative, factsByMemoryId)
       return detail
         ? c.json(detail)
         : c.json({ error: 'Not found' }, 404)
@@ -145,12 +160,12 @@ export function createNarrativeRoutes(config: NarrativeRoutesConfig): Hono {
     }
   })
 
-  async function readMemoryImages(rows: NarrativeRow[]): Promise<Map<string, NarrativeImage>> {
+  async function readMemoryFacts(rows: NarrativeRow[]): Promise<Map<string, NarrativeMemoryFacts>> {
     const memoryIds = [...new Set(rows.flatMap((row) => row.source_memory_ids))]
       .filter((id) => UUID_RE.test(id))
     const allowedMemoryIds = new Set(memoryIds)
-    const images = new Map<string, NarrativeImage>()
-    if (memoryIds.length === 0) return images
+    const facts = new Map<string, NarrativeMemoryFacts>()
+    if (memoryIds.length === 0) return facts
     if (Math.ceil(memoryIds.length / ENTITY_KNOWLEDGE_MAX_PAGE_SIZE) > MAX_MEMORY_HYDRATION_REQUESTS) {
       throw new Error(`narrative memory hydration exceeds ${MAX_MEMORY_HYDRATION_REQUESTS} bounded knowledge requests`)
     }
@@ -165,14 +180,16 @@ export function createNarrativeRoutes(config: NarrativeRoutesConfig): Hono {
         for (const memory of memories) {
           if (!allowedMemoryIds.has(memory.id)) continue
           const image = narrativeImage(memory.media)
-          if (image) images.set(memory.id, image)
+          const sourceName = narrativeSourceName(memory)
+          if (!image && !sourceName) continue
+          facts.set(memory.id, { image, sourceName })
         }
       } catch {
-        // Media enrichment is optional; a transient knowledge read must not
-        // take down the public feed after the narrative query succeeded.
+        // Source and media enrichment are optional; a transient knowledge read
+        // must not take down the public feed after the narrative query succeeded.
       }
     }
-    return images
+    return facts
   }
 
   return app
@@ -197,42 +214,66 @@ function boundedInteger(raw: string | undefined, fallback: number, min: number, 
   return Math.min(Math.max(parsed, min), max)
 }
 
-function toFeedItem(row: NarrativeRow, imagesByMemoryId: Map<string, NarrativeImage>): FeedItemDto {
-  const image = preferredNarrativeImage(row, imagesByMemoryId)
+function toFeedItem(row: NarrativeRow, factsByMemoryId: Map<string, NarrativeMemoryFacts>): FeedItemDto {
+  const presentation = preferredNarrativePresentation(row, factsByMemoryId)
   return {
     updateKey: row.id,
     title: row.title,
     summary: row.content_small,
     publishedAt: row.published_at,
-    imageUrl: image?.imageUrl ?? null,
-    imageKind: image?.imageKind ?? null,
-    imageAttribution: image?.imageAttribution ?? null,
+    imageUrl: presentation.image?.imageUrl ?? null,
+    imageKind: presentation.image?.imageKind ?? null,
+    imageAttribution: presentation.image?.imageAttribution ?? null,
+    sourceName: presentation.sourceName,
   }
 }
 
-function toFeedDetail(row: NarrativeRow, imagesByMemoryId: Map<string, NarrativeImage>): FeedDetailDto {
-  const image = preferredNarrativeImage(row, imagesByMemoryId)
+function toFeedDetail(row: NarrativeRow, factsByMemoryId: Map<string, NarrativeMemoryFacts>): FeedDetailDto {
+  const presentation = preferredNarrativePresentation(row, factsByMemoryId)
   return {
     updateKey: row.id,
     title: row.title,
     summary: row.content_small,
     content: row.content_full!,
     publishedAt: row.published_at,
-    imageUrl: image?.imageUrl ?? null,
-    imageKind: image?.imageKind ?? null,
-    imageAttribution: image?.imageAttribution ?? null,
+    imageUrl: presentation.image?.imageUrl ?? null,
+    imageKind: presentation.image?.imageKind ?? null,
+    imageAttribution: presentation.image?.imageAttribution ?? null,
+    sourceName: presentation.sourceName,
   }
 }
 
-function preferredNarrativeImage(
+function preferredNarrativePresentation(
   row: NarrativeRow,
-  imagesByMemoryId: Map<string, NarrativeImage>,
-): NarrativeImage | null {
+  factsByMemoryId: Map<string, NarrativeMemoryFacts>,
+): { image: NarrativeImage | null, sourceName: string | null } {
   const available = row.source_memory_ids.flatMap((id) => {
-    const image = imagesByMemoryId.get(id)
-    return image ? [image] : []
+    const facts = factsByMemoryId.get(id)
+    return facts ? [facts] : []
   })
-  return available.find((image) => image.imageKind === 'content') ?? available[0] ?? null
+  const imageCarrier = available.find((facts) => facts.image?.imageKind === 'content')
+    ?? available.find((facts) => facts.image)
+    ?? null
+  // The label follows the report's linked sources, in stored order. The picture
+  // can come from a later memory without renaming the report.
+  const sourceName = available.find((facts) => facts.sourceName)?.sourceName ?? null
+  return { image: imageCarrier?.image ?? null, sourceName }
+}
+
+function narrativeSourceName(memory: NarrativeSourceMemory): string | null {
+  const context = memory.context ?? {}
+  return publicSourceName(context.source_name)
+    ?? publicSourceName(context.upstream_source_name)
+    ?? publicSourceName(context.image_attribution)
+    ?? publicSourceName(memory.media?.attribution)
+}
+
+function publicSourceName(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const name = value.replace(/\s+/g, ' ').trim()
+  if (!name || name.length > MAX_SOURCE_NAME_LENGTH) return null
+  if (UNKNOWN_SOURCE_NAMES.has(name.toLowerCase())) return null
+  return name
 }
 
 function narrativeImage(value: unknown): NarrativeImage | null {

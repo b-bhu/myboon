@@ -8,7 +8,7 @@ import {
   type CanonEntity,
   type RecentEntityMemory,
 } from './canon'
-import { normalizeSlug } from './normalization'
+import { compactString, normalizeSlug } from './normalization'
 import type {
   EntityInput,
   EntityMemoryInput,
@@ -446,6 +446,31 @@ async function resolvePrimaryEntities(
   return resolved
 }
 
+function trustedNewsSourceName(packet: ResearchPacket): string | null {
+  if (packet.source !== 'news') return null
+  // The outlet (or social handle) is a source fact. Prefer the aggregator's
+  // upstream name, then the recorded source name. Extraction cannot supply it.
+  return compactString(packet.context.upstream_source_name)
+    || compactString(packet.context.source_name)
+    || null
+}
+
+function memoryContext(packet: ResearchPacket, memory: EntityMemoryCandidate): Record<string, unknown> {
+  const extracted = { ...(memory.context ?? {}) }
+  if (packet.source === 'news') {
+    delete extracted.source_name
+    delete extracted.upstream_source_name
+  }
+  const sourceName = trustedNewsSourceName(packet)
+  return {
+    ...extracted,
+    source_title: packet.title,
+    source_url: packet.url ?? null,
+    ...packetImageContext(packet),
+    ...(sourceName ? { source_name: sourceName } : {}),
+  }
+}
+
 function memoryInput(packet: ResearchPacket, memory: EntityMemoryCandidate, entityId: string): EntityMemoryInput {
   return {
     entity_id: entityId,
@@ -464,12 +489,7 @@ function memoryInput(packet: ResearchPacket, memory: EntityMemoryCandidate, enti
     evidence: memory.evidence ?? packet.evidence,
     mentions: unique(memory.mentions ?? []),
     metrics: { ...packet.metrics, ...(memory.metrics ?? {}) },
-    context: {
-      ...(memory.context ?? {}),
-      source_title: packet.title,
-      source_url: packet.url ?? null,
-      ...packetImageContext(packet),
-    },
+    context: memoryContext(packet, memory),
   }
 }
 
