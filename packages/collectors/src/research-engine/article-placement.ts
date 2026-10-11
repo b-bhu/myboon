@@ -283,6 +283,16 @@ async function membership(
   if ((relationship.value.relationship === 'direct_continuation' || relationship.value.relationship === 'related_story_branch') && !prior) {
     throw new ArticleResearchHold('entity_resolution_uncertain', 'A relationship selected a continuation or story branch without a valid durable historical target.')
   }
+  // The validators demote a Hermes duplicate to this uncertain value; novelty
+  // must never save the suppressed duplicate as new information over it. When
+  // the final relationship decision came from Hermes — an explicit fallback
+  // result, or a result with no raw Jev answer for the question — placement
+  // holds before novelty/synthesis instead of accepting the uncertain
+  // relationship. Jev keeps its validated uncertain choices unchanged.
+  if (input.useHermesFallbackVersions === true && relationship.value.relationship === 'uncertain'
+    && (relationship.fallbackUsed || rawJevAnswer(relationship, 'relationship') === undefined)) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', `Hermes story relationship for ${entity.id} is uncertain; the article is held instead of saving a default.`)
+  }
   const fallback = input.useHermesFallbackVersions === true
   const relationshipDecision = decide(relationship, 'relationship', fallback, relationship.value.relationship)
   const priorItemDecision = decide(relationship, 'prior_item', fallback, relationship.value.priorItemId ?? 'none')
@@ -580,7 +590,7 @@ async function batchedCatalogueStage(
 ): Promise<BatchedCatalogueStage> {
   const fallbackVersions = input.useHermesFallbackVersions === true
   const batches = batchedCatalogueBatches(input, extraCandidates, lookupTerms)
-  let selected: string | null = null
+  const batchPlacements: Array<{ selectedId: string | null, uncertain: boolean }> = []
   let uncertain = false
   const orderedCandidates: ArticleResearchContext['candidates'] = []
   const dispositionByCandidate: BatchedCatalogueStage['dispositionByCandidate'] = new Map()
@@ -603,12 +613,24 @@ async function batchedCatalogueStage(
       const outcome = result.value.dispositions[candidate.id]
       if (outcome) dispositionByCandidate.set(candidate.id, { outcome, result })
     }
-    if (result.value.disposition === 'selected' && result.value.entityId && selected === null) {
-      selected = result.value.entityId
-    }
+    batchPlacements.push({
+      selectedId: result.value.disposition === 'selected' && result.value.entityId ? result.value.entityId : null,
+      uncertain: result.value.disposition === 'uncertain',
+    })
     if (result.value.disposition === 'uncertain') uncertain = true
   }
-  return { selected, uncertain, orderedCandidates, dispositionByCandidate, firstResult: firstResult! }
+  // A split catalogue answers placement once per batch; the primary is chosen
+  // only from the pooled placements. Batches that disagree on the selected
+  // entity, or a selection made while another batch could not resolve its own
+  // placement, are a hold — never a first-selected-batch win.
+  const selectedIds = [...new Set(batchPlacements.map((item) => item.selectedId).filter((id): id is string => id !== null))]
+  if (selectedIds.length > 1) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', `The batched catalogue selected conflicting primaries (${selectedIds.sort().join(', ')}) across batches; entity resolution is held instead of choosing one.`)
+  }
+  if (selectedIds.length === 1 && batchPlacements.some((item) => item.uncertain)) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', 'The batched catalogue selected a primary while another batch was uncertain; entity resolution is held instead of choosing one.')
+  }
+  return { selected: selectedIds[0] ?? null, uncertain, orderedCandidates, dispositionByCandidate, firstResult: firstResult! }
 }
 
 /** Stage 2: joint relationship/target dispatches over the selected entities. */
@@ -790,6 +812,16 @@ async function batchedMembership(
   }
   // Marginals retain the joint distribution in the existing packet fields; the
   // full joint answer remains in the durable classification record.
+  // The validators demote a Hermes duplicate to uncertain and drop the target;
+  // novelty must never save the suppressed duplicate as new information over
+  // it. When the final relationship decision came from Hermes — an explicit
+  // fallback result, or a result with no raw Jev answer for the question —
+  // placement holds before novelty/synthesis. Jev's validated uncertain
+  // choices keep the flag-off behaviour unchanged.
+  if (fallbackVersions && relationship.value.relationship === 'uncertain'
+    && (relationship.fallbackUsed || rawJevAnswer(relationship, fromOlderLookup ? 'relationship' : `relationship_target_${entity.id}`) === undefined)) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', `Hermes story relationship for ${entity.id} is uncertain; the article is held instead of saving a default.`)
+  }
   const decisions = fromOlderLookup
     ? {
       relationshipDecision: decide(relationship, 'relationship', fallbackVersions, relationship.value.relationship),

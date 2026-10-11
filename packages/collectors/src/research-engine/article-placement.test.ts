@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { prepareArticlePlacement } from './article-placement'
+import { ArticleResearchHold, prepareArticlePlacement } from './article-placement'
 import { v4ClassificationResult } from './v4-test-fixtures'
 import { managedFixture } from '../entity-manager/managed-v4.test-support'
 import { createConfiguredClassificationRuntime } from '../inference-gateway/classification-configuration'
@@ -454,6 +454,8 @@ type BatchAnswerOverrides = {
   relationship?: (state: { entities: Array<{ id: string, name: string, recentItems: Array<{ id: string, source: string }> }> }) => Array<{ entityId: string, relationship: string, priorItemId: string | null }>
   /** Raw (undecoded) decision value, e.g. a durable saved result replayed verbatim. */
   relationshipRaw?: (state: { entities: Array<{ id: string }> }) => unknown
+  /** Resolves the relationship batch dispatch as a Hermes fallback result carrying these targets. */
+  relationshipHermes?: (state: { entities: Array<{ id: string }> }) => Array<{ entityId: string, relationship: string, priorItemId: string | null }>
 }
 
 // Mocked gateway whose batched answers are decoded through the real registry
@@ -489,6 +491,18 @@ function batchedGateway(options: BatchAnswerOverrides = {}) {
         }
         const validated = articleRelationshipBatchDefinition().validateState(state)
         assert.equal(validated.valid, true)
+        // A Hermes fallback result carries its validated decision value with
+        // no Jev answers; a duplicate target is demoted to uncertain by the
+        // real batch validator before this point.
+        const hermesTargets = options.relationshipHermes?.(state)
+        if (hermesTargets) {
+          const decoded = articleRelationshipBatchDefinition(undefined, { articleHermesFallback: true }).validateHermes!(
+            { targets: hermesTargets }, validated.value,
+          )
+          assert.equal(decoded.valid, true)
+          if (!decoded.valid) throw new Error('unreachable')
+          return { ...v4ClassificationResult(decoded.value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers: null, actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash', fallbackUsed: true, fallbackReason: 'provider_billing' } as ClassificationResult<Value>
+        }
         const targets = options.relationship?.(state) ?? state.entities.map((entity) => ({ entityId: entity.id, relationship: 'direct_continuation', priorItemId: `${entity.id}-0` }))
         const answers = Object.fromEntries(state.entities.map((entity) => {
           const target = targets.find((item) => item.entityId === entity.id)!
@@ -657,4 +671,120 @@ test('#5A a batched duplicate without a valid target holds', async () => {
     prepareArticlePlacement({ gateway: duplicate.gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: batchedContext(), useBatching: true }),
     /duplicate without a valid durable historical target/,
   )
+})
+
+// #308 remark (c)4: a split catalogue answers placement once per batch; the
+// primary may be chosen only from pooled placements that agree.
+function splitCataloguePlacements(placements: Array<{ entityId: string | null, disposition: 'selected' | 'no_match' | 'uncertain' }>) {
+  // Three candidates whose states each exceed half the 96,000-byte bound force
+  // exactly one bounded batch per candidate, so every placement judgment gets
+  // its own catalogue dispatch in candidate-id order.
+  const candidates = ['a-01', 'a-02', 'a-03'].map((id) => ({ id, name: `Entity ${id}`, aliases: [], summary: null, scope: { blob: 'x'.repeat(50_000) } }))
+  let catalogueCalls = 0
+  const { gateway, requests } = batchedGateway({
+    catalogue: (state) => {
+      const judgment = placements[catalogueCalls] ?? { entityId: null, disposition: 'no_match' as const }
+      catalogueCalls += 1
+      const dispositions = Object.fromEntries(state.candidates.map((candidate) => [candidate.id, 'not_related' as const]))
+      return { ...judgment, dispositions }
+    },
+    relationship: (state) => state.entities.map((entity) => ({ entityId: entity.id, relationship: 'same_topic_only', priorItemId: null })),
+  })
+  return { gateway, requests, candidates }
+}
+
+test('#5A conflicting batch selections hold instead of a first-batch win', async () => {
+  const { gateway, requests, candidates } = splitCataloguePlacements([
+    { entityId: 'a-01', disposition: 'selected' }, { entityId: 'a-02', disposition: 'selected' }, { entityId: null, disposition: 'no_match' },
+  ])
+  await assert.rejects(
+    prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: { ...batchedContext(), candidates }, useBatching: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /conflicting primaries/.test(error.message),
+  )
+  assert.equal(requests.filter((request) => request.workload === 'research.article_catalogue_batch').length, 3)
+  assert.equal(requests.some((request) => request.workload.endsWith('novelty')), false)
+})
+
+test('#5A a consistent single batch selection proceeds with the existing memberships', async () => {
+  const { gateway, requests, candidates } = splitCataloguePlacements([
+    { entityId: 'a-01', disposition: 'selected' }, { entityId: null, disposition: 'no_match' }, { entityId: null, disposition: 'no_match' },
+  ])
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: { ...batchedContext(), candidates }, useBatching: true })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['a-01', 'primary']])
+  assert.equal(requests.filter((request) => request.workload === 'research.article_catalogue_batch').length, 3)
+  assert.equal(result.novelty.choice, 'new_information')
+})
+
+test('#5A a batch selection made while another batch is uncertain holds', async () => {
+  const { gateway, requests, candidates } = splitCataloguePlacements([
+    { entityId: 'a-01', disposition: 'selected' }, { entityId: null, disposition: 'uncertain' }, { entityId: null, disposition: 'no_match' },
+  ])
+  await assert.rejects(
+    prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: { ...batchedContext(), candidates }, useBatching: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /selected a primary while another batch was uncertain/.test(error.message),
+  )
+  assert.equal(requests.filter((request) => request.workload === 'research.article_catalogue_batch').length, 3)
+  assert.equal(requests.some((request) => request.workload.endsWith('novelty')), false)
+})
+
+// #308 remark (c)6: the validators demote a Hermes duplicate to an uncertain
+// relationship; novelty must never save that duplicate as new information.
+test('#308 an uncertain Hermes story relationship holds instead of passing through novelty (unbatched)', async () => {
+  const c = context(); c.candidates = c.candidates.slice(0, 1)
+  const gateway = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    let value: unknown; let answers: Record<string, JevAnswer> | null
+    if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: answer('bitcoin') } }
+    else if (request.workload.endsWith('story_relationship')) {
+      value = { relationship: 'uncertain', priorItemId: null }
+      answers = null
+      return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers, actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash', fallbackUsed: true, fallbackReason: 'provider_billing' } as ClassificationResult<Value>
+    }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  await assert.rejects(
+    prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: c, useHermesFallbackVersions: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /Hermes story relationship for bitcoin is uncertain/.test(error.message),
+  )
+  // A durable result replayed without its raw Jev answers (a disabled Jev
+  // lifecycle dispatched Hermes directly) is the same Hermes provenance.
+  const replayed = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    let value: unknown; let answers: Record<string, JevAnswer> | null
+    if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: answer('bitcoin') } }
+    else if (request.workload.endsWith('story_relationship')) { value = { relationship: 'uncertain', priorItemId: null }; answers = null }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers } as ClassificationResult<Value>
+  } }
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: replayed, stableDecisionKey: 'k', signal, sourceText: 'x', context: c, useHermesFallbackVersions: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /Hermes story relationship for bitcoin is uncertain/.test(error.message),
+  )
+})
+
+test('#308 an uncertain Hermes story relationship holds instead of passing through novelty (batched)', async () => {
+  const { gateway, requests } = batchedGateway({ relationshipHermes: (state) => state.entities.map((entity) => ({ entityId: entity.id, relationship: 'duplicate', priorItemId: `${entity.id}-0` })) })
+  await assert.rejects(
+    prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: batchedContext(), useBatching: true, useHermesFallbackVersions: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /Hermes story relationship for bitcoin is uncertain/.test(error.message),
+  )
+  assert.equal(requests.some((request) => request.workload.endsWith('novelty')), false)
+})
+
+test('#308 an uncertain Jev story relationship still passes through placement unchanged', async () => {
+  const c = context(); c.candidates = c.candidates.slice(0, 1)
+  const gateway = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: answer('bitcoin') } }
+    else if (request.workload.endsWith('story_relationship')) { value = { relationship: 'uncertain', priorItemId: null }; answers = { relationship_target: answer('uncertain') } }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: c, useHermesFallbackVersions: true })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role, membership.relationship]), [['bitcoin', 'primary', 'uncertain']])
+  assert.equal(result.novelty.choice, 'new_information')
 })
