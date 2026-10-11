@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Pool } from 'pg'
 import { canonicalJson } from '../signal-platform/canonical-json'
-import { isArticleResearchPacket, type ArticleResearchPacketV1, type ResearchPacket, type Signal } from '../signal-platform/contracts'
+import { isArticleResearchPacket, type ArticleResearchPacketV1, type ArticleResearchPacketV2, type ResearchPacket, type Signal } from '../signal-platform/contracts'
 import { validateResearchPacket } from '../signal-platform/validation'
 import type { EntityHandoffContext } from './canonical-packet-adapter'
 import {
@@ -78,7 +78,8 @@ export interface ArticleCommitInput {
   workId: string
   owner: string
   epoch: number
-  packet: ArticleResearchPacketV1
+  /** Either article packet version; the SQL writer accepts both. */
+  packet: ArticleResearchPacketV1 | ArticleResearchPacketV2
   contextDigest: string
   contextWatermark: string
   targetRevisions: Record<string, string>

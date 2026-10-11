@@ -9,6 +9,12 @@ export const RESEARCH_PACKET_SCHEMA_VERSION = 'myboon.research_packet.v1' as con
  * fields with empty values for articles: absence is the compatibility marker.
  */
 export const ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION = 'myboon.research_packet.article.v1' as const
+/**
+ * Entity Manager V4 article packet with provider-aware decisions.  Readers and
+ * persistence accept both versions; producers still emit v1 until an emitter
+ * for v2 lands.
+ */
+export const ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION = 'myboon.research_packet.article.v2' as const
 export const EXECUTION_EVENT_SCHEMA_VERSION = 'myboon.execution_event.v1' as const
 
 export type SignalSchemaVersion = typeof SIGNAL_SCHEMA_VERSION
@@ -331,7 +337,11 @@ export type ArticleStoryRelationship =
   | 'unrelated'
   | 'uncertain'
 
-/** A raw TypeSafe Choice is retained for audit/replay; code decides its policy. */
+/**
+ * A raw TypeSafe Choice is retained for audit/replay; code decides its policy.
+ * This shape stays tied to Jev's truthful raw Choice data: probabilities and
+ * confidence exist only where a provider reports them.
+ */
 export interface ArticleChoiceDecision extends ExtensibleContract {
   choice: string
   probabilities: Record<string, number>
@@ -339,6 +349,31 @@ export interface ArticleChoiceDecision extends ExtensibleContract {
   decisionId: string
   decisionVersion: string
 }
+
+/**
+ * Provider-aware v2 article decision. The `provider` discriminator separates
+ * Jev's raw Choice data from Hermes fallback decisions: a Hermes decision is
+ * audit-provenance only and must never carry a fabricated probabilities or
+ * confidence claim.
+ */
+export type ArticleDecisionV2 =
+  | {
+    provider: 'jev'
+    choice: string
+    probabilities: Record<string, number>
+    confidence: number
+    decisionId: string
+    decisionVersion: string
+    model: string
+  }
+  | {
+    provider: 'hermes'
+    choice: string
+    decisionId: string
+    decisionVersion: string
+    model: string
+    fallbackReason: string
+  }
 
 /** Source-grounded candidate identity awaiting Entity Manager equivalence checks. */
 export interface ArticleEntityCreationProposal extends ExtensibleContract {
@@ -377,6 +412,32 @@ export interface ArticleEntityProposal extends ExtensibleContract {
    * Related-entity duplicate context retained when the primary exact target
    * owns the one shared reuse effect. This never authorizes a writer effect.
    */
+  contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
+}
+
+/**
+ * v2 membership: the v1 proposal with provider-aware retained decisions. It is
+ * written out explicitly because ExtensibleContract's index signature makes
+ * Omit/keyof combinations collapse on these shapes.
+ */
+export interface ArticleV2EntityProposal extends ExtensibleContract {
+  entityId: string | null
+  placementDisposition: 'selected' | 'no_match' | 'uncertain'
+  role: ArticleMembershipRole
+  name: string
+  type: string | null
+  aliases: string[]
+  summary: string | null
+  scope: Record<string, unknown>
+  creationProposal: ArticleEntityCreationProposal | null
+  creationDecision: ArticleDecisionV2 | null
+  placement: ArticleDecisionV2
+  relationship: ArticleStoryRelationship | null
+  relationshipDecision: ArticleDecisionV2 | null
+  priorItemDecision: ArticleDecisionV2 | null
+  priorItemId: string | null
+  priorItemSource: 'legacy' | 'managed' | null
+  duplicateTarget: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
 }
 
@@ -428,10 +489,61 @@ export interface ArticleResearchPacketV1 extends ExtensibleContract {
   createdAt: string
 }
 
-export type ResearchPacket = ResearchPacketV1 | ArticleResearchPacketV1
+/**
+ * Same handoff shape as v1, but every retained decision (creation, placement,
+ * relationship, prior item, novelty) is provider-aware via ArticleDecisionV2:
+ * Jev decisions keep truthful raw Choice data, Hermes fallback decisions record
+ * only why the fallback happened.
+ */
+export interface ArticleResearchPacketV2 extends ExtensibleContract {
+  schemaVersion: typeof ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION
+  packetKind: 'article'
+  packetId: string
+  workId: string
+  signalId: string
+  sourceType: Signal['sourceType']
+  observedAt: string
+  sourceSignal: {
+    sourceId: string
+    title: string
+    canonicalUrl: string
+    /** Input URL before retrieval redirects, retained with the captured URL. */
+    /** Optional only for article packets saved before redirect provenance. */
+    originalCanonicalUrl?: string | null
+    capturedUrl?: string
+    publishedAt: string | null
+    provenance: SignalProvenance
+    [key: string]: unknown
+  }
+  article: {
+    title: string
+    timelineSummary: string
+    body: string | null
+    /** Actual event time when stated; never substituted with publishedAt. */
+    eventAt: string | null
+    sourceUrl: string
+    capturedText: string
+    capturedAt: string
+    contentHash: string
+    truncated: boolean
+  }
+  memberships: ArticleV2EntityProposal[]
+  /** Every prepared article records a separate provider-attributed novelty judgment. */
+  novelty: ArticleDecisionV2
+  limitations: string[]
+  openQuestions: string[]
+  completion: ResearchCompletion
+  budgetUsed: BudgetUsage
+  execution: ResearchExecution
+  researchContractVersion: ResearchPacketSchemaVersion
+  createdAt: string
+}
 
-export function isArticleResearchPacket(packet: ResearchPacket | Record<string, unknown>): packet is ArticleResearchPacketV1 {
-  return packet.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION
+export type ResearchPacket = ResearchPacketV1 | ArticleResearchPacketV1 | ArticleResearchPacketV2
+
+export function isArticleResearchPacket(packet: ResearchPacket | Record<string, unknown>): packet is ArticleResearchPacketV1 | ArticleResearchPacketV2 {
+  return (packet.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION
+    || packet.schemaVersion === ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION)
     && packet.packetKind === 'article'
 }
 

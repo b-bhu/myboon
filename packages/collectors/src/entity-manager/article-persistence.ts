@@ -1,10 +1,18 @@
 import { createHash } from 'node:crypto'
 import { canonicalJson } from '../signal-platform/canonical-json'
-import { isArticleResearchPacket, type ArticleEntityProposal, type ArticleResearchPacketV1, type ResearchPacket } from '../signal-platform/contracts'
+import { isArticleResearchPacket, ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION, type ArticleEntityProposal, type ArticleResearchPacketV1, type ArticleResearchPacketV2, type ArticleV2EntityProposal, type ResearchPacket } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { deriveManagedItemId, deriveProgressionOperationId } from './progression-processor'
 import { knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
 import type { ManagedArticleContext, ManagedEntityBinding, PostgresKnowledgeOperationWriter } from './postgres-knowledge-writer'
+
+/**
+ * Readers first: persistence accepts both article packet versions.  The two
+ * versions share every durable-reference field; only the retained decisions
+ * (creation/placement/relationship/prior item/novelty) differ by provider.
+ */
+type ArticlePacket = ArticleResearchPacketV1 | ArticleResearchPacketV2
+type ArticleMembership = ArticlePacket['memberships'][number]
 
 /**
  * Deterministic article persistence. Research has already made placement,
@@ -124,7 +132,7 @@ export class ArticlePersistenceProcessor {
     }
   }
 
-  private async raiseHold(packet: ArticleResearchPacketV1, owner: string, reason: string, missingDependency: string): Promise<never> {
+  private async raiseHold(packet: ArticlePacket, owner: string, reason: string, missingDependency: string): Promise<never> {
     const operationId = deriveProgressionOperationId(packet.workId)
     const accepted = await this.writer.findReceipt(operationId)
     if (accepted) {
@@ -145,7 +153,7 @@ export class ArticlePersistenceProcessor {
   }
 }
 
-function resolveMemberships(packet: ArticleResearchPacketV1, context: ManagedArticleContext):
+function resolveMemberships(packet: ArticlePacket, context: ManagedArticleContext):
   | { kind: 'ok', entities: ManagedEntityBinding[] }
   | { kind: 'hold', reason: string } {
   const primary = packet.memberships.filter((proposal) => proposal.role === 'primary' && (proposal.placementDisposition === 'selected' || proposal.placementDisposition === 'no_match'))
@@ -189,7 +197,7 @@ function resolveMemberships(packet: ArticleResearchPacketV1, context: ManagedArt
   return { kind: 'ok', entities }
 }
 
-function resolveDuplicate(packet: ArticleResearchPacketV1, context: ManagedArticleContext):
+function resolveDuplicate(packet: ArticlePacket, context: ManagedArticleContext):
   | { kind: 'ok', target: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null }
   | { kind: 'hold', reason: string } {
   const proposals = packet.memberships
@@ -236,8 +244,8 @@ function resolveDuplicate(packet: ArticleResearchPacketV1, context: ManagedArtic
     : { kind: 'hold', reason: 'article duplicate target is not a valid durable history reference' }
 }
 
-function duplicateTarget(proposal: ArticleEntityProposal): { itemId: string, source: 'legacy' | 'managed', entityId: string } | null {
-  const target = (proposal as ArticleEntityProposal & { duplicateTarget?: unknown }).duplicateTarget
+function duplicateTarget(proposal: ArticleMembership): { itemId: string, source: 'legacy' | 'managed', entityId: string } | null {
+  const target = (proposal as ArticleMembership & { duplicateTarget?: unknown }).duplicateTarget
   if (!target || typeof target !== 'object') return null
   const value = target as { itemId?: unknown, source?: unknown, entityId?: unknown }
   return typeof value.itemId === 'string' && typeof value.entityId === 'string' && (value.source === 'legacy' || value.source === 'managed')
@@ -245,8 +253,8 @@ function duplicateTarget(proposal: ArticleEntityProposal): { itemId: string, sou
     : null
 }
 
-function contextualDuplicateTarget(proposal: ArticleEntityProposal): { itemId: string, source: 'legacy' | 'managed', entityId: string } | null {
-  const target = (proposal as ArticleEntityProposal & { contextualDuplicateTarget?: unknown }).contextualDuplicateTarget
+function contextualDuplicateTarget(proposal: ArticleMembership): { itemId: string, source: 'legacy' | 'managed', entityId: string } | null {
+  const target = (proposal as ArticleMembership & { contextualDuplicateTarget?: unknown }).contextualDuplicateTarget
   if (!target || typeof target !== 'object') return null
   const value = target as { itemId?: unknown, source?: unknown, entityId?: unknown }
   return typeof value.itemId === 'string' && typeof value.entityId === 'string' && (value.source === 'legacy' || value.source === 'managed')
@@ -258,12 +266,14 @@ function contextualDuplicateTarget(proposal: ArticleEntityProposal): { itemId: s
  * that the primary exact duplicate selected. Related duplicate judgments are
  * retained as packet history, but they are not additional writer effects.
  */
-export function retainPrimaryDuplicateTarget(packet: ArticleResearchPacketV1): ArticleResearchPacketV1 {
+export function retainPrimaryDuplicateTarget(packet: ArticlePacket): ArticlePacket {
   if (packet.novelty.choice !== 'already_known') return packet
   const primary = packet.memberships.find((proposal) => proposal.role === 'primary' && duplicateTarget(proposal) !== null)
   const authoritative = primary ? duplicateTarget(primary) : null
   if (!authoritative) return packet
   let changed = false
+  // Both article versions carry identical membership shapes apart from the
+  // retained decision types; the transformation is version-agnostic.
   const memberships = packet.memberships.map((proposal) => {
     const target = duplicateTarget(proposal)
     if (!target || proposal === primary) return proposal
@@ -271,8 +281,16 @@ export function retainPrimaryDuplicateTarget(packet: ArticleResearchPacketV1): A
     // Keep the exact secondary target and raw relationship decision as
     // contextual history. Only the primary exact duplicate is a writer effect.
     return { ...proposal, duplicateTarget: null, contextualDuplicateTarget: target }
-  })
-  return changed ? { ...packet, memberships } : packet
+  }) as typeof packet.memberships
+  if (!changed) return packet
+  // Both article versions carry identical membership shapes apart from the
+  // retained decision types; rebuild through the schemaVersion discriminant.
+  if (packet.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION) {
+    const rebuilt: ArticleResearchPacketV1 = { ...packet, memberships: memberships as ArticleEntityProposal[] }
+    return rebuilt
+  }
+  const rebuiltV2: ArticleResearchPacketV2 = { ...packet, memberships: memberships as ArticleV2EntityProposal[] }
+  return rebuiltV2
 }
 
 function receiptOutcome(receipt: KnowledgeOperationReceipt, operationId: string, workId: string): void {
