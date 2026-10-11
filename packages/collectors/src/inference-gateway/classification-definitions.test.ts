@@ -376,6 +376,16 @@ test('article Hermes fallback safety holds: proposal accept and novelty duplicat
   )
 })
 
+test('article Hermes fallback safety hold: story duplicate becomes uncertain', () => {
+  const story = articleStoryRelationshipDefinition(undefined, { articleHermesFallback: true })
+  assert.deepEqual(
+    story.validateHermes({ relationship: 'duplicate', priorItemId: 'bitcoin-1' }, FALLBACK_STORY_STATE),
+    { valid: true, value: { relationship: 'uncertain', priorItemId: null, priorItemSource: null } },
+  )
+  // A duplicate naming a target outside the supplied history stays invalid.
+  assert.equal(story.validateHermes({ relationship: 'duplicate', priorItemId: 'unregistered-id' }, FALLBACK_STORY_STATE).valid, false)
+})
+
 test('fallback article versions decode Jev answers identically to the legacy versions', () => {
   const legacy = articleEntityPlacementDefinition()
   const modern = articleEntityPlacementDefinition(undefined, { articleHermesFallback: true })

@@ -505,6 +505,10 @@ Standalone outcomes: same_topic_only, unrelated, uncertain (priorItemId must be 
             return { valid: false, issues: ['Hermes relationship target is outside supplied history'] }
           }
           const target = state.recentItems.find(item => item.id === priorItemId)!
+          // Safety hold: a Hermes duplicate outcome must never suppress the
+          // article; demote it to the same uncertain hold the Jev question
+          // offers and drop the prior-item target.
+          if (relationship === 'duplicate') return { valid: true, value: { relationship: 'uncertain' as const, priorItemId: null, priorItemSource: null } }
           return { valid: true, value: { relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId: target.id, priorItemSource: target.source } }
         }
         if (priorItemId !== null) {
