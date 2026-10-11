@@ -4,12 +4,19 @@ import { ClassificationDoubleFailureError, ClassificationOutcomeUnknownError, Cl
 import { StaticClassificationRegistry } from './classification-registry'
 import { InferenceGatewayError } from './errors'
 import type {
+  ClassificationAttemptRecord,
+  ClassificationAuditSink,
+  ClassificationCapacityCoordinator,
+  ClassificationCapacityPolicy,
   ClassificationDefinition,
+  ClassificationLease,
+  ClassificationPolicyOutcomeRecord,
   HermesClassificationAdapter,
   HermesClassificationCall,
   JevClassificationAdapter,
   JevClassificationCall,
 } from './classification-types'
+import type { InferenceProviderTarget } from './types'
 
 interface State { subject: string }
 interface Decision { label: 'keep' | 'drop' }
@@ -233,4 +240,197 @@ test('preflight rejects invalid state without reaching any provider', () => {
   const setup = gateway({})
   assert.throws(() => setup.instance.preflight({ ...request(), state: { subject: 42 } }), /subject required/)
   assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 0 })
+})
+
+// Minimal in-memory ports mirroring the SQLite store's circuit semantics:
+// retryable failures count toward circuitFailureThreshold, then acquire refuses
+// with circuit_open until circuitCooldownMs has passed.
+class CircuitTrackingPorts implements ClassificationCapacityCoordinator, ClassificationAuditSink {
+  readonly attempts: ClassificationAttemptRecord[] = []
+  readonly outcomes: ClassificationPolicyOutcomeRecord[] = []
+  private readonly failures = new Map<string, number>()
+  private readonly blockedUntilMs = new Map<string, number>()
+  constructor(private readonly policy: ClassificationCapacityPolicy, private readonly nowMs: () => number) {}
+
+  acquire(input: {
+    workload: string
+    target: InferenceProviderTarget
+    mode: 'live'
+    policy: ClassificationCapacityPolicy
+  }): ClassificationLease {
+    const key = `${input.target.provider}|${input.target.model}`
+    if ((this.blockedUntilMs.get(key) ?? 0) > this.nowMs()) {
+      throw new InferenceGatewayError('Classification provider circuit is open', {
+        category: 'circuit_open', retryable: true,
+        retryAfterMs: Math.max(1, (this.blockedUntilMs.get(key) ?? 0) - this.nowMs()),
+        provider: input.target.provider, model: input.target.model,
+      })
+    }
+    return { token: 'test-lease', release: ({ success, retryableFailure }) => {
+      if (success || !retryableFailure) this.failures.set(key, 0)
+      else {
+        const count = (this.failures.get(key) ?? 0) + 1
+        if (count >= this.policy.circuitFailureThreshold) this.blockedUntilMs.set(key, this.nowMs() + this.policy.circuitCooldownMs)
+        this.failures.set(key, count)
+      }
+    } }
+  }
+
+  trip(definition: ClassificationDefinition): void {
+    for (let index = 0; index < definition.capacity.circuitFailureThreshold; index += 1) {
+      this.acquire({ workload: definition.workload, target: definition.jevTarget, mode: 'live', policy: definition.capacity })
+        .release({ success: false, retryableFailure: true })
+    }
+  }
+
+  recordAttempt(record: ClassificationAttemptRecord): void { this.attempts.push(record) }
+  recordPolicyOutcome(record: ClassificationPolicyOutcomeRecord): void { this.outcomes.push(record) }
+}
+
+function billingError(retryAfterMs?: number): InferenceGatewayError {
+  return new InferenceGatewayError('Jev classification failed with HTTP 402', {
+    category: 'provider_billing', retryable: true,
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    provider: 'typesafe', model: 'jev-1.13.0',
+  })
+}
+
+test('a second billing failure retries Jev once, then falls back to Hermes without spending the reservation', async () => {
+  const sleepCalls: number[] = []
+  let jevCalls = 0
+  let hermesCalls = 0
+  const ports = new CircuitTrackingPorts(definition().capacity, () => 0)
+  const instance = new ClassificationGateway({
+    registry: new StaticClassificationRegistry([definition()]),
+    jev: { async classify() {
+      jevCalls += 1
+      throw billingError()
+    } },
+    hermes: { async classify(call: HermesClassificationCall) {
+      hermesCalls += 1
+      return { actualProvider: call.target.provider, actualModel: call.target.model,
+        value: { label: 'drop' }, durationMs: 7, usage: { inputTokens: 2, outputTokens: 1 } }
+    } },
+    capacity: ports, audit: ports,
+    now: () => 1_700_000_000_000,
+    sleep: async (ms) => { sleepCalls.push(ms) },
+  })
+  const result = await instance.classify<Decision>(request())
+  assert.deepEqual(result.value, { label: 'drop' })
+  assert.equal(result.fallbackUsed, true)
+  assert.equal(result.fallbackReason, 'provider_billing')
+  assert.deepEqual({ jevCalls, hermesCalls }, { jevCalls: 2, hermesCalls: 1 })
+  assert.deepEqual(sleepCalls, [1_000])
+  const record = ports.attempts[0]
+  assert.equal(record?.calls.length, 3)
+  assert.deepEqual(record?.calls.map((call) => call.failureCategory), ['provider_billing', 'provider_billing', null])
+
+  // The force-opened circuit must refuse the next dispatch before any Jev
+  // attempt: zero new Jev calls, and the request degrades to the Hermes
+  // fallback under category circuit_open.
+  const nextAttempts = ports.attempts.length
+  const next = await instance.classify<Decision>(request())
+  assert.equal(next.fallbackUsed, true)
+  assert.equal(next.fallbackReason, 'circuit_open')
+  assert.equal(ports.attempts.length, nextAttempts + 1)
+  assert.deepEqual(ports.attempts[nextAttempts]?.calls.map((call) => call.failureCategory), ['circuit_open', null])
+  assert.deepEqual({ jevCalls, hermesCalls }, { jevCalls: 2, hermesCalls: 2 })
+})
+
+test('a Jev billing retry that succeeds is authoritative with no fallback spend', async () => {
+  let jevCalls = 0
+  const ports = new CircuitTrackingPorts(definition().capacity, () => 0)
+  const instance = new ClassificationGateway({
+    registry: new StaticClassificationRegistry([definition()]),
+    jev: { async classify() {
+      jevCalls += 1
+      if (jevCalls === 1) throw billingError(250)
+      return jevAnswer()
+    } },
+    hermes: { async classify() { throw new Error('Hermes must not be called') } },
+    capacity: ports, audit: ports,
+    sleep: async () => {},
+  })
+  const result = await instance.classify<Decision>(request())
+  assert.deepEqual(result.value, { label: 'keep' })
+  assert.equal(result.fallbackUsed, false)
+  assert.equal(jevCalls, 2)
+  const record = ports.attempts[0]
+  assert.equal(record?.calls.length, 2)
+  assert.deepEqual(record?.calls.map((call) => call.status), ['failed', 'succeeded'])
+})
+
+test('Jev authentication failure does not retry and goes straight to Hermes', async () => {
+  let jevCalls = 0
+  let hermesCalls = 0
+  const ports = new CircuitTrackingPorts(definition().capacity, () => 0)
+  const instance = new ClassificationGateway({
+    registry: new StaticClassificationRegistry([definition()]),
+    jev: { async classify() {
+      jevCalls += 1
+      throw new InferenceGatewayError('Jev classification failed with HTTP 401', {
+        category: 'provider_authentication', retryable: false,
+        provider: 'typesafe', model: 'jev-1.13.0',
+      })
+    } },
+    hermes: { async classify(call: HermesClassificationCall) {
+      hermesCalls += 1
+      return { actualProvider: call.target.provider, actualModel: call.target.model,
+        value: { label: 'drop' }, durationMs: 7, usage: { inputTokens: 2, outputTokens: 1 } }
+    } },
+    capacity: ports, audit: ports,
+    sleep: async () => { throw new Error('retry sleep must not run') },
+  })
+  const result = await instance.classify<Decision>(request())
+  assert.equal(result.fallbackUsed, true)
+  assert.equal(result.fallbackReason, 'provider_authentication')
+  assert.deepEqual({ jevCalls, hermesCalls }, { jevCalls: 1, hermesCalls: 1 })
+})
+
+test('an already-open Jev circuit skips every Jev attempt and uses Hermes directly', async () => {
+  let jevCalls = 0
+  let hermesCalls = 0
+  const testDefinition = definition()
+  const ports = new CircuitTrackingPorts(testDefinition.capacity, () => 0)
+  ports.trip(testDefinition)
+  const instance = new ClassificationGateway({
+    registry: new StaticClassificationRegistry([testDefinition]),
+    jev: { async classify() { jevCalls += 1; return jevAnswer() } },
+    hermes: { async classify(call: HermesClassificationCall) {
+      hermesCalls += 1
+      return { actualProvider: call.target.provider, actualModel: call.target.model,
+        value: { label: 'drop' }, durationMs: 7, usage: { inputTokens: 2, outputTokens: 1 } }
+    } },
+    capacity: ports, audit: ports,
+    sleep: async () => { throw new Error('retry sleep must not run') },
+  })
+  const result = await instance.classify<Decision>(request())
+  assert.equal(result.fallbackUsed, true)
+  assert.equal(result.fallbackReason, 'circuit_open')
+  assert.deepEqual({ jevCalls, hermesCalls }, { jevCalls: 0, hermesCalls: 1 })
+})
+
+test('a billing failure on a Jev-required definition stays held with no retry and no Hermes', async () => {
+  let jevCalls = 0
+  const testDefinition = { ...definition(), requiresJev: true }
+  const ports = new CircuitTrackingPorts(testDefinition.capacity, () => 0)
+  const instance = new ClassificationGateway({
+    registry: new StaticClassificationRegistry([testDefinition]),
+    jev: { async classify() {
+      jevCalls += 1
+      throw billingError(250)
+    } },
+    hermes: { async classify() { throw new Error('Hermes must not be called') } },
+    capacity: ports, audit: ports,
+    sleep: async () => { throw new Error('retry sleep must not run') },
+  })
+  await assert.rejects(instance.classify<Decision>(request()), (error: unknown) => {
+    assert.ok(error instanceof InferenceGatewayError)
+    assert.equal(error.category, 'provider_billing')
+    assert.equal(error.retryable, true)
+    return true
+  })
+  assert.equal(jevCalls, 1)
+  assert.equal(ports.attempts[0]?.calls.length, 1)
+  assert.equal(ports.attempts[0]?.fallbackUsed, false)
 })

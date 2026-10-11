@@ -8,6 +8,7 @@ import type {
   ClassificationAuditSink,
   ClassificationCapacityCoordinator,
   ClassificationDefinition,
+  ClassificationLease,
   ClassificationLifecycleMode,
   ClassificationPolicyOutcomeRecord,
   ClassificationRegistry,
@@ -28,6 +29,8 @@ export interface ClassificationGatewayOptions {
   audit: ClassificationAuditSink
   lifecycleMode?: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
   now?: () => number
+  /** Waits between Jev billing retries; defaults to a real setTimeout sleep. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 export class ClassificationDoubleFailureError extends InferenceGatewayError {
@@ -72,6 +75,7 @@ export class ClassificationGateway {
   private readonly audit: ClassificationAuditSink
   private readonly lifecycleMode: (definition: ClassificationDefinition) => ClassificationLifecycleMode | undefined
   private readonly now: () => number
+  private readonly sleep: (ms: number) => Promise<void>
 
   constructor(options: ClassificationGatewayOptions) {
     this.registry = options.registry
@@ -81,6 +85,7 @@ export class ClassificationGateway {
     this.audit = options.audit
     this.lifecycleMode = options.lifecycleMode ?? (() => undefined)
     this.now = options.now ?? Date.now
+    this.sleep = options.sleep ?? defaultSleep
   }
 
   /**
@@ -222,6 +227,47 @@ export class ClassificationGateway {
       providerResponseReceived ||= failure.providerResponseReceived
       jevFailure = failure.category
       if (calls.length === 0) calls.push(failedCall(definition.jevTarget, failure, Math.max(0, this.now() - startedAt)))
+    }
+
+    // HTTP 402 (provider_billing) is a transient billing state: retry Jev once
+    // inside the same dispatch. The retry is itself a Jev attempt recorded in
+    // calls and must not consume the reserved Hermes fallback call, so it only
+    // runs where fallback is already allowed (two-call, non-Jev-required).
+    // A second billing failure opens the Jev circuit so later requests are
+    // refused pre-dispatch, then the dispatch continues to Hermes as usual.
+    if (primaryFailure !== null && primaryFailure.category === 'provider_billing'
+      && dispatchPolicy.maxProviderCalls !== 1 && !definition.requiresJev) {
+      const retry = await this.retryJevAfterBillingFailure(definition, state, startedAt, deadlineMs, primaryFailure)
+      if (retry.outcome === 'success') {
+        providerResponseReceived = true
+        answers = retry.response.answers
+        const decoded = safeDecodeJev(definition, answers, state)
+        const accepted = decoded.valid ? safeAcceptJev(definition, answers, decoded.value, state) : {
+          accepted: false, reason: decoded.issues.join('; '),
+        }
+        calls.push(providerCall(retry.response, accepted.accepted ? 'succeeded' : 'not_accepted', null))
+        if (decoded.valid && accepted.accepted) {
+          const finishedAt = this.now()
+          const record = attemptRecord({
+            decisionId, executionMode: 'authoritative', attemptNumber: 1, definition, stateDigest, stableDecisionKey,
+            configuredPrimary: definition.jevTarget, configuredFallback: definition.hermesTarget,
+            actualProvider: retry.response.actualProvider, actualModel: retry.response.actualModel,
+            fallbackUsed: false, fallbackReason: null, decision: decoded.value, answers, calls,
+            failure: null, startedAt, finishedAt, startedAtIso,
+          })
+          await this.audit.recordAttempt(record)
+          return resultEnvelope<TDecision>(record, decoded.value, retry.response.usage)
+        }
+        jevFailure = accepted.reason
+      } else if (retry.outcome === 'failed') {
+        calls.push(failedCall(definition.jevTarget, retry.failure, Math.max(0, this.now() - startedAt)))
+        providerResponseReceived ||= retry.failure.providerResponseReceived
+        if (retry.failure.category === 'provider_billing') this.forceJevCircuitOpen(definition)
+        jevFailure = retry.failure.category
+        primaryFailure = retry.failure
+      }
+      // 'skip' (logical deadline exhausted before the retry): no retry attempt,
+      // keep the billing failure as-is and let the policy block below decide.
     }
 
     // The caller's durable reservation is authoritative over internal fallback.
@@ -410,6 +456,73 @@ export class ClassificationGateway {
       throw providerResponseReceived ? withProviderResponse(failure) : failure
     }
   }
+
+  /**
+   * Jev HTTP 402 (provider_billing) allows exactly one bounded retry inside
+   * the same dispatch. The retry is a Jev attempt and never consumes the
+   * caller's reserved Hermes fallback call.
+   */
+  private async retryJevAfterBillingFailure(
+    definition: ClassificationDefinition,
+    state: unknown,
+    startedAtMs: number,
+    deadlineMs: number,
+    failure: InferenceGatewayError,
+  ) {
+    const elapsedMs = Math.max(0, this.now() - startedAtMs)
+    const remainingMs = deadlineMs - elapsedMs
+    if (remainingMs <= 0) return { outcome: 'skip' as const }
+    const waitMs = Math.min(Math.max(0, failure.retryAfterMs ?? 1_000), remainingMs)
+    await this.sleep(waitMs)
+    let lease: ClassificationLease
+    try {
+      lease = this.capacity.acquire({
+        workload: definition.workload, target: definition.jevTarget, mode: 'live', policy: definition.capacity,
+      })
+    } catch (error) {
+      return { outcome: 'failed' as const, failure: mapFailure(error, definition.jevTarget) }
+    }
+    try {
+      let questions: Readonly<Record<string, JevQuestion>>
+      try { questions = definition.questions(state) } catch (error) {
+        throw new InferenceGatewayError('Classification registry failed to build Jev questions', {
+          category: 'invalid_structured_output', retryable: false, cause: error,
+        })
+      }
+      const response = await withDeadline(remainingMs, (signal) => this.jev.classify({
+        workload: definition.workload,
+        decisionVersion: definition.decisionVersion,
+        state,
+        questions,
+        target: definition.jevTarget,
+        deadlineMs: remainingMs,
+        signal,
+      }), definition.jevTarget)
+      assertUsage(response.usage, definition)
+      lease.release({ success: true, retryableFailure: false })
+      return { outcome: 'success' as const, response }
+    } catch (error) {
+      const retryFailure = mapFailure(error, definition.jevTarget)
+      lease.release({ success: false, retryableFailure: retryFailure.retryable })
+      return { outcome: 'failed' as const, failure: retryFailure }
+    }
+  }
+
+  /** Best-effort trip through the capacity store: one failed lease per unit of progress until the next acquire is refused. */
+  private forceJevCircuitOpen(definition: ClassificationDefinition): void {
+    const threshold = Math.max(1, definition.capacity.circuitFailureThreshold)
+    for (let index = 0; index < threshold; index += 1) {
+      try {
+        const lease = this.capacity.acquire({
+          workload: definition.workload, target: definition.jevTarget, mode: 'live', policy: definition.capacity,
+        })
+        lease.release({ success: false, retryableFailure: true })
+      } catch {
+        // Already open or rate limited: the goal is only that the next dispatch is refused pre-dispatch.
+        break
+      }
+    }
+  }
 }
 
 function assertPublicRequest(request: ClassificationRequest): void {
@@ -480,6 +593,10 @@ function tightenedDeadline(maximum: number, requested: number | undefined): numb
   if (!Number.isInteger(requested) || requested <= 0) throw invalidInput('tighterDeadlineMs must be positive')
   if (requested > maximum) throw invalidInput('tighterDeadlineMs cannot enlarge the registry deadline')
   return requested
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, Math.max(0, ms)) })
 }
 
 function selectedForPercent(key: { workload: string, decisionVersion: string, stableDecisionKey: string }, percent: number): boolean {
