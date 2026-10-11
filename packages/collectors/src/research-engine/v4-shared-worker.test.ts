@@ -9,7 +9,10 @@ import { durableResearchClassification } from './durable-classification'
 import { durablePrimarySynthesis } from './durable-synthesis'
 import { durableArticleEntityProposal } from './durable-article-proposal'
 import { researchRootAssignmentId, ResearchFollowupHold, runBoundedFollowup } from './bounded-followup'
-import { InferenceGatewayError, RESEARCH_NOVELTY_VERSION, RESEARCH_NOVELTY_WORKLOAD, type ClassificationGateway, type InferenceTelemetry } from '../inference-gateway'
+import { InferenceGatewayError, ClassificationOutcomeUnknownError, ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+  RESEARCH_NOVELTY_VERSION, RESEARCH_NOVELTY_WORKLOAD,
+  type ClassificationGateway, type ClassificationRequest, type InferenceTelemetry } from '../inference-gateway'
+import { ARTICLE_NOVELTY_VERSION, ARTICLE_NOVELTY_WORKLOAD } from '../inference-gateway/classification-definitions'
 import { resolveKnownObservation, assertKnownObservationResolution, type KnownObservationResolution } from './known-observation'
 import { createResolvedWithoutNewItemReadiness } from '../signal-platform/research-readiness'
 import type { GateDecision } from '../research-gate/types'
@@ -695,5 +698,72 @@ test('durable classification preflight rejects local input before creating a pai
       state: { invalid: true }, trace: { stableDecisionKey: 'invalid-local-state' } }), /candidate state is invalid/)
     assert.equal(classifyCalls, 0)
     assert.equal(fx.store.listResearchReservations(100).length, 0)
+  } finally { fx.close() }
+})
+
+test('hermes fallback version reserves two provider calls and dispatches with maxProviderCalls 2', async () => {
+  const fx = v4Database()
+  try {
+    const { work } = seedV4(fx.store)
+    const classifier = v4Classifier({ verdict: 'new_information', reason: 'Unseen fact.' })
+    const request = { workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+      state: { signal: {}, context: {} }, trace: { stableDecisionKey: 'hermes-fallback-novelty' } }
+    const record = await durableResearchClassification({ gateway: classifier.port, store: fx.store, work,
+      assignmentPolicy: V4_POLICY.assignmentPolicy, now: () => V4_NOW }).classify(request)
+    assert.deepEqual(record.value, { verdict: 'new_information', reason: 'Unseen fact.' })
+    assert.equal(classifier.requests.length, 1)
+    assert.equal(classifier.requests[0].maxProviderCalls, 2)
+    assert.equal(classifier.requests[0].holdOnUnknownOutcome, true)
+  } finally { fx.close() }
+})
+
+test('fallback reservation persists two approved provider calls while base versions stay at one', async () => {
+  const fx = v4Database()
+  try {
+    const { work } = seedV4(fx.store)
+    const baseClassifier = v4Classifier({ verdict: 'done' })
+    const baseRequest = { workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_VERSION,
+      state: { signal: {}, context: {} }, trace: { stableDecisionKey: 'base-novelty' } }
+    await durableResearchClassification({ gateway: baseClassifier.port, store: fx.store, work,
+      assignmentPolicy: V4_POLICY.assignmentPolicy, now: () => V4_NOW }).classify(baseRequest)
+    assert.equal(baseClassifier.requests[0].maxProviderCalls, 1)
+    const fallbackClassifier = v4Classifier({ verdict: 'done' })
+    const fallbackRequest = { workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+      state: { signal: {}, context: {} }, trace: { stableDecisionKey: 'fallback-novelty' } }
+    await durableResearchClassification({ gateway: fallbackClassifier.port, store: fx.store, work,
+      assignmentPolicy: V4_POLICY.assignmentPolicy, now: () => V4_NOW }).classify(fallbackRequest)
+    assert.equal(fallbackClassifier.requests[0].maxProviderCalls, 2)
+    const fallbackReservation = fx.store.listResearchReservations(100)
+      .find((row) => row.providerRoute === 'classification:research.article_novelty:research.article_novelty.v3')
+    assert.ok(fallbackReservation, 'fallback reservation must be persisted')
+    assert.equal(fallbackReservation.approvedLimits.maxProviderCalls, 2)
+  } finally { fx.close() }
+})
+
+test('unknown hermes fallback outcome keeps the reservation unresolved and is not redispatched', async () => {
+  const fx = v4Database()
+  try {
+    const { work } = seedV4(fx.store)
+    let calls = 0
+    const gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'> = {
+      classify: async () => {
+        calls += 1
+        throw new ClassificationOutcomeUnknownError('decision-unknown-1', new InferenceGatewayError(
+          'Provider response lost in transit', {
+            category: 'provider_timeout', retryable: false, provider: 'jev', model: 'jev-1.13.0',
+            providerResponseReceived: false,
+          }))
+      },
+      recordPolicyOutcome: async () => {},
+    }
+    const request = { workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+      state: { signal: {}, context: {} }, trace: { stableDecisionKey: 'fallback-unknown-outcome' } }
+    const make = () => durableResearchClassification({ gateway, store: fx.store, work,
+      assignmentPolicy: V4_POLICY.assignmentPolicy, now: () => V4_NOW })
+    await assert.rejects(make().classify(request), ClassificationOutcomeUnknownError)
+    await assert.rejects(make().classify(request), ResearchFollowupHold)
+    assert.equal(calls, 1)
+    const reservation = fx.store.listResearchReservations(100)[0]
+    assert.equal(reservation.state, 'execution_outcome_unknown')
   } finally { fx.close() }
 })

@@ -3,6 +3,11 @@ import { canonicalJson } from '../signal-platform/canonical-json'
 import { stableContractId } from '../signal-platform/adapters/identity'
 import type { ResearchWorkItem } from '../signal-platform/contracts'
 import {
+  ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
+  ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION,
+  ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION,
   approvedClassificationDefinitions, type ClassificationGateway, type ClassificationResult,
 } from '../inference-gateway'
 import { InferenceGatewayError } from '../inference-gateway/errors'
@@ -13,7 +18,15 @@ import {
 import { researchRootAssignmentId, ResearchFollowupHold } from './bounded-followup'
 import type { ResearchV4StorePort } from './v4-store'
 
-/** Each classified paid dispatch gets a durable one-call reservation too. */
+/** Every classified paid dispatch holds a durable reservation: one call, or two for Hermes fallback versions. */
+// Decision versions that only exist in the Hermes fallback definition registry.
+const ARTICLE_HERMES_FALLBACK_VERSIONS = new Set<string>([
+  ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
+  ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+])
 export function durableResearchClassification(input: {
   gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'> & {
     /** Optional on test/dumb ports; the real gateway exposes paid-call preflight. */
@@ -32,7 +45,17 @@ export function durableResearchClassification(input: {
       // Otherwise a caller-owned malformed state is indistinguishable from a
       // provider timeout and leaves an unjustified paid-outcome hold.
       input.gateway.preflight?.(request)
-      const definition = approvedClassificationDefinitions().find((item) => item.workload === request.workload)
+      // Flag-gated Hermes fallback versions are defined only in the fallback
+      // registry, while retired base versions must keep resolving without it.
+      // Match by workload AND decisionVersion so a base version never resolves
+      // to the fallback definition's budget and route.
+      const fallbackDefinitions = ARTICLE_HERMES_FALLBACK_VERSIONS.has(request.decisionVersion)
+        ? approvedClassificationDefinitions(undefined, { articleHermesFallback: true })
+          .filter((item) => item.workload === request.workload
+            && item.decisionVersion === request.decisionVersion)
+        : []
+      const definition = (fallbackDefinitions.length > 0 ? fallbackDefinitions : approvedClassificationDefinitions()
+        .filter((item) => item.workload === request.workload && item.decisionVersion === request.decisionVersion))[0]
       if (!definition) throw new ResearchFollowupHold('Research classification workload has no approved budget definition.')
       const rootAssignmentId = researchRootAssignmentId(input.work)
       const allowanceId = stableContractId('research_classification', request.workload, request.trace.stableDecisionKey)
@@ -42,11 +65,14 @@ export function durableResearchClassification(input: {
         workload: request.workload, decisionVersion: request.decisionVersion, state: request.state,
       })).digest('hex')
       const store = input.store.researchBudgetStore()
+      // Fallback versions allow Jev plus one Hermes fallback dispatch;
+      // every other version keeps the strict one-call exposure.
+      const hermesFallback = ARTICLE_HERMES_FALLBACK_VERSIONS.has(request.decisionVersion)
       const reservation = await claimReservation(store, {
         ...key, requestDigest, providerRoute: `classification:${request.workload}:${request.decisionVersion}`,
         // Registry policy supplies approved classifier token ceilings. Cost is
         // explicitly unknown because the classifier has no measured-cost port.
-        approvedLimits: { maxProviderCalls: 1, maxInputTokens: definition.budget.maxInputTokens,
+        approvedLimits: { maxProviderCalls: hermesFallback ? 2 : 1, maxInputTokens: definition.budget.maxInputTokens,
           maxOutputTokens: definition.budget.maxOutputTokens, maxIncrementalCostUsdMicros: null },
         assignmentLimits: input.assignmentPolicy,
         nowMs: Date.parse(input.now()),
@@ -90,7 +116,9 @@ export function durableResearchClassification(input: {
       })
       if (!intent.ok) throw new ResearchFollowupHold(`Classification dispatch refused: ${intent.code}.`)
       try {
-        const result = await input.gateway.classify<Value>({ ...request, maxProviderCalls: 1, holdOnUnknownOutcome: true })
+        const result = await input.gateway.classify<Value>({
+          ...request, maxProviderCalls: hermesFallback ? 2 : 1, holdOnUnknownOutcome: true,
+        })
         input.store.putResearchV4Record('classification_result', input.work.workId, attemptId, result)
         await settle(result)
         return result
