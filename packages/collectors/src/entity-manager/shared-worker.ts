@@ -712,6 +712,7 @@ function safeFailureDetail(failureValue: PlatformFailure | null): string | null 
     provider_rate_limited: 'provider rate limited; details redacted',
     provider_timeout: 'provider timeout; details redacted',
     provider_authentication: 'provider authentication failed; details redacted',
+    provider_billing: 'provider billing rejected; details redacted',
     circuit_open: 'provider circuit open; details redacted',
     retrieval_timeout: 'retrieval timeout; details redacted',
     retrieval_blocked: 'retrieval blocked; details redacted',

@@ -564,7 +564,7 @@ function queueEvidence(value: unknown): LiveSoakEvidenceV1['queueFreshness'] {
 }
 function typedFailures(value: unknown): LiveSoakEvidenceV1['typedFailures'] {
   if (!Array.isArray(value)) throw new Error('typedFailures must be an array')
-  const allowed = new Set<FailureCategory>(['provider_unavailable', 'provider_rate_limited', 'provider_timeout', 'provider_authentication', 'circuit_open', 'retrieval_timeout', 'retrieval_blocked', 'retrieval_unsafe_url', 'budget_exceeded', 'invalid_structured_output', 'schema_version_mismatch', 'permanent_source_error', 'entity_resolution_failed', 'storage_transient', 'storage_permanent'])
+  const allowed = new Set<FailureCategory>(['provider_unavailable', 'provider_rate_limited', 'provider_timeout', 'provider_authentication', 'provider_billing', 'circuit_open', 'retrieval_timeout', 'retrieval_blocked', 'retrieval_unsafe_url', 'budget_exceeded', 'invalid_structured_output', 'schema_version_mismatch', 'permanent_source_error', 'entity_resolution_failed', 'storage_transient', 'storage_permanent'])
   const result = value.map((item, index) => { const path = `typedFailures[${index}]`; const row = exactObject(item, ['category', 'count'], path); const category = text(row.category, `${path}.category`) as FailureCategory; if (!allowed.has(category)) throw new Error(`${path}.category is not typed`); return { category, count: integer(row.count, `${path}.count`) } })
   if (new Set(result.map((row) => row.category)).size !== result.length) throw new Error('typedFailures contains duplicate categories')
   return result

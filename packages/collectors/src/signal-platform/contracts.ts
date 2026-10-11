@@ -53,6 +53,7 @@ export type FailureCategory =
   | 'provider_rate_limited'
   | 'provider_timeout'
   | 'provider_authentication'
+  | 'provider_billing'
   | 'circuit_open'
   | 'retrieval_timeout'
   | 'retrieval_blocked'
