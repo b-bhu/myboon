@@ -510,14 +510,19 @@ test('batched catalogue definition carries one placement question plus one membe
 
 test('batched catalogue Hermes fallback holds the primary placement and validates memberships exactly', () => {
   const definition = articleCatalogueBatchDefinition(undefined, { articleHermesFallback: true })
-  // Safety hold: Hermes may never select or exclude a primary on its own.
+  // Placement may be selected only when Hermes names a supplied candidate id,
+  // which backs up the catalogue stage; no_match and uncertain keep holding.
   assert.deepEqual(
     definition.validateHermes({ entityId: 'bitcoin', dispositions: { bitcoin: 'not_related', blackrock: 'related' } }, BATCH_CATALOGUE_STATE),
-    { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions: { bitcoin: 'not_related', blackrock: 'related' } } },
+    { valid: true, value: { entityId: 'bitcoin', disposition: 'selected', dispositions: { bitcoin: 'not_related', blackrock: 'related' } } },
   )
   assert.deepEqual(
     definition.validateHermes({ entityId: 'no_match', dispositions: { bitcoin: 'uncertain', blackrock: 'uncertain' } }, BATCH_CATALOGUE_STATE),
-    { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions: { bitcoin: 'uncertain', blackrock: 'uncertain' } } },
+    { valid: true, value: { entityId: null, disposition: 'no_match', dispositions: { bitcoin: 'uncertain', blackrock: 'uncertain' } } },
+  )
+  assert.deepEqual(
+    definition.validateHermes({ entityId: 'uncertain', dispositions: { bitcoin: 'not_related', blackrock: 'uncertain' } }, BATCH_CATALOGUE_STATE),
+    { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions: { bitcoin: 'not_related', blackrock: 'uncertain' } } },
   )
   assert.equal(definition.validateHermes({ entityId: 'unregistered', dispositions: {} }, BATCH_CATALOGUE_STATE).valid, false)
   assert.equal(definition.validateHermes({ entityId: 'bitcoin', dispositions: { bitcoin: 'not_related' } }, BATCH_CATALOGUE_STATE).valid, false)

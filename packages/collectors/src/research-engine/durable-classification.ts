@@ -21,7 +21,10 @@ import { researchRootAssignmentId, ResearchFollowupHold } from './bounded-follow
 import type { ResearchV4StorePort } from './v4-store'
 
 /** Every classified paid dispatch holds a durable reservation: one call, or three for Hermes fallback versions (Jev, one Jev billing retry, Hermes fallback). */
-// Decision versions that only exist in the Hermes fallback definition registry.
+// Decision versions whose dispatch may spend the three-call fallback
+// envelope: the *_HERMES_FALLBACK versions only. The batched base versions
+// (CLASSIFICATION_ARTICLE_BATCHING without the fallback flag) are Jev-only
+// definitions whose dispatch keeps the strict one-call exposure.
 const ARTICLE_HERMES_FALLBACK_VERSIONS = new Set<string>([
   ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION,
   ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
@@ -49,17 +52,17 @@ export function durableResearchClassification(input: {
       // Otherwise a caller-owned malformed state is indistinguishable from a
       // provider timeout and leaves an unjustified paid-outcome hold.
       input.gateway.preflight?.(request)
-      // Flag-gated fallback/batching versions may be defined only in the
+      // Flag-gated fallback and batching versions may be defined only in the
       // alternate registries, while retired base versions must keep resolving
-      // without it. Match by workload AND decisionVersion so a base version
-      // never resolves to the alternate definition's budget and route.
-      const fallbackDefinitions = ARTICLE_HERMES_FALLBACK_VERSIONS.has(request.decisionVersion)
-        ? approvedClassificationDefinitions(undefined, { articleHermesFallback: true, articleBatching: true })
-          .filter((item) => item.workload === request.workload
-            && item.decisionVersion === request.decisionVersion)
-        : []
-      const definition = (fallbackDefinitions.length > 0 ? fallbackDefinitions : approvedClassificationDefinitions()
-        .filter((item) => item.workload === request.workload && item.decisionVersion === request.decisionVersion))[0]
+      // without them. The lookup searches the full approved registry and
+      // matches by workload AND decisionVersion, so a batch version resolves
+      // with batching on and fallback off instead of holding pre-dispatch,
+      // and a base version never resolves to an alternate definition's
+      // budget and route.
+      const definition = approvedClassificationDefinitions(undefined, {
+        articleHermesFallback: true, articleBatching: true,
+      }).find((item) => item.workload === request.workload
+        && item.decisionVersion === request.decisionVersion)
       if (!definition) throw new ResearchFollowupHold('Research classification workload has no approved budget definition.')
       const rootAssignmentId = researchRootAssignmentId(input.work)
       const allowanceId = stableContractId('research_classification', request.workload, request.trace.stableDecisionKey)
@@ -69,15 +72,19 @@ export function durableResearchClassification(input: {
         workload: request.workload, decisionVersion: request.decisionVersion, state: request.state,
       })).digest('hex')
       const store = input.store.researchBudgetStore()
-      // Fallback versions allow Jev, one Jev billing (HTTP 402) retry inside
-      // the same dispatch, and one Hermes fallback; every other version keeps
-      // the strict one-call exposure.
+      // The *_HERMES_FALLBACK versions allow Jev, one Jev billing (HTTP 402)
+      // retry inside the same dispatch, and one Hermes fallback; every other
+      // version (including the Jev-only batched base versions) keeps the
+      // strict one-call exposure. Asserted durably below via approvedLimits.
       const hermesFallback = ARTICLE_HERMES_FALLBACK_VERSIONS.has(request.decisionVersion)
+      const maxProviderCalls = hermesFallback ? 3 : 1
       const reservation = await claimReservation(store, {
         ...key, requestDigest, providerRoute: `classification:${request.workload}:${request.decisionVersion}`,
         // Registry policy supplies approved classifier token ceilings. Cost is
         // explicitly unknown because the classifier has no measured-cost port.
-        approvedLimits: { maxProviderCalls: hermesFallback ? 3 : 1, maxInputTokens: definition.budget.maxInputTokens,
+        // The 3-call fallback allowance (Jev, one Jev 402 retry, Hermes) names
+        // exactly the calls the same-dispatch path may spend.
+        approvedLimits: { maxProviderCalls, maxInputTokens: definition.budget.maxInputTokens,
           maxOutputTokens: definition.budget.maxOutputTokens, maxIncrementalCostUsdMicros: null },
         assignmentLimits: input.assignmentPolicy,
         nowMs: Date.parse(input.now()),
@@ -124,9 +131,9 @@ export function durableResearchClassification(input: {
         // The gateway's provider-call envelope is now explicit: three for the
         // fallback versions (Jev, one Jev 402 billing retry, the Hermes
         // fallback), one strict call for every other version. The reserved
-        // allowance above already covers the 3-call path.
+        // allowance above already covers exactly this path.
         const result = await input.gateway.classify<Value>({
-          ...request, maxProviderCalls: hermesFallback ? 3 : 1, holdOnUnknownOutcome: true,
+          ...request, maxProviderCalls, holdOnUnknownOutcome: true,
         })
         input.store.putResearchV4Record('classification_result', input.work.workId, attemptId, result)
         await settle(result)

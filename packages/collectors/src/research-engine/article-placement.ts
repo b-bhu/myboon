@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import type {
   ArticleChoiceDecision, ArticleDecisionV2, ArticleEntityCreationProposal, ArticleEntityProposal, ArticleV2EntityProposal, Signal,
 } from '../signal-platform/contracts'
-import type { ClassificationGateway, ClassificationResult } from '../inference-gateway'
+import type { ClassificationGateway, ClassificationResult, JevAnswer } from '../inference-gateway'
 import {
   ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION,
   ARTICLE_CATALOGUE_BATCH_MAX_CANDIDATES,
@@ -206,9 +206,21 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
     trace: { stableDecisionKey: `${input.stableDecisionKey}:related-memberships`, correlationIds: { signalId: input.signal.signalId, entityId: entity.id } },
   })
   const memberships: Membership[] = []
+  // An uncertain related-membership judgment from Hermes (fallback versions)
+  // is a hold, never a silently omitted membership. Jev's uncertain answers
+  // are validated choices that the flag-off route keeps omitting unchanged.
+  if (fallbackVersions && related?.value.dispositions) {
+    const uncertainId = Object.entries(related.value.dispositions)
+      .find(([, outcome]) => outcome === 'uncertain')?.[0]
+    if (uncertainId) {
+      throw new ArticleResearchHold('entity_resolution_uncertain', `Related membership for ${uncertainId} is uncertain; membership is held instead of omitted.`)
+    }
+  }
   for (const candidate of relatedCandidates) {
     if (related?.value.dispositions[candidate.id] !== 'related') continue
-    memberships.push(await membership(input, candidate, 'related', decision(related, relatedQuestion(candidate.id), related.value.dispositions[candidate.id] ?? 'uncertain')))
+    memberships.push(await membership(input, candidate, 'related', related !== null && related.fallbackUsed
+      ? decision(related, relatedQuestion(candidate.id), 'related')
+      : decision(related, relatedQuestion(candidate.id), related.value.dispositions[candidate.id] ?? 'uncertain')))
   }
   memberships.unshift(await membership(input, entity, 'primary', decision(placement, 'placement', placement.value.entityId ?? placement.value.disposition)))
   return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
@@ -417,21 +429,36 @@ async function noveltyTargets(
 /**
  * Provider-aware decision builder. With fallback versions off this is exactly
  * choice(). With them on, a Jev result keeps its validated raw Choice data plus
- * the model; a Hermes fallback result records the validated decision value and
- * why the fallback happened, never fabricated probabilities or confidence.
+ * the model; a Hermes result records the validated decision value and why the
+ * dispatch ran on Hermes, never fabricated probabilities or confidence.
+ *
+ * Provenance follows the dispatch's actual data, not the fallback flag alone:
+ * a disabled Jev lifecycle dispatches Hermes directly with fallbackUsed: false
+ * and no raw Choice answers, so a result without its Jev distribution for the
+ * question — or an explicitly Hermes fallback result — encodes a valid Hermes
+ * v2 decision instead of failing the Jev branch.
  */
 function decide<T>(
   result: ClassificationResult<T>, question: string, fallbackVersions: boolean, hermesChoice: string, project?: (key: string) => string,
 ): Decision {
   if (!fallbackVersions) return choice(result, question, project)
-  if (!result.fallbackUsed) {
+  const rawJev = rawJevAnswer(result, question)
+  if (!result.fallbackUsed && rawJev) {
     return { provider: 'jev', ...choice(result, question, project), model: result.actualModel }
   }
   if (!hermesChoice.trim()) throw new ArticleResearchHold('entity_resolution_uncertain', `Hermes fallback ${question} returned no decision value.`)
   return {
     provider: 'hermes', choice: hermesChoice, decisionId: result.decisionId, decisionVersion: result.decisionVersion,
-    model: result.actualModel, fallbackReason: result.fallbackReason ?? 'unspecified',
+    model: result.actualModel, fallbackReason: result.fallbackReason ?? (result.fallbackUsed ? 'unspecified' : 'jev_disabled'),
   }
+}
+
+/** The raw Jev Choice answer `choice()` consumes, or undefined when the result carries no Jev answer for the question. */
+function rawJevAnswer<T>(result: ClassificationResult<T>, question: string): JevAnswer | undefined {
+  const answer = result.answers?.[question]
+  if (answer) return answer
+  if (['relationship', 'prior_item'].includes(question)) return result.answers?.relationship_target
+  return undefined
 }
 
 function choice<T>(result: ClassificationResult<T>, question: string, project?: (key: string) => string): ArticleChoiceDecision {
@@ -661,10 +688,22 @@ async function batchedSelectedPreparation(
     const observed = stage.dispositionByCandidate.get(candidate.id)
     if (!observed) throw new ArticleResearchHold('entity_resolution_uncertain', `The batched catalogue answered no membership for ${candidate.id}.`)
     if (candidate.id === primary.id) return decide(observed.result, 'placement', fallbackVersions, primary.id)
-    return decide(observed.result, relatedQuestion(candidate.id), fallbackVersions, observed.outcome)
+    return observed.result.fallbackUsed
+      ? decide(observed.result, relatedQuestion(candidate.id), fallbackVersions, 'related')
+      : decide(observed.result, relatedQuestion(candidate.id), fallbackVersions, observed.outcome)
   }
   // Membership questions judge candidates independently of the primary; the
-  // primary is excluded from related-membership consideration code-side.
+  // primary is excluded from related-membership consideration code-side. With
+  // Hermes fallback versions an uncertain membership judgment is a hold,
+  // never a silently omitted membership; Jev's validated uncertain choices
+  // keep the flag-off behaviour of omitting the membership.
+  if (fallbackVersions) {
+    const uncertainMemberships = stage.orderedCandidates.filter((candidate) => candidate.id !== primary.id
+      && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'uncertain')
+    if (uncertainMemberships.length > 0) {
+      throw new ArticleResearchHold('entity_resolution_uncertain', `Batched related membership for ${uncertainMemberships.map((candidate) => candidate.id).join(', ')} is uncertain; membership is held instead of omitted.`)
+    }
+  }
   const selected = [primary, ...stage.orderedCandidates.filter((candidate) => candidate.id !== primary.id
     && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'related')]
   // The latest-five history for every selected entity is loaded once and stays

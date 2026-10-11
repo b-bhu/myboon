@@ -190,8 +190,9 @@ test('article batching env flag registers batched versions only behind the exact
     })
     assert.equal(result.decisionVersion, 'research.article_catalogue_batch.v2')
     assert.equal(result.fallbackUsed, true)
-    // The batched Hermes safety hold keeps the primary placement uncertain.
-    assert.deepEqual(result.value, { entityId: null, disposition: 'uncertain', dispositions: { bitcoin: 'not_related' } })
+    // A validated Hermes selection among the supplied ids backs up the
+    // catalogue stage (entityId kept); only an unvalidated id is rejected.
+    assert.deepEqual(result.value, { entityId: 'bitcoin', disposition: 'selected', dispositions: { bitcoin: 'not_related' } })
   } finally { both.close() }
   assert.equal(hermesCalls, 1)
 })

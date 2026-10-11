@@ -538,9 +538,11 @@ Standalone outcomes: same_topic_only, unrelated, uncertain (priorItemId must be 
             return { valid: false, issues: ['Hermes relationship target is outside supplied history'] }
           }
           const target = state.recentItems.find(item => item.id === priorItemId)!
-          // Safety hold: a Hermes duplicate outcome must never suppress the
-          // article; demote it to the same uncertain hold the Jev question
-          // offers and drop the prior-item target.
+          // Safety hold in the validator: a Hermes duplicate outcome may never
+          // suppress the article on its own, so it demotes to the same
+          // uncertain hold the Jev question offers and drops the prior-item
+          // target; article placement then holds on the Hermes-uncertain
+          // relationship before synthesis instead of saving a default.
           if (relationship === 'duplicate') return { valid: true, value: { relationship: 'uncertain' as const, priorItemId: null, priorItemSource: null } }
           return { valid: true, value: { relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId: target.id, priorItemSource: target.source } }
         }
@@ -653,8 +655,8 @@ Every dispositions key must be exactly one of the supplied candidate ids. Member
     } : () => '',
     validateHermes: fallback
       ? (value, state) => {
-        // Safety hold mirrors the standalone placement definition: a Hermes
-        // batched placement can never select or exclude a primary on its own.
+        // Safety hold only for placement: Hermes may never select or exclude a
+        // primary on its own, but a validated membership verdict is preserved.
         if (!record(value) || !exactKeys(value, ['entityId', 'dispositions']) || !record(value.dispositions)) {
           return { valid: false, issues: ['Hermes catalogue batch must be {"entityId": ..., "dispositions": {...}} with no extra keys'] }
         }
@@ -677,7 +679,14 @@ Every dispositions key must be exactly one of the supplied candidate ids. Member
           }
           dispositions[candidateId] = outcome as ArticleCatalogueBatchDecision['dispositions'][string]
         }
-        return { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions } }
+        return {
+          valid: true,
+          value: {
+            entityId: entityId === 'no_match' || entityId === 'uncertain' ? null : entityId as string,
+            disposition: entityId === 'no_match' || entityId === 'uncertain' ? entityId : 'selected',
+            dispositions,
+          },
+        } as ClassificationDecisionValidation<ArticleCatalogueBatchDecision>
       }
       : () => ({ valid: false, issues: ['Article catalogue batching is Jev-only'] }),
   }
@@ -819,6 +828,9 @@ Every entities[] entry needs exactly one targets[] entry with its own entityId. 
               return { valid: false, issues: ['Hermes relationship target is outside supplied history'] }
             }
             const target = entity.recentItems.find(item => item.id === priorItemId)!
+            // Same policy as the standalone relationship definition: a Hermes
+            // duplicate demotes to the uncertain hold (target dropped) and the
+            // caller's placement holds on the Hermes-uncertain relationship.
             if (relationship === 'duplicate') {
               targets.push({ entityId, relationship: 'uncertain', priorItemId: null, priorItemSource: null })
             } else {
