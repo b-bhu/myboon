@@ -9,6 +9,16 @@ interface PublishedNarrativeListItem {
   imageUrl?: string | null;
   imageKind?: 'content' | 'source_avatar' | null;
   imageAttribution?: string | null;
+  sourceName?: string | null;
+}
+
+const MAX_SOURCE_NAME_LENGTH = 120;
+
+export function reportSourceName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const name = value.replace(/\s+/g, ' ').trim();
+  if (!name || name.length > MAX_SOURCE_NAME_LENGTH) return null;
+  return name;
 }
 
 export function getApiBaseUrl(): string {
@@ -54,6 +64,7 @@ function mapNarrativeToFeedItem(item: PublishedNarrativeListItem, index: number,
     imageAttribution: typeof item.imageAttribution === 'string' && item.imageAttribution.trim()
       ? item.imageAttribution.trim()
       : null,
+    sourceName: reportSourceName(item.sourceName),
   };
 }
 

@@ -2,7 +2,7 @@ import { Image } from 'expo-image';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
-import { toRelativeTime } from '@/features/feed/feed.api';
+import { reportSourceName, toRelativeTime } from '@/features/feed/feed.api';
 import type { FeedItem } from '@/features/feed/feed.types';
 
 interface FeedCardProps {
@@ -14,8 +14,10 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const { fontScale } = useWindowDimensions();
   const date = toRelativeTime(item.createdAt);
+  const source = reportSourceName(item.sourceName);
   const hasContentImage = item.imageKind === 'content' && Boolean(item.imageUrl) && failedImage !== item.imageUrl;
   const category = item.category === 'feed' ? 'Latest' : item.category;
+  const accessibilityLabel = source ? `${item.headline}, ${source}, ${date}` : `${item.headline}, ${date}`;
 
   if (item.isTop) {
     return (
@@ -23,7 +25,7 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
         style={({ pressed }) => [styles.leadCard, pressed && styles.cardPressed]}
         onPress={() => onPress(item)}
         accessibilityRole="button"
-        accessibilityLabel={`${item.headline}, ${date}`}
+        accessibilityLabel={accessibilityLabel}
       >
         {hasContentImage ? (
           <Image
@@ -42,8 +44,8 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
           </View>
           <Text style={styles.leadHeadline} numberOfLines={fontScale > 1.15 ? undefined : 3}>{item.headline}</Text>
           <Text style={styles.leadBody} numberOfLines={fontScale > 1.15 ? undefined : 3}>{item.description}</Text>
-          <View style={styles.leadFooter}>
-            <Text style={styles.readLabel}>Open update</Text>
+          <View style={[styles.leadFooter, !source && styles.footerEnd]}>
+            {source ? <Text style={styles.sourceName} numberOfLines={1}>{source}</Text> : null}
             <Text style={styles.readMore}>Read more →</Text>
           </View>
         </View>
@@ -56,7 +58,7 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
       onPress={() => onPress(item)}
       accessibilityRole="button"
-      accessibilityLabel={`${item.headline}, ${date}`}
+      accessibilityLabel={accessibilityLabel}
     >
       <View style={styles.cardCopy}>
         <View style={styles.metaRow}>
@@ -65,6 +67,11 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
         </View>
         <Text style={styles.headlineText} numberOfLines={fontScale > 1.15 ? undefined : 3}>{item.headline}</Text>
         <Text style={styles.bodyText} numberOfLines={fontScale > 1.15 ? undefined : 2}>{item.description}</Text>
+        {source ? (
+          <View style={styles.cardFooter}>
+            <Text style={styles.sourceName} numberOfLines={1}>{source}</Text>
+          </View>
+        ) : null}
       </View>
       {hasContentImage ? (
         <Image
@@ -141,18 +148,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
+    gap: 8,
     borderTopWidth: 1,
     borderTopColor: FEED_COLORS.border,
     paddingTop: 9,
   },
-  readLabel: {
+  footerEnd: {
+    justifyContent: 'flex-end',
+  },
+  cardFooter: {
+    borderTopWidth: 1,
+    borderTopColor: FEED_COLORS.border,
+    paddingTop: 9,
+  },
+  sourceName: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
     color: FEED_COLORS.textFaint,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    letterSpacing: 0.7,
-    textTransform: 'uppercase',
+    fontSize: 10,
+    lineHeight: 14,
   },
   readMore: {
+    flexShrink: 0,
     color: FEED_COLORS.accent,
     fontSize: 11,
     lineHeight: 15,

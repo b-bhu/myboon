@@ -698,7 +698,64 @@ test('writeExtraction durably attaches trusted news image metadata to every enti
     image_kind: 'source_avatar',
     image_origin: 'tokens_xyz',
     image_attribution: '@tokens',
+    source_name: '@tokens',
   })
+})
+
+test('writeExtraction keeps the news outlet on the memory even when the article has no image', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  const newsPacket: ResearchPacket = {
+    ...packet,
+    source: 'news',
+    sourceArea: 'news_feed:articles',
+    sourceType: 'article',
+    sourceResearchId: 'feed-article-outlet',
+    url: 'https://www.coindesk.com/markets/example',
+    context: {
+      source_name: 'Structured News Feed',
+      upstream_source_name: 'CoinDesk',
+    },
+  }
+
+  await writeExtraction(store, newsPacket, provider({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+    memories: [{
+      entitySlug: 'bitcoin',
+      memoryType: 'news_event',
+      title: 'Bitcoin article',
+      summary: 'An article reported a Bitcoin update.',
+      context: {
+        source_name: 'Hallucinated Desk',
+        upstream_source_name: 'Also Hallucinated',
+      },
+    }],
+  }))
+
+  assert.equal(store.memories[0].context.source_name, 'CoinDesk')
+  assert.equal(store.memories[0].context.upstream_source_name, undefined)
+  assert.equal(store.memories[0].context.image_url, null)
+})
+
+test('writeExtraction records the news source name when the upstream outlet is absent', async () => {
+  const store = new InMemoryEntityMemoryStore()
+  await writeExtraction(store, {
+    ...packet,
+    source: 'news',
+    sourceArea: 'news_feed:articles',
+    sourceType: 'article',
+    sourceResearchId: 'feed-article-fallback',
+    context: { source_name: '  ETF flow desk  ' },
+  }, provider({
+    primaryEntities: [{ name: 'Bitcoin', type: 'asset', slug: 'bitcoin' }],
+    memories: [{
+      entitySlug: 'bitcoin',
+      memoryType: 'news_event',
+      title: 'Bitcoin article',
+      summary: 'An article reported a Bitcoin update.',
+    }],
+  }))
+
+  assert.equal(store.memories[0].context.source_name, 'ETF flow desk')
 })
 
 test('writeExtraction stores a null image for news packets with an unsafe upstream URL', async () => {
