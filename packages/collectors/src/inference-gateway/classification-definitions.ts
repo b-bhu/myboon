@@ -21,6 +21,22 @@ export const ARTICLE_RELATED_MEMBERSHIP_WORKLOAD = 'research.article_related_mem
 export const ARTICLE_RELATED_MEMBERSHIP_VERSION = 'research.article_related_membership.v1' as const
 export const ARTICLE_NOVELTY_WORKLOAD = 'research.article_novelty' as const
 export const ARTICLE_NOVELTY_VERSION = 'research.article_novelty.v2' as const
+export const ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION = 'research.article_entity_placement.v3' as const
+export const ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION = 'research.article_entity_proposal_validation.v2' as const
+export const ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION = 'research.article_related_membership.v2' as const
+export const ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION = 'research.article_story_relationship.v3' as const
+export const ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION = 'research.article_novelty.v3' as const
+
+/** Options shared by the five article definition factories. */
+export interface ArticleDefinitionOptions {
+  /**
+   * Registers an additional decision version per article workload where Jev
+   * stays primary but a failed or disabled Jev lifecycle falls back to Hermes
+   * instead of holding. Off by default; retired versions stay registered so
+   * in-flight work pinned to them still resolves.
+   */
+  articleHermesFallback?: boolean
+}
 
 const JEV_TARGET = Object.freeze({ provider: 'typesafe', model: 'jev-1.13.0' })
 const DEFAULT_HERMES_TARGET = Object.freeze({ provider: 'ollama-cloud', model: 'glm-5.3-flash' })
@@ -85,35 +101,162 @@ function articleCandidateState(value: unknown, path: string): { id: string, name
 
 export function approvedClassificationDefinitions(
   hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
 ): readonly ClassificationDefinition[] {
-  return Object.freeze([researchNoveltyDefinition(hermesTarget), researchFollowupValueDefinition(hermesTarget), articleEntityPlacementDefinition(hermesTarget), articleEntityProposalValidationDefinition(hermesTarget), articleRelatedMembershipDefinition(hermesTarget), articleStoryRelationshipDefinition(hermesTarget), articleNoveltyDefinition(hermesTarget)])
+  const definitions: ClassificationDefinition[] = [
+    researchNoveltyDefinition(hermesTarget), researchFollowupValueDefinition(hermesTarget),
+    articleEntityPlacementDefinition(hermesTarget), articleEntityProposalValidationDefinition(hermesTarget),
+    articleRelatedMembershipDefinition(hermesTarget), articleStoryRelationshipDefinition(hermesTarget),
+    articleNoveltyDefinition(hermesTarget),
+  ]
+  if (options.articleHermesFallback === true) {
+    definitions.push(
+      articleEntityPlacementDefinition(hermesTarget, { articleHermesFallback: true }),
+      articleEntityProposalValidationDefinition(hermesTarget, { articleHermesFallback: true }),
+      articleRelatedMembershipDefinition(hermesTarget, { articleHermesFallback: true }),
+      articleStoryRelationshipDefinition(hermesTarget, { articleHermesFallback: true }),
+      articleNoveltyDefinition(hermesTarget, { articleHermesFallback: true }),
+    )
+  }
+  return Object.freeze(definitions)
 }
 
-export function articleEntityProposalValidationDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleEntityProposalValidationState, ArticleEntityProposalValidationDecision> {
+export function articleEntityProposalValidationDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
+): ClassificationDefinition<ArticleEntityProposalValidationState, ArticleEntityProposalValidationDecision> {
+  const fallback = options.articleHermesFallback === true
   return {
-    workload: ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION, maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, canaryPercent: 100,
+    workload: ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD,
+    decisionVersion: fallback ? ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION : ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active',
+    requiresJev: !fallback, canaryPercent: 100,
     jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 500 }, capacity: DEFAULT_CAPACITY,
     validateState: (value) => { if (!record(value) || !record(value.article) || !record(value.proposal)) return { valid: false, issues: ['article and proposal are required'] }; try { const proposal = value.proposal; return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', ARTICLE_DECISION_SOURCE_MAX_CHARS) }, proposal: { name: boundedText(proposal.name, 'proposal.name', 300), type: boundedText(proposal.type, 'proposal.type', 100), aliases: Array.isArray(proposal.aliases) ? proposal.aliases.slice(0, 25).map((item, index) => boundedText(item, `proposal.aliases[${index}]`, 200)) : [], summary: boundedText(proposal.summary, 'proposal.summary', 128_000), scope: requiredRecord(proposal.scope, 'proposal.scope') } } } } catch (error) { return invalid(error) } },
-    questions: () => ({ proposal: { type: 'choice', instructions: { question: 'Does this source-grounded proposed identity validly describe the article subject after no existing catalogue candidate matched?', rules: ['Accept only when name, type, aliases and scope are supported by the captured article.', 'Do not decide whether it duplicates an existing catalogue entity; Entity Manager performs equivalence checks.', 'Choose uncertain when the article does not support a safe identity proposal.'] }, criteria: { accept: 'A meaningful article-subject identity suitable for bounded Entity Manager equivalence checking.', reject: 'The proposed identity is unsupported, generic, or materially wrong.', uncertain: 'The captured article does not safely support or reject this proposal.' } } }),
+    questions: () => {
+      const rubric = articleProposalValidationRubric()
+      return { proposal: { type: 'choice' as const, instructions: { question: rubric.question, rules: rubric.rules }, criteria: rubric.criteria } }
+    },
     decodeJev: (answers) => { const answer = answers.proposal; return isChoice(answer) && ['accept', 'reject', 'uncertain'].includes(answer.choice) ? { valid: true, value: { disposition: answer.choice as ArticleEntityProposalValidationDecision['disposition'] } } : { valid: false, issues: ['proposal validation is invalid'] } },
-    acceptJev: (answers) => isChoice(answers.proposal) ? { accepted: true, reason: 'Jev proposal validation distribution retained' } : { accepted: false, reason: 'proposal validation is not Choice' }, renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article proposal validation is Jev-only'] }),
+    acceptJev: (answers) => isChoice(answers.proposal) ? { accepted: true, reason: 'Jev proposal validation distribution retained' } : { accepted: false, reason: 'proposal validation is not Choice' },
+    renderHermes: fallback ? (state) => articleHermesPrompt(articleProposalValidationRubric(), state, '{ "disposition": "accept|reject|uncertain" }') : () => '',
+    validateHermes: fallback
+      ? (value) => {
+        if (!record(value) || !exactKeys(value, ['disposition'])) return { valid: false, issues: ['Hermes proposal validation must be an object with exactly {"disposition": ...}'] }
+        const disposition = value.disposition
+        // Safety hold: a Hermes accept must never create a new entity; demote
+        // it to the same uncertain hold the Jev question offers.
+        if (disposition === 'accept') return { valid: true, value: { disposition: 'uncertain' as const } }
+        if (disposition === 'reject' || disposition === 'uncertain') {
+          return { valid: true, value: { disposition: disposition as ArticleEntityProposalValidationDecision['disposition'] } }
+        }
+        return { valid: false, issues: ['Hermes proposal validation disposition is outside the admitted outcomes'] }
+      }
+      : () => ({ valid: false, issues: ['Article proposal validation is Jev-only'] }),
   }
 }
 
-export function articleRelatedMembershipDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleRelatedMembershipState, ArticleRelatedMembershipDecision> {
+/** Shared Jev/Hermes rubric so the two prompts cannot drift apart. */
+function articleProposalValidationRubric() {
   return {
-    workload: ARTICLE_RELATED_MEMBERSHIP_WORKLOAD, decisionVersion: ARTICLE_RELATED_MEMBERSHIP_VERSION, maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, canaryPercent: 100,
+    question: 'Does this source-grounded proposed identity validly describe the article subject after no existing catalogue candidate matched?',
+    rules: [
+      'Accept only when name, type, aliases and scope are supported by the captured article.',
+      'Do not decide whether it duplicates an existing catalogue entity; Entity Manager performs equivalence checks.',
+      'Choose uncertain when the article does not support a safe identity proposal.',
+    ],
+    criteria: {
+      accept: 'A meaningful article-subject identity suitable for bounded Entity Manager equivalence checking.',
+      reject: 'The proposed identity is unsupported, generic, or materially wrong.',
+      uncertain: 'The captured article does not safely support or reject this proposal.',
+    },
+  }
+}
+
+export function articleRelatedMembershipDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
+): ClassificationDefinition<ArticleRelatedMembershipState, ArticleRelatedMembershipDecision> {
+  const fallback = options.articleHermesFallback === true
+  return {
+    workload: ARTICLE_RELATED_MEMBERSHIP_WORKLOAD,
+    decisionVersion: fallback ? ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION : ARTICLE_RELATED_MEMBERSHIP_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active',
+    requiresJev: !fallback, canaryPercent: 100,
     jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 8_000 }, capacity: DEFAULT_CAPACITY,
     validateState: (value) => { if (!record(value) || !record(value.article) || !record(value.primary) || !Array.isArray(value.candidates) || value.candidates.length > 31) return { valid: false, issues: ['article, primary and up to 31 candidates are required'] }; try { return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', ARTICLE_DECISION_SOURCE_MAX_CHARS) }, primary: { id: boundedText(value.primary.id, 'primary.id', 200), name: boundedText(value.primary.name, 'primary.name', 300) }, candidates: value.candidates.map((candidate, index) => articleCandidateState(candidate, `candidates[${index}]`)) } } } catch (error) { return invalid(error) } },
-    questions: (state) => Object.fromEntries(state.candidates.map((candidate) => [`related_${candidate.id}`, { type: 'choice' as const, instructions: { question: `Should ${candidate.name} receive an independent related membership for this article?`, rules: ['Decide each candidate independently of the primary placement.', 'A co-mention, publisher, desk, venue, or generic context is not enough.', 'Bitcoin holding news can file Bitcoin primary and BlackRock related when the article materially concerns both.'] }, criteria: { related: 'The article materially concerns this candidate as an independent participant or subject.', not_related: 'The candidate is only incidental, contextual, a publisher, or absent.', uncertain: 'The captured article does not resolve an independent membership safely.' } }])),
+    questions: (state) => Object.fromEntries(state.candidates.map((candidate) => {
+      const rubric = articleRelatedMembershipRubric(candidate.name)
+      return [`related_${candidate.id}`, {
+        type: 'choice' as const,
+        instructions: { question: rubric.question, rules: rubric.rules },
+        criteria: rubric.criteria,
+      }]
+    })),
     decodeJev: (answers, state) => { const dispositions: ArticleRelatedMembershipDecision['dispositions'] = {}; for (const candidate of state.candidates) { const answer = answers[`related_${candidate.id}`]; if (!isChoice(answer) || !['related', 'not_related', 'uncertain'].includes(answer.choice)) return { valid: false, issues: [`related membership for ${candidate.id} is invalid`] }; dispositions[candidate.id] = answer.choice as ArticleRelatedMembershipDecision['dispositions'][string] } return { valid: true, value: { dispositions } } },
-    acceptJev: (answers, _decision, state) => state.candidates.every((candidate) => isChoice(answers[`related_${candidate.id}`])) ? { accepted: true, reason: 'Jev independent related-membership distributions retained' } : { accepted: false, reason: 'one or more membership answers are not Choice' }, renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article related membership is Jev-only'] }),
+    acceptJev: (answers, _decision, state) => state.candidates.every((candidate) => isChoice(answers[`related_${candidate.id}`])) ? { accepted: true, reason: 'Jev independent related-membership distributions retained' } : { accepted: false, reason: 'one or more membership answers are not Choice' },
+    renderHermes: fallback ? (state) => {
+      const schemaEntries = state.candidates.map((candidate) => `    "${candidate.id}": "related|not_related|uncertain"`).join(',\n')
+      return articleHermesPrompt(articleRelatedMembershipRubric(state.primary.name), state, `{
+  "dispositions": {
+${schemaEntries}
   }
 }
 
-export function articleNoveltyDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleNoveltyState, ArticleNoveltyDecision> {
+Every dispositions key must be exactly one of the supplied candidate ids.`)
+    } : () => '',
+    validateHermes: fallback
+      ? (value, state) => {
+        if (!record(value) || !exactKeys(value, ['dispositions']) || !record(value.dispositions)) {
+          return { valid: false, issues: ['Hermes related membership must be {"dispositions": {...}} with no extra keys'] }
+        }
+        const dispositions: ArticleRelatedMembershipDecision['dispositions'] = {}
+        const entries = Object.entries(value.dispositions)
+        if (entries.length !== state.candidates.length) {
+          return { valid: false, issues: ['Hermes related membership dispositions must cover exactly the supplied candidates'] }
+        }
+        for (const [candidateId, outcome] of entries) {
+          if (!state.candidates.some((candidate) => candidate.id === candidateId)) {
+            return { valid: false, issues: [`related membership for ${candidateId} is outside the supplied candidates`] }
+          }
+          if (outcome !== 'related' && outcome !== 'not_related' && outcome !== 'uncertain') {
+            return { valid: false, issues: [`related membership for ${candidateId} is outside the admitted outcomes`] }
+          }
+          dispositions[candidateId] = outcome as ArticleRelatedMembershipDecision['dispositions'][string]
+        }
+        return { valid: true, value: { dispositions } }
+      }
+      : () => ({ valid: false, issues: ['Article related membership is Jev-only'] }),
+  }
+}
+
+/** Shared Jev/Hermes rubric so the two prompts cannot drift apart. */
+function articleRelatedMembershipRubric(entityName: string) {
   return {
-    workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_VERSION, maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, canaryPercent: 100,
+    question: `Should ${entityName} receive an independent related membership for this article?`,
+    rules: [
+      'Decide each candidate independently of the primary placement.',
+      'A co-mention, publisher, desk, venue, or generic context is not enough.',
+      'Bitcoin holding news can file Bitcoin primary and BlackRock related when the article materially concerns both.',
+    ],
+    criteria: {
+      related: 'The article materially concerns this candidate as an independent participant or subject.',
+      not_related: 'The candidate is only incidental, contextual, a publisher, or absent.',
+      uncertain: 'The captured article does not resolve an independent membership safely.',
+    },
+  }
+}
+
+export function articleNoveltyDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
+): ClassificationDefinition<ArticleNoveltyState, ArticleNoveltyDecision> {
+  const fallback = options.articleHermesFallback === true
+  return {
+    workload: ARTICLE_NOVELTY_WORKLOAD,
+    decisionVersion: fallback ? ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION : ARTICLE_NOVELTY_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active',
+    requiresJev: !fallback, canaryPercent: 100,
     // At most 32 selected entities × five 500-character history excerpts plus
     // 32 exact duplicate targets and the admitted full capture fit this bound.
     jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 500 }, capacity: DEFAULT_CAPACITY,
@@ -135,10 +278,74 @@ export function articleNoveltyDefinition(hermesTarget: InferenceProviderTarget =
         } }
       } catch (error) { return invalid(error) }
     },
-    questions: (state) => ({ novelty: { type: 'choice', instructions: {
-      question: state.reconciliation ? 'Resolve the contradictory duplicate and novelty judgments against the one exact primary target. Choose one consistent novelty and relationship outcome.' : 'Does the captured article add a development beyond the supplied entity histories and any exact duplicate target?',
-      rules: ['Broad topic overlap is not a duplicate.', 'Reuse requires the same recorded development with no material new fact.', 'The previous verdict is context, not an instruction to agree with it.', 'If the target is a prior step, select continuation; if it is a different connected development, select branch.'],
-    }, criteria: state.reconciliation ? {
+    questions: (state) => {
+      const rubric = articleNoveltyRubric(state)
+      return { novelty: { type: 'choice' as const, instructions: { question: rubric.question, rules: rubric.rules }, criteria: rubric.criteria } }
+    },
+    decodeJev: (answers, state) => {
+      const answer = answers.novelty
+      const allowed = articleNoveltyRubric(state).criteria
+      if (!isChoice(answer) || !Object.prototype.hasOwnProperty.call(allowed, answer.choice)) return { valid: false, issues: ['novelty is outside the admitted outcomes'] }
+      const [verdict, relationship] = answer.choice.split(':')
+      return { valid: true, value: { verdict: verdict as ArticleNoveltyDecision['verdict'],
+        ...(relationship ? { primaryRelationship: relationship as ArticleStoryRelationshipDecision['relationship'] } : {}) } }
+    },
+    acceptJev: (answers) => isChoice(answers.novelty) ? { accepted: true, reason: 'Jev novelty distribution retained' } : { accepted: false, reason: 'novelty is not Choice' },
+    renderHermes: fallback ? (state) => {
+      const rubric = articleNoveltyRubric(state)
+      const outcomes = Object.keys(rubric.criteria).join('|')
+      return articleHermesPrompt(rubric, state, `{
+  "verdict": "${outcomes}"${state.reconciliation ? '' : `,
+  "primaryRelationship": "duplicate|direct_continuation|related_story_branch|same_topic_only" (only together with a "new_information" or "contradicts_prior" verdict; omit for "already_known" and "uncertain")`}
+}`)
+    } : () => '',
+    validateHermes: fallback
+      ? (value, state) => {
+        if (!record(value) || !exactKeys(value, ['verdict', ...(value.primaryRelationship === undefined ? [] : ['primaryRelationship'])])) {
+          return { valid: false, issues: ['Hermes novelty must be {"verdict": ...[, "primaryRelationship": ...]} with no extra keys'] }
+        }
+        const allowed = articleNoveltyRubric(state).criteria
+        const rawVerdict = value.verdict
+        if (typeof rawVerdict !== 'string' || !Object.prototype.hasOwnProperty.call(allowed, rawVerdict)) {
+          return { valid: false, issues: ['Hermes novelty is outside the admitted outcomes'] }
+        }
+        const [verdict, compositeRelationship] = rawVerdict.split(':')
+        const rawRelationship = value.primaryRelationship !== undefined ? value.primaryRelationship : compositeRelationship
+        if (rawRelationship !== undefined) {
+          if (verdict !== 'new_information' && verdict !== 'contradicts_prior') {
+            return { valid: false, issues: ['Hermes novelty primaryRelationship requires a new_information or contradicts_prior verdict'] }
+          }
+          if (typeof rawRelationship !== 'string' || !ARTICLE_RELATIONSHIPS.includes(rawRelationship as typeof ARTICLE_RELATIONSHIPS[number])
+            || rawRelationship === 'uncertain') {
+            return { valid: false, issues: ['Hermes novelty primaryRelationship is invalid'] }
+          }
+        }
+        // Safety hold: a Hermes duplicate outcome must never suppress the
+        // article; demote already_known to the same uncertain hold the Jev
+        // question offers.
+        if (verdict === 'already_known') return { valid: true, value: { verdict: 'uncertain' as const } }
+        return { valid: true, value: {
+          verdict: verdict as ArticleNoveltyDecision['verdict'],
+          ...(rawRelationship !== undefined ? { primaryRelationship: rawRelationship as ArticleStoryRelationshipDecision['relationship'] } : {}),
+        } }
+      }
+      : () => ({ valid: false, issues: ['Article novelty is Jev-only'] }),
+  }
+}
+
+/** Shared Jev/Hermes rubric so the two prompts cannot drift apart. */
+function articleNoveltyRubric(state: ArticleNoveltyState) {
+  return {
+    question: state.reconciliation
+      ? 'Resolve the contradictory duplicate and novelty judgments against the one exact primary target. Choose one consistent novelty and relationship outcome.'
+      : 'Does the captured article add a development beyond the supplied entity histories and any exact duplicate target?',
+    rules: [
+      'Broad topic overlap is not a duplicate.',
+      'Reuse requires the same recorded development with no material new fact.',
+      'The previous verdict is context, not an instruction to agree with it.',
+      'If the target is a prior step, select continuation; if it is a different connected development, select branch.',
+    ],
+    criteria: (state.reconciliation ? {
       already_known: 'This is exactly the primary target development, with no material new fact. Retain duplicate and reuse its durable item.',
       'new_information:direct_continuation': 'New material information directly continues the supplied target. Create a new entry linked as continuation.',
       'new_information:related_story_branch': 'A distinct new development in the target narrative. Create a new entry linked as a branch.',
@@ -150,16 +357,7 @@ export function articleNoveltyDefinition(hermesTarget: InferenceProviderTarget =
       ...(state.selectedTargets.length ? { already_known: 'The development is already recorded by a supplied exact duplicate target.' } : {}),
       contradicts_prior: 'The article conflicts with recorded history.',
       uncertain: 'The bounded history does not support a safe novelty decision.',
-    } } }),
-    decodeJev: (answers, state) => {
-      const answer = answers.novelty
-      const allowed = articleNoveltyDefinition(hermesTarget).questions(state).novelty.criteria!
-      if (!isChoice(answer) || !Object.prototype.hasOwnProperty.call(allowed, answer.choice)) return { valid: false, issues: ['novelty is outside the admitted outcomes'] }
-      const [verdict, relationship] = answer.choice.split(':')
-      return { valid: true, value: { verdict: verdict as ArticleNoveltyDecision['verdict'],
-        ...(relationship ? { primaryRelationship: relationship as ArticleStoryRelationshipDecision['relationship'] } : {}) } }
-    },
-    acceptJev: (answers) => isChoice(answers.novelty) ? { accepted: true, reason: 'Jev novelty distribution retained' } : { accepted: false, reason: 'novelty is not Choice' }, renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article novelty is Jev-only'] }),
+    }) as Record<string, string>,
   }
 }
 
@@ -183,44 +381,88 @@ function articleNoveltyItem(value: unknown, path: string): { id: string, source:
   return { id: boundedText(item.id, `${path}.id`, 200), source, title: boundedText(item.title, `${path}.title`, 500), summary: boundedText(item.summary, `${path}.summary`, 500), eventAt: boundedText(item.eventAt, `${path}.eventAt`, 64) }
 }
 
-export function articleEntityPlacementDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleEntityPlacementState, ArticleEntityPlacementDecision> {
+export function articleEntityPlacementDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
+): ClassificationDefinition<ArticleEntityPlacementState, ArticleEntityPlacementDecision> {
+  const fallback = options.articleHermesFallback === true
   return {
-    workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD, decisionVersion: ARTICLE_ENTITY_PLACEMENT_VERSION,
-    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, canaryPercent: 100,
+    workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD,
+    decisionVersion: fallback ? ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION : ARTICLE_ENTITY_PLACEMENT_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active',
+    requiresJev: !fallback, canaryPercent: 100,
     jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 4_000 }, capacity: DEFAULT_CAPACITY,
     validateState: (value) => {
       if (!record(value) || !record(value.article) || !Array.isArray(value.candidates) || value.candidates.length > 32) return { valid: false, issues: ['bounded article and candidate catalogue are required'] }
       try { return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', ARTICLE_DECISION_SOURCE_MAX_CHARS) }, candidates: value.candidates.map((candidate, index) => { const item = requiredRecord(candidate, `candidates[${index}]`); return { id: boundedText(item.id, `candidates[${index}].id`, 200), name: boundedText(item.name, `candidates[${index}].name`, 300), aliases: Array.isArray(item.aliases) ? item.aliases.slice(0, 25).map((alias, aliasIndex) => boundedText(alias, `candidates[${index}].aliases[${aliasIndex}]`, 200)) : (() => { throw new Error('aliases must be an array') })(), summary: nullableText(item.summary, `candidates[${index}].summary`, 1_000), scope: requiredRecord(item.scope, `candidates[${index}].scope`) } }) } } } catch (error) { return invalid(error) }
     },
-    questions: (state) => ({ placement: { type: 'choice', instructions: { question: 'Which supplied candidate is the primary entity for this article?', rules: ['Choose a candidate only when the article is substantively about it.', 'Choose no_match when no supplied candidate fits.', 'Choose uncertain for unresolved ambiguity.', 'Policy: proposal news concerning U.S.–Iran belongs primarily to U.S.–Iran Conflict. Bitcoin holding news belongs primarily to Bitcoin; BlackRock may be independently related.'] }, criteria: Object.fromEntries([...state.candidates.map((candidate, index) => [candidate.id, `${candidate.name}: the entity described by candidates[${index}] in the supplied state, including its aliases, summary and scope.`]), ['no_match', 'No supplied candidate is a meaningful primary placement.'], ['uncertain', 'The bounded candidates do not resolve placement safely.']]) } }),
+    questions: (state) => {
+      const rubric = articlePlacementRubric(state)
+      return { placement: { type: 'choice' as const, instructions: { question: rubric.question, rules: rubric.rules }, criteria: rubric.criteria } }
+    },
     decodeJev: (answers) => { const answer = answers.placement; if (!isChoice(answer)) return { valid: false, issues: ['placement must be Choice'] }; if (answer.choice === 'no_match') return { valid: true, value: { entityId: null, disposition: 'no_match' } }; if (answer.choice === 'uncertain') return { valid: true, value: { entityId: null, disposition: 'uncertain' } }; return { valid: true, value: { entityId: answer.choice, disposition: 'selected' } } },
     acceptJev: (answers, decision, state) => { const answer = answers.placement; return isChoice(answer) && (decision.entityId === null || state.candidates.some((candidate) => candidate.id === decision.entityId)) ? { accepted: true, reason: 'Jev placement retained with raw probabilities' } : { accepted: false, reason: 'placement candidate is outside supplied catalogue' } },
-    renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article placement is Jev-only'] }),
+    renderHermes: fallback ? (state) => {
+      const rubric = articlePlacementRubric(state)
+      const outcomes = [...state.candidates.map((candidate) => candidate.id), 'no_match', 'uncertain'].join('|')
+      return articleHermesPrompt(rubric, state, `{
+  "entityId": "${outcomes}" — one of the supplied candidate ids, or "no_match", or "uncertain"
+}`)
+    } : () => '',
+    validateHermes: fallback
+      ? (value, state) => {
+        if (!record(value) || !exactKeys(value, ['entityId'])) {
+          return { valid: false, issues: ['Hermes placement must be {"entityId": ...} with no extra keys'] }
+        }
+        const entityId = value.entityId
+        if (entityId === 'no_match') return { valid: true, value: { entityId: null, disposition: 'no_match' } }
+        if (entityId === 'uncertain') return { valid: true, value: { entityId: null, disposition: 'uncertain' } }
+        if (typeof entityId !== 'string' || !state.candidates.some((candidate) => candidate.id === entityId)) {
+          return { valid: false, issues: ['Hermes placement is outside the supplied candidate catalogue'] }
+        }
+        return { valid: true, value: { entityId: entityId as ArticleEntityPlacementDecision['entityId'], disposition: 'selected' } }
+      }
+      : () => ({ valid: false, issues: ['Article placement is Jev-only'] }),
   }
 }
 
-export function articleStoryRelationshipDefinition(hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET): ClassificationDefinition<ArticleStoryRelationshipState, ArticleStoryRelationshipDecision> {
+/** Shared Jev/Hermes rubric so the two prompts cannot drift apart. */
+function articlePlacementRubric(state: ArticleEntityPlacementState) {
   return {
-    workload: ARTICLE_STORY_RELATIONSHIP_WORKLOAD, decisionVersion: ARTICLE_STORY_RELATIONSHIP_VERSION,
-    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active', requiresJev: true, canaryPercent: 100,
+    question: 'Which supplied candidate is the primary entity for this article?',
+    rules: [
+      'Choose a candidate only when the article is substantively about it.',
+      'Choose no_match when no supplied candidate fits.',
+      'Choose uncertain for unresolved ambiguity.',
+      'Policy: proposal news concerning U.S.–Iran belongs primarily to U.S.–Iran Conflict. Bitcoin holding news belongs primarily to Bitcoin; BlackRock may be independently related.',
+    ],
+    criteria: Object.fromEntries([
+      ...state.candidates.map((candidate, index) => [candidate.id, `${candidate.name}: the entity described by candidates[${index}] in the supplied state, including its aliases, summary and scope.`]),
+      ['no_match', 'No supplied candidate is a meaningful primary placement.'],
+      ['uncertain', 'The bounded candidates do not resolve placement safely.'],
+    ]) as Record<string, string>,
+  }
+}
+
+export function articleStoryRelationshipDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
+): ClassificationDefinition<ArticleStoryRelationshipState, ArticleStoryRelationshipDecision> {
+  const fallback = options.articleHermesFallback === true
+  return {
+    workload: ARTICLE_STORY_RELATIONSHIP_WORKLOAD,
+    decisionVersion: fallback ? ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION : ARTICLE_STORY_RELATIONSHIP_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active',
+    requiresJev: !fallback, canaryPercent: 100,
     jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 4_000 }, capacity: DEFAULT_CAPACITY,
     validateState: (value) => {
       if (!record(value) || !record(value.article) || !record(value.entity) || !Array.isArray(value.recentItems) || value.recentItems.length > 5) return { valid: false, issues: ['article, entity and at most five recent items are required'] }
       try { return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), sourceText: boundedText(value.article.sourceText, 'article.sourceText', ARTICLE_DECISION_SOURCE_MAX_CHARS), publishedAt: nullableText(value.article.publishedAt, 'article.publishedAt', 64), observedAt: boundedText(value.article.observedAt, 'article.observedAt', 64) }, entity: { id: boundedText(value.entity.id, 'entity.id', 200), name: boundedText(value.entity.name, 'entity.name', 300) }, recentItems: value.recentItems.map((raw, index) => { const item = requiredRecord(raw, `recentItems[${index}]`); const source = boundedText(item.source, `recentItems[${index}].source`, 20); if (source !== 'legacy' && source !== 'managed') throw new Error('item source is invalid'); return { id: boundedText(item.id, `recentItems[${index}].id`, 200), source, title: boundedText(item.title, `recentItems[${index}].title`, 500), summary: boundedText(item.summary, `recentItems[${index}].summary`, 128_000), eventAt: boundedText(item.eventAt, `recentItems[${index}].eventAt`, 64) } }) } } } catch (error) { return invalid(error) }
     },
-    questions: (state) => ({ relationship_target: { type: 'choice', instructions: {
-      question: 'Choose the article relationship together with its exact supplied historical target, or a standalone outcome.',
-      rules: ['A continuation or branch must identify one supplied item.', 'Duplicate means the same development, not the same topic.', 'A branch is not a direct next step or resolution.', 'With no valid target choose same_topic_only, unrelated, or uncertain. The five items are narrative context; older duplicate coverage is retrieved separately.'],
-    }, criteria: Object.fromEntries([
-      ['same_topic_only', 'Shares a broad topic but no meaningful narrative link to a supplied item. No historical target.'],
-      ['unrelated', 'Not related to the supplied developments. No historical target.'],
-      ['uncertain', 'No safe narrative relationship can be established. No historical target.'],
-      ...state.recentItems.flatMap(item => [
-        [`duplicate:${item.source}:${item.id}`, { relation: 'Same recorded development without a material new fact', target: item }],
-        [`direct_continuation:${item.source}:${item.id}`, { relation: 'Later step, update, outcome, or explicit continuation of this target', target: item }],
-        [`related_story_branch:${item.source}:${item.id}`, { relation: 'Distinct development in the same evolving narrative as this target', target: item }],
-      ]),
-    ]) } }),
+    questions: (state) => {
+      const rubric = articleStoryRelationshipRubric(state)
+      return { relationship_target: { type: 'choice' as const, instructions: { question: rubric.question, rules: rubric.rules }, criteria: rubric.criteria } }
+    },
     decodeJev: (answers, state) => {
       const answer = answers.relationship_target
       if (!isChoice(answer)) return { valid: false, issues: ['relationship_target must be Choice'] }
@@ -235,7 +477,65 @@ export function articleStoryRelationshipDefinition(hermesTarget: InferenceProvid
       return { valid: true, value: { relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId, priorItemSource: priorItemId ? source as 'legacy' | 'managed' : null } }
     },
     acceptJev: (answers) => isChoice(answers.relationship_target) ? { accepted: true, reason: 'Jev joint relationship/target distribution retained' } : { accepted: false, reason: 'relationship_target is not Choice' },
-    renderHermes: () => '', validateHermes: () => ({ valid: false, issues: ['Article relationship is Jev-only'] }),
+    renderHermes: fallback ? (state) => {
+      const rubric = articleStoryRelationshipRubric(state)
+      const jointOutcomes = state.recentItems
+        .flatMap(item => (['duplicate', 'direct_continuation', 'related_story_branch'] as const).map(relationship => `${relationship}:${item.source}:${item.id}`))
+        .join('|')
+      return articleHermesPrompt(rubric, state, `{
+  "relationship": "duplicate|direct_continuation|related_story_branch|same_topic_only|unrelated|uncertain",
+  "priorItemId": "<exact supplied recentItems id>" (required together with duplicate, direct_continuation or related_story_branch; must be null otherwise)
+}
+
+Valid joint outcomes: ${jointOutcomes || '(none — no supplied items)'}
+Standalone outcomes: same_topic_only, unrelated, uncertain (priorItemId must be null for these).`)
+    } : () => '',
+    validateHermes: fallback
+      ? (value, state) => {
+        if (!record(value) || !exactKeys(value, ['relationship', 'priorItemId'])) {
+          return { valid: false, issues: ['Hermes relationship must be {"relationship": ..., "priorItemId": ...} with no extra keys'] }
+        }
+        const { relationship, priorItemId } = value as { relationship: unknown, priorItemId: unknown }
+        if (!ARTICLE_RELATIONSHIPS.includes(relationship as typeof ARTICLE_RELATIONSHIPS[number])) {
+          return { valid: false, issues: ['Hermes relationship is outside the admitted outcomes'] }
+        }
+        const targetRelationships = ['duplicate', 'direct_continuation', 'related_story_branch']
+        if (targetRelationships.includes(relationship as string)) {
+          if (typeof priorItemId !== 'string' || !state.recentItems.some(item => item.id === priorItemId)) {
+            return { valid: false, issues: ['Hermes relationship target is outside supplied history'] }
+          }
+          const target = state.recentItems.find(item => item.id === priorItemId)!
+          return { valid: true, value: { relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId: target.id, priorItemSource: target.source } }
+        }
+        if (priorItemId !== null) {
+          return { valid: false, issues: ['Hermes standalone relationship must not carry a historical target'] }
+        }
+        return { valid: true, value: { relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId: null, priorItemSource: null } }
+      }
+      : () => ({ valid: false, issues: ['Article relationship is Jev-only'] }),
+  }
+}
+
+/** Shared Jev/Hermes rubric so the two prompts cannot drift apart. */
+function articleStoryRelationshipRubric(state: ArticleStoryRelationshipState) {
+  return {
+    question: 'Choose the article relationship together with its exact supplied historical target, or a standalone outcome.',
+    rules: [
+      'A continuation or branch must identify one supplied item.',
+      'Duplicate means the same development, not the same topic.',
+      'A branch is not a direct next step or resolution.',
+      'With no valid target choose same_topic_only, unrelated, or uncertain. The five items are narrative context; older duplicate coverage is retrieved separately.',
+    ],
+    criteria: Object.fromEntries([
+      ['same_topic_only', 'Shares a broad topic but no meaningful narrative link to a supplied item. No historical target.'],
+      ['unrelated', 'Not related to the supplied developments. No historical target.'],
+      ['uncertain', 'No safe narrative relationship can be established. No historical target.'],
+      ...state.recentItems.flatMap(item => [
+        [`duplicate:${item.source}:${item.id}`, { relation: 'Same recorded development without a material new fact', target: item }],
+        [`direct_continuation:${item.source}:${item.id}`, { relation: 'Later step, update, outcome, or explicit continuation of this target', target: item }],
+        [`related_story_branch:${item.source}:${item.id}`, { relation: 'Distinct development in the same evolving narrative as this target', target: item }],
+      ]),
+    ]) as Record<string, unknown>,
   }
 }
 
@@ -427,6 +727,34 @@ function validateFollowupValueDecision(value: unknown): ClassificationDecisionVa
   const reason = typeof value.reason === 'string' && value.reason.trim()
     ? value.reason.trim().slice(0, 500) : `Follow-up value ${value.direction}.`
   return { valid: true, value: { direction: value.direction as ResearchFollowupValueDecision['direction'], reason } }
+}
+
+/**
+ * Builds the Hermes fallback prompt from the same rubric the Jev question
+ * uses. Output is a strict-JSON instruction block followed by the state; the
+ * schema string spells out the exact JSON shape and its outcome enums.
+ */
+function articleHermesPrompt(
+  rubric: { question: string, rules: readonly string[], criteria: Record<string, unknown> },
+  state: unknown,
+  schema: string,
+): string {
+  return [
+    'You are the myboon article classifier. Decide using only the supplied state and the rules below. Do not invent facts, ids, probabilities, or confidence values.',
+    `Question: ${rubric.question}`,
+    ...rubric.rules.map((rule, index) => `${index + 1}. ${rule}`),
+    'Outcome guidance:',
+    ...Object.entries(rubric.criteria).map(([outcome, description]) => `- ${outcome}: ${typeof description === 'string' ? description : JSON.stringify(description)}`),
+    `Return strict JSON only, exactly this shape and nothing else:\n${schema}`,
+    `State:\n${JSON.stringify(state)}`,
+  ].join('\n')
+}
+
+/** True when the value is a plain object with exactly these own keys. */
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const expected = [...keys].sort()
+  const actual = Object.keys(value).sort()
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index])
 }
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {

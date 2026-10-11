@@ -24,6 +24,7 @@ export const CLASSIFICATION_ENV = Object.freeze({
   hermesProfile: 'INFERENCE_GATEWAY_HERMES_PROFILE',
   hermesProvider: 'INFERENCE_GATEWAY_PRIMARY_PROVIDER',
   hermesModel: 'INFERENCE_GATEWAY_PRIMARY_MODEL',
+  articleHermesFallback: 'CLASSIFICATION_ARTICLE_HERMES_FALLBACK',
 } as const)
 
 const APPROVED_HERMES_ROUTES = new Set([
@@ -60,7 +61,10 @@ export function createConfiguredClassificationRuntime(options: {
   if (!APPROVED_HERMES_ROUTES.has(`${hermesTarget.provider}/${hermesTarget.model}`)) {
     throw new Error(`Unapproved classification Hermes route ${hermesTarget.provider}/${hermesTarget.model}`)
   }
-  const definitions = approvedClassificationDefinitions(hermesTarget)
+  // Opt-in article Hermes fallback. Only the exact string "true" enables it;
+  // any other value (including unset) keeps the Jev-only default.
+  const articleHermesFallback = env[CLASSIFICATION_ENV.articleHermesFallback] === 'true'
+  const definitions = approvedClassificationDefinitions(hermesTarget, { articleHermesFallback })
   const known = new Set(definitions.map((item) => item.workload))
   for (const workload of modes.keys()) if (!known.has(workload)) throw new Error(`Unknown classification workload ${workload}`)
   for (const definition of definitions) {
