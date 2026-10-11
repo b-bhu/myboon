@@ -166,8 +166,7 @@ export class ClassificationGateway {
       return this.runHermes<TDecision>(definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs, null)
     }
     return this.runJevWithFallback<TDecision>(
-      definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs,
-      request,
+      definition, state, decisionId, stateDigest, request.trace.stableDecisionKey, deadlineMs, request,
     )
   }
 
@@ -186,7 +185,7 @@ export class ClassificationGateway {
     stateDigest: string,
     stableDecisionKey: string,
     deadlineMs: number,
-    dispatchPolicy: Pick<ClassificationRequest, 'maxProviderCalls' | 'holdOnUnknownOutcome'>,
+    request: ClassificationRequest,
   ): Promise<ClassificationResult<TDecision>> {
     const startedAt = this.now()
     const startedAtIso = new Date(startedAt).toISOString()
@@ -195,10 +194,19 @@ export class ClassificationGateway {
     let answers: Readonly<Record<string, JevAnswer>> | null = null
     let jevFailure: string | null = null
     let primaryFailure: InferenceGatewayError | null = null
+    // The caller's stated provider-call envelope is authoritative. The
+    // in-dispatch Jev billing (HTTP 402) retry is a third call that runs only
+    // inside an explicit 3-call envelope (Jev, one 402 retry, Hermes); the
+    // legacy unbounded envelope (no maxProviderCalls) keeps its historical
+    // retry for callers that predate the explicit field.
+    const allowance = {
+      maxProviderCalls: request.maxProviderCalls ?? 2,
+      billingRetry: request.maxProviderCalls === undefined || request.maxProviderCalls === 3,
+    } as { maxProviderCalls: 1 | 2 | 3, billingRetry: boolean }
     try {
       // Single-call and hold-on-unknown requests can use the full deadline.
-      // The ordinary two-call path reserves a slice for timeout fallback.
-      const primaryDeadline = dispatchPolicy.maxProviderCalls === 1 || dispatchPolicy.holdOnUnknownOutcome === true
+      // The multi-call path reserves a slice so the fallback keeps budget.
+      const primaryDeadline = allowance.maxProviderCalls === 1 || request.holdOnUnknownOutcome === true
         ? deadlineMs : Math.max(1, Math.floor(deadlineMs / 2))
       const result = await this.callJev(definition, state, primaryDeadline, 'live')
       providerResponseReceived = true
@@ -230,13 +238,14 @@ export class ClassificationGateway {
     }
 
     // HTTP 402 (provider_billing) is a transient billing state: retry Jev once
-    // inside the same dispatch. The retry is itself a Jev attempt recorded in
-    // calls and must not consume the reserved Hermes fallback call, so it only
-    // runs where fallback is already allowed (two-call, non-Jev-required).
+    // inside the same dispatch, but only where the caller's stated envelope
+    // explicitly admits a third call (Jev, one Jev billing retry, Hermes).
+    // The retry is itself a Jev attempt recorded in calls and never consumes
+    // the reserved Hermes fallback call.
     // A second billing failure opens the Jev circuit so later requests are
     // refused pre-dispatch, then the dispatch continues to Hermes as usual.
     if (primaryFailure !== null && primaryFailure.category === 'provider_billing'
-      && dispatchPolicy.maxProviderCalls !== 1 && !definition.requiresJev) {
+      && allowance.billingRetry && allowance.maxProviderCalls === 3 && !definition.requiresJev) {
       const retry = await this.retryJevAfterBillingFailure(definition, state, startedAt, deadlineMs, primaryFailure)
       if (retry.outcome === 'success') {
         providerResponseReceived = true
@@ -273,9 +282,9 @@ export class ClassificationGateway {
     // The caller's durable reservation is authoritative over internal fallback.
     // Transport failures cannot establish non-execution or absence of charges.
     const unknownDispatch = primaryFailure !== null
-      && dispatchPolicy.holdOnUnknownOutcome === true
+      && request.holdOnUnknownOutcome === true
       && (primaryFailure.category === 'provider_timeout' || primaryFailure.category === 'provider_unavailable')
-    if (unknownDispatch || dispatchPolicy.maxProviderCalls === 1 || definition.requiresJev) {
+    if (unknownDispatch || allowance.maxProviderCalls === 1 || definition.requiresJev) {
       const failure = unknownDispatch
         ? new ClassificationOutcomeUnknownError(decisionId, primaryFailure!)
         : definition.requiresJev
@@ -469,11 +478,16 @@ export class ClassificationGateway {
     deadlineMs: number,
     failure: InferenceGatewayError,
   ) {
-    const elapsedMs = Math.max(0, this.now() - startedAtMs)
-    const remainingMs = deadlineMs - elapsedMs
+    let remainingMs = deadlineMs - Math.max(0, this.now() - startedAtMs)
     if (remainingMs <= 0) return { outcome: 'skip' as const }
     const waitMs = Math.min(Math.max(0, failure.retryAfterMs ?? 1_000), remainingMs)
     await this.sleep(waitMs)
+    // The wall-clock budget is authoritative: recompute what remains after the
+    // Retry-After wait instead of trusting the pre-wait remainder. A wait that
+    // consumed the deadline skips the retry; the preserved 402 rejection stays
+    // fallback-eligible and the policy block below routes to Hermes.
+    remainingMs = deadlineMs - Math.max(0, this.now() - startedAtMs)
+    if (remainingMs <= 0) return { outcome: 'skip' as const }
     let lease: ClassificationLease
     try {
       lease = this.capacity.acquire({
@@ -508,8 +522,18 @@ export class ClassificationGateway {
     }
   }
 
-  /** Best-effort trip through the capacity store: one failed lease per unit of progress until the next acquire is refused. */
+  /**
+   * Record the exhaustion of the Jev billing cycle on the circuit directly.
+   * Synthetic acquire/release loops cannot establish the trip: under rate or
+   * concurrency limits the acquire refuses first and the circuit silently
+   * stays closed. The real coordinator records the failure without consuming
+   * rate events; unknown ports keep the historical best-effort loop.
+   */
   private forceJevCircuitOpen(definition: ClassificationDefinition): void {
+    if (typeof this.capacity.tripCircuit === 'function') {
+      this.capacity.tripCircuit({ workload: definition.workload, target: definition.jevTarget, policy: definition.capacity })
+      return
+    }
     const threshold = Math.max(1, definition.capacity.circuitFailureThreshold)
     for (let index = 0; index < threshold; index += 1) {
       try {
@@ -531,8 +555,8 @@ function assertPublicRequest(request: ClassificationRequest): void {
   if (keys.some((key) => !['decisionVersion', 'state', 'tighterDeadlineMs', 'trace', 'workload', 'maxProviderCalls', 'holdOnUnknownOutcome'].includes(key))) {
     throw invalidInput('Classification request contains caller-owned policy fields')
   }
-  if (request.maxProviderCalls !== undefined && request.maxProviderCalls !== 1 && request.maxProviderCalls !== 2) {
-    throw invalidInput('maxProviderCalls must tighten the existing one-or-two-provider path')
+  if (request.maxProviderCalls !== undefined && request.maxProviderCalls !== 1 && request.maxProviderCalls !== 2 && request.maxProviderCalls !== 3) {
+    throw invalidInput('maxProviderCalls must tighten the existing one-, two- or three-provider path')
   }
   if (request.holdOnUnknownOutcome !== undefined && typeof request.holdOnUnknownOutcome !== 'boolean') {
     throw invalidInput('holdOnUnknownOutcome must be boolean')
@@ -735,7 +759,11 @@ function resultEnvelope<T>(
     actualProvider: record.actualProvider!, actualModel: record.actualModel!,
     fallbackUsed: record.fallbackUsed, fallbackReason: record.fallbackReason,
     answers: record.fallbackUsed ? null : record.answers,
-    usage: Object.freeze({ ...usage }), durationMs: record.durationMs,
+    usage: Object.freeze({ ...usage }),
+    // The durable caller settles every known call, not only the final one:
+    // a 402 retry plus a Hermes fallback can issue up to three calls.
+    calls: record.calls,
+    durationMs: record.durationMs,
   })
 }
 

@@ -11,7 +11,7 @@ import { durableArticleEntityProposal } from './durable-article-proposal'
 import { researchRootAssignmentId, ResearchFollowupHold, runBoundedFollowup } from './bounded-followup'
 import { InferenceGatewayError, ClassificationOutcomeUnknownError, ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
   RESEARCH_NOVELTY_VERSION, RESEARCH_NOVELTY_WORKLOAD,
-  type ClassificationGateway, type ClassificationRequest, type InferenceTelemetry } from '../inference-gateway'
+  type ClassificationGateway, type ClassificationRequest, type ClassificationResult, type InferenceTelemetry } from '../inference-gateway'
 import { ARTICLE_NOVELTY_VERSION, ARTICLE_NOVELTY_WORKLOAD } from '../inference-gateway/classification-definitions'
 import { resolveKnownObservation, assertKnownObservationResolution, type KnownObservationResolution } from './known-observation'
 import { createResolvedWithoutNewItemReadiness } from '../signal-platform/research-readiness'
@@ -701,7 +701,7 @@ test('durable classification preflight rejects local input before creating a pai
   } finally { fx.close() }
 })
 
-test('hermes fallback version reserves two provider calls and dispatches with maxProviderCalls 2', async () => {
+test('hermes fallback version reserves three provider calls and dispatches with maxProviderCalls 3', async () => {
   const fx = v4Database()
   try {
     const { work } = seedV4(fx.store)
@@ -712,7 +712,7 @@ test('hermes fallback version reserves two provider calls and dispatches with ma
       assignmentPolicy: V4_POLICY.assignmentPolicy, now: () => V4_NOW }).classify(request)
     assert.deepEqual(record.value, { verdict: 'new_information', reason: 'Unseen fact.' })
     assert.equal(classifier.requests.length, 1)
-    assert.equal(classifier.requests[0].maxProviderCalls, 2)
+    assert.equal(classifier.requests[0].maxProviderCalls, 3)
     assert.equal(classifier.requests[0].holdOnUnknownOutcome, true)
   } finally { fx.close() }
 })
@@ -732,11 +732,57 @@ test('fallback reservation persists two approved provider calls while base versi
       state: { signal: {}, context: {} }, trace: { stableDecisionKey: 'fallback-novelty' } }
     await durableResearchClassification({ gateway: fallbackClassifier.port, store: fx.store, work,
       assignmentPolicy: V4_POLICY.assignmentPolicy, now: () => V4_NOW }).classify(fallbackRequest)
-    assert.equal(fallbackClassifier.requests[0].maxProviderCalls, 2)
+    assert.equal(fallbackClassifier.requests[0].maxProviderCalls, 3)
     const fallbackReservation = fx.store.listResearchReservations(100)
       .find((row) => row.providerRoute === 'classification:research.article_novelty:research.article_novelty.v3')
     assert.ok(fallbackReservation, 'fallback reservation must be persisted')
     assert.equal(fallbackReservation.approvedLimits.maxProviderCalls, 3)
+  } finally { fx.close() }
+})
+
+test('a fallback-version settlement aggregates every known provider call', async () => {
+  const fx = v4Database()
+  try {
+    const { work } = seedV4(fx.store)
+    // A 402-retried Jev failure followed by a Hermes fallback: three real
+    // provider calls with known per-call usage in the classification record.
+    const gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'> = {
+      classify: async <Value>(): Promise<ClassificationResult<Value>> => {
+        const record: ClassificationResult<{ verdict: string }> = {
+          decisionId: 'decision-multi-call', workload: ARTICLE_NOVELTY_WORKLOAD,
+          decisionVersion: ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+          value: { verdict: 'new_information' },
+          configuredPrimary: { provider: 'typesafe', model: 'jev-1.13.0' },
+          configuredFallback: { provider: 'ollama-cloud', model: 'glm-5.3-flash' },
+          actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash',
+          fallbackUsed: true, fallbackReason: 'provider_billing', answers: null,
+          usage: { inputTokens: 30, outputTokens: 15 },
+          calls: [
+            { provider: 'typesafe', model: 'jev-1.13.0', status: 'failed', failureCategory: 'provider_billing',
+              durationMs: 10, inputTokens: 10, outputTokens: 5, costUsdMicros: null },
+            { provider: 'typesafe', model: 'jev-1.13.0', status: 'failed', failureCategory: 'provider_billing',
+              durationMs: 10, inputTokens: 10, outputTokens: 5, costUsdMicros: null },
+            { provider: 'ollama-cloud', model: 'glm-5.3-flash', status: 'succeeded', failureCategory: null,
+              durationMs: 10, inputTokens: 10, outputTokens: 5, costUsdMicros: null },
+          ],
+          durationMs: 30,
+        }
+        return record as unknown as ClassificationResult<Value>
+      },
+      recordPolicyOutcome: async () => {},
+    }
+    const request = { workload: ARTICLE_NOVELTY_WORKLOAD, decisionVersion: ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+      state: { signal: {}, context: {} }, trace: { stableDecisionKey: 'multi-call-settlement' } }
+    await durableResearchClassification({ gateway, store: fx.store, work,
+      assignmentPolicy: V4_POLICY.assignmentPolicy, now: () => V4_NOW }).classify(request)
+    const reservation = fx.store.listResearchReservations(100)[0]
+    assert.equal(reservation.state, 'settled')
+    assert.equal(reservation.settlement?.usage.providerCalls, 3, 'all three provider calls settle, not one')
+    assert.equal(reservation.settlement?.usage.inputTokens, 30)
+    assert.equal(reservation.settlement?.usage.outputTokens, 15)
+    // One call lacks measured cost, so the aggregate cost stays honestly unknown.
+    assert.equal(reservation.settlement?.usage.status, 'unknown')
+    assert.equal(reservation.settlement?.usage.costUsdMicros, null)
   } finally { fx.close() }
 })
 

@@ -171,7 +171,7 @@ test('uses the shared classification contract and records the downstream policy 
           value: { verdict: 'already_known' as const, reason: 'The timeline already contains the same repricing.' } as TDecision,
           configuredPrimary: { provider: 'typesafe', model: 'jev-1.13.0' }, configuredFallback: null,
           actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash', fallbackUsed: false,
-          fallbackReason: null, answers: null, usage: { inputTokens: 1, outputTokens: 1 }, durationMs: 1,
+          fallbackReason: null, answers: null, usage: { inputTokens: 1, outputTokens: 1 }, calls: [], durationMs: 1,
         }
       },
       async recordPolicyOutcome(value) { outcomes.push(value) },

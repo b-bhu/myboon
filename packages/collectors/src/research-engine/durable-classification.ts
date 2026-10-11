@@ -121,11 +121,12 @@ export function durableResearchClassification(input: {
       })
       if (!intent.ok) throw new ResearchFollowupHold(`Classification dispatch refused: ${intent.code}.`)
       try {
-        // The gateway's request contract tightens only its one-or-two-provider
-        // path. Two calls give the 402-billing retry plus the Hermes fallback;
-        // the reserved three-call allowance above covers both.
+        // The gateway's provider-call envelope is now explicit: three for the
+        // fallback versions (Jev, one Jev 402 billing retry, the Hermes
+        // fallback), one strict call for every other version. The reserved
+        // allowance above already covers the 3-call path.
         const result = await input.gateway.classify<Value>({
-          ...request, maxProviderCalls: hermesFallback ? 2 : 1, holdOnUnknownOutcome: true,
+          ...request, maxProviderCalls: hermesFallback ? 3 : 1, holdOnUnknownOutcome: true,
         })
         input.store.putResearchV4Record('classification_result', input.work.workId, attemptId, result)
         await settle(result)
@@ -157,14 +158,27 @@ export function durableResearchClassification(input: {
       }
 
       async function settle(result: ClassificationResult<Value>) {
+        // A 402 retry plus a Hermes fallback can issue up to three provider
+        // calls; the result records every known call, so the settlement sums
+        // them instead of counting one call and only the final usage.
+        const calls = result.calls
+        const knownTokenUsage = calls.length > 0
+          ? {
+            inputTokens: calls.reduce((sum, call) => sum + call.inputTokens, 0),
+            outputTokens: calls.reduce((sum, call) => sum + call.outputTokens, 0),
+            costUsdMicros: calls.some((call) => call.costUsdMicros === null) ? null as number | null
+              : calls.reduce((sum, call) => sum + (call.costUsdMicros ?? 0), 0),
+          }
+          : { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+            costUsdMicros: result.usage.costUsdMicros ?? null }
         const settled = await settleReservation(store, key, {
           requestDigest, providerResultDigest: createHash('sha256').update(canonicalJson(result)).digest('hex'),
           savedResultRef: `classification_result:${input.work.workId}:${attemptId}`,
-          usage: typeof result.usage.costUsdMicros === 'number' && result.usage.costUsdMicros > 0
-            ? { status: 'measured', costUsdMicros: result.usage.costUsdMicros,
-              inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, providerCalls: 1 }
+          usage: knownTokenUsage.costUsdMicros !== null && knownTokenUsage.costUsdMicros > 0
+            ? { status: 'measured', costUsdMicros: knownTokenUsage.costUsdMicros,
+              inputTokens: knownTokenUsage.inputTokens, outputTokens: knownTokenUsage.outputTokens, providerCalls: Math.max(1, calls.length) }
             : { status: 'unknown', costUsdMicros: null,
-              inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, providerCalls: 1 },
+              inputTokens: knownTokenUsage.inputTokens, outputTokens: knownTokenUsage.outputTokens, providerCalls: Math.max(1, calls.length) },
           savedResultSavedAtMs: Date.parse(input.now()), verification: { kind: 'transport_response_saved' },
         })
         if (!settled.ok) throw new ResearchFollowupHold(`Saved classification result settlement refused: ${settled.code}.`)

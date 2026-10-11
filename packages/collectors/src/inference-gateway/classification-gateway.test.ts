@@ -231,7 +231,7 @@ test('Jev can use the full deadline when unknown dispatch outcomes forbid replac
 
 test('invalid dispatch tightening fails before reaching any provider', async () => {
   const setup = gateway({})
-  await assert.rejects(setup.instance.classify({ ...request(), maxProviderCalls: 3 } as never), /one-or-two-provider/)
+  await assert.rejects(setup.instance.classify({ ...request(), maxProviderCalls: 4 } as never), /one-, two- or three-provider/)
   await assert.rejects(setup.instance.classify({ ...request(), holdOnUnknownOutcome: 'yes' } as never), /must be boolean/)
   assert.deepEqual(setup.calls(), { jevCalls: 0, hermesCalls: 0 })
 })
@@ -315,7 +315,9 @@ test('a second billing failure retries Jev once, then falls back to Hermes witho
     now: () => 1_700_000_000_000,
     sleep: async (ms) => { sleepCalls.push(ms) },
   })
-  const result = await instance.classify<Decision>(request())
+  // The explicit three-call envelope (Jev, one 402 retry, Hermes) is what the
+  // durable reservation actually covers for fallback versions.
+  const result = await instance.classify<Decision>({ ...request(), maxProviderCalls: 3 })
   assert.deepEqual(result.value, { label: 'drop' })
   assert.equal(result.fallbackUsed, true)
   assert.equal(result.fallbackReason, 'provider_billing')
@@ -324,12 +326,19 @@ test('a second billing failure retries Jev once, then falls back to Hermes witho
   const record = ports.attempts[0]
   assert.equal(record?.calls.length, 3)
   assert.deepEqual(record?.calls.map((call) => call.failureCategory), ['provider_billing', 'provider_billing', null])
+  // The gateway result exposes the real per-call record so a durable caller
+  // can settle every known provider call instead of only the final usage.
+  assert.equal(result.calls.length, 3)
+  assert.deepEqual(result.calls.map((call) => call.failureCategory), ['provider_billing', 'provider_billing', null])
+  const retryUsage = result.calls[2]
+  assert.equal(retryUsage?.inputTokens, 2)
+  assert.equal(retryUsage?.outputTokens, 1)
 
   // The force-opened circuit must refuse the next dispatch before any Jev
   // attempt: zero new Jev calls, and the request degrades to the Hermes
   // fallback under category circuit_open.
   const nextAttempts = ports.attempts.length
-  const next = await instance.classify<Decision>(request())
+  const next = await instance.classify<Decision>({ ...request(), maxProviderCalls: 3 })
   assert.equal(next.fallbackUsed, true)
   assert.equal(next.fallbackReason, 'circuit_open')
   assert.equal(ports.attempts.length, nextAttempts + 1)
@@ -351,13 +360,74 @@ test('a Jev billing retry that succeeds is authoritative with no fallback spend'
     capacity: ports, audit: ports,
     sleep: async () => {},
   })
-  const result = await instance.classify<Decision>(request())
+  // The explicit three-call envelope (Jev, one 402 retry, Hermes) admits the
+  // billing retry; a succeeding retry is authoritative with no fallback spend.
+  const result = await instance.classify<Decision>({ ...request(), maxProviderCalls: 3 })
   assert.deepEqual(result.value, { label: 'keep' })
   assert.equal(result.fallbackUsed, false)
   assert.equal(jevCalls, 2)
   const record = ports.attempts[0]
   assert.equal(record?.calls.length, 2)
   assert.deepEqual(record?.calls.map((call) => call.status), ['failed', 'succeeded'])
+  // The result carries both calls so a durable caller can settle both.
+  assert.equal(result.calls.length, 2)
+  assert.deepEqual(result.calls.map((call) => call.status), ['failed', 'succeeded'])
+})
+
+test('a Retry-After wait that exhausts the deadline skips the retry and falls back', async () => {
+  const clock = { now: 1_700_000_000_000 }
+  let jevCalls = 0
+  let hermesCalls = 0
+  const instance = new ClassificationGateway({
+    registry: new StaticClassificationRegistry([definition()]),
+    jev: { async classify() {
+      jevCalls += 1
+      throw billingError(60_000)
+    } },
+    hermes: { async classify(call: HermesClassificationCall) {
+      hermesCalls += 1
+      return { actualProvider: call.target.provider, actualModel: call.target.model,
+        value: { label: 'drop' }, durationMs: 7, usage: { inputTokens: 2, outputTokens: 1 } }
+    } },
+    capacity: new InMemoryClassificationPorts(), audit: new InMemoryClassificationPorts(),
+    now: () => clock.now,
+    // Advancing-clock sleep: the Retry-After wait consumes the whole budget.
+    sleep: async (ms) => { clock.now += ms },
+  })
+  await assert.rejects(
+    instance.classify<Decision>({ ...request(), maxProviderCalls: 3 }),
+    ClassificationDoubleFailureError,
+  )
+  // The wait consumed the whole budget (Retry-After larger than the deadline):
+  // no second Jev attempt and the skip carries the 402 as a known, fallback-
+  // eligible rejection — but with zero logical time left even the Hermes
+  // fallback cannot run, so the dispatch fails without further spend.
+  assert.deepEqual({ jevCalls, hermesCalls }, { jevCalls: 1, hermesCalls: 0 })
+})
+
+test('a Retry-After wait that preserves budget retries Jev with the post-wait remainder', async () => {
+  const clock = { now: 1_700_000_000_000 }
+  const observedDeadlines: number[] = []
+  let jevCalls = 0
+  const instance = new ClassificationGateway({
+    registry: new StaticClassificationRegistry([definition()]),
+    jev: { async classify(call) {
+      jevCalls += 1
+      observedDeadlines.push(call.deadlineMs)
+      if (jevCalls === 1) throw billingError(200)
+      return jevAnswer()
+    } },
+    hermes: { async classify() { throw new Error('Hermes must not be called') } },
+    capacity: new InMemoryClassificationPorts(), audit: new InMemoryClassificationPorts(),
+    now: () => clock.now,
+    sleep: async (ms) => { clock.now += ms },
+  })
+  const result = await instance.classify<Decision>({ ...request(), maxProviderCalls: 3 })
+  assert.deepEqual(result.value, { label: 'keep' })
+  assert.equal(jevCalls, 2)
+  // The wait preserved budget inside the halved primary deadline: the retry
+  // runs with the exact post-wait wall-clock remainder (deadline - elapsed).
+  assert.equal(observedDeadlines[1], 800)
 })
 
 test('Jev authentication failure does not retry and goes straight to Hermes', async () => {
