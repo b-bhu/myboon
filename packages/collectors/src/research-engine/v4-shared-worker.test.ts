@@ -736,7 +736,7 @@ test('fallback reservation persists two approved provider calls while base versi
     const fallbackReservation = fx.store.listResearchReservations(100)
       .find((row) => row.providerRoute === 'classification:research.article_novelty:research.article_novelty.v3')
     assert.ok(fallbackReservation, 'fallback reservation must be persisted')
-    assert.equal(fallbackReservation.approvedLimits.maxProviderCalls, 2)
+    assert.equal(fallbackReservation.approvedLimits.maxProviderCalls, 3)
   } finally { fx.close() }
 })
 

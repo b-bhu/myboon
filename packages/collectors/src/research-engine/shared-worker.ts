@@ -221,6 +221,8 @@ export interface SharedResearchV4Options {
   article?: {
     classification: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
     contextReader(signal: Signal, work: ResearchWorkItem): EntityMemoryReader
+    /** CLASSIFICATION_ARTICLE_HERMES_FALLBACK=true: fallback decision versions and v2 article packets. Off by default. */
+    useHermesFallbackVersions?: boolean
   }
 }
 
@@ -1011,10 +1013,11 @@ export class SharedResearchWorker {
       work: input.lease.work, assignmentPolicy: v4.assignmentPolicy,
       stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
     })
-    let preparation: { memberships: import('../signal-platform/contracts').ArticleEntityProposal[], novelty: import('../signal-platform/contracts').ArticleChoiceDecision, contextualHistory: string }
+    let preparation: import('./article-placement').ArticlePlacementPreparationV1 | import('./article-placement').ArticlePlacementPreparationV2
     try {
       preparation = await prepareArticlePlacement({
         gateway: durableClassification, stableDecisionKey: input.lease.work.workId,
+        useHermesFallbackVersions: v4.article.useHermesFallbackVersions === true,
         signal: input.signal, sourceText: source.text,
         context: input.articleContext?.context
           ?? await reader.articleContext({ sourceUrl: source.finalUrl, terms: articleLookupTerms(input.signal) }),

@@ -18,7 +18,7 @@ import {
 import { researchRootAssignmentId, ResearchFollowupHold } from './bounded-followup'
 import type { ResearchV4StorePort } from './v4-store'
 
-/** Every classified paid dispatch holds a durable reservation: one call, or two for Hermes fallback versions. */
+/** Every classified paid dispatch holds a durable reservation: one call, or three for Hermes fallback versions (Jev, one Jev billing retry, Hermes fallback). */
 // Decision versions that only exist in the Hermes fallback definition registry.
 const ARTICLE_HERMES_FALLBACK_VERSIONS = new Set<string>([
   ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
@@ -65,14 +65,15 @@ export function durableResearchClassification(input: {
         workload: request.workload, decisionVersion: request.decisionVersion, state: request.state,
       })).digest('hex')
       const store = input.store.researchBudgetStore()
-      // Fallback versions allow Jev plus one Hermes fallback dispatch;
-      // every other version keeps the strict one-call exposure.
+      // Fallback versions allow Jev, one Jev billing (HTTP 402) retry inside
+      // the same dispatch, and one Hermes fallback; every other version keeps
+      // the strict one-call exposure.
       const hermesFallback = ARTICLE_HERMES_FALLBACK_VERSIONS.has(request.decisionVersion)
       const reservation = await claimReservation(store, {
         ...key, requestDigest, providerRoute: `classification:${request.workload}:${request.decisionVersion}`,
         // Registry policy supplies approved classifier token ceilings. Cost is
         // explicitly unknown because the classifier has no measured-cost port.
-        approvedLimits: { maxProviderCalls: hermesFallback ? 2 : 1, maxInputTokens: definition.budget.maxInputTokens,
+        approvedLimits: { maxProviderCalls: hermesFallback ? 3 : 1, maxInputTokens: definition.budget.maxInputTokens,
           maxOutputTokens: definition.budget.maxOutputTokens, maxIncrementalCostUsdMicros: null },
         assignmentLimits: input.assignmentPolicy,
         nowMs: Date.parse(input.now()),
@@ -116,6 +117,9 @@ export function durableResearchClassification(input: {
       })
       if (!intent.ok) throw new ResearchFollowupHold(`Classification dispatch refused: ${intent.code}.`)
       try {
+        // The gateway's request contract tightens only its one-or-two-provider
+        // path. Two calls give the 402-billing retry plus the Hermes fallback;
+        // the reserved three-call allowance above covers both.
         const result = await input.gateway.classify<Value>({
           ...request, maxProviderCalls: hermesFallback ? 2 : 1, holdOnUnknownOutcome: true,
         })

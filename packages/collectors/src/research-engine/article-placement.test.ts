@@ -10,7 +10,7 @@ import { createConfiguredClassificationRuntime } from '../inference-gateway/clas
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
 import type { ClassificationRequest, ClassificationResult, JevAnswer } from '../inference-gateway/classification-types'
 import { InferenceGatewayError } from '../inference-gateway/errors'
-import { articleNoveltyDefinition, articleStoryRelationshipDefinition } from '../inference-gateway/classification-definitions'
+import { articleNoveltyDefinition, articleStoryRelationshipDefinition, ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION, ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION } from '../inference-gateway/classification-definitions'
 import { ARTICLE_DECISION_SOURCE_MAX_CHARS } from './article-input-bounds'
 
 const answer = (key: string): JevAnswer => ({ type: 'choice', choice: key, confidence: .95, probabilities: { [key]: .95, alternative: .05 } })
@@ -379,4 +379,67 @@ test('uncertain novelty with duplicate context holds without a provider retry', 
   await assert.rejects(prepareArticlePlacement({ gateway, stableDecisionKey: 'uncertain-no-retry', signal,
     sourceText: 'An unresolved development.', context: c }), /uncertain/i)
   assert.equal(noveltyCalls, 1)
+})
+
+// #308 step 4D: flag-gated provider-aware decisions (useHermesFallbackVersions).
+function fallbackGateway(options: { hermes?: (workload: string) => boolean, placement?: 'selected' | 'uncertain', novelty?: string } = {}) {
+  const requests: ClassificationRequest[] = []
+  const gateway = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    requests.push(request)
+    const hermes = options.hermes?.(request.workload) ?? false
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload.endsWith('entity_placement')) {
+      value = options.placement === 'uncertain' ? { entityId: null, disposition: 'uncertain' } : { entityId: 'bitcoin', disposition: 'selected' }
+      answers = { placement: answer(options.placement === 'uncertain' ? 'uncertain' : 'bitcoin') }
+    } else if (request.workload.endsWith('related_membership')) { value = { dispositions: { blackrock: 'related' } }; answers = { related_blackrock: answer('related') } }
+    else if (request.workload.endsWith('story_relationship')) {
+      const state = request.state as { entity: { id: string } }
+      value = { relationship: 'direct_continuation', priorItemId: `${state.entity.id}-0` }
+      answers = { relationship: answer('direct_continuation'), prior_item: answer(`${state.entity.id}-0`) }
+    } else { value = { verdict: options.novelty ?? 'new_information' }; answers = { novelty: answer(options.novelty ?? 'new_information') } }
+    const base = { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion }
+    return hermes
+      ? { ...base, answers: null, actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash', fallbackUsed: true, fallbackReason: 'provider_billing' }
+      : { ...base, answers, actualProvider: 'typesafe', actualModel: 'jev-1.13.0', fallbackUsed: false, fallbackReason: null }
+  } }
+  return { gateway, requests }
+}
+
+test('#308 flag off keeps v1 decisions and base decision versions', async () => {
+  const { gateway, requests } = fallbackGateway()
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'BlackRock added Bitcoin.', context: context() })
+  assert.equal('provider' in result.memberships[0].placement, false)
+  assert.equal(result.memberships[0].placement.probabilities.bitcoin, .95)
+  assert.equal('provider' in result.novelty, false)
+  assert.notEqual(requests[0].decisionVersion, ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION)
+})
+
+test('#308 flag on with Jev results gives v2 jev decisions with model', async () => {
+  const { gateway, requests } = fallbackGateway()
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'BlackRock added Bitcoin.', context: context(), useHermesFallbackVersions: true })
+  const placement = result.memberships[0].placement
+  assert.equal(placement.provider, 'jev')
+  if (placement.provider === 'jev') { assert.equal(placement.model, 'jev-1.13.0'); assert.equal(placement.probabilities.bitcoin, .95) }
+  assert.equal(result.novelty.provider, 'jev')
+  assert.equal(requests[0].decisionVersion, ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION)
+  assert.equal(requests.at(-1)!.decisionVersion, ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION)
+})
+
+test('#308 flag on with a Hermes result records provenance without probabilities', async () => {
+  const { gateway } = fallbackGateway({ hermes: () => true })
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'BlackRock added Bitcoin.', context: context(), useHermesFallbackVersions: true })
+  const placement = result.memberships[0].placement
+  assert.equal(placement.provider, 'hermes'); assert.equal(placement.choice, 'bitcoin')
+  assert.equal('probabilities' in placement, false); assert.equal('confidence' in placement, false)
+  if (placement.provider === 'hermes') { assert.equal(placement.fallbackReason, 'provider_billing'); assert.equal(placement.model, 'glm-5.3-flash') }
+  assert.equal(result.memberships[1].placement.choice, 'related')
+  assert.equal(result.memberships[0].relationshipDecision?.choice, 'direct_continuation')
+  assert.equal(result.novelty.choice, 'new_information')
+})
+
+test('#308 Hermes uncertain placement and novelty hold instead of saving a default', async () => {
+  const placement = fallbackGateway({ hermes: () => true, placement: 'uncertain' })
+  await assert.rejects(prepareArticlePlacement({ gateway: placement.gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: context(), useHermesFallbackVersions: true }), /could not safely resolve/)
+  const novelty = fallbackGateway({ hermes: w => w.endsWith('novelty'), novelty: 'uncertain' })
+  await assert.rejects(prepareArticlePlacement({ gateway: novelty.gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: context(), useHermesFallbackVersions: true }), /Hermes fallback novelty is uncertain/)
 })
