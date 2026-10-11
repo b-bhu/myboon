@@ -26,8 +26,18 @@ export const ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION = 'resea
 export const ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION = 'research.article_related_membership.v2' as const
 export const ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION = 'research.article_story_relationship.v3' as const
 export const ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION = 'research.article_novelty.v3' as const
+export const ARTICLE_CATALOGUE_BATCH_WORKLOAD = 'research.article_catalogue_batch' as const
+export const ARTICLE_CATALOGUE_BATCH_VERSION = 'research.article_catalogue_batch.v1' as const
+export const ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION = 'research.article_catalogue_batch.v2' as const
+export const ARTICLE_RELATIONSHIP_BATCH_WORKLOAD = 'research.article_relationship_batch' as const
+export const ARTICLE_RELATIONSHIP_BATCH_VERSION = 'research.article_relationship_batch.v1' as const
+export const ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION = 'research.article_relationship_batch.v2' as const
+/** Candidate cap per batched catalogue dispatch; mirrors the placement definition. */
+export const ARTICLE_CATALOGUE_BATCH_MAX_CANDIDATES = 32
+/** Selected-entity cap per batched relationship dispatch; mirrors the novelty bound. */
+export const ARTICLE_RELATIONSHIP_BATCH_MAX_ENTITIES = 32
 
-/** Options shared by the five article definition factories. */
+/** Options shared by the article definition factories. */
 export interface ArticleDefinitionOptions {
   /**
    * Registers an additional decision version per article workload where Jev
@@ -36,6 +46,13 @@ export interface ArticleDefinitionOptions {
    * in-flight work pinned to them still resolves.
    */
   articleHermesFallback?: boolean
+  /**
+   * Registers the staged-batching catalogue/relationship versions (#308 patch
+   * 5A): one catalogue dispatch carries the primary placement plus every
+   * independent related membership, and one relationship dispatch covers all
+   * selected entities. Off by default.
+   */
+  articleBatching?: boolean
 }
 
 const JEV_TARGET = Object.freeze({ provider: 'typesafe', model: 'jev-1.13.0' })
@@ -80,6 +97,12 @@ export interface ArticleRelatedMembershipState { article: { title: string, text:
 export interface ArticleRelatedMembershipDecision { dispositions: Record<string, 'related' | 'not_related' | 'uncertain'> }
 export interface ArticleNoveltyState { article: { title: string, text: string, publishedAt: string | null, observedAt: string }, histories: Array<{ entityId: string, items: Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }> }>, selectedTargets: Array<{ entityId: string, role: 'primary' | 'related', id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>, reconciliation?: { priorVerdict: string } }
 export interface ArticleNoveltyDecision { verdict: 'new_information' | 'already_known' | 'contradicts_prior' | 'uncertain', primaryRelationship?: ArticleStoryRelationshipDecision['relationship'] }
+export interface ArticleCatalogueBatchState { article: { title: string, text: string }, candidates: Array<{ id: string, name: string, aliases: string[], summary: string | null, scope: Record<string, unknown> }> }
+export interface ArticleCatalogueBatchDecision { entityId: string | null, disposition: 'selected' | 'no_match' | 'uncertain', dispositions: Record<string, 'related' | 'not_related' | 'uncertain'> }
+export interface ArticleRelationshipBatchEntity { id: string, name: string, recentItems: Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }> }
+export interface ArticleRelationshipBatchState { article: { title: string, sourceText: string, publishedAt: string | null, observedAt: string }, entities: ArticleRelationshipBatchEntity[] }
+export interface ArticleRelationshipBatchTarget { entityId: string, relationship: ArticleStoryRelationshipDecision['relationship'], priorItemId: string | null, priorItemSource?: 'legacy' | 'managed' | null }
+export interface ArticleRelationshipBatchDecision { targets: ArticleRelationshipBatchTarget[] }
 
 const FOLLOWUP_VALUE_DECISION_DESCRIPTION = 'Assess whether one bounded follow-up could add information material to this research assignment beyond the supplied source and relevant saved knowledge. Unanswered details alone are not sufficient. Do not assert that any supplied claim is true. If the supplied context is insufficient to judge, return uncertain.'
 const NOVELTY_DECISIONS = ['already_known', 'new_information', 'contradicts_prior'] as const
@@ -101,7 +124,7 @@ function articleCandidateState(value: unknown, path: string): { id: string, name
 
 export function approvedClassificationDefinitions(
   hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
-  options: { articleHermesFallback?: boolean } = {},
+  options: { articleHermesFallback?: boolean, articleBatching?: boolean } = {},
 ): readonly ClassificationDefinition[] {
   const definitions: ClassificationDefinition[] = [
     researchNoveltyDefinition(hermesTarget), researchFollowupValueDefinition(hermesTarget),
@@ -116,6 +139,16 @@ export function approvedClassificationDefinitions(
       articleRelatedMembershipDefinition(hermesTarget, { articleHermesFallback: true }),
       articleStoryRelationshipDefinition(hermesTarget, { articleHermesFallback: true }),
       articleNoveltyDefinition(hermesTarget, { articleHermesFallback: true }),
+    )
+  }
+  if (options.articleBatching === true) {
+    definitions.push(
+      articleCatalogueBatchDefinition(hermesTarget),
+      articleRelationshipBatchDefinition(hermesTarget),
+      ...(options.articleHermesFallback === true ? [
+        articleCatalogueBatchDefinition(hermesTarget, { articleHermesFallback: true }),
+        articleRelationshipBatchDefinition(hermesTarget, { articleHermesFallback: true }),
+      ] : []),
     )
   }
   return Object.freeze(definitions)
@@ -540,6 +573,267 @@ function articleStoryRelationshipRubric(state: ArticleStoryRelationshipState) {
         [`related_story_branch:${item.source}:${item.id}`, { relation: 'Distinct development in the same evolving narrative as this target', target: item }],
       ]),
     ]) as Record<string, unknown>,
+  }
+}
+
+export function articleCatalogueBatchDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
+): ClassificationDefinition<ArticleCatalogueBatchState, ArticleCatalogueBatchDecision> {
+  const fallback = options.articleHermesFallback === true
+  return {
+    workload: ARTICLE_CATALOGUE_BATCH_WORKLOAD,
+    decisionVersion: fallback ? ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION : ARTICLE_CATALOGUE_BATCH_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active',
+    requiresJev: !fallback, canaryPercent: 100,
+    // One dispatch replaces the separate placement and related-membership
+    // calls, so it inherits the larger membership output budget.
+    jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 8_000 }, capacity: DEFAULT_CAPACITY,
+    validateState: (value) => {
+      if (!record(value) || !record(value.article) || !Array.isArray(value.candidates) || value.candidates.length > ARTICLE_CATALOGUE_BATCH_MAX_CANDIDATES) {
+        return { valid: false, issues: ['bounded article and candidate catalogue are required'] }
+      }
+      try { return { valid: true, value: { article: { title: boundedText(value.article.title, 'article.title', 500), text: boundedText(value.article.text, 'article.text', ARTICLE_DECISION_SOURCE_MAX_CHARS) }, candidates: value.candidates.map((candidate, index) => articleCandidateState(candidate, `candidates[${index}]`)) } } } catch (error) { return invalid(error) }
+    },
+    questions: (state) => {
+      const rubric = articlePlacementRubric(state)
+      return {
+        placement: {
+          type: 'choice' as const, instructions: { question: rubric.question, rules: rubric.rules }, criteria: {
+            ...rubric.criteria, uncertain: `${rubric.criteria['uncertain']!} Membership questions are judged independently; choose a placement even when memberships stay unresolved.`,
+          },
+        },
+        ...Object.fromEntries(state.candidates.map((candidate) => {
+          const membership = articleRelatedMembershipRubric(candidate.name)
+          return [`related_${candidate.id}`, {
+            type: 'choice' as const,
+            instructions: { question: membership.question, rules: membership.rules },
+            criteria: membership.criteria,
+          }]
+        })),
+      }
+    },
+    decodeJev: (answers, state) => {
+      const answer = answers.placement
+      if (!isChoice(answer)) return { valid: false, issues: ['placement must be Choice'] }
+      const dispositions: ArticleCatalogueBatchDecision['dispositions'] = {}
+      for (const candidate of state.candidates) {
+        const membership = answers[`related_${candidate.id}`]
+        if (!isChoice(membership) || !['related', 'not_related', 'uncertain'].includes(membership.choice)) {
+          return { valid: false, issues: [`related membership for ${candidate.id} is invalid`] }
+        }
+        dispositions[candidate.id] = membership.choice as ArticleCatalogueBatchDecision['dispositions'][string]
+      }
+      if (answer.choice === 'no_match') return { valid: true, value: { entityId: null, disposition: 'no_match', dispositions } }
+      if (answer.choice === 'uncertain') return { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions } }
+      return { valid: true, value: { entityId: answer.choice, disposition: 'selected', dispositions } }
+    },
+    acceptJev: (answers, decision, state) => {
+      const answer = answers.placement
+      const placements = isChoice(answer) && (decision.entityId === null || state.candidates.some((candidate) => candidate.id === decision.entityId))
+      if (!placements) return { accepted: false, reason: 'placement candidate is outside supplied catalogue or placement is not Choice' }
+      return state.candidates.every((candidate) => isChoice(answers[`related_${candidate.id}`]))
+        ? { accepted: true, reason: 'Jev batched catalogue distributions retained' }
+        : { accepted: false, reason: 'one or more batched membership answers are not Choice' }
+    },
+    renderHermes: fallback ? (state) => {
+      const rubric = articlePlacementRubric(state)
+      const outcomes = [...state.candidates.map((candidate) => candidate.id), 'no_match', 'uncertain'].join('|')
+      const membershipSchema = state.candidates.length === 0
+        ? '  (no related membership questions when the candidate catalogue is empty)'
+        : state.candidates.map((candidate) => `    "${candidate.id}": "related|not_related|uncertain"`).join(',\n')
+      return articleHermesPrompt(rubric, state, `{
+  "entityId": "${outcomes}" — one of the supplied candidate ids, or "no_match", or "uncertain",
+  "dispositions": {
+${membershipSchema}
+  }
+}
+
+Every dispositions key must be exactly one of the supplied candidate ids. Membership questions are judged independently of the placement.`)
+    } : () => '',
+    validateHermes: fallback
+      ? (value, state) => {
+        // Safety hold mirrors the standalone placement definition: a Hermes
+        // batched placement can never select or exclude a primary on its own.
+        if (!record(value) || !exactKeys(value, ['entityId', 'dispositions']) || !record(value.dispositions)) {
+          return { valid: false, issues: ['Hermes catalogue batch must be {"entityId": ..., "dispositions": {...}} with no extra keys'] }
+        }
+        const entityId = value.entityId
+        if (entityId !== 'no_match' && entityId !== 'uncertain'
+          && !(typeof entityId === 'string' && state.candidates.some((candidate) => candidate.id === entityId))) {
+          return { valid: false, issues: ['Hermes batched placement is outside the supplied candidate catalogue'] }
+        }
+        const dispositions: ArticleCatalogueBatchDecision['dispositions'] = {}
+        const entries = Object.entries(value.dispositions)
+        if (entries.length !== state.candidates.length) {
+          return { valid: false, issues: ['Hermes catalogue batch dispositions must cover exactly the supplied candidates'] }
+        }
+        for (const [candidateId, outcome] of entries) {
+          if (!state.candidates.some((candidate) => candidate.id === candidateId)) {
+            return { valid: false, issues: [`related membership for ${candidateId} is outside the supplied candidates`] }
+          }
+          if (outcome !== 'related' && outcome !== 'not_related' && outcome !== 'uncertain') {
+            return { valid: false, issues: [`related membership for ${candidateId} is outside the admitted outcomes`] }
+          }
+          dispositions[candidateId] = outcome as ArticleCatalogueBatchDecision['dispositions'][string]
+        }
+        return { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions } }
+      }
+      : () => ({ valid: false, issues: ['Article catalogue batching is Jev-only'] }),
+  }
+}
+
+/** Shared Jev/Hermes rubric for one entity's joint relationship/target question. */
+function articleRelationshipBatchRubric(entity: { id: string, name: string }) {
+  return {
+    question: `For ${entity.name} (entities[].id "${entity.id}"), choose the article relationship together with its exact supplied historical target in that entity's recentItems, or a standalone outcome.`,
+    rules: [
+      'Judge each entity independently using only its own entities[] entry and recentItems history in the supplied state.',
+      `A continuation or branch for ${entity.name} must identify one item from that same entity's recentItems.`,
+      'Duplicate means the same development, not the same topic.',
+      'A branch is not a direct next step or resolution.',
+      'With no valid target choose same_topic_only, unrelated, or uncertain. The five items are narrative context; older duplicate coverage is retrieved separately.',
+    ],
+    criteria: {} as Record<string, unknown>,
+  }
+}
+
+export function articleRelationshipBatchDefinition(
+  hermesTarget: InferenceProviderTarget = DEFAULT_HERMES_TARGET,
+  options: { articleHermesFallback?: boolean } = {},
+): ClassificationDefinition<ArticleRelationshipBatchState, ArticleRelationshipBatchDecision> {
+  const fallback = options.articleHermesFallback === true
+  return {
+    workload: ARTICLE_RELATIONSHIP_BATCH_WORKLOAD,
+    decisionVersion: fallback ? ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION : ARTICLE_RELATIONSHIP_BATCH_VERSION,
+    maximumLifecycleMode: 'active', defaultLifecycleMode: 'active',
+    requiresJev: !fallback, canaryPercent: 100,
+    jevTarget: JEV_TARGET, hermesTarget, budget: { deadlineMs: 30_000, maxStateBytes: 96_000, maxInputTokens: 64_000, maxOutputTokens: 8_000 }, capacity: DEFAULT_CAPACITY,
+    validateState: (value) => {
+      if (!record(value) || !record(value.article) || !Array.isArray(value.entities) || value.entities.length > ARTICLE_RELATIONSHIP_BATCH_MAX_ENTITIES) {
+        return { valid: false, issues: ['article and at most 32 selected entities are required'] }
+      }
+      try {
+        const seen = new Set<string>()
+        return { valid: true, value: {
+          article: { title: boundedText(value.article.title, 'article.title', 500), sourceText: boundedText(value.article.sourceText, 'article.sourceText', ARTICLE_DECISION_SOURCE_MAX_CHARS), publishedAt: nullableText(value.article.publishedAt, 'article.publishedAt', 64), observedAt: boundedText(value.article.observedAt, 'article.observedAt', 64) },
+          entities: value.entities.map((raw, index) => {
+            const entity = requiredRecord(raw, `entities[${index}]`)
+            const id = boundedText(entity.id, `entities[${index}].id`, 200)
+            if (seen.has(id)) throw new Error(`entities[${index}].id is duplicated`)
+            seen.add(id)
+            if (!Array.isArray(entity.recentItems) || entity.recentItems.length > 5) throw new Error(`entities[${index}].recentItems must contain at most five entries`)
+            return {
+              id, name: boundedText(entity.name, `entities[${index}].name`, 300),
+              recentItems: entity.recentItems.map((item, itemIndex) => {
+                const entry = requiredRecord(item, `entities[${index}].recentItems[${itemIndex}]`)
+                const source = boundedText(entry.source, `entities[${index}].recentItems[${itemIndex}].source`, 20)
+                if (source !== 'legacy' && source !== 'managed') throw new Error('item source is invalid')
+                return { id: boundedText(entry.id, `entities[${index}].recentItems[${itemIndex}].id`, 200), source, title: boundedText(entry.title, `entities[${index}].recentItems[${itemIndex}].title`, 500), summary: boundedText(entry.summary, `entities[${index}].recentItems[${itemIndex}].summary`, 128_000), eventAt: boundedText(entry.eventAt, `entities[${index}].recentItems[${itemIndex}].eventAt`, 64) }
+              }),
+            }
+          }),
+        } }
+      } catch (error) { return invalid(error) }
+    },
+    questions: (state) => Object.fromEntries(state.entities.map((entity) => {
+      const rubric = articleRelationshipBatchRubric(entity)
+      const criteria = Object.fromEntries([
+        ['same_topic_only', 'Shares a broad topic but no meaningful narrative link to a supplied item. No historical target.'],
+        ['unrelated', 'Not related to the supplied developments. No historical target.'],
+        ['uncertain', 'No safe narrative relationship can be established. No historical target.'],
+        ...entity.recentItems.flatMap(item => [
+          [`duplicate:${item.source}:${item.id}`, { relation: 'Same recorded development without a material new fact', target: item }],
+          [`direct_continuation:${item.source}:${item.id}`, { relation: 'Later step, update, outcome, or explicit continuation of this target', target: item }],
+          [`related_story_branch:${item.source}:${item.id}`, { relation: 'Distinct development in the same evolving narrative as this target', target: item }],
+        ]),
+      ]) as Record<string, unknown>
+      return [`relationship_target_${entity.id}`, {
+        type: 'choice' as const,
+        instructions: { question: rubric.question, rules: rubric.rules },
+        criteria,
+      }]
+    })),
+    decodeJev: (answers, state) => {
+      const targets: ArticleRelationshipBatchTarget[] = []
+      for (const entity of state.entities) {
+        const answer = answers[`relationship_target_${entity.id}`]
+        if (!isChoice(answer)) return { valid: false, issues: [`relationship_target_${entity.id} must be Choice`] }
+        const allowedChoices = ['same_topic_only', 'unrelated', 'uncertain', ...entity.recentItems.flatMap(item =>
+          ['duplicate', 'direct_continuation', 'related_story_branch'].map(relationship => `${relationship}:${item.source}:${item.id}`))]
+        if (!allowedChoices.includes(answer.choice)) return { valid: false, issues: [`relationship_target_${entity.id} is outside supplied history`] }
+        const [relationship, source, ...id] = answer.choice.split(':')
+        const priorItemId = id.length ? id.join(':') : null
+        if (!ARTICLE_RELATIONSHIPS.includes(relationship as typeof ARTICLE_RELATIONSHIPS[number])
+          || (priorItemId === null ? !['same_topic_only', 'unrelated', 'uncertain'].includes(relationship)
+            : !entity.recentItems.some(item => item.id === priorItemId && item.source === source))) {
+          return { valid: false, issues: [`relationship_target_${entity.id} is outside supplied history`] }
+        }
+        targets.push({ entityId: entity.id, relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId, priorItemSource: priorItemId ? source as 'legacy' | 'managed' : null })
+      }
+      return { valid: true, value: { targets } }
+    },
+    acceptJev: (answers, _decision, state) => state.entities.every((entity) => isChoice(answers[`relationship_target_${entity.id}`]))
+      ? { accepted: true, reason: 'Jev joint relationship/target distributions retained' }
+      : { accepted: false, reason: 'one or more batched relationship answers are not Choice' },
+    renderHermes: fallback ? (state) => {
+      const firstRubric = articleRelationshipBatchRubric(state.entities[0] ?? { id: '', name: 'the first entity' })
+      return articleHermesPrompt(firstRubric, state, `{
+  "targets": [
+    { "entityId": "<exact entities[].id>", "relationship": "duplicate|direct_continuation|related_story_branch|same_topic_only|unrelated|uncertain", "priorItemId": "<exact recentItems id of that same entity, or null>" }
+  ]
+}
+
+Every entities[] entry needs exactly one targets[] entry with its own entityId. Duplicate, direct_continuation and related_story_branch require a priorItemId from that same entity's recentItems; standalone outcomes must carry null.`)
+    } : () => '',
+    validateHermes: fallback
+      ? (value, state) => {
+        // A Hermes relationship decision may never suppress the article: a
+        // batched duplicate outcome demotes to the same uncertain hold the
+        // standalone definition offers.
+        if (!record(value) || !exactKeys(value, ['targets']) || !Array.isArray(value.targets)) {
+          return { valid: false, issues: ['Hermes relationship batch must be {"targets": [...]} with no extra keys'] }
+        }
+        const byEntity = new Map(state.entities.map((entity) => [entity.id, entity]))
+        if (value.targets.length !== state.entities.length) {
+          return { valid: false, issues: ['Hermes relationship batch targets must cover exactly the supplied entities'] }
+        }
+        const targets: ArticleRelationshipBatchTarget[] = []
+        const seen = new Set<string>()
+        for (const raw of value.targets) {
+          if (!record(raw) || !exactKeys(raw, ['entityId', 'relationship', 'priorItemId'])) {
+            return { valid: false, issues: ['Hermes relationship batch target must be {"entityId": ..., "relationship": ..., "priorItemId": ...} with no extra keys'] }
+          }
+          const { entityId, relationship, priorItemId } = raw as { entityId: unknown, relationship: unknown, priorItemId: unknown }
+          if (typeof entityId !== 'string' || !byEntity.has(entityId) || seen.has(entityId)) {
+            return { valid: false, issues: ['Hermes relationship batch entityId is outside the supplied entities or duplicated'] }
+          }
+          seen.add(entityId)
+          if (!ARTICLE_RELATIONSHIPS.includes(relationship as typeof ARTICLE_RELATIONSHIPS[number])) {
+            return { valid: false, issues: ['Hermes relationship is outside the admitted outcomes'] }
+          }
+          const entity = byEntity.get(entityId)!
+          const targetRelationships = ['duplicate', 'direct_continuation', 'related_story_branch']
+          if (targetRelationships.includes(relationship as string)) {
+            if (typeof priorItemId !== 'string' || !entity.recentItems.some(item => item.id === priorItemId)) {
+              return { valid: false, issues: ['Hermes relationship target is outside supplied history'] }
+            }
+            const target = entity.recentItems.find(item => item.id === priorItemId)!
+            if (relationship === 'duplicate') {
+              targets.push({ entityId, relationship: 'uncertain', priorItemId: null, priorItemSource: null })
+            } else {
+              targets.push({ entityId, relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId: target.id, priorItemSource: target.source })
+            }
+            continue
+          }
+          if (priorItemId !== null) {
+            return { valid: false, issues: ['Hermes standalone relationship must not carry a historical target'] }
+          }
+          targets.push({ entityId, relationship: relationship as ArticleStoryRelationshipDecision['relationship'], priorItemId: null, priorItemSource: null })
+        }
+        return { valid: true, value: { targets } }
+      }
+      : () => ({ valid: false, issues: ['Article relationship batching is Jev-only'] }),
   }
 }
 

@@ -7,12 +7,16 @@ import {
   articleNoveltyDefinition,
   articleStoryRelationshipDefinition,
   articleEntityProposalValidationDefinition,
+  articleCatalogueBatchDefinition,
+  articleRelationshipBatchDefinition,
   researchFollowupValueDefinition,
   researchNoveltyDefinition,
+  type ArticleCatalogueBatchState,
   type ArticleEntityPlacementState,
   type ArticleEntityProposalValidationState,
   type ArticleRelatedMembershipState,
   type ArticleNoveltyState,
+  type ArticleRelationshipBatchState,
   type ArticleStoryRelationshipState,
   type ResearchFollowupValueState,
   type ResearchNoveltyState,
@@ -404,4 +408,233 @@ test('fallback article versions decode Jev answers identically to the legacy ver
     modernNovelty.decodeJev(fallbackAnswer('novelty', 'new_information:same_topic_only'), FALLBACK_NOVELTY_STATE),
     legacyNovelty.decodeJev(fallbackAnswer('novelty', 'new_information:same_topic_only'), FALLBACK_NOVELTY_STATE),
   )
+})
+
+// #308 patch 5A: staged-batching decision versions (articleBatching).
+const BATCH_CATALOGUE_STATE: ArticleCatalogueBatchState = {
+  article: { title: 'Development', text: 'BlackRock added $1.5 billion in Bitcoin holdings.' },
+  candidates: [
+    { id: 'bitcoin', name: 'Bitcoin', aliases: ['BTC'], summary: null, scope: {} },
+    { id: 'blackrock', name: 'BlackRock', aliases: [], summary: null, scope: {} },
+  ],
+}
+const BATCH_RELATIONSHIP_STATE: ArticleRelationshipBatchState = {
+  article: { title: 'Development', sourceText: 'A captured article.', publishedAt: null, observedAt: '2026-10-01T00:00:00.000Z' },
+  entities: [
+    { id: 'bitcoin', name: 'Bitcoin', recentItems: [{ id: 'bitcoin-1', source: 'managed', title: 'Earlier filing', summary: 'Earlier state.', eventAt: '2026-09-20T00:00:00.000Z' }] },
+    { id: 'blackrock', name: 'BlackRock', recentItems: [{ id: 'blackrock-2', source: 'legacy', title: 'Earlier filing', summary: 'Earlier state.', eventAt: '2026-09-21T00:00:00.000Z' }] },
+  ],
+}
+
+test('batching flag registers batched catalogue/relationship versions only behind the flag', () => {
+  assert.equal(approvedClassificationDefinitions().some((item) => item.workload === 'research.article_catalogue_batch'), false)
+  assert.equal(approvedClassificationDefinitions().some((item) => item.workload === 'research.article_relationship_batch'), false)
+
+  const batching = approvedClassificationDefinitions(undefined, { articleBatching: true })
+  assert.equal(batching.length, 9)
+  const catalogue = batching.find((item) => item.workload === 'research.article_catalogue_batch')!
+  const relationship = batching.find((item) => item.workload === 'research.article_relationship_batch')!
+  assert.equal(catalogue.decisionVersion, 'research.article_catalogue_batch.v1')
+  assert.equal(relationship.decisionVersion, 'research.article_relationship_batch.v1')
+  assert.equal(catalogue.requiresJev, true)
+  assert.equal(relationship.requiresJev, true)
+
+  const both = approvedClassificationDefinitions(undefined, { articleBatching: true, articleHermesFallback: true })
+  // 7 base + 5 Hermes-fallback + 2 batched base + 2 batched-Hermes-fallback.
+  assert.equal(both.length, 16)
+  const catalogueFallback = both.find((item) => item.decisionVersion === 'research.article_catalogue_batch.v2')!
+  const relationshipFallback = both.find((item) => item.decisionVersion === 'research.article_relationship_batch.v2')!
+  assert.equal(catalogueFallback.workload, 'research.article_catalogue_batch')
+  assert.equal(relationshipFallback.workload, 'research.article_relationship_batch')
+  assert.equal(catalogueFallback.requiresJev, false)
+  assert.equal(relationshipFallback.requiresJev, false)
+  // Base versions stay registered beside the fallback ones.
+  assert.ok(both.find((item) => item.decisionVersion === 'research.article_catalogue_batch.v1'))
+  assert.ok(both.find((item) => item.decisionVersion === 'research.article_relationship_batch.v1'))
+})
+
+test('batched catalogue definition carries one placement question plus one membership question per candidate', () => {
+  const definition = articleCatalogueBatchDefinition()
+  const questions = definition.questions(BATCH_CATALOGUE_STATE)
+  assert.deepEqual(Object.keys(questions), ['placement', 'related_bitcoin', 'related_blackrock'])
+  const membership = questions.related_blackrock!
+  assert.ok(membership.type === 'choice')
+  assert.ok('related' in membership.criteria && 'not_related' in membership.criteria && 'uncertain' in membership.criteria)
+  // Membership rules judge candidates independently of the primary placement.
+  assert.deepEqual((membership.instructions as { rules: string[] }).rules, (articleRelatedMembershipDefinition().questions({
+    article: BATCH_CATALOGUE_STATE.article, primary: { id: 'bitcoin', name: 'Bitcoin' }, candidates: BATCH_CATALOGUE_STATE.candidates,
+  }).related_blackrock! as { instructions: { rules: string[] } }).instructions.rules)
+
+  const valid = definition.decodeJev({
+    placement: fallbackAnswer('placement', 'bitcoin').placement,
+    related_bitcoin: fallbackAnswer('related_bitcoin', 'not_related').related_bitcoin,
+    related_blackrock: fallbackAnswer('related_blackrock', 'related').related_blackrock,
+  }, BATCH_CATALOGUE_STATE)
+  assert.deepEqual(valid, { valid: true, value: { entityId: 'bitcoin', disposition: 'selected', dispositions: { bitcoin: 'not_related', blackrock: 'related' } } })
+  const noMatch = definition.decodeJev({
+    placement: fallbackAnswer('placement', 'no_match').placement,
+    related_bitcoin: fallbackAnswer('related_bitcoin', 'uncertain').related_bitcoin,
+    related_blackrock: fallbackAnswer('related_blackrock', 'not_related').related_blackrock,
+  }, BATCH_CATALOGUE_STATE)
+  assert.deepEqual(noMatch, { valid: true, value: { entityId: null, disposition: 'no_match', dispositions: { bitcoin: 'uncertain', blackrock: 'not_related' } } })
+  // Every registered candidate needs a valid membership answer.
+  assert.equal(definition.decodeJev({
+    placement: fallbackAnswer('placement', 'bitcoin').placement,
+    related_bitcoin: fallbackAnswer('related_bitcoin', 'partner').related_bitcoin,
+    related_blackrock: fallbackAnswer('related_blackrock', 'related').related_blackrock,
+  }, BATCH_CATALOGUE_STATE).valid, false)
+  assert.equal(definition.decodeJev({
+    placement: fallbackAnswer('placement', 'blackrock').placement,
+    related_blackrock: fallbackAnswer('related_blackrock', 'related').related_blackrock,
+  }, BATCH_CATALOGUE_STATE).valid, false)
+  // Placement catalogue membership is acceptJev's contract (mirrors the
+  // standalone placement definition); decode keeps the raw choice value.
+  const unregistered = definition.decodeJev({
+    placement: fallbackAnswer('placement', 'unregistered').placement,
+    related_bitcoin: fallbackAnswer('related_bitcoin', 'related').related_bitcoin,
+    related_blackrock: fallbackAnswer('related_blackrock', 'related').related_blackrock,
+  }, BATCH_CATALOGUE_STATE)
+  assert.equal(unregistered.valid, true)
+  if (unregistered.valid) assert.equal(unregistered.value.entityId, 'unregistered')
+  assert.equal(definition.acceptJev({
+    placement: fallbackAnswer('placement', 'bitcoin').placement,
+    related_bitcoin: fallbackAnswer('related_bitcoin', 'not_related').related_bitcoin,
+    related_blackrock: fallbackAnswer('related_blackrock', 'related').related_blackrock,
+  }, { entityId: 'bitcoin', disposition: 'selected', dispositions: {} }, BATCH_CATALOGUE_STATE).accepted, true)
+  assert.equal(definition.acceptJev({
+    placement: fallbackAnswer('placement', 'bitcoin').placement,
+    related_bitcoin: fallbackAnswer('related_bitcoin', 'not_related').related_bitcoin,
+    related_blackrock: fallbackAnswer('related_blackrock', 'related').related_blackrock,
+  }, { entityId: 'unregistered', disposition: 'selected', dispositions: {} }, BATCH_CATALOGUE_STATE).accepted, false)
+})
+
+test('batched catalogue Hermes fallback holds the primary placement and validates memberships exactly', () => {
+  const definition = articleCatalogueBatchDefinition(undefined, { articleHermesFallback: true })
+  // Safety hold: Hermes may never select or exclude a primary on its own.
+  assert.deepEqual(
+    definition.validateHermes({ entityId: 'bitcoin', dispositions: { bitcoin: 'not_related', blackrock: 'related' } }, BATCH_CATALOGUE_STATE),
+    { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions: { bitcoin: 'not_related', blackrock: 'related' } } },
+  )
+  assert.deepEqual(
+    definition.validateHermes({ entityId: 'no_match', dispositions: { bitcoin: 'uncertain', blackrock: 'uncertain' } }, BATCH_CATALOGUE_STATE),
+    { valid: true, value: { entityId: null, disposition: 'uncertain', dispositions: { bitcoin: 'uncertain', blackrock: 'uncertain' } } },
+  )
+  assert.equal(definition.validateHermes({ entityId: 'unregistered', dispositions: {} }, BATCH_CATALOGUE_STATE).valid, false)
+  assert.equal(definition.validateHermes({ entityId: 'bitcoin', dispositions: { bitcoin: 'not_related' } }, BATCH_CATALOGUE_STATE).valid, false)
+  assert.equal(definition.validateHermes({ entityId: 'bitcoin', dispositions: { bitcoin: 'not_related', blackrock: 'partner' } }, BATCH_CATALOGUE_STATE).valid, false)
+  assert.equal(definition.validateHermes({ entityId: 'bitcoin', dispositions: { bitcoin: 'not_related', blackrock: 'related', extra: 'uncertain' } }, BATCH_CATALOGUE_STATE).valid, false)
+  assert.equal(definition.validateHermes({ entityId: 'bitcoin' }, BATCH_CATALOGUE_STATE).valid, false)
+
+  // The render prompt names every membership key and the joint placement outcomes.
+  const prompt = definition.renderHermes(BATCH_CATALOGUE_STATE)
+  assert.ok(prompt.includes('related_bitcoin') === false) // schema carries ids, not question keys
+  assert.ok(prompt.includes('"bitcoin": "related|not_related|uncertain"'))
+  assert.ok(prompt.includes('no_match'))
+  assert.ok(prompt.includes('Return strict JSON only'))
+})
+
+test('batched relationship definition validates per-entity joint targets against their own history', () => {
+  const definition = articleRelationshipBatchDefinition()
+  const questions = definition.questions(BATCH_RELATIONSHIP_STATE)
+  assert.deepEqual(Object.keys(questions), ['relationship_target_bitcoin', 'relationship_target_blackrock'])
+  const bitcoinQuestion = questions.relationship_target_bitcoin!
+  assert.ok(bitcoinQuestion.type === 'choice')
+  // The joint criteria include this entity's own history targets and its own id.
+  assert.ok('duplicate:managed:bitcoin-1' in bitcoinQuestion.criteria)
+  assert.ok('related_story_branch:managed:bitcoin-1' in bitcoinQuestion.criteria)
+  assert.ok(!('duplicate:legacy:blackrock-2' in bitcoinQuestion.criteria))
+  assert.ok(JSON.stringify((bitcoinQuestion.instructions as unknown as { question: string }).question).includes('blackrock') === false)
+
+  const valid = definition.decodeJev({
+    relationship_target_bitcoin: fallbackAnswer('relationship_target_bitcoin', 'direct_continuation:managed:bitcoin-1').relationship_target_bitcoin,
+    relationship_target_blackrock: fallbackAnswer('relationship_target_blackrock', 'same_topic_only').relationship_target_blackrock,
+  }, BATCH_RELATIONSHIP_STATE)
+  assert.deepEqual(valid, { valid: true, value: { targets: [
+    { entityId: 'bitcoin', relationship: 'direct_continuation', priorItemId: 'bitcoin-1', priorItemSource: 'managed' },
+    { entityId: 'blackrock', relationship: 'same_topic_only', priorItemId: null, priorItemSource: null },
+  ] } })
+  // A target from another entity's history is invalid.
+  assert.equal(definition.decodeJev({
+    relationship_target_bitcoin: fallbackAnswer('relationship_target_bitcoin', 'direct_continuation:legacy:blackrock-2').relationship_target_bitcoin,
+    relationship_target_blackrock: fallbackAnswer('relationship_target_blackrock', 'same_topic_only').relationship_target_blackrock,
+  }, BATCH_RELATIONSHIP_STATE).valid, false)
+  // A joint outcome without a target, or a missing entity answer, is invalid.
+  assert.equal(definition.decodeJev({
+    relationship_target_bitcoin: fallbackAnswer('relationship_target_bitcoin', 'direct_continuation').relationship_target_bitcoin,
+    relationship_target_blackrock: fallbackAnswer('relationship_target_blackrock', 'same_topic_only').relationship_target_blackrock,
+  }, BATCH_RELATIONSHIP_STATE).valid, false)
+  assert.equal(definition.decodeJev({
+    relationship_target_blackrock: fallbackAnswer('relationship_target_blackrock', 'same_topic_only').relationship_target_blackrock,
+  }, BATCH_RELATIONSHIP_STATE).valid, false)
+  assert.equal(definition.acceptJev({
+    relationship_target_bitcoin: fallbackAnswer('relationship_target_bitcoin', 'duplicate:managed:bitcoin-1').relationship_target_bitcoin,
+    relationship_target_blackrock: fallbackAnswer('relationship_target_blackrock', 'uncertain').relationship_target_blackrock,
+  }, { targets: [] }, BATCH_RELATIONSHIP_STATE).accepted, true)
+})
+
+test('batched relationship state projection bounds entities, history and ids exactly', () => {
+  const definition = articleRelationshipBatchDefinition()
+  const item = { id: 'item', source: 'legacy' as const, title: 'Earlier', summary: 'State.', eventAt: '2026-09-20T00:00:00.000Z' }
+  assert.equal(definition.validateState({ ...BATCH_RELATIONSHIP_STATE, entities: undefined }).valid, false)
+  assert.equal(definition.validateState({
+    ...BATCH_RELATIONSHIP_STATE,
+    entities: Array.from({ length: 33 }, (_, i) => ({ id: `entity-${i}`, name: `Entity ${i}`, recentItems: [] })),
+  }).valid, false)
+  assert.equal(definition.validateState({
+    ...BATCH_RELATIONSHIP_STATE,
+    entities: [{ id: 'bitcoin', name: 'Bitcoin', recentItems: Array.from({ length: 6 }, () => item) }],
+  }).valid, false)
+  assert.equal(definition.validateState({
+    ...BATCH_RELATIONSHIP_STATE,
+    entities: [
+      { id: 'bitcoin', name: 'Bitcoin', recentItems: [] },
+      { id: 'bitcoin', name: 'Duplicate', recentItems: [] },
+    ],
+  }).valid, false)
+  const projected = definition.validateState({ ...BATCH_RELATIONSHIP_STATE, arbitrary: 'drop', entities: [{ id: 'bitcoin', name: 'Bitcoin', recentItems: [{ ...item, privateData: 'drop' }] }] })
+  assert.equal(projected.valid, true)
+  if (projected.valid) {
+    assert.deepEqual(Object.keys(projected.value), ['article', 'entities'])
+    assert.equal('privateData' in projected.value.entities[0].recentItems[0], false)
+  }
+
+  // Hermes fallback: duplicates demote to the uncertain hold; coverage is exact.
+  const fallback = articleRelationshipBatchDefinition(undefined, { articleHermesFallback: true })
+  assert.deepEqual(
+    fallback.validateHermes({ targets: [
+      { entityId: 'bitcoin', relationship: 'duplicate', priorItemId: 'bitcoin-1' },
+      { entityId: 'blackrock', relationship: 'related_story_branch', priorItemId: 'blackrock-2' },
+    ] }, BATCH_RELATIONSHIP_STATE),
+    { valid: true, value: { targets: [
+      { entityId: 'bitcoin', relationship: 'uncertain', priorItemId: null, priorItemSource: null },
+      { entityId: 'blackrock', relationship: 'related_story_branch', priorItemId: 'blackrock-2', priorItemSource: 'legacy' },
+    ] } },
+  )
+  assert.deepEqual(
+    fallback.validateHermes({ targets: [
+      { entityId: 'bitcoin', relationship: 'unrelated', priorItemId: null },
+      { entityId: 'blackrock', relationship: 'uncertain', priorItemId: null },
+    ] }, BATCH_RELATIONSHIP_STATE),
+    { valid: true, value: { targets: [
+      { entityId: 'bitcoin', relationship: 'unrelated', priorItemId: null, priorItemSource: null },
+      { entityId: 'blackrock', relationship: 'uncertain', priorItemId: null, priorItemSource: null },
+    ] } },
+  )
+  assert.equal(fallback.validateHermes({ targets: [{ entityId: 'bitcoin', relationship: 'same_topic_only', priorItemId: null }] }, BATCH_RELATIONSHIP_STATE).valid, false)
+  assert.equal(fallback.validateHermes({ targets: [
+    { entityId: 'bitcoin', relationship: 'duplicate', priorItemId: 'blackrock-2' },
+    { entityId: 'blackrock', relationship: 'same_topic_only', priorItemId: null },
+  ] }, BATCH_RELATIONSHIP_STATE).valid, false)
+  assert.equal(fallback.validateHermes({ targets: [
+    { entityId: 'bitcoin', relationship: 'same_topic_only', priorItemId: 'bitcoin-1' },
+    { entityId: 'blackrock', relationship: 'same_topic_only', priorItemId: null },
+  ] }, BATCH_RELATIONSHIP_STATE).valid, false)
+  assert.equal(fallback.validateHermes({ targets: [
+    { entityId: 'bitcoin', relationship: 'same_topic_only', priorItemId: null, extra: 1 },
+    { entityId: 'blackrock', relationship: 'same_topic_only', priorItemId: null },
+  ] }, BATCH_RELATIONSHIP_STATE).valid, false)
+  assert.equal(fallback.validateHermes({ targets: [
+    { entityId: 'bitcoin', relationship: 'same_topic_only', priorItemId: null },
+    { entityId: 'bitcoin', relationship: 'unrelated', priorItemId: null },
+  ] }, BATCH_RELATIONSHIP_STATE).valid, false)
 })

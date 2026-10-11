@@ -25,6 +25,7 @@ export const CLASSIFICATION_ENV = Object.freeze({
   hermesProvider: 'INFERENCE_GATEWAY_PRIMARY_PROVIDER',
   hermesModel: 'INFERENCE_GATEWAY_PRIMARY_MODEL',
   articleHermesFallback: 'CLASSIFICATION_ARTICLE_HERMES_FALLBACK',
+  articleBatching: 'CLASSIFICATION_ARTICLE_BATCHING',
 } as const)
 
 const APPROVED_HERMES_ROUTES = new Set([
@@ -64,7 +65,10 @@ export function createConfiguredClassificationRuntime(options: {
   // Opt-in article Hermes fallback. Only the exact string "true" enables it;
   // any other value (including unset) keeps the Jev-only default.
   const articleHermesFallback = env[CLASSIFICATION_ENV.articleHermesFallback] === 'true'
-  const definitions = approvedClassificationDefinitions(hermesTarget, { articleHermesFallback })
+  // Opt-in staged article batching (#308 patch 5A). Same exact-"true" switch:
+  // the batched catalogue/relationship decision versions register only here.
+  const articleBatching = env[CLASSIFICATION_ENV.articleBatching] === 'true'
+  const definitions = approvedClassificationDefinitions(hermesTarget, { articleHermesFallback, articleBatching })
   const known = new Set(definitions.map((item) => item.workload))
   for (const workload of modes.keys()) if (!known.has(workload)) throw new Error(`Unknown classification workload ${workload}`)
   for (const definition of definitions) {

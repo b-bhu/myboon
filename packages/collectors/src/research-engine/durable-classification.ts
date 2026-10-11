@@ -3,10 +3,12 @@ import { canonicalJson } from '../signal-platform/canonical-json'
 import { stableContractId } from '../signal-platform/adapters/identity'
 import type { ResearchWorkItem } from '../signal-platform/contracts'
 import {
+  ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION,
   ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
   ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION,
   ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
   ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION,
   ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION,
   approvedClassificationDefinitions, type ClassificationGateway, type ClassificationResult,
 } from '../inference-gateway'
@@ -21,9 +23,11 @@ import type { ResearchV4StorePort } from './v4-store'
 /** Every classified paid dispatch holds a durable reservation: one call, or three for Hermes fallback versions (Jev, one Jev billing retry, Hermes fallback). */
 // Decision versions that only exist in the Hermes fallback definition registry.
 const ARTICLE_HERMES_FALLBACK_VERSIONS = new Set<string>([
+  ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION,
   ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
   ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION,
   ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION,
   ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION,
   ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
 ])
@@ -45,12 +49,12 @@ export function durableResearchClassification(input: {
       // Otherwise a caller-owned malformed state is indistinguishable from a
       // provider timeout and leaves an unjustified paid-outcome hold.
       input.gateway.preflight?.(request)
-      // Flag-gated Hermes fallback versions are defined only in the fallback
-      // registry, while retired base versions must keep resolving without it.
-      // Match by workload AND decisionVersion so a base version never resolves
-      // to the fallback definition's budget and route.
+      // Flag-gated fallback/batching versions may be defined only in the
+      // alternate registries, while retired base versions must keep resolving
+      // without it. Match by workload AND decisionVersion so a base version
+      // never resolves to the alternate definition's budget and route.
       const fallbackDefinitions = ARTICLE_HERMES_FALLBACK_VERSIONS.has(request.decisionVersion)
-        ? approvedClassificationDefinitions(undefined, { articleHermesFallback: true })
+        ? approvedClassificationDefinitions(undefined, { articleHermesFallback: true, articleBatching: true })
           .filter((item) => item.workload === request.workload
             && item.decisionVersion === request.decisionVersion)
         : []

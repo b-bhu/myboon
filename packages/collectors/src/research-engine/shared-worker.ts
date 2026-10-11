@@ -223,6 +223,8 @@ export interface SharedResearchV4Options {
     contextReader(signal: Signal, work: ResearchWorkItem): EntityMemoryReader
     /** CLASSIFICATION_ARTICLE_HERMES_FALLBACK=true: fallback decision versions and v2 article packets. Off by default. */
     useHermesFallbackVersions?: boolean
+    /** CLASSIFICATION_ARTICLE_BATCHING=true: staged batched catalogue/relationship dispatches. Off by default. */
+    useBatching?: boolean
   }
 }
 
@@ -1018,6 +1020,7 @@ export class SharedResearchWorker {
       preparation = await prepareArticlePlacement({
         gateway: durableClassification, stableDecisionKey: input.lease.work.workId,
         useHermesFallbackVersions: v4.article.useHermesFallbackVersions === true,
+        useBatching: v4.article.useBatching === true,
         signal: input.signal, sourceText: source.text,
         context: input.articleContext?.context
           ?? await reader.articleContext({ sourceUrl: source.finalUrl, terms: articleLookupTerms(input.signal) }),

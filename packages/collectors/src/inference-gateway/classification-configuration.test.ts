@@ -134,3 +134,64 @@ test('article Hermes fallback env flag accepts only the exact string true', asyn
     } finally { runtime.close() }
   }
 })
+
+test('article batching env flag registers batched versions only behind the exact string true', async () => {
+  const hermesService = { async oneshot() { throw new Error('must not dispatch') } }
+  const catalogueState = {
+    article: { title: 'Development', text: 'A captured article about Bitcoin custody.' },
+    candidates: [{ id: 'bitcoin', name: 'Bitcoin', aliases: [], summary: null, scope: {} }],
+  }
+  const trace = { stableDecisionKey: 'article-batching' }
+  // Without credentials the batched base versions resolve to the Jev-required
+  // definitions and surface the missing Jev configuration, exactly like the
+  // standalone placement workload.
+  const batched = createConfiguredClassificationRuntime({
+    env: { CLASSIFICATION_SQLITE_PATH: sqlitePath(), CLASSIFICATION_ARTICLE_BATCHING: 'true' },
+    hermesService,
+  })
+  try {
+    await assert.rejects(batched.gateway.classify({
+      workload: 'research.article_catalogue_batch', decisionVersion: 'research.article_catalogue_batch.v1',
+      state: catalogueState, trace, maxProviderCalls: 1,
+    }), /JEV_API_TOKEN is not configured/)
+    // Non-exact values never register the batched versions.
+    for (const value of ['TRUE', '1', 'yes']) {
+      const runtime = createConfiguredClassificationRuntime({
+        env: { CLASSIFICATION_SQLITE_PATH: sqlitePath(), CLASSIFICATION_ARTICLE_BATCHING: value },
+        hermesService,
+      })
+      try {
+        await assert.rejects(runtime.gateway.classify({
+          workload: 'research.article_catalogue_batch', decisionVersion: 'research.article_catalogue_batch.v1',
+          state: catalogueState, trace, maxProviderCalls: 1,
+        }), /Unknown classification definition/)
+      } finally { runtime.close() }
+    }
+  } finally { batched.close() }
+
+  // Both flags on: the batched Hermes fallback versions resolve and dispatch
+  // Hermes (no Jev credentials configured).
+  let hermesCalls = 0
+  const both = createConfiguredClassificationRuntime({
+    env: {
+      CLASSIFICATION_SQLITE_PATH: sqlitePath(),
+      CLASSIFICATION_ARTICLE_BATCHING: 'true',
+      CLASSIFICATION_ARTICLE_HERMES_FALLBACK: 'true',
+    },
+    hermesService: { async oneshot() {
+      hermesCalls += 1
+      return { stdout: '{"entityId":"bitcoin","dispositions":{"bitcoin":"not_related"}}', stderr: '' }
+    } },
+  })
+  try {
+    const result = await both.gateway.classify({
+      workload: 'research.article_catalogue_batch', decisionVersion: 'research.article_catalogue_batch.v2',
+      state: catalogueState, trace,
+    })
+    assert.equal(result.decisionVersion, 'research.article_catalogue_batch.v2')
+    assert.equal(result.fallbackUsed, true)
+    // The batched Hermes safety hold keeps the primary placement uncertain.
+    assert.deepEqual(result.value, { entityId: null, disposition: 'uncertain', dispositions: { bitcoin: 'not_related' } })
+  } finally { both.close() }
+  assert.equal(hermesCalls, 1)
+})

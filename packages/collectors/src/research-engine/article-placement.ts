@@ -4,12 +4,20 @@ import type {
 } from '../signal-platform/contracts'
 import type { ClassificationGateway, ClassificationResult } from '../inference-gateway'
 import {
+  ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION,
+  ARTICLE_CATALOGUE_BATCH_MAX_CANDIDATES,
+  ARTICLE_CATALOGUE_BATCH_VERSION,
+  ARTICLE_CATALOGUE_BATCH_WORKLOAD,
   ARTICLE_ENTITY_PLACEMENT_VERSION,
   ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
   ARTICLE_ENTITY_PLACEMENT_WORKLOAD,
   ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION,
   ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION,
   ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD,
+  ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATIONSHIP_BATCH_MAX_ENTITIES,
+  ARTICLE_RELATIONSHIP_BATCH_VERSION,
+  ARTICLE_RELATIONSHIP_BATCH_WORKLOAD,
   ARTICLE_RELATED_MEMBERSHIP_VERSION,
   ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION,
   ARTICLE_RELATED_MEMBERSHIP_WORKLOAD,
@@ -19,10 +27,12 @@ import {
   ARTICLE_STORY_RELATIONSHIP_VERSION,
   ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION,
   ARTICLE_STORY_RELATIONSHIP_WORKLOAD,
+  type ArticleCatalogueBatchDecision,
   type ArticleEntityPlacementDecision,
   type ArticleEntityProposalValidationDecision,
   type ArticleRelatedMembershipDecision,
   type ArticleNoveltyDecision,
+  type ArticleRelationshipBatchDecision,
   type ArticleStoryRelationshipDecision,
 } from '../inference-gateway/classification-definitions'
 import type { ArticleResearchContext } from '../research-gate/managed-context-reader'
@@ -89,10 +99,19 @@ export interface ArticlePlacementInput {
    * provider-aware ArticleDecisionV2. Off by default; the packet stays v1.
    */
   useHermesFallbackVersions?: boolean
+  /**
+   * Opt-in staged batching (#308 patch 5A): the catalogue stage answers
+   * placement plus every related membership in one dispatch, and the
+   * relationship stage answers all selected entities in one dispatch.
+   * Novelty stays its own later call. Off by default the legacy per-question
+   * dispatch sequence runs byte-identically.
+   */
+  useBatching?: boolean
 }
 
-export async function prepareArticlePlacement(input: ArticlePlacementInput & { useHermesFallbackVersions?: false }): Promise<ArticlePlacementPreparationV1>
-export async function prepareArticlePlacement(input: ArticlePlacementInput & { useHermesFallbackVersions: true }): Promise<ArticlePlacementPreparationV2>
+export async function prepareArticlePlacement(input: ArticlePlacementInput & { useHermesFallbackVersions?: false, useBatching?: false }): Promise<ArticlePlacementPreparationV1>
+export async function prepareArticlePlacement(input: ArticlePlacementInput & { useHermesFallbackVersions: true } & { useBatching?: boolean }): Promise<ArticlePlacementPreparationV2>
+export async function prepareArticlePlacement(input: ArticlePlacementInput & { useBatching: true }): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>
 export async function prepareArticlePlacement(input: ArticlePlacementInput): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>
 export async function prepareArticlePlacement(input: ArticlePlacementInput): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2> {
   const fallbackVersions = input.useHermesFallbackVersions === true
@@ -105,6 +124,7 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
     throw new ArticleResearchHold('source_input_too_large', `Captured article exceeds the ${ARTICLE_DECISION_SOURCE_MAX_CHARS}-character Jev source-input bound.`)
   }
   assertContextCoverage(input.context)
+  if (input.useBatching === true) return prepareBatchedArticlePlacement(input)
   let candidates = rankEntityCandidates(input.context.candidates, articleLookupTerms(input.signal))
   let placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
     workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD,
@@ -254,11 +274,36 @@ async function membership(
   const fallback = input.useHermesFallbackVersions === true
   const relationshipDecision = decide(relationship, 'relationship', fallback, relationship.value.relationship)
   const priorItemDecision = decide(relationship, 'prior_item', fallback, relationship.value.priorItemId ?? 'none')
+  return membershipFromRelationship(input, entity, role, placement, relationship, relationshipHistory, { relationshipDecision, priorItemDecision })
+}
+
+/**
+ * Shared relationship-tail for the legacy and batched routes: the same
+ * duplicate/continuation target holds, the same membership record, computed
+ * from one resolved relationship result and its authoritative history.
+ */
+function membershipFromRelationship(
+  input: ArticlePlacementInput,
+  entity: ArticleResearchContext['candidates'][number],
+  role: 'primary' | 'related',
+  placement: Decision,
+  relationship: ClassificationResult<ArticleStoryRelationshipDecision>,
+  relationshipHistory: ReadonlyArray<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>,
+  decisions: { relationshipDecision: Decision, priorItemDecision: Decision },
+): Membership {
+  const prior = relationship.value.priorItemId === null ? null : relationshipHistory.find((item) => item.id === relationship.value.priorItemId
+    && (!relationship.value.priorItemSource || item.source === relationship.value.priorItemSource)) ?? null
+  if (relationship.value.relationship === 'duplicate' && !prior) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', 'A story relationship marked a duplicate without a valid durable historical target.')
+  }
+  if ((relationship.value.relationship === 'direct_continuation' || relationship.value.relationship === 'related_story_branch') && !prior) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', 'A relationship selected a continuation or story branch without a valid durable historical target.')
+  }
   return {
     entityId: entity.id, placementDisposition: 'selected', role, name: entity.name, type: null, aliases: [...entity.aliases], summary: entity.summary,
     scope: { ...entity.scope }, creationProposal: null, creationDecision: null, placement,
-    relationship: relationship.value.relationship, relationshipDecision,
-    priorItemDecision,
+    relationship: relationship.value.relationship, relationshipDecision: decisions.relationshipDecision,
+    priorItemDecision: decisions.priorItemDecision,
     priorItemId: prior?.id ?? null, priorItemSource: prior?.source ?? null,
     duplicateTarget: relationship.value.relationship === 'duplicate' && prior
       ? { itemId: prior.id, source: prior.source, entityId: entity.id } : null,
@@ -431,6 +476,351 @@ export function articleLookupTerms(signal: Signal, sourceText = ''): string[] {
 }
 
 function relatedQuestion(entityId: string): string { return `related_${entityId}` }
+
+/**
+ * Staged batching (#308 patch 5A). The candidate catalogue is kept whole: the
+ * full article dispatches once per stage instead of once per question. Stage 1
+ * answers primary placement plus every independent related membership in one
+ * batched catalogue call; stage 2 answers the joint relationship/origin/target
+ * question for all selected entities in one call. The older targeted duplicate
+ * lookup stays a separate bounded call that runs only when an entity needs it,
+ * and novelty remains its own later dispatch after duplicate targets are known.
+ * Off the flag none of this runs.
+ */
+type RelationshipHistoryItem = { id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }
+
+function batchedStateBytes(state: unknown): number {
+  try { return Buffer.byteLength(JSON.stringify(state), 'utf8') }
+  catch { return Number.POSITIVE_INFINITY }
+}
+
+/**
+ * Rank, then sort by candidate id: batch membership is deterministic and
+ * every ranked candidate survives a split, never a truncation.
+ */
+function batchedRankedCandidates(
+  input: ArticlePlacementInput,
+  extraCandidates: ArticleResearchContext['candidates'] = [],
+  lookupTerms: readonly string[] = articleLookupTerms(input.signal),
+): ArticleResearchContext['candidates'] {
+  return [...rankEntityCandidates([...input.context.candidates, ...extraCandidates], lookupTerms)]
+    .sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** Split the whole catalogue into bounded batched states; nothing is dropped. */
+function batchedCatalogueBatches(
+  input: ArticlePlacementInput,
+  extraCandidates: ArticleResearchContext['candidates'] = [],
+  lookupTerms: readonly string[] = articleLookupTerms(input.signal),
+): Array<{ candidates: ArticleResearchContext['candidates'], state: unknown }> {
+  const catalogueState = (candidates: ArticleResearchContext['candidates']) =>
+    ({ article: { title: input.signal.title, text: input.sourceText }, candidates: decisionCandidates(candidates) })
+  const batches: Array<{ candidates: ArticleResearchContext['candidates'], state: unknown }> = []
+  let current: ArticleResearchContext['candidates'] = []
+  for (const candidate of batchedRankedCandidates(input, extraCandidates, lookupTerms)) {
+    const next = [...current, candidate]
+    const oversize = current.length > 0
+      && batchedStateBytes(catalogueState(next)) > ARTICLE_DECISION_STATE_MAX_BYTES
+    if (next.length > ARTICLE_CATALOGUE_BATCH_MAX_CANDIDATES || oversize) {
+      batches.push({ candidates: current, state: catalogueState(current) })
+      current = [candidate]
+    } else {
+      current = next
+    }
+  }
+  // An empty catalogue still dispatches one empty batch so the placement
+  // question is answered exactly like the unbatched route.
+  batches.push({ candidates: current, state: catalogueState(current) })
+  return batches
+}
+
+type BatchedCatalogueStage = {
+  selected: string | null
+  uncertain: boolean
+  orderedCandidates: ArticleResearchContext['candidates']
+  dispositionByCandidate: Map<string, {
+    outcome: 'related' | 'not_related' | 'uncertain'
+    result: ClassificationResult<ArticleCatalogueBatchDecision>
+  }>
+  firstResult: ClassificationResult<ArticleCatalogueBatchDecision>
+}
+
+/** Stage 1: every candidate answers the placement and its own membership question. */
+async function batchedCatalogueStage(
+  input: ArticlePlacementInput,
+  extraCandidates: ArticleResearchContext['candidates'] = [],
+  lookupTerms: readonly string[] = articleLookupTerms(input.signal),
+): Promise<BatchedCatalogueStage> {
+  const fallbackVersions = input.useHermesFallbackVersions === true
+  const batches = batchedCatalogueBatches(input, extraCandidates, lookupTerms)
+  let selected: string | null = null
+  let uncertain = false
+  const orderedCandidates: ArticleResearchContext['candidates'] = []
+  const dispositionByCandidate: BatchedCatalogueStage['dispositionByCandidate'] = new Map()
+  let firstResult: ClassificationResult<ArticleCatalogueBatchDecision> | null = null
+  for (const [index, batch] of batches.entries()) {
+    const result = await input.gateway.classify<ArticleCatalogueBatchDecision>({
+      workload: ARTICLE_CATALOGUE_BATCH_WORKLOAD,
+      decisionVersion: fallbackVersions ? ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION : ARTICLE_CATALOGUE_BATCH_VERSION,
+      state: articleDecisionState('batched catalogue', batch.state),
+      trace: {
+        stableDecisionKey: batches.length > 1
+          ? `${input.stableDecisionKey}:catalogue-batch:${index}`
+          : `${input.stableDecisionKey}:catalogue`,
+        correlationIds: { signalId: input.signal.signalId },
+      },
+    })
+    if (firstResult === null) firstResult = result
+    orderedCandidates.push(...batch.candidates)
+    for (const candidate of batch.candidates) {
+      const outcome = result.value.dispositions[candidate.id]
+      if (outcome) dispositionByCandidate.set(candidate.id, { outcome, result })
+    }
+    if (result.value.disposition === 'selected' && result.value.entityId && selected === null) {
+      selected = result.value.entityId
+    }
+    if (result.value.disposition === 'uncertain') uncertain = true
+  }
+  return { selected, uncertain, orderedCandidates, dispositionByCandidate, firstResult: firstResult! }
+}
+
+/** Stage 2: joint relationship/target dispatches over the selected entities. */
+async function batchedRelationshipStages(
+  input: ArticlePlacementInput,
+  selected: ReadonlyArray<{ id: string, name: string }>,
+  historyById: ReadonlyMap<string, RelationshipHistoryItem[]>,
+): Promise<Array<{ entities: ReadonlyArray<{ id: string, name: string }>, result: ClassificationResult<ArticleRelationshipBatchDecision> }>> {
+  const fallbackVersions = input.useHermesFallbackVersions === true
+  const relationshipState = (entities: ReadonlyArray<{ id: string, name: string }>) => ({
+    article: { title: input.signal.title, sourceText: input.sourceText, publishedAt: input.signal.publishedAt, observedAt: input.signal.observedAt },
+    entities: entities.map((entity) => ({
+      id: entity.id, name: entity.name,
+      recentItems: (historyById.get(entity.id) ?? []).map(relationshipHistoryItem),
+    })),
+  })
+  const ordered = [...selected].sort((a, b) => a.id.localeCompare(b.id))
+  const chunks: Array<Array<{ id: string, name: string }>> = []
+  let current: Array<{ id: string, name: string }> = []
+  for (const entity of ordered) {
+    const next = [...current, entity]
+    if (next.length > ARTICLE_RELATIONSHIP_BATCH_MAX_ENTITIES
+      || (current.length > 0 && batchedStateBytes(relationshipState(next)) > ARTICLE_DECISION_STATE_MAX_BYTES)) {
+      chunks.push(current)
+      current = [entity]
+    } else {
+      current = next
+    }
+  }
+  if (current.length > 0 || chunks.length === 0) chunks.push(current)
+  const stages: Array<{ entities: ReadonlyArray<{ id: string, name: string }>, result: ClassificationResult<ArticleRelationshipBatchDecision> }> = []
+  for (const [index, chunk] of chunks.entries()) {
+    const result = await input.gateway.classify<ArticleRelationshipBatchDecision>({
+      workload: ARTICLE_RELATIONSHIP_BATCH_WORKLOAD,
+      decisionVersion: fallbackVersions ? ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION : ARTICLE_RELATIONSHIP_BATCH_VERSION,
+      state: articleDecisionState('batched relationships', relationshipState(chunk)),
+      trace: {
+        stableDecisionKey: chunks.length > 1
+          ? `${input.stableDecisionKey}:relationships:${index}`
+          : `${input.stableDecisionKey}:relationships`,
+        correlationIds: { signalId: input.signal.signalId },
+      },
+    })
+    stages.push({ entities: chunk, result })
+  }
+  return stages
+}
+
+async function prepareBatchedArticlePlacement(
+  input: ArticlePlacementInput,
+): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2> {
+  let stage = await batchedCatalogueStage(input)
+  // One expanded catalogue pass after an unresolved placement, exactly like
+  // the unbatched route; an unchanged merged catalogue is not re-dispatched.
+  if (!stage.selected && input.context.widenCandidates) {
+    const widened = await input.context.widenCandidates(articleLookupTerms(input.signal, input.sourceText))
+    assertContextCoverage(input.context)
+    const merged = batchedRankedCandidates(input, widened)
+    const changed = merged.length !== stage.orderedCandidates.length
+      || merged.some((candidate, index) => candidate.id !== stage.orderedCandidates[index]?.id)
+    if (changed) stage = await batchedCatalogueStage(input, widened)
+  }
+  if (stage.selected) return batchedSelectedPreparation(input, stage)
+  if (stage.uncertain) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', 'Placement could not safely resolve article placement after bounded catalogue retrieval.')
+  }
+  return batchedCreationFallback(input, stage)
+}
+
+async function batchedSelectedPreparation(
+  input: ArticlePlacementInput, stage: BatchedCatalogueStage,
+): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2> {
+  const fallbackVersions = input.useHermesFallbackVersions === true
+  const primary = stage.orderedCandidates.find((candidate) => candidate.id === stage.selected)
+  if (!primary) throw new Error('Batched placement selected an entity outside the bounded candidate catalogue')
+  const placementDecision = (candidate: ArticleResearchContext['candidates'][number]): Decision => {
+    const observed = stage.dispositionByCandidate.get(candidate.id)
+    if (!observed) throw new ArticleResearchHold('entity_resolution_uncertain', `The batched catalogue answered no membership for ${candidate.id}.`)
+    if (candidate.id === primary.id) return decide(observed.result, 'placement', fallbackVersions, primary.id)
+    return decide(observed.result, relatedQuestion(candidate.id), fallbackVersions, observed.outcome)
+  }
+  // Membership questions judge candidates independently of the primary; the
+  // primary is excluded from related-membership consideration code-side.
+  const selected = [primary, ...stage.orderedCandidates.filter((candidate) => candidate.id !== primary.id
+    && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'related')]
+  // The latest-five history for every selected entity is loaded once and stays
+  // in the shared context for the novelty stage and the writing handoff.
+  const historyById = new Map<string, RelationshipHistoryItem[]>()
+  for (const entity of selected) {
+    const allHistory = input.context.loadHistory
+      ? await input.context.loadHistory(entity.id)
+      : input.context.historyByEntity.get(entity.id) ?? []
+    input.context.historyByEntity.set(entity.id, allHistory)
+    historyById.set(entity.id, allHistory.slice(0, 5))
+  }
+  assertContextCoverage(input.context)
+  const stages = await batchedRelationshipStages(input, selected.map((candidate) => ({ id: candidate.id, name: candidate.name })), historyById)
+  const memberships: Membership[] = []
+  for (const entity of selected) {
+    const owned = stages.find((item) => item.entities.some((member) => member.id === entity.id))
+    const target = owned?.result.value.targets.find((item) => item.entityId === entity.id)
+    if (!owned || !target) {
+      throw new ArticleResearchHold('entity_resolution_uncertain', `The batched relationship stage returned no judgment for ${entity.id}.`)
+    }
+    memberships.push(await batchedMembership(
+      input, entity, entity.id === primary.id ? 'primary' : 'related',
+      placementDecision(entity), target, owned.result, historyById,
+    ))
+  }
+  return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
+    memberships,
+    novelty: await novelty(input, memberships.map((membership) => membership.entityId).filter((id): id is string => id !== null), memberships),
+    contextualHistory: contextualHistoryFor(input, memberships),
+  }
+}
+
+/** One membership from the batched catalogue plus relationship stage results. */
+async function batchedMembership(
+  input: ArticlePlacementInput,
+  entity: ArticleResearchContext['candidates'][number],
+  role: 'primary' | 'related',
+  placement: Decision,
+  target: ArticleRelationshipBatchDecision['targets'][number],
+  stage: ClassificationResult<ArticleRelationshipBatchDecision>,
+  historyById: ReadonlyMap<string, RelationshipHistoryItem[]>,
+): Promise<Membership> {
+  const fallbackVersions = input.useHermesFallbackVersions === true
+  let relationship: ClassificationResult<ArticleStoryRelationshipDecision> = {
+    ...stage,
+    value: { relationship: target.relationship, priorItemId: target.priorItemId, priorItemSource: target.priorItemSource ?? null },
+  }
+  let relationshipHistory: RelationshipHistoryItem[] = historyById.get(entity.id) ?? []
+  // A target-relationship must resolve inside this entity's own history
+  // before any marginal is computed; a tampered durable result naming an
+  // unknown item holds instead of building a membership from it.
+  const targetPreview = ['duplicate', 'direct_continuation', 'related_story_branch'].includes(target.relationship)
+    ? relationshipHistory.find((item) => item.id === target.priorItemId
+      && (!target.priorItemSource || item.source === target.priorItemSource)) ?? null
+    : null
+  if (target.relationship === 'duplicate' && !targetPreview) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', 'A story relationship marked a duplicate without a valid durable historical target.')
+  }
+  if ((target.relationship === 'direct_continuation' || target.relationship === 'related_story_branch') && !targetPreview) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', 'A relationship selected a continuation or story branch without a valid durable historical target.')
+  }
+  let fromOlderLookup = false
+  // The latest five are narrative context only. A separate, bounded older
+  // lookup is consulted exclusively to find a duplicate target; it never
+  // redefines a branch/continuation relationship from the latest context.
+  if (relationship.value.relationship !== 'duplicate' && input.context.lookupOlderDuplicate) {
+    const older = await input.context.lookupOlderDuplicate(entity.id)
+    assertContextCoverage(input.context)
+    if (older.length > 0) {
+      const targeted = await input.gateway.classify<ArticleStoryRelationshipDecision>({
+        workload: ARTICLE_STORY_RELATIONSHIP_WORKLOAD,
+        decisionVersion: fallbackVersions
+          ? ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION : ARTICLE_STORY_RELATIONSHIP_VERSION,
+        state: articleDecisionState('older duplicate relationship', { article: { title: input.signal.title, sourceText: input.sourceText, publishedAt: input.signal.publishedAt, observedAt: input.signal.observedAt }, entity: { id: entity.id, name: entity.name }, recentItems: older.map(relationshipHistoryItem) }),
+        trace: { stableDecisionKey: `${input.stableDecisionKey}:older-duplicate:${entity.id}`, correlationIds: { signalId: input.signal.signalId, entityId: entity.id } },
+      })
+      if (targeted.value.relationship === 'duplicate') {
+        relationship = targeted
+        relationshipHistory = older
+        fromOlderLookup = true
+      }
+    }
+  }
+  // Marginals retain the joint distribution in the existing packet fields; the
+  // full joint answer remains in the durable classification record.
+  const decisions = fromOlderLookup
+    ? {
+      relationshipDecision: decide(relationship, 'relationship', fallbackVersions, relationship.value.relationship),
+      priorItemDecision: decide(relationship, 'prior_item', fallbackVersions, relationship.value.priorItemId ?? 'none'),
+    }
+    : {
+      relationshipDecision: decide(stage, `relationship_target_${entity.id}`, fallbackVersions, relationship.value.relationship, key => key.split(':')[0]),
+      priorItemDecision: decide(stage, `relationship_target_${entity.id}`, fallbackVersions, relationship.value.priorItemId ?? 'none', key => key.includes(':') ? key.split(':').slice(2).join(':') : 'none'),
+    }
+  return membershipFromRelationship(input, entity, role, placement, relationship, relationshipHistory, decisions)
+}
+
+/** Batched no-match path: exact-identity recovery first, then the proposal validation. */
+async function batchedCreationFallback(
+  input: ArticlePlacementInput, stage: BatchedCatalogueStage,
+): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2> {
+  const fallbackVersions = input.useHermesFallbackVersions === true
+  if (!input.proposeCreation) throw new ArticleResearchHold('entity_resolution_no_match', 'No matching entity was found and no durable source-grounded creation proposal is configured.')
+  const creationProposal = await input.proposeCreation()
+  if (input.context.findExactEntities) {
+    let exact: ArticleResearchContext['candidates']
+    try { exact = await input.context.findExactEntities([creationProposal.name, ...creationProposal.aliases]) }
+    catch {
+      throw new ArticleResearchHold(
+        input.context.coverageFailureKind === 'transient' ? 'context_coverage_transient' : 'context_coverage_unavailable',
+        'Exact entity identity lookup failed; no creation is allowed without complete identity coverage.',
+      )
+    }
+    assertContextCoverage(input.context)
+    if (exact.length > 0) {
+      // One exact-identity batched catalogue over the merged candidates. An
+      // exact identity the batch still cannot select is a hold, never a
+      // duplicate creation.
+      const retry = await batchedCatalogueStage(input, exact, [creationProposal.name, ...creationProposal.aliases])
+      if (retry.selected) return batchedSelectedPreparation(input, retry)
+      throw new ArticleResearchHold('entity_resolution_uncertain', 'An existing exact entity identity was found but placement could not resolve it; the identity will not be duplicated.')
+    }
+  }
+  const creationValidation = await input.gateway.classify<ArticleEntityProposalValidationDecision>({
+    workload: ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD,
+    decisionVersion: fallbackVersions
+      ? ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION : ARTICLE_ENTITY_PROPOSAL_VALIDATION_VERSION,
+    state: articleDecisionState('creation proposal validation', { article: { title: input.signal.title, text: input.sourceText }, proposal: creationProposal }),
+    trace: { stableDecisionKey: `${input.stableDecisionKey}:creation-proposal`, correlationIds: { signalId: input.signal.signalId } },
+  })
+  if (creationValidation.value.disposition === 'uncertain') throw new ArticleResearchHold('entity_resolution_uncertain', 'Placement could not safely validate the source-grounded new-entity proposal.')
+  if (creationValidation.value.disposition === 'reject') throw new ArticleResearchHold('entity_resolution_no_match', 'The source-grounded new-entity proposal was rejected; an actionable identity is required.')
+  return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
+    memberships: [{
+      entityId: null, placementDisposition: 'no_match', role: 'primary', name: creationProposal.name, type: creationProposal.type, aliases: [...creationProposal.aliases],
+      summary: creationProposal.summary, scope: { ...creationProposal.scope }, creationProposal,
+      creationDecision: decide(creationValidation, 'proposal', fallbackVersions, creationValidation.value.disposition),
+      placement: decide(stage.firstResult, 'placement', fallbackVersions, 'no_match'), relationship: null, relationshipDecision: null, priorItemDecision: null,
+      priorItemId: null, priorItemSource: null, duplicateTarget: null,
+    }] as Membership[],
+    novelty: await novelty(input, [], []),
+    contextualHistory: 'No existing entity placement was selected; Entity Manager must assess the bounded creation proposal.',
+  }
+}
+
+/** Shared writing-context rendering for the legacy and batched routes. */
+function contextualHistoryFor(input: ArticlePlacementInput, memberships: Membership[]): string {
+  return memberships.map((membership) => {
+    const prior = membership.priorItemId ? `linked to ${membership.priorItemSource} item ${membership.priorItemId}` : 'has no selected prior item'
+    const history = (input.context.historyByEntity.get(membership.entityId ?? '') ?? []).slice(0, 5)
+      .map((item) => `[${item.source}:${item.id}] ${item.eventAt} — ${item.title}: ${item.summary}`).join('\n')
+    return `${membership.role} ${membership.name}: ${membership.relationship ?? 'placement unresolved'}; ${prior}.\nRecent connected history:\n${history || '(none)'}`
+  }).join('\n')
+}
+
 
 function articleDecisionState<T>(label: string, state: T): T {
   let bytes: number
