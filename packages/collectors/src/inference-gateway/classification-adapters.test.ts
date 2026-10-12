@@ -168,3 +168,28 @@ test('Jev retry headers remain available to live callers', async () => {
   const bounded = await failureFor('999999999999999999999999')
   assert.equal(bounded.retryAfterMs, 24 * 60 * 60_000)
 })
+
+test('Jev HTTP 402 is a retryable billing rejection that preserves Retry-After', async () => {
+  const adapter = new JevSystemOneAdapter({
+    apiToken: 'secret',
+    fetchImpl: (async () => new Response(JSON.stringify({ error: { type: 'billing_error' } }), {
+      status: 402,
+      headers: { 'Retry-After': '30' },
+    })) as typeof fetch,
+  })
+  try {
+    await adapter.classify({
+      workload: 'test', decisionVersion: 'v1', state: {},
+      questions: { relevant: { type: 'noul', instructions: 'x' } },
+      target: { provider: 'typesafe', model: 'jev-1.13.0' },
+      deadlineMs: 1_000, signal: new AbortController().signal,
+    })
+    throw new Error('Expected Jev 402 failure')
+  } catch (error) {
+    assert.ok(error instanceof InferenceGatewayError)
+    assert.equal(error.category, 'provider_billing')
+    assert.equal(error.retryable, true)
+    assert.equal(error.retryAfterMs, 30_000)
+    assert.match(error.message, /HTTP 402/)
+  }
+})

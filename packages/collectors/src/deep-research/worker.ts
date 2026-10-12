@@ -692,6 +692,7 @@ function redactedFailure(category: FailureCategory | null): string | null {
     provider_rate_limited: 'contained provider rate limited; details redacted',
     provider_timeout: 'contained execution timed out; details redacted',
     provider_authentication: 'contained provider authentication failed; details redacted',
+    provider_billing: 'contained provider billing rejected; details redacted',
     circuit_open: 'contained execution circuit open; details redacted',
     retrieval_timeout: 'deep retrieval timed out; details redacted',
     retrieval_blocked: 'deep retrieval blocked; details redacted',

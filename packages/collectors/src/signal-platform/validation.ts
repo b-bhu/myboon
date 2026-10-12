@@ -1,6 +1,7 @@
 import {
   EXECUTION_EVENT_SCHEMA_VERSION,
   ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION,
+  ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION,
   RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
   RETRIEVED_EVIDENCE_SCHEMA_VERSION,
@@ -11,6 +12,7 @@ import {
   type ResearchBudget,
   type ResearchPacketV1,
   type ArticleResearchPacketV1,
+  type ArticleResearchPacketV2,
   type ResearchPacket,
   type ResearchWorkItem,
   type RetrievedEvidence,
@@ -45,7 +47,7 @@ const WORK_STATUSES = new Set([
 ])
 const FAILURE_CATEGORIES = new Set<FailureCategory>([
   'provider_unavailable', 'provider_rate_limited', 'provider_timeout',
-  'provider_authentication', 'circuit_open', 'retrieval_timeout',
+  'provider_authentication', 'provider_billing', 'circuit_open', 'retrieval_timeout',
   'retrieval_blocked', 'retrieval_unsafe_url', 'budget_exceeded',
   'invalid_structured_output', 'schema_version_mismatch', 'permanent_source_error',
   'entity_resolution_failed', 'storage_transient', 'storage_permanent',
@@ -202,10 +204,12 @@ export function validateRetrievedEvidence(value: unknown): RetrievedEvidence {
 /** Runtime packet kind is explicit; legacy consumers narrow through `validateLegacyResearchPacket`. */
 export function validateResearchPacket(value: ResearchPacketV1): ResearchPacketV1
 export function validateResearchPacket(value: ArticleResearchPacketV1): ArticleResearchPacketV1
+export function validateResearchPacket(value: ArticleResearchPacketV2): ArticleResearchPacketV2
 export function validateResearchPacket(value: unknown): ResearchPacket
 export function validateResearchPacket(value: unknown): ResearchPacket {
   const record = object(value, 'packet')
   if (record.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION) return validateArticleResearchPacket(record)
+  if (record.schemaVersion === ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION) return validateArticleResearchPacketV2(record)
   literal(record.schemaVersion, RESEARCH_PACKET_SCHEMA_VERSION, 'packet.schemaVersion')
   literal(record.researchContractVersion, RESEARCH_PACKET_SCHEMA_VERSION, 'packet.researchContractVersion')
   for (const key of ['packetId', 'workId', 'signalId'] as const) nonEmpty(record[key], `packet.${key}`)
@@ -286,7 +290,8 @@ export function validateResearchPacket(value: unknown): ResearchPacket {
 /** Legacy claim/evidence consumers must opt in explicitly. */
 export function validateLegacyResearchPacket(value: unknown): ResearchPacketV1 {
   const packet = validateResearchPacket(value)
-  if (packet.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION) {
+  if (packet.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION
+    || packet.schemaVersion === ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION) {
     throw new ContractValidationError('packet.schemaVersion', 'article packet is not valid for a legacy claim/evidence consumer')
   }
   return packet
@@ -465,6 +470,195 @@ function validateArticleChoice(value: unknown, path: string): void {
   boundedNumber(decision.confidence, `${path}.confidence`, 0, 1)
   nonEmpty(decision.decisionId, `${path}.decisionId`)
   nonEmpty(decision.decisionVersion, `${path}.decisionVersion`)
+}
+
+/**
+ * v2 article handoff. Packet rules are identical to v1 (duplicate targets,
+ * novelty, roles); only the retained decisions are provider-aware and are
+ * validated through validateArticleDecisionV2 instead of validateArticleChoice.
+ */
+function validateArticleResearchPacketV2(record: Record<string, unknown>): ArticleResearchPacketV2 {
+  literal(record.schemaVersion, ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION, 'packet.schemaVersion')
+  literal(record.packetKind, 'article', 'packet.packetKind')
+  for (const key of ['packetId', 'workId', 'signalId'] as const) nonEmpty(record[key], `packet.${key}`)
+  oneOf(record.sourceType, ['news', 'polymarket', 'market_calendar', 'x'], 'packet.sourceType')
+  timestamp(record.observedAt, 'packet.observedAt')
+  timestamp(record.createdAt, 'packet.createdAt')
+  literal(record.researchContractVersion, RESEARCH_PACKET_SCHEMA_VERSION, 'packet.researchContractVersion')
+  const sourceSignal = object(record.sourceSignal, 'packet.sourceSignal')
+  for (const key of ['sourceId', 'title', 'canonicalUrl'] as const) nonEmpty(sourceSignal[key], `packet.sourceSignal.${key}`)
+  httpUrl(sourceSignal.canonicalUrl, 'packet.sourceSignal.canonicalUrl')
+  if (sourceSignal.originalCanonicalUrl !== undefined) nullableHttpUrl(sourceSignal.originalCanonicalUrl, 'packet.sourceSignal.originalCanonicalUrl')
+  if (sourceSignal.capturedUrl !== undefined) httpUrl(sourceSignal.capturedUrl, 'packet.sourceSignal.capturedUrl')
+  nullableTimestamp(sourceSignal.publishedAt, 'packet.sourceSignal.publishedAt')
+  const provenance = object(sourceSignal.provenance, 'packet.sourceSignal.provenance')
+  nonEmpty(provenance.provider, 'packet.sourceSignal.provenance.provider')
+  nullableString(provenance.upstreamSource, 'packet.sourceSignal.provenance.upstreamSource')
+  nonEmpty(provenance.rawPayloadRef, 'packet.sourceSignal.provenance.rawPayloadRef')
+  const article = object(record.article, 'packet.article')
+  for (const key of ['title', 'timelineSummary', 'sourceUrl', 'capturedText', 'capturedAt', 'contentHash'] as const) {
+    nonEmpty(article[key], `packet.article.${key}`)
+  }
+  nullableString(article.body, 'packet.article.body')
+  nullableTimestamp(article.eventAt, 'packet.article.eventAt')
+  httpUrl(article.sourceUrl, 'packet.article.sourceUrl')
+  timestamp(article.capturedAt, 'packet.article.capturedAt')
+  boolean(article.truncated, 'packet.article.truncated')
+  let duplicateTargetCount = 0
+  let primaryDuplicateTargetCount = 0
+  const contextualDuplicateTargets: Array<{ item: Record<string, unknown>, path: string, target: Record<string, unknown> }> = []
+  objectArray(record.memberships, 'packet.memberships', (item, path) => {
+    nullableString(item.entityId, `${path}.entityId`)
+    oneOf(item.placementDisposition, ['selected', 'no_match', 'uncertain'], `${path}.placementDisposition`)
+    nonEmpty(item.name, `${path}.name`)
+    nullableString(item.type, `${path}.type`)
+    stringArray(item.aliases, `${path}.aliases`)
+    nullableString(item.summary, `${path}.summary`)
+    object(item.scope, `${path}.scope`)
+    if (item.creationProposal !== null) {
+      const proposal = object(item.creationProposal, `${path}.creationProposal`)
+      nonEmpty(proposal.name, `${path}.creationProposal.name`)
+      nonEmpty(proposal.type, `${path}.creationProposal.type`)
+      stringArray(proposal.aliases, `${path}.creationProposal.aliases`)
+      nonEmpty(proposal.summary, `${path}.creationProposal.summary`)
+      object(proposal.scope, `${path}.creationProposal.scope`)
+    }
+    if (item.creationDecision !== null) validateArticleDecisionV2(item.creationDecision, `${path}.creationDecision`)
+    oneOf(item.role, ['primary', 'related'], `${path}.role`)
+    validateArticleDecisionV2(item.placement, `${path}.placement`)
+    const placement = object(item.placement, `${path}.placement`)
+    if (item.relationship !== null) oneOf(item.relationship, ['duplicate', 'direct_continuation', 'related_story_branch', 'same_topic_only', 'unrelated', 'uncertain'], `${path}.relationship`)
+    if (item.relationshipDecision !== null) validateArticleDecisionV2(item.relationshipDecision, `${path}.relationshipDecision`)
+    if (item.priorItemDecision !== null) validateArticleDecisionV2(item.priorItemDecision, `${path}.priorItemDecision`)
+    nullableString(item.priorItemId, `${path}.priorItemId`)
+    if (item.priorItemSource !== null) oneOf(item.priorItemSource, ['legacy', 'managed'], `${path}.priorItemSource`)
+    if ((item.priorItemId === null) !== (item.priorItemSource === null)) {
+      throw new ContractValidationError(path, 'prior item identity and source must be present together')
+    }
+    if (item.duplicateTarget !== null) {
+      const target = object(item.duplicateTarget, `${path}.duplicateTarget`)
+      nonEmpty(target.itemId, `${path}.duplicateTarget.itemId`)
+      oneOf(target.source, ['legacy', 'managed'], `${path}.duplicateTarget.source`)
+      nonEmpty(target.entityId, `${path}.duplicateTarget.entityId`)
+      if (item.relationship !== 'duplicate') throw new ContractValidationError(path, 'duplicateTarget requires Jev duplicate relationship')
+      duplicateTargetCount += 1
+      if (item.role === 'primary') primaryDuplicateTargetCount += 1
+    }
+    if (item.contextualDuplicateTarget !== undefined && item.contextualDuplicateTarget !== null) {
+      const target = object(item.contextualDuplicateTarget, `${path}.contextualDuplicateTarget`)
+      nonEmpty(target.itemId, `${path}.contextualDuplicateTarget.itemId`)
+      oneOf(target.source, ['legacy', 'managed'], `${path}.contextualDuplicateTarget.source`)
+      nonEmpty(target.entityId, `${path}.contextualDuplicateTarget.entityId`)
+      contextualDuplicateTargets.push({ item, path, target })
+    }
+    if (item.entityId === null && item.placementDisposition === 'selected') {
+      throw new ContractValidationError(path, 'selected placement requires an existing entity ID')
+    }
+    if (item.entityId === null && item.placementDisposition === 'no_match' && item.creationProposal === null) {
+      throw new ContractValidationError(path, 'no_match placement requires a bounded creation proposal')
+    }
+    if (item.entityId === null && item.placementDisposition === 'no_match' && placement.choice !== 'no_match') {
+      throw new ContractValidationError(path, 'no_match membership must retain Jev no_match placement')
+    }
+    if (item.entityId !== null && item.role === 'primary' && placement.choice !== item.entityId) {
+      throw new ContractValidationError(path, 'primary membership must retain the selected entity placement choice')
+    }
+    if (item.entityId !== null && item.role === 'related' && placement.choice !== 'related') {
+      throw new ContractValidationError(path, 'related membership must retain its independent related Choice')
+    }
+    if (item.entityId !== null && item.creationProposal !== null) {
+      throw new ContractValidationError(path, 'existing entity membership must not request creation')
+    }
+    if ((item.creationProposal === null) !== (item.creationDecision === null)) {
+      throw new ContractValidationError(path, 'creation proposal and its Jev validation decision must be present together')
+    }
+    if (item.creationDecision !== null && object(item.creationDecision, `${path}.creationDecision`).choice !== 'accept') {
+      throw new ContractValidationError(path, 'saved creation proposal requires Jev acceptance')
+    }
+    if ((item.relationship === null) !== (item.relationshipDecision === null)) {
+      throw new ContractValidationError(path, 'relationship and its Jev decision must be present together')
+    }
+    if ((item.relationship === null) !== (item.priorItemDecision === null)) {
+      throw new ContractValidationError(path, 'relationship and its prior-item Jev decision must be present together')
+    }
+    if (item.relationship === 'duplicate' && item.duplicateTarget === null
+      && (item.contextualDuplicateTarget === undefined || item.contextualDuplicateTarget === null)) {
+      throw new ContractValidationError(path, 'duplicate relationship requires a durable duplicate target')
+    }
+    if ((item.relationship === 'direct_continuation' || item.relationship === 'related_story_branch')
+      && item.priorItemId === null) {
+      throw new ContractValidationError(path, 'continuation and related branch relationships require a durable prior item')
+    }
+  })
+  if (!Array.isArray(record.memberships) || record.memberships.length === 0) {
+    throw new ContractValidationError('packet.memberships', 'article packet requires at least one prepared membership')
+  }
+  validateArticleDecisionV2(record.novelty, 'packet.novelty')
+  const novelty = object(record.novelty, 'packet.novelty')
+  for (const { item, path, target } of contextualDuplicateTargets) {
+    if (item.role !== 'related' || item.relationship !== 'duplicate') {
+      throw new ContractValidationError(path, 'contextual duplicate target requires a related duplicate relationship')
+    }
+    if (item.entityId === null || target.entityId !== item.entityId
+      || target.itemId !== item.priorItemId || target.source !== item.priorItemSource) {
+      throw new ContractValidationError(path, 'contextual duplicate target must match the related prior item identity and origin')
+    }
+    if (novelty.choice !== 'already_known' || primaryDuplicateTargetCount !== 1) {
+      throw new ContractValidationError(path, 'contextual duplicate target requires one primary exact duplicate under already_known novelty')
+    }
+  }
+  // Reuse is only safe when the separately retained novelty judgment agrees
+  // with an exact durable duplicate target. A related-only duplicate may still
+  // accompany a new primary development and must not suppress it.
+  if (novelty.choice === 'already_known' && primaryDuplicateTargetCount !== 1) {
+    throw new ContractValidationError('packet.novelty', 'already_known requires exactly one primary exact duplicate target')
+  }
+  if (duplicateTargetCount > 0 && novelty.choice === 'uncertain') {
+    throw new ContractValidationError('packet.novelty', 'an exact duplicate target with uncertain novelty must be held, not persisted')
+  }
+  if (primaryDuplicateTargetCount > 0 && (novelty.choice === 'new_information' || novelty.choice === 'contradicts_prior')) {
+    throw new ContractValidationError('packet.novelty', 'primary exact duplicate conflicts with new or contradictory novelty')
+  }
+  stringArray(record.limitations, 'packet.limitations')
+  stringArray(record.openQuestions, 'packet.openQuestions')
+  oneOf(record.completion, ['complete', 'partial', 'failed'], 'packet.completion')
+  validateBudgetUsage(record.budgetUsed, 'packet.budgetUsed')
+  validateExecution(record.execution, 'packet.execution')
+  return record as ArticleResearchPacketV2
+}
+
+/**
+ * Provider-aware v2 decision. The `provider` branch is authoritative: Jev
+ * decisions must still carry truthful raw Choice data (same checks as v1 plus
+ * the executing model); Hermes fallback decisions are audit provenance and
+ * must never claim probabilities or confidence they cannot report.
+ */
+function validateArticleDecisionV2(value: unknown, path: string): void {
+  const decision = object(value, path)
+  const provider = oneOf(decision.provider, ['jev', 'hermes'], `${path}.provider`)
+  if (provider === 'jev') {
+    if (decision.probabilities === undefined || decision.confidence === undefined) {
+      throw new ContractValidationError(path, 'jev decision requires raw probabilities and confidence')
+    }
+    validateArticleChoice(
+      { choice: decision.choice, probabilities: decision.probabilities, confidence: decision.confidence,
+        decisionId: decision.decisionId, decisionVersion: decision.decisionVersion },
+      path,
+    )
+    nonEmpty(decision.model, `${path}.model`)
+    return
+  }
+  if (decision.probabilities !== undefined) {
+    throw new ContractValidationError(`${path}.probabilities`, 'hermes decisions must not carry probabilities')
+  }
+  if (decision.confidence !== undefined) {
+    throw new ContractValidationError(`${path}.confidence`, 'hermes decisions must not carry confidence')
+  }
+  nonEmpty(decision.choice, `${path}.choice`)
+  nonEmpty(decision.decisionId, `${path}.decisionId`)
+  nonEmpty(decision.decisionVersion, `${path}.decisionVersion`)
+  nonEmpty(decision.model, `${path}.model`)
+  nonEmpty(decision.fallbackReason, `${path}.fallbackReason`)
 }
 
 function validateExecution(value: unknown, path: string): void {

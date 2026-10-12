@@ -598,6 +598,10 @@ export function createLiveSharedResearchRuntime(
         } } : {}),
         ...(v4Configuration.articleWorkflowEnabled ? { article: {
           classification: classificationRuntime!.gateway,
+          // Same exact-"true" switches the classification runtime uses for its
+          // fallback definitions and batched decision versions.
+          useHermesFallbackVersions: config.env.CLASSIFICATION_ARTICLE_HERMES_FALLBACK === 'true',
+          useBatching: config.env.CLASSIFICATION_ARTICLE_BATCHING === 'true',
           contextReader: (signal: Signal) => new InternalResearchEntityMemoryReader({
             legacy: legacyReader!, managed: managedResearchContext ?? undefined, source: signal.sourceType,
             sourceRefs: managedSignalSourceRefs(signal),

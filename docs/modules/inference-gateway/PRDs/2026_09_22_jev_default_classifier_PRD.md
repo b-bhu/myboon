@@ -1031,6 +1031,26 @@ redacted fixtures and versioned hashes.
 - Provider output is untrusted input until schema and membership validation
   complete.
 - Jev has no tools, database client, queue client, or mutation capability.
+- Flag-gated article Hermes fallback (#308): the required article workloads
+  (`research.article_*`) are Jev-primary with a flag-gated
+  (`CLASSIFICATION_ARTICLE_HERMES_FALLBACK`, default off) Hermes
+  `ollama-cloud/glm-5.3-flash` fallback applied per logical decision after a
+  known Jev rejection — one HTTP 402 (provider billing) retry inside the same
+  dispatch, then the Jev circuit opens. The fallback runs under a separately
+  reserved call allowance (Jev, one 402 retry, one Hermes call) that never
+  consumes another workload's exposure. Its fallback decision versions remain
+  the same registered definitions: provider-aware `ArticleDecisionV2` /
+  article packet v2 records Jev raw probabilities unchanged, while a Hermes
+  result carries only the validated decision value, exact model and typed
+  fallback reason — never fabricated probabilities or confidence — and an
+  uncertain consequential Hermes decision holds instead of saving a default.
+  Off the flag the exact Jev-only sequence is preserved. Flag-gated staged
+  batching (`CLASSIFICATION_ARTICLE_BATCHING`, default off; #308) may compose
+  one bounded catalogue dispatch (placement plus independent memberships) and
+  one bounded relationship dispatch over selected entities per stage, keeping
+  the whole candidate catalogue through deterministic bounded splitting and
+  never truncating it; novelty stays its own later dispatch after duplicate
+  targets are known.
 - Data-retention/legal settings must be reviewed before production activation;
   any required enterprise zero-data-retention agreement is an operational
   release gate, not an assumption in code.

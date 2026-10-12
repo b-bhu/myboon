@@ -8,6 +8,7 @@ import type {
   ClassificationAttemptRecord,
   ClassificationAuditSink,
   ClassificationCapacityCoordinator,
+  ClassificationCapacityPolicy,
   ClassificationLease,
   ClassificationPolicyOutcomeRecord,
 } from './classification-types'
@@ -194,6 +195,40 @@ ClassificationCapacityCoordinator, ClassificationAuditSink {
         released = true
         this.releaseLease(token, target, policy.circuitFailureThreshold, policy.circuitCooldownMs, success, retryableFailure)
       },
+    }
+  }
+
+  /**
+   * Direct circuit trip for an exhausted billing cycle: record the real
+   * provider failure and open the circuit for the cooldown without acquiring
+   * a lease or consuming rate events. Decisive by contract — the gateway
+   * calls this only after the in-dispatch billing retry also failed — the
+   * failure count reflects at least the full threshold, so the next dispatch
+   * is refused pre-dispatch under any failure history, and a later acquire
+   * runs the normal half-open probe.
+   */
+  tripCircuit(input: {
+    workload: string
+    target: InferenceProviderTarget
+    policy: ClassificationCapacityPolicy
+  }): void {
+    this.assertOpen()
+    const now = this.now()
+    const { target, policy } = input
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.db.prepare(`SELECT failure_count FROM classification_circuits
+        WHERE provider = ? AND model = ?`).get(target.provider, target.model) as
+        { failure_count: number } | undefined
+      const failures = Math.max((row?.failure_count ?? 0) + 1, Math.max(1, policy.circuitFailureThreshold))
+      this.db.prepare(`INSERT INTO classification_circuits(provider, model, failure_count, open_until_ms, probe_token)
+        VALUES (?, ?, ?, ?, NULL) ON CONFLICT(provider, model) DO UPDATE SET
+        failure_count = excluded.failure_count, open_until_ms = excluded.open_until_ms, probe_token = NULL`)
+        .run(target.provider, target.model, failures, now + policy.circuitCooldownMs)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
     }
   }
 

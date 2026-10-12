@@ -3,6 +3,13 @@ import { canonicalJson } from '../signal-platform/canonical-json'
 import { stableContractId } from '../signal-platform/adapters/identity'
 import type { ResearchWorkItem } from '../signal-platform/contracts'
 import {
+  ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION,
+  ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
+  ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION,
+  ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION,
+  ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION,
   approvedClassificationDefinitions, type ClassificationGateway, type ClassificationResult,
 } from '../inference-gateway'
 import { InferenceGatewayError } from '../inference-gateway/errors'
@@ -13,7 +20,20 @@ import {
 import { researchRootAssignmentId, ResearchFollowupHold } from './bounded-followup'
 import type { ResearchV4StorePort } from './v4-store'
 
-/** Each classified paid dispatch gets a durable one-call reservation too. */
+/** Every classified paid dispatch holds a durable reservation: one call, or three for Hermes fallback versions (Jev, one Jev billing retry, Hermes fallback). */
+// Decision versions whose dispatch may spend the three-call fallback
+// envelope: the *_HERMES_FALLBACK versions only. The batched base versions
+// (CLASSIFICATION_ARTICLE_BATCHING without the fallback flag) are Jev-only
+// definitions whose dispatch keeps the strict one-call exposure.
+const ARTICLE_HERMES_FALLBACK_VERSIONS = new Set<string>([
+  ARTICLE_CATALOGUE_BATCH_HERMES_FALLBACK_VERSION,
+  ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
+  ARTICLE_ENTITY_PROPOSAL_VALIDATION_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATED_MEMBERSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_RELATIONSHIP_BATCH_HERMES_FALLBACK_VERSION,
+  ARTICLE_STORY_RELATIONSHIP_HERMES_FALLBACK_VERSION,
+  ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+])
 export function durableResearchClassification(input: {
   gateway: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'> & {
     /** Optional on test/dumb ports; the real gateway exposes paid-call preflight. */
@@ -32,7 +52,17 @@ export function durableResearchClassification(input: {
       // Otherwise a caller-owned malformed state is indistinguishable from a
       // provider timeout and leaves an unjustified paid-outcome hold.
       input.gateway.preflight?.(request)
-      const definition = approvedClassificationDefinitions().find((item) => item.workload === request.workload)
+      // Flag-gated fallback and batching versions may be defined only in the
+      // alternate registries, while retired base versions must keep resolving
+      // without them. The lookup searches the full approved registry and
+      // matches by workload AND decisionVersion, so a batch version resolves
+      // with batching on and fallback off instead of holding pre-dispatch,
+      // and a base version never resolves to an alternate definition's
+      // budget and route.
+      const definition = approvedClassificationDefinitions(undefined, {
+        articleHermesFallback: true, articleBatching: true,
+      }).find((item) => item.workload === request.workload
+        && item.decisionVersion === request.decisionVersion)
       if (!definition) throw new ResearchFollowupHold('Research classification workload has no approved budget definition.')
       const rootAssignmentId = researchRootAssignmentId(input.work)
       const allowanceId = stableContractId('research_classification', request.workload, request.trace.stableDecisionKey)
@@ -42,11 +72,19 @@ export function durableResearchClassification(input: {
         workload: request.workload, decisionVersion: request.decisionVersion, state: request.state,
       })).digest('hex')
       const store = input.store.researchBudgetStore()
+      // The *_HERMES_FALLBACK versions allow Jev, one Jev billing (HTTP 402)
+      // retry inside the same dispatch, and one Hermes fallback; every other
+      // version (including the Jev-only batched base versions) keeps the
+      // strict one-call exposure. Asserted durably below via approvedLimits.
+      const hermesFallback = ARTICLE_HERMES_FALLBACK_VERSIONS.has(request.decisionVersion)
+      const maxProviderCalls = hermesFallback ? 3 : 1
       const reservation = await claimReservation(store, {
         ...key, requestDigest, providerRoute: `classification:${request.workload}:${request.decisionVersion}`,
         // Registry policy supplies approved classifier token ceilings. Cost is
         // explicitly unknown because the classifier has no measured-cost port.
-        approvedLimits: { maxProviderCalls: 1, maxInputTokens: definition.budget.maxInputTokens,
+        // The 3-call fallback allowance (Jev, one Jev 402 retry, Hermes) names
+        // exactly the calls the same-dispatch path may spend.
+        approvedLimits: { maxProviderCalls, maxInputTokens: definition.budget.maxInputTokens,
           maxOutputTokens: definition.budget.maxOutputTokens, maxIncrementalCostUsdMicros: null },
         assignmentLimits: input.assignmentPolicy,
         nowMs: Date.parse(input.now()),
@@ -90,7 +128,13 @@ export function durableResearchClassification(input: {
       })
       if (!intent.ok) throw new ResearchFollowupHold(`Classification dispatch refused: ${intent.code}.`)
       try {
-        const result = await input.gateway.classify<Value>({ ...request, maxProviderCalls: 1, holdOnUnknownOutcome: true })
+        // The gateway's provider-call envelope is now explicit: three for the
+        // fallback versions (Jev, one Jev 402 billing retry, the Hermes
+        // fallback), one strict call for every other version. The reserved
+        // allowance above already covers exactly this path.
+        const result = await input.gateway.classify<Value>({
+          ...request, maxProviderCalls, holdOnUnknownOutcome: true,
+        })
         input.store.putResearchV4Record('classification_result', input.work.workId, attemptId, result)
         await settle(result)
         return result
@@ -121,14 +165,27 @@ export function durableResearchClassification(input: {
       }
 
       async function settle(result: ClassificationResult<Value>) {
+        // A 402 retry plus a Hermes fallback can issue up to three provider
+        // calls; the result records every known call, so the settlement sums
+        // them instead of counting one call and only the final usage.
+        const calls = result.calls
+        const knownTokenUsage = calls.length > 0
+          ? {
+            inputTokens: calls.reduce((sum, call) => sum + call.inputTokens, 0),
+            outputTokens: calls.reduce((sum, call) => sum + call.outputTokens, 0),
+            costUsdMicros: calls.some((call) => call.costUsdMicros === null) ? null as number | null
+              : calls.reduce((sum, call) => sum + (call.costUsdMicros ?? 0), 0),
+          }
+          : { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+            costUsdMicros: result.usage.costUsdMicros ?? null }
         const settled = await settleReservation(store, key, {
           requestDigest, providerResultDigest: createHash('sha256').update(canonicalJson(result)).digest('hex'),
           savedResultRef: `classification_result:${input.work.workId}:${attemptId}`,
-          usage: typeof result.usage.costUsdMicros === 'number' && result.usage.costUsdMicros > 0
-            ? { status: 'measured', costUsdMicros: result.usage.costUsdMicros,
-              inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, providerCalls: 1 }
+          usage: knownTokenUsage.costUsdMicros !== null && knownTokenUsage.costUsdMicros > 0
+            ? { status: 'measured', costUsdMicros: knownTokenUsage.costUsdMicros,
+              inputTokens: knownTokenUsage.inputTokens, outputTokens: knownTokenUsage.outputTokens, providerCalls: Math.max(1, calls.length) }
             : { status: 'unknown', costUsdMicros: null,
-              inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, providerCalls: 1 },
+              inputTokens: knownTokenUsage.inputTokens, outputTokens: knownTokenUsage.outputTokens, providerCalls: Math.max(1, calls.length) },
           savedResultSavedAtMs: Date.parse(input.now()), verification: { kind: 'transport_response_saved' },
         })
         if (!settled.ok) throw new ResearchFollowupHold(`Saved classification result settlement refused: ${settled.code}.`)

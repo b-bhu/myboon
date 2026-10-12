@@ -97,7 +97,7 @@ export function v4ClassificationResult<Value>(value: Value): ClassificationResul
   return { decisionId: 'offline-classification-id', workload: 'offline', decisionVersion: 'offline.v1', value,
     configuredPrimary: { provider: 'typesafe', model: 'jev-1.13.0' }, configuredFallback: null,
     actualProvider: 'offline', actualModel: 'offline', fallbackUsed: false, fallbackReason: null,
-    answers: null, usage: { inputTokens: 100, outputTokens: 20 }, durationMs: 5 }
+    answers: null, usage: { inputTokens: 100, outputTokens: 20 }, calls: [], durationMs: 5 }
 }
 
 interface V4ClassifierFixture {

@@ -63,13 +63,18 @@ export class JevSystemOneAdapter implements JevClassificationAdapter {
     if (!response.ok) {
       const category = response.status === 429 ? 'provider_rate_limited'
         : response.status === 401 || response.status === 403 ? 'provider_authentication'
-          : response.status >= 500 ? 'provider_unavailable' : 'invalid_structured_output'
+          : response.status === 402 ? 'provider_billing'
+            : response.status >= 500 ? 'provider_unavailable' : 'invalid_structured_output'
       const retryable = category === 'provider_rate_limited' || category === 'provider_unavailable'
+        || category === 'provider_billing'
+      const retryAfter = response.status === 402 || category === 'provider_rate_limited'
+        ? parseRetryAfterMs(response.headers.get('retry-after'), Date.now())
+        : undefined
       const detail = await jevFailureDetail(response, this.apiToken)
       throw new InferenceGatewayError(`Jev classification failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`, {
         category,
         retryable,
-        ...(retryable ? { retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after'), Date.now()) } : {}),
+        ...(retryAfter !== undefined ? { retryAfterMs: retryAfter } : {}),
         provider: request.target.provider,
         model: request.target.model,
       })

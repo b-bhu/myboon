@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
-import { RESEARCH_PACKET_SCHEMA_VERSION, type ArticleChoiceDecision, type ArticleEntityProposal, type ArticleResearchPacketV1 } from '../signal-platform/contracts'
+import { RESEARCH_PACKET_SCHEMA_VERSION, type ArticleChoiceDecision, type ArticleEntityProposal, type ArticleResearchPacketV1, type ArticleResearchPacketV2, type ArticleV2EntityProposal } from '../signal-platform/contracts'
+import { canonicalJson } from '../signal-platform/canonical-json'
 import { validateResearchPacket } from '../signal-platform/validation'
 import { ArticlePersistenceProcessor, retainPrimaryDuplicateTarget } from './article-persistence'
+import { deriveProgressionOperationId } from './progression-processor'
 
 const ITEM_PRIMARY = 'managed-primary'
 const ITEM_RELATED = 'managed-related'
@@ -39,6 +42,59 @@ function packet(memberships: ArticleEntityProposal[]): ArticleResearchPacketV1 {
       capturedAt: '2026-10-06T00:00:00.000Z', contentHash: 'hash', truncated: false,
     },
     memberships, novelty: decision('already_known'), limitations: [], openQuestions: [], completion: 'complete',
+    budgetUsed: { providerCalls: 0, repairCalls: 0, inputTokens: 0, outputTokens: 0, toolCalls: 0, wallTimeMs: 0, budgetExceeded: false },
+    execution: { provider: 'fixture', model: 'fixture', fallbackProvider: null, fallbackModel: null, fallbackUsed: false, promptVersion: 'fixture', policyVersion: 'fixture', traceId: 'trace-1', attempt: 1 },
+    researchContractVersion: RESEARCH_PACKET_SCHEMA_VERSION, createdAt: '2026-10-06T00:00:00.000Z',
+  }
+}
+
+function v2Decision(provider: 'jev' | 'hermes', choice: string, fallbackReason?: string): ArticleV2EntityProposal['placement'] {
+  return provider === 'jev'
+    ? { provider, choice, probabilities: { [choice]: 1 }, confidence: 1, decisionId: `fixture:${choice}`, decisionVersion: 'fixture.v2', model: 'fixture-jev-model' }
+    : { provider, choice, decisionId: `fixture:${choice}`, decisionVersion: 'fixture.v2', model: 'fixture-hermes-model', fallbackReason: fallbackReason ?? 'provider_billing' }
+}
+
+function v2Proposal(
+  role: 'primary' | 'related',
+  entityId: string,
+  itemId: string,
+  provider: 'jev' | 'hermes',
+): ArticleV2EntityProposal {
+  return {
+    entityId,
+    placementDisposition: 'selected',
+    role,
+    name: role === 'primary' ? 'Primary Entity' : 'Related Entity',
+    type: 'organization', aliases: [], summary: null, scope: {},
+    creationProposal: null, creationDecision: null,
+    placement: v2Decision(provider, role === 'primary' ? entityId : 'related'),
+    relationship: 'duplicate',
+    relationshipDecision: v2Decision(provider, 'duplicate'),
+    priorItemDecision: v2Decision(provider, itemId),
+    priorItemId: itemId, priorItemSource: 'managed',
+    // v2 packets are saved in the normalized shape: exactly one primary
+    // durable reuse target, with related duplicate judgment retained only as
+    // contextual history — the shape retainPrimaryDuplicateTarget produces.
+    duplicateTarget: role === 'primary' ? { itemId, source: 'managed', entityId } : null,
+    contextualDuplicateTarget: role === 'primary' ? null : { itemId, source: 'managed', entityId },
+  }
+}
+
+function packetV2(memberships: ArticleV2EntityProposal[]): ArticleResearchPacketV2 {
+  return {
+    schemaVersion: 'myboon.research_packet.article.v2', packetKind: 'article', packetId: 'packet-1',
+    workId: 'work-1', signalId: 'signal-1', sourceType: 'news', observedAt: '2026-10-06T00:00:00.000Z',
+    sourceSignal: {
+      sourceId: 'source-1', title: 'A source-backed development', canonicalUrl: 'https://example.com/article',
+      publishedAt: null, provenance: { provider: 'fixture', upstreamSource: 'fixture', rawPayloadRef: 'fixture' },
+    },
+    article: {
+      title: 'A source-backed development', timelineSummary: 'The source-backed development.', body: 'Captured body.',
+      eventAt: null, sourceUrl: 'https://example.com/article', capturedText: 'Captured body.',
+      capturedAt: '2026-10-06T00:00:00.000Z', contentHash: 'hash', truncated: false,
+    },
+    memberships,
+    novelty: v2Decision('jev', 'already_known'), limitations: [], openQuestions: [], completion: 'complete',
     budgetUsed: { providerCalls: 0, repairCalls: 0, inputTokens: 0, outputTokens: 0, toolCalls: 0, wallTimeMs: 0, budgetExceeded: false },
     execution: { provider: 'fixture', model: 'fixture', fallbackProvider: null, fallbackModel: null, fallbackUsed: false, promptVersion: 'fixture', policyVersion: 'fixture', traceId: 'trace-1', attempt: 1 },
     researchContractVersion: RESEARCH_PACKET_SCHEMA_VERSION, createdAt: '2026-10-06T00:00:00.000Z',
@@ -187,3 +243,99 @@ test('persistence retains a valid legacy multi-target packet when its source che
   assert.equal(committed, false)
   assert.equal(hold.missingDependency, 'immutable_article_source_checkpoint')
 })
+
+const ARTICLE_CONTEXT = {
+  entities: [
+    { id: 'entity-primary', slug: 'primary', name: 'Primary Entity', type: 'organization', aliases: [], summary: null,
+      status: 'active', show_in_carousel: false, metadata: {}, revision: 'entity-revision-primary', catalogEntityId: null, identityKey: 'catalog:primary' },
+    { id: 'entity-related', slug: 'related', name: 'Related Entity', type: 'organization', aliases: [], summary: null,
+      status: 'active', show_in_carousel: false, metadata: {}, revision: 'entity-revision-related', catalogEntityId: null, identityKey: 'catalog:related' },
+  ],
+  items: [], digest: 'context-digest', watermark: 'watermark', truncated: false,
+  articleItems: [
+    { itemId: ITEM_PRIMARY, entityId: 'entity-primary', origin: 'managed', title: 'Primary prior', summary: 'Primary prior',
+      publishedAt: null, eventAt: null, observedAt: '2026-10-05T00:00:00Z', catalogEntityId: null, aliases: [], metadata: {}, revision: 'item-revision-primary' },
+    { itemId: ITEM_RELATED, entityId: 'entity-related', origin: 'managed', title: 'Related prior', summary: 'Related prior',
+      publishedAt: null, eventAt: null, observedAt: '2026-10-05T00:00:00Z', catalogEntityId: null, aliases: [], metadata: {}, revision: 'item-revision-related' },
+  ],
+}
+
+function writerCapturingCommit(): { writer: any, committedPackets: unknown[], receipt: unknown } {
+  const committedPackets: unknown[] = []
+  const receipt = { status: 'accepted', operationId: deriveProgressionOperationId('work-1'), workId: 'work-1' }
+  const writer = {
+    findReceipt: async () => null,
+    articleContext: async () => ARTICLE_CONTEXT,
+    savePlanningContext: async () => {},
+    acquireLease: async () => ({ owner: 'fixture-owner', epoch: 1 }),
+    releaseLease: async () => true,
+    commitArticle: async (input: { packet: unknown }) => {
+      committedPackets.push(input.packet)
+      return { receipt }
+    },
+    commitArticleHold: async () => ({}),
+  } as any
+  return { writer, committedPackets, receipt }
+}
+
+test('persistence accepts a v2 packet with jev decisions and commits it', async () => {
+  const { writer, committedPackets } = writerCapturingCommit()
+  const input = packetV2([v2Proposal('primary', 'entity-primary', ITEM_PRIMARY, 'jev'), v2Proposal('related', 'entity-related', ITEM_RELATED, 'jev')])
+  assert.doesNotThrow(() => validateResearchPacket(input))
+  const result = await new ArticlePersistenceProcessor(writer).persist({
+    packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+  })
+  // A legacy multi-target packet is deliberately held before commit; this
+  // single-target v2 packet must reach the commit boundary instead.
+  assert.equal(committedPackets.length, 1)
+  assert.equal(committedPackets[0], input)
+  assert.equal(result, 'reused')
+})
+
+test('persistence accepts a v2 packet with hermes fallback decisions and commits it', async () => {
+  const { writer, committedPackets } = writerCapturingCommit()
+  const input = packetV2([
+    v2Proposal('primary', 'entity-primary', ITEM_PRIMARY, 'hermes'),
+    v2Proposal('related', 'entity-related', ITEM_RELATED, 'hermes'),
+  ])
+  assert.doesNotThrow(() => validateResearchPacket(input))
+  const result = await new ArticlePersistenceProcessor(writer).persist({
+    packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+  })
+  assert.equal(committedPackets.length, 1)
+  assert.equal(committedPackets[0], input)
+  assert.equal(result, 'reused')
+})
+
+test('v1 packet survives the widened persistence helpers with its digest unchanged', () => {
+  const input = packet([proposal('primary', 'entity-primary', ITEM_PRIMARY)])
+  // Snapshot every retained v1 decision before the version-agnostic helpers run.
+  const before = JSON.stringify(input)
+  const reduced = retainPrimaryDuplicateTarget(input)
+  // A single-target packet passes through by reference; content is untouched.
+  assert.equal(reduced, input)
+  assert.equal(JSON.stringify(reduced), before)
+  assert.equal(reduced.novelty, input.novelty)
+  assert.equal(reduced.memberships[0]!.placement, input.memberships[0]!.placement)
+  assert.equal(reduced.memberships[0]!.relationshipDecision, input.memberships[0]!.relationshipDecision)
+  assert.equal(reduced.memberships[0]!.priorItemDecision, input.memberships[0]!.priorItemDecision)
+})
+
+test('v2 packet flows through the same digest path with decisions intact', () => {
+  const input = packetV2([v2Proposal('primary', 'entity-primary', ITEM_PRIMARY, 'jev')])
+  const before = JSON.stringify(input)
+  const reduced = retainPrimaryDuplicateTarget(input)
+  assert.equal(reduced, input)
+  assert.equal(JSON.stringify(reduced), before)
+  // The same sha256-of-canonical-json digest used for v1 receipts applies to
+  // v2 content without special-casing.
+  const first = digestForTest(input)
+  const second = digestForTest(input)
+  assert.equal(first, second)
+  assert.match(first, /^[0-9a-f]{64}$/)
+})
+
+function digestForTest(value: unknown): string {
+  // Mirrors article-persistence.digest(): sha256 over canonical JSON.
+  return createHash('sha256').update(canonicalJson(value)).digest('hex')
+}

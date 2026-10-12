@@ -9,6 +9,7 @@ import {
 import {
   RESEARCH_PACKET_SCHEMA_VERSION,
   ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION,
+  ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
   SIGNAL_SCHEMA_VERSION,
   isArticleResearchPacket,
@@ -16,6 +17,9 @@ import {
   type ResearchPacketV1,
   type ResearchPacket,
   type ArticleResearchPacketV1,
+  type ArticleResearchPacketV2,
+  type ArticleV2EntityProposal,
+  type ArticleDecisionV2,
   type ArticleEntityProposal,
   type ArticleEntityCreationProposal,
   type ArticleChoiceDecision,
@@ -103,6 +107,7 @@ export interface StructuredSynthesisInput {
   holdOnUnknownOutcome?: boolean
   /** Jev decisions are prepared before Hermes writes reader-facing prose. */
   articlePreparation?: { memberships: ArticleEntityProposal[], novelty: ArticleChoiceDecision, contextualHistory: string }
+    | { memberships: ArticleV2EntityProposal[], novelty: ArticleDecisionV2, contextualHistory: string }
 }
 
 export interface StructuredSynthesisGateway {
@@ -191,7 +196,7 @@ export class StructuredResearchSynthesizer {
     }
   }
 
-  async synthesize(input: StructuredSynthesisInput & { articlePreparation: NonNullable<StructuredSynthesisInput['articlePreparation']> }): Promise<ArticleResearchPacketV1>
+  async synthesize(input: StructuredSynthesisInput & { articlePreparation: NonNullable<StructuredSynthesisInput['articlePreparation']> }): Promise<ArticleResearchPacketV1 | ArticleResearchPacketV2>
   async synthesize(input: StructuredSynthesisInput & { articlePreparation?: undefined }): Promise<ResearchPacketV1>
   async synthesize(input: StructuredSynthesisInput): Promise<ResearchPacket>
   async synthesize(input: StructuredSynthesisInput): Promise<ResearchPacket> {
@@ -341,7 +346,7 @@ export class StructuredResearchSynthesizer {
   }
 
   /** Hermes writes reader prose only. Placement and relationships are prepared separately by Jev. */
-  private async synthesizeArticle(input: StructuredSynthesisInput): Promise<ArticleResearchPacketV1> {
+  private async synthesizeArticle(input: StructuredSynthesisInput): Promise<ArticleResearchPacketV1 | ArticleResearchPacketV2> {
     const preparation = input.articlePreparation
     if (!preparation) throw localError('Article synthesis requires prepared Jev decisions')
     const source = latestArticleCapture(input.evidence)
@@ -364,8 +369,10 @@ export class StructuredResearchSynthesizer {
     })
     const provider = result.telemetry.actualProvider ?? result.telemetry.configuredPrimaryProvider
     const model = result.telemetry.actualModel ?? result.telemetry.configuredPrimaryModel
-    const packet: ArticleResearchPacketV1 = {
-      schemaVersion: ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION, packetKind: 'article',
+    // Provider-aware (fallback-version) decisions are emitted only as v2; flag-off preparation stays v1 exactly.
+    const providerAware = 'provider' in preparation.novelty
+    const packet = {
+      schemaVersion: providerAware ? ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION : ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION, packetKind: 'article' as const,
       packetId: deterministicPacketId(input.workItem.workId, input.workItem.researchContractVersion),
       workId: input.workItem.workId, signalId: input.signal.signalId, sourceType: input.signal.sourceType, observedAt: input.signal.observedAt,
       sourceSignal: {
@@ -395,7 +402,7 @@ export class StructuredResearchSynthesizer {
         configuredPrimaryModel: result.telemetry.configuredPrimaryModel, fallbackReason: result.telemetry.fallbackReason,
         outputSchemaValid: result.telemetry.schemaValid,
       }, researchContractVersion: input.workItem.researchContractVersion, createdAt: this.now().toISOString(),
-    }
+    } as ArticleResearchPacketV1 | ArticleResearchPacketV2
     try {
       const validated = validateResearchPacket(packet)
       if (!isArticleResearchPacket(validated)) throw localError('Article packet validated as a legacy packet')

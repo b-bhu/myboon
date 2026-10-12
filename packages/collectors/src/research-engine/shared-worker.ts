@@ -221,6 +221,10 @@ export interface SharedResearchV4Options {
   article?: {
     classification: Pick<ClassificationGateway, 'classify' | 'recordPolicyOutcome'>
     contextReader(signal: Signal, work: ResearchWorkItem): EntityMemoryReader
+    /** CLASSIFICATION_ARTICLE_HERMES_FALLBACK=true: fallback decision versions and v2 article packets. Off by default. */
+    useHermesFallbackVersions?: boolean
+    /** CLASSIFICATION_ARTICLE_BATCHING=true: staged batched catalogue/relationship dispatches. Off by default. */
+    useBatching?: boolean
   }
 }
 
@@ -1011,10 +1015,12 @@ export class SharedResearchWorker {
       work: input.lease.work, assignmentPolicy: v4.assignmentPolicy,
       stillOwnsLease: input.stillOwnsLease, now: () => this.nowIso(),
     })
-    let preparation: { memberships: import('../signal-platform/contracts').ArticleEntityProposal[], novelty: import('../signal-platform/contracts').ArticleChoiceDecision, contextualHistory: string }
+    let preparation: import('./article-placement').ArticlePlacementPreparationV1 | import('./article-placement').ArticlePlacementPreparationV2
     try {
       preparation = await prepareArticlePlacement({
         gateway: durableClassification, stableDecisionKey: input.lease.work.workId,
+        useHermesFallbackVersions: v4.article.useHermesFallbackVersions === true,
+        useBatching: v4.article.useBatching === true,
         signal: input.signal, sourceText: source.text,
         context: input.articleContext?.context
           ?? await reader.articleContext({ sourceUrl: source.finalUrl, terms: articleLookupTerms(input.signal) }),
@@ -2053,7 +2059,7 @@ function truncate(value: string, max: number): string {
 }
 
 const FAILURE_CATEGORIES = new Set<FailureCategory>([
-  'provider_unavailable', 'provider_rate_limited', 'provider_timeout', 'provider_authentication',
+  'provider_unavailable', 'provider_rate_limited', 'provider_timeout', 'provider_authentication', 'provider_billing',
   'circuit_open', 'retrieval_timeout', 'retrieval_blocked', 'retrieval_unsafe_url',
   'budget_exceeded', 'invalid_structured_output', 'schema_version_mismatch',
   'permanent_source_error', 'entity_resolution_failed', 'storage_transient', 'storage_permanent',

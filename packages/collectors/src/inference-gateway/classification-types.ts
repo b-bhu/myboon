@@ -14,8 +14,14 @@ export interface ClassificationRequest {
   }
   /** May only make the registry deadline smaller. */
   tighterDeadlineMs?: number
-  /** Tightens the existing two-provider path; a one-call reservation forbids fallback spend. */
-  maxProviderCalls?: 1 | 2
+  /**
+   * Provider-call envelope. 1 = Jev only. 2 = Jev plus the Hermes fallback,
+   * with no billing retry. 3 = Jev plus one Jev billing (HTTP 402) retry plus
+   * the Hermes fallback — the caller's durable reservation must cover every
+   * call the gateway may issue. Omitted: the legacy two-provider envelope
+   * whose in-dispatch billing retry predates the explicit envelope.
+   */
+  maxProviderCalls?: 1 | 2 | 3
   /** V4 D2: an unknown primary dispatch outcome must not trigger replacement spending. */
   holdOnUnknownOutcome?: boolean
 }
@@ -219,6 +225,8 @@ export interface ClassificationResult<TDecision = unknown> {
   fallbackReason: string | null
   answers: Readonly<Record<string, JevAnswer>> | null
   usage: ClassificationProviderUsage
+  /** Every provider call this dispatch actually issued, in issue order. */
+  calls: readonly ClassificationAttemptCall[]
   durationMs: number
 }
 
@@ -234,4 +242,15 @@ export interface ClassificationCapacityCoordinator {
     mode: 'live'
     policy: ClassificationCapacityPolicy
   }): ClassificationLease
+  /**
+   * Record a real provider failure directly against the circuit without
+   * acquiring a lease or consuming a rate event. The gateway trips through
+   * this after a billing cycle is exhausted; synthetic acquire/release loops
+   * fail under rate/concurrency limits and silently leave the circuit closed.
+   */
+  tripCircuit?(input: {
+    workload: string
+    target: InferenceProviderTarget
+    policy: ClassificationCapacityPolicy
+  }): void
 }
