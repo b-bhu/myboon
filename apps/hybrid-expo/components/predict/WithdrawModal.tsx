@@ -35,6 +35,7 @@ import {
   markWithdrawalFailed,
   markWithdrawalSubmitted,
   markWithdrawalSubmitting,
+  persistWithdrawalTracking,
   reconcileWithdrawalTracking,
 } from '@/features/predict/withdrawalTracking';
 import type { TrackedWithdrawal } from '@/features/predict/withdrawalTracking';
@@ -91,28 +92,51 @@ export function WithdrawModal({
   const [routeLoading, setRouteLoading] = useState(false);
   const [quote, setQuote] = useState<BridgeQuote | null>(null);
   const [trackedWithdrawal, setTrackedWithdrawal] = useState<TrackedWithdrawal | null>(null);
+  const [trackingSaveFailed, setTrackingSaveFailed] = useState(false);
   const trackedWithdrawalRef = useRef<TrackedWithdrawal | null>(null);
   const submitLockRef = useRef(createSingleFlightLock());
   const refreshLockRef = useRef(createSingleFlightLock());
   const trackingKey = `${WITHDRAW_TRACKING_PREFIX}:${client.account.wallet.toLowerCase()}`;
+
+  const saveTracking = useCallback(async (tracking: TrackedWithdrawal): Promise<boolean> => {
+    return persistWithdrawalTracking(
+      (key, value) => AsyncStorage.setItem(key, value),
+      trackingKey,
+      JSON.stringify(tracking),
+    );
+  }, [trackingKey]);
+
   const persistTracking = useCallback(async (tracking: TrackedWithdrawal) => {
-    await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
+    const saved = await saveTracking(tracking);
+    if (!saved) {
+      // Pre-submission: never send a transfer without a recoverable tracking
+      // record, and never adopt it into state until the save succeeded. Abort
+      // so the catch path surfaces the failure instead of continuing toward an
+      // unrecoverable submission.
+      setTrackingSaveFailed(true);
+      throw new Error('Could not save withdrawal tracking. Try again.');
+    }
+    setTrackingSaveFailed(false);
     trackedWithdrawalRef.current = tracking;
     setTrackedWithdrawal(tracking);
-  }, [trackingKey]);
+  }, [saveTracking]);
   const persistAfterSubmission = useCallback(async (tracking: TrackedWithdrawal): Promise<boolean> => {
     // Once submission was attempted, never fall back to a clean retry screen
     // just because local persistence failed. Retain the state in memory and
     // continue reconciliation conservatively.
+    const saved = await saveTracking(tracking);
+    setTrackingSaveFailed(!saved);
     trackedWithdrawalRef.current = tracking;
     setTrackedWithdrawal(tracking);
-    try {
-      await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
-      return true;
-    } catch {
-      return false;
-    }
-  }, [trackingKey]);
+    return saved;
+  }, [saveTracking]);
+
+  const retryTrackingSave = useCallback(async () => {
+    const tracking = trackedWithdrawalRef.current;
+    if (!tracking) return;
+    const saved = await saveTracking(tracking);
+    if (saved) setTrackingSaveFailed(false);
+  }, [saveTracking]);
 
   const parsedAmount = parseFloat(amount);
   const minimumWithdraw = destinationAsset?.minCheckoutUsd ?? Number.POSITIVE_INFINITY;
@@ -171,7 +195,9 @@ export function WithdrawModal({
             trackedWithdrawalRef.current = restored;
             setTrackedWithdrawal(restored);
             if (restored !== saved) {
-              AsyncStorage.setItem(trackingKey, JSON.stringify(restored)).catch(() => {});
+              void saveTracking(restored).then((ok) => {
+                if (!ok) setTrackingSaveFailed(true);
+              });
             }
             setAmount(String(saved.amount));
             setRecipientAddress(saved.recipientAddress);
@@ -190,10 +216,11 @@ export function WithdrawModal({
         setError(loadError instanceof Error ? loadError.message : 'Could not load the withdrawal route.');
       })
       .finally(() => setRouteLoading(false));
-  }, [isOpen, solanaAddress, trackingKey]);
+  }, [isOpen, saveTracking, solanaAddress, trackingKey]);
 
   const handleClose = () => {
     Keyboard.dismiss();
+    setTrackingSaveFailed(false);
     if (!trackedWithdrawal) {
       setAmount('');
       setState('input');
@@ -336,7 +363,8 @@ export function WithdrawModal({
       if (next !== current) {
         trackedWithdrawalRef.current = next;
         setTrackedWithdrawal(next);
-        await AsyncStorage.setItem(trackingKey, JSON.stringify(next)).catch(() => {});
+        const saved = await saveTracking(next);
+        if (!saved) setTrackingSaveFailed(true);
       }
     });
     void refresh();
@@ -345,12 +373,13 @@ export function WithdrawModal({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [client, trackedWithdrawal, trackingKey]);
+  }, [client, saveTracking, trackedWithdrawal, trackingKey]);
 
   const handleDismissTracking = async () => {
     await AsyncStorage.removeItem(trackingKey);
     trackedWithdrawalRef.current = null;
     setTrackedWithdrawal(null);
+    setTrackingSaveFailed(false);
     setAmount('');
     setQuote(null);
     setTxHash(null);
@@ -384,6 +413,19 @@ export function WithdrawModal({
               <MaterialIcons name="close" size={18} color={semantic.text.dim} />
             </Pressable>
           </View>
+
+          {trackingSaveFailed && (
+            <View style={styles.trackingBanner}>
+              <Text style={styles.trackingBannerText}>Tracking not saved</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry saving tracking"
+                onPress={() => void retryTrackingSave()}
+              >
+                <Text style={styles.trackingBannerRetry}>Retry</Text>
+              </Pressable>
+            </View>
+          )}
 
           {state === 'input' && (
             <>
@@ -633,6 +675,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: semantic.text.primary,
     letterSpacing: 1,
+  },
+  trackingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(232,197,71,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(232,197,71,0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  trackingBannerText: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    fontWeight: '700',
+    color: tokens.colors.primary,
+    letterSpacing: 0.5,
+  },
+  trackingBannerRetry: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: tokens.colors.primary,
+    textTransform: 'uppercase',
   },
   closeBtn: {
     width: 28,

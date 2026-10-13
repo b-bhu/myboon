@@ -208,3 +208,57 @@ export function reconcileWithdrawalTracking(
 
   return tracking;
 }
+
+export interface PersistWithdrawalTrackingOptions {
+  /** Total write attempts, including the first. Defaults to 3. */
+  retries?: number;
+  /** Delay before the first retry; doubles with each further retry. Defaults to 500ms. */
+  baseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  /** Invoked once per failed attempt. Defaults to console.warn without payload. */
+  onError?: (error: unknown, attempt: number) => void;
+}
+
+const DEFAULT_PERSIST_ATTEMPTS = 3;
+const DEFAULT_PERSIST_BASE_DELAY_MS = 500;
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function defaultPersistErrorLogger(error: unknown, attempt: number): void {
+  console.warn(
+    `Withdrawal tracking save failed (attempt ${attempt}).`,
+    error instanceof Error ? error.message : 'Unknown storage error.',
+  );
+}
+
+/**
+ * Persist one tracking snapshot with bounded exponential-backoff retries.
+ * Resolves false only after every attempt failed, so callers can surface a
+ * visible recovery path instead of dropping the restore/reconciliation write.
+ */
+export async function persistWithdrawalTracking(
+  setItem: (key: string, value: string) => Promise<void>,
+  key: string,
+  value: string,
+  options: PersistWithdrawalTrackingOptions = {},
+): Promise<boolean> {
+  const attempts = Math.max(1, options.retries ?? DEFAULT_PERSIST_ATTEMPTS);
+  const baseDelayMs = options.baseDelayMs ?? DEFAULT_PERSIST_BASE_DELAY_MS;
+  const sleep = options.sleep ?? defaultSleep;
+  const onError = options.onError ?? defaultPersistErrorLogger;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await setItem(key, value);
+      return true;
+    } catch (error: unknown) {
+      onError(error, attempt);
+      if (attempt < attempts) {
+        await sleep(baseDelayMs * 2 ** (attempt - 1));
+      }
+    }
+  }
+  return false;
+}

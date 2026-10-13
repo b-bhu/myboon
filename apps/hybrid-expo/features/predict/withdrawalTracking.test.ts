@@ -5,6 +5,7 @@ import {
   markWithdrawalAmbiguous,
   markWithdrawalSubmitted,
   markWithdrawalSubmitting,
+  persistWithdrawalTracking,
   reconcileWithdrawalTracking,
 } from './withdrawalTracking';
 import type { BridgeQuote } from './predict.api';
@@ -93,4 +94,110 @@ test('stale or empty reconciliation cannot regress COMPLETED tracking', () => {
   assert.strictEqual(reconcileWithdrawalTracking(completed, [], {
     state: 'STATE_NEW', transactionId: 'relayer-1', transactionHash: '0xhash', errorMessage: null,
   }, 2_300), completed);
+});
+
+test('persistWithdrawalTracking returns false and logs once per failed attempt', async () => {
+  const attempts: string[] = [];
+  const delays: number[] = [];
+  const logged: number[] = [];
+  let calls = 0;
+  const result = await persistWithdrawalTracking(
+    async () => {
+      calls += 1;
+      attempts.push(`attempt-${calls}`);
+      throw new Error('storage unavailable');
+    },
+    'predict.withdraw.tracking.v1:test',
+    '{"status":"PREPARED"}',
+    {
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      onError: (_error, attempt) => {
+        logged.push(attempt);
+      },
+    },
+  );
+
+  assert.equal(result, false);
+  assert.equal(calls, 3);
+  assert.deepEqual(attempts, ['attempt-1', 'attempt-2', 'attempt-3']);
+  assert.deepEqual(logged, [1, 2, 3]);
+  assert.deepEqual(delays, [500, 1000]);
+});
+
+test('persistWithdrawalTracking succeeds when a later retry works', async () => {
+  let calls = 0;
+  const logged: number[] = [];
+  const result = await persistWithdrawalTracking(
+    async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('storage unavailable');
+    },
+    'predict.withdraw.tracking.v1:test',
+    '{"status":"SUBMITTED"}',
+    {
+      sleep: async () => {},
+      onError: (_error, attempt) => {
+        logged.push(attempt);
+      },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(logged, [1]);
+});
+
+test('persistWithdrawalTracking succeeds first try without logging', async () => {
+  let calls = 0;
+  let logged = 0;
+  const result = await persistWithdrawalTracking(
+    async () => {
+      calls += 1;
+    },
+    'predict.withdraw.tracking.v1:test',
+    '{"status":"BRIDGING"}',
+    {
+      sleep: async () => {
+        throw new Error('sleep must not run when the first attempt succeeds');
+      },
+      onError: () => {
+        logged += 1;
+      },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(calls, 1);
+  assert.equal(logged, 0);
+});
+
+test('default onError warns with attempt and message but no payload', async () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  try {
+    const result = await persistWithdrawalTracking(
+      async () => {
+        throw new Error('quota exceeded');
+      },
+      'predict.withdraw.tracking.v1:test',
+      '{"status":"PREPARED"}',
+      { retries: 1, sleep: async () => {} },
+    );
+    assert.equal(result, false);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  const [message, detail] = warnings[0] as [string, string];
+  assert.match(message, /attempt 1/);
+  assert.match(detail, /quota exceeded/);
+  for (const arg of warnings[0] as string[]) {
+    assert.ok(!arg.includes('status'));
+  }
 });
