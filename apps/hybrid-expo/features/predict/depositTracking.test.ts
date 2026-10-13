@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   canCompleteTrackedDeposit,
+  classifyDepositStatusCheck,
   latestDepositTransaction,
   matchingDepositTransactions,
+  persistDepositTracking,
   type TrackedDepositEvidence,
 } from './depositTracking';
-import type { DepositBridgeTransaction } from './predict.api';
+import type { ClobBalance, DepositBridgeTransaction } from './predict.api';
 
 const tracked: TrackedDepositEvidence = {
   chainId: '137',
@@ -66,4 +68,140 @@ test('matching PROCESSING deposit plus unrelated balance increase does not compl
   const transaction = latestDepositTransaction(matchingDepositTransactions([matching], tracked));
   assert.equal(transaction?.status, 'PROCESSING');
   assert.equal(canCompleteTrackedDeposit(1, 25, transaction), false);
+});
+
+// --- persistDepositTracking --------------------------------------------------
+
+test('save failure logs every attempt and returns false after retries', async () => {
+  const delays: number[] = [];
+  const failures: string[] = [];
+  let calls = 0;
+  const saved = await persistDepositTracking(
+    () => {
+      calls += 1;
+      return Promise.reject(new Error('disk full'));
+    },
+    'storage-key',
+    'payload',
+    {
+      retries: 3,
+      baseDelayMs: 500,
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      onError: (message) => {
+        failures.push(message);
+      },
+    },
+  );
+  assert.equal(saved, false);
+  assert.equal(calls, 3);
+  assert.equal(delays.length, 2, 'no sleep after the final attempt');
+  assert.deepEqual(delays, [500, 1000]);
+  assert.equal(failures.length, 3);
+  assert.ok(failures.every((message) => message.includes('attempt 1/3') || message.includes('attempt 2/3') || message.includes('attempt 3/3')));
+  assert.ok(failures.every((message) => message.includes('disk full')));
+  // The storage key and payload must never reach the log line.
+  assert.ok(failures.every((message) => !message.includes('storage-key') && !message.includes('payload')));
+});
+
+test('fail-then-succeed save retries and returns true', async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  const saved = await persistDepositTracking(
+    () => {
+      calls += 1;
+      return calls === 1 ? Promise.reject(new Error('busy')) : Promise.resolve();
+    },
+    'storage-key',
+    'payload',
+    {
+      retries: 3,
+      baseDelayMs: 500,
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      onError: () => {},
+    },
+  );
+  assert.equal(saved, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [500]);
+});
+
+test('a successful first save never logs or sleeps', async () => {
+  let calls = 0;
+  const failures: string[] = [];
+  const saved = await persistDepositTracking(
+    () => {
+      calls += 1;
+      return Promise.resolve();
+    },
+    'storage-key',
+    'payload',
+    {
+      retries: 3,
+      baseDelayMs: 500,
+      sleep: async () => {
+        throw new Error('no retry expected');
+      },
+      onError: (message) => {
+        failures.push(message);
+      },
+    },
+  );
+  assert.equal(saved, true);
+  assert.equal(calls, 1);
+  assert.deepEqual(failures, []);
+});
+
+// --- classifyDepositStatusCheck ---------------------------------------------
+
+const fulfilledBalance: PromiseSettledResult<ClobBalance | null> = {
+  status: 'fulfilled',
+  value: { balance: 10, allowance: 10 },
+};
+
+test('a rejected status fetch classifies as an error, not an empty result', () => {
+  assert.deepEqual(
+    classifyDepositStatusCheck({
+      transactionsResult: { status: 'rejected', reason: new Error('offline') },
+      balanceResult: fulfilledBalance,
+    }),
+    { outcome: 'error', balanceFailed: false },
+  );
+  assert.deepEqual(
+    classifyDepositStatusCheck({
+      transactionsResult: { status: 'rejected', reason: new Error('offline') },
+      balanceResult: { status: 'rejected', reason: new Error('offline') },
+    }),
+    { outcome: 'error', balanceFailed: true },
+  );
+});
+
+test('a fulfilled empty transaction list is genuinely empty, not an error', () => {
+  assert.deepEqual(
+    classifyDepositStatusCheck({
+      transactionsResult: { status: 'fulfilled', value: [] },
+      balanceResult: fulfilledBalance,
+    }),
+    { outcome: 'empty', balanceFailed: false },
+  );
+  assert.deepEqual(
+    classifyDepositStatusCheck({
+      transactionsResult: { status: 'fulfilled', value: [] },
+      balanceResult: { status: 'rejected', reason: new Error('offline') },
+    }),
+    { outcome: 'empty', balanceFailed: true },
+  );
+});
+
+test('fulfilled transactions classify as data regardless of balance outcome', () => {
+  assert.deepEqual(
+    classifyDepositStatusCheck({
+      transactionsResult: { status: 'fulfilled', value: [matching] },
+      balanceResult: fulfilledBalance,
+    }),
+    { outcome: 'data', balanceFailed: false },
+  );
 });

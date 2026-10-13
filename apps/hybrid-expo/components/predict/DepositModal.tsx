@@ -33,9 +33,11 @@ import type {
 } from '@/features/predict/predict.api';
 import {
   canCompleteTrackedDeposit,
+  classifyDepositStatusCheck,
   depositTransactionKey,
   latestDepositTransaction,
   matchingDepositTransactions,
+  persistDepositTracking,
 } from '@/features/predict/depositTracking';
 
 interface DepositModalProps {
@@ -86,6 +88,8 @@ interface DepositStatusView {
   label: string;
   detail: string;
   tone: DepositStatusTone;
+  /** Set only for a failed status check, so it renders its own Retry action. */
+  retryable?: boolean;
 }
 
 const DEPOSIT_POLL_MS = 10_000;
@@ -162,6 +166,12 @@ export function DepositModal({
   const [statusView, setStatusView] = useState<DepositStatusView | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [trackingStorageKey, setTrackingStorageKey] = useState<string | null>(null);
+  // Re-run the storage effect (same key, bumping a counter) so it retries the
+  // failed snapshot write without touching the tracked state.
+  const [trackingSaveRetryToken, setTrackingSaveRetryToken] = useState(0);
+  // True after the tracked-deposit snapshot could not be written to storage;
+  // cleared once a retry confirms the save (DepositModal issue #313).
+  const [trackingSaveFailed, setTrackingSaveFailed] = useState(false);
   const fundsNotifiedRef = useRef(false);
   const storageKey = polygonAddress && depositWalletAddress
     ? `${DEPOSIT_TRACKING_STORAGE_PREFIX}:${polygonAddress.toLowerCase()}:${depositWalletAddress.toLowerCase()}`
@@ -202,6 +212,7 @@ export function DepositModal({
     setTrackingStorageKey(null);
     setTrackedDeposit(null);
     setStatusView(null);
+    setTrackingSaveFailed(false);
 
     if (!storageKey) {
       return () => {
@@ -249,8 +260,20 @@ export function DepositModal({
   useEffect(() => {
     if (!storageKey || !trackedDeposit || trackingStorageKey !== storageKey) return;
 
-    AsyncStorage.setItem(storageKey, JSON.stringify({ trackedDeposit, statusView })).catch(() => {});
-  }, [statusView, storageKey, trackedDeposit, trackingStorageKey]);
+    let cancelled = false;
+    setTrackingSaveFailed(false);
+    void persistDepositTracking(
+      (key, value) => AsyncStorage.setItem(key, value),
+      storageKey,
+      JSON.stringify({ trackedDeposit, statusView }),
+    ).then((saved) => {
+      if (!cancelled) setTrackingSaveFailed(!saved);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // trackingSaveRetryToken intentionally re-runs this effect for the Retry button.
+  }, [statusView, storageKey, trackedDeposit, trackingStorageKey, trackingSaveRetryToken]);
 
   const refreshDepositStatus = useCallback(async () => {
     if (!trackedDeposit || !polygonAddress) return;
@@ -258,10 +281,37 @@ export function DepositModal({
 
     setStatusLoading(true);
     try {
-      const [transactions, balance] = await Promise.all([
-        fetchDepositStatus(trackedDeposit.address).catch(() => []),
-        fetchClobBalance(client).catch(() => null),
+      const [transactionsResult, balanceResult] = await Promise.allSettled([
+        fetchDepositStatus(trackedDeposit.address),
+        fetchClobBalance(client),
       ]);
+      const { outcome, balanceFailed } = classifyDepositStatusCheck({
+        transactionsResult,
+        balanceResult,
+      });
+
+      if (outcome === 'error') {
+        // A failed status check must not look like "no deposit yet"; show a
+        // distinct error state so the user can retry the check.
+        console.warn(
+          '[predict] Deposit status check failed; keeping the deposit unconfirmed.',
+        );
+        setStatusView({
+          label: "Couldn't check status",
+          detail: 'The deposit status could not be checked just now. Try again in a moment.',
+          tone: 'error',
+          retryable: true,
+        });
+        return;
+      }
+      if (balanceFailed) {
+        console.warn('[predict] Deposit balance check failed; using Bridge status only.');
+      }
+
+      const transactions = transactionsResult.status === 'fulfilled'
+        ? transactionsResult.value
+        : [];
+      const balance = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
       const baseline = trackedDeposit.baselineBalance ?? 0;
       const balanceDelta = trackedDeposit.baselineKnown && balance
@@ -332,6 +382,7 @@ export function DepositModal({
     setTrackingStorageKey(null);
     setTrackedDeposit(null);
     setStatusView(null);
+    setTrackingSaveFailed(false);
     handleClose();
   };
 
@@ -382,8 +433,13 @@ export function DepositModal({
       detail: 'Send funds to the copied address. We will keep checking while this is open.',
       tone: 'waiting',
     });
+    setTrackingSaveFailed(false);
     setStatusLoading(false);
     setTimeout(() => setCopied(null), 2000);
+  };
+
+  const handleRetryTrackingSave = () => {
+    setTrackingSaveRetryToken((token) => token + 1);
   };
 
   const chains = supportedAssets.flatMap((asset) => {
@@ -543,9 +599,28 @@ export function DepositModal({
                 Tracking {trackedDeposit.chainName ?? trackedDeposit.chain.toUpperCase()}
                 {trackedDeposit.tokenSymbol ? ` · ${trackedDeposit.tokenSymbol}` : ''} {truncateAddress(trackedDeposit.address)}
               </Text>
+              {trackingSaveFailed && (
+                <View style={styles.saveBanner}>
+                  <MaterialIcons name="error-outline" size={12} color={tokens.colors.vermillion} />
+                  <Text style={styles.saveBannerText}>Tracking not saved</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry saving deposit tracking"
+                    onPress={handleRetryTrackingSave}
+                    style={styles.saveBannerRetry}
+                  >
+                    <Text style={styles.saveBannerRetryText}>Retry</Text>
+                  </Pressable>
+                </View>
+              )}
               {statusView.tone === 'success' && (
                 <Pressable onPress={() => void handleDone()} style={styles.doneBtn}>
                   <Text style={styles.doneText}>Done</Text>
+                </Pressable>
+              )}
+              {statusView.retryable && !statusLoading && (
+                <Pressable onPress={() => void refreshDepositStatus()} style={styles.doneBtn}>
+                  <Text style={styles.doneText}>Retry</Text>
                 </Pressable>
               )}
             </View>
@@ -826,5 +901,36 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.5,
+  },
+  saveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(214,77,64,0.35)',
+    backgroundColor: 'rgba(214,77,64,0.12)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  saveBannerText: {
+    flex: 1,
+    fontFamily: 'monospace',
+    fontSize: 8,
+    fontWeight: '700',
+    color: tokens.colors.vermillion,
+  },
+  saveBannerRetry: {
+    borderWidth: 1,
+    borderColor: tokens.colors.vermillion,
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  saveBannerRetryText: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    fontWeight: '700',
+    color: tokens.colors.vermillion,
   },
 });

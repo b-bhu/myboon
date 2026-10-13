@@ -1,4 +1,4 @@
-import type { DepositBridgeTransaction } from './predict.api';
+import type { ClobBalance, DepositBridgeTransaction } from './predict.api';
 
 export interface TrackedDepositEvidence {
   chainId?: string;
@@ -108,4 +108,97 @@ export function canCompleteTrackedDeposit(
 ): boolean {
   return isCompletedDepositEvidence(transaction)
     || balanceMatchesTrackedDeposit(balanceDelta, intendedAmount);
+}
+
+// --- Deposit tracking persistence -------------------------------------------
+
+export type DepositTrackingLogger = (message: string, ...details: unknown[]) => void;
+
+export type StorageSetItem = (key: string, value: string) => Promise<void>;
+
+export interface PersistDepositTrackingOptions {
+  /** Total attempts, including the first one. Defaults to 3. */
+  retries?: number;
+  /** Base delay in milliseconds; attempt N waits baseDelayMs * 2^(N-1). Defaults to 500. */
+  baseDelayMs?: number;
+  /** Injectable delay (defaults to a real setTimeout) so tests never wait. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Injectable warning logger (defaults to console.warn); receives no payloads. */
+  onError?: DepositTrackingLogger;
+}
+
+const DEFAULT_SAVE_ATTEMPTS = 3;
+const DEFAULT_SAVE_BASE_DELAY_MS = 500;
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Persist the tracked-deposit snapshot with bounded exponential-backoff
+ * retries. Returns true when a write is confirmed, false after every attempt
+ * has failed. Callers must surface a `false` result to the user; the failures
+ * themselves are only logged, without payloads or storage keys.
+ */
+export async function persistDepositTracking(
+  setItem: StorageSetItem,
+  key: string,
+  value: string,
+  options: PersistDepositTrackingOptions = {},
+): Promise<boolean> {
+  const attempts = Math.max(1, options.retries ?? DEFAULT_SAVE_ATTEMPTS);
+  const baseDelayMs = Math.max(0, options.baseDelayMs ?? DEFAULT_SAVE_BASE_DELAY_MS);
+  const sleep = options.sleep ?? defaultSleep;
+  const onError = options.onError ?? ((message: string, ...details: unknown[]) => {
+    console.warn(message, ...details);
+  });
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await setItem(key, value);
+      return true;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unknown error';
+      onError(`[predict] Deposit tracking save failed (attempt ${attempt}/${attempts}): ${detail}`);
+      if (attempt < attempts) {
+        await sleep(baseDelayMs * 2 ** (attempt - 1));
+      }
+    }
+  }
+  return false;
+}
+
+// --- Deposit status check classification ------------------------------------
+
+export interface DepositStatusCheckInputs {
+  /** Settlement of the Bridge status fetch (fulfilled transactions, rejected on failure). */
+  transactionsResult: PromiseSettledResult<DepositBridgeTransaction[]>;
+  /** Settlement of the CLOB balance fetch (fulfilled value or null, rejected on failure). */
+  balanceResult: PromiseSettledResult<ClobBalance | null>;
+}
+
+export type DepositStatusCheckOutcome = 'error' | 'empty' | 'data';
+
+/**
+ * Classify a settled status check. A rejected Bridge status fetch is an error
+ * state, never "no deposit yet"; a fulfilled empty list is genuinely empty.
+ * A balance rejection is secondary: the status fetch carries the deposit
+ * evidence, so it decides the outcome, while the balance rejection is only
+ * reported so callers can log it.
+ */
+export function classifyDepositStatusCheck({
+  transactionsResult,
+  balanceResult,
+}: DepositStatusCheckInputs): {
+  outcome: DepositStatusCheckOutcome;
+  balanceFailed: boolean;
+} {
+  if (transactionsResult.status === 'rejected') {
+    return { outcome: 'error', balanceFailed: balanceResult.status === 'rejected' };
+  }
+  const balanceFailed = balanceResult.status === 'rejected';
+  if (transactionsResult.value.length === 0) {
+    return { outcome: 'empty', balanceFailed };
+  }
+  return { outcome: 'data', balanceFailed };
 }
