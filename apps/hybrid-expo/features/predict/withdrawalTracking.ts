@@ -137,6 +137,52 @@ export function isWithdrawalTerminal(tracking: TrackedWithdrawal): boolean {
   return tracking.status === 'COMPLETED' || tracking.status === 'FAILED';
 }
 
+export interface TrackingSaveDecisionInput {
+  /** Whether the modal still holds a withdrawal whose tracking record matters. */
+  hasTrackedWithdrawal: boolean;
+  /** Whether the latest tracking persistence write succeeded. */
+  saveSucceeded: boolean;
+}
+
+/**
+ * Next "Tracking not saved" banner state after a tracking save completes.
+ * A failed save keeps the warning while a tracked (unsaved) withdrawal
+ * remains; a successful save — or there being no tracked withdrawal at all —
+ * clears it.
+ */
+export function nextTrackingSaveFailed({
+  hasTrackedWithdrawal,
+  saveSucceeded,
+}: TrackingSaveDecisionInput): boolean {
+  if (!hasTrackedWithdrawal) return false;
+  return !saveSucceeded;
+}
+
+/**
+ * Whether closing the modal may clear the "Tracking not saved" warning.
+ * Closing must keep the warning while an unsaved tracked withdrawal remains,
+ * so the pending state survives close/reopen. Dismissal (nothing tracked)
+ * is the only close path that clears it.
+ */
+export function shouldClearTrackingSaveFailedOnClose({
+  hasTrackedWithdrawal,
+}: {
+  hasTrackedWithdrawal: boolean;
+}): boolean {
+  return !hasTrackedWithdrawal;
+}
+
+/**
+ * Pre-submission guard: never send a transfer without a recoverable tracking
+ * record. Throws so the caller's catch path surfaces the failure before any
+ * submission continues.
+ */
+export function requireTrackingSaved(saved: boolean): void {
+  if (!saved) {
+    throw new Error('Could not save withdrawal tracking. Try again.');
+  }
+}
+
 function bridgeAmountMatches(transaction: DepositBridgeTransaction, tracking: TrackedWithdrawal): boolean {
   if (!transaction.fromAmountBaseUnit) return true;
   const amount = Number(transaction.fromAmountBaseUnit) / 1e6;

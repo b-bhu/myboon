@@ -5,8 +5,11 @@ import {
   markWithdrawalAmbiguous,
   markWithdrawalSubmitted,
   markWithdrawalSubmitting,
+  nextTrackingSaveFailed,
   persistWithdrawalTracking,
   reconcileWithdrawalTracking,
+  requireTrackingSaved,
+  shouldClearTrackingSaveFailedOnClose,
 } from './withdrawalTracking';
 import type { BridgeQuote } from './predict.api';
 
@@ -200,4 +203,27 @@ test('default onError warns with attempt and message but no payload', async () =
   for (const arg of warnings[0] as string[]) {
     assert.ok(!arg.includes('status'));
   }
+});
+
+test('nextTrackingSaveFailed keeps the warning only while a tracked withdrawal is unsaved', () => {
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: true, saveSucceeded: false }), true);
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: true, saveSucceeded: true }), false);
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: false, saveSucceeded: false }), false);
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: false, saveSucceeded: true }), false);
+});
+
+test('close does not clear the pending-unsaved flag while tracking remains', () => {
+  assert.equal(
+    shouldClearTrackingSaveFailedOnClose({ hasTrackedWithdrawal: true }),
+    false,
+  );
+  assert.equal(
+    shouldClearTrackingSaveFailedOnClose({ hasTrackedWithdrawal: false }),
+    true,
+  );
+});
+
+test('requireTrackingSaved throws so a pre-submit save failure blocks the withdrawal', () => {
+  assert.throws(() => requireTrackingSaved(false), /Could not save withdrawal tracking/);
+  assert.doesNotThrow(() => requireTrackingSaved(true));
 });
