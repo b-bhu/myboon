@@ -33,9 +33,12 @@ import type {
 } from '@/features/predict/predict.api';
 import {
   canCompleteTrackedDeposit,
+  classifyDepositStatusCheck,
   depositTransactionKey,
   latestDepositTransaction,
   matchingDepositTransactions,
+  persistDepositTracking,
+  statusViewToPersist,
 } from '@/features/predict/depositTracking';
 
 interface DepositModalProps {
@@ -86,6 +89,8 @@ interface DepositStatusView {
   label: string;
   detail: string;
   tone: DepositStatusTone;
+  /** Set only for a failed status check, so the card shows its Retry action. */
+  retryable?: boolean;
 }
 
 const DEPOSIT_POLL_MS = 10_000;
@@ -162,7 +167,17 @@ export function DepositModal({
   const [statusView, setStatusView] = useState<DepositStatusView | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [trackingStorageKey, setTrackingStorageKey] = useState<string | null>(null);
+  // Re-run the storage effect (same key, bumping a counter) so it retries the
+  // failed snapshot write without touching the tracked state.
+  const [trackingSaveRetryToken, setTrackingSaveRetryToken] = useState(0);
+  // True after the tracked-deposit snapshot could not be written to storage;
+  // cleared once the latest generation's save confirms (DepositModal, #313).
+  const [trackingSaveFailed, setTrackingSaveFailed] = useState(false);
   const fundsNotifiedRef = useRef(false);
+  // Sequence number incremented per save; only the latest generation may flip
+  // trackingSaveFailed, and older in-flight saves pass a shouldContinue gate
+  // so they stop before they can overwrite a newer snapshot.
+  const saveGenRef = useRef(0);
   const storageKey = polygonAddress && depositWalletAddress
     ? `${DEPOSIT_TRACKING_STORAGE_PREFIX}:${polygonAddress.toLowerCase()}:${depositWalletAddress.toLowerCase()}`
     : null;
@@ -202,6 +217,7 @@ export function DepositModal({
     setTrackingStorageKey(null);
     setTrackedDeposit(null);
     setStatusView(null);
+    setTrackingSaveFailed(false);
 
     if (!storageKey) {
       return () => {
@@ -231,7 +247,9 @@ export function DepositModal({
             }
           : null;
         setTrackedDeposit(restored);
-        setStatusView(saved.statusView ?? null);
+        // A snapshot may still carry a transient "Couldn't check status" view
+        // from before it stopped being persisted; reopening must not show it.
+        setStatusView(statusViewToPersist(saved.statusView));
         setTrackingStorageKey(restored ? storageKey : null);
       })
       .catch(() => {
@@ -249,8 +267,28 @@ export function DepositModal({
   useEffect(() => {
     if (!storageKey || !trackedDeposit || trackingStorageKey !== storageKey) return;
 
-    AsyncStorage.setItem(storageKey, JSON.stringify({ trackedDeposit, statusView })).catch(() => {});
-  }, [statusView, storageKey, trackedDeposit, trackingStorageKey]);
+    // A newer save (state changed again, Retry pressed) supersedes this one:
+    // the older loop stops at its next gate instead of overwriting fresh data.
+    let cancelled = false;
+    const thisSaveGen = ++saveGenRef.current;
+    const isLatestSave = () => !cancelled && thisSaveGen === saveGenRef.current;
+    void persistDepositTracking(
+      (key, value) => AsyncStorage.setItem(key, value),
+      storageKey,
+      JSON.stringify({ trackedDeposit, statusView: statusViewToPersist(statusView) }),
+      { shouldContinue: isLatestSave },
+    ).then((result) => {
+      // Only the latest generation may touch the flag: a superseded save
+      // changes nothing, a failed save raises the banner, a confirmed one
+      // clears it (no banner flicker at the start of every save).
+      if (!isLatestSave()) return;
+      setTrackingSaveFailed(result === 'failed');
+    });
+    return () => {
+      cancelled = true;
+    };
+    // trackingSaveRetryToken intentionally re-runs this effect for the Retry button.
+  }, [statusView, storageKey, trackedDeposit, trackingStorageKey, trackingSaveRetryToken]);
 
   const refreshDepositStatus = useCallback(async () => {
     if (!trackedDeposit || !polygonAddress) return;
@@ -258,10 +296,37 @@ export function DepositModal({
 
     setStatusLoading(true);
     try {
-      const [transactions, balance] = await Promise.all([
-        fetchDepositStatus(trackedDeposit.address).catch(() => []),
-        fetchClobBalance(client).catch(() => null),
+      const [transactionsResult, balanceResult] = await Promise.allSettled([
+        fetchDepositStatus(trackedDeposit.address),
+        fetchClobBalance(client),
       ]);
+      const { outcome, balanceFailed } = classifyDepositStatusCheck({
+        transactionsResult,
+        balanceResult,
+      });
+
+      if (outcome === 'error') {
+        // A failed status check must not look like "no deposit yet"; show a
+        // distinct error state so the user can retry the check.
+        console.warn(
+          '[predict] Deposit status check failed; keeping the deposit unconfirmed.',
+        );
+        setStatusView({
+          label: "Couldn't check status",
+          detail: 'The deposit status could not be checked just now. Try again in a moment.',
+          tone: 'error',
+          retryable: true,
+        });
+        return;
+      }
+      if (balanceFailed) {
+        console.warn('[predict] Deposit balance check failed; using Bridge status only.');
+      }
+
+      const transactions = transactionsResult.status === 'fulfilled'
+        ? transactionsResult.value
+        : [];
+      const balance = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
       const baseline = trackedDeposit.baselineBalance ?? 0;
       const balanceDelta = trackedDeposit.baselineKnown && balance
@@ -332,6 +397,7 @@ export function DepositModal({
     setTrackingStorageKey(null);
     setTrackedDeposit(null);
     setStatusView(null);
+    setTrackingSaveFailed(false);
     handleClose();
   };
 
@@ -384,6 +450,15 @@ export function DepositModal({
     });
     setStatusLoading(false);
     setTimeout(() => setCopied(null), 2000);
+  };
+
+  // One Retry for both failure surfaces: a failed status check and a failed
+  // snapshot save are shown together in the status card, and stacked retry
+  // buttons read as two separate broken flows. This re-runs the status check
+  // and re-attempts the save. The save effect re-runs via trackingSaveRetryToken.
+  const handleRetryTrackingSave = () => {
+    setTrackingSaveRetryToken((token) => token + 1);
+    void refreshDepositStatus();
   };
 
   const chains = supportedAssets.flatMap((asset) => {
@@ -543,9 +618,28 @@ export function DepositModal({
                 Tracking {trackedDeposit.chainName ?? trackedDeposit.chain.toUpperCase()}
                 {trackedDeposit.tokenSymbol ? ` · ${trackedDeposit.tokenSymbol}` : ''} {truncateAddress(trackedDeposit.address)}
               </Text>
+              {trackingSaveFailed && (
+                <View style={styles.saveBanner}>
+                  <MaterialIcons name="error-outline" size={12} color={tokens.colors.vermillion} />
+                  <Text style={styles.saveBannerText}>Tracking not saved</Text>
+                </View>
+              )}
               {statusView.tone === 'success' && (
                 <Pressable onPress={() => void handleDone()} style={styles.doneBtn}>
                   <Text style={styles.doneText}>Done</Text>
+                </Pressable>
+              )}
+              {/*
+                A single Retry for the card: it re-runs the status check and
+                re-attempts the snapshot save, so a failed check plus a failed
+                save never stack two Retry buttons. Shown when the check is
+                retryable, when the save failed, or both.
+              */}
+              {(statusView.retryable || trackingSaveFailed) && !statusLoading && !(
+                statusView.tone === 'success'
+              ) && (
+                <Pressable onPress={() => void handleRetryTrackingSave()} style={styles.doneBtn}>
+                  <Text style={styles.doneText}>Retry</Text>
                 </Pressable>
               )}
             </View>
@@ -826,5 +920,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.5,
+  },
+  saveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(214,77,64,0.35)',
+    backgroundColor: 'rgba(214,77,64,0.12)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  saveBannerText: {
+    flex: 1,
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '700',
+    color: tokens.colors.vermillion,
   },
 });
