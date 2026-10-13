@@ -28,6 +28,7 @@ import {
 import type { BridgeQuote, BridgeSupportedAsset } from '@/features/predict/predict.api';
 import { normalizePredictError } from '@/features/predict/predict.errors';
 import {
+  chooseReopenedWithdrawal,
   createPreparedWithdrawal,
   isWithdrawalTerminal,
   markWithdrawalAmbiguous,
@@ -219,33 +220,44 @@ export function WithdrawModal({
             lastError: parsed.lastError ?? null,
           };
           if (saved?.bridgeAddress && saved.quote) {
-            const restored = saved.status === 'SUBMITTING'
-              ? markWithdrawalAmbiguous(saved, 'The app closed while submission was in progress.')
-              : saved;
-            const wasAlreadyTracked = trackedWithdrawalRef.current?.bridgeAddress === restored.bridgeAddress;
-            // Reopen over an unsaved record: keep the pending-unsaved warning
-            // and try the save again instead of resetting it to hidden (the
-            // next save that succeeds clears the flag).
-            if (wasAlreadyTracked) {
-              void saveTracking(restored).then((ok) => {
-                if (ok) setTrackingSaveFailedIfMounted(false);
-              });
-            } else {
-              setTrackingSaveFailedIfMounted(false);
-            }
-            trackedWithdrawalRef.current = restored;
-            setTrackedWithdrawal(restored);
-            if (restored !== saved) {
+            const wasAlreadyTracked = trackedWithdrawalRef.current?.bridgeAddress === saved.bridgeAddress;
+            const chosen = wasAlreadyTracked
+              ? chooseReopenedWithdrawal(trackedWithdrawalRef.current, saved)
+              : { tracking: saved, preferInMemory: false };
+            const restored = chosen.preferInMemory
+              ? chosen.tracking
+              : saved.status === 'SUBMITTING'
+                // Fresh reopen from storage: a snapshot saved mid-submission
+                // has an unknown outcome, so mark it ambiguous instead of
+                // retrying.
+                ? markWithdrawalAmbiguous(saved, 'The app closed while submission was in progress.')
+                : saved;
+            if (chosen.preferInMemory) {
+              // Reopen over an unsaved record: storage may hold an older
+              // snapshot, so memory stays authoritative and the pending-unsaved
+              // warning survives until this one retry save succeeds.
               void saveTracking(restored).then((ok) => {
                 setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
                   hasTrackedWithdrawal: trackedWithdrawalRef.current?.bridgeAddress === restored.bridgeAddress,
                   saveSucceeded: ok,
                 }));
               });
+            } else {
+              setTrackingSaveFailedIfMounted(false);
+              trackedWithdrawalRef.current = restored;
+              setTrackedWithdrawal(restored);
+              if (restored !== saved) {
+                void saveTracking(restored).then((ok) => {
+                  setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+                    hasTrackedWithdrawal: trackedWithdrawalRef.current?.bridgeAddress === restored.bridgeAddress,
+                    saveSucceeded: ok,
+                  }));
+                });
+              }
             }
-            setAmount(String(saved.amount));
-            setRecipientAddress(saved.recipientAddress);
-            setQuote(saved.quote);
+            setAmount(String(restored.amount));
+            setRecipientAddress(restored.recipientAddress);
+            setQuote(restored.quote);
             setTxHash(restored.transactionHash);
             setBridgeStatus(trackingMessage(restored));
             setState(restored.status === 'PREPARED' ? 'confirming' : 'success');

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  chooseReopenedWithdrawal,
   createPreparedWithdrawal,
   markWithdrawalAmbiguous,
   markWithdrawalSubmitted,
@@ -226,4 +227,53 @@ test('close does not clear the pending-unsaved flag while tracking remains', () 
 test('requireTrackingSaved throws so a pre-submit save failure blocks the withdrawal', () => {
   assert.throws(() => requireTrackingSaved(false), /Could not save withdrawal tracking/);
   assert.doesNotThrow(() => requireTrackingSaved(true));
+});
+
+test('chooseReopenedWithdrawal keeps the newer in-memory record for the same withdrawal', () => {
+  const prepared = createPreparedWithdrawal({
+    amount: 25, recipientAddress: 'recipient', bridgeAddress: '0xbridge', quote, now: 1_000,
+  });
+  // Memory holds the newer SUBMITTED snapshot; storage still holds an older
+  // PREPARED snapshot because the last save failed.
+  const inMemory = markWithdrawalSubmitted(markWithdrawalSubmitting(prepared, 1_100), 'relayer-1', '0xhash', 1_200);
+  const stored = JSON.parse(JSON.stringify(prepared)) as typeof prepared;
+
+  const chosen = chooseReopenedWithdrawal(inMemory, stored);
+
+  assert.equal(chosen.preferInMemory, true);
+  assert.strictEqual(chosen.tracking, inMemory);
+  assert.equal(chosen.tracking.status, 'SUBMITTED');
+});
+
+test('chooseReopenedWithdrawal falls back to storage for a different or absent in-memory record', () => {
+  const prepared = createPreparedWithdrawal({
+    amount: 25, recipientAddress: 'recipient', bridgeAddress: '0xbridge', quote, now: 1_000,
+  });
+  const otherPrepared = createPreparedWithdrawal({
+    amount: 10, recipientAddress: 'recipient', bridgeAddress: '0xother', quote, now: 2_000,
+  });
+
+  const differentBridge = chooseReopenedWithdrawal(otherPrepared, prepared);
+  assert.equal(differentBridge.preferInMemory, false);
+  assert.strictEqual(differentBridge.tracking, prepared);
+
+  const freshStart = chooseReopenedWithdrawal(null, prepared);
+  assert.equal(freshStart.preferInMemory, false);
+  assert.strictEqual(freshStart.tracking, prepared);
+});
+
+test('a failed retry of the in-memory record keeps the pending-unsaved warning visible', () => {
+  const prepared = createPreparedWithdrawal({
+    amount: 25, recipientAddress: 'recipient', bridgeAddress: '0xbridge', quote, now: 1_000,
+  });
+  const inMemory = markWithdrawalSubmitted(markWithdrawalSubmitting(prepared, 1_100), 'relayer-1', '0xhash', 1_200);
+
+  const chosen = chooseReopenedWithdrawal(inMemory, JSON.parse(JSON.stringify(prepared)) as typeof prepared);
+  // The reopen path retries exactly this record once; the banner must stay up
+  // while that save fails and a tracked withdrawal remains.
+  assert.equal(chosen.preferInMemory, true);
+  assert.equal(
+    nextTrackingSaveFailed({ hasTrackedWithdrawal: true, saveSucceeded: false }),
+    true,
+  );
 });

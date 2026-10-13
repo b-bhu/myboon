@@ -158,6 +158,31 @@ export function nextTrackingSaveFailed({
   return !saveSucceeded;
 }
 
+export interface ReopenedWithdrawalChoice {
+  /** The record the reopen should present and keep tracking. */
+  tracking: TrackedWithdrawal;
+  /** True when the in-memory record was newer-or-equal and was chosen. */
+  preferInMemory: boolean;
+}
+
+/**
+ * Choose which withdrawal record a reopened modal presents. Storage can hold
+ * an older snapshot than memory when the last save failed, so when the modal
+ * still tracks the same withdrawal (same Bridge address) the in-memory record
+ * wins — regressing to storage could roll a SUBMITTED record back to
+ * PREPARED and hide the pending-unsaved warning. A fresh app start (no
+ * in-memory record) or a different withdrawal falls back to storage.
+ */
+export function chooseReopenedWithdrawal(
+  inMemory: TrackedWithdrawal | null,
+  stored: TrackedWithdrawal,
+): ReopenedWithdrawalChoice {
+  if (inMemory && inMemory.bridgeAddress === stored.bridgeAddress) {
+    return { tracking: inMemory, preferInMemory: true };
+  }
+  return { tracking: stored, preferInMemory: false };
+}
+
 /**
  * Whether closing the modal may clear the "Tracking not saved" warning.
  * Closing must keep the warning while an unsaved tracked withdrawal remains,
