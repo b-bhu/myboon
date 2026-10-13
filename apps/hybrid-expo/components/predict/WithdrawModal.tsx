@@ -28,6 +28,7 @@ import {
 import type { BridgeQuote, BridgeSupportedAsset } from '@/features/predict/predict.api';
 import { normalizePredictError } from '@/features/predict/predict.errors';
 import {
+  chooseReopenedWithdrawal,
   createPreparedWithdrawal,
   isWithdrawalTerminal,
   markWithdrawalAmbiguous,
@@ -35,7 +36,11 @@ import {
   markWithdrawalFailed,
   markWithdrawalSubmitted,
   markWithdrawalSubmitting,
+  nextTrackingSaveFailed,
+  persistWithdrawalTracking,
   reconcileWithdrawalTracking,
+  requireTrackingSaved,
+  shouldClearTrackingSaveFailedOnClose,
 } from '@/features/predict/withdrawalTracking';
 import type { TrackedWithdrawal } from '@/features/predict/withdrawalTracking';
 import { createSingleFlightLock, runSingleFlight } from '@/features/predict/singleFlight';
@@ -91,28 +96,78 @@ export function WithdrawModal({
   const [routeLoading, setRouteLoading] = useState(false);
   const [quote, setQuote] = useState<BridgeQuote | null>(null);
   const [trackedWithdrawal, setTrackedWithdrawal] = useState<TrackedWithdrawal | null>(null);
+  // Not reset on close: the pending-unsaved warning must survive close/reopen
+  // while trackedWithdrawalRef still holds an unsaved record.
+  const [trackingSaveFailed, setTrackingSaveFailed] = useState(false);
+  const [retrySaving, setRetrySaving] = useState(false);
   const trackedWithdrawalRef = useRef<TrackedWithdrawal | null>(null);
+  const isMountedRef = useRef(true);
+  const retryInFlightRef = useRef(false);
   const submitLockRef = useRef(createSingleFlightLock());
   const refreshLockRef = useRef(createSingleFlightLock());
   const trackingKey = `${WITHDRAW_TRACKING_PREFIX}:${client.account.wallet.toLowerCase()}`;
-  const persistTracking = useCallback(async (tracking: TrackedWithdrawal) => {
-    await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
-    trackedWithdrawalRef.current = tracking;
-    setTrackedWithdrawal(tracking);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const setTrackingSaveFailedIfMounted = useCallback((failed: boolean) => {
+    if (isMountedRef.current) setTrackingSaveFailed(failed);
+  }, []);
+
+  const saveTracking = useCallback(async (tracking: TrackedWithdrawal): Promise<boolean> => {
+    return persistWithdrawalTracking(
+      (key, value) => AsyncStorage.setItem(key, value),
+      trackingKey,
+      JSON.stringify(tracking),
+    );
   }, [trackingKey]);
+
+  const persistTracking = useCallback(async (tracking: TrackedWithdrawal) => {
+    const saved = await saveTracking(tracking);
+    // Pre-submission: never send a transfer without a recoverable tracking
+    // record, and never adopt it into state until the save succeeded. Abort
+    // so the catch path surfaces the failure instead of continuing toward an
+    // unrecoverable submission.
+    requireTrackingSaved(saved);
+    if (isMountedRef.current) {
+      setTrackingSaveFailed(false);
+      trackedWithdrawalRef.current = tracking;
+      setTrackedWithdrawal(tracking);
+    }
+  }, [saveTracking]);
   const persistAfterSubmission = useCallback(async (tracking: TrackedWithdrawal): Promise<boolean> => {
     // Once submission was attempted, never fall back to a clean retry screen
     // just because local persistence failed. Retain the state in memory and
     // continue reconciliation conservatively.
+    const saved = await saveTracking(tracking);
+    setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+      hasTrackedWithdrawal: true,
+      saveSucceeded: saved,
+    }));
     trackedWithdrawalRef.current = tracking;
-    setTrackedWithdrawal(tracking);
-    try {
-      await AsyncStorage.setItem(trackingKey, JSON.stringify(tracking));
-      return true;
-    } catch {
-      return false;
+    if (isMountedRef.current) setTrackedWithdrawal(tracking);
+    return saved;
+  }, [saveTracking, setTrackingSaveFailedIfMounted]);
+
+  const retryTrackingSave = useCallback(async () => {
+    const tracking = trackedWithdrawalRef.current;
+    // In-flight guard: ignore extra taps while a retry is running.
+    if (!tracking || retryInFlightRef.current) return;
+    retryInFlightRef.current = true;
+    if (isMountedRef.current) setRetrySaving(true);
+    const saved = await saveTracking(tracking);
+    if (isMountedRef.current) {
+      if (saved) {
+        setTrackingSaveFailed(false);
+      }
+      setRetrySaving(false);
     }
-  }, [trackingKey]);
+    retryInFlightRef.current = false;
+  }, [saveTracking]);
 
   const parsedAmount = parseFloat(amount);
   const minimumWithdraw = destinationAsset?.minCheckoutUsd ?? Number.POSITIVE_INFINITY;
@@ -165,17 +220,44 @@ export function WithdrawModal({
             lastError: parsed.lastError ?? null,
           };
           if (saved?.bridgeAddress && saved.quote) {
-            const restored = saved.status === 'SUBMITTING'
-              ? markWithdrawalAmbiguous(saved, 'The app closed while submission was in progress.')
-              : saved;
-            trackedWithdrawalRef.current = restored;
-            setTrackedWithdrawal(restored);
-            if (restored !== saved) {
-              AsyncStorage.setItem(trackingKey, JSON.stringify(restored)).catch(() => {});
+            const wasAlreadyTracked = trackedWithdrawalRef.current?.bridgeAddress === saved.bridgeAddress;
+            const chosen = wasAlreadyTracked
+              ? chooseReopenedWithdrawal(trackedWithdrawalRef.current, saved)
+              : { tracking: saved, preferInMemory: false };
+            const restored = chosen.preferInMemory
+              ? chosen.tracking
+              : saved.status === 'SUBMITTING'
+                // Fresh reopen from storage: a snapshot saved mid-submission
+                // has an unknown outcome, so mark it ambiguous instead of
+                // retrying.
+                ? markWithdrawalAmbiguous(saved, 'The app closed while submission was in progress.')
+                : saved;
+            if (chosen.preferInMemory) {
+              // Reopen over an unsaved record: storage may hold an older
+              // snapshot, so memory stays authoritative and the pending-unsaved
+              // warning survives until this one retry save succeeds.
+              void saveTracking(restored).then((ok) => {
+                setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+                  hasTrackedWithdrawal: trackedWithdrawalRef.current?.bridgeAddress === restored.bridgeAddress,
+                  saveSucceeded: ok,
+                }));
+              });
+            } else {
+              setTrackingSaveFailedIfMounted(false);
+              trackedWithdrawalRef.current = restored;
+              setTrackedWithdrawal(restored);
+              if (restored !== saved) {
+                void saveTracking(restored).then((ok) => {
+                  setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+                    hasTrackedWithdrawal: trackedWithdrawalRef.current?.bridgeAddress === restored.bridgeAddress,
+                    saveSucceeded: ok,
+                  }));
+                });
+              }
             }
-            setAmount(String(saved.amount));
-            setRecipientAddress(saved.recipientAddress);
-            setQuote(saved.quote);
+            setAmount(String(restored.amount));
+            setRecipientAddress(restored.recipientAddress);
+            setQuote(restored.quote);
             setTxHash(restored.transactionHash);
             setBridgeStatus(trackingMessage(restored));
             setState(restored.status === 'PREPARED' ? 'confirming' : 'success');
@@ -190,10 +272,17 @@ export function WithdrawModal({
         setError(loadError instanceof Error ? loadError.message : 'Could not load the withdrawal route.');
       })
       .finally(() => setRouteLoading(false));
-  }, [isOpen, solanaAddress, trackingKey]);
+  }, [isOpen, saveTracking, setTrackingSaveFailedIfMounted, solanaAddress, trackingKey]);
 
   const handleClose = () => {
     Keyboard.dismiss();
+    // Closing must not clear the pending-unsaved warning while a tracked
+    // withdrawal is still unsaved — the flag has to survive close/reopen.
+    if (shouldClearTrackingSaveFailedOnClose({
+      hasTrackedWithdrawal: trackedWithdrawalRef.current !== null,
+    })) {
+      setTrackingSaveFailedIfMounted(false);
+    }
     if (!trackedWithdrawal) {
       setAmount('');
       setState('input');
@@ -336,7 +425,12 @@ export function WithdrawModal({
       if (next !== current) {
         trackedWithdrawalRef.current = next;
         setTrackedWithdrawal(next);
-        await AsyncStorage.setItem(trackingKey, JSON.stringify(next)).catch(() => {});
+        const saved = await saveTracking(next);
+        if (cancelled || !isMountedRef.current) return;
+        setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+          hasTrackedWithdrawal: true,
+          saveSucceeded: saved,
+        }));
       }
     });
     void refresh();
@@ -345,12 +439,16 @@ export function WithdrawModal({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [client, trackedWithdrawal, trackingKey]);
+  }, [client, saveTracking, setTrackingSaveFailedIfMounted, trackedWithdrawal, trackingKey]);
 
   const handleDismissTracking = async () => {
     await AsyncStorage.removeItem(trackingKey);
     trackedWithdrawalRef.current = null;
     setTrackedWithdrawal(null);
+    // Nothing is tracked anymore, so the pending-unsaved warning can go.
+    if (isMountedRef.current) setTrackingSaveFailed(false);
+    setRetrySaving(false);
+    retryInFlightRef.current = false;
     setAmount('');
     setQuote(null);
     setTxHash(null);
@@ -384,6 +482,21 @@ export function WithdrawModal({
               <MaterialIcons name="close" size={18} color={semantic.text.dim} />
             </Pressable>
           </View>
+
+          {trackingSaveFailed && (
+            <View style={styles.trackingBanner}>
+              <Text style={styles.trackingBannerText}>Tracking not saved</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry saving tracking"
+                onPress={retrySaving ? undefined : () => void retryTrackingSave()}
+                disabled={retrySaving}
+                style={[styles.trackingBannerRetryBtn, retrySaving && styles.trackingBannerRetryDisabled]}
+              >
+                <Text style={styles.trackingBannerRetry}>{retrySaving ? 'Saving…' : 'Retry'}</Text>
+              </Pressable>
+            </View>
+          )}
 
           {state === 'input' && (
             <>
@@ -633,6 +746,41 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: semantic.text.primary,
     letterSpacing: 1,
+  },
+  trackingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(232,197,71,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(232,197,71,0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  trackingBannerText: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '700',
+    color: tokens.colors.primary,
+    letterSpacing: 0.5,
+    flex: 1,
+  },
+  trackingBannerRetryBtn: {
+    paddingHorizontal: tokens.spacing.sm,
+    paddingVertical: tokens.spacing.xs,
+  },
+  trackingBannerRetryDisabled: {
+    opacity: tokens.opacity.muted,
+  },
+  trackingBannerRetry: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: tokens.colors.primary,
+    textTransform: 'uppercase',
   },
   closeBtn: {
     width: 28,

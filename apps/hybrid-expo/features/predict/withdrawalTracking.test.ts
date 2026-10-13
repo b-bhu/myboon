@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  chooseReopenedWithdrawal,
   createPreparedWithdrawal,
   markWithdrawalAmbiguous,
   markWithdrawalSubmitted,
   markWithdrawalSubmitting,
+  nextTrackingSaveFailed,
+  persistWithdrawalTracking,
   reconcileWithdrawalTracking,
+  requireTrackingSaved,
+  shouldClearTrackingSaveFailedOnClose,
 } from './withdrawalTracking';
 import type { BridgeQuote } from './predict.api';
 
@@ -93,4 +98,182 @@ test('stale or empty reconciliation cannot regress COMPLETED tracking', () => {
   assert.strictEqual(reconcileWithdrawalTracking(completed, [], {
     state: 'STATE_NEW', transactionId: 'relayer-1', transactionHash: '0xhash', errorMessage: null,
   }, 2_300), completed);
+});
+
+test('persistWithdrawalTracking returns false and logs once per failed attempt', async () => {
+  const attempts: string[] = [];
+  const delays: number[] = [];
+  const logged: number[] = [];
+  let calls = 0;
+  const result = await persistWithdrawalTracking(
+    async () => {
+      calls += 1;
+      attempts.push(`attempt-${calls}`);
+      throw new Error('storage unavailable');
+    },
+    'predict.withdraw.tracking.v1:test',
+    '{"status":"PREPARED"}',
+    {
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      onError: (_error, attempt) => {
+        logged.push(attempt);
+      },
+    },
+  );
+
+  assert.equal(result, false);
+  assert.equal(calls, 3);
+  assert.deepEqual(attempts, ['attempt-1', 'attempt-2', 'attempt-3']);
+  assert.deepEqual(logged, [1, 2, 3]);
+  assert.deepEqual(delays, [500, 1000]);
+});
+
+test('persistWithdrawalTracking succeeds when a later retry works', async () => {
+  let calls = 0;
+  const logged: number[] = [];
+  const result = await persistWithdrawalTracking(
+    async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('storage unavailable');
+    },
+    'predict.withdraw.tracking.v1:test',
+    '{"status":"SUBMITTED"}',
+    {
+      sleep: async () => {},
+      onError: (_error, attempt) => {
+        logged.push(attempt);
+      },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(logged, [1]);
+});
+
+test('persistWithdrawalTracking succeeds first try without logging', async () => {
+  let calls = 0;
+  let logged = 0;
+  const result = await persistWithdrawalTracking(
+    async () => {
+      calls += 1;
+    },
+    'predict.withdraw.tracking.v1:test',
+    '{"status":"BRIDGING"}',
+    {
+      sleep: async () => {
+        throw new Error('sleep must not run when the first attempt succeeds');
+      },
+      onError: () => {
+        logged += 1;
+      },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(calls, 1);
+  assert.equal(logged, 0);
+});
+
+test('default onError warns with attempt and message but no payload', async () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  try {
+    const result = await persistWithdrawalTracking(
+      async () => {
+        throw new Error('quota exceeded');
+      },
+      'predict.withdraw.tracking.v1:test',
+      '{"status":"PREPARED"}',
+      { retries: 1, sleep: async () => {} },
+    );
+    assert.equal(result, false);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  const [message, detail] = warnings[0] as [string, string];
+  assert.match(message, /attempt 1/);
+  assert.match(detail, /quota exceeded/);
+  for (const arg of warnings[0] as string[]) {
+    assert.ok(!arg.includes('status'));
+  }
+});
+
+test('nextTrackingSaveFailed keeps the warning only while a tracked withdrawal is unsaved', () => {
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: true, saveSucceeded: false }), true);
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: true, saveSucceeded: true }), false);
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: false, saveSucceeded: false }), false);
+  assert.equal(nextTrackingSaveFailed({ hasTrackedWithdrawal: false, saveSucceeded: true }), false);
+});
+
+test('close does not clear the pending-unsaved flag while tracking remains', () => {
+  assert.equal(
+    shouldClearTrackingSaveFailedOnClose({ hasTrackedWithdrawal: true }),
+    false,
+  );
+  assert.equal(
+    shouldClearTrackingSaveFailedOnClose({ hasTrackedWithdrawal: false }),
+    true,
+  );
+});
+
+test('requireTrackingSaved throws so a pre-submit save failure blocks the withdrawal', () => {
+  assert.throws(() => requireTrackingSaved(false), /Could not save withdrawal tracking/);
+  assert.doesNotThrow(() => requireTrackingSaved(true));
+});
+
+test('chooseReopenedWithdrawal keeps the newer in-memory record for the same withdrawal', () => {
+  const prepared = createPreparedWithdrawal({
+    amount: 25, recipientAddress: 'recipient', bridgeAddress: '0xbridge', quote, now: 1_000,
+  });
+  // Memory holds the newer SUBMITTED snapshot; storage still holds an older
+  // PREPARED snapshot because the last save failed.
+  const inMemory = markWithdrawalSubmitted(markWithdrawalSubmitting(prepared, 1_100), 'relayer-1', '0xhash', 1_200);
+  const stored = JSON.parse(JSON.stringify(prepared)) as typeof prepared;
+
+  const chosen = chooseReopenedWithdrawal(inMemory, stored);
+
+  assert.equal(chosen.preferInMemory, true);
+  assert.strictEqual(chosen.tracking, inMemory);
+  assert.equal(chosen.tracking.status, 'SUBMITTED');
+});
+
+test('chooseReopenedWithdrawal falls back to storage for a different or absent in-memory record', () => {
+  const prepared = createPreparedWithdrawal({
+    amount: 25, recipientAddress: 'recipient', bridgeAddress: '0xbridge', quote, now: 1_000,
+  });
+  const otherPrepared = createPreparedWithdrawal({
+    amount: 10, recipientAddress: 'recipient', bridgeAddress: '0xother', quote, now: 2_000,
+  });
+
+  const differentBridge = chooseReopenedWithdrawal(otherPrepared, prepared);
+  assert.equal(differentBridge.preferInMemory, false);
+  assert.strictEqual(differentBridge.tracking, prepared);
+
+  const freshStart = chooseReopenedWithdrawal(null, prepared);
+  assert.equal(freshStart.preferInMemory, false);
+  assert.strictEqual(freshStart.tracking, prepared);
+});
+
+test('a failed retry of the in-memory record keeps the pending-unsaved warning visible', () => {
+  const prepared = createPreparedWithdrawal({
+    amount: 25, recipientAddress: 'recipient', bridgeAddress: '0xbridge', quote, now: 1_000,
+  });
+  const inMemory = markWithdrawalSubmitted(markWithdrawalSubmitting(prepared, 1_100), 'relayer-1', '0xhash', 1_200);
+
+  const chosen = chooseReopenedWithdrawal(inMemory, JSON.parse(JSON.stringify(prepared)) as typeof prepared);
+  // The reopen path retries exactly this record once; the banner must stay up
+  // while that save fails and a tracked withdrawal remains.
+  assert.equal(chosen.preferInMemory, true);
+  assert.equal(
+    nextTrackingSaveFailed({ hasTrackedWithdrawal: true, saveSucceeded: false }),
+    true,
+  );
 });
