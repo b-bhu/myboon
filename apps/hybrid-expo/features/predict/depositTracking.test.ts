@@ -6,6 +6,8 @@ import {
   latestDepositTransaction,
   matchingDepositTransactions,
   persistDepositTracking,
+  statusViewToPersist,
+  type PersistableDepositStatusView,
   type TrackedDepositEvidence,
 } from './depositTracking';
 import type { ClobBalance, DepositBridgeTransaction } from './predict.api';
@@ -94,7 +96,7 @@ test('save failure logs every attempt and returns false after retries', async ()
       },
     },
   );
-  assert.equal(saved, false);
+  assert.equal(saved, 'failed', 'exhausted retries report failure for the user');
   assert.equal(calls, 3);
   assert.equal(delays.length, 2, 'no sleep after the final attempt');
   assert.deepEqual(delays, [500, 1000]);
@@ -124,7 +126,7 @@ test('fail-then-succeed save retries and returns true', async () => {
       onError: () => {},
     },
   );
-  assert.equal(saved, true);
+  assert.equal(saved, 'confirmed', 'a landed write is confirmed');
   assert.equal(calls, 2);
   assert.deepEqual(delays, [500]);
 });
@@ -150,9 +152,166 @@ test('a successful first save never logs or sleeps', async () => {
       },
     },
   );
-  assert.equal(saved, true);
+  assert.equal(saved, 'confirmed', 'first-try success is confirmed');
   assert.equal(calls, 1);
   assert.deepEqual(failures, []);
+});
+
+// --- persistDepositTracking (superseded saves) --------------------------------
+
+test('a superseded save stops before the next attempt and never writes again', async () => {
+  let calls = 0;
+  const failures: string[] = [];
+  let continueSaving = true;
+  const result = await persistDepositTracking(
+    () => {
+      calls += 1;
+      return Promise.reject(new Error('busy'));
+    },
+    'storage-key',
+    'payload',
+    {
+      retries: 3,
+      baseDelayMs: 500,
+      // While this older save waits out its backoff, a newer save starts and
+      // supersedes it; the gate must stop the loop before attempt 2.
+      sleep: async () => {
+        continueSaving = false;
+      },
+      onError: (message) => {
+        failures.push(message);
+      },
+      shouldContinue: () => continueSaving,
+    },
+  );
+  assert.equal(result, 'superseded');
+  assert.equal(calls, 1, 'a superseded save must not call setItem again');
+  assert.equal(failures.length, 1);
+});
+
+test('the cancel gate is checked before every attempt and around the sleep', async () => {
+  const events: string[] = [];
+  let calls = 0;
+  let newerSaveStarted = false;
+  const result = await persistDepositTracking(
+    () => {
+      calls += 1;
+      events.push(`attempt-${calls}`);
+      return Promise.reject(new Error('offline'));
+    },
+    'storage-key',
+    'payload',
+    {
+      retries: 3,
+      baseDelayMs: 100,
+      sleep: async () => {
+        events.push('sleep');
+        // A newer save starts during the backoff wait.
+        newerSaveStarted = true;
+      },
+      onError: () => {},
+      shouldContinue: () => !newerSaveStarted,
+    },
+  );
+  assert.equal(result, 'superseded');
+  assert.equal(calls, 1, 'the gate became false during the wait: no second attempt');
+  assert.deepEqual(events, ['attempt-1', 'sleep']);
+});
+
+test('an older generation cannot overwrite a newer one', async () => {
+  const stored = new Map<string, string>();
+  const setItem = (key: string, value: string): Promise<void> => {
+    stored.set(key, value);
+    return Promise.resolve();
+  };
+  // Older save keeps retrying through a still-failing store.
+  const olderSave = persistDepositTracking(
+    () => {
+      // Succeeds only once the newer save has already landed its value.
+      if (stored.get('key') === 'newer') return Promise.resolve();
+      return Promise.reject(new Error('still busy'));
+    },
+    'key',
+    'older',
+    {
+      retries: 5,
+      baseDelayMs: 1,
+      sleep: async () => {},
+      onError: () => {},
+      shouldContinue: () => stored.get('key') !== 'newer',
+    },
+  );
+  const newerSave = persistDepositTracking(setItem, 'key', 'newer', {
+    retries: 1,
+    sleep: async () => {},
+    onError: () => {},
+  });
+  const [olderResult, newerResult] = await Promise.all([olderSave, newerSave]);
+  assert.equal(newerResult, 'confirmed');
+  assert.equal(olderResult, 'superseded');
+  assert.equal(stored.get('key'), 'newer', 'the stale save must never land after the fresh one');
+});
+
+test('superseded is not reported as failure, and a gate closing before the first attempt writes nothing', async () => {
+  let writes = 0;
+  const failures: string[] = [];
+  const result = await persistDepositTracking(
+    () => {
+      writes += 1;
+      return Promise.resolve();
+    },
+    'storage-key',
+    'payload',
+    {
+      retries: 2,
+      baseDelayMs: 10,
+      sleep: async () => {
+        throw new Error('unexpected sleep');
+      },
+      onError: (message) => {
+        failures.push(message);
+      },
+      shouldContinue: () => false,
+    },
+  );
+  assert.equal(result, 'superseded');
+  assert.notEqual(result, 'failed');
+  assert.equal(writes, 0);
+  assert.deepEqual(failures, []);
+});
+
+// --- statusViewToPersist -------------------------------------------------------
+
+test('a retryable error status view is never persisted', () => {
+  const retryableError: PersistableDepositStatusView = {
+    tone: 'error',
+    retryable: true,
+  };
+  assert.equal(statusViewToPersist(retryableError), null);
+});
+
+test('a non-retryable status view is persisted', () => {
+  const failedDeposit: PersistableDepositStatusView = { tone: 'error' };
+  assert.equal(statusViewToPersist(failedDeposit), failedDeposit);
+  const explicitlyNonRetryable: PersistableDepositStatusView = {
+    tone: 'error',
+    retryable: false,
+  };
+  assert.equal(statusViewToPersist(explicitlyNonRetryable), explicitlyNonRetryable);
+});
+
+test('normal status views are persisted', () => {
+  const waiting: PersistableDepositStatusView = { tone: 'waiting' };
+  assert.equal(statusViewToPersist(waiting), waiting);
+  const active: PersistableDepositStatusView = { tone: 'active' };
+  assert.equal(statusViewToPersist(active), active);
+  const success: PersistableDepositStatusView = { tone: 'success' };
+  assert.equal(statusViewToPersist(success), success);
+});
+
+test('null and undefined status views persist as null', () => {
+  assert.equal(statusViewToPersist(null), null);
+  assert.equal(statusViewToPersist(undefined), null);
 });
 
 // --- classifyDepositStatusCheck ---------------------------------------------

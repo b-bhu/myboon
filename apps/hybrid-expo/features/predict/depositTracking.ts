@@ -116,6 +116,19 @@ export type DepositTrackingLogger = (message: string, ...details: unknown[]) => 
 
 export type StorageSetItem = (key: string, value: string) => Promise<void>;
 
+/** Outcome of a bounded-retry snapshot save. */
+export type DepositTrackingSaveResult =
+  /** A write was confirmed. */
+  | 'confirmed'
+  /** Every attempt failed; callers must surface this to the user. */
+  | 'failed'
+  /**
+   * The caller's `shouldContinue` gate ended the save early (a newer save
+   * superseded it, or the caller closed). Deliberately not a failure: a
+   * stale save must neither overwrite newer data nor be reported as one.
+   */
+  | 'superseded';
+
 export interface PersistDepositTrackingOptions {
   /** Total attempts, including the first one. Defaults to 3. */
   retries?: number;
@@ -125,6 +138,13 @@ export interface PersistDepositTrackingOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Injectable warning logger (defaults to console.warn); receives no payloads. */
   onError?: DepositTrackingLogger;
+  /**
+   * Checked before every attempt and around the backoff sleep. Returning
+   * false abandons the save without another write and yields 'superseded'
+   * instead of a failure, so an older in-flight save can never overwrite a
+   * newer one.
+   */
+  shouldContinue?: () => boolean;
 }
 
 const DEFAULT_SAVE_ATTEMPTS = 3;
@@ -136,39 +156,81 @@ function defaultSleep(ms: number): Promise<void> {
 
 /**
  * Persist the tracked-deposit snapshot with bounded exponential-backoff
- * retries. Returns true when a write is confirmed, false after every attempt
- * has failed. Callers must surface a `false` result to the user; the failures
- * themselves are only logged, without payloads or storage keys.
+ * retries. Returns 'confirmed' when a write lands, 'failed' after every
+ * attempt has failed, and 'superseded' when `shouldContinue` breaks the loop:
+ * an abandoned stale save must not count as a failure. Callers surface a
+ * 'failed' result to the user; the failures themselves are only logged,
+ * without payloads or storage keys.
  */
 export async function persistDepositTracking(
   setItem: StorageSetItem,
   key: string,
   value: string,
   options: PersistDepositTrackingOptions = {},
-): Promise<boolean> {
+): Promise<DepositTrackingSaveResult> {
   const attempts = Math.max(1, options.retries ?? DEFAULT_SAVE_ATTEMPTS);
   const baseDelayMs = Math.max(0, options.baseDelayMs ?? DEFAULT_SAVE_BASE_DELAY_MS);
   const sleep = options.sleep ?? defaultSleep;
+  const shouldContinue = options.shouldContinue ?? (() => true);
   const onError = options.onError ?? ((message: string, ...details: unknown[]) => {
     console.warn(message, ...details);
   });
 
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      await setItem(key, value);
-      return true;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'unknown error';
-      onError(`[predict] Deposit tracking save failed (attempt ${attempt}/${attempts}): ${detail}`);
-      if (attempt < attempts) {
-        await sleep(baseDelayMs * 2 ** (attempt - 1));
+  try {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      if (!shouldContinue()) return 'superseded';
+      try {
+        await setItem(key, value);
+        return 'confirmed';
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'unknown error';
+        onError(`[predict] Deposit tracking save failed (attempt ${attempt}/${attempts}): ${detail}`);
+        if (attempt < attempts) {
+          if (!shouldContinue()) return 'superseded';
+          await sleep(baseDelayMs * 2 ** (attempt - 1));
+          // A newer save may have started (or the caller may have closed)
+          // while this one was waiting: stop before writing again.
+          if (!shouldContinue()) return 'superseded';
+        }
       }
     }
+  } catch (error) {
+    // A rejected injectable sleep is not a storage failure; an in-flight save
+    // that cannot proceed simply stops, without any write having occurred.
+    onError(
+      `[predict] Deposit tracking save aborted between attempts: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    );
+    return 'superseded';
   }
-  return false;
+  return 'failed';
 }
 
 // --- Deposit status check classification ------------------------------------
+
+/**
+ * A status view as rendered in the modal. `retryable` marks the transient
+ * "Couldn't check status" view of a failed status check, which is the only
+ * view persistence drops down; a genuine error view never sets it.
+ */
+export interface PersistableDepositStatusView {
+  tone: string;
+  retryable?: boolean;
+}
+
+/**
+ * Decide which status view may be persisted. Only the transient "Couldn't
+ * check status" view of a failed status check is dropped: persisting it would
+ * show a stale retry prompt on reopen. A genuine error view (e.g. a
+ * Bridge-reported failed deposit) carries no `retryable` flag and is kept.
+ */
+export function statusViewToPersist<V extends PersistableDepositStatusView>(
+  statusView: V | null | undefined,
+): V | null {
+  if (!statusView) return null;
+  return statusView.retryable === true ? null : statusView;
+}
 
 export interface DepositStatusCheckInputs {
   /** Settlement of the Bridge status fetch (fulfilled transactions, rejected on failure). */
