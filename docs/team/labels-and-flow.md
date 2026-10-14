@@ -18,3 +18,5 @@ Use the repository's [canonical label list](../../.github/labels.md):
 When the change touches money, wallets or DB/migrations, also add `needs-bucket`. Keep it through review for Bucket's approval. Bucket alone merges.
 
 Older `agent:*` labels are being retired; use the labels above for new work.
+
+When a spec gets `spec-approved`, and when a `needs-bucket` PR merges, the acting bot posts a one-line comment starting with `Decision:` on the spec PR, issue or PR so Ledger can log it to Notion.

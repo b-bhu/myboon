@@ -3,7 +3,7 @@
 `.github/workflows/ci.yml` runs on every pull request. It has two Ubuntu jobs:
 
 1. **secrets:** checks out full history (`fetch-depth: 0`) and runs `gitleaks/gitleaks-action@v2` with the GitHub token.
-2. **checks:** checks out the repository, sets up pnpm and Node.js 22 with pnpm caching, then runs `pnpm install --frozen-lockfile` followed by the four commands below.
+2. **checks:** checks out the repository, sets up pnpm and Node.js 22 with pnpm caching, then runs `pnpm install --frozen-lockfile` followed by the five commands below.
 
 The package test and lint scripts can be reproduced from the repository root:
 
@@ -12,6 +12,7 @@ pnpm --filter hybrid-expo lint
 pnpm --filter hybrid-expo test
 pnpm --filter @myboon/shared test
 pnpm --filter @myboon/tx-parser test
+pnpm --filter @myboon/api test:internal
 ```
 
 Install dependencies first with the same frozen-lockfile command used in CI:

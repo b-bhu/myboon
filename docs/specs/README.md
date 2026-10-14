@@ -11,6 +11,8 @@ For agent roles, repository areas, local workflow and safety rules, see the [AI-
 
 Add `needs-bucket` to work touching money, wallets or DB/migrations. Mark work `blocked` when stuck.
 
+When a spec gets `spec-approved`, and when a `needs-bucket` PR merges, the acting bot posts a one-line comment starting with `Decision:` on the spec PR, issue or PR so Ledger can log it to Notion.
+
 ```mermaid
 flowchart TD
     A[Spec PR in docs/specs, label spec] --> B[Bucket approves: spec-approved]
