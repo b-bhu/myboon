@@ -17,6 +17,7 @@ export const DEFAULT_LOCAL_TRIAGE_CAPACITY: TriageCapacityLimits = Object.freeze
 export const LOCAL_TRIAGE_CAPACITY_ENV = Object.freeze({
   p3: 'FEED_V3_TRIAGE_P3_CAPACITY',
   light: 'FEED_V3_TRIAGE_LIGHT_CAPACITY',
+  paidExposure: 'FEED_V3_UNRESOLVED_PAID_HOLD_LIMIT',
 })
 
 const LOCAL_TRIAGE_CAPACITY_MAX = 500
@@ -31,10 +32,12 @@ export function loadLocalTriageCapacity(
 ): TriageCapacityLimits {
   const p3 = capacityOverride(env[LOCAL_TRIAGE_CAPACITY_ENV.p3], DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority.P3, LOCAL_TRIAGE_CAPACITY_ENV.p3)
   const light = capacityOverride(env[LOCAL_TRIAGE_CAPACITY_ENV.light], DEFAULT_LOCAL_TRIAGE_CAPACITY.byDepth.light, LOCAL_TRIAGE_CAPACITY_ENV.light)
+  const paidExposureLimit = capacityOverride(env[LOCAL_TRIAGE_CAPACITY_ENV.paidExposure], 50, LOCAL_TRIAGE_CAPACITY_ENV.paidExposure)
   return Object.freeze({
     byPriority: { ...DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority, P3: p3 },
     byDepth: { ...DEFAULT_LOCAL_TRIAGE_CAPACITY.byDepth, light },
     reservedByPriority: { ...DEFAULT_LOCAL_TRIAGE_CAPACITY.reservedByPriority },
+    paidExposureLimit,
   })
 }
 

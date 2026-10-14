@@ -332,6 +332,8 @@ export type D2SettleVerification =
   | { readonly kind: 'transport_response_saved' }
   | { readonly kind: 'provider_supported', readonly sourceHandle: string }
   | { readonly kind: 'durable_matching_response', readonly savedResultRef: string, readonly providerResultDigest: string }
+  | { readonly kind: 'gateway_abort_max_exposure', readonly failureCategory: 'budget_exceeded' | 'provider_timeout' }
+  | { readonly kind: 'stale_hold_max_exposure' }
 
 // Saved result identity: settled exactly once against the same attempt,
 // request digest, and provider result digest. Epoch-neutral late save is
@@ -380,10 +382,16 @@ export async function settleReservation(
   }
   if (record.state === 'execution_outcome_unknown'
     && input.verification.kind !== 'provider_supported'
+    && input.verification.kind !== 'gateway_abort_max_exposure'
+    && input.verification.kind !== 'stale_hold_max_exposure'
     && !(input.verification.kind === 'durable_matching_response'
       && input.verification.savedResultRef === input.savedResultRef
       && input.verification.providerResultDigest === input.providerResultDigest
       && Boolean(input.providerResultDigest) && Boolean(input.savedResultRef))) {
+    return { ok: false, code: 'requires_provider_supported_handle', record }
+  }
+  if (input.verification.kind === 'gateway_abort_max_exposure'
+    && !['budget_exceeded', 'provider_timeout'].includes(input.verification.failureCategory)) {
     return { ok: false, code: 'requires_provider_supported_handle', record }
   }
   const settlement: D2Settlement = Object.freeze({

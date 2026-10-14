@@ -151,7 +151,7 @@ const FAILURE_CATEGORIES = new Set([
   'provider_unavailable', 'provider_rate_limited', 'provider_timeout', 'provider_authentication', 'provider_billing',
   'circuit_open', 'retrieval_timeout', 'retrieval_blocked', 'retrieval_unsafe_url',
   'budget_exceeded', 'invalid_structured_output', 'schema_version_mismatch',
-  'permanent_source_error', 'entity_resolution_failed', 'storage_transient', 'storage_permanent',
+  'permanent_source_error', 'lease_expired', 'entity_resolution_failed', 'storage_transient', 'storage_permanent',
 ])
 
 export function researchReadinessId(

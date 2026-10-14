@@ -10,6 +10,7 @@ import { isArticleResearchPacket } from './contracts'
 import type {
   BudgetStorePort, D2ReservationRecord, D2ReservationKey,
 } from '../research-engine/assignment-budget'
+import { settleReservation } from '../research-engine/assignment-budget'
 import {
   ARTIFACT_ELIGIBILITY_POLICY_VERSION,
   ARTIFACT_USAGE_SCHEMA_VERSION,
@@ -134,6 +135,7 @@ export interface TriageCapacityLimits {
   byPriority: Record<ResearchWorkItem['priorityClass'], number>
   byDepth: Record<ResearchWorkItem['researchDepth'], number>
   reservedByPriority?: Partial<Record<ResearchWorkItem['priorityClass'], number>>
+  paidExposureLimit?: number
 }
 
 /** Additive canonical store that can share either legacy SQLite database. */
@@ -1027,10 +1029,11 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     const nowMs = Date.parse(now)
     if (!Number.isFinite(nowMs)) throw new Error('Capacity snapshot now must be a timestamp')
     const placeholders = CAPACITY_STATUSES.map(() => '?').join(', ')
-    const unresolvedRoots = new Set((this.db.prepare(`
-      SELECT DISTINCT root_assignment_id FROM signal_platform_research_reservations
+    const unresolvedRows = this.db.prepare(`
+      SELECT root_assignment_id FROM signal_platform_research_reservations
       WHERE source_type = ? AND state IN ('dispatch_intent', 'execution_outcome_unknown')
-    `).all(this.sourceType) as Array<{ root_assignment_id: string }>).map((row) => row.root_assignment_id))
+    `).all(this.sourceType) as Array<{ root_assignment_id: string }>
+    const unresolvedRoots = new Set(unresolvedRows.map((row) => row.root_assignment_id))
     const unmatchedRoots = new Set(unresolvedRoots)
     const rows = this.db.prepare(`
       SELECT priority_class, status, freshness_deadline, work_json FROM signal_platform_research_work
@@ -1041,16 +1044,14 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     const count = (row: Record<string, unknown>, queued: boolean) => {
       const leased = (LEASED_STATUSES as readonly unknown[]).includes(row.status)
       const fresh = Date.parse(String(row.freshness_deadline)) > nowMs
-      // Retained expired work cannot be claimed and does not reserve intake
-      // capacity. A leased stage or an unresolved paid dispatch remains exposure
-      // even after freshness/lease expiry, until its durable state is resolved.
-      if (!leased && !fresh && unresolvedRoots.size === 0) return
       try {
         const work = JSON.parse(String(row.work_json)) as ResearchWorkItem
         const root = researchRootAssignmentId(work)
         const exposed = unresolvedRoots.has(root)
         if (exposed) unmatchedRoots.delete(root)
-        if (!(queued && (leased || fresh)) && !exposed) return
+        // Only live, claimable intake work reserves lane capacity. Paid holds
+        // are counted separately, including holds attached to terminal work.
+        if (!queued || !(leased || fresh)) return
         const depth = work.researchDepth as keyof typeof depthCounts
         if (!(depth in depthCounts)) throw new Error('unknown depth')
         const priority = row.priority_class as keyof typeof priorityCounts
@@ -1063,13 +1064,20 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     }
     for (const row of rows) count(row, true)
     if (unmatchedRoots.size > 0) {
-      // A paid hold may have reached a terminal queue status. Only scan retained
-      // terminal rows when an unresolved root was not found in the live queue.
+      // Validate binding against all retained canonical work without assigning
+      // terminal items to intake capacity.
       const terminal = this.db.prepare(`
         SELECT priority_class, status, freshness_deadline, work_json FROM signal_platform_research_work
         WHERE source_type = ? AND status NOT IN (${placeholders})
       `).all(this.sourceType, ...CAPACITY_STATUSES) as Array<Record<string, unknown>>
-      for (const row of terminal) count(row, false)
+      for (const row of terminal) {
+        try {
+          const work = JSON.parse(String(row.work_json)) as ResearchWorkItem
+          unmatchedRoots.delete(researchRootAssignmentId(work))
+        } catch {
+          throw new Error('Local triage capacity is unavailable because canonical work is invalid')
+        }
+      }
       if (unmatchedRoots.size > 0) throw new Error('Local triage capacity is unavailable because paid exposure has no canonical work binding')
     }
     const bucket = (used: number, maximum: number, reserved = 0) => {
@@ -1092,6 +1100,11 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         light: bucket(depthCounts.light, limits.byDepth.light),
         standard: bucket(depthCounts.standard, limits.byDepth.standard),
         deep: bucket(depthCounts.deep, limits.byDepth.deep),
+      },
+      paidExposure: {
+        unresolvedHolds: unresolvedRows.length,
+        limit: Math.max(0, Math.trunc(limits.paidExposureLimit ?? 50)),
+        available: Math.max(0, Math.max(0, Math.trunc(limits.paidExposureLimit ?? 50)) - unresolvedRows.length),
       },
     }
   }
@@ -1373,6 +1386,89 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       WHERE source_type = ? AND state IN ('dispatch_intent', 'execution_outcome_unknown')`)
       .get(this.sourceType) as { count: number }
     return Number(row.count)
+  }
+
+  /** Settle aged holds conservatively and return expired leases to bounded retry. */
+  async sweepStaleResearchHolds(input: {
+    olderThanMs?: number
+    now?: number | string
+    limit?: number
+    maxAttempts?: number
+  } = {}): Promise<{ reservationsSettled: number, leasesRetried: number, leasesDeadLettered: number }> {
+    this.assertOpen()
+    const nowMs = typeof input.now === 'string' ? Date.parse(input.now) : input.now ?? Date.now()
+    const olderThanMs = input.olderThanMs ?? 24 * 60 * 60_000
+    const limit = boundedLimit(input.limit ?? 100)
+    const maxAttempts = input.maxAttempts ?? 3
+    if (!Number.isFinite(nowMs) || !Number.isSafeInteger(olderThanMs) || olderThanMs < 1) {
+      throw new Error('Stale research hold sweep requires valid now and positive olderThanMs')
+    }
+    if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) throw new Error('Stale lease sweep maxAttempts must be positive')
+    const now = new Date(nowMs).toISOString()
+    const retryAt = new Date(nowMs + 1_000).toISOString()
+    const cutoff = nowMs - olderThanMs
+    const candidates = this.db.prepare(`SELECT canonical_json FROM signal_platform_research_reservations
+      WHERE source_type = ? AND state IN ('dispatch_intent','execution_outcome_unknown')
+        AND CAST(json_extract(canonical_json, '$.updatedAtMs') AS INTEGER) <= ?
+      ORDER BY CAST(json_extract(canonical_json, '$.updatedAtMs') AS INTEGER), root_assignment_id, allowance_id, attempt_id
+      LIMIT ?`).all(this.sourceType, cutoff, limit) as Array<{ canonical_json: string }>
+    let reservationsSettled = 0
+    const budget = this.researchBudgetStore()
+    for (const row of candidates) {
+      const reservation = JSON.parse(row.canonical_json) as D2ReservationRecord
+      const workRows = this.db.prepare(`SELECT work_json FROM signal_platform_research_work WHERE source_type = ?`)
+        .all(this.sourceType) as Array<{ work_json: string }>
+      const work = workRows.map((candidate) => parseWork(candidate.work_json))
+        .find((candidate) => researchRootAssignmentId(candidate) === reservation.rootAssignmentId)
+      // Preserve the fail-closed canonical-binding behavior for paid exposure.
+      if (!work) continue
+      const settled = await settleReservation(budget, reservation, {
+        requestDigest: reservation.requestDigest,
+        providerResultDigest: null,
+        savedResultRef: null,
+        usage: { status: 'unknown', costUsdMicros: null,
+          inputTokens: reservation.approvedLimits.maxInputTokens,
+          outputTokens: reservation.approvedLimits.maxOutputTokens,
+          providerCalls: reservation.approvedLimits.maxProviderCalls },
+        savedResultSavedAtMs: nowMs,
+        verification: { kind: 'stale_hold_max_exposure' },
+      })
+      if (!settled.ok) continue
+      this.putResearchV4Record('reservation_reconciliation', work.workId,
+        `stale_hold:${reservation.allowanceId}:${reservation.attemptId}`, {
+          status: 'stale_hold_max_exposure', reservationKey: reservation,
+          settledAt: now, approvedLimits: reservation.approvedLimits,
+        })
+      reservationsSettled += 1
+    }
+
+    let leasesRetried = 0
+    let leasesDeadLettered = 0
+    const expired = this.db.prepare(`SELECT work_json FROM signal_platform_research_work
+      WHERE source_type = ? AND status IN ('retrieval_leased','deep_leased','synthesis_leased','entity_leased')
+        AND lease_expires_at < ? ORDER BY lease_expires_at, work_id LIMIT ?`)
+      .all(this.sourceType, now, limit) as Array<{ work_json: string }>
+    for (const row of expired) {
+      const work = parseWork(row.work_json)
+      const retry = work.attemptCount < maxAttempts
+      const updated = validateResearchWorkItem({
+        ...work,
+        status: retry ? 'retry_wait' : 'dead_letter',
+        nextAttemptAt: retry ? retryAt : null,
+        retryTargetStatus: retry ? pendingStatusFor(work.status as typeof LEASED_STATUSES[number]) : null,
+        leaseOwner: null, leaseId: null, leaseExpiresAt: null,
+        failureCategory: 'lease_expired', failureDetail: 'Research lease expired before the work was completed.',
+        updatedAt: now,
+      })
+      const changedRow = this.updateWorkWithFence(updated, `
+        work_id = ? AND source_type = ? AND status = ? AND lease_id = ? AND lease_expires_at < ?
+      `, [work.workId, this.sourceType, work.status, work.leaseId, now], 0)
+      if (changed(changedRow)) {
+        if (retry) leasesRetried += 1
+        else leasesDeadLettered += 1
+      }
+    }
+    return { reservationsSettled, leasesRetried, leasesDeadLettered }
   }
 
   /** SQLite uniqueness owns allowance exclusivity; list-then-insert alone does not. */

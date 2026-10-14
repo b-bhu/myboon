@@ -44,6 +44,12 @@ function receivedSynthesisTelemetry(work: ReturnType<typeof v4Work>, failureCate
   }
 }
 
+function gatewayTimeoutTelemetry(work: ReturnType<typeof v4Work>): InferenceTelemetry {
+  const telemetry = receivedSynthesisTelemetry(work, 'budget_exceeded')
+  return { ...telemetry, failureCategory: 'provider_timeout', budgetExceeded: false,
+    calls: [{ ...telemetry.calls[0]!, status: 'failed', failureCategory: 'provider_timeout' }] }
+}
+
 /** Simulate a crash after the rejection receipt is durable but before settlement. */
 function failNextSettlement(store: SqliteSignalPlatformStore, allowanceId?: string): void {
   const factory = store.researchBudgetStore.bind(store)
@@ -397,6 +403,45 @@ test('unknown primary outcome becomes a durable hold and never dispatches a repl
   } finally { fx.close() }
 })
 
+test('gateway timeout settles primary synthesis at its approved maximum exposure', async () => {
+  const fx = v4Database()
+  try {
+    const { work } = seedV4(fx.store)
+    const telemetry = gatewayTimeoutTelemetry(work)
+    await assert.rejects(durablePrimarySynthesis({ store: fx.store, work, saved: null, requestMaterial: {},
+      policy: V4_POLICY.synthesisPolicy, assignmentPolicy: V4_POLICY.assignmentPolicy,
+      generate: async () => { throw new InferenceGatewayError('Gateway timed out', {
+        category: 'provider_timeout', retryable: true, telemetry,
+      }) }, transform: (packet) => packet, stillOwnsLease: async () => true, now: () => V4_NOW }), ResearchFollowupHold)
+    const reservation = fx.store.listResearchReservations(100).find((row) => row.allowanceId === 'research_primary_synthesis.v1')
+    assert.equal(reservation?.state, 'settled')
+    assert.equal(reservation?.settlement?.usage.status, 'unknown')
+    assert.equal(reservation?.settlement?.usage.inputTokens, reservation?.approvedLimits.maxInputTokens)
+    assert.equal(reservation?.settlement?.usage.outputTokens, reservation?.approvedLimits.maxOutputTokens)
+    assert.equal(fx.store.countUnresolvedResearchReservations(), 0)
+  } finally { fx.close() }
+})
+
+test('gateway timeout settles article proposal at its approved maximum exposure', async () => {
+  const fx = v4Database()
+  try {
+    const { work } = seedV4(fx.store)
+    const telemetry = gatewayTimeoutTelemetry(work)
+    await assert.rejects(durableArticleEntityProposal({ store: fx.store, work,
+      assignmentPolicy: V4_POLICY.assignmentPolicy, requestMaterial: { article: 'fixture' },
+      stillOwnsLease: async () => true, now: () => V4_NOW,
+      generate: async () => { throw new InferenceGatewayError('Gateway timed out', {
+        category: 'provider_timeout', retryable: true, telemetry,
+      }) },
+    }), ResearchFollowupHold)
+    const reservation = fx.store.listResearchReservations(100).find((row) => row.allowanceId === 'research_article_entity_proposal.v1')
+    assert.equal(reservation?.state, 'settled')
+    assert.equal(reservation?.settlement?.usage.inputTokens, reservation?.approvedLimits.maxInputTokens)
+    assert.equal(reservation?.settlement?.usage.outputTokens, reservation?.approvedLimits.maxOutputTokens)
+    assert.equal(fx.store.countUnresolvedResearchReservations(), 0)
+  } finally { fx.close() }
+})
+
 test('received synthesis output overrun settles its paid attempt with a durable rejection receipt', async () => {
   const fx = v4Database()
   try {
@@ -489,6 +534,28 @@ test('unknown paid follow-up retains the original baseline and holds without rep
     assert.equal(fx.store.listResearchReservations(100).find((row) => row.allowanceId === 'research_followup_investigation.v1')?.state, 'execution_outcome_unknown')
     assert.equal((await worker(fx.store, synth, v4).runOnce()).kind, 'idle')
     assert.equal(synth.inputs.length, 2)
+  } finally { fx.close() }
+})
+
+test('gateway timeout settles paid follow-up at its approved maximum exposure', async () => {
+  const fx = v4Database()
+  try {
+    const { work } = seedV4(fx.store)
+    const classifier = v4Classifier({ direction: 'worthwhile', reason: 'An admitted regulator source answers the unresolved date.' })
+    const telemetry = gatewayTimeoutTelemetry(work)
+    const synth = new V4Synthesizer((input) => {
+      if (input.evidence.length > 1) throw new InferenceGatewayError('Gateway timed out', {
+        category: 'provider_timeout', retryable: true, telemetry,
+      })
+      return v4Packet(input)
+    })
+    const v4 = { ...V4_POLICY, followup: { classification: classifier.port, policy: V4_FOLLOWUP_POLICY } }
+    assert.equal((await worker(fx.store, synth, v4).runOnce()).kind, 'dead_letter')
+    const reservation = fx.store.listResearchReservations(100).find((row) => row.allowanceId === 'research_followup_investigation.v1')
+    assert.equal(reservation?.state, 'settled')
+    assert.equal(reservation?.settlement?.usage.inputTokens, reservation?.approvedLimits.maxInputTokens)
+    assert.equal(reservation?.settlement?.usage.outputTokens, reservation?.approvedLimits.maxOutputTokens)
+    assert.equal(fx.store.countUnresolvedResearchReservations(), 0)
   } finally { fx.close() }
 })
 

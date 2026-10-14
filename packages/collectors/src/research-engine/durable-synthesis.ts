@@ -89,6 +89,24 @@ export async function durablePrimarySynthesis(input: {
     packet = store.putResearchV4Record('baseline', work.workId, 'packet', input.transform(generated))
   } catch (error) {
     const telemetry = error instanceof InferenceGatewayError ? error.telemetry : undefined
+    if (isGatewayAbort(telemetry)) {
+      try {
+        const settled = await settleReservation(budget, key, {
+          requestDigest, providerResultDigest: null, savedResultRef: null,
+          usage: maxExposureUsage(record.approvedLimits), savedResultSavedAtMs: Date.parse(input.now()),
+          verification: { kind: 'gateway_abort_max_exposure', failureCategory: telemetry!.failureCategory as 'budget_exceeded' | 'provider_timeout' },
+        })
+        if (!settled.ok) throw new ResearchFollowupHold(`Gateway-aborted primary settlement refused: ${settled.code}.`)
+      } finally {
+        // If persistence itself failed, leave a recoverable unknown marker for
+        // the bounded stale-hold sweep instead of losing the abort classification.
+        const current = await budget.get(key)
+        if (current?.state === 'dispatch_intent') await recordUnknownOutcome(budget, key, {
+          ownedEpoch: record.ownershipEpoch, nowMs: Date.parse(input.now()),
+        })
+      }
+      throw new ResearchFollowupHold(`Primary synthesis stopped by gateway: ${telemetry!.failureCategory}.`)
+    }
     // A provider response that the gateway or the code-owned contract
     // rejected is a confirmed paid attempt. Persist a compact receipt and
     // settle the reservation against that receipt so it is not misreported as
@@ -143,6 +161,16 @@ export async function durablePrimarySynthesis(input: {
   }
 }
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
+
+function isGatewayAbort(telemetry: InferenceGatewayError['telemetry'] | undefined): boolean {
+  return telemetry?.failureCategory === 'provider_timeout'
+    || (telemetry?.failureCategory === 'budget_exceeded' && !hasReceivedProviderResponse(telemetry))
+}
+
+function maxExposureUsage(limits: { maxProviderCalls: number, maxInputTokens: number, maxOutputTokens: number }): D2Usage {
+  return { status: 'unknown', costUsdMicros: null, inputTokens: limits.maxInputTokens,
+    outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
+}
 
 function hasReceivedProviderResponse(telemetry: InferenceGatewayError['telemetry']): boolean {
   if (!telemetry) return false

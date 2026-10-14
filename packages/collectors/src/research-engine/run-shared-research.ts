@@ -43,6 +43,7 @@ import {
   type GlobalSchedulerQuery,
 } from '../signal-platform/shared-scheduler'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import { loadLocalTriageCapacity } from '../signal-platform/local-capacity'
 import {
   FileSqliteWriteHealthJournal,
   resolveSqliteWriteHealthJournalPath,
@@ -97,6 +98,8 @@ export const SHARED_RESEARCH_ENV = Object.freeze({
   runtimeStatusPath: 'FEED_V3_RESEARCH_RUNTIME_STATUS_PATH',
   contextHealthyProbeIntervalMs: 'FEED_V3_RESEARCH_CONTEXT_HEALTHY_PROBE_INTERVAL_MS',
   historyCacheTtlMs: 'FEED_V3_RESEARCH_HISTORY_CACHE_TTL_MS',
+  staleHoldSweepEnabled: 'FEED_V3_STALE_HOLD_SWEEP_ENABLED',
+  staleHoldTtlMs: 'FEED_V3_STALE_HOLD_TTL_MS',
 })
 
 type SupportedResearchSource = Signal['sourceType']
@@ -168,6 +171,7 @@ export interface SharedResearchRuntimeStatus {
     sources: string[]
     managedContextConfigured: boolean
     paidOutcomeHoldsBySource: Record<string, number>
+    capacityBySource?: Record<string, { p3Utilization: number, lightUtilization: number }>
   }
 }
 
@@ -479,6 +483,11 @@ export function createLiveSharedResearchRuntime(
         sources: [...v4Configuration.activeSources], managedContextConfigured: v4Configuration.databaseUrl !== null,
         paidOutcomeHoldsBySource: Object.fromEntries(stores.map((store) => [store.sourceType,
           runtimeMode === 'active' ? store.countUnresolvedResearchReservations() : 0])),
+        capacityBySource: Object.fromEntries(stores.map((store) => {
+          const capacity = store.readTriageCapacitySnapshot(loadLocalTriageCapacity(config.env), new Date().toISOString())
+          return [store.sourceType, { p3Utilization: capacity.byPriority.P3.utilization,
+            lightUtilization: capacity.byDepth.light.utilization }]
+        })),
       },
     })
   }
@@ -646,9 +655,21 @@ export function createLiveSharedResearchRuntime(
     let stopPromise: Promise<void> | null = null
     return {
       get status() { return runtimeStatus() },
-      recoverExpired: ({ now, limitPerSource }) => recoveryScheduler.recoverExpiredLeases({
-        now, limitPerStore: limitPerSource,
-      }),
+      recoverExpired: async ({ now, limitPerSource }) => {
+        if (staleHoldSweepEnabled(config.env)) {
+          await Promise.all(stores.map(async (store) => {
+            try {
+              const ttl = positiveEnvInteger(config.env[SHARED_RESEARCH_ENV.staleHoldTtlMs], 86_400_000,
+                SHARED_RESEARCH_ENV.staleHoldTtlMs)
+              await store.sweepStaleResearchHolds({ olderThanMs: ttl, now, limit: limitPerSource })
+            } catch {
+              // Reconciliation is bounded and best effort; normal recovery and
+              // the worker tick remain available if a source store is busy.
+            }
+          }))
+        }
+        return recoveryScheduler.recoverExpiredLeases({ now, limitPerStore: limitPerSource })
+      },
       async runCycle() {
         if (stopping || !claimsEnabled()) return []
         if (articleContextAvailability) await articleContextAvailability.check()
@@ -905,6 +926,16 @@ function flag(raw: string | undefined, fallback: boolean, field: string): boolea
   if (raw === '1') return true
   if (raw === '0') return false
   throw new Error(`${field} must be 0 or 1`)
+}
+function staleHoldSweepEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
+  const raw = env[SHARED_RESEARCH_ENV.staleHoldSweepEnabled]
+  if (raw === undefined) return true
+  return raw === 'true'
+}
+function positiveEnvInteger(raw: string | undefined, fallback: number, field: string): number {
+  const value = raw === undefined ? fallback : Number(raw)
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${field} must be a positive integer`)
+  return value
 }
 function safeValue(value: string, field: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value)) throw new Error(`${field} is unsafe`)

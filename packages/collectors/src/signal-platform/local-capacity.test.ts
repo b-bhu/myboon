@@ -32,9 +32,11 @@ function fixture(source: Signal['sourceType'] = 'polymarket', limits = DEFAULT_L
 test('capacity overrides are explicit, bounded, and preserve every other lane', () => {
   const configured = loadLocalTriageCapacity({
     [LOCAL_TRIAGE_CAPACITY_ENV.p3]: '200', [LOCAL_TRIAGE_CAPACITY_ENV.light]: '200',
+    [LOCAL_TRIAGE_CAPACITY_ENV.paidExposure]: '75',
   })
   assert.equal(configured.byPriority.P3, 200)
   assert.equal(configured.byDepth.light, 200)
+  assert.equal(configured.paidExposureLimit, 75)
   assert.equal(configured.byPriority.P2, DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority.P2)
   assert.equal(configured.byPriority.P0, DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority.P0)
   assert.equal(configured.byPriority.P1, DEFAULT_LOCAL_TRIAGE_CAPACITY.byPriority.P1)
@@ -46,15 +48,16 @@ test('capacity overrides are explicit, bounded, and preserve every other lane', 
   }
 })
 
-async function dispatched(fx: ReturnType<typeof fixture>, work: ResearchWorkItem, allowance: string, unknown = false) {
+async function dispatched(fx: ReturnType<typeof fixture>, work: ResearchWorkItem, allowance: string, unknown = false,
+  atMs = Date.parse(EXPIRED)) {
   const port = fx.store.researchBudgetStore()
   const key = { rootAssignmentId: researchRootAssignmentId(work), allowanceId: allowance, attemptId: `attempt-${allowance}` }
   const requestDigest = 'a'.repeat(64)
   assert.equal((await claimReservation(port, { ...key, requestDigest, providerRoute: 'fixture',
     approvedLimits: { maxProviderCalls: 1, maxInputTokens: 100, maxOutputTokens: 20, maxIncrementalCostUsdMicros: null },
-    nowMs: Date.parse(EXPIRED) })).ok, true)
-  assert.equal((await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: Date.parse(EXPIRED) })).ok, true)
-  if (unknown) assert.equal((await recordUnknownOutcome(port, key, { ownedEpoch: 1, nowMs: Date.parse(NOW) })).ok, true)
+    nowMs: atMs })).ok, true)
+  assert.equal((await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: atMs })).ok, true)
+  if (unknown) assert.equal((await recordUnknownOutcome(port, key, { ownedEpoch: 1, nowMs: atMs })).ok, true)
   return { port, key, requestDigest }
 }
 
@@ -96,7 +99,7 @@ test('leased Research and Entity work remains capacity exposure after freshness 
   } finally { fx.dispose() }
 })
 
-test('unresolved paid exposure counts expired and terminal work once, then stops counting a durably settled result', async () => {
+test('unresolved paid exposure is separate from live capacity, including terminal work', async () => {
   const fx = fixture()
   try {
     const retry = fx.seed('unknown-retry', { status: 'retry_wait', freshnessDeadline: EXPIRED, nextAttemptAt: EXPIRED, retryTargetStatus: 'research_pending' })
@@ -104,19 +107,21 @@ test('unresolved paid exposure counts expired and terminal work once, then stops
     await dispatched(fx, retry, 'retry-classifier', true)
     const terminal = fx.seed('terminal-dispatch', { status: 'dead_letter', freshnessDeadline: EXPIRED })
     const active = await dispatched(fx, terminal, 'terminal-primary')
-    assert.equal(fx.snapshot().byDepth.light.available, 98)
+    assert.equal(fx.snapshot().byDepth.light.available, 100)
+    assert.equal(fx.snapshot().paidExposure?.unresolvedHolds, 3)
     const resultRef = 'baseline:terminal-dispatch:packet'
     assert.equal((await settleReservation(active.port, active.key, { requestDigest: active.requestDigest,
       providerResultDigest: 'b'.repeat(64), savedResultRef: resultRef,
       usage: { status: 'unknown', costUsdMicros: null, inputTokens: 10, outputTokens: 5, providerCalls: 1 },
       savedResultSavedAtMs: Date.parse(NOW), verification: { kind: 'durable_matching_response', savedResultRef: resultRef, providerResultDigest: 'b'.repeat(64) },
     })).ok, true)
-    assert.equal(fx.snapshot().byDepth.light.available, 99)
+    assert.equal(fx.snapshot().byDepth.light.available, 100)
+    assert.equal(fx.snapshot().paidExposure?.unresolvedHolds, 2)
     assert.equal(fx.store.getResearchWork(terminal.workId)?.status, 'dead_letter')
   } finally { fx.dispose() }
 })
 
-test('an unresolved paid hold remains counted under the explicit P3/light capacity override', async () => {
+test('terminal unresolved paid hold stays outside overridden P3/light lane capacity', async () => {
   const limits = loadLocalTriageCapacity({
     [LOCAL_TRIAGE_CAPACITY_ENV.p3]: '200', [LOCAL_TRIAGE_CAPACITY_ENV.light]: '200',
   })
@@ -127,12 +132,13 @@ test('an unresolved paid hold remains counted under the explicit P3/light capaci
     })
     await dispatched(fx, work, 'unknown-under-override-primary', true)
     const snapshot = fx.snapshot()
-    assert.equal(snapshot.byPriority.P3.available, 199)
-    assert.equal(snapshot.byDepth.light.available, 199)
+    assert.equal(snapshot.byPriority.P3.available, 200)
+    assert.equal(snapshot.byDepth.light.available, 200)
+    assert.equal(snapshot.paidExposure?.unresolvedHolds, 1)
   } finally { fx.dispose() }
 })
 
-test('fresh leased work and its dispatch are counted once; inherited root IDs retain unresolved exposure', async () => {
+test('fresh leased work and its dispatch are counted once; inherited root IDs keep unresolved paid exposure', async () => {
   const fx = fixture()
   try {
     const leased = fx.seed('live', { status: 'synthesis_leased', leaseOwner: 'worker', leaseId: 'lease-live', leaseExpiresAt: FUTURE })
@@ -140,7 +146,11 @@ test('fresh leased work and its dispatch are counted once; inherited root IDs re
     const continuation = fx.seed('continuation', { freshnessDeadline: EXPIRED,
       retrievalPlan: { ...operatorWork('polymarket', 'continuation').retrievalPlan, rootAssignmentId: 'explicit-root-continuation' } })
     await dispatched(fx, continuation, 'continuation-primary', true)
-    assert.equal(fx.snapshot().byDepth.light.available, 98)
+    const snapshot = fx.snapshot()
+    // Live leased work holds one intake slot; the expired continuation's
+    // unresolved hold moves to the separate paid-exposure budget (#299).
+    assert.equal(snapshot.byDepth.light.available, 99)
+    assert.equal(snapshot.paidExposure?.unresolvedHolds, 2)
   } finally { fx.dispose() }
 })
 
@@ -149,5 +159,41 @@ test('unbound paid exposure fails capacity closed rather than disappearing from 
   try {
     await dispatched(fx, operatorWork('polymarket', 'missing-work'), 'missing-primary', true)
     assert.throws(() => fx.snapshot(), /paid exposure has no canonical work binding/)
+  } finally { fx.dispose() }
+})
+
+test('stale hold sweep settles only holds past the TTL and writes a reconciliation record', async () => {
+  const fx = fixture()
+  try {
+    const old = fx.seed('old-hold')
+    const recent = fx.seed('recent-hold')
+    const oldTime = Date.parse(NOW) - 25 * 60 * 60_000
+    const oldReservation = await dispatched(fx, old, 'old-hold-allowance', true, oldTime)
+    const recentReservation = await dispatched(fx, recent, 'recent-hold-allowance', true)
+    const result = await fx.store.sweepStaleResearchHolds({ olderThanMs: 24 * 60 * 60_000, now: NOW, limit: 10 })
+    assert.equal(result.reservationsSettled, 1)
+    assert.equal((await oldReservation.port.get(oldReservation.key))?.state, 'settled')
+    assert.equal((await recentReservation.port.get(recentReservation.key))?.state, 'execution_outcome_unknown')
+    const audit = fx.store.listResearchV4Records<{ status: string }>('reservation_reconciliation', old.workId, 10)
+    assert.equal(audit[0]?.status, 'stale_hold_max_exposure')
+    assert.deepEqual((await oldReservation.port.get(oldReservation.key))?.settlement?.usage, {
+      status: 'unknown', costUsdMicros: null, inputTokens: 100, outputTokens: 20, providerCalls: 1,
+    })
+  } finally { fx.dispose() }
+})
+
+test('stale hold sweep retries expired leases when attempts remain and dead-letters exhausted work', async () => {
+  const fx = fixture()
+  try {
+    const retry = fx.seed('expired-lease-retry', { status: 'retrieval_leased', attemptCount: 0,
+      leaseOwner: 'worker', leaseId: 'lease-retry', leaseExpiresAt: EXPIRED })
+    const terminal = fx.seed('expired-lease-terminal', { status: 'synthesis_leased', attemptCount: 3,
+      leaseOwner: 'worker', leaseId: 'lease-terminal', leaseExpiresAt: EXPIRED })
+    const result = await fx.store.sweepStaleResearchHolds({ now: NOW, limit: 10 })
+    assert.equal(result.leasesRetried, 1)
+    assert.equal(result.leasesDeadLettered, 1)
+    assert.equal(fx.store.getResearchWork(retry.workId)?.status, 'retry_wait')
+    assert.equal(fx.store.getResearchWork(terminal.workId)?.status, 'dead_letter')
+    assert.equal(fx.store.getResearchWork(terminal.workId)?.failureCategory, 'lease_expired')
   } finally { fx.dispose() }
 })

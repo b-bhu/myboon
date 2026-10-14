@@ -100,6 +100,22 @@ export async function durableArticleEntityProposal(input: {
     result = input.store.putResearchV4Record('article_entity_proposal', input.work.workId, 'result', result)
   } catch (error) {
     const telemetry = error instanceof InferenceGatewayError ? error.telemetry : undefined
+    if (isGatewayAbort(telemetry)) {
+      try {
+        const settled = await settleReservation(budget, key, {
+          requestDigest, providerResultDigest: null, savedResultRef: null,
+          usage: maxExposureUsage(record.approvedLimits), savedResultSavedAtMs: Date.parse(input.now()),
+          verification: { kind: 'gateway_abort_max_exposure', failureCategory: telemetry!.failureCategory as 'budget_exceeded' | 'provider_timeout' },
+        })
+        if (!settled.ok) throw new ResearchFollowupHold(`Gateway-aborted article proposal settlement refused: ${settled.code}.`)
+      } finally {
+        const current = await budget.get(key)
+        if (current?.state === 'dispatch_intent') await recordUnknownOutcome(budget, key, {
+          ownedEpoch: record.ownershipEpoch, nowMs: Date.parse(input.now()),
+        })
+      }
+      throw new ResearchFollowupHold(`Article entity proposal stopped by gateway: ${telemetry!.failureCategory}.`)
+    }
     if (result !== null || hasReceivedProviderResponse(telemetry)) {
       const receiptRef = `rejected_response:${input.work.workId}:${attemptId}`
       const receipt = {
@@ -141,6 +157,16 @@ export async function durableArticleEntityProposal(input: {
 }
 
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
+
+function isGatewayAbort(telemetry: InferenceGatewayError['telemetry'] | undefined): boolean {
+  return telemetry?.failureCategory === 'provider_timeout'
+    || (telemetry?.failureCategory === 'budget_exceeded' && !hasReceivedProviderResponse(telemetry))
+}
+
+function maxExposureUsage(limits: { maxProviderCalls: number, maxInputTokens: number, maxOutputTokens: number }): D2Usage {
+  return { status: 'unknown', costUsdMicros: null, inputTokens: limits.maxInputTokens,
+    outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
+}
 
 function hasReceivedProviderResponse(telemetry: InferenceGatewayError['telemetry']): boolean {
   return telemetry?.calls.some((call) => call.status === 'succeeded') === true

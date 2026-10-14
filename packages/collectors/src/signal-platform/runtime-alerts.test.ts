@@ -172,8 +172,42 @@ test('operational policy parsing is strict and never invents reviewed thresholds
     minimumCompletionAdmissionRatio: 1,
     sqliteWriteErrorCountThreshold: 0,
   })
+  assert.equal(parseOperationalAlertPolicy({
+    minimumThroughputWindowMs: 1_800_000, minimumCompletionAdmissionRatio: 1,
+    sqliteWriteErrorCountThreshold: 0, unresolvedPaidHoldThreshold: 40,
+  }).unresolvedPaidHoldThreshold, 40)
   assert.throws(() => parseOperationalAlertPolicy({
     minimumThroughputWindowMs: 1_800_000, minimumCompletionAdmissionRatio: 1,
     sqliteWriteErrorCountThreshold: 0, invented: 1,
   }), /unknown/)
+})
+
+test('fires zero-admission, lane-pressure and unresolved-hold alerts at their thresholds only', () => {
+  const current = status()
+  current.sources.news!.activity.windowStart = '2026-08-26T11:59:00.000Z'
+  current.sources.news!.activity.admissions = 0
+  const activeRuntime = runtime()
+  activeRuntime.researchRuntime.snapshot!.runtime.v4 = {
+    configured: true, composed: true, noveltyEnabled: false, articleWorkflowEnabled: false,
+    reuseEnabled: false, followupEnabled: false, sources: ['news'], managedContextConfigured: false,
+    paidOutcomeHoldsBySource: { news: 26 },
+    capacityBySource: { news: { p3Utilization: 0.8, lightUtilization: 0.79 } },
+  }
+  const policy = { minimumThroughputWindowMs: 30 * 60_000,
+    minimumCompletionAdmissionRatio: 0, sqliteWriteErrorCountThreshold: 99 }
+  const report = evaluateOperationalAlerts({ status: current, runtime: activeRuntime, policy })
+  assert.deepEqual(new Set(report.items.map((item) => item.code).filter((code) => [
+    'ZERO_ADMISSIONS_WITH_DECISIONS', 'TRIAGE_CAPACITY_PRESSURE', 'UNRESOLVED_PAID_HOLD_THRESHOLD',
+  ].includes(code))), new Set([
+    'ZERO_ADMISSIONS_WITH_DECISIONS', 'TRIAGE_CAPACITY_PRESSURE', 'UNRESOLVED_PAID_HOLD_THRESHOLD',
+  ]))
+
+  current.sources.news!.activity.windowStart = '2026-08-26T12:01:00.000Z'
+  activeRuntime.researchRuntime.snapshot!.runtime.v4.paidOutcomeHoldsBySource.news = 25
+  activeRuntime.researchRuntime.snapshot!.runtime.v4.capacityBySource!.news = {
+    p3Utilization: 0.79, lightUtilization: 0.79,
+  }
+  const below = evaluateOperationalAlerts({ status: current, runtime: activeRuntime, policy })
+  assert.ok(!below.items.some((item) => ['ZERO_ADMISSIONS_WITH_DECISIONS', 'TRIAGE_CAPACITY_PRESSURE',
+    'UNRESOLVED_PAID_HOLD_THRESHOLD'].includes(item.code)))
 })
