@@ -26,12 +26,26 @@ create index token_registry_updated_at_idx on public.token_registry (updated_at)
 alter table public.token_registry enable row level security;
 -- No anon/authenticated policies: only the API (service role) reads and writes.
 ```
-Writes are upserts guarded by `where excluded.upstream_seen_at > token_registry.upstream_seen_at or token_registry.<field> is null`, so older upstream data never overwrites a newer row.
+Writes are upserts guarded by `where excluded.upstream_seen_at > token_registry.upstream_seen_at or token_registry.upstream_seen_at is null or token_registry.<field> is null`, so older upstream data never overwrites a newer row.
 
 ### 2. Bounded in-memory LRU
 - Replaces `mintCache` (`jupiter-tokens.ts:60`). Found TTL 7d, miss TTL 10min, max about 50k entries.
 - All limits are config values in `packages/api/src/bootstrap/config.ts`, not constants: `TOKEN_REGISTRY_LRU_MAX`, `TOKEN_REGISTRY_FOUND_TTL_MS`, `TOKEN_REGISTRY_MISS_TTL_MS`, `TOKEN_REGISTRY_STALE_AFTER_MS`.
-- The icon byte cache (`icon-proxy.ts:50`) moves to its own bounded LRU (by entry count and total bytes). Its current TTLs stay.
+- The icon byte cache (`icon-proxy.ts:50`) moves to its own bounded LRU. Defaults, all config values:
+  - `TOKEN_ICON_CACHE_MAX_ENTRIES=2000`: about 30x the 60 icons a home-screen load needs, and well above the 209 icon requests seen in 15 days of logs.
+  - `TOKEN_ICON_CACHE_MAX_BYTES=64MB`: token icons are typically 5–30KB, so 2000 × 32KB ≈ 64MB, a safe ceiling for a single PM2 process.
+  - `TOKEN_ICON_MAX_ITEM_BYTES=256KB`: anything larger is served without being cached.
+  - TTLs stay as they are today: 7d found, 1h missing, 1min error (`icon-proxy.ts:24-35`).
+  - Eviction is least recently used, applied when either limit is exceeded.
+
+### 2a. Jupiter free-tier protection
+One shared upstream limiter is used by foreground lookups and stale-while-revalidate background refreshes alike. All of its settings are config values:
+- **Concurrency:** `TOKEN_UPSTREAM_MAX_CONCURRENCY=2` in-flight Jupiter requests.
+- **Rate:** a token bucket, `TOKEN_UPSTREAM_RPM=30` requests per minute. Each request carries at most 10 mints (`jupiter-tokens.ts:29`).
+- **Backoff:** on a 429 or 5xx, exponential backoff with full jitter (base 1s, max 60s). After 3 consecutive failures, a circuit break opens for a `TOKEN_UPSTREAM_COOLDOWN_MS=300000` (5min) cooldown, and Jupiter is not called until it ends. A `Retry-After` header is honored when present.
+- **Fallback when limited or circuit-open:** serve from the LRU, DB, seed and cached misses only. Unresolved refs come back as misses with a short TTL. Background refreshes are dropped, not queued without limit.
+- **Cold batch:** a cold `POST /tokens/resolve` with 500 unknown refs never fans out without limit. Each request may make at most `TOKEN_UPSTREAM_MAX_PER_REQUEST=50` upstream lookups (5 batches) through the shared limiter, and waits at most `TOKEN_UPSTREAM_REQUEST_BUDGET_MS=2000`. The response is a partial result (`v: 1`, with `partial: true` and the unresolved refs). Leftover refs are queued for background fill under the same limiter, and that queue is capped at `TOKEN_UPSTREAM_QUEUE_MAX=1000`.
+- **Counter:** every upstream call increments `token_upstream_calls_total{source,status}`, logged as a one-line summary each minute. This gives the baseline for the acceptance target.
 
 ### 3. Lookup order
 LRU → `token_registry` (batched `in (...)` select) → seed (`seed/token-identities.seed.json`) → upstream (Jupiter `tokens/v2/search`; Meteora data only via ingest). In-flight dedupe is kept per mint (`jupiter-tokens.ts:62`). Upstream results are written back to both the DB and the LRU. Misses are cached only in the LRU, never in the DB.
@@ -52,7 +66,23 @@ Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/share
 ### 7. Client token store — coordinate with Frontend Dev
 - Shared types (`TokenIdentityV1`, `TokenResolveResponseV1`) land first in `packages/shared` as their own small PR. The frontend issue links that PR as a dependency.
 - Phone: a persistent store (MMKV or AsyncStorage, hours to days TTL) replaces the 10min/30s in-memory TTLs (`lib/token-identity.store.ts:3-4`). Drop `no-store` (`lib/token-identity.ts:78`). Keep warming the catalog at start (already called in `app/_layout.tsx:21`). Load icons only via `/tokens/icon/*` and never use Meteora `iconUrl`.
+- **Client TTL:** 7 days for found tokens and 10 minutes for misses, with stale entries revalidated against the cacheable `GET /tokens/resolve`.
+- **Storage:** AsyncStorage. `apps/hybrid-expo` already depends on `@react-native-async-storage/async-storage` 2.2.0 (`package.json:41`) and uses it in several places (for example `hooks/useOddsFormat.ts`). MMKV is not a dependency, and adding it would mean a new native module and a new EAS build. **Confirm with Frontend Dev.**
 - Frontend Dev owns this part and its EAS checklist.
+
+### 8. Rollout and rollback
+- **Flag:** `TOKEN_REGISTRY_ENABLED`, default **off**, separate from `TOKEN_IDENTITY_ENABLED` (which stays as the master switch for token identity). With the flag off, today's Map and Jupiter path runs unchanged. With it on, the TokenRegistry path runs (LRU, DB, seed, upstream).
+- **Migration:** the PR1 migration includes a down-migration (`drop table if exists public.token_registry;`). Merging PR1 does not apply it. It is applied only after Bucket says yes on #318.
+- **Rollback:** set `TOKEN_REGISTRY_ENABLED` to off and restart `myboon-api` (with approval). That returns the API to the current behavior right away. Drop the table only if needed, using the down-migration, again with Bucket's yes.
+- **Compatibility:** the response shape stays a superset of today's. Older app builds keep working against `v: 1` (new fields like `partial` are additive), and no field is removed in Phase 1.
+
+### 9. PR plan
+| PR | Contents | Flag / client impact |
+|---|---|---|
+| PR0 | Shared types in `packages/shared` (`TokenIdentityV1`, `TokenResolveResponseV1`) | No runtime change |
+| PR1 | Migration (up and down) + `TokenRegistry` + bounded LRU + upstream limiter + Jupiter call counter | Flag off, no client change. **Merging PR1 does not apply the migration** (Bucket's yes is needed) |
+| PR2 | Meteora write-through + cacheable `GET /tokens/resolve` + bounded icon LRU | Behind the flag. Turned on only after the migration is applied and approved |
+| PR3 | Client persistent store, drop `no-store`, icons only through the proxy (Frontend Dev) | Needs an EAS build; follows PR0 |
 
 ## Out of scope
 - **Phase 2: the server Meteora pools proxy (`GET /meteora/pools`) is explicitly out of scope.** It starts only after Phase 1 is merged and baselined.
@@ -66,6 +96,12 @@ Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/share
 - [ ] Ingest never overwrites a row with an older `upstream_seen_at` (unit test).
 - [ ] `GET /tokens/resolve` returns the ETag/304 and `Cache-Control` above, and the body carries `v: 1`.
 - [ ] The phone loads zero icons from third-party hosts on the Meteora home screen.
+- [ ] With the flag on, upstream Jupiter calls per hour (from the new counter) are **at least 90% lower** than the first measured window with the flag off.
+- [ ] Post-restart upstream calls (counted at the next natural restart) are recorded, and with the flag on the first 100 known mints after a restart cause 0 calls.
+- [ ] Icon LRU never exceeds 2000 entries or 64MB (unit test).
+- [ ] A cold 500-ref POST makes at most 50 upstream lookups, returns within about 2s with `partial: true`, and never exceeds 2 concurrent upstream requests (unit test).
+- [ ] When Jupiter returns 429 or 5xx, the circuit opens and responses fall back to seed and cached misses (unit test).
+- [ ] With the flag off, behavior is identical to today (existing route tests pass unchanged).
 - [ ] Home screen server p95 for `/tokens/resolve` and `/tokens/icon/*` is no worse than the baseline below.
 
 ## Test plan
