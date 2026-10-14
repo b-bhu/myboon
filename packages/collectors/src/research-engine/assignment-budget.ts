@@ -54,8 +54,8 @@ export interface D2Settlement {
 }
 
 export type D2Usage =
-  | { readonly status: 'measured', readonly costUsdMicros: number | null, readonly inputTokens: number | null, readonly outputTokens: number | null, readonly providerCalls?: number | null }
-  | { readonly status: 'unknown', readonly costUsdMicros: null, readonly inputTokens: number | null, readonly outputTokens: number | null, readonly providerCalls?: number | null }
+  | { readonly status: 'measured', readonly costUsdMicros: number | null, readonly inputTokens: number | null, readonly outputTokens: number | null, readonly providerCalls?: number | null, readonly costBasis?: 'approved_max_incremental_cost' }
+  | { readonly status: 'unknown', readonly costUsdMicros: number | null, readonly inputTokens: number | null, readonly outputTokens: number | null, readonly providerCalls?: number | null, readonly costBasis?: 'approved_max_incremental_cost' }
 
 export interface D2ReservationKey {
   readonly rootAssignmentId: string
@@ -324,7 +324,10 @@ function validLimits(limits: D2FollowupLimitsSnapshot): boolean {
 const settleOutcomeShape = (usage: D2Usage): 'invalid' | 'valid' => {
   if (![usage.inputTokens, usage.outputTokens, usage.providerCalls ?? null]
     .every((value) => value === null || (Number.isSafeInteger(value) && value >= 0))) return 'invalid'
-  if (usage.status === 'unknown') return usage.costUsdMicros === null ? 'valid' : 'invalid'
+  if (usage.costBasis === 'approved_max_incremental_cost'
+    && (usage.status !== 'unknown' || !Number.isSafeInteger(usage.costUsdMicros) || usage.costUsdMicros! <= 0)) return 'invalid'
+  if (usage.status === 'unknown') return usage.costUsdMicros === null
+    || (Number.isSafeInteger(usage.costUsdMicros) && usage.costUsdMicros > 0) ? 'valid' : 'invalid'
   return Number.isSafeInteger(usage.costUsdMicros) && usage.costUsdMicros! > 0 ? 'valid' : 'invalid'
 }
 

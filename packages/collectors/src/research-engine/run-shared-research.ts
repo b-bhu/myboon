@@ -210,6 +210,7 @@ export type SharedResearchRunnerCycleResult =
 
 export interface CreateLiveSharedResearchRuntimeOptions {
   standardSearchFactories?: RegisteredSearchConnectorFactories
+  writeRuntimeLog?: (line: string) => void
   runtimeControl?: RuntimeControlReadPort
   /** Composition seams preserve the same configuration, ownership and budget gates. */
   createInferenceRuntime?: typeof createConfiguredInferenceGateway
@@ -382,6 +383,7 @@ export function createLiveSharedResearchRuntime(
   config: SharedResearchRunnerConfig,
   options: CreateLiveSharedResearchRuntimeOptions = {},
 ): SharedResearchRunnerRuntime {
+  const writeRuntimeLog = options.writeRuntimeLog ?? ((line: string) => process.stdout.write(`${line}\n`))
   const runtimeMode = config.mode
   const v4Configuration = loadEntityManagerV4RuntimeConfig(config.env)
   if (runtimeMode === 'off') throw new Error('Disabled research must not construct a live runtime')
@@ -668,15 +670,17 @@ export function createLiveSharedResearchRuntime(
                 SHARED_RESEARCH_ENV.staleHoldTtlMs)
               const result = await store.sweepStaleResearchHolds({ olderThanMs: ttl, now, limit: limitPerSource,
                 mode: config.staleHoldSweepMode })
-              process.stdout.write(`${JSON.stringify({ event: 'stale_research_hold_sweep', sourceType: store.sourceType,
-                mode: config.staleHoldSweepMode, ...result })}\n`)
-            } catch {
+              writeRuntimeLog(JSON.stringify({ event: 'stale_research_hold_sweep', sourceType: store.sourceType,
+                mode: config.staleHoldSweepMode, ...result }))
+            } catch (error) {
               // Reconciliation is bounded and best effort; normal recovery and
               // the worker tick remain available if a source store is busy.
+              writeRuntimeLog(JSON.stringify({ event: 'stale_research_hold_sweep_error',
+                sourceType: store.sourceType, mode: config.staleHoldSweepMode,
+                message: redactedErrorMessage(error) }))
             }
           }))
         }
-        if (config.staleHoldSweepEnabled && config.staleHoldSweepMode === 'report') return {}
         return recoveryScheduler.recoverExpiredLeases({ now, limitPerStore: limitPerSource })
       },
       async runCycle() {
@@ -733,6 +737,11 @@ export function createLiveSharedResearchRuntime(
     void managedResearchContext?.close().catch(() => undefined)
     throw error
   }
+}
+
+function redactedErrorMessage(_error: unknown): string {
+  // Error text can contain paths, SQL or credentials from driver messages.
+  return 'Stale hold sweep failed'
 }
 
 /** Preserve full-policy capability behavior; Phase 1 alone is admission-bounded. */

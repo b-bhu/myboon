@@ -243,10 +243,29 @@ test('report mode only reports bound holds and leaves reservations and lease row
     assert.equal(result.maxOutputTokens, 20)
     assert.equal(result.maxProviderCalls, 1)
     assert.equal(result.maxIncrementalCostUsdMicros, null)
+    assert.equal(result.totalStale, 1)
+    assert.equal(result.totalBound, 1)
+    assert.equal(result.totalOrphaned, 0)
     assert.deepEqual(result.reservationKeys[0], { root_assignment_id: held.key.rootAssignmentId,
       allowance_id: held.key.allowanceId, attempt_id: held.key.attemptId, age: 3_600_000 })
     assert.deepEqual(fx.store.getResearchWork(expiredLease.workId), beforeWork)
     assert.deepEqual(await held.port.get(held.key), beforeReservation)
+  } finally { fx.dispose() }
+})
+
+test('report totals include every stale hold beyond the bounded candidate batch', async () => {
+  const fx = fixture()
+  try {
+    for (let i = 0; i < 4; i += 1) {
+      const work = fx.seed(`report-total-${i}`)
+      await dispatched(fx, work, `report-total-${i}`, true)
+    }
+    const result = await fx.store.sweepStaleResearchHolds({ now: NOW, limit: 1, olderThanMs: 1, mode: 'report' })
+    assert.equal(result.wouldClose, 1)
+    assert.equal(result.totalStale, 4)
+    assert.equal(result.totalBound, 4)
+    assert.equal(result.totalOrphaned, 0)
+    assert.equal(result.reservationsSettled, 0)
   } finally { fx.dispose() }
 })
 
@@ -274,6 +293,9 @@ test('orphaned holds do not consume the settlement limit and are returned as orp
     const result = await fx.store.sweepStaleResearchHolds({ now: NOW, limit: 1, olderThanMs: 1 })
     assert.equal(result.reservationsSettled, 1)
     assert.equal(result.orphaned.length, 4)
+    assert.equal(result.totalStale, 5)
+    assert.equal(result.totalBound, 1)
+    assert.equal(result.totalOrphaned, 4)
     assert.equal((await held.port.get(held.key))?.state, 'settled')
   } finally { fx.dispose() }
 })

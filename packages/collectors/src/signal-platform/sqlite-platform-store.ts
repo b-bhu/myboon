@@ -1423,6 +1423,9 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     maxOutputTokens: number
     maxProviderCalls: number
     maxIncrementalCostUsdMicros: number | null
+    totalStale: number
+    totalBound: number
+    totalOrphaned: number
     reservationKeys: Array<{ root_assignment_id: string, allowance_id: string, attempt_id: string, age: number }>
     orphaned: Array<{ root_assignment_id: string, allowance_id: string, attempt_id: string, age: number }>
   }> {
@@ -1468,6 +1471,9 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     const maxIncrementalCostUsdMicros = knownCosts.length > 0
       ? knownCosts.reduce((sum, cost) => sum + cost, 0) : null
     const baseResult = {
+      totalStale: staleRows.length,
+      totalBound: boundRows.length,
+      totalOrphaned: orphanRows.length,
       wouldClose: holds.length, maxInputTokens: total('maxInputTokens'), maxOutputTokens: total('maxOutputTokens'),
       maxProviderCalls: total('maxProviderCalls'), maxIncrementalCostUsdMicros,
       reservationKeys: candidates.map(({ canonical_json }) => {
@@ -1495,12 +1501,14 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
       // Preserve the fail-closed canonical-binding behavior for paid exposure.
       if (!work) continue
       const cost = reservation.approvedLimits.maxIncrementalCostUsdMicros
-      // Current policies have maxIncrementalCostUsdMicros null, so dollar cost stays unknown and only token/call maxima are recorded.
       const usage = typeof cost === 'number' && cost > 0
-        ? { status: 'measured' as const, costUsdMicros: cost, inputTokens: reservation.approvedLimits.maxInputTokens,
+        ? { status: 'unknown' as const, costUsdMicros: cost, costBasis: 'approved_max_incremental_cost' as const, inputTokens: reservation.approvedLimits.maxInputTokens,
           outputTokens: reservation.approvedLimits.maxOutputTokens, providerCalls: reservation.approvedLimits.maxProviderCalls }
         : { status: 'unknown' as const, costUsdMicros: null, inputTokens: reservation.approvedLimits.maxInputTokens,
           outputTokens: reservation.approvedLimits.maxOutputTokens, providerCalls: reservation.approvedLimits.maxProviderCalls }
+      // BEGIN IMMEDIATE is safe across this await: this SQLite connection is owned by this
+      // single worker process, and nothing else writes on it during the await. Other writers
+      // block on the lock or busy timeout. transactionContext prevents nested transactions.
       const committed = await this.inImmediateTransactionAsync(async () => {
         const settled = await settleReservation(budget, reservation, {
           requestDigest: reservation.requestDigest, providerResultDigest: null, savedResultRef: null,
@@ -1511,7 +1519,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
           `stale_hold:${reservation.allowanceId}:${reservation.attemptId}`, {
             status: 'stale_hold_max_exposure', reservationKey: reservation, originalReservation: reservation,
             settledAt: now, approvedLimits: reservation.approvedLimits, ownershipEpoch: reservation.ownershipEpoch,
-            costBasis: usage.status === 'measured' ? 'approved_max_incremental_cost' : 'unknown_no_cost_limit',
+            costBasis: typeof cost === 'number' && cost > 0 ? 'approved_max_incremental_cost' : 'unknown_no_cost_limit',
           })
         return true
       })

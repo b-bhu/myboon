@@ -169,7 +169,7 @@ function isGatewayAbort(telemetry: InferenceGatewayError['telemetry'] | undefine
 
 function maxExposureUsage(limits: { maxProviderCalls: number, maxInputTokens: number, maxOutputTokens: number, maxIncrementalCostUsdMicros: number | null }): D2Usage {
   return typeof limits.maxIncrementalCostUsdMicros === 'number' && limits.maxIncrementalCostUsdMicros > 0
-    ? { status: 'measured', costUsdMicros: limits.maxIncrementalCostUsdMicros, inputTokens: limits.maxInputTokens,
+    ? { status: 'unknown', costUsdMicros: limits.maxIncrementalCostUsdMicros, costBasis: 'approved_max_incremental_cost', inputTokens: limits.maxInputTokens,
       outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
     : { status: 'unknown', costUsdMicros: null, inputTokens: limits.maxInputTokens,
       outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
