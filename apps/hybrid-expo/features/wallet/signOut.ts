@@ -4,6 +4,21 @@ type PrivySignOutOptions = {
   onClearActivationError?: (error: unknown) => void;
 };
 
+type FullSignOutOptions = PrivySignOutOptions & {
+  disconnectMwa?: () => Promise<unknown>;
+  onMwaDisconnectError?: (error: unknown) => void;
+};
+
+export function selectMwaDisconnect({
+  hasMwaAccount,
+  disconnectMwa,
+}: {
+  hasMwaAccount: boolean;
+  disconnectMwa?: (() => Promise<unknown>) | null;
+}): (() => Promise<unknown>) | undefined {
+  return hasMwaAccount ? disconnectMwa ?? undefined : undefined;
+}
+
 export async function runPrivySignOut({
   clearActivation,
   logout,
@@ -16,4 +31,20 @@ export async function runPrivySignOut({
   } finally {
     await logout();
   }
+}
+
+export async function runFullSignOut({
+  disconnectMwa,
+  onMwaDisconnectError = (error) => console.warn('Could not disconnect the external Solana wallet during sign-out.', error),
+  ...privyOptions
+}: FullSignOutOptions): Promise<void> {
+  if (disconnectMwa) {
+    try {
+      await disconnectMwa();
+    } catch (error) {
+      onMwaDisconnectError(error);
+    }
+  }
+
+  await runPrivySignOut(privyOptions);
 }

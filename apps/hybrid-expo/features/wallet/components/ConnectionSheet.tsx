@@ -46,6 +46,7 @@ import { useChainActivation } from '@/features/chain/activation';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { useWallet } from '@/hooks/useWallet';
+import { selectMwaDisconnect } from '@/features/wallet/signOut';
 import { semantic, tokens } from '@/theme';
 
 type ConnectStep =
@@ -372,7 +373,7 @@ export function ConnectionSheet({
         await solana.disconnect();
         await deactivate(target);
       } else if (privy.isPrivyUser) {
-        await privy.disconnect();
+        await privy.disconnect(selectMwaDisconnect(solana));
       } else if (solana.disconnect) {
         await solana.disconnect();
         await deactivate(target);

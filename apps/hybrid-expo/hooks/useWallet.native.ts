@@ -1,12 +1,31 @@
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
+import { useCallback, useState } from 'react';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 
 export type WalletSource = 'privy' | 'mwa';
 
 export function useWallet() {
   const privy = usePrivyWallet();
-  const { account, connect, disconnect, signMessage, signTransaction, signAndSendTransaction, connection } =
+  const { account, connect, disconnect, store, signMessage, signTransaction, signAndSendTransaction, connection } =
     useMobileWallet();
+  const [mwaAccountCleared, setMwaAccountCleared] = useState(false);
+  const connectMwa = useCallback(async () => {
+    setMwaAccountCleared(false);
+    await connect();
+  }, [connect]);
+  const disconnectMwa = useCallback(async () => {
+    // Immediate UI guard; store.persist(null) clears the durable cache below.
+    setMwaAccountCleared(true);
+    try {
+      await disconnect();
+    } finally {
+      try {
+        await store.persist(null);
+      } catch (error) {
+        console.warn('Could not clear the cached external Solana wallet authorization.', error);
+      }
+    }
+  }, [disconnect, store]);
 
   if (process.env.EXPO_PUBLIC_PREDICT_E2E === '1') {
     const runtimeAddress = (globalThis as typeof globalThis & {
@@ -27,13 +46,15 @@ export function useWallet() {
       connection: null,
       walletOptions: [],
       source: 'mwa' as WalletSource,
+      hasMwaAccount: true,
+      disconnectMwa: async () => {},
       isPreparing: false,
       sessionKey: `mwa:${fakeAddress}`,
     };
   }
 
   // MWA wallet state
-  const raw = account?.address;
+  const raw = mwaAccountCleared ? null : account?.address;
   const mwaAddress = raw ? (typeof raw === 'string' ? raw : raw.toBase58()) : null;
 
   // A connected external wallet (Phantom / Solflare via MWA) wins over a Privy embedded
@@ -48,7 +69,7 @@ export function useWallet() {
   // session — so no cached MWA account is ever exposed during the hydration window, exactly
   // as before. Stale-vs-live is resolved the same way it is for MWA-only users: the first
   // signing call re-authorizes through `transact` and fails if the cache is dead.
-  const preferMwa = !!account && !privy.isPreparing;
+  const preferMwa = !!mwaAddress && !privy.isPreparing;
 
   if (privy.isPrivyUser && !preferMwa) {
     return {
@@ -68,6 +89,8 @@ export function useWallet() {
       connection: null,
       walletOptions: [],
       source: 'privy' as WalletSource,
+      hasMwaAccount: !!account?.address,
+      disconnectMwa,
       isPreparing: privy.isPreparing,
       sessionKey: privy.connected && privy.address ? `privy:${privy.address}` : 'privy:disconnected',
     };
@@ -75,19 +98,21 @@ export function useWallet() {
 
   // Fall back to MWA (Phantom / Solflare)
   return {
-    connected: !!account,
+    connected: !!raw,
     address: mwaAddress,
     shortAddress: mwaAddress
       ? `${mwaAddress.slice(0, 4)}···${mwaAddress.slice(-4)}`
       : null,
-    connect: async (_walletName?: string) => connect(),
-    disconnect,
+    connect: async (_walletName?: string) => connectMwa(),
+    disconnect: disconnectMwa,
     signMessage,
     signTransaction,
     signAndSendTransaction,
     connection,
     walletOptions: [],
     source: 'mwa' as WalletSource,
+    hasMwaAccount: !!account?.address,
+    disconnectMwa,
     isPreparing: false,
     sessionKey: mwaAddress ? `mwa:${mwaAddress}` : 'mwa:disconnected',
   };
