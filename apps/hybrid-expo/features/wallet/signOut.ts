@@ -9,6 +9,16 @@ type FullSignOutOptions = PrivySignOutOptions & {
   onMwaDisconnectError?: (error: unknown) => void;
 };
 
+export function selectMwaDisconnect({
+  hasMwaAccount,
+  disconnectMwa,
+}: {
+  hasMwaAccount: boolean;
+  disconnectMwa?: (() => Promise<unknown>) | null;
+}): (() => Promise<unknown>) | undefined {
+  return hasMwaAccount ? disconnectMwa ?? undefined : undefined;
+}
+
 export async function runPrivySignOut({
   clearActivation,
   logout,

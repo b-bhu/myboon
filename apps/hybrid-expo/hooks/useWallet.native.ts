@@ -6,7 +6,7 @@ export type WalletSource = 'privy' | 'mwa';
 
 export function useWallet() {
   const privy = usePrivyWallet();
-  const { account, connect, disconnect, signMessage, signTransaction, signAndSendTransaction, connection } =
+  const { account, connect, disconnect, store, signMessage, signTransaction, signAndSendTransaction, connection } =
     useMobileWallet();
   const [mwaAccountCleared, setMwaAccountCleared] = useState(false);
   const connectMwa = useCallback(async () => {
@@ -14,11 +14,18 @@ export function useWallet() {
     await connect();
   }, [connect]);
   const disconnectMwa = useCallback(async () => {
-    // Hide the adapter's cached account immediately, including when the external
-    // wallet rejects its disconnect request.
+    // Immediate UI guard; store.persist(null) clears the durable cache below.
     setMwaAccountCleared(true);
-    await disconnect();
-  }, [disconnect]);
+    try {
+      await disconnect();
+    } finally {
+      try {
+        await store.persist(null);
+      } catch (error) {
+        console.warn('Could not clear the cached external Solana wallet authorization.', error);
+      }
+    }
+  }, [disconnect, store]);
 
   if (process.env.EXPO_PUBLIC_PREDICT_E2E === '1') {
     const runtimeAddress = (globalThis as typeof globalThis & {
@@ -39,6 +46,8 @@ export function useWallet() {
       connection: null,
       walletOptions: [],
       source: 'mwa' as WalletSource,
+      hasMwaAccount: true,
+      disconnectMwa: async () => {},
       isPreparing: false,
       sessionKey: `mwa:${fakeAddress}`,
     };
@@ -80,6 +89,8 @@ export function useWallet() {
       connection: null,
       walletOptions: [],
       source: 'privy' as WalletSource,
+      hasMwaAccount: !!account?.address,
+      disconnectMwa,
       isPreparing: privy.isPreparing,
       sessionKey: privy.connected && privy.address ? `privy:${privy.address}` : 'privy:disconnected',
     };
@@ -100,6 +111,8 @@ export function useWallet() {
     connection,
     walletOptions: [],
     source: 'mwa' as WalletSource,
+    hasMwaAccount: !!account?.address,
+    disconnectMwa,
     isPreparing: false,
     sessionKey: mwaAddress ? `mwa:${mwaAddress}` : 'mwa:disconnected',
   };
