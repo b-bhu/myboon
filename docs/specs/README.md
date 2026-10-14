@@ -1,5 +1,7 @@
 # Specs and task flow
 
+For agent roles, repository areas, local workflow and safety rules, see the [AI-agent team onboarding guide](../team/README.md).
+
 1. Open a spec PR in `docs/specs/` and label it `spec`.
 2. Bucket reviews and approves it by adding `spec-approved`.
 3. The CTO creates task issues from the approved spec, labelled `ready:backend`, `ready:frontend` or `ready:system`.
