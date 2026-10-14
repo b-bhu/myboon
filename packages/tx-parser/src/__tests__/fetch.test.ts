@@ -1,13 +1,9 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { fetchTransactionBySignature, fetchWalletTransactions } from '../rpc.js';
-import { ensureTestEnv, TEST_SIGNATURES } from './fixtures.js';
+import { integrationTestsEnabled, TEST_SIGNATURES } from './fixtures.js';
 
-describe('fetchWalletTransactions (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('fetchWalletTransactions (integration)', () => {
   it('returns parsed transactions for a valid wallet', async () => {
     const walletAddress = process.env.EXAMPLE_WALLET;
     expect(walletAddress).toBeDefined();
@@ -30,11 +26,7 @@ describe('fetchWalletTransactions (integration)', () => {
   });
 });
 
-describe('fetchTransactionBySignature (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('fetchTransactionBySignature (integration)', () => {
   it('fetches one known transaction by signature', async () => {
     const transaction = await fetchTransactionBySignature(TEST_SIGNATURES.TRANSFER);
 

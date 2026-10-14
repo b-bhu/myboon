@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   parseTransactionBySignature,
@@ -6,13 +6,9 @@ import {
   parseWalletHistory
 } from '../orchestrator.js';
 import { fetchWalletTransactions } from '../rpc.js';
-import { ensureTestEnv, TEST_SIGNATURES } from './fixtures.js';
+import { integrationTestsEnabled, TEST_SIGNATURES } from './fixtures.js';
 
-describe('parseTransactions (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('parseTransactions (integration)', () => {
   it('maps raw wallet transactions into parsed transactions', async () => {
     const wallet = process.env.EXAMPLE_WALLET!;
     const raw = await fetchWalletTransactions(wallet, { count: 2 });
@@ -27,11 +23,7 @@ describe('parseTransactions (integration)', () => {
   });
 });
 
-describe('parseWalletHistory (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('parseWalletHistory (integration)', () => {
   it('fetches and parses wallet history end-to-end', async () => {
     const wallet = process.env.EXAMPLE_WALLET!;
     const parsed = await parseWalletHistory(wallet, { count: 2 });
@@ -44,11 +36,7 @@ describe('parseWalletHistory (integration)', () => {
   });
 });
 
-describe('parseTransactionBySignature (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('parseTransactionBySignature (integration)', () => {
   it('parses known transfer signature', async () => {
     const result = await parseTransactionBySignature(TEST_SIGNATURES.TRANSFER);
 

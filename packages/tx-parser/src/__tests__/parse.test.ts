@@ -1,5 +1,5 @@
 import { PublicKey, type ParsedTransactionWithMeta, type TokenBalance } from '@solana/web3.js';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { KNOWN_FUNDING_TOKENS } from '../constants/knownTokens.js';
 import { VERIFIED_PROGRAM_IDS } from '../constants/programIds.js';
@@ -9,13 +9,9 @@ import {
   parseJupiterTransaction,
   parseSingleTransaction
 } from '../parsers/index.js';
-import { ensureTestEnv, TEST_SIGNATURES } from './fixtures.js';
+import { integrationTestsEnabled, TEST_SIGNATURES } from './fixtures.js';
 
-describe('identifyTransactionType (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('identifyTransactionType (integration)', () => {
   it('identifies transfer signature', async () => {
     const tx = await fetchTransactionBySignature(TEST_SIGNATURES.TRANSFER);
     expect(tx).not.toBeNull();
@@ -47,11 +43,7 @@ describe('identifyTransactionType (integration)', () => {
   });
 });
 
-describe('parseSingleTransaction (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('parseSingleTransaction (integration)', () => {
   it('returns parsed transfer with generic details', async () => {
     const tx = await fetchTransactionBySignature(TEST_SIGNATURES.TRANSFER);
     expect(tx).not.toBeNull();

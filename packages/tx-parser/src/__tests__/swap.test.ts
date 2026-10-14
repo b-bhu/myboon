@@ -1,14 +1,10 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { parseSingleTransaction, parseSwapTransaction } from '../parsers/index.js';
 import { fetchTransactionBySignature } from '../rpc.js';
-import { ensureTestEnv, TEST_SIGNATURES } from './fixtures.js';
+import { integrationTestsEnabled, TEST_SIGNATURES } from './fixtures.js';
 
-describe('parseSwapTransaction (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('parseSwapTransaction (integration)', () => {
   it('returns null for non-jupiter transfer tx', async () => {
     const tx = await fetchTransactionBySignature(TEST_SIGNATURES.TRANSFER);
     expect(tx).not.toBeNull();
@@ -26,11 +22,7 @@ describe('parseSwapTransaction (integration)', () => {
   });
 });
 
-describe('parseSingleTransaction swap path (integration)', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('parseSingleTransaction swap path (integration)', () => {
   it('keeps generic details for known non-swap signature', async () => {
     const tx = await fetchTransactionBySignature(TEST_SIGNATURES.UNKNOWN);
     expect(tx).not.toBeNull();

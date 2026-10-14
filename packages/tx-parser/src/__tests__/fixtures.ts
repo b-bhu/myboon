@@ -7,14 +7,14 @@ export const TEST_SIGNATURES = {
   LP_METEORA: '3i3N31Zc21bJBB7D4k27jHgY1Yrtc7BVjxVPQHbLBk6xoTf7py316XZEpaaiA59E3MyH5KcHDYv3Xx8fR9ZSXQxG'
 } as const;
 
-export function ensureTestEnv(): void {
+export function ensureTestEnv(): boolean {
   if (process.env.HELIUS_RPC_URL?.trim()) {
-    return;
+    return true;
   }
 
   const rootEnvPath = path.resolve(process.cwd(), '../../.env');
   if (!existsSync(rootEnvPath)) {
-    throw new Error('Missing HELIUS_RPC_URL and root .env for integration tests.');
+    return false;
   }
 
   const content = readFileSync(rootEnvPath, 'utf8');
@@ -36,7 +36,7 @@ export function ensureTestEnv(): void {
     }
   }
 
-  if (!process.env.HELIUS_RPC_URL?.trim()) {
-    throw new Error('Missing HELIUS_RPC_URL after loading root .env');
-  }
+  return Boolean(process.env.HELIUS_RPC_URL?.trim());
 }
+
+export const integrationTestsEnabled = ensureTestEnv();
