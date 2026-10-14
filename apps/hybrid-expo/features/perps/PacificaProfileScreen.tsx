@@ -30,7 +30,7 @@ import {
   cancelStopOrder,
 } from '@/features/perps/perps.signed-api';
 import type { PerpsAccount, PerpsPosition, PerpsOrder } from '@/features/perps/perps.types';
-import { createTradeHistoryStore } from '@/features/perps/tradeHistoryStore';
+import { createTradeHistoryStore, makeTradeRecordId } from '@/features/perps/tradeHistoryStore';
 import type { TradeRecord } from '@/features/perps/tradeHistoryStore';
 import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { semantic, tokens } from '@/theme';
@@ -221,7 +221,7 @@ export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
       // C-15: Log trade to history
       try {
         await tradeHistoryStore.saveTradeRecord({
-          id: `${pos.symbol}-${Date.now()}`,
+          id: makeTradeRecordId(pos.symbol),
           symbol: pos.symbol,
           side: pos.side,
           size: sizeToClose,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTradeHistoryStore, type TradeRecord } from './tradeHistoryStore';
+import { createTradeHistoryStore, makeTradeRecordId, type TradeRecord } from './tradeHistoryStore';
 
 const record = (id: string): TradeRecord => ({
   id,
@@ -32,6 +32,47 @@ test('concurrent trade history saves preserve both records', async () => {
   await Promise.all([store.saveTradeRecord(record('first')), store.saveTradeRecord(record('second'))]);
 
   assert.deepEqual((await store.loadTradeHistory()).map(({ id }) => id), ['second', 'first']);
+});
+
+test('corrupt or non-array stored history is reset so the new record still saves', async () => {
+  for (const initialValue of ['{broken json', '{"old":true}']) {
+    let stored: string | null = initialValue;
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    const store = createTradeHistoryStore({
+      async getItem() { return stored; },
+      async setItem(_key, value) { stored = value; },
+    });
+
+    try {
+      await store.saveTradeRecord(record('saved'));
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.deepEqual(JSON.parse(stored ?? 'null'), [record('saved')]);
+    assert.equal(warnings.length, 1);
+  }
+});
+
+test('trade record ids differ when created in the same millisecond', () => {
+  const originalNow = Date.now;
+  const originalRandom = Math.random;
+  let random = 0.1;
+  Date.now = () => 1234;
+  Math.random = () => {
+    const value = random;
+    random += 0.1;
+    return value;
+  };
+
+  try {
+    assert.notEqual(makeTradeRecordId('BTC-PERP'), makeTradeRecordId('BTC-PERP'));
+  } finally {
+    Date.now = originalNow;
+    Math.random = originalRandom;
+  }
 });
 
 test('a failed trade history save is reported and does not block the next save', async () => {
