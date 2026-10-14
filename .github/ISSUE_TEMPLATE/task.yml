@@ -25,8 +25,8 @@ body:
     id: depends-on
     attributes:
       label: Depends on
-      description: List prerequisite issue numbers, if any.
-      placeholder: "#123, #124"
+      description: Link prerequisites, including the shared API types PR for frontend work.
+      placeholder: "https://github.com/owner/repo/pull/123, #124"
     validations:
       required: false
   - type: textarea

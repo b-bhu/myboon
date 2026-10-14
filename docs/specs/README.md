@@ -11,6 +11,10 @@ For agent roles, repository areas, local workflow and safety rules, see the [AI-
 
 Add `needs-bucket` to work touching money, wallets or DB/migrations. Mark work `blocked` when stuck.
 
+A `ready:*` label is the go-ahead for work outside money, wallet or DB changes; those still need `needs-bucket`. Apply a DB migration only after Bucket explicitly says yes on the issue; merging the PR is not approval.
+
+Before frontend work starts, shared API types must land in `packages/shared` in their own small PR. Link that PR as a dependency in the frontend issue.
+
 When a spec gets `spec-approved`, and when a `needs-bucket` PR merges, the acting bot posts a one-line comment starting with `Decision:` on the spec PR, issue or PR so Ledger can log it to Notion.
 
 ```mermaid
