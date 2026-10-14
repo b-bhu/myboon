@@ -1,13 +1,9 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { fetchWalletTransactions } from '../rpc.js';
 import { parseSingleTransaction } from '../parsers/transaction.js';
-import { ensureTestEnv } from './fixtures.js';
+import { integrationTestsEnabled } from './fixtures.js';
 
-describe('wallet analysis: 7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C', () => {
-  beforeAll(() => {
-    ensureTestEnv();
-  });
-
+describe.skipIf(!integrationTestsEnabled)('wallet analysis: 7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C', () => {
   it('analyzes transaction breakdown', async () => {
     const wallet = '7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C';
     const transactions = await fetchWalletTransactions(wallet, { count: 50 });
