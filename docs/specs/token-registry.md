@@ -26,7 +26,21 @@ create index token_registry_updated_at_idx on public.token_registry (updated_at)
 alter table public.token_registry enable row level security;
 -- No anon/authenticated policies: only the API (service role) reads and writes.
 ```
-Writes are upserts guarded by `where excluded.upstream_seen_at > token_registry.upstream_seen_at or token_registry.upstream_seen_at is null or token_registry.<field> is null`, so older upstream data never overwrites a newer row.
+Writes are **field-level merges**, not whole-row overwrites. An incoming field replaces the stored one only if the incoming data is newer or the stored value is null. An incoming null never clears a stored value. `upstream_seen_at` only moves forward:
+```sql
+insert into public.token_registry as t (mint, symbol, name, decimals, icon_source_url, verified, sources, upstream_seen_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8)
+on conflict (mint) do update set
+  symbol          = case when excluded.symbol is not null and (t.symbol is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.symbol else t.symbol end,
+  name            = case when excluded.name is not null and (t.name is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.name else t.name end,
+  decimals        = case when excluded.decimals is not null and (t.decimals is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.decimals else t.decimals end,
+  icon_source_url = case when excluded.icon_source_url is not null and (t.icon_source_url is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.icon_source_url else t.icon_source_url end,
+  -- verified follows the source-priority rule in section 5; the app computes $6 before the upsert
+  verified        = case when t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at then excluded.verified else t.verified end,
+  sources         = t.sources || excluded.sources,   -- per-field provenance, merged
+  upstream_seen_at = greatest(t.upstream_seen_at, excluded.upstream_seen_at),  -- greatest() ignores NULLs
+  updated_at      = now();
+```
 
 ### 2. Bounded in-memory LRU
 - Replaces `mintCache` (`jupiter-tokens.ts:60`). Found TTL 7d, miss TTL 10min, max about 50k entries.
@@ -44,7 +58,7 @@ One shared upstream limiter is used by foreground lookups and stale-while-revali
 - **Rate:** a token bucket, `TOKEN_UPSTREAM_RPM=30` requests per minute. Each request carries at most 10 mints (`jupiter-tokens.ts:29`).
 - **Backoff:** on a 429 or 5xx, exponential backoff with full jitter (base 1s, max 60s). After 3 consecutive failures, a circuit break opens for a `TOKEN_UPSTREAM_COOLDOWN_MS=300000` (5min) cooldown, and Jupiter is not called until it ends. A `Retry-After` header is honored when present.
 - **Fallback when limited or circuit-open:** serve from the LRU, DB, seed and cached misses only. Unresolved refs come back as misses with a short TTL. Background refreshes are dropped, not queued without limit.
-- **Cold batch:** a cold `POST /tokens/resolve` with 500 unknown refs never fans out without limit. Each request may make at most `TOKEN_UPSTREAM_MAX_PER_REQUEST=50` upstream lookups (5 batches) through the shared limiter, and waits at most `TOKEN_UPSTREAM_REQUEST_BUDGET_MS=2000`. The response is a partial result (`v: 1`, with `partial: true` and the unresolved refs). Leftover refs are queued for background fill under the same limiter, and that queue is capped at `TOKEN_UPSTREAM_QUEUE_MAX=1000`.
+- **Cold batch:** a cold `POST /tokens/resolve` with 500 unknown refs never fans out without limit. Each request may send at most `TOKEN_UPSTREAM_MAX_PER_REQUEST=50` **tokens (mints)** upstream. `jupiter-tokens.ts` already batches 10 mints into one comma-separated search call (`MINTS_PER_REQUEST = 10`, `:29-30`), so that is at most **5 Jupiter HTTP calls**. Today those batches all run at once through `Promise.all` (`warmJupiterTokens`, `:166-180`) with no concurrency cap; in this design they go through the shared limiter instead (2 at a time) through the shared limiter, and waits at most `TOKEN_UPSTREAM_REQUEST_BUDGET_MS=2000`. The response is a partial result (see the contract in section 6). Leftover refs are queued for background fill under the same limiter, and that queue is capped at `TOKEN_UPSTREAM_QUEUE_MAX=1000`.
 - **Counter:** every upstream call increments `token_upstream_calls_total{source,status}`, logged as a one-line summary each minute. This gives the baseline for the acceptance target.
 
 ### 3. Lookup order
@@ -58,16 +72,18 @@ Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/share
 
 ### 6. Cacheable endpoints (response shape versioned `v: 1`)
 - `GET /tokens/resolve?refs=` (≤100 refs, `routes.ts:20`): sorted, normalized refs give a stable URL. Response has `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` and an ETag/304. Responses with misses get `max-age=60`.
+- **Partial-result contract** (only `GET /tokens/resolve` and `POST /tokens/resolve` can return it; `/tokens/catalog` and the icon routes never do): `{ v: 1, identities: [...], partial: boolean, unresolved: string[] }`. `partial` is `true` when refs were skipped because of the per-request limit, the time budget or the rate limiter, and `unresolved` lists exactly those refs. Refs confirmed as misses are not partial; they come back as misses, as today. Both fields are always present (`false` and `[]` when complete), and older clients ignore them.
+- **Caching a partial result:** a partial `GET` gets `Cache-Control: public, max-age=60` with no `stale-while-revalidate`, the same as misses. I chose 60s over `no-store` because a burst of identical cold requests (many phones opening the home screen at once) then collapses into one upstream fill instead of re-hitting the limiter every time. Meanwhile the background queue fills the rest, so the next fetch after 60s is complete. `POST` stays `no-store`.
 - `POST /tokens/resolve` (≤500 refs, `routes.ts:21`): unchanged batch path, `no-store`.
 - `GET /tokens/catalog`: already `max-age` 3d plus ETag (`routes.ts:24`, `:189-209`). It gains `v: 1`.
 - `GET /tokens/icon/*`: unchanged headers (`routes.ts:235-270`). It is the only icon path clients use.
 - Every JSON body carries `"v": 1`, so Phase 2 can change the shape without breaking older builds.
 
 ### 7. Client token store — coordinate with Frontend Dev
-- Shared types (`TokenIdentityV1`, `TokenResolveResponseV1`) land first in `packages/shared` as their own small PR. The frontend issue links that PR as a dependency.
+- Shared types (`TokenIdentityV1`, plus `TokenResolveResponseV1 = { v: 1; identities: TokenIdentityV1[]; partial: boolean; unresolved: string[] }`) land first in `packages/shared` as their own small PR. The frontend issue links that PR as a dependency.
 - Phone: a persistent store (MMKV or AsyncStorage, hours to days TTL) replaces the 10min/30s in-memory TTLs (`lib/token-identity.store.ts:3-4`). Drop `no-store` (`lib/token-identity.ts:78`). Keep warming the catalog at start (already called in `app/_layout.tsx:21`). Load icons only via `/tokens/icon/*` and never use Meteora `iconUrl`.
-- **Client TTL:** 7 days for found tokens and 10 minutes for misses, with stale entries revalidated against the cacheable `GET /tokens/resolve`.
-- **Storage:** AsyncStorage. `apps/hybrid-expo` already depends on `@react-native-async-storage/async-storage` 2.2.0 (`package.json:41`) and uses it in several places (for example `hooks/useOddsFormat.ts`). MMKV is not a dependency, and adding it would mean a new native module and a new EAS build. **Confirm with Frontend Dev.**
+- **Storage and TTL:** the store uses **AsyncStorage**, with a **7-day TTL for found tokens and 10 minutes for misses**. Stale entries are revalidated against the cacheable `GET /tokens/resolve`. Refs listed in `unresolved` are not stored as misses; they are retried on the next fetch.
+- **Why AsyncStorage:** `apps/hybrid-expo` already depends on `@react-native-async-storage/async-storage` 2.2.0 (`package.json:41`) and uses it in several places (for example `hooks/useOddsFormat.ts`). MMKV is not a dependency, and adding it would mean a new native module and a new EAS build. **This is a PR3 decision to confirm with Frontend Dev.**
 - Frontend Dev owns this part and its EAS checklist.
 
 ### 8. Rollout and rollback
@@ -79,10 +95,10 @@ Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/share
 ### 9. PR plan
 | PR | Contents | Flag / client impact |
 |---|---|---|
-| PR0 | Shared types in `packages/shared` (`TokenIdentityV1`, `TokenResolveResponseV1`) | No runtime change |
+| PR0 | Shared types in `packages/shared` (`TokenIdentityV1`, `TokenResolveResponseV1` including `partial` and `unresolved`) | No runtime change |
 | PR1 | Migration (up and down) + `TokenRegistry` + bounded LRU + upstream limiter + Jupiter call counter | Flag off, no client change. **Merging PR1 does not apply the migration** (Bucket's yes is needed) |
 | PR2 | Meteora write-through + cacheable `GET /tokens/resolve` + bounded icon LRU | Behind the flag. Turned on only after the migration is applied and approved |
-| PR3 | Client persistent store, drop `no-store`, icons only through the proxy (Frontend Dev) | Needs an EAS build; follows PR0 |
+| PR3 | Client persistent store, drop `no-store`, icons only through the proxy (Frontend Dev) | Needs an EAS build; follows PR0. **Decision with Frontend Dev:** storage (AsyncStorage recommended over MMKV) |
 
 ## Out of scope
 - **Phase 2: the server Meteora pools proxy (`GET /meteora/pools`) is explicitly out of scope.** It starts only after Phase 1 is merged and baselined.
@@ -99,7 +115,9 @@ Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/share
 - [ ] With the flag on, upstream Jupiter calls per hour (from the new counter) are **at least 90% lower** than the first measured window with the flag off.
 - [ ] Post-restart upstream calls (counted at the next natural restart) are recorded, and with the flag on the first 100 known mints after a restart cause 0 calls.
 - [ ] Icon LRU never exceeds 2000 entries or 64MB (unit test).
-- [ ] A cold 500-ref POST makes at most 50 upstream lookups, returns within about 2s with `partial: true`, and never exceeds 2 concurrent upstream requests (unit test).
+- [ ] A cold 500-ref POST sends at most 50 mints upstream (at most 5 Jupiter HTTP calls), returns within about 2s with `partial: true`, and never exceeds 2 concurrent upstream requests (unit test).
+- [ ] Route test: a partial `GET /tokens/resolve` returns `partial: true`, the exact `unresolved` refs and `Cache-Control: public, max-age=60` (no SWR). A complete response returns `partial: false`, `unresolved: []` and the long-lived headers. `POST` stays `no-store`.
+- [ ] Unit test for the field-level merge: older data never overwrites newer fields; a stored null is filled; an incoming null never clears a stored value; `upstream_seen_at` never moves backward (including a stored NULL, and an incoming NULL); `sources` are merged.
 - [ ] When Jupiter returns 429 or 5xx, the circuit opens and responses fall back to seed and cached misses (unit test).
 - [ ] With the flag off, behavior is identical to today (existing route tests pass unchanged).
 - [ ] Home screen server p95 for `/tokens/resolve` and `/tokens/icon/*` is no worse than the baseline below.
