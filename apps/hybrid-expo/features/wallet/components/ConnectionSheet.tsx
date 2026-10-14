@@ -372,7 +372,7 @@ export function ConnectionSheet({
         await solana.disconnect();
         await deactivate(target);
       } else if (privy.isPrivyUser) {
-        await privy.disconnect();
+        await privy.disconnect(solana.source === 'mwa' ? solana.disconnect ?? undefined : undefined);
       } else if (solana.disconnect) {
         await solana.disconnect();
         await deactivate(target);
