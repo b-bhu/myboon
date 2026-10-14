@@ -53,7 +53,7 @@ type ConnectStep =
   | { kind: 'email_otp'; email: string }
   | { kind: 'connecting'; backend: WalletBackend }
   | { kind: 'confirm_disconnect'; chain: Chain }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; disconnectChain?: Chain };
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -353,9 +353,9 @@ export function ConnectionSheet({
     setStep({ kind: 'confirm_disconnect', chain: target });
   }, [busy]);
 
-  const confirmDisconnect = useCallback(async () => {
+  const confirmDisconnect = useCallback(async (retryTarget?: Chain) => {
     if (busy) return;
-    const target = step.kind === 'confirm_disconnect' ? step.chain : chain;
+    const target = retryTarget ?? (step.kind === 'confirm_disconnect' ? step.chain : chain);
     setBusy(true);
     try {
       // Drop the connection first, then the activation record. The reverse
@@ -382,6 +382,7 @@ export function ConnectionSheet({
       setStep({
         kind: 'error',
         message: errorMessage(error, 'Could not disconnect.'),
+        disconnectChain: target,
       });
     } finally {
       setBusy(false);
@@ -467,7 +468,7 @@ export function ConnectionSheet({
                   busy && styles.primaryBtnDisabled,
                   pressed && styles.primaryBtnPressed,
                 ]}
-                onPress={confirmDisconnect}
+                onPress={() => void confirmDisconnect()}
                 disabled={busy}
                 accessibilityRole="button"
                 accessibilityLabel="Confirm disconnect"
@@ -565,10 +566,14 @@ export function ConnectionSheet({
               </View>
               <Pressable
                 style={({ pressed }) => [styles.primaryBtn, pressed && styles.primaryBtnPressed]}
-                onPress={() => setStep({ kind: 'options' })}
+                onPress={() => step.disconnectChain
+                  ? void confirmDisconnect(step.disconnectChain)
+                  : setStep({ kind: 'options' })}
                 accessibilityRole="button"
               >
-                <Text style={styles.primaryBtnText}>Try again</Text>
+                <Text style={styles.primaryBtnText}>
+                  {step.disconnectChain ? 'Retry disconnect' : 'Try again'}
+                </Text>
               </Pressable>
             </View>
           ) : null}

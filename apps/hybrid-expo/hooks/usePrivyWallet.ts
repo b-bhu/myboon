@@ -18,6 +18,7 @@ import {
 import type { Transaction, VersionedTransaction } from '@solana/web3.js';
 
 import { clearActivation } from '@/features/chain/activation';
+import { runPrivySignOut } from '@/features/wallet/signOut';
 
 export interface PrivyWalletState {
   /** Whether the user is authenticated via Privy AND has an embedded wallet */
@@ -216,8 +217,7 @@ export function usePrivyWallet(): PrivyWalletState {
       // Logout is one of the two explicit session boundaries (the other is
       // disconnecting a wallet). Everything else — backgrounding, process death,
       // app restart — leaves activation intact.
-      await clearActivation();
-      await logout();
+      await runPrivySignOut({ clearActivation, logout });
     },
     waitForWallet: waitForEmbeddedWallet,
     signMessage,
