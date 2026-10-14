@@ -51,3 +51,14 @@ body:
           required: true
         - label: Risk assessed
           required: true
+  - type: textarea
+    id: eas-checklist
+    attributes:
+      label: EAS checklist (frontend/mobile tasks)
+      description: For frontend mobile tasks, state whether a new EAS build and version bump are needed, what to test on a real Seeker phone, and whether a dApp Store update is needed.
+      placeholder: |-
+        New EAS build / version bump:
+        Real Seeker phone testing:
+        dApp Store update:
+    validations:
+      required: false

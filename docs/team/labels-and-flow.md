@@ -19,4 +19,6 @@ When the change touches money, wallets or DB/migrations, also add `needs-bucket`
 
 Older `agent:*` labels are being retired; use the labels above for new work.
 
+Frontend (mobile) tasks must end with an EAS checklist covering whether a new EAS build and version bump are needed, what to test on a real Seeker phone, and whether a dApp Store update is needed.
+
 When a spec gets `spec-approved`, and when a `needs-bucket` PR merges, the acting bot posts a one-line comment starting with `Decision:` on the spec PR, issue or PR so Ledger can log it to Notion.

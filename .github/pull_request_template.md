@@ -3,6 +3,10 @@ Closes #
 
 ## What changed
 
+## UI changes
+Before/after screenshots:
+Matching mock in `docs/mockups/`:
+
 ## Test evidence
 Commands run and output:
 

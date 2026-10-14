@@ -38,4 +38,4 @@ flowchart TD
 ## Planned
 
 - A deploy step owned by the systems manager, to be filed as a `ready:system` issue after #321 merges.
-- Per-package typecheck scripts, to be filed as a `ready:system` issue after #321 merges.
+- Per-package typecheck scripts, to be filed as a `ready:system` issue after #321 merges; this must wait until the Expo TypeScript error at `apps/hybrid-expo/features/wallet/HomeWalletOverview.tsx:209` is fixed by a `ready:frontend` issue owned by the Frontend Dev.
