@@ -81,7 +81,7 @@ Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/share
 | `/tokens/resolve` prod | p50 0ms, p95 142ms | PM2 access log since 2026-09-29, n=57 |
 | `/tokens/icon/*` prod | p50 6ms, p95 578ms | access log, n=209 |
 | `/tokens/catalog` prod | p50 1ms, p95 54ms | access log, n=28 |
-| Jupiter calls after restart | **not measured** | upstream calls aren't logged; a restart was not allowed |
+| Jupiter calls after restart | **still to capture at the next natural restart** | Last natural restart 2026-10-08 16:56 IST (PM2 `pm_uptime`, 2 restarts total, 0 unstable). The out/error logs around it have no Jupiter traces: `jupiter-tokens.ts` doesn't log upstream calls and the error log has 0 Jupiter or lite-api lines. PR 1 adds an upstream-call counter log so this can be counted next time. |
 
 ## Owners
 - [x] Backend (registry, table, endpoints, icon cache)
