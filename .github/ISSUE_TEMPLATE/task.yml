@@ -1,0 +1,53 @@
+name: Task
+description: A task from an approved spec
+title: ""
+labels: []
+body:
+  - type: input
+    id: spec-link
+    attributes:
+      label: Spec link
+      description: Link the approved spec.
+      placeholder: https://github.com/owner/repo/blob/main/docs/specs/example.md
+    validations:
+      required: true
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Owner
+      options:
+        - backend
+        - frontend
+        - system
+    validations:
+      required: true
+  - type: input
+    id: depends-on
+    attributes:
+      label: Depends on
+      description: List prerequisite issue numbers, if any.
+      placeholder: "#123, #124"
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: State observable outcomes that can be checked.
+    validations:
+      required: true
+  - type: checkboxes
+    id: definition-of-ready
+    attributes:
+      label: Definition of ready
+      options:
+        - label: Spec approved
+          required: true
+        - label: Acceptance criteria testable
+          required: true
+        - label: Dependencies done or listed
+          required: true
+        - label: Owner assigned
+          required: true
+        - label: Risk assessed
+          required: true
