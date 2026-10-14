@@ -163,9 +163,12 @@ function isGatewayAbort(telemetry: InferenceGatewayError['telemetry'] | undefine
     || (telemetry?.failureCategory === 'budget_exceeded' && !hasReceivedProviderResponse(telemetry))
 }
 
-function maxExposureUsage(limits: { maxProviderCalls: number, maxInputTokens: number, maxOutputTokens: number }): D2Usage {
-  return { status: 'unknown', costUsdMicros: null, inputTokens: limits.maxInputTokens,
-    outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
+function maxExposureUsage(limits: { maxProviderCalls: number, maxInputTokens: number, maxOutputTokens: number, maxIncrementalCostUsdMicros: number | null }): D2Usage {
+  return typeof limits.maxIncrementalCostUsdMicros === 'number' && limits.maxIncrementalCostUsdMicros > 0
+    ? { status: 'measured', costUsdMicros: limits.maxIncrementalCostUsdMicros, inputTokens: limits.maxInputTokens,
+      outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
+    : { status: 'unknown', costUsdMicros: null, inputTokens: limits.maxInputTokens,
+      outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
 }
 
 function hasReceivedProviderResponse(telemetry: InferenceGatewayError['telemetry']): boolean {

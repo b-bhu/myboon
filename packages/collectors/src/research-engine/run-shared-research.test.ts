@@ -49,6 +49,18 @@ test('context probe and recent-cache configuration stays bounded with explicit c
   }
 })
 
+test('stale hold sweep flags use strict 0/1 parsing and default to report mode', () => {
+  assert.equal(loadSharedResearchRunnerConfig({}).staleHoldSweepEnabled, true)
+  assert.equal(loadSharedResearchRunnerConfig({}).staleHoldSweepMode, 'report')
+  assert.equal(loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepEnabled]: '1' }).staleHoldSweepEnabled, true)
+  assert.equal(loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepEnabled]: '0' }).staleHoldSweepEnabled, false)
+  for (const invalid of ['true', 'yes', '']) {
+    assert.throws(() => loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepEnabled]: invalid }), /must be 0 or 1/)
+  }
+  assert.equal(loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepMode]: 'settle' }).staleHoldSweepMode, 'settle')
+  assert.throws(() => loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepMode]: 'invalid' }), /must be report or settle/)
+})
+
 const nodeRequire = createRequire(__filename)
 const TEST_CUTOVER_RECEIPT_PATH = '/tmp/feed-v3-test-cutover-receipt.json'
 const { DatabaseSync } = nodeRequire('node:sqlite') as {

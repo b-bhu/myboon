@@ -197,3 +197,83 @@ test('stale hold sweep retries expired leases when attempts remain and dead-lett
     assert.equal(fx.store.getResearchWork(terminal.workId)?.failureCategory, 'lease_expired')
   } finally { fx.dispose() }
 })
+
+test('expired paid lease is dead-lettered and cannot be claimed or reserve another attempt', async () => {
+  const fx = fixture()
+  try {
+    const work = fx.seed('expired-paid-lease', { status: 'retrieval_leased', attemptCount: 1,
+      leaseOwner: 'worker', leaseId: 'lease-paid', leaseExpiresAt: EXPIRED })
+    const reservation = await dispatched(fx, work, 'expired-paid', true)
+    const beforeCount = fx.store.listResearchReservations(100).length
+    const result = await fx.store.sweepStaleResearchHolds({ now: NOW, limit: 10, olderThanMs: 1 })
+    assert.equal(result.reservationsSettled, 1)
+    assert.equal(fx.store.getResearchWork(work.workId)?.status, 'dead_letter')
+    assert.match(fx.store.getResearchWork(work.workId)?.failureDetail ?? '', /paid outcome is unknown.*reconciliation/i)
+    assert.equal(await fx.store.claimWithLease({ workId: work.workId, expectedStatus: 'research_pending',
+      leaseOwner: 'worker-2', leaseId: 'lease-next', leaseExpiresAt: FUTURE, now: NOW }), null)
+    assert.equal(fx.store.listResearchReservations(100).length, beforeCount)
+    assert.equal((await reservation.port.get(reservation.key))?.state, 'settled')
+  } finally { fx.dispose() }
+})
+
+test('ordinary lease recovery dead-letters paid leases instead of requeueing them', async () => {
+  const fx = fixture()
+  try {
+    const work = fx.seed('recovery-paid-lease', { status: 'retrieval_leased', leaseOwner: 'worker',
+      leaseId: 'recovery-paid-lease', leaseExpiresAt: EXPIRED })
+    await dispatched(fx, work, 'recovery-paid', true)
+    await fx.store.recoverExpiredLeases({ now: NOW, limit: 10 })
+    assert.equal(fx.store.getResearchWork(work.workId)?.status, 'dead_letter')
+    assert.match(fx.store.getResearchWork(work.workId)?.failureDetail ?? '', /paid outcome is unknown.*reconciliation/i)
+  } finally { fx.dispose() }
+})
+
+test('report mode only reports bound holds and leaves reservations and lease rows untouched', async () => {
+  const fx = fixture()
+  try {
+    const work = fx.seed('report-hold')
+    const expiredLease = fx.seed('report-lease', { status: 'retrieval_leased', leaseOwner: 'worker',
+      leaseId: 'report-lease-id', leaseExpiresAt: EXPIRED })
+    const held = await dispatched(fx, work, 'report-allowance', true)
+    const beforeWork = fx.store.getResearchWork(expiredLease.workId)
+    const beforeReservation = await held.port.get(held.key)
+    const result = await fx.store.sweepStaleResearchHolds({ now: NOW, limit: 10, olderThanMs: 1, mode: 'report' })
+    assert.equal(result.wouldClose, 1)
+    assert.equal(result.maxInputTokens, 100)
+    assert.equal(result.maxOutputTokens, 20)
+    assert.equal(result.maxProviderCalls, 1)
+    assert.equal(result.maxIncrementalCostUsdMicros, null)
+    assert.deepEqual(result.reservationKeys[0], { root_assignment_id: held.key.rootAssignmentId,
+      allowance_id: held.key.allowanceId, attempt_id: held.key.attemptId, age: 3_600_000 })
+    assert.deepEqual(fx.store.getResearchWork(expiredLease.workId), beforeWork)
+    assert.deepEqual(await held.port.get(held.key), beforeReservation)
+  } finally { fx.dispose() }
+})
+
+test('stale hold audit failure rolls back the reservation settlement', async () => {
+  const fx = fixture()
+  try {
+    const work = fx.seed('audit-failure')
+    const held = await dispatched(fx, work, 'audit-failure-allowance', true)
+    const original = fx.store.putResearchV4Record.bind(fx.store)
+    fx.store.putResearchV4Record = (() => { throw new Error('injected audit failure') }) as typeof fx.store.putResearchV4Record
+    await assert.rejects(fx.store.sweepStaleResearchHolds({ now: NOW, limit: 10, olderThanMs: 1 }), /injected audit failure/)
+    fx.store.putResearchV4Record = original
+    assert.equal((await held.port.get(held.key))?.state, 'execution_outcome_unknown')
+    assert.equal(fx.store.listResearchV4Records('reservation_reconciliation', work.workId, 10).length, 0)
+  } finally { fx.dispose() }
+})
+
+test('orphaned holds do not consume the settlement limit and are returned as orphaned', async () => {
+  const fx = fixture()
+  try {
+    for (let i = 0; i < 4; i += 1) await dispatched(fx,
+      operatorWork('polymarket', `missing-${i}`), `orphan-${i}`, true)
+    const bound = fx.seed('bounded-after-orphans')
+    const held = await dispatched(fx, bound, 'bound-after-orphans', true)
+    const result = await fx.store.sweepStaleResearchHolds({ now: NOW, limit: 1, olderThanMs: 1 })
+    assert.equal(result.reservationsSettled, 1)
+    assert.equal(result.orphaned.length, 4)
+    assert.equal((await held.port.get(held.key))?.state, 'settled')
+  } finally { fx.dispose() }
+})

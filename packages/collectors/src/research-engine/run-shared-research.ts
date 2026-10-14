@@ -99,6 +99,7 @@ export const SHARED_RESEARCH_ENV = Object.freeze({
   contextHealthyProbeIntervalMs: 'FEED_V3_RESEARCH_CONTEXT_HEALTHY_PROBE_INTERVAL_MS',
   historyCacheTtlMs: 'FEED_V3_RESEARCH_HISTORY_CACHE_TTL_MS',
   staleHoldSweepEnabled: 'FEED_V3_STALE_HOLD_SWEEP_ENABLED',
+  staleHoldSweepMode: 'FEED_V3_STALE_HOLD_SWEEP_MODE',
   staleHoldTtlMs: 'FEED_V3_STALE_HOLD_TTL_MS',
 })
 
@@ -122,6 +123,8 @@ export interface SharedResearchRunnerConfig {
   runtimeStatusPath: string
   contextHealthyProbeIntervalMs: number
   historyCacheTtlMs: number
+  staleHoldSweepEnabled: boolean
+  staleHoldSweepMode: 'report' | 'settle'
   runtimeControlPath: string
   cutoverReceiptPath: string | null
   runtimeConfig: FeedV3RuntimeConfig
@@ -258,6 +261,8 @@ export function loadSharedResearchRunnerConfig(
     runtimeStatusPath: databasePath(env[SHARED_RESEARCH_ENV.runtimeStatusPath], '.data/feed-v3-research-runtime-status.json'),
     contextHealthyProbeIntervalMs: integer(env[SHARED_RESEARCH_ENV.contextHealthyProbeIntervalMs], 30_000, 300_000, 300_000, 'healthy context probe interval'),
     historyCacheTtlMs: integer(env[SHARED_RESEARCH_ENV.historyCacheTtlMs], 0, 60_000, 60_000, 'recent history cache TTL'),
+    staleHoldSweepEnabled: flag(env[SHARED_RESEARCH_ENV.staleHoldSweepEnabled], true, SHARED_RESEARCH_ENV.staleHoldSweepEnabled),
+    staleHoldSweepMode: staleHoldSweepMode(env[SHARED_RESEARCH_ENV.staleHoldSweepMode]),
     runtimeControlPath: resolveRuntimeControlPath(env, PACKAGE_DIR),
     cutoverReceiptPath: feed.cutoverReceiptPath,
     runtimeConfig: feed,
@@ -656,18 +661,22 @@ export function createLiveSharedResearchRuntime(
     return {
       get status() { return runtimeStatus() },
       recoverExpired: async ({ now, limitPerSource }) => {
-        if (staleHoldSweepEnabled(config.env)) {
+        if (config.staleHoldSweepEnabled) {
           await Promise.all(stores.map(async (store) => {
             try {
               const ttl = positiveEnvInteger(config.env[SHARED_RESEARCH_ENV.staleHoldTtlMs], 86_400_000,
                 SHARED_RESEARCH_ENV.staleHoldTtlMs)
-              await store.sweepStaleResearchHolds({ olderThanMs: ttl, now, limit: limitPerSource })
+              const result = await store.sweepStaleResearchHolds({ olderThanMs: ttl, now, limit: limitPerSource,
+                mode: config.staleHoldSweepMode })
+              process.stdout.write(`${JSON.stringify({ event: 'stale_research_hold_sweep', sourceType: store.sourceType,
+                mode: config.staleHoldSweepMode, ...result })}\n`)
             } catch {
               // Reconciliation is bounded and best effort; normal recovery and
               // the worker tick remain available if a source store is busy.
             }
           }))
         }
+        if (config.staleHoldSweepEnabled && config.staleHoldSweepMode === 'report') return {}
         return recoveryScheduler.recoverExpiredLeases({ now, limitPerStore: limitPerSource })
       },
       async runCycle() {
@@ -927,10 +936,10 @@ function flag(raw: string | undefined, fallback: boolean, field: string): boolea
   if (raw === '0') return false
   throw new Error(`${field} must be 0 or 1`)
 }
-function staleHoldSweepEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
-  const raw = env[SHARED_RESEARCH_ENV.staleHoldSweepEnabled]
-  if (raw === undefined) return true
-  return raw === 'true'
+function staleHoldSweepMode(raw: string | undefined): 'report' | 'settle' {
+  const mode = raw ?? 'report'
+  if (mode === 'report' || mode === 'settle') return mode
+  throw new Error(`${SHARED_RESEARCH_ENV.staleHoldSweepMode} must be report or settle`)
 }
 function positiveEnvInteger(raw: string | undefined, fallback: number, field: string): number {
   const value = raw === undefined ? fallback : Number(raw)
