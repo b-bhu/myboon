@@ -16,7 +16,7 @@
     "test:polymarket-read": "tsx --test src/polymarket/catalog/*.test.ts src/polymarket/routes/*.test.ts",
     "test:spot": "tsx --test src/spot.test.ts",
     "test:polymarket-trading": "tsx --test src/polymarket/trading/routes/*.test.ts",
-    "test:tokens": "tsx --test src/tokens/*.test.ts",
+    "test:tokens": "tsx --test src/tokens/*.test.ts src/tokens/registry/*.test.ts",
     "test:swap": "tsx --test src/swap.test.ts",
     "tokens:icons": "tsx scripts/fetch-token-icons.ts"
   },

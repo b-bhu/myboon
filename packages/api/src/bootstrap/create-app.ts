@@ -33,13 +33,38 @@ import {
   resolveCatalog,
   resolveRef,
   warmMintIdentities,
+  tokenRegistrySeeds,
 } from '../tokens/identity-service.js'
+import { createOptionalTokenRegistry, TokenRegistry } from '../tokens/registry/token-registry.js'
+import { SupabaseTokenRegistryStore } from '../tokens/registry/store.js'
+import type { RegistryConfig } from '../tokens/registry/token-registry.js'
 import { createTokenRoutes } from '../tokens/routes.js'
 import { createRpcRoutes, createRpcRateLimiter, type RpcRateLimiter } from '../rpc/routes.js'
 import type { ApiConfig } from './config.js'
 
 export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRateLimiter } = {}): Hono {
   const { SupabaseEntityKnowledgeReader } = entityManager
+  const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
+    store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
+    seeds: tokenRegistrySeeds(),
+    config: {
+      lruMax: config.tokenRegistryLruMax, foundTtlMs: config.tokenRegistryFoundTtlMs,
+      missTtlMs: config.tokenRegistryMissTtlMs, staleAfterMs: config.tokenRegistryStaleAfterMs,
+      maxConcurrency: config.tokenUpstreamMaxConcurrency, rpm: config.tokenUpstreamRpm,
+      cooldownMs: config.tokenUpstreamCooldownMs, maxPerRequest: config.tokenUpstreamMaxPerRequest,
+      requestBudgetMs: config.tokenUpstreamRequestBudgetMs, queueMax: config.tokenUpstreamQueueMax,
+    } satisfies RegistryConfig,
+  }))
+  if (tokenRegistry) tokenRegistry.counter.start()
+  const registryWarm = tokenRegistry
+    ? async (mints: readonly string[]) => { await tokenRegistry.lookupMany(mints) }
+    : warmMintIdentities
+  const resolveTokenRef = tokenRegistry
+    ? (ref: string) => resolveRef(ref, (mint) => tokenRegistry.getCachedRow(mint))
+    : resolveRef
+  const registryIconSourceForMint = tokenRegistry
+    ? (mint: string) => tokenRegistry.getCachedRow(mint)?.icon_source_url ?? null
+    : iconSourceUrlForMint
   const app = new Hono()
   const polymarketCatalogStore = new SupabasePolymarketCatalogStore(
     config.supabaseUrl,
@@ -136,17 +161,17 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/tokens', createTokenRoutes({
     enabled: config.tokenIdentityEnabled,
     service: {
-      resolveRef,
+      resolveRef: resolveTokenRef,
       iconSourceUrlForAssetId,
       resolveCatalog,
-      iconSourceUrlForMint,
-      warmMintIdentities,
+      iconSourceUrlForMint: registryIconSourceForMint,
+      warmMintIdentities: registryWarm,
     },
   }))
   app.route('/swap', createSwapRoutes({
     jupApiKey: config.jupApiKey,
     jupApiBase: config.jupApiBase,
-    identity: { resolveRef, warmMintIdentities },
+    identity: { resolveRef: resolveTokenRef, warmMintIdentities: registryWarm },
     priorityFeeMaxLamports: config.swapPriorityFeeMaxLamports,
     tradingEnabled: config.swapTradingEnabled,
     store: createSqliteSwapExecutionStore(config.swapSqlitePath ?? '.data/swap.sqlite'),
