@@ -30,6 +30,8 @@ import {
   cancelStopOrder,
 } from '@/features/perps/perps.signed-api';
 import type { PerpsAccount, PerpsPosition, PerpsOrder } from '@/features/perps/perps.types';
+import { createTradeHistoryStore, makeTradeRecordId } from '@/features/perps/tradeHistoryStore';
+import type { TradeRecord } from '@/features/perps/tradeHistoryStore';
 import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { semantic, tokens } from '@/theme';
 
@@ -41,34 +43,10 @@ const LazyPacificaWithdrawModal = lazy(() =>
 );
 
 // C-15: Trade history stored in AsyncStorage
-const TRADE_HISTORY_KEY = 'pnl:trade_history';
-
-interface TradeRecord {
-  id: string;
-  symbol: string;
-  side: 'long' | 'short';
-  size: number;
-  entryPrice: number;
-  exitPrice: number;
-  pnl: number;
-  closedAt: number;
-  type: 'market_close' | 'tp_trigger' | 'sl_trigger';
-}
-
-async function loadTradeHistory(): Promise<TradeRecord[]> {
-  try {
-    const raw = await AsyncStorage.getItem(TRADE_HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-async function saveTradeRecord(record: TradeRecord): Promise<void> {
-  const existing = await loadTradeHistory();
-  existing.unshift(record);
-  // Keep last 100
-  if (existing.length > 100) existing.length = 100;
-  await AsyncStorage.setItem(TRADE_HISTORY_KEY, JSON.stringify(existing));
-}
+const tradeHistoryStore = createTradeHistoryStore({
+  getItem: (key) => AsyncStorage.getItem(key),
+  setItem: (key, value) => AsyncStorage.setItem(key, value),
+});
 
 function truncate(addr: string, start = 6, end = 4): string {
   return `${addr.slice(0, start)}···${addr.slice(-end)}`;
@@ -209,7 +187,7 @@ export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
 
   // C-15: Load trade history
   useEffect(() => {
-    loadTradeHistory().then(setTradeHistory);
+    tradeHistoryStore.loadTradeHistory().then(setTradeHistory);
   }, []);
 
   // C-14: Polling
@@ -241,18 +219,22 @@ export function PacificaProfileScreen({ onBack }: PacificaProfileScreenProps) {
       const sizeToClose = partialSize ?? pos.size;
       await closePosition(pos.symbol, closeSide, sizeToClose, address, signMessage);
       // C-15: Log trade to history
-      await saveTradeRecord({
-        id: `${pos.symbol}-${Date.now()}`,
-        symbol: pos.symbol,
-        side: pos.side,
-        size: sizeToClose,
-        entryPrice: pos.entryPrice,
-        exitPrice: pos.markPrice,
-        pnl: pos.unrealizedPnl * (sizeToClose / pos.size),
-        closedAt: Date.now(),
-        type: 'market_close',
-      });
-      loadTradeHistory().then(setTradeHistory);
+      try {
+        await tradeHistoryStore.saveTradeRecord({
+          id: makeTradeRecordId(pos.symbol),
+          symbol: pos.symbol,
+          side: pos.side,
+          size: sizeToClose,
+          entryPrice: pos.entryPrice,
+          exitPrice: pos.markPrice,
+          pnl: pos.unrealizedPnl * (sizeToClose / pos.size),
+          closedAt: Date.now(),
+          type: 'market_close',
+        });
+        tradeHistoryStore.loadTradeHistory().then(setTradeHistory);
+      } catch {
+        setActionMsg('Position closed, but trade history could not be saved.');
+      }
       setClosePosition_(null);
       if (connected && address) fetchAll(address, 'silent');
     } catch (err: any) {
