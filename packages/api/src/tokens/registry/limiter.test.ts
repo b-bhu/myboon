@@ -33,3 +33,28 @@ test('429/5xx backoff honors Retry-After and circuit opens after three failures'
   await limiter.schedule(async () => undefined, 10_000)
   assert.ok(sleeps.includes(4_000))
 })
+
+test('timeouts and 404s do not open the circuit; three consecutive 503s do', async () => {
+  let now = 0
+  const limiter = new UpstreamLimiter({
+    requestsPerMinute: 100, cooldownMs: 10_000, now: () => now, random: () => 0,
+    sleep: async (ms) => { now += ms },
+  })
+
+  for (let i = 0; i < 3; i++) {
+    await assert.rejects(
+      limiter.schedule(() => new Promise((resolve) => setTimeout(resolve, 5)), 1),
+      (error: unknown) => error instanceof LimitedError && error.reason === 'budget-exceeded',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  for (let i = 0; i < 3; i++) {
+    await assert.rejects(limiter.schedule(async () => { throw new UpstreamStatusError(404) }))
+  }
+  assert.equal(limiter.isOpen, false)
+
+  for (let i = 0; i < 3; i++) {
+    await assert.rejects(limiter.schedule(async () => { throw new UpstreamStatusError(503) }))
+  }
+  assert.equal(limiter.isOpen, true)
+})

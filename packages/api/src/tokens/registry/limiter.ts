@@ -78,14 +78,18 @@ export class UpstreamLimiter {
       this.blockedUntil = 0
       return value
     } catch (error) {
-      this.failures += 1
-      const isRetryable = error instanceof UpstreamStatusError && (error.status === 429 || error.status >= 500)
+      const isRetryable = error instanceof UpstreamStatusError && (error.status === 429 || (error.status >= 500 && error.status <= 599))
       if (isRetryable) {
+        this.failures += 1
         const base = Math.min(60_000, 1_000 * (2 ** (this.failures - 1)))
         const jitter = Math.floor(this.random() * base)
         this.blockedUntil = this.now() + Math.max(jitter, error.retryAfterMs ?? 0)
+        if (this.failures >= 3) this.circuitUntil = this.now() + this.cooldownMs
+      } else {
+        // Only an uninterrupted run of retryable HTTP failures opens the
+        // circuit. Timeouts, network errors and non-retryable statuses break it.
+        this.failures = 0
       }
-      if (this.failures >= 3) this.circuitUntil = this.now() + this.cooldownMs
       throw error
     } finally {
       if (timeout) clearTimeout(timeout)

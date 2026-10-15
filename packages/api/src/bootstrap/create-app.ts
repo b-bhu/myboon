@@ -60,7 +60,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     ? async (mints: readonly string[]) => { await tokenRegistry.lookupMany(mints) }
     : warmMintIdentities
   const resolveTokenRef = tokenRegistry
-    ? (ref: string) => resolveRef(ref, (mint) => tokenRegistry.getCachedRow(mint))
+    ? (ref: string) => resolveRef(ref, { registryRowForMint: (mint) => tokenRegistry.getCachedRow(mint) })
     : resolveRef
   const registryIconSourceForMint = tokenRegistry
     ? (mint: string) => tokenRegistry.getCachedRow(mint)?.icon_source_url ?? null

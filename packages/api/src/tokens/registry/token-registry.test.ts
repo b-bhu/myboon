@@ -4,6 +4,7 @@ import { createOptionalTokenRegistry, TokenRegistry } from './token-registry.js'
 import { UpstreamLimiter, UpstreamStatusError } from './limiter.js'
 import { InMemoryTokenRegistryStore } from './store.js'
 import type { TokenRegistryIncoming } from './merge.js'
+import { resolveRef } from '../identity-service.js'
 
 const config = { lruMax: 1000, foundTtlMs: 604800000, missTtlMs: 600000, staleAfterMs: 86400000, maxConcurrency: 2, rpm: 30, cooldownMs: 300000, maxPerRequest: 50, requestBudgetMs: 2000, queueMax: 1000 }
 const row = (mint: string, seen = new Date().toISOString()): TokenRegistryIncoming => ({ mint, symbol: `S${mint}`, name: `Name ${mint}`, decimals: 6, icon_source_url: null, verified: false, sources: { symbol: 'jupiter', name: 'jupiter', decimals: 'jupiter', verified: 'jupiter' }, upstream_seen_at: seen })
@@ -98,8 +99,43 @@ test('registry-warmed seed keeps the existing canonical identity contract', asyn
   assert.ok(seed?.mint)
   const registry = new TokenRegistry({ store: new InMemoryTokenRegistryStore(), config, seeds: tokenRegistrySeeds(), fetchBatch: async () => [] })
   await registry.lookupMany([seed.mint])
-  const identity = resolveRef(`mint:${seed.mint}`, (mint) => registry.getCachedRow(mint))
+  const identity = resolveRef(`mint:${seed.mint}`, { registryRowForMint: (mint) => registry.getCachedRow(mint) })
   assert.equal(identity.assetId, 'usdc')
   assert.equal(identity.source, 'static')
   assert.equal(identity.iconUrl, '/tokens/icon/usdc')
+})
+
+test('non-mint refs use legacy resolution and do not consume the upstream cap', async () => {
+  const refs = ['perp:SOL', 'garbage-ref-no-prefix', 'mint:one', 'mint:two']
+  let calls = 0
+  const registry = new TokenRegistry({
+    store: new InMemoryTokenRegistryStore(), config: { ...config, maxPerRequest: 1, queueMax: 0 },
+    fetchBatch: async (mints) => { calls++; return mints.map((mint) => row(mint)) },
+  })
+
+  const result = await registry.resolve(refs)
+
+  assert.deepEqual(result.identities[0], resolveRef('perp:SOL'))
+  assert.deepEqual(result.identities[1], resolveRef('garbage-ref-no-prefix'))
+  assert.equal(result.identities[1].mint, null)
+  assert.equal(calls, 1)
+  assert.deepEqual(result.unresolved, ['mint:two'])
+})
+
+test('a fetched batch reuses its stored map for the upsert', async () => {
+  class CountingStore extends InMemoryTokenRegistryStore {
+    reads = 0
+    override async getMany(mints: readonly string[]) {
+      this.reads++
+      return super.getMany(mints)
+    }
+  }
+  const store = new CountingStore()
+  const registry = new TokenRegistry({ store, config, fetchBatch: async (mints) => mints.map((mint) => row(mint)) })
+
+  await registry.resolve(['mint:cold'])
+
+  // One lookup for the initial miss and one merge read in fetchWithLimiter;
+  // the upsert reuses that second map instead of reading it a third time.
+  assert.equal(store.reads, 2)
 })

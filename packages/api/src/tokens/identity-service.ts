@@ -13,6 +13,7 @@ import type { TokenIdentity, TokenIdentitySource } from './types.js'
 import { canonicalAssetIdFor } from './canonical-asset-map.js'
 import { getCachedJupiterToken, warmJupiterTokens } from './jupiter-tokens.js'
 import { categoryForSymbol, fallbackLetter, parseTokenRef } from './types.js'
+import type { TokenRegistryRow } from './registry/merge.js'
 
 interface SeedEntry {
   assetId: string
@@ -166,27 +167,29 @@ function staticFallback(raw: string, symbol: string): TokenIdentity {
  */
 export function resolveRef(
   ref: string,
-  registryRowForMint?: (mint: string) => { symbol: string | null; name: string | null; decimals: number | null; icon_source_url: string | null; verified: boolean; sources: Record<string, string> } | null | undefined,
+  opts?: { registryRowForMint?: (mint: string) => TokenRegistryRow | null | undefined },
 ): TokenIdentity {
   const parsed = parseTokenRef(ref)
 
   if (parsed.kind === 'mint') {
     // In registry mode this is the bounded LRU view; do not fall through into
     // the legacy unbounded Jupiter map when the registry has a miss.
-    if (registryRowForMint) {
-      const row = registryRowForMint(parsed.mint)
-      if (row) {
-        const seededAssetId = row.sources.symbol === 'seed' ? seedByMint.get(parsed.mint)?.assetId : null
-        const seeded = seededAssetId ? resolveByAssetId(seededAssetId) : null
-        if (seeded) {
-          return {
-            key: ref, assetId: seeded.fields.assetId, symbol: seeded.fields.symbol,
-            name: seeded.fields.name, iconUrl: iconUrlFor(seeded.fields.assetId),
-            decimals: seeded.fields.decimals, mint: seeded.fields.mint ?? parsed.mint,
-            verified: seeded.fields.verified, category: seeded.fields.category,
-            fallbackLetter: fallbackLetter(seeded.fields.symbol), source: seeded.source,
-          }
+    if (opts?.registryRowForMint) {
+      const row = opts.registryRowForMint(parsed.mint)
+      // Checked-in seed data remains authoritative for curated mints, even
+      // when the bounded registry has not loaded it or has an upstream row.
+      const seededAssetId = seedByMint.get(parsed.mint)?.assetId
+      const seeded = seededAssetId ? resolveByAssetId(seededAssetId) : null
+      if (seeded) {
+        return {
+          key: ref, assetId: seeded.fields.assetId, symbol: seeded.fields.symbol,
+          name: seeded.fields.name, iconUrl: iconUrlFor(seeded.fields.assetId),
+          decimals: seeded.fields.decimals, mint: seeded.fields.mint ?? parsed.mint,
+          verified: seeded.fields.verified, category: seeded.fields.category,
+          fallbackLetter: fallbackLetter(seeded.fields.symbol), source: seeded.source,
         }
+      }
+      if (row) {
         const symbol = nonEmpty(row.symbol) ?? shortMint(parsed.mint)
         return {
           key: ref, assetId: null, symbol, name: nonEmpty(row.name) ?? symbol,

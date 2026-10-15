@@ -2,7 +2,7 @@ import { mergeTokenRow, type TokenRegistryIncoming, type TokenRegistryRow } from
 
 export interface TokenRegistryStore {
   getMany(mints: readonly string[]): Promise<Map<string, TokenRegistryRow>>
-  upsertMany(rows: readonly TokenRegistryIncoming[]): Promise<void>
+  upsertMany(rows: readonly TokenRegistryIncoming[], stored?: Map<string, TokenRegistryRow>): Promise<void>
 }
 
 export class InMemoryTokenRegistryStore implements TokenRegistryStore {
@@ -10,8 +10,9 @@ export class InMemoryTokenRegistryStore implements TokenRegistryStore {
   async getMany(mints: readonly string[]): Promise<Map<string, TokenRegistryRow>> {
     return new Map(mints.flatMap((mint) => this.rows.has(mint) ? [[mint, structuredClone(this.rows.get(mint)!)] as const] : []))
   }
-  async upsertMany(rows: readonly TokenRegistryIncoming[]): Promise<void> {
-    for (const row of rows) this.rows.set(row.mint, mergeTokenRow(this.rows.get(row.mint) ?? null, row))
+  async upsertMany(rows: readonly TokenRegistryIncoming[], stored?: Map<string, TokenRegistryRow>): Promise<void> {
+    const current = stored ?? await this.getMany(rows.map((row) => row.mint))
+    for (const row of rows) this.rows.set(row.mint, mergeTokenRow(current.get(row.mint) ?? null, row))
   }
 }
 
@@ -27,11 +28,11 @@ export class SupabaseTokenRegistryStore implements TokenRegistryStore {
     const rows = await this.request(`${this.restBase}?${params}`)
     return new Map((rows as TokenRegistryRow[]).map((row) => [row.mint, row]))
   }
-  async upsertMany(rows: readonly TokenRegistryIncoming[]): Promise<void> {
+  async upsertMany(rows: readonly TokenRegistryIncoming[], stored?: Map<string, TokenRegistryRow>): Promise<void> {
     if (!rows.length) return
     // PostgREST cannot express the proposal's field-level conflict merge. Read,
     // merge in application code, then upsert; writes are idempotent but not serializable.
-    const current = await this.getMany(rows.map((row) => row.mint))
+    const current = stored ?? await this.getMany(rows.map((row) => row.mint))
     const updatedAt = new Date().toISOString()
     const merged = rows.map((row) => ({ ...mergeTokenRow(current.get(row.mint) ?? null, row), updated_at: updatedAt }))
     const response = await this.fetchImpl(`${this.restBase}?on_conflict=mint`, {

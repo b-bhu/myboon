@@ -1,6 +1,7 @@
 import type { TokenIdentityV1, TokenResolveResponseV1 } from '@myboon/shared/tokens'
 import { fetchJupiterTokenBatch } from '../jupiter-tokens.js'
-import { categoryForSymbol, fallbackLetter } from '../types.js'
+import { categoryForSymbol, fallbackLetter, parseTokenRef } from '../types.js'
+import { resolveRef } from '../identity-service.js'
 import { Lru } from './lru.js'
 import { UpstreamLimiter, UpstreamStatusError } from './limiter.js'
 import { TokenUpstreamCounter } from './counter.js'
@@ -56,9 +57,12 @@ export class TokenRegistry {
     for (const seed of options.seeds ?? DEFAULT_SEEDS) this.seedByMint.set(seed.mint, seed)
   }
 
-  /** Resolves mint refs. Non-mint refs are returned as ordinary unresolved fallbacks. */
+  /** Resolves mint refs; other refs keep the synchronous legacy identity behavior. */
   async resolve(refs: readonly string[]): Promise<TokenResolveResponseV1> {
-    const mints = [...new Set(refs.filter((ref) => ref.startsWith('mint:')).map((ref) => ref.slice(5).trim()).filter(Boolean))]
+    const mints = [...new Set(refs.flatMap((ref) => {
+      const parsed = parseTokenRef(ref)
+      return parsed.kind === 'mint' ? [parsed.mint] : []
+    }))]
     const deadline = this.now() + this.options.config.requestBudgetMs
     const rows = new Map<string, TokenRegistryRow | null>()
     const misses: string[] = []
@@ -117,12 +121,20 @@ export class TokenRegistry {
     if (deferred.length) this.enqueue(deferred)
     const responseRows = new Map(rows)
     const identities = refs.map((ref) => {
-      if (!ref.startsWith('mint:')) return { ...identity(ref, null), key: ref, mint: null }
-      const mint = ref.slice(5).trim()
+      const parsed = parseTokenRef(ref)
+      if (parsed.kind !== 'mint') return resolveRef(ref)
+      const mint = parsed.mint
       const row = responseRows.has(mint) ? responseRows.get(mint)! : null
       return { ...identity(mint, row), key: ref }
     })
-    return { v: 1, identities, partial: unresolved.length > 0, unresolved: refs.filter((ref) => unresolved.includes(`mint:${ref.slice(5).trim()}`)) }
+    const unresolvedSet = new Set(unresolved)
+    return {
+      v: 1, identities, partial: unresolved.length > 0,
+      unresolved: refs.filter((ref) => {
+        const parsed = parseTokenRef(ref)
+        return parsed.kind === 'mint' && unresolvedSet.has(`mint:${parsed.mint}`)
+      }),
+    }
   }
 
   getCachedRow(mint: string): TokenRegistryRow | null | undefined { return this.cache.get(mint) }
@@ -184,7 +196,7 @@ export class TokenRegistry {
         merged.set(mint, row)
       }
       if (writes.length) {
-        try { await this.options.store.upsertMany(writes) }
+        try { await this.options.store.upsertMany(writes, stored) }
         catch (error) { console.error('[api] Token registry write failed:', error instanceof Error ? error.message : String(error)) }
       }
       return merged
