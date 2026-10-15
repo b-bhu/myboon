@@ -28,16 +28,30 @@ alter table public.token_registry enable row level security;
 ```
 Writes are **field-level merges**, not whole-row overwrites. An incoming field replaces the stored one only if the incoming data is newer or the stored value is null. An incoming null never clears a stored value. `upstream_seen_at` only moves forward:
 ```sql
+-- Rank of a provenance source for `verified`; higher wins. Unknown/absent = 0.
+create or replace function public.token_source_rank(src text) returns int language sql immutable as $$
+  select case src when 'seed' then 3 when 'jupiter' then 2 when 'meteora' then 1 else 0 end
+$$;
+
 insert into public.token_registry as t (mint, symbol, name, decimals, icon_source_url, verified, sources, upstream_seen_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8)
+values ($1, $2, $3, $4, $5, $6, $7, $8)   -- $7 carries provenance only for the fields this write supplies
 on conflict (mint) do update set
   symbol          = case when excluded.symbol is not null and (t.symbol is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.symbol else t.symbol end,
   name            = case when excluded.name is not null and (t.name is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.name else t.name end,
   decimals        = case when excluded.decimals is not null and (t.decimals is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.decimals else t.decimals end,
   icon_source_url = case when excluded.icon_source_url is not null and (t.icon_source_url is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at) then excluded.icon_source_url else t.icon_source_url end,
-  -- verified follows the source-priority rule in section 5; the app computes $6 before the upsert
-  verified        = case when t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at then excluded.verified else t.verified end,
-  sources         = t.sources || excluded.sources,   -- per-field provenance, merged
+  -- verified is decided by source priority (seed > jupiter > meteora), NOT freshness; ties go to the incoming value
+  verified        = case when public.token_source_rank(excluded.sources->>'verified') >= public.token_source_rank(t.sources->>'verified') then excluded.verified else t.verified end,
+  -- provenance follows the value: a field's source is replaced only when that field's value was taken from this write
+  sources         = t.sources || (
+                      select coalesce(jsonb_object_agg(k, v), '{}'::jsonb) from jsonb_each(excluded.sources) e(k, v)
+                      where case k
+                        when 'symbol' then excluded.symbol is not null and (t.symbol is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at)
+                        when 'name' then excluded.name is not null and (t.name is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at)
+                        when 'decimals' then excluded.decimals is not null and (t.decimals is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at)
+                        when 'icon_source_url' then excluded.icon_source_url is not null and (t.icon_source_url is null or t.upstream_seen_at is null or excluded.upstream_seen_at > t.upstream_seen_at)
+                        when 'verified' then public.token_source_rank(excluded.sources->>'verified') >= public.token_source_rank(t.sources->>'verified')
+                        else true end),
   upstream_seen_at = greatest(t.upstream_seen_at, excluded.upstream_seen_at),  -- greatest() ignores NULLs
   updated_at      = now();
 ```
@@ -58,7 +72,7 @@ One shared upstream limiter is used by foreground lookups and stale-while-revali
 - **Rate:** a token bucket, `TOKEN_UPSTREAM_RPM=30` requests per minute. Each request carries at most 10 mints (`jupiter-tokens.ts:29`).
 - **Backoff:** on a 429 or 5xx, exponential backoff with full jitter (base 1s, max 60s). After 3 consecutive failures, a circuit break opens for a `TOKEN_UPSTREAM_COOLDOWN_MS=300000` (5min) cooldown, and Jupiter is not called until it ends. A `Retry-After` header is honored when present.
 - **Fallback when limited or circuit-open:** serve from the LRU, DB, seed and cached misses only. Unresolved refs come back as misses with a short TTL. Background refreshes are dropped, not queued without limit.
-- **Cold batch:** a cold `POST /tokens/resolve` with 500 unknown refs never fans out without limit. Each request may send at most `TOKEN_UPSTREAM_MAX_PER_REQUEST=50` **tokens (mints)** upstream. `jupiter-tokens.ts` already batches 10 mints into one comma-separated search call (`MINTS_PER_REQUEST = 10`, `:29-30`), so that is at most **5 Jupiter HTTP calls**. Today those batches all run at once through `Promise.all` (`warmJupiterTokens`, `:166-180`) with no concurrency cap; in this design they go through the shared limiter instead (2 at a time) through the shared limiter, and waits at most `TOKEN_UPSTREAM_REQUEST_BUDGET_MS=2000`. The response is a partial result (see the contract in section 6). Leftover refs are queued for background fill under the same limiter, and that queue is capped at `TOKEN_UPSTREAM_QUEUE_MAX=1000`.
+- **Cold batch:** a cold `POST /tokens/resolve` with 500 unknown refs never fans out without limit. Each request may send at most `TOKEN_UPSTREAM_MAX_PER_REQUEST=50` **tokens (mints)** upstream. `jupiter-tokens.ts` already batches 10 mints into one comma-separated search call (`MINTS_PER_REQUEST = 10`, `:29-30`), so that is at most **5 Jupiter HTTP calls**. Today those batches all run at once through `Promise.all` (`warmJupiterTokens`, `:166-180`) with no concurrency cap; in this design they go through the shared limiter instead (2 at a time). Each request waits at most `TOKEN_UPSTREAM_REQUEST_BUDGET_MS=2000`. The response is a partial result (see the contract in section 6). Leftover refs are queued for background fill under the same limiter, and that queue is capped at `TOKEN_UPSTREAM_QUEUE_MAX=1000`.
 - **Counter:** every upstream call increments `token_upstream_calls_total{source,status}`, logged as a one-line summary each minute. This gives the baseline for the acceptance target.
 
 ### 3. Lookup order
@@ -68,7 +82,7 @@ LRU → `token_registry` (batched `in (...)` select) → seed (`seed/token-ident
 A row older than `TOKEN_REGISTRY_STALE_AFTER_MS` (default 24h) is returned immediately, and one deduped background refresh is queued. Refresh failures keep the old row and log a counter. They are never surfaced to the client.
 
 ### 5. Meteora ingest (write-through)
-Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/shared/src/meteora/data-api.ts:59`, `:176-179`, `:203-210`), it upserts fill-gap or refresh-stale rows using the guard in §1. Meteora's `verified` is recorded in `sources.meteora_verified`. It does not set `verified` unless no higher-priority source exists. Priority: seed > existing registry decision > Jupiter > Meteora. In Phase 1 ingest only runs where the API already touches Meteora data, because the server pools proxy is Phase 2.
+Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/shared/src/meteora/data-api.ts:59`, `:176-179`, `:203-210`), it upserts fill-gap or refresh-stale rows using the guard in §1. Meteora's `verified` is recorded in `sources.meteora_verified`. It does not set `verified` unless no higher-priority source exists. Priority: seed > Jupiter > Meteora, decided by source rank, never by freshness (see `token_source_rank` in §1). In Phase 1 ingest only runs where the API already touches Meteora data, because the server pools proxy is Phase 2.
 
 ### 6. Cacheable endpoints (response shape versioned `v: 1`)
 - `GET /tokens/resolve?refs=` (≤100 refs, `routes.ts:20`): sorted, normalized refs give a stable URL. Response has `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` and an ETag/304. Responses with misses get `max-age=60`.
@@ -81,8 +95,8 @@ Whenever the server sees Meteora pool data (`token_x`/`token_y`, `packages/share
 
 ### 7. Client token store — coordinate with Frontend Dev
 - Shared types (`TokenIdentityV1`, plus `TokenResolveResponseV1 = { v: 1; identities: TokenIdentityV1[]; partial: boolean; unresolved: string[] }`) land first in `packages/shared` as their own small PR. The frontend issue links that PR as a dependency.
-- Phone: a persistent store (MMKV or AsyncStorage, hours to days TTL) replaces the 10min/30s in-memory TTLs (`lib/token-identity.store.ts:3-4`). Drop `no-store` (`lib/token-identity.ts:78`). Keep warming the catalog at start (already called in `app/_layout.tsx:21`). Load icons only via `/tokens/icon/*` and never use Meteora `iconUrl`.
 - **Storage and TTL:** the store uses **AsyncStorage**, with a **7-day TTL for found tokens and 10 minutes for misses**. Stale entries are revalidated against the cacheable `GET /tokens/resolve`. Refs listed in `unresolved` are not stored as misses; they are retried on the next fetch.
+- Phone behaviour: drop `no-store` (`lib/token-identity.ts:78`), keep warming the catalog at start (`app/_layout.tsx:21`), and load icons only via `/tokens/icon/*`.
 - **Why AsyncStorage:** `apps/hybrid-expo` already depends on `@react-native-async-storage/async-storage` 2.2.0 (`package.json:41`) and uses it in several places (for example `hooks/useOddsFormat.ts`). MMKV is not a dependency, and adding it would mean a new native module and a new EAS build. **This is a PR3 decision to confirm with Frontend Dev.**
 - Frontend Dev owns this part and its EAS checklist.
 
