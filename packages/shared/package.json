@@ -34,6 +34,11 @@
       "import": "./src/spot/data-api.ts",
       "default": "./src/spot/data-api.ts",
       "types": "./src/spot/data-api.ts"
+    },
+    "./tokens": {
+      "import": "./src/tokens/index.ts",
+      "default": "./src/tokens/index.ts",
+      "types": "./src/tokens/index.ts"
     }
   },
   "typesVersions": {
@@ -45,7 +50,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts",
+    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts && tsx src/tokens/types.test.ts",
     "test:meteora": "tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts",
     "test:spot": "tsx src/spot/data-api.test.ts",
     "test:mobile-signing": "tsx src/pacific/mobile-signing.test.ts"
