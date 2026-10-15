@@ -11,6 +11,17 @@ export type ApiConfig = {
   aiExplanationBaseUrl: string
   aiExplanationModel: string
   tokenIdentityEnabled: boolean
+  tokenRegistryEnabled: boolean
+  tokenRegistryLruMax: number
+  tokenRegistryFoundTtlMs: number
+  tokenRegistryMissTtlMs: number
+  tokenRegistryStaleAfterMs: number
+  tokenUpstreamMaxConcurrency: number
+  tokenUpstreamRpm: number
+  tokenUpstreamCooldownMs: number
+  tokenUpstreamMaxPerRequest: number
+  tokenUpstreamRequestBudgetMs: number
+  tokenUpstreamQueueMax: number
   tokensApiKey?: string
   jupApiKey?: string
   jupApiBase?: string
@@ -57,6 +68,13 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       : (env.OPENAI_API_KEY ? 'gpt-4o-mini' : (env.XAI_MODEL ?? 'grok-3-mini')))
 
   const tokenIdentityEnabled = env.TOKEN_IDENTITY_ENABLED === '1' || env.TOKEN_IDENTITY_ENABLED === 'true'
+  const tokenRegistryEnabled = env.TOKEN_REGISTRY_ENABLED === '1' || env.TOKEN_REGISTRY_ENABLED === 'true'
+  const positiveInt = (name: string, fallback: number): number => {
+    const raw = env[name]
+    if (!raw || !/^\d+$/.test(raw)) return fallback
+    const value = Number(raw)
+    return Number.isSafeInteger(value) && value > 0 ? value : fallback
+  }
   const solanaRpcUrl = env.SOLANA_RPC_URL?.trim() || env.HELIUS_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com'
   const solanaDevnetRpcUrl = env.SOLANA_DEVNET_RPC_URL?.trim() || 'https://api.devnet.solana.com'
   const polygonRpcUrl = env.POLYGON_RPC_URL?.trim() || 'https://polygon-rpc.com'
@@ -84,6 +102,17 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     aiExplanationBaseUrl,
     aiExplanationModel,
     tokenIdentityEnabled,
+    tokenRegistryEnabled,
+    tokenRegistryLruMax: positiveInt('TOKEN_REGISTRY_LRU_MAX', 50_000),
+    tokenRegistryFoundTtlMs: positiveInt('TOKEN_REGISTRY_FOUND_TTL_MS', 7 * 24 * 60 * 60 * 1000),
+    tokenRegistryMissTtlMs: positiveInt('TOKEN_REGISTRY_MISS_TTL_MS', 10 * 60 * 1000),
+    tokenRegistryStaleAfterMs: positiveInt('TOKEN_REGISTRY_STALE_AFTER_MS', 24 * 60 * 60 * 1000),
+    tokenUpstreamMaxConcurrency: positiveInt('TOKEN_UPSTREAM_MAX_CONCURRENCY', 2),
+    tokenUpstreamRpm: positiveInt('TOKEN_UPSTREAM_RPM', 30),
+    tokenUpstreamCooldownMs: positiveInt('TOKEN_UPSTREAM_COOLDOWN_MS', 300_000),
+    tokenUpstreamMaxPerRequest: positiveInt('TOKEN_UPSTREAM_MAX_PER_REQUEST', 50),
+    tokenUpstreamRequestBudgetMs: positiveInt('TOKEN_UPSTREAM_REQUEST_BUDGET_MS', 2_000),
+    tokenUpstreamQueueMax: positiveInt('TOKEN_UPSTREAM_QUEUE_MAX', 1000),
     tokensApiKey: env.TOKENS_API_KEY,
     jupApiKey,
     jupApiBase: env.JUP_API_BASE,

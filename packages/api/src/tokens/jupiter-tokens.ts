@@ -21,6 +21,8 @@
  * gateway costs one server-side miss instead of a broken row on every device.
  */
 
+import { UpstreamStatusError } from './registry/limiter.js'
+
 /** Free tier. `JUP_API_KEY` upgrades to api.jup.ag via the swap proxy config. */
 const JUPITER_TOKEN_SEARCH_URL = process.env.JUPITER_API_BASE
   ? `${process.env.JUPITER_API_BASE}/tokens/v2/search`
@@ -107,6 +109,37 @@ function parseToken(raw: Record<string, unknown>): JupiterTokenInfo | null {
     // Jupiter exposes verification under a couple of names depending on tier.
     verified: raw.isVerified === true || raw.verified === true,
   }
+}
+
+/** Fetch and parse one Jupiter search batch without touching the legacy cache. */
+export async function fetchJupiterTokenBatch(
+  mints: readonly string[],
+  fetchImpl: FetchLike = globalThis.fetch,
+  apiKey = process.env.JUP_API_KEY,
+): Promise<JupiterTokenInfo[]> {
+  const url = `${JUPITER_TOKEN_SEARCH_URL}?query=${encodeURIComponent(mints.join(','))}`
+  const response = await fetchImpl(url, {
+    headers: apiKey ? { 'x-api-key': apiKey } : undefined,
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!response.ok) {
+    const rawRetryAfter = response.headers.get('retry-after')
+    const retryDate = rawRetryAfter ? Date.parse(rawRetryAfter) : Number.NaN
+    const retryAfterMs = rawRetryAfter
+      ? (Number.isFinite(Number(rawRetryAfter)) ? Number(rawRetryAfter) * 1000 : Number.isFinite(retryDate) ? Math.max(0, retryDate - Date.now()) : undefined)
+      : undefined
+    throw new UpstreamStatusError(response.status, retryAfterMs)
+  }
+  const body = await response.json() as unknown
+  const rows = Array.isArray(body)
+    ? body
+    : Array.isArray((body as { tokens?: unknown[] }).tokens)
+      ? (body as { tokens: unknown[] }).tokens
+      : []
+  return rows.flatMap((row) => {
+    const info = parseToken(row as Record<string, unknown>)
+    return info && mints.includes(info.mint) ? [info] : []
+  })
 }
 
 async function fetchBatch(mints: string[], fetchImpl: FetchLike, apiKey?: string): Promise<void> {

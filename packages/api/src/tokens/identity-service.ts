@@ -1,23 +1,10 @@
-// Token identity service: warm in-memory maps + pure synchronous resolution.
+// Token identity service: checked-in seed data, a legacy warm Jupiter map, and
+// pure synchronous resolution. When TOKEN_REGISTRY_ENABLED is on, app wiring
+// supplies a bounded registry lookup to resolveRef; when off, the legacy
+// seed/Jupiter path remains unchanged.
 //
-// Resolution layers, evaluated PER FIELD and triggered by an EMPTY field,
-// never by HTTP status:
-//   1. checked-in seed (seed/token-identities.seed.json) — perps and majors,
-//      the curated set, source 'static'
-//   2. Jupiter mint cache (jupiter-tokens.ts) — the open-ended long tail keyed
-//      by mint: Meteora pool legs today, spot and meme lists later. source
-//      'venue'
-//   3. computed static fallback (symbol from the ref, fallbackLetter, iconUrl
-//      null) — source 'static'
-//
-// There is deliberately NO database layer. Identity for the curated set does
-// not change, so it is checked in; identity for the long tail is far too large
-// and too fast-moving to snapshot, so it is fetched on demand and cached in
-// memory. A table would only have restated one of those two facts.
-//
-// resolveRef is PURE AND SYNCHRONOUS: the request path must never await an
-// upstream call. The Jupiter lookup happens in warmMintIdentities, off the
-// resolution path, so a market list renders immediately and icons fill in.
+// resolveRef is PURE AND SYNCHRONOUS: request handling never waits on Jupiter.
+// All upstream warming happens before resolution and is best-effort.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +13,7 @@ import type { TokenIdentity, TokenIdentitySource } from './types.js'
 import { canonicalAssetIdFor } from './canonical-asset-map.js'
 import { getCachedJupiterToken, warmJupiterTokens } from './jupiter-tokens.js'
 import { categoryForSymbol, fallbackLetter, parseTokenRef } from './types.js'
+import type { TokenRegistryRow } from './registry/merge.js'
 
 interface SeedEntry {
   assetId: string
@@ -177,10 +165,41 @@ function staticFallback(raw: string, symbol: string): TokenIdentity {
  * Resolve a token ref to its identity. PURE AND SYNCHRONOUS — reads only
  * from the already-warm in-memory maps, never awaits an upstream call.
  */
-export function resolveRef(ref: string): TokenIdentity {
+export function resolveRef(
+  ref: string,
+  opts?: { registryRowForMint?: (mint: string) => TokenRegistryRow | null | undefined },
+): TokenIdentity {
   const parsed = parseTokenRef(ref)
 
   if (parsed.kind === 'mint') {
+    // In registry mode this is the bounded LRU view; do not fall through into
+    // the legacy unbounded Jupiter map when the registry has a miss.
+    if (opts?.registryRowForMint) {
+      const row = opts.registryRowForMint(parsed.mint)
+      // Checked-in seed data remains authoritative for curated mints, even
+      // when the bounded registry has not loaded it or has an upstream row.
+      const seededAssetId = seedByMint.get(parsed.mint)?.assetId
+      const seeded = seededAssetId ? resolveByAssetId(seededAssetId) : null
+      if (seeded) {
+        return {
+          key: ref, assetId: seeded.fields.assetId, symbol: seeded.fields.symbol,
+          name: seeded.fields.name, iconUrl: iconUrlFor(seeded.fields.assetId),
+          decimals: seeded.fields.decimals, mint: seeded.fields.mint ?? parsed.mint,
+          verified: seeded.fields.verified, category: seeded.fields.category,
+          fallbackLetter: fallbackLetter(seeded.fields.symbol), source: seeded.source,
+        }
+      }
+      if (row) {
+        const symbol = nonEmpty(row.symbol) ?? shortMint(parsed.mint)
+        return {
+          key: ref, assetId: null, symbol, name: nonEmpty(row.name) ?? symbol,
+          iconUrl: row.icon_source_url ? `/tokens/icon/mint/${parsed.mint}` : null,
+          decimals: row.decimals, mint: parsed.mint, verified: row.verified,
+          category: 'crypto', fallbackLetter: fallbackLetter(symbol), source: row.sources.symbol === 'seed' ? 'static' : 'venue',
+        }
+      }
+      return staticFallback(ref, shortMint(parsed.mint))
+    }
     const assetId = seedByMint.get(parsed.mint)?.assetId ?? null
     if (assetId) {
       const resolved = resolveByAssetId(assetId)
@@ -200,11 +219,8 @@ export function resolveRef(ref: string): TokenIdentity {
         }
       }
     }
-    // Not in the curated registry — the normal case for a Meteora pool leg, a
-    // meme token, or anything else minted this week. Fall through to whatever
-    // Jupiter told us on a previous warm pass. Read-only and synchronous: the
-    // lookup itself happens in the background (warmJupiterTokens), never here,
-    // so a market list is never blocked on it.
+    // Legacy mode: read the old warm Jupiter map. The lookup itself happens
+    // in warmJupiterTokens, never synchronously in this function.
     const jupiter = getCachedJupiterToken(parsed.mint)
     if (jupiter) {
       const symbol = nonEmpty(jupiter.symbol) ?? shortMint(parsed.mint)
@@ -309,7 +325,7 @@ export function resolveCatalog(): TokenIdentity[] {
   const refs: string[] = []
   for (const symbol of Object.keys(PERP_SYMBOL_TO_ASSET_ID)) refs.push(`perp:${symbol}`)
   for (const entry of SEED_ENTRIES) if (entry.mint) refs.push(`mint:${entry.mint}`)
-  return refs.map(resolveRef)
+  return refs.map((ref) => resolveRef(ref))
 }
 
 /**
@@ -334,4 +350,16 @@ export function iconSourceUrlForAssetId(assetId: string): string | null {
   return nonEmpty(canonicalSeed?.iconSourceUrl) ?? nonEmpty(seed?.iconSourceUrl) ?? null
 }
 
+
+
+
+/** Registry seed projection; kept separate from the frozen client TokenIdentity. */
+export function tokenRegistrySeeds() {
+  return SEED_ENTRIES.filter((entry) => entry.mint).map((entry) => ({
+    mint: entry.mint!, symbol: entry.symbol, name: entry.name, decimals: entry.decimals,
+    icon_source_url: entry.iconSourceUrl, verified: entry.verified,
+    sources: { symbol: 'seed', name: 'seed', decimals: 'seed', ...(entry.iconSourceUrl ? { icon_source_url: 'seed' } : {}), verified: 'seed' },
+    upstream_seen_at: null,
+  }))
+}
 

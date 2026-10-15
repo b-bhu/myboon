@@ -23,6 +23,30 @@ test('resolve hit for a seeded mint ref returns the full identity, iconUrl start
   assert.equal(identity.source, 'static')
 })
 
+test('registry miss for seeded USDC preserves its flag-off seed identity', () => {
+  const usdcMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+  const legacy = resolveRef(`mint:${usdcMint}`)
+  const registryMiss = resolveRef(`mint:${usdcMint}`, { registryRowForMint: () => null })
+
+  assert.equal(registryMiss.assetId, legacy.assetId)
+  assert.equal(registryMiss.iconUrl, legacy.iconUrl)
+  assert.equal(registryMiss.decimals, legacy.decimals)
+})
+
+test('a non-seed registry row cannot hide the local seed identity', () => {
+  const usdcMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+  const legacy = resolveRef(`mint:${usdcMint}`)
+  const registryRow = {
+    mint: usdcMint, symbol: 'OTHER', name: 'Other', decimals: 3, icon_source_url: null,
+    verified: false, sources: { symbol: 'jupiter' }, upstream_seen_at: null, updated_at: null,
+  }
+  const registryResult = resolveRef(`mint:${usdcMint}`, { registryRowForMint: () => registryRow })
+
+  assert.equal(registryResult.assetId, legacy.assetId)
+  assert.equal(registryResult.iconUrl, legacy.iconUrl)
+  assert.equal(registryResult.decimals, legacy.decimals)
+})
+
 test('miss for a garbage ref returns assetId null, correct fallbackLetter, source static, key echoed verbatim', () => {
   const garbage = 'mint:NotARealMintAddressAtAll1111111111111'
   const identity = resolveRef(garbage)
