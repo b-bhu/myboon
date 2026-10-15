@@ -701,6 +701,7 @@ function redactedFailure(category: FailureCategory | null): string | null {
     invalid_structured_output: 'contained structured output rejected; details redacted',
     schema_version_mismatch: 'deep schema version mismatch; details redacted',
     permanent_source_error: 'permanent source error; details redacted',
+    lease_expired: 'research lease expired; details redacted',
     entity_resolution_failed: 'entity resolution failed; details redacted',
     storage_transient: 'transient fencing or storage failure; details redacted',
     storage_permanent: 'permanent containment or storage failure; details redacted',

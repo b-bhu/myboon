@@ -68,6 +68,7 @@ export type FailureCategory =
   | 'invalid_structured_output'
   | 'schema_version_mismatch'
   | 'permanent_source_error'
+  | 'lease_expired'
   | 'entity_resolution_failed'
   | 'storage_transient'
   | 'storage_permanent'

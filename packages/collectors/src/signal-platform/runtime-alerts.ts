@@ -8,6 +8,7 @@ export interface OperationalAlertPolicyV1 {
   minimumThroughputWindowMs: number
   minimumCompletionAdmissionRatio: number
   sqliteWriteErrorCountThreshold: number
+  unresolvedPaidHoldThreshold?: number
 }
 
 export type OperationalAlertCode =
@@ -15,6 +16,9 @@ export type OperationalAlertCode =
   | 'RESEARCH_COMPLETION_BELOW_ADMISSION'
   | 'CONTAINED_JOB_SURVIVED_DEADLINE'
   | 'SQLITE_WRITE_ERROR_THRESHOLD'
+  | 'ZERO_ADMISSIONS_WITH_DECISIONS'
+  | 'TRIAGE_CAPACITY_PRESSURE'
+  | 'UNRESOLVED_PAID_HOLD_THRESHOLD'
 
 export interface OperationalAlertV1 {
   code: OperationalAlertCode
@@ -45,7 +49,8 @@ export function parseOperationalAlertPolicy(value: unknown): OperationalAlertPol
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('operational alert policy must be an object')
   const record = value as Record<string, unknown>
   for (const key of Object.keys(record)) {
-    if (!['minimumThroughputWindowMs', 'minimumCompletionAdmissionRatio', 'sqliteWriteErrorCountThreshold'].includes(key)) {
+    if (!['minimumThroughputWindowMs', 'minimumCompletionAdmissionRatio', 'sqliteWriteErrorCountThreshold',
+      'unresolvedPaidHoldThreshold'].includes(key)) {
       throw new Error(`unknown operational alert policy key: ${key}`)
     }
   }
@@ -56,7 +61,10 @@ export function parseOperationalAlertPolicy(value: unknown): OperationalAlertPol
     throw new Error('minimumCompletionAdmissionRatio must be between 0 and 1')
   }
   const sqliteWriteErrorCountThreshold = integer(record.sqliteWriteErrorCountThreshold, 'sqliteWriteErrorCountThreshold', 0)
-  return { minimumThroughputWindowMs, minimumCompletionAdmissionRatio, sqliteWriteErrorCountThreshold }
+  const unresolvedPaidHoldThreshold = record.unresolvedPaidHoldThreshold === undefined
+    ? undefined : integer(record.unresolvedPaidHoldThreshold, 'unresolvedPaidHoldThreshold', 0)
+  return { minimumThroughputWindowMs, minimumCompletionAdmissionRatio, sqliteWriteErrorCountThreshold,
+    ...(unresolvedPaidHoldThreshold === undefined ? {} : { unresolvedPaidHoldThreshold }) }
 }
 
 export function evaluateOperationalAlerts(input: {
@@ -78,6 +86,15 @@ export function evaluateOperationalAlerts(input: {
       const source = input.status.sources[sourceType]
       if (!source) continue
       const windowMs = nowMs - Date.parse(source.activity.windowStart)
+      if (Number.isFinite(windowMs) && windowMs >= 60 * 60_000
+        && (source.intake.triageDecisions ?? 0) > 0 && source.activity.admissions === 0) {
+        items.push({
+          code: 'ZERO_ADMISSIONS_WITH_DECISIONS', sourceType, stage: 'unassigned', provider: null,
+          queueAgeMs: source.oldestReadyAgeMs, nextProbeAt: null,
+          message: 'Triage decisions are continuing without research admissions for over an hour',
+          suggestedCommand: 'pnpm feed-v3:status',
+        })
+      }
       if (!Number.isFinite(windowMs) || windowMs < input.policy.minimumThroughputWindowMs
         || source.activity.admissions === null || source.activity.completions === null) {
         unavailableChecks.push({
@@ -118,6 +135,22 @@ export function evaluateOperationalAlerts(input: {
     })
   } else {
     const runtime = research.snapshot.runtime
+    for (const sourceType of runtime.sources) {
+      const capacity = runtime.v4?.capacityBySource?.[sourceType]
+      if (capacity && (capacity.p3Utilization >= 0.8 || capacity.lightUtilization >= 0.8)) items.push({
+        code: 'TRIAGE_CAPACITY_PRESSURE', sourceType, stage: 'unassigned', provider: null,
+        queueAgeMs: input.status.sources[sourceType]?.oldestReadyAgeMs ?? null, nextProbeAt: null,
+        message: 'P3 or light research intake capacity is at least 80% utilized',
+        suggestedCommand: 'pnpm feed-v3:status',
+      })
+      const holds = runtime.v4?.paidOutcomeHoldsBySource[sourceType]
+      if (holds !== undefined && holds > (input.policy?.unresolvedPaidHoldThreshold ?? 25)) items.push({
+        code: 'UNRESOLVED_PAID_HOLD_THRESHOLD', sourceType, stage: 'synthesis', provider: null,
+        queueAgeMs: null, nextProbeAt: null,
+        message: 'Unresolved paid research holds exceed the default threshold of 25',
+        suggestedCommand: 'pnpm feed-v3:status',
+      })
+    }
     for (const workload of runtime.circuits.workloads) {
       for (const target of workload.targets) {
         if (!target.circuitOpen) continue

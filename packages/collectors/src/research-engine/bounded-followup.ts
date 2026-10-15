@@ -218,6 +218,23 @@ export async function runBoundedFollowup(input: {
     generated = store.putResearchV4Record('followup_result', work.workId, attemptId, generated)
   } catch (error) {
     const telemetry = error instanceof InferenceGatewayError ? error.telemetry : undefined
+    if (isGatewayAbort(telemetry)) {
+      try {
+        const settled = await settleReservation(budgetStore, key, {
+          requestDigest, providerResultDigest: null, savedResultRef: null,
+          usage: maxExposureUsage(record.approvedLimits), settlementEpoch: record.ownershipEpoch,
+          savedResultSavedAtMs: Date.parse(input.now()),
+          verification: { kind: 'gateway_abort_max_exposure', failureCategory: telemetry!.failureCategory as 'budget_exceeded' | 'provider_timeout' },
+        })
+        if (!settled.ok) throw new ResearchFollowupHold(`Gateway-aborted follow-up settlement refused: ${settled.code}.`)
+      } finally {
+        const current = await budgetStore.get(key)
+        if (current?.state === 'dispatch_intent') await recordUnknownOutcome(budgetStore, key, {
+          ownedEpoch: record.ownershipEpoch, nowMs: Date.parse(input.now()),
+        })
+      }
+      throw new ResearchFollowupHold(`Paid follow-up stopped by gateway: ${telemetry!.failureCategory}. Original Research is retained.`)
+    }
     if (received !== null || hasReceivedProviderResponse(telemetry)) {
       const receiptRef = `rejected_response:${work.workId}:${attemptId}`
       const receipt = {
@@ -296,6 +313,19 @@ export async function runBoundedFollowup(input: {
 function hasReceivedProviderResponse(telemetry: InferenceGatewayError['telemetry']): boolean {
   return telemetry?.calls.some((call) => call.status === 'succeeded') === true
     && (telemetry?.failureCategory === 'budget_exceeded' || telemetry?.failureCategory === 'invalid_structured_output')
+}
+
+function isGatewayAbort(telemetry: InferenceGatewayError['telemetry'] | undefined): boolean {
+  return telemetry?.failureCategory === 'provider_timeout'
+    || (telemetry?.failureCategory === 'budget_exceeded' && !hasReceivedProviderResponse(telemetry))
+}
+
+function maxExposureUsage(limits: { maxProviderCalls: number, maxInputTokens: number, maxOutputTokens: number, maxIncrementalCostUsdMicros: number | null }): D2Usage {
+  return typeof limits.maxIncrementalCostUsdMicros === 'number' && limits.maxIncrementalCostUsdMicros > 0
+    ? { status: 'unknown', costUsdMicros: limits.maxIncrementalCostUsdMicros, costBasis: 'approved_max_incremental_cost', inputTokens: limits.maxInputTokens,
+      outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
+    : { status: 'unknown', costUsdMicros: null, inputTokens: limits.maxInputTokens,
+      outputTokens: limits.maxOutputTokens, providerCalls: limits.maxProviderCalls }
 }
 
 function usageFromTelemetry(telemetry: InferenceGatewayError['telemetry'] | null): D2Usage {

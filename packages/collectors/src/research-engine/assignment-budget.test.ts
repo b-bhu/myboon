@@ -251,6 +251,28 @@ test('cost reporting fails closed: null measured cost or zero cost rejected, unk
   assert.ok(unknown.ok && unknown.record.state === 'settled')
 })
 
+test('unknown usage may carry an approved maximum cost without claiming it was measured', async () => {
+  const port = createInMemoryBudgetStore()
+  const key = settleKey()
+  await claimReservation(port, { approvedLimits: APPROVED_LIMITS, ...key, requestDigest: 'digest-1',
+    providerRoute: 'jev/systemone@1', nowMs: 1_000 })
+  await recordDispatchIntent(port, key, { ownedEpoch: 1, nowMs: 2_000 })
+  const result = await settleReservation(port, key, {
+    requestDigest: 'digest-1', providerResultDigest: null, savedResultRef: null,
+    usage: { status: 'unknown', costUsdMicros: APPROVED_LIMITS.maxIncrementalCostUsdMicros,
+      costBasis: 'approved_max_incremental_cost', inputTokens: APPROVED_LIMITS.maxInputTokens,
+      outputTokens: APPROVED_LIMITS.maxOutputTokens, providerCalls: APPROVED_LIMITS.maxProviderCalls },
+    savedResultSavedAtMs: 3_000,
+    verification: { kind: 'gateway_abort_max_exposure', failureCategory: 'provider_timeout' },
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.ok && result.record.settlement?.usage, {
+    status: 'unknown', costUsdMicros: APPROVED_LIMITS.maxIncrementalCostUsdMicros,
+    costBasis: 'approved_max_incremental_cost', inputTokens: APPROVED_LIMITS.maxInputTokens,
+    outputTokens: APPROVED_LIMITS.maxOutputTokens, providerCalls: APPROVED_LIMITS.maxProviderCalls,
+  })
+})
+
 test('hold-forever: unknown outcome keeps holding without a provider-supported handle, even after lease expiry', async () => {
   const port = createInMemoryBudgetStore()
   const key = settleKey()

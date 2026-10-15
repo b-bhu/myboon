@@ -79,6 +79,7 @@ export interface CapacityBucket {
 export interface TriageCapacitySnapshot {
   byPriority: Record<PriorityClass, CapacityBucket>
   byDepth: Record<ResearchDepth, CapacityBucket>
+  paidExposure?: { unresolvedHolds: number, limit: number, available: number }
 }
 
 export type ProviderWorkloadHealth = 'healthy' | 'degraded' | 'unavailable' | 'circuit_open'
@@ -112,6 +113,7 @@ export type TriageDecisionReasonCode =
   | 'priority_semantics'
   | 'provider_pressure_defer'
   | 'capacity_pressure_defer'
+  | 'paid_exposure_defer'
   | 'deep_capacity_tightened'
   | 'deep_ineligible'
   | 'typed_deep_escalation'

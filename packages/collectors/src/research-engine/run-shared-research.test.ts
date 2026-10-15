@@ -13,6 +13,9 @@ import {
 import { SharedResearchScheduler } from '../signal-platform/shared-scheduler'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { defaultRuntimeControl, FileRuntimeControlStore } from '../signal-platform/runtime-control'
+import { operatorSignal, operatorWork } from '../signal-platform/operator-fixtures.test-support'
+import { claimReservation, recordDispatchIntent, recordUnknownOutcome } from './assignment-budget'
+import { researchRootAssignmentId } from './bounded-followup'
 import type { SharedResearchWorkPort } from './shared-worker'
 import {
   ResearchDepthFilteredScheduler,
@@ -47,6 +50,18 @@ test('context probe and recent-cache configuration stays bounded with explicit c
   for (const invalid of ['-1', '60001', '1.5']) {
     assert.throws(() => loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.historyCacheTtlMs]: invalid }), /cache TTL/)
   }
+})
+
+test('stale hold sweep flags use strict 0/1 parsing and default to report mode', () => {
+  assert.equal(loadSharedResearchRunnerConfig({}).staleHoldSweepEnabled, true)
+  assert.equal(loadSharedResearchRunnerConfig({}).staleHoldSweepMode, 'report')
+  assert.equal(loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepEnabled]: '1' }).staleHoldSweepEnabled, true)
+  assert.equal(loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepEnabled]: '0' }).staleHoldSweepEnabled, false)
+  for (const invalid of ['true', 'yes', '']) {
+    assert.throws(() => loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepEnabled]: invalid }), /must be 0 or 1/)
+  }
+  assert.equal(loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepMode]: 'settle' }).staleHoldSweepMode, 'settle')
+  assert.throws(() => loadSharedResearchRunnerConfig({ [SHARED_RESEARCH_ENV.staleHoldSweepMode]: 'invalid' }), /must be report or settle/)
 })
 
 const nodeRequire = createRequire(__filename)
@@ -157,6 +172,58 @@ test('active runner recovers at startup and on a bounded cadence before further 
   assert.equal(cycles, 3)
   assert.deepEqual(recoveries, ['2026-08-26T12:00:00.000Z', '2026-08-26T12:00:00.200Z'])
   assert.equal(writes.at(-1), 'stopped')
+})
+
+test('report mode logs sweep errors and still retries unpaid leases and dead-letters paid leases', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-report-recovery-'))
+  const dbPath = join(dir, 'news.sqlite')
+  const seedStore = new SqliteSignalPlatformStore(dbPath, 'news')
+  const expiredAt = '2026-08-26T10:00:00.000Z'
+  const makeExpired = (id: string) => {
+    seedStore.appendSignal(operatorSignal('news', id))
+    const work = operatorWork('news', id, { status: 'retrieval_leased', leaseOwner: 'fixture', leaseId: `lease-${id}`,
+      leaseExpiresAt: expiredAt, createdAt: expiredAt, updatedAt: expiredAt })
+    seedStore.admitResearchWork(work)
+    return work
+  }
+  const unpaid = makeExpired('report-unpaid')
+  const paid = makeExpired('report-paid')
+  const budget = seedStore.researchBudgetStore()
+  const key = { rootAssignmentId: researchRootAssignmentId(paid), allowanceId: 'report-paid', attemptId: 'attempt' }
+  assert.equal((await claimReservation(budget, { ...key, requestDigest: 'digest', providerRoute: 'fixture',
+    approvedLimits: { maxProviderCalls: 1, maxInputTokens: 10, maxOutputTokens: 10, maxIncrementalCostUsdMicros: null },
+    nowMs: Date.parse(expiredAt) })).ok, true)
+  assert.equal((await recordDispatchIntent(budget, key, { ownedEpoch: 1, nowMs: Date.parse(expiredAt) })).ok, true)
+  assert.equal((await recordUnknownOutcome(budget, key, { ownedEpoch: 1, nowMs: Date.parse(expiredAt) })).ok, true)
+  seedStore.close()
+  const config = loadSharedResearchRunnerConfig({
+    FEED_V3_CUTOVER_POLICY: 'phase1', FEED_V3_RESEARCH_MODE: 'active',
+    FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news', FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+    FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy', NEWS_SQLITE_PATH: dbPath,
+    [SHARED_RESEARCH_ENV.staleHoldTtlMs]: 'not-an-integer',
+  })
+  const writes: string[] = []
+  const live = createLiveSharedResearchRuntime(config, { writeRuntimeLog: (line) => writes.push(line) })
+  try {
+    const recovered = await live.recoverExpired!({ now: '2026-08-26T12:00:00.000Z', limitPerSource: 10 })
+    assert.equal(live.status.sources[0], 'news')
+    assert.ok(JSON.stringify(recovered).includes(unpaid.workId))
+    assert.ok(JSON.stringify(recovered).includes(paid.workId))
+    const check = new SqliteSignalPlatformStore(dbPath, 'news')
+    try {
+      assert.equal(check.getResearchWork(unpaid.workId)?.status, 'research_pending')
+      assert.equal(check.getResearchWork(paid.workId)?.status, 'dead_letter')
+      assert.equal((await check.researchBudgetStore().get(key))?.state, 'execution_outcome_unknown')
+    } finally { check.close() }
+    const errorLine = writes.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((line) => line.event === 'stale_research_hold_sweep_error')
+    assert.ok(errorLine)
+    assert.equal(errorLine.message, 'Stale hold sweep failed')
+    assert.equal(writes.some((line) => line.includes('not-an-integer')), false)
+  } finally {
+    live.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('SIGTERM-equivalent abort gates new claims immediately and waits for the active call to drain', async () => {

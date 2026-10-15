@@ -149,7 +149,12 @@ export class RulesFirstTriageEngine {
       reasons.push({ code: 'deep_capacity_tightened', detail: 'Deep admission tightened before light/standard capacity.' })
     }
 
-    if (priorityClass !== 'P0'
+    if (priorityClass !== 'P0' && input.capacity.paidExposure
+      && input.capacity.paidExposure.available <= 0) {
+      outcome = 'defer'
+      deepReason = null
+      reasons.push({ code: 'paid_exposure_defer', detail: 'Unresolved paid exposure reached its separate admission limit.' })
+    } else if (priorityClass !== 'P0'
       && (input.providerHealth === 'unavailable' || input.providerHealth === 'circuit_open')) {
       outcome = 'defer'
       deepReason = null

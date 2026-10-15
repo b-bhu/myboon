@@ -6,6 +6,7 @@ const RETRYABLE_FAILURES = new Set<FailureCategory>([
   'provider_timeout',
   'circuit_open',
   'retrieval_timeout',
+  'lease_expired',
   'storage_transient',
 ])
 

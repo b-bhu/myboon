@@ -26,7 +26,7 @@ const DEEP_REASONS: DeepEscalationReason[] = [
 const DECISION_REASON_CODES = [
   'exact_duplicate', 'stale_low_value', 'material_change', 'novel_entity_preserved',
   'official_urgent_reserved_path', 'priority_semantics', 'provider_pressure_defer',
-  'capacity_pressure_defer', 'deep_capacity_tightened', 'deep_ineligible',
+  'capacity_pressure_defer', 'paid_exposure_defer', 'deep_capacity_tightened', 'deep_ineligible',
   'typed_deep_escalation', 'ambiguous_classifier', 'rules_default',
   'unsupported_research_depth_defer',
 ] as const

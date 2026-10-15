@@ -721,6 +721,7 @@ function safeFailureDetail(failureValue: PlatformFailure | null): string | null 
     invalid_structured_output: 'structured output rejected; details redacted',
     schema_version_mismatch: 'schema version mismatch; details redacted',
     permanent_source_error: 'permanent source error; details redacted',
+    lease_expired: 'research lease expired; details redacted',
     entity_resolution_failed: 'entity resolution failed; details redacted',
     storage_transient: 'transient storage failure; details redacted',
     storage_permanent: 'permanent storage failure; details redacted',

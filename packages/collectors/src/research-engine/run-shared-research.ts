@@ -43,6 +43,7 @@ import {
   type GlobalSchedulerQuery,
 } from '../signal-platform/shared-scheduler'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import { loadLocalTriageCapacity } from '../signal-platform/local-capacity'
 import {
   FileSqliteWriteHealthJournal,
   resolveSqliteWriteHealthJournalPath,
@@ -97,6 +98,9 @@ export const SHARED_RESEARCH_ENV = Object.freeze({
   runtimeStatusPath: 'FEED_V3_RESEARCH_RUNTIME_STATUS_PATH',
   contextHealthyProbeIntervalMs: 'FEED_V3_RESEARCH_CONTEXT_HEALTHY_PROBE_INTERVAL_MS',
   historyCacheTtlMs: 'FEED_V3_RESEARCH_HISTORY_CACHE_TTL_MS',
+  staleHoldSweepEnabled: 'FEED_V3_STALE_HOLD_SWEEP_ENABLED',
+  staleHoldSweepMode: 'FEED_V3_STALE_HOLD_SWEEP_MODE',
+  staleHoldTtlMs: 'FEED_V3_STALE_HOLD_TTL_MS',
 })
 
 type SupportedResearchSource = Signal['sourceType']
@@ -119,6 +123,8 @@ export interface SharedResearchRunnerConfig {
   runtimeStatusPath: string
   contextHealthyProbeIntervalMs: number
   historyCacheTtlMs: number
+  staleHoldSweepEnabled: boolean
+  staleHoldSweepMode: 'report' | 'settle'
   runtimeControlPath: string
   cutoverReceiptPath: string | null
   runtimeConfig: FeedV3RuntimeConfig
@@ -168,6 +174,7 @@ export interface SharedResearchRuntimeStatus {
     sources: string[]
     managedContextConfigured: boolean
     paidOutcomeHoldsBySource: Record<string, number>
+    capacityBySource?: Record<string, { p3Utilization: number, lightUtilization: number }>
   }
 }
 
@@ -203,6 +210,7 @@ export type SharedResearchRunnerCycleResult =
 
 export interface CreateLiveSharedResearchRuntimeOptions {
   standardSearchFactories?: RegisteredSearchConnectorFactories
+  writeRuntimeLog?: (line: string) => void
   runtimeControl?: RuntimeControlReadPort
   /** Composition seams preserve the same configuration, ownership and budget gates. */
   createInferenceRuntime?: typeof createConfiguredInferenceGateway
@@ -254,6 +262,8 @@ export function loadSharedResearchRunnerConfig(
     runtimeStatusPath: databasePath(env[SHARED_RESEARCH_ENV.runtimeStatusPath], '.data/feed-v3-research-runtime-status.json'),
     contextHealthyProbeIntervalMs: integer(env[SHARED_RESEARCH_ENV.contextHealthyProbeIntervalMs], 30_000, 300_000, 300_000, 'healthy context probe interval'),
     historyCacheTtlMs: integer(env[SHARED_RESEARCH_ENV.historyCacheTtlMs], 0, 60_000, 60_000, 'recent history cache TTL'),
+    staleHoldSweepEnabled: flag(env[SHARED_RESEARCH_ENV.staleHoldSweepEnabled], true, SHARED_RESEARCH_ENV.staleHoldSweepEnabled),
+    staleHoldSweepMode: staleHoldSweepMode(env[SHARED_RESEARCH_ENV.staleHoldSweepMode]),
     runtimeControlPath: resolveRuntimeControlPath(env, PACKAGE_DIR),
     cutoverReceiptPath: feed.cutoverReceiptPath,
     runtimeConfig: feed,
@@ -373,6 +383,7 @@ export function createLiveSharedResearchRuntime(
   config: SharedResearchRunnerConfig,
   options: CreateLiveSharedResearchRuntimeOptions = {},
 ): SharedResearchRunnerRuntime {
+  const writeRuntimeLog = options.writeRuntimeLog ?? ((line: string) => process.stdout.write(`${line}\n`))
   const runtimeMode = config.mode
   const v4Configuration = loadEntityManagerV4RuntimeConfig(config.env)
   if (runtimeMode === 'off') throw new Error('Disabled research must not construct a live runtime')
@@ -479,6 +490,11 @@ export function createLiveSharedResearchRuntime(
         sources: [...v4Configuration.activeSources], managedContextConfigured: v4Configuration.databaseUrl !== null,
         paidOutcomeHoldsBySource: Object.fromEntries(stores.map((store) => [store.sourceType,
           runtimeMode === 'active' ? store.countUnresolvedResearchReservations() : 0])),
+        capacityBySource: Object.fromEntries(stores.map((store) => {
+          const capacity = store.readTriageCapacitySnapshot(loadLocalTriageCapacity(config.env), new Date().toISOString())
+          return [store.sourceType, { p3Utilization: capacity.byPriority.P3.utilization,
+            lightUtilization: capacity.byDepth.light.utilization }]
+        })),
       },
     })
   }
@@ -646,9 +662,27 @@ export function createLiveSharedResearchRuntime(
     let stopPromise: Promise<void> | null = null
     return {
       get status() { return runtimeStatus() },
-      recoverExpired: ({ now, limitPerSource }) => recoveryScheduler.recoverExpiredLeases({
-        now, limitPerStore: limitPerSource,
-      }),
+      recoverExpired: async ({ now, limitPerSource }) => {
+        if (config.staleHoldSweepEnabled) {
+          await Promise.all(stores.map(async (store) => {
+            try {
+              const ttl = positiveEnvInteger(config.env[SHARED_RESEARCH_ENV.staleHoldTtlMs], 86_400_000,
+                SHARED_RESEARCH_ENV.staleHoldTtlMs)
+              const result = await store.sweepStaleResearchHolds({ olderThanMs: ttl, now, limit: limitPerSource,
+                mode: config.staleHoldSweepMode })
+              writeRuntimeLog(JSON.stringify({ event: 'stale_research_hold_sweep', sourceType: store.sourceType,
+                mode: config.staleHoldSweepMode, ...result }))
+            } catch (error) {
+              // Reconciliation is bounded and best effort; normal recovery and
+              // the worker tick remain available if a source store is busy.
+              writeRuntimeLog(JSON.stringify({ event: 'stale_research_hold_sweep_error',
+                sourceType: store.sourceType, mode: config.staleHoldSweepMode,
+                message: redactedErrorMessage(error) }))
+            }
+          }))
+        }
+        return recoveryScheduler.recoverExpiredLeases({ now, limitPerStore: limitPerSource })
+      },
       async runCycle() {
         if (stopping || !claimsEnabled()) return []
         if (articleContextAvailability) await articleContextAvailability.check()
@@ -703,6 +737,11 @@ export function createLiveSharedResearchRuntime(
     void managedResearchContext?.close().catch(() => undefined)
     throw error
   }
+}
+
+function redactedErrorMessage(_error: unknown): string {
+  // Error text can contain paths, SQL or credentials from driver messages.
+  return 'Stale hold sweep failed'
 }
 
 /** Preserve full-policy capability behavior; Phase 1 alone is admission-bounded. */
@@ -905,6 +944,16 @@ function flag(raw: string | undefined, fallback: boolean, field: string): boolea
   if (raw === '1') return true
   if (raw === '0') return false
   throw new Error(`${field} must be 0 or 1`)
+}
+function staleHoldSweepMode(raw: string | undefined): 'report' | 'settle' {
+  const mode = raw ?? 'report'
+  if (mode === 'report' || mode === 'settle') return mode
+  throw new Error(`${SHARED_RESEARCH_ENV.staleHoldSweepMode} must be report or settle`)
+}
+function positiveEnvInteger(raw: string | undefined, fallback: number, field: string): number {
+  const value = raw === undefined ? fallback : Number(raw)
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${field} must be a positive integer`)
+  return value
 }
 function safeValue(value: string, field: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value)) throw new Error(`${field} is unsafe`)

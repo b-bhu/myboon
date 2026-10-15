@@ -148,6 +148,22 @@ test('provider outage defers lower priority without mutating or dropping the Sig
   assert.deepEqual(source, before)
 })
 
+test('exhausted paid exposure defers non-P0 admissions with a distinct reason', async () => {
+  const engine = new RulesFirstTriageEngine({ policy })
+  const deferred = await engine.decide(input({ capacity: capacity({
+    paidExposure: { unresolvedHolds: 50, limit: 50, available: 0 },
+  }) }))
+  assert.equal(deferred.outcome, 'defer')
+  assert.ok(deferred.reasons.some((reason) => reason.code === 'paid_exposure_defer'))
+
+  const urgent = await engine.decide(input({
+    officialSource: true, sourceAuthorityScore: 1, materialityTags: ['security_incident'],
+    capacity: capacity({ paidExposure: { unresolvedHolds: 50, limit: 50, available: 0 } }),
+  }))
+  assert.equal(urgent.priorityClass, 'P0')
+  assert.notEqual(urgent.outcome, 'defer')
+})
+
 test('overload tightens deep before light and requires a typed eligible reason', async () => {
   const engine = new RulesFirstTriageEngine({ policy })
   const deepPressure = capacity()
