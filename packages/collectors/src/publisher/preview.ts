@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '../supabase-client'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
@@ -10,7 +10,7 @@ import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity
 
 async function main(): Promise<void> {
   const config = publisherCliConfig()
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )

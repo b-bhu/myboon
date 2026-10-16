@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '../supabase-client'
 import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
@@ -357,7 +357,7 @@ async function main(): Promise<void> {
 
 async function runOwnedPolymarketRunner(): Promise<void> {
   const config = polymarketEntityManagerCliConfig()
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
