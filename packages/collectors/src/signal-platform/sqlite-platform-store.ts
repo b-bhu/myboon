@@ -464,6 +464,50 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     })
   }
 
+  /**
+   * Read-only backlog report for #339: signals whose only outcome is the
+   * retired unsupported-depth hold and that never got research work.
+   */
+  depthDeferredBacklog(): { signals: number, oldestObservedAt: string | null, newestObservedAt: string | null } {
+    this.assertOpen()
+    const row = this.db.prepare(`
+      SELECT COUNT(DISTINCT s.signal_id) AS signals, MIN(s.observed_at) AS oldest, MAX(s.observed_at) AS newest
+      FROM signal_platform_triage_decisions d
+      JOIN signal_platform_signals s ON s.signal_id = d.signal_id
+      WHERE d.source_type = ? AND d.outcome = 'defer'
+        AND d.canonical_json LIKE '%"unsupported_research_depth_defer"%'
+        AND NOT EXISTS (SELECT 1 FROM signal_platform_research_work w WHERE w.signal_id = d.signal_id)
+    `).get(this.sourceType) as { signals: number, oldest: string | null, newest: string | null } | undefined
+    return { signals: Number(row?.signals ?? 0), oldestObservedAt: row?.oldest ?? null, newestObservedAt: row?.newest ?? null }
+  }
+
+  /**
+   * #339: signals held by the retired unsupported-depth rule that never got
+   * research work and have no decision yet under the release generation.
+   */
+  listHeldDepthDeferredSignals(input: {
+    releaseBudgetPolicyVersion: string, limit: number
+    /** Keyset cursor: rows strictly after this (observedAt, signalId). */
+    after?: { observedAt: string, signalId: string } | null
+  }): Signal[] {
+    this.assertOpen()
+    return this.readJsonList(
+      `SELECT DISTINCT s.canonical_json, s.observed_at, s.signal_id FROM signal_platform_triage_decisions d
+       JOIN signal_platform_signals s ON s.signal_id = d.signal_id
+       WHERE d.source_type = ? AND d.outcome = 'defer'
+         AND d.canonical_json LIKE '%"unsupported_research_depth_defer"%'
+         AND NOT EXISTS (SELECT 1 FROM signal_platform_research_work w WHERE w.signal_id = d.signal_id)
+         AND NOT EXISTS (SELECT 1 FROM signal_platform_triage_decisions r
+           WHERE r.signal_id = d.signal_id AND r.budget_policy_version = ?)
+         AND (? IS NULL OR s.observed_at > ? OR (s.observed_at = ? AND s.signal_id > ?))
+       ORDER BY s.observed_at ASC, s.signal_id ASC LIMIT ?`,
+      [this.sourceType, input.releaseBudgetPolicyVersion,
+        input.after?.observedAt ?? null, input.after?.observedAt ?? null, input.after?.observedAt ?? null, input.after?.signalId ?? null,
+        boundedLimit(input.limit)],
+      validateSignal,
+    )
+  }
+
   getSignal(signalId: string): Signal | null {
     return this.readJson<Signal>(
       `SELECT canonical_json FROM signal_platform_signals WHERE signal_id = ? AND source_type = ?`,

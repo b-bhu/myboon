@@ -50,13 +50,22 @@ export interface ResearchWorkCreationPolicy {
 export class RulesFirstTriageEngine {
   private readonly policy: PriorityPolicyV1
   private readonly classifier: CheapToollessTriageClassifier | null
+  private readonly supportedDepths: ReadonlySet<ResearchDepth> | null
 
   constructor(input: {
     policy: PriorityPolicyV1
     classifier?: CheapToollessTriageClassifier | null
+    /**
+     * Depths the researcher can run (#339). Research outcomes above them are
+     * routed to the deepest supported depth instead of being deferred. Omitted
+     * means every depth is supported.
+     */
+    supportedDepths?: ReadonlySet<ResearchDepth> | null
   }) {
     this.policy = validatePriorityPolicy(input.policy)
     this.classifier = input.classifier ?? null
+    this.supportedDepths = input.supportedDepths ?? null
+    if (this.supportedDepths && !this.supportedDepths.has('light')) throw new Error('Supported research depths must include light')
   }
 
   async decide(input: RulesFirstTriageInput): Promise<TriageDecisionV1> {
@@ -147,6 +156,13 @@ export class RulesFirstTriageEngine {
       outcome = 'standard'
       deepReason = null
       reasons.push({ code: 'deep_capacity_tightened', detail: 'Deep admission tightened before light/standard capacity.' })
+    }
+
+    if (this.supportedDepths && isResearchOutcome(outcome) && !this.supportedDepths.has(outcome)) {
+      const routed = supportedDepthAtMost(outcome, this.supportedDepths)
+      reasons.push({ code: 'research_depth_routed_to_supported', detail: `${outcome} research is not supported by the researcher; routed as ${routed}.` })
+      outcome = routed
+      if (routed !== 'deep') deepReason = null
     }
 
     if (priorityClass !== 'P0' && input.capacity.paidExposure
@@ -301,6 +317,14 @@ function selectPriorityScore(input: RulesFirstTriageInput, priority: PriorityCla
     + (input.officialSource ? 0.02 : 0)
     + (input.novelty === 'novel_entity' ? 0.04 : input.novelty === 'material' ? 0.02 : 0)
     + (input.dedupeOutcome === 'material_change' ? 0.02 : 0))
+}
+
+function supportedDepthAtMost(depth: ResearchDepth, supported: ReadonlySet<ResearchDepth>): ResearchDepth {
+  const order: ResearchDepth[] = ['light', 'standard', 'deep']
+  for (let index = order.indexOf(depth); index >= 0; index -= 1) {
+    if (supported.has(order[index]!)) return order[index]!
+  }
+  return 'light'
 }
 
 function selectRulesDepth(input: RulesFirstTriageInput, priority: PriorityClass): TriageOutcome {
