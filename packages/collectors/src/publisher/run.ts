@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
@@ -16,7 +16,7 @@ function previewOnly(env: NodeJS.ProcessEnv): boolean {
 
 async function runOnce(): Promise<void> {
   const config = publisherCliConfig()
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )

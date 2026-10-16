@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { verifyEntityMemoryMigration } from './entity-memory-migration-verifier'
 
@@ -6,7 +6,7 @@ async function main(): Promise<void> {
   loadDotenvChain()
   const url = required('SUPABASE_URL')
   const serviceRoleKey = required('SUPABASE_SERVICE_ROLE_KEY')
-  const report = await verifyEntityMemoryMigration(createClient(url, serviceRoleKey))
+  const report = await verifyEntityMemoryMigration(createSupabaseClient(url, serviceRoleKey))
   process.stdout.write(`${JSON.stringify(report)}\n`)
   if (!report.ok) process.exitCode = 1
 }

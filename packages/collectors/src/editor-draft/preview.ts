@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
 import { HermesEditorDraftProvider } from './hermes-editor'
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   const config = editorDraftCliConfig()
   const write = shouldWrite(process.argv.slice(2), process.env)
   const observedAt = new Date().toISOString()
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )

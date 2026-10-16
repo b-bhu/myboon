@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketPublisher } from './publisher'
@@ -15,7 +15,7 @@ function envNumber(name: string, fallback: number): number {
 }
 
 async function runOnce(): Promise<void> {
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
