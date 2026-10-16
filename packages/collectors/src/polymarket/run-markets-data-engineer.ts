@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 
 loadDotenvChain()
 
-import { createSupabaseClient } from '../supabase-client'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'

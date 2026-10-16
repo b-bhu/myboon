@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../supabase-client'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { verifyEntityMemoryMigration } from './entity-memory-migration-verifier'
 

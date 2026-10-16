@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../supabase-client'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { newsResearchToPacket } from './news-adapter'

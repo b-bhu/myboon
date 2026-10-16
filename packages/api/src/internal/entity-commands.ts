@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import entityManager from '@myboon/collectors/entity-manager'
 import type {
   ManualEntityApplyResult,
@@ -83,8 +83,8 @@ function createService(config: InternalEntityCommandRoutesConfig): EntityCommand
       async applyManual() { throw new Error('Entity command database is not configured') },
     }
   }
-  const db = createClient(config.supabaseUrl, config.serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
+  const db = createSupabaseClient(config.supabaseUrl, config.serviceRoleKey, {
+    clientOptions: { auth: { persistSession: false, autoRefreshToken: false } },
   })
   return new EntityService(new SupabaseEntityMemoryStore(db))
 }

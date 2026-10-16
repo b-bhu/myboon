@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createSupabaseClient } from '../supabase-client'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { previewHyperliquidCollector, runHyperliquidCollector } from './collector'
 import { runHyperliquidCollectorToSqlite } from './sqlite-store'
 

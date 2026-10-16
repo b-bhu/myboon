@@ -2,7 +2,7 @@ import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipel
 
 loadDotenvChain()
 
-import { createSupabaseClient } from '../supabase-client'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { HermesService } from '../hermes'
 import { createConfiguredClassificationRuntime } from '../inference-gateway'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'

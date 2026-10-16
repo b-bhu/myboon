@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
@@ -558,15 +558,7 @@ export function createLiveSharedResearchRuntime(
           const url = env.SUPABASE_URL?.trim()
           const key = env.SUPABASE_SERVICE_ROLE_KEY?.trim()
           if (!url || !key) throw new Error('Enabled V4 internal Research context requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY')
-          return new SupabaseEntityMemoryReader(createClient(url, key, {
-            auth: { persistSession: false, autoRefreshToken: false },
-            global: { fetch: (input, init) => fetch(input, {
-              ...init,
-              signal: init?.signal
-                ? AbortSignal.any([init.signal, AbortSignal.timeout(15_000)])
-                : AbortSignal.timeout(15_000),
-            }) },
-          }))
+          return new SupabaseEntityMemoryReader(createSupabaseClient(url, key, { timeoutMs: 15_000 }))
         }))(config.env)
       }
       if (v4Configuration.articleWorkflowEnabled) {
