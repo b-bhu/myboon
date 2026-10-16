@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  ARTICLE_TIMELINE_SUMMARY_MAX_CHARS, articleBodyValidator, articleFillerIssues, finalizeTimelineSummary,
+  ARTICLE_TIMELINE_SUMMARY_MAX_CHARS, articleBodyValidator, buildArticlePrompt, articleFillerIssues, finalizeTimelineSummary,
 } from './structured-synthesizer'
 
 const branch = { name: 'Iran', relationship: 'related_story_branch' as const, priorItemId: 'item-hormuz' }
@@ -64,6 +64,10 @@ describe('concise summaries (#345)', () => {
       'The article says Iran warned Gulf shippers.',
     ]) assert.equal(validate(body({ timelineSummary: filler })).valid, false, filler)
     assert.deepEqual(articleFillerIssues('Reuters reported Iran warned Gulf shippers.', 'x'), [])
+    for (const attribution of ['Iran warned Gulf shippers, as reported by Reuters.', 'A statement written by the Fed said rates hold.', 'Iran warned shippers, reported by Reuters on Thursday.']) {
+      assert.equal(validate(body({ timelineSummary: attribution })).valid, true, attribution)
+    }
+    assert.equal(validate(body({ timelineSummary: 'Iran warned shippers. Fact-checked by Jane Doe.' })).valid, false)
   })
 
   it('rejects summaries far beyond the blurb limit and trims the rest at a sentence boundary', () => {
@@ -82,5 +86,22 @@ describe('concise summaries (#345)', () => {
 
   it('leaves short summaries untouched apart from whitespace', () => {
     assert.equal(finalizeTimelineSummary('  Iran warned  shippers. '), 'Iran warned shippers.')
+  })
+})
+
+describe('article prompt (#345 lead-with-entity)', () => {
+  it('names the primary entity in the lead instruction and passes the prior item id', () => {
+    const prompt = buildArticlePrompt({
+      signal: { title: 'Gulf talks', publishedAt: null, observedAt: '2026-10-16T00:00:00.000Z' },
+      articlePreparation: {
+        memberships: [
+          { name: 'Bitcoin', role: 'related', relationship: 'same_topic_only', priorItemId: null },
+          { name: 'Iran', role: 'primary', relationship: 'related_story_branch', priorItemId: 'item-hormuz' },
+        ],
+        novelty: { choice: 'new_development' }, contextualHistory: 'history',
+      },
+    } as never, { finalUrl: 'https://example.com/a', retrievedAt: '2026-10-16T00:00:00.000Z', truncated: false, text: 'body' } as never)
+    assert.match(prompt, /leads with the news about "Iran"/)
+    assert.match(prompt, /"priorItemId":"item-hormuz"/)
   })
 })

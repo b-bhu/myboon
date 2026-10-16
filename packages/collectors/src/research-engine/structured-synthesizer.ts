@@ -554,7 +554,7 @@ export const ARTICLE_CONTEXTUAL_HISTORY_MAX_CHARS = 4000
 const LINKING_RELATIONSHIPS = new Set(['duplicate', 'direct_continuation', 'related_story_branch'])
 /** Deterministic filler checks (#345): editor credits and article-retelling phrases. */
 const ARTICLE_FILLER_PATTERNS: readonly RegExp[] = [
-  /\b(?:edited|reported|written|reviewed|fact[- ]checked) by [A-Z][\p{L}'-]+/u,
+  /\b(?:[Ee]dited|[Ff]act[- ]checked|[Cc]opy[- ]edited) by [A-Z][\p{L}'-]+(?: [A-Z][\p{L}'-]+)+/u,
   /\b(?:per|according to|as stated in|as reported in|as noted in) (?:the|this) (?:article|report|piece|story)\b/i,
   /\bthe (?:article|report|piece) (?:says|said|states|stated|notes|noted|reports|reported)\b/i,
 ]
@@ -578,7 +578,7 @@ export function articleBodyValidator(memberships: readonly PreparedMembership[])
     nonEmptyString(body.title, 'title', issues)
     nonEmptyString(body.timelineSummary, 'timelineSummary', issues)
     if (typeof body.timelineSummary === 'string') {
-      if (body.timelineSummary.length > ARTICLE_TIMELINE_SUMMARY_REJECT_CHARS) issues.push(`timelineSummary must be at most ${ARTICLE_TIMELINE_SUMMARY_MAX_CHARS} characters`)
+      if (body.timelineSummary.length > ARTICLE_TIMELINE_SUMMARY_REJECT_CHARS) issues.push(`timelineSummary must be at most ${ARTICLE_TIMELINE_SUMMARY_REJECT_CHARS} characters (target ${ARTICLE_TIMELINE_SUMMARY_MAX_CHARS}; code trims to it)`)
       issues.push(...articleFillerIssues(body.timelineSummary, 'timelineSummary'))
     }
     nullableString(body.body, 'body', issues)

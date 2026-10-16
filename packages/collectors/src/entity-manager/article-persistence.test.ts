@@ -339,3 +339,23 @@ function digestForTest(value: unknown): string {
   // Mirrors article-persistence.digest(): sha256 over canonical JSON.
   return createHash('sha256').update(canonicalJson(value)).digest('hex')
 }
+
+test('commitArticle stores contextualHistory and relationSummary in the item effect payload (#340)', async () => {
+  const { PostgresKnowledgeOperationWriter } = await import('./postgres-knowledge-writer')
+  const writer = new PostgresKnowledgeOperationWriter({ connectionString: 'postgresql://writer_fixture@localhost/fixture' })
+  let captured: unknown
+  ;(writer as unknown as { pool: unknown }).pool = {
+    query: async (_sql: string, params: unknown[]) => { captured = params[1]; return { rows: [{ result: { ok: true } }] } },
+    end: async () => {},
+  }
+  const input = { ...packet([{ ...proposal('primary', 'entity-primary', ITEM_PRIMARY), relationSummary: 'Follows the earlier item.' }]),
+    contextualHistory: 'primary Primary Entity: duplicate; linked to managed item managed-primary.' }
+  await writer.commitArticle({
+    operationId: 'op-1', workId: 'work-1', owner: 'owner', epoch: 1, packet: input, contextDigest: 'digest',
+    contextWatermark: 'wm', targetRevisions: {}, entities: [], itemId: 'item-1', duplicateTarget: null,
+  })
+  const sent = (typeof captured === 'string' ? JSON.parse(captured) : captured) as { plan: { effect: Record<string, unknown> }, effects: Array<Record<string, unknown>> }
+  assert.equal(sent.plan.effect.contextualHistory, input.contextualHistory)
+  assert.equal(sent.effects[0]!.contextualHistory, input.contextualHistory)
+  assert.equal((sent.plan.effect.memberships as Array<Record<string, unknown>>)[0]!.relationSummary, 'Follows the earlier item.')
+})
