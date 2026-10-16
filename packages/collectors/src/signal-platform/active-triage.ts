@@ -1,5 +1,4 @@
 import type { ResearchDepth, Signal } from './contracts'
-import { stableContractId } from './adapters/identity'
 import { CanonicalSourceSignalIntake } from './source-intake'
 import type { CanonicalPlatformStore } from './platform-store'
 import type {
@@ -8,13 +7,13 @@ import type {
   ProviderWorkloadHealth,
   RulesFirstTriageInput,
   TriageCapacitySnapshot,
+  TriageDecisionV1,
 } from './triage-contracts'
 import {
   createPriorityPolicyV1,
   RulesFirstTriageEngine,
   type ResearchWorkCreationPolicy,
 } from './triage-engine'
-import { validateTriageDecision } from './triage-validation'
 import { approvedArticleDomains } from '../news/safe-public-http'
 
 export const ACTIVE_TRIAGE_POLICY_VERSION = 'feed-v3.rules-first.v1' as const
@@ -43,10 +42,18 @@ export interface ActiveSourceTriageOptions {
   sourceFacts?: SourceFactsBuilder
   /** Observe persists Signal+decision but never admits work; active is the live path. */
   mode?: 'observe' | 'active'
-  /** Defaults to light only; standard/deep require explicit capability enablement. */
+  /** Depths the researcher supports (default light). Intake routes to these; it never defers on depth. */
   allowedDepths?: readonly ResearchDepth[]
   /** Re-read durable source authority before classifier spending and queue admission. */
   mayAdmit?: () => boolean
+  /**
+   * One-shot operators only (#339 backlog release): a separate budget-policy
+   * generation so their decisions never collide with, or are retried by, the
+   * live intake. Live runners must leave this unset.
+   */
+  budgetPolicyVersion?: string
+  /** One-shot operators only: final deterministic rewrite of the rules decision. */
+  transformDecision?: (decision: TriageDecisionV1, signal: Signal) => TriageDecisionV1
 }
 
 /**
@@ -59,34 +66,21 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
   if (classifierEnabled && !options.classifier) {
     throw new Error('Tool-less triage classifier was enabled but no classifier port was registered')
   }
+  // #339: intake only collects. It never holds work for an unsupported
+  // depth; the researcher's configured capability bounds the routed depth.
   const rules = new RulesFirstTriageEngine({
     policy: createPriorityPolicyV1({
       policyVersion: ACTIVE_TRIAGE_POLICY_VERSION,
-      budgetPolicyVersion: ACTIVE_BUDGET_POLICY_VERSION,
+      budgetPolicyVersion: options.budgetPolicyVersion ?? ACTIVE_BUDGET_POLICY_VERSION,
     }),
     classifier: classifierEnabled ? options.classifier : null,
+    supportedDepths: validateAllowedDepths(options.allowedDepths ?? ['light']),
   })
-  const allowedDepths = validateAllowedDepths(options.allowedDepths ?? ['light'])
   const triage = {
     decide: async (input: RulesFirstTriageInput) => {
       if (options.mayAdmit && !options.mayAdmit()) throw new Error('Source ownership fences triage execution')
-      const selected = await rules.decide(input)
-      if (selected.outcome !== 'light' && selected.outcome !== 'standard' && selected.outcome !== 'deep') return selected
-      if (allowedDepths.has(selected.outcome)) return selected
-      return validateTriageDecision({
-        ...selected,
-        decisionId: stableContractId(
-          'triage_capability', selected.decisionId, [...allowedDepths].sort().join(','),
-        ),
-        outcome: 'defer',
-        budget: null,
-        deepEscalationReason: null,
-        deepEscalation: null,
-        reasons: [...selected.reasons, {
-          code: 'unsupported_research_depth_defer',
-          detail: `${selected.outcome} research is not enabled for this source intake capability policy.`,
-        }],
-      })
+      const decided = await rules.decide(input)
+      return options.transformDecision ? options.transformDecision(decided, input.signal) : decided
     },
   }
   const sourceFacts = options.sourceFacts ?? buildSourceTriageFacts
@@ -100,7 +94,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
     retrievalPolicy: retrievalPolicyForSignal,
     decisionPolicy: {
       priorityPolicyVersion: ACTIVE_TRIAGE_POLICY_VERSION,
-      budgetPolicyVersion: ACTIVE_BUDGET_POLICY_VERSION,
+      budgetPolicyVersion: options.budgetPolicyVersion ?? ACTIVE_BUDGET_POLICY_VERSION,
     },
     buildTriageInput: async (signal) => {
       const now = options.clock?.() ?? new Date().toISOString()
@@ -133,13 +127,10 @@ export function buildSourceTriageFacts(signal: Signal): DeterministicSourceFacts
 }
 
 export function buildNewsTriageFacts(signal: Extract<Signal, { sourceType: 'news' }>): DeterministicSourceFacts {
-  const text = `${signal.title} ${signal.visibleSummary ?? ''}`.toLowerCase()
-  const tags: MaterialityTag[] = []
-  if (/\b(hack|exploit|breach|security incident)\b/.test(text)) tags.push('security')
-  if (/\b(regulator|regulatory|sec\b|cftc\b|court ruling)\b/.test(text)) tags.push('regulatory')
-  if (/\b(earnings|quarterly results|revenue|guidance)\b/.test(text)) tags.push('earnings')
-  if (/\b(rate decision|inflation|gdp|central bank|federal reserve)\b/.test(text)) tags.push('macro')
-  if (tags.length === 0) tags.push(signal.visibleSummary ? 'background' : 'low_value')
+  // #339: no keyword tagging at intake; the researcher judges materiality.
+  // Used only for the short-unclassified ambiguity length check.
+  const ambiguityText = `${signal.title} ${signal.visibleSummary ?? ''}`
+  const tags: MaterialityTag[] = [signal.visibleSummary ? 'background' : 'low_value']
   const materialChange = signal.content.materialChange === true
   const officialSource = isOfficialProvider(signal.provenance.provider)
   if (officialSource) tags.push('official_release')
@@ -152,8 +143,8 @@ export function buildNewsTriageFacts(signal: Extract<Signal, { sourceType: 'news
     materialityTags: unique(tags),
     eventDeadline: signal.sourceHints.deadline,
     ambiguity: {
-      isAmbiguous: tags.length === 1 && tags[0] === 'background' && text.length < 120,
-      reasons: tags.length === 1 && tags[0] === 'background' && text.length < 120
+      isAmbiguous: tags.length === 1 && tags[0] === 'background' && ambiguityText.length < 120,
+      reasons: tags.length === 1 && tags[0] === 'background' && ambiguityText.length < 120
         ? ['short_unclassified_news_observation'] : [],
     },
     deepEscalation: null,
