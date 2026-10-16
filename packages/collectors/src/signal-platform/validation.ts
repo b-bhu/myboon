@@ -328,6 +328,7 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
   httpUrl(article.sourceUrl, 'packet.article.sourceUrl')
   timestamp(article.capturedAt, 'packet.article.capturedAt')
   boolean(article.truncated, 'packet.article.truncated')
+  if (record.contextualHistory !== undefined) nonEmpty(record.contextualHistory, 'packet.contextualHistory')
   let duplicateTargetCount = 0
   let primaryDuplicateTargetCount = 0
   const contextualDuplicateTargets: Array<{ item: Record<string, unknown>, path: string, target: Record<string, unknown> }> = []
@@ -355,6 +356,7 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
     if (item.relationshipDecision !== null) validateArticleChoice(item.relationshipDecision, `${path}.relationshipDecision`)
     if (item.priorItemDecision !== null) validateArticleChoice(item.priorItemDecision, `${path}.priorItemDecision`)
     nullableString(item.priorItemId, `${path}.priorItemId`)
+    if (item.relationSummary !== undefined) nullableString(item.relationSummary, `${path}.relationSummary`)
     if (item.priorItemSource !== null) oneOf(item.priorItemSource, ['legacy', 'managed'], `${path}.priorItemSource`)
     if ((item.priorItemId === null) !== (item.priorItemSource === null)) {
       throw new ContractValidationError(path, 'prior item identity and source must be present together')
@@ -504,6 +506,7 @@ function validateArticleResearchPacketV2(record: Record<string, unknown>): Artic
   httpUrl(article.sourceUrl, 'packet.article.sourceUrl')
   timestamp(article.capturedAt, 'packet.article.capturedAt')
   boolean(article.truncated, 'packet.article.truncated')
+  if (record.contextualHistory !== undefined) nonEmpty(record.contextualHistory, 'packet.contextualHistory')
   let duplicateTargetCount = 0
   let primaryDuplicateTargetCount = 0
   const contextualDuplicateTargets: Array<{ item: Record<string, unknown>, path: string, target: Record<string, unknown> }> = []
@@ -531,6 +534,7 @@ function validateArticleResearchPacketV2(record: Record<string, unknown>): Artic
     if (item.relationshipDecision !== null) validateArticleDecisionV2(item.relationshipDecision, `${path}.relationshipDecision`)
     if (item.priorItemDecision !== null) validateArticleDecisionV2(item.priorItemDecision, `${path}.priorItemDecision`)
     nullableString(item.priorItemId, `${path}.priorItemId`)
+    if (item.relationSummary !== undefined) nullableString(item.relationSummary, `${path}.relationSummary`)
     if (item.priorItemSource !== null) oneOf(item.priorItemSource, ['legacy', 'managed'], `${path}.priorItemSource`)
     if ((item.priorItemId === null) !== (item.priorItemSource === null)) {
       throw new ContractValidationError(path, 'prior item identity and source must be present together')

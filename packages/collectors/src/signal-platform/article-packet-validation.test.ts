@@ -261,3 +261,16 @@ test('v2 packet keeps v1 packet rules: related-only already_known is held, not p
   const input = packet(V2, [relatedOnly], v2Decision({ provider: 'jev', choice: 'already_known' }))
   assert.throws(() => validateResearchPacket(input), /primary exact duplicate/i)
 })
+test('article packets retain relationSummary and contextualHistory (#340) and stay valid without them', () => {
+  for (const schema of [V1, V2]) {
+    const membership = schema === V1
+      ? v1Membership('primary', 'entity-primary', ITEM_PRIMARY)
+      : v2Membership({ role: 'primary', entityId: 'entity-primary', itemId: ITEM_PRIMARY, provider: 'jev' })
+    const novelty = schema === V1 ? v1Decision('already_known') : v2Decision({ provider: 'jev', choice: 'already_known' })
+    const input = packet(schema, [{ ...membership, relationSummary: 'Follows the earlier item and matters because…' }], novelty)
+    input.contextualHistory = 'primary Primary Entity: related_story_branch; linked to managed item managed-primary.'
+    assert.equal(validateResearchPacket(input), input)
+    assert.throws(() => validateResearchPacket({ ...input, memberships: [{ ...membership, relationSummary: 7 }] }), ContractValidationError)
+    assert.throws(() => validateResearchPacket({ ...input, contextualHistory: '' }), ContractValidationError)
+  }
+})

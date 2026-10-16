@@ -321,6 +321,8 @@ export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWrite
       duplicateTarget: input.duplicateTarget,
       memberships: packet.memberships,
       article: packet.article,
+      // #340: retained on items.payload; omitted for packets saved before it existed.
+      ...(packet.contextualHistory !== undefined ? { contextualHistory: packet.contextualHistory } : {}),
     }
     const plan = {
       schemaVersion: 'myboon.article_progression_plan.v1',
