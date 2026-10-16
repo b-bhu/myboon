@@ -7,6 +7,7 @@ import type {
   ProviderWorkloadHealth,
   RulesFirstTriageInput,
   TriageCapacitySnapshot,
+  TriageDecisionV1,
 } from './triage-contracts'
 import {
   createPriorityPolicyV1,
@@ -45,6 +46,14 @@ export interface ActiveSourceTriageOptions {
   allowedDepths?: readonly ResearchDepth[]
   /** Re-read durable source authority before classifier spending and queue admission. */
   mayAdmit?: () => boolean
+  /**
+   * One-shot operators only (#339 backlog release): a separate budget-policy
+   * generation so their decisions never collide with, or are retried by, the
+   * live intake. Live runners must leave this unset.
+   */
+  budgetPolicyVersion?: string
+  /** One-shot operators only: final deterministic rewrite of the rules decision. */
+  transformDecision?: (decision: TriageDecisionV1, signal: Signal) => TriageDecisionV1
 }
 
 /**
@@ -62,7 +71,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
   const rules = new RulesFirstTriageEngine({
     policy: createPriorityPolicyV1({
       policyVersion: ACTIVE_TRIAGE_POLICY_VERSION,
-      budgetPolicyVersion: ACTIVE_BUDGET_POLICY_VERSION,
+      budgetPolicyVersion: options.budgetPolicyVersion ?? ACTIVE_BUDGET_POLICY_VERSION,
     }),
     classifier: classifierEnabled ? options.classifier : null,
     supportedDepths: validateAllowedDepths(options.allowedDepths ?? ['light']),
@@ -70,7 +79,8 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
   const triage = {
     decide: async (input: RulesFirstTriageInput) => {
       if (options.mayAdmit && !options.mayAdmit()) throw new Error('Source ownership fences triage execution')
-      return rules.decide(input)
+      const decided = await rules.decide(input)
+      return options.transformDecision ? options.transformDecision(decided, input.signal) : decided
     },
   }
   const sourceFacts = options.sourceFacts ?? buildSourceTriageFacts
@@ -84,7 +94,7 @@ export function createActiveSourceTriageIntake(options: ActiveSourceTriageOption
     retrievalPolicy: retrievalPolicyForSignal,
     decisionPolicy: {
       priorityPolicyVersion: ACTIVE_TRIAGE_POLICY_VERSION,
-      budgetPolicyVersion: ACTIVE_BUDGET_POLICY_VERSION,
+      budgetPolicyVersion: options.budgetPolicyVersion ?? ACTIVE_BUDGET_POLICY_VERSION,
     },
     buildTriageInput: async (signal) => {
       const now = options.clock?.() ?? new Date().toISOString()
@@ -118,7 +128,8 @@ export function buildSourceTriageFacts(signal: Signal): DeterministicSourceFacts
 
 export function buildNewsTriageFacts(signal: Extract<Signal, { sourceType: 'news' }>): DeterministicSourceFacts {
   // #339: no keyword tagging at intake; the researcher judges materiality.
-  const text = `${signal.title} ${signal.visibleSummary ?? ''}`
+  // Used only for the short-unclassified ambiguity length check.
+  const ambiguityText = `${signal.title} ${signal.visibleSummary ?? ''}`
   const tags: MaterialityTag[] = [signal.visibleSummary ? 'background' : 'low_value']
   const materialChange = signal.content.materialChange === true
   const officialSource = isOfficialProvider(signal.provenance.provider)
@@ -132,8 +143,8 @@ export function buildNewsTriageFacts(signal: Extract<Signal, { sourceType: 'news
     materialityTags: unique(tags),
     eventDeadline: signal.sourceHints.deadline,
     ambiguity: {
-      isAmbiguous: tags.length === 1 && tags[0] === 'background' && text.length < 120,
-      reasons: tags.length === 1 && tags[0] === 'background' && text.length < 120
+      isAmbiguous: tags.length === 1 && tags[0] === 'background' && ambiguityText.length < 120,
+      reasons: tags.length === 1 && tags[0] === 'background' && ambiguityText.length < 120
         ? ['short_unclassified_news_observation'] : [],
     },
     deepEscalation: null,

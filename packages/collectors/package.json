@@ -21,7 +21,7 @@
   "scripts": {
     "entity-v4:ownership": "tsx src/signal-platform/run-v4-ownership.ts",
     "entity-v4:status": "tsx src/signal-platform/run-v4-status.ts",
-    "signal-platform:depth-deferred-report": "tsx src/signal-platform/run-depth-deferred-report.ts",
+    "signal-platform:release-held-backlog": "tsx src/signal-platform/run-held-backlog-release.ts",
     "entity-v4:research-assess-partial": "tsx src/research-engine/run-retained-partial-assessment.ts",
     "entity-v4:research-reconcile": "tsx src/research-engine/run-reconcile-research-reservation.ts",
     "entity-v4:planning-reconcile": "tsx src/entity-manager/run-reconcile-planning-dispatch.ts",
