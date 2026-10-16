@@ -147,3 +147,29 @@ test('held backlog counts only verified saves', async () => {
     store.close(); rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('close-all clean start: dry-run closes = held, releases = 0; apply closes everything, paged and verified (#339)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'held-backlog-close-all-'))
+  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  try {
+    await seedHeld(store, news('old', '2026-10-01T00:00:00.000Z'))
+    await seedHeld(store, news('fresh', '2026-10-15T00:00:00.000Z'))
+    await seedHeld(store, { ...news('nopub', '2026-10-16T06:00:00.000Z'), publishedAt: null })
+    const dry = await releaseHeldBacklog({ store, apply: false, closeAll: true, now: NOW, providerHealth: 'healthy', pageSize: 2 })
+    assert.deepEqual({ closeAll: dry.closeAll, held: dry.held, toClose: dry.toClose, toRelease: dry.toRelease, closed: dry.closed },
+      { closeAll: true, held: 3, toClose: 3, toRelease: 0, closed: 0 })
+    assert.equal(store.listTriageDecisionsBySignal('sig-fresh', 10).length, 1)
+    const applied = await releaseHeldBacklog({ store, apply: true, closeAll: true, now: NOW, providerHealth: 'healthy', pageSize: 2 })
+    assert.deepEqual({ closed: applied.closed, released: applied.released, failures: applied.failures }, { closed: 3, released: 0, failures: [] })
+    for (const id of ['sig-old', 'sig-fresh', 'sig-nopub']) {
+      const saved = store.listTriageDecisionsBySignal(id, 10).find((d) => d.budgetPolicyVersion === HELD_BACKLOG_RELEASE_BUDGET_POLICY_VERSION)
+      assert.equal(saved?.outcome, 'archive')
+      assert.ok(saved?.reasons.some((r) => r.code === 'held_backlog_closed_clean_start'))
+      assert.equal(store.listResearchWorkBySignal(id, 10).length, 0)
+    }
+    const rerun = await releaseHeldBacklog({ store, apply: true, closeAll: true, now: NOW, providerHealth: 'healthy' })
+    assert.equal(rerun.held, 0)
+  } finally {
+    store.close(); rmSync(dir, { recursive: true, force: true })
+  }
+})

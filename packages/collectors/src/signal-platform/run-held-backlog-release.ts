@@ -22,9 +22,10 @@ function databasePath(value: string | undefined, fallback: string): string {
 
 async function main(): Promise<void> {
   const args = packageScriptArgs(process.argv.slice(2))
-  const unknown = args.filter((arg) => arg !== '--apply')
-  if (unknown.length) throw new Error(`Unknown arguments: ${unknown.join(' ')} (only --apply is accepted)`)
+  const unknown = args.filter((arg) => arg !== '--apply' && arg !== '--close-all')
+  if (unknown.length) throw new Error(`Unknown arguments: ${unknown.join(' ')} (accepted: --apply, --close-all)`)
   const apply = args.includes('--apply')
+  const closeAll = args.includes('--close-all')
   const now = new Date().toISOString()
   const sources = [
     ['news', databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')],
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
     const store = new SqliteSignalPlatformStore(path, source, { readOnly: !apply })
     try {
       reports.push(await releaseHeldBacklog({
-        store, apply, now, providerHealth: runtime.triageProviderHealth, allowedDepths: [...runtime.triageAllowedDepths],
+        store, apply, closeAll, now, providerHealth: runtime.triageProviderHealth, allowedDepths: [...runtime.triageAllowedDepths],
       }))
     } finally { store.close() }
   }

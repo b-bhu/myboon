@@ -126,6 +126,8 @@ export type TriageDecisionReasonCode =
   | 'held_backlog_expired_closed'
   /** #339 one-shot backlog release: held item re-triaged under the release generation. */
   | 'held_backlog_released'
+  /** #339 clean start: every held item closed, none released. */
+  | 'held_backlog_closed_clean_start'
 
 export interface TriageDecisionReason {
   code: TriageDecisionReasonCode
