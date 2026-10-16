@@ -414,6 +414,8 @@ export interface ArticleEntityProposal extends ExtensibleContract {
    * owns the one shared reuse effect. This never authorizes a writer effect.
    */
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
+  /** Reader-facing "how it relates / why it matters" (#340); absent on packets before it shipped. */
+  relationSummary?: string | null
 }
 
 /**
@@ -440,6 +442,8 @@ export interface ArticleV2EntityProposal extends ExtensibleContract {
   priorItemSource: 'legacy' | 'managed' | null
   duplicateTarget: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
+  /** Reader-facing "how it relates / why it matters" (#340); absent on packets before it shipped. */
+  relationSummary?: string | null
 }
 
 /**
@@ -479,6 +483,8 @@ export interface ArticleResearchPacketV1 extends ExtensibleContract {
     truncated: boolean
   }
   memberships: ArticleEntityProposal[]
+  /** Jev writing context given to Hermes (#340); absent on packets before it shipped. */
+  contextualHistory?: string
   /** Every prepared article records Jev's separate novelty judgment. */
   novelty: ArticleChoiceDecision
   limitations: string[]
@@ -529,6 +535,8 @@ export interface ArticleResearchPacketV2 extends ExtensibleContract {
     truncated: boolean
   }
   memberships: ArticleV2EntityProposal[]
+  /** Jev writing context given to Hermes (#340); absent on packets before it shipped. */
+  contextualHistory?: string
   /** Every prepared article records a separate provider-attributed novelty judgment. */
   novelty: ArticleDecisionV2
   limitations: string[]
