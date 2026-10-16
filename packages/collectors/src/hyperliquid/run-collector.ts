@@ -30,6 +30,7 @@ async function runOnce(): Promise<void> {
     return
   }
 
+  requireSupabaseEnv()
   const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
@@ -70,7 +71,6 @@ function scheduleNextRun(): void {
 }
 
 async function main(): Promise<void> {
-  requireSupabaseEnv()
   if (process.env.HYPERLIQUID_RUN_ONCE === '1') {
     await runOnce()
     return
