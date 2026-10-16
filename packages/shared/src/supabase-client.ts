@@ -13,7 +13,12 @@ export function validateSupabaseFetchTimeoutMs(timeoutMs: number): void {
   }
 }
 
-export type SupabaseFetchFailureCause = 'timeout' | 'aborted' | 'connection_refused' | 'other'
+export type SupabaseFetchFailureCause =
+  | 'timeout'
+  | 'aborted'
+  | 'connection_refused'
+  | 'statement_timeout'
+  | 'other'
 
 /**
  * Console-style logger receiving the one-line `[supabase] request failed`
@@ -63,6 +68,23 @@ function requestMethodOf(input: RequestInfo | URL, init?: RequestInit): string {
 }
 
 /**
+ * Postgres cancels a query after statement_timeout without rejecting the
+ * fetch: PostgREST answers with an HTTP error whose JSON body carries the
+ * Postgres error code 57014. Read that code from a clone so the caller's
+ * response body stays untouched; any body that cannot be inspected counts as
+ * "not a statement timeout" instead of failing the request.
+ */
+async function postgrestErrorCodeOf(response: Response): Promise<string | null> {
+  try {
+    const body: unknown = await response.clone().json()
+    const code = (body as { code?: unknown } | null)?.code
+    return typeof code === 'string' ? code : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Wrap a base fetch so every request also aborts after timeoutMs. The caller's
  * init.signal (if any) stays connected: whichever fires first cancels the
  * request. Validation happens here, so a client built through this factory
@@ -70,7 +92,9 @@ function requestMethodOf(input: RequestInfo | URL, init?: RequestInit): string {
  *
  * Every rejection is also reported as one console.warn line with the failure
  * cause, timeoutMs, method and request path only, and the original error is
- * rethrown unchanged.
+ * rethrown unchanged. An HTTP error response whose body carries the Postgres
+ * statement_timeout code 57014 does not reject: it is reported as cause
+ * statement_timeout (with the HTTP status) and then returned unchanged.
  */
 export function createTimeoutFetch(
   timeoutMs: number,
@@ -81,12 +105,25 @@ export function createTimeoutFetch(
   const logger = options.logger ?? console.warn
   return async (input, init) => {
     try {
-      return await baseFetch(input, {
+      const response = await baseFetch(input, {
         ...init,
         signal: init?.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
           : AbortSignal.timeout(timeoutMs),
       })
+      if (!response.ok) {
+        const code = await postgrestErrorCodeOf(response)
+        if (code === '57014') {
+          logger(`[supabase] request failed ${JSON.stringify({
+            cause: 'statement_timeout',
+            timeoutMs,
+            method: requestMethodOf(input, init),
+            path: requestPathOf(input),
+            status: response.status,
+          })}`)
+        }
+      }
+      return response
     } catch (error) {
       logger(`[supabase] request failed ${JSON.stringify({
         cause: classifyFetchFailure(error, init?.signal),
@@ -114,13 +151,20 @@ export type CreateSupabaseClientOptions = {
  * Shared Supabase client factory for collectors workers: no persisted sessions
  * (workers hold a service-role key), no auto refresh, and every request
  * bounded by the timeout fetch. Returns an untyped SupabaseClient like the raw
- * createClient call sites it replaces.
+ * createClient call sites it replaces. Throws when the url or key is missing
+ * or blank; the error names the argument, never its value.
  */
 export function createSupabaseClient(
   supabaseUrl: string,
   supabaseKey: string,
   options?: CreateSupabaseClientOptions,
 ): SupabaseClient {
+  if (supabaseUrl.trim() === '') {
+    throw new Error('createSupabaseClient: supabaseUrl is required')
+  }
+  if (supabaseKey.trim() === '') {
+    throw new Error('createSupabaseClient: supabaseKey is required')
+  }
   const clientOptions = options?.clientOptions
   const timeoutMs = options?.timeoutMs ?? DEFAULT_SUPABASE_FETCH_TIMEOUT_MS
   return createClient(supabaseUrl, supabaseKey, {
@@ -135,4 +179,25 @@ export function createSupabaseClient(
       fetch: createTimeoutFetch(timeoutMs, options?.fetch, { logger: options?.logger }),
     },
   }) as SupabaseClient
+}
+
+/**
+ * Startup env check for Supabase-backed workers: fails fast naming every
+ * missing or blank required key rather than surfacing a confusing fetch error
+ * on the first request. Values are trimmed and never appear in error
+ * messages. Keys: repo-managed names SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY.
+ */
+export function requireSupabaseEnv(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): { supabaseUrl: string; supabaseKey: string } {
+  const missing: string[] = []
+  const supabaseUrl = env.SUPABASE_URL?.trim()
+  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+  if (!supabaseUrl) missing.push('SUPABASE_URL')
+  if (!supabaseKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
+  if (missing.length > 0) {
+    throw new Error(`Missing required Supabase env: ${missing.join(', ')}`)
+  }
+  // supabaseUrl and supabaseKey are non-empty here; the narrowing follows the throw above.
+  return { supabaseUrl: supabaseUrl as string, supabaseKey: supabaseKey as string }
 }

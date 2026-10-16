@@ -5,7 +5,12 @@ import {
   createSupabaseClient,
   createTimeoutFetch,
   DEFAULT_SUPABASE_FETCH_TIMEOUT_MS,
+  requireSupabaseEnv,
 } from './supabase-client'
+
+function fetchResponding(response: Response): typeof fetch {
+  return (() => Promise.resolve(response)) as unknown as typeof fetch
+}
 
 function fetchCallsCollector(): { fetch: typeof fetch; calls: Array<{ input: unknown; init?: RequestInit }> } {
   const calls: Array<{ input: unknown; init?: RequestInit }> = []
@@ -70,6 +75,74 @@ test('createTimeoutFetch passes a normal response through and forwards init', as
   assert.equal((calls[0]?.init?.headers as Record<string, string> | undefined)?.Authorization, 'Bearer test')
   // The wrapper injects a bounded signal even when the caller passes none.
   assert.ok(calls[0]?.init?.signal instanceof AbortSignal)
+})
+
+test('createTimeoutFetch logs statement_timeout for a PostgREST 57014 response and passes it through', async () => {
+  const messages: string[] = []
+  const timed = createTimeoutFetch(1_000, fetchResponding(new Response(JSON.stringify({
+    code: '57014',
+    message: 'canceling statement due to statement timeout',
+    details: null,
+    hint: null,
+  }), {
+    status: 500,
+    headers: { 'Content-Type': 'application/json' },
+  })), {
+    logger: (message) => { messages.push(message) },
+  })
+
+  const response = await timed('https://example.test/rest/v1/entity_memories?apikey=secret&select=*', { method: 'POST' })
+
+  // The original response comes back unchanged and its body is still readable.
+  assert.equal(response.status, 500)
+  assert.equal(((await response.json()) as { code: string }).code, '57014')
+
+  assert.equal(messages.length, 1)
+  const line = messages[0] ?? ''
+  assert.ok(line.startsWith('[supabase] request failed '), line)
+  assert.ok(line.includes('"cause":"statement_timeout"'), line)
+  assert.ok(line.includes('"timeoutMs":1000'), line)
+  assert.ok(line.includes('"method":"POST"'), line)
+  assert.ok(line.includes('"path":"/rest/v1/entity_memories"'), line)
+  assert.ok(line.includes('"status":500'), line)
+  // Path only: no host, no query string, no apikey.
+  assert.ok(!line.includes('example.test'), line)
+  assert.ok(!line.includes('secret'), line)
+})
+
+test('createTimeoutFetch logs nothing for other non-ok PostgREST responses', async () => {
+  const messages: string[] = []
+  const timed = createTimeoutFetch(1_000, fetchResponding(new Response(JSON.stringify({
+    code: '42501',
+    message: 'permission denied for table rows',
+  }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  })), {
+    logger: (message) => { messages.push(message) },
+  })
+
+  const response = await timed('http://example.test/rows')
+
+  assert.equal(response.status, 400)
+  assert.ok((await response.text()).includes('42501'))
+  assert.equal(messages.length, 0)
+})
+
+test('createTimeoutFetch logs nothing and does not throw on a non-JSON error body', async () => {
+  const messages: string[] = []
+  const timed = createTimeoutFetch(1_000, fetchResponding(new Response('<html>Bad Gateway</html>', {
+    status: 502,
+    headers: { 'Content-Type': 'text/html' },
+  })), {
+    logger: (message) => { messages.push(message) },
+  })
+
+  const response = await timed('http://example.test/rows')
+
+  assert.equal(response.status, 502)
+  assert.equal(await response.text(), '<html>Bad Gateway</html>')
+  assert.equal(messages.length, 0)
 })
 
 test('createTimeoutFetch reports the timeout cause and never logs credentials', async () => {
@@ -205,6 +278,13 @@ test('createSupabaseClient rejects an invalid timeoutMs', () => {
   }
 })
 
+test('createSupabaseClient rejects a blank or missing url and key', () => {
+  assert.throws(() => createSupabaseClient('', 'anon-key'), /createSupabaseClient: supabaseUrl is required/)
+  assert.throws(() => createSupabaseClient('   ', 'anon-key'), /createSupabaseClient: supabaseUrl is required/)
+  assert.throws(() => createSupabaseClient('https://example.test', ''), /createSupabaseClient: supabaseKey is required/)
+  assert.throws(() => createSupabaseClient('https://example.test', '  '), /createSupabaseClient: supabaseKey is required/)
+})
+
 test('createSupabaseClient builds a client whose requests go through the timeout fetch', async () => {
   const { fetch, calls } = fetchCallsCollector()
   const supabase = createSupabaseClient('https://example.test', 'anon-key', { fetch })
@@ -215,4 +295,39 @@ test('createSupabaseClient builds a client whose requests go through the timeout
   assert.equal(calls.length, 1)
   // Every client request arrives at the base fetch already bounded by the wrapper.
   assert.ok(calls[0]?.init?.signal instanceof AbortSignal)
+})
+
+test('requireSupabaseEnv returns the trimmed url and key when both are set', () => {
+  assert.deepEqual(
+    requireSupabaseEnv({
+      SUPABASE_URL: '  https://example.test  ',
+      SUPABASE_SERVICE_ROLE_KEY: ' service-role-key ',
+    }),
+    { supabaseUrl: 'https://example.test', supabaseKey: 'service-role-key' },
+  )
+})
+
+test('requireSupabaseEnv names every missing or blank key and never prints values', () => {
+  assert.throws(
+    () => requireSupabaseEnv({}),
+    /Missing required Supabase env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/,
+  )
+  // Whitespace-only values count as blank.
+  assert.throws(
+    () => requireSupabaseEnv({ SUPABASE_URL: '   ', SUPABASE_SERVICE_ROLE_KEY: '' }),
+    /Missing required Supabase env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/,
+  )
+  assert.throws(
+    () => requireSupabaseEnv({ SUPABASE_SERVICE_ROLE_KEY: 'secret-service-role-key' }),
+    /^Error: Missing required Supabase env: SUPABASE_URL$/,
+  )
+  try {
+    requireSupabaseEnv({ SUPABASE_URL: 'https://secret.example.test' })
+    assert.ok(false, 'expected requireSupabaseEnv to throw')
+  } catch (error) {
+    assert.ok(error instanceof Error)
+    assert.equal(error.message, 'Missing required Supabase env: SUPABASE_SERVICE_ROLE_KEY')
+    // Values must not leak into the message.
+    assert.ok(!error.message.includes('secret'), error.message)
+  }
 })
