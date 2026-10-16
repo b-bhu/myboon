@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createSupabaseClient } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { runPolymarketPublisher } from './publisher'
@@ -30,6 +30,7 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  requireSupabaseEnv()
   // LEGACY LANE GUARD (PR review finding): see run-editor.ts - this
   // research-row publisher writes published_narratives via a different
   // column set than the production entity-draft lane. Never run by accident.

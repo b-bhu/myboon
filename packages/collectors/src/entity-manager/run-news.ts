@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipeline-store/cli-env'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { newsResearchToPacket } from './news-adapter'
@@ -202,6 +202,7 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   loadDotenvChain()
+  requireSupabaseEnv()
   const { ownership } = await runLegacyEntityWhenOwned({ sourceType: 'news', run: runOnce })
   if (ownership.owner === 'shared') {
     console.log('[entity-manager:news] shared Entity owns news; legacy runner is inert')

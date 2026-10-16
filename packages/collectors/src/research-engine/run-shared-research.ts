@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { createSupabaseClient } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
@@ -963,13 +963,15 @@ function abortableWait(ms: number, signal?: AbortSignal): Promise<void> {
 
 /**
  * Explicit CLI seam: load package/root dotenv sources before any process.env
- * based runtime composition. The injectable loader keeps the behavior testable
- * without reading or exposing real credentials.
+ * based runtime composition, then fail fast with a named missing key if the
+ * required Supabase env is still missing or blank. The injectable loader keeps
+ * the behavior testable without reading or exposing real credentials.
  */
 export function loadSharedResearchProcessEnvironment(
   loader: () => void = loadDotenvChain,
 ): void {
   loader()
+  requireSupabaseEnv()
 }
 
 export function isSharedResearchProcessEntrypoint(input: {

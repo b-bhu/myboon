@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createSupabaseClient } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { previewHyperliquidCollector, runHyperliquidCollector } from './collector'
 import { runHyperliquidCollectorToSqlite } from './sqlite-store'
 
@@ -70,6 +70,7 @@ function scheduleNextRun(): void {
 }
 
 async function main(): Promise<void> {
+  requireSupabaseEnv()
   if (process.env.HYPERLIQUID_RUN_ONCE === '1') {
     await runOnce()
     return

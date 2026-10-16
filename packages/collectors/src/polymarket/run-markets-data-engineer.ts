@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 
 loadDotenvChain()
 
-import { createSupabaseClient } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
@@ -90,6 +90,7 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  requireSupabaseEnv()
   await runOnce()
 
   if (process.env.POLYMARKET_MARKETS_RUN_ONCE === '1') return

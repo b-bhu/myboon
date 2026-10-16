@@ -428,7 +428,18 @@ test('phase1 accepts news and polymarket with no receipt when all invariants are
 
 test('shared Research CLI environment seam loads dotenv before composition without exposing values', () => {
   let calls = 0
-  loadSharedResearchProcessEnvironment(() => { calls += 1 })
+  const savedUrl = process.env.SUPABASE_URL
+  const savedKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_URL = 'https://example.test'
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key'
+  try {
+    loadSharedResearchProcessEnvironment(() => { calls += 1 })
+  } finally {
+    if (savedUrl === undefined) delete process.env.SUPABASE_URL
+    else process.env.SUPABASE_URL = savedUrl
+    if (savedKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = savedKey
+  }
   assert.equal(calls, 1)
 })
 
