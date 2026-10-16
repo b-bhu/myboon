@@ -485,7 +485,11 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
    * #339: signals held by the retired unsupported-depth rule that never got
    * research work and have no decision yet under the release generation.
    */
-  listHeldDepthDeferredSignals(input: { releaseBudgetPolicyVersion: string, limit: number }): Signal[] {
+  listHeldDepthDeferredSignals(input: {
+    releaseBudgetPolicyVersion: string, limit: number
+    /** Keyset cursor: rows strictly after this (observedAt, signalId). */
+    after?: { observedAt: string, signalId: string } | null
+  }): Signal[] {
     this.assertOpen()
     return this.readJsonList(
       `SELECT DISTINCT s.canonical_json, s.observed_at, s.signal_id FROM signal_platform_triage_decisions d
@@ -495,8 +499,11 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
          AND NOT EXISTS (SELECT 1 FROM signal_platform_research_work w WHERE w.signal_id = d.signal_id)
          AND NOT EXISTS (SELECT 1 FROM signal_platform_triage_decisions r
            WHERE r.signal_id = d.signal_id AND r.budget_policy_version = ?)
+         AND (? IS NULL OR s.observed_at > ? OR (s.observed_at = ? AND s.signal_id > ?))
        ORDER BY s.observed_at ASC, s.signal_id ASC LIMIT ?`,
-      [this.sourceType, input.releaseBudgetPolicyVersion, boundedLimit(input.limit)],
+      [this.sourceType, input.releaseBudgetPolicyVersion,
+        input.after?.observedAt ?? null, input.after?.observedAt ?? null, input.after?.observedAt ?? null, input.after?.signalId ?? null,
+        boundedLimit(input.limit)],
       validateSignal,
     )
   }

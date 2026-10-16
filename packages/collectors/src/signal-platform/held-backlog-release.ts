@@ -13,6 +13,8 @@ export interface HeldBacklogReport {
   sourceType: Signal['sourceType']
   mode: 'dry-run' | 'apply'
   cutoff: string
+  /** How each item's age was measured: article publish time, or when it was observed (no publish time). */
+  ageBasis: { publishedAt: number, observedAt: number }
   held: number
   toClose: number
   toRelease: number
@@ -45,37 +47,57 @@ export async function releaseHeldBacklog(input: {
   store: SqliteSignalPlatformStore
   apply: boolean
   now: string
-  limit?: number
+  /** Page size; every page is processed, so totals are not capped by it. */
+  pageSize?: number
   providerHealth: ActiveSourceTriageOptions['providerHealth']
   allowedDepths?: ActiveSourceTriageOptions['allowedDepths']
 }): Promise<HeldBacklogReport> {
   const nowMs = Date.parse(input.now)
   if (!Number.isFinite(nowMs)) throw new Error('now must be a timestamp')
   const cutoffMs = nowMs - HELD_BACKLOG_MAX_AGE_MS
-  const held = input.store.listHeldDepthDeferredSignals({
-    releaseBudgetPolicyVersion: HELD_BACKLOG_RELEASE_BUDGET_POLICY_VERSION, limit: input.limit ?? 1000,
-  })
-  const expired = new Set(held.filter((signal) => heldSignalIsExpired(signal, cutoffMs)).map((signal) => signal.signalId))
+  const pageSize = input.pageSize ?? 500
   const report: HeldBacklogReport = {
     sourceType: input.store.sourceType, mode: input.apply ? 'apply' : 'dry-run', cutoff: new Date(cutoffMs).toISOString(),
-    held: held.length, toClose: expired.size, toRelease: held.length - expired.size, closed: 0, released: 0, failures: [],
+    ageBasis: { publishedAt: 0, observedAt: 0 },
+    held: 0, toClose: 0, toRelease: 0, closed: 0, released: 0, failures: [],
   }
-  if (!input.apply) return report
-  const intake = createActiveSourceTriageIntake({
+  const expired = new Set<string>()
+  const intake = input.apply ? createActiveSourceTriageIntake({
     store: input.store, mode: 'active', capacity: { snapshot: () => openCapacity() },
     providerHealth: input.providerHealth, allowedDepths: input.allowedDepths, clock: () => input.now,
     budgetPolicyVersion: HELD_BACKLOG_RELEASE_BUDGET_POLICY_VERSION,
     transformDecision: (decision, signal) => expired.has(signal.signalId) ? closeDecision(decision) : releaseDecision(decision),
-  })
-  for (const signal of held) {
-    try {
-      const result = await intake.ingest(signal)
-      if (expired.has(signal.signalId)) report.closed += 1
-      else if (result.workInserted) report.released += 1
-      else report.failures.push({ signalId: signal.signalId, code: `RELEASE_NOT_ADMITTED_${String(result.decision?.outcome ?? 'none').toUpperCase()}` })
-    } catch {
-      report.failures.push({ signalId: signal.signalId, code: 'HELD_BACKLOG_RELEASE_FAILED' })
+  }) : null
+  let after: { observedAt: string, signalId: string } | null = null
+  for (;;) {
+    const page = input.store.listHeldDepthDeferredSignals({
+      releaseBudgetPolicyVersion: HELD_BACKLOG_RELEASE_BUDGET_POLICY_VERSION, limit: pageSize, after,
+    })
+    if (page.length === 0) break
+    const last = page[page.length - 1]!
+    after = { observedAt: last.observedAt, signalId: last.signalId }
+    for (const signal of page) {
+      report.held += 1
+      if (signal.publishedAt) report.ageBasis.publishedAt += 1
+      else report.ageBasis.observedAt += 1
+      const close = heldSignalIsExpired(signal, cutoffMs)
+      if (close) { report.toClose += 1; expired.add(signal.signalId) } else report.toRelease += 1
+      if (!intake) continue
+      try {
+        await intake.ingest(signal)
+        // Count only what is verifiably saved under the release generation.
+        const saved = input.store.listTriageDecisionsBySignal(signal.signalId, 50)
+          .find((decision) => decision.budgetPolicyVersion === HELD_BACKLOG_RELEASE_BUDGET_POLICY_VERSION)
+        const savedWork = saved !== undefined && saved.outcome !== 'archive' && saved.outcome !== 'defer'
+          && input.store.listResearchWorkBySignal(signal.signalId, 10).length > 0
+        if (close && saved?.outcome === 'archive' && saved.reasons.some((r) => r.code === 'held_backlog_expired_closed')) report.closed += 1
+        else if (!close && savedWork) report.released += 1
+        else report.failures.push({ signalId: signal.signalId, code: `RELEASE_NOT_VERIFIED_${String(saved?.outcome ?? 'missing').toUpperCase()}` })
+      } catch {
+        report.failures.push({ signalId: signal.signalId, code: 'HELD_BACKLOG_RELEASE_FAILED' })
+      }
     }
+    if (page.length < pageSize) break
   }
   return report
 }

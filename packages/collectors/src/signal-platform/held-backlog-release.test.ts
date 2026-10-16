@@ -108,3 +108,42 @@ test('live re-ingest of a stored v1 hold resumes the saved decision: no new deci
     store.close(); rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('held backlog pages past the page size and reports the age basis (#349 re-review)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'held-backlog-pages-'))
+  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  try {
+    for (let index = 0; index < 7; index += 1) {
+      const day = String(8 + index).padStart(2, '0')
+      await seedHeld(store, news(`p${index}`, `2026-10-${day}T00:00:00.000Z`))
+    }
+    const noPublish = { ...news('nopub', '2026-10-15T06:00:00.000Z'), publishedAt: null }
+    await seedHeld(store, noPublish)
+    const dry = await releaseHeldBacklog({ store, apply: false, now: NOW, providerHealth: 'healthy', pageSize: 3 })
+    assert.equal(dry.held, 8)
+    assert.deepEqual(dry.ageBasis, { publishedAt: 7, observedAt: 1 })
+    assert.equal(dry.toClose, 6)
+    assert.equal(dry.toRelease, 2)
+    const applied = await releaseHeldBacklog({ store, apply: true, now: NOW, providerHealth: 'healthy', pageSize: 3 })
+    assert.deepEqual({ closed: applied.closed, released: applied.released, failures: applied.failures }, { closed: 6, released: 2, failures: [] })
+  } finally {
+    store.close(); rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('held backlog counts only verified saves', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'held-backlog-verify-'))
+  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  try {
+    await seedHeld(store, news('fresh', '2026-10-15T00:00:00.000Z'))
+    // Simulate a save that never lands: the read-back finds no release decision.
+    const original = store.listTriageDecisionsBySignal.bind(store)
+    store.listTriageDecisionsBySignal = (signalId, limit) => original(signalId, limit)
+      .filter((decision) => decision.budgetPolicyVersion !== HELD_BACKLOG_RELEASE_BUDGET_POLICY_VERSION)
+    const report = await releaseHeldBacklog({ store, apply: true, now: NOW, providerHealth: 'healthy' })
+    assert.equal(report.released, 0)
+    assert.deepEqual(report.failures.map((failure) => failure.code), ['RELEASE_NOT_VERIFIED_MISSING'])
+  } finally {
+    store.close(); rmSync(dir, { recursive: true, force: true })
+  }
+})
