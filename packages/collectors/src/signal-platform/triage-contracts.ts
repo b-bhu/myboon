@@ -119,7 +119,15 @@ export type TriageDecisionReasonCode =
   | 'typed_deep_escalation'
   | 'ambiguous_classifier'
   | 'rules_default'
+  /** Historical only (#339): retained so stored decisions still validate; no longer emitted. */
   | 'unsupported_research_depth_defer'
+  | 'research_depth_routed_to_supported'
+  /** #339 one-shot backlog release: held item too old to research, closed. */
+  | 'held_backlog_expired_closed'
+  /** #339 one-shot backlog release: held item re-triaged under the release generation. */
+  | 'held_backlog_released'
+  /** #339 clean start: every held item closed, none released. */
+  | 'held_backlog_closed_clean_start'
 
 export interface TriageDecisionReason {
   code: TriageDecisionReasonCode

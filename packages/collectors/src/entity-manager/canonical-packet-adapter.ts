@@ -275,6 +275,7 @@ function adaptArticlePacket(packet: Extract<SourceResearchPacket, { packetKind: 
       work_id: packet.workId, signal_id: packet.signalId, trace_id: packet.execution.traceId,
       published_at: packet.sourceSignal.publishedAt, event_at: packet.article.eventAt,
       article: clone(packet.article), memberships: clone(packet.memberships), research_readiness: clone(readiness),
+      ...(packet.contextualHistory !== undefined ? { contextual_history: packet.contextualHistory } : {}),
       canonical_packet: clone(packet), limitations: clone(packet.limitations), open_questions: clone(packet.openQuestions) },
   }
 }
