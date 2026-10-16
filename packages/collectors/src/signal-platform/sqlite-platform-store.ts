@@ -464,6 +464,23 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     })
   }
 
+  /**
+   * Read-only backlog report for #339: signals whose only outcome is the
+   * retired unsupported-depth hold and that never got research work.
+   */
+  depthDeferredBacklog(): { signals: number, oldestObservedAt: string | null, newestObservedAt: string | null } {
+    this.assertOpen()
+    const row = this.db.prepare(`
+      SELECT COUNT(DISTINCT s.signal_id) AS signals, MIN(s.observed_at) AS oldest, MAX(s.observed_at) AS newest
+      FROM signal_platform_triage_decisions d
+      JOIN signal_platform_signals s ON s.signal_id = d.signal_id
+      WHERE d.source_type = ? AND d.outcome = 'defer'
+        AND d.canonical_json LIKE '%"unsupported_research_depth_defer"%'
+        AND NOT EXISTS (SELECT 1 FROM signal_platform_research_work w WHERE w.signal_id = d.signal_id)
+    `).get(this.sourceType) as { signals: number, oldest: string | null, newest: string | null } | undefined
+    return { signals: Number(row?.signals ?? 0), oldestObservedAt: row?.oldest ?? null, newestObservedAt: row?.newest ?? null }
+  }
+
   getSignal(signalId: string): Signal | null {
     return this.readJson<Signal>(
       `SELECT canonical_json FROM signal_platform_signals WHERE signal_id = ? AND source_type = ?`,

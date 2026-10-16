@@ -119,7 +119,9 @@ export type TriageDecisionReasonCode =
   | 'typed_deep_escalation'
   | 'ambiguous_classifier'
   | 'rules_default'
+  /** Historical only (#339): retained so stored decisions still validate; no longer emitted. */
   | 'unsupported_research_depth_defer'
+  | 'research_depth_routed_to_supported'
 
 export interface TriageDecisionReason {
   code: TriageDecisionReasonCode

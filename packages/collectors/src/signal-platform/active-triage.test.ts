@@ -61,7 +61,11 @@ test('source fact builders are deterministic, conservative, and do not mutate Si
   const before = structuredClone(newsSignal)
   assert.deepEqual(buildNewsTriageFacts(newsSignal), buildNewsTriageFacts(newsSignal))
   assert.equal(buildNewsTriageFacts(newsSignal).dedupeOutcome, 'material_change')
-  assert.ok(buildNewsTriageFacts(newsSignal).materialityTags.includes('earnings'))
+  // #339: no keyword tagging at intake, even for earnings/macro/security/regulatory wording.
+  assert.deepEqual(buildNewsTriageFacts(newsSignal).materialityTags, ['background'])
+  for (const title of ['Exchange hack drains funds', 'SEC regulator sues exchange', 'Federal Reserve rate decision', 'Quarterly earnings']) {
+    assert.deepEqual(buildNewsTriageFacts({ ...newsSignal, title, visibleSummary: null, content: { ...newsSignal.content, materialChange: false } }).materialityTags, ['low_value'])
+  }
   assert.deepEqual(newsSignal, before)
 
   const marketFacts = buildPolymarketTriageFacts(polymarket())
@@ -111,7 +115,7 @@ test('Signal remains durable when capacity/triage composition fails after observ
   }
 })
 
-test('unsupported standard depth defers without losing P0/P1 priority semantics', async () => {
+test('unsupported standard depth is routed to the researcher at light, never deferred, keeping P0/P1 priority (#339)', async () => {
   const cases: Array<{ item: Signal; expected: 'P0' | 'P1' }> = [
     {
       item: {
@@ -132,10 +136,11 @@ test('unsupported standard depth defers without losing P0/P1 priority semantics'
       })
       const result = await intake.ingest(item)
       assert.equal(result.decision?.priorityClass, expected)
-      assert.equal(result.decision?.outcome, 'defer')
-      assert.equal(result.decision?.budget, null)
-      assert.ok(result.decision?.reasons.some((reason) => reason.code === 'unsupported_research_depth_defer'))
-      assert.equal(result.workInserted, false)
+      assert.equal(result.decision?.outcome, 'light')
+      assert.notEqual(result.decision?.budget, null)
+      assert.ok(result.decision?.reasons.some((reason) => reason.code === 'research_depth_routed_to_supported'))
+      assert.ok(!result.decision?.reasons.some((reason) => reason.code === 'unsupported_research_depth_defer'))
+      assert.equal(result.workInserted, true)
     } finally {
       store.close(); rmSync(dir, { recursive: true, force: true })
     }
@@ -193,6 +198,26 @@ test('classifier is ignored unless explicitly enabled and enabled-without-port f
     })
     await intake.ingest(news())
     assert.equal(calls, 0)
+  } finally {
+    store.close(); rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('depth-deferred backlog report counts only retired-hold signals without research work (#339)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'active-depth-backlog-'))
+  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  try {
+    assert.deepEqual(store.depthDeferredBacklog(), { signals: 0, oldestObservedAt: null, newestObservedAt: null })
+    const intake = createActiveSourceTriageIntake({ store, capacity: { snapshot: () => openCapacity() }, providerHealth: 'healthy', clock: () => NOW })
+    const admitted = await intake.ingest(news())
+    assert.equal(admitted.workInserted, true)
+    const held = { ...news(), signalId: 'sig-held', idempotencyKey: 'news:held:1', sourceId: 'article:held' }
+    store.appendSignal(held)
+    store.appendTriageDecision({
+      ...admitted.decision!, decisionId: 'triage:legacy-held', signalId: held.signalId, outcome: 'defer', budget: null,
+      reasons: [...admitted.decision!.reasons, { code: 'unsupported_research_depth_defer', detail: 'legacy hold' }],
+    })
+    assert.deepEqual(store.depthDeferredBacklog(), { signals: 1, oldestObservedAt: NOW, newestObservedAt: NOW })
   } finally {
     store.close(); rmSync(dir, { recursive: true, force: true })
   }

@@ -28,7 +28,7 @@ const DECISION_REASON_CODES = [
   'official_urgent_reserved_path', 'priority_semantics', 'provider_pressure_defer',
   'capacity_pressure_defer', 'paid_exposure_defer', 'deep_capacity_tightened', 'deep_ineligible',
   'typed_deep_escalation', 'ambiguous_classifier', 'rules_default',
-  'unsupported_research_depth_defer',
+  'unsupported_research_depth_defer', 'research_depth_routed_to_supported',
 ] as const
 
 export function validatePriorityPolicy(value: unknown): PriorityPolicyV1 {
