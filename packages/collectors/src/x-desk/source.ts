@@ -1,13 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
-import type { EntityMemoryChangePage } from '../entity-manager/entity-knowledge-reader'
+import { createEntityKnowledgeReader } from '../entity-manager/entity-knowledge-reader-factory'
+import type {
+  EntityKnowledgeReader,
+  EntityMemoryChangePage,
+} from '../entity-manager/entity-knowledge-reader'
 import type { XDeskEntity, XDeskSource } from './types'
 
 export class SupabaseXDeskSource implements XDeskSource {
-  private readonly reader: SupabaseEntityKnowledgeReader
+  private readonly reader: EntityKnowledgeReader
 
   constructor(private readonly db: SupabaseClient) {
-    this.reader = new SupabaseEntityKnowledgeReader(db)
+    this.reader = createEntityKnowledgeReader(db)
   }
 
   getChanges(afterCursor: string, limit: number): Promise<EntityMemoryChangePage> {

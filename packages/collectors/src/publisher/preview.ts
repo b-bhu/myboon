@@ -7,7 +7,7 @@ import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
-import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
+import { createEntityKnowledgeReader } from '../entity-manager/entity-knowledge-reader-factory'
 
 async function main(): Promise<void> {
   const config = publisherCliConfig()
@@ -21,7 +21,7 @@ async function main(): Promise<void> {
       store: new SupabasePublisherStore(
         supabase,
         pipelineStore,
-        new SupabaseEntityKnowledgeReader(supabase),
+        createEntityKnowledgeReader(supabase),
       ),
       batchSize: config.batchSize,
       dryRun: true,
