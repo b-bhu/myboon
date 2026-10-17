@@ -6,6 +6,11 @@ import {
   ENTITY_MEMORY_CHANGES_START_CURSOR,
   InvalidEntityKnowledgeCursorError,
 } from './entity-knowledge-reader'
+import {
+  DualEntityKnowledgeReader,
+  SupabaseManagedEntityKnowledgeReader,
+} from './managed-entity-knowledge-reader'
+import { createEntityKnowledgeReader } from './entity-knowledge-reader-factory'
 import { SupabaseEntityKnowledgeReader } from './supabase-entity-knowledge-reader'
 import { SupabaseEntityMemoryStore } from './supabase-store'
 
@@ -37,6 +42,18 @@ export type {
   PriorityClass,
 } from './entity-knowledge-reader'
 export { SupabaseEntityKnowledgeReader } from './supabase-entity-knowledge-reader'
+export {
+  DualEntityKnowledgeQueryPort,
+  DualEntityKnowledgeReader,
+  SupabaseManagedEntityKnowledgeQueryPort,
+  SupabaseManagedEntityKnowledgeReader,
+} from './managed-entity-knowledge-reader'
+export {
+  createEntityKnowledgeReader,
+  entityKnowledgeReadSource,
+  ENTITY_KNOWLEDGE_READ_SOURCE_ENV,
+} from './entity-knowledge-reader-factory'
+export type { EntityKnowledgeReadSource } from './entity-knowledge-reader-factory'
 export {
   ENTITY_ADMISSION_KNOWLEDGE_MAX_CLASSIFICATIONS,
   ENTITY_ADMISSION_KNOWLEDGE_MAX_RELATIONSHIPS,
@@ -208,5 +225,8 @@ export default {
   ENTITY_MEMORY_CHANGES_START_CURSOR,
   InvalidEntityKnowledgeCursorError,
   SupabaseEntityKnowledgeReader,
+  SupabaseManagedEntityKnowledgeReader,
+  DualEntityKnowledgeReader,
+  createEntityKnowledgeReader,
   SupabaseEntityMemoryStore,
 }
