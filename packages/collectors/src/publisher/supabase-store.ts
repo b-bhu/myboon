@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PipelineStore } from '../pipeline-store/store'
+import { fetchManagedEntities, fetchActiveManagedEntities } from '../entity-manager/managed-entity-catalog'
+import type { ManagedEntityRow } from '../entity-manager/managed-entity-catalog'
 import {
   ENTITY_KNOWLEDGE_MAX_PAGE_SIZE,
 } from '../entity-manager/entity-knowledge-reader'
@@ -162,7 +164,9 @@ export class SupabasePublisherStore implements PublisherStore {
       p_entity_id: entityId,
     })
     if (redirectError) throw new Error(`publisher entity redirect lookup failed: ${redirectError.message}`)
-    if (typeof resolved !== 'string' || resolved.trim() === '') return null
+    if (typeof resolved !== 'string' || resolved.trim() === '') {
+      return this.fetchManagedEntity(entityId)
+    }
     const resolvedEntityId = resolved
     const { data, error } = await this.db
       .from('entities')
@@ -171,7 +175,20 @@ export class SupabasePublisherStore implements PublisherStore {
       .maybeSingle()
 
     if (error) throw new Error(`publisher entity fetch failed: ${error.message}`)
-    return data ? normalizeEntity(data) : null
+    return data ? normalizeEntity(data) : this.fetchManagedEntity(entityId)
+  }
+
+  private async fetchManagedEntity(entityId: string): Promise<PublisherEntityRecord | null> {
+    // The original entity_id covers the single id space: managed article-only
+    // entities have no redirect, so it is safe even after a resolved one.
+    let rows: ManagedEntityRow[]
+    try {
+      rows = await fetchActiveManagedEntities(this.db, [entityId])
+    } catch (lookupError) {
+      const detail = lookupError instanceof Error ? lookupError.message : 'unknown error'
+      throw new Error(`publisher entity fetch failed: ${detail}`, { cause: lookupError })
+    }
+    return rows.length > 0 ? normalizeEntity(rows[0]) : null
   }
 
   /**
@@ -207,6 +224,8 @@ export class SupabasePublisherStore implements PublisherStore {
       await this.markDraftPublished(publication.editor_draft_id, publication.published_at)
       return { narrative: existing, existing: true }
     }
+
+    await this.assertEntityExists(publication.entity_id)
 
     const payload = {
       title: publication.title,
@@ -267,6 +286,32 @@ export class SupabasePublisherStore implements PublisherStore {
 
     if (error) throw new Error(`publisher existing narrative lookup failed: ${error.message}`)
     return data ? normalizeNarrative(data) : null
+  }
+
+  /**
+   * Stands in for the dropped entity_id FK: the column is nullable and, since
+   * the single catalogue/managed id space (#337 PR-D), existence is any row in
+   * public.entities OR the managed store, regardless of its status.
+   */
+  private async assertEntityExists(entityId: string | null): Promise<void> {
+    if (entityId === null) return
+    const { data, error } = await this.db
+      .from('entities')
+      .select('id')
+      .eq('id', entityId)
+      .maybeSingle()
+
+    if (error) throw new Error(`publisher entity check failed: ${error.message}`)
+    if (data) return
+    let managedRows: ManagedEntityRow[]
+    try {
+      managedRows = await fetchManagedEntities(this.db, [entityId])
+    } catch (lookupError) {
+      const detail = lookupError instanceof Error ? lookupError.message : 'unknown error'
+      throw new Error(`publisher entity check failed: ${detail}`, { cause: lookupError })
+    }
+    if (managedRows.some((row) => row.id === entityId)) return
+    throw new Error(`publisher entity check failed: ${entityId} exists in neither public.entities nor the managed store`)
   }
 
   private async ensureHistory(narrativeId: string, publication: PublishedNarrativeInput): Promise<void> {

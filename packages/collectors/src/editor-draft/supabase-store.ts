@@ -7,6 +7,8 @@ import type {
   EntityKnowledgeReader,
 } from '../entity-manager/entity-knowledge-reader'
 import type { PipelineDraftUpsertInput, PipelineStore } from '../pipeline-store/store'
+import { fetchActiveManagedEntities } from '../entity-manager/managed-entity-catalog'
+import type { ManagedEntityRow } from '../entity-manager/managed-entity-catalog'
 import type {
   EntityDraftBundle,
   EditorDraftAction,
@@ -149,7 +151,18 @@ async function fetchEntities(db: SupabaseClient, entityIds: string[]): Promise<E
     .select(ENTITY_SELECT)
     .in('id', entityIds)
   if (error) throw new Error(`editor draft entity fetch failed: ${error.message}`)
-  return (data ?? []).map(normalizeEntity)
+  const publicRows = (data ?? []).map(normalizeEntity)
+  const publicIds = new Set(publicRows.map((row) => row.id))
+  const managedOnlyIds = unique(entityIds.filter((id) => !publicIds.has(id)))
+  if (managedOnlyIds.length === 0) return publicRows
+  let managedRows: ManagedEntityRow[]
+  try {
+    managedRows = await fetchActiveManagedEntities(db, managedOnlyIds)
+  } catch (lookupError) {
+    const detail = lookupError instanceof Error ? lookupError.message : 'unknown error'
+    throw new Error(`editor draft entity fetch failed: ${detail}`, { cause: lookupError })
+  }
+  return [...publicRows, ...managedRows.map(normalizeEntity)]
 }
 
 async function fetchMemoriesForEntities(
