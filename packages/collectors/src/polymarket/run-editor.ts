@@ -4,6 +4,7 @@ loadDotenvChain()
 
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { runPolymarketEditor } from './editor'
 
 const DEFAULT_INTERVAL_MS = 90 * 60 * 1000
@@ -16,7 +17,7 @@ function envNumber(name: string, fallback: number): number {
 async function runOnce(): Promise<void> {
   // Editor decisions/research now live in the local pipeline store; this
   // stage has no remaining Supabase dependency.
-  const store = new SqlitePipelineStore()
+  const store = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
   try {
     const result = await runPolymarketEditor(store)
     console.log(JSON.stringify(result, null, 2))

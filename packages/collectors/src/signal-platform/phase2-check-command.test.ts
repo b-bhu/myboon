@@ -37,8 +37,8 @@ function phase2Env(overrides: Record<string, string | undefined> = {}): Record<s
     TOKENS_API_KEY: 'tokens-secret-value',
     SUPABASE_URL: 'https://secret-project.example',
     SUPABASE_SERVICE_ROLE_KEY: 'service-secret-value',
-    NEWS_SQLITE_PATH: '.data/news.sqlite',
-    PIPELINE_SQLITE_PATH: '.data/pipeline.sqlite',
+    NEWS_SQLITE_PATH: '.data/news-lane.sqlite',
+    PIPELINE_SQLITE_PATH: '.data/polymarket-lane.sqlite',
     ...overrides,
   }
 }
@@ -91,8 +91,8 @@ test('preflight is dependency-injected, redacted, and treats absent runtime as a
   assert.equal(report.ready, true)
   assert.equal(report.checks.filter((check) => check.status === 'warn').length, 2)
   assert.deepEqual(calls, [
-    'news:/safe/package/.data/news.sqlite',
-    'polymarket:/safe/package/.data/pipeline.sqlite',
+    'news:/safe/package/.data/news-lane.sqlite',
+    'polymarket:/safe/package/.data/polymarket-lane.sqlite',
     'runtime',
   ])
   const serialized = JSON.stringify(report)

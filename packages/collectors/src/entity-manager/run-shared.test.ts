@@ -148,7 +148,7 @@ test('inert CLI shutdown wait stays pending and resolves cleanly on the first si
 
 test('shadow composition writes observations source-locally without Supabase/provider construction', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-shadow-'))
-  const path = join(directory, 'pipeline.sqlite')
+  const path = join(directory, 'polymarket-lane.sqlite')
   new SqliteSignalPlatformStore(path, 'polymarket').close()
   let captured: SharedEntityWorkerOptions | undefined
   let forbiddenConstruction = 0
@@ -209,7 +209,7 @@ test('active composition requires explicit legacy cutover and wires scoped owner
   }), /legacy-disabled sources: news/)
 
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-active-'))
-  const path = join(directory, 'news.sqlite')
+  const path = join(directory, 'news-lane.sqlite')
   const receiptPath = cutoverManifest(directory, ['news'])
   let captured: SharedEntityWorkerOptions | undefined
   let inferenceObserver: InferenceTelemetryObserver | undefined
@@ -315,7 +315,7 @@ test('active cutover receipts fail closed before opening SQLite, Supabase, or pr
         FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
         FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
         FEED_V3_CUTOVER_RECEIPT_PATH: receiptPath,
-        NEWS_SQLITE_PATH: join(directory, 'news.sqlite'),
+        NEWS_SQLITE_PATH: join(directory, 'news-lane.sqlite'),
         SUPABASE_URL: 'https://example.supabase.co',
         SUPABASE_SERVICE_ROLE_KEY: 'test-only',
       },
@@ -341,7 +341,7 @@ test('full policy rejects missing and invalid receipts before any dependency con
         FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
         FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
         FEED_V3_CUTOVER_RECEIPT_PATH: missingPath,
-        NEWS_SQLITE_PATH: join(directory, 'news.sqlite'),
+        NEWS_SQLITE_PATH: join(directory, 'news-lane.sqlite'),
         SUPABASE_URL: 'https://example.supabase.co',
         SUPABASE_SERVICE_ROLE_KEY: 'test-only',
       },
@@ -362,7 +362,7 @@ test('full policy rejects missing and invalid receipts before any dependency con
         FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
         FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
         FEED_V3_CUTOVER_RECEIPT_PATH: invalidPath,
-        NEWS_SQLITE_PATH: join(directory, 'news.sqlite'),
+        NEWS_SQLITE_PATH: join(directory, 'news-lane.sqlite'),
         SUPABASE_URL: 'https://example.supabase.co',
         SUPABASE_SERVICE_ROLE_KEY: 'test-only',
       },
@@ -378,8 +378,8 @@ test('full policy rejects missing and invalid receipts before any dependency con
 
 test('phase1 accepts news and polymarket with no receipt when all invariants are valid', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-phase1-accept-'))
-  const newsPath = join(directory, 'news.sqlite')
-  const pipelinePath = join(directory, 'pipeline.sqlite')
+  const newsPath = join(directory, 'news-lane.sqlite')
+  const pipelinePath = join(directory, 'polymarket-lane.sqlite')
   new SqliteSignalPlatformStore(newsPath, 'news').close()
   new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
   let captured: SharedEntityWorkerOptions | undefined
@@ -429,8 +429,8 @@ test('phase1 accepts news and polymarket with no receipt when all invariants are
 
 test('phase1 rejects invalid invariants before any dependency construction', () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-phase1-reject-'))
-  const newsPath = join(directory, 'news.sqlite')
-  const pipelinePath = join(directory, 'pipeline.sqlite')
+  const newsPath = join(directory, 'news-lane.sqlite')
+  const pipelinePath = join(directory, 'polymarket-lane.sqlite')
   new SqliteSignalPlatformStore(newsPath, 'news').close()
   new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
   const base = {
@@ -489,7 +489,7 @@ test('off and shadow entity never evaluate active cutover authorization', async 
   await off.close()
 
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-phase1-shadow-'))
-  const path = join(directory, 'pipeline.sqlite')
+  const path = join(directory, 'polymarket-lane.sqlite')
   new SqliteSignalPlatformStore(path, 'polymarket').close()
   try {
     const runtime = createSharedEntityRuntime({
@@ -515,7 +515,7 @@ test('off and shadow entity never evaluate active cutover authorization', async 
 
 test('active migration preflight fails before the worker can claim', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-preflight-'))
-  const path = join(directory, 'news.sqlite')
+  const path = join(directory, 'news-lane.sqlite')
   const receiptPath = cutoverManifest(directory, ['news'])
   let activeCycles = 0
   try {
@@ -570,7 +570,7 @@ test('active migration preflight fails before the worker can claim', async () =>
 
 test('durable Entity drain control prevents claims while resident and resume re-enables them', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-runtime-control-'))
-  const path = join(directory, 'news.sqlite')
+  const path = join(directory, 'news-lane.sqlite')
   const receiptPath = cutoverManifest(directory, ['news'])
   let desiredState: 'running' | 'draining' = 'draining'
   let controlUnavailable = true
@@ -690,7 +690,7 @@ test('durable Entity drain control prevents claims while resident and resume re-
  * touch the network. Supabase env is required at composition for this path.
  */
 function activeRestRuntime(directory: string): ReturnType<typeof createSharedEntityRuntime> {
-  const path = join(directory, 'news.sqlite')
+  const path = join(directory, 'news-lane.sqlite')
   const receiptPath = cutoverManifest(directory, ['news'])
   return createSharedEntityRuntime({
     env: {
@@ -730,7 +730,7 @@ test('managed-writer active runtime is ungated: no Supabase REST dependency and 
         FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
         FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
         FEED_V3_CUTOVER_RECEIPT_PATH: receiptPath,
-        NEWS_SQLITE_PATH: join(directory, 'news.sqlite'),
+        NEWS_SQLITE_PATH: join(directory, 'news-lane.sqlite'),
         ENTITY_V4_MANAGED_WRITER_ENABLED: '1',
         ENTITY_V4_ACTIVE_SOURCES: 'news',
         ENTITY_V4_SOURCE_OWNERSHIP_ENABLED: '1',
@@ -857,7 +857,7 @@ test('shadow and off runtimes receive no Supabase health gate', async () => {
   await off.close()
 
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-gate-shadow-'))
-  const path = join(directory, 'pipeline.sqlite')
+  const path = join(directory, 'polymarket-lane.sqlite')
   new SqliteSignalPlatformStore(path, 'polymarket').close()
   try {
     const shadow = createSharedEntityRuntime({

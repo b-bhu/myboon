@@ -41,7 +41,7 @@ function decision(signalId: string): TriageDecisionV1 {
 
 test('trace inspection links canonical artifacts by signal, work and packet with strict bounds', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-trace-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   const store = new SqliteSignalPlatformStore(path, 'news')
   const ledger = new SqliteExecutionLedger(path)
   let reader: SqliteBoundedExecutionTraceReader | null = null
@@ -90,7 +90,7 @@ test('trace inspection links canonical artifacts by signal, work and packet with
 
 test('trace formatter redacts credentials and failure detail without mutating stored artifacts', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-trace-redact-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   const store = new SqliteSignalPlatformStore(path, 'news')
   const ledger = new SqliteExecutionLedger(path)
   let reader: SqliteBoundedExecutionTraceReader | null = null
@@ -146,7 +146,7 @@ test('trace lookup isolates a failed store and validates identity and bounds', a
 
 test('trace inspection resolves Calendar and X from source-scoped stores sharing pipeline SQLite', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-trace-registered-'))
-  const path = join(dir, 'pipeline.sqlite')
+  const path = join(dir, 'polymarket-lane.sqlite')
   const stores = [
     new SqliteSignalPlatformStore(path, 'market_calendar'),
     new SqliteSignalPlatformStore(path, 'x'),

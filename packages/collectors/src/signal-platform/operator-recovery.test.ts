@@ -29,7 +29,7 @@ const { DatabaseSync } = nodeRequire('node:sqlite') as {
 
 function fixture(): { dir: string; newsPath: string; polyPath: string } {
   const dir = mkdtempSync(join(tmpdir(), 'signal-recovery-'))
-  return { dir, newsPath: join(dir, 'news.sqlite'), polyPath: join(dir, 'pipeline.sqlite') }
+  return { dir, newsPath: join(dir, 'news-lane.sqlite'), polyPath: join(dir, 'polymarket-lane.sqlite') }
 }
 
 function receipt(sources: Array<'news' | 'polymarket'> = ['news']): VerifiedBackupReceipt {

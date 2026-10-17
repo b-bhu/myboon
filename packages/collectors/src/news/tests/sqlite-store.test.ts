@@ -147,8 +147,8 @@ test('news SQLite schema creates source run, candidate observation, and research
 
 test('default SQLite path is stable under the collectors package', () => {
   assert.match(
-    __newsSqliteTesting.sqlitePath(),
-    /packages\/collectors\/\.data\/news\.sqlite$/
+    __newsSqliteTesting.resolveNewsSqlitePath(),
+    /packages\/collectors\/\.data\/news-lane\.sqlite$/
   )
 })
 
@@ -272,7 +272,7 @@ test('duplicate research result inserts are idempotent by candidate and research
 
 test('recordCandidateResearchFailure stores debug metadata for failed attempts', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'news-sqlite-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   const store = new SqliteNewsStore(path)
   try {
     const [storedCandidate] = await store.insertCandidateObservations([observationInput()])
@@ -312,7 +312,7 @@ test('recordCandidateResearchFailure stores debug metadata for failed attempts',
 
 test('recoverStaleWork resets stale researching candidates', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'news-sqlite-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   const store = new SqliteNewsStore(path)
   try {
     const [storedCandidate] = await store.insertCandidateObservations([observationInput()])

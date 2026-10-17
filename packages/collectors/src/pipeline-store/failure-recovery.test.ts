@@ -10,6 +10,7 @@ import { SqliteNewsStore } from '../news/sqlite-store'
 import type { NewsCandidateObservationRow } from '../news/store'
 import type { NewsCandidate, NewsResearchResponse } from '../news/types'
 import { TEST_NEWS_SOURCE, TEST_NEWS_SOURCE_URL } from '../news/tests/fixtures'
+import { RetiredLaneSqlitePathError } from '../lane-store/paths'
 import { SqlitePipelineStore } from './sqlite-store'
 import type { PipelineCandidateInsertInput, PipelineResearchUpsertInput } from './store'
 import {
@@ -32,7 +33,7 @@ async function withStores(
   fn: (paths: { dir: string; news: string; pipeline: string }) => Promise<void>
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'myboon-recovery-'))
-  const paths = { dir, news: join(dir, 'news.sqlite'), pipeline: join(dir, 'pipeline.sqlite') }
+  const paths = { dir, news: join(dir, 'news-lane.sqlite'), pipeline: join(dir, 'polymarket-lane.sqlite') }
   const news = new SqliteNewsStore(paths.news)
   const pipeline = new SqlitePipelineStore(paths.pipeline)
   news.close()
@@ -348,5 +349,36 @@ test('recovery batch limit is bounded and reports truncation', async () => {
     assert.equal(report.matched, 2)
     assert.equal(report.truncated, true)
     assert.equal(report.audit.length, 2)
+  })
+})
+
+test('recovery and dead-letter status refuse retired lane store filenames before any I/O', async () => {
+  await withStores(async (paths) => {
+    // recoverFailedBacklog: the path resolution (dry-run or apply) throws
+    // before any database is opened, so no store files are touched.
+    await assert.rejects(
+      recoverFailedBacklog({
+        source: 'polymarket', stage: 'research', since: SINCE,
+        pipelineSqlitePath: join(paths.dir, 'pipeline.sqlite'), newsSqlitePath: paths.news,
+      }),
+      RetiredLaneSqlitePathError,
+    )
+    await assert.rejects(
+      recoverFailedBacklog({
+        source: 'news', stage: 'entity-manager', since: SINCE,
+        pipelineSqlitePath: paths.pipeline, newsSqlitePath: join(paths.dir, 'news.sqlite'),
+      }),
+      RetiredLaneSqlitePathError,
+    )
+
+    // readAllDeadLetterCounts is synchronous and throws at path resolution;
+    // news resolves first, so give it the real lane file to reach the
+    // retired polymarket path.
+    assert.throws(
+      () => readAllDeadLetterCounts({
+        pipelineSqlitePath: join(paths.dir, 'pipeline.sqlite'), newsSqlitePath: paths.news,
+      }),
+      RetiredLaneSqlitePathError,
+    )
   })
 })

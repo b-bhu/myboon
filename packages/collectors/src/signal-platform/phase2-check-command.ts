@@ -1,6 +1,7 @@
 import { basename, isAbsolute, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { realpathSync } from 'node:fs'
+import { resolveLaneSqlitePath } from '../lane-store/paths'
 
 import {
   INFERENCE_GATEWAY_ENV,
@@ -116,8 +117,8 @@ export async function runPhase2Check(
   const generatedAt = (ports.now?.() ?? new Date()).toISOString()
   const config = loadFeedV3RuntimeConfig(input.env)
   const packageDirectory = resolve(input.packageDirectory ?? resolve(__dirname, '..', '..'))
-  const newsPath = databasePath(input.env.NEWS_SQLITE_PATH, '.data/news.sqlite', packageDirectory)
-  const pipelinePath = databasePath(input.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite', packageDirectory)
+  const newsPath = resolveLaneSqlitePath('news', input.env.NEWS_SQLITE_PATH, { baseDir: packageDirectory })
+  const pipelinePath = resolveLaneSqlitePath('polymarket', input.env.PIPELINE_SQLITE_PATH, { baseDir: packageDirectory })
   const databasePathsDistinct = canonicalPathIdentity(newsPath) !== canonicalPathIdentity(pipelinePath)
   const gateway = loadInferenceGatewayConfiguration(input.env)
   const researchRoute = gateway.routes['research.synthesis']

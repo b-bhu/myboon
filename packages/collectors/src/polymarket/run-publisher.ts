@@ -5,6 +5,7 @@ loadDotenvChain()
 import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { runPolymarketPublisher } from './publisher'
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000
@@ -19,7 +20,7 @@ async function runOnce(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const store = new SqlitePipelineStore()
+  const store = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
 
   try {
     const result = await runPolymarketPublisher(store, supabase)

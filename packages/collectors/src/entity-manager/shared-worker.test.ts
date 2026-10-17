@@ -564,7 +564,7 @@ test('execution event appends are replay-idempotent and conflicts cannot corrupt
 
 test('Entity provider execution contributes one active event until its terminal event lands', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-active-event-'))
-  const ledger = new SqliteExecutionLedger(join(directory, 'pipeline.sqlite'))
+  const ledger = new SqliteExecutionLedger(join(directory, 'polymarket-lane.sqlite'))
   let release!: () => void
   let started!: () => void
   const processing = new Promise<void>((resolve) => { release = resolve })

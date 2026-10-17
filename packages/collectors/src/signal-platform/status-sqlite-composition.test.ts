@@ -9,7 +9,7 @@ import { readSqliteControlPlaneStatus } from './status-sqlite-composition'
 
 test('SQLite status composition returns typed partial output when pipeline DB is missing', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'feed-v3-status-partial-'))
-  const newsPath = join(dir, 'news.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
   const pipelinePath = join(dir, 'missing-pipeline.sqlite')
   const store = new SqliteSignalPlatformStore(newsPath, 'news')
   const ledger = new SqliteExecutionLedger(newsPath)
@@ -31,8 +31,8 @@ test('SQLite status composition returns typed partial output when pipeline DB is
 
 test('SQLite status composition isolates corrupt News while pipeline sources remain queryable', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'feed-v3-status-corrupt-'))
-  const newsPath = join(dir, 'news.sqlite')
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   writeFileSync(newsPath, 'not sqlite')
   const store = new SqliteSignalPlatformStore(pipelinePath, 'polymarket')
   const ledger = new SqliteExecutionLedger(pipelinePath)

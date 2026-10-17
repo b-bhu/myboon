@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, resolve } from 'node:path'
+import { dirname } from 'node:path'
+import {
+  DEFAULT_POLYMARKET_LANE_SQLITE_PATH,
+  resolveLaneSqlitePath,
+} from '../lane-store/paths'
 import type { Signal } from '../signal-platform/contracts'
 import { validateSignal } from '../signal-platform/validation'
 import { ImmutableRecordConflictError } from '../signal-platform/platform-store'
@@ -64,14 +68,16 @@ const { DatabaseSync } = nodeRequire('node:sqlite') as {
   DatabaseSync: new (path: string) => SqliteDatabase
 }
 
-const COLLECTORS_PACKAGE_DIR = resolve(__dirname, '..', '..')
+/** Kept for PR #376: default polymarket lane store file (issue #369 renames). */
+export const DEFAULT_PIPELINE_SQLITE_PATH = DEFAULT_POLYMARKET_LANE_SQLITE_PATH
 
 /**
- * Default pipeline.sqlite location: `<collectors package>/.data/pipeline.sqlite`.
- * Exported as the single source of truth so backups, the failure-recovery CLI
- * and the cron condition checker all resolve the same store.
+ * Resolve a pipeline (polymarket lane) SQLite path through the shared
+ * lane-store helper; retired basenames fail loudly (see #369).
  */
-export const DEFAULT_PIPELINE_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite')
+export function resolvePipelineSqlitePath(path: string = DEFAULT_PIPELINE_SQLITE_PATH): string {
+  return resolveLaneSqlitePath('polymarket', path)
+}
 
 // SQLite has a default bound-parameter limit of ~999; chunk large IN-clause
 // batches so callers of this store never have to think about it.
@@ -153,21 +159,7 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ')
 }
 
-/**
- * Resolves the caller-supplied pipeline.sqlite path exactly as this store
- * always has: ':memory:' passes through untouched (test seam), an undefined
- * path falls back to DEFAULT_PIPELINE_SQLITE_PATH, and a relative path
- * anchors at the process working directory (matching the '.data/...' env
- * defaults the other runners use). Exported so read-only consumers - e.g.
- * the condition checker's draft gatherer - open the same file the store
- * opens without ever creating it.
- */
-export function resolvePipelineSqlitePath(path: string = DEFAULT_PIPELINE_SQLITE_PATH): string {
-  if (path === ':memory:') return path
-  return resolve(process.cwd(), path)
-}
-
-function openPipelineSqlite(path?: string): SqliteDatabase {
+export function openPipelineSqlite(path?: string): SqliteDatabase {
   const dbPath = resolvePipelineSqlitePath(path)
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
   const db = new DatabaseSync(dbPath)
@@ -177,7 +169,7 @@ function openPipelineSqlite(path?: string): SqliteDatabase {
   return db
 }
 
-function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
+export function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pipeline_watchlist (
       id TEXT PRIMARY KEY,

@@ -33,8 +33,9 @@ const { DatabaseSync } = nodeRequire('node:sqlite') as {
 export const EXECUTION_LEDGER_TABLE = 'signal_execution_events' as const
 
 /**
- * Immutable append-only execution ledger. Point it at either pipeline.sqlite
- * or news.sqlite; table creation is additive and isolated from legacy stores.
+ * Immutable append-only execution ledger. Point it at either
+ * polymarket-lane.sqlite or news-lane.sqlite; table creation is additive and
+ * isolated from legacy stores.
  */
 export class SqliteExecutionLedger implements ExecutionLedger {
   private readonly db: SqliteDatabase

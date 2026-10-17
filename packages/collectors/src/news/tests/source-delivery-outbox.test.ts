@@ -90,7 +90,7 @@ function observationInput(
 async function withTempDb<T>(fn: (path: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'news-outbox-'))
   try {
-    return await fn(join(dir, 'news.sqlite'))
+    return await fn(join(dir, 'news-lane.sqlite'))
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -535,7 +535,7 @@ test('News backup and restore retain pending source delivery obligations', async
       backupDir: join(dirname(path), 'backups'),
     })
     assert.equal(backup.tableCounts.news_source_delivery_outbox, 1)
-    const targetPath = join(dirname(path), 'restored', 'news.sqlite')
+    const targetPath = join(dirname(path), 'restored', 'news-lane.sqlite')
     await restoreNewsStore({ backupPath: backup.path, targetPath })
 
     const restored = new SqliteNewsStore(targetPath)

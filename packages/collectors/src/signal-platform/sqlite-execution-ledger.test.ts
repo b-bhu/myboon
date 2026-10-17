@@ -57,7 +57,7 @@ function event(overrides: Partial<ExecutionTraceEvent> = {}): ExecutionTraceEven
 test('SQLite ledger is append-only, idempotent, and detects event id collisions', () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-ledger-'))
   try {
-    const ledger = new SqliteExecutionLedger(join(dir, 'news.sqlite'))
+    const ledger = new SqliteExecutionLedger(join(dir, 'news-lane.sqlite'))
     const first = event({ futureField: 'retained' })
     assert.equal(ledger.append(first).inserted, true)
     assert.equal(ledger.append({ ...first }).inserted, false)
@@ -82,7 +82,7 @@ test('SQLite ledger is append-only, idempotent, and detects event id collisions'
 test('SQLite ledger aggregates status, provider, fallback, schema and budget usage', () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-ledger-'))
   try {
-    const ledger = new SqliteExecutionLedger(join(dir, 'pipeline.sqlite'))
+    const ledger = new SqliteExecutionLedger(join(dir, 'polymarket-lane.sqlite'))
     ledger.append(event({ packetId: 'packet-1', costUsdMicros: 1250 }))
     ledger.append(event({
       eventId: 'event-2', sourceType: 'polymarket', status: 'failed',
@@ -119,7 +119,7 @@ test('SQLite ledger aggregates status, provider, fallback, schema and budget usa
 test('activeEvents counts distinct stage attempts without historical started rows', () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-ledger-active-'))
   try {
-    const ledger = new SqliteExecutionLedger(join(dir, 'pipeline.sqlite'))
+    const ledger = new SqliteExecutionLedger(join(dir, 'polymarket-lane.sqlite'))
     ledger.append(event({
       eventId: 'started-1', status: 'started', finishedAt: null,
       provider: null, model: null, providerCalls: 0, inputTokens: 0, outputTokens: 0,
@@ -149,7 +149,7 @@ test('activeEvents counts distinct stage attempts without historical started row
 test('ledger rejects incomplete or invalid additive provenance', () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-ledger-provenance-'))
   try {
-    const ledger = new SqliteExecutionLedger(join(dir, 'news.sqlite'))
+    const ledger = new SqliteExecutionLedger(join(dir, 'news-lane.sqlite'))
     assert.throws(() => ledger.append(event({ configuredPrimaryModel: undefined })), /present together/)
     assert.throws(() => ledger.append({ ...event(), fallbackReason: 'made_up' } as unknown as ExecutionTraceEvent), /known failure/)
     assert.throws(() => ledger.append({ ...event(), outputSchemaValid: 'yes' } as unknown as ExecutionTraceEvent), /must be boolean/)
@@ -161,7 +161,7 @@ test('ledger rejects incomplete or invalid additive provenance', () => {
 
 test('replay of a pre-AC20 event remains idempotent after null provenance normalization', () => {
   const dir = mkdtempSync(join(tmpdir(), 'signal-ledger-legacy-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   try {
     const legacy = event({ eventId: 'legacy-replay' }) as Record<string, unknown>
     delete legacy.configuredPrimaryProvider

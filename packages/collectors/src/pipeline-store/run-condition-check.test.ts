@@ -664,24 +664,26 @@ test('runConditionCheck never throws when several gatherers fail at once', async
 })
 
 test('pipeline sqlite path: resolution lives in sqlite-store (default, absolute override, cwd-relative), shared via failure-recovery', () => {
-  // No path -> the sqlite-store default: an absolute <collectors>/.data/pipeline.sqlite.
+  // No path -> the sqlite-store default: an absolute <collectors>/.data/polymarket-lane.sqlite (#369).
   assert.equal(resolvePipelineSqlitePath(), DEFAULT_PIPELINE_SQLITE_PATH)
-  assert.equal(DEFAULT_PIPELINE_SQLITE_PATH, join(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite'))
+  assert.equal(DEFAULT_PIPELINE_SQLITE_PATH, join(COLLECTORS_PACKAGE_DIR, '.data', 'polymarket-lane.sqlite'))
   // failure-recovery re-exports the same constant: one source of truth.
   assert.equal(FAILURE_RECOVERY_PIPELINE_DEFAULT, DEFAULT_PIPELINE_SQLITE_PATH)
   // An absolute PIPELINE_SQLITE_PATH passes through untouched, and ':memory:'
   // keeps its test-seam meaning.
-  assert.equal(resolvePipelineSqlitePath('/abs/pipeline.sqlite'), '/abs/pipeline.sqlite')
+  assert.equal(resolvePipelineSqlitePath('/abs/polymarket-lane.sqlite'), '/abs/polymarket-lane.sqlite')
   assert.equal(resolvePipelineSqlitePath(':memory:'), ':memory:')
+  // The retired pipeline.sqlite basename fails loudly on purpose (#369).
+  assert.throws(() => resolvePipelineSqlitePath('/abs/pipeline.sqlite'), /retired store file/)
   // A relative path anchors at the process working directory, matching the
   // other runners' '.data/...' env defaults.
-  assert.equal(resolvePipelineSqlitePath('nested/pipeline.sqlite'), resolve(process.cwd(), 'nested/pipeline.sqlite'))
+  assert.equal(resolvePipelineSqlitePath('nested/polymarket-lane.sqlite'), resolve(process.cwd(), 'nested/polymarket-lane.sqlite'))
 })
 
 test('draft sqlite gatherer: returns max(created_at), normalised to ISO UTC so Date.parse reads it as UTC', async () => {
   const fixture = setup()
   try {
-    const dbPath = join(fixture.dir, 'pipeline.sqlite')
+    const dbPath = join(fixture.dir, 'polymarket-lane.sqlite')
     createDraftSqlite(dbPath, [
       { id: 'stale-row', createdAt: '2019-05-05 04:00:00' },
       { id: 'fresh-row', createdAt: '2026-01-02 10:15:00' },
@@ -700,7 +702,7 @@ test('draft sqlite gatherer: returns max(created_at), normalised to ISO UTC so D
 test('draft sqlite gatherer: single stale row is returned as-is; staleness is the check\'s decision', async () => {
   const fixture = setup()
   try {
-    const dbPath = join(fixture.dir, 'pipeline.sqlite')
+    const dbPath = join(fixture.dir, 'polymarket-lane.sqlite')
     createDraftSqlite(dbPath, [{ id: 'only-row', createdAt: '2019-05-05 04:00:00' }])
     const gather = createDraftCreatedAtGatherer({ PIPELINE_SQLITE_PATH: dbPath })
     assert.equal(await gather(), '2019-05-05T04:00:00Z')
@@ -712,7 +714,7 @@ test('draft sqlite gatherer: single stale row is returned as-is; staleness is th
 test('draft sqlite gatherer: a row written by the store default (CURRENT_TIMESTAMP) arrives as ISO UTC and fresh', async () => {
   const fixture = setup()
   try {
-    const dbPath = join(fixture.dir, 'pipeline.sqlite')
+    const dbPath = join(fixture.dir, 'polymarket-lane.sqlite')
     const before = Date.now()
     createDraftSqlite(dbPath, [{}])
     const value = await createDraftCreatedAtGatherer({ PIPELINE_SQLITE_PATH: dbPath })()
@@ -739,7 +741,7 @@ test('draft sqlite gatherer: empty table, missing file and corrupt file reject; 
       createDraftCreatedAtGatherer({ PIPELINE_SQLITE_PATH: absentDb })(),
       /pipeline sqlite not found at /,
     )
-    assert.equal(existsSync(absentDb), false, 'the gatherer must never create pipeline.sqlite')
+    assert.equal(existsSync(absentDb), false, 'the gatherer must never create the polymarket lane store')
 
     const corruptDb = join(fixture.dir, 'corrupt.sqlite')
     writeFileSync(corruptDb, 'this is not a database')
@@ -752,7 +754,7 @@ test('draft sqlite gatherer: empty table, missing file and corrupt file reject; 
 test('draft_stale defaults to the local sqlite gatherer: a real CURRENT_TIMESTAMP row checks clean, a missing store skips without creating anything', async () => {
   const fixture = setup()
   try {
-    const dbPath = join(fixture.dir, 'pipeline.sqlite')
+    const dbPath = join(fixture.dir, 'polymarket-lane.sqlite')
     createDraftSqlite(dbPath, [{}])
     fixture.env.PIPELINE_SQLITE_PATH = dbPath
 
@@ -779,7 +781,7 @@ test('draft_stale defaults to the local sqlite gatherer: a real CURRENT_TIMESTAM
       missing.skipped.some((note) => note.startsWith('draft_stale:') && note.includes('pipeline sqlite not found at')),
       JSON.stringify(missing.skipped),
     )
-    assert.equal(existsSync(join(fixture.dir, 'absent.sqlite')), false, 'the gatherer must never create pipeline.sqlite')
+    assert.equal(existsSync(join(fixture.dir, 'absent.sqlite')), false, 'the gatherer must never create the polymarket lane store')
   } finally {
     teardown(fixture)
   }
@@ -788,7 +790,7 @@ test('draft_stale defaults to the local sqlite gatherer: a real CURRENT_TIMESTAM
 test('draft_stale: an empty local drafts table skips (condition_skipped), it never breaches', async () => {
   const fixture = setup()
   try {
-    const dbPath = join(fixture.dir, 'pipeline.sqlite')
+    const dbPath = join(fixture.dir, 'polymarket-lane.sqlite')
     createDraftSqlite(dbPath, [])
     fixture.env.PIPELINE_SQLITE_PATH = dbPath
 

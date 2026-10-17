@@ -4,6 +4,7 @@ loadDotenvChain()
 
 import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
 import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
@@ -14,7 +15,7 @@ async function main(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const pipelineStore = new SqlitePipelineStore()
+  const pipelineStore = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
   try {
     const result = await runPublisher({
       store: new SupabasePublisherStore(

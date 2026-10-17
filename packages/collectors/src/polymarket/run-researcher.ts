@@ -8,6 +8,7 @@ import { createConfiguredClassificationRuntime } from '../inference-gateway'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { ResearchEngine } from '../research-engine'
 import { legacyResearchOwnership, runLegacyResearchWhenOwned } from '../research-engine/legacy-ownership-guard'
 import { SupabaseEntityMemoryReader } from '../research-gate'
@@ -39,7 +40,7 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
   // Local pipeline state now lives in SQLite; the researcher no longer reads
   // or writes any Supabase table directly, but still takes the client for
   // signature parity with the data-engineer stage and any future need.
-  const store = new SqlitePipelineStore()
+  const store = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
   const hermes = new HermesService()
   const gateEnabled = process.env.RESEARCH_GATE_DISABLED !== '1'
   const classification = gateEnabled && config.researchGateClassificationEnabled

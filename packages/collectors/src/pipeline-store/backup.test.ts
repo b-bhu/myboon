@@ -15,6 +15,7 @@ import {
   verifyPipelineBackup,
 } from './backup'
 import { SqlitePipelineStore } from './sqlite-store'
+import { RetiredLaneSqlitePathError } from '../lane-store/paths'
 import { SqliteNewsStore } from '../news/sqlite-store'
 import { SqliteResearchShadowStore } from '../signal-platform/sqlite-research-shadow-store'
 import { SqliteEntityShadowObservationStore } from '../entity-manager/sqlite-shadow-observation-store'
@@ -185,7 +186,7 @@ test('backupPipelineStore: backup of a store with real data has tableCounts matc
   const dir = makeTmpDir('pipeline-backup-src-')
   const backupDir = join(dir, 'backups')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     const seeded = await seedStore(sourcePath)
 
     const result = await backupPipelineStore({ sourcePath, backupDir, now: '2026-07-28T12:00:00.000Z' })
@@ -216,10 +217,10 @@ test('backupPipelineStore: backup of a store with real data has tableCounts matc
   }
 })
 
-test('backupNewsStore: creates and verifies an independent news.sqlite backup', async () => {
+test('backupNewsStore: creates and verifies an independent news-lane.sqlite backup', async () => {
   const dir = makeTmpDir('news-backup-src-')
   try {
-    const sourcePath = join(dir, 'news.sqlite')
+    const sourcePath = join(dir, 'news-lane.sqlite')
     const store = new SqliteNewsStore(sourcePath)
     store.close()
 
@@ -247,7 +248,7 @@ test('online backup works with a read-only rollback-journal source file and dire
   const dir=makeTmpDir('pipeline-read-only-backup-'),sourceDir=join(dir,'source')
   const {mkdirSync}=await import('node:fs')
   mkdirSync(sourceDir)
-  const sourcePath=join(sourceDir,'pipeline.sqlite')
+  const sourcePath=join(sourceDir,'polymarket-lane.sqlite')
   try {
     await seedStore(sourcePath)
     // WAL may need a shared-memory sidecar for a consistent reader. This
@@ -282,10 +283,28 @@ test('backup refuses a nonexistent News or pipeline source without creating a da
   } finally {rmSync(dir,{recursive:true,force:true})}
 })
 
+test('backup refuses retired lane store filenames before any backup output is created', async () => {
+  const dir = makeTmpDir('retired-backup-source-')
+  try {
+    const backupDir = join(dir, 'backups')
+    await assert.rejects(
+      () => backupPipelineStore({ sourcePath: join(dir, 'pipeline.sqlite'), backupDir, now: '2026-10-03T05:00:00.000Z' }),
+      RetiredLaneSqlitePathError,
+    )
+    await assert.rejects(
+      () => backupNewsStore({ sourcePath: join(dir, 'news.sqlite'), backupDir, now: '2026-10-03T05:00:00.000Z' }),
+      RetiredLaneSqlitePathError,
+    )
+    assert.equal(existsSync(backupDir), false, 'a retired source path must not reach the backup writer')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('backupNewsStore: inventories additive Feed V3 shadow and deep registry tables when present', async () => {
   const dir = makeTmpDir('news-feed-v3-backup-src-')
   try {
-    const sourcePath = join(dir, 'news.sqlite')
+    const sourcePath = join(dir, 'news-lane.sqlite')
     const news = new SqliteNewsStore(sourcePath)
     news.close()
     const researchShadow = new SqliteResearchShadowStore(sourcePath)
@@ -308,7 +327,7 @@ test('backupNewsStore: inventories additive Feed V3 shadow and deep registry tab
 test('verifyPipelineBackup: returns ok:true and integrity "ok" on a good backup', async () => {
   const dir = makeTmpDir('pipeline-backup-verify-good-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
 
@@ -327,7 +346,7 @@ test('verifyPipelineBackup: returns ok:true and integrity "ok" on a good backup'
 test('verifyPipelineBackup: DETECTS corruption (the most important test - a verifier that cannot detect corruption is theatre)', async () => {
   const dir = makeTmpDir('pipeline-backup-corrupt-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
 
@@ -350,7 +369,7 @@ test('verifyPipelineBackup: DETECTS corruption (the most important test - a veri
 test('verifyPipelineBackup: reports mismatches when expected counts differ', async () => {
   const dir = makeTmpDir('pipeline-backup-mismatch-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
 
@@ -374,13 +393,13 @@ test('verifyPipelineBackup: reports mismatches when expected counts differ', asy
 test('restorePipelineStore: round-trip reproduces the seeded data at a fresh path', async () => {
   const dir = makeTmpDir('pipeline-backup-restore-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
 
     const backupResult = await backupPipelineStore({ sourcePath, backupDir })
 
-    const targetPath = join(dir, 'restored', 'pipeline.sqlite')
+    const targetPath = join(dir, 'restored', 'polymarket-lane.sqlite')
     const restoreResult = await restorePipelineStore({ backupPath: backupResult.path, targetPath })
 
     assert.equal(restoreResult.verified, true)
@@ -415,14 +434,14 @@ test('restorePipelineStore: round-trip reproduces the seeded data at a fresh pat
   }
 })
 
-test('restoreNewsStore: verifies and restores news.sqlite independently', async () => {
+test('restoreNewsStore: verifies and restores news-lane.sqlite independently', async () => {
   const dir = makeTmpDir('news-backup-restore-')
   try {
-    const sourcePath = join(dir, 'news.sqlite')
+    const sourcePath = join(dir, 'news-lane.sqlite')
     const store = new SqliteNewsStore(sourcePath)
     store.close()
     const backup = await backupNewsStore({ sourcePath, backupDir: join(dir, 'backups') })
-    const targetPath = join(dir, 'restored', 'news.sqlite')
+    const targetPath = join(dir, 'restored', 'news-lane.sqlite')
 
     const restored = await restoreNewsStore({ backupPath: backup.path, targetPath })
     assert.equal(restored.targetPath, targetPath)
@@ -436,12 +455,12 @@ test('restoreNewsStore: verifies and restores news.sqlite independently', async 
 test('restorePipelineStore: refuses to overwrite an existing target without force, succeeds with force', async () => {
   const dir = makeTmpDir('pipeline-backup-force-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
     const backupResult = await backupPipelineStore({ sourcePath, backupDir })
 
-    const targetPath = join(dir, 'existing', 'pipeline.sqlite')
+    const targetPath = join(dir, 'existing', 'polymarket-lane.sqlite')
     // Create a pre-existing target file (a different, smaller store).
     const preexisting = new SqlitePipelineStore(targetPath)
     preexisting.close()
@@ -462,14 +481,14 @@ test('restorePipelineStore: refuses to overwrite an existing target without forc
 test('restorePipelineStore: refuses a corrupt backup even with force', async () => {
   const dir = makeTmpDir('pipeline-backup-corrupt-restore-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
     const backupResult = await backupPipelineStore({ sourcePath, backupDir })
 
     corruptFileInPlace(backupResult.path)
 
-    const targetPath = join(dir, 'restored', 'pipeline.sqlite')
+    const targetPath = join(dir, 'restored', 'polymarket-lane.sqlite')
     await assert.rejects(
       () => restorePipelineStore({ backupPath: backupResult.path, targetPath, force: true }),
       /Refusing to restore from a backup that fails verification/
@@ -482,7 +501,7 @@ test('restorePipelineStore: refuses a corrupt backup even with force', async () 
 test('restorePipelineStore: requires the companion manifest and refuses manifest/backup digest mismatch', async () => {
   const dir = makeTmpDir('pipeline-backup-manifest-restore-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const first = await backupPipelineStore({
       sourcePath, backupDir: join(dir, 'backups'), now: '2026-08-27T10:00:00.000Z',
@@ -533,7 +552,7 @@ test('restorePipelineStore: requires the companion manifest and refuses manifest
 test('backupPipelineStore: timestamp collisions never replace an existing backup or manifest', async () => {
   const dir = makeTmpDir('pipeline-backup-no-replace-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const options = { sourcePath, backupDir: join(dir, 'backups'), now: '2026-08-27T11:00:00.000Z' }
     const first = await backupPipelineStore(options)
@@ -566,7 +585,7 @@ test('restorePipelineStore: refuses targets with WAL/SHM sidecars even with forc
 test('pruneOldBackups: dry-run reports exact bounded paths and apply deletes backup/manifest pairs', async () => {
   const dir = makeTmpDir('pipeline-backup-prune-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
 
@@ -608,7 +627,7 @@ test('pruneOldBackups: dry-run reports exact bounded paths and apply deletes bac
 test('pruneOldBackups: defaults to keeping 7 backups and remains dry-run', async () => {
   const dir = makeTmpDir('pipeline-backup-prune-default-')
   try {
-    const sourcePath = join(dir, 'pipeline.sqlite')
+    const sourcePath = join(dir, 'polymarket-lane.sqlite')
     await seedStore(sourcePath)
     const backupDir = join(dir, 'backups')
 

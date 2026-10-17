@@ -1,6 +1,4 @@
 import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
-import { DEFAULT_PIPELINE_SQLITE_PATH } from './sqlite-store'
 import {
   backupNewsStore,
   backupPipelineStore,
@@ -8,11 +6,11 @@ import {
   verifyPipelineBackup,
   type PipelineBackupResult,
 } from './backup'
-
-// The pipeline store path is owned by sqlite-store.ts (same value its own
-// store resolves); re-exported so consumers of failure-recovery keep their
-// import site.
-export { DEFAULT_PIPELINE_SQLITE_PATH }
+import {
+  DEFAULT_NEWS_LANE_SQLITE_PATH,
+  DEFAULT_POLYMARKET_LANE_SQLITE_PATH,
+  resolveLaneSqlitePath,
+} from '../lane-store/paths'
 
 const nodeRequire = createRequire(__filename)
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
@@ -31,8 +29,8 @@ interface SqliteDatabase {
   prepare(sql: string): SqliteStatement
 }
 
-const COLLECTORS_PACKAGE_DIR = resolve(__dirname, '..', '..')
-export const DEFAULT_NEWS_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'news.sqlite')
+export const DEFAULT_PIPELINE_SQLITE_PATH = DEFAULT_POLYMARKET_LANE_SQLITE_PATH
+export const DEFAULT_NEWS_SQLITE_PATH = DEFAULT_NEWS_LANE_SQLITE_PATH
 export const DEFAULT_RECOVERY_LIMIT = 100
 export const MAX_RECOVERY_LIMIT = 500
 
@@ -522,8 +520,8 @@ export async function recoverFailedBacklog(options: FailureRecoveryOptions): Pro
   }
 
   const action = options.action ?? 'requeue'
-  const pipelineSqlitePath = resolve(options.pipelineSqlitePath ?? DEFAULT_PIPELINE_SQLITE_PATH)
-  const newsSqlitePath = resolve(options.newsSqlitePath ?? DEFAULT_NEWS_SQLITE_PATH)
+  const pipelineSqlitePath = resolveLaneSqlitePath('polymarket', options.pipelineSqlitePath)
+  const newsSqlitePath = resolveLaneSqlitePath('news', options.newsSqlitePath)
   const storePath = options.source === 'news' ? newsSqlitePath : pipelineSqlitePath
   const db = options.apply
     ? new DatabaseSync(storePath)
@@ -634,8 +632,8 @@ export function readAllDeadLetterCounts(input?: {
   const results: DeadLetterCount[] = []
   for (const source of ['news', 'polymarket'] as const) {
     const path = source === 'news'
-      ? resolve(input?.newsSqlitePath ?? DEFAULT_NEWS_SQLITE_PATH)
-      : resolve(input?.pipelineSqlitePath ?? DEFAULT_PIPELINE_SQLITE_PATH)
+      ? resolveLaneSqlitePath('news', input?.newsSqlitePath)
+      : resolveLaneSqlitePath('polymarket', input?.pipelineSqlitePath)
     const db = new DatabaseSync(path, { readOnly: true, open: true })
     try {
       for (const stage of ['research', 'entity-manager'] as const) results.push(deadLetterCount(db, source, stage))

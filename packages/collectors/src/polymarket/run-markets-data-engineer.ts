@@ -1,6 +1,6 @@
 import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
-import { resolve } from 'node:path'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 
 loadDotenvChain()
 installProcessErrorLogging('polymarket-markets-data-engineer')
@@ -35,7 +35,7 @@ async function runOnce(): Promise<void> {
     return
   }
 
-  const pipelinePath = process.env.PIPELINE_SQLITE_PATH ?? resolve(__dirname, '..', '..', '.data', 'pipeline.sqlite')
+  const pipelinePath = resolveLaneSqlitePathFromEnv('polymarket', process.env)
   const runtime = loadFeedV3RuntimeConfig()
   const intakeMode = feedV3ModeForSource(runtime, 'intake', 'polymarket')
   const supabase = createSupabaseClient(

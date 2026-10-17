@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { link, lstat, open, realpath, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import {
   RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
@@ -96,8 +97,10 @@ export function parseDeepContainmentVerificationArgs(
   }
   return {
     apply: true, fixture: 'descendant-timeout-v1', registryPath, artifactPath,
-    protectedPaths: [env.NEWS_SQLITE_PATH?.trim() || '.data/news.sqlite', env.PIPELINE_SQLITE_PATH?.trim() || '.data/pipeline.sqlite']
-      .map((path) => resolve(path)),
+    protectedPaths: [
+      resolveLaneSqlitePathFromEnv('news', env),
+      resolveLaneSqlitePathFromEnv('polymarket', env),
+    ],
   }
 }
 

@@ -55,7 +55,7 @@ test('orphan audit is read-only and reports active, filesystem, and deadline sta
 
 test('read-only source-local audit treats an absent registry table as empty without creating it', () => {
   const dir = mkdtempSync(join(tmpdir(), 'deep-source-local-audit-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   try {
     const canonical = new SqliteSignalPlatformStore(path, 'news')
     canonical.close()
