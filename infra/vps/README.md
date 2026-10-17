@@ -61,3 +61,46 @@ Bookkeeping:
 - Run: `pnpm --filter @myboon/collectors pipeline-store:check` (always exits 0).
 - The crontab line lives in `infra/vps/crontab.example` and is NOT installed;
   install only with Bucket's approval.
+
+## Log rotation (Ref #346 PR 6)
+
+Two layers, both documentation-only: nothing here has been installed on the
+VPS, and nothing in this directory installs anything by itself.
+
+1. PM2 app logs (`~/.pm2/logs/*.log` and per-app error logs) via the
+   pm2-logrotate module, decided settings (max_size 50M, retain 7, compress):
+
+   ```bash
+   pm2 install pm2-logrotate
+   pm2 set pm2-logrotate:max_size 50M
+   pm2 set pm2-logrotate:retain 7
+   pm2 set pm2-logrotate:compress true
+   ```
+
+   Check the active values afterwards with `pm2 conf pm2-logrotate`.
+
+2. The persistent JSONL error log (`MYBOON_ERROR_LOG`, by default
+   `~/myboon-logs/errors.jsonl` — `resolveErrorLogPath` in
+   `packages/collectors/src/pipeline-store/error-log.ts`) lives outside PM2's
+   log directory, so it needs a system logrotate rule:
+   `infra/vps/logrotate/myboon-error-log` (size 50M, rotate 7, compress,
+   copytruncate). Install with:
+
+   ```bash
+   sudo cp infra/vps/logrotate/myboon-error-log /etc/logrotate.d/myboon-error-log
+   sudo logrotate -d /etc/logrotate.d/myboon-error-log   # dry-check, changes nothing
+   ```
+
+   If `MYBOON_ERROR_LOG` is set to a path other than
+   `~/myboon-logs/errors.jsonl` in the workers' env, edit the path in the
+   rule to match what the workers actually write.
+
+3. The lane-store prune (Ref #346 PR 6) keeps SQLite row counts bounded; its
+   NOT-installed daily crontab entry is documented in
+   `infra/vps/crontab.example` and `docs/DEPLOY.md`.
+
+4. The local backup files written by `pipeline-store:backup` are capped daily
+   (keep the newest 2 per store) by `pipeline-store:backup:prune`; its
+   NOT-installed daily crontab entries are documented in
+   `infra/vps/crontab.example` (Ref #346) — install only with Bucket's
+   approval.

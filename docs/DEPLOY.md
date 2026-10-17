@@ -152,6 +152,9 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
   pnpm --filter @myboon/collectors pipeline-store:backup:prune -- \
     --store news --backup-dir /srv/myboon/backups --keep 14 --limit 10 --apply
   ```
+  The documented cap for routine runs is `--keep 2` per store (`pipeline-` and
+  `news-` backups; issue #346 caps backups to 1-2 per store). Its not-installed
+  daily cron entries are in `infra/vps/crontab.example`.
 - Restore is deliberately a separate, dry-run-first command and never chooses a
   live target implicitly. Review the integrity output, stop the owning workers,
   and then repeat with `--apply`; add `--force` only when replacing an existing
@@ -192,6 +195,53 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
 - Migration `20260818145731_drop_retired_pipeline_tables.sql` removes the retired
   Supabase news, Polymarket working-state, and editor-draft tables. It does not
   touch either local SQLite file or any durable entity/publishing table.
+
+### Lane-store row retention and log rotation (Ref #346 PR 6)
+
+`lane-store:prune` deletes only old terminal rows from the two lane stores
+(`news-lane.sqlite` / `polymarket-lane.sqlite`; both paths resolve through the
+same `NEWS_SQLITE_PATH` / `PIPELINE_SQLITE_PATH` env vars the workers use, and
+a lane whose file does not exist is reported as missing, never created):
+
+- 14 days: terminal rows of `news_source_runs`, `news_research_results`,
+  `pipeline_runs`, `pipeline_candidates`, `pipeline_research`. The exact
+  terminal statuses (and the safety rule that keeps a candidate alive while
+  any child result/research is non-terminal, recently consumed, failed, or
+  dead-lettered) are documented next to the SQL in
+  `packages/collectors/src/lane-store/prune.ts`.
+- 7 days: delivered rows of `news_source_delivery_outbox` and
+  `pipeline_source_delivery_outbox`.
+- Never deleted: `news_candidate_observations` in its entirety — it is the
+  news dedupe memory: `fetchPriorObservations` has no time window and
+  ingestion applies no age cutoff, so pruning a settled observation would
+  re-admit a still-listed article as `new_candidate` and have it researched
+  and placed a second time; `pipeline_watchlist`; outbox rows that are not
+  delivered; non-terminal rows (queued / running / pending / retry); failed
+  or dead-letter-marked rows; `pipeline_editor_drafts` /
+  `pipeline_editor_decisions` in their entirety (the publisher's consumption
+  is not safely determinable from the schema, so those tables are not pruned).
+
+Dry run by default; deletes only with `--apply` (1000-row transactions,
+idempotent, never VACUUM):
+
+```bash
+pnpm --filter @myboon/collectors lane-store:prune
+pnpm --filter @myboon/collectors lane-store:prune -- --apply
+```
+
+Restart-sequence order (Ref #346 PR 6): after the #377 managed-entity backfill
+completes, run the prune dry run and review its JSON, then repeat the command
+with `--apply`, and only then reload the workers
+(`infra/vps/deploy.sh` / `pm2 startOrReload`). A daily `--apply` cron entry
+exists in `infra/vps/crontab.example` and is NOT INSTALLED - install it only
+with Bucket's approval, and only after this backfill + dry-run + apply
+sequence has run.
+
+Log rotation is also documented-only, nothing installed: PM2 app logs via
+`pm2-logrotate` (max_size 50M, retain 7, compress true) and a system logrotate
+rule for the persistent JSONL error log (`MYBOON_ERROR_LOG`, by default
+`~/myboon-logs/errors.jsonl`) - exact commands and the rule file are in
+`infra/vps/README.md` ("Log rotation") and `infra/vps/logrotate/myboon-error-log`.
 
 ### Feed V3 staged controls (safe-off; not yet a production cutover)
 

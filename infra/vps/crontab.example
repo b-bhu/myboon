@@ -11,3 +11,51 @@
 # restart_burst / supabase_health_failed / config_missing / disk_high);
 # stopped PM2 apps keep their staleness checks silent.
 */5 * * * * cd /home/ubuntu/myboon && pnpm --filter @myboon/collectors pipeline-store:check >> /home/ubuntu/myboon-logs/condition-check.cron.log 2>&1
+
+# Lane-store prune cron line (Ref #346 PR 6).
+#
+# NOT INSTALLED. Install only with Bucket's approval, and only AFTER the
+# #377 managed-entity backfill has completed and the same command has been run
+# as a dry run (no --apply) with its JSON reviewed: this prune deletes old
+# terminal rows from the two lane SQLite stores (news-lane.sqlite /
+# polymarket-lane.sqlite). 14-day retention for terminal run / research rows,
+# 7-day retention for delivered outbox rows; news_candidate_observations (the
+# news dedupe memory: pruning a settled observation would re-admit a
+# still-listed article as new_candidate and get it researched and placed a
+# second time), pipeline_watchlist, undelivered outbox rows, non-terminal rows
+# and failed / dead-letter rows are never deleted. Statuses and safety rules:
+# packages/collectors/src/lane-store/prune.ts. A lane whose file is missing is
+# skipped, never created.
+35 4 * * * cd /home/ubuntu/myboon && pnpm --filter @myboon/collectors lane-store:prune -- --apply >> /home/ubuntu/myboon-logs/lane-store-prune.cron.log 2>&1
+
+# Backup-file prune cron lines (Ref #346: cap backups to 1-2 per store).
+#
+# NOT INSTALLED. Install only with Bucket's approval, and only AFTER both
+# commands below have been run as a dry run (without --apply) with their JSON
+# audited and every candidateDeletePaths entry reviewed.
+#
+# `pipeline-store:backup` writes online backup FILES to PIPELINE_BACKUP_DIR,
+# defaulting to packages/collectors/.data/backups - on this VPS that is
+# /home/ubuntu/myboon/packages/collectors/.data/backups (the ops docs under
+# docs/modules/entity-manager/operations reference that path). If
+# PIPELINE_BACKUP_DIR is set on the VPS, use that directory in the lines
+# below instead.
+#
+# pipeline-store:backup:prune deletes old backup files, not SQLite rows. It
+# matches `pipeline-<timestamp>.sqlite` / `news-<timestamp>.sqlite` files in
+# --backup-dir (prefix 'pipeline-' / 'news-', pruneOldBackups in
+# src/pipeline-store/backup.ts), keeps the newest --keep files per store,
+# deletes at most --limit files per run oldest-first, and removes a backup's
+# companion manifest (<backup>.sqlite.manifest.json next to the file) only
+# when that backup file is a deletion candidate. Dry run by default; only
+# --apply deletes, and --backup-dir must be absolute.
+#
+# Dry-run first, review candidateDeletePaths, then repeat with --apply:
+#   pnpm --filter @myboon/collectors pipeline-store:backup:prune -- \
+#     --store pipeline --backup-dir /home/ubuntu/myboon/packages/collectors/.data/backups --keep 2 --limit 10
+#   pnpm --filter @myboon/collectors pipeline-store:backup:prune -- \
+#     --store news --backup-dir /home/ubuntu/myboon/packages/collectors/.data/backups --keep 2 --limit 10
+#
+# Scheduled at 04:50 / 04:55 so neither collides with the 04:35 lane prune.
+50 4 * * * cd /home/ubuntu/myboon && pnpm --filter @myboon/collectors pipeline-store:backup:prune -- --store pipeline --backup-dir /home/ubuntu/myboon/packages/collectors/.data/backups --keep 2 --limit 10 --apply >> /home/ubuntu/myboon-logs/backup-prune.cron.log 2>&1
+55 4 * * * cd /home/ubuntu/myboon && pnpm --filter @myboon/collectors pipeline-store:backup:prune -- --store news --backup-dir /home/ubuntu/myboon/packages/collectors/.data/backups --keep 2 --limit 10 --apply >> /home/ubuntu/myboon-logs/backup-prune.cron.log 2>&1

@@ -1,0 +1,24 @@
+# logrotate rule for the Myboon persistent JSONL error log (Ref #346 PR 6).
+#
+# NOT INSTALLED. Install with:
+#   sudo cp infra/vps/logrotate/myboon-error-log /etc/logrotate.d/myboon-error-log
+# then dry-check it with: sudo logrotate -d /etc/logrotate.d/myboon-error-log
+#
+# Target: MYBOON_ERROR_LOG, which defaults to ~/myboon-logs/errors.jsonl
+# (resolveErrorLogPath in packages/collectors/src/pipeline-store/error-log.ts).
+# If MYBOON_ERROR_LOG is set to a different path in the workers' environment,
+# replace the path below with the real one - rotate what the workers actually
+# write.
+#
+# copytruncate is part of the decided policy: the error-log writer opens,
+# appends and closes the file per write, so truncating in place never loses
+# the next line, while a rename-based rotation would leave lines behind under
+# the old name.
+/home/ubuntu/myboon-logs/errors.jsonl {
+    size 50M
+    rotate 7
+    compress
+    copytruncate
+    missingok
+    notifempty
+}
