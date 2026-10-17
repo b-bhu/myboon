@@ -8,6 +8,20 @@
 -- latest definition of article_writer_v1) with exactly three edits, all in the
 -- schemaVersion checks: v1 OR v2 is acceptable everywhere v1 was required.
 
+-- Runs as myboon_knowledge_owner (the function owner), using the same wrapper as
+-- 20261006112717; existing grants and ownership are unchanged.
+DO $access$
+BEGIN
+  PERFORM set_config('myboon.migration_had_owner_set',pg_has_role(current_user,'myboon_knowledge_owner','SET')::text,true);
+  PERFORM set_config('myboon.migration_had_owner_create',has_schema_privilege('myboon_knowledge_owner','managed_knowledge_private','CREATE')::text,true);
+  IF NOT pg_has_role(current_user,'myboon_knowledge_owner','SET') THEN
+    EXECUTE format('GRANT myboon_knowledge_owner TO %I WITH INHERIT FALSE, SET TRUE',current_user);
+  END IF;
+END
+$access$;
+GRANT CREATE ON SCHEMA managed_knowledge_private TO myboon_knowledge_owner;
+SET LOCAL ROLE myboon_knowledge_owner;
+
 CREATE OR REPLACE FUNCTION managed_knowledge_private.article_writer_v1(action text, input jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
 DECLARE operation text := input->>'operationId'; work text := input->>'workId'; lease managed_knowledge_private.leases;
@@ -204,23 +218,14 @@ BEGIN
 END
 $body$;
 
-REVOKE ALL ON managed_knowledge_private.article_items, managed_knowledge_private.article_relationships, managed_knowledge_private.article_source_attachments FROM PUBLIC, anon, authenticated, service_role, myboon_knowledge_executor, myboon_knowledge_context_executor;
-REVOKE ALL ON FUNCTION managed_knowledge_private.article_context_v1(jsonb) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION managed_knowledge_private.article_writer_v1(text,jsonb) FROM PUBLIC, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION managed_knowledge_private.article_context_v1(jsonb) TO myboon_knowledge_executor, myboon_knowledge_context_executor;
-GRANT EXECUTE ON FUNCTION managed_knowledge_private.article_writer_v1(text,jsonb) TO myboon_knowledge_executor;
-GRANT CREATE ON SCHEMA managed_knowledge_private TO myboon_knowledge_owner;
-DO $function_ownership$
-DECLARE already_can_set boolean := pg_catalog.pg_has_role(current_user,'myboon_knowledge_owner','SET');
+RESET ROLE;
+DO $restore$
 BEGIN
-  IF NOT already_can_set THEN
-    EXECUTE format('GRANT myboon_knowledge_owner TO %I WITH INHERIT FALSE, SET TRUE',current_user);
+  IF current_setting('myboon.migration_had_owner_create')='false' THEN
+    REVOKE CREATE ON SCHEMA managed_knowledge_private FROM myboon_knowledge_owner;
   END IF;
-  ALTER FUNCTION managed_knowledge_private.article_context_v1(jsonb) OWNER TO myboon_knowledge_owner;
-  ALTER FUNCTION managed_knowledge_private.article_writer_v1(text,jsonb) OWNER TO myboon_knowledge_owner;
-  IF NOT already_can_set THEN
+  IF current_setting('myboon.migration_had_owner_set')='false' THEN
     EXECUTE format('REVOKE SET OPTION FOR myboon_knowledge_owner FROM %I',current_user);
   END IF;
 END
-$function_ownership$;
-REVOKE CREATE ON SCHEMA managed_knowledge_private FROM myboon_knowledge_owner;
+$restore$;
