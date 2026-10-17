@@ -10,12 +10,9 @@
 -- an id absent from public.entities; an entity_id is valid iff it exists in either store.
 --
 -- Changes in this migration:
---   * published_entity_reference_requires_active_v1 (SECURITY DEFINER, owned
---     by myboon_knowledge_owner): same existence/status gate and messages as
---     the shared entity_reference_requires_active_v1, plus a managed-store
---     fallback when the id is absent from the catalogue. The two published
---     tables' active_entity_guard triggers fire it; the shared function and
---     the entity_memories guard are untouched.
+--   * Entity checks for the two published tables stay ONLY in the
+--     relationship guard (20260921153932 removed their *_active_entity_guard
+--     triggers; this migration does not bring them back).
 --   * read_managed_entities_v1 pins search_path to pg_catalog, pg_temp.
 --   * myboon_knowledge_owner gains UPDATE(updated_at) on
 --     managed_knowledge_private.entities, needed only for FOR KEY SHARE row
@@ -80,60 +77,6 @@ COMMENT ON FUNCTION public.read_managed_entities_v1(uuid[])
   IS '#337 PR-D: read-only managed entity rows in the single id space for the editor-draft/publisher entity existence checks. service_role only.';
 REVOKE ALL ON FUNCTION public.read_managed_entities_v1(uuid[]) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.read_managed_entities_v1(uuid[]) TO service_role;
-
--- #337 PR-D: existence/status gate for entity_id writes on the two published
--- tables, spanning both stores of the single id space. Messages and codes
--- match entity_reference_requires_active_v1 exactly; only the managed-store
--- fallback is new. SECURITY DEFINER because the publisher has no USAGE on
--- managed_knowledge_private: the definer owner's owner_only policy and the
--- UPDATE(updated_at) lease granted above cover the FOR KEY SHARE locks.
-CREATE OR REPLACE FUNCTION public.published_entity_reference_requires_active_v1()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, pg_temp
-AS $entity_guard$
-DECLARE
-  entity_status text;
-BEGIN
-  IF NEW.entity_id IS NULL THEN RETURN NEW; END IF;
-
-  SELECT entity.status INTO entity_status
-  FROM public.entities AS entity
-  WHERE entity.id = NEW.entity_id
-  FOR KEY SHARE;
-
-  IF FOUND THEN
-    IF entity_status <> 'active' THEN
-      RAISE EXCEPTION 'referenced Entity is no longer active; resolve its redirect and retry'
-        USING ERRCODE = '40001';
-    END IF;
-    RETURN NEW;
-  END IF;
-
-  SELECT entity.status INTO entity_status
-  FROM managed_knowledge_private.entities AS entity
-  WHERE entity.id = NEW.entity_id
-  FOR KEY SHARE;
-
-  IF FOUND THEN
-    IF entity_status <> 'active' THEN
-      RAISE EXCEPTION 'referenced Entity is no longer active; resolve its redirect and retry'
-        USING ERRCODE = '40001';
-    END IF;
-    RETURN NEW;
-  END IF;
-
-  RAISE EXCEPTION 'referenced Entity does not exist'
-    USING ERRCODE = '23503';
-END;
-$entity_guard$;
--- Trigger functions are invoked only through their trigger bindings, so no
--- EXECUTE grant exists.
-REVOKE ALL ON FUNCTION public.published_entity_reference_requires_active_v1()
-  FROM PUBLIC, anon, authenticated;
-COMMENT ON FUNCTION public.published_entity_reference_requires_active_v1() IS
-  '#337 PR-D: same gate as entity_reference_requires_active_v1 plus a managed-store fallback for entity_id writes on the two published tables.';
 
 -- #337 PR-D: managed-store pieces of the publication relationship guards.
 -- SECURITY DEFINER owned by myboon_knowledge_owner so the publisher never
@@ -250,31 +193,6 @@ COMMENT ON COLUMN public.published_narratives.entity_id
   IS 'Entity id in the single catalogue/managed id space; existence is checked by the publisher (no FK since #337 PR-D).';
 COMMENT ON COLUMN public.entity_published_history.entity_id
   IS 'Entity id in the single catalogue/managed id space; existence is checked by the publisher (no FK since #337 PR-D).';
-
--- #337 PR-D: the two published tables' entity_id existence/status guards move
--- from the shared public-only function to the definer function above.
--- 20260921153932 had folded these trigger names into the relationship guards;
--- the names return here so a missing or archived referenced Entity fails the
--- cheap existence check first (alphabetical trigger order puts
--- *_active_entity_guard ahead of *_relationship_guard). Runs as the
--- migration role because that role owns the published tables; the shared
--- entity_reference_requires_active_v1 and the entity_memories guard are
--- untouched.
-DROP TRIGGER IF EXISTS published_narratives_active_entity_guard
-  ON public.published_narratives;
-CREATE TRIGGER published_narratives_active_entity_guard
-BEFORE INSERT OR UPDATE OF entity_id
-ON public.published_narratives
-FOR EACH ROW
-EXECUTE FUNCTION public.published_entity_reference_requires_active_v1();
-
-DROP TRIGGER IF EXISTS entity_published_history_active_entity_guard
-  ON public.entity_published_history;
-CREATE TRIGGER entity_published_history_active_entity_guard
-BEFORE INSERT OR UPDATE OF entity_id
-ON public.entity_published_history
-FOR EACH ROW
-EXECUTE FUNCTION public.published_entity_reference_requires_active_v1();
 
 -- #337 PR-D: the publication relationship guard learns the single id space.
 -- This runs as the migration role because that role owns the function (and

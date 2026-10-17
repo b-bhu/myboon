@@ -1,8 +1,5 @@
 -- Rollback for 20261018090000_published_entity_managed_ids.sql (#337 PR-D).
 -- Restores the pre-PR-D state:
---   * the two published tables' active_entity_guard triggers point back at
---     the shared public.entity_reference_requires_active_v1; the PR-D trigger
---     function is dropped first (after its trigger bindings).
 --   * entity_publication_relationship_guard_v1 returns to its exact pre-PR-D
 --     body, copied verbatim from
 --     20260921153932_harden_entity_catalog_review_boundaries.sql (public
@@ -21,33 +18,6 @@
 -- That NULLing only runs with the explicit guard, otherwise the rollback
 -- refuses and reports both counts:
 --   SET LOCAL myboon.rollback_null_managed_entity_ids = 'on';
-
--- Drop the PR-D trigger bindings, then the PR-D trigger function, then point
--- the same trigger names back at the shared public-store function so the
--- entity-active boundary stays live for every later step. This deliberately
--- runs BEFORE the NULLing step: a NULLing UPDATE fires the restored
--- UPDATE OF entity_id trigger with NEW.entity_id NULL, and the shared
--- function returns such rows untouched before any lookup, so its
--- public-store-only body never sees a managed-only reference here. Restoring
--- them after the NULLing and FK re-add would be equally safe; the guards
--- simply never lapse with this order.
-DROP TRIGGER IF EXISTS published_narratives_active_entity_guard
-  ON public.published_narratives;
-DROP TRIGGER IF EXISTS entity_published_history_active_entity_guard
-  ON public.entity_published_history;
-DROP FUNCTION IF EXISTS public.published_entity_reference_requires_active_v1();
-
-CREATE TRIGGER published_narratives_active_entity_guard
-BEFORE INSERT OR UPDATE OF entity_id
-ON public.published_narratives
-FOR EACH ROW
-EXECUTE FUNCTION public.entity_reference_requires_active_v1();
-
-CREATE TRIGGER entity_published_history_active_entity_guard
-BEFORE INSERT OR UPDATE OF entity_id
-ON public.entity_published_history
-FOR EACH ROW
-EXECUTE FUNCTION public.entity_reference_requires_active_v1();
 
 DROP FUNCTION IF EXISTS public.read_managed_entities_v1(uuid[]);
 
