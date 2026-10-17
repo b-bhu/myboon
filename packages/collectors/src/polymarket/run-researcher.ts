@@ -75,7 +75,9 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
             ? {}
             : { engine: new ResearchEngine({ hermes }) }),
         })
-      }
+      },
+      undefined,
+      { app: 'polymarket-researcher' }
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {

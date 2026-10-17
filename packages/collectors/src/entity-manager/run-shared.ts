@@ -6,8 +6,11 @@ import {
   type InferenceCircuitStatusSnapshot,
   type InferenceTelemetryObserver,
 } from '../inference-gateway'
+import { createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { envFlag, loadDotenvChain, positiveInteger } from '../pipeline-store/cli-env'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
+import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
 import type { ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
@@ -66,6 +69,8 @@ export type SharedEntityCycleResult =
 
 export interface SharedEntityRuntime {
   mode: FeedV3RuntimeConfig['entityMode']
+  /** True only for active mode on the Supabase REST path. */
+  supabaseRest: boolean
   runCycle(): Promise<SharedEntityCycleResult>
   stop(input?: { abortActive?: boolean }): void
   close(): Promise<void>
@@ -188,6 +193,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
     }
     shadowObservations ??= noOpShadowObservations
     let processor: CanonicalPacketProcessor
+    let supabaseRest = false
     let executionLedger: SharedEntityWorkerOptions['executionLedger']
     let activePreflight: (() => Promise<void>) | undefined
     let circuitSnapshot: (() => InferenceCircuitStatusSnapshot | null) | undefined
@@ -221,6 +227,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
           },
         })
       } else {
+      supabaseRest = true
       const supabase = (options.supabaseFactory ?? createClient)(
         required(env, 'SUPABASE_URL'),
         required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
@@ -304,7 +311,7 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
       tracker: healthTracker,
       circuitSnapshot,
       now,
-    })
+    }, supabaseRest)
   } catch (error) {
     for (const resource of [...closables].reverse()) void Promise.resolve(resource.close()).catch(() => {})
     throw error
@@ -323,6 +330,7 @@ function managedRuntime(
     circuitSnapshot?: () => InferenceCircuitStatusSnapshot | null
     now: () => Date
   },
+  supabaseRest = false,
 ): SharedEntityRuntime {
   let closed = false
   let ready: Promise<void> | null = null
@@ -355,6 +363,7 @@ function managedRuntime(
   }
   return {
     mode,
+    supabaseRest,
     async runCycle() {
       if (closed) throw new Error('Shared Entity runtime is closed.')
       if (mode === 'active') {
@@ -437,6 +446,7 @@ function emptyActiveCycleResult(): ActiveCycleResult {
 function disabledRuntime(): SharedEntityRuntime {
   return {
     mode: 'off',
+    supabaseRest: false,
     async runCycle() { return { mode: 'off' } },
     stop() {},
     async close() {},
@@ -501,6 +511,32 @@ export function waitForSharedEntityShutdown(
   })
 }
 
+/**
+ * Active-mode Supabase REST gate: probe + interval gate + RUN_ONCE startup check
+ * share the one bounded probe client. Shadow/off never touch Supabase, and
+ * managed-writer active mode is also ungated: it writes through direct Postgres
+ * and its activePreflight covers that dependency, so a missing Supabase env
+ * must not make the worker exit at startup (Refs #346). Returns null when no
+ * gate applies; env falls back to process.env to match the worker entrypoint.
+ */
+export function createSharedEntityHealthGate(
+  runtime: Pick<SharedEntityRuntime, 'mode' | 'supabaseRest'>,
+  deps?: {
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>
+    createProbe?: (url: string, key: string) => () => Promise<void>
+  },
+): { gate: SupabaseHealthGate; runOnceCheck: () => Promise<void> } | null {
+  if (runtime.mode !== 'active' || !runtime.supabaseRest) return null
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv(deps?.env)
+  const probe = deps?.createProbe
+    ? deps.createProbe(supabaseUrl, supabaseKey)
+    : createSupabaseHealthProbe(supabaseUrl, supabaseKey)
+  return {
+    gate: new SupabaseHealthGate({ app: 'feed-v3:shared-entity-manager', probe }),
+    runOnceCheck: () => waitForSupabaseRunOnce({ app: 'feed-v3:shared-entity-manager', probe }),
+  }
+}
+
 async function main(): Promise<void> {
   loadDotenvChain()
   const runtime = createSharedEntityRuntime()
@@ -513,17 +549,24 @@ async function main(): Promise<void> {
     await waitForSharedEntityShutdown(() => runtime.close())
     return
   }
+  const supabaseHealth = createSharedEntityHealthGate(runtime)
   const run = async () => { process.stdout.write(`${JSON.stringify(await runtime.runCycle())}\n`) }
-  await run()
   if (envFlag(process.env.FEED_V3_ENTITY_RUN_ONCE)) {
+    if (supabaseHealth) await supabaseHealth.runOnceCheck()
+    await run()
     await runtime.close()
     return
   }
-  const interval = startIntervalRunner({
+  // In interval mode a failing first run is reported and the schedule still
+  // starts; RUN_ONCE above keeps its propagate-to-catch exit behaviour.
+  const interval = await runFirstThenInterval({
     label: 'feed-v3:shared-entity-manager',
     intervalMs: positiveInteger(process.env.FEED_V3_ENTITY_INTERVAL_MS, DEFAULT_INTERVAL_MS),
+    runOnce: false,
     run,
+    ...(supabaseHealth ? { healthGate: supabaseHealth.gate } : {}),
   })
+  if (interval === null) throw new Error('interval runner did not start')
   await waitForSharedEntityShutdown(async () => {
     interval.stop()
     await runtime.close()
@@ -544,7 +587,9 @@ export function isSharedEntityProcessEntrypoint(input: {
 // `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
 // execution marker and keeps imports/tests inert outside the process manager.
 if (isSharedEntityProcessEntrypoint()) {
+  installProcessErrorLogging('feed-v3:shared-entity-manager')
   main().catch((error) => {
+    appendErrorLog({ app: 'feed-v3:shared-entity-manager', kind: 'run_failed', error })
     process.stderr.write(`[feed-v3-entity] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
   })

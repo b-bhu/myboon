@@ -1,6 +1,7 @@
 import { envFlag, loadDotenvChain } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import { resolve } from 'node:path'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import {
   DEFAULT_NEWS_FEED_INTERVAL_MS,
   positiveInteger,
@@ -56,20 +57,20 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   loadDotenvChain()
-  await runOnce()
-  if (envFlag(process.env.NEWS_FEED_RUN_ONCE)) return
-
-  startIntervalRunner({
+  installProcessErrorLogging('news-feed-ingestor')
+  await runFirstThenInterval({
     label: 'news-feed-ingestor',
     intervalMs: positiveInteger(
       process.env.NEWS_FEED_INTERVAL_MS,
       DEFAULT_NEWS_FEED_INTERVAL_MS,
     ),
+    runOnce: envFlag(process.env.NEWS_FEED_RUN_ONCE),
     run: runOnce,
   })
 }
 
 main().catch((error) => {
+  appendErrorLog({ app: 'news-feed-ingestor', kind: 'run_failed', error })
   console.error(error instanceof Error ? error.message : String(error))
   process.exit(1)
 })

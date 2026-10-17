@@ -14,6 +14,7 @@ import type {
 import { EXECUTION_EVENT_SCHEMA_VERSION, isArticleResearchPacket } from '../signal-platform/contracts'
 import { stableContractId } from '../signal-platform/adapters/identity'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
+import { appendErrorLog } from '../pipeline-store/error-log'
 import type { CanonicalPlatformStore } from '../signal-platform/platform-store'
 import { adaptRetrievedEvidenceArtifact } from '../signal-platform/retrieved-evidence-adapter'
 import {
@@ -1514,9 +1515,11 @@ export class SharedResearchWorker {
     if (!this.executionLedger) return
     try {
       this.executionLedger.append(event)
-    } catch {
-      // Observability is deliberately best-effort. Queue state and immutable
-      // artifacts remain authoritative when the ledger is unavailable.
+    } catch (error) {
+      // Observability is deliberately best-effort: trace failures stay visible
+      // in the JSONL error log, while queue state and immutable artifacts
+      // remain authoritative when the ledger is unavailable.
+      appendErrorLog({ app: 'feed-v3-shared-research', kind: 'trace_append_failed', error })
     }
   }
 

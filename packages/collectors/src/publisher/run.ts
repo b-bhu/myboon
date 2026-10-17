@@ -1,10 +1,13 @@
 import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 
 loadDotenvChain()
+installProcessErrorLogging('publisher')
 
-import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
@@ -41,7 +44,9 @@ async function runOnce(): Promise<void> {
         ),
         batchSize: config.batchSize,
         dryRun: previewOnly(process.env),
-      })
+      }),
+      undefined,
+      { app: 'publisher' }
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {
@@ -50,20 +55,21 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  requireSupabaseEnv()
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv()
   const config = publisherCliConfig()
-  await runOnce()
-
-  if (config.runOnce) return
-
-  startIntervalRunner({
+  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
+  await runFirstThenInterval({
     label: 'publisher',
     intervalMs: config.intervalMs,
+    runOnce: config.runOnce,
     run: runOnce,
+    healthGate: new SupabaseHealthGate({ app: 'publisher', probe }),
+    runOnceHealthCheck: () => waitForSupabaseRunOnce({ app: 'publisher', probe }),
   })
 }
 
 main().catch((err) => {
+  appendErrorLog({ app: 'publisher', kind: 'run_failed', error: err })
   console.error('[publisher] fatal:', err)
   process.exit(1)
 })

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import {
   createProductionDeepResearchRuntime,
   SqliteDeepResearchExecutionRegistry,
@@ -57,6 +58,7 @@ import {
   type RuntimeStageControl,
 } from '../signal-platform/runtime-control'
 import { compareResearchWorkPriority, type WorkLease } from '../signal-platform/store-adapter'
+import { healthGateAllows, SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
 import { DeterministicRetriever } from './deterministic-retrieval'
 import { ResearchShadowEvaluator, type ShadowEvaluationOutcome } from './shadow-evaluator'
 import {
@@ -192,6 +194,12 @@ export interface RunSharedResearchOptions {
   signal?: AbortSignal
   createRuntime?: (config: SharedResearchRunnerConfig) => SharedResearchRunnerRuntime
   onResult?: (result: SharedResearchRunnerCycleResult) => void
+  /** Interval mode only. Called when a cycle or expired-lease recovery rejects; the schedule then reschedules. */
+  onCycleError?: (error: unknown, info?: { phase: 'cycle' | 'recovery' }) => void
+  /** Interval mode only. A false or rejecting gate check skips the cycle and reschedules it. */
+  healthGate?: { check(): Promise<boolean> }
+  /** RUN_ONCE mode only. Awaited before the first cycle; its rejection propagates as fatal. */
+  runOnceHealthCheck?: () => Promise<void>
   wait?: (ms: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
   createStatusWriter?: (path: string) => ResearchRuntimeStatusWriter
@@ -273,6 +281,15 @@ export function loadSharedResearchRunnerConfig(
   })
 }
 
+function defaultOnCycleError(error: unknown, info?: { phase: 'cycle' | 'recovery' }): void {
+  process.stderr.write(`[feed-v3-shared-research] cycle failed: ${error instanceof Error ? error.message : 'unknown failure'}\n`)
+  appendErrorLog({
+    app: 'feed-v3-shared-research',
+    kind: info?.phase === 'recovery' ? 'recovery_failed' : 'cycle_failed',
+    error,
+  })
+}
+
 /** Disabled mode never invokes createRuntime and remains resident until signal. */
 export async function runSharedResearchLoop(options: RunSharedResearchOptions = {}): Promise<void> {
   const config = loadSharedResearchRunnerConfig(options.env)
@@ -330,10 +347,19 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
       controlObservation = readResearchRuntimeControl(runtimeControl)
       operatorControl = controlObservation.control
       if (runtime.recoverExpired !== undefined && observedAt >= nextRecoveryAt) {
-        const recovered = await runtime.recoverExpired({
-          now: new Date(observedAt).toISOString(), limitPerSource: config.recoveryLimitPerSource,
-        })
-        recovery = Object.freeze({ lastRunAt: new Date(observedAt).toISOString(), recoveredBySource: recovered })
+        try {
+          const recovered = await runtime.recoverExpired({
+            now: new Date(observedAt).toISOString(), limitPerSource: config.recoveryLimitPerSource,
+          })
+          recovery = Object.freeze({ lastRunAt: new Date(observedAt).toISOString(), recoveredBySource: recovered })
+        } catch (error) {
+          // One rejected recovery (e.g. a Supabase timeout) must not escape the
+          // loop and exit the daemon: report it like a failed cycle and
+          // reschedule. RUN_ONCE keeps its propagate-and-exit behaviour, and
+          // the last successful recovery snapshot stays in the status file.
+          if (config.runOnce) throw error
+          ;(options.onCycleError ?? defaultOnCycleError)(error, { phase: 'recovery' })
+        }
         nextRecoveryAt = now() + config.recoveryIntervalMs
         await writeStatus(operatorControl.desiredState === 'running' ? 'running' : 'draining')
         if (drainPromise !== null) break
@@ -353,12 +379,36 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
         continue
       }
       lastReportedControlState = 'running'
+      // Gate every cycle on Supabase health like the interval runners do: a
+      // closed gate skips the cycle without touching it (not an error) and
+      // just reschedules (Refs #346).
+      if (!config.runOnce && !(await healthGateAllows(options.healthGate))) {
+        await writeStatus('running')
+        nextCycleAt = now() + config.intervalMs
+        continue
+      }
+      if (config.runOnce && options.runOnceHealthCheck !== undefined) {
+        await options.runOnceHealthCheck()
+      }
       const cycle = runtime.runCycle()
       const outcome = await Promise.race([
-        cycle.then((outcomes) => ({ kind: 'completed' as const, outcomes })),
+        cycle.then(
+          (outcomes) => ({ kind: 'completed' as const, outcomes }),
+          (error) => ({ kind: 'failed' as const, error }),
+        ),
         aborted.then(() => ({ kind: 'aborted' as const })),
       ])
       if (outcome.kind === 'aborted') break
+      if (outcome.kind === 'failed') {
+        // One bad tick (e.g. a Supabase timeout) must not escape the loop and
+        // exit the daemon: report it and reschedule, matching the interval
+        // runners. RUN_ONCE keeps its propagate-and-exit behaviour.
+        if (config.runOnce) throw outcome.error
+        ;(options.onCycleError ?? defaultOnCycleError)(outcome.error, { phase: 'cycle' })
+        await writeStatus('running')
+        nextCycleAt = now() + config.intervalMs
+        continue
+      }
       options.onResult?.({ kind: 'completed', status: runtime.status, outcomes: outcome.outcomes })
       await writeStatus('running')
       if (config.runOnce) break
@@ -984,18 +1034,43 @@ export function isSharedResearchProcessEntrypoint(input: {
   return input.direct || input.nodeAppInstance !== undefined
 }
 
+/**
+ * Process body for the shared Research entrypoint, kept async so the Supabase
+ * env seam (dotenv load, then the named missing-key check) rejects the process
+ * promise instead of throwing at module load: the rejection lands in the
+ * entrypoint's run_failed catch handler like every other gated worker
+ * (Refs #346). The injectable loader/env keep the behavior testable without
+ * reading or exposing real credentials.
+ */
+export interface RunSharedResearchProcessDeps {
+  loadEnvironment?: () => void
+  env?: NodeJS.ProcessEnv
+  signal?: AbortSignal
+}
+
+export async function runSharedResearchProcess(deps: RunSharedResearchProcessDeps = {}): Promise<void> {
+  const loadEnvironment = deps.loadEnvironment ?? loadSharedResearchProcessEnvironment
+  loadEnvironment()
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv(deps.env)
+  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
+  await runSharedResearchLoop({
+    signal: deps.signal,
+    healthGate: new SupabaseHealthGate({ app: 'feed-v3-shared-research', probe }),
+    runOnceHealthCheck: () => waitForSupabaseRunOnce({ app: 'feed-v3-shared-research', probe }),
+    onResult: (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
+  })
+}
+
 // PM2 executes TypeScript through its process-container wrapper, so
 // `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
 // execution marker and keeps imports/tests inert outside the process manager.
 if (isSharedResearchProcessEntrypoint()) {
-  loadSharedResearchProcessEnvironment()
+  installProcessErrorLogging('feed-v3-shared-research')
   const controller = new AbortController()
   process.once('SIGTERM', () => controller.abort())
   process.once('SIGINT', () => controller.abort())
-  runSharedResearchLoop({
-    signal: controller.signal,
-    onResult: (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
-  }).catch((error) => {
+  runSharedResearchProcess({ signal: controller.signal }).catch((error) => {
+    appendErrorLog({ app: 'feed-v3-shared-research', kind: 'run_failed', error })
     process.stderr.write(`[feed-v3-shared-research] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
   })

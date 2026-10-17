@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 import {
   RESEARCH_WORK_SCHEMA_VERSION,
@@ -26,6 +26,7 @@ import {
   loadSharedResearchRunnerConfig,
   resolveSupportedResearchDepths,
   runSharedResearchLoop,
+  runSharedResearchProcess,
   type SharedResearchRunnerRuntime,
 } from './run-shared-research'
 
@@ -172,6 +173,37 @@ test('active runner recovers at startup and on a bounded cadence before further 
   assert.equal(cycles, 3)
   assert.deepEqual(recoveries, ['2026-08-26T12:00:00.000Z', '2026-08-26T12:00:00.200Z'])
   assert.equal(writes.at(-1), 'stopped')
+})
+
+test('health gate: a closed gate skips the cycle and an open gate runs it', async () => {
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let cycles = 0
+  let checks = 0
+  const checksSucceed = [false, true]
+  const reports: string[] = []
+  await runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+      [SHARED_RESEARCH_ENV.intervalMs]: '100',
+    },
+    signal: controller.signal, now: () => current,
+    healthGate: { check: async () => { checks += 1; return checksSucceed[checks - 1] === true } },
+    createRuntime: () => runtime('active', () => { cycles += 1 }),
+    createStatusWriter: () => ({ write: async () => undefined }),
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+    wait: async (ms) => { current += ms },
+    onResult: (result) => {
+      reports.push(result.kind)
+      if (result.kind === 'completed') controller.abort()
+    },
+  })
+  // The first (closed) check skipped the cycle without touching the runtime;
+  // the second (open) check ran exactly one cycle.
+  assert.equal(checks, 2)
+  assert.equal(cycles, 1)
+  assert.deepEqual(reports, ['completed'])
 })
 
 test('report mode logs sweep errors and still retries unpaid leases and dead-letters paid leases', async () => {
@@ -441,6 +473,54 @@ test('shared Research CLI environment seam loads dotenv before composition witho
     else process.env.SUPABASE_SERVICE_ROLE_KEY = savedKey
   }
   assert.equal(calls, 1)
+})
+
+test('runSharedResearchProcess rejects with the named missing Supabase env before any network', async () => {
+  // The in-process seam: a no-op loader and an explicitly empty env make the
+  // rejection independent of this test process's own environment, and the
+  // named missing-key error throws before the health probe is constructed.
+  await assert.rejects(
+    runSharedResearchProcess({ loadEnvironment: () => {}, env: {} }),
+    (error) => error instanceof Error && /Missing required Supabase env/.test(error.message),
+  )
+})
+
+test('runSharedResearchProcess entrypoint logs run_failed and exits non-zero when the Supabase env is missing (subprocess)', async () => {
+  // Regression: the entrypoint used to call the Supabase env seam at module
+  // load, so a missing env escaped to the process-level handler as
+  // uncaught_exception instead of the run_failed path every other gated
+  // worker uses (Refs #346). Spawned like PM2's tsx execution: cwd is a fresh
+  // temp dir whose dotenv lookups find nothing, and the env is an explicit
+  // allowlist, so no Supabase key can ever leak into the child.
+  const { execFile } = await import('node:child_process')
+  const entryPath = resolve(__dirname, 'run-shared-research.ts')
+  const tsxBin = resolve(__dirname, '../../node_modules/.bin/tsx')
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-entrypoint-'))
+  const errorLogPath = join(dir, 'errors.jsonl')
+  try {
+    const childEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH ?? '',
+      HOME: dir,
+      MYBOON_ERROR_LOG: errorLogPath,
+    }
+    const child = await new Promise<{ code: number; stdout: string; stderr: string }>((resolvePromise) => {
+      execFile(tsxBin, [entryPath], { timeout: 20_000, cwd: dir, env: childEnv }, (error, stdout, stderr) => {
+        const code = error === null ? 0 : typeof error.code === 'number' ? error.code : 1
+        resolvePromise({ code, stdout, stderr })
+      })
+    })
+    assert.ok(child.code !== 0, `entrypoint child must exit non-zero; stderr=${JSON.stringify(child.stderr)}`)
+    assert.ok(existsSync(errorLogPath), 'a run_failed entry must be written to the error log')
+    const lines = readFileSync(errorLogPath, 'utf8').split('\n').filter((line) => line.trim() !== '')
+    assert.equal(lines.length, 1, `expected exactly one error-log line, got ${JSON.stringify(lines)}`)
+    const entry = JSON.parse(lines[0]!) as { app?: string; kind?: string; message?: string }
+    assert.equal(entry.app, 'feed-v3-shared-research')
+    assert.equal(entry.kind, 'run_failed')
+    assert.match(entry.message ?? '', /Missing required Supabase env/)
+    assert.ok(!lines.some((line) => line.includes('uncaught_exception')), 'a missing env must surface as run_failed, not uncaught_exception')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('full policy preserves every available Research depth while Phase 1 remains light-only', () => {
@@ -805,7 +885,9 @@ test('article runtime checks both storage readers and waits between failed probe
     healthy = true
     assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
     assert.deepEqual([managedReads, legacyReads], [1, 1])
-    now += 30_000
+    // The outage retry is the shared jittered health curve (24s-36s); 36s
+    // covers every possible draw (Ref #346).
+    now += 36_000
     assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
     assert.equal(live.status.articleContextAvailability?.available, true)
     assert.deepEqual([managedReads, legacyReads, providerCalls], [2, 2, 0])
@@ -820,6 +902,132 @@ test('article runtime checks both storage readers and waits between failed probe
     live?.close()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('a failing cycle is reported via onCycleError and the schedule continues', async () => {
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let cycles = 0
+  let waits = 0
+  const cycleErrors: Array<{ error: unknown; phase?: 'cycle' | 'recovery' }> = []
+  const results: string[] = []
+  const live = runtime('active', () => {
+    cycles += 1
+    if (cycles === 1) throw new Error('supabase timeout')
+  })
+  await runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+      FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+      [SHARED_RESEARCH_ENV.intervalMs]: '100',
+    },
+    signal: controller.signal, now: () => current,
+    createRuntime: () => live,
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+    createStatusWriter: () => ({ write: async () => undefined }),
+    onResult: (result) => results.push(result.kind),
+    onCycleError: (error, info) => cycleErrors.push({ error, phase: info?.phase }),
+    wait: async (ms) => {
+      current += ms
+      waits += 1
+      if (waits === 2) controller.abort()
+    },
+  })
+  assert.equal(cycles, 2, 'the failed cycle must be retried on the next tick')
+  assert.equal(cycleErrors.length, 1, 'onCycleError must fire exactly once for the failed cycle')
+  assert.equal((cycleErrors[0]?.error as Error).message, 'supabase timeout')
+  assert.equal(cycleErrors[0]?.phase, 'cycle')
+  assert.deepEqual(results, ['completed'])
+})
+
+test('a rejected expired-lease recovery is reported via onCycleError and rescheduled', async () => {
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let recoveries = 0
+  let waits = 0
+  const cycleErrors: Array<{ error: unknown; phase?: 'cycle' | 'recovery' }> = []
+  const results: string[] = []
+  const live = {
+    ...runtime('active', () => undefined),
+    recoverExpired: async () => {
+      recoveries += 1
+      if (recoveries === 1) throw new Error('supabase timeout')
+      return {}
+    },
+  }
+  // Resolving (not rejecting) below proves the rejected recovery did not exit
+  // the daemon the way a rejected first-run cycle used to.
+  await runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+      FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+      [SHARED_RESEARCH_ENV.intervalMs]: '100',
+      [SHARED_RESEARCH_ENV.recoveryIntervalMs]: '100',
+    },
+    signal: controller.signal, now: () => current,
+    createRuntime: () => live,
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+    createStatusWriter: () => ({ write: async () => undefined }),
+    onResult: (result) => results.push(result.kind),
+    onCycleError: (error, info) => cycleErrors.push({ error, phase: info?.phase }),
+    wait: async (ms) => {
+      current += ms
+      waits += 1
+      // Abort only after the failed recovery was rescheduled and re-ran.
+      if (waits === 4) controller.abort()
+    },
+  })
+  assert.equal(cycleErrors.length, 1, 'onCycleError must fire exactly once for the rejected recovery')
+  assert.equal((cycleErrors[0]?.error as Error).message, 'supabase timeout')
+  assert.equal(cycleErrors[0]?.phase, 'recovery')
+  assert.ok(recoveries >= 2, 'recovery must be rescheduled after a rejection')
+  assert.ok(results.includes('completed'), 'at least one cycle must still complete')
+})
+
+test('runOnce keeps a rejected expired-lease recovery fatal', async () => {
+  const live = {
+    ...runtime('active', () => undefined),
+    recoverExpired: async () => { throw new Error('supabase timeout') },
+  }
+  await assert.rejects(
+    runSharedResearchLoop({
+      env: {
+        FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+        [SHARED_RESEARCH_ENV.runOnce]: '1',
+      },
+      createRuntime: () => live,
+      createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+      createStatusWriter: () => ({ write: async () => undefined }),
+    }),
+    (error) => error instanceof Error && error.message === 'supabase timeout',
+  )
+})
+
+test('runOnce keeps a failing shared Research cycle fatal', async () => {
+  let cycles = 0
+  const live = runtime('active', () => {
+    cycles += 1
+    throw new Error('supabase timeout')
+  })
+  await assert.rejects(
+    runSharedResearchLoop({
+      env: {
+        FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+        [SHARED_RESEARCH_ENV.runOnce]: '1',
+      },
+      createRuntime: () => live,
+      createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+      createStatusWriter: () => ({ write: async () => undefined }),
+    }),
+    (error) => error instanceof Error && error.message === 'supabase timeout',
+  )
+  assert.equal(cycles, 1)
 })
 
 function researchWork(

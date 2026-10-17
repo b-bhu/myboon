@@ -24,6 +24,9 @@
  * (the process is still alive and working) so two of them never race.
  */
 
+import { appendErrorLog } from './error-log'
+import { healthGateAllows } from './health-gate'
+
 export interface IntervalRunnerOptions {
   /** Human-readable name used in the skip/overlap log line. */
   label: string
@@ -31,10 +34,12 @@ export interface IntervalRunnerOptions {
   intervalMs: number
   /** The work to run on each tick. */
   run: () => Promise<void>
+  /** Optional health gate (e.g. SupabaseHealthGate). A false or rejecting check skips the tick without calling run. */
+  healthGate?: { check(): Promise<boolean> }
   /** Called when a tick is skipped because the previous tick is still running. */
   onOverlap?: (info: { label: string; runningForMs: number }) => void
-  /** Called when `run()` rejects. Defaults to a console.error line. */
-  onError?: (error: unknown, info: { label: string }) => void
+  /** Called when `run()` rejects. Defaults to a console.error line plus a JSONL error-log entry. */
+  onError?: (error: unknown, info: { label: string; consecutiveFailures?: number }) => void
 }
 
 export interface IntervalRunnerHandle {
@@ -50,19 +55,24 @@ function defaultOnOverlap(info: { label: string; runningForMs: number }): void {
   )
 }
 
-function defaultOnError(error: unknown, info: { label: string }): void {
+function defaultOnError(error: unknown, info: { label: string; consecutiveFailures?: number }): void {
   console.error(`[${info.label}] run failed:`, error)
+  appendErrorLog(
+    info.consecutiveFailures === undefined
+      ? { app: info.label, kind: 'run_failed', error }
+      : { app: info.label, kind: 'run_failed', error, count: info.consecutiveFailures },
+  )
 }
 
 /**
  * Starts a `run` callback on a fixed interval, skipping (and logging) any
  * tick that would overlap a still-in-flight previous run.
  *
- * Does NOT invoke `run` immediately - callers that want an initial run
- * before the interval starts should await it themselves first (matching the
- * existing `await runOnce()` before `setInterval(...)` pattern in every
- * `run-*.ts` entrypoint), then call `startIntervalRunner` for the recurring
- * schedule.
+ * Does NOT invoke `run` immediately. Callers that want an initial run before
+ * the interval starts should use `runFirstThenInterval`, which awaits that
+ * first run and then starts this recurring schedule - reporting a failing
+ * first run through `onError` instead of letting it escape, so one bad
+ * startup tick cannot exit the worker before the schedule is running.
  */
 export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRunnerHandle {
   const { label, intervalMs, run } = options
@@ -71,6 +81,7 @@ export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRun
   let running = false
   let startedAt = 0
   let lastOverlapWarningAt = 0
+  let consecutiveFailures = 0
   const overlapWarningAfterMs = Math.max(5 * 60_000, intervalMs * 2)
 
   const timer = setInterval(() => {
@@ -87,11 +98,20 @@ export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRun
     running = true
     startedAt = Date.now()
     lastOverlapWarningAt = 0
-    run()
-      .catch((error) => onError(error, { label }))
-      .finally(() => {
+    void (async () => {
+      try {
+        // A closed health gate skips the tick entirely: no run, no error -
+        // the gate logs its own down/still_down evidence (Ref #346).
+        if (!(await healthGateAllows(options.healthGate))) return
+        await run()
+        consecutiveFailures = 0
+      } catch (error) {
+        consecutiveFailures += 1
+        onError(error, { label, consecutiveFailures })
+      } finally {
         running = false
-      })
+      }
+    })()
   }, intervalMs)
 
   // This timer MUST hold a ref. In every run-*.ts daemon entrypoint it is
@@ -106,4 +126,38 @@ export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRun
     stop: () => clearInterval(timer),
     isRunning: () => running,
   }
+}
+
+export interface RunFirstThenIntervalOptions extends IntervalRunnerOptions {
+  /** When true, run exactly once and let a failure propagate (RUN_ONCE semantics). */
+  runOnce: boolean
+  /** RUN_ONCE mode only: awaited before the single run (e.g. waitForSupabaseRunOnce); its rejection propagates and no run starts. */
+  runOnceHealthCheck?: () => Promise<void>
+}
+
+/**
+ * Runs `run` once, then (unless runOnce) starts the overlap-guarded interval.
+ * A failing first run is reported through onError and the schedule still starts,
+ * so one bad tick cannot exit a PM2 daemon. Returns null in runOnce mode.
+ * `healthGate` gates the first run and every interval tick, and
+ * `runOnceHealthCheck` gates the RUN_ONCE run.
+ */
+export async function runFirstThenInterval(options: RunFirstThenIntervalOptions): Promise<IntervalRunnerHandle | null> {
+  if (options.runOnce) {
+    if (options.runOnceHealthCheck) await options.runOnceHealthCheck()
+    await options.run()
+    return null
+  }
+  // In daemon mode the first run is just an early tick: a failure here used
+  // to escape to the entrypoint catch and process.exit(1) before the
+  // interval ever started, so PM2 kept restarting into the same failure.
+  // Report it the same way an interval tick failure is reported and keep the
+  // schedule running so a later tick can succeed. A closed health gate skips
+  // the early tick the same way it skips later ticks (Refs #346).
+  try {
+    if (await healthGateAllows(options.healthGate)) await options.run()
+  } catch (error) {
+    ;(options.onError ?? defaultOnError)(error, { label: options.label })
+  }
+  return startIntervalRunner(options)
 }

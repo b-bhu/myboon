@@ -10,6 +10,7 @@ import type {
 } from '../signal-platform/contracts'
 import { EXECUTION_EVENT_SCHEMA_VERSION } from '../signal-platform/contracts'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
+import { appendErrorLog } from '../pipeline-store/error-log'
 import type { CanonicalPlatformStore } from '../signal-platform/platform-store'
 import {
   SharedResearchScheduler,
@@ -436,9 +437,11 @@ export class DeepResearchSideQueueWorker {
     if (this.executionLedger === undefined) return
     try {
       this.executionLedger.append(deepExecutionEvent(input, this.policy))
-    } catch {
-      // Observability is deliberately best-effort. It cannot undo a contained
-      // execution, immutable packet append, or fenced queue transition.
+    } catch (error) {
+      // Observability is deliberately best-effort: trace failures stay visible
+      // in the error log. It cannot undo a contained execution, immutable
+      // packet append, or fenced queue transition.
+      appendErrorLog({ app: 'deep-research-worker', kind: 'trace_append_failed', error })
     }
   }
 
