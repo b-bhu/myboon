@@ -274,7 +274,7 @@ $$;
 -- The managed helpers go after the guard above is restored: its verbatim
 -- body no longer references them, and the trigger function that could
 -- otherwise call them was already dropped.
-DROP FUNCTION IF EXISTS public.managed_active_memory_ids_v1(uuid[]);
+DROP FUNCTION IF EXISTS public.managed_active_memory_ids_v1(uuid[], boolean);
 DROP FUNCTION IF EXISTS public.managed_entity_lock_status_v1(uuid);
 
 -- The row-lock lease added by the PR-D migration is revoked; no pre-PR-D

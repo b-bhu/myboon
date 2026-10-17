@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PipelineStore } from '../pipeline-store/store'
-import { fetchManagedEntities, fetchActiveManagedEntities } from '../entity-manager/managed-entity-catalog'
+import { fetchActiveManagedEntities } from '../entity-manager/managed-entity-catalog'
 import type { ManagedEntityRow } from '../entity-manager/managed-entity-catalog'
 import {
   ENTITY_KNOWLEDGE_MAX_PAGE_SIZE,
@@ -225,8 +225,6 @@ export class SupabasePublisherStore implements PublisherStore {
       return { narrative: existing, existing: true }
     }
 
-    await this.assertEntityExists(publication.entity_id)
-
     const payload = {
       title: publication.title,
       content_small: publication.content_small,
@@ -286,32 +284,6 @@ export class SupabasePublisherStore implements PublisherStore {
 
     if (error) throw new Error(`publisher existing narrative lookup failed: ${error.message}`)
     return data ? normalizeNarrative(data) : null
-  }
-
-  /**
-   * Stands in for the dropped entity_id FK: the column is nullable and, since
-   * the single catalogue/managed id space (#337 PR-D), existence is any row in
-   * public.entities OR the managed store, regardless of its status.
-   */
-  private async assertEntityExists(entityId: string | null): Promise<void> {
-    if (entityId === null) return
-    const { data, error } = await this.db
-      .from('entities')
-      .select('id')
-      .eq('id', entityId)
-      .maybeSingle()
-
-    if (error) throw new Error(`publisher entity check failed: ${error.message}`)
-    if (data) return
-    let managedRows: ManagedEntityRow[]
-    try {
-      managedRows = await fetchManagedEntities(this.db, [entityId])
-    } catch (lookupError) {
-      const detail = lookupError instanceof Error ? lookupError.message : 'unknown error'
-      throw new Error(`publisher entity check failed: ${detail}`, { cause: lookupError })
-    }
-    if (managedRows.some((row) => row.id === entityId)) return
-    throw new Error(`publisher entity check failed: ${entityId} exists in neither public.entities nor the managed store`)
   }
 
   private async ensureHistory(narrativeId: string, publication: PublishedNarrativeInput): Promise<void> {

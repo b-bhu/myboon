@@ -85,7 +85,7 @@ GRANT EXECUTE ON FUNCTION public.read_managed_entities_v1(uuid[]) TO service_rol
 -- tables (catalog maintenance definer functions owned by the migration role,
 -- which is also this owner's grantor) are unaffected, and the grants below
 -- only ADD EXECUTE for the publisher and leave every other privilege alone.
-CREATE OR REPLACE FUNCTION public.managed_active_memory_ids_v1(p_memory_ids uuid[])
+CREATE OR REPLACE FUNCTION public.managed_active_memory_ids_v1(p_memory_ids uuid[], p_lock boolean DEFAULT false)
 RETURNS uuid[]
 LANGUAGE plpgsql
 VOLATILE
@@ -98,16 +98,19 @@ BEGIN
   IF p_memory_ids IS NULL OR pg_catalog.cardinality(p_memory_ids) = 0 THEN
     RETURN '{}'::uuid[];
   END IF;
-  -- Lock the active item_heads rows FOR SHARE, ordered by item_id, so a
-  -- correction or retraction cannot land underneath the publication write
-  -- while it waits. The owner's full-table UPDATE on item_heads
-  -- (20261003090000) already permits FOR SHARE.
-  PERFORM head.item_id
-  FROM managed_knowledge_private.item_heads AS head
-  WHERE head.item_id = ANY(p_memory_ids)
-    AND head.status = 'active'
-  ORDER BY head.item_id
-  FOR SHARE;
+  -- With p_lock, lock the active item_heads rows FOR SHARE, ordered by
+  -- item_id, so a correction or retraction cannot land underneath the
+  -- publication write. The guard calls it unlocked for the existence count and
+  -- locked only after its Entity locks, keeping Entity-first lock order. The
+  -- owner's full-table UPDATE on item_heads (20261003090000) permits FOR SHARE.
+  IF p_lock THEN
+    PERFORM head.item_id
+    FROM managed_knowledge_private.item_heads AS head
+    WHERE head.item_id = ANY(p_memory_ids)
+      AND head.status = 'active'
+    ORDER BY head.item_id
+    FOR SHARE;
+  END IF;
 
   SELECT pg_catalog.array_agg(head.item_id ORDER BY head.item_id)
   INTO active_ids
@@ -138,18 +141,18 @@ BEGIN
 END;
 $entity_status$;
 
-REVOKE ALL ON FUNCTION public.managed_active_memory_ids_v1(uuid[])
+REVOKE ALL ON FUNCTION public.managed_active_memory_ids_v1(uuid[], boolean)
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.managed_entity_lock_status_v1(uuid)
   FROM PUBLIC, anon, authenticated;
 -- The relationship guards run as their invoker (the publisher), so
 -- service_role is the only grantee added here besides the owner.
-GRANT EXECUTE ON FUNCTION public.managed_active_memory_ids_v1(uuid[])
+GRANT EXECUTE ON FUNCTION public.managed_active_memory_ids_v1(uuid[], boolean)
   TO service_role;
 GRANT EXECUTE ON FUNCTION public.managed_entity_lock_status_v1(uuid)
   TO service_role;
-COMMENT ON FUNCTION public.managed_active_memory_ids_v1(uuid[]) IS
-  '#337 PR-D: requested memory ids that are active in the managed item heads, each locked FOR SHARE.';
+COMMENT ON FUNCTION public.managed_active_memory_ids_v1(uuid[], boolean) IS
+  '#337 PR-D: requested memory ids that are active in the managed item heads; locked FOR SHARE when p_lock.';
 COMMENT ON FUNCTION public.managed_entity_lock_status_v1(uuid) IS
   '#337 PR-D: managed entity status with its row locked FOR KEY SHARE, NULL when the id is absent.';
 
@@ -167,7 +170,7 @@ $restore$;
 
 -- Drop every single-column FK from the two published tables to public.entities
 -- on entity_id, whatever its name, so the article-only managed ids below are
--- kept. Existence is checked by the publisher across both stores instead.
+-- kept. Existence is checked by the relationship guard across both stores instead.
 DO $drop_fks$
 DECLARE
   fk record;
@@ -190,9 +193,9 @@ END
 $drop_fks$;
 
 COMMENT ON COLUMN public.published_narratives.entity_id
-  IS 'Entity id in the single catalogue/managed id space; existence is checked by the publisher (no FK since #337 PR-D).';
+  IS 'Entity id in the single catalogue/managed id space; existence is checked by the relationship guard (no FK since #337 PR-D).';
 COMMENT ON COLUMN public.entity_published_history.entity_id
-  IS 'Entity id in the single catalogue/managed id space; existence is checked by the publisher (no FK since #337 PR-D).';
+  IS 'Entity id in the single catalogue/managed id space; existence is checked by the relationship guard (no FK since #337 PR-D).';
 
 -- #337 PR-D: the publication relationship guard learns the single id space.
 -- This runs as the migration role because that role owns the function (and
@@ -201,7 +204,8 @@ COMMENT ON COLUMN public.entity_published_history.entity_id
 -- from 20260921153932 with only two changes, marked below:
 --   * found_memory_count also counts requested ids reported active by
 --     managed_active_memory_ids_v1 once they are missing from the public
---     store; the helper locks those item_heads rows FOR SHARE, so managed
+--     store; those item_heads rows are locked FOR SHARE after the Entity
+--     lock loop (Entity-first order) and re-checked, so managed
 --     memories need no public ownership row (the public snapshots below stay
 --     as they are);
 --   * an Entity id absent from the catalogue is status-checked and row-locked
@@ -224,6 +228,8 @@ DECLARE
   referenced_status text;
   requested_memory_count integer;
   found_memory_count integer;
+  managed_memory_ids uuid[];
+  locked_managed_memory_ids uuid[];
   memory_ownership_before jsonb;
   memory_ownership_after jsonb;
   narrative_relationship_before jsonb;
@@ -280,12 +286,17 @@ BEGIN
   INTO requested_memory_count
   FROM jsonb_array_elements(source_memory_ids) AS item(value);
 
-  -- #337 PR-D: source memories may live in either store. Count the requested
-  -- ids found in public.entity_memories UNION the ids
-  -- managed_active_memory_ids_v1 returns for the requested ids missing from
-  -- public.entity_memories; the helper row-locks those active item_heads
-  -- rows FOR SHARE. Managed memories produce no row in either
-  -- memory_ownership snapshot below and are covered by the helper's lock.
+  -- #337 PR-D: source memories may live in either store. Requested ids
+  -- missing from public.entity_memories are checked against active managed
+  -- item heads (unlocked here; they are locked after the Entity loop below).
+  -- Managed memories produce no row in either memory_ownership snapshot.
+  managed_memory_ids := public.managed_active_memory_ids_v1(
+    (SELECT pg_catalog.array_agg(DISTINCT item.memory_id::uuid)
+     FROM jsonb_array_elements_text(source_memory_ids) AS item(memory_id)
+     WHERE NOT EXISTS (
+       SELECT 1 FROM public.entity_memories AS memory
+       WHERE memory.id = item.memory_id::uuid
+     )), false);
   SELECT count(DISTINCT found.memory_id)
   INTO found_memory_count
   FROM (
@@ -294,14 +305,7 @@ BEGIN
     JOIN public.entity_memories AS memory
       ON memory.id = item.memory_id::uuid
     UNION
-    SELECT pg_catalog.unnest(public.managed_active_memory_ids_v1(
-      (SELECT pg_catalog.array_agg(DISTINCT item.memory_id::uuid)
-       FROM jsonb_array_elements_text(source_memory_ids) AS item(memory_id)
-       WHERE NOT EXISTS (
-         SELECT 1 FROM public.entity_memories AS memory
-         WHERE memory.id = item.memory_id::uuid
-       ))
-    ))
+    SELECT pg_catalog.unnest(managed_memory_ids)
   ) AS found;
 
   IF found_memory_count IS DISTINCT FROM requested_memory_count THEN
@@ -371,6 +375,16 @@ BEGIN
         USING ERRCODE = '40001';
     END IF;
   END LOOP;
+
+  -- #337 PR-D: managed memory heads are locked only now, after every Entity
+  -- lock, then re-read; a head retracted or corrected while waiting fails.
+  IF pg_catalog.cardinality(managed_memory_ids) > 0 THEN
+    locked_managed_memory_ids := public.managed_active_memory_ids_v1(managed_memory_ids, true);
+    IF locked_managed_memory_ids IS DISTINCT FROM managed_memory_ids THEN
+      RAISE EXCEPTION 'publication managed memory changed while waiting; resolve and retry'
+        USING ERRCODE = '40001';
+    END IF;
+  END IF;
 
   -- Entity locks are acquired before dependency-row locks, matching merge and
   -- rollback ordering. Re-reading ownership after a wait prevents a writer

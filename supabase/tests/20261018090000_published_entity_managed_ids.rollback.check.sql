@@ -3,7 +3,7 @@
 SELECT check_name, pass FROM (VALUES
   ('01 PR-D functions and helpers dropped', 1, to_regprocedure('public.read_managed_entities_v1(uuid[])') IS NULL
      AND to_regprocedure('public.published_entity_reference_requires_active_v1()') IS NULL
-     AND to_regprocedure('public.managed_active_memory_ids_v1(uuid[])') IS NULL
+     AND to_regprocedure('public.managed_active_memory_ids_v1(uuid[], boolean)') IS NULL
      AND to_regprocedure('public.managed_entity_lock_status_v1(uuid)') IS NULL),
   ('02 relationship guard restored without managed references', 2, EXISTS (SELECT 1 FROM pg_proc
      WHERE oid = to_regprocedure('public.entity_publication_relationship_guard_v1()') AND prosrc !~ 'managed_')),

@@ -284,24 +284,6 @@ test('publisher publishes a draft whose entity only exists in the managed store'
   assert.deepEqual(published, ['draft-1'])
 })
 
-test('publisher refuses to publish an entity id that exists in neither store and inserts nothing', async () => {
-  const fake = publisherFake({
-    publicEntityRow: null,
-    managedRows: [],
-    managedError: null,
-    existingNarrativeDraftIds: [],
-  })
-  const store = publisherStore(fake)
-
-  await assert.rejects(
-    store.publishDraft(publicationInput(MANAGED_ENTITY_ID)),
-    (error: unknown) => error instanceof Error
-      && error.message === `publisher entity check failed: ${MANAGED_ENTITY_ID} exists in neither public.entities nor the managed store`,
-  )
-  assert.deepEqual(fake.inserts, [])
-  assert.deepEqual(fake.upserts, [])
-})
-
 test('publisher fetchEntity falls back to an active managed row when the redirect returns null', async () => {
   const fake = publisherFake({
     publicEntityRow: null,
@@ -318,22 +300,4 @@ test('publisher fetchEntity falls back to an active managed row when the redirec
     type: 'asset',
     metadata: { source: 'managed_v4' },
   })
-})
-
-test('publisher fails closed on a managed entity check error without inserting', async () => {
-  const fake = publisherFake({
-    publicEntityRow: null,
-    managedRows: [],
-    managedError: 'temporary outage',
-    existingNarrativeDraftIds: [],
-  })
-  const store = publisherStore(fake)
-
-  await assert.rejects(
-    store.publishDraft(publicationInput(MANAGED_ENTITY_ID)),
-    (error: unknown) => error instanceof Error
-      && error.message === 'publisher entity check failed: managed entity lookup failed: temporary outage',
-  )
-  assert.deepEqual(fake.inserts, [])
-  assert.deepEqual(fake.upserts, [])
 })

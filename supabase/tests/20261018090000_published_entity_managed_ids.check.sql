@@ -7,7 +7,7 @@ WITH fn AS (
   WHERE ns.nspname = 'public'
     AND p.oid IN (
       to_regprocedure('public.read_managed_entities_v1(uuid[])'),
-      to_regprocedure('public.managed_active_memory_ids_v1(uuid[])'),
+      to_regprocedure('public.managed_active_memory_ids_v1(uuid[], boolean)'),
       to_regprocedure('public.managed_entity_lock_status_v1(uuid)'))
 )
 SELECT check_name, pass FROM (VALUES
