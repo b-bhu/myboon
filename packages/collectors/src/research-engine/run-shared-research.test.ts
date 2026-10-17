@@ -858,6 +858,71 @@ test('a failing cycle is reported via onCycleError and the schedule continues', 
   assert.deepEqual(results, ['completed'])
 })
 
+test('a rejected expired-lease recovery is reported via onCycleError and rescheduled', async () => {
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let recoveries = 0
+  let waits = 0
+  const cycleErrors: unknown[] = []
+  const results: string[] = []
+  const live = {
+    ...runtime('active', () => undefined),
+    recoverExpired: async () => {
+      recoveries += 1
+      if (recoveries === 1) throw new Error('supabase timeout')
+      return {}
+    },
+  }
+  // Resolving (not rejecting) below proves the rejected recovery did not exit
+  // the daemon the way a rejected first-run cycle used to.
+  await runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+      FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+      [SHARED_RESEARCH_ENV.intervalMs]: '100',
+      [SHARED_RESEARCH_ENV.recoveryIntervalMs]: '100',
+    },
+    signal: controller.signal, now: () => current,
+    createRuntime: () => live,
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+    createStatusWriter: () => ({ write: async () => undefined }),
+    onResult: (result) => results.push(result.kind),
+    onCycleError: (error) => cycleErrors.push(error),
+    wait: async (ms) => {
+      current += ms
+      waits += 1
+      // Abort only after the failed recovery was rescheduled and re-ran.
+      if (waits === 4) controller.abort()
+    },
+  })
+  assert.equal(cycleErrors.length, 1, 'onCycleError must fire exactly once for the rejected recovery')
+  assert.equal((cycleErrors[0] as Error).message, 'supabase timeout')
+  assert.ok(recoveries >= 2, 'recovery must be rescheduled after a rejection')
+  assert.ok(results.includes('completed'), 'at least one cycle must still complete')
+})
+
+test('runOnce keeps a rejected expired-lease recovery fatal', async () => {
+  const live = {
+    ...runtime('active', () => undefined),
+    recoverExpired: async () => { throw new Error('supabase timeout') },
+  }
+  await assert.rejects(
+    runSharedResearchLoop({
+      env: {
+        FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+        [SHARED_RESEARCH_ENV.runOnce]: '1',
+      },
+      createRuntime: () => live,
+      createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+      createStatusWriter: () => ({ write: async () => undefined }),
+    }),
+    (error) => error instanceof Error && error.message === 'supabase timeout',
+  )
+})
+
 test('runOnce keeps a failing shared Research cycle fatal', async () => {
   let cycles = 0
   const live = runtime('active', () => {

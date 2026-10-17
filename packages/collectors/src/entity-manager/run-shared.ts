@@ -527,8 +527,9 @@ async function main(): Promise<void> {
     runOnce: false,
     run,
   })
+  if (interval === null) throw new Error('interval runner did not start')
   await waitForSharedEntityShutdown(async () => {
-    interval?.stop()
+    interval.stop()
     await runtime.close()
   })
 }

@@ -148,12 +148,10 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_restarts: 10,
-      restart_delay: 5000,
       // PM2 counts an exit within min_uptime (30s) as an unstable restart; at
       // max_restarts (10) unstable restarts inside PM2's min_uptime*max_restarts
-      // window (300s) the app goes to errored instead of looping. When
-      // exp_backoff_restart_delay is set PM2 uses it instead of restart_delay:
-      // 2s, then x1.5 per restart, capped at 15s, reset after a stable run.
+      // window (300s) the app goes to errored instead of looping. Restarts back
+      // off via exp_backoff_restart_delay: 2s, x1.5 each, capped at 15s.
       min_uptime: 30000,
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
@@ -169,7 +167,6 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_restarts: 10,
-      restart_delay: 5000,
       min_uptime: 30000,
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
@@ -195,7 +192,6 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_restarts: 10,
-      restart_delay: 5000,
       min_uptime: 30000,
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
@@ -215,7 +211,6 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_restarts: 10,
-      restart_delay: 5000,
       min_uptime: 30000,
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
@@ -239,7 +234,6 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_restarts: 10,
-      restart_delay: 5000,
       min_uptime: 30000,
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
@@ -261,7 +255,6 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_restarts: 10,
-      restart_delay: 5000,
       min_uptime: 30000,
       exp_backoff_restart_delay: 2000,
       // Must remain greater than FEED_V3_RESEARCH_DRAIN_GRACE_MS so the
@@ -300,7 +293,6 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_restarts: 10,
-      restart_delay: 5000,
       min_uptime: 30000,
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',

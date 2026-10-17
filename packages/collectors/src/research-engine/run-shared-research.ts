@@ -192,7 +192,7 @@ export interface RunSharedResearchOptions {
   signal?: AbortSignal
   createRuntime?: (config: SharedResearchRunnerConfig) => SharedResearchRunnerRuntime
   onResult?: (result: SharedResearchRunnerCycleResult) => void
-  /** Interval mode only. Called when a cycle rejects; the schedule then reschedules after intervalMs. */
+  /** Interval mode only. Called when a cycle or expired-lease recovery rejects; the schedule then reschedules. */
   onCycleError?: (error: unknown) => void
   wait?: (ms: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
@@ -336,10 +336,19 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
       controlObservation = readResearchRuntimeControl(runtimeControl)
       operatorControl = controlObservation.control
       if (runtime.recoverExpired !== undefined && observedAt >= nextRecoveryAt) {
-        const recovered = await runtime.recoverExpired({
-          now: new Date(observedAt).toISOString(), limitPerSource: config.recoveryLimitPerSource,
-        })
-        recovery = Object.freeze({ lastRunAt: new Date(observedAt).toISOString(), recoveredBySource: recovered })
+        try {
+          const recovered = await runtime.recoverExpired({
+            now: new Date(observedAt).toISOString(), limitPerSource: config.recoveryLimitPerSource,
+          })
+          recovery = Object.freeze({ lastRunAt: new Date(observedAt).toISOString(), recoveredBySource: recovered })
+        } catch (error) {
+          // One rejected recovery (e.g. a Supabase timeout) must not escape the
+          // loop and exit the daemon: report it like a failed cycle and
+          // reschedule. RUN_ONCE keeps its propagate-and-exit behaviour, and
+          // the last successful recovery snapshot stays in the status file.
+          if (config.runOnce) throw error
+          ;(options.onCycleError ?? defaultOnCycleError)(error)
+        }
         nextRecoveryAt = now() + config.recoveryIntervalMs
         await writeStatus(operatorControl.desiredState === 'running' ? 'running' : 'draining')
         if (drainPromise !== null) break
