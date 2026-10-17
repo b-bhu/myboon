@@ -359,3 +359,43 @@ test('commitArticle stores contextualHistory and relationSummary in the item eff
   assert.equal(sent.effects[0]!.contextualHistory, input.contextualHistory)
   assert.equal((sent.plan.effect.memberships as Array<Record<string, unknown>>)[0]!.relationSummary, 'Follows the earlier item.')
 })
+
+test('persistence holds a no-match creation proposal equivalent to an existing context identity', async () => {
+  const membership = {
+    ...proposal('primary', 'entity-bitcoin', ITEM_PRIMARY),
+    entityId: null,
+    placementDisposition: 'no_match' as const,
+    name: 'Bitcoin (BTC)',
+    type: 'asset',
+    aliases: [],
+    creationProposal: { name: 'Bitcoin (BTC)', type: 'asset', aliases: [], summary: 'A source-grounded identity proposal.', scope: {} },
+    creationDecision: decision('accept'),
+    relationship: null, relationshipDecision: null,
+    priorItemDecision: null, priorItemId: null, priorItemSource: null, duplicateTarget: null,
+  }
+  let committed = false
+  const hold: { missingDependency?: string, reason?: string } = {}
+  const writer = {
+    findReceipt: async () => null,
+    articleContext: async () => ({
+      entities: [
+        { id: 'entity-bitcoin', slug: 'bitcoin', name: 'Bitcoin', type: 'asset', aliases: ['BTC'], summary: null,
+          status: 'active', show_in_carousel: false, metadata: {}, revision: 'entity-revision', catalogEntityId: null, identityKey: 'catalog:bitcoin' },
+      ],
+      items: [], digest: 'context-digest', watermark: 'watermark', truncated: false,
+      articleItems: [],
+    }),
+    savePlanningContext: async () => {},
+    acquireLease: async () => ({ owner: 'fixture-owner', epoch: 1 }),
+    releaseLease: async () => true,
+    commitArticle: async () => { committed = true; throw new Error('must not commit') },
+    commitArticleHold: async (input: { missingDependency?: string, reason?: string }) => { Object.assign(hold, input); return {} },
+  } as any
+
+  await assert.rejects(new ArticlePersistenceProcessor(writer).persist({
+    packet: packet([membership]), source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+  }), /entity_resolution/)
+  assert.equal(committed, false)
+  assert.equal(hold.missingDependency, 'entity_resolution')
+  assert.equal(hold.reason, 'creation proposal for Bitcoin (BTC) is equivalent to an existing identity')
+})
