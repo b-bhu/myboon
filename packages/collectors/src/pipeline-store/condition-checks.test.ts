@@ -1,23 +1,31 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  CHECKER_APP,
   CONDITION_REPEAT_MS,
   DISK_USED_PERCENT_THRESHOLD,
+  DRAFT_APP,
   DRAFT_STALE_MAX_AGE_MS,
+  PUBLISHER_APP,
   PUBLISH_STALE_MAX_AGE_MS,
   RESTART_BURST_THRESHOLD,
   RESTART_BURST_WINDOW_MS,
   SAMPLE_TTL_MS,
   SUPABASE_FAIL_THRESHOLD,
   checkDisk,
+  checkConfigMissing,
   checkDraftStale,
   checkPublishStale,
   checkRestartBurst,
   checkSupabaseFails,
   emptyConditionState,
   planLogEntries,
+  planSkipEntries,
+  skipCheckApp,
+  skipNoteCheck,
   stalenessGateReason,
   statfsUsedPercent,
+  updateAppStatuses,
   updateRestartSamples,
   type ConditionResult,
   type Pm2AppSample,
@@ -175,6 +183,49 @@ test('supabase: 2 consecutive fails is not a breach, the 3rd is; success resets'
   assert.equal(reset.observed, 0)
 })
 
+test('config_missing: a missing Supabase env breaches carrying the env error, a present env is healthy', () => {
+  const missing = checkConfigMissing({
+    envMissing: true,
+    error: new Error('Missing required Supabase env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY'),
+  })
+  assert.equal(missing.condition, 'config_missing')
+  assert.equal(missing.app, CHECKER_APP)
+  assert.equal(missing.breached, true)
+  assert.ok(missing.error instanceof Error)
+
+  const present = checkConfigMissing({ envMissing: false })
+  assert.equal(present.condition, 'config_missing')
+  assert.equal(present.breached, false)
+  assert.equal(present.error, undefined)
+})
+
+test('planLogEntries: config_missing follows breach/repeat/clear cadence and never moves the supabase counter', () => {
+  const breach = checkConfigMissing({ envMissing: true, error: new Error('Missing required Supabase env: SUPABASE_URL') })
+  const first = planLogEntries(emptyConditionState(), [breach], T)
+  assert.equal(first.entries.length, 1)
+  assert.equal(first.entries[0]?.kind, 'config_missing')
+  assert.equal(first.breached['config_missing:condition-check'], true)
+  assert.equal(first.supabaseConsecutiveFailures, undefined, 'a config-missing run must not touch the counter')
+
+  const repeat = planLogEntries(
+    { ...emptyConditionState(), breached: first.breached, lastLoggedAt: first.lastLoggedAt },
+    [breach],
+    T + CONDITION_REPEAT_MS,
+  )
+  assert.equal(repeat.entries.length, 1)
+  assert.equal(repeat.entries[0]?.kind, 'config_missing')
+
+  const cleared = planLogEntries(
+    { ...emptyConditionState(), breached: first.breached, lastLoggedAt: first.lastLoggedAt },
+    [checkConfigMissing({ envMissing: false })],
+    T + CONDITION_REPEAT_MS,
+  )
+  assert.equal(cleared.entries.length, 1)
+  assert.equal(cleared.entries[0]?.kind, 'condition_cleared')
+  assert.equal(cleared.entries[0]?.condition, 'config_missing')
+  assert.equal('config_missing:condition-check' in cleared.breached, false)
+})
+
 test('stalenessGateReason: unreadable pm2, missing app and non-online status all skip; online does not', () => {
   assert.equal(stalenessGateReason(null, 'myboon-publisher'), 'pm2 jlist unavailable')
   assert.equal(stalenessGateReason([], 'myboon-publisher'), 'app missing from pm2 jlist')
@@ -293,6 +344,79 @@ test('updateRestartSamples: keeps samples within ~20 min, drops older, appends t
   assert.equal(appended.length, 2)
   assert.equal(appended[0]?.restart_time, 20)
   assert.equal(appended[1]?.app, 'myboon-editor-draft')
+})
+
+test('skipNoteCheck / skipCheckApp: a note maps to its check, and the clear names the gating app', () => {
+  assert.equal(skipNoteCheck('publish_stale: app status stopped'), 'publish_stale')
+  assert.equal(skipNoteCheck('disk_high: statfs exploded'), 'disk_high')
+  assert.equal(skipNoteCheck('restart_burst: pm2 jlist unavailable'), 'restart_burst')
+  assert.equal(skipCheckApp('publish_stale'), PUBLISHER_APP)
+  assert.equal(skipCheckApp('draft_stale'), DRAFT_APP)
+  assert.equal(skipCheckApp('restart_burst'), CHECKER_APP)
+  assert.equal(skipCheckApp('disk_high'), CHECKER_APP)
+})
+
+test('planSkipEntries: first sighting logs once, unchanged notes are silent, first-seen timestamps persist', () => {
+  const first = planSkipEntries(undefined, ['publish_stale: app status stopped', 'draft_stale: app status stopped'], T)
+  assert.equal(first.entries.length, 1)
+  const skippedEntry = first.entries[0]
+  assert.equal(skippedEntry?.kind, 'condition_skipped')
+  assert.equal(skippedEntry?.app, CHECKER_APP)
+  assert.match((skippedEntry?.error as Error).message, /^checks skipped: publish_stale: app status stopped; draft_stale: app status stopped$/)
+  assert.deepEqual(Object.keys(first.activeSkips).sort(), ['draft_stale: app status stopped', 'publish_stale: app status stopped'])
+  assert.equal(first.activeSkips['publish_stale: app status stopped'], T)
+
+  // Same notes next run: nothing logs and the first-seen stamps survive.
+  const same = planSkipEntries(first.activeSkips, ['publish_stale: app status stopped', 'draft_stale: app status stopped'], T)
+  assert.equal(same.entries.length, 0)
+  assert.equal(same.activeSkips['publish_stale: app status stopped'], T)
+
+  // A further run without the injected fetchers (real gatherer errors) still
+  // counts as the same reasons and stays silent.
+  const again = planSkipEntries(same.activeSkips, ['publish_stale: app status stopped', 'draft_stale: app status stopped'], T + CONDITION_REPEAT_MS)
+  assert.equal(again.entries.length, 0)
+})
+
+test('planSkipEntries: a changed set logs only the delta - new sighting plus one clear per resolved note', () => {
+  const prev = planSkipEntries(undefined, ['publish_stale: app status stopped', 'draft_stale: app status stopped'], T)
+
+  // pm2 goes unreadable: the app-status notes resolve, the pm2 note appears.
+  const changed = planSkipEntries(
+    prev.activeSkips,
+    ['publish_stale: pm2 jlist unavailable', 'draft_stale: pm2 jlist unavailable', 'restart_burst: pm2 jlist unavailable'],
+    T + 60_000,
+  )
+  assert.equal(changed.entries.length, 3, 'one condition_skipped line plus one clear per resolved note')
+  assert.equal(changed.entries[0]?.kind, 'condition_skipped')
+  const skippedEntry = changed.entries[0]
+  assert.match((skippedEntry?.error as Error).message, /^checks skipped: publish_stale: pm2 jlist unavailable/)
+  const clears = changed.entries.slice(1)
+  assert.deepEqual(clears.map((entry) => entry.kind), ['condition_cleared', 'condition_cleared'])
+  assert.deepEqual(clears.map((entry) => entry.condition), ['publish_stale_skipped', 'draft_stale_skipped'])
+  assert.deepEqual(clears.map((entry) => entry.app), [PUBLISHER_APP, DRAFT_APP])
+  assert.equal(Object.keys(changed.activeSkips).length, 3)
+
+  // Full recovery: every note clears on its own.
+  const recovered = planSkipEntries(changed.activeSkips, [], T + 120_000)
+  assert.equal(recovered.entries.length, 3)
+  assert.match((recovered.entries[0]?.error as Error).message, /^no longer skipped: publish_stale: pm2 jlist unavailable$/)
+  assert.deepEqual(Object.keys(recovered.activeSkips), [])
+})
+
+test('updateAppStatuses: readable pm2 updates the gated apps, unreadable pm2 keeps last-known statuses', () => {
+  const updated = updateAppStatuses(
+    { [PUBLISHER_APP]: 'online' },
+    [
+      { name: PUBLISHER_APP, pmId: 0, status: 'stopped', restartTime: 0 },
+      { name: 'myboon-api', pmId: 2, status: 'online', restartTime: 0 },
+    ],
+  )
+  assert.deepEqual(updated, { [PUBLISHER_APP]: 'stopped' })
+
+  const untouched = updateAppStatuses({ [PUBLISHER_APP]: 'stopped', [DRAFT_APP]: 'launching' }, null)
+  assert.deepEqual(untouched, { [PUBLISHER_APP]: 'stopped', [DRAFT_APP]: 'launching' })
+
+  assert.deepEqual(updateAppStatuses(undefined, null), {})
 })
 
 test('emptyConditionState: version is always 1', () => {

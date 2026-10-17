@@ -25,12 +25,19 @@ export type ErrorLogKind =
   | 'trace_append_failed'
   | 'supabase_unavailable'
   // Log-only condition checks run by the cron checker (Ref #346 PR 5).
-  // condition_skipped records checks that could not run (e.g. their PM2 app
-  // is stopped); condition_cleared closes a previously breached condition.
+  // condition_skipped records a skipped check only when its reason is new
+  // or changed since the previous run ("<check>: <reason>" keys in the
+  // checker state file); condition_cleared closes a previously breached
+  // condition, or a skipped check that can run again (condition
+  // "<check>_skipped").
   | 'publish_stale'
   | 'draft_stale'
   | 'restart_burst'
   | 'supabase_health_failed'
+  // Missing Supabase env: a configuration error that breaches on its own and
+  // supersedes the old "supabase env missing" skip (Ref #346 PR 5); it never
+  // counts toward the consecutive probe-failure counter.
+  | 'config_missing'
   | 'disk_high'
   | 'condition_cleared'
   | 'condition_skipped'
@@ -47,7 +54,7 @@ export interface ErrorLogEntry {
   state?: ErrorLogHealthState
   /** Milliseconds from the first observed outage to recovery; only set on recovered entries. */
   downtimeMs?: number
-  /** Condition name on condition-check entries (e.g. publish_stale); also names the recovered condition on condition_cleared. */
+  /** Condition name on condition-check entries (e.g. publish_stale, or "<check>_skipped" when a skipped check becomes runnable); also names the recovered condition on condition_cleared. */
   condition?: string
   /** Measured value (age ms, restart delta, used percent, consecutive count); only set when measured. */
   observed?: number

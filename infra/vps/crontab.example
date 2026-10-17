@@ -6,7 +6,8 @@
 #
 # Log-only condition checks: no published narrative > 2h, no editor draft
 # > 3h, > 5 app restarts in 15 min, 3 consecutive failed Supabase health
-# probes, disk used > 80%. Breaches land in ~/myboon-logs/errors.jsonl
-# (kinds publish_stale / draft_stale / restart_burst / supabase_health_failed
-# / disk_high); stopped PM2 apps keep their staleness checks silent.
+# probes, missing Supabase env (config_missing), disk used > 80%. Breaches
+# land in ~/myboon-logs/errors.jsonl (kinds publish_stale / draft_stale /
+# restart_burst / supabase_health_failed / config_missing / disk_high);
+# stopped PM2 apps keep their staleness checks silent.
 */5 * * * * cd /home/ubuntu/myboon && pnpm --filter @myboon/collectors pipeline-store:check >> /home/ubuntu/myboon-logs/condition-check.cron.log 2>&1

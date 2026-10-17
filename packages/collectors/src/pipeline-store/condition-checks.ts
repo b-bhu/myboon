@@ -1,21 +1,25 @@
 /**
  * Log-only condition checks for the Myboon VPS (Ref #346 PR 5).
  *
- * A cron checker watches five conditions - no published narrative for > 2h,
+ * A cron checker watches six conditions - no published narrative for > 2h,
  * no editor draft for > 3h, an app restarting more than 5 times in 15
- * minutes, 3+ consecutive failed Supabase health probes, and disk used >
- * 80% - and records breaches through the shared JSONL error log
+ * minutes, 3+ consecutive failed Supabase health probes, a missing Supabase
+ * env (config_missing), and disk used > 80% - and records breaches through
+ * the shared JSONL error log
  * (appendErrorLog). No push alerts: the decision is that human operators
  * read the VPS logs periodically, so the checks must be silent when
  * everything is sane and unmistakable when they are not.
  *
  * Two shapes of silence matter (decision Q2): all seven PM2 apps are
  * intentionally stopped right now, so a staleness check whose app is not
- * `online` in `pm2 jlist` must stay silent - only a condition_skipped line
- * records that the check could not run. Supabase and disk are never gated
- * that way. The other is cadence (decision Q5): a breach logs once, repeats
- * at most every 30 minutes while it persists, and closes with a single
- * condition_cleared when it recovers.
+ * `online` in `pm2 jlist` must stay silent - a condition_skipped line
+ * records the skipped check, but only when the set of skip reasons changes
+ * (first sighting or transition): repeated stopped runs log nothing, and a
+ * skip that resolves (the app is online again) closes with one
+ * condition_cleared carrying condition "<check>_skipped". Supabase and
+ * disk are never gated that way. The other is cadence (decision Q5): a
+ * breach logs once, repeats at most every 30 minutes while it persists,
+ * and closes with a single condition_cleared when it recovers.
  *
  * Everything computable lives in pure functions here with injected inputs,
  * so the tests drive ages, clocks and pm2 snapshots by hand; the cron
@@ -47,6 +51,7 @@ export type ConditionKind =
   | 'draft_stale'
   | 'restart_burst'
   | 'supabase_health_failed'
+  | 'config_missing'
   | 'disk_high'
 
 /** One pm2 jlist restart sample, keyed by app so the file stays small. */
@@ -84,6 +89,21 @@ export interface ConditionState {
   supabaseConsecutiveFailures: number
   breached: Record<string, boolean>
   lastLoggedAt: Record<string, number>
+  /**
+   * Last-known pm2 status per gated staleness app (myboon-publisher,
+   * myboon-editor-draft), e.g. "stopped". Absent on state files written
+   * before this field existed; left untouched whenever pm2 is unreadable so
+   * a transient daemon outage cannot fake a status transition.
+   */
+  appStatus?: Record<string, string>
+  /**
+   * Skip notes ("<check>: <reason>") that were active as of the last run,
+   * keyed by the note itself and valued with the epoch ms the note was
+   * first seen in the current stretch of runs. condition_skipped logs only
+   * when a run's notes differ from these, so repeated stopped runs and
+   * other persisting skips stay silent.
+   */
+  activeSkips?: Record<string, number>
 }
 
 export function emptyConditionState(): ConditionState {
@@ -115,6 +135,95 @@ export function stalenessGateReason(apps: readonly Pm2AppSnapshot[] | null, appN
   if (app === undefined) return 'app missing from pm2 jlist'
   if (app.status.toLowerCase() !== 'online') return `app status ${app.status}`
   return null
+}
+
+/**
+ * Last-known pm2 status for the gated staleness apps, persisted between
+ * runs (Ref #346): the operator can see what the checker last observed.
+ * A readable pm2 jlist updates each gated app whose snapshot is present;
+ * an unreadable pm2 keeps every previous value - no data is not a status.
+ */
+export function updateAppStatuses(
+  prev: Record<string, string> | undefined,
+  current: readonly Pm2AppSnapshot[] | null,
+): Record<string, string> {
+  const next: Record<string, string> = { ...(prev ?? {}) }
+  if (current === null) return next
+  for (const appName of [PUBLISHER_APP, DRAFT_APP] as const) {
+    const app = current.find((candidate) => candidate.name === appName)
+    if (app !== undefined) next[appName] = app.status
+  }
+  return next
+}
+
+/** The check a skip note belongs to: 'publish_stale: app status stopped' -> 'publish_stale'. */
+export function skipNoteCheck(note: string): string {
+  const colon = note.indexOf(':')
+  return colon === -1 ? note : note.slice(0, colon)
+}
+
+/** App named on a skip's condition_cleared line: the gating app for staleness checks, the checker itself otherwise. */
+export function skipCheckApp(check: string): string {
+  if (check === 'publish_stale') return PUBLISHER_APP
+  if (check === 'draft_stale') return DRAFT_APP
+  return CHECKER_APP
+}
+
+export interface SkipPlan {
+  entries: ErrorLogEntry[]
+  /** Notes that stopped being active this run ("<check>: <reason>"). */
+  clearedNotes: string[]
+  /** Notes active after this run, keyed by note, valued with the first-seen epoch ms. */
+  activeSkips: Record<string, number>
+}
+
+/**
+ * Skip lines are part of the log's signal, so they follow a transition
+ * cadence like the breach lines do (Ref #346): a run logs condition_skipped
+ * exactly once per change - the notes first seen this run, which covers an
+ * app first seen not online, an online -> not-online transition, pm2 going
+ * unreadable, or a store/statfs failure - and stays silent while the same
+ * notes persist (repeated stopped runs log nothing). A note that stops
+ * being active (its app came back online, pm2 recovered, the store is
+ * readable again) closes with one condition_cleared per note, carrying
+ * condition "<check>_skipped". Keys are the full note strings ("keyed by
+ * reason"), so a changed reason is a new sighting and a resolved reason
+ * clears its own key independently.
+ */
+export function planSkipEntries(
+  prevActiveSkips: Record<string, number> | undefined,
+  skippedNotes: readonly string[],
+  now: number,
+): SkipPlan {
+  const activeSkips: Record<string, number> = { ...(prevActiveSkips ?? {}) }
+  const persisted = new Set(Object.keys(activeSkips))
+  const currentNotes = new Set(skippedNotes)
+  const newNotes: string[] = []
+  for (const note of skippedNotes) {
+    if (!persisted.has(note) && newNotes.indexOf(note) === -1) newNotes.push(note)
+  }
+  const clearedNotes = [...persisted].filter((note) => !currentNotes.has(note))
+
+  const entries: ErrorLogEntry[] = []
+  if (newNotes.length > 0) {
+    entries.push({
+      app: CHECKER_APP,
+      kind: 'condition_skipped',
+      error: new Error(`checks skipped: ${newNotes.join('; ')}`),
+    })
+  }
+  for (const note of clearedNotes) {
+    const check = skipNoteCheck(note)
+    entries.push({
+      app: skipCheckApp(check),
+      kind: 'condition_cleared',
+      condition: `${check}_skipped`,
+      error: new Error(`no longer skipped: ${note}`),
+    })
+  }
+  for (const note of newNotes) activeSkips[note] = now
+  for (const note of clearedNotes) delete activeSkips[note]
+  return { entries, clearedNotes, activeSkips }
 }
 
 /**
@@ -239,6 +348,27 @@ export function checkSupabaseFails(
 }
 
 /**
+ * Supabase env precondition for the checker's own probe and the
+ * published-narratives gatherer: a missing SUPABASE_URL /
+ * SUPABASE_SERVICE_ROLE_KEY is a configuration error, not a Supabase outage
+ * (Ref #346 PR 5). It breaches config_missing and supersedes the old
+ * env-missing skip, while the health probe never runs and the consecutive
+ * probe-failure counter stays exactly as the previous run left it. A
+ * present env reports healthy so a recovered configuration closes with one
+ * condition_cleared.
+ */
+export function checkConfigMissing(
+  input: { envMissing: boolean; error?: unknown },
+): ConditionResult {
+  return {
+    condition: 'config_missing',
+    app: CHECKER_APP,
+    breached: input.envMissing,
+    ...(input.envMissing && input.error !== undefined ? { error: input.error } : {}),
+  }
+}
+
+/**
  * Disk used percent STRICTLY greater than 80 breaches (exactly 80% is fine).
  * Expects a df-style read of a statfs result.
  */
@@ -289,6 +419,8 @@ function breachMessage(result: ConditionResult): string {
       return `pm2 restart_time rose by ${measured} within the last ${RESTART_BURST_WINDOW_MS}ms (threshold: more than ${RESTART_BURST_THRESHOLD})`
     case 'supabase_health_failed':
       return `supabase health probe failed on ${measured} consecutive checker runs (threshold ${SUPABASE_FAIL_THRESHOLD})`
+    case 'config_missing':
+      return 'missing required Supabase env (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)'
     case 'disk_high':
       return `disk used ${measured}% (threshold: more than ${DISK_USED_PERCENT_THRESHOLD}%)`
   }

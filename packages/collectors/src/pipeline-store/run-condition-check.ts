@@ -14,23 +14,30 @@
  * Failure posture: every gatherer failure is caught and turned into a skip
  * (never a breach), the run itself never throws and always exits 0, and
  * the durable state file (last breach state, last-logged times, restart
- * samples, consecutive probe failures) is written atomically; a missing or
- * corrupt file yields a fresh state. Because PM2 apps are often
+ * samples, consecutive probe failures, last-known statuses of the gated
+ * apps and the still-active skip reasons) is written atomically; a missing
+ * or corrupt file yields a fresh state. Because PM2 apps are often
  * intentionally stopped, staleness queries are gated on the related app
- * being `online`, exactly as decided in Ref #346 Q2. For draft_stale the
+ * being `online`, exactly as decided in Ref #346 Q2, and condition_skipped
+ * logs only when a run's skip reasons differ from the persisted set -
+ * repeated stopped runs log nothing, an app coming back online closes its
+ * skip with one condition_cleared carrying condition "<check>_skipped",
+ * and staleness resumes. For draft_stale the
  * same skip rule covers a missing, unreadable or empty local
  * pipeline.sqlite - a broken draft store never becomes a breach. The
  * disk check always runs; the Supabase health probe runs whenever the
- * Supabase env is present - a missing env is a configuration error,
- * recorded as a condition_skipped line that never counts toward the
- * consecutive probe-failure counter.
+ * Supabase env is present. A missing env is a configuration error that
+ * breaches config_missing instead (supersedes the old env-missing skip):
+ * the probe never runs, supabaseConsecutiveFailures is left exactly as the
+ * previous run left it, and no supabase_health_failed line is ever
+ * produced - whatever an older state file still holds.
  */
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { statfs as fsStatfs } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
@@ -40,14 +47,17 @@ import {
   CHECKER_APP,
   DRAFT_APP,
   PUBLISHER_APP,
+  checkConfigMissing,
   checkDisk,
   checkPublishStale,
   checkDraftStale,
   checkRestartBurst,
   checkSupabaseFails,
   planLogEntries,
+  planSkipEntries,
   stalenessGateReason,
   statfsUsedPercent,
+  updateAppStatuses,
   updateRestartSamples,
   type ConditionResult,
   type ConditionState,
@@ -56,20 +66,9 @@ import {
 } from './condition-checks'
 import type { ErrorLogEntry } from './error-log'
 import { appendErrorLog } from './error-log'
-import { DEFAULT_PIPELINE_SQLITE_PATH } from './failure-recovery'
+import { resolvePipelineSqlitePath } from './sqlite-store'
 
 const execFileP = promisify(execFile)
-
-/**
- * Failure-recovery's default plus the PIPELINE_SQLITE_PATH override, with
- * the same resolution the other SQLite-backed runners use: an absolute
- * path wins, a relative one is anchored at the collectors package dir.
- */
-export function resolvePipelineSqlitePath(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = env.PIPELINE_SQLITE_PATH?.trim()
-  if (!configured) return DEFAULT_PIPELINE_SQLITE_PATH
-  return isAbsolute(configured) ? configured : resolve(__dirname, '..', '..', configured)
-}
 
 interface DraftSqliteStatement {
   get(...params: unknown[]): unknown
@@ -103,15 +102,18 @@ function normaliseSqliteTimestamp(value: string): string {
  * Draft staleness reads the local PipelineStore, not Supabase: the
  * editor_drafts data moved off Supabase into the pipeline_editor_drafts
  * table (see editor-draft/supabase-store.ts and sqlite-store.ts). The
- * gatherer opens pipeline.sqlite strictly READ-ONLY - it can never create
- * the file - for a single max(created_at) query, and closes the connection
- * even on failure. There is nothing to measure (missing file, empty table,
- * any read error) rejects: the run records a condition_skipped line rather
- * than breaching on a store it could not read.
+ * gatherer resolves the store path with the shared
+ * resolvePipelineSqlitePath (PIPELINE_SQLITE_PATH override, else the
+ * sqlite-store default) and opens it strictly READ-ONLY - it can never
+ * create the file - for a single max(created_at) query, and closes the
+ * connection even on failure. There is nothing to measure (missing file,
+ * empty table, any read error) rejects: the run records a
+ * condition_skipped line rather than breaching on a store it could not
+ * read.
  */
 export function createDraftCreatedAtGatherer(env: NodeJS.ProcessEnv = process.env): () => Promise<string> {
   return async () => {
-    const dbPath = resolvePipelineSqlitePath(env)
+    const dbPath = resolvePipelineSqlitePath(env.PIPELINE_SQLITE_PATH?.trim() || undefined)
     // Read-only opens do not create files, but checking first keeps a
     // missing store a plain, readable skip instead of a node:sqlite error.
     if (!existsSync(dbPath)) throw new Error(`pipeline sqlite not found at ${dbPath}`)
@@ -147,7 +149,7 @@ export interface ConditionCheckDeps {
   fetchLastPublishedAt?: () => Promise<string | null>
   /** max(created_at) of the local pipeline_editor_drafts table (pipeline.sqlite, opened read-only), normalised to ISO UTC. Rejects when there is nothing to measure (missing file, empty table, read error), which logs a condition_skipped line instead of a draft_stale breach. */
   fetchLastDraftCreatedAt?: () => Promise<string>
-  /** The bounded health probe (createSupabaseHealthProbe); rejects when Supabase is unhealthy. */
+  /** The bounded health probe (createSupabaseHealthProbe); rejects when Supabase is unhealthy. Only consulted when the Supabase env is present: a missing env breaches config_missing and the probe never runs. */
   probe?: () => Promise<void>
   /** Injected for tests. Defaults to fs.statfs. */
   statfs?: (path: string) => Promise<{ blocks: number; bfree: number; bavail: number }>
@@ -208,6 +210,8 @@ async function listPm2Apps(): Promise<Pm2AppSnapshot[] | null> {
 function createSupabaseGatherers(env: NodeJS.ProcessEnv): {
   /** True when SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are absent from `env`. */
   envMissing: boolean
+  /** The requireSupabaseEnv error ("Missing required Supabase env: ..."); set exactly when envMissing is true. */
+  envError?: unknown
   fetchLastPublishedAt: () => Promise<string | null>
   probe: () => Promise<void>
 } {
@@ -219,16 +223,17 @@ function createSupabaseGatherers(env: NodeJS.ProcessEnv): {
     resolved = null
     envError = error
   }
-  // A missing env is a configuration error, not a Supabase failure: it skips
-  // the staleness gatherer and the probe without counting toward the
-  // consecutive-failure counter. Editor drafts are local, so draft_stale does
-  // not depend on this factory at all.
+  // A missing env is a configuration error, not a Supabase failure: the
+  // error rides along so the run breaches config_missing, and the probe
+  // never runs or counts toward the consecutive-failure counter. Editor
+  // drafts are local, so draft_stale does not depend on this factory at all.
   if (resolved === null) {
     const envUnavailable = (): never => {
       throw envError instanceof Error ? envError : new Error('Supabase env unavailable')
     }
     return {
       envMissing: true,
+      envError,
       fetchLastPublishedAt: envUnavailable,
       probe: envUnavailable,
     }
@@ -257,6 +262,26 @@ function isNumberRecord(value: unknown): value is Record<string, number> {
   return Object.values(value).every((entry) => typeof entry === 'number')
 }
 
+/** String map from persisted state; non-string entries are dropped. */
+function parseStringMap(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (value === null || typeof value !== 'object') return out
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === 'string') out[key] = entry
+  }
+  return out
+}
+
+/** Number map from persisted state; non-finite numeric entries are dropped. */
+function parseNumberMap(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (value === null || typeof value !== 'object') return out
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === 'number' && Number.isFinite(entry)) out[key] = entry
+  }
+  return out
+}
+
 function parseState(parsed: unknown): ConditionState {
   const fresh = () => ({ version: 1 as const, samples: [], supabaseConsecutiveFailures: 0, breached: {}, lastLoggedAt: {} })
   if (parsed === null || typeof parsed !== 'object') return fresh()
@@ -276,6 +301,10 @@ function parseState(parsed: unknown): ConditionState {
   if (typeof record.supabaseConsecutiveFailures === 'number') {
     state.supabaseConsecutiveFailures = record.supabaseConsecutiveFailures
   }
+  // Last-known app statuses and active skip notes (both added later; state
+  // files from earlier runs simply yield empty maps, a fresh skip cadence).
+  state.appStatus = parseStringMap(record.appStatus)
+  state.activeSkips = parseNumberMap(record.activeSkips)
   if (record.breached === null || typeof record.breached !== 'object') return state
   const breached = record.breached as Record<string, unknown>
   for (const [key, value] of Object.entries(breached)) {
@@ -333,6 +362,13 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
 
   // Staleness checks run only when their app is online (Q2); a stopped,
   // missing app or unreadable pm2 stays silent except for the skip line.
+  //
+  // Supabase env precondition for this run, collected from two sources: the
+  // env read in createSupabaseGatherers, and any gatherer/probe error whose
+  // message reports the missing env directly. The probe section below
+  // honours it.
+  let configMissingError: unknown
+
   const publisherGate = stalenessGateReason(pm2Apps, PUBLISHER_APP)
   if (publisherGate !== null) {
     skipped.push(`publish_stale: ${publisherGate}`)
@@ -341,6 +377,12 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
       const lastPublishedAt = await (deps.fetchLastPublishedAt ?? gather.fetchLastPublishedAt)()
       results.push(checkPublishStale({ lastPublishedAt }, now))
     } catch (error) {
+      // A gatherer error naming the missing env is the same configuration
+      // failure the probe section reports - it must not count as a probe
+      // failure either.
+      if (configMissingError === undefined && errorText(error).startsWith('Missing required Supabase env')) {
+        configMissingError = error
+      }
       skipped.push(`publish_stale: ${errorText(error)}`)
     }
   }
@@ -363,20 +405,35 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
   }
 
   // The checker's own Supabase liveness: runs even when all apps are stopped.
-  // A missing Supabase env is a configuration error, not a probe failure: it
-  // is recorded as a skip and leaves the consecutive counter unchanged. (An
-  // injected probe - tests - overrides the env gate.)
-  if (gather.envMissing && deps.probe === undefined) {
-    skipped.push('supabase_health_failed: supabase env missing')
-  } else {
-    let probeFailed = false
-    let probeError: unknown
+  // A missing Supabase env is a configuration error, not a probe failure
+  // (Ref #346): it breaches config_missing and supersedes the old
+  // "supabase env missing" skip - the probe never runs, the consecutive
+  // counter is left exactly as the previous run left it, and no
+  // supabase_health_failed result is produced, whatever an older state file
+  // (a breached flag or 3+ recorded failures) might still hold. When the env
+  // is present the config_missing check reports healthy so a recovered
+  // configuration closes with exactly one condition_cleared.
+  if (gather.envMissing && configMissingError === undefined) {
+    configMissingError = gather.envError
+  }
+  let probeFailed = false
+  let probeError: unknown
+  if (configMissingError === undefined) {
     try {
       await (deps.probe ?? gather.probe)()
     } catch (error) {
-      probeFailed = true
-      probeError = error
+      if (errorText(error).startsWith('Missing required Supabase env')) {
+        configMissingError = error
+      } else {
+        probeFailed = true
+        probeError = error
+      }
     }
+  }
+  if (configMissingError !== undefined) {
+    results.push(checkConfigMissing({ envMissing: true, error: configMissingError }))
+  } else {
+    results.push(checkConfigMissing({ envMissing: false }))
     results.push(checkSupabaseFails({
       prevConsecutive: prevState.supabaseConsecutiveFailures ?? 0,
       failed: probeFailed,
@@ -398,17 +455,18 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
     skipped.push(`disk_high: ${errorText(error)}`)
   }
 
-  // One condition_skipped line per run naming every skipped check and why.
-  if (skipped.length > 0) {
-    log({
-      app: CHECKER_APP,
-      kind: 'condition_skipped',
-      error: new Error(`checks skipped: ${skipped.join('; ')}`),
-    })
-  }
+  // Skip lines carry state-transition cadence too: only a change in the
+  // run's skip notes (versus the notes persisted in the state file) logs a
+  // condition_skipped - first sighting of an app not online, a status or
+  // pm2 availability change, a store/statfs failure - so repeated stopped
+  // runs and other persisting skips stay silent. A note that resolves
+  // (app back online, store readable again) clears with one
+  // condition_cleared per note, condition "<check>_skipped". The stdout
+  // summary still lists every skip of every run.
+  const skipPlan = planSkipEntries(prevState.activeSkips, skipped, now)
 
   const plan = planLogEntries(prevState, results, now)
-  for (const entry of plan.entries) {
+  for (const entry of [...skipPlan.entries, ...plan.entries]) {
     try {
       log(entry)
     } catch {
@@ -419,6 +477,8 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
 
   // A failed pm2 jlist must not wipe restart samples: keep the previous
   // baselines so a transient pm2 outage does not reset burst tracking.
+  // Likewise it must not fake app-status transitions, so the last-known
+  // statuses are kept untouched whenever pm2 was unreadable.
   const samples = pm2Apps === null
     ? prevState.samples
     : updateRestartSamples(prevState.samples ?? [], pm2Apps, now)
@@ -428,6 +488,8 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
     supabaseConsecutiveFailures: plan.supabaseConsecutiveFailures ?? prevState.supabaseConsecutiveFailures ?? 0,
     breached: plan.breached,
     lastLoggedAt: plan.lastLoggedAt,
+    appStatus: updateAppStatuses(prevState.appStatus, pm2Apps),
+    activeSkips: skipPlan.activeSkips,
   }
   const stateWritten = writeState(statePath, nextState)
 
@@ -435,18 +497,29 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
     now,
     results,
     skipped,
-    entriesLogged: plan.entries.length + (skipped.length > 0 ? 1 : 0),
+    entriesLogged: plan.entries.length + skipPlan.entries.length,
     stateWritten,
   }
 }
 
-async function main(): Promise<void> {
+export interface ConditionCheckMainDeps {
+  /** Loads the .env chain; main calls it first so every env read below sees it. */
+  loadEnv: () => void
+  run: () => Promise<ConditionCheckSummary>
+  /** Injectable for tests; defaults to process.exit(code). */
+  exit?: (code: number) => void
+}
+
+export async function main(
+  deps: ConditionCheckMainDeps = { loadEnv: loadDotenvChain, run: runConditionCheck },
+): Promise<void> {
   // CLI main path only: the cron needs the .env chain so SUPABASE_URL /
   // SUPABASE_SERVICE_ROLE_KEY reach process.env, like every other run-*.ts
-  // entrypoint. Importing this module (tests) must stay hermetic - the load
-  // never happens inside runConditionCheck.
-  loadDotenvChain()
-  const summary = await runConditionCheck()
+  // entrypoint - always BEFORE the check runs. Importing this module (tests)
+  // must stay hermetic: the load happens only here, never inside
+  // runConditionCheck, and the auto-run below is guarded.
+  deps.loadEnv()
+  const summary = await deps.run()
   // Short stdout trail for the cron log file; the JSONL error log carries
   // the actual condition entries.
   console.log(JSON.stringify({
@@ -457,7 +530,8 @@ async function main(): Promise<void> {
   }))
   // Explicit exit so keep-alive sockets from Supabase cannot hang the cron
   // run; appendErrorLog writes are synchronous, so logging is durable.
-  process.exit(0)
+  const exit = deps.exit ?? ((code: number) => process.exit(code))
+  exit(0)
 }
 
 // Never throws, always exits 0: a broken cron run must not page anyone more

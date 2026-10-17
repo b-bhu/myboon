@@ -65,7 +65,13 @@ const { DatabaseSync } = nodeRequire('node:sqlite') as {
 }
 
 const COLLECTORS_PACKAGE_DIR = resolve(__dirname, '..', '..')
-const DEFAULT_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite')
+
+/**
+ * Default pipeline.sqlite location: `<collectors package>/.data/pipeline.sqlite`.
+ * Exported as the single source of truth so backups, the failure-recovery CLI
+ * and the cron condition checker all resolve the same store.
+ */
+export const DEFAULT_PIPELINE_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite')
 
 // SQLite has a default bound-parameter limit of ~999; chunk large IN-clause
 // batches so callers of this store never have to think about it.
@@ -147,13 +153,22 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ')
 }
 
-function sqlitePath(path = DEFAULT_SQLITE_PATH): string {
+/**
+ * Resolves the caller-supplied pipeline.sqlite path exactly as this store
+ * always has: ':memory:' passes through untouched (test seam), an undefined
+ * path falls back to DEFAULT_PIPELINE_SQLITE_PATH, and a relative path
+ * anchors at the process working directory (matching the '.data/...' env
+ * defaults the other runners use). Exported so read-only consumers - e.g.
+ * the condition checker's draft gatherer - open the same file the store
+ * opens without ever creating it.
+ */
+export function resolvePipelineSqlitePath(path: string = DEFAULT_PIPELINE_SQLITE_PATH): string {
   if (path === ':memory:') return path
   return resolve(process.cwd(), path)
 }
 
 function openPipelineSqlite(path?: string): SqliteDatabase {
-  const dbPath = sqlitePath(path)
+  const dbPath = resolvePipelineSqlitePath(path)
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
   const db = new DatabaseSync(dbPath)
   db.exec('PRAGMA journal_mode = WAL;')

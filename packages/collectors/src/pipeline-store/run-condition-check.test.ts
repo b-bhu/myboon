@@ -12,9 +12,11 @@ import {
   type RestartSample,
 } from './condition-checks'
 import { appendErrorLog } from './error-log'
+import { DEFAULT_PIPELINE_SQLITE_PATH, resolvePipelineSqlitePath } from './sqlite-store'
+import { DEFAULT_PIPELINE_SQLITE_PATH as FAILURE_RECOVERY_PIPELINE_DEFAULT } from './failure-recovery'
 import {
   createDraftCreatedAtGatherer,
-  resolvePipelineSqlitePath,
+  main,
   runConditionCheck,
   type ConditionCheckDeps,
   type ConditionCheckSummary,
@@ -84,7 +86,18 @@ function setup(): Fixture {
   const dir = mkdtempSync(join(tmpdir(), 'condition-check-test-'))
   const statePath = join(dir, 'condition-state.json')
   const logPath = join(dir, 'errors.jsonl')
-  return { dir, statePath, logPath, env: { MYBOON_ERROR_LOG: logPath } }
+  return {
+    dir,
+    statePath,
+    logPath,
+    // Supabase env present by default so the injected default probe runs;
+    // the env-missing tests pass their own bare env instead.
+    env: {
+      MYBOON_ERROR_LOG: logPath,
+      SUPABASE_URL: 'http://127.0.0.1:54321',
+      SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+    },
+  }
 }
 
 function teardown(fixture: Fixture): void {
@@ -165,6 +178,170 @@ test('all apps stopped: staleness checks stay silent, one condition_skipped line
   }
 })
 
+test('missing state file and repeated stopped runs: condition_skipped logs once, state persists statuses and skip notes, stdout still lists every skip', async () => {
+  const fixture = setup()
+  try {
+    // No state file exists yet, so this doubles as the missing-state-file
+    // case: the cadence starts fresh and the first sighting logs.
+    const deps = makeDeps(fixture, {
+      fetchLastPublishedAt: async () => { throw new Error('must not query supabase while app is stopped') },
+      fetchLastDraftCreatedAt: async () => { throw new Error('must not query supabase while app is stopped') },
+    }, pm2Apps('stopped'))
+
+    const first = await runConditionCheck(deps)
+    assert.deepEqual(kinds(fixture), ['condition_skipped'])
+    assert.ok(first.skipped.length >= 2)
+    assert.ok(String(logLines(fixture)[0]?.message).includes('checks skipped:'))
+
+    // The notes persist in the state file keyed by reason, with the
+    // last-known statuses of the two gated apps.
+    let state = readStateFile(fixture)
+    assert.deepEqual(
+      Object.keys(state.activeSkips ?? {}).sort(),
+      ['draft_stale: app status stopped', 'publish_stale: app status stopped'],
+    )
+    assert.equal(state.appStatus?.[PUBLISHER_APP], 'stopped')
+    assert.equal(state.appStatus?.[DRAFT_APP], 'stopped')
+
+    // Runs 2 and 3 with the same stopped fleet: silent in the log, while the
+    // stdout summary still lists every skip of every run.
+    nowMs += 60_000
+    const second = await runConditionCheck(deps)
+    nowMs += 60_000
+    await runConditionCheck(deps)
+    assert.equal(
+      logLines(fixture).filter((line) => line.kind === 'condition_skipped').length,
+      1,
+      'repeated stopped runs must not log again',
+    )
+    assert.deepEqual(
+      [...second.skipped].sort(),
+      ['draft_stale: app status stopped', 'publish_stale: app status stopped'],
+    )
+    // First-seen timestamps persist for the still-active notes.
+    state = readStateFile(fixture)
+    for (const seenAt of Object.values(state.activeSkips ?? {})) {
+      assert.equal(typeof seenAt, 'number')
+      assert.ok((seenAt as number) <= nowMs)
+    }
+  } finally {
+    teardown(fixture)
+  }
+})
+
+test('corrupt skip-cadence fields in the state file are dropped and the cadence starts fresh', async () => {
+  const fixture = setup()
+  try {
+    // A state file with the new fields typed wrong (value shapes the
+    // parser cannot trust) must behave like a file without them.
+    writeFileSync(fixture.statePath, JSON.stringify({
+      version: 1,
+      samples: [],
+      supabaseConsecutiveFailures: 0,
+      breached: {},
+      lastLoggedAt: {},
+      appStatus: { [PUBLISHER_APP]: 42 },
+      activeSkips: { 'publish_stale: app status stopped': 'yes' },
+    }))
+    const deps = makeDeps(fixture, {
+      fetchLastPublishedAt: async () => { throw new Error('must not run') },
+      fetchLastDraftCreatedAt: async () => { throw new Error('must not run') },
+    }, pm2Apps('stopped'))
+
+    await runConditionCheck(deps)
+    assert.deepEqual(kinds(fixture), ['condition_skipped'], 'untrusted cadence fields mean a fresh cadence')
+    nowMs += 60_000
+    await runConditionCheck(deps)
+    assert.equal(logLines(fixture).filter((line) => line.kind === 'condition_skipped').length, 1)
+    // The rewrite stores only well-typed fields.
+    const state = readStateFile(fixture)
+    assert.deepEqual(Object.keys(state.activeSkips ?? {}).sort(), ['draft_stale: app status stopped', 'publish_stale: app status stopped'])
+    assert.equal(state.appStatus?.[PUBLISHER_APP], 'stopped')
+  } finally {
+    teardown(fixture)
+  }
+})
+
+test('online -> stopped logs the skip; back online closes each gate with one clear and staleness resumes', async () => {
+  const fixture = setup()
+  try {
+    // Baseline: everything online and healthy - completely silent.
+    await runConditionCheck(makeDeps(fixture))
+    assert.equal(existsSync(fixture.logPath), false)
+    assert.equal(readStateFile(fixture).appStatus?.[PUBLISHER_APP], 'online')
+
+    // Apps go down: the online -> not-online transition logs one
+    // condition_skipped line naming the reasons.
+    nowMs += 60_000
+    const stoppedDeps = makeDeps(fixture, {
+      fetchLastPublishedAt: async () => { throw new Error('must not run') },
+      fetchLastDraftCreatedAt: async () => { throw new Error('must not run') },
+    }, pm2Apps('stopped'))
+    await runConditionCheck(stoppedDeps)
+    assert.deepEqual(kinds(fixture), ['condition_skipped'])
+    assert.equal(readStateFile(fixture).appStatus?.[PUBLISHER_APP], 'stopped')
+
+    // Repeated stopped runs stay silent.
+    nowMs += 60_000
+    await runConditionCheck(stoppedDeps)
+    assert.deepEqual(kinds(fixture), ['condition_skipped'])
+
+    // Apps come back: exactly one condition_cleared per gated check
+    // (condition "<check>_skipped") and staleness resumes.
+    nowMs += 60_000
+    const back = await runConditionCheck(makeDeps(fixture))
+    const clears = logLines(fixture).filter((line) => line.kind === 'condition_cleared')
+    assert.equal(clears.length, 2)
+    assert.deepEqual(clears.map((line) => line.condition).sort(), ['draft_stale_skipped', 'publish_stale_skipped'])
+    const publishClear = clears.find((line) => line.condition === 'publish_stale_skipped')
+    assert.equal(publishClear?.app, PUBLISHER_APP)
+    assert.ok(String(publishClear?.message).includes('no longer skipped: publish_stale: app status stopped'))
+    const publishResult = back.results.find((result) => result.condition === 'publish_stale')
+    assert.ok(publishResult, 'publish_stale must run again once the app is online')
+    assert.equal(publishResult.breached, false)
+    const draftResult = back.results.find((result) => result.condition === 'draft_stale')
+    assert.ok(draftResult && draftResult.breached === false)
+
+    // The skip state is drained; a further online run logs nothing new.
+    assert.deepEqual(Object.keys(readStateFile(fixture).activeSkips ?? {}), [])
+    nowMs += 60_000
+    await runConditionCheck(makeDeps(fixture))
+    assert.equal(logLines(fixture).filter((line) => line.kind === 'condition_cleared').length, 2, 'no further clears')
+    assert.equal(logLines(fixture).filter((line) => line.kind === 'condition_skipped').length, 1, 'no further skips')
+    assert.equal(readStateFile(fixture).appStatus?.[DRAFT_APP], 'online')
+  } finally {
+    teardown(fixture)
+  }
+})
+
+test('statfs failure: skip logs once and stays silent while it persists, clears when statfs recovers', async () => {
+  const fixture = setup()
+  try {
+    const failing = async () => { throw new Error('statfs exploded') }
+    await runConditionCheck(makeDeps(fixture, { statfs: failing }))
+    assert.deepEqual(kinds(fixture), ['condition_skipped'])
+    assert.deepEqual(Object.keys(readStateFile(fixture).activeSkips ?? {}), ['disk_high: statfs exploded'])
+
+    // Same failure next run: silent (only the changed reasons log).
+    nowMs += 60_000
+    await runConditionCheck(makeDeps(fixture, { statfs: failing }))
+    assert.deepEqual(kinds(fixture), ['condition_skipped'])
+
+    // Statfs recovers: one clear carrying condition <check>_skipped.
+    nowMs += 60_000
+    const recovered = await runConditionCheck(makeDeps(fixture))
+    const clears = logLines(fixture).filter((line) => line.kind === 'condition_cleared')
+    assert.equal(clears.length, 1)
+    assert.equal(clears[0]?.condition, 'disk_high_skipped')
+    assert.equal(clears[0]?.app, 'condition-check')
+    const disk = recovered.results.find((result) => result.condition === 'disk_high')
+    assert.ok(disk && disk.breached === false, 'disk_high must run again after statfs recovers')
+    assert.deepEqual(Object.keys(readStateFile(fixture).activeSkips ?? {}), [])
+  } finally {
+    teardown(fixture)
+  }
+})
+
 test('corrupt state file is tolerated and rewritten as a fresh valid state', async () => {
   const fixture = setup()
   try {
@@ -193,7 +370,10 @@ test('failing pm2: staleness and restart checks skip, supabase and disk still ru
 
     const summary = await runConditionCheck(deps)
 
-    assert.deepEqual(summary.results.map((result) => result.condition), ['supabase_health_failed', 'disk_high'])
+    // The healthy config_missing check rides along (env present); supabase
+    // and disk still ran.
+    assert.deepEqual(summary.results.map((result) => result.condition), ['config_missing', 'supabase_health_failed', 'disk_high'])
+    assert.equal(summary.results.find((result) => result.condition === 'config_missing')?.breached, false)
     const skipped = [...summary.skipped].sort()
     assert.ok(skipped.includes('publish_stale: pm2 jlist unavailable'), JSON.stringify(skipped))
     assert.ok(skipped.includes('draft_stale: pm2 jlist unavailable'), JSON.stringify(skipped))
@@ -279,58 +459,116 @@ test('supabase_health_failed after 3 consecutive bad probes, cleared on success'
     await runConditionCheck(makeDeps(fixture, {}, pm2Apps('stopped')))
     assert.equal(kinds(fixture).includes('condition_cleared'), true, 'recovered probe clears the breach')
     assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 0)
+    // The Supabase env was present throughout: config_missing never breaches.
+    assert.equal(kinds(fixture).includes('config_missing'), false)
   } finally {
     teardown(fixture)
   }
 })
 
-test('missing Supabase env is a configuration error: the probe is skipped, never counted as a failure', async () => {
+test('missing Supabase env: config_missing breaches once, repeats at 30 min, the probe never runs or counts', async () => {
   const fixture = setup()
   try {
-    // fixture.env carries no Supabase credentials and no probe is injected,
-    // so the run reaches the default gatherers on their missing-env path.
-    const deps = makeDeps(fixture)
-    delete deps.probe
-    const summary = await runConditionCheck(deps)
+    // env carries no Supabase credentials and no probe is injected, so the
+    // run reaches the default missing-env path: config_missing, never a
+    // supabase_health_failed result.
+    const deps = makeDeps(fixture, { env: { MYBOON_ERROR_LOG: fixture.logPath }, probe: undefined })
 
-    assert.equal(summary.results.some((result) => result.condition === 'supabase_health_failed'), false)
-    assert.deepEqual(summary.skipped, ['supabase_health_failed: supabase env missing'])
-    assert.deepEqual(kinds(fixture), ['condition_skipped'])
-    assert.ok(String(logLines(fixture)[0]?.message).includes('supabase_health_failed: supabase env missing'))
+    const first = await runConditionCheck(deps)
+    assert.deepEqual(kinds(fixture), ['config_missing'])
+    const entry = logLines(fixture)[0]
+    assert.equal(entry?.app, 'condition-check')
+    assert.equal(String(entry?.message).includes('Missing required Supabase env'), true)
+    assert.equal(readStateFile(fixture).breached['config_missing:condition-check'], true)
+    assert.equal(first.results.some((result) => result.condition === 'supabase_health_failed'), false)
+    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 0, 'the counter is left as the previous state had it')
+
+    // Runs 2 and 3, still inside the 30-min cadence: silent.
+    nowMs += 10 * 60_000
+    await runConditionCheck(deps)
+    nowMs += 10 * 60_000
+    await runConditionCheck(deps)
+    assert.deepEqual(kinds(fixture), ['config_missing'], 'no repeat inside 30 min')
     assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 0)
-    assert.deepEqual(readStateFile(fixture).breached, {})
+
+    // Run 4, 30 min after the first breach: config_missing fires again.
+    nowMs += 10 * 60_000
+    await runConditionCheck(deps)
+    assert.equal(kinds(fixture).filter((kind) => kind === 'config_missing').length, 2)
+    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 0)
   } finally {
     teardown(fixture)
   }
 })
 
-test('missing Supabase env leaves the consecutive-failure counter unchanged', async () => {
+test('missing Supabase env: a stale state file with supabase failures and a breach logs no supabase_health_failed', async () => {
   const fixture = setup()
   try {
-    // A real probe outage left 2 consecutive failures behind; the env then
-    // goes missing: neither run may increment or reset the counter, and the
-    // skip must not log a supabase breach or a recovery (a configuration
-    // error is neither a Supabase failure nor a recovery).
+    // An older run left a 5-failure counter and a still-breached
+    // supabase_health_failed flag behind: an env-missing run must not log any
+    // supabase_health_failed line (nor clear the stale breach), and the
+    // counter must stay exactly as the file held it.
     writeFileSync(fixture.statePath, JSON.stringify({
       version: 1,
       samples: [],
-      supabaseConsecutiveFailures: 2,
-      breached: {},
-      lastLoggedAt: {},
+      supabaseConsecutiveFailures: 5,
+      breached: { 'supabase_health_failed:condition-check': true },
+      lastLoggedAt: { 'supabase_health_failed:condition-check': nowMs - 60 * 60_000 },
     }))
-    const deps = makeDeps(fixture)
-    delete deps.probe
+    const deps = makeDeps(fixture, { env: { MYBOON_ERROR_LOG: fixture.logPath }, probe: undefined })
 
     await runConditionCheck(deps)
-    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 2)
-    nowMs += 60_000
-    await runConditionCheck(deps)
-    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 2)
     assert.equal(kinds(fixture).includes('supabase_health_failed'), false)
-    assert.equal(kinds(fixture).includes('condition_cleared'), false)
+    assert.equal(kinds(fixture).includes('condition_cleared'), false, 'the stale supabase breach stays frozen, it is not cleared')
+    assert.equal(kinds(fixture).filter((kind) => kind === 'config_missing').length, 1)
+    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 5)
+    assert.equal(readStateFile(fixture).breached['config_missing:condition-check'], true)
   } finally {
     teardown(fixture)
   }
+})
+
+test('missing Supabase env restored: exactly one condition_cleared for config_missing', async () => {
+  const fixture = setup()
+  try {
+    const bareEnv: NodeJS.ProcessEnv = { MYBOON_ERROR_LOG: fixture.logPath }
+    const missingDeps = makeDeps(fixture, { env: bareEnv, probe: undefined })
+    await runConditionCheck(missingDeps)
+    nowMs += 60_000
+    await runConditionCheck(missingDeps)
+    assert.deepEqual(kinds(fixture), ['config_missing'])
+    assert.equal(readStateFile(fixture).breached['config_missing:condition-check'], true)
+
+    // Env restored (credentials appear) with the healthy default probe: the
+    // config check reports healthy and closes the breach exactly once.
+    nowMs += 60_000
+    bareEnv.SUPABASE_URL = 'http://127.0.0.1:54321'
+    bareEnv.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
+    const restored = await runConditionCheck(makeDeps(fixture, { env: bareEnv }))
+    assert.equal(restored.results.some((result) => result.condition === 'config_missing' && result.breached), false)
+    assert.equal(kinds(fixture).filter((kind) => kind === 'condition_cleared').length, 1, 'exactly one condition_cleared on recovery')
+    const cleared = logLines(fixture).find((line) => line.kind === 'condition_cleared')
+    assert.equal(cleared?.condition, 'config_missing')
+    assert.equal(readStateFile(fixture).breached['config_missing:condition-check'], undefined)
+    assert.equal(kinds(fixture).filter((kind) => kind === 'config_missing').length, 1, 'no second config_missing line')
+  } finally {
+    teardown(fixture)
+  }
+})
+
+test('main: loadEnv runs before the check run (dotenv chain first) and the run exits 0', async () => {
+  const order: string[] = []
+  const exitCodes: number[] = []
+  await main({
+    loadEnv: () => { order.push('loadEnv') },
+    run: async () => {
+      order.push('run')
+      return { now: 0, results: [], skipped: [], entriesLogged: 0, stateWritten: true }
+    },
+    exit: (code) => { order.push('exit'); exitCodes.push(code) },
+  })
+  assert.deepEqual(order, ['loadEnv', 'run', 'exit'])
+  assert.deepEqual(exitCodes, [0])
 })
 
 test('disk_high: breach once, silent on repeat, clears after recovery; statfs failure skips', async () => {
@@ -400,30 +638,44 @@ test('runConditionCheck never throws when several gatherers fail at once', async
       probe: async () => { throw new Error('down') },
       statfs: async () => { throw new Error('down') },
     }, null)
-    // Every gatherer failing still yields exactly one result: the probe
-    // counts toward the consecutive counter, but the breach needs 3 runs.
+    // Every gatherer failing still yields exactly two results: the healthy
+    // config_missing check (the Supabase env is present here) and the probe
+    // result - which counts toward the consecutive counter, but the breach
+    // needs 3 runs.
     for (let run = 1; run <= 3; run += 1) {
       const summary: ConditionCheckSummary = await runConditionCheck(brokenDeps)
-      assert.equal(summary.results.length, 1)
-      assert.equal(summary.results[0]?.condition, 'supabase_health_failed')
-      assert.equal(summary.results[0]?.breached, run === 3)
-      assert.equal(summary.results[0]?.observed, run)
+      assert.equal(summary.results.length, 2)
+      assert.equal(summary.results[0]?.condition, 'config_missing')
+      assert.equal(summary.results[0]?.breached, false)
+      assert.equal(summary.results[1]?.condition, 'supabase_health_failed')
+      assert.equal(summary.results[1]?.breached, run === 3)
+      assert.equal(summary.results[1]?.observed, run)
       assert.equal(summary.stateWritten, true)
       assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, run)
       nowMs += 60_000
     }
     assert.equal(kinds(fixture).includes('supabase_health_failed'), true)
-    assert.equal(logLines(fixture).filter((line) => line.kind === 'condition_skipped').length, 3)
+    // Skip cadence: the identical skip reasons log condition_skipped once on
+    // first sighting; the two later runs with the same reasons stay silent.
+    assert.equal(logLines(fixture).filter((line) => line.kind === 'condition_skipped').length, 1)
   } finally {
     teardown(fixture)
   }
 })
 
-test('resolvePipelineSqlitePath: PIPELINE_SQLITE_PATH wins, relative paths anchor at the package dir, default reused from failure-recovery', () => {
-  assert.equal(resolvePipelineSqlitePath({}), join(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite'))
-  assert.equal(resolvePipelineSqlitePath({ PIPELINE_SQLITE_PATH: '   ' }), join(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite'))
-  assert.equal(resolvePipelineSqlitePath({ PIPELINE_SQLITE_PATH: '/abs/pipeline.sqlite' }), '/abs/pipeline.sqlite')
-  assert.equal(resolvePipelineSqlitePath({ PIPELINE_SQLITE_PATH: 'nested/pipeline.sqlite' }), join(COLLECTORS_PACKAGE_DIR, 'nested/pipeline.sqlite'))
+test('pipeline sqlite path: resolution lives in sqlite-store (default, absolute override, cwd-relative), shared via failure-recovery', () => {
+  // No path -> the sqlite-store default: an absolute <collectors>/.data/pipeline.sqlite.
+  assert.equal(resolvePipelineSqlitePath(), DEFAULT_PIPELINE_SQLITE_PATH)
+  assert.equal(DEFAULT_PIPELINE_SQLITE_PATH, join(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite'))
+  // failure-recovery re-exports the same constant: one source of truth.
+  assert.equal(FAILURE_RECOVERY_PIPELINE_DEFAULT, DEFAULT_PIPELINE_SQLITE_PATH)
+  // An absolute PIPELINE_SQLITE_PATH passes through untouched, and ':memory:'
+  // keeps its test-seam meaning.
+  assert.equal(resolvePipelineSqlitePath('/abs/pipeline.sqlite'), '/abs/pipeline.sqlite')
+  assert.equal(resolvePipelineSqlitePath(':memory:'), ':memory:')
+  // A relative path anchors at the process working directory, matching the
+  // other runners' '.data/...' env defaults.
+  assert.equal(resolvePipelineSqlitePath('nested/pipeline.sqlite'), resolve(process.cwd(), 'nested/pipeline.sqlite'))
 })
 
 test('draft sqlite gatherer: returns max(created_at), normalised to ISO UTC so Date.parse reads it as UTC', async () => {
@@ -518,9 +770,8 @@ test('draft_stale defaults to the local sqlite gatherer: a real CURRENT_TIMESTAM
     // An all-healthy run is completely silent: not even the log file exists.
     assert.equal(existsSync(fixture.logPath), false, 'an all-healthy run stays silent')
 
-    // Missing store: skip, never breach, never create. fixture.env carries
-    // no Supabase credentials at all, which must not matter: drafts are read
-    // locally now.
+    // Missing store: skip, never breach, never create. The draft read is
+    // local - it never touches the Supabase env or the config_missing check.
     fixture.env.PIPELINE_SQLITE_PATH = join(fixture.dir, 'absent.sqlite')
     const missing = await runConditionCheck({ ...deps })
     assert.equal(missing.results.some((result) => result.condition === 'draft_stale'), false)

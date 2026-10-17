@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
+import { DEFAULT_PIPELINE_SQLITE_PATH } from './sqlite-store'
 import {
   backupNewsStore,
   backupPipelineStore,
@@ -7,6 +8,11 @@ import {
   verifyPipelineBackup,
   type PipelineBackupResult,
 } from './backup'
+
+// The pipeline store path is owned by sqlite-store.ts (same value its own
+// store resolves); re-exported so consumers of failure-recovery keep their
+// import site.
+export { DEFAULT_PIPELINE_SQLITE_PATH }
 
 const nodeRequire = createRequire(__filename)
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
@@ -26,7 +32,6 @@ interface SqliteDatabase {
 }
 
 const COLLECTORS_PACKAGE_DIR = resolve(__dirname, '..', '..')
-export const DEFAULT_PIPELINE_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite')
 export const DEFAULT_NEWS_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'news.sqlite')
 export const DEFAULT_RECOVERY_LIMIT = 100
 export const MAX_RECOVERY_LIMIT = 500
