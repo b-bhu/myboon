@@ -61,6 +61,9 @@ ALTER TABLE managed_knowledge_private.entities
   ADD COLUMN IF NOT EXISTS name_key text
     GENERATED ALWAYS AS (managed_knowledge_private.entity_name_key_v1(name)) STORED;
 
+-- The SECURITY INVOKER fill trigger copies the catalogue carousel flag for linked rows, so the writer role needs this column.
+GRANT SELECT (show_in_carousel) ON public.entities TO myboon_knowledge_owner;
+
 -- The writers (writer_v1, article_writer_v1) keep their INSERT column list and
 -- only pass `binding`; this trigger copies identity into the columns. A row
 -- linked after this migration (catalog_entity_id set and that catalogue row
@@ -72,10 +75,16 @@ ALTER TABLE managed_knowledge_private.entities
 -- trigger runs and hide the binding value.
 CREATE OR REPLACE FUNCTION managed_knowledge_private.entity_fill_columns_v1()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $fill$
-DECLARE catalog public.entities;
+DECLARE catalog record;
 BEGIN
   IF NEW.catalog_entity_id IS NOT NULL THEN
-    SELECT * INTO catalog FROM public.entities WHERE id = NEW.catalog_entity_id;
+    SELECT e.name,e.slug,e.type,e.aliases,e.summary,e.status,e.show_in_carousel,e.metadata,e.updated_at INTO catalog FROM public.entities e WHERE e.id = NEW.catalog_entity_id;
+  ELSE
+    -- A record that was never assigned cannot be dereferenced, so the unlinked
+    -- path fills it from NULLs typed as the public.entities columns.
+    SELECT NULL::text AS name,NULL::text AS slug,NULL::text AS type,NULL::jsonb AS aliases,
+      NULL::text AS summary,NULL::text AS status,NULL::boolean AS show_in_carousel,
+      NULL::jsonb AS metadata,NULL::timestamptz AS updated_at INTO catalog;
   END IF;
   IF NEW.name IS NULL THEN NEW.name := coalesce(catalog.name,NEW.binding->>'name'); END IF;
   -- Writers always send slug and type; a binding without them falls back to a

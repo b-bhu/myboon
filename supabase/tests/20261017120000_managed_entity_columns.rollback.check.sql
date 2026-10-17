@@ -47,6 +47,9 @@ BEGIN
     AND conrelid='managed_knowledge_private.entities'::regclass) THEN
     RAISE EXCEPTION 'rollback left the #337 constraints in place';
   END IF;
+  IF has_column_privilege('myboon_knowledge_owner','public.entities','show_in_carousel','SELECT') THEN
+    RAISE EXCEPTION 'rollback left the show_in_carousel grant on public.entities';
+  END IF;
 
   -- Old context_v1 answers from the stored binding again.
   SELECT v INTO r FROM c337r WHERE k='post_new_row';

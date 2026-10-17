@@ -483,3 +483,6 @@ ALTER TABLE managed_knowledge_private.entities
   DROP COLUMN IF EXISTS metadata,
   DROP COLUMN IF EXISTS updated_at;
 DROP FUNCTION IF EXISTS managed_knowledge_private.entity_name_key_v1(text);
+
+-- The fill trigger that read the catalogue carousel column is gone with its grant.
+REVOKE SELECT (show_in_carousel) ON public.entities FROM myboon_knowledge_owner;

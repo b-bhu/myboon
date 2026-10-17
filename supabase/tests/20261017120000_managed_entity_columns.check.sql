@@ -64,6 +64,9 @@ BEGIN
     AND attnum > 0 AND NOT attisdropped AND attname ~ '^(image|image_url|tag|tags)$') THEN
     RAISE EXCEPTION 'managed entities must not carry image or tag columns';
   END IF;
+  IF NOT has_column_privilege('myboon_knowledge_owner','public.entities','show_in_carousel','SELECT') THEN
+    RAISE EXCEPTION 'the writer role needs SELECT on show_in_carousel: the SECURITY INVOKER fill trigger copies it for linked rows';
+  END IF;
 END
 $columns$;
 
@@ -148,16 +151,21 @@ INSERT INTO c337
 
 -- 6. A row linked AFTER the migration keeps the real catalogue identity: the
 --    fill trigger takes still-NULL columns from the catalogue row, so the
---    binding's catalog-only branch (show_in_carousel:false) does not win.
+--    binding's catalog-only branch (show_in_carousel:false) does not win. The
+--    managed INSERT runs as the production writer role, because the trigger is
+--    SECURITY INVOKER and reads public.entities as the inserting role.
 INSERT INTO public.entities(id,slug,name,type,aliases,summary,status,show_in_carousel,metadata)
   VALUES('00000000-0000-4000-8000-00000000c337','carousel-337','Carousel 337','topic','[]'::jsonb,'carousel catalogue summary','active',true,'{}'::jsonb);
+SET ROLE myboon_knowledge_owner;
 INSERT INTO managed_knowledge_private.entities(id,identity_key,catalog_entity_id,binding,created_operation)
   SELECT e.id,'catalog:' || e.id::text,e.id,
     jsonb_build_object('id',e.id,'slug',e.slug,'name',e.name,'type',e.type,'aliases',e.aliases,
       'summary',e.summary,'status',e.status,'show_in_carousel',false,'metadata',e.metadata,
       'created_at',e.created_at,'updated_at',e.updated_at,'revision','catalog:check337',
-      'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text)
+      'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text),
+    'progression-v2:' || repeat('b',64)
     FROM public.entities e WHERE e.id='00000000-0000-4000-8000-00000000c337';
+RESET ROLE;
 DO $carousel_link$
 DECLARE r record;
 BEGIN
