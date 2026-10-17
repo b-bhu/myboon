@@ -1,6 +1,6 @@
 import { envFlag, loadDotenvChain } from '../pipeline-store/cli-env'
 import { resolve } from 'node:path'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import {
   DEFAULT_NEWS_FEED_INTERVAL_MS,
   positiveInteger,
@@ -56,15 +56,13 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   loadDotenvChain()
-  await runOnce()
-  if (envFlag(process.env.NEWS_FEED_RUN_ONCE)) return
-
-  startIntervalRunner({
+  await runFirstThenInterval({
     label: 'news-feed-ingestor',
     intervalMs: positiveInteger(
       process.env.NEWS_FEED_INTERVAL_MS,
       DEFAULT_NEWS_FEED_INTERVAL_MS,
     ),
+    runOnce: envFlag(process.env.NEWS_FEED_RUN_ONCE),
     run: runOnce,
   })
 }

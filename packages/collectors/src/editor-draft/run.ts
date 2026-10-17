@@ -5,7 +5,7 @@ loadDotenvChain()
 import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import type { PipelineStore } from '../pipeline-store/store'
 import { HermesEditorDraftProvider } from './hermes-editor'
@@ -45,12 +45,10 @@ async function main(): Promise<void> {
   const pipelineStore = new SqlitePipelineStore()
 
   try {
-    await runOnce(supabase, pipelineStore)
-    if (config.runOnce) return
-
-    startIntervalRunner({
+    await runFirstThenInterval({
       label: 'editor-draft',
       intervalMs: config.intervalMs,
+      runOnce: config.runOnce,
       run: () => runOnce(supabase, pipelineStore),
     })
   } finally {

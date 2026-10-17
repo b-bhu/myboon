@@ -192,6 +192,8 @@ export interface RunSharedResearchOptions {
   signal?: AbortSignal
   createRuntime?: (config: SharedResearchRunnerConfig) => SharedResearchRunnerRuntime
   onResult?: (result: SharedResearchRunnerCycleResult) => void
+  /** Interval mode only. Called when a cycle rejects; the schedule then reschedules after intervalMs. */
+  onCycleError?: (error: unknown) => void
   wait?: (ms: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
   createStatusWriter?: (path: string) => ResearchRuntimeStatusWriter
@@ -271,6 +273,10 @@ export function loadSharedResearchRunnerConfig(
     pipelinePath: databasePath(env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite'),
     env,
   })
+}
+
+function defaultOnCycleError(error: unknown): void {
+  process.stderr.write(`[feed-v3-shared-research] cycle failed: ${error instanceof Error ? error.message : 'unknown failure'}\n`)
 }
 
 /** Disabled mode never invokes createRuntime and remains resident until signal. */
@@ -355,10 +361,23 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
       lastReportedControlState = 'running'
       const cycle = runtime.runCycle()
       const outcome = await Promise.race([
-        cycle.then((outcomes) => ({ kind: 'completed' as const, outcomes })),
+        cycle.then(
+          (outcomes) => ({ kind: 'completed' as const, outcomes }),
+          (error) => ({ kind: 'failed' as const, error }),
+        ),
         aborted.then(() => ({ kind: 'aborted' as const })),
       ])
       if (outcome.kind === 'aborted') break
+      if (outcome.kind === 'failed') {
+        // One bad tick (e.g. a Supabase timeout) must not escape the loop and
+        // exit the daemon: report it and reschedule, matching the interval
+        // runners. RUN_ONCE keeps its propagate-and-exit behaviour.
+        if (config.runOnce) throw outcome.error
+        ;(options.onCycleError ?? defaultOnCycleError)(outcome.error)
+        await writeStatus('running')
+        nextCycleAt = now() + config.intervalMs
+        continue
+      }
       options.onResult?.({ kind: 'completed', status: runtime.status, outcomes: outcome.outcomes })
       await writeStatus('running')
       if (config.runOnce) break

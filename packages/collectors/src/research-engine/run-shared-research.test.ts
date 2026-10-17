@@ -822,6 +822,65 @@ test('article runtime checks both storage readers and waits between failed probe
   }
 })
 
+test('a failing cycle is reported via onCycleError and the schedule continues', async () => {
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let cycles = 0
+  let waits = 0
+  const cycleErrors: unknown[] = []
+  const results: string[] = []
+  const live = runtime('active', () => {
+    cycles += 1
+    if (cycles === 1) throw new Error('supabase timeout')
+  })
+  await runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+      FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+      [SHARED_RESEARCH_ENV.intervalMs]: '100',
+    },
+    signal: controller.signal, now: () => current,
+    createRuntime: () => live,
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+    createStatusWriter: () => ({ write: async () => undefined }),
+    onResult: (result) => results.push(result.kind),
+    onCycleError: (error) => cycleErrors.push(error),
+    wait: async (ms) => {
+      current += ms
+      waits += 1
+      if (waits === 2) controller.abort()
+    },
+  })
+  assert.equal(cycles, 2, 'the failed cycle must be retried on the next tick')
+  assert.equal(cycleErrors.length, 1, 'onCycleError must fire exactly once for the failed cycle')
+  assert.equal((cycleErrors[0] as Error).message, 'supabase timeout')
+  assert.deepEqual(results, ['completed'])
+})
+
+test('runOnce keeps a failing shared Research cycle fatal', async () => {
+  let cycles = 0
+  const live = runtime('active', () => {
+    cycles += 1
+    throw new Error('supabase timeout')
+  })
+  await assert.rejects(
+    runSharedResearchLoop({
+      env: {
+        FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+        [SHARED_RESEARCH_ENV.runOnce]: '1',
+      },
+      createRuntime: () => live,
+      createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+      createStatusWriter: () => ({ write: async () => undefined }),
+    }),
+    (error) => error instanceof Error && error.message === 'supabase timeout',
+  )
+  assert.equal(cycles, 1)
+})
+
 function researchWork(
   workId: string,
   depth: ResearchWorkItem['researchDepth'],
