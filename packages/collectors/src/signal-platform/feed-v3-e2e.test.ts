@@ -25,7 +25,7 @@ import {
   type StructuredSynthesisBody,
   type StructuredSynthesisGateway,
 } from '../research-engine'
-import { SIGNAL_SCHEMA_VERSION, type Signal } from './contracts'
+import { packetExecution, SIGNAL_SCHEMA_VERSION, type Signal } from './contracts'
 import { SignalIntakeCoordinator } from './signal-intake'
 import { SqliteSignalPlatformStore } from './sqlite-platform-store'
 import type {
@@ -220,8 +220,8 @@ test('active Signal intake reaches stable entity memory and full replay is idemp
     assert.ok(packet)
     assert.equal(store.getResearchWork(admitted.work.workId)?.status, 'entity_pending')
     assert.equal(store.getResearchWork(admitted.work.workId)?.attemptCount, 2)
-    assert.equal(packet.execution.traceId, admitted.work.traceId)
-    assert.equal(packet.execution.provider, 'fake-provider')
+    assert.equal(packetExecution(packet)?.traceId, admitted.work.traceId)
+    assert.equal(packetExecution(packet)?.provider, 'fake-provider')
     assert.deepEqual(packet.budgetUsed, {
       providerCalls: 1, repairCalls: 0, inputTokens: 321, outputTokens: 87,
       toolCalls: 0, wallTimeMs: 25, budgetExceeded: false, costUsdMicros: null,

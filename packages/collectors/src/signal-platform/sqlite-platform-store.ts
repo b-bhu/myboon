@@ -7,7 +7,7 @@ import { canonicalJson } from './canonical-json'
 import type { ResearchV4RecordKind } from '../research-engine/v4-store'
 import { assertKnownObservationResolution } from '../research-engine/known-observation'
 import { researchRootAssignmentId } from '../research-engine/bounded-followup'
-import { isArticleResearchPacket } from './contracts'
+import { isArticleResearchPacket, packetExecution } from './contracts'
 import type {
   BudgetStorePort, D2ReservationRecord, D2ReservationKey,
 } from '../research-engine/assignment-budget'
@@ -1932,7 +1932,10 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
     this.assertSource(packet.sourceType)
     this.assertPacketLinkage(packet)
     const json = canonicalJson(packet)
-    return this.inImmediateTransaction(() => this.appendResearchPacketInTransaction(packet, json))
+    // Article packets (#341) dropped packet.execution; the work row owns the trace.
+    const traceId = packetExecution(packet)?.traceId ?? this.getResearchWork(packet.workId)?.traceId
+    if (!traceId) throw new Error(`Packet ${packet.packetId} has no trace linkage`)
+    return this.inImmediateTransaction(() => this.appendResearchPacketInTransaction(packet, json, traceId))
   }
 
   private assertPacketLinkage(packet: ResearchPacket): void {
@@ -1946,6 +1949,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
   private appendResearchPacketInTransaction(
     packet: ResearchPacket,
     json: string,
+    traceId: string,
   ): ImmutableAppendResult<ResearchPacket> {
     return this.appendImmutableInTransaction(
       'packet', packet.packetId, json,
@@ -1956,7 +1960,7 @@ export class SqliteSignalPlatformStore implements CanonicalPlatformStore {
         research_contract_version, trace_id, canonical_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [packet.packetId, packet.schemaVersion, packet.workId, packet.signalId, packet.sourceType,
-        packet.researchContractVersion, packet.execution.traceId, json, packet.createdAt],
+        packet.researchContractVersion, traceId, json, packet.createdAt],
       packet,
       [packet.packetId, packet.workId, packet.researchContractVersion],
     )
@@ -2142,7 +2146,8 @@ private appendResearchReadinessInTransaction(
       // not the persisted one.
       this.assertHandoffLinkage(readiness, packet, row)
       const target = handoffTargetStatus(readiness, row, unit.now, unit.retry)
-      const packetResult = this.appendResearchPacketInTransaction(packet, packetJson)
+      const packetResult = this.appendResearchPacketInTransaction(packet, packetJson,
+        packetExecution(packet)?.traceId ?? row.traceId)
       const readinessResult = this.appendResearchReadinessInTransaction(readiness, readinessJson)
       const updated = validateResearchWorkItem({
         ...row,

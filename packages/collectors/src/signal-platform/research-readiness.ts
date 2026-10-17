@@ -2,6 +2,8 @@ import { stableContractId } from './adapters/identity'
 import { canonicalJson } from './canonical-json'
 import { isArticleResearchPacket } from './contracts'
 import type {
+  ArticleResearchPacketV1,
+  ArticleResearchPacketV2,
   FailureCategory,
   ResearchCompletion,
   ResearchPacketV1,
@@ -249,7 +251,8 @@ export function assessResearchReadiness(
       researchContractVersion: work.researchContractVersion, readinessPolicyVersion, packetCompletion: packet.completion,
       sourceCoverage: { sourceUrl: packet.article.sourceUrl, capturedAt: packet.article.capturedAt,
         contentHash: packet.article.contentHash, placementCount: packet.memberships.length },
-      limitations: [...packet.limitations], openQuestions: [...packet.openQuestions], assessedBy, assessedAt, createdAt: assessedAt,
+      limitations: articlePacketStrings(packet, 'limitations'), openQuestions: articlePacketStrings(packet, 'openQuestions'),
+      assessedBy, assessedAt, createdAt: assessedAt,
     }
     if (linkage !== null) {
       return validateResearchReadiness({
@@ -823,6 +826,12 @@ function legacyReadinessPacket(packet: ResearchPacket): ResearchPacketV1 {
     throw new ContractValidationError('researchReadiness.packet', 'article packets require the article readiness branch')
   }
   return packet
+}
+
+/** #341: article packets carry no limitations/openQuestions; saved legacy extras still surface. */
+function articlePacketStrings(packet: ArticleResearchPacketV1 | ArticleResearchPacketV2, key: 'limitations' | 'openQuestions'): string[] {
+  const value = (packet as Record<string, unknown>)[key]
+  return Array.isArray(value) ? [...value as string[]] : []
 }
 
 function measureCoverage(

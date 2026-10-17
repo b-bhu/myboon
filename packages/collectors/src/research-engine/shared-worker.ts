@@ -11,7 +11,7 @@ import type {
   RetrievedEvidence,
   Signal,
 } from '../signal-platform/contracts'
-import { EXECUTION_EVENT_SCHEMA_VERSION, isArticleResearchPacket } from '../signal-platform/contracts'
+import { EXECUTION_EVENT_SCHEMA_VERSION, isArticleResearchPacket, packetExecution } from '../signal-platform/contracts'
 import { stableContractId } from '../signal-platform/adapters/identity'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import { appendErrorLog } from '../pipeline-store/error-log'
@@ -903,7 +903,7 @@ export class SharedResearchWorker {
         assignmentContract,
       })
     }
-    if (!packet?.execution.reusedResult) {
+    if (!packet || !packetExecution(packet)?.reusedResult) {
       packet = await durablePrimarySynthesis({
         store, work: lease.work, policy: v4.synthesisPolicy, saved: packet,
         assignmentPolicy: v4.assignmentPolicy,
@@ -928,8 +928,9 @@ export class SharedResearchWorker {
       })
     }
     const savedBaseline = store.getResearchV4Record<ResearchPacket>('baseline', lease.work.workId, 'packet')
-    if (!savedBaseline && packet.execution.reusedResult && v4.contextReader) {
-      const reused = packet.execution.reusedResult as { packetId?: string }
+    const reuse = packet && packetExecution(packet)?.reusedResult
+    if (!savedBaseline && reuse && v4.contextReader) {
+      const reused = reuse as { packetId?: string }
       const reader = v4.contextReader(signal, lease.work)
       const target = reused.packetId && await reader.attachmentTargetForPacket?.(reused.packetId)
       if (target) packet = { ...packet,
@@ -939,7 +940,7 @@ export class SharedResearchWorker {
       }
     }
     packet = store.putResearchV4Record('baseline', lease.work.workId, 'packet', packet)
-    if (!v4.followup || packet.execution.reusedResult) return packet
+    if (!v4.followup || packetExecution(packet)?.reusedResult) return packet
     if (isArticleResearchPacket(packet)) {
       throw new ArticleResearchHold('incompatible_article_checkpoint',
         'An article packet reached the legacy bounded-followup path; the checkpoint is held rather than reinterpreted as claim/evidence research.')
@@ -1419,25 +1420,26 @@ export class SharedResearchWorker {
   private recordSynthesisSuccess(lease: WorkLease, packet: ResearchPacket, timing: StageTiming): void {
     const finishedAt = packet.createdAt
     const startedAt = subtractMs(finishedAt, packet.budgetUsed.wallTimeMs)
+    const execution = packetExecution(packet)
     this.appendExecutionEvent({
       ...baseExecutionEvent({
         lease, stage: 'synthesis', timing: { ...timing, startedAt }, finishedAt,
-        status: 'succeeded', attempt: packet.execution.attempt,
+        status: 'succeeded', attempt: execution?.attempt ?? lease.work.attemptCount,
         failureCategory: null, discriminator: `packet:${packet.packetId}`,
       }),
       packetId: packet.packetId,
       wallTimeMs: packet.budgetUsed.wallTimeMs,
-      provider: packet.execution.provider,
-      model: packet.execution.model,
-      fallbackProvider: packet.execution.fallbackProvider,
-      fallbackModel: packet.execution.fallbackModel,
-      fallbackUsed: packet.execution.fallbackUsed,
-      configuredPrimaryProvider: packet.execution.configuredPrimaryProvider ?? null,
-      configuredPrimaryModel: packet.execution.configuredPrimaryModel ?? null,
-      fallbackReason: packet.execution.fallbackReason ?? null,
-      outputSchemaValid: packet.execution.outputSchemaValid ?? null,
-      promptVersion: packet.execution.promptVersion,
-      policyVersion: packet.execution.policyVersion,
+      provider: execution?.provider ?? null,
+      model: execution?.model ?? null,
+      fallbackProvider: execution?.fallbackProvider ?? null,
+      fallbackModel: execution?.fallbackModel ?? null,
+      fallbackUsed: execution?.fallbackUsed ?? false,
+      configuredPrimaryProvider: execution?.configuredPrimaryProvider ?? null,
+      configuredPrimaryModel: execution?.configuredPrimaryModel ?? null,
+      fallbackReason: execution?.fallbackReason ?? null,
+      outputSchemaValid: execution?.outputSchemaValid ?? null,
+      promptVersion: execution?.promptVersion ?? this.synthesizer.contractPromptVersion(),
+      policyVersion: execution?.policyVersion ?? lease.work.policyVersion,
       researchContractVersion: packet.researchContractVersion,
       providerCalls: packet.budgetUsed.providerCalls,
       repairCalls: packet.budgetUsed.repairCalls,
@@ -1453,20 +1455,21 @@ export class SharedResearchWorker {
     packet: ResearchPacket,
     readiness: ResearchReadiness,
   ): void {
+    const execution = packetExecution(packet)
     const timing = { startedAt: packet.createdAt, queueWaitMs: 0 }
     this.appendExecutionEvent({
       ...baseExecutionEvent({
         lease, stage: 'synthesis', timing, finishedAt: packet.createdAt,
-        status: 'skipped', attempt: packet.execution.attempt,
+        status: 'skipped', attempt: execution?.attempt ?? lease.work.attemptCount,
         failureCategory: readiness.failureCategory,
         discriminator: `packet_replay:${packet.packetId}`, packetId: packet.packetId,
       }),
-      configuredPrimaryProvider: packet.execution.configuredPrimaryProvider ?? null,
-      configuredPrimaryModel: packet.execution.configuredPrimaryModel ?? null,
-      fallbackReason: packet.execution.fallbackReason ?? null,
-      outputSchemaValid: packet.execution.outputSchemaValid ?? null,
-      promptVersion: packet.execution.promptVersion,
-      policyVersion: packet.execution.policyVersion,
+      configuredPrimaryProvider: execution?.configuredPrimaryProvider ?? null,
+      configuredPrimaryModel: execution?.configuredPrimaryModel ?? null,
+      fallbackReason: execution?.fallbackReason ?? null,
+      outputSchemaValid: execution?.outputSchemaValid ?? null,
+      promptVersion: execution?.promptVersion ?? this.synthesizer.contractPromptVersion(),
+      policyVersion: execution?.policyVersion ?? lease.work.policyVersion,
       researchReadinessId: readiness.readinessId,
       researchReadinessOutcome: readiness.outcome,
       researchReadinessPolicyVersion: readiness.readinessPolicyVersion,

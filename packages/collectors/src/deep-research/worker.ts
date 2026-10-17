@@ -8,7 +8,7 @@ import type {
   RetrievedEvidence,
   Signal,
 } from '../signal-platform/contracts'
-import { EXECUTION_EVENT_SCHEMA_VERSION } from '../signal-platform/contracts'
+import { EXECUTION_EVENT_SCHEMA_VERSION, packetExecution } from '../signal-platform/contracts'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
 import { appendErrorLog } from '../pipeline-store/error-log'
 import type { CanonicalPlatformStore } from '../signal-platform/platform-store'
@@ -389,23 +389,23 @@ export class DeepResearchSideQueueWorker {
   }
 
   private recordPacketEvent(work: ResearchWorkItem, packet: import('../signal-platform/contracts').ResearchPacket): void {
-    const execution = packet.execution
-    const containedStartedAt = typeof execution.containedStartedAt === 'string'
+    const execution = packetExecution(packet)
+    const containedStartedAt = typeof execution?.containedStartedAt === 'string'
       ? execution.containedStartedAt
       : new Date(Date.parse(packet.createdAt) - packet.budgetUsed.wallTimeMs).toISOString()
-    const containedFinishedAt = typeof execution.containedFinishedAt === 'string'
+    const containedFinishedAt = typeof execution?.containedFinishedAt === 'string'
       ? execution.containedFinishedAt
       : packet.createdAt
     this.recordEvent({
       work,
       packet,
       status: 'succeeded',
-      attempt: execution.attempt,
+      attempt: execution?.attempt ?? work.attemptCount,
       failureCategory: null,
       startedAt: containedStartedAt,
       finishedAt: containedFinishedAt,
       wallTimeMs: packet.budgetUsed.wallTimeMs,
-      queueWaitMs: typeof execution.queueWaitMs === 'number' ? execution.queueWaitMs : 0,
+      queueWaitMs: typeof execution?.queueWaitMs === 'number' ? execution.queueWaitMs : 0,
       providerInvoked: packet.budgetUsed.providerCalls > 0,
       budgetExceeded: packet.budgetUsed.budgetExceeded,
     })
@@ -631,7 +631,7 @@ interface DeepExecutionEventInput {
 
 function deepExecutionEvent(input: DeepExecutionEventInput, policy: DeepResearchJobPolicy): ExecutionTraceEvent {
   const packet = input.packet
-  const execution = packet?.execution
+  const execution = packet ? packetExecution(packet) : null
   const budget = packet?.budgetUsed
   const measuredUsage = budget ?? input.measuredUsage
   const event = validateExecutionTraceEvent({

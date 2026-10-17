@@ -5,6 +5,7 @@ import type {
   RetrievedEvidence,
   Signal,
 } from './contracts'
+import { packetExecution } from './contracts'
 import type { CanonicalPlatformStore } from './platform-store'
 import type { TriageDecisionV1 } from './triage-contracts'
 import { redactControlPlaneValue } from './control-plane-format'
@@ -143,10 +144,12 @@ export class CanonicalTraceInspector {
       }
     }
 
+    // Article packets (#341) dropped packet.execution; fall back to the packet's work trace.
+    const traceIdByWork = new Map(workItems.map((work) => [work.workId, work.traceId]))
     const traceIds = [...new Set([
       ...workItems.map((work) => work.traceId),
-      ...packets.map((packet) => packet.execution.traceId),
-    ])]
+      ...packets.map((packet) => packetExecution(packet)?.traceId ?? traceIdByWork.get(packet.workId)),
+    ])].filter((traceId): traceId is string => traceId !== undefined)
     const executionEvents: ExecutionTraceEvent[] = []
     let eventsTruncated = false
     const executionReader = this.executionReaders.get(root.store.sourceType)
