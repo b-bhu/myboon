@@ -1,22 +1,26 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { DEFAULT_NEWS_LANE_SQLITE_PATH, DEFAULT_POLYMARKET_LANE_SQLITE_PATH } from '../lane-store/paths'
 import { formatDeepOrphanAudit, parseDeepOrphanAuditArgs } from './orphan-audit-command'
 
 test('parser defaults to both source-local production databases and accepts one explicit scratch registry', () => {
   const defaults = parseDeepOrphanAuditArgs([], {})
-  assert.deepEqual(defaults.registryPaths, ['.data/news.sqlite', '.data/pipeline.sqlite'])
+  assert.deepEqual(
+    defaults.registryPaths,
+    [DEFAULT_NEWS_LANE_SQLITE_PATH, DEFAULT_POLYMARKET_LANE_SQLITE_PATH],
+  )
   assert.equal(defaults.productionDefault, true)
   assert.deepEqual(defaults.configurationErrors, [
     'temp_roots_not_configured', 'profile_roots_not_configured', 'sandbox_executable_not_configured',
   ])
   const configured = parseDeepOrphanAuditArgs([], {
-    NEWS_SQLITE_PATH: '/run/news.sqlite', PIPELINE_SQLITE_PATH: '/run/pipeline.sqlite',
+    NEWS_SQLITE_PATH: '/run/news-lane.sqlite', PIPELINE_SQLITE_PATH: '/run/polymarket-lane.sqlite',
     FEED_V3_DEEP_RESEARCH_AUDIT_TEMP_ROOTS: '/var/tmp/myboon-deep-workspaces',
     FEED_V3_DEEP_RESEARCH_AUDIT_PROFILE_ROOTS: '/var/tmp/myboon-deep-profiles',
     FEED_V3_DEEP_RESEARCH_WORKER_EXECUTABLE: '/opt/myboon/deep-worker',
     FEED_V3_DEEP_RESEARCH_AUDIT_LIMIT: '25',
   })
-  assert.deepEqual(configured.registryPaths, ['/run/news.sqlite', '/run/pipeline.sqlite'])
+  assert.deepEqual(configured.registryPaths, ['/run/news-lane.sqlite', '/run/polymarket-lane.sqlite'])
   assert.equal(configured.limit, 25)
   assert.deepEqual(configured.configurationErrors, [])
   const scratch = parseDeepOrphanAuditArgs(['--registry', '/tmp/deep.sqlite'])

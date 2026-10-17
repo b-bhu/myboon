@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import type { DeepResearchDiscoverySnapshot, DeepResearchUnregisteredArtifact } from './orphan-discovery'
 import type { DeepResearchOrphanAuditSnapshot } from './sqlite-execution-registry'
 
@@ -82,8 +83,8 @@ export function parseDeepOrphanAuditArgs(
   if (sandboxExecutables.length === 0) configurationErrors.push('sandbox_executable_not_configured')
   return {
     registryPaths: explicitRegistry ? [explicitRegistry] : [
-      env.NEWS_SQLITE_PATH?.trim() || '.data/news.sqlite',
-      env.PIPELINE_SQLITE_PATH?.trim() || '.data/pipeline.sqlite',
+      resolveLaneSqlitePathFromEnv('news', env),
+      resolveLaneSqlitePathFromEnv('polymarket', env),
     ],
     registryRequired: true,
     productionDefault: explicitRegistry === undefined,

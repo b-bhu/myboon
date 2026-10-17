@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { defaultLast30DaysScriptPath } from './researcher'
 import { fetchPolymarketNativeContext } from './market-context'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -66,7 +67,7 @@ async function main(): Promise<void> {
     // polymarket_market_candidates now lives in the local SQLite pipeline
     // store, not Supabase (Supabase's copy is empty post-migration) - do a
     // cheap read against the same store the researcher/data-engineer use.
-    const store = new SqlitePipelineStore()
+    const store = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
     try {
       await store.fetchPendingCandidates({ source: 'polymarket', area: 'markets', limit: 1 })
       return 'read ok'
@@ -78,7 +79,7 @@ async function main(): Promise<void> {
   results.push(await runCheck('local_pipeline_store:candidate_research:read', async () => {
     // polymarket_market_candidate_research likewise moved to the local
     // pipeline store.
-    const store = new SqlitePipelineStore()
+    const store = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
     try {
       await store.fetchResearchByStatus({ source: 'polymarket', area: 'markets', status: 'pending_editor', limit: 1 })
       return 'read ok'

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, resolve } from 'node:path'
+import { dirname } from 'node:path'
+import {
+  DEFAULT_POLYMARKET_LANE_SQLITE_PATH,
+  resolveLaneSqlitePath,
+} from '../lane-store/paths'
 import type { Signal } from '../signal-platform/contracts'
 import { validateSignal } from '../signal-platform/validation'
 import { ImmutableRecordConflictError } from '../signal-platform/platform-store'
@@ -64,8 +68,16 @@ const { DatabaseSync } = nodeRequire('node:sqlite') as {
   DatabaseSync: new (path: string) => SqliteDatabase
 }
 
-const COLLECTORS_PACKAGE_DIR = resolve(__dirname, '..', '..')
-const DEFAULT_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite')
+/** Kept for PR #376: default polymarket lane store file (issue #369 renames). */
+export const DEFAULT_PIPELINE_SQLITE_PATH = DEFAULT_POLYMARKET_LANE_SQLITE_PATH
+
+/**
+ * Resolve a pipeline (polymarket lane) SQLite path through the shared
+ * lane-store helper; retired basenames fail loudly (see #369).
+ */
+export function resolvePipelineSqlitePath(path: string = DEFAULT_PIPELINE_SQLITE_PATH): string {
+  return resolveLaneSqlitePath('polymarket', path)
+}
 
 // SQLite has a default bound-parameter limit of ~999; chunk large IN-clause
 // batches so callers of this store never have to think about it.
@@ -147,13 +159,8 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ')
 }
 
-function sqlitePath(path = DEFAULT_SQLITE_PATH): string {
-  if (path === ':memory:') return path
-  return resolve(process.cwd(), path)
-}
-
-function openPipelineSqlite(path?: string): SqliteDatabase {
-  const dbPath = sqlitePath(path)
+export function openPipelineSqlite(path?: string): SqliteDatabase {
+  const dbPath = resolvePipelineSqlitePath(path)
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
   const db = new DatabaseSync(dbPath)
   db.exec('PRAGMA journal_mode = WAL;')
@@ -162,7 +169,7 @@ function openPipelineSqlite(path?: string): SqliteDatabase {
   return db
 }
 
-function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
+export function ensurePipelineSqliteSchema(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pipeline_watchlist (
       id TEXT PRIMARY KEY,

@@ -16,7 +16,7 @@ test('write-health journal reports current zero coverage and typed failures with
   try {
     const path = join(directory, 'journal.jsonl')
     const journal = new FileSqliteWriteHealthJournal(path, { heartbeatIntervalMs: 1_000 })
-    const storeId = sqliteStoreId(join(directory, 'news.sqlite'))
+    const storeId = sqliteStoreId(join(directory, 'news-lane.sqlite'))
     journal.observeSuccess({ sourceType: 'news', storeId, operation: 'append', observedAt: '2026-08-27T12:00:00.000Z' })
     assert.deepEqual(journal.readCoverage({
       sourceType: 'news', storeId, since: '2026-08-27T11:55:00.000Z', now: '2026-08-27T12:00:01.000Z', staleAfterMs: 60_000,
@@ -39,7 +39,7 @@ test('write-health journal fails closed for missing/stale collectors and ignores
     const path = join(directory, 'journal.jsonl')
     const reader = new FileSqliteWriteHealthJournal(path, { readOnly: true })
     assert.equal(reader.readCoverage({
-      sourceType: 'news', storeId: sqliteStoreId(join(directory, 'news.sqlite')),
+      sourceType: 'news', storeId: sqliteStoreId(join(directory, 'news-lane.sqlite')),
       since: '2026-08-27T11:00:00.000Z', now: '2026-08-27T12:00:00.000Z', staleAfterMs: 60_000,
     }).availability, 'unavailable')
     assert.equal(classifySqliteWriteFailure(new Error('validation failed')), null)
@@ -50,7 +50,7 @@ test('write-health journal fails closed for missing/stale collectors and ignores
 test('canonical store exposes current journal coverage through read-only observability', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'write-health-store-'))
   try {
-    const databasePath = join(directory, 'news.sqlite')
+    const databasePath = join(directory, 'news-lane.sqlite')
     const journalPath = join(directory, 'journal.jsonl')
     const writer = new FileSqliteWriteHealthJournal(journalPath)
     const store = new SqliteSignalPlatformStore(databasePath, 'news', { writeHealthJournal: writer })
@@ -71,7 +71,7 @@ test('canonical store exposes current journal coverage through read-only observa
 test('one physical pipeline heartbeat covers every logical adapter on that SQLite file', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'write-health-pipeline-'))
   try {
-    const databasePath = join(directory, 'pipeline.sqlite')
+    const databasePath = join(directory, 'polymarket-lane.sqlite')
     const journalPath = join(directory, 'journal.jsonl')
     const writer = new FileSqliteWriteHealthJournal(journalPath)
     new SqliteSignalPlatformStore(databasePath, 'polymarket', { writeHealthJournal: writer }).close()

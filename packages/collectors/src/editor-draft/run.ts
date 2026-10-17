@@ -10,6 +10,7 @@ import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import type { PipelineStore } from '../pipeline-store/store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { editorDraftCliConfig, runEditorDraft } from './runner'
 
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const pipelineStore = new SqlitePipelineStore()
+  const pipelineStore = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
 
   try {
     await runFirstThenInterval({

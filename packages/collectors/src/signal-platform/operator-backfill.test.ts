@@ -64,7 +64,7 @@ function reader(items: LegacySignalBackfillCandidate[]): LegacySignalBackfillRea
 
 test('legacy backfill is bounded, filtered, dry-run by default, and performs no writes', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'backfill-dry-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const intake = createActiveSourceTriageIntake({
       store, mode: 'observe', providerHealth: 'unavailable', clock: () => NOW,
@@ -99,7 +99,7 @@ test('legacy backfill is bounded, filtered, dry-run by default, and performs no 
 
 test('composite continuation advances same-timestamp batches and replays each page idempotently', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'backfill-cursor-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const bucket = { available: 100, reservedAvailable: 10, utilization: 0 }
     const intake = createActiveSourceTriageIntake({
@@ -149,7 +149,7 @@ test('composite continuation advances same-timestamp batches and replays each pa
 
 test('apply is backup-gated, appends Signal+triage only, and repeated apply is idempotent', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'backfill-apply-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const intake = createActiveSourceTriageIntake({
       store, mode: 'observe', providerHealth: 'unavailable', clock: () => NOW,

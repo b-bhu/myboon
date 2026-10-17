@@ -46,7 +46,7 @@ async function seedHeld(store: SqliteSignalPlatformStore, signal: Signal): Promi
 
 test('held backlog: dry-run counts and writes nothing; apply closes >3d, releases the rest; rerun is a no-op', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'held-backlog-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     await seedHeld(store, news('old', '2026-10-10T00:00:00.000Z'))
     await seedHeld(store, news('fresh', '2026-10-15T00:00:00.000Z'))
@@ -78,7 +78,7 @@ test('held backlog: dry-run counts and writes nothing; apply closes >3d, release
 
 test('held backlog dry-run works on a read-only store', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'held-backlog-ro-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   const writer = new SqliteSignalPlatformStore(path, 'news')
   await seedHeld(writer, news('old', '2026-10-01T00:00:00.000Z'))
   writer.close()
@@ -93,7 +93,7 @@ test('held backlog dry-run works on a read-only store', async () => {
 
 test('live re-ingest of a stored v1 hold resumes the saved decision: no new decision, no id collision (#339 review)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'held-backlog-replay-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const signal = news('held', '2026-10-15T00:00:00.000Z')
     await seedHeld(store, signal)
@@ -111,7 +111,7 @@ test('live re-ingest of a stored v1 hold resumes the saved decision: no new deci
 
 test('held backlog pages past the page size and reports the age basis (#349 re-review)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'held-backlog-pages-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     for (let index = 0; index < 7; index += 1) {
       const day = String(8 + index).padStart(2, '0')
@@ -133,7 +133,7 @@ test('held backlog pages past the page size and reports the age basis (#349 re-r
 
 test('held backlog counts only verified saves', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'held-backlog-verify-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     await seedHeld(store, news('fresh', '2026-10-15T00:00:00.000Z'))
     // Simulate a save that never lands: the read-back finds no release decision.
@@ -150,7 +150,7 @@ test('held backlog counts only verified saves', async () => {
 
 test('close-all clean start: dry-run closes = held, releases = 0; apply closes everything, paged and verified (#339)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'held-backlog-close-all-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     await seedHeld(store, news('old', '2026-10-01T00:00:00.000Z'))
     await seedHeld(store, news('fresh', '2026-10-15T00:00:00.000Z'))

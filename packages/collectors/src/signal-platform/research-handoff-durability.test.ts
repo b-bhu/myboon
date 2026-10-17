@@ -119,7 +119,7 @@ function fence(overrides: Partial<ResearchWorkItem> = {}): {
 
 function open(): { store: SqliteSignalPlatformStore, path: string, close(): void } {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-handoff-'))
-  const path = join(directory, 'news.sqlite')
+  const path = join(directory, 'news-lane.sqlite')
   const store = new SqliteSignalPlatformStore(path, 'news')
   return { store, path, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }) } }
 }

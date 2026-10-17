@@ -196,7 +196,7 @@ test('post mapping retains social kind and untrusted hints in raw candidate data
 
 test('canonical observe hook is replay-safe and preserves same-URL material changes as distinct Signals', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'news-live-signals-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   const store = new SqliteNewsStore(path)
   const canonical = new SqliteSignalPlatformStore(path, 'news')
   const signalIntake = new CanonicalSourceSignalIntake({ mode: 'observe', store: canonical })

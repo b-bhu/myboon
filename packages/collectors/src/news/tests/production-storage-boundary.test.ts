@@ -8,7 +8,7 @@ const repoRoot = resolve(__dirname, '..', '..', '..', '..', '..')
 test('PM2 keeps both scouts and registers only the shared Research/Entity owners', () => {
   const ecosystem = readFileSync(resolve(repoRoot, 'ecosystem.config.cjs'), 'utf8')
 
-  assert.match(ecosystem, /name: 'myboon-news-feed-ingestor'[\s\S]*?script: 'src\/news\/run-news-feed-ingestor\.ts'[\s\S]*?NEWS_SQLITE_PATH: '\.data\/news\.sqlite'/)
+  assert.match(ecosystem, /name: 'myboon-news-feed-ingestor'[\s\S]*?script: 'src\/news\/run-news-feed-ingestor\.ts'[\s\S]*?NEWS_SQLITE_PATH: '\.data\/news-lane\.sqlite'/)
   assert.match(ecosystem, /name: 'myboon-polymarket-data-engineer'[\s\S]*?script: 'src\/polymarket\/run-markets-data-engineer\.ts'/)
   assert.match(ecosystem, /name: 'myboon-feed-v3-research'[\s\S]*?script: 'src\/research-engine\/run-shared-research\.ts'/)
   assert.match(ecosystem, /name: 'myboon-feed-v3-entity-manager'[\s\S]*?script: 'src\/entity-manager\/run-shared\.ts'/)

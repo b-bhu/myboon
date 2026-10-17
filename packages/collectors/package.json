@@ -85,7 +85,9 @@
     "feed-v3:validate-deep-containment": "tsx src/deep-research/run-containment-artifact-validator.ts",
     "feed-v3:verify-deep-egress-policy": "tsx src/deep-research/run-egress-policy-verification.ts",
     "feed-v3:runtime-control": "tsx src/signal-platform/run-runtime-control.ts",
-    "feed-v3:verify-drain": "tsx src/signal-platform/run-verify-drain.ts"
+    "feed-v3:verify-drain": "tsx src/signal-platform/run-verify-drain.ts",
+    "lane-store:seed-watchlist": "tsx src/lane-store/run-seed-watchlist.ts",
+    "test:lane-store": "tsx --test src/lane-store/*.test.ts"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",

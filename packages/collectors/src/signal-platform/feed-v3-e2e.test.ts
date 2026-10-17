@@ -158,7 +158,7 @@ function triageInput(item: Signal): RulesFirstTriageInput {
 
 test('active Signal intake reaches stable entity memory and full replay is idempotent', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'feed-v3-e2e-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const item = signal()
     const policy = createPriorityPolicyV1({

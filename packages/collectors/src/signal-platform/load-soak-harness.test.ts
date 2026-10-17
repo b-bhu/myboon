@@ -50,8 +50,8 @@ test('dry-run creates no files and both fixture and output refuse configured pro
   const dir = mkdtempSync(join(tmpdir(), 'load-soak-plan-'))
   const fixture = join(dir, 'fixture.sqlite')
   const output = join(dir, 'artifact.json')
-  const newsProduction = join(dir, 'news.sqlite')
-  const pipelineProduction = join(dir, 'pipeline.sqlite')
+  const newsProduction = join(dir, 'news-lane.sqlite')
+  const pipelineProduction = join(dir, 'polymarket-lane.sqlite')
   try {
     const command = parseLoadSoakArgs(['--fixture-db', fixture, '--output', output])
     const result = await runLoadSoakCommand({
@@ -96,7 +96,7 @@ test('executed 2x fixture run exercises queue transitions and emits a redacted p
       '--min-completion-ratio', '1',
     ])
     const result = await runLoadSoakCommand({
-      command, protectedDatabasePaths: [join(dir, 'news.sqlite'), join(dir, 'pipeline.sqlite')],
+      command, protectedDatabasePaths: [join(dir, 'news-lane.sqlite'), join(dir, 'polymarket-lane.sqlite')],
       generatedAt: GENERATED_AT,
       runtime: simulatedRuntime(),
     })

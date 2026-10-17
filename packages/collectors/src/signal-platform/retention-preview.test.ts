@@ -87,8 +87,8 @@ function seedDeepRegistry(path: string, tempPath: string): void {
 
 test('retention preview inventories only cutoff terminal rows and redacts deep paths and entity data', () => {
   const dir = mkdtempSync(join(tmpdir(), 'retention-preview-'))
-  const newsPath = join(dir, 'news.sqlite')
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   const registryPath = join(dir, 'deep.sqlite')
   const tempArtifact = join(dir, 'deep-temp')
   mkdirSync(tempArtifact)
@@ -185,9 +185,9 @@ test('missing databases and absent tables are reported without creating files or
 
 test('CLI requires an explicit cutoff, supports news/pipeline/both, and exposes no mutation flag', () => {
   assert.deepEqual(parseRetentionPreviewArgs([
-    '--before', BEFORE, '--store', 'pipeline', '--limit', '7', '--pipeline-db', '/tmp/pipeline.sqlite',
+    '--before', BEFORE, '--store', 'pipeline', '--limit', '7', '--pipeline-db', '/tmp/polymarket-lane.sqlite',
   ]), {
-    store: 'pipeline', before: BEFORE, sampleLimit: 7, pipelinePath: '/tmp/pipeline.sqlite',
+    store: 'pipeline', before: BEFORE, sampleLimit: 7, pipelinePath: '/tmp/polymarket-lane.sqlite',
   })
   assert.throws(() => parseRetentionPreviewArgs([]), /--before is required/)
   assert.throws(() => parseRetentionPreviewArgs(['--before', BEFORE, '--store', 'invalid']), /news, pipeline, or both/)
@@ -197,8 +197,8 @@ test('CLI requires an explicit cutoff, supports news/pipeline/both, and exposes 
 
 test('CLI composition emits bounded both-store JSON without creating missing databases', () => {
   const dir = mkdtempSync(join(tmpdir(), 'retention-cli-'))
-  const newsPath = join(dir, 'news.sqlite')
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   seedOperationalDatabase(newsPath, 'news')
   try {
     const parsed = JSON.parse(runRetentionPreviewCli([

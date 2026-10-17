@@ -296,8 +296,8 @@ function seed(
 
 test('source-local News/Polymarket flow isolates canon outages, replays stably, and consolidates market stories', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-source-e2e-'))
-  const newsPath = join(directory, 'news.sqlite')
-  const pipelinePath = join(directory, 'pipeline.sqlite')
+  const newsPath = join(directory, 'news-lane.sqlite')
+  const pipelinePath = join(directory, 'polymarket-lane.sqlite')
   const news = seed(newsPath, 'news', 'news-source')
   seed(pipelinePath, 'polymarket', 'poly-source')
   const database = new FakeCanonicalSupabase()
@@ -405,7 +405,7 @@ test('source-local News/Polymarket flow isolates canon outages, replays stably, 
 
 test('Market Calendar and X canonical packets share the registered pipeline store and replay stably', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-calendar-x-e2e-'))
-  const pipelinePath = join(directory, 'pipeline.sqlite')
+  const pipelinePath = join(directory, 'polymarket-lane.sqlite')
   const calendar = seed(pipelinePath, 'market_calendar', 'calendar-source')
   const social = seed(pipelinePath, 'x', 'x-source')
   const database = new FakeCanonicalSupabase()

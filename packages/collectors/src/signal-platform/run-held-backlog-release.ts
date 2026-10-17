@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { packageScriptArgs } from '../cli-args'
 import { backupNewsStore, backupPipelineStore, verifyNewsBackup, verifyPipelineBackup } from '../pipeline-store/backup'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { releaseHeldBacklog, type HeldBacklogReport } from './held-backlog-release'
 import { loadFeedV3RuntimeConfig } from './runtime-config'
 import { SqliteSignalPlatformStore } from './sqlite-platform-store'
@@ -15,11 +16,6 @@ import { SqliteSignalPlatformStore } from './sqlite-platform-store'
 loadDotenvChain()
 const PACKAGE_DIR = resolve(__dirname, '..', '..')
 
-function databasePath(value: string | undefined, fallback: string): string {
-  const configured = value?.trim() || fallback
-  return isAbsolute(configured) ? configured : resolve(PACKAGE_DIR, configured)
-}
-
 async function main(): Promise<void> {
   const args = packageScriptArgs(process.argv.slice(2))
   const unknown = args.filter((arg) => arg !== '--apply' && arg !== '--close-all')
@@ -28,8 +24,8 @@ async function main(): Promise<void> {
   const closeAll = args.includes('--close-all')
   const now = new Date().toISOString()
   const sources = [
-    ['news', databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')],
-    ['polymarket', databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')],
+    ['news', resolveLaneSqlitePathFromEnv('news', process.env, { baseDir: PACKAGE_DIR })],
+    ['polymarket', resolveLaneSqlitePathFromEnv('polymarket', process.env, { baseDir: PACKAGE_DIR })],
   ] as const
   for (const [source, path] of sources) if (!existsSync(path)) throw new Error(`${source} SQLite database does not exist at configured path`)
   if (apply) {

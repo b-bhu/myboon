@@ -9,6 +9,7 @@ import {
 import { envFlag, loadDotenvChain, positiveInteger } from '../pipeline-store/cli-env'
 import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
+import { resolveLaneSqlitePath } from '../lane-store/paths'
 import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
 import type { ExecutionEventAppendResult } from '../signal-platform/execution-ledger'
@@ -448,10 +449,12 @@ function sourceDatabasePath(
   source: Signal['sourceType'],
   env: Readonly<Record<string, string | undefined>>,
 ): string {
-  const configured = source === 'news'
-    ? env.NEWS_SQLITE_PATH ?? '.data/news.sqlite'
-    : env.PIPELINE_SQLITE_PATH ?? '.data/pipeline.sqlite'
-  return configuredPath(configured)
+  const lane = source === 'news' ? 'news' as const : 'polymarket' as const
+  return resolveLaneSqlitePath(
+    lane,
+    env[lane === 'news' ? 'NEWS_SQLITE_PATH' : 'PIPELINE_SQLITE_PATH'],
+    { baseDir: PACKAGE_DIR },
+  )
 }
 
 function configuredPath(value: string): string {

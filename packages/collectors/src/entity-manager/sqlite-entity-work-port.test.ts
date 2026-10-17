@@ -19,7 +19,7 @@ import { SqliteEntityPacketWorkPort } from './sqlite-entity-work-port'
 
 test('SQLite Entity work port reads the canonical packet and delegates fenced lease operations', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'entity-work-port-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     store.appendSignal(operatorSignal('news', 'entity'))
     store.admitResearchWork(operatorWork('news', 'entity', { status: 'entity_pending' }))
@@ -52,7 +52,7 @@ test('SQLite Entity work port reads the canonical packet and delegates fenced le
 
 test('the concrete port returns the saved readiness plus the linkage it can be validated against', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'entity-handoff-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     // An attributed partial packet, the Ethena shape: valid, useful, and partial.
     const signal = operatorSignal('news', 'handoff')
@@ -121,7 +121,7 @@ test('the concrete port returns the saved readiness plus the linkage it can be v
 
 test('the concrete port reports no readiness for a packet saved before the decision existed', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'entity-handoff-legacy-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     store.appendSignal(operatorSignal('news', 'legacy'))
     store.admitResearchWork(operatorWork('news', 'legacy', { status: 'entity_pending' }))

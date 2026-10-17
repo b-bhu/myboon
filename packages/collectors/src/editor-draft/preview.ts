@@ -4,6 +4,7 @@ loadDotenvChain()
 
 import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const pipelineStore = new SqlitePipelineStore()
+  const pipelineStore = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
   try {
     const store = new SupabaseEditorDraftStore(
       supabase,

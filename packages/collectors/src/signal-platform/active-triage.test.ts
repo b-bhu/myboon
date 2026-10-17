@@ -76,7 +76,7 @@ test('source fact builders are deterministic, conservative, and do not mutate Si
 
 test('active rules-first composition admits work and local capacity observes it', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'active-triage-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const intake = createActiveSourceTriageIntake({
       store,
@@ -99,7 +99,7 @@ test('active rules-first composition admits work and local capacity observes it'
 
 test('Signal remains durable when capacity/triage composition fails after observation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'active-triage-failure-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const intake = createActiveSourceTriageIntake({
       store, providerHealth: 'healthy', clock: () => NOW,
@@ -149,7 +149,7 @@ test('unsupported standard depth is routed to the researcher at light, never def
 
 test('a later bounded cycle retries retained untriaged Signals without a source re-observation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'active-triage-retry-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   let capacityCalls = 0
   try {
     const intake = createActiveSourceTriageIntake({
@@ -178,7 +178,7 @@ test('a later bounded cycle retries retained untriaged Signals without a source 
 
 test('classifier is ignored unless explicitly enabled and enabled-without-port fails closed', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'active-triage-classifier-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   let calls = 0
   const classifier = { classify: async () => {
     calls += 1
@@ -205,7 +205,7 @@ test('classifier is ignored unless explicitly enabled and enabled-without-port f
 
 test('depth-deferred backlog report counts only retired-hold signals without research work (#339)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'active-depth-backlog-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     assert.deepEqual(store.depthDeferredBacklog(), { signals: 0, oldestObservedAt: null, newestObservedAt: null })
     const intake = createActiveSourceTriageIntake({ store, capacity: { snapshot: () => openCapacity() }, providerHealth: 'healthy', clock: () => NOW })

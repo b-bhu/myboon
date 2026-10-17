@@ -105,7 +105,7 @@ export class FileSqliteWriteHealthJournal implements SqliteWriteHealthJournalPor
     try {
       if (statSync(this.path).size > MAX_JOURNAL_BYTES) return unavailable('SQLite write-health journal exceeds its read bound')
       const storeId = digest(input.storeId)
-      // SQLite health is physical-store scoped. One pipeline.sqlite heartbeat
+      // SQLite health is physical-store scoped. One polymarket-lane.sqlite heartbeat
       // covers its Polymarket, Calendar, and X logical adapters, while each
       // event retains source attribution for incident tracing.
       const rows = readFileSync(this.path, 'utf8').split(/\r?\n/).filter(Boolean).map(parseEvent)

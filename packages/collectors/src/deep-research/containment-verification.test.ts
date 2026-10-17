@@ -30,7 +30,7 @@ test('containment verifier emits only a redacted proof artifact and never enable
   const dir = mkdtempSync(join(tmpdir(), 'deep-containment-verifier-'))
   const command = parseDeepContainmentVerificationArgs([
     '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'registry.sqlite'), '--artifact', join(dir, 'report.json'),
-  ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
+  ], { NEWS_SQLITE_PATH: join(dir, 'news-lane.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'polymarket-lane.sqlite') })
   const expected: DeepContainmentVerificationOutcome = {
     fixture: 'descendant-timeout-v1',
     executedAt: '2026-08-26T00:00:00.000Z', systemdAvailable: true, timeoutObserved: true,
@@ -56,7 +56,7 @@ test('containment verifier emits only a redacted proof artifact and never enable
 
 test('containment verifier performs zero execution or artifact writes for protected or existing targets', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'deep-containment-safety-'))
-  const newsPath = join(dir, 'news.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
   const existingArtifact = join(dir, 'existing.json')
   writeFileSync(existingArtifact, 'do not replace')
   let executions = 0
@@ -69,11 +69,11 @@ test('containment verifier performs zero execution or artifact writes for protec
   try {
     const protectedCommand = parseDeepContainmentVerificationArgs([
       '--apply', '--fixture', 'descendant-timeout-v1', '--registry', newsPath, '--artifact', join(dir, 'report.json'),
-    ], { NEWS_SQLITE_PATH: newsPath, PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
+    ], { NEWS_SQLITE_PATH: newsPath, PIPELINE_SQLITE_PATH: join(dir, 'polymarket-lane.sqlite') })
     await assert.rejects(runDeepContainmentVerification(protectedCommand, dependencies), /protected/)
     const existingCommand = parseDeepContainmentVerificationArgs([
       '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'scratch.sqlite'), '--artifact', existingArtifact,
-    ], { NEWS_SQLITE_PATH: newsPath, PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
+    ], { NEWS_SQLITE_PATH: newsPath, PIPELINE_SQLITE_PATH: join(dir, 'polymarket-lane.sqlite') })
     await assert.rejects(runDeepContainmentVerification(existingCommand, dependencies), /already exists/)
     assert.equal(executions, 0)
     assert.equal(writes, 0)
@@ -85,7 +85,7 @@ test('containment artifact publication is no-replace even if a target appears af
   const artifactPath = join(dir, 'report.json')
   const command = parseDeepContainmentVerificationArgs([
     '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'scratch.sqlite'), '--artifact', artifactPath,
-  ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
+  ], { NEWS_SQLITE_PATH: join(dir, 'news-lane.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'polymarket-lane.sqlite') })
   const expected: DeepContainmentVerificationOutcome = {
     fixture: 'descendant-timeout-v1',
     executedAt: '2026-08-26T00:00:00.000Z', systemdAvailable: true, timeoutObserved: true,
@@ -106,7 +106,7 @@ test('containment artifact is published mode-0600 after a successful explicit sc
   const artifactPath = join(dir, 'report.json')
   const command = parseDeepContainmentVerificationArgs([
     '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'scratch.sqlite'), '--artifact', artifactPath,
-  ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
+  ], { NEWS_SQLITE_PATH: join(dir, 'news-lane.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'polymarket-lane.sqlite') })
   const expected: DeepContainmentVerificationOutcome = {
     fixture: 'descendant-timeout-v1',
     executedAt: '2026-08-26T00:00:00.000Z', systemdAvailable: true, timeoutObserved: true,
@@ -127,7 +127,7 @@ test('containment verifier refuses to publish when fixture identity changes duri
   const command = parseDeepContainmentVerificationArgs([
     '--apply', '--fixture', 'descendant-timeout-v1', '--registry', join(dir, 'scratch.sqlite'),
     '--artifact', join(dir, 'artifact.json'),
-  ], { NEWS_SQLITE_PATH: join(dir, 'news.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'pipeline.sqlite') })
+  ], { NEWS_SQLITE_PATH: join(dir, 'news-lane.sqlite'), PIPELINE_SQLITE_PATH: join(dir, 'polymarket-lane.sqlite') })
   const expected: DeepContainmentVerificationOutcome = {
     fixture: 'descendant-timeout-v1', executedAt: '2026-08-26T00:00:00.000Z',
     systemdAvailable: true, timeoutObserved: true, descendantUnitInactive: true,

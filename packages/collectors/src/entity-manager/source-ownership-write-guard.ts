@@ -1,10 +1,11 @@
-import { isAbsolute, resolve } from 'node:path'
+import { resolve } from 'node:path'
+import { resolveLaneSqlitePath } from '../lane-store/paths'
 import { requireSourceOwnership } from '../signal-platform/source-ownership'
 import type { EntityMemoryStore } from './types'
 
 export function legacyEntitySourcePath(source: 'news' | 'polymarket', env: Readonly<Record<string,string | undefined>> = process.env): string {
-  const path = source === 'news' ? env.NEWS_SQLITE_PATH ?? '.data/news.sqlite' : env.PIPELINE_SQLITE_PATH ?? '.data/pipeline.sqlite'
-  return isAbsolute(path) ? path : resolve(__dirname,'..','..',path)
+  const configured = source === 'news' ? env.NEWS_SQLITE_PATH : env.PIPELINE_SQLITE_PATH
+  return resolveLaneSqlitePath(source, configured, { baseDir: resolve(__dirname, '..', '..') })
 }
 
 export function legacyEntityWriteGuard(source: 'news' | 'polymarket', env: Readonly<Record<string,string | undefined>> = process.env): () => void {

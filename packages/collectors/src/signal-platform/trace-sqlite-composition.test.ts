@@ -10,8 +10,8 @@ import { inspectSqliteTrace } from './trace-sqlite-composition'
 
 test('trace composition finds Calendar/X while isolating a corrupt News database', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'feed-v3-trace-partial-'))
-  const newsPath = join(dir, 'news.sqlite')
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   writeFileSync(newsPath, 'not a sqlite database')
   const calendar = new SqliteSignalPlatformStore(pipelinePath, 'market_calendar')
   const ledger = new SqliteExecutionLedger(pipelinePath)

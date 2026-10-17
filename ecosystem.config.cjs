@@ -196,7 +196,7 @@ module.exports = {
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
-        NEWS_SQLITE_PATH: '.data/news.sqlite',
+        NEWS_SQLITE_PATH: '.data/news-lane.sqlite',
         ...HERMES_ENV,
         ...COLLECTOR_OWNERSHIP_ENV,
         NEWS_FEED_RUN_ONCE: '0',
