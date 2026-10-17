@@ -10,6 +10,7 @@ import {
   deriveProgressionAttemptDigest,
   deriveProgressionOperationId,
   ProgressionProcessor,
+  type ProgressionPlanFreshness,
   type ProgressionPlanMetadata,
   type ProgressionProcessInput,
 } from './progression-processor'
@@ -716,4 +717,58 @@ test('operation identity is stable per work while item identities remain determi
   assert.notEqual(operationId, deriveProgressionOperationId('work-2'))
   assert.match(deriveManagedItemId('operation-1', 'draft-a'), /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   assert.notEqual(deriveManagedItemId('operation-1', 'draft-a'), deriveManagedItemId('operation-2', 'draft-a'))
+})
+
+test('a plan carrying an old entity revision is re-planned, not dead-lettered', async () => {
+  // #337 PR-A swaps every managed entity revision string exactly once. A plan
+  // checkpointed before the swap carries the old digest; its hold must not
+  // block a new attempt that carries the post-swap revision.
+  const oldEntityRevision = `managed:1:${'a'.repeat(64)}`
+  const newEntityRevision = `managed:1:${'f'.repeat(64)}`
+  const plannedRevisions = {
+    'resolved-candidate-entity-a': oldEntityRevision,
+    'resolved-candidate-entity-b': 'entity-revision-b',
+    'existing-item-uuid': 'item-revision-8',
+  }
+  const store = new InMemoryKnowledgeOperationStore({ leaseTtlMs: 60_000 })
+  for (const [targetId, revision] of Object.entries(plannedRevisions)) store.setTargetRevision(targetId, revision)
+  const processor = createProcessor(store)
+  const staleMissingDependency = (plan: { targetRevisions: Record<string, string> }): Promise<ProgressionPlanFreshness> =>
+    Promise.resolve(plan.targetRevisions['resolved-candidate-entity-a'] === oldEntityRevision
+      ? { current: false, reason: 'Entity target revision changed after planning', missingDependency: 'target_revalidation' }
+      : { current: true, reason: '', missingDependency: '' })
+
+  let staleProposals = 0
+  const stale = await processor.process(processInput({
+    metadata: { ...metadata, targetRevisions: plannedRevisions },
+    checkPlanFreshness: staleMissingDependency,
+    proposeOutcome: async () => { staleProposals += 1; return applyOutcome() },
+  }))
+  assert.equal(stale.kind, 'held')
+  if (stale.kind !== 'held') assert.fail('expected held result')
+  assert.equal(stale.receipt.status, 'held')
+  assert.equal(stale.receipt.missingDependency, 'target_revalidation')
+  assert.equal(stale.alreadyAccepted, false)
+  assert.deepEqual(store.committedEffects(OPERATION_ID), [])
+  assert.equal(await store.findReceipt(OPERATION_ID), null)
+  assert.equal(staleProposals, 1)
+
+  store.setTargetRevision('resolved-candidate-entity-a', newEntityRevision)
+  const currentRevisions = { ...plannedRevisions, 'resolved-candidate-entity-a': newEntityRevision }
+  let freshProposals = 0
+  const replanned = await processor.process(processInput({
+    metadata: { ...metadata, targetRevisions: currentRevisions },
+    proposeOutcome: async () => { freshProposals += 1; return applyOutcome() },
+    checkPlanFreshness: (plan) => Promise.resolve(plan.targetRevisions['resolved-candidate-entity-a'] === newEntityRevision
+      ? { current: true, reason: '', missingDependency: '' }
+      : { current: false, reason: 'Entity target revision changed after planning', missingDependency: 'target_revalidation' }),
+  }))
+  assert.equal(replanned.kind, 'accepted')
+  if (replanned.kind !== 'accepted') assert.fail('expected accepted result')
+  assert.equal(freshProposals, 1)
+  assert.equal(replanned.receipt.status, 'accepted')
+  assert.equal(replanned.alreadyAccepted, false)
+  assert.deepEqual((await store.findSavedPlanHistory(OPERATION_ID)).map((saved) => saved.revision), [1, 2])
+  assert.equal((await store.findHoldHistory(OPERATION_ID)).length, 1)
+  assert.equal(store.committedEffects(OPERATION_ID).length, 3)
 })
