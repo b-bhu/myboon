@@ -62,28 +62,40 @@ ALTER TABLE managed_knowledge_private.entities
     GENERATED ALWAYS AS (managed_knowledge_private.entity_name_key_v1(name)) STORED;
 
 -- The writers (writer_v1, article_writer_v1) keep their INSERT column list and
--- only pass `binding`; this trigger copies identity into the columns. The
--- columns deliberately have no DEFAULTs: a default would be applied before
--- this BEFORE trigger runs and hide the binding value.
+-- only pass `binding`; this trigger copies identity into the columns. A row
+-- linked after this migration (catalog_entity_id set and that catalogue row
+-- present) takes each still-NULL column from the catalogue row instead, the
+-- same source the one-time initialization UPDATE uses, so its real carousel
+-- flag and summary survive the binding's catalog-only branch
+-- (show_in_carousel:false). Every other row fills from `binding`. The columns
+-- deliberately have no DEFAULTs: a default would be applied before this BEFORE
+-- trigger runs and hide the binding value.
 CREATE OR REPLACE FUNCTION managed_knowledge_private.entity_fill_columns_v1()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $fill$
+DECLARE catalog public.entities;
 BEGIN
-  IF NEW.name IS NULL THEN NEW.name := NEW.binding->>'name'; END IF;
+  IF NEW.catalog_entity_id IS NOT NULL THEN
+    SELECT * INTO catalog FROM public.entities WHERE id = NEW.catalog_entity_id;
+  END IF;
+  IF NEW.name IS NULL THEN NEW.name := coalesce(catalog.name,NEW.binding->>'name'); END IF;
   -- Writers always send slug and type; a binding without them falls back to a
-  -- slug derived from the name and the 'unclassified' kind instead of failing.
-  IF NEW.slug IS NULL THEN NEW.slug := coalesce(NEW.binding->>'slug',btrim(regexp_replace(lower(NEW.name),'[^a-z0-9]+','-','g'),'-')); END IF;
-  IF NEW.type IS NULL THEN NEW.type := coalesce(NEW.binding->>'type','unclassified'); END IF;
-  IF NEW.aliases IS NULL THEN NEW.aliases := coalesce(NEW.binding->'aliases','[]'::jsonb); END IF;
-  IF NEW.summary IS NULL THEN NEW.summary := NEW.binding->>'summary'; END IF;
-  IF NEW.status IS NULL THEN NEW.status := coalesce(NEW.binding->>'status','active'); END IF;
+  -- slug derived from the name and the 'unclassified' kind instead of failing,
+  -- and an empty derived slug (a non-ASCII name) becomes 'entity-'||id.
+  IF NEW.slug IS NULL THEN
+    NEW.slug := coalesce(catalog.slug,NEW.binding->>'slug',nullif(btrim(regexp_replace(lower(NEW.name),'[^a-z0-9]+','-','g'),'-'),''),'entity-' || replace(NEW.id::text,'-',''));
+  END IF;
+  IF NEW.type IS NULL THEN NEW.type := coalesce(catalog.type,NEW.binding->>'type','unclassified'); END IF;
+  IF NEW.aliases IS NULL THEN NEW.aliases := coalesce(catalog.aliases,nullif(NEW.binding->'aliases','null'::jsonb),'[]'::jsonb); END IF;
+  IF NEW.summary IS NULL THEN NEW.summary := coalesce(catalog.summary,NEW.binding->>'summary'); END IF;
+  IF NEW.status IS NULL THEN NEW.status := coalesce(catalog.status,NEW.binding->>'status','active'); END IF;
   IF NEW.show_in_carousel IS NULL THEN
-    NEW.show_in_carousel := CASE WHEN jsonb_typeof(NEW.binding->'show_in_carousel') = 'boolean'
-      THEN (NEW.binding->>'show_in_carousel')::boolean ELSE false END;
+    NEW.show_in_carousel := coalesce(catalog.show_in_carousel,CASE WHEN jsonb_typeof(NEW.binding->'show_in_carousel') = 'boolean'
+      THEN (NEW.binding->>'show_in_carousel')::boolean ELSE false END);
   END IF;
   IF NEW.metadata IS NULL THEN
-    NEW.metadata := CASE WHEN jsonb_typeof(NEW.binding->'metadata') = 'object' THEN NEW.binding->'metadata' ELSE '{}'::jsonb END;
+    NEW.metadata := coalesce(catalog.metadata,CASE WHEN jsonb_typeof(NEW.binding->'metadata') = 'object' THEN NEW.binding->'metadata' ELSE '{}'::jsonb END);
   END IF;
-  IF NEW.updated_at IS NULL THEN NEW.updated_at := clock_timestamp(); END IF;
+  IF NEW.updated_at IS NULL THEN NEW.updated_at := coalesce(catalog.updated_at,clock_timestamp()); END IF;
   RETURN NEW;
 END
 $fill$;
@@ -109,9 +121,9 @@ FROM public.entities catalog
 WHERE own.name IS NULL AND own.catalog_entity_id = catalog.id;
 UPDATE managed_knowledge_private.entities
 SET name = binding->>'name',
-    slug = coalesce(binding->>'slug',btrim(regexp_replace(lower(binding->>'name'),'[^a-z0-9]+','-','g'),'-')),
+    slug = coalesce(binding->>'slug',nullif(btrim(regexp_replace(lower(binding->>'name'),'[^a-z0-9]+','-','g'),'-'),''),'entity-' || replace(id::text,'-','')),
     type = coalesce(binding->>'type','unclassified'),
-    aliases = coalesce(binding->'aliases','[]'::jsonb), summary = binding->>'summary',
+    aliases = coalesce(nullif(binding->'aliases','null'::jsonb),'[]'::jsonb), summary = binding->>'summary',
     status = coalesce(binding->>'status','active'),
     show_in_carousel = CASE WHEN jsonb_typeof(binding->'show_in_carousel') = 'boolean'
       THEN (binding->>'show_in_carousel')::boolean ELSE false END,

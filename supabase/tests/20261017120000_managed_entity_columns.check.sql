@@ -146,7 +146,81 @@ $revision$;
 INSERT INTO c337
   SELECT 'managed_revision',to_jsonb(current_setting('myboon.check_337_new_revision'));
 
--- 6. The readers answer from the columns, not the stored binding or the
+-- 6. A row linked AFTER the migration keeps the real catalogue identity: the
+--    fill trigger takes still-NULL columns from the catalogue row, so the
+--    binding's catalog-only branch (show_in_carousel:false) does not win.
+INSERT INTO public.entities(id,slug,name,type,aliases,summary,status,show_in_carousel,metadata)
+  VALUES('00000000-0000-4000-8000-00000000c337','carousel-337','Carousel 337','topic','[]'::jsonb,'carousel catalogue summary','active',true,'{}'::jsonb);
+INSERT INTO managed_knowledge_private.entities(id,identity_key,catalog_entity_id,binding,created_operation)
+  SELECT e.id,'catalog:' || e.id::text,e.id,
+    jsonb_build_object('id',e.id,'slug',e.slug,'name',e.name,'type',e.type,'aliases',e.aliases,
+      'summary',e.summary,'status',e.status,'show_in_carousel',false,'metadata',e.metadata,
+      'created_at',e.created_at,'updated_at',e.updated_at,'revision','catalog:check337',
+      'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text)
+    FROM public.entities e WHERE e.id='00000000-0000-4000-8000-00000000c337';
+DO $carousel_link$
+DECLARE r record;
+BEGIN
+  SELECT * INTO r FROM managed_knowledge_private.entities WHERE id='00000000-0000-4000-8000-00000000c337';
+  IF r.name IS DISTINCT FROM 'Carousel 337' OR r.slug IS DISTINCT FROM 'carousel-337' OR r.type IS DISTINCT FROM 'topic'
+    OR r.aliases IS DISTINCT FROM '[]'::jsonb OR r.summary IS DISTINCT FROM 'carousel catalogue summary'
+    OR r.status IS DISTINCT FROM 'active' OR r.show_in_carousel IS NOT TRUE OR r.metadata IS DISTINCT FROM '{}'::jsonb
+    OR r.updated_at IS DISTINCT FROM (SELECT updated_at FROM public.entities WHERE id='00000000-0000-4000-8000-00000000c337') THEN
+    RAISE EXCEPTION 'a row linked after the migration must take the catalogue identity (carousel flag included): %',to_jsonb(r);
+  END IF;
+END
+$carousel_link$;
+
+-- 7. A JSON null aliases binding stores []; any other non-array value stays
+--    untouched for the CHECK to reject.
+INSERT INTO managed_knowledge_private.entities(id,identity_key,catalog_entity_id,binding,created_operation)
+  VALUES('00000000-0000-4000-8000-000000002337','article:topic:null-aliases-337',NULL,
+    '{"name":"Null Aliases 337","slug":"null-aliases-337","type":"topic","aliases":null}'::jsonb,
+    'progression-v2:' || repeat('b',64));
+DO $null_aliases$
+DECLARE r record;
+BEGIN
+  SELECT * INTO r FROM managed_knowledge_private.entities WHERE id='00000000-0000-4000-8000-000000002337';
+  IF r.aliases IS DISTINCT FROM '[]'::jsonb THEN
+    RAISE EXCEPTION 'a JSON null aliases binding must store []: %',r.aliases;
+  END IF;
+END
+$null_aliases$;
+
+-- 8. A non-array aliases binding (a JSON string) is rejected by
+--    managed_entities_aliases_array.
+DO $string_aliases$
+DECLARE rejected boolean := false;
+BEGIN
+  BEGIN
+    INSERT INTO managed_knowledge_private.entities(id,identity_key,catalog_entity_id,binding,created_operation)
+      VALUES('00000000-0000-4000-8000-00000000d337','article:topic:not-array-337',NULL,
+        '{"name":"Not Array 337","slug":"not-array-337","type":"topic","aliases":"not-an-array"}'::jsonb,
+        'progression-v2:' || repeat('b',64));
+  EXCEPTION WHEN check_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN
+    RAISE EXCEPTION 'a non-array aliases binding must fail with check_violation on managed_entities_aliases_array';
+  END IF;
+END
+$string_aliases$;
+
+-- 9. A binding whose derived ASCII slug is empty (a non-ASCII name) falls back
+--    to 'entity-' || id without dashes.
+INSERT INTO managed_knowledge_private.entities(id,identity_key,catalog_entity_id,binding,created_operation)
+  VALUES('00000000-0000-4000-8000-000000001337','article:topic:greek-337',NULL,
+    '{"name":"Ελλάδα","type":"topic","aliases":[]}'::jsonb,'progression-v2:' || repeat('b',64));
+DO $greek_slug$
+DECLARE r record;
+BEGIN
+  SELECT * INTO r FROM managed_knowledge_private.entities WHERE id='00000000-0000-4000-8000-000000001337';
+  IF r.slug IS DISTINCT FROM 'entity-' || replace('00000000-0000-4000-8000-000000001337'::text,'-','') THEN
+    RAISE EXCEPTION 'a non-ASCII name without a slug must fall back to entity-<id without dashes>: %',r.slug;
+  END IF;
+END
+$greek_slug$;
+
+-- 10. The readers answer from the columns, not the stored binding or the
 --    public catalogue: give the linked row a column-only summary first.
 UPDATE managed_knowledge_private.entities SET summary='column summary 337' WHERE id='00000000-0000-4000-8000-00000000e337';
 SET SESSION AUTHORIZATION myboon_v4_research;
