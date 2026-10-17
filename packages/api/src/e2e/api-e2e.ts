@@ -453,3 +453,5 @@ run().catch((err) => {
   console.error('E2E crashed:', err)
   process.exit(1)
 })
+
+export {}
