@@ -1224,3 +1224,23 @@ test('a failing artifact link is absorbed and synthesis proceeds without backgro
     producer.close()
   }
 })
+
+// #343 CTO review follow-up: the shared worker validates the article placement
+// floor environment at startup, so a bad value fails loudly before any run.
+test('shared worker startup rejects an invalid article placement link floor environment value', () => {
+  const fx = fixture('news')
+  try {
+    const previous = process.env.ARTICLE_PLACEMENT_LINK_FLOOR
+    try {
+      process.env.ARTICLE_PLACEMENT_LINK_FLOOR = '2'
+      assert.throws(
+        () => new SharedResearchWorker(workerOptions([fx.store])),
+        (error: unknown) => error instanceof SharedResearchWorkerConfigurationError
+          && /Invalid ARTICLE_PLACEMENT_LINK_FLOOR="2": expected a number between 0 and 1\./.test(error.message),
+      )
+    } finally {
+      if (previous === undefined) delete process.env.ARTICLE_PLACEMENT_LINK_FLOOR
+      else process.env.ARTICLE_PLACEMENT_LINK_FLOOR = previous
+    }
+  } finally { fx.close() }
+})

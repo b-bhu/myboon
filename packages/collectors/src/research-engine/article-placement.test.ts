@@ -3,7 +3,10 @@ import test from 'node:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ArticleResearchHold, prepareArticlePlacement } from './article-placement'
+import {
+  ArticleResearchHold, ARTICLE_PLACEMENT_LINK_FLOOR_ENV, ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV,
+  parseArticlePlacementConfidenceFloors, prepareArticlePlacement,
+} from './article-placement'
 import { v4ClassificationResult } from './v4-test-fixtures'
 import { managedFixture } from '../entity-manager/managed-v4.test-support'
 import { createConfiguredClassificationRuntime } from '../inference-gateway/classification-configuration'
@@ -425,16 +428,17 @@ test('#308 flag on with Jev results gives v2 jev decisions with model', async ()
   assert.equal(requests.at(-1)!.decisionVersion, ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION)
 })
 
-test('#308 flag on with a Hermes result records provenance without probabilities', async () => {
-  const { gateway } = fallbackGateway({ hermes: () => true })
-  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'BlackRock added Bitcoin.', context: context(), useHermesFallbackVersions: true })
-  const placement = result.memberships[0].placement
-  assert.equal(placement.provider, 'hermes'); assert.equal(placement.choice, 'bitcoin')
-  assert.equal('probabilities' in placement, false); assert.equal('confidence' in placement, false)
-  if (placement.provider === 'hermes') { assert.equal(placement.fallbackReason, 'provider_billing'); assert.equal(placement.model, 'glm-5.3-flash') }
-  assert.equal(result.memberships[1].placement.choice, 'related')
-  assert.equal(result.memberships[0].relationshipDecision?.choice, 'direct_continuation')
-  assert.equal(result.novelty.choice, 'new_information')
+// #343 change 2: a Hermes result has no numeric confidence, so it now counts
+// as below the primary-placement floor; this provenance dispatch rejects with
+// entity_resolution_uncertain instead of recording Hermes placement provenance.
+test('#308 flag on with a Hermes result holds without a confidence score', async () => {
+  const { gateway, requests } = fallbackGateway({ hermes: () => true })
+  await assert.rejects(
+    prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'BlackRock added Bitcoin.', context: context(), useHermesFallbackVersions: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /no confidence score \(provider hermes\)/.test(error.message),
+  )
+  assert.equal(requests[0].decisionVersion, ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION)
 })
 
 test('#308 Hermes uncertain placement and novelty hold instead of saving a default', async () => {
@@ -456,6 +460,8 @@ type BatchAnswerOverrides = {
   relationshipRaw?: (state: { entities: Array<{ id: string }> }) => unknown
   /** Resolves the relationship batch dispatch as a Hermes fallback result carrying these targets. */
   relationshipHermes?: (state: { entities: Array<{ id: string }> }) => Array<{ entityId: string, relationship: string, priorItemId: string | null }>
+  /** Resolves the catalogue batch dispatch as a Hermes fallback result (no Jev answers). */
+  catalogueHermes?: boolean
 }
 
 // Mocked gateway whose batched answers are decoded through the real registry
@@ -473,6 +479,16 @@ function batchedGateway(options: BatchAnswerOverrides = {}) {
         const planned = options.catalogue?.(state) ?? {
           entityId: 'bitcoin', disposition: 'selected' as const,
           dispositions: { bitcoin: 'not_related', blackrock: 'related' } as Record<string, 'related' | 'not_related' | 'uncertain'>,
+        }
+        // A Hermes fallback result carries a validated decision value with no
+        // Jev answers, decoded through the real batch fallback validator.
+        if (options.catalogueHermes === true) {
+          const decoded = articleCatalogueBatchDefinition(undefined, { articleHermesFallback: true }).validateHermes!(
+            { entityId: planned.entityId ?? planned.disposition, dispositions: planned.dispositions }, validated.value,
+          )
+          assert.equal(decoded.valid, true)
+          if (!decoded.valid) throw new Error('unreachable')
+          return { ...v4ClassificationResult(decoded.value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers: null, actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash', fallbackUsed: true, fallbackReason: 'provider_billing' } as ClassificationResult<Value>
         }
         const answers = {
           placement: answer(planned.entityId ?? planned.disposition),
@@ -795,7 +811,8 @@ test('#308 an uncertain Jev story relationship still passes through placement un
 // confidence floors. A related candidate must be mentioned in the article
 // (title plus captured text) by name or alias; a scored Jev decision below the
 // floor holds the article as uncertain instead of saving it as certain, and a
-// Hermes fallback decision carries no score and is not floored.
+// decision without a numeric confidence score — for example a Hermes fallback
+// decision — counts as below the floor and holds the article as uncertain too.
 
 /** A Jev Choice with a tunable confidence; the two probabilities sum to 1. */
 const floorAnswer = (key: string, confidence: number): JevAnswer => ({ type: 'choice', choice: key, confidence, probabilities: { [key]: confidence, alternative: 1 - confidence } })
@@ -957,4 +974,121 @@ test('#343 a custom primaryPlacement floor accepts the 0.44 placement', async ()
   const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'floor-custom', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), confidenceFloors: { primaryPlacement: 0.4 } })
   assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
   assert.equal(requests.some((request) => request.workload.endsWith('novelty')), true)
+})
+
+// #343 CTO review follow-up: Hermes / no-score decisions count as below the
+// floor, the floors are env-configurable, and mention rejections are logged.
+
+// A Hermes fallback result has no numeric confidence score; the primary
+// placement floor must hold it as uncertain on both routes.
+test('#343 a Hermes primary placement without a confidence score holds on both routes', async () => {
+  const hold = (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+    && /no confidence score \(provider hermes\)/.test(error.message)
+  const single = fallbackGateway({ hermes: () => true })
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: single.gateway, stableDecisionKey: 'no-score-single', signal, sourceText: 'BlackRock added Bitcoin.', context: context(), useHermesFallbackVersions: true }),
+    hold,
+  )
+  const batched = batchedGateway({ catalogueHermes: true })
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: batched.gateway, stableDecisionKey: 'no-score-batched', signal, sourceText: 'BlackRock added Bitcoin.', context: batchedContext(), useBatching: true, useHermesFallbackVersions: true }),
+    hold,
+  )
+})
+
+// A Hermes relationship that links a valid prior item carries no score either;
+// the prior-item link floor holds it on both routes.
+test('#343 a Hermes prior-item link without a confidence score holds', async () => {
+  const hold = (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+    && /no confidence score \(provider hermes\)/.test(error.message)
+  // Jev confirms the placement (.95); only the relationship dispatch is Hermes.
+  const single = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    let value: unknown; let answers: Record<string, JevAnswer> | null
+    if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: answer('bitcoin') } }
+    else if (request.workload.endsWith('story_relationship')) {
+      value = { relationship: 'direct_continuation', priorItemId: 'bitcoin-0' }
+      answers = null
+      return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers, actualProvider: 'ollama-cloud', actualModel: 'glm-5.3-flash', fallbackUsed: true, fallbackReason: 'provider_billing' } as ClassificationResult<Value>
+    }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  const linkContext = () => { const c = context(); c.candidates = c.candidates.slice(0, 1); return c }
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: single, stableDecisionKey: 'link-no-score-single', signal, sourceText: 'Bitcoin continues the earlier development.', context: linkContext(), useHermesFallbackVersions: true }),
+    hold,
+  )
+  const batched = batchedGateway({
+    relationshipHermes: (state) => state.entities.map((entity) => ({ entityId: entity.id, relationship: 'direct_continuation', priorItemId: `${entity.id}-0` })),
+  })
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: batched.gateway, stableDecisionKey: 'link-no-score-batched', signal, sourceText: 'Bitcoin added $1.5 billion in new holdings.', context: batchedContext(), useBatching: true, useHermesFallbackVersions: true }),
+    hold,
+  )
+})
+
+test('#343 parseArticlePlacementConfidenceFloors reads env values, defaults and rejects loudly', () => {
+  assert.deepEqual(parseArticlePlacementConfidenceFloors({}), { primaryPlacement: 0.6, priorItemLink: 0.5 })
+  assert.deepEqual(parseArticlePlacementConfidenceFloors({ ARTICLE_PLACEMENT_PRIMARY_FLOOR: '  ', ARTICLE_PLACEMENT_LINK_FLOOR: '' }), { primaryPlacement: 0.6, priorItemLink: 0.5 })
+  assert.deepEqual(parseArticlePlacementConfidenceFloors({ [ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV]: '0.7', [ARTICLE_PLACEMENT_LINK_FLOOR_ENV]: '0.45' }), { primaryPlacement: 0.7, priorItemLink: 0.45 })
+  assert.deepEqual(parseArticlePlacementConfidenceFloors({ [ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV]: ' 0.25 ' }), { primaryPlacement: 0.25, priorItemLink: 0.5 })
+  for (const bad of ['abc', '1.5', '-0.1', 'NaN', '0x1', '1e-1']) {
+    assert.throws(
+      () => parseArticlePlacementConfidenceFloors({ [ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV]: bad }),
+      (error: unknown) => error instanceof Error && error.message === `Invalid ${ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV}=${JSON.stringify(bad)}: expected a number between 0 and 1.`,
+    )
+  }
+  assert.throws(
+    () => parseArticlePlacementConfidenceFloors({ [ARTICLE_PLACEMENT_LINK_FLOOR_ENV]: '1.5' }),
+    (error: unknown) => error instanceof Error && error.message === `Invalid ${ARTICLE_PLACEMENT_LINK_FLOOR_ENV}="1.5": expected a number between 0 and 1.`,
+  )
+  assert.deepEqual(parseArticlePlacementConfidenceFloors({ [ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV]: '0', [ARTICLE_PLACEMENT_LINK_FLOOR_ENV]: '1' }), { primaryPlacement: 0, priorItemLink: 1 })
+})
+
+test('#343 prepareArticlePlacement reads the floor environment and per-call overrides win', async () => {
+  const previous = process.env.ARTICLE_PLACEMENT_PRIMARY_FLOOR
+  try {
+    // The env floor 0.4 accepts the 0.44 placement the 0.6 default holds.
+    process.env.ARTICLE_PLACEMENT_PRIMARY_FLOOR = '0.4'
+    const envFloors = floorGateway(floorAnswer('bitcoin', .44))
+    const result = await prepareArticlePlacement({ gateway: envFloors.gateway, stableDecisionKey: 'floor-env', signal, sourceText: 'Bitcoin rose 4% today.', context: context() })
+    assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+    // A per-call override beats the environment: the 0.6 placement misses 0.7.
+    const override = floorGateway(floorAnswer('bitcoin', .6))
+    await assert.rejects(
+      prepareArticlePlacement({ gateway: override.gateway, stableDecisionKey: 'floor-env-override', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), confidenceFloors: { primaryPlacement: 0.7 } }),
+      (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+        && /0\.6 is below the 0\.7 floor/.test(error.message),
+    )
+  } finally {
+    if (previous === undefined) delete process.env.ARTICLE_PLACEMENT_PRIMARY_FLOOR
+    else process.env.ARTICLE_PLACEMENT_PRIMARY_FLOOR = previous
+  }
+})
+
+test('#343 one info line per route logs the related candidates the mention check rejected', async () => {
+  const originalInfo = console.info
+  const lines: string[] = []
+  console.info = ((...args: unknown[]) => { lines.push(args.map(String).join(' ')) }) as typeof console.info
+  try {
+    lines.length = 0
+    const single = mentionGateway()
+    await prepareArticlePlacement({ gateway: single.gateway, stableDecisionKey: 'log-single', signal, sourceText: 'Bitcoin rose 4% today.', context: context() })
+    assert.equal(lines.length, 1)
+    assert.match(lines[0]!, /\[research-engine:placement\]/)
+    assert.match(lines[0]!, /related_mention_rejected/)
+    assert.match(lines[0]!, /"rejected":1/)
+    assert.match(lines[0]!, /blackrock/)
+    assert.match(lines[0]!, /"route":"single"/)
+    assert.doesNotMatch(lines[0]!, /rose 4%/)
+    lines.length = 0
+    const batched = batchedGateway()
+    await prepareArticlePlacement({ gateway: batched.gateway, stableDecisionKey: 'log-batched', signal, sourceText: 'Bitcoin added $1.5 billion in new holdings.', context: batchedContext(), useBatching: true })
+    assert.equal(lines.length, 1)
+    assert.match(lines[0]!, /related_mention_rejected/)
+    assert.match(lines[0]!, /"rejected":1/)
+    assert.match(lines[0]!, /blackrock/)
+    assert.match(lines[0]!, /"route":"batched"/)
+    assert.doesNotMatch(lines[0]!, /holdings/)
+  } finally { console.info = originalInfo }
 })
