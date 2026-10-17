@@ -32,7 +32,9 @@ async function runOnce(supabase: SupabaseClient, pipelineStore: PipelineStore): 
       priorDraftLimit: config.priorDraftLimit,
       publishedHistoryLimit: config.publishedHistoryLimit,
       provider: new HermesEditorDraftProvider({ timeoutMs: config.hermesTimeoutMs }),
-    })
+    }),
+    undefined,
+    { app: 'editor-draft' }
   )
   console.log(JSON.stringify(result, null, 2))
 }

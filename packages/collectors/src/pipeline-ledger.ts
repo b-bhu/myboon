@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PipelineStore } from './pipeline-store/store'
+import { appendErrorLog, type ErrorLogEntry } from './pipeline-store/error-log'
+
+export type { ErrorLogEntry }
 
 export type PipelineRunStatus = 'running' | 'succeeded' | 'failed' | 'skipped' | 'partial'
 
@@ -119,25 +122,83 @@ export function boundError(error: unknown, maxLength = 2000): string {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`
 }
 
+export interface WithPipelineRunOptions {
+  /** App label for error-log entries and console lines. Defaults to input.stage. */
+  app?: string
+  /** Error-log sink, injectable for tests. Defaults to appendErrorLog. */
+  logError?: (entry: ErrorLogEntry) => void
+}
+
+/**
+ * Consecutive startRun failures per app label. A successful startRun resets
+ * the app's counter to 0 and each 'ledger_start_failed' entry carries the
+ * current count. Test helper: resetLedgerFailureCounts().
+ */
+const consecutiveStartFailures = new Map<string, number>()
+
+/** Clears the consecutive ledger start-failure counters. For tests. */
+export function resetLedgerFailureCounts(): void {
+  consecutiveStartFailures.clear()
+}
+
+/**
+ * finishRun must never mask the outcome it reports: a failed ledger update is
+ * logged and swallowed, so the work's own result (or error) still wins.
+ */
+async function finishLedgerRun(
+  store: PipelineLedgerStore,
+  id: string,
+  input: PipelineRunFinishInput,
+  app: string,
+  logError: (entry: ErrorLogEntry) => void
+): Promise<void> {
+  try {
+    await store.finishRun(id, input)
+  } catch (error) {
+    logError({ app, kind: 'ledger_finish_failed', error })
+    console.error(`[${app}] ledger finish failed`)
+  }
+}
+
 export async function withPipelineRun<T>(
   store: PipelineLedgerStore,
   input: PipelineRunStartInput,
   run: () => Promise<T>,
-  countsForResult: (result: T) => Record<string, number | boolean> = compactCounts
+  countsForResult: (result: T) => Record<string, number | boolean> = compactCounts,
+  options: WithPipelineRunOptions = {}
 ): Promise<T> {
-  const started = await store.startRun(input)
+  const app = options.app ?? input.stage
+  const logError = options.logError ?? appendErrorLog
+
+  let started: PipelineRunRecord | undefined
+  try {
+    started = await store.startRun(input)
+    consecutiveStartFailures.set(app, 0)
+  } catch (error) {
+    // Q6: a failed ledger insert must never kill the tick - run without a
+    // record and report the outage with a consecutive-failure count.
+    const count = (consecutiveStartFailures.get(app) ?? 0) + 1
+    consecutiveStartFailures.set(app, count)
+    logError({ app, kind: 'ledger_start_failed', error, count })
+    console.error(`[${app}] ledger start failed; running without a run record`)
+  }
+
+  if (!started) {
+    return run()
+  }
+
   try {
     const result = await run()
-    await store.finishRun(started.id, {
+    await finishLedgerRun(store, started.id, {
       status: 'succeeded',
       counts: countsForResult(result),
-    })
+    }, app, logError)
     return result
   } catch (error) {
-    await store.finishRun(started.id, {
+    await finishLedgerRun(store, started.id, {
       status: 'failed',
       error: boundError(error),
-    })
+    }, app, logError)
     throw error
   }
 }

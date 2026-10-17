@@ -318,7 +318,9 @@ async function runAndLog(
       maxAttempts: config.maxAttempts,
       retryBaseMs: config.retryBaseMs,
       extractionProvider: new HermesEntityExtractionProvider({ timeoutMs: config.hermesTimeoutMs }),
-    })
+    }),
+    undefined,
+    { app: 'entity-manager:polymarket' }
   )
   console.log(JSON.stringify(result, null, 2))
   })
