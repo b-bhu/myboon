@@ -34,3 +34,4 @@ jobs:
       - run: pnpm --filter @myboon/tx-parser test
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix
+      - run: pnpm --filter @myboon/api typecheck

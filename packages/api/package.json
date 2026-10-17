@@ -19,7 +19,8 @@
     "test:tokens": "tsx --test src/tokens/*.test.ts src/tokens/registry/*.test.ts",
     "test:swap": "tsx --test src/swap.test.ts",
     "test:phoenix": "tsx --test src/phoenix.test.ts",
-    "tokens:icons": "tsx scripts/fetch-token-icons.ts"
+    "tokens:icons": "tsx scripts/fetch-token-icons.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@ellipsis-labs/rise": "0.4.9",
