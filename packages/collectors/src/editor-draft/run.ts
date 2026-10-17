@@ -1,6 +1,8 @@
 import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 
 loadDotenvChain()
+installProcessErrorLogging('editor-draft')
 
 import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -57,6 +59,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  appendErrorLog({ app: 'editor-draft', kind: 'run_failed', error: err })
   console.error('[editor-draft] fatal:', err)
   process.exit(1)
 })

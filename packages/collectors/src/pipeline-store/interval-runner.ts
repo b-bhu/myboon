@@ -24,6 +24,8 @@
  * (the process is still alive and working) so two of them never race.
  */
 
+import { appendErrorLog } from './error-log'
+
 export interface IntervalRunnerOptions {
   /** Human-readable name used in the skip/overlap log line. */
   label: string
@@ -33,8 +35,8 @@ export interface IntervalRunnerOptions {
   run: () => Promise<void>
   /** Called when a tick is skipped because the previous tick is still running. */
   onOverlap?: (info: { label: string; runningForMs: number }) => void
-  /** Called when `run()` rejects. Defaults to a console.error line. */
-  onError?: (error: unknown, info: { label: string }) => void
+  /** Called when `run()` rejects. Defaults to a console.error line plus a JSONL error-log entry. */
+  onError?: (error: unknown, info: { label: string; consecutiveFailures?: number }) => void
 }
 
 export interface IntervalRunnerHandle {
@@ -50,8 +52,13 @@ function defaultOnOverlap(info: { label: string; runningForMs: number }): void {
   )
 }
 
-function defaultOnError(error: unknown, info: { label: string }): void {
+function defaultOnError(error: unknown, info: { label: string; consecutiveFailures?: number }): void {
   console.error(`[${info.label}] run failed:`, error)
+  appendErrorLog(
+    info.consecutiveFailures === undefined
+      ? { app: info.label, kind: 'run_failed', error }
+      : { app: info.label, kind: 'run_failed', error, count: info.consecutiveFailures },
+  )
 }
 
 /**
@@ -71,6 +78,7 @@ export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRun
   let running = false
   let startedAt = 0
   let lastOverlapWarningAt = 0
+  let consecutiveFailures = 0
   const overlapWarningAfterMs = Math.max(5 * 60_000, intervalMs * 2)
 
   const timer = setInterval(() => {
@@ -88,7 +96,10 @@ export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRun
     startedAt = Date.now()
     lastOverlapWarningAt = 0
     run()
-      .catch((error) => onError(error, { label }))
+      .then(() => { consecutiveFailures = 0 }, (error) => {
+        consecutiveFailures += 1
+        onError(error, { label, consecutiveFailures })
+      })
       .finally(() => {
         running = false
       })

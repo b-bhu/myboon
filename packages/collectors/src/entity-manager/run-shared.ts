@@ -7,6 +7,7 @@ import {
   type InferenceTelemetryObserver,
 } from '../inference-gateway'
 import { envFlag, loadDotenvChain, positiveInteger } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
@@ -548,7 +549,9 @@ export function isSharedEntityProcessEntrypoint(input: {
 // `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
 // execution marker and keeps imports/tests inert outside the process manager.
 if (isSharedEntityProcessEntrypoint()) {
+  installProcessErrorLogging('feed-v3:shared-entity-manager')
   main().catch((error) => {
+    appendErrorLog({ app: 'feed-v3:shared-entity-manager', kind: 'run_failed', error })
     process.stderr.write(`[feed-v3-entity] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
   })
