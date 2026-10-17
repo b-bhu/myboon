@@ -8,7 +8,7 @@ import {
   article308Gateway, article308IranContext, article308IranPlan, article308Signal,
 } from './article-308-fixtures'
 import {
-  ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION, ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION,
+  ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION,
 } from '../inference-gateway/classification-definitions'
 
 // #308 patch 5B. These tests run prepareArticlePlacement against mocked
@@ -137,33 +137,27 @@ test('#308 BlackRock Bitcoin article batches into three dispatches with the same
   assert.equal(result.novelty.choice, 'new_information')
 })
 
-test('#308 Hermes fallback versions record provider-aware provenance without fabricated probabilities', async () => {
+// #343 change 2: a Hermes result carries no numeric confidence, so a Hermes
+// placement — and a Hermes prior-item link — counts as below its floor and
+// holds the article as uncertain before any later stage runs.
+test('#308 Hermes fallback versions dispatch the fallback registry, then a scoreless Hermes placement holds', async () => {
   const placementFallback = article308Gateway({ ...article308BlackRockPlan(), hermes: (request) => request.workload === 'research.article_entity_placement' })
-  const result = await prepareArticlePlacement({ gateway: placementFallback.gateway, stableDecisionKey: 'article-308-hermes',
-    signal: ARTICLE_308_CRYPTO_SIGNAL, sourceText: ARTICLE_308_CRYPTO_TITLE, context: article308CryptoContext(), useHermesFallbackVersions: true })
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: placementFallback.gateway, stableDecisionKey: 'article-308-hermes',
+      signal: ARTICLE_308_CRYPTO_SIGNAL, sourceText: ARTICLE_308_CRYPTO_TITLE, context: article308CryptoContext(), useHermesFallbackVersions: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /no confidence score \(provider hermes\)/.test(error.message),
+  )
   assert.equal(placementFallback.requests[0].decisionVersion, ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION)
-  assert.equal(placementFallback.requests.at(-1)!.decisionVersion, ARTICLE_NOVELTY_HERMES_FALLBACK_VERSION)
-  const placement = result.memberships[0].placement
-  assert.equal(placement.provider, 'hermes'); assert.equal(placement.choice, 'bitcoin')
-  assert.equal('probabilities' in placement, false); assert.equal('confidence' in placement, false)
-  if (placement.provider === 'hermes') {
-    assert.equal(placement.fallbackReason, 'provider_billing'); assert.equal(placement.model, 'glm-5.3-flash')
-  }
-  const relationship = result.memberships[0].relationshipDecision!
-  assert.equal(relationship.provider, 'jev'); assert.equal(relationship.choice, 'direct_continuation')
-  if (relationship.provider === 'jev') { assert.equal(relationship.model, 'jev-1.13.0'); assert.equal(relationship.probabilities.direct_continuation, .95) }
-  assert.equal(result.novelty.provider, 'jev'); assert.equal(result.novelty.choice, 'new_information')
-  // A full Hermes journey keeps the same provenance rule on every decision.
+  // A full Hermes journey holds the same way before its linked prior item saves.
   const allHermes = article308Gateway({ ...article308BlackRockPlan(), hermes: () => true })
-  const hermesResult = await prepareArticlePlacement({ gateway: allHermes.gateway, stableDecisionKey: 'article-308-hermes-all',
-    signal: ARTICLE_308_CRYPTO_SIGNAL, sourceText: ARTICLE_308_CRYPTO_TITLE, context: article308CryptoContext(), useHermesFallbackVersions: true })
-  assert.equal(hermesResult.novelty.provider, 'hermes'); assert.equal(hermesResult.novelty.choice, 'new_information')
-  assert.equal('probabilities' in hermesResult.novelty, false)
-  if (hermesResult.novelty.provider === 'hermes') {
-    assert.equal(hermesResult.novelty.fallbackReason, 'provider_billing'); assert.equal(hermesResult.novelty.model, 'glm-5.3-flash')
-  }
-  assert.equal(hermesResult.memberships[0].priorItemDecision?.provider, 'hermes')
-  assert.equal(hermesResult.memberships[0].priorItemDecision?.choice, 'btc-1')
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: allHermes.gateway, stableDecisionKey: 'article-308-hermes-all',
+      signal: ARTICLE_308_CRYPTO_SIGNAL, sourceText: ARTICLE_308_CRYPTO_TITLE, context: article308CryptoContext(), useHermesFallbackVersions: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /no confidence score \(provider hermes\)/.test(error.message),
+  )
+  assert.equal(allHermes.requests[0].decisionVersion, ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION)
 })
 
 test('#308 a same-event second report reuses the one primary duplicate target as already known', async () => {
