@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import type { ApiConfig } from '../bootstrap/config.js'
 
 test('routes catalog writes to their dedicated credential before broad internal read auth', async () => {
   // createApp composes the CLOB router, whose production session cleanup owns a
@@ -11,7 +12,7 @@ test('routes catalog writes to their dedicated credential before broad internal 
 
   const readToken = 'r'.repeat(48)
   const catalogWriteToken = 'w'.repeat(48)
-  const app = createApp({
+  const config: ApiConfig = {
     supabaseUrl: 'https://project.supabase.co',
     supabaseServiceRoleKey: 'service-role-key',
     internalDashboardToken: readToken,
@@ -22,7 +23,20 @@ test('routes catalog writes to their dedicated credential before broad internal 
     aiExplanationProvider: 'test',
     aiExplanationBaseUrl: 'https://example.com',
     aiExplanationModel: 'test',
-  })
+    tokenIdentityEnabled: false,
+    tokenRegistryEnabled: false,
+    tokenRegistryLruMax: 100,
+    tokenRegistryFoundTtlMs: 60_000,
+    tokenRegistryMissTtlMs: 60_000,
+    tokenRegistryStaleAfterMs: 60_000,
+    tokenUpstreamMaxConcurrency: 1,
+    tokenUpstreamRpm: 60,
+    tokenUpstreamCooldownMs: 1_000,
+    tokenUpstreamMaxPerRequest: 10,
+    tokenUpstreamRequestBudgetMs: 1_000,
+    tokenUpstreamQueueMax: 10,
+  }
+  const app = createApp(config)
 
   const response = await app.request('/internal/polymarket/collections/featured/draft', {
     method: 'POST',

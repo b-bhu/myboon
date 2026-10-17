@@ -91,3 +91,5 @@ run().catch(err => {
   console.error('Smoke test crashed:', err)
   process.exit(1)
 })
+
+export {}
