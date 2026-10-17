@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   ArticleResearchHold, ARTICLE_PLACEMENT_LINK_FLOOR_ENV, ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV,
-  parseArticlePlacementConfidenceFloors, prepareArticlePlacement,
+  ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV, parseArticlePlacementConfidenceFloors,
+  parseArticlePlacementSaveUncertain, prepareArticlePlacement,
 } from './article-placement'
 import { v4ClassificationResult } from './v4-test-fixtures'
 import { managedFixture } from '../entity-manager/managed-v4.test-support'
@@ -1091,4 +1092,124 @@ test('#343 one info line per route logs the related candidates the mention check
     assert.match(lines[0]!, /"route":"batched"/)
     assert.doesNotMatch(lines[0]!, /holdings/)
   } finally { console.info = originalInfo }
+})
+
+// #343 PR-B: Bucket's save-uncertain mode. A floor failure no longer holds:
+// the affected membership is saved with placementUncertain true and EVERY
+// membership records both placement fields. With the mode off nothing changes.
+
+// a) A 0.44 primary placement (below the 0.6 floor) resolves on both routes
+// with the primary membership saved uncertain at its 0.44 confidence.
+test('#343 save-uncertain mode saves a below-floor primary placement as uncertain on both routes', async () => {
+  const single = floorGateway(floorAnswer('bitcoin', .44))
+  const result = await prepareArticlePlacement({ gateway: single.gateway, stableDecisionKey: 'save-uncertain-single', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), saveUncertainPlacements: true })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+  assert.equal(result.memberships[0].placementUncertain, true)
+  assert.equal(result.memberships[0].placementConfidence, .44)
+  const batched = floorGateway(floorAnswer('bitcoin', .44), true)
+  const batchedResult = await prepareArticlePlacement({ gateway: batched.gateway, stableDecisionKey: 'save-uncertain-batched', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), useBatching: true, saveUncertainPlacements: true })
+  assert.deepEqual(batchedResult.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+  assert.equal(batchedResult.memberships[0].placementUncertain, true)
+  assert.equal(batchedResult.memberships[0].placementConfidence, .44)
+})
+
+// b) Above the floors every membership is saved with both fields, uncertain
+// false — the annotation itself does not depend on the floor outcome.
+test('#343 save-uncertain mode annotates every membership when the floors pass', async () => {
+  const { gateway } = fallbackGateway()
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'save-uncertain-certain', signal, sourceText: 'BlackRock added Bitcoin.', context: context(), saveUncertainPlacements: true })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary'], ['blackrock', 'related']])
+  for (const membership of result.memberships) {
+    assert.equal(membership.placementUncertain, false)
+    assert.equal(membership.placementConfidence, .95)
+  }
+})
+
+// c) A Hermes primary placement carries no confidence score; the floor "fails"
+// without a score and the membership is saved uncertain at confidence null.
+test('#343 save-uncertain mode saves a Hermes no-score primary placement as uncertain on both routes', async () => {
+  const single = fallbackGateway({ hermes: () => true })
+  const result = await prepareArticlePlacement({ gateway: single.gateway, stableDecisionKey: 'save-uncertain-no-score-single', signal, sourceText: 'BlackRock added Bitcoin.', context: context(), useHermesFallbackVersions: true, saveUncertainPlacements: true })
+  const primary = result.memberships.find((membership) => membership.role === 'primary')!
+  assert.equal(primary.entityId, 'bitcoin')
+  assert.equal(primary.placementUncertain, true)
+  assert.equal(primary.placementConfidence, null)
+  const batched = batchedGateway({ catalogueHermes: true })
+  const batchedResult = await prepareArticlePlacement({ gateway: batched.gateway, stableDecisionKey: 'save-uncertain-no-score-batched', signal, sourceText: 'BlackRock added Bitcoin.', context: batchedContext(), useBatching: true, useHermesFallbackVersions: true, saveUncertainPlacements: true })
+  const batchedPrimary = batchedResult.memberships.find((membership) => membership.role === 'primary')!
+  assert.equal(batchedPrimary.entityId, 'bitcoin')
+  assert.equal(batchedPrimary.placementUncertain, true)
+  assert.equal(batchedPrimary.placementConfidence, null)
+})
+
+// d) A 0.44 prior-item link (below the 0.5 floor) saves the membership
+// uncertain and the direct_continuation relationship, prior item and novelty
+// all proceed unchanged.
+test('#343 save-uncertain mode saves a below-floor prior-item link as uncertain', async () => {
+  const linkContext = () => { const c = context(); c.candidates = c.candidates.slice(0, 1); return c }
+  const link = priorItemGateway(.44)
+  const result = await prepareArticlePlacement({ gateway: link.gateway, stableDecisionKey: 'save-uncertain-link', signal, sourceText: 'Bitcoin continues the earlier development.', context: linkContext(), saveUncertainPlacements: true })
+  assert.equal(result.memberships[0].relationship, 'direct_continuation')
+  assert.equal(result.memberships[0].priorItemId, 'bitcoin-0')
+  assert.equal(result.memberships[0].placementUncertain, true)
+  // The placement confidence stays the placement decision's own 0.95; the
+  // failed 0.44 link decision is what marked the membership uncertain.
+  assert.equal(result.memberships[0].placementConfidence, .95)
+  assert.equal(result.novelty.choice, 'new_information')
+  // The relationship stage and novelty both ran despite the link floor failure.
+  assert.deepEqual(link.requests.map((request) => request.workload), ['research.article_entity_placement', 'research.article_story_relationship', 'research.article_novelty'])
+})
+
+// e) Mode off (the default): floors still hold and packets carry none of the
+// new keys, byte-identical to the floors-only behaviour.
+test('#343 with save-uncertain mode off the floors still hold and memberships stay unannotated', async () => {
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: floorGateway(floorAnswer('bitcoin', .44)).gateway, stableDecisionKey: 'save-uncertain-off-floor', signal, sourceText: 'Bitcoin rose 4% today.', context: context() }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /0\.44 is below the 0\.6 floor/.test(error.message),
+  )
+  const { gateway } = fallbackGateway()
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'save-uncertain-off-certain', signal, sourceText: 'BlackRock added Bitcoin.', context: context() })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary'], ['blackrock', 'related']])
+  for (const membership of result.memberships) {
+    assert.equal('placementUncertain' in membership, false)
+    assert.equal('placementConfidence' in membership, false)
+  }
+})
+
+// f) The ARTICLE_PLACEMENT_SAVE_UNCERTAIN switch: parser unit cases, the
+// environment turning the mode on, and the per-call override still winning.
+test('#343 parseArticlePlacementSaveUncertain reads the save-uncertain switch and rejects other values', () => {
+  assert.equal(parseArticlePlacementSaveUncertain({}), false)
+  assert.equal(parseArticlePlacementSaveUncertain({ [ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]: '  ' }), false)
+  assert.equal(parseArticlePlacementSaveUncertain({ [ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]: '' }), false)
+  assert.equal(parseArticlePlacementSaveUncertain({ [ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]: 'TRUE' }), true)
+  assert.equal(parseArticlePlacementSaveUncertain({ [ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]: '1' }), true)
+  assert.equal(parseArticlePlacementSaveUncertain({ [ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]: 'false' }), false)
+  assert.equal(parseArticlePlacementSaveUncertain({ [ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]: '0' }), false)
+  assert.throws(
+    () => parseArticlePlacementSaveUncertain({ [ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]: 'yes' }),
+    (error: unknown) => error instanceof Error
+      && error.message === `Invalid ${ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV}=${JSON.stringify('yes')}: expected true or false.`,
+  )
+})
+
+test('#343 the save-uncertain environment turns the mode on and the per-call override still wins', async () => {
+  const previous = process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN
+  try {
+    process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN = 'true'
+    const { gateway } = floorGateway(floorAnswer('bitcoin', .44))
+    const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'save-uncertain-env', signal, sourceText: 'Bitcoin rose 4% today.', context: context() })
+    assert.equal(result.memberships[0].placementUncertain, true)
+    assert.equal(result.memberships[0].placementConfidence, .44)
+    const override = floorGateway(floorAnswer('bitcoin', .44))
+    await assert.rejects(
+      prepareArticlePlacement({ gateway: override.gateway, stableDecisionKey: 'save-uncertain-env-override', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), saveUncertainPlacements: false }),
+      (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+        && /0\.44 is below the 0\.6 floor/.test(error.message),
+    )
+  } finally {
+    if (previous === undefined) delete process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN
+    else process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN = previous
+  }
 })

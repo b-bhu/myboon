@@ -67,6 +67,9 @@ interface Membership {
   priorItemSource: 'legacy' | 'managed' | null
   duplicateTarget: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
+  // #343 save-uncertain mode only: absent from packets with the mode off.
+  placementUncertain?: boolean
+  placementConfidence?: number | null
 }
 
 /** Certain-grade Jev confidence floors for article placement outcomes. */
@@ -79,6 +82,8 @@ export interface ArticlePlacementConfidenceFloors {
 export const ARTICLE_PLACEMENT_PRIMARY_FLOOR_ENV = 'ARTICLE_PLACEMENT_PRIMARY_FLOOR'
 /** Environment variable overriding the prior-item link floor. */
 export const ARTICLE_PLACEMENT_LINK_FLOOR_ENV = 'ARTICLE_PLACEMENT_LINK_FLOOR'
+/** Environment variable switching confidence floors from holds to saved-uncertain packets (#343). */
+export const ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV = 'ARTICLE_PLACEMENT_SAVE_UNCERTAIN'
 
 /**
  * A Jev decision below a floor holds the article as uncertain instead of
@@ -113,6 +118,22 @@ export function parseArticlePlacementConfidenceFloors(env: Readonly<Record<strin
   }
 }
 
+/**
+ * Read Bucket's save-uncertain switch (#343): unset or blank keeps the mode
+ * off so a floor failure holds the article as today; 'true' or '1' saves
+ * below-floor placements as uncertain memberships instead; 'false' or '0'
+ * turns the mode off. Matching is trimmed and case-insensitive; every other
+ * value throws so an invalid configuration fails loudly.
+ */
+export function parseArticlePlacementSaveUncertain(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  const raw = env[ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV]
+  if (raw === undefined) return false
+  const value = raw.trim().toLowerCase()
+  if (value === '' || value === 'false' || value === '0') return false
+  if (value === 'true' || value === '1') return true
+  throw new Error(`Invalid ${ARTICLE_PLACEMENT_SAVE_UNCERTAIN_ENV}=${JSON.stringify(raw)}: expected true or false.`)
+}
+
 /** Merge the input's optional floors over the environment-configured floors; every provided value must be a finite number in [0, 1]. */
 function confidenceFloors(input: ArticlePlacementInput): ArticlePlacementConfidenceFloors {
   const provided = input.confidenceFloors
@@ -132,19 +153,53 @@ function confidenceFloors(input: ArticlePlacementInput): ArticlePlacementConfide
   return merged
 }
 
+/** The decision's numeric confidence, or null when the decision carries no score (Hermes). */
+function decisionConfidence(decision: Decision): number | null {
+  return 'confidence' in decision && typeof decision.confidence === 'number' ? decision.confidence : null
+}
+
 /**
- * A Jev decision below the floor holds the article instead of saving a certain
- * outcome; a decision without a numeric confidence score — for example a Hermes
- * fallback decision — counts as below the floor and also holds.
+ * A Jev decision below the floor is not certain-grade: below the floor, or
+ * without a numeric confidence score — for example a Hermes fallback decision —
+ * it counts as a floor failure. With the save-uncertain mode off the failure
+ * holds the article instead of saving a certain outcome (this throws); with
+ * the mode on the caller instead marks the affected membership saved
+ * uncertain, so the check only reports whether the floor failed.
  */
-function assertConfidenceFloor(decision: Decision, floor: number, what: string): void {
-  const confidence = 'confidence' in decision && typeof decision.confidence === 'number' ? decision.confidence : null
+function checkConfidenceFloor(decision: Decision, floor: number, what: string, saveUncertain: boolean): boolean {
+  const confidence = decisionConfidence(decision)
   if (confidence === null) {
-    throw new ArticleResearchHold('entity_resolution_uncertain', `${what} has no confidence score (provider ${'provider' in decision ? decision.provider : 'unknown'}); it counts as below the ${floor} floor and the article is held as uncertain.`)
+    if (!saveUncertain) {
+      throw new ArticleResearchHold('entity_resolution_uncertain', `${what} has no confidence score (provider ${'provider' in decision ? decision.provider : 'unknown'}); it counts as below the ${floor} floor and the article is held as uncertain.`)
+    }
+    return true
   }
   if (confidence < floor) {
-    throw new ArticleResearchHold('entity_resolution_uncertain', `${what} confidence ${confidence} is below the ${floor} floor; the article is held as uncertain instead of saved as certain.`)
+    if (!saveUncertain) {
+      throw new ArticleResearchHold('entity_resolution_uncertain', `${what} confidence ${confidence} is below the ${floor} floor; the article is held as uncertain instead of saved as certain.`)
+    }
+    return true
   }
+  return false
+}
+
+/**
+ * Bucket's save-uncertain mode (#343): every prepared membership records its
+ * placement uncertainty flag — true when one of its confidence floors failed —
+ * and the placement decision's numeric confidence, null when the decision
+ * carries no score (Hermes). With the mode off nothing is added and packets
+ * stay byte-identical to the confident floors-only behaviour.
+ */
+function annotateSaveUncertain(
+  membership: Membership,
+  saveUncertain: boolean,
+  placementUncertain: boolean,
+  placementConfidence: number | null,
+): Membership {
+  if (!saveUncertain) return membership
+  membership.placementUncertain = placementUncertain
+  membership.placementConfidence = placementConfidence
+  return membership
 }
 
 export interface ArticlePlacementPreparationV1 {
@@ -193,6 +248,15 @@ export interface ArticlePlacementInput {
    * score — for example a Hermes fallback decision — also holds.
    */
   confidenceFloors?: Partial<ArticlePlacementConfidenceFloors>
+  /**
+   * Bucket's save-uncertain mode (#343), per-call override; defaults from the
+   * ARTICLE_PLACEMENT_SAVE_UNCERTAIN environment switch. On: a confidence
+   * floor failure does not hold — the affected membership is saved with
+   * placementUncertain true and every membership records its placement
+   * decision confidence. Off (default): floor failures hold and memberships
+   * carry no uncertainty fields, byte-identical to the previous behaviour.
+   */
+  saveUncertainPlacements?: boolean
 }
 
 export async function prepareArticlePlacement(input: ArticlePlacementInput & { useHermesFallbackVersions?: false, useBatching?: false }): Promise<ArticlePlacementPreparationV1>
@@ -203,6 +267,10 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
   const fallbackVersions = input.useHermesFallbackVersions === true
   const version = (base: string, fallback: string) => fallbackVersions ? fallback : base
   const decision = <T>(result: ClassificationResult<T>, question: string, hermesChoice: string) => decide(result, question, fallbackVersions, hermesChoice)
+  // Bucket's save-uncertain switch (#343) resolves once per prepare call —
+  // the per-call override wins over the environment; every membership built
+  // below shares the resolved mode.
+  const saveUncertain = input.saveUncertainPlacements ?? parseArticlePlacementSaveUncertain()
   // Jev receives the immutable capture, never an unmarked excerpt.  The
   // definition limits are therefore an admission bound, not a truncation
   // policy: an oversized capture must wait for a configured larger workload.
@@ -210,7 +278,7 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
     throw new ArticleResearchHold('source_input_too_large', `Captured article exceeds the ${ARTICLE_DECISION_SOURCE_MAX_CHARS}-character Jev source-input bound.`)
   }
   assertContextCoverage(input.context)
-  if (input.useBatching === true) return prepareBatchedArticlePlacement(input)
+  if (input.useBatching === true) return prepareBatchedArticlePlacement(input, saveUncertain)
   let candidates = rankEntityCandidates(input.context.candidates, articleLookupTerms(input.signal))
   let placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
     workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD,
@@ -270,13 +338,16 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
       })
       if (creationValidation.value.disposition === 'uncertain') throw new ArticleResearchHold('entity_resolution_uncertain', 'Placement could not safely validate the source-grounded new-entity proposal.')
       if (creationValidation.value.disposition === 'reject') throw new ArticleResearchHold('entity_resolution_no_match', 'The source-grounded new-entity proposal was rejected; an actionable identity is required.')
+      const creationPlacement = decision(placement, 'placement', placement.value.entityId ?? placement.value.disposition)
+      // The no-match/creation path is not floored; with save-uncertain on it
+      // still records its placement provenance fields, as a certain placement.
       return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
-        memberships: [{
+        memberships: [annotateSaveUncertain({
           entityId: null, placementDisposition: placement.value.disposition, role: 'primary', name: creationProposal.name, type: creationProposal.type, aliases: [...creationProposal.aliases],
           summary: creationProposal.summary, scope: { ...creationProposal.scope }, creationProposal, creationDecision: decision(creationValidation, 'proposal', creationValidation.value.disposition),
-          placement: decision(placement, 'placement', placement.value.entityId ?? placement.value.disposition), relationship: null, relationshipDecision: null, priorItemDecision: null,
+          placement: creationPlacement, relationship: null, relationshipDecision: null, priorItemDecision: null,
           priorItemId: null, priorItemSource: null, duplicateTarget: null,
-        }] as Membership[],
+        } as Membership, saveUncertain, false, decisionConfidence(creationPlacement))],
         novelty: await novelty(input, [], []),
         contextualHistory: 'No existing entity placement was selected; Entity Manager must assess the bounded creation proposal.',
       }
@@ -288,9 +359,11 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
   // related-membership classify call happens; the no-match/creation path above
   // is not floored. Floors resolve once per prepare call — environment-backed
   // unless the input overrides them — and are shared by every membership below.
+  // With save-uncertain on (#343) a floor failure marks the primary membership
+  // uncertain instead of holding, and the related/novelty work proceeds.
   const primaryPlacement = decision(placement, 'placement', placement.value.entityId ?? placement.value.disposition)
   const floors = confidenceFloors(input)
-  assertConfidenceFloor(primaryPlacement, floors.primaryPlacement, 'Primary placement')
+  const primaryUncertain = checkConfidenceFloor(primaryPlacement, floors.primaryPlacement, 'Primary placement', saveUncertain)
   const relatedCandidates = candidates.filter((candidate) => candidate.id !== entity.id)
   const related = relatedCandidates.length === 0 ? null : await input.gateway.classify<ArticleRelatedMembershipDecision>({
     workload: ARTICLE_RELATED_MEMBERSHIP_WORKLOAD,
@@ -326,10 +399,10 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
     if (!articleMentionsEntity(articleText, candidate)) continue
     memberships.push(await membership(input, candidate, 'related', related !== null && related.fallbackUsed
       ? decision(related, relatedQuestion(candidate.id), 'related')
-      : decision(related, relatedQuestion(candidate.id), related.value.dispositions[candidate.id] ?? 'uncertain'), floors))
+      : decision(related, relatedQuestion(candidate.id), related.value.dispositions[candidate.id] ?? 'uncertain'), floors, saveUncertain, false))
   }
   logRelatedMentionRejections('single', input, rejectedRelatedIds)
-  memberships.unshift(await membership(input, entity, 'primary', primaryPlacement, floors))
+  memberships.unshift(await membership(input, entity, 'primary', primaryPlacement, floors, saveUncertain, primaryUncertain))
   return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
     memberships,
     novelty: await novelty(input, memberships.map((membership) => membership.entityId).filter((id): id is string => id !== null), memberships),
@@ -351,6 +424,11 @@ async function membership(
   entity: ArticleResearchContext['candidates'][number], role: 'primary' | 'related',
   placement: Decision,
   floors: ArticlePlacementConfidenceFloors,
+  saveUncertain: boolean,
+  // Floor outcome already resolved for the placement decision (the primary's
+  // check ran in prepareArticlePlacement); membershipFromRelationship adds any
+  // prior-item link failure of its own.
+  placementUncertain: boolean,
 ): Promise<Membership> {
   const allHistory = input.context.loadHistory
     ? await input.context.loadHistory(entity.id)
@@ -404,7 +482,7 @@ async function membership(
   const fallback = input.useHermesFallbackVersions === true
   const relationshipDecision = decide(relationship, 'relationship', fallback, relationship.value.relationship)
   const priorItemDecision = decide(relationship, 'prior_item', fallback, relationship.value.priorItemId ?? 'none')
-  return membershipFromRelationship(input, entity, role, placement, relationship, relationshipHistory, { relationshipDecision, priorItemDecision }, floors)
+  return membershipFromRelationship(input, entity, role, placement, relationship, relationshipHistory, { relationshipDecision, priorItemDecision }, floors, saveUncertain, placementUncertain)
 }
 
 /**
@@ -421,14 +499,20 @@ function membershipFromRelationship(
   relationshipHistory: ReadonlyArray<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>,
   decisions: { relationshipDecision: Decision, priorItemDecision: Decision },
   floors: ArticlePlacementConfidenceFloors,
+  saveUncertain: boolean,
+  placementUncertain: boolean,
 ): Membership {
+  let uncertain = placementUncertain
   // A membership that links to a prior item is a certain-grade link: below the
   // prior-item floor it holds instead of saving the link, and a decision
   // without a numeric confidence score counts as below the floor, so a Hermes
-  // fallback link is held as uncertain too.
+  // fallback link is held as uncertain too. With save-uncertain on (#343) the
+  // same failure instead marks this membership saved uncertain and the
+  // relationship, prior item and novelty all proceed unchanged.
   if (['duplicate', 'direct_continuation', 'related_story_branch'].includes(relationship.value.relationship)) {
-    assertConfidenceFloor(decisions.relationshipDecision, floors.priorItemLink, 'Prior-item relationship')
-    assertConfidenceFloor(decisions.priorItemDecision, floors.priorItemLink, 'Prior-item link')
+    const relationshipUncertain = checkConfidenceFloor(decisions.relationshipDecision, floors.priorItemLink, 'Prior-item relationship', saveUncertain)
+    const linkUncertain = checkConfidenceFloor(decisions.priorItemDecision, floors.priorItemLink, 'Prior-item link', saveUncertain)
+    uncertain = uncertain || relationshipUncertain || linkUncertain
   }
   const prior = relationship.value.priorItemId === null ? null : relationshipHistory.find((item) => item.id === relationship.value.priorItemId
     && (!relationship.value.priorItemSource || item.source === relationship.value.priorItemSource)) ?? null
@@ -438,7 +522,7 @@ function membershipFromRelationship(
   if ((relationship.value.relationship === 'direct_continuation' || relationship.value.relationship === 'related_story_branch') && !prior) {
     throw new ArticleResearchHold('entity_resolution_uncertain', 'A relationship selected a continuation or story branch without a valid durable historical target.')
   }
-  return {
+  return annotateSaveUncertain({
     entityId: entity.id, placementDisposition: 'selected', role, name: entity.name, type: null, aliases: [...entity.aliases], summary: entity.summary,
     scope: { ...entity.scope }, creationProposal: null, creationDecision: null, placement,
     relationship: relationship.value.relationship, relationshipDecision: decisions.relationshipDecision,
@@ -446,7 +530,7 @@ function membershipFromRelationship(
     priorItemId: prior?.id ?? null, priorItemSource: prior?.source ?? null,
     duplicateTarget: relationship.value.relationship === 'duplicate' && prior
       ? { itemId: prior.id, source: prior.source, entityId: entity.id } : null,
-  }
+  }, saveUncertain, uncertain, decisionConfidence(placement))
 }
 
 async function novelty(
@@ -820,6 +904,7 @@ async function batchedRelationshipStages(
 
 async function prepareBatchedArticlePlacement(
   input: ArticlePlacementInput,
+  saveUncertain: boolean,
 ): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2> {
   let stage = await batchedCatalogueStage(input)
   // One expanded catalogue pass after an unresolved placement, exactly like
@@ -832,28 +917,30 @@ async function prepareBatchedArticlePlacement(
       || merged.some((candidate, index) => candidate.id !== stage.orderedCandidates[index]?.id)
     if (changed) stage = await batchedCatalogueStage(input, widened)
   }
-  if (stage.selected) return batchedSelectedPreparation(input, stage)
+  if (stage.selected) return batchedSelectedPreparation(input, stage, saveUncertain)
   if (stage.uncertain) {
     throw new ArticleResearchHold('entity_resolution_uncertain', 'Placement could not safely resolve article placement after bounded catalogue retrieval.')
   }
-  return batchedCreationFallback(input, stage)
+  return batchedCreationFallback(input, stage, saveUncertain)
 }
 
 async function batchedSelectedPreparation(
-  input: ArticlePlacementInput, stage: BatchedCatalogueStage,
+  input: ArticlePlacementInput, stage: BatchedCatalogueStage, saveUncertain: boolean,
 ): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2> {
   const fallbackVersions = input.useHermesFallbackVersions === true
   const primary = stage.orderedCandidates.find((candidate) => candidate.id === stage.selected)
   if (!primary) throw new Error('Batched placement selected an entity outside the bounded candidate catalogue')
   // The primary placement decision is computed once and floored before any
   // history load or relationship dispatch; the membership loop reuses it.
+  // With save-uncertain on (#343) a floor failure marks the primary membership
+  // uncertain instead of holding, and the relationship/novelty stages proceed.
   const observedPrimary = stage.dispositionByCandidate.get(primary.id)
   if (!observedPrimary) throw new ArticleResearchHold('entity_resolution_uncertain', `The batched catalogue answered no membership for ${primary.id}.`)
   const primaryPlacementDecision = decide(observedPrimary.result, 'placement', fallbackVersions, primary.id)
   // Floors resolve once per prepare call — environment-backed unless the input
   // overrides them — and are shared by every membership below.
   const floors = confidenceFloors(input)
-  assertConfidenceFloor(primaryPlacementDecision, floors.primaryPlacement, 'Primary placement')
+  const primaryUncertain = checkConfidenceFloor(primaryPlacementDecision, floors.primaryPlacement, 'Primary placement', saveUncertain)
   const placementDecision = (candidate: ArticleResearchContext['candidates'][number]): Decision => {
     if (candidate.id === primary.id) return primaryPlacementDecision
     const observed = stage.dispositionByCandidate.get(candidate.id)
@@ -911,7 +998,8 @@ async function batchedSelectedPreparation(
     }
     memberships.push(await batchedMembership(
       input, entity, entity.id === primary.id ? 'primary' : 'related',
-      placementDecision(entity), target, owned.result, historyById, floors,
+      placementDecision(entity), target, owned.result, historyById, floors, saveUncertain,
+      entity.id === primary.id ? primaryUncertain : false,
     ))
   }
   return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
@@ -931,6 +1019,8 @@ async function batchedMembership(
   stage: ClassificationResult<ArticleRelationshipBatchDecision>,
   historyById: ReadonlyMap<string, RelationshipHistoryItem[]>,
   floors: ArticlePlacementConfidenceFloors,
+  saveUncertain: boolean,
+  placementUncertain: boolean,
 ): Promise<Membership> {
   const fallbackVersions = input.useHermesFallbackVersions === true
   let relationship: ClassificationResult<ArticleStoryRelationshipDecision> = {
@@ -994,7 +1084,7 @@ async function batchedMembership(
       relationshipDecision: decide(stage, `relationship_target_${entity.id}`, fallbackVersions, relationship.value.relationship, key => key.split(':')[0]),
       priorItemDecision: decide(stage, `relationship_target_${entity.id}`, fallbackVersions, relationship.value.priorItemId ?? 'none', key => key.includes(':') ? key.split(':').slice(2).join(':') : 'none'),
     }
-  return membershipFromRelationship(input, entity, role, placement, relationship, relationshipHistory, decisions, floors)
+  return membershipFromRelationship(input, entity, role, placement, relationship, relationshipHistory, decisions, floors, saveUncertain, placementUncertain)
 }
 
 /**
@@ -1008,7 +1098,7 @@ function logRelatedMentionRejections(route: 'single' | 'batched', input: Article
 
 /** Batched no-match path: exact-identity recovery first, then the proposal validation. */
 async function batchedCreationFallback(
-  input: ArticlePlacementInput, stage: BatchedCatalogueStage,
+  input: ArticlePlacementInput, stage: BatchedCatalogueStage, saveUncertain: boolean,
 ): Promise<ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2> {
   const fallbackVersions = input.useHermesFallbackVersions === true
   if (!input.proposeCreation) throw new ArticleResearchHold('entity_resolution_no_match', 'No matching entity was found and no durable source-grounded creation proposal is configured.')
@@ -1028,7 +1118,7 @@ async function batchedCreationFallback(
       // exact identity the batch still cannot select is a hold, never a
       // duplicate creation.
       const retry = await batchedCatalogueStage(input, exact, [creationProposal.name, ...creationProposal.aliases])
-      if (retry.selected) return batchedSelectedPreparation(input, retry)
+      if (retry.selected) return batchedSelectedPreparation(input, retry, saveUncertain)
       throw new ArticleResearchHold('entity_resolution_uncertain', 'An existing exact entity identity was found but placement could not resolve it; the identity will not be duplicated.')
     }
   }
@@ -1041,14 +1131,17 @@ async function batchedCreationFallback(
   })
   if (creationValidation.value.disposition === 'uncertain') throw new ArticleResearchHold('entity_resolution_uncertain', 'Placement could not safely validate the source-grounded new-entity proposal.')
   if (creationValidation.value.disposition === 'reject') throw new ArticleResearchHold('entity_resolution_no_match', 'The source-grounded new-entity proposal was rejected; an actionable identity is required.')
+  const creationPlacement = decide(stage.firstResult, 'placement', fallbackVersions, 'no_match')
+  // The no-match/creation path is not floored; with save-uncertain on it
+  // still records its placement provenance fields, as a certain placement.
   return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
-    memberships: [{
+    memberships: [annotateSaveUncertain({
       entityId: null, placementDisposition: 'no_match', role: 'primary', name: creationProposal.name, type: creationProposal.type, aliases: [...creationProposal.aliases],
       summary: creationProposal.summary, scope: { ...creationProposal.scope }, creationProposal,
       creationDecision: decide(creationValidation, 'proposal', fallbackVersions, creationValidation.value.disposition),
-      placement: decide(stage.firstResult, 'placement', fallbackVersions, 'no_match'), relationship: null, relationshipDecision: null, priorItemDecision: null,
+      placement: creationPlacement, relationship: null, relationshipDecision: null, priorItemDecision: null,
       priorItemId: null, priorItemSource: null, duplicateTarget: null,
-    }] as Membership[],
+    } as Membership, saveUncertain, false, decisionConfidence(creationPlacement))],
     novelty: await novelty(input, [], []),
     contextualHistory: 'No existing entity placement was selected; Entity Manager must assess the bounded creation proposal.',
   }

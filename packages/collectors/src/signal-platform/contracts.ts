@@ -416,6 +416,16 @@ export interface ArticleEntityProposal extends ExtensibleContract {
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
   /** Reader-facing "how it relates / why it matters" (#340); absent on packets before it shipped. */
   relationSummary?: string | null
+  /**
+   * #343: true when a scored floor failed (or the decision had no score) and
+   * Bucket's save-uncertain mode is on; absent on older packets = certain.
+   */
+  placementUncertain?: boolean
+  /**
+   * #343: the membership's placement decision confidence; null when the
+   * decision carries no score (Hermes).
+   */
+  placementConfidence?: number | null
 }
 
 /**
@@ -444,6 +454,16 @@ export interface ArticleV2EntityProposal extends ExtensibleContract {
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
   /** Reader-facing "how it relates / why it matters" (#340); absent on packets before it shipped. */
   relationSummary?: string | null
+  /**
+   * #343: true when a scored floor failed (or the decision had no score) and
+   * Bucket's save-uncertain mode is on; absent on older packets = certain.
+   */
+  placementUncertain?: boolean
+  /**
+   * #343: the membership's placement decision confidence; null when the
+   * decision carries no score (Hermes).
+   */
+  placementConfidence?: number | null
 }
 
 /**

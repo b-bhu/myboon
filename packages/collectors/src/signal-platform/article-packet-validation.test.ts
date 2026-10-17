@@ -274,3 +274,36 @@ test('article packets retain relationSummary and contextualHistory (#340) and st
     assert.throws(() => validateResearchPacket({ ...input, contextualHistory: '' }), ContractValidationError)
   }
 })
+
+// #343 save-uncertain placement fields: additive, well-formed, and present
+// together; packets without them stay valid unchanged on both schema versions.
+test('article packets retain validated save-uncertain placement fields (#343) and stay valid without them', () => {
+  for (const schema of [V1, V2]) {
+    const membership = schema === V1
+      ? v1Membership('primary', 'entity-primary', ITEM_PRIMARY)
+      : v2Membership({ role: 'primary', entityId: 'entity-primary', itemId: ITEM_PRIMARY, provider: 'jev' })
+    const novelty = schema === V1 ? v1Decision('already_known') : v2Decision({ provider: 'jev', choice: 'already_known' })
+    const annotated = packet(schema, [{ ...membership, placementUncertain: true, placementConfidence: 0.44 }], novelty)
+    assert.equal(validateResearchPacket(annotated), annotated)
+    const unannotated = packet(schema, [membership], novelty)
+    assert.equal(validateResearchPacket(unannotated), unannotated)
+    const hermes = packet(schema, [{ ...membership, placementUncertain: true, placementConfidence: null }], novelty)
+    assert.equal(validateResearchPacket(hermes), hermes)
+    assert.throws(
+      () => validateResearchPacket(packet(schema, [{ ...membership, placementUncertain: true }], novelty)),
+      /placement uncertainty fields must be present together/,
+    )
+    assert.throws(
+      () => validateResearchPacket(packet(schema, [{ ...membership, placementConfidence: 0.44 }], novelty)),
+      /placement uncertainty fields must be present together/,
+    )
+    assert.throws(
+      () => validateResearchPacket(packet(schema, [{ ...membership, placementUncertain: false, placementConfidence: 1.5 }], novelty)),
+      /placementConfidence: must be between 0 and 1/,
+    )
+    assert.throws(
+      () => validateResearchPacket(packet(schema, [{ ...membership, placementUncertain: 'yes', placementConfidence: 0.44 }], novelty)),
+      /placementUncertain: must be boolean/,
+    )
+  }
+})
