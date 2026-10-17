@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 import {
   RESEARCH_WORK_SCHEMA_VERSION,
@@ -26,6 +26,7 @@ import {
   loadSharedResearchRunnerConfig,
   resolveSupportedResearchDepths,
   runSharedResearchLoop,
+  runSharedResearchProcess,
   type SharedResearchRunnerRuntime,
 } from './run-shared-research'
 
@@ -472,6 +473,54 @@ test('shared Research CLI environment seam loads dotenv before composition witho
     else process.env.SUPABASE_SERVICE_ROLE_KEY = savedKey
   }
   assert.equal(calls, 1)
+})
+
+test('runSharedResearchProcess rejects with the named missing Supabase env before any network', async () => {
+  // The in-process seam: a no-op loader and an explicitly empty env make the
+  // rejection independent of this test process's own environment, and the
+  // named missing-key error throws before the health probe is constructed.
+  await assert.rejects(
+    runSharedResearchProcess({ loadEnvironment: () => {}, env: {} }),
+    (error) => error instanceof Error && /Missing required Supabase env/.test(error.message),
+  )
+})
+
+test('runSharedResearchProcess entrypoint logs run_failed and exits non-zero when the Supabase env is missing (subprocess)', async () => {
+  // Regression: the entrypoint used to call the Supabase env seam at module
+  // load, so a missing env escaped to the process-level handler as
+  // uncaught_exception instead of the run_failed path every other gated
+  // worker uses (Refs #346). Spawned like PM2's tsx execution: cwd is a fresh
+  // temp dir whose dotenv lookups find nothing, and the env is an explicit
+  // allowlist, so no Supabase key can ever leak into the child.
+  const { execFile } = await import('node:child_process')
+  const entryPath = resolve(__dirname, 'run-shared-research.ts')
+  const tsxBin = resolve(__dirname, '../../node_modules/.bin/tsx')
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-entrypoint-'))
+  const errorLogPath = join(dir, 'errors.jsonl')
+  try {
+    const childEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH ?? '',
+      HOME: dir,
+      MYBOON_ERROR_LOG: errorLogPath,
+    }
+    const child = await new Promise<{ code: number; stdout: string; stderr: string }>((resolvePromise) => {
+      execFile(tsxBin, [entryPath], { timeout: 20_000, cwd: dir, env: childEnv }, (error, stdout, stderr) => {
+        const code = error === null ? 0 : typeof error.code === 'number' ? error.code : 1
+        resolvePromise({ code, stdout, stderr })
+      })
+    })
+    assert.ok(child.code !== 0, `entrypoint child must exit non-zero; stderr=${JSON.stringify(child.stderr)}`)
+    assert.ok(existsSync(errorLogPath), 'a run_failed entry must be written to the error log')
+    const lines = readFileSync(errorLogPath, 'utf8').split('\n').filter((line) => line.trim() !== '')
+    assert.equal(lines.length, 1, `expected exactly one error-log line, got ${JSON.stringify(lines)}`)
+    const entry = JSON.parse(lines[0]!) as { app?: string; kind?: string; message?: string }
+    assert.equal(entry.app, 'feed-v3-shared-research')
+    assert.equal(entry.kind, 'run_failed')
+    assert.match(entry.message ?? '', /Missing required Supabase env/)
+    assert.ok(!lines.some((line) => line.includes('uncaught_exception')), 'a missing env must surface as run_failed, not uncaught_exception')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('full policy preserves every available Research depth while Phase 1 remains light-only', () => {

@@ -1034,23 +1034,42 @@ export function isSharedResearchProcessEntrypoint(input: {
   return input.direct || input.nodeAppInstance !== undefined
 }
 
+/**
+ * Process body for the shared Research entrypoint, kept async so the Supabase
+ * env seam (dotenv load, then the named missing-key check) rejects the process
+ * promise instead of throwing at module load: the rejection lands in the
+ * entrypoint's run_failed catch handler like every other gated worker
+ * (Refs #346). The injectable loader/env keep the behavior testable without
+ * reading or exposing real credentials.
+ */
+export interface RunSharedResearchProcessDeps {
+  loadEnvironment?: () => void
+  env?: NodeJS.ProcessEnv
+  signal?: AbortSignal
+}
+
+export async function runSharedResearchProcess(deps: RunSharedResearchProcessDeps = {}): Promise<void> {
+  const loadEnvironment = deps.loadEnvironment ?? loadSharedResearchProcessEnvironment
+  loadEnvironment()
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv(deps.env)
+  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
+  await runSharedResearchLoop({
+    signal: deps.signal,
+    healthGate: new SupabaseHealthGate({ app: 'feed-v3-shared-research', probe }),
+    runOnceHealthCheck: () => waitForSupabaseRunOnce({ app: 'feed-v3-shared-research', probe }),
+    onResult: (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
+  })
+}
+
 // PM2 executes TypeScript through its process-container wrapper, so
 // `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
 // execution marker and keeps imports/tests inert outside the process manager.
 if (isSharedResearchProcessEntrypoint()) {
   installProcessErrorLogging('feed-v3-shared-research')
-  loadSharedResearchProcessEnvironment()
   const controller = new AbortController()
   process.once('SIGTERM', () => controller.abort())
   process.once('SIGINT', () => controller.abort())
-  const { supabaseUrl, supabaseKey } = requireSupabaseEnv()
-  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
-  runSharedResearchLoop({
-    signal: controller.signal,
-    healthGate: new SupabaseHealthGate({ app: 'feed-v3-shared-research', probe }),
-    runOnceHealthCheck: () => waitForSupabaseRunOnce({ app: 'feed-v3-shared-research', probe }),
-    onResult: (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
-  }).catch((error) => {
+  runSharedResearchProcess({ signal: controller.signal }).catch((error) => {
     appendErrorLog({ app: 'feed-v3-shared-research', kind: 'run_failed', error })
     process.stderr.write(`[feed-v3-shared-research] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
