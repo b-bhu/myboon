@@ -43,7 +43,7 @@ import { createRpcRoutes, createRpcRateLimiter, type RpcRateLimiter } from '../r
 import type { ApiConfig } from './config.js'
 
 export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRateLimiter } = {}): Hono {
-  const { SupabaseEntityKnowledgeReader } = entityManager
+  const { createEntityKnowledgeReader } = entityManager
   const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
     store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
     seeds: tokenRegistrySeeds(),
@@ -77,7 +77,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   const upDownService = new PolymarketUpDownService({
     priceService: new UpDownPriceService(upDownReferenceStore),
   })
-  const entityKnowledgeReader = new SupabaseEntityKnowledgeReader(createSupabaseClient(
+  const entityKnowledgeReader = createEntityKnowledgeReader(createSupabaseClient(
     config.supabaseUrl,
     config.supabaseServiceRoleKey,
     { clientOptions: { auth: { persistSession: false, autoRefreshToken: false } } },

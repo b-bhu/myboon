@@ -12,7 +12,7 @@ import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
-import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
+import { createEntityKnowledgeReader } from '../entity-manager/entity-knowledge-reader-factory'
 
 function previewOnly(env: NodeJS.ProcessEnv): boolean {
   return env.PUBLISHER_PREVIEW_ONLY === '1' || env.PUBLISHER_DRY_RUN === '1'
@@ -41,7 +41,7 @@ async function runOnce(): Promise<void> {
         store: new SupabasePublisherStore(
           supabase,
           pipelineStore,
-          new SupabaseEntityKnowledgeReader(supabase),
+          createEntityKnowledgeReader(supabase),
         ),
         batchSize: config.batchSize,
         dryRun: previewOnly(process.env),

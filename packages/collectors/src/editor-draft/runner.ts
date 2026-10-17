@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { envFlag, positiveInteger } from '../pipeline-store/cli-env'
 import type { PipelineStore } from '../pipeline-store/store'
-import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
+import { createEntityKnowledgeReader } from '../entity-manager/entity-knowledge-reader-factory'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
 import { SupabaseEditorDraftStore } from './supabase-store'
@@ -86,7 +86,7 @@ export async function runEditorDraft(
     store = new SupabaseEditorDraftStore(
       db,
       pipelineStore,
-      new SupabaseEntityKnowledgeReader(db),
+      createEntityKnowledgeReader(db),
     )
   }
   const provider = options.provider ?? new HermesEditorDraftProvider()
