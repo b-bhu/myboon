@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   EXECUTION_EVENT_SCHEMA_VERSION,
+  packetExecution,
   type ExecutionEventStatus,
   type ExecutionTraceEvent,
   type ResearchDepth,
@@ -645,7 +646,7 @@ function executionEvent(input: ExecutionEventInput): ExecutionTraceEvent {
   const event = validateExecutionTraceEvent({
     schemaVersion: EXECUTION_EVENT_SCHEMA_VERSION,
     eventId: executionEventId(input),
-    traceId: input.packet?.execution.traceId ?? input.work.traceId,
+    traceId: (input.packet ? packetExecution(input.packet)?.traceId : undefined) ?? input.work.traceId,
     signalId: input.work.signalId,
     workId: input.work.workId,
     packetId: input.packet?.packetId ?? null,

@@ -260,8 +260,9 @@ const ARTICLE_CONTEXT = {
   ],
 }
 
-function writerCapturingCommit(): { writer: any, committedPackets: unknown[], receipt: unknown } {
+function writerCapturingCommit(): { writer: any, committedPackets: unknown[], commits: Array<Record<string, unknown>>, receipt: unknown } {
   const committedPackets: unknown[] = []
+  const commits: Array<Record<string, unknown>> = []
   const receipt = { status: 'accepted', operationId: deriveProgressionOperationId('work-1'), workId: 'work-1' }
   const writer = {
     findReceipt: async () => null,
@@ -269,13 +270,14 @@ function writerCapturingCommit(): { writer: any, committedPackets: unknown[], re
     savePlanningContext: async () => {},
     acquireLease: async () => ({ owner: 'fixture-owner', epoch: 1 }),
     releaseLease: async () => true,
-    commitArticle: async (input: { packet: unknown }) => {
+    commitArticle: async (input: { packet: unknown } & Record<string, unknown>) => {
+      commits.push(input)
       committedPackets.push(input.packet)
       return { receipt }
     },
     commitArticleHold: async () => ({}),
   } as any
-  return { writer, committedPackets, receipt }
+  return { writer, committedPackets, commits, receipt }
 }
 
 test('persistence accepts a v2 packet with jev decisions and commits it', async () => {
@@ -305,6 +307,67 @@ test('persistence accepts a v2 packet with hermes fallback decisions and commits
   assert.equal(committedPackets.length, 1)
   assert.equal(committedPackets[0], input)
   assert.equal(result, 'reused')
+})
+
+// #341 current article shape: memberships carry itemSummary +
+// updatedEntitySummary and packets no longer carry legacy limitations,
+// openQuestions or execution.
+function currentProposal(role: 'primary' | 'related', entityId: string, itemId: string): ArticleEntityProposal {
+  return {
+    ...proposal(role, entityId, itemId),
+    relationship: role === 'primary' ? 'direct_continuation' : 'related_story_branch',
+    relationshipDecision: decision(role === 'primary' ? 'direct_continuation' : 'related_story_branch'),
+    priorItemDecision: decision(itemId), priorItemId: itemId, priorItemSource: 'managed',
+    duplicateTarget: null,
+    itemSummary: role === 'primary' ? 'Primary Entity faces the new filing.' : 'Related Entity watches the filing.',
+    updatedEntitySummary: role === 'primary' ? 'Primary Entity now faces a fresh regulatory review.' : 'Related Entity still holds its earlier position.',
+    placementUncertain: false, placementConfidence: 1,
+  }
+}
+
+function currentPacket(memberships: ArticleEntityProposal[], novelty: ArticleChoiceDecision): ArticleResearchPacketV1 {
+  const { limitations: _limitations, openQuestions: _openQuestions, execution: _execution, ...article } = packet(memberships)
+  return { ...article, novelty }
+}
+
+test('persistence passes confident #341 summary updates to the writer on a new-information article', async () => {
+  const { writer, commits } = writerCapturingCommit()
+  const input = currentPacket([currentProposal('primary', 'entity-primary', ITEM_PRIMARY)], decision('new_information'))
+  assert.doesNotThrow(() => validateResearchPacket(input))
+  const result = await new ArticlePersistenceProcessor(writer).persist({
+    packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+  })
+  assert.equal(result, 'written')
+  assert.equal(commits.length, 1)
+  assert.deepEqual(commits[0]!.summaryUpdates, [{ entityId: 'entity-primary', summary: 'Primary Entity now faces a fresh regulatory review.' }])
+  assert.deepEqual(
+    (commits[0]!.summaryDecisions as Array<{ outcome: string, reason: string, proposedSummary: string | null }>)
+      .map(({ outcome, reason, proposedSummary }) => ({ outcome, reason, proposedSummary })),
+    [{ outcome: 'update', reason: 'conditions_met', proposedSummary: 'Primary Entity now faces a fresh regulatory review.' }],
+  )
+})
+
+test('persistence passes empty summary updates when the article is same-topic-only for its entity', async () => {
+  const { writer, commits } = writerCapturingCommit()
+  const primary = {
+    ...currentProposal('primary', 'entity-primary', ITEM_PRIMARY),
+    relationship: 'same_topic_only' as const,
+    relationshipDecision: decision('same_topic_only'),
+    priorItemDecision: decision('same_topic_only'),
+    priorItemId: null, priorItemSource: null,
+  }
+  const input = currentPacket([primary], decision('new_information'))
+  assert.doesNotThrow(() => validateResearchPacket(input))
+  const result = await new ArticlePersistenceProcessor(writer).persist({
+    packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+  })
+  assert.equal(result, 'written')
+  assert.equal(commits.length, 1)
+  assert.deepEqual(commits[0]!.summaryUpdates, [])
+  assert.deepEqual(
+    (commits[0]!.summaryDecisions as Array<{ outcome: string, reason: string }>).map(({ outcome, reason }) => ({ outcome, reason })),
+    [{ outcome: 'kept', reason: 'relationship_same_topic_only' }],
+  )
 })
 
 test('v1 packet survives the widened persistence helpers with its digest unchanged', () => {
@@ -340,7 +403,7 @@ function digestForTest(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex')
 }
 
-test('commitArticle stores contextualHistory and relationSummary in the item effect payload (#340)', async () => {
+test('commitArticle stores itemSummary plus summary updates and decisions in the item effect payload (#341)', async () => {
   const { PostgresKnowledgeOperationWriter } = await import('./postgres-knowledge-writer')
   const writer = new PostgresKnowledgeOperationWriter({ connectionString: 'postgresql://writer_fixture@localhost/fixture' })
   let captured: unknown
@@ -348,16 +411,46 @@ test('commitArticle stores contextualHistory and relationSummary in the item eff
     query: async (_sql: string, params: unknown[]) => { captured = params[1]; return { rows: [{ result: { ok: true } }] } },
     end: async () => {},
   }
-  const input = { ...packet([{ ...proposal('primary', 'entity-primary', ITEM_PRIMARY), relationSummary: 'Follows the earlier item.' }]),
+  const membership = {
+    ...proposal('primary', 'entity-primary', ITEM_PRIMARY),
+    itemSummary: 'Follows the earlier item.',
+    updatedEntitySummary: 'Primary Entity now faces a fresh regulatory review.',
+  }
+  const input = { ...packet([membership]),
     contextualHistory: 'primary Primary Entity: duplicate; linked to managed item managed-primary.' }
+  const summaryUpdates = [{ entityId: 'entity-primary', summary: 'Primary Entity now faces a fresh regulatory review.' }]
+  const summaryDecisions = [{ entityId: 'entity-primary', name: 'Primary Entity', role: 'primary' as const, outcome: 'update' as const, reason: 'conditions_met', proposedSummary: 'Primary Entity now faces a fresh regulatory review.' }]
   await writer.commitArticle({
     operationId: 'op-1', workId: 'work-1', owner: 'owner', epoch: 1, packet: input, contextDigest: 'digest',
     contextWatermark: 'wm', targetRevisions: {}, entities: [], itemId: 'item-1', duplicateTarget: null,
+    summaryUpdates, summaryDecisions,
   })
   const sent = (typeof captured === 'string' ? JSON.parse(captured) : captured) as { plan: { effect: Record<string, unknown> }, effects: Array<Record<string, unknown>> }
   assert.equal(sent.plan.effect.contextualHistory, input.contextualHistory)
   assert.equal(sent.effects[0]!.contextualHistory, input.contextualHistory)
-  assert.equal((sent.plan.effect.memberships as Array<Record<string, unknown>>)[0]!.relationSummary, 'Follows the earlier item.')
+  assert.deepEqual(sent.plan.effect.summaryUpdates, summaryUpdates)
+  assert.deepEqual(sent.effects[0]!.summaryDecisions, summaryDecisions)
+  assert.equal((sent.plan.effect.memberships as Array<Record<string, unknown>>)[0]!.itemSummary, 'Follows the earlier item.')
+  assert.equal((sent.effects[0]!.memberships as Array<Record<string, unknown>>)[0]!.updatedEntitySummary, 'Primary Entity now faces a fresh regulatory review.')
+})
+
+test('commitArticle rejects summary updates on a reused article source attachment', async () => {
+  const { PostgresKnowledgeOperationWriter } = await import('./postgres-knowledge-writer')
+  const writer = new PostgresKnowledgeOperationWriter({ connectionString: 'postgresql://writer_fixture@localhost/fixture' })
+  ;(writer as unknown as { pool: unknown }).pool = {
+    query: async () => ({ rows: [{ result: { ok: true } }] }),
+    end: async () => {},
+  }
+  await assert.rejects(
+    writer.commitArticle({
+      operationId: 'op-1', workId: 'work-1', owner: 'owner', epoch: 1,
+      packet: packet([proposal('primary', 'entity-primary', ITEM_PRIMARY)]), contextDigest: 'digest',
+      contextWatermark: 'wm', targetRevisions: {}, entities: [], itemId: null,
+      duplicateTarget: { itemId: ITEM_PRIMARY, source: 'managed', entityId: 'entity-primary' },
+      summaryUpdates: [{ entityId: 'entity-primary', summary: 'Primary Entity now faces a fresh regulatory review.' }],
+    }),
+    (error: unknown) => error instanceof TypeError && error.message === 'A reused article source cannot update an entity summary',
+  )
 })
 
 test('persistence holds a no-match creation proposal equivalent to an existing context identity', async () => {

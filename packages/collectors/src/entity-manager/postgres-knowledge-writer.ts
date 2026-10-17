@@ -4,6 +4,7 @@ import { canonicalJson } from '../signal-platform/canonical-json'
 import { isArticleResearchPacket, type ArticleResearchPacketV1, type ArticleResearchPacketV2, type ResearchPacket, type Signal } from '../signal-platform/contracts'
 import { validateResearchPacket } from '../signal-platform/validation'
 import type { EntityHandoffContext } from './canonical-packet-adapter'
+import type { EntitySummaryDecision, EntitySummaryUpdate } from './entity-summary-update'
 import {
   KnowledgeOperationConflictError,
   KnowledgeOperationFencingError,
@@ -87,6 +88,10 @@ export interface ArticleCommitInput {
   /** Null means the source is deliberately attached to an existing duplicate. */
   itemId: string | null
   duplicateTarget: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
+  /** #341: deterministic entity-summary rewrites applied in the article transaction. Empty on a reused/duplicate source. */
+  summaryUpdates?: readonly EntitySummaryUpdate[]
+  /** #341: per-membership audit/review record; held_for_review keeps its proposedSummary here. */
+  summaryDecisions?: readonly EntitySummaryDecision[]
 }
 
 export interface ArticleHoldInput {
@@ -315,6 +320,10 @@ export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWrite
     const packet = validateResearchPacket(input.packet)
     if (!isArticleResearchPacket(packet)) throw new TypeError('Article commit requires an article packet')
     const itemId = input.itemId
+    // #341: a reused/duplicate article source never rewrites an entity summary.
+    if (itemId === null && (input.summaryUpdates ?? []).length > 0) {
+      throw new TypeError('A reused article source cannot update an entity summary')
+    }
     const effect = {
       kind: itemId === null ? 'article_source_attachment' : 'article_item',
       itemId,
@@ -323,6 +332,9 @@ export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWrite
       article: packet.article,
       // #340: retained on items.payload; omitted for packets saved before it existed.
       ...(packet.contextualHistory !== undefined ? { contextualHistory: packet.contextualHistory } : {}),
+      // #341: the writer applies summaryUpdates (history + revision bump) in the article transaction; summaryDecisions is the audit/review record (held_for_review keeps proposedSummary). Both join the plan digest and are retained on items.payload / history.
+      summaryUpdates: input.summaryUpdates ?? [],
+      summaryDecisions: input.summaryDecisions ?? [],
     }
     const plan = {
       schemaVersion: 'myboon.article_progression_plan.v1',

@@ -28,7 +28,7 @@ import {
 } from '../signal-platform/contracts'
 import { deriveEntityHintClaimRefs } from '../signal-platform/entity-hint-claims'
 import { canonicalJson } from '../signal-platform/canonical-json'
-import { validateResearchPacket } from '../signal-platform/validation'
+import { assertCurrentArticlePacketShape, validateResearchPacket } from '../signal-platform/validation'
 import type { RetrievedEvidenceArtifact } from './deterministic-retrieval'
 import { ARTICLE_DECISION_SOURCE_MAX_CHARS } from './article-input-bounds'
 
@@ -70,20 +70,19 @@ export interface StructuredSynthesisBody {
   completion: ResearchCompletion
 }
 
-interface StructuredArticleRelationSummary {
+interface StructuredArticleEntityUpdate {
   entity: string
   priorItemId: string | null
-  text: string
+  itemSummary: string
+  updatedEntitySummary: string
 }
 
 interface StructuredArticleSynthesisBody {
   title: string
   timelineSummary: string
   body: string | null
-  relationSummaries: StructuredArticleRelationSummary[]
+  entityUpdates: StructuredArticleEntityUpdate[]
   eventAt: string | null
-  limitations: string[]
-  openQuestions: string[]
   completion: ResearchCompletion
 }
 
@@ -392,12 +391,13 @@ export class StructuredResearchSynthesizer {
         eventAt: result.value.eventAt, sourceUrl: source.finalUrl, capturedText: source.text,
         capturedAt: source.retrievedAt, contentHash: source.contentHash, truncated: source.truncated,
       },
-      memberships: preparation.memberships.map((membership, index) => ({
-        ...membership, relationSummary: result.value.relationSummaries[index]!.text.trim(),
-      })),
+      memberships: preparation.memberships.map((membership, index) => {
+        const update = result.value.entityUpdates[index]!
+        const { relationSummary: _legacyRelationSummary, ...rest } = membership
+        return { ...rest, itemSummary: update.itemSummary.trim(), updatedEntitySummary: update.updatedEntitySummary.trim() }
+      }),
       novelty: preparation.novelty,
       contextualHistory: boundedContextualHistory(preparation.contextualHistory),
-      limitations: [...result.value.limitations], openQuestions: [...result.value.openQuestions],
       completion: result.value.completion,
       budgetUsed: {
         providerCalls: result.telemetry.providerCalls, repairCalls: result.telemetry.repairCalls,
@@ -405,18 +405,13 @@ export class StructuredResearchSynthesizer {
         toolCalls: result.telemetry.toolCalls, wallTimeMs: result.telemetry.durationMs,
         budgetExceeded: result.telemetry.budgetExceeded, costUsdMicros: result.telemetry.costUsdMicros ?? null,
       },
-      execution: {
-        provider, model, fallbackProvider: result.telemetry.fallbackInvoked ? provider : null,
-        fallbackModel: result.telemetry.fallbackInvoked ? model : null, fallbackUsed: result.telemetry.fallbackInvoked,
-        promptVersion: this.promptVersion, policyVersion: input.workItem.policyVersion, traceId: input.workItem.traceId,
-        attempt: input.workItem.attemptCount, configuredPrimaryProvider: result.telemetry.configuredPrimaryProvider,
-        configuredPrimaryModel: result.telemetry.configuredPrimaryModel, fallbackReason: result.telemetry.fallbackReason,
-        outputSchemaValid: result.telemetry.schemaValid,
-      }, researchContractVersion: input.workItem.researchContractVersion, createdAt: this.now().toISOString(),
+      researchContractVersion: input.workItem.researchContractVersion, createdAt: this.now().toISOString(),
     } as ArticleResearchPacketV1 | ArticleResearchPacketV2
     try {
       const validated = validateResearchPacket(packet)
       if (!isArticleResearchPacket(validated)) throw localError('Article packet validated as a legacy packet')
+      assertCurrentArticlePacketShape(validated)
+      console.info(`[research-engine:synthesis] ${JSON.stringify({ event: 'article_synthesis_provenance', workId: input.workItem.workId, packetId: validated.packetId, traceId: input.workItem.traceId, attempt: input.workItem.attemptCount, provider, model, fallbackUsed: result.telemetry.fallbackInvoked, configuredPrimaryProvider: result.telemetry.configuredPrimaryProvider, configuredPrimaryModel: result.telemetry.configuredPrimaryModel, fallbackReason: result.telemetry.fallbackReason ?? null, outputSchemaValid: result.telemetry.schemaValid ?? null, promptVersion: this.promptVersion, policyVersion: input.workItem.policyVersion })}`)
       return validated
     }
     catch (error) { throw localError('Code-assembled article packet failed contract validation', error) }
@@ -547,8 +542,10 @@ function validateBody(
 /** Reader blurb target (#345). The validator hard-rejects only far beyond it; code trims the rest. */
 export const ARTICLE_TIMELINE_SUMMARY_MAX_CHARS = 400
 const ARTICLE_TIMELINE_SUMMARY_REJECT_CHARS = 1200
-/** Per-membership "how it relates / why it matters" (#340). */
-export const ARTICLE_RELATION_SUMMARY_MAX_CHARS = 280
+/** Per-membership "how this development moves the entity's story forward" (#341). */
+export const ARTICLE_ITEM_SUMMARY_MAX_CHARS = 280
+/** Per-membership rewritten "where the entity stands now" (#341). */
+export const ARTICLE_UPDATED_ENTITY_SUMMARY_MAX_CHARS = 1200
 /** Rendered Jev writing context retained on the packet (#340). */
 export const ARTICLE_CONTEXTUAL_HISTORY_MAX_CHARS = 4000
 const LINKING_RELATIONSHIPS = new Set(['duplicate', 'direct_continuation', 'related_story_branch'])
@@ -563,18 +560,18 @@ export function articleFillerIssues(text: string, path: string): string[] {
   return ARTICLE_FILLER_PATTERNS.filter((pattern) => pattern.test(text)).map((pattern) => `${path} contains filler matching ${pattern.source}`)
 }
 
-type PreparedMembership = Pick<ArticleEntityProposal, 'name' | 'relationship' | 'priorItemId'>
+type PreparedMembership = Pick<ArticleEntityProposal, 'name' | 'relationship' | 'priorItemId' | 'summary'>
 
 /**
- * One relation summary per prepared membership, in order. A linking summary
- * must cite exactly Jev's selected prior item; a standalone one must cite none.
+ * One entity update per prepared membership, in order. A linking update must
+ * cite exactly Jev's selected prior item; a standalone one must cite none.
  */
 export function articleBodyValidator(memberships: readonly PreparedMembership[]) {
   return (value: unknown): StructuredOutputValidation<StructuredArticleSynthesisBody> => {
     const issues: string[] = []
     const body = record(value)
     if (!body) return { valid: false, issues: ['Article body must be an object'] }
-    exactKeys(body, ['title', 'timelineSummary', 'body', 'relationSummaries', 'eventAt', 'limitations', 'openQuestions', 'completion'], 'body', issues)
+    exactKeys(body, ['title', 'timelineSummary', 'body', 'entityUpdates', 'eventAt', 'completion'], 'body', issues)
     nonEmptyString(body.title, 'title', issues)
     nonEmptyString(body.timelineSummary, 'timelineSummary', issues)
     if (typeof body.timelineSummary === 'string') {
@@ -583,14 +580,14 @@ export function articleBodyValidator(memberships: readonly PreparedMembership[])
     }
     nullableString(body.body, 'body', issues)
     if (typeof body.body === 'string') issues.push(...articleFillerIssues(body.body, 'body'))
-    if (!Array.isArray(body.relationSummaries) || body.relationSummaries.length !== memberships.length) {
-      issues.push(`relationSummaries must contain exactly ${memberships.length} entries, one per membership in order`)
+    if (!Array.isArray(body.entityUpdates) || body.entityUpdates.length !== memberships.length) {
+      issues.push(`entityUpdates must contain exactly ${memberships.length} entries, one per membership in order`)
     } else {
-      body.relationSummaries.forEach((entry, index) => {
-        const path = `relationSummaries[${index}]`
+      body.entityUpdates.forEach((entry, index) => {
+        const path = `entityUpdates[${index}]`
         const item = record(entry)
         if (!item) { issues.push(`${path} must be an object`); return }
-        exactKeys(item, ['entity', 'priorItemId', 'text'], path, issues)
+        exactKeys(item, ['entity', 'priorItemId', 'itemSummary', 'updatedEntitySummary'], path, issues)
         const membership = memberships[index]!
         if (item.entity !== membership.name) issues.push(`${path}.entity must be ${JSON.stringify(membership.name)}`)
         const expectedPrior = membership.relationship && LINKING_RELATIONSHIPS.has(membership.relationship) ? membership.priorItemId : null
@@ -599,17 +596,21 @@ export function articleBodyValidator(memberships: readonly PreparedMembership[])
             ? `${path}.priorItemId must be null; explain relevance to the entity only and claim no link`
             : `${path}.priorItemId must be the selected prior item ${expectedPrior}`)
         }
-        nonEmptyString(item.text, `${path}.text`, issues)
-        if (typeof item.text === 'string') {
-          if (item.text.trim().length > ARTICLE_RELATION_SUMMARY_MAX_CHARS) issues.push(`${path}.text must be at most ${ARTICLE_RELATION_SUMMARY_MAX_CHARS} characters`)
-          issues.push(...articleFillerIssues(item.text, `${path}.text`))
+        nonEmptyString(item.itemSummary, `${path}.itemSummary`, issues)
+        if (typeof item.itemSummary === 'string') {
+          if (item.itemSummary.trim().length > ARTICLE_ITEM_SUMMARY_MAX_CHARS) issues.push(`${path}.itemSummary must be at most ${ARTICLE_ITEM_SUMMARY_MAX_CHARS} characters`)
+          issues.push(...articleFillerIssues(item.itemSummary, `${path}.itemSummary`))
+        }
+        nonEmptyString(item.updatedEntitySummary, `${path}.updatedEntitySummary`, issues)
+        if (typeof item.updatedEntitySummary === 'string') {
+          if (item.updatedEntitySummary.trim().length > ARTICLE_UPDATED_ENTITY_SUMMARY_MAX_CHARS) issues.push(`${path}.updatedEntitySummary must be at most ${ARTICLE_UPDATED_ENTITY_SUMMARY_MAX_CHARS} characters`)
+          issues.push(...articleFillerIssues(item.updatedEntitySummary, `${path}.updatedEntitySummary`))
         }
       })
     }
     if (body.eventAt !== null && (typeof body.eventAt !== 'string' || !Number.isFinite(Date.parse(body.eventAt)))) {
       issues.push('eventAt must be an ISO timestamp or null')
     }
-    stringArray(body.limitations, 'limitations', issues); stringArray(body.openQuestions, 'openQuestions', issues)
     if (!['complete', 'partial', 'failed'].includes(String(body.completion))) issues.push('completion is invalid')
     return issues.length ? { valid: false, issues } : { valid: true, value: value as StructuredArticleSynthesisBody }
   }
@@ -785,13 +786,14 @@ export function buildArticlePrompt(input: StructuredSynthesisInput, source: Retr
   const primary = memberships.find((membership) => membership.role === 'primary') ?? memberships[0]
   return [
     'Write the reader-facing article timeline prose from the immutable captured article below.',
-    'Return exactly one JSON object with exactly these keys: {"title":"development title","timelineSummary":"tight news blurb","body":null,"relationSummaries":[{"entity":"membership name","priorItemId":null,"text":"how it relates and why it matters"}],"eventAt":null,"limitations":[],"openQuestions":[],"completion":"complete"}.',
-    `title is a non-empty string of at most 1000 characters. timelineSummary is a non-empty blurb of at most ${ARTICLE_TIMELINE_SUMMARY_MAX_CHARS} characters (2-3 sentences). body is a string or null. eventAt is an ISO timestamp or null. limitations and openQuestions are arrays of strings. completion is complete, partial, or failed.`,
+    'Return exactly one JSON object with exactly these keys: {"title":"development title","timelineSummary":"tight news blurb","body":null,"entityUpdates":[{"entity":"membership name","priorItemId":null,"itemSummary":"how this article moves this entity\'s story forward","updatedEntitySummary":"where this entity stands now, after this article"}],"eventAt":null,"completion":"complete"}.',
+    `title is a non-empty string of at most 1000 characters. timelineSummary is a non-empty blurb of at most ${ARTICLE_TIMELINE_SUMMARY_MAX_CHARS} characters (2-3 sentences). body is a string or null. eventAt is an ISO timestamp or null. completion is complete, partial, or failed.`,
     `timelineSummary leads with the news about ${primary ? JSON.stringify(primary.name) : 'the primary entity'} in its first sentence, even when the source covers other topics (for example, never open an Iran item with a Bitcoin price move). State what happened directly with natural attribution to the outlet or speaker.`,
     'No filler: never write "per the article", "according to the article", "the article says", or editor/author credits such as "edited by ...". No market lead-ins unrelated to the entity.',
-    `relationSummaries has exactly one entry per preparedPlacement membership, in the same order, each with "entity" set to that membership name. text is at most ${ARTICLE_RELATION_SUMMARY_MAX_CHARS} characters.`,
-    'When a membership has a priorItemId (duplicate, direct_continuation or related_story_branch), set that entry\'s priorItemId to exactly that id and say how this development relates to that earlier item in contextualHistory and why it matters for the entity. Only state links supported by both the captured article and the linked earlier item.',
-    'When a membership has no priorItemId, set the entry\'s priorItemId to null and explain only why this development matters for the entity; claim no link to earlier items.',
+    `entityUpdates has exactly one entry per preparedPlacement membership, in the same order, each with "entity" set to that membership name. itemSummary is at most ${ARTICLE_ITEM_SUMMARY_MAX_CHARS} characters.`,
+    `When a membership has a priorItemId (duplicate, direct_continuation or related_story_branch), set that entry's priorItemId to exactly that id and say how this development relates to that earlier item in contextualHistory and why it matters for the entity in itemSummary. Only state links supported by both the captured article and the linked earlier item.`,
+    `When a membership has no priorItemId, set the entry's priorItemId to null and explain only in itemSummary why this development matters for the entity; claim no link to earlier items.`,
+    `updatedEntitySummary rewrites the entity's currentSummary (given per membership) so it describes where the entity stands now after this article: keep still-true background, drop stale or superseded points, add what this article changes. It is about that entity only, names it, and is at most ${ARTICLE_UPDATED_ENTITY_SUMMARY_MAX_CHARS} characters. If the article changes nothing for the entity, still return the current state accurately.`,
     'Never invent facts, causes, or connections that are not in the captured article or contextualHistory. Do not imply a related story branch resolves another story.',
     'eventAt is the actual event time only when the article states it; otherwise null. Never substitute the publication time.',
     'Do not output claims, facts, evidence IDs, citations, entity IDs, placement decisions, or connected_story fields.',
@@ -802,6 +804,7 @@ export function buildArticlePrompt(input: StructuredSynthesisInput, source: Retr
         memberships: memberships.map((membership) => ({
           name: membership.name, role: membership.role, relationship: membership.relationship,
           priorItemId: membership.relationship && LINKING_RELATIONSHIPS.has(membership.relationship) ? membership.priorItemId : null,
+          currentSummary: membership.summary ?? null,
         })),
         novelty: input.articlePreparation.novelty.choice,
         contextualHistory: input.articlePreparation.contextualHistory,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { validateResearchPacket, validateLegacyResearchPacket, ContractValidationError } from './validation'
+import { validateResearchPacket, validateLegacyResearchPacket, assertCurrentArticlePacketShape, ContractValidationError } from './validation'
 
 const V1 = 'myboon.research_packet.article.v1'
 const V2 = 'myboon.research_packet.article.v2'
@@ -261,7 +261,7 @@ test('v2 packet keeps v1 packet rules: related-only already_known is held, not p
   const input = packet(V2, [relatedOnly], v2Decision({ provider: 'jev', choice: 'already_known' }))
   assert.throws(() => validateResearchPacket(input), /primary exact duplicate/i)
 })
-test('article packets retain relationSummary and contextualHistory (#340) and stay valid without them', () => {
+test('legacy article packets keep relationSummary, limitations, openQuestions and execution valid (#340/#341)', () => {
   for (const schema of [V1, V2]) {
     const membership = schema === V1
       ? v1Membership('primary', 'entity-primary', ITEM_PRIMARY)
@@ -270,8 +270,78 @@ test('article packets retain relationSummary and contextualHistory (#340) and st
     const input = packet(schema, [{ ...membership, relationSummary: 'Follows the earlier item and matters because…' }], novelty)
     input.contextualHistory = 'primary Primary Entity: related_story_branch; linked to managed item managed-primary.'
     assert.equal(validateResearchPacket(input), input)
+    const legacyMembership = input.memberships as Membership[]
+    assert.equal(legacyMembership[0]!.relationSummary, 'Follows the earlier item and matters because…')
+    // #341: a packet holding the removed article keys is no longer the current shape.
+    assert.throws(() => assertCurrentArticlePacketShape(input as never), ContractValidationError)
     assert.throws(() => validateResearchPacket({ ...input, memberships: [{ ...membership, relationSummary: 7 }] }), ContractValidationError)
     assert.throws(() => validateResearchPacket({ ...input, contextualHistory: '' }), ContractValidationError)
+  }
+})
+
+/** #341-current packet: no legacy limitations/openQuestions/execution keys. */
+function currentPacket(schemaVersion: string, memberships: Membership[], novelty: Decision): PacketFixture {
+  const base = packet(schemaVersion, memberships, novelty)
+  delete base.limitations
+  delete base.openQuestions
+  delete base.execution
+  return base
+}
+
+function currentMember(membership: Membership): Membership {
+  return { ...membership, itemSummary: 'Moves the entity story forward.', updatedEntitySummary: 'Where the entity stands now.' }
+}
+
+function currentFixtures(schema: string): { membership: Membership, novelty: Decision } {
+  return {
+    membership: schema === V1
+      ? v1Membership('primary', 'entity-primary', ITEM_PRIMARY)
+      : v2Membership({ role: 'primary', entityId: 'entity-primary', itemId: ITEM_PRIMARY, provider: 'jev' }),
+    novelty: schema === V1 ? v1Decision('already_known') : v2Decision({ provider: 'jev', choice: 'already_known' }),
+  }
+}
+
+// #341: a packet produced after Part B drops limitations/openQuestions/execution
+// and every membership carries itemSummary and updatedEntitySummary.
+test('#341 current-shape packets with itemSummary and updatedEntitySummary validate and pass assertCurrentArticlePacketShape', () => {
+  for (const schema of [V1, V2]) {
+    const { membership, novelty } = currentFixtures(schema)
+    const input = currentPacket(schema, [currentMember(membership)], novelty)
+    assert.equal(validateResearchPacket(input), input)
+    assertCurrentArticlePacketShape(input as never)
+    // itemSummary and updatedEntitySummary stay optional-shaped for the validator (null allowed).
+    const nullable = currentPacket(schema, [{ ...currentMember(membership), itemSummary: null, updatedEntitySummary: null }], novelty)
+    assert.equal(validateResearchPacket(nullable), nullable)
+  }
+})
+
+test('#341 assertCurrentArticlePacketShape rejects legacy extras and incomplete memberships', () => {
+  for (const schema of [V1, V2]) {
+    const { membership, novelty } = currentFixtures(schema)
+    const input = currentPacket(schema, [currentMember(membership)], novelty)
+    assert.throws(() => assertCurrentArticlePacketShape({ ...input, limitations: [] } as never), (error: unknown) =>
+      error instanceof ContractValidationError && error.path === 'packet.limitations')
+    assert.throws(() => assertCurrentArticlePacketShape({ ...input, openQuestions: [] } as never), (error: unknown) =>
+      error instanceof ContractValidationError && error.path === 'packet.openQuestions')
+    assert.throws(() => assertCurrentArticlePacketShape({ ...input, execution: { provider: 'fixture' } } as never), (error: unknown) =>
+      error instanceof ContractValidationError && error.path === 'packet.execution')
+    const legacyMembership = { ...membership, relationSummary: 'Follows the earlier item.' }
+    assert.throws(() => assertCurrentArticlePacketShape(currentPacket(schema, [legacyMembership], novelty) as never), (error: unknown) =>
+      error instanceof ContractValidationError && error.path === 'packet.memberships[0].relationSummary')
+    const noItemSummary = { ...membership, updatedEntitySummary: 'Where the entity stands now.' }
+    assert.throws(() => assertCurrentArticlePacketShape(currentPacket(schema, [noItemSummary], novelty) as never), (error: unknown) =>
+      error instanceof ContractValidationError && error.path === 'packet.memberships[0].itemSummary')
+    const emptyUpdated = { ...membership, itemSummary: 'Moves the entity story forward.', updatedEntitySummary: '   ' }
+    assert.throws(() => assertCurrentArticlePacketShape(currentPacket(schema, [emptyUpdated], novelty) as never), (error: unknown) =>
+      error instanceof ContractValidationError && error.path === 'packet.memberships[0].updatedEntitySummary')
+  }
+})
+
+test('#341 validateResearchPacket rejects relationSummary combined with itemSummary', () => {
+  for (const schema of [V1, V2]) {
+    const { membership, novelty } = currentFixtures(schema)
+    const input = packet(schema, [{ ...currentMember(membership), relationSummary: 'Follows the earlier item.' }], novelty)
+    assert.throws(() => validateResearchPacket(input), /itemSummary: must not be combined with legacy relationSummary/)
   }
 })
 

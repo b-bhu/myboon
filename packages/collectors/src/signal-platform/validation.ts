@@ -357,6 +357,11 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
     if (item.priorItemDecision !== null) validateArticleChoice(item.priorItemDecision, `${path}.priorItemDecision`)
     nullableString(item.priorItemId, `${path}.priorItemId`)
     if (item.relationSummary !== undefined) nullableString(item.relationSummary, `${path}.relationSummary`)
+    if (item.itemSummary !== undefined) nullableString(item.itemSummary, `${path}.itemSummary`)
+    if (item.updatedEntitySummary !== undefined) nullableString(item.updatedEntitySummary, `${path}.updatedEntitySummary`)
+    if (item.relationSummary !== undefined && item.itemSummary !== undefined) {
+      throw new ContractValidationError(`${path}.itemSummary`, 'must not be combined with legacy relationSummary')
+    }
     validatePlacementUncertainty(item, path)
     if (item.priorItemSource !== null) oneOf(item.priorItemSource, ['legacy', 'managed'], `${path}.priorItemSource`)
     if ((item.priorItemId === null) !== (item.priorItemSource === null)) {
@@ -446,12 +451,37 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
   if (primaryDuplicateTargetCount > 0 && (novelty.choice === 'new_information' || novelty.choice === 'contradicts_prior')) {
     throw new ContractValidationError('packet.novelty', 'primary exact duplicate conflicts with new or contradictory novelty')
   }
-  stringArray(record.limitations, 'packet.limitations')
-  stringArray(record.openQuestions, 'packet.openQuestions')
+  if (record.limitations !== undefined) stringArray(record.limitations, 'packet.limitations')
+  if (record.openQuestions !== undefined) stringArray(record.openQuestions, 'packet.openQuestions')
   oneOf(record.completion, ['complete', 'partial', 'failed'], 'packet.completion')
   validateBudgetUsage(record.budgetUsed, 'packet.budgetUsed')
-  validateExecution(record.execution, 'packet.execution')
+  if (record.execution !== undefined) validateExecution(record.execution, 'packet.execution')
   return record as ArticleResearchPacketV1
+}
+
+/**
+ * #341: a packet produced after Part B has no legacy
+ * limitations/openQuestions/execution and every membership carries
+ * itemSummary and updatedEntitySummary.
+ */
+export function assertCurrentArticlePacketShape(packet: ArticleResearchPacketV1 | ArticleResearchPacketV2): void {
+  for (const key of ['limitations', 'openQuestions', 'execution'] as const) {
+    if (Object.prototype.hasOwnProperty.call(packet, key)) {
+      throw new ContractValidationError(`packet.${key}`, 'is removed from article packets (#341)')
+    }
+  }
+  packet.memberships.forEach((membership, index) => {
+    const path = `packet.memberships[${index}]`
+    if (Object.prototype.hasOwnProperty.call(membership, 'relationSummary')) {
+      throw new ContractValidationError(`${path}.relationSummary`, 'is replaced by itemSummary (#341)')
+    }
+    for (const key of ['itemSummary', 'updatedEntitySummary'] as const) {
+      const value = membership[key]
+      if (typeof value !== 'string' || !value.trim()) {
+        throw new ContractValidationError(`${path}.${key}`, 'must be a non-empty string')
+      }
+    }
+  })
 }
 
 function validateArticleChoice(value: unknown, path: string): void {
@@ -554,6 +584,11 @@ function validateArticleResearchPacketV2(record: Record<string, unknown>): Artic
     if (item.priorItemDecision !== null) validateArticleDecisionV2(item.priorItemDecision, `${path}.priorItemDecision`)
     nullableString(item.priorItemId, `${path}.priorItemId`)
     if (item.relationSummary !== undefined) nullableString(item.relationSummary, `${path}.relationSummary`)
+    if (item.itemSummary !== undefined) nullableString(item.itemSummary, `${path}.itemSummary`)
+    if (item.updatedEntitySummary !== undefined) nullableString(item.updatedEntitySummary, `${path}.updatedEntitySummary`)
+    if (item.relationSummary !== undefined && item.itemSummary !== undefined) {
+      throw new ContractValidationError(`${path}.itemSummary`, 'must not be combined with legacy relationSummary')
+    }
     validatePlacementUncertainty(item, path)
     if (item.priorItemSource !== null) oneOf(item.priorItemSource, ['legacy', 'managed'], `${path}.priorItemSource`)
     if ((item.priorItemId === null) !== (item.priorItemSource === null)) {
@@ -643,11 +678,11 @@ function validateArticleResearchPacketV2(record: Record<string, unknown>): Artic
   if (primaryDuplicateTargetCount > 0 && (novelty.choice === 'new_information' || novelty.choice === 'contradicts_prior')) {
     throw new ContractValidationError('packet.novelty', 'primary exact duplicate conflicts with new or contradictory novelty')
   }
-  stringArray(record.limitations, 'packet.limitations')
-  stringArray(record.openQuestions, 'packet.openQuestions')
+  if (record.limitations !== undefined) stringArray(record.limitations, 'packet.limitations')
+  if (record.openQuestions !== undefined) stringArray(record.openQuestions, 'packet.openQuestions')
   oneOf(record.completion, ['complete', 'partial', 'failed'], 'packet.completion')
   validateBudgetUsage(record.budgetUsed, 'packet.budgetUsed')
-  validateExecution(record.execution, 'packet.execution')
+  if (record.execution !== undefined) validateExecution(record.execution, 'packet.execution')
   return record as ArticleResearchPacketV2
 }
 

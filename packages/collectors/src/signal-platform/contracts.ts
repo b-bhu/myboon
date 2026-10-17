@@ -414,8 +414,12 @@ export interface ArticleEntityProposal extends ExtensibleContract {
    * owns the one shared reuse effect. This never authorizes a writer effect.
    */
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
-  /** Reader-facing "how it relates / why it matters" (#340); absent on packets before it shipped. */
+  /** Legacy (#340) name; packets written before #341 only. New packets use itemSummary. */
   relationSummary?: string | null
+  /** #341: how this article moves this entity's story forward (replaces relationSummary). Required on packets written after #341. */
+  itemSummary?: string | null
+  /** #341: where this entity stands now, after this article. Written by the same Hermes synthesis call; Entity Manager applies it only when the five #341 conditions hold. */
+  updatedEntitySummary?: string | null
   /**
    * #343: true when a scored floor failed (or the decision had no score) and
    * Bucket's save-uncertain mode is on; absent on older packets = certain.
@@ -452,8 +456,12 @@ export interface ArticleV2EntityProposal extends ExtensibleContract {
   priorItemSource: 'legacy' | 'managed' | null
   duplicateTarget: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
-  /** Reader-facing "how it relates / why it matters" (#340); absent on packets before it shipped. */
+  /** Legacy (#340) name; packets written before #341 only. New packets use itemSummary. */
   relationSummary?: string | null
+  /** #341: how this article moves this entity's story forward (replaces relationSummary). Required on packets written after #341. */
+  itemSummary?: string | null
+  /** #341: where this entity stands now, after this article. Written by the same Hermes synthesis call; Entity Manager applies it only when the five #341 conditions hold. */
+  updatedEntitySummary?: string | null
   /**
    * #343: true when a scored floor failed (or the decision had no score) and
    * Bucket's save-uncertain mode is on; absent on older packets = certain.
@@ -469,6 +477,9 @@ export interface ArticleV2EntityProposal extends ExtensibleContract {
 /**
  * New article-only handoff.  Captured text and source timestamps are immutable
  * provenance, while reader-facing prose lives in `timelineSummary`.
+ * #341: no limitations/openQuestions/execution; model/provider provenance is
+ * logged by the synthesizer. Packets saved before #341 may still carry them as
+ * legacy extra keys.
  */
 export interface ArticleResearchPacketV1 extends ExtensibleContract {
   schemaVersion: typeof ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION
@@ -507,11 +518,8 @@ export interface ArticleResearchPacketV1 extends ExtensibleContract {
   contextualHistory?: string
   /** Every prepared article records Jev's separate novelty judgment. */
   novelty: ArticleChoiceDecision
-  limitations: string[]
-  openQuestions: string[]
   completion: ResearchCompletion
   budgetUsed: BudgetUsage
-  execution: ResearchExecution
   researchContractVersion: ResearchPacketSchemaVersion
   createdAt: string
 }
@@ -521,6 +529,9 @@ export interface ArticleResearchPacketV1 extends ExtensibleContract {
  * relationship, prior item, novelty) is provider-aware via ArticleDecisionV2:
  * Jev decisions keep truthful raw Choice data, Hermes fallback decisions record
  * only why the fallback happened.
+ * #341: no limitations/openQuestions/execution; model/provider provenance is
+ * logged by the synthesizer. Packets saved before #341 may still carry them as
+ * legacy extra keys.
  */
 export interface ArticleResearchPacketV2 extends ExtensibleContract {
   schemaVersion: typeof ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION
@@ -559,11 +570,8 @@ export interface ArticleResearchPacketV2 extends ExtensibleContract {
   contextualHistory?: string
   /** Every prepared article records a separate provider-attributed novelty judgment. */
   novelty: ArticleDecisionV2
-  limitations: string[]
-  openQuestions: string[]
   completion: ResearchCompletion
   budgetUsed: BudgetUsage
-  execution: ResearchExecution
   researchContractVersion: ResearchPacketSchemaVersion
   createdAt: string
 }
@@ -574,6 +582,13 @@ export function isArticleResearchPacket(packet: ResearchPacket | Record<string, 
   return (packet.schemaVersion === ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION
     || packet.schemaVersion === ARTICLE_RESEARCH_PACKET_V2_SCHEMA_VERSION)
     && packet.packetKind === 'article'
+}
+
+/** Legacy packets carry execution provenance; article packets (#341) do not. */
+export function packetExecution(packet: ResearchPacket): ResearchExecution | null {
+  return isArticleResearchPacket(packet)
+    ? ((packet as Record<string, unknown>).execution as ResearchExecution | undefined) ?? null
+    : packet.execution
 }
 
 export type ExecutionStage =

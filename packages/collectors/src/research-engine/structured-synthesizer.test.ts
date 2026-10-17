@@ -11,16 +11,21 @@ import {
   type StructuredProviderResult,
 } from '../inference-gateway'
 import {
+  ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_PACKET_SCHEMA_VERSION,
   RESEARCH_WORK_SCHEMA_VERSION,
   SIGNAL_SCHEMA_VERSION,
+  type ArticleEntityProposal,
+  type ArticleChoiceDecision,
   type ResearchWorkItem,
   type Signal,
 } from '../signal-platform/contracts'
 import type { RetrievedEvidenceArtifact } from './deterministic-retrieval'
 import { ARTICLE_DECISION_SOURCE_MAX_CHARS } from './article-input-bounds'
 import {
+  ARTICLE_UPDATED_ENTITY_SUMMARY_MAX_CHARS,
   StructuredResearchSynthesizer,
+  articleBodyValidator,
   deterministicPacketId,
   type StructuredSynthesisBody,
   type StructuredSynthesisGateway,
@@ -518,3 +523,117 @@ function deepFreeze<T>(value: T): T {
   }
   return value
 }
+
+function articlePlacement(entityId: string): ArticleChoiceDecision {
+  return { choice: entityId, probabilities: { [entityId]: 1 }, confidence: 1, decisionId: `fixture:placement:${entityId}`, decisionVersion: 'fixture.v1' }
+}
+
+function articleProposal(role: 'primary' | 'related', entityId: string, overrides: Partial<ArticleEntityProposal> = {}): ArticleEntityProposal {
+  return {
+    entityId,
+    placementDisposition: 'selected',
+    role,
+    name: role === 'primary' ? 'Example Protocol' : 'Example Exchange',
+    type: 'organization',
+    aliases: [],
+    summary: role === 'primary' ? 'Example Protocol runs a settled settlement network.' : 'Example Exchange lists the protocol asset.',
+    scope: {},
+    creationProposal: null,
+    creationDecision: null,
+    placement: articlePlacement(role === 'primary' ? entityId : 'related'),
+    relationship: null,
+    relationshipDecision: null,
+    priorItemDecision: null,
+    priorItemId: null,
+    priorItemSource: null,
+    duplicateTarget: null,
+    ...overrides,
+  }
+}
+
+const ARTICLE_PREPARATION = {
+  memberships: [
+    articleProposal('primary', 'entity-protocol'),
+    articleProposal('related', 'entity-exchange'),
+  ],
+  novelty: {
+    choice: 'new_information' as const,
+    probabilities: { new_information: 1 },
+    confidence: 1,
+    decisionId: 'fixture:novelty',
+    decisionVersion: 'fixture.v1',
+  },
+  contextualHistory: 'primary Example Protocol: direct_continuation history for the version 2 programme.',
+}
+
+function articleBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    title: 'Protocol confirms version 2 launch window',
+    timelineSummary: 'Example Protocol confirmed the version 2 launch window at its annual summit.',
+    body: null,
+    entityUpdates: [
+      { entity: 'Example Protocol', priorItemId: null, itemSummary: 'The protocol confirmed its version 2 launch window.  ',
+        updatedEntitySummary: 'Example Protocol has confirmed the version 2 launch window ahead of the summit commitments.  ' },
+      { entity: 'Example Exchange', priorItemId: null, itemSummary: 'The exchange opened the version 2 upgrade path.  ',
+        updatedEntitySummary: 'Example Exchange now lists the version 2 upgrade path for its users.  ' },
+    ],
+    eventAt: null,
+    completion: 'complete',
+    ...overrides,
+  }
+}
+
+test('article synthesis emits the #341 packet shape: no limitations/openQuestions/execution, entityUpdates memberships', async () => {
+  const gateway = new CapturingGateway(articleBody())
+  const packet = await synthesizer(gateway).synthesize({
+    signal: SIGNAL, workItem: WORK, evidence: [artifact()], articlePreparation: ARTICLE_PREPARATION,
+  })
+  assert.equal(packet.schemaVersion, ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION)
+  assert.equal('limitations' in packet, false)
+  assert.equal('openQuestions' in packet, false)
+  assert.equal('execution' in packet, false)
+  assert.equal(packet.memberships.length, 2)
+  assert.equal(packet.memberships[0].itemSummary, 'The protocol confirmed its version 2 launch window.')
+  assert.equal(packet.memberships[0].updatedEntitySummary, 'Example Protocol has confirmed the version 2 launch window ahead of the summit commitments.')
+  assert.equal(packet.memberships[1].itemSummary, 'The exchange opened the version 2 upgrade path.')
+  assert.equal(packet.memberships[1].updatedEntitySummary, 'Example Exchange now lists the version 2 upgrade path for its users.')
+  for (const membership of packet.memberships) {
+    assert.equal('relationSummary' in membership, false)
+    assert.ok(membership.itemSummary && membership.itemSummary.length > 0)
+    assert.ok(membership.updatedEntitySummary && membership.updatedEntitySummary.length > 0)
+  }
+})
+
+test('article prompt carries entityUpdates instructions and every membership currentSummary', async () => {
+  const gateway = new CapturingGateway(articleBody())
+  await synthesizer(gateway).synthesize({
+    signal: SIGNAL, workItem: WORK, evidence: [artifact()], articlePreparation: ARTICLE_PREPARATION,
+  })
+  const prompt = gateway.requests[0].prompt
+  assert.ok(prompt.includes('"entityUpdates":[{"entity":"membership name","priorItemId":null,"itemSummary":"how this article moves this entity\'s story forward","updatedEntitySummary":"where this entity stands now, after this article"}]'))
+  assert.ok(!prompt.includes('limitations'))
+  assert.ok(!prompt.includes('openQuestions'))
+  assert.ok(prompt.includes('"currentSummary":"Example Protocol runs a settled settlement network."'))
+  assert.ok(prompt.includes('"currentSummary":"Example Exchange lists the protocol asset."'))
+  assert.ok(prompt.includes(`at most ${ARTICLE_UPDATED_ENTITY_SUMMARY_MAX_CHARS} characters`))
+})
+
+test('article body validator rejects an updatedEntitySummary beyond the bound or empty', () => {
+  const validate = articleBodyValidator(ARTICLE_PREPARATION.memberships)
+  const tooLong = validate(articleBody({ entityUpdates: [
+    { entity: 'Example Protocol', priorItemId: null, itemSummary: 'The protocol confirmed its version 2 launch window.',
+      updatedEntitySummary: 'a'.repeat(ARTICLE_UPDATED_ENTITY_SUMMARY_MAX_CHARS + 1) },
+    { entity: 'Example Exchange', priorItemId: null, itemSummary: 'The exchange opened the version 2 upgrade path.',
+      updatedEntitySummary: 'Example Exchange now lists the version 2 upgrade path.' },
+  ] }))
+  assert.equal(tooLong.valid, false)
+  assert.ok((tooLong.issues ?? []).some((issue) => issue.includes('updatedEntitySummary must be at most')))
+  const empty = validate(articleBody({ entityUpdates: [
+    { entity: 'Example Protocol', priorItemId: null, itemSummary: 'The protocol confirmed its version 2 launch window.',
+      updatedEntitySummary: '   ' },
+    { entity: 'Example Exchange', priorItemId: null, itemSummary: 'The exchange opened the version 2 upgrade path.',
+      updatedEntitySummary: 'Example Exchange now lists the version 2 upgrade path.' },
+  ] }))
+  assert.equal(empty.valid, false)
+  assert.ok((empty.issues ?? []).some((issue) => issue.includes('updatedEntitySummary must be a non-empty string')))
+})

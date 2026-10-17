@@ -1,4 +1,4 @@
-import { isArticleResearchPacket, type ResearchPacket as SourceResearchPacket, type ResearchPacketV1, type ResearchWorkItem, type RetrievedEvidence, type Signal } from '../signal-platform/contracts'
+import { isArticleResearchPacket, packetExecution, type ResearchPacket as SourceResearchPacket, type ResearchPacketV1, type ResearchWorkItem, type RetrievedEvidence, type Signal } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { validateResearchPacket } from '../signal-platform/validation'
 import {
@@ -264,7 +264,7 @@ function canonicalPacket(value: unknown): SourceResearchPacket {
 
 function adaptArticlePacket(packet: Extract<SourceResearchPacket, { packetKind: 'article' }>, context?: EntityHandoffContext): ResearchPacket {
   const readiness = context ? resolveReadiness(packet, context) : null
-  if (!readiness) throw new CanonicalPacketAdapterError('Article packet requires explicit article readiness before Entity processing.')
+  if (!readiness || !context) throw new CanonicalPacketAdapterError('Article packet requires explicit article readiness before Entity processing.')
   return {
     id: `canonical-packet:${packet.packetId}`, source: packet.sourceType, sourceArea: 'feed', sourceResearchId: packet.packetId,
     sourceType: 'article', sourceRefId: packet.signalId, title: packet.article.title, summary: packet.article.timelineSummary,
@@ -272,12 +272,20 @@ function adaptArticlePacket(packet: Extract<SourceResearchPacket, { packetKind: 
     eventAt: packet.article.eventAt ?? packet.sourceSignal.publishedAt ?? packet.observedAt, url: packet.article.sourceUrl,
     evidence: [], metrics: { membershipCount: packet.memberships.length, budgetUsed: clone(packet.budgetUsed) },
     context: { adapter_version: ADAPTER_VERSION_V2, packet_kind: 'article', packet_id: packet.packetId,
-      work_id: packet.workId, signal_id: packet.signalId, trace_id: packet.execution.traceId,
+      work_id: packet.workId, signal_id: packet.signalId,
+      trace_id: packetExecution(packet)?.traceId ?? context.work.traceId,
       published_at: packet.sourceSignal.publishedAt, event_at: packet.article.eventAt,
       article: clone(packet.article), memberships: clone(packet.memberships), research_readiness: clone(readiness),
       ...(packet.contextualHistory !== undefined ? { contextual_history: packet.contextualHistory } : {}),
-      canonical_packet: clone(packet), limitations: clone(packet.limitations), open_questions: clone(packet.openQuestions) },
+      canonical_packet: clone(packet),
+      limitations: legacyStrings(packet, 'limitations'), open_questions: legacyStrings(packet, 'openQuestions') },
   }
+}
+
+/** #341: article packets carry no limitations/openQuestions; saved legacy extras still surface. */
+function legacyStrings(packet: SourceResearchPacket, key: 'limitations' | 'openQuestions'): string[] {
+  const value = (packet as Record<string, unknown>)[key]
+  return Array.isArray(value) ? [...value as string[]] : []
 }
 
 function validateLinkage(packet: ResearchPacketV1): void {

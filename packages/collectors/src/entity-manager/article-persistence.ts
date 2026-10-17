@@ -6,6 +6,8 @@ import { deriveManagedItemId, deriveProgressionOperationId } from './progression
 import { knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
 import type { ManagedArticleContext, ManagedEntityBinding, PostgresKnowledgeOperationWriter } from './postgres-knowledge-writer'
 import { entityIdentityKeys } from './identity-key'
+import { decideEntitySummaryUpdates, logEntitySummaryDecisions } from './entity-summary-update'
+import { parseArticlePlacementConfidenceFloors } from '../research-engine/article-placement'
 
 /**
  * Readers first: persistence accepts both article packet versions.  The two
@@ -21,7 +23,11 @@ type ArticleMembership = ArticlePacket['memberships'][number]
  * durable references before asking the private writer to commit one effect.
  */
 export class ArticlePersistenceProcessor {
-  constructor(private readonly writer: PostgresKnowledgeOperationWriter) {}
+  /** #341: confident-grade primary placement floor for summary updates, read once. */
+  private readonly placementFloor: number
+  constructor(private readonly writer: PostgresKnowledgeOperationWriter, private readonly options: { placementFloor?: number } = {}) {
+    this.placementFloor = options.placementFloor ?? parseArticlePlacementConfidenceFloors().primaryPlacement
+  }
 
   async persist(input: {
     packet: ResearchPacket
@@ -87,6 +93,12 @@ export class ArticlePersistenceProcessor {
         'article packet requires duplicate-target normalization before its immutable source checkpoint is saved',
         'immutable_article_source_checkpoint')
     }
+    // #341: the librarian decides which membership summaries may be applied —
+    // no model call — and logs one audit line per decision.
+    const entitySummaries = decideEntitySummaryUpdates({
+      packet: packetForCommit, entities: resolved.entities, duplicateTarget: duplicate.target, placementFloor: this.placementFloor,
+    })
+    logEntitySummaryDecisions(packet.workId, entitySummaries.decisions)
     const contextDigest = knowledgeOperationSemanticDigest({
       baseDigest: context.digest,
       packetDigest: digest(packetForCommit),
@@ -125,6 +137,7 @@ export class ArticlePersistenceProcessor {
         operationId, workId: packetForCommit.workId, owner: lease.owner, epoch: lease.epoch, packet: packetForCommit,
         contextDigest, contextWatermark: context.watermark, targetRevisions,
         entities: resolved.entities, itemId, duplicateTarget: duplicate.target,
+        summaryUpdates: entitySummaries.updates, summaryDecisions: entitySummaries.decisions,
       })
       receiptOutcome(committed.receipt, operationId, packet.workId)
       return duplicate.target ? 'reused' : 'written'
