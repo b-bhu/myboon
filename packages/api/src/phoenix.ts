@@ -1175,6 +1175,13 @@ function parseOrderBuilderIndexes(body: Record<string, unknown>): {
   return { traderPdaIndex, traderSubaccountIndex }
 }
 
+export function requireLimitPriceUsd(priceUsd: string | undefined): string {
+  if (priceUsd === undefined) {
+    throw new Error('Phoenix limit order builder: priceUsd is missing after body parsing (expected for kind=limit)')
+  }
+  return priceUsd
+}
+
 function parseSdkOrderBuilderBody(body: Record<string, unknown>, kind: 'market' | 'limit'): {
   authority: Authority
   positionAuthority?: Authority
@@ -1851,7 +1858,7 @@ phoenixRoutes.post('/tx/limit-order', async (c) => {
     const orderPacket = await client.orderPackets.buildLimitOrderPacket({
       symbol: builder.symbol,
       side: builder.side,
-      priceUsd: builder.priceUsd,
+      priceUsd: requireLimitPriceUsd(builder.priceUsd),
       baseUnits: builder.baseUnits,
       orderFlags: builder.orderFlags,
     })
