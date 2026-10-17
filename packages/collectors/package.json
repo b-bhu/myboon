@@ -25,6 +25,7 @@
     "entity-v4:research-assess-partial": "tsx src/research-engine/run-retained-partial-assessment.ts",
     "entity-v4:research-reconcile": "tsx src/research-engine/run-reconcile-research-reservation.ts",
     "entity-v4:planning-reconcile": "tsx src/entity-manager/run-reconcile-planning-dispatch.ts",
+    "entity-v4:backfill-337": "tsx src/entity-manager/run-managed-entity-backfill.ts",
     "polymarket:markets-data-engineer": "tsx src/polymarket/run-markets-data-engineer.ts",
     "polymarket:researcher": "tsx src/polymarket/run-researcher.ts",
     "polymarket:doctor": "tsx src/polymarket/run-doctor.ts",
