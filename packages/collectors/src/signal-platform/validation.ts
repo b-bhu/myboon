@@ -357,6 +357,7 @@ function validateArticleResearchPacket(record: Record<string, unknown>): Article
     if (item.priorItemDecision !== null) validateArticleChoice(item.priorItemDecision, `${path}.priorItemDecision`)
     nullableString(item.priorItemId, `${path}.priorItemId`)
     if (item.relationSummary !== undefined) nullableString(item.relationSummary, `${path}.relationSummary`)
+    validatePlacementUncertainty(item, path)
     if (item.priorItemSource !== null) oneOf(item.priorItemSource, ['legacy', 'managed'], `${path}.priorItemSource`)
     if ((item.priorItemId === null) !== (item.priorItemSource === null)) {
       throw new ContractValidationError(path, 'prior item identity and source must be present together')
@@ -475,6 +476,24 @@ function validateArticleChoice(value: unknown, path: string): void {
 }
 
 /**
+ * #343 save-uncertain placement fields are additive: older packets omit both
+ * and stay valid unchanged. When present they must be well-formed and appear
+ * together so downstream writers can rely on the uncertainty annotation being
+ * complete.
+ */
+function validatePlacementUncertainty(item: Record<string, unknown>, path: string): void {
+  const uncertain = item.placementUncertain
+  const confidence = item.placementConfidence
+  if (uncertain !== undefined) boolean(uncertain, `${path}.placementUncertain`)
+  if (confidence !== undefined && confidence !== null) {
+    boundedNumber(confidence, `${path}.placementConfidence`, 0, 1)
+  }
+  if ((uncertain === undefined) !== (confidence === undefined)) {
+    throw new ContractValidationError(path, 'placement uncertainty fields must be present together')
+  }
+}
+
+/**
  * v2 article handoff. Packet rules are identical to v1 (duplicate targets,
  * novelty, roles); only the retained decisions are provider-aware and are
  * validated through validateArticleDecisionV2 instead of validateArticleChoice.
@@ -535,6 +554,7 @@ function validateArticleResearchPacketV2(record: Record<string, unknown>): Artic
     if (item.priorItemDecision !== null) validateArticleDecisionV2(item.priorItemDecision, `${path}.priorItemDecision`)
     nullableString(item.priorItemId, `${path}.priorItemId`)
     if (item.relationSummary !== undefined) nullableString(item.relationSummary, `${path}.relationSummary`)
+    validatePlacementUncertainty(item, path)
     if (item.priorItemSource !== null) oneOf(item.priorItemSource, ['legacy', 'managed'], `${path}.priorItemSource`)
     if ((item.priorItemId === null) !== (item.priorItemSource === null)) {
       throw new ContractValidationError(path, 'prior item identity and source must be present together')

@@ -1244,3 +1244,23 @@ test('shared worker startup rejects an invalid article placement link floor envi
     }
   } finally { fx.close() }
 })
+
+// #343 PR-B: the save-uncertain switch is validated at startup the same way,
+// so a bad ARTICLE_PLACEMENT_SAVE_UNCERTAIN value cannot reach a run.
+test('shared worker startup rejects an invalid article placement save-uncertain environment value', () => {
+  const fx = fixture('news')
+  try {
+    const previous = process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN
+    try {
+      process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN = 'maybe'
+      assert.throws(
+        () => new SharedResearchWorker(workerOptions([fx.store])),
+        (error: unknown) => error instanceof SharedResearchWorkerConfigurationError
+          && /Invalid ARTICLE_PLACEMENT_SAVE_UNCERTAIN="maybe": expected true or false\./.test(error.message),
+      )
+    } finally {
+      if (previous === undefined) delete process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN
+      else process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN = previous
+    }
+  } finally { fx.close() }
+})
