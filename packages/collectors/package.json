@@ -89,6 +89,7 @@
     "feed-v3:runtime-control": "tsx src/signal-platform/run-runtime-control.ts",
     "feed-v3:verify-drain": "tsx src/signal-platform/run-verify-drain.ts",
     "lane-store:seed-watchlist": "tsx src/lane-store/run-seed-watchlist.ts",
+    "lane-store:prune": "tsx src/lane-store/run-prune.ts",
     "test:lane-store": "tsx --test src/lane-store/*.test.ts"
   },
   "dependencies": {

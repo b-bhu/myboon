@@ -11,3 +11,17 @@
 # restart_burst / supabase_health_failed / config_missing / disk_high);
 # stopped PM2 apps keep their staleness checks silent.
 */5 * * * * cd /home/ubuntu/myboon && pnpm --filter @myboon/collectors pipeline-store:check >> /home/ubuntu/myboon-logs/condition-check.cron.log 2>&1
+
+# Lane-store prune cron line (Ref #346 PR 6).
+#
+# NOT INSTALLED. Install only with Bucket's approval, and only AFTER the
+# #377 managed-entity backfill has completed and the same command has been run
+# as a dry run (no --apply) with its JSON reviewed: this prune deletes old
+# terminal rows from the two lane SQLite stores (news-lane.sqlite /
+# polymarket-lane.sqlite). 14-day retention for terminal run / observation /
+# research rows, 7-day retention for delivered outbox rows; pipeline_watchlist,
+# undelivered outbox rows, non-terminal rows and failed / dead-letter rows are
+# never deleted. Statuses and safety rules:
+# packages/collectors/src/lane-store/prune.ts. A lane whose file is missing is
+# skipped, never created.
+35 4 * * * cd /home/ubuntu/myboon && pnpm --filter @myboon/collectors lane-store:prune -- --apply >> /home/ubuntu/myboon-logs/lane-store-prune.cron.log 2>&1
