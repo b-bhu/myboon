@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
@@ -35,7 +35,7 @@ async function runOnce(): Promise<void> {
   const pipelinePath = process.env.PIPELINE_SQLITE_PATH ?? resolve(__dirname, '..', '..', '.data', 'pipeline.sqlite')
   const runtime = loadFeedV3RuntimeConfig()
   const intakeMode = feedV3ModeForSource(runtime, 'intake', 'polymarket')
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
@@ -90,6 +90,7 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  requireSupabaseEnv()
   await runOnce()
 
   if (process.env.POLYMARKET_MARKETS_RUN_ONCE === '1') return

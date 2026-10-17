@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
 import { startIntervalRunner } from '../pipeline-store/interval-runner'
@@ -36,8 +36,9 @@ async function runOnce(supabase: SupabaseClient, pipelineStore: PipelineStore): 
 }
 
 async function main(): Promise<void> {
+  requireSupabaseEnv()
   const config = editorDraftCliConfig()
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )

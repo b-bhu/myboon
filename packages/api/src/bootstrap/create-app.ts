@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import entityManager from '@myboon/collectors/entity-manager'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { createAiRoutes } from '../ai/routes.js'
 import { createCalendarRoutes } from '../calendar/routes.js'
 import { createMarketHeatmapRoutes } from '../market-heatmap/routes.js'
@@ -77,11 +77,11 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   const upDownService = new PolymarketUpDownService({
     priceService: new UpDownPriceService(upDownReferenceStore),
   })
-  const entityKnowledgeReader = new SupabaseEntityKnowledgeReader(createClient(
+  const entityKnowledgeReader = new SupabaseEntityKnowledgeReader(createSupabaseClient(
     config.supabaseUrl,
     config.supabaseServiceRoleKey,
-    { auth: { persistSession: false, autoRefreshToken: false } },
-  ) as never)
+    { clientOptions: { auth: { persistSession: false, autoRefreshToken: false } } },
+  ))
 
   const publicCors = cors()
   app.use('*', async (c, next) => {

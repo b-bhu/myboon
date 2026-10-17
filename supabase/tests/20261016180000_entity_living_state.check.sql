@@ -58,3 +58,26 @@ SET ROLE ls_writer;
 DO $t$ BEGIN PERFORM 1 FROM managed_knowledge_private.entity_summary_history; ASSERT false, 'executor must not read history';
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'executor direct read denied: ok'; END $t$;
 RESET ROLE;
+-- NULL inputs must raise MK011 (CAS / lease guards cannot be bypassed).
+SET ROLE ls_writer;
+DO $t$
+DECLARE e text := '11111111-1111-1111-1111-111111111111'; cases jsonb[] := ARRAY[
+  jsonb_build_object('expectedSummaryRevision',0,'restoreRevision',0),
+  jsonb_build_object('entityId',e,'restoreRevision',0),
+  jsonb_build_object('entityId',e,'expectedSummaryRevision',0)]; c jsonb;
+BEGIN
+  FOREACH c IN ARRAY cases LOOP
+    BEGIN PERFORM managed_knowledge_private.entity_summary_restore_v1(c); ASSERT false, 'restore accepted NULL: '||c;
+    EXCEPTION WHEN SQLSTATE 'MK011' THEN NULL; END;
+  END LOOP;
+  BEGIN PERFORM managed_knowledge_private.entity_summary_claim_due_v1('w',NULL,60000); ASSERT false, 'claim accepted NULL limit';
+  EXCEPTION WHEN SQLSTATE 'MK011' THEN NULL; END;
+  BEGIN PERFORM managed_knowledge_private.entity_summary_claim_due_v1('w',10,NULL); ASSERT false, 'claim accepted NULL lease';
+  EXCEPTION WHEN SQLSTATE 'MK011' THEN NULL; END;
+  BEGIN PERFORM managed_knowledge_private.entity_summary_claim_due_v1('w',0,60000); ASSERT false, 'claim accepted 0 limit';
+  EXCEPTION WHEN SQLSTATE 'MK011' THEN NULL; END;
+  BEGIN PERFORM managed_knowledge_private.entity_summary_claim_due_v1('w',10,0); ASSERT false, 'claim accepted 0 lease';
+  EXCEPTION WHEN SQLSTATE 'MK011' THEN NULL; END;
+  RAISE NOTICE 'null/non-positive input guards: all passed';
+END $t$;
+RESET ROLE;

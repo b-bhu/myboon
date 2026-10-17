@@ -17,6 +17,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=22"
+  },
   "packageManager": "pnpm@10.28.0",
   "devDependencies": {
     "dotenv": "^17.4.2",

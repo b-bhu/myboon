@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { previewHyperliquidCollector, runHyperliquidCollector } from './collector'
 import { runHyperliquidCollectorToSqlite } from './sqlite-store'
 
@@ -30,7 +30,8 @@ async function runOnce(): Promise<void> {
     return
   }
 
-  const supabase = createClient(
+  requireSupabaseEnv()
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )

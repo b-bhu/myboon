@@ -2,7 +2,7 @@ import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { buildOnDemandResponse, requestedSuggestionCount } from './on-demand'
 import { GatewayXDeskProvider } from './provider'
 import { runXDesk, xDeskCliConfig } from './runner'
@@ -10,9 +10,10 @@ import { SupabaseXDeskSource } from './source'
 import { XDeskStore } from './store'
 
 async function main(): Promise<void> {
+  requireSupabaseEnv()
   const requested = requestedSuggestionCount(process.argv[2])
   const config = xDeskCliConfig()
-  const supabase = createClient(requiredEnv('SUPABASE_URL'), requiredEnv('SUPABASE_SERVICE_ROLE_KEY'))
+  const supabase = createSupabaseClient(requiredEnv('SUPABASE_URL'), requiredEnv('SUPABASE_SERVICE_ROLE_KEY'))
   const store = new XDeskStore(config.dbPath)
   const source = new SupabaseXDeskSource(supabase)
   const provider = new GatewayXDeskProvider()

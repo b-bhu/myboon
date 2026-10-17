@@ -140,6 +140,9 @@ DECLARE target uuid := (input->>'entityId')::uuid; expected bigint := (input->>'
   source_revision bigint := (input->>'restoreRevision')::bigint; current_row managed_knowledge_private.entities;
   snapshot managed_knowledge_private.entity_summary_history; next_revision bigint;
 BEGIN
+  IF target IS NULL OR expected IS NULL OR source_revision IS NULL THEN
+    RAISE EXCEPTION 'entityId, expectedSummaryRevision and restoreRevision required' USING ERRCODE='MK011';
+  END IF;
   SELECT * INTO current_row FROM managed_knowledge_private.entities WHERE id = target FOR UPDATE;
   IF current_row.id IS NULL THEN RAISE EXCEPTION 'entity not found' USING ERRCODE='MK011'; END IF;
   IF current_row.summary_revision <> expected THEN
@@ -162,7 +165,7 @@ $body$;
 CREATE FUNCTION managed_knowledge_private.entity_summary_claim_due_v1(owner text, claim_limit integer, lease_ms integer)
 RETURNS SETOF managed_knowledge_private.entity_summary_due LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
 BEGIN
-  IF coalesce(btrim(owner),'') = '' OR claim_limit NOT BETWEEN 1 AND 200 OR lease_ms NOT BETWEEN 1000 AND 3600000 THEN
+  IF coalesce(btrim(owner),'') = '' OR claim_limit IS NULL OR lease_ms IS NULL OR claim_limit NOT BETWEEN 1 AND 200 OR lease_ms NOT BETWEEN 1000 AND 3600000 THEN
     RAISE EXCEPTION 'invalid claim' USING ERRCODE='MK011';
   END IF;
   RETURN QUERY

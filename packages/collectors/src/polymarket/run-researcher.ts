@@ -2,7 +2,7 @@ import { envFlag, loadDotenvChain, positiveInteger, requiredEnv } from '../pipel
 
 loadDotenvChain()
 
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { HermesService } from '../hermes'
 import { createConfiguredClassificationRuntime } from '../inference-gateway'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
@@ -31,7 +31,7 @@ export function polymarketResearcherCliConfig(env: NodeJS.ProcessEnv = process.e
 }
 
 async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>): Promise<void> {
-  const supabase = createClient(
+  const supabase = createSupabaseClient(
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
@@ -85,6 +85,7 @@ async function runOnce(config: ReturnType<typeof polymarketResearcherCliConfig>)
 }
 
 async function main(): Promise<void> {
+  requireSupabaseEnv()
   const config = polymarketResearcherCliConfig()
   const { ownership } = await runLegacyResearchWhenOwned({
     sourceType: 'polymarket',

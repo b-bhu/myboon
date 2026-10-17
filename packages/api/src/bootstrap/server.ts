@@ -1,4 +1,5 @@
 import { serve } from '@hono/node-server'
+import { requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { startMarketReadPolling } from '../polymarket/read/market-read.js'
 import { upDownLivePriceFeed } from '../polymarket/read/updown-prices.js'
 import { loadApiConfig } from './config.js'
@@ -7,6 +8,7 @@ import { createRpcRateLimiter } from '../rpc/routes.js'
 import { attachRpcWebSocketBridge } from '../rpc/websocket.js'
 
 export function startApiServer(): void {
+  requireSupabaseEnv()
   const config = loadApiConfig()
   const rpcRateLimiter = createRpcRateLimiter()
   const app = createApp(config, { rpcRateLimiter })
