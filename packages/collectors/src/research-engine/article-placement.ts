@@ -69,6 +69,41 @@ interface Membership {
   contextualDuplicateTarget?: { itemId: string, source: 'legacy' | 'managed', entityId: string } | null
 }
 
+/** Certain-grade Jev confidence floors for article placement outcomes. */
+export interface ArticlePlacementConfidenceFloors {
+  primaryPlacement: number
+  priorItemLink: number
+}
+
+/**
+ * A Jev decision below a floor holds the article as uncertain instead of
+ * saving it as certain. The input may override either floor. Hermes fallback
+ * decisions carry no score and are not floored (they pass unchanged).
+ */
+export const ARTICLE_PLACEMENT_CONFIDENCE_FLOORS: Readonly<ArticlePlacementConfidenceFloors> = Object.freeze({ primaryPlacement: 0.6, priorItemLink: 0.5 })
+
+/** Merge the input's optional floors over the defaults; every provided value must be a finite number in [0, 1]. */
+function confidenceFloors(input: ArticlePlacementInput): ArticlePlacementConfidenceFloors {
+  const provided = input.confidenceFloors ?? {}
+  const merged: ArticlePlacementConfidenceFloors = {
+    primaryPlacement: provided.primaryPlacement ?? ARTICLE_PLACEMENT_CONFIDENCE_FLOORS.primaryPlacement,
+    priorItemLink: provided.priorItemLink ?? ARTICLE_PLACEMENT_CONFIDENCE_FLOORS.priorItemLink,
+  }
+  for (const [key, value] of Object.entries(merged)) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+      throw new Error(`Invalid confidence floor ${key} ${String(value)}: a floor must be a finite number in [0, 1].`)
+    }
+  }
+  return merged
+}
+
+/** A scored Jev decision below the floor holds the article instead of saving a certain outcome. */
+function assertConfidenceFloor(decision: Decision, floor: number, what: string): void {
+  if ('confidence' in decision && typeof decision.confidence === 'number' && decision.confidence < floor) {
+    throw new ArticleResearchHold('entity_resolution_uncertain', `${what} confidence ${decision.confidence} is below the ${floor} floor; the article is held as uncertain instead of saved as certain.`)
+  }
+}
+
 export interface ArticlePlacementPreparationV1 {
   memberships: ArticleEntityProposal[]
   novelty: ArticleChoiceDecision
@@ -107,6 +142,12 @@ export interface ArticlePlacementInput {
    * dispatch sequence runs byte-identically.
    */
   useBatching?: boolean
+  /**
+   * Overrides merged over ARTICLE_PLACEMENT_CONFIDENCE_FLOORS (the defaults always apply).
+   * A Jev decision below a floor holds the article as uncertain instead of
+   * saving it as certain; Hermes fallback decisions carry no score.
+   */
+  confidenceFloors?: Partial<ArticlePlacementConfidenceFloors>
 }
 
 export async function prepareArticlePlacement(input: ArticlePlacementInput & { useHermesFallbackVersions?: false, useBatching?: false }): Promise<ArticlePlacementPreparationV1>
@@ -198,6 +239,12 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
   }
   const entity = candidates.find((candidate) => candidate.id === selected)
   if (!entity) throw new Error('Placement selected an entity outside the bounded candidate catalogue')
+  // The primary placement decision is computed once and floored before any
+  // related-membership classify call happens; the no-match/creation path above
+  // is not floored.
+  const primaryPlacement = decision(placement, 'placement', placement.value.entityId ?? placement.value.disposition)
+  const floors = confidenceFloors(input)
+  assertConfidenceFloor(primaryPlacement, floors.primaryPlacement, 'Primary placement')
   const relatedCandidates = candidates.filter((candidate) => candidate.id !== entity.id)
   const related = relatedCandidates.length === 0 ? null : await input.gateway.classify<ArticleRelatedMembershipDecision>({
     workload: ARTICLE_RELATED_MEMBERSHIP_WORKLOAD,
@@ -206,23 +253,29 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
     trace: { stableDecisionKey: `${input.stableDecisionKey}:related-memberships`, correlationIds: { signalId: input.signal.signalId, entityId: entity.id } },
   })
   const memberships: Membership[] = []
+  // A related candidate must additionally be mentioned in the article (title
+  // plus captured text); an unmentioned candidate is rejected regardless of
+  // its disposition and never holds the article.
+  const articleText = `${input.signal.title}\n${input.sourceText}`
   // An uncertain related-membership judgment from Hermes (fallback versions)
   // is a hold, never a silently omitted membership. Jev's uncertain answers
   // are validated choices that the flag-off route keeps omitting unchanged.
   if (fallbackVersions && related?.value.dispositions) {
     const uncertainId = Object.entries(related.value.dispositions)
-      .find(([, outcome]) => outcome === 'uncertain')?.[0]
+      .find(([candidateId, outcome]) => outcome === 'uncertain'
+        && relatedCandidates.some((candidate) => candidate.id === candidateId && articleMentionsEntity(articleText, candidate)))?.[0]
     if (uncertainId) {
       throw new ArticleResearchHold('entity_resolution_uncertain', `Related membership for ${uncertainId} is uncertain; membership is held instead of omitted.`)
     }
   }
   for (const candidate of relatedCandidates) {
     if (related?.value.dispositions[candidate.id] !== 'related') continue
+    if (!articleMentionsEntity(articleText, candidate)) continue
     memberships.push(await membership(input, candidate, 'related', related !== null && related.fallbackUsed
       ? decision(related, relatedQuestion(candidate.id), 'related')
       : decision(related, relatedQuestion(candidate.id), related.value.dispositions[candidate.id] ?? 'uncertain')))
   }
-  memberships.unshift(await membership(input, entity, 'primary', decision(placement, 'placement', placement.value.entityId ?? placement.value.disposition)))
+  memberships.unshift(await membership(input, entity, 'primary', primaryPlacement))
   return <ArticlePlacementPreparationV1 | ArticlePlacementPreparationV2>{
     memberships,
     novelty: await novelty(input, memberships.map((membership) => membership.entityId).filter((id): id is string => id !== null), memberships),
@@ -313,6 +366,14 @@ function membershipFromRelationship(
   relationshipHistory: ReadonlyArray<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>,
   decisions: { relationshipDecision: Decision, priorItemDecision: Decision },
 ): Membership {
+  // A membership that links to a prior item is a certain-grade link: below the
+  // prior-item floor it holds instead of saving the link (Jev decisions only;
+  // Hermes fallback decisions carry no score and pass unchanged).
+  if (['duplicate', 'direct_continuation', 'related_story_branch'].includes(relationship.value.relationship)) {
+    const floors = confidenceFloors(input)
+    assertConfidenceFloor(decisions.relationshipDecision, floors.priorItemLink, 'Prior-item relationship')
+    assertConfidenceFloor(decisions.priorItemDecision, floors.priorItemLink, 'Prior-item link')
+  }
   const prior = relationship.value.priorItemId === null ? null : relationshipHistory.find((item) => item.id === relationship.value.priorItemId
     && (!relationship.value.priorItemSource || item.source === relationship.value.priorItemSource)) ?? null
   if (relationship.value.relationship === 'duplicate' && !prior) {
@@ -512,6 +573,28 @@ export function articleLookupTerms(signal: Signal, sourceText = ''): string[] {
   return [...new Set([...signal.sourceHints.entities, ...signal.sourceHints.assets, ...phrases.slice(0, 24), ...words].map((value) => value.trim()).filter(Boolean))].slice(0, 64)
 }
 
+/**
+ * Normalised mention form: accent-stripped, casefolded, with every run of
+ * non-letters/digits collapsed to a single space.
+ */
+export function normaliseMentionText(value: string): string {
+  return value.normalize('NFKD').replace(/\p{M}+/gu, '').toLocaleLowerCase('en-US').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
+/**
+ * Whether the article text mentions the entity by name or any alias as a
+ * standalone normalised token. Gates related memberships only; the primary
+ * placement entity is never mention-filtered.
+ */
+export function articleMentionsEntity(articleText: string, entity: { name: string, aliases: readonly string[] }): boolean {
+  const haystack = ` ${normaliseMentionText(articleText)} `
+  for (const term of [entity.name, ...entity.aliases]) {
+    const normalised = normaliseMentionText(term)
+    if (normalised !== '' && haystack.includes(` ${normalised} `)) return true
+  }
+  return false
+}
+
 function relatedQuestion(entityId: string): string { return `related_${entityId}` }
 
 /**
@@ -706,14 +789,23 @@ async function batchedSelectedPreparation(
   const fallbackVersions = input.useHermesFallbackVersions === true
   const primary = stage.orderedCandidates.find((candidate) => candidate.id === stage.selected)
   if (!primary) throw new Error('Batched placement selected an entity outside the bounded candidate catalogue')
+  // The primary placement decision is computed once and floored before any
+  // history load or relationship dispatch; the membership loop reuses it.
+  const observedPrimary = stage.dispositionByCandidate.get(primary.id)
+  if (!observedPrimary) throw new ArticleResearchHold('entity_resolution_uncertain', `The batched catalogue answered no membership for ${primary.id}.`)
+  const primaryPlacementDecision = decide(observedPrimary.result, 'placement', fallbackVersions, primary.id)
+  assertConfidenceFloor(primaryPlacementDecision, confidenceFloors(input).primaryPlacement, 'Primary placement')
   const placementDecision = (candidate: ArticleResearchContext['candidates'][number]): Decision => {
+    if (candidate.id === primary.id) return primaryPlacementDecision
     const observed = stage.dispositionByCandidate.get(candidate.id)
     if (!observed) throw new ArticleResearchHold('entity_resolution_uncertain', `The batched catalogue answered no membership for ${candidate.id}.`)
-    if (candidate.id === primary.id) return decide(observed.result, 'placement', fallbackVersions, primary.id)
     return observed.result.fallbackUsed
       ? decide(observed.result, relatedQuestion(candidate.id), fallbackVersions, 'related')
       : decide(observed.result, relatedQuestion(candidate.id), fallbackVersions, observed.outcome)
   }
+  // The article text a related membership must mention (title plus captured
+  // text); an unmentioned candidate is rejected regardless of its disposition.
+  const articleText = `${input.signal.title}\n${input.sourceText}`
   // Membership questions judge candidates independently of the primary; the
   // primary is excluded from related-membership consideration code-side. With
   // Hermes fallback versions an uncertain membership judgment is a hold,
@@ -721,13 +813,15 @@ async function batchedSelectedPreparation(
   // keep the flag-off behaviour of omitting the membership.
   if (fallbackVersions) {
     const uncertainMemberships = stage.orderedCandidates.filter((candidate) => candidate.id !== primary.id
-      && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'uncertain')
+      && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'uncertain'
+      && articleMentionsEntity(articleText, candidate))
     if (uncertainMemberships.length > 0) {
       throw new ArticleResearchHold('entity_resolution_uncertain', `Batched related membership for ${uncertainMemberships.map((candidate) => candidate.id).join(', ')} is uncertain; membership is held instead of omitted.`)
     }
   }
   const selected = [primary, ...stage.orderedCandidates.filter((candidate) => candidate.id !== primary.id
-    && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'related')]
+    && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'related'
+    && articleMentionsEntity(articleText, candidate))]
   // The latest-five history for every selected entity is loaded once and stays
   // in the shared context for the novelty stage and the writing handoff.
   const historyById = new Map<string, RelationshipHistoryItem[]>()

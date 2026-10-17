@@ -585,7 +585,7 @@ test('#5A oversized batched catalogue splits deterministically by candidate id',
   const articleText = 'BlackRock added $1.5 billion in Bitcoin holdings.'
   // A ranked catalogue whose projected state exceeds the 96,000-byte bound
   // splits deterministically, sorted by candidate id, never truncated.
-  const bulky = (id: string) => ({ id, name: `Entity ${id}`, aliases: [], summary: null, scope: { blob: 'x'.repeat(3_100) } })
+  const bulky = (id: string) => ({ id, name: `Entity ${id}`, aliases: id === 'blackrock' ? ['BlackRock'] : [], summary: null, scope: { blob: 'x'.repeat(3_100) } })
   const ids = ['blackrock', ...Array.from({ length: 30 }, (_, i) => `entity-${String(i).padStart(2, '0')}`)]
   const { gateway, requests } = batchedGateway()
   const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: articleText,
@@ -652,7 +652,9 @@ test('#5A batched relationship stage keeps the older targeted duplicate lookup s
       return Array.from({ length: 3 }, (_, i) => ({ id: `old-${i}`, source: 'legacy' as const, title: `Older development ${i}`, summary: `Older ${i}.`, eventAt: '2026-09-01T00:00:00Z' }))
     },
   }
-  await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: contextWithOlder, useBatching: true })
+  // Article text mentions both candidates so both stay selected under the
+  // #343 related-membership mention gate.
+  await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'Bitcoin and BlackRock developments.', context: contextWithOlder, useBatching: true })
   // The joint stage said not-a-duplicate, so each selected entity consults the
   // bounded older lookup as its own separate dispatch, exactly one per entity.
   assert.equal(olderLookups, 2)
@@ -787,4 +789,172 @@ test('#308 an uncertain Jev story relationship still passes through placement un
   const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'x', context: c, useHermesFallbackVersions: true })
   assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role, membership.relationship]), [['bitcoin', 'primary', 'uncertain']])
   assert.equal(result.novelty.choice, 'new_information')
+})
+
+// #343 PR-A (placement quality): mention check for related entities and Jev
+// confidence floors. A related candidate must be mentioned in the article
+// (title plus captured text) by name or alias; a scored Jev decision below the
+// floor holds the article as uncertain instead of saving it as certain, and a
+// Hermes fallback decision carries no score and is not floored.
+
+/** A Jev Choice with a tunable confidence; the two probabilities sum to 1. */
+const floorAnswer = (key: string, confidence: number): JevAnswer => ({ type: 'choice', choice: key, confidence, probabilities: { [key]: confidence, alternative: 1 - confidence } })
+
+// Placement selects bitcoin and Jev marks blackrock related; relationships
+// stay unlinked (same_topic_only) so the mention check is the only membership
+// filter under test.
+function mentionGateway() {
+  const requests: ClassificationRequest[] = []
+  const gateway = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    requests.push(request)
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: answer('bitcoin') } }
+    else if (request.workload.endsWith('related_membership')) { value = { dispositions: { blackrock: 'related' } }; answers = { related_blackrock: answer('related') } }
+    else if (request.workload.endsWith('story_relationship')) { value = { relationship: 'same_topic_only', priorItemId: null }; answers = { relationship_target: answer('same_topic_only') } }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  return { gateway, requests }
+}
+
+test('#343 related entity not mentioned in the article is rejected', async () => {
+  // The managed fixture title is 'Acme statement' and this text carries no
+  // BlackRock token, so Jev's related judgment must be rejected code-side.
+  const { gateway, requests } = mentionGateway()
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'mention-reject', signal, sourceText: 'Bitcoin rose 4% today.', context: context() })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+  // One story-relationship dispatch (bitcoin only); the rejected candidate
+  // never joins the memberships.
+  assert.deepEqual(requests.map((request) => request.workload), [
+    'research.article_entity_placement', 'research.article_related_membership', 'research.article_story_relationship', 'research.article_novelty',
+  ])
+})
+
+test('#343 related entity mentioned by alias is accepted', async () => {
+  const { gateway, requests } = mentionGateway()
+  const aliasContext = context()
+  aliasContext.candidates[1] = { ...aliasContext.candidates[1], aliases: ['BLK'] }
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'mention-alias', signal, sourceText: 'BLK bought more Bitcoin.', context: aliasContext })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary'], ['blackrock', 'related']])
+  assert.equal(requests.length, 5)
+})
+
+test('#343 primary is unaffected by the mention check', async () => {
+  const { gateway } = mentionGateway()
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'mention-primary', signal, sourceText: 'A major development happened.', context: context() })
+  assert.equal(result.memberships[0].name, 'Bitcoin')
+  assert.equal(result.memberships[0].role, 'primary')
+  assert.equal(result.memberships[0].placementDisposition, 'selected')
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+})
+
+// Placement answers with a tunable Jev confidence; the related candidate stays
+// not_related and relationships stay unlinked so the primary floor is the only
+// gate under test. `batched` answers the staged catalogue dispatch route.
+function floorGateway(placementAnswer: JevAnswer, batched = false) {
+  const requests: ClassificationRequest[] = []
+  const gateway = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    requests.push(request)
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload === 'research.article_catalogue_batch') {
+      value = { entityId: 'bitcoin', disposition: 'selected', dispositions: { bitcoin: 'not_related', blackrock: 'not_related' } }
+      answers = { placement: placementAnswer, related_bitcoin: answer('not_related'), related_blackrock: answer('not_related') }
+    }
+    else if (request.workload === 'research.article_relationship_batch') {
+      value = { targets: [{ entityId: 'bitcoin', relationship: 'same_topic_only', priorItemId: null }] }
+      answers = { relationship_target_bitcoin: answer('same_topic_only') }
+    }
+    else if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: placementAnswer } }
+    else if (request.workload.endsWith('related_membership')) { value = { dispositions: { blackrock: 'not_related' } }; answers = { related_blackrock: answer('not_related') } }
+    else if (request.workload.endsWith('story_relationship')) { value = { relationship: 'same_topic_only', priorItemId: null }; answers = { relationship_target: answer('same_topic_only') } }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  return { gateway, requests }
+}
+
+test('#343 a 0.44 primary placement is never saved as certain', async () => {
+  const single = floorGateway(floorAnswer('bitcoin', .44))
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: single.gateway, stableDecisionKey: 'floor-single', signal, sourceText: 'Bitcoin rose 4% today.', context: context() }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /0\.44 is below the 0\.6 floor/.test(error.message),
+  )
+  // The floor assert fires before any related-membership classify call.
+  assert.deepEqual(single.requests.map((request) => request.workload), ['research.article_entity_placement'])
+  const batched = floorGateway(floorAnswer('bitcoin', .44), true)
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: batched.gateway, stableDecisionKey: 'floor-batched', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), useBatching: true }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /0\.44 is below the 0\.6 floor/.test(error.message),
+  )
+  // The floor assert fires before the batched relationship stage.
+  assert.deepEqual(batched.requests.map((request) => request.workload), ['research.article_catalogue_batch'])
+})
+
+test('#343 a 0.6 primary placement is accepted', async () => {
+  const single = await prepareArticlePlacement({ gateway: floorGateway(floorAnswer('bitcoin', .6)).gateway, stableDecisionKey: 'floor-boundary', signal, sourceText: 'Bitcoin rose 4% today.', context: context() })
+  assert.deepEqual(single.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+  const singlePlacement = single.memberships[0].placement
+  assert.equal(singlePlacement.confidence, .6)
+  const batchedGatewayRequests = floorGateway(floorAnswer('bitcoin', .6), true)
+  const batched = await prepareArticlePlacement({ gateway: batchedGatewayRequests.gateway, stableDecisionKey: 'floor-boundary-batched', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), useBatching: true })
+  assert.deepEqual(batched.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+  const batchedPlacement = batched.memberships[0].placement
+  assert.equal('confidence' in batchedPlacement, true)
+  if ('confidence' in batchedPlacement) assert.equal(batchedPlacement.confidence, .6)
+  assert.deepEqual(batchedGatewayRequests.requests.map((request) => request.workload), ['research.article_catalogue_batch', 'research.article_relationship_batch', 'research.article_novelty'])
+})
+
+// The prior-item link floor: direct_continuation relationship/prior-item
+// answers at or below the 0.5 floor decide whether the link to bitcoin-0 is
+// saved as certain or held as uncertain.
+function priorItemGateway(confidence: number) {
+  const requests: ClassificationRequest[] = []
+  const gateway = { recordPolicyOutcome() {}, async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    requests.push(request)
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload.endsWith('entity_placement')) { value = { entityId: 'bitcoin', disposition: 'selected' }; answers = { placement: answer('bitcoin') } }
+    else if (request.workload.endsWith('story_relationship')) {
+      value = { relationship: 'direct_continuation', priorItemId: 'bitcoin-0' }
+      answers = { relationship: floorAnswer('direct_continuation', confidence), prior_item: floorAnswer('bitcoin-0', confidence) }
+    }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  return { gateway, requests }
+}
+
+test('#343 a below-floor prior-item link is held', async () => {
+  const linkContext = () => { const c = context(); c.candidates = c.candidates.slice(0, 1); return c }
+  const held = priorItemGateway(.44)
+  await assert.rejects(
+    prepareArticlePlacement({ gateway: held.gateway, stableDecisionKey: 'link-floor', signal, sourceText: 'Bitcoin continues the earlier development.', context: linkContext() }),
+    (error: unknown) => error instanceof ArticleResearchHold && error.code === 'entity_resolution_uncertain'
+      && /0\.44 is below the 0\.5 floor/.test(error.message),
+  )
+  // The hold fires before novelty; no further dispatch happens.
+  assert.deepEqual(held.requests.map((request) => request.workload), ['research.article_entity_placement', 'research.article_story_relationship'])
+  const accepted = priorItemGateway(.5)
+  const result = await prepareArticlePlacement({ gateway: accepted.gateway, stableDecisionKey: 'link-at-floor', signal, sourceText: 'Bitcoin continues the earlier development.', context: linkContext() })
+  assert.equal(result.memberships[0].relationship, 'direct_continuation')
+  assert.equal(result.memberships[0].priorItemId, 'bitcoin-0')
+  assert.equal(result.novelty.choice, 'new_information')
+})
+
+test('#343 batched route rejects an unmentioned related entity', async () => {
+  // The shared batched fake marks blackrock related, but the article text
+  // mentions only Bitcoin, so the batched route must reject it code-side.
+  const { gateway, requests } = batchedGateway()
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'Bitcoin added $1.5 billion in new holdings.', context: batchedContext(), useBatching: true })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+  // The rejected candidate is excluded from the relationship stage entirely.
+  assert.deepEqual((requests[1].state as { entities: Array<{ id: string }> }).entities.map((entity) => entity.id), ['bitcoin'])
+})
+
+test('#343 a custom primaryPlacement floor accepts the 0.44 placement', async () => {
+  const { gateway, requests } = floorGateway(floorAnswer('bitcoin', .44))
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'floor-custom', signal, sourceText: 'Bitcoin rose 4% today.', context: context(), confidenceFloors: { primaryPlacement: 0.4 } })
+  assert.deepEqual(result.memberships.map((membership) => [membership.entityId, membership.role]), [['bitcoin', 'primary']])
+  assert.equal(requests.some((request) => request.workload.endsWith('novelty')), true)
 })
