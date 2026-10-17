@@ -237,7 +237,7 @@ export function createTokenRoutes(config: CreateTokenRoutesConfig): Hono {
       return c.body(null, 304, { etag, 'Cache-Control': result.cacheControl })
     }
 
-    return new Response(result.bytes, {
+    return new Response(new Uint8Array(result.bytes), {
       headers: {
         'Content-Type': result.contentType,
         'Cache-Control': result.cacheControl,
@@ -263,7 +263,7 @@ export function createTokenRoutes(config: CreateTokenRoutesConfig): Hono {
       return c.body(null, 304, { etag, 'Cache-Control': result.cacheControl })
     }
 
-    return new Response(result.bytes, {
+    return new Response(new Uint8Array(result.bytes), {
       headers: {
         'Content-Type': result.contentType,
         'Cache-Control': result.cacheControl,
