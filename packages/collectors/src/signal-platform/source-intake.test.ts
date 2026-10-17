@@ -46,7 +46,7 @@ function triageInput(item: Signal): RulesFirstTriageInput {
 
 test('observe mode appends a Signal idempotently and cannot create queue work', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'source-intake-observe-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const intake = new CanonicalSourceSignalIntake({ mode: 'observe', store })
     const report = await deliverCanonicalSignals(intake, [signal(), structuredClone(signal())])
@@ -71,7 +71,7 @@ test('observe mode appends a Signal idempotently and cannot create queue work', 
 
 test('active mode retains deferred Signal and decision without admitting work', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'source-intake-active-'))
-  const store = new SqliteSignalPlatformStore(join(dir, 'news.sqlite'), 'news')
+  const store = new SqliteSignalPlatformStore(join(dir, 'news-lane.sqlite'), 'news')
   try {
     const intake = new CanonicalSourceSignalIntake({
       mode: 'active', store,

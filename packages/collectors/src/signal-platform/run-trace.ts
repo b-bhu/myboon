@@ -6,6 +6,7 @@ import {
   formatTraceInspectionJson,
   type TraceInspectionQuery,
 } from './operator-trace'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { inspectSqliteTrace } from './trace-sqlite-composition'
 
 loadDotenvChain()
@@ -19,8 +20,8 @@ function databasePath(value: string | undefined, fallback: string): string {
 
 async function main(): Promise<void> {
   const query = parseQuery(packageScriptArgs(process.argv.slice(2)))
-  const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
-  const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
+  const newsPath = resolveLaneSqlitePathFromEnv('news', process.env, { baseDir: PACKAGE_DIR })
+  const pipelinePath = resolveLaneSqlitePathFromEnv('polymarket', process.env, { baseDir: PACKAGE_DIR })
   const result = await inspectSqliteTrace({
     newsPath, pipelinePath, query, now: new Date().toISOString(),
   })

@@ -93,7 +93,7 @@ function evidence(): RetrievedEvidence {
 
 function stores() {
   const directory = mkdtempSync(join(tmpdir(), 'artifact-repository-'))
-  const newsPath = join(directory, 'news.sqlite')
+  const newsPath = join(directory, 'news-lane.sqlite')
   const marketPath = join(directory, 'market.sqlite')
   const owner = new SqliteSignalPlatformStore(newsPath, 'news')
   const consumer = new SqliteSignalPlatformStore(marketPath, 'polymarket')

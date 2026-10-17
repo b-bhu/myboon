@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { SqliteSourceOwnershipOperator, type SourceOwnershipReceipt } from './source-ownership'
 
 export function parseV4OwnershipArgs(args:string[]) {
@@ -26,8 +27,7 @@ function main():void {
   const receipt=JSON.parse(readFileSync(args.receiptPath,'utf8')) as SourceOwnershipReceipt
   if(receipt.source!==args.source)throw new Error('Receipt source differs from explicit command source')
   const packageDirectory=resolve(__dirname,'..','..')
-  const configured=(args.source==='news'?process.env.NEWS_SQLITE_PATH:process.env.PIPELINE_SQLITE_PATH)?.trim()||`.data/${args.source==='news'?'news':'pipeline'}.sqlite`
-  const databasePath=isAbsolute(configured)?configured:resolve(packageDirectory,configured)
+  const databasePath=resolveLaneSqlitePathFromEnv(args.source,process.env,{baseDir:packageDirectory})
   const operator=new SqliteSourceOwnershipOperator(databasePath,!args.apply)
   try {
     const result=operator.run({receiptPath:args.receiptPath,operatorId:args.operatorId,apply:args.apply,now:new Date().toISOString()})

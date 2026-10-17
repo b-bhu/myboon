@@ -9,6 +9,7 @@ import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger
 import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
 import { SupabaseEntityKnowledgeReader } from '../entity-manager/supabase-entity-knowledge-reader'
@@ -23,7 +24,7 @@ async function runOnce(): Promise<void> {
     requiredEnv('SUPABASE_URL'),
     requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
   )
-  const pipelineStore = new SqlitePipelineStore()
+  const pipelineStore = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
   try {
     const result = await withPipelineRun(
       new SupabasePipelineLedgerStore(supabase),

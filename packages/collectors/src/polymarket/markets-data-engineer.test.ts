@@ -288,7 +288,7 @@ test('the Gamma events fetch pins order=volume24hr (regression guard for the ren
 
 test('Polymarket delivery survives backlog throttling and recovers the exact obligation after intake failure', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'poly-live-signal-'))
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   const sourceStore = new SqlitePipelineStore(pipelinePath)
   const canonical = new SqliteSignalPlatformStore(pipelinePath, 'polymarket')
   await sourceStore.upsertWatchlist([{

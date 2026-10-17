@@ -5,6 +5,7 @@ import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { readEntityRuntimeHealthSnapshot } from '../entity-manager/entity-runtime-health'
 import { readResearchRuntimeStatusSnapshot } from '../research-engine/research-runtime-lifecycle'
 import { parseDrainVerificationArgs, verifyDrainState } from './drain-verification'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { FileRuntimeControlStore, resolveRuntimeControlPath } from './runtime-control'
 import { readSqliteControlPlaneStatus } from './status-sqlite-composition'
 import { resolveSqliteWriteHealthJournalPath } from './sqlite-write-error-journal'
@@ -27,8 +28,8 @@ async function main(): Promise<void> {
 
 async function inspect(command: ReturnType<typeof parseDrainVerificationArgs>) {
   const generatedAt = new Date().toISOString()
-  const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
-  const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
+  const newsPath = resolveLaneSqlitePathFromEnv('news', process.env, { baseDir: PACKAGE_DIR })
+  const pipelinePath = resolveLaneSqlitePathFromEnv('polymarket', process.env, { baseDir: PACKAGE_DIR })
   const staleAfterMs = positiveInteger(process.env.FEED_V3_DRAIN_STATUS_STALE_MS, 60_000)
   const [status, researchRuntime, entityRuntime] = await Promise.all([
     readSqliteControlPlaneStatus({

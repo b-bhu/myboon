@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, resolve } from 'node:path'
+import { dirname } from 'node:path'
+import {
+  DEFAULT_NEWS_LANE_SQLITE_PATH,
+  resolveLaneSqlitePath,
+} from '../lane-store/paths'
 import type { PriorNewsObservation } from './types'
 import type { Signal } from '../signal-platform/contracts'
 import { validateSignal } from '../signal-platform/validation'
@@ -36,8 +40,16 @@ const { DatabaseSync } = nodeRequire('node:sqlite') as {
   DatabaseSync: new (path: string) => SqliteDatabase
 }
 
-const COLLECTORS_PACKAGE_DIR = resolve(__dirname, '..', '..')
-const DEFAULT_SQLITE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'news.sqlite')
+/** Kept for callers: default news lane store file (issue #369 renames). */
+export const DEFAULT_NEWS_SQLITE_PATH = DEFAULT_NEWS_LANE_SQLITE_PATH
+
+/**
+ * Resolve a news lane SQLite path through the shared lane-store helper;
+ * retired basenames fail loudly (see #369).
+ */
+export function resolveNewsSqlitePath(path?: string): string {
+  return resolveLaneSqlitePath('news', path)
+}
 
 interface SqliteStatement {
   all(...params: unknown[]): unknown[]
@@ -79,13 +91,8 @@ function numberValue(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-function sqlitePath(path = DEFAULT_SQLITE_PATH): string {
-  if (path === ':memory:') return path
-  return resolve(process.cwd(), path)
-}
-
 function openNewsSqlite(path?: string): SqliteDatabase {
-  const dbPath = sqlitePath(path)
+  const dbPath = resolveNewsSqlitePath(path)
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
   const db = new DatabaseSync(dbPath)
   db.exec('PRAGMA journal_mode = WAL;')
@@ -1068,5 +1075,5 @@ function mapResearchResultRow(row: Record<string, unknown>): NewsResearchResultR
 export const __newsSqliteTesting = {
   ensureNewsSqliteSchema,
   openNewsSqlite,
-  sqlitePath,
+  resolveNewsSqlitePath,
 }

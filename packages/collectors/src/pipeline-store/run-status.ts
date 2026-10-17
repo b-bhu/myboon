@@ -6,6 +6,7 @@ import { SqlitePipelineStore } from './sqlite-store'
 import { buildNewsOperationalStatus, buildPipelineStatusReport } from './status'
 import { SqliteNewsStore } from '../news/sqlite-store'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 
 /**
  * CLI: `pnpm pipeline-store:status`
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
   const store = new SqlitePipelineStore(sqlitePath)
   const newsStore = new SqliteNewsStore(newsSqlitePath)
   const canonicalNewsStore = new SqliteSignalPlatformStore(
-    newsSqlitePath ?? '.data/news.sqlite', 'news', { readOnly: true },
+    resolveLaneSqlitePathFromEnv('news', process.env), 'news', { readOnly: true },
   )
   try {
     const generatedAt = new Date().toISOString()

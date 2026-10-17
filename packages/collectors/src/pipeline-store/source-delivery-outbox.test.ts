@@ -69,7 +69,7 @@ function signal() {
 
 test('legacy pipeline database migration preserves baseline and does not invent delivery obligations', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pipeline-outbox-migration-'))
-  const path = join(dir, 'pipeline.sqlite')
+  const path = join(dir, 'polymarket-lane.sqlite')
   const old = new DatabaseSync(path)
   old.exec(`
     CREATE TABLE pipeline_watchlist (
@@ -143,9 +143,9 @@ test('market baseline and immutable delivery obligation commit or roll back toge
 
 test('pipeline backup and restore retain pending source delivery obligations', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pipeline-outbox-backup-'))
-  const sourcePath = join(dir, 'pipeline.sqlite')
+  const sourcePath = join(dir, 'polymarket-lane.sqlite')
   const backupDir = join(dir, 'backups')
-  const targetPath = join(dir, 'restored', 'pipeline.sqlite')
+  const targetPath = join(dir, 'restored', 'polymarket-lane.sqlite')
   const sourceStore = new SqlitePipelineStore(sourcePath)
   const expected = signal()
   try {

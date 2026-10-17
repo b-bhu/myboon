@@ -7,6 +7,7 @@ import { parseControlPlaneAlertPolicy } from './control-plane'
 import { readFeedV3RuntimeStatusAvailability } from './runtime-status'
 import { evaluateOperationalAlerts, parseOperationalAlertPolicy } from './runtime-alerts'
 import { readSqliteControlPlaneStatus } from './status-sqlite-composition'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { resolveSqliteWriteHealthJournalPath } from './sqlite-write-error-journal'
 import { readManagedV4OperationalStatus, readV4OperationalStatus } from './v4-operational-status'
 import {
@@ -27,8 +28,8 @@ function databasePath(value: string | undefined, fallback: string): string {
 async function main(): Promise<void> {
   const command = parseStatusArgs(packageScriptArgs(process.argv.slice(2)))
   const reviewedPolicy = command.policyPath ? readStatusPolicy(command.policyPath) : null
-  const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
-  const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
+  const newsPath = resolveLaneSqlitePathFromEnv('news', process.env, { baseDir: PACKAGE_DIR })
+  const pipelinePath = resolveLaneSqlitePathFromEnv('polymarket', process.env, { baseDir: PACKAGE_DIR })
   const runtimeStatusPath = databasePath(
     process.env.FEED_V3_RESEARCH_RUNTIME_STATUS_PATH,
     '.data/feed-v3-research-runtime-status.json',

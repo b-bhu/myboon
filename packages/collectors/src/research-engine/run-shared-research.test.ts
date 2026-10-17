@@ -208,7 +208,7 @@ test('health gate: a closed gate skips the cycle and an open gate runs it', asyn
 
 test('report mode logs sweep errors and still retries unpaid leases and dead-letters paid leases', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-report-recovery-'))
-  const dbPath = join(dir, 'news.sqlite')
+  const dbPath = join(dir, 'news-lane.sqlite')
   const seedStore = new SqliteSignalPlatformStore(dbPath, 'news')
   const expiredAt = '2026-08-26T10:00:00.000Z'
   const makeExpired = (id: string) => {
@@ -398,7 +398,7 @@ test('active composition validates cutover evidence before opening a source data
     FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
     FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
     FEED_V3_CUTOVER_RECEIPT_PATH: '/does/not/exist/cutover.json',
-    NEWS_SQLITE_PATH: '/does/not/exist/news.sqlite',
+    NEWS_SQLITE_PATH: '/does/not/exist/news-lane.sqlite',
   })
   assert.throws(() => createLiveSharedResearchRuntime(config), /receipt manifest/i)
 })
@@ -408,7 +408,7 @@ test('full policy rejects missing and invalid receipts before any dependency con
     FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
     FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
     FEED_V3_CUTOVER_RECEIPT_PATH: '/does/not/exist/cutover.json',
-    NEWS_SQLITE_PATH: '/does/not/exist/news.sqlite',
+    NEWS_SQLITE_PATH: '/does/not/exist/news-lane.sqlite',
   })
   // The guard must throw before the SQLite existence check, so a missing
   // database path must never surface as the failure.
@@ -424,7 +424,7 @@ test('full policy rejects missing and invalid receipts before any dependency con
       FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
       FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news',
       FEED_V3_CUTOVER_RECEIPT_PATH: invalidPath,
-      NEWS_SQLITE_PATH: join(dir, 'news.sqlite'),
+      NEWS_SQLITE_PATH: join(dir, 'news-lane.sqlite'),
     })
     assert.throws(() => createLiveSharedResearchRuntime(invalid), /Cutover receipt missing for research:news/)
   } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -432,8 +432,8 @@ test('full policy rejects missing and invalid receipts before any dependency con
 
 test('phase1 accepts news and polymarket with no receipt when all invariants are valid', () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-phase1-accept-'))
-  const newsPath = join(dir, 'news.sqlite')
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   new SqliteSignalPlatformStore(newsPath, 'news').close()
   new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
   try {
@@ -536,8 +536,8 @@ test('full policy preserves every available Research depth while Phase 1 remains
 
 test('phase1 rejects invalid invariants before any dependency construction', () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-phase1-reject-'))
-  const newsPath = join(dir, 'news.sqlite')
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   new SqliteSignalPlatformStore(newsPath, 'news').close()
   new SqliteSignalPlatformStore(pipelinePath, 'polymarket').close()
   const base = {
@@ -587,7 +587,7 @@ test('off and shadow research never evaluate active cutover authorization', asyn
   assert.equal(creates, 0)
 
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-phase1-shadow-'))
-  const newsPath = join(dir, 'news.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
   new SqliteSignalPlatformStore(newsPath, 'news').close()
   try {
     const config = loadSharedResearchRunnerConfig({
@@ -607,7 +607,7 @@ test('off and shadow research never evaluate active cutover authorization', asyn
 
 test('calendar and X use the registered pipeline store without a source-specific Research runner', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-sources-'))
-  const pipelinePath = join(dir, 'pipeline.sqlite')
+  const pipelinePath = join(dir, 'polymarket-lane.sqlite')
   const bootstrap = new SqliteSignalPlatformStore(pipelinePath, 'market_calendar')
   bootstrap.close()
   try {
@@ -627,7 +627,7 @@ test('calendar and X use the registered pipeline store without a source-specific
 
 test('live shadow composition writes its result table inside the source database boundary', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-shadow-'))
-  const newsPath = join(dir, 'news.sqlite')
+  const newsPath = join(dir, 'news-lane.sqlite')
   const canonical = new SqliteSignalPlatformStore(newsPath, 'news')
   canonical.close()
   try {
@@ -828,7 +828,7 @@ test('recovery resumes expired leases and due retries once without inflating att
 
 test('article runtime checks both storage readers and waits between failed probes before recovering', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'article-context-availability-'))
-  const path = join(dir, 'news.sqlite')
+  const path = join(dir, 'news-lane.sqlite')
   new SqliteSignalPlatformStore(path, 'news').close()
   let now = Date.parse('2026-10-08T12:00:00Z')
   let healthy = false

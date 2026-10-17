@@ -127,13 +127,13 @@ test('no third Feed V3 SQLite path is introduced', () => {
   assert.deepEqual(feedV3SqliteKeys, [])
 
   // The shared apps must not introduce a third physical store: the only SQLite
-  // path references in the ecosystem are news.sqlite and pipeline.sqlite.
+  // path references in the ecosystem are the two lane files (rename per #369).
   const sqlitePaths = [...ecosystemSource.matchAll(/['"]([^'"]*\.sqlite)['"]/g)]
     .map((match) => match[1])
   assert.ok(sqlitePaths.length > 0, 'expected at least the two source SQLite paths')
   for (const path of sqlitePaths) {
     assert.ok(
-      path === '.data/news.sqlite' || path === '.data/pipeline.sqlite',
+      path === '.data/news-lane.sqlite' || path === '.data/polymarket-lane.sqlite',
       `unexpected SQLite path in ecosystem: ${path}`,
     )
   }

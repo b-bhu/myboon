@@ -1,6 +1,7 @@
 import { isAbsolute, resolve } from 'node:path'
 import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { resolveLaneSqlitePath } from '../lane-store/paths'
 import {
   formatRetentionPreviewJson,
   previewSqliteRetention,
@@ -60,8 +61,9 @@ export function runRetentionPreviewCli(
   now = new Date(),
 ): string {
   const command = parseRetentionPreviewArgs(argv)
-  const newsPath = pathFrom(command.newsPath ?? env.NEWS_SQLITE_PATH, '.data/news.sqlite')
-  const pipelinePath = pathFrom(command.pipelinePath ?? env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
+  const baseDirectory = resolve(__dirname, '..', '..')
+  const newsPath = resolveLaneSqlitePath('news', command.newsPath ?? env.NEWS_SQLITE_PATH, { baseDir: baseDirectory })
+  const pipelinePath = resolveLaneSqlitePath('polymarket', command.pipelinePath ?? env.PIPELINE_SQLITE_PATH, { baseDir: baseDirectory })
   const deepRegistryPath = pathFrom(
     command.deepRegistryPath ?? env.DEEP_RESEARCH_REGISTRY_PATH,
     '.data/deep-research-registry.sqlite',

@@ -11,6 +11,7 @@ import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/he
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import type { PipelineStore } from '../pipeline-store/store'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { HermesEditorDraftProvider } from './hermes-editor'
 import { editorDraftCliConfig, runEditorDraft } from './runner'
 
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
   const { supabaseUrl, supabaseKey } = requireSupabaseEnv()
   const config = editorDraftCliConfig()
   const supabase = createSupabaseClient(supabaseUrl, supabaseKey)
-  const pipelineStore = new SqlitePipelineStore()
+  const pipelineStore = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
   const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
 
   try {

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { packageScriptArgs } from '../cli-args'
 import {
   backupNewsStore,
@@ -8,6 +8,7 @@ import {
   verifyPipelineBackup,
 } from '../pipeline-store/backup'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { createActiveSourceTriageIntake } from './active-triage'
 import { stableContractId } from './adapters/identity'
 import {
@@ -37,8 +38,8 @@ const PACKAGE_DIR = resolve(__dirname, '..', '..')
 async function main(): Promise<void> {
   const parsed = parseLegacySignalBackfillArgs(packageScriptArgs(process.argv.slice(2)))
   const now = new Date().toISOString()
-  const newsPath = databasePath(process.env.NEWS_SQLITE_PATH, '.data/news.sqlite')
-  const pipelinePath = databasePath(process.env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite')
+  const newsPath = resolveLaneSqlitePathFromEnv('news', process.env, { baseDir: PACKAGE_DIR })
+  const pipelinePath = resolveLaneSqlitePathFromEnv('polymarket', process.env, { baseDir: PACKAGE_DIR })
   const selected = parsed.filters.sourceType ? [parsed.filters.sourceType] : ['news', 'polymarket'] as const
   // Apply always proves both legacy databases before any additive schema open;
   // a source-filtered dry-run needs only its selected read-only database.
@@ -132,11 +133,6 @@ async function createVerifiedDualBackup(input: {
     verifiedAt: new Date().toISOString(),
     sources: ['news', 'polymarket'],
   }
-}
-
-function databasePath(value: string | undefined, fallback: string): string {
-  const configured = value?.trim() || fallback
-  return isAbsolute(configured) ? configured : resolve(PACKAGE_DIR, configured)
 }
 
 main().catch((error) => {

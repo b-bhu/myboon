@@ -1,6 +1,6 @@
 import { envFlag, loadDotenvChain } from '../pipeline-store/cli-env'
 import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
-import { resolve } from 'node:path'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import {
   DEFAULT_NEWS_FEED_INTERVAL_MS,
@@ -21,7 +21,7 @@ import {
 } from '../signal-platform/sqlite-write-error-journal'
 
 async function runOnce(): Promise<void> {
-  const newsPath = process.env.NEWS_SQLITE_PATH ?? resolve(__dirname, '..', '..', '.data', 'news.sqlite')
+  const newsPath = resolveLaneSqlitePathFromEnv('news', process.env)
   const runtime = loadFeedV3RuntimeConfig()
   const intakeMode = feedV3ModeForSource(runtime, 'intake', 'news')
   const store = new SqliteNewsStore(newsPath)

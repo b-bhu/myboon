@@ -40,7 +40,7 @@ export function withIsolatedV4Environment():()=>void {
 
 export function operationsFixture(source:EntityManagerV4Source='news') {
   const dir=mkdtempSync(join(tmpdir(),'myboon-v4-operations-'))
-  const path=join(dir,source==='news'?'news.sqlite':'pipeline.sqlite')
+  const path=join(dir,source==='news'?'news-lane.sqlite':'polymarket-lane.sqlite')
   const legacy=source==='news'?new SqliteNewsStore(path):new SqlitePipelineStore(path)
   const store=new SqliteSignalPlatformStore(path,source)
   const db=new DatabaseSync(path)

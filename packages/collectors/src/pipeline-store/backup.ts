@@ -43,6 +43,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { resolveLaneSqlitePath } from '../lane-store/paths'
 
 const nodeRequire = createRequire(__filename)
 const { DatabaseSync, backup: sqliteBackup } = nodeRequire('node:sqlite') as {
@@ -67,7 +68,6 @@ interface SqliteDatabase {
 }
 
 const COLLECTORS_PACKAGE_DIR = resolve(__dirname, '..', '..')
-const DEFAULT_SOURCE_PATH = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'pipeline.sqlite')
 const DEFAULT_BACKUP_DIR = resolve(COLLECTORS_PACKAGE_DIR, '.data', 'backups')
 
 // Every table the pipeline store owns. Kept in one place so backup and
@@ -405,7 +405,7 @@ export async function backupPipelineStore(options?: {
   backupDir?: string
   now?: string
 }): Promise<PipelineBackupResult> {
-  const sourcePath = resolve(options?.sourcePath ?? DEFAULT_SOURCE_PATH)
+  const sourcePath = resolveLaneSqlitePath('polymarket', options?.sourcePath)
   const backupDir = resolve(options?.backupDir ?? DEFAULT_BACKUP_DIR)
   const createdAt = options?.now ?? new Date().toISOString()
   return backupSqliteStore({
@@ -419,7 +419,7 @@ export async function backupNewsStore(options?: {
   now?: string
 }): Promise<PipelineBackupResult> {
   return backupSqliteStore({
-    sourcePath: resolve(options?.sourcePath ?? resolve(COLLECTORS_PACKAGE_DIR, '.data', 'news.sqlite')),
+    sourcePath: resolveLaneSqlitePath('news', options?.sourcePath),
     backupDir: resolve(options?.backupDir ?? DEFAULT_BACKUP_DIR),
     createdAt: options?.now ?? new Date().toISOString(),
     prefix: 'news-',

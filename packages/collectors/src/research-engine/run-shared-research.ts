@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
+import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import {
@@ -275,8 +276,8 @@ export function loadSharedResearchRunnerConfig(
     runtimeControlPath: resolveRuntimeControlPath(env, PACKAGE_DIR),
     cutoverReceiptPath: feed.cutoverReceiptPath,
     runtimeConfig: feed,
-    newsPath: databasePath(env.NEWS_SQLITE_PATH, '.data/news.sqlite'),
-    pipelinePath: databasePath(env.PIPELINE_SQLITE_PATH, '.data/pipeline.sqlite'),
+    newsPath: resolveLaneSqlitePathFromEnv('news', env, { baseDir: PACKAGE_DIR }),
+    pipelinePath: resolveLaneSqlitePathFromEnv('polymarket', env, { baseDir: PACKAGE_DIR }),
     env,
   })
 }
@@ -802,7 +803,7 @@ export function resolveSupportedResearchDepths(input: {
     : capabilities
 }
 
-/** Source registration is code-owned; all non-News source queues share pipeline.sqlite. */
+/** Source registration is code-owned; all non-News source queues share polymarket-lane.sqlite. */
 function sourceDatabasePaths(config: SharedResearchRunnerConfig): ReadonlyMap<SupportedResearchSource, string> {
   return new Map<SupportedResearchSource, string>([
     ['news', config.newsPath],
