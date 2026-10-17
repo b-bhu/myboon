@@ -415,6 +415,36 @@ BEGIN
 END
 $body$;
 
+-- Before the columns go, retire every uncertain membership with the same
+-- mechanism writer_v1 uses for remove_membership: set removed_operation (and
+-- bump the item head revision), so the restored readers, which only filter
+-- removed_operation IS NULL, never count them as certain. The removal is
+-- attributed to one deterministic rollback lease that is already expired, so
+-- no writer can ever act under it. Skipped when the column is already gone,
+-- so the rollback is safe to re-run; the lease is only created when there is
+-- something to retire.
+DO $retire_uncertain$
+DECLARE rollback_operation text := 'progression-v2:' || encode(sha256(convert_to('myboon.rollback.20261017093000_article_uncertain_memberships','UTF8')),'hex');
+  has_uncertain boolean := false;
+BEGIN
+  IF EXISTS(SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid='managed_knowledge_private.memberships'::regclass AND attname='uncertain' AND NOT attisdropped) THEN
+    EXECUTE 'SELECT EXISTS(SELECT 1 FROM managed_knowledge_private.memberships WHERE uncertain AND removed_operation IS NULL)' INTO has_uncertain;
+  END IF;
+  IF has_uncertain THEN
+    INSERT INTO managed_knowledge_private.leases(operation_id,owner,epoch,expires_at)
+      VALUES(rollback_operation,'rollback:20261017093000',1,clock_timestamp()) ON CONFLICT(operation_id) DO NOTHING;
+    EXECUTE $retire$
+      WITH retired AS (
+        UPDATE managed_knowledge_private.memberships SET removed_operation=$1
+        WHERE uncertain AND removed_operation IS NULL RETURNING item_id
+      )
+      UPDATE managed_knowledge_private.item_heads SET revision=item_heads.revision+1
+      WHERE item_id IN (SELECT DISTINCT item_id FROM retired)
+    $retire$ USING rollback_operation;
+  END IF;
+END
+$retire_uncertain$;
+
 RESET ROLE;
 DO $restore$
 BEGIN
