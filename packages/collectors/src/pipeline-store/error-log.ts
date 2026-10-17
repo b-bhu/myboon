@@ -49,6 +49,10 @@ export interface ProcessErrorHandlers {
 
 const MESSAGE_MAX_LENGTH = 1000
 const STACK_MAX_LENGTH = 2048
+const CAUSE_MAX_LENGTH = 500
+const CODE_MAX_LENGTH = 100
+/** Cause-walk depth: outer cause first, deeper grandchild causes are dropped. */
+const MAX_CAUSE_DEPTH = 2
 const TRUNCATION_MARKER = '…[truncated]'
 const REDACTION_MARKER = '[REDACTED]'
 
@@ -87,6 +91,68 @@ function truncate(text: string, maxLength: number): string {
   return text.length <= maxLength ? text : text.slice(0, maxLength) + TRUNCATION_MARKER
 }
 
+/** Property reads with a safety net: getters, Proxies or host objects must not
+ * be able to derail a failing worker's last log write. */
+function readProperty(source: unknown, key: string): unknown {
+  if (source === null || typeof source !== 'object') return undefined
+  try {
+    return (source as Record<string, unknown>)[key]
+  } catch {
+    return undefined
+  }
+}
+
+function asText(value: unknown): string {
+  try {
+    return String(value)
+  } catch {
+    return '<unprintable error>'
+  }
+}
+
+/** The real message of Errors and PostgrestError-like plain objects alike. */
+function errorMessage(error: unknown): string {
+  const message = readProperty(error, 'message')
+  if (typeof message === 'string' && message !== '') return message
+  if (error instanceof Error) return typeof message === 'string' ? message : ''
+  return asText(error)
+}
+
+/** Code (e.g. PostgrestError PGRST codes, errno strings): only meaningful as a
+ * string or number; redacted and truncated like every other free-form field. */
+function readCode(source: unknown): string | null {
+  const code = readProperty(source, 'code')
+  if (typeof code !== 'string' && typeof code !== 'number') return null
+  return truncate(redactSecrets(asText(code)), CODE_MAX_LENGTH)
+}
+
+/** PostgrestError details/hint: only string values carry information. */
+function readTextField(source: unknown, key: string): string | null {
+  const value = readProperty(source, key)
+  if (typeof value !== 'string' || value === '') return null
+  return value
+}
+
+/**
+ * Cause chain, outer cause first, capped at MAX_CAUSE_DEPTH levels. The
+ * identity set stops cycles (cause === self, or a → b → a); stacks of causes
+ * are never included.
+ */
+function collectCauses(error: unknown): Array<{ message: string, code?: string }> {
+  const causes: Array<{ message: string, code?: string }> = []
+  const seen = new Set<unknown>([error])
+  let current: unknown = readProperty(error, 'cause')
+  while (current !== undefined && current !== null && causes.length < MAX_CAUSE_DEPTH) {
+    if (seen.has(current)) break
+    seen.add(current)
+    const message = truncate(redactSecrets(errorMessage(current)), CAUSE_MAX_LENGTH)
+    const code = readCode(current)
+    causes.push(code === null ? { message } : { message, code })
+    current = readProperty(current, 'cause')
+  }
+  return causes
+}
+
 export function redactSecrets(text: string): string {
   let redacted = text
   for (const { pattern, replacement } of REDACTION_PATTERNS) {
@@ -101,17 +167,32 @@ export function resolveErrorLogPath(env: NodeJS.ProcessEnv = process.env): strin
   return join(homedir(), 'myboon-logs', 'errors.jsonl')
 }
 
+/**
+ * One JSONL line per failure. PostgrestError fields (code, details, hint) and
+ * a bounded cause chain are recorded so Supabase network failures that only
+ * surface as "fetch failed" also carry the real reason from error.cause
+ * (ECONNRESET, timeout, DNS). Every field is redacted before truncation and
+ * omitted when the error does not provide it; the writer must not throw.
+ */
 export function formatErrorLogLine(entry: ErrorLogEntry, now: Date = new Date()): string {
   const error = entry.error
-  const message = error instanceof Error ? error.message : String(error)
-  const stack = error instanceof Error && typeof error.stack === 'string' ? error.stack : null
+  const stackValue = readProperty(error, 'stack')
+  const stack = error instanceof Error && typeof stackValue === 'string' ? stackValue : null
   const record: Record<string, unknown> = {
     ts: now.toISOString(),
     app: entry.app,
     kind: entry.kind,
-    message: truncate(redactSecrets(message), MESSAGE_MAX_LENGTH),
+    message: truncate(redactSecrets(errorMessage(error)), MESSAGE_MAX_LENGTH),
     stack: stack === null ? null : truncate(redactSecrets(stack), STACK_MAX_LENGTH),
   }
+  const code = readCode(error)
+  if (code !== null) record.code = code
+  const details = readTextField(error, 'details')
+  if (details !== null) record.details = truncate(redactSecrets(details), MESSAGE_MAX_LENGTH)
+  const hint = readTextField(error, 'hint')
+  if (hint !== null) record.hint = truncate(redactSecrets(hint), MESSAGE_MAX_LENGTH)
+  const causes = collectCauses(error)
+  if (causes.length > 0) record.cause = causes
   if (entry.count !== undefined) record.count = entry.count
   return `${JSON.stringify(record)}\n`
 }

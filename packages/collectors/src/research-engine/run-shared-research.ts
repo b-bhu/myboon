@@ -1031,7 +1031,7 @@ if (isSharedResearchProcessEntrypoint()) {
     signal: controller.signal,
     onResult: (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
   }).catch((error) => {
-    appendErrorLog({ app: 'feed-v3-shared-research', kind: 'cycle_failed', error })
+    appendErrorLog({ app: 'feed-v3-shared-research', kind: 'run_failed', error })
     process.stderr.write(`[feed-v3-shared-research] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
   })
