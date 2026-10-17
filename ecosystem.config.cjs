@@ -216,6 +216,7 @@ module.exports = {
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        NEWS_SQLITE_PATH: '.data/news-lane.sqlite',
         ...HERMES_ENV,
         HERMES_COMMAND: 'hermes',
         ENTITY_V4_READ_SOURCE: 'dual',
@@ -240,6 +241,7 @@ module.exports = {
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        NEWS_SQLITE_PATH: '.data/news-lane.sqlite',
         PUBLISHER_RUN_ONCE: '0',
         ENTITY_V4_READ_SOURCE: 'dual',
         PUBLISHER_INTERVAL_MS: '300000',
@@ -265,6 +267,7 @@ module.exports = {
       kill_timeout: 180000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        NEWS_SQLITE_PATH: '.data/news-lane.sqlite',
         ...HERMES_ENV,
         // Ownership/deep values come from the invoking shell when explicitly
         // supplied; otherwise the runner loads collectors/.env. Code defaults
@@ -300,6 +303,7 @@ module.exports = {
       exp_backoff_restart_delay: 2000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
+        NEWS_SQLITE_PATH: '.data/news-lane.sqlite',
         ...HERMES_ENV,
         ...ENTITY_OWNERSHIP_ENV,
         ...FEED_V3_POLICY_ENV,
