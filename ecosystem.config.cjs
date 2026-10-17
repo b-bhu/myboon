@@ -157,6 +157,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         PORT: '3000',
+        ENTITY_V4_READ_SOURCE: 'dual',
       },
     },
     {
@@ -217,6 +218,7 @@ module.exports = {
       env: {
         ...HERMES_ENV,
         HERMES_COMMAND: 'hermes',
+        ENTITY_V4_READ_SOURCE: 'dual',
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',
@@ -239,6 +241,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         PUBLISHER_RUN_ONCE: '0',
+        ENTITY_V4_READ_SOURCE: 'dual',
         PUBLISHER_INTERVAL_MS: '300000',
         PUBLISHER_BATCH_SIZE: '10',
         PUBLISHER_PREVIEW_ONLY: '0',
