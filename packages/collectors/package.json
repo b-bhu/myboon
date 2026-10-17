@@ -51,6 +51,7 @@
     "pipeline-store:recover-research": "tsx src/pipeline-store/run-recover-failures.ts --stage research",
     "pipeline-store:recover-entity-manager": "tsx src/pipeline-store/run-recover-failures.ts --stage entity-manager",
     "pipeline-store:dead-letters": "tsx src/pipeline-store/run-dead-letter-status.ts",
+    "pipeline-store:check": "tsx src/pipeline-store/run-condition-check.ts",
     "test:pipeline-ledger": "tsx --test src/pipeline-ledger.test.ts",
     "test:pipeline-store": "tsx --test src/pipeline-store/*.test.ts",
     "test:news": "tsx --test src/news/tests/*.test.ts",

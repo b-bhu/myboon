@@ -24,6 +24,16 @@ export type ErrorLogKind =
   | 'ledger_finish_failed'
   | 'trace_append_failed'
   | 'supabase_unavailable'
+  // Log-only condition checks run by the cron checker (Ref #346 PR 5).
+  // condition_skipped records checks that could not run (e.g. their PM2 app
+  // is stopped); condition_cleared closes a previously breached condition.
+  | 'publish_stale'
+  | 'draft_stale'
+  | 'restart_burst'
+  | 'supabase_health_failed'
+  | 'disk_high'
+  | 'condition_cleared'
+  | 'condition_skipped'
 
 /** Supabase health-gate transition: outage first seen, inside the outage, or recovered (Ref #346). */
 export type ErrorLogHealthState = 'down' | 'still_down' | 'recovered'
@@ -37,6 +47,12 @@ export interface ErrorLogEntry {
   state?: ErrorLogHealthState
   /** Milliseconds from the first observed outage to recovery; only set on recovered entries. */
   downtimeMs?: number
+  /** Condition name on condition-check entries (e.g. publish_stale); also names the recovered condition on condition_cleared. */
+  condition?: string
+  /** Measured value (age ms, restart delta, used percent, consecutive count); only set when measured. */
+  observed?: number
+  /** Breach threshold the observed value is compared against. */
+  threshold?: number
 }
 
 export interface AppendErrorLogOptions {
@@ -209,6 +225,9 @@ export function formatErrorLogLine(entry: ErrorLogEntry, now: Date = new Date())
   if (entry.count !== undefined) record.count = entry.count
   if (entry.state !== undefined) record.state = entry.state
   if (entry.downtimeMs !== undefined) record.downtimeMs = entry.downtimeMs
+  if (entry.condition !== undefined) record.condition = entry.condition
+  if (entry.observed !== undefined) record.observed = entry.observed
+  if (entry.threshold !== undefined) record.threshold = entry.threshold
   return `${JSON.stringify(record)}\n`
 }
 
