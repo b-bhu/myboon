@@ -56,6 +56,10 @@ interface CandidateState {
 interface HintLabel {
   value: string
   source: EntityGroundingMatchSupport['labelSource']
+  /** Trailing parenthetical qualifier of a name_base label, e.g. `AFP` in 'Paris (AFP)'. */
+  qualifier?: string
+  /** The hint's own aliases corroborate the qualifier, so the base may ground any compatible match. */
+  hintCorroborated?: boolean
 }
 
 interface IdentityMatch {
@@ -98,6 +102,7 @@ export function groundEntityCandidates(
     const hintType = normalizeGroundingType(hint.type)
     for (const label of hintLabels(hint)) {
       const matches = states.flatMap((state): IdentityMatch[] => {
+        if (!nameBaseMatchesCandidate(label, state.entity)) return []
         const kind = identityMatchKind(state.entity, label.value)
         if (!kind) return []
         const entityType = normalizeGroundingType(state.entity.type) ?? 'unclassified'
@@ -175,36 +180,54 @@ function isEvidenceLinked(hint: EntityHint): boolean {
 function hintLabels(hint: EntityHint): HintLabel[] {
   const output: HintLabel[] = []
   const seen = new Set<string>()
-  const add = (value: string, source: HintLabel['source']): void => {
+  const add = (value: string, source: HintLabel['source'], extra: Omit<HintLabel, 'value' | 'source'> = {}): void => {
     const cleaned = cleanOptional(value)
     if (!cleaned || seen.has(cleaned)) return
     seen.add(cleaned)
-    output.push({ value: cleaned, source })
+    output.push({ value: cleaned, source, ...extra })
   }
 
   add(hint.name, 'name')
 
-  // Research commonly emits "Canonical Name (TICKER)". The name's base is a
-  // grounded canonical-name label whenever the qualifier is ticker-like,
-  // with or without a corroborating alias; non-ticker parentheticals such as
-  // 'Mercury (planet)' are qualifiers, not identity labels, and add no base.
+  // Research commonly emits "Canonical Name (TICKER)", and isTickerLike
+  // matches any short acronym, so 'Paris (AFP)' looks plausible too. The
+  // base therefore becomes a name_base label only when the qualifier is
+  // ticker-like, and it grounds only when corroborated: either the hint's
+  // own aliases contain the qualifier, or the matched candidate's aliases
+  // do (checked per candidate in groundEntityCandidates). A wrong attachment
+  // is worse than a hold. Non-ticker parentheticals such as 'Mercury
+  // (planet)' are qualifiers, not identity labels, and add no base.
   const parenthetical = cleanOptional(hint.name)?.match(/^(.+?)\s*\(([^()]+)\)$/)
   if (parenthetical) {
     const base = cleanOptional(parenthetical[1])
     const qualifier = cleanOptional(parenthetical[2])
-    if (base && qualifier && isTickerLike(qualifier)) add(base, 'name_base')
+    if (base && qualifier && isTickerLike(qualifier)) {
+      add(base, 'name_base', {
+        qualifier,
+        hintCorroborated: hint.aliases.some((alias) => cleanOptional(alias) === qualifier),
+      })
+    }
   }
 
   for (const alias of hint.aliases) add(alias, 'alias')
   return output
 }
 
-/** Identity labels used by canon lookup and deterministic grounding. */
+/**
+ * Identity labels for canon lookups. Lookup labels are not authority: the
+ * base of 'Name (TICKER)' is included so a lookup can fetch the candidate,
+ * while groundEntityCandidates still decides whether it attaches.
+ */
 export function entityHintIdentityLabels(hint: EntityHint): string[] {
   return hintLabels(hint).map((label) => label.value)
 }
 
-/** Canonical-name labels only; aliases remain in the alias lookup channel. */
+/**
+ * Canonical-name labels only; aliases remain in the alias lookup channel.
+ * Lookup labels are not authority: the 'Name (TICKER)' base is included so a
+ * lookup can fetch the candidate, while groundEntityCandidates still decides
+ * whether it attaches.
+ */
 export function entityHintCanonicalLabels(hint: EntityHint): string[] {
   return hintLabels(hint)
     .filter((label) => label.source !== 'alias')
@@ -306,11 +329,26 @@ function identityRouteSupportsCandidate(hint: EntityHint, label: HintLabel, matc
   if (!usesAliasAuthority(label, match)) return true
   if (tickerIsExplicitlyCorroborated(hint, label.value, match.state.entity)) return true
   if (label.source === 'alias') {
-    return entityHintCanonicalLabels(hint).some((canonicalLabel) => (
-      canonicalLabelSupportsCandidate(canonicalLabel, match.state.entity)
-    ))
+    return hintLabels(hint)
+      .filter((canonicalLabel) => canonicalLabel.source !== 'alias')
+      .some((canonicalLabel) => (
+        nameBaseMatchesCandidate(canonicalLabel, match.state.entity)
+        && canonicalLabelSupportsCandidate(canonicalLabel.value, match.state.entity)
+      ))
   }
   return entityAliasIsStructurallyRelated(label.value, match.state.entity.name)
+}
+
+/**
+ * An uncorroborated `Name (TICKER)` base matches a candidate only when the
+ * candidate's own aliases contain the qualifier exactly. Lookups may still
+ * fetch the candidate; grounding alone decides the attachment.
+ */
+function nameBaseMatchesCandidate(label: HintLabel, entity: EntityRecord): boolean {
+  if (label.source !== 'name_base') return true
+  if (label.hintCorroborated) return true
+  const qualifier = cleanOptional(label.qualifier ?? null)
+  return !!qualifier && entity.aliases.some((alias) => identityEquals(qualifier, alias))
 }
 
 function canonicalLabelSupportsCandidate(label: string, entity: EntityRecord): boolean {

@@ -38,7 +38,7 @@ function hint(overrides: Partial<EntityHint> = {}): EntityHint {
 }
 
 test('an evidenced membership hint matching an existing identity grounds it and never creates a second binding', () => {
-  const result = groundManagedEntities(context([contextEntity()]), [hint({
+  const result = groundManagedEntities(context([contextEntity({ aliases: ['BTC'] })]), [hint({
     name: 'Bitcoin (BTC)',
     type: 'asset',
     role: 'secondary_subject',
@@ -46,7 +46,8 @@ test('an evidenced membership hint matching an existing identity grounds it and 
   })])
 
   assert.deepEqual(result.entities.map((entity) => entity.id), ['entity-bitcoin'])
-  // The base of the parenthetical hint name grounds the existing Bitcoin identity.
+  // The base of the parenthetical hint name grounds the existing Bitcoin identity:
+  // the context alias `BTC` corroborates the `BTC` qualifier.
   assert.deepEqual(result.claimsByEntity.get('entity-bitcoin'), ['claim-1'])
   assert.equal(result.skipped.size, 0)
 })
@@ -67,7 +68,7 @@ test('a hint that grounds and creates nothing is tallied with its skip reasons',
 })
 
 test('a non-membership hint grounds nothing and is tallied as not_member_role', () => {
-  const result = groundManagedEntities(context([contextEntity()]), [hint({
+  const result = groundManagedEntities(context([contextEntity({ aliases: ['BTC'] })]), [hint({
     name: 'Bitcoin (BTC)',
     type: 'asset',
     role: 'publisher',

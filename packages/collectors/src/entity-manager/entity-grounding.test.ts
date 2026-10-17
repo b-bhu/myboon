@@ -246,12 +246,64 @@ test('unlinked, null-role, and explicit non-subject hints do not authorize candi
   assert.equal(result.support.some((item) => item.entityId === unlinked.id), false)
 })
 
-test('a ticker-like parenthetical grounds its base name without a corroborating alias', () => {
+test('an uncorroborated ticker-like parenthetical grounds no candidate', () => {
+  const paris = entity({
+    id: 'entity-paris',
+    slug: 'paris',
+    name: 'Paris',
+    type: 'place',
+  })
+  const result = groundEntityCandidates([paris], [hint({
+    name: 'Paris (AFP)',
+    role: 'subject',
+    type: 'place',
+  })])
+
+  assert.deepEqual(result.candidates, [])
+  assert.deepEqual(result.support, [])
+
+  const unclassifiedResult = groundEntityCandidates(
+    [entity({ ...paris, id: 'entity-paris-unclassified', type: 'unclassified' })],
+    [hint({
+      name: 'Paris (AFP)',
+      role: 'subject',
+      type: 'place',
+    })],
+  )
+
+  assert.deepEqual(unclassifiedResult.candidates, [])
+  assert.deepEqual(unclassifiedResult.support, [])
+})
+
+test('a ticker-like parenthetical grounds its base name with a corroborating hint alias', () => {
   const bitcoin = entity({
     id: 'entity-bitcoin',
     slug: 'bitcoin',
     name: 'Bitcoin',
     type: 'asset',
+  })
+
+  const result = groundEntityCandidates([bitcoin], [hint({
+    name: 'Bitcoin (BTC)',
+    role: 'subject',
+    type: 'asset',
+    aliases: ['BTC'],
+  })])
+
+  assert.deepEqual(result.candidates.map((candidate) => candidate.id), ['entity-bitcoin'])
+  const baseMatch = result.support[0]?.matches.find((match) => match.labelSource === 'name_base')
+  assert.equal(baseMatch?.label, 'Bitcoin')
+  assert.equal(baseMatch?.matchKind, 'canonical_name')
+  assert.equal(baseMatch?.decision, 'authoritative_canonical')
+})
+
+test('a ticker-like parenthetical grounds its base name when the candidate aliases corroborate the qualifier', () => {
+  const bitcoin = entity({
+    id: 'entity-bitcoin',
+    slug: 'bitcoin',
+    name: 'Bitcoin',
+    type: 'asset',
+    aliases: ['BTC'],
   })
 
   const result = groundEntityCandidates([bitcoin], [hint({
@@ -265,6 +317,24 @@ test('a ticker-like parenthetical grounds its base name without a corroborating 
   assert.equal(baseMatch?.label, 'Bitcoin')
   assert.equal(baseMatch?.matchKind, 'canonical_name')
   assert.equal(baseMatch?.decision, 'authoritative_canonical')
+})
+
+test('a ticker-like parenthetical without any corroboration grounds nothing', () => {
+  const bitcoin = entity({
+    id: 'entity-bitcoin',
+    slug: 'bitcoin',
+    name: 'Bitcoin',
+    type: 'asset',
+  })
+
+  const result = groundEntityCandidates([bitcoin], [hint({
+    name: 'Bitcoin (BTC)',
+    role: 'subject',
+    type: 'asset',
+  })])
+
+  assert.deepEqual(result.candidates, [])
+  assert.deepEqual(result.support, [])
 })
 
 test('a non-ticker parenthetical adds no base identity label', () => {
