@@ -3,6 +3,7 @@ import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabas
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import {
   createProductionDeepResearchRuntime,
   SqliteDeepResearchExecutionRegistry,
@@ -193,7 +194,7 @@ export interface RunSharedResearchOptions {
   createRuntime?: (config: SharedResearchRunnerConfig) => SharedResearchRunnerRuntime
   onResult?: (result: SharedResearchRunnerCycleResult) => void
   /** Interval mode only. Called when a cycle or expired-lease recovery rejects; the schedule then reschedules. */
-  onCycleError?: (error: unknown) => void
+  onCycleError?: (error: unknown, info?: { phase: 'cycle' | 'recovery' }) => void
   wait?: (ms: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
   createStatusWriter?: (path: string) => ResearchRuntimeStatusWriter
@@ -275,8 +276,13 @@ export function loadSharedResearchRunnerConfig(
   })
 }
 
-function defaultOnCycleError(error: unknown): void {
+function defaultOnCycleError(error: unknown, info?: { phase: 'cycle' | 'recovery' }): void {
   process.stderr.write(`[feed-v3-shared-research] cycle failed: ${error instanceof Error ? error.message : 'unknown failure'}\n`)
+  appendErrorLog({
+    app: 'feed-v3-shared-research',
+    kind: info?.phase === 'recovery' ? 'recovery_failed' : 'cycle_failed',
+    error,
+  })
 }
 
 /** Disabled mode never invokes createRuntime and remains resident until signal. */
@@ -347,7 +353,7 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
           // reschedule. RUN_ONCE keeps its propagate-and-exit behaviour, and
           // the last successful recovery snapshot stays in the status file.
           if (config.runOnce) throw error
-          ;(options.onCycleError ?? defaultOnCycleError)(error)
+          ;(options.onCycleError ?? defaultOnCycleError)(error, { phase: 'recovery' })
         }
         nextRecoveryAt = now() + config.recoveryIntervalMs
         await writeStatus(operatorControl.desiredState === 'running' ? 'running' : 'draining')
@@ -382,7 +388,7 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
         // exit the daemon: report it and reschedule, matching the interval
         // runners. RUN_ONCE keeps its propagate-and-exit behaviour.
         if (config.runOnce) throw outcome.error
-        ;(options.onCycleError ?? defaultOnCycleError)(outcome.error)
+        ;(options.onCycleError ?? defaultOnCycleError)(outcome.error, { phase: 'cycle' })
         await writeStatus('running')
         nextCycleAt = now() + config.intervalMs
         continue
@@ -1016,6 +1022,7 @@ export function isSharedResearchProcessEntrypoint(input: {
 // `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
 // execution marker and keeps imports/tests inert outside the process manager.
 if (isSharedResearchProcessEntrypoint()) {
+  installProcessErrorLogging('feed-v3-shared-research')
   loadSharedResearchProcessEnvironment()
   const controller = new AbortController()
   process.once('SIGTERM', () => controller.abort())
@@ -1024,6 +1031,7 @@ if (isSharedResearchProcessEntrypoint()) {
     signal: controller.signal,
     onResult: (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
   }).catch((error) => {
+    appendErrorLog({ app: 'feed-v3-shared-research', kind: 'cycle_failed', error })
     process.stderr.write(`[feed-v3-shared-research] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
   })
