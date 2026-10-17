@@ -37,6 +37,7 @@ import {
 } from '../inference-gateway/classification-definitions'
 import type { ArticleResearchContext } from '../research-gate/managed-context-reader'
 import { rankEntityCandidates } from '../research-gate/entity-candidates'
+import { entityIdentityLookupLabels } from '../entity-manager/identity-key'
 import {
   ARTICLE_DECISION_SOURCE_MAX_CHARS,
   ARTICLE_DECISION_STATE_MAX_BYTES,
@@ -309,7 +310,7 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
     const creationProposal = await input.proposeCreation()
     if (input.context.findExactEntities) {
       let exact: ArticleResearchContext['candidates']
-      try { exact = await input.context.findExactEntities([creationProposal.name, ...creationProposal.aliases]) }
+      try { exact = await input.context.findExactEntities(entityIdentityLookupLabels([creationProposal.name, ...creationProposal.aliases])) }
       catch {
         throw new ArticleResearchHold(
           input.context.coverageFailureKind === 'transient' ? 'context_coverage_transient' : 'context_coverage_unavailable',
@@ -1105,7 +1106,7 @@ async function batchedCreationFallback(
   const creationProposal = await input.proposeCreation()
   if (input.context.findExactEntities) {
     let exact: ArticleResearchContext['candidates']
-    try { exact = await input.context.findExactEntities([creationProposal.name, ...creationProposal.aliases]) }
+    try { exact = await input.context.findExactEntities(entityIdentityLookupLabels([creationProposal.name, ...creationProposal.aliases])) }
     catch {
       throw new ArticleResearchHold(
         input.context.coverageFailureKind === 'transient' ? 'context_coverage_transient' : 'context_coverage_unavailable',

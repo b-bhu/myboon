@@ -246,6 +246,41 @@ test('unlinked, null-role, and explicit non-subject hints do not authorize candi
   assert.equal(result.support.some((item) => item.entityId === unlinked.id), false)
 })
 
+test('a ticker-like parenthetical grounds its base name without a corroborating alias', () => {
+  const bitcoin = entity({
+    id: 'entity-bitcoin',
+    slug: 'bitcoin',
+    name: 'Bitcoin',
+    type: 'asset',
+  })
+
+  const result = groundEntityCandidates([bitcoin], [hint({
+    name: 'Bitcoin (BTC)',
+    role: 'subject',
+    type: 'asset',
+  })])
+
+  assert.deepEqual(result.candidates.map((candidate) => candidate.id), ['entity-bitcoin'])
+  const baseMatch = result.support[0]?.matches.find((match) => match.labelSource === 'name_base')
+  assert.equal(baseMatch?.label, 'Bitcoin')
+  assert.equal(baseMatch?.matchKind, 'canonical_name')
+  assert.equal(baseMatch?.decision, 'authoritative_canonical')
+})
+
+test('a non-ticker parenthetical adds no base identity label', () => {
+  const mercury = entity({
+    id: 'entity-mercury',
+    slug: 'mercury',
+    name: 'Mercury',
+    type: 'planet',
+  })
+
+  const result = groundEntityCandidates([mercury], [hint({ name: 'Mercury (planet)' })])
+
+  assert.deepEqual(result.candidates, [])
+  assert.deepEqual(result.support, [])
+})
+
 test('clearly incompatible normalized hint and entity types are rejected', () => {
   const model = entity({
     id: 'entity-model',

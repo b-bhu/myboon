@@ -184,17 +184,15 @@ function hintLabels(hint: EntityHint): HintLabel[] {
 
   add(hint.name, 'name')
 
-  // Research commonly emits "Canonical Name (TICKER)" plus TICKER as an
-  // explicit alias. Only derive the base when that exact ticker is corroborated
-  // by the hint aliases; this lets Solana outrank a polluted `Solana` alias
-  // without treating arbitrary parenthetical text as canonical identity.
+  // Research commonly emits "Canonical Name (TICKER)". The name's base is a
+  // grounded canonical-name label whenever the qualifier is ticker-like,
+  // with or without a corroborating alias; non-ticker parentheticals such as
+  // 'Mercury (planet)' are qualifiers, not identity labels, and add no base.
   const parenthetical = cleanOptional(hint.name)?.match(/^(.+?)\s*\(([^()]+)\)$/)
   if (parenthetical) {
     const base = cleanOptional(parenthetical[1])
     const qualifier = cleanOptional(parenthetical[2])
-    if (base && qualifier && isTickerLike(qualifier) && hint.aliases.some((alias) => cleanOptional(alias) === qualifier)) {
-      add(base, 'name_base')
-    }
+    if (base && qualifier && isTickerLike(qualifier)) add(base, 'name_base')
   }
 
   for (const alias of hint.aliases) add(alias, 'alias')

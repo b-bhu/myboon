@@ -8,6 +8,7 @@ import { CANONICAL_ENTITY_PLANNING_BUDGET, type CanonicalEntityPlanningGateway }
 import { withCanonicalEntityTelemetry } from './canonical-processor'
 import { entityHintAuthorizesPrimarySelection, groundEntityCandidates } from './entity-grounding'
 import { isBannedEntitySlug } from './canon'
+import { entityIdentityKeys, entityIdentityLookupLabels } from './identity-key'
 import { knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
 import { normalizeSlug } from './normalization'
 import {
@@ -102,7 +103,9 @@ export class ManagedCanonicalPacketProcessor implements CanonicalPacketProcessor
     }
     const canonicalPacket = input.canonicalPacket
     const hints = deriveEntityHintClaimRefs(canonicalPacket.entityHints, canonicalPacket.claims)
-    const labels = [...new Set(hints.flatMap((hint) => [hint.name, ...hint.aliases]).filter(Boolean))]
+    // Exact DB lookup labels expand each hint name/alias with its base name
+    // ('Bitcoin (BTC)' also looks up 'Bitcoin') and bound the overflow check.
+    const labels = entityIdentityLookupLabels(hints.flatMap((hint) => [hint.name, ...hint.aliases]))
     const action = handoff.readiness.entityAction
     const prior = await this.options.writer.researchContext({
       source: input.work.sourceType,
@@ -156,7 +159,7 @@ export class ManagedCanonicalPacketProcessor implements CanonicalPacketProcessor
         }
         if (entities.length === 0) return {
           kind: 'hold',
-          reason: 'No explicitly evidenced entity identity can be grounded; the complete saved Research packet is retained',
+          reason: `${IDENTITY_GROUNDING_HOLD_REASON}${groundingSkipSuffix(grounded.skipped)}`,
           missingDependency: 'entity_identity_grounding',
         }
         const requestDigest = knowledgeOperationSemanticDigest({ prompt, route, policyVersion: metadata.policyVersion, promptVersion: metadata.promptVersion })
@@ -229,8 +232,24 @@ export class ManagedCanonicalPacketProcessor implements CanonicalPacketProcessor
   }
 }
 
-function groundManagedEntities(context: ManagedResearchContext, hints: EntityHint[]): {
-  entities: ManagedEntityBinding[]; claimsByEntity: Map<string,string[]>
+const IDENTITY_GROUNDING_HOLD_REASON = 'No explicitly evidenced entity identity can be grounded; the complete saved Research packet is retained'
+const HOLD_REASON_CHAR_LIMIT = 600
+
+/** Explains why evidenced hints neither grounded nor created an identity, e.g. '; grounding: ambiguous_alias=2, existing_identity_collision=1'. */
+export function groundingSkipSuffix(skipped: ReadonlyMap<string,number>): string {
+  let entries = ''
+  for (const [reason,count] of [...skipped].sort(([left],[right]) => left < right ? -1 : left > right ? 1 : 0)) {
+    const part = `${entries ? ', ' : ''}${reason}=${count}`
+    // The complete hold reason must stay under the 600-character bound.
+    if (IDENTITY_GROUNDING_HOLD_REASON.length + 13 + entries.length + part.length >= HOLD_REASON_CHAR_LIMIT) break
+    entries += part
+  }
+  return entries ? `; grounding: ${entries}` : ''
+}
+
+/** Grounds packet hints against context identities, creating evidenced new ones; `skipped` tallies why hints did neither. */
+export function groundManagedEntities(context: ManagedResearchContext, hints: EntityHint[]): {
+  entities: ManagedEntityBinding[]; claimsByEntity: Map<string,string[]>; skipped: Map<string,number>
 } {
   // The legacy resolver is primary-subject focused. Managed membership also
   // admits explicitly evidenced secondary participants while preserving its
@@ -239,23 +258,53 @@ function groundManagedEntities(context: ManagedResearchContext, hints: EntityHin
   const grounded = groundEntityCandidates(context.entities,membershipHints)
   const entities = grounded.candidates.map((entity) => context.entities.find((value) => value.id === entity.id)!)
   const claimsByEntity = new Map(grounded.support.filter((support) => support.primarySelectionAuthorized).map((support) => [support.entityId,support.supportingClaimIds]))
-  for (const hint of hints) {
-    if (!managedMembershipRole(hint.role) || !hint.type || hint.claimRefs.length === 0 || hint.evidenceRefs.length === 0) continue
+  const groundedHints = new Set<number>()
+  const decisionsByHint = new Map<number,Set<string>>()
+  for (const support of grounded.support) for (const match of support.matches) {
+    if (match.primarySelectionAuthorized) groundedHints.add(match.hintIndex)
+    const decisions = decisionsByHint.get(match.hintIndex) ?? new Set<string>()
+    decisions.add(match.decision)
+    decisionsByHint.set(match.hintIndex,decisions)
+  }
+  const createdHints = new Set<number>()
+  const skippedByHint = new Map<number,string>()
+  for (const [hintIndex,hint] of hints.entries()) {
+    if (!managedMembershipRole(hint.role)) { skippedByHint.set(hintIndex,'not_member_role'); continue }
+    if (!hint.type || hint.claimRefs.length === 0 || hint.evidenceRefs.length === 0) {
+      skippedByHint.set(hintIndex,!hint.type ? 'missing_type' : 'missing_claims_or_evidence')
+      continue
+    }
     const name = hint.name.normalize('NFKC').replace(/\s+/g,' ').trim()
-    const labels = [name,...hint.aliases].map((value) => value.toLocaleLowerCase('en-US'))
+    const hintKeys = entityIdentityKeys([name,...hint.aliases])
     // Existing or ambiguous aliases never authorize creating a second identity.
-    if (context.entities.some((entity) => [entity.name,entity.slug,...entity.aliases].some((label) => labels.includes(label.toLocaleLowerCase('en-US'))))) continue
+    if (context.entities.some((entity) => [...entityIdentityKeys([entity.name,entity.slug,...entity.aliases])].some((key) => hintKeys.has(key)))) {
+      skippedByHint.set(hintIndex,'existing_identity_collision')
+      continue
+    }
     const type = hint.type.trim().toLocaleLowerCase('en-US')
     const slug = normalizeSlug(name,name)
-    if (!name || name.length > 200 || isBannedEntitySlug(slug)) continue
+    if (!name || name.length > 200 || isBannedEntitySlug(slug)) { skippedByHint.set(hintIndex,'invalid_or_banned_name'); continue }
     const identityKey = `${type}:${name.toLocaleLowerCase('en-US')}`
     const bytes = createHash('sha256').update(`myboon.entity_v4:${identityKey}`).digest('hex').slice(0,32)
     const id = `${bytes.slice(0,8)}-${bytes.slice(8,12)}-${bytes.slice(12,16)}-${bytes.slice(16,20)}-${bytes.slice(20)}`
-    if (entities.some((entity) => entity.id === id)) continue
+    if (entities.some((entity) => entity.id === id)) { skippedByHint.set(hintIndex,'duplicate_in_plan'); continue }
     entities.push({ id,slug,name,type,aliases: [...new Set(hint.aliases)],summary: null,status: 'active',show_in_carousel: false,metadata: {},revision: 'absent',catalogEntityId: null,identityKey })
     claimsByEntity.set(id,hint.claimRefs)
+    createdHints.add(hintIndex)
   }
-  return { entities,claimsByEntity }
+  // Evidenced hints that neither grounded an identity nor created one explain
+  // the entity_identity_grounding hold; creation skips carry one reason while
+  // every rejected grounding decision of the hint stays visible.
+  const skipped = new Map<string,number>()
+  for (const [hintIndex,hint] of hints.entries()) {
+    if (hint.claimRefs.length === 0 && hint.evidenceRefs.length === 0) continue
+    if (groundedHints.has(hintIndex) || createdHints.has(hintIndex)) continue
+    const reasons = new Set(decisionsByHint.get(hintIndex) ?? [])
+    const skippedReason = skippedByHint.get(hintIndex)
+    if (skippedReason) reasons.add(skippedReason)
+    for (const reason of reasons) skipped.set(reason,(skipped.get(reason) ?? 0) + 1)
+  }
+  return { entities,claimsByEntity,skipped }
 }
 
 function managedMembershipRole(role: string | null): boolean {

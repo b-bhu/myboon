@@ -5,6 +5,7 @@ import { PlatformFailure } from '../signal-platform/failures'
 import { deriveManagedItemId, deriveProgressionOperationId } from './progression-processor'
 import { knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
 import type { ManagedArticleContext, ManagedEntityBinding, PostgresKnowledgeOperationWriter } from './postgres-knowledge-writer'
+import { entityIdentityKeys } from './identity-key'
 
 /**
  * Readers first: persistence accepts both article packet versions.  The two
@@ -173,8 +174,9 @@ function resolveMemberships(packet: ArticlePacket, context: ManagedArticleContex
     if (!proposal.creationProposal || proposal.creationDecision?.choice !== 'accept') {
       return { kind: 'hold', reason: `no-match placement for ${proposal.name} has no accepted bounded creation proposal` }
     }
-    const labels = normalLabels([proposal.creationProposal.name, ...proposal.creationProposal.aliases])
-    const collision = context.entities.filter((entity) => [...normalLabels([entity.name, entity.slug, ...entity.aliases])].some((label) => labels.has(label)))
+    // Equivalent identities (e.g. 'Bitcoin (BTC)' vs 'Bitcoin') must not create a second identity.
+    const hintKeys = entityIdentityKeys([proposal.creationProposal.name, ...proposal.creationProposal.aliases])
+    const collision = context.entities.filter((entity) => [...entityIdentityKeys([entity.name, entity.slug, ...entity.aliases])].some((key) => hintKeys.has(key)))
     const identityKey = `article:${proposal.creationProposal.type.trim().toLocaleLowerCase('en-US')}:${proposal.creationProposal.name.trim().toLocaleLowerCase('en-US')}`
     const id = deterministicUuid(`myboon.article_entity_v1:${identityKey}`)
     const existingDeterministic = collision.find((entity) => entity.id === id && entity.identityKey === identityKey && entity.status === 'active')
@@ -305,5 +307,4 @@ function deterministicUuid(value: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`
 }
 function slug(value: string): string { return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 200) }
-function normalLabels(values: readonly string[]): Set<string> { return new Set(values.map((value) => value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')).filter(Boolean)) }
 function unique(values: readonly string[]): string[] { return [...new Set(values.filter((value) => value.trim().length > 0))] }
