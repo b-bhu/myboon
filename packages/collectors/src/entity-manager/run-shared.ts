@@ -6,8 +6,10 @@ import {
   type InferenceCircuitStatusSnapshot,
   type InferenceTelemetryObserver,
 } from '../inference-gateway'
+import { createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { envFlag, loadDotenvChain, positiveInteger } from '../pipeline-store/cli-env'
 import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
+import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
 import { assertActiveCutoverReceipts } from '../signal-platform/cutover-receipt'
@@ -502,6 +504,23 @@ export function waitForSharedEntityShutdown(
   })
 }
 
+/**
+ * Active-mode Supabase gate: probe + interval gate + RUN_ONCE startup check
+ * share the one bounded probe client. Shadow/off never touch Supabase, so
+ * they get no gate (Refs #346).
+ */
+function createSupabaseHealthGate(): {
+  gate: SupabaseHealthGate
+  runOnceCheck: () => Promise<void>
+} {
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv()
+  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
+  return {
+    gate: new SupabaseHealthGate({ app: 'feed-v3:shared-entity-manager', probe }),
+    runOnceCheck: () => waitForSupabaseRunOnce({ app: 'feed-v3:shared-entity-manager', probe }),
+  }
+}
+
 async function main(): Promise<void> {
   loadDotenvChain()
   const runtime = createSharedEntityRuntime()
@@ -514,8 +533,10 @@ async function main(): Promise<void> {
     await waitForSharedEntityShutdown(() => runtime.close())
     return
   }
+  const supabaseHealth = runtime.mode === 'active' ? createSupabaseHealthGate() : null
   const run = async () => { process.stdout.write(`${JSON.stringify(await runtime.runCycle())}\n`) }
   if (envFlag(process.env.FEED_V3_ENTITY_RUN_ONCE)) {
+    if (supabaseHealth) await supabaseHealth.runOnceCheck()
     await run()
     await runtime.close()
     return
@@ -527,6 +548,7 @@ async function main(): Promise<void> {
     intervalMs: positiveInteger(process.env.FEED_V3_ENTITY_INTERVAL_MS, DEFAULT_INTERVAL_MS),
     runOnce: false,
     run,
+    ...(supabaseHealth ? { healthGate: supabaseHealth.gate } : {}),
   })
   if (interval === null) throw new Error('interval runner did not start')
   await waitForSharedEntityShutdown(async () => {

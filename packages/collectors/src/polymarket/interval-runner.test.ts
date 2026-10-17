@@ -310,6 +310,101 @@ test('runFirstThenInterval: a failing first run does not exit the worker (child-
   assert.ok(!runOnce.stdout.includes('ALIVE'), `runOnce child must not stay alive; stdout=${JSON.stringify(runOnce.stdout)}`)
 })
 
+test('runFirstThenInterval: a closed health gate skips the first run and every tick without calling run or onError', async () => {
+  let runs = 0
+  let checks = 0
+  const errors: unknown[] = []
+
+  const handle = await runFirstThenInterval({
+    label: 'closed-gate',
+    intervalMs: 10,
+    runOnce: false,
+    run: async () => { runs += 1 },
+    healthGate: { check: async () => { checks += 1; return false } },
+    onError: (error) => errors.push(error),
+  })
+
+  await wait(45)
+  handle?.stop()
+  // The first run and at least one interval tick were gated; every gated tick
+  // is a quiet skip, not a run failure.
+  assert.ok(checks >= 2, `expected the first run and a tick to be gated, got ${checks}`)
+  assert.equal(runs, 0)
+  assert.equal(errors.length, 0)
+})
+
+test('runFirstThenInterval: a rejecting health gate check counts as closed and never escapes', async () => {
+  let runs = 0
+  const errors: unknown[] = []
+
+  const handle = await runFirstThenInterval({
+    label: 'throwing-gate',
+    intervalMs: 10,
+    runOnce: false,
+    run: async () => { runs += 1 },
+    healthGate: { check: async () => { throw new Error('gate exploded') } },
+    onError: (error) => errors.push(error),
+  })
+
+  await wait(45)
+  handle?.stop()
+  assert.equal(runs, 0)
+  assert.equal(errors.length, 0)
+})
+
+test('runFirstThenInterval: an open health gate still runs the first run and every tick', async () => {
+  let runs = 0
+  let checks = 0
+
+  const handle = await runFirstThenInterval({
+    label: 'open-gate',
+    intervalMs: 10,
+    runOnce: false,
+    run: async () => { runs += 1 },
+    healthGate: { check: async () => { checks += 1; return true } },
+  })
+
+  await wait(45)
+  handle?.stop()
+  assert.ok(checks >= 2, `expected gated checks, got ${checks}`)
+  assert.ok(runs >= 2, `expected every gated check to run, got ${runs}`)
+})
+
+test('runFirstThenInterval: in RUN_ONCE mode a failing runOnceHealthCheck rejects without calling run', async () => {
+  const gateError = new Error('Supabase unavailable after 3 health probe attempts')
+  let runs = 0
+
+  await assert.rejects(
+    runFirstThenInterval({
+      label: 'run-once-closed-gate',
+      intervalMs: 10,
+      runOnce: true,
+      run: async () => { runs += 1 },
+      runOnceHealthCheck: async () => { throw gateError },
+    }),
+    (error) => error === gateError,
+  )
+
+  // Several interval boundaries later: RUN_ONCE never scheduled and never ran.
+  await wait(60)
+  assert.equal(runs, 0)
+})
+
+test('runFirstThenInterval: in RUN_ONCE mode a passing runOnceHealthCheck runs the single run', async () => {
+  let runs = 0
+
+  const result = await runFirstThenInterval({
+    label: 'run-once-open-gate',
+    intervalMs: 10,
+    runOnce: true,
+    run: async () => { runs += 1 },
+    runOnceHealthCheck: async () => undefined,
+  })
+
+  assert.equal(result, null)
+  assert.equal(runs, 1)
+})
+
 test('interval runner: default onError appends JSONL failure entries with consecutive failure counts', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'interval-runner-error-log-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))

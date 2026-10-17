@@ -174,6 +174,37 @@ test('active runner recovers at startup and on a bounded cadence before further 
   assert.equal(writes.at(-1), 'stopped')
 })
 
+test('health gate: a closed gate skips the cycle and an open gate runs it', async () => {
+  const controller = new AbortController()
+  let current = Date.parse('2026-08-26T12:00:00.000Z')
+  let cycles = 0
+  let checks = 0
+  const checksSucceed = [false, true]
+  const reports: string[] = []
+  await runSharedResearchLoop({
+    env: {
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', FEED_V3_CUTOVER_RECEIPT_PATH: TEST_CUTOVER_RECEIPT_PATH,
+      [SHARED_RESEARCH_ENV.intervalMs]: '100',
+    },
+    signal: controller.signal, now: () => current,
+    healthGate: { check: async () => { checks += 1; return checksSucceed[checks - 1] === true } },
+    createRuntime: () => runtime('active', () => { cycles += 1 }),
+    createStatusWriter: () => ({ write: async () => undefined }),
+    createRuntimeControl: () => ({ read: defaultRuntimeControl }),
+    wait: async (ms) => { current += ms },
+    onResult: (result) => {
+      reports.push(result.kind)
+      if (result.kind === 'completed') controller.abort()
+    },
+  })
+  // The first (closed) check skipped the cycle without touching the runtime;
+  // the second (open) check ran exactly one cycle.
+  assert.equal(checks, 2)
+  assert.equal(cycles, 1)
+  assert.deepEqual(reports, ['completed'])
+})
+
 test('report mode logs sweep errors and still retries unpaid leases and dead-letters paid leases', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-report-recovery-'))
   const dbPath = join(dir, 'news.sqlite')
@@ -805,7 +836,9 @@ test('article runtime checks both storage readers and waits between failed probe
     healthy = true
     assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
     assert.deepEqual([managedReads, legacyReads], [1, 1])
-    now += 30_000
+    // The outage retry is the shared jittered health curve (24s-36s); 36s
+    // covers every possible draw (Ref #346).
+    now += 36_000
     assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
     assert.equal(live.status.articleContextAvailability?.available, true)
     assert.deepEqual([managedReads, legacyReads, providerCalls], [2, 2, 0])

@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ArticleContextAvailabilityGate } from './context-availability'
 
+// Health-gate jitter factor 0.8 + 0.4 * 0.5 = 1.0: the raw backoff curve
+// survives untouched, keeping these assertions deterministic.
+const EXACT_JITTER = () => 0.5
+
 test('storage outage gates claims, backs off probes and resumes only after a successful read', async () => {
   let now = Date.parse('2026-10-08T12:00:00Z')
   let healthy = false
@@ -9,7 +13,7 @@ test('storage outage gates claims, backs off probes and resumes only after a suc
   const gate = new ArticleContextAvailabilityGate(async () => {
     probes += 1
     if (!healthy) throw new Error('database unavailable')
-  }, () => now)
+  }, () => now, undefined, EXACT_JITTER)
   assert.equal(gate.claimsAllowed, false)
   assert.equal(await gate.check(), false)
   healthy = true
@@ -28,7 +32,7 @@ test('storage outage gates claims, backs off probes and resumes only after a suc
   assert.equal(await gate.check(), true)
 })
 
-test('concurrent callers share one probe and outage backoff stops at five minutes', async () => {
+test('concurrent callers share one probe and outage backoff caps at fifteen minutes', async () => {
   let now = 0
   let release!: () => void
   let probes = 0
@@ -37,25 +41,25 @@ test('concurrent callers share one probe and outage backoff stops at five minute
     probes += 1
     if (probes === 1) await wait
     throw new Error('offline')
-  }, () => now)
+  }, () => now, undefined, EXACT_JITTER)
   const first = gate.check()
   const second = gate.check()
   assert.equal(probes, 1)
   release()
   assert.deepEqual(await Promise.all([first, second]), [false, false])
-  for (const delay of [30_000, 60_000, 120_000, 240_000, 300_000]) {
+  for (const delay of [30_000, 60_000, 120_000, 240_000, 480_000]) {
     now += delay
     assert.equal(await gate.check(), false)
   }
   assert.equal(probes, 6)
-  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 300_000)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 900_000)
 })
 
 test('a successful old probe cannot reopen claims after a newer dependency failure', async () => {
   let now = 0
   let release!: () => void
   const waiting = new Promise<void>(resolve => { release = resolve })
-  const gate = new ArticleContextAvailabilityGate(() => waiting, () => now)
+  const gate = new ArticleContextAvailabilityGate(() => waiting, () => now, undefined, EXACT_JITTER)
   const pending = gate.check()
   gate.invalidate()
   release()
@@ -101,7 +105,7 @@ test('healthy cadence is bounded and configurable without changing outage backof
 
 test('repeated invalidation preserves an already known outage backoff', async () => {
   let now = 0
-  const gate = new ArticleContextAvailabilityGate(async () => { throw new Error('offline') }, () => now)
+  const gate = new ArticleContextAvailabilityGate(async () => { throw new Error('offline') }, () => now, undefined, EXACT_JITTER)
   for (const delay of [0, 30_000, 60_000, 120_000, 240_000]) {
     now += delay
     assert.equal(await gate.check(), false)
@@ -109,5 +113,14 @@ test('repeated invalidation preserves an already known outage backoff', async ()
     gate.invalidate()
     assert.equal(gate.snapshot().nextProbeAt, deadline)
   }
-  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 300_000)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 480_000)
+})
+
+test('the outage backoff now uses the shared 15-min jittered health curve (Ref #346)', async () => {
+  let now = 0
+  const gate = new ArticleContextAvailabilityGate(async () => { throw new Error('offline') }, () => now, undefined, () => 0)
+  assert.equal(await gate.check(), false)
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  // random() = 0 lands on the jitter floor: 0.8 * 30s.
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 24_000)
 })
