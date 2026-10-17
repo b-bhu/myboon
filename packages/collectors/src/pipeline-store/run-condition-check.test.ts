@@ -284,6 +284,55 @@ test('supabase_health_failed after 3 consecutive bad probes, cleared on success'
   }
 })
 
+test('missing Supabase env is a configuration error: the probe is skipped, never counted as a failure', async () => {
+  const fixture = setup()
+  try {
+    // fixture.env carries no Supabase credentials and no probe is injected,
+    // so the run reaches the default gatherers on their missing-env path.
+    const deps = makeDeps(fixture)
+    delete deps.probe
+    const summary = await runConditionCheck(deps)
+
+    assert.equal(summary.results.some((result) => result.condition === 'supabase_health_failed'), false)
+    assert.deepEqual(summary.skipped, ['supabase_health_failed: supabase env missing'])
+    assert.deepEqual(kinds(fixture), ['condition_skipped'])
+    assert.ok(String(logLines(fixture)[0]?.message).includes('supabase_health_failed: supabase env missing'))
+    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 0)
+    assert.deepEqual(readStateFile(fixture).breached, {})
+  } finally {
+    teardown(fixture)
+  }
+})
+
+test('missing Supabase env leaves the consecutive-failure counter unchanged', async () => {
+  const fixture = setup()
+  try {
+    // A real probe outage left 2 consecutive failures behind; the env then
+    // goes missing: neither run may increment or reset the counter, and the
+    // skip must not log a supabase breach or a recovery (a configuration
+    // error is neither a Supabase failure nor a recovery).
+    writeFileSync(fixture.statePath, JSON.stringify({
+      version: 1,
+      samples: [],
+      supabaseConsecutiveFailures: 2,
+      breached: {},
+      lastLoggedAt: {},
+    }))
+    const deps = makeDeps(fixture)
+    delete deps.probe
+
+    await runConditionCheck(deps)
+    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 2)
+    nowMs += 60_000
+    await runConditionCheck(deps)
+    assert.equal(readStateFile(fixture).supabaseConsecutiveFailures, 2)
+    assert.equal(kinds(fixture).includes('supabase_health_failed'), false)
+    assert.equal(kinds(fixture).includes('condition_cleared'), false)
+  } finally {
+    teardown(fixture)
+  }
+})
+
 test('disk_high: breach once, silent on repeat, clears after recovery; statfs failure skips', async () => {
   const fixture = setup()
   try {

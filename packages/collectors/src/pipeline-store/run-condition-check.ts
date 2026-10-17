@@ -20,7 +20,10 @@
  * being `online`, exactly as decided in Ref #346 Q2. For draft_stale the
  * same skip rule covers a missing, unreadable or empty local
  * pipeline.sqlite - a broken draft store never becomes a breach. The
- * Supabase health probe and the disk check always run.
+ * disk check always runs; the Supabase health probe runs whenever the
+ * Supabase env is present - a missing env is a configuration error,
+ * recorded as a condition_skipped line that never counts toward the
+ * consecutive probe-failure counter.
  */
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -32,6 +35,7 @@ import { promisify } from 'node:util'
 
 import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 
+import { loadDotenvChain } from './cli-env'
 import {
   CHECKER_APP,
   DRAFT_APP,
@@ -202,6 +206,8 @@ async function listPm2Apps(): Promise<Pm2AppSnapshot[] | null> {
 }
 
 function createSupabaseGatherers(env: NodeJS.ProcessEnv): {
+  /** True when SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are absent from `env`. */
+  envMissing: boolean
   fetchLastPublishedAt: () => Promise<string | null>
   probe: () => Promise<void>
 } {
@@ -213,14 +219,16 @@ function createSupabaseGatherers(env: NodeJS.ProcessEnv): {
     resolved = null
     envError = error
   }
-  // A missing env must surface as a probe failure (it counts toward the
-  // consecutive-failure counter) and as a skipped staleness check. Editor
-  // drafts are local, so draft_stale does not depend on this factory at all.
+  // A missing env is a configuration error, not a Supabase failure: it skips
+  // the staleness gatherer and the probe without counting toward the
+  // consecutive-failure counter. Editor drafts are local, so draft_stale does
+  // not depend on this factory at all.
   if (resolved === null) {
     const envUnavailable = (): never => {
       throw envError instanceof Error ? envError : new Error('Supabase env unavailable')
     }
     return {
+      envMissing: true,
       fetchLastPublishedAt: envUnavailable,
       probe: envUnavailable,
     }
@@ -238,6 +246,7 @@ function createSupabaseGatherers(env: NodeJS.ProcessEnv): {
     return typeof value === 'string' ? value : null
   }
   return {
+    envMissing: false,
     fetchLastPublishedAt,
     probe: createSupabaseHealthProbe(resolved.supabaseUrl, resolved.supabaseKey),
   }
@@ -354,19 +363,26 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
   }
 
   // The checker's own Supabase liveness: runs even when all apps are stopped.
-  let probeFailed = false
-  let probeError: unknown
-  try {
-    await (deps.probe ?? gather.probe)()
-  } catch (error) {
-    probeFailed = true
-    probeError = error
+  // A missing Supabase env is a configuration error, not a probe failure: it
+  // is recorded as a skip and leaves the consecutive counter unchanged. (An
+  // injected probe - tests - overrides the env gate.)
+  if (gather.envMissing && deps.probe === undefined) {
+    skipped.push('supabase_health_failed: supabase env missing')
+  } else {
+    let probeFailed = false
+    let probeError: unknown
+    try {
+      await (deps.probe ?? gather.probe)()
+    } catch (error) {
+      probeFailed = true
+      probeError = error
+    }
+    results.push(checkSupabaseFails({
+      prevConsecutive: prevState.supabaseConsecutiveFailures ?? 0,
+      failed: probeFailed,
+      error: probeError,
+    }))
   }
-  results.push(checkSupabaseFails({
-    prevConsecutive: prevState.supabaseConsecutiveFailures ?? 0,
-    failed: probeFailed,
-    error: probeError,
-  }))
 
   // Disk: never gated on app state.
   const diskPath = env.MYBOON_CONDITION_DISK_PATH?.trim() || '/'
@@ -425,6 +441,11 @@ export async function runConditionCheck(deps: ConditionCheckDeps = {}): Promise<
 }
 
 async function main(): Promise<void> {
+  // CLI main path only: the cron needs the .env chain so SUPABASE_URL /
+  // SUPABASE_SERVICE_ROLE_KEY reach process.env, like every other run-*.ts
+  // entrypoint. Importing this module (tests) must stay hermetic - the load
+  // never happens inside runConditionCheck.
+  loadDotenvChain()
   const summary = await runConditionCheck()
   // Short stdout trail for the cron log file; the JSONL error log carries
   // the actual condition entries.
