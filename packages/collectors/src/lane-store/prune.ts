@@ -6,14 +6,21 @@
  * `resolveLaneSqlitePathFromEnv` in paths.ts, one lane per entry in
  * LANE_SQLITE_FILENAMES - there is no news-specific code path.
  *
- * Retention (decided for #346):
- * - 14 days: terminal rows of news_source_runs, news_candidate_observations,
- *   news_research_results, pipeline_runs, pipeline_candidates,
- *   pipeline_research.
+ * Retention (decided for #346; news observations excluded by the #382 review):
+ * - 14 days: terminal rows of news_source_runs, news_research_results,
+ *   pipeline_runs, pipeline_candidates, pipeline_research.
  * - 7 days: delivered rows of news_source_delivery_outbox and
  *   pipeline_source_delivery_outbox.
  *
  * Never deleted (see the eligibility fragments below):
+ * - news_candidate_observations: this table IS the news dedupe memory.
+ *   fetchPriorObservations (news/sqlite-store.ts) selects from it with no
+ *   time window, and ingestDiscoveredNewsCandidates applies no age cutoff, so
+ *   deleting a settled observation would make classifyNewsCandidate return
+ *   new_candidate again for any article a feed still lists: the article is
+ *   researched and placed a second time. Old terminal observations therefore
+ *   age out of retention entirely; only their research-result children and
+ *   the run/outbox logs keep the usual cutoffs.
  * - pipeline_watchlist (has no entry in LANE_PRUNE_TABLE_SPECS).
  * - Outbox rows that are not yet delivered (state = 'pending').
  * - Non-terminal rows: queued / running / pending_* / retry states, plus
@@ -23,13 +30,16 @@
  *   marked published from the Supabase side, decisions via loose research_ids
  *   JSON), so these tables are not pruned at all.
  *
- * Cascade safety: news_research_results cascades from observations
- * (ON DELETE CASCADE, news/sqlite-store.ts) and pipeline_research cascades
- * from candidates (pipeline-store/sqlite-store.ts). A parent row is eligible
- * only when every child research/result row has reached a terminal state, so
- * deleting a parent can never cascade unfinished work away. The command opens
- * the SQLite files itself and sets PRAGMA foreign_keys = ON so those cascades
- * behave like the stores' own connections.
+ * Cascade safety: pipeline_research cascades from candidates
+ * (pipeline-store/sqlite-store.ts). A parent row is eligible only when every
+ * child research row has reached a terminal state, so deleting a parent can
+ * never cascade unfinished work away. News observations are never deleted, so
+ * their ON DELETE CASCADE to news_research_results never fires during a
+ * prune; news_research_results rows are deleted directly by their own
+ * eligibility rule instead, and deleting that child never affects dedupe
+ * (fetchPriorObservations reads only the observations table). The command
+ * opens the SQLite files itself and sets PRAGMA foreign_keys = ON so those
+ * cascades behave like the stores' own connections.
  *
  * Age column per table is `updated_at` (NOT NULL, maintained on every status
  * transition), except the delivery outboxes, which age on `delivered_at`
@@ -78,29 +88,23 @@ const AGE_SQL = (column: string) => `julianday(${column}) < julianday(?1)`
 const CHILD_AGE_SAFE_SQL = `julianday(r.updated_at) <= julianday(?1)`
 
 /**
- * A research/result child is safe to cascade-delete (its parent may go away)
- * only when no consumer can still need it, and only when the child itself is
- * older than the cutoff (a recently-consumed child survives the aged parent):
- * - news: the only terminal news_research_results status is
- *   handed_to_entity_memory (see the CHECK in news/sqlite-store.ts);
- *   pending_entity_memory is queued entity-memory work, not_ready and
- *   failed_entity_memory stay visible as followup/failure evidence.
- * - pipeline: editor-terminal statuses are edited / rejected / published
- *   (pending_editor and editing are the editor queue and its lease;
- *   needs_more_research is re-researchable). The entity-manager lifecycle
- *   runs independently (claimResearchForEntityManager claims rows whose
- *   editor status is edited or published), so edited/published rows also
- *   need entity_manager_status processed/skipped. Rejected rows are never
- *   claimed by the entity manager. entity_manager_failure_status rows
- *   (failed / dead_letter) stay as evidence.
+ * A pipeline research child is safe to cascade-delete (its candidate may go
+ * away) only when no consumer can still need it, and only when the child
+ * itself is older than the cutoff (a recently-consumed child survives the
+ * aged parent):
+ * editor-terminal statuses are edited / rejected / published
+ * (pending_editor and editing are the editor queue and its lease;
+ * needs_more_research is re-researchable). The entity-manager lifecycle
+ * runs independently (claimResearchForEntityManager claims rows whose
+ * editor status is edited or published), so edited/published rows also
+ * need entity_manager_status processed/skipped. Rejected rows are never
+ * claimed by the entity manager. entity_manager_failure_status rows
+ * (failed / dead_letter) stay as evidence.
+ *
+ * news_research_results needs no such child-safety fragment: observations
+ * are never pruned, so a result is deleted directly by its own eligibility
+ * rule (see the news spec below) and never via a cascade.
  */
-const NEWS_RESEARCH_RESULT_SAFE = `
-  (
-    r.status = 'handed_to_entity_memory'
-    AND r.entity_manager_failure_status IS NULL
-    AND ${CHILD_AGE_SAFE_SQL}
-  )`
-
 const PIPELINE_RESEARCH_TERMINAL = `
   (
     (r.status = 'rejected' AND r.entity_manager_failure_status IS NULL)
@@ -126,14 +130,17 @@ export interface LanePruneTableSpec {
 /**
  * One entry per prunable table. Statuses and references follow the CREATE
  * TABLE definitions in src/news/sqlite-store.ts and
- * src/pipeline-store/sqlite-store.ts. Child tables (research results /
- * research) come before their cascade parents (observations / candidates) so
- * apply-time per-table counts line up with the dry run; the parent-side NOT
- * EXISTS child checks remain the real safety net.
+ * src/pipeline-store/sqlite-store.ts. pipeline_research comes before its
+ * cascade parent pipeline_candidates so apply-time per-table counts line up
+ * with the dry run; the parent-side NOT EXISTS child check remains the real
+ * safety net. news_candidate_observations has no entry here (never pruned).
  */
 export const LANE_PRUNE_TABLE_SPECS: Readonly<Record<SqliteLane, readonly LanePruneTableSpec[]>> = {
   news: [
     {
+      // Old terminal results are pruned directly here; their observation
+      // parents are NEVER pruned (dedupe memory - see the header), so this
+      // delete is standalone and no news cascade is involved.
       // Only handed_to_entity_memory rows are terminal; failures keep their
       // entity_manager_failure_status evidence.
       table: 'news_research_results',
@@ -143,24 +150,6 @@ export const LANE_PRUNE_TABLE_SPECS: Readonly<Record<SqliteLane, readonly LanePr
         status = 'handed_to_entity_memory'
         AND entity_manager_failure_status IS NULL
         AND ${AGE_SQL('updated_at')}`,
-    },
-    {
-      // Terminal observation statuses: researched, handed_to_entity_memory,
-      // rejected, observed_only (settled outcomes). failed_research rows keep
-      // their failure/dead-letter evidence and stay. Every result child must
-      // be terminal AND older than the cutoff, else the parent is kept.
-      table: 'news_candidate_observations',
-      keyColumn: 'id',
-      retentionDays: 14,
-      eligibleWhere: `
-        status IN ('researched', 'handed_to_entity_memory', 'rejected', 'observed_only')
-        AND ${AGE_SQL('updated_at')}
-        AND NOT EXISTS (
-          SELECT 1
-          FROM news_research_results r
-          WHERE r.candidate_observation_id = news_candidate_observations.id
-            AND NOT ${NEWS_RESEARCH_RESULT_SAFE}
-        )`,
     },
     {
       // Terminal run statuses: succeeded, result_validated,
@@ -339,8 +328,8 @@ function deleteEligibleRows(
  * Prune one lane's SQLite file. A file that does not exist is reported as
  * missing and is never created. Dry runs open the file read-only; only
  * --apply opens it read-write (and then enables foreign keys so the
- * observation->result and candidate->research cascades behave exactly like
- * the stores' own connections).
+ * candidate->research cascade behaves exactly like the stores' own
+ * connections).
  */
 function pruneLane(
   lane: SqliteLane,

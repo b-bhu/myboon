@@ -98,3 +98,9 @@ VPS, and nothing in this directory installs anything by itself.
 3. The lane-store prune (Ref #346 PR 6) keeps SQLite row counts bounded; its
    NOT-installed daily crontab entry is documented in
    `infra/vps/crontab.example` and `docs/DEPLOY.md`.
+
+4. The local backup files written by `pipeline-store:backup` are capped daily
+   (keep the newest 2 per store) by `pipeline-store:backup:prune`; its
+   NOT-installed daily crontab entries are documented in
+   `infra/vps/crontab.example` (Ref #346) — install only with Bucket's
+   approval.

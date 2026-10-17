@@ -9,6 +9,8 @@ import { ensurePipelineSqliteSchema, openPipelineSqlite } from '../pipeline-stor
 import { RetiredLaneSqlitePathError } from './paths'
 import { runLaneStorePrune, type LaneStorePruneAudit } from './prune'
 import { parseLaneStorePruneArgs, runLaneStorePruneCommand } from './prune-command'
+import { ingestDiscoveredNewsCandidates, type DiscoveredNewsCandidate } from '../news/ingestion'
+import { TEST_NEWS_SOURCE, TEST_NEWS_SOURCE_URL, testNewsCandidate } from '../news/tests/fixtures'
 
 const nodeRequire = createRequire(__filename)
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
@@ -193,8 +195,10 @@ function insertWatchlistRow(db: SqliteFixtureDb, id: string, updatedAt: string):
 
 /**
  * News lane fixture. Returns the surviving ids per table expected after a
- * successful apply run (cutoffs NOW-14d for the run/observation/research
- * tables, NOW-7d for the outbox).
+ * successful apply run (cutoffs NOW-14d for the run/research tables, NOW-7d
+ * for the outbox). news_candidate_observations is NEVER pruned (it is the
+ * dedupe memory), so every observation row in this fixture survives no matter
+ * how old and terminal it is.
  */
 function seedNewsLane(dir: string): { path: string; survivors: Record<string, string[]>; deletedPerTable: Record<string, number> } {
   const path = join(dir, 'news-lane.sqlite')
@@ -237,16 +241,17 @@ function seedNewsLane(dir: string): { path: string; survivors: Record<string, st
     path,
     survivors: {
       news_source_runs: ['run-fresh-succeeded', 'run-old-queued', 'run-old-retry', 'run-old-running', 'run-old-transient'],
+      // Every observation stays: the prune must not touch the dedupe memory.
       news_candidate_observations: [
         'obs-fresh-handed', 'obs-old-deadletter', 'obs-old-failed-research',
-        'obs-old-pending-child', 'obs-old-rejected-fresh-child',
+        'obs-old-handed', 'obs-old-observed-only', 'obs-old-pending-child',
+        'obs-old-rejected', 'obs-old-rejected-fresh-child', 'obs-old-researched',
       ],
       news_research_results: ['res-fresh-handed', 'res-fresh-handed-under-old-parent', 'res-old-pending'],
       news_source_delivery_outbox: ['out-fresh-delivered', 'out-old-pending'],
     },
     deletedPerTable: {
       news_research_results: 2,
-      news_candidate_observations: 4,
       news_source_runs: 2,
       news_source_delivery_outbox: 1,
     },
@@ -353,7 +358,7 @@ test('dry run counts eligible rows and deletes nothing', () => {
 
     assert.equal(audit.mode, 'dry_run')
     assert.equal(audit.nowIso, NOW.toISOString())
-    assert.deepEqual(audit.totals, { eligibleRows: 9 + 11 })
+    assert.deepEqual(audit.totals, { eligibleRows: 5 + 11 })
     const newsLane = tablesOf(audit, 'news')
     const pipelineLane = tablesOf(audit, 'polymarket')
     assert.equal(newsLane.status, 'pruned')
@@ -382,7 +387,7 @@ test('apply deletes only old terminal rows and is idempotent', () => {
     const audit = runLaneStorePrune({ paths: { news: news.path, polymarket: pipeline.path }, now: NOW, apply: true })
 
     assert.equal(audit.mode, 'apply')
-    assert.deepEqual(audit.totals, { deletedRows: 9 + 11 })
+    assert.deepEqual(audit.totals, { deletedRows: 5 + 11 })
     for (const lane of [tablesOf(audit, 'news'), tablesOf(audit, 'polymarket')]) {
       assert.equal(lane.status, 'pruned')
     }
@@ -403,6 +408,85 @@ test('apply deletes only old terminal rows and is idempotent', () => {
     assert.deepEqual(secondRun.totals, { deletedRows: 0 })
     for (const lane of secondRun.lanes) {
       for (const table of lane.tables) assert.equal(table.deletedRows, 0, `${lane.lane}/${table.table} second run`)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('apply prune keeps old terminal news observations, so a re-listed article stays known (dedupe regression)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lane-prune-dedupe-'))
+  try {
+    const path = join(dir, 'news-lane.sqlite')
+    const item: DiscoveredNewsCandidate = {
+      source: TEST_NEWS_SOURCE,
+      sourceUrl: TEST_NEWS_SOURCE_URL,
+      candidate: testNewsCandidate({
+        headline: 'Filing appears in public records',
+        summary: 'Observed article summary.',
+        article_url: 'https://example.com/filing',
+      }),
+      observedAt: OLD,
+    }
+
+    // Real ingestion path (no signal intake: nothing but the observation row
+    // and its research child are persisted). The first sighting is new.
+    const store = new SqliteNewsStore(path)
+    try {
+      const first = await ingestDiscoveredNewsCandidates({ store, discoveries: [item] })
+      assert.equal(first.candidatesNew, 1)
+      assert.equal(first.candidateObservationsInserted, 1)
+    } finally {
+      store.close()
+    }
+
+    // Age the observation past the 14-day cutoff and settle it into a
+    // terminal state, and add an old terminal research child: the child IS
+    // prunable, the observation is the dedupe memory and is not.
+    const fixture = openFixtureDb(path)
+    let observationId: string
+    try {
+      observationId = String((
+        fixture.prepare('SELECT id FROM news_candidate_observations').get() as Record<string, unknown>
+      ).id)
+      fixture.prepare(
+        `UPDATE news_candidate_observations SET status = 'researched', observed_at = ?, updated_at = ? WHERE id = ?`,
+      ).run(OLD, OLD, observationId)
+      insertNewsResearchResult(fixture, 'res-old-dedupe-guard', observationId, 'handed_to_entity_memory', OLD)
+    } finally {
+      fixture.close()
+    }
+
+    // --apply semantics with a fixed now, exactly like production's cron run.
+    const audit = runLaneStorePrune({
+      paths: { news: path, polymarket: join(dir, 'absent-pipeline-lane.sqlite') },
+      lanes: ['news'],
+      now: NOW,
+      apply: true,
+    })
+    const newsLane = tablesOf(audit, 'news')
+    assert.equal(newsLane.status, 'pruned')
+    // The observation table is absent from the audit entirely: the prune has
+    // no spec for it anymore.
+    assert.equal(newsLane.tables.some((entry) => entry.table === 'news_candidate_observations'), false)
+    assert.equal(auditFor(newsLane, 'news_research_results').deletedRows, 1, 'old terminal research child is pruned')
+    assert.deepEqual(audit.totals, { deletedRows: 1 })
+    assert.deepEqual(
+      tableIds(path, 'news_candidate_observations'),
+      [observationId],
+      'the old terminal observation row must survive the apply run',
+    )
+
+    // Same article listed again after the prune: still known_unchanged, not
+    // re-admitted as new_candidate for a second research/placement.
+    const reopened = new SqliteNewsStore(path)
+    try {
+      const second = await ingestDiscoveredNewsCandidates({ store: reopened, discoveries: [item] })
+      assert.equal(second.candidatesNew, 0, 'a pruned observation would have re-admitted this article')
+      assert.equal(second.candidatesUnchanged, 1)
+      assert.equal(second.candidateObservationsInserted, 0)
+    } finally {
+      reopened.close()
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -442,7 +526,7 @@ test('command resolves lane paths from env; retired filenames throw before any s
     )
     assert.equal(tablesOf(audit, 'news').status, 'pruned')
     assert.equal(tablesOf(audit, 'polymarket').status, 'pruned')
-    assert.deepEqual(audit.totals, { eligibleRows: 9 + 11 })
+    assert.deepEqual(audit.totals, { eligibleRows: 5 + 11 })
 
     await assert.rejects(
       () => runLaneStorePruneCommand({ apply: true }, { env: { NEWS_SQLITE_PATH: join(dir, 'news.sqlite') } }),
