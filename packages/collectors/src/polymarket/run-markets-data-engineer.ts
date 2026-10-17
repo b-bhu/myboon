@@ -5,8 +5,9 @@ import { resolve } from 'node:path'
 loadDotenvChain()
 installProcessErrorLogging('polymarket-markets-data-engineer')
 
-import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
+import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { feedV3ModeForSource, loadFeedV3RuntimeConfig } from '../signal-platform/runtime-config'
@@ -94,13 +95,16 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  requireSupabaseEnv()
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv()
   const intervalMs = Number(process.env.POLYMARKET_MARKETS_RUN_INTERVAL_MS) || DEFAULT_RUN_INTERVAL_MS
+  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
   await runFirstThenInterval({
     label: 'polymarket-markets-data-engineer',
     intervalMs,
     runOnce: process.env.POLYMARKET_MARKETS_RUN_ONCE === '1',
     run: runOnce,
+    healthGate: new SupabaseHealthGate({ app: 'polymarket-markets-data-engineer', probe }),
+    runOnceHealthCheck: () => waitForSupabaseRunOnce({ app: 'polymarket-markets-data-engineer', probe }),
   })
 }
 

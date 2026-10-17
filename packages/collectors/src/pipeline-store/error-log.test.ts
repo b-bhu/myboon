@@ -314,3 +314,24 @@ test('formatErrorLogLine keeps PostgrestError fields from plain-object errors', 
   assert.equal('details' in numeric, false)
   assert.equal('hint' in numeric, false)
 })
+
+test('formatErrorLogLine records health-gate state and downtime, and tolerates a missing error', () => {
+  const down = JSON.parse(formatErrorLogLine(
+    { app: 'editor-draft', kind: 'supabase_unavailable', error: new Error('probe failed'), count: 10, state: 'still_down' },
+    new Date('2026-10-17T10:00:00.000Z'),
+  )) as Record<string, unknown>
+  assert.equal(down.state, 'still_down')
+  assert.equal(down.count, 10)
+  assert.equal(down.message, 'probe failed')
+
+  // The recovered entry carries no error at all: the line must form cleanly.
+  const recovered = JSON.parse(formatErrorLogLine(
+    { app: 'editor-draft', kind: 'supabase_unavailable', error: undefined, state: 'recovered', downtimeMs: 30_000, count: 20 },
+    new Date('2026-10-17T10:00:00.000Z'),
+  )) as Record<string, unknown>
+  assert.equal(recovered.state, 'recovered')
+  assert.equal(recovered.downtimeMs, 30_000)
+  assert.equal(recovered.count, 20)
+  assert.equal(recovered.message, '', 'a missing error is an empty message, not the string "undefined"')
+  assert.equal(recovered.stack, null)
+})

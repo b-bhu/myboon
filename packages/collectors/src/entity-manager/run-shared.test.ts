@@ -5,15 +5,18 @@ import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import type { InferenceTelemetry, InferenceTelemetryObserver } from '../inference-gateway'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { defaultRuntimeControl } from '../signal-platform/runtime-control'
 import {
+  createSharedEntityHealthGate,
   createSharedEntityRuntime,
   isSharedEntityProcessEntrypoint,
   waitForSharedEntityShutdown,
   type SharedEntityShutdownSignalPort,
 } from './run-shared'
+import type { PostgresKnowledgeOperationWriter } from './postgres-knowledge-writer'
 import type { SharedEntityWorkerOptions } from './shared-worker'
 import { SqliteEntityShadowObservationStore } from './sqlite-shadow-observation-store'
 
@@ -679,4 +682,203 @@ test('durable Entity drain control prevents claims while resident and resume re-
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+/**
+ * Active REST runtime built from the same fixtures as the composition tests:
+ * local SQLite, a receipt manifest, and Supabase/gateway factories that never
+ * touch the network. Supabase env is required at composition for this path.
+ */
+function activeRestRuntime(directory: string): ReturnType<typeof createSharedEntityRuntime> {
+  const path = join(directory, 'news.sqlite')
+  const receiptPath = cutoverManifest(directory, ['news'])
+  return createSharedEntityRuntime({
+    env: {
+      FEED_V3_ENTITY_MODE: 'active',
+      FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
+      FEED_V3_CUTOVER_RECEIPT_PATH: receiptPath,
+      NEWS_SQLITE_PATH: path,
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'test-only',
+    },
+    storeFactory(databasePath, sourceType) {
+      return new SqliteSignalPlatformStore(databasePath, sourceType)
+    },
+    supabaseFactory() {
+      return { async rpc() { return { data: migrationReport(), error: null } } } as never
+    },
+    gatewayFactory() {
+      return {
+        checkReadiness() { return { ready: true } },
+        async generateStructured() { throw new Error('not invoked during composition') },
+      } as never
+    },
+    healthWriter: noOpHealthWriter,
+    runtimeControl: { read: defaultRuntimeControl },
+    workerFactory: workerFactory(() => undefined),
+  })
+}
+
+test('managed-writer active runtime is ungated: no Supabase REST dependency and ticks run', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-gate-managed-'))
+  const receiptPath = cutoverManifest(directory, ['news'])
+  try {
+    const runtime = createSharedEntityRuntime({
+      env: {
+        FEED_V3_ENTITY_MODE: 'active',
+        FEED_V3_ENTITY_ACTIVE_SOURCES: 'news',
+        FEED_V3_LEGACY_ENTITY_DISABLED_SOURCES: 'news',
+        FEED_V3_CUTOVER_RECEIPT_PATH: receiptPath,
+        NEWS_SQLITE_PATH: join(directory, 'news.sqlite'),
+        ENTITY_V4_MANAGED_WRITER_ENABLED: '1',
+        ENTITY_V4_ACTIVE_SOURCES: 'news',
+        ENTITY_V4_SOURCE_OWNERSHIP_ENABLED: '1',
+        ENTITY_V4_POLICY_VERSION: 'policy-v1',
+        MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL: 'postgres://fixtures.invalid:5432/knowledge',
+      },
+      storeFactory(databasePath, sourceType) {
+        return new SqliteSignalPlatformStore(databasePath, sourceType)
+      },
+      managedWriterFactory() {
+        // Composition only stores the writer and closes it; nothing calls it.
+        return { close() {} } as unknown as PostgresKnowledgeOperationWriter
+      },
+      healthWriter: noOpHealthWriter,
+      runtimeControl: { read: defaultRuntimeControl },
+      workerFactory: workerFactory(() => undefined),
+    })
+
+    assert.equal(runtime.mode, 'active')
+    assert.equal(runtime.supabaseRest, false)
+    const health = createSharedEntityHealthGate(runtime, {
+      env: {},
+      createProbe: () => { throw new Error('must not be called') },
+    })
+    assert.equal(health, null)
+
+    // main() only passes healthGate when the helper returns a gate; with none
+    // the first scheduled tick must run instead of being skipped.
+    let runs = 0
+    const interval = await runFirstThenInterval({
+      label: 'test:entity-managed-ungated',
+      intervalMs: 3_600_000,
+      runOnce: false,
+      run: async () => { runs += 1 },
+    })
+    try {
+      assert.equal(runs, 1)
+    } finally {
+      interval?.stop()
+    }
+    await runtime.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('active REST runtime gates ticks: failed probe leaves the first tick skipped', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-gate-rest-'))
+  const logDirectory = mkdtempSync(join(tmpdir(), 'myboon-entity-gate-rest-log-'))
+  const previousErrorLog = process.env.MYBOON_ERROR_LOG
+  // SupabaseHealthGate defaults to appendErrorLog; keep the failure line out
+  // of ~/myboon-logs (restored in finally).
+  process.env.MYBOON_ERROR_LOG = join(logDirectory, 'errors.jsonl')
+  try {
+    const runtime = activeRestRuntime(directory)
+    assert.equal(runtime.mode, 'active')
+    assert.equal(runtime.supabaseRest, true)
+
+    const probeUrls: string[] = []
+    const health = createSharedEntityHealthGate(runtime, {
+      env: { SUPABASE_URL: 'https://example.invalid', SUPABASE_SERVICE_ROLE_KEY: 'test-key' },
+      createProbe: (url) => {
+        probeUrls.push(url)
+        return async () => { throw new Error('probe outage') }
+      },
+    })
+    assert.ok(health)
+    assert.equal(await health.gate.check(), false)
+    assert.deepEqual(probeUrls, ['https://example.invalid'])
+
+    let runs = 0
+    const interval = await runFirstThenInterval({
+      label: 'test:entity-rest-gated',
+      intervalMs: 3_600_000,
+      runOnce: false,
+      run: async () => { runs += 1 },
+      healthGate: health.gate,
+    })
+    try {
+      assert.equal(runs, 0)
+    } finally {
+      interval?.stop()
+    }
+    await runtime.close()
+  } finally {
+    if (previousErrorLog === undefined) delete process.env.MYBOON_ERROR_LOG
+    else process.env.MYBOON_ERROR_LOG = previousErrorLog
+    rmSync(directory, { recursive: true, force: true })
+    rmSync(logDirectory, { recursive: true, force: true })
+  }
+})
+
+test('active REST runtime without Supabase env fails gate creation by name', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-gate-rest-missing-'))
+  try {
+    const runtime = activeRestRuntime(directory)
+    assert.equal(runtime.supabaseRest, true)
+    let probes = 0
+    assert.throws(
+      () => createSharedEntityHealthGate(runtime, {
+        env: {},
+        createProbe: () => { probes += 1; return async () => {} },
+      }),
+      /Missing required Supabase env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/,
+    )
+    assert.equal(probes, 0)
+    await runtime.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('shadow and off runtimes receive no Supabase health gate', async () => {
+  let constructed = 0
+  const off = createSharedEntityRuntime({
+    env: {},
+    storeFactory() { constructed += 1; throw new Error('must not open') },
+    supabaseFactory() { constructed += 1; throw new Error('must not open') },
+    gatewayFactory() { constructed += 1; throw new Error('must not open') },
+  })
+  assert.equal(off.mode, 'off')
+  assert.equal(off.supabaseRest, false)
+  assert.equal(createSharedEntityHealthGate(off), null)
+  await off.close()
+
+  const directory = mkdtempSync(join(tmpdir(), 'myboon-entity-gate-shadow-'))
+  const path = join(directory, 'pipeline.sqlite')
+  new SqliteSignalPlatformStore(path, 'polymarket').close()
+  try {
+    const shadow = createSharedEntityRuntime({
+      env: {
+        FEED_V3_CUTOVER_POLICY: 'phase1',
+        FEED_V3_ENTITY_MODE: 'shadow',
+        FEED_V3_ENTITY_SHADOW_SOURCES: 'polymarket',
+        FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '500',
+        PIPELINE_SQLITE_PATH: path,
+      },
+      supabaseFactory() { constructed += 1; throw new Error('shadow must not open') },
+      gatewayFactory() { constructed += 1; throw new Error('shadow must not open') },
+      healthWriter: noOpHealthWriter,
+      workerFactory: workerFactory(() => undefined),
+    })
+    assert.equal(shadow.mode, 'shadow')
+    assert.equal(shadow.supabaseRest, false)
+    assert.equal(createSharedEntityHealthGate(shadow), null)
+    await shadow.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+  assert.equal(constructed, 0)
 })

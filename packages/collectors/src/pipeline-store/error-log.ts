@@ -23,12 +23,20 @@ export type ErrorLogKind =
   | 'ledger_start_failed'
   | 'ledger_finish_failed'
   | 'trace_append_failed'
+  | 'supabase_unavailable'
+
+/** Supabase health-gate transition: outage first seen, inside the outage, or recovered (Ref #346). */
+export type ErrorLogHealthState = 'down' | 'still_down' | 'recovered'
 
 export interface ErrorLogEntry {
   app: string
   kind: ErrorLogKind
   error: unknown
   count?: number
+  /** Health-gate state transition; only set on supabase_unavailable entries. */
+  state?: ErrorLogHealthState
+  /** Milliseconds from the first observed outage to recovery; only set on recovered entries. */
+  downtimeMs?: number
 }
 
 export interface AppendErrorLogOptions {
@@ -114,6 +122,9 @@ function asText(value: unknown): string {
 
 /** The real message of Errors and PostgrestError-like plain objects alike. */
 function errorMessage(error: unknown): string {
+  // A missing error (e.g. the recovered health-gate entry) is an empty
+  // message, not the string "undefined".
+  if (error === null || error === undefined) return ''
   const message = readProperty(error, 'message')
   if (typeof message === 'string' && message !== '') return message
   if (error instanceof Error) return typeof message === 'string' ? message : ''
@@ -196,6 +207,8 @@ export function formatErrorLogLine(entry: ErrorLogEntry, now: Date = new Date())
   const causes = collectCauses(error)
   if (causes.length > 0) record.cause = causes
   if (entry.count !== undefined) record.count = entry.count
+  if (entry.state !== undefined) record.state = entry.state
+  if (entry.downtimeMs !== undefined) record.downtimeMs = entry.downtimeMs
   return `${JSON.stringify(record)}\n`
 }
 
