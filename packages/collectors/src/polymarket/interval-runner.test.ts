@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { runFirstThenInterval, startIntervalRunner } from '../pipeline-store/interval-runner'
+
+// The default onError appends JSONL entries to MYBOON_ERROR_LOG. Point the
+// whole file (including every spawned fixture child, which inherits this env)
+// at a throwaway directory so no test can write the operator's real
+// ~/myboon-logs/errors.jsonl.
+const errorLogDir = mkdtempSync(join(tmpdir(), 'interval-runner-error-log-'))
+process.env.MYBOON_ERROR_LOG = join(errorLogDir, 'errors.jsonl')
+test.after(() => { rmSync(errorLogDir, { recursive: true, force: true }) })
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -297,4 +308,40 @@ test('runFirstThenInterval: a failing first run does not exit the worker (child-
   const runOnce = await runFixture({ ...baseEnv, FIXTURE_RUN_ONCE: '1' })
   assert.notEqual(runOnce.code, 0, `runOnce child should exit non-zero; stderr=${JSON.stringify(runOnce.stderr)}`)
   assert.ok(!runOnce.stdout.includes('ALIVE'), `runOnce child must not stay alive; stdout=${JSON.stringify(runOnce.stdout)}`)
+})
+
+test('interval runner: default onError appends JSONL failure entries with consecutive failure counts', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'interval-runner-error-log-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const logPath = join(dir, 'errors.jsonl')
+  const saved = process.env.MYBOON_ERROR_LOG
+  process.env.MYBOON_ERROR_LOG = logPath
+  const consoleError = t.mock.method(console, 'error', () => {})
+  try {
+    const handle = startIntervalRunner({
+      label: 'jsonl-failing-runner',
+      intervalMs: 10,
+      run: async () => {
+        throw new Error('boom')
+      },
+    })
+    await wait(45)
+    handle.stop()
+  } finally {
+    if (saved === undefined) delete process.env.MYBOON_ERROR_LOG
+    else process.env.MYBOON_ERROR_LOG = saved
+  }
+  const lines = readFileSync(logPath, 'utf8').split('\n').filter((line) => line !== '')
+  assert.ok(lines.length >= 2, `expected at least two logged failures, got ${lines.length}`)
+  const entries = lines
+    .map((line) => JSON.parse(line) as { app: string; kind: string; message: string; count?: number })
+  assert.ok(
+    entries.every((entry) => entry.app === 'jsonl-failing-runner' && entry.kind === 'run_failed' && entry.message === 'boom'),
+    `unexpected entries: ${lines.join(', ')}`,
+  )
+  // A run that always fails must count its consecutive failures per runner.
+  assert.equal(entries[0].count, 1)
+  assert.equal(entries[1].count, 2)
+  // The existing console.error line is unchanged and stays quiet under the mock.
+  assert.equal(consoleError.mock.callCount(), lines.length)
 })

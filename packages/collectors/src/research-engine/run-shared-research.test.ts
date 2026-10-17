@@ -827,7 +827,7 @@ test('a failing cycle is reported via onCycleError and the schedule continues', 
   let current = Date.parse('2026-08-26T12:00:00.000Z')
   let cycles = 0
   let waits = 0
-  const cycleErrors: unknown[] = []
+  const cycleErrors: Array<{ error: unknown; phase?: 'cycle' | 'recovery' }> = []
   const results: string[] = []
   const live = runtime('active', () => {
     cycles += 1
@@ -845,7 +845,7 @@ test('a failing cycle is reported via onCycleError and the schedule continues', 
     createRuntimeControl: () => ({ read: defaultRuntimeControl }),
     createStatusWriter: () => ({ write: async () => undefined }),
     onResult: (result) => results.push(result.kind),
-    onCycleError: (error) => cycleErrors.push(error),
+    onCycleError: (error, info) => cycleErrors.push({ error, phase: info?.phase }),
     wait: async (ms) => {
       current += ms
       waits += 1
@@ -854,7 +854,8 @@ test('a failing cycle is reported via onCycleError and the schedule continues', 
   })
   assert.equal(cycles, 2, 'the failed cycle must be retried on the next tick')
   assert.equal(cycleErrors.length, 1, 'onCycleError must fire exactly once for the failed cycle')
-  assert.equal((cycleErrors[0] as Error).message, 'supabase timeout')
+  assert.equal((cycleErrors[0]?.error as Error).message, 'supabase timeout')
+  assert.equal(cycleErrors[0]?.phase, 'cycle')
   assert.deepEqual(results, ['completed'])
 })
 
@@ -863,7 +864,7 @@ test('a rejected expired-lease recovery is reported via onCycleError and resched
   let current = Date.parse('2026-08-26T12:00:00.000Z')
   let recoveries = 0
   let waits = 0
-  const cycleErrors: unknown[] = []
+  const cycleErrors: Array<{ error: unknown; phase?: 'cycle' | 'recovery' }> = []
   const results: string[] = []
   const live = {
     ...runtime('active', () => undefined),
@@ -888,7 +889,7 @@ test('a rejected expired-lease recovery is reported via onCycleError and resched
     createRuntimeControl: () => ({ read: defaultRuntimeControl }),
     createStatusWriter: () => ({ write: async () => undefined }),
     onResult: (result) => results.push(result.kind),
-    onCycleError: (error) => cycleErrors.push(error),
+    onCycleError: (error, info) => cycleErrors.push({ error, phase: info?.phase }),
     wait: async (ms) => {
       current += ms
       waits += 1
@@ -897,7 +898,8 @@ test('a rejected expired-lease recovery is reported via onCycleError and resched
     },
   })
   assert.equal(cycleErrors.length, 1, 'onCycleError must fire exactly once for the rejected recovery')
-  assert.equal((cycleErrors[0] as Error).message, 'supabase timeout')
+  assert.equal((cycleErrors[0]?.error as Error).message, 'supabase timeout')
+  assert.equal(cycleErrors[0]?.phase, 'recovery')
   assert.ok(recoveries >= 2, 'recovery must be rescheduled after a rejection')
   assert.ok(results.includes('completed'), 'at least one cycle must still complete')
 })
