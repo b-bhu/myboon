@@ -1,0 +1,170 @@
+/**
+ * JSONL error log for pipeline workers.
+ *
+ * Workers previously reported failures only through console/stderr, which PM2
+ * truncates and interleaves with the workers' stdout JSON. This module appends
+ * one redacted JSON line per failure to a single file (MYBOON_ERROR_LOG, by
+ * default ~/myboon-logs/errors.jsonl) so an operator can answer "which worker
+ * failed, when, why, how often" with plain grep. Writes are synchronous on
+ * purpose: uncaught-exception logging must complete before the process exits.
+ * The writer never throws - a failing log write must not be able to kill (or
+ * crash-loop) a worker that is already failing.
+ */
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+
+export type ErrorLogKind =
+  | 'run_failed'
+  | 'cycle_failed'
+  | 'recovery_failed'
+  | 'unhandled_rejection'
+  | 'uncaught_exception'
+  | 'ledger_start_failed'
+
+export interface ErrorLogEntry {
+  app: string
+  kind: ErrorLogKind
+  error: unknown
+  count?: number
+}
+
+export interface AppendErrorLogOptions {
+  env?: NodeJS.ProcessEnv
+  now?: Date
+  path?: string
+}
+
+export interface ProcessErrorLogOptions {
+  /** Exit hook, injectable for tests. Defaults to process.exit. */
+  exit?: (code: number) => void
+  /** Append hook, injectable for tests. Defaults to appendErrorLog. */
+  append?: (entry: ErrorLogEntry) => void
+}
+
+export interface ProcessErrorHandlers {
+  onUnhandledRejection: (reason: unknown) => void
+  onUncaughtException: (error: unknown) => void
+}
+
+const MESSAGE_MAX_LENGTH = 1000
+const STACK_MAX_LENGTH = 2048
+const TRUNCATION_MARKER = '…[truncated]'
+const REDACTION_MARKER = '[REDACTED]'
+
+/**
+ * Ordered redaction rules. Credential-bearing URLs run first so later rules
+ * redact what they leave behind, not the reverse.
+ */
+const REDACTION_PATTERNS: ReadonlyArray<{ pattern: RegExp, replacement: string }> = [
+  // scheme://user:password@ (postgres, postgresql, mysql, redis, mongodb(+srv)
+  // and any other scheme), keeping the scheme so the line stays readable.
+  {
+    pattern: /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)(?:[^\s/@:]+:[^\s/@]+|:[^\s/@]+)@/g,
+    replacement: `$1${REDACTION_MARKER}@`,
+  },
+  // Authorization-style bearer tokens.
+  { pattern: /\b(bearer\s+)\S+/gi, replacement: `$1${REDACTION_MARKER}` },
+  // JWT-shaped tokens: three base64url segments with the standard {" header prefix.
+  { pattern: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, replacement: REDACTION_MARKER },
+  // Common API key shapes: OpenAI, Stripe, GitHub, Slack, AWS access key ids.
+  {
+    pattern: /\b(?:sk-[A-Za-z0-9_-]{8,}|sk_live_[A-Za-z0-9]{8,}|pk_live_[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|gho_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}|xox[abp]-[A-Za-z0-9-]{8,}|AKIA[0-9A-Z]{16})/g,
+    replacement: REDACTION_MARKER,
+  },
+  // Named secret fields in key=value, key: value and "key": "value" forms
+  // (case-insensitive). The name must END with one of the secret words, with
+  // an optional [A-Za-z0-9_-]* prefix, so env-var style names such as
+  // SUPABASE_SERVICE_ROLE_KEY and x-api-key are covered, while ordinary words
+  // like "keyboard" are not. The key name is kept; only the value is redacted.
+  {
+    pattern: /(["']?[A-Za-z0-9_-]*(?:access_token|api_key|apikey|password|passwd|secret|token|pwd|key)(?![A-Za-z0-9_-])["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/gi,
+    replacement: `$1${REDACTION_MARKER}`,
+  },
+]
+
+function truncate(text: string, maxLength: number): string {
+  return text.length <= maxLength ? text : text.slice(0, maxLength) + TRUNCATION_MARKER
+}
+
+export function redactSecrets(text: string): string {
+  let redacted = text
+  for (const { pattern, replacement } of REDACTION_PATTERNS) {
+    redacted = redacted.replace(pattern, replacement)
+  }
+  return redacted
+}
+
+export function resolveErrorLogPath(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.MYBOON_ERROR_LOG?.trim()
+  if (configured) return configured
+  return join(homedir(), 'myboon-logs', 'errors.jsonl')
+}
+
+export function formatErrorLogLine(entry: ErrorLogEntry, now: Date = new Date()): string {
+  const error = entry.error
+  const message = error instanceof Error ? error.message : String(error)
+  const stack = error instanceof Error && typeof error.stack === 'string' ? error.stack : null
+  const record: Record<string, unknown> = {
+    ts: now.toISOString(),
+    app: entry.app,
+    kind: entry.kind,
+    message: truncate(redactSecrets(message), MESSAGE_MAX_LENGTH),
+    stack: stack === null ? null : truncate(redactSecrets(stack), STACK_MAX_LENGTH),
+  }
+  if (entry.count !== undefined) record.count = entry.count
+  return `${JSON.stringify(record)}\n`
+}
+
+export function appendErrorLog(entry: ErrorLogEntry, options: AppendErrorLogOptions = {}): void {
+  try {
+    const path = options.path ?? resolveErrorLogPath(options.env)
+    const line = formatErrorLogLine(entry, options.now)
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, line)
+  } catch {
+    // Never throw: logging must not turn an already-failing worker into a
+    // crash loop. Emit the already-redacted line on stderr instead, and keep
+    // the failed write's path details out of the output.
+    let line: string
+    try {
+      line = formatErrorLogLine(entry, options.now).replace(/\n$/, '')
+    } catch {
+      line = JSON.stringify({ app: entry.app, kind: entry.kind, message: '<unformattable error>' })
+    }
+    console.error('[error-log] write failed; falling back to stderr:', line)
+  }
+}
+
+export function createProcessErrorHandlers(
+  app: string,
+  options: ProcessErrorLogOptions = {},
+): ProcessErrorHandlers {
+  const append = options.append ?? ((entry: ErrorLogEntry) => appendErrorLog(entry))
+  const exit = options.exit ?? ((code: number) => process.exit(code))
+  return {
+    // A late async failure keeps the process alive: the daemon can still make
+    // progress on later ticks, so this logs and continues.
+    onUnhandledRejection(reason: unknown) {
+      append({ app, kind: 'unhandled_rejection', error: reason })
+      console.error(`[${app}] unhandled rejection:`, reason)
+    },
+    // A synchronous crash stays fatal as before - the JSONL line is simply
+    // written first, synchronously, so it survives the exit.
+    onUncaughtException(error: unknown) {
+      append({ app, kind: 'uncaught_exception', error })
+      console.error(`[${app}] uncaught exception:`, error)
+      exit(1)
+    },
+  }
+}
+
+let processErrorLoggingInstalled = false
+
+export function installProcessErrorLogging(app: string, options: ProcessErrorLogOptions = {}): void {
+  if (processErrorLoggingInstalled) return
+  processErrorLoggingInstalled = true
+  const { onUnhandledRejection, onUncaughtException } = createProcessErrorHandlers(app, options)
+  process.on('unhandledRejection', onUnhandledRejection)
+  process.on('uncaughtException', onUncaughtException)
+}

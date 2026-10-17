@@ -1,6 +1,8 @@
 import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 
 loadDotenvChain()
+installProcessErrorLogging('publisher')
 
 import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
@@ -61,6 +63,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  appendErrorLog({ app: 'publisher', kind: 'run_failed', error: err })
   console.error('[publisher] fatal:', err)
   process.exit(1)
 })
