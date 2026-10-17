@@ -10,6 +10,7 @@ import {
   type Signal,
 } from '../signal-platform/contracts'
 import type { ExecutionLedger } from '../signal-platform/execution-ledger'
+import { appendErrorLog } from '../pipeline-store/error-log'
 import type { InferenceTelemetry } from '../inference-gateway/types'
 import { PlatformFailure } from '../signal-platform/failures'
 import type {
@@ -543,9 +544,11 @@ export class SharedEntityWorker {
       })
       try {
         this.options.executionLedger.append(event)
-      } catch {
+      } catch (error) {
         // Instrumentation cannot undo a fenced queue transition or durable
-        // Entity write. Immutable append conflicts remain contained here.
+        // Entity write. Trace failures stay visible in the error log; immutable
+        // append conflicts remain contained here.
+        appendErrorLog({ app: 'feed-v3:shared-entity-manager', kind: 'trace_append_failed', error })
       }
     }
     return outcome
@@ -560,8 +563,9 @@ export class SharedEntityWorker {
     })
     try {
       this.options.executionLedger.append(event)
-    } catch {
+    } catch (error) {
       // Best-effort measurement cannot affect queue or processor execution.
+      appendErrorLog({ app: 'feed-v3:shared-entity-manager', kind: 'trace_append_failed', error })
     }
   }
 
