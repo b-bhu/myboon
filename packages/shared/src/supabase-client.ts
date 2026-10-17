@@ -201,3 +201,44 @@ export function requireSupabaseEnv(
   // supabaseUrl and supabaseKey are non-empty here; the narrowing follows the throw above.
   return { supabaseUrl: supabaseUrl as string, supabaseKey: supabaseKey as string }
 }
+
+/**
+ * Timeout applied to every request of the dedicated health-probe client, so a
+ * hung Supabase fails the probe within seconds instead of stalling a worker
+ * tick (Refs #346).
+ */
+export const SUPABASE_HEALTH_PROBE_TIMEOUT_MS = 5_000
+
+/**
+ * Cheap liveness check for Supabase-backed workers: one small read from the
+ * pipeline_runs ledger table. Resolves when the read succeeds and rejects
+ * with a single redacted Error otherwise - the message carries only the
+ * Postgrest text, never the URL or key, and the original error rides in
+ * `cause` with its `code` copied as a string property when present.
+ */
+export async function probeSupabaseHealth(client: Pick<SupabaseClient, 'from'>): Promise<void> {
+  const { error } = await client.from('pipeline_runs').select('id').limit(1)
+  if (error) {
+    const failure = new Error(`Supabase health probe failed: ${error.message}`, { cause: error })
+    if (typeof error.code === 'string') (failure as { code?: string }).code = error.code
+    throw failure
+  }
+}
+
+/**
+ * Builds the ONE client a worker uses for health gating: a small bounded
+ * read probe with its own per-request timeout. The returned closure is the
+ * probe handed to SupabaseHealthGate / waitForSupabaseRunOnce. timeoutMs and
+ * fetch exist only for tests.
+ */
+export function createSupabaseHealthProbe(
+  supabaseUrl: string,
+  supabaseKey: string,
+  options?: { timeoutMs?: number; fetch?: typeof fetch },
+): () => Promise<void> {
+  const client = createSupabaseClient(supabaseUrl, supabaseKey, {
+    timeoutMs: options?.timeoutMs ?? SUPABASE_HEALTH_PROBE_TIMEOUT_MS,
+    fetch: options?.fetch,
+  })
+  return () => probeSupabaseHealth(client)
+}

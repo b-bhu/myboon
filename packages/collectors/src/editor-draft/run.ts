@@ -1,12 +1,13 @@
-import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
+import { loadDotenvChain } from '../pipeline-store/cli-env'
 import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 
 loadDotenvChain()
 installProcessErrorLogging('editor-draft')
 
-import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import type { PipelineStore } from '../pipeline-store/store'
@@ -41,13 +42,11 @@ async function runOnce(supabase: SupabaseClient, pipelineStore: PipelineStore): 
 }
 
 async function main(): Promise<void> {
-  requireSupabaseEnv()
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv()
   const config = editorDraftCliConfig()
-  const supabase = createSupabaseClient(
-    requiredEnv('SUPABASE_URL'),
-    requiredEnv('SUPABASE_SERVICE_ROLE_KEY')
-  )
+  const supabase = createSupabaseClient(supabaseUrl, supabaseKey)
   const pipelineStore = new SqlitePipelineStore(resolveLaneSqlitePathFromEnv('polymarket', process.env))
+  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
 
   try {
     await runFirstThenInterval({
@@ -55,6 +54,8 @@ async function main(): Promise<void> {
       intervalMs: config.intervalMs,
       runOnce: config.runOnce,
       run: () => runOnce(supabase, pipelineStore),
+      healthGate: new SupabaseHealthGate({ app: 'editor-draft', probe }),
+      runOnceHealthCheck: () => waitForSupabaseRunOnce({ app: 'editor-draft', probe }),
     })
   } finally {
     if (config.runOnce) pipelineStore.close()

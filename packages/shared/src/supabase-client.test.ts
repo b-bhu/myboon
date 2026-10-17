@@ -3,10 +3,14 @@ import test from 'node:test'
 
 import {
   createSupabaseClient,
+  createSupabaseHealthProbe,
   createTimeoutFetch,
   DEFAULT_SUPABASE_FETCH_TIMEOUT_MS,
+  probeSupabaseHealth,
   requireSupabaseEnv,
+  SUPABASE_HEALTH_PROBE_TIMEOUT_MS,
 } from './supabase-client'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 function fetchResponding(response: Response): typeof fetch {
   return (() => Promise.resolve(response)) as unknown as typeof fetch
@@ -329,5 +333,110 @@ test('requireSupabaseEnv names every missing or blank key and never prints value
     assert.equal(error.message, 'Missing required Supabase env: SUPABASE_SERVICE_ROLE_KEY')
     // Values must not leak into the message.
     assert.ok(!error.message.includes('secret'), error.message)
+  }
+})
+
+test('the Supabase health probe timeout default is 5 seconds', () => {
+  assert.equal(SUPABASE_HEALTH_PROBE_TIMEOUT_MS, 5_000)
+})
+
+type ProbeCall = { table: string; select?: string; count: string | null; limit?: number }
+
+/** Minimal `Pick<SupabaseClient, 'from'>` capturing the exact query shape the probe must issue. */
+function fakeProbeClient(result: { data: unknown; error: unknown }): {
+  client: Pick<SupabaseClient, 'from'>
+  calls: ProbeCall[]
+} {
+  const calls: ProbeCall[] = []
+  const client = {
+    from(table: string) {
+      const call: ProbeCall = { table, select: undefined, count: null, limit: undefined }
+      calls.push(call)
+      const builder = {
+        select: (columns: string, options?: { count?: string }) => {
+          call.select = columns
+          call.count = options?.count ?? null
+          return builder
+        },
+        limit: (value: number) => {
+          call.limit = value
+          return builder
+        },
+        then: (
+          onFulfilled?: (value: { data: unknown; error: unknown }) => unknown,
+          onRejected?: (error: unknown) => unknown,
+        ) => Promise.resolve(result).then(onFulfilled, onRejected),
+      }
+      return builder
+    },
+  } as unknown as Pick<SupabaseClient, 'from'>
+  return { client, calls }
+}
+
+test('probeSupabaseHealth resolves on success with one small pipeline_runs id read and no count', async () => {
+  const { client, calls } = fakeProbeClient({ data: [{ id: 1 }], error: null })
+
+  await probeSupabaseHealth(client)
+
+  assert.deepEqual(calls, [{ table: 'pipeline_runs', select: 'id', count: null, limit: 1 }])
+})
+
+test('probeSupabaseHealth throws one error naming the probe, with the code copied and the original as cause', async () => {
+  const postgrestError = { message: 'permission denied for table pipeline_runs', code: '42501' }
+  const { client } = fakeProbeClient({ data: null, error: postgrestError })
+
+  let caught: unknown
+  try {
+    await probeSupabaseHealth(client)
+    assert.ok(false, 'expected probeSupabaseHealth to reject')
+  } catch (error) {
+    caught = error
+  }
+
+  assert.ok(caught instanceof Error)
+  assert.equal(caught.message, 'Supabase health probe failed: permission denied for table pipeline_runs')
+  assert.equal((caught as { code?: string }).code, '42501')
+  assert.equal((caught as { cause?: unknown }).cause, postgrestError)
+})
+
+test('probeSupabaseHealth omits the code property when the error carries none', async () => {
+  const { client } = fakeProbeClient({ data: null, error: { message: 'socket hang up' } })
+
+  try {
+    await probeSupabaseHealth(client)
+    assert.ok(false, 'expected probeSupabaseHealth to reject')
+  } catch (error) {
+    assert.ok(error instanceof Error)
+    assert.equal(error.message, 'Supabase health probe failed: socket hang up')
+    assert.equal((error as { code?: string }).code, undefined)
+  }
+})
+
+test('createSupabaseHealthProbe rejects a hung Supabase within its timeout and never leaks credentials', async () => {
+  // AbortSignal.timeout timers are unref'd, so hold the event loop open until
+  // the abort fires or this test would drain before the timeout runs.
+  const keepEventLoopAlive = setTimeout(() => {}, 5_000)
+  try {
+    const probe = createSupabaseHealthProbe('https://secret-host.example.test', 'service-role-secret', {
+      timeoutMs: 50,
+      fetch: hangingNeverResolves(),
+    })
+
+    let caught: unknown
+    try {
+      await probe()
+      assert.ok(false, 'expected the hanging probe to reject')
+    } catch (error) {
+      caught = error
+    }
+
+    assert.ok(caught instanceof Error, `expected an Error, got: ${String(caught)}`)
+    const message = (caught as Error).message
+    assert.ok(message.length > 0, 'the rejection carries a message')
+    // The message names the failure, never the URL or the key.
+    assert.ok(!message.includes('secret-host.example.test'), message)
+    assert.ok(!message.includes('service-role-secret'), message)
+  } finally {
+    clearTimeout(keepEventLoopAlive)
   }
 })

@@ -1,3 +1,5 @@
+import { healthBackoffMs } from '../pipeline-store/health-gate'
+
 export interface ArticleContextAvailabilitySnapshot {
   available: boolean | null
   lastCheckedAt: string | null
@@ -18,6 +20,7 @@ export class ArticleContextAvailabilityGate {
     private readonly probe: () => Promise<void>,
     private readonly now: () => number = Date.now,
     private readonly healthyIntervalMs = 300_000,
+    private readonly random: () => number = Math.random,
   ) {
     if (!Number.isSafeInteger(healthyIntervalMs) || healthyIntervalMs < 30_000 || healthyIntervalMs > 300_000) {
       throw new RangeError('Healthy storage probe interval must be between 30000 and 300000 milliseconds')
@@ -67,7 +70,8 @@ export class ArticleContextAvailabilityGate {
       this.available = false
       this.consecutiveFailures += 1
       this.lastCheckedAt = this.now()
-      this.nextProbeAt = this.lastCheckedAt + Math.min(300_000, 30_000 * 2 ** Math.min(this.consecutiveFailures - 1, 4))
+      // Backoff moved to the shared 15-min ceiling jittered health backoff (Ref #346).
+      this.nextProbeAt = this.lastCheckedAt + healthBackoffMs(this.consecutiveFailures, this.random)
       return false
     }
   }

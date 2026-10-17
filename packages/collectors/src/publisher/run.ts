@@ -4,8 +4,9 @@ import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/er
 loadDotenvChain()
 installProcessErrorLogging('publisher')
 
-import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
+import { createSupabaseClient, createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
+import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { resolveLaneSqlitePathFromEnv } from '../lane-store/paths'
@@ -55,13 +56,16 @@ async function runOnce(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  requireSupabaseEnv()
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv()
   const config = publisherCliConfig()
+  const probe = createSupabaseHealthProbe(supabaseUrl, supabaseKey)
   await runFirstThenInterval({
     label: 'publisher',
     intervalMs: config.intervalMs,
     runOnce: config.runOnce,
     run: runOnce,
+    healthGate: new SupabaseHealthGate({ app: 'publisher', probe }),
+    runOnceHealthCheck: () => waitForSupabaseRunOnce({ app: 'publisher', probe }),
   })
 }
 
