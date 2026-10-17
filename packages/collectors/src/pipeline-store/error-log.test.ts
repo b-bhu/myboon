@@ -260,3 +260,57 @@ test('formatErrorLogLine redacts before truncating so a redaction marker inside 
   assert.ok(record.message.includes(REDACTED))
   assert.ok(record.message.length <= 1000 + TRUNCATION_MARKER.length)
 })
+
+test('formatErrorLogLine records a bounded cause chain with codes and redaction', () => {
+  // Credential-shaped fragments are assembled at runtime so no token-like
+  // literal sits in the source.
+  const secret = 'hunter22'
+  const thirdLevel = Object.assign(new Error('dns fallback ' + 'failed with ' + 'token=' + secret), {
+    code: 'EAI_AGAIN',
+  })
+  const inner = Object.assign(new Error('inner'), { code: 'ETIMEDOUT', cause: thirdLevel })
+  const middle = Object.assign(new Error('read ECONNRESET ' + 'password=' + secret), {
+    code: 'ECONNRESET', cause: inner,
+  })
+  const error = new Error('fetch failed', { cause: middle })
+  const line = formatErrorLogLine(
+    { app: 'feed-v3-shared-research', kind: 'run_failed', error },
+    new Date('2026-10-17T10:00:00.000Z'),
+  )
+  const record = JSON.parse(line) as { message: string, cause?: Array<{ message: string, code?: string }> }
+  assert.equal(record.message, 'fetch failed')
+  assert.ok(!line.includes(secret), 'the secret fragment must be redacted everywhere in the line')
+  assert.deepEqual(record.cause, [
+    { message: 'read ECONNRESET password=' + REDACTED, code: 'ECONNRESET' },
+    { message: 'inner', code: 'ETIMEDOUT' },
+  ])
+  assert.ok(!line.includes('dns fallback'), 'a third cause level must not appear')
+})
+
+test('formatErrorLogLine keeps PostgrestError fields from plain-object errors', () => {
+  const postgrest = {
+    message: 'Invalid JWT',
+    code: 'PGRST301',
+    details: 'row blocked; password=' + 'hunter' + '22',
+    hint: 'refresh the service credential',
+  }
+  const line = formatErrorLogLine(
+    { app: 'feed-v3-shared-research', kind: 'cycle_failed', error: postgrest },
+    new Date('2026-10-17T10:00:00.000Z'),
+  )
+  const record = JSON.parse(line) as Record<string, unknown>
+  assert.equal(record.message, 'Invalid JWT', 'a plain-object message beats [object Object]')
+  assert.equal(record.code, 'PGRST301')
+  assert.equal(record.details, 'row blocked; password=' + REDACTED)
+  assert.equal(record.hint, 'refresh the service credential')
+  assert.equal(record.stack, null)
+  assert.equal('cause' in record, false, 'no cause field without a cause')
+  const numeric = JSON.parse(formatErrorLogLine(
+    { app: 'feed-v3-shared-research', kind: 'cycle_failed', error: { message: 'socket hung up', code: 42 } },
+    new Date('2026-10-17T10:00:00.000Z'),
+  )) as Record<string, unknown>
+  assert.equal(numeric.message, 'socket hung up')
+  assert.equal(numeric.code, '42', 'a numeric code is recorded as a string')
+  assert.equal('details' in numeric, false)
+  assert.equal('hint' in numeric, false)
+})
