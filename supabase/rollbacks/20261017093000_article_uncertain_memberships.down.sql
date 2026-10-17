@@ -15,6 +15,84 @@ $access$;
 GRANT CREATE ON SCHEMA managed_knowledge_private TO myboon_knowledge_owner;
 SET LOCAL ROLE myboon_knowledge_owner;
 
+CREATE OR REPLACE FUNCTION managed_knowledge_private.context_v1(input jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $context$
+DECLARE entities_json jsonb; items_json jsonb; result jsonb; ids uuid[]; limit_count integer; item_count integer;
+BEGIN
+  IF NOT (pg_has_role(session_user,'myboon_knowledge_executor','member') OR pg_has_role(session_user,'myboon_knowledge_context_executor','member'))
+    OR pg_has_role(session_user,'myboon_knowledge_owner','member') OR pg_has_role(session_user,'service_role','member') OR pg_has_role(session_user,'authenticator','member')
+    OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = session_user AND (rolsuper OR rolbypassrls))
+    OR session_user IN ('authenticator','anon','authenticated','service_role') THEN
+    RAISE EXCEPTION 'dedicated managed context login required' USING ERRCODE = '42501';
+  END IF;
+  IF octet_length(input::text) > 131072 OR jsonb_typeof(input) <> 'object' THEN RAISE EXCEPTION 'bounded context input required' USING ERRCODE = '22023'; END IF;
+  IF jsonb_typeof(input->'labels') <> 'array' OR jsonb_array_length(input->'labels') > 100
+    OR jsonb_typeof(input->'sourceRefs') <> 'array' OR jsonb_array_length(input->'sourceRefs') > 32
+    OR jsonb_typeof(input->'entityIds') <> 'array' OR jsonb_array_length(input->'entityIds') > 32
+    OR jsonb_typeof(input->'itemIds') <> 'array' OR jsonb_array_length(input->'itemIds') > 32 THEN
+    RAISE EXCEPTION 'bounded context identities required' USING ERRCODE = '22023';
+  END IF;
+  limit_count := greatest(1,least(coalesce((input->>'limit')::integer,24),32));
+  -- Serializes context capture against accepted writes; snapshots never mix
+  -- item state, provenance and revision watermarks from different commits.
+  PERFORM pg_advisory_xact_lock(299,4);
+  WITH subject_entities AS (
+    SELECT DISTINCT membership.entity_id AS id FROM managed_knowledge_private.memberships membership
+    JOIN managed_knowledge_private.item_sources item_source ON item_source.item_id = membership.item_id
+    JOIN managed_knowledge_private.sources source ON source.work_id = item_source.work_id
+    WHERE membership.removed_operation IS NULL AND source.source = input->>'source'
+      AND source.source_refs ?| ARRAY(SELECT jsonb_array_elements_text(input->'sourceRefs'))
+    UNION SELECT value::uuid FROM jsonb_array_elements_text(input->'entityIds') value
+    UNION SELECT membership.entity_id FROM managed_knowledge_private.memberships membership
+      WHERE membership.item_id::text IN (SELECT jsonb_array_elements_text(input->'itemIds')) AND membership.removed_operation IS NULL
+  ), candidates AS (
+    SELECT entity.id, entity.binding
+      || CASE WHEN catalog.id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('slug',catalog.slug,'name',catalog.name,'type',catalog.type,'aliases',catalog.aliases,'summary',catalog.summary,'metadata',catalog.metadata,'status',catalog.status,'updated_at',catalog.updated_at) END
+      || jsonb_build_object('revision',managed_knowledge_private.entity_revision_v1(entity.id)) AS binding
+      FROM managed_knowledge_private.entities entity LEFT JOIN public.entities catalog ON catalog.id = entity.catalog_entity_id
+      WHERE managed_knowledge_private.entity_revision_v1(entity.id) <> 'unavailable'
+      AND (entity.id IN (SELECT id FROM subject_entities) OR EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(input->'labels') label WHERE lower(btrim(label)) = lower(btrim(coalesce(catalog.name,entity.binding->>'name')))
+          OR lower(btrim(label)) = lower(btrim(coalesce(catalog.slug,entity.binding->>'slug')))
+          OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(coalesce(to_jsonb(catalog.aliases),entity.binding->'aliases')) alias WHERE lower(btrim(alias)) = lower(btrim(label)))
+      ))
+    UNION ALL
+    SELECT entity.id,jsonb_build_object('id',entity.id,'slug',entity.slug,'name',entity.name,'type',entity.type,'aliases',entity.aliases,
+      'summary',entity.summary,'status',entity.status,'show_in_carousel',false,'metadata',entity.metadata,
+      'created_at',entity.created_at,'updated_at',entity.updated_at,'revision',managed_knowledge_private.entity_revision_v1(entity.id),
+      'catalogEntityId',entity.id,'identityKey','catalog:' || entity.id::text)
+      FROM public.entities entity WHERE entity.status = 'active' AND NOT EXISTS(SELECT 1 FROM managed_knowledge_private.entities own WHERE own.id = entity.id)
+      AND (entity.id IN (SELECT id FROM subject_entities) OR EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(input->'labels') label WHERE lower(btrim(label)) = lower(btrim(entity.name))
+          OR lower(btrim(label)) = lower(btrim(entity.slug))
+          OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(entity.aliases) alias WHERE lower(btrim(alias)) = lower(btrim(label)))
+      ))
+  ) SELECT coalesce(jsonb_agg(binding ORDER BY id),'[]'::jsonb) INTO entities_json FROM (SELECT * FROM candidates ORDER BY id LIMIT 101) bounded;
+  ids := ARRAY(SELECT (value->>'id')::uuid FROM jsonb_array_elements(entities_json) value);
+  SELECT count(*) INTO item_count FROM managed_knowledge_private.items item
+    WHERE item.id::text IN (SELECT jsonb_array_elements_text(input->'itemIds')) OR EXISTS(
+      SELECT 1 FROM managed_knowledge_private.memberships membership WHERE membership.item_id = item.id AND membership.entity_id = ANY(ids) AND membership.removed_operation IS NULL);
+  SELECT coalesce(jsonb_agg(snapshot ORDER BY observed_at DESC,id),'[]'::jsonb) INTO items_json FROM (
+    SELECT item.id,item.observed_at,jsonb_build_object(
+      'itemId',item.id,'note',item.note,'status',head.status,'revision','item:' || head.revision::text,'observedAt',item.observed_at,
+      'entityIds',coalesce((SELECT jsonb_agg(entity_id ORDER BY entity_id) FROM managed_knowledge_private.memberships WHERE item_id = item.id AND removed_operation IS NULL),'[]'::jsonb),
+      'packetRefs',coalesce((SELECT jsonb_agg(packet_id ORDER BY work_id) FROM (SELECT source.work_id,source.packet->>'packetId' AS packet_id FROM managed_knowledge_private.item_sources linkage JOIN managed_knowledge_private.sources source USING(work_id) WHERE linkage.item_id = item.id ORDER BY source.created_at DESC,source.work_id LIMIT 64) refs),'[]'::jsonb),
+      'evidenceRefs',coalesce((SELECT jsonb_agg(jsonb_build_object('claimId',claim_id,'evidenceId',evidence_id,'sourceRef',source_ref) ORDER BY work_id,claim_id,evidence_id) FROM (SELECT work_id,claim_id,evidence_id,source_ref FROM managed_knowledge_private.evidence WHERE item_id = item.id ORDER BY work_id,claim_id,evidence_id LIMIT 128) refs),'[]'::jsonb),
+      'successorItemIds',coalesce((SELECT jsonb_agg(to_item ORDER BY to_item) FROM managed_knowledge_private.developments WHERE from_item = item.id AND kind IN ('correct','supersede')),'[]'::jsonb)
+    ) AS snapshot FROM managed_knowledge_private.items item JOIN managed_knowledge_private.item_heads head ON head.item_id = item.id
+    WHERE item.id::text IN (SELECT jsonb_array_elements_text(input->'itemIds')) OR EXISTS(
+      SELECT 1 FROM managed_knowledge_private.memberships membership WHERE membership.item_id = item.id AND membership.entity_id = ANY(ids) AND membership.removed_operation IS NULL)
+    ORDER BY item.observed_at DESC,item.id LIMIT limit_count
+  ) bounded;
+  result := jsonb_build_object('entities',entities_json,'items',items_json,'watermark',(SELECT coalesce(max(sequence),0)::text FROM managed_knowledge_private.history),
+    'truncated',jsonb_array_length(entities_json) > 32 OR item_count > limit_count OR EXISTS(
+      SELECT 1 FROM jsonb_array_elements(items_json) selected WHERE
+        (SELECT count(*) FROM managed_knowledge_private.item_sources WHERE item_id = (selected->>'itemId')::uuid) > 64
+        OR (SELECT count(*) FROM managed_knowledge_private.evidence WHERE item_id = (selected->>'itemId')::uuid) > 128));
+  RETURN result || jsonb_build_object('digest',managed_knowledge_private.digest_v1(result));
+END
+$context$;
+
 CREATE OR REPLACE FUNCTION managed_knowledge_private.article_writer_v1(action text, input jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
 DECLARE operation text := input->>'operationId'; work text := input->>'workId'; lease managed_knowledge_private.leases;
