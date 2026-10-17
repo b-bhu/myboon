@@ -4,7 +4,7 @@ loadDotenvChain()
 
 import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { SupabasePipelineLedgerStore, withPipelineRun } from '../pipeline-ledger'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { publisherCliConfig, runPublisher } from './runner'
 import { SupabasePublisherStore } from './supabase-store'
@@ -52,13 +52,10 @@ async function runOnce(): Promise<void> {
 async function main(): Promise<void> {
   requireSupabaseEnv()
   const config = publisherCliConfig()
-  await runOnce()
-
-  if (config.runOnce) return
-
-  startIntervalRunner({
+  await runFirstThenInterval({
     label: 'publisher',
     intervalMs: config.intervalMs,
+    runOnce: config.runOnce,
     run: runOnce,
   })
 }

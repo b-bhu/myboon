@@ -58,11 +58,11 @@ function defaultOnError(error: unknown, info: { label: string }): void {
  * Starts a `run` callback on a fixed interval, skipping (and logging) any
  * tick that would overlap a still-in-flight previous run.
  *
- * Does NOT invoke `run` immediately - callers that want an initial run
- * before the interval starts should await it themselves first (matching the
- * existing `await runOnce()` before `setInterval(...)` pattern in every
- * `run-*.ts` entrypoint), then call `startIntervalRunner` for the recurring
- * schedule.
+ * Does NOT invoke `run` immediately. Callers that want an initial run before
+ * the interval starts should use `runFirstThenInterval`, which awaits that
+ * first run and then starts this recurring schedule - reporting a failing
+ * first run through `onError` instead of letting it escape, so one bad
+ * startup tick cannot exit the worker before the schedule is running.
  */
 export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRunnerHandle {
   const { label, intervalMs, run } = options
@@ -106,4 +106,32 @@ export function startIntervalRunner(options: IntervalRunnerOptions): IntervalRun
     stop: () => clearInterval(timer),
     isRunning: () => running,
   }
+}
+
+export interface RunFirstThenIntervalOptions extends IntervalRunnerOptions {
+  /** When true, run exactly once and let a failure propagate (RUN_ONCE semantics). */
+  runOnce: boolean
+}
+
+/**
+ * Runs `run` once, then (unless runOnce) starts the overlap-guarded interval.
+ * A failing first run is reported through onError and the schedule still starts,
+ * so one bad tick cannot exit a PM2 daemon. Returns null in runOnce mode.
+ */
+export async function runFirstThenInterval(options: RunFirstThenIntervalOptions): Promise<IntervalRunnerHandle | null> {
+  if (options.runOnce) {
+    await options.run()
+    return null
+  }
+  // In daemon mode the first run is just an early tick: a failure here used
+  // to escape to the entrypoint catch and process.exit(1) before the
+  // interval ever started, so PM2 kept restarting into the same failure.
+  // Report it the same way an interval tick failure is reported and keep the
+  // schedule running so a later tick can succeed.
+  try {
+    await options.run()
+  } catch (error) {
+    ;(options.onError ?? defaultOnError)(error, { label: options.label })
+  }
+  return startIntervalRunner(options)
 }
