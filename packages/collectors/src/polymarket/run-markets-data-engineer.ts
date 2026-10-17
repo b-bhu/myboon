@@ -82,7 +82,9 @@ async function runOnce(): Promise<void> {
         signalIntake,
         () => sourceOwnershipAllows({databasePath:pipelinePath,source:'polymarket',domain:'collector',owner:'legacy'}),
         () => sourceOwnershipEnabled(),
-      ))
+      )),
+      undefined,
+      { app: 'polymarket-markets-data-engineer' }
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {

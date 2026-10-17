@@ -21,6 +21,8 @@ export type ErrorLogKind =
   | 'unhandled_rejection'
   | 'uncaught_exception'
   | 'ledger_start_failed'
+  | 'ledger_finish_failed'
+  | 'trace_append_failed'
 
 export interface ErrorLogEntry {
   app: string

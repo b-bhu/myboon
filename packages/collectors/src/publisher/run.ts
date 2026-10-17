@@ -43,7 +43,9 @@ async function runOnce(): Promise<void> {
         ),
         batchSize: config.batchSize,
         dryRun: previewOnly(process.env),
-      })
+      }),
+      undefined,
+      { app: 'publisher' }
     )
     console.log(JSON.stringify(result, null, 2))
   } finally {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -625,6 +625,41 @@ test('ledger failure cannot change a successful fenced queue outcome', async () 
     assert.equal(fx.store.getResearchWork('work-market_calendar')?.status, 'synthesis_pending')
     assert.equal(fx.store.listEvidenceByWork('work-market_calendar', 10).length, 1)
   } finally { fx.close() }
+})
+
+test('trace append failures are recorded in the JSONL error log without changing the outcome', async () => {
+  const fx = fixture()
+  const dir = mkdtempSync(join(tmpdir(), 'trace-append-error-log-'))
+  const errorLogPath = join(dir, 'errors.jsonl')
+  const previousErrorLog = process.env.MYBOON_ERROR_LOG
+  process.env.MYBOON_ERROR_LOG = errorLogPath
+  try {
+    fx.store.appendSignal(signal())
+    fx.store.admitResearchWork(work())
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['retrieval'],
+      executionLedger: { append() { throw new Error('ledger offline') } },
+    }))
+    // Same outcome as the success path with a working ledger: the trace is
+    // best-effort and queue state plus immutable artifacts stay authoritative.
+    assert.equal((await worker.runOnce()).kind, 'succeeded')
+    assert.equal(fx.store.getResearchWork('work-market_calendar')?.status, 'synthesis_pending')
+    assert.equal(fx.store.listEvidenceByWork('work-market_calendar', 10).length, 1)
+    const lines = readFileSync(errorLogPath, 'utf8').trimEnd().split('\n')
+    const traceFailures = lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((entry) => entry.kind === 'trace_append_failed')
+    assert.ok(traceFailures.length >= 1, `expected a trace_append_failed line in: ${lines.join(' | ')}`)
+    assert.ok(
+      traceFailures.every((entry) => entry.app === 'feed-v3-shared-research'),
+      `unexpected app in trace failure entries: ${JSON.stringify(traceFailures.map((entry) => entry.app))}`,
+    )
+  } finally {
+    fx.close()
+    if (previousErrorLog === undefined) delete process.env.MYBOON_ERROR_LOG
+    else process.env.MYBOON_ERROR_LOG = previousErrorLog
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('provider failures after execution spend attempts and follow bounded retry/dead-letter policy', async () => {
