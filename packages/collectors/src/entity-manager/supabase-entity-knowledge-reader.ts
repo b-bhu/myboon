@@ -66,6 +66,8 @@ export class SupabaseEntityKnowledgeQueryPort implements EntityKnowledgeQueryPor
     // PriorityClass is product policy, persisted in the neutral memory context
     // until the v1 write contract promotes it to a dedicated column.
     if (input.priorityClasses) query = query.in('context->>priority_class', input.priorityClasses)
+    // Lets the planner use the partial observed cursor index, which requires entity_id IS NOT NULL (#336 item 6).
+    if (!entityId && input.order === 'observed-desc') query = query.not('entity_id', 'is', null)
 
     if (input.order === 'id-asc') {
       const { data, error } = await query

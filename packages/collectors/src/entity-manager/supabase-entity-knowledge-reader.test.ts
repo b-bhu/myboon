@@ -102,6 +102,55 @@ test('Supabase query port fails closed when an Entity ID has no active canonical
   assert.equal(queried, false)
 })
 
+test('Supabase unscoped observed-desc memories add the partial-index entity_id filter and pass rows through', async () => {
+  const rows = [
+    { id: 'memory-b', entity_id: 'entity-2' },
+    { id: 'memory-a', entity_id: 'entity-1' },
+  ] as unknown as EntityKnowledgeRow[]
+  const builder = new RecordingBuilder(rows)
+  const db = {
+    from() {
+      return { select: () => builder }
+    },
+  } as unknown as SupabaseClient
+
+  const result = await new SupabaseEntityKnowledgeQueryPort(db).queryMemories({
+    order: 'observed-desc',
+    limit: 61,
+  })
+
+  assert.deepEqual(builder.calls, [
+    ['not', 'entity_id', 'is', null],
+    ['order', 'observed_at', { ascending: false }],
+    ['order', 'id', { ascending: false }],
+    ['limit', 61],
+  ])
+  assert.deepEqual(result, rows)
+})
+
+test('Supabase unscoped observed-desc memories keep the partial-index filter before the cursor filter', async () => {
+  const builder = new RecordingBuilder([])
+  const db = {
+    from() {
+      return { select: () => builder }
+    },
+  } as unknown as SupabaseClient
+
+  await new SupabaseEntityKnowledgeQueryPort(db).queryMemories({
+    order: 'observed-desc',
+    after: { at: '2026-08-26T12:00:00.000Z', id: 'memory-z' },
+    limit: 61,
+  })
+
+  assert.deepEqual(builder.calls, [
+    ['not', 'entity_id', 'is', null],
+    ['or', 'observed_at.lt.2026-08-26T12:00:00.000Z,and(observed_at.eq.2026-08-26T12:00:00.000Z,id.lt.memory-z)'],
+    ['order', 'observed_at', { ascending: false }],
+    ['order', 'id', { ascending: false }],
+    ['limit', 61],
+  ])
+})
+
 test('Supabase change query orders updated_at and id ascending after its cursor', async () => {
   const builder = new RecordingBuilder([])
   const db = {
