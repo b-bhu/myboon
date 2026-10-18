@@ -8,7 +8,9 @@ import type {
   EntityKnowledgeMemoryV1,
   EntityKnowledgeReader,
 } from '../entity-manager/entity-knowledge-reader'
-import type { PipelineStore } from '../pipeline-store/store'
+import type { PipelineDraftUpsertInput, PipelineStore } from '../pipeline-store/store'
+import type { ManagedEntityRow } from '../entity-manager/managed-entity-catalog'
+import { draftInputFromDecision, normalizeEditorDraftDecision } from './normalizer'
 import { SupabaseEditorDraftStore, __testing } from './supabase-store'
 
 const NOW = '2026-08-26T12:00:00.000Z'
@@ -94,6 +96,91 @@ function pipelineStore(): PipelineStore {
     async findReviewedMemoryIds() { return new Set<string>() },
     async fetchPriorDraftsByEntity() { return new Map() },
   } as unknown as PipelineStore
+}
+
+const MANAGED_ENTITY_ID = '00000000-0000-4000-8000-000000001234'
+
+function managedEntityRow(status = 'active'): ManagedEntityRow {
+  return {
+    id: MANAGED_ENTITY_ID,
+    slug: 'private-slug',
+    name: 'Private Entity',
+    type: 'asset',
+    aliases: ['PE'],
+    summary: 'Managed only',
+    status,
+    show_in_carousel: null,
+    metadata: { source: 'managed_v4' },
+    created_at: NOW,
+    updated_at: NOW,
+    catalog_entity_id: null,
+  }
+}
+
+// The article-only entity is absent from every public read; the managed rows
+// arrive through read_managed_entities_v1 instead.
+class ManagedReadBuilder implements PromiseLike<{ data: unknown[], error: null }> {
+  select(): this { return this }
+  in(): this { return this }
+  eq(): this { return this }
+  order(): this { return this }
+  limit(): this { return this }
+  then<TResult1 = { data: unknown[], error: null }, TResult2 = never>(
+    onfulfilled?: ((value: { data: unknown[], error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+    _onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): PromiseLike<TResult1 | TResult2> {
+    return Promise.resolve({ data: [], error: null }).then(onfulfilled ?? undefined)
+  }
+}
+
+function managedDatabase(managedRows: ManagedEntityRow[], rpcCalls: string[][]): SupabaseClient {
+  return {
+    from(table: string) {
+      assert.notEqual(table, 'entity_memories')
+      return new ManagedReadBuilder()
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      assert.equal(name, 'read_managed_entities_v1')
+      const ids = args.p_entity_ids as string[]
+      rpcCalls.push(ids)
+      return {
+        data: managedRows.filter((row) => ids.includes(row.id)),
+        error: null,
+      }
+    },
+  } as unknown as SupabaseClient
+}
+
+function savingPipelineStore(saved: PipelineDraftUpsertInput[]): PipelineStore {
+  return {
+    async findReviewedMemoryIds() { return new Set<string>() },
+    async fetchPriorDraftsByEntity() { return new Map() },
+    async upsertDraftsByBundleKey(drafts: PipelineDraftUpsertInput[]) {
+      saved.push(...drafts)
+      return drafts.map((draft, index) => ({ ...draft, id: `draft-${index + 1}`, createdAt: NOW, updatedAt: NOW }))
+    },
+  } as unknown as PipelineStore
+}
+
+function managedEntityReader(): Pick<EntityKnowledgeReader, 'getRecentEntityMemories' | 'getEntityMemories'> {
+  return {
+    async getRecentEntityMemories() {
+      return {
+        schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION,
+        items: [knowledgeMemory('memory-managed-1', MANAGED_ENTITY_ID)],
+        nextCursor: null,
+        hasMore: false,
+      }
+    },
+    async getEntityMemories() {
+      return {
+        schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION,
+        items: [knowledgeMemory('memory-managed-1', MANAGED_ENTITY_ID)],
+        nextCursor: null,
+        hasMore: false,
+      }
+    },
+  }
 }
 
 test('editor draft Entity reads include and normalize carousel selection', () => {
@@ -286,4 +373,68 @@ test('Editor fails closed when a knowledge cursor repeats', async () => {
     publishedHistoryLimit: 0,
   }), /cursor repeated/)
   assert.equal(recentCalls, 2)
+})
+
+test('Editor saves an article-only managed entity through the draft pipeline', async () => {
+  const rpcCalls: string[][] = []
+  const savedDrafts: PipelineDraftUpsertInput[] = []
+  const store = new SupabaseEditorDraftStore(
+    managedDatabase([managedEntityRow()], rpcCalls),
+    savingPipelineStore(savedDrafts),
+    managedEntityReader(),
+  )
+
+  const bundles = await store.fetchBundles({
+    batchSize: 2,
+    recentMemoryLimit: 2,
+    laneMemoryLimit: 2,
+    priorDraftLimit: 2,
+    publishedHistoryLimit: 2,
+  })
+
+  assert.deepEqual(rpcCalls, [[MANAGED_ENTITY_ID]])
+  assert.equal(bundles.length, 1)
+  assert.deepEqual(bundles[0]?.entity, {
+    id: MANAGED_ENTITY_ID,
+    slug: 'private-slug',
+    name: 'Private Entity',
+    type: 'asset',
+    aliases: ['PE'],
+    summary: 'Managed only',
+    status: 'active',
+    show_in_carousel: false,
+    metadata: { source: 'managed_v4' },
+    created_at: NOW,
+    updated_at: NOW,
+  })
+
+  const decision = normalizeEditorDraftDecision({ action: 'draft_post' }, bundles[0]!)
+  const input = draftInputFromDecision(bundles[0]!, decision, NOW, 'test-backend', null)
+  const written = await store.upsertDrafts([input])
+
+  assert.equal(written.length, 1)
+  assert.deepEqual(
+    savedDrafts.map((draft) => [draft.entityId, draft.entitySlug, draft.entityName]),
+    [[MANAGED_ENTITY_ID, 'private-slug', 'Private Entity']],
+  )
+})
+
+test('Editor does not use managed entities that are not active', async () => {
+  const rpcCalls: string[][] = []
+  const store = new SupabaseEditorDraftStore(
+    managedDatabase([managedEntityRow('review')], rpcCalls),
+    pipelineStore(),
+    managedEntityReader(),
+  )
+
+  const bundles = await store.fetchBundles({
+    batchSize: 2,
+    recentMemoryLimit: 2,
+    laneMemoryLimit: 2,
+    priorDraftLimit: 2,
+    publishedHistoryLimit: 2,
+  })
+
+  assert.deepEqual(rpcCalls, [[MANAGED_ENTITY_ID]])
+  assert.deepEqual(bundles, [])
 })

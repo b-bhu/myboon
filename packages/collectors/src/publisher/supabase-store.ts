@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PipelineStore } from '../pipeline-store/store'
+import { fetchActiveManagedEntities } from '../entity-manager/managed-entity-catalog'
+import type { ManagedEntityRow } from '../entity-manager/managed-entity-catalog'
 import {
   ENTITY_KNOWLEDGE_MAX_PAGE_SIZE,
 } from '../entity-manager/entity-knowledge-reader'
@@ -162,7 +164,9 @@ export class SupabasePublisherStore implements PublisherStore {
       p_entity_id: entityId,
     })
     if (redirectError) throw new Error(`publisher entity redirect lookup failed: ${redirectError.message}`)
-    if (typeof resolved !== 'string' || resolved.trim() === '') return null
+    if (typeof resolved !== 'string' || resolved.trim() === '') {
+      return this.fetchManagedEntity(entityId)
+    }
     const resolvedEntityId = resolved
     const { data, error } = await this.db
       .from('entities')
@@ -171,7 +175,20 @@ export class SupabasePublisherStore implements PublisherStore {
       .maybeSingle()
 
     if (error) throw new Error(`publisher entity fetch failed: ${error.message}`)
-    return data ? normalizeEntity(data) : null
+    return data ? normalizeEntity(data) : this.fetchManagedEntity(entityId)
+  }
+
+  private async fetchManagedEntity(entityId: string): Promise<PublisherEntityRecord | null> {
+    // The original entity_id covers the single id space: managed article-only
+    // entities have no redirect, so it is safe even after a resolved one.
+    let rows: ManagedEntityRow[]
+    try {
+      rows = await fetchActiveManagedEntities(this.db, [entityId])
+    } catch (lookupError) {
+      const detail = lookupError instanceof Error ? lookupError.message : 'unknown error'
+      throw new Error(`publisher entity fetch failed: ${detail}`, { cause: lookupError })
+    }
+    return rows.length > 0 ? normalizeEntity(rows[0]) : null
   }
 
   /**
