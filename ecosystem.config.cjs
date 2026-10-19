@@ -291,6 +291,10 @@ module.exports = {
         FEED_V3_RESEARCH_RUNTIME_STATUS_PATH: '.data/feed-v3-research-runtime-status.json',
         FEED_V3_RESEARCH_RUNTIME_STATUS_STALE_MS: '60000',
         FEED_V3_RUNTIME_CONTROL_PATH: '.data/feed-v3-runtime-control.json',
+        // #343: 'true' saves below-floor article placements as uncertain
+        // memberships instead of holding them. Stays 'false' until Bucket says
+        // yes; PM2 env wins over collectors/.env, so only this line turns it on.
+        ARTICLE_PLACEMENT_SAVE_UNCERTAIN: 'false',
       },
     },
     {

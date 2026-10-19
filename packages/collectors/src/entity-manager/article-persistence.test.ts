@@ -492,3 +492,51 @@ test('persistence holds a no-match creation proposal equivalent to an existing c
   assert.equal(hold.missingDependency, 'entity_resolution')
   assert.equal(hold.reason, 'creation proposal for Bitcoin (BTC) is equivalent to an existing identity')
 })
+
+// #343 save-uncertain path: a below-floor placement that Research saved as
+// uncertain reaches the writer with its flag and confidence intact, and the
+// #341 librarian keeps the entity summary instead of applying it.
+test('persistence commits a below-floor placement with its uncertain flag and confidence (#343)', async () => {
+  const { writer, commits } = writerCapturingCommit()
+  const primary = {
+    ...currentProposal('primary', 'entity-primary', ITEM_PRIMARY),
+    placement: { ...decision('entity-primary'), confidence: 0.44, probabilities: { 'entity-primary': 0.44, other: 0.56 } },
+    placementUncertain: true, placementConfidence: 0.44,
+  }
+  const input = currentPacket([primary], decision('new_information'))
+  assert.doesNotThrow(() => validateResearchPacket(input))
+  const result = await new ArticlePersistenceProcessor(writer).persist({
+    packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+  })
+  assert.equal(result, 'written')
+  assert.equal(commits.length, 1)
+  const committed = commits[0]!.packet as ArticleResearchPacketV1
+  assert.equal(committed.memberships[0]!.placementUncertain, true)
+  assert.equal(committed.memberships[0]!.placementConfidence, 0.44)
+  assert.deepEqual(commits[0]!.summaryUpdates, [])
+  assert.deepEqual(
+    (commits[0]!.summaryDecisions as Array<{ outcome: string, reason: string }>).map(({ outcome, reason }) => ({ outcome, reason })),
+    [{ outcome: 'kept', reason: 'placement_uncertain' }],
+  )
+})
+
+test('commitArticle sends the uncertain flag and confidence to the SQL writer unchanged (#343)', async () => {
+  const { PostgresKnowledgeOperationWriter } = await import('./postgres-knowledge-writer')
+  const writer = new PostgresKnowledgeOperationWriter({ connectionString: 'postgresql://writer_fixture@localhost/fixture' })
+  let captured: unknown
+  ;(writer as unknown as { pool: unknown }).pool = {
+    query: async (_sql: string, params: unknown[]) => { captured = params[1]; return { rows: [{ result: { ok: true } }] } },
+    end: async () => {},
+  }
+  const uncertain = { ...currentProposal('primary', 'entity-primary', ITEM_PRIMARY), placementUncertain: true, placementConfidence: 0.44 }
+  const certain = { ...currentProposal('related', 'entity-related', ITEM_RELATED), placementUncertain: false, placementConfidence: 0.91 }
+  await writer.commitArticle({
+    operationId: 'op-1', workId: 'work-1', owner: 'owner', epoch: 1, packet: currentPacket([uncertain, certain], decision('new_information')),
+    contextDigest: 'digest', contextWatermark: 'wm', targetRevisions: {}, entities: [], itemId: 'item-1', duplicateTarget: null,
+    summaryUpdates: [], summaryDecisions: [],
+  })
+  const sent = (typeof captured === 'string' ? JSON.parse(captured) : captured) as { plan: { effect: Record<string, unknown> } }
+  const memberships = sent.plan.effect.memberships as Array<{ placementUncertain?: boolean, placementConfidence?: number }>
+  assert.deepEqual(memberships.map(({ placementUncertain, placementConfidence }) => ({ placementUncertain, placementConfidence })),
+    [{ placementUncertain: true, placementConfidence: 0.44 }, { placementUncertain: false, placementConfidence: 0.91 }])
+})
