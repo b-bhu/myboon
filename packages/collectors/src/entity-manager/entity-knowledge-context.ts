@@ -109,24 +109,40 @@ export class EntityAdmissionKnowledgeValidationError extends TypeError {
 }
 
 /**
- * Explicit read-only compatibility projection for legacy `entities.type`.
- * Ambiguous values do not silently become `topic`; reviewed knowledge may
- * override `unclassified` without rewriting the legacy row.
+ * Explicit read-only compatibility projection for legacy `entities.type`, kept
+ * pair-for-pair equal to the SQL managed_knowledge_private.entity_kind_v1 CASE
+ * in supabase/migrations/20261019230000_entity_kind_v1.sql (the parity test
+ * reads that CASE and asserts every pair). The entity-writer boundary passes
+ * every NEW entity's type through this map before it reaches a writer binding.
+ * Anything unmapped is `unclassified`; reviewed knowledge may override
+ * `unclassified` without rewriting the legacy row.
  */
 export function legacyEntityTypeToKindV1(type: string): EntityKindV1 {
-  const normalized = type.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  // Mirrors the SQL normalisation exactly: lower(), then Postgres trim() (SPACES
+  // only), then every run of whitespace/hyphens becomes one '_'.
+  const normalized = type.toLowerCase().replace(/^ +| +$/g, '').replace(/[\s-]+/g, '_')
   switch (normalized) {
     case 'person':
       return 'person'
     case 'organization':
     case 'company':
+    case 'group':
+    case 'exchange':
+    case 'government_agency':
+    case 'data_provider':
       return 'organization'
     case 'network':
       return 'network'
     case 'protocol':
+    case 'project':
+    case 'crypto_project':
       return 'protocol'
     case 'product':
     case 'ai_model':
+    case 'platform':
+    case 'software_application':
+    case 'ai_coding_tool':
+    case 'ai_agent_app':
       return 'product'
     case 'asset':
     case 'commodity':
@@ -134,6 +150,9 @@ export function legacyEntityTypeToKindV1(type: string): EntityKindV1 {
     case 'index':
     case 'instrument':
     case 'asset_class':
+    case 'cryptoasset':
+    case 'financial_instrument':
+    case 'exchange_traded_fund':
       return 'asset'
     case 'country':
     case 'nation':
@@ -142,6 +161,8 @@ export function legacyEntityTypeToKindV1(type: string): EntityKindV1 {
     case 'location':
       return 'place'
     case 'event':
+    case 'conflict':
+    case 'election':
       return 'event'
     case 'topic':
     case 'market_theme':
@@ -149,15 +170,18 @@ export function legacyEntityTypeToKindV1(type: string): EntityKindV1 {
     case 'indicator':
     case 'geopolitical_topic':
     case 'event_market':
+    case 'market':
       return 'topic'
     case 'regulation':
     case 'legislation':
     case 'regulation_or_initiative':
+    case 'proposed_government_payment_program':
       return 'regulation'
-    // `project` and `platform` are intentionally ambiguous: either can refer
-    // to an organization, protocol, product, or umbrella brand.
-    case 'project':
-    case 'platform':
+    case 'unclassified':
+    case 'trader':
+    case 'wallet':
+    case 'wallet_or_trader':
+      return 'unclassified'
     default:
       return 'unclassified'
   }

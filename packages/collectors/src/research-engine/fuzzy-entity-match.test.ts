@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  decideFuzzyEntityMatch, fuzzyTypesCompatible, FUZZY_ATTACH_MIN_SIMILARITY, FUZZY_HOLD_MIN_SIMILARITY, FUZZY_MIN_KEY_LENGTH,
+  decideFuzzyEntityMatch, fuzzyCompareKey, fuzzyTypesCompatible, stripLegalSuffixKey, FUZZY_ATTACH_MIN_SIMILARITY, FUZZY_HOLD_MIN_SIMILARITY, FUZZY_MIN_KEY_LENGTH,
   type FuzzyEntityCandidate,
 } from './fuzzy-entity-match'
 import { entityIdentityKey } from '../entity-manager/identity-key'
@@ -51,7 +51,11 @@ test('#342 grounding compatibility: unknown or unclassified types are compatible
   assert.equal(fuzzyTypesCompatible('country', 'geo'), true)
   assert.equal(fuzzyTypesCompatible('asset', 'person'), false)
   assert.equal(fuzzyTypesCompatible(null, 'person'), true)
-  assert.equal(fuzzyTypesCompatible('project', 'person'), true)
+  // #342 PR-4: the deterministic kind map resolves project -> protocol and
+  // platform -> product, so a project hint no longer matches a person but
+  // does match a protocol entity.
+  assert.equal(fuzzyTypesCompatible('project', 'person'), false)
+  assert.equal(fuzzyTypesCompatible('project', 'protocol'), true)
   assert.equal(fuzzyTypesCompatible('person', null), true)
 })
 
@@ -68,4 +72,45 @@ test('#342 the highest attach-band candidate wins over hold-band ones', () => {
   const d = decideFuzzyEntityMatch(token, [row('Token2049', 0.7), row('Token2049 Singapore', 0.86)])
   assert.equal(d.kind, 'attach_candidate')
   if (d.kind === 'attach_candidate') assert.equal(d.candidate.name, 'Token2049 Singapore')
+})
+
+test('#342 PR-4 legal-suffix compare keys: Metaplanet Inc vs Metaplanet attaches', () => {
+  const d = decideFuzzyEntityMatch({ name: 'Metaplanet Inc', type: 'organization' }, [
+    row('Metaplanet', 0.6667, 'organization'),
+  ])
+  assert.equal(d.kind, 'attach_candidate')
+  if (d.kind === 'attach_candidate') assert.equal(d.candidate.name, 'Metaplanet')
+  // ...but an incompatible type still holds before any attach.
+  assert.equal(decideFuzzyEntityMatch({ name: 'Metaplanet Inc', type: 'organization' }, [
+    row('Metaplanet', 0.6667, 'person'),
+  ]).kind, 'hold')
+})
+
+test('#342 PR-4 the CTO no-band measured pairs still create', () => {
+  const pairs: readonly (readonly [string, string, number])[] = [
+    ['Bitcoin Cash', 'Bitcoin', 0.539],
+    ['USDGO', 'USDG', 0.571],
+    ['Solana DvP', 'Solana', 0.546],
+    ['Government of Israel', 'Government of Iran', 0.565],
+  ]
+  for (const [leftName, rightName, similarity] of pairs) {
+    const d = decideFuzzyEntityMatch({ name: rightName, type: 'asset' }, [row(leftName, similarity, 'asset')])
+    assert.equal(d.kind, 'none', `${leftName} vs ${rightName} at ${similarity}`)
+  }
+})
+
+test('#342 PR-4 stripLegalSuffixKey removes exactly one trailing inc/ltd/corp/labs token', () => {
+  assert.equal(fuzzyCompareKey('Metaplanet Inc'), fuzzyCompareKey('Metaplanet'))
+  assert.equal(fuzzyCompareKey('Metaplanet Inc.'), fuzzyCompareKey('Metaplanet'))
+  assert.equal(stripLegalSuffixKey('Acme, Inc.'), 'Acme')
+  assert.equal(stripLegalSuffixKey('Stacks Labs'), 'Stacks')
+  assert.equal(stripLegalSuffixKey('Acme corp'), 'Acme')
+  // Only when a non-empty base remains; and never a fused word or inner token.
+  assert.equal(stripLegalSuffixKey('Inc.'), 'Inc.')
+  assert.equal(entityIdentityKey(stripLegalSuffixKey('Inc.')), 'inc')
+  assert.equal(entityIdentityKey('Xinc'), 'xinc')
+  assert.equal(fuzzyCompareKey('Acme Incorporated'), 'acmeincorporated')
+  assert.equal(fuzzyCompareKey('Bitcoin Cash'), 'bitcoincash')
+  // The stored name_key comparison is untouched.
+  assert.equal(entityIdentityKey('Metaplanet Inc'), 'metaplanetinc')
 })

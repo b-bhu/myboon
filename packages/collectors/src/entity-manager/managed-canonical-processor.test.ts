@@ -89,3 +89,16 @@ test('the grounding skip suffix drops whole entries to keep the hold reason boun
   assert.ok(reason.length < 600)
   assert.ok(reason.includes('; grounding: very_long_reason_name_padding_0=1'), reason)
 })
+
+test('a created managed binding keeps the raw hint type and its identity key', () => {
+  const result = groundManagedEntities(context([contextEntity()]), [hint({
+    name: 'DefiLlama',
+    type: 'data provider',
+    role: 'secondary_subject',
+    aliases: [],
+  })])
+
+  assert.equal(result.entities.length, 1)
+  assert.equal(result.entities[0]!.type, 'data provider')
+  assert.equal(result.entities[0]!.identityKey, 'data provider:defillama')
+})

@@ -91,6 +91,9 @@ export class ManagedCanonicalPacketProcessor implements CanonicalPacketProcessor
     if (!['ready_for_entity', 'resolved_without_new_item'].includes(handoff.readiness.outcome)) {
       throw heldFailure('Research has not admitted this packet for Entity processing')
     }
+    // Packet and binding types stay raw so the writer_v1 source digest and
+    // packet-grounding equality hold on retry; entity_fill_columns_v1
+    // (20261019230000) maps the stored type column.
     await this.options.writer.saveResearchSource(input.canonicalPacket, handoff)
     if (isArticleResearchPacket(input.canonicalPacket)) {
       const result = await new ArticlePersistenceProcessor(this.options.writer).persist({
