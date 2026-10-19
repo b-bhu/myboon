@@ -192,9 +192,19 @@ test('article migration and deterministic persistence preserve shared membership
       assert.deepEqual((await database.admin.query('select * from public.entity_memories order by id')).rows, before)
     })
     await t.test('exact identities survive more than 32 broad matches and creation ignores irrelevant candidate overflow', async () => {
-      await database.admin.query(`INSERT INTO public.entities(id,slug,name,type,aliases,summary)
-        SELECT ('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'noise-'||n,'Background '||n,'topic','[]','Bitcoin and general finance news'
-        FROM generate_series(1,40) n`)
+      // #336 PR B: broad supplementary candidates now come from the private
+      // trigram index (exact for public rows), so the >32 candidate flood is
+      // seeded as private 'Finance N' rows whose name_key trigram-matches the
+      // 'finance' label (similarity 0.636-0.700) without exact-matching it;
+      // 'Bitcoin' stays exact on the 'Bitcoin' public identity.
+      await database.admin.query(`INSERT INTO managed_knowledge_private.leases(operation_id,owner,epoch,expires_at)
+        VALUES('progression-v2:'||repeat('c',64),'fixture-336-prb',1,now()+interval '1 hour') ON CONFLICT DO NOTHING;
+      INSERT INTO managed_knowledge_private.entities(id,identity_key,binding,created_operation,name,slug,type,aliases,summary,status,show_in_carousel,metadata,updated_at,revision)
+        SELECT ('11111111-1111-4000-8000-'||lpad(n::text,12,'0'))::uuid,'fixture:noise:'||n,
+          jsonb_build_object('id',('11111111-1111-4000-8000-'||lpad(n::text,12,'0'))::uuid,'name','Finance '||n,'slug','finance-'||n,'type','topic','aliases','[]'),
+          'progression-v2:'||repeat('c',64),'Finance '||n,'finance-'||n,'topic','[]','A private fixture candidate '||n,
+          'active',false,'{}',now(),1
+        FROM generate_series(1,40) n ON CONFLICT (id) DO NOTHING`)
       const ranked = await writer!.articleContext({ labels: ['Bitcoin', 'finance'], historyMode: 'targeted', limit: 32 })
       assert.equal(ranked.entities[0].id, SECOND_ID)
       assert.equal(ranked.candidateTruncated, true)
