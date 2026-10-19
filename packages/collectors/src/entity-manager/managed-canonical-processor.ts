@@ -7,6 +7,7 @@ import type { InferenceTelemetry } from '../inference-gateway/types'
 import { CANONICAL_ENTITY_PLANNING_BUDGET, type CanonicalEntityPlanningGateway } from './canonical-planner'
 import { withCanonicalEntityTelemetry } from './canonical-processor'
 import { entityHintAuthorizesPrimarySelection, groundEntityCandidates } from './entity-grounding'
+import { legacyEntityTypeToKindV1 } from './entity-knowledge-context'
 import { isBannedEntitySlug } from './canon'
 import { entityIdentityKeys, entityIdentityLookupLabels } from './identity-key'
 import { knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
@@ -91,17 +92,29 @@ export class ManagedCanonicalPacketProcessor implements CanonicalPacketProcessor
     if (!['ready_for_entity', 'resolved_without_new_item'].includes(handoff.readiness.outcome)) {
       throw heldFailure('Research has not admitted this packet for Entity processing')
     }
-    await this.options.writer.saveResearchSource(input.canonicalPacket, handoff)
-    if (isArticleResearchPacket(input.canonicalPacket)) {
+    // #342 PR-4 writer boundary: the managed writer touches hint types twice -
+    // writer_v1 stores the packet's entityHints and then requires the
+    // packet-grounding equality lower(hint type) = lower(binding type) for a
+    // created entity, and the created binding's type column lands in
+    // managed_knowledge_private.entities.type whose CHECK is the eleven kinds.
+    // Map the packet hints AND the created binding types through
+    // legacyEntityTypeToKindV1 so both sides stay equal and stored types are
+    // always kinds. Article packets must stay untouched (their bindings are
+    // mapped in article-persistence.ts) because article_writer_v1 compares the
+    // saved packet with the plan byte-for-byte.
+    const canonicalPacket = isArticleResearchPacket(input.canonicalPacket)
+      ? input.canonicalPacket
+      : mapEntityHintTypesToKinds(input.canonicalPacket)
+    await this.options.writer.saveResearchSource(canonicalPacket, handoff)
+    if (isArticleResearchPacket(canonicalPacket)) {
       const result = await new ArticlePersistenceProcessor(this.options.writer).persist({
-        packet: input.canonicalPacket,
+        packet: canonicalPacket,
         source: input.work.sourceType as 'news' | 'polymarket',
         owner: this.options.owner,
         signal: input.signal,
       })
       return { entityTelemetry: null, memoryOutcome: result === 'written' ? 'written' : 'skipped' }
     }
-    const canonicalPacket = input.canonicalPacket
     const hints = deriveEntityHintClaimRefs(canonicalPacket.entityHints, canonicalPacket.claims)
     // Exact DB lookup labels expand each hint name/alias with its base name
     // ('Bitcoin (BTC)' also looks up 'Bitcoin') and bound the overflow check.
@@ -281,7 +294,7 @@ export function groundManagedEntities(context: ManagedResearchContext, hints: En
       skippedByHint.set(hintIndex,'existing_identity_collision')
       continue
     }
-    const type = hint.type.trim().toLocaleLowerCase('en-US')
+    const type = legacyEntityTypeToKindV1(hint.type.trim().toLocaleLowerCase('en-US'))
     const slug = normalizeSlug(name,name)
     if (!name || name.length > 200 || isBannedEntitySlug(slug)) { skippedByHint.set(hintIndex,'invalid_or_banned_name'); continue }
     const identityKey = `${type}:${name.toLocaleLowerCase('en-US')}`
@@ -305,6 +318,24 @@ export function groundManagedEntities(context: ManagedResearchContext, hints: En
     for (const reason of reasons) skipped.set(reason,(skipped.get(reason) ?? 0) + 1)
   }
   return { entities,claimsByEntity,skipped }
+}
+
+/**
+ * #342 PR-4 writer boundary: every packet hint type the managed writer compares
+ * against a binding (writer_v1 packet-grounding equality) or stores as a created
+ * entity's type column is passed through legacyEntityTypeToKindV1, so the saved
+ * packet and the created bindings carry the same eleven-kind values. Idempotent
+ * on already mapped input; hint names, aliases and claim/evidence refs are
+ * untouched.
+ */
+export function mapEntityHintTypesToKinds(packet: ResearchPacketV1): ResearchPacketV1 {
+  return {
+    ...packet,
+    entityHints: packet.entityHints.map((hint) => ({
+      ...hint,
+      type: hint.type === null ? null : legacyEntityTypeToKindV1(hint.type),
+    })),
+  }
 }
 
 function managedMembershipRole(role: string | null): boolean {

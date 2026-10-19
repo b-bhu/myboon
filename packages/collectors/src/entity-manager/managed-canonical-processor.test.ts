@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { EntityHint } from '../signal-platform/contracts'
-import { groundingSkipSuffix, groundManagedEntities } from './managed-canonical-processor'
+import type { EntityHint, ResearchPacketV1 } from '../signal-platform/contracts'
+import { groundingSkipSuffix, groundManagedEntities, mapEntityHintTypesToKinds } from './managed-canonical-processor'
 import type { ManagedEntityBinding, ManagedResearchContext } from './postgres-knowledge-writer'
 
 function contextEntity(overrides: Partial<ManagedEntityBinding> = {}): ManagedEntityBinding {
@@ -88,4 +88,36 @@ test('the grounding skip suffix drops whole entries to keep the hold reason boun
 
   assert.ok(reason.length < 600)
   assert.ok(reason.includes('; grounding: very_long_reason_name_padding_0=1'), reason)
+})
+
+test('#342 PR-4 a created managed binding carries the mapped kind as its type', () => {
+  const result = groundManagedEntities(context([contextEntity()]), [hint({
+    name: 'DefiLlama',
+    type: 'data provider',
+    role: 'secondary_subject',
+    aliases: [],
+  })])
+
+  assert.equal(result.entities.length, 1)
+  assert.equal(result.entities[0]!.type, 'organization')
+  assert.equal(result.entities[0]!.identityKey, 'organization:defillama')
+})
+
+test('#342 PR-4 hint types in the saved packet are mapped to the eleven kinds', () => {
+  const packet = {
+    entityHints: [
+      hint({ name: 'DefiLlama', type: 'data provider', role: 'primary' }),
+      hint({ name: 'RunUp', type: 'project', role: null }),
+      hint({ name: 'Ghost', type: null, role: null }),
+      hint({ name: 'Weird', type: 'made-up-kind', role: null }),
+      hint({ name: 'Already Kind', type: 'regulation', role: null }),
+    ],
+  } as unknown as ResearchPacketV1
+  const mapped = mapEntityHintTypesToKinds(packet)
+
+  assert.deepEqual(mapped.entityHints.map((item) => item.type), ['organization', 'protocol', null, 'unclassified', 'regulation'])
+  // Names, aliases and claim/evidence refs are untouched.
+  assert.equal(mapped.entityHints[0]!.name, 'DefiLlama')
+  assert.deepEqual(mapped.entityHints[0]!.claimRefs, ['claim-1'])
+  assert.equal(mapped.entityHints[0]!.source, 'research')
 })

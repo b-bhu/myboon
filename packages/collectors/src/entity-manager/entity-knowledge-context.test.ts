@@ -193,14 +193,38 @@ test('scoped Solana, Jupiter, and Polymarket examples form bounded reviewed admi
   assert.ok(polymarket?.classifications.some((item) => item.conceptId === 'sector:prediction-markets'))
 })
 
-test('legacy type projection is explicit and leaves ambiguous project/platform values unclassified', () => {
+test('legacy type projection maps every writer value onto the eleven kinds', () => {
   assert.equal(legacyEntityTypeToKindV1('company'), 'organization')
   assert.equal(legacyEntityTypeToKindV1('protocol'), 'protocol')
   assert.equal(legacyEntityTypeToKindV1('commodity'), 'asset')
   assert.equal(legacyEntityTypeToKindV1('nation'), 'place')
-  assert.equal(legacyEntityTypeToKindV1('project'), 'unclassified')
-  assert.equal(legacyEntityTypeToKindV1('platform'), 'unclassified')
   assert.equal(legacyEntityTypeToKindV1('made-up-value'), 'unclassified')
+  assert.equal(legacyEntityTypeToKindV1(''), 'unclassified')
+})
+
+test('#342 PR-4: all 42 prod legacy types map to the same kinds as the SQL CASE', () => {
+  const expected: readonly (readonly [string, EntityKindV1])[] = [
+    ['organization', 'organization'], ['asset', 'asset'], ['event', 'event'], ['person', 'person'],
+    ['topic', 'topic'], ['protocol', 'protocol'], ['project', 'protocol'], ['conflict', 'event'],
+    ['country', 'place'], ['product', 'product'], ['company', 'organization'], ['regulation', 'regulation'],
+    ['commodity', 'asset'], ['asset_class', 'asset'], ['election', 'event'], ['trader', 'unclassified'],
+    ['place', 'place'], ['cryptoasset', 'asset'], ['group', 'organization'], ['index', 'asset'],
+    ['geopolitical_topic', 'topic'], ['platform', 'product'], ['wallet_or_trader', 'unclassified'],
+    ['market', 'topic'], ['wallet', 'unclassified'], ['currency', 'asset'], ['ai coding tool', 'product'],
+    ['financial_instrument', 'asset'], ['ai_model', 'product'], ['market_theme', 'topic'],
+    ['ai agent app', 'product'], ['nation', 'place'], ['crypto_project', 'protocol'], ['indicator', 'topic'],
+    ['proposed government payment program', 'regulation'], ['government agency', 'organization'],
+    ['exchange', 'organization'], ['software application', 'product'], ['data provider', 'organization'],
+    ['exchange-traded fund', 'asset'], ['sector', 'topic'], ['legislation', 'regulation'],
+  ]
+  assert.equal(expected.length, 42)
+  for (const [type, kind] of expected) assert.equal(legacyEntityTypeToKindV1(type), kind, type)
+  // The same values with the SQL normalisation's separator variants agree.
+  for (const [type, kind] of expected) {
+    assert.equal(legacyEntityTypeToKindV1(type.replace(/_/g, ' ')), kind, type)
+    assert.equal(legacyEntityTypeToKindV1(type.replace(/_/g, '-')), kind, type)
+    assert.equal(legacyEntityTypeToKindV1(type.toUpperCase()), kind, type)
+  }
 })
 
 test('static provider returns only requested reviewed profiles and defensive copies', async () => {

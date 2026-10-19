@@ -6,6 +6,7 @@ import { deriveManagedItemId, deriveProgressionOperationId } from './progression
 import { KnowledgeOperationStaleTargetError, knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
 import type { ManagedArticleContext, ManagedEntityBinding, PostgresKnowledgeOperationWriter } from './postgres-knowledge-writer'
 import { entityIdentityKeys } from './identity-key'
+import { legacyEntityTypeToKindV1 } from './entity-knowledge-context'
 import { decideEntitySummaryUpdates, logEntitySummaryDecisions } from './entity-summary-update'
 import { parseArticlePlacementConfidenceFloors } from '../research-engine/article-placement'
 
@@ -224,8 +225,13 @@ function resolveMemberships(packet: ArticlePacket, context: ManagedArticleContex
     }
     if (!seen.has(id)) {
       seen.add(id)
+      // #342 PR-4: the stored `type` column is the eleven-kind EntityKindV1 set
+      // (supabase/migrations/20261019230000 CHECK), so the writer boundary maps
+      // the proposal's legacy free-text type before it reaches the binding. The
+      // deterministic identityKey keeps its raw-type derivation so already
+      // created entities keep their id on re-proposal.
       entities.push({
-        id, slug: slug(proposal.creationProposal.name), name: proposal.creationProposal.name.trim(), type: proposal.creationProposal.type.trim(),
+        id, slug: slug(proposal.creationProposal.name), name: proposal.creationProposal.name.trim(), type: legacyEntityTypeToKindV1(proposal.creationProposal.type.trim()),
         aliases: unique(proposal.creationProposal.aliases), summary: proposal.creationProposal.summary.trim(), status: 'active', show_in_carousel: false,
         metadata: { scope: proposal.creationProposal.scope, articleCreated: true }, revision: 'absent', catalogEntityId: null, identityKey,
       })
