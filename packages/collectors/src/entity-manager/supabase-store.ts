@@ -89,13 +89,51 @@ function normalizeMemory(row: unknown): EntityMemoryRecord {
   }
 }
 
+/**
+ * Resolver writeExtraction reads the full entity catalog once per packet for
+ * the shortlist and the near-duplicate guardrail. Real callers construct one
+ * store per runner cycle and loop over up to ~20 packets, so reads collapse
+ * from per-packet to per-cycle (plus TTL refreshes for long cycles). Bounded:
+ * one snapshot of at most the loaded limit rows. A load failure throws
+ * exactly as before and never poisons the cache; the resolver still fails
+ * open. Entities written by OTHER processes stay invisible until the TTL
+ * refresh, bounded by this window; see refreshCatalogCache for how this
+ * process's own writes stay visible immediately.
+ */
+const DEFAULT_CATALOG_CACHE_TTL_MS = 5 * 60_000
+
+interface CatalogCacheEntry {
+  entities: EntityRecord[]
+  loadedLimit: number
+  loadedAtMs: number
+}
+
 export class SupabaseEntityMemoryStore implements EntityMemoryStore {
+  private catalogCache: CatalogCacheEntry | null = null
+
   constructor(
     private readonly db: SupabaseClient,
     private readonly now: () => Date = () => new Date(),
+    private readonly catalogCacheTtlMs: number = DEFAULT_CATALOG_CACHE_TTL_MS,
   ) {}
 
   async listEntities(limit = 1000): Promise<EntityRecord[]> {
+    const cached = this.catalogCache
+    if (
+      cached
+      && cached.loadedLimit >= limit
+      && this.now().getTime() - cached.loadedAtMs <= this.catalogCacheTtlMs
+    ) {
+      return cached.entities.slice(0, limit)
+    }
+    const entities = await this.loadEntities(limit)
+    // Cache only successful loads: a failed read throws (fail-open behavior
+    // unchanged) and leaves the previous snapshot untouched for the next call.
+    this.catalogCache = { entities, loadedLimit: limit, loadedAtMs: this.now().getTime() }
+    return entities
+  }
+
+  private async loadEntities(limit: number): Promise<EntityRecord[]> {
     let result = await this.db
       .from('entities')
       .select(ENTITY_SELECT)
@@ -113,6 +151,42 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     const { data, error } = result
     if (error) throw new Error(`entity catalog list failed: ${error.message}`)
     return (data ?? []).map(normalizeEntity)
+  }
+
+  /**
+   * Fold the authoritative rows a successful entity write just returned into
+   * the catalog cache, so a freshly created or updated entity is visible to
+   * the next packet's near-duplicate guardrail without a reload. Replace in
+   * place when the id is already in the cached page (page membership depends
+   * on status and created_at, not content); drop rows retired to a
+   * non-active status so the cache matches the read's status filter; append
+   * new rows only while the page is not full, because a fresh read returns
+   * the oldest `loadedLimit` active rows ascending by created_at and a new
+   * row belongs beyond a full page. Writers outside this store instance stay
+   * invisible until the TTL refresh.
+   */
+  private refreshCatalogCache(rows: readonly EntityRecord[]): void {
+    const cached = this.catalogCache
+    if (!cached || rows.length === 0) return
+    let entities = cached.entities
+    let changed = false
+    for (const row of rows) {
+      const index = entities.findIndex((entity) => entity.id === row.id)
+      if (index >= 0) {
+        if (!changed) {
+          entities = [...entities]
+          changed = true
+        }
+        if (row.status === 'active') entities[index] = row
+        else entities.splice(index, 1)
+        continue
+      }
+      if (row.status === 'active' && entities.length < cached.loadedLimit) {
+        entities = [...entities, row]
+        changed = true
+      }
+    }
+    if (changed) this.catalogCache = { ...cached, entities }
   }
 
   async findEntities(slugs: string[], aliases: string[]): Promise<EntityRecord[]> {
@@ -175,7 +249,9 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
       throw new Error(`canonical entity creation failed: ${error.message}`)
     }
     if ((data ?? []).length !== 1) throw new Error('canonical entity creation returned an invalid row count')
-    return normalizeEntity(data![0])
+    const created = normalizeEntity(data![0])
+    this.refreshCatalogCache([created])
+    return created
   }
 
   async createEntities(entities: EntityInput[]): Promise<EntityRecord[]> {
@@ -194,7 +270,9 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     }
     const { data, error } = result
     if (error) throw new Error(`entity upsert failed: ${error.message}`)
-    return (data ?? []).map(normalizeEntity)
+    const upserted = (data ?? []).map(normalizeEntity)
+    this.refreshCatalogCache(upserted)
+    return upserted
   }
 
   async updateEntity(entity: EntityRecord): Promise<EntityRecord> {
@@ -226,7 +304,9 @@ export class SupabaseEntityMemoryStore implements EntityMemoryStore {
     }
     const { data, error } = result
     if (error) throw new Error(`entity update failed: ${error.message}`)
-    return normalizeEntity(data)
+    const updated = normalizeEntity(data)
+    this.refreshCatalogCache([updated])
+    return updated
   }
 
   async findMemories(keys: MemoryLookupKey[]): Promise<EntityMemoryRecord[]> {
@@ -482,6 +562,7 @@ export const __testing = {
   ENTITY_SELECT,
   LEGACY_ENTITY_SELECT,
   MEMORY_SELECT,
+  DEFAULT_CATALOG_CACHE_TTL_MS,
   normalizeEntity,
   normalizeMemory,
   explicitMemoryIdentity,
