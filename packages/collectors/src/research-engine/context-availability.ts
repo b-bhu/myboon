@@ -86,8 +86,17 @@ export class ArticleContextAvailabilityGate {
     this.nextProbeAt = wasAvailable ? retryAt : Math.max(this.nextProbeAt, retryAt)
   }
 
-  /** Only real successful work proves the database healthy; a probe cannot. */
-  recordHealthy(): void {
+  /** Identity of the invalidation curve; captured once per cycle before its workers race. */
+  get currentGeneration(): number { return this.generation }
+
+  /**
+   * Only real successful work proves the database healthy; a probe cannot.
+   * Ignored unless the gate is still available and the generation captured at
+   * cycle start is current: a batch landing after a sibling's invalidate()
+   * must not erase the back-off step that failure just advanced (Ref #407).
+   */
+  recordHealthy(generation: number): void {
+    if (this.available !== true || generation !== this.generation) return
     this.consecutiveFailures = 0
   }
 

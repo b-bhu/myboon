@@ -26,7 +26,7 @@ test('storage outage gates claims, backs off probes and resumes only after a suc
   assert.equal(probes, 2)
   // A passing probe no longer clears the failure count; real work does (Ref #336).
   assert.equal(gate.snapshot().consecutiveFailures, 1)
-  gate.recordHealthy()
+  gate.recordHealthy(gate.currentGeneration)
   assert.equal(gate.snapshot().consecutiveFailures, 0)
   gate.invalidate()
   assert.equal(gate.claimsAllowed, false)
@@ -137,11 +137,40 @@ test('invalidation keeps growing the retry while probes pass; recordHealthy rese
   assert.equal(await gate.check(), true)
   gate.invalidate()
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 120_000)
-  // Record healthy only counts while the gate is up again: a passing probe
-  // plus recordHealthy put the next invalidate back on the first step.
-  gate.recordHealthy()
+  // Record healthy only counts while the gate is up again: after the passing
+  // probe reopens it, real work resets the curve so the next invalidate is
+  // back on the first step.
   now += 120_000
   assert.equal(await gate.check(), true)
+  gate.recordHealthy(gate.currentGeneration)
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
+})
+
+test('recordHealthy resets only real work of the captured generation while available (Ref #407)', async () => {
+  let now = 0
+  const gate = new ArticleContextAvailabilityGate(async () => undefined, () => now, undefined, EXACT_JITTER)
+  await gate.check()
+  const stale = gate.currentGeneration
+  gate.invalidate()
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  // While the gate is down nothing counts, whether the generation is stale or current.
+  gate.recordHealthy(stale)
+  gate.recordHealthy(gate.currentGeneration)
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  now += 30_000
+  await gate.check()
+  // With the gate up again, pre-invalidate work stays stale:
+  gate.recordHealthy(stale)
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  // ...and the skipped reset keeps the curve on step two for the next failure:
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 60_000)
+  // After the gate recovers, current-generation work resets it to step one:
+  now += 60_000
+  await gate.check()
+  gate.recordHealthy(gate.currentGeneration)
+  assert.equal(gate.snapshot().consecutiveFailures, 0)
   gate.invalidate()
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
 })

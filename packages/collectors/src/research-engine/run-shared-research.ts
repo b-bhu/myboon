@@ -764,27 +764,38 @@ export function createLiveSharedResearchRuntime(
         if (stopping || !claimsEnabled()) return []
         if (articleContextAvailability) await articleContextAvailability.check()
         if (stopping || !claimsEnabled()) return []
+        const cycleGeneration = articleContextAvailability?.currentGeneration
         const batches = await Promise.all(workers.map(async worker => {
           const outcomes: SharedResearchRunOutcome[] = []
           for (let index = 0; index < config.batchSize && !stopping && claimsEnabled(); index += 1) {
             const batch = await worker.runBatch(1)
             outcomes.push(...batch)
             if (batch.some(outcome => 'category' in outcome && outcome.category === 'storage_transient')) {
+              // Workers run in parallel, so health is decided once per cycle
+              // after Promise.all (Ref #407): recording per batch would let a
+              // succeeding sibling erase the back-off step this just advanced.
               articleHistoryCache?.clear()
               articleContextAvailability?.invalidate()
               break
             }
-            // Only a batch with real outcomes completing without a storage
-            // transient proves the database actually answers (Ref #336).
-            if (batch.some(outcome =>
-              outcome.kind !== 'idle' && outcome.kind !== 'disabled' && outcome.kind !== 'shadow',
-            )) articleContextAvailability?.recordHealthy()
             if (batch.length === 0 || batch.some(outcome =>
               outcome.kind === 'idle' || outcome.kind === 'disabled' || outcome.kind === 'shadow',
             )) break
           }
           return outcomes
         }))
+        // One health decision per cycle: a storage transient anywhere in the
+        // cycle keeps the back-off growing, and real work only counts when no
+        // batch observed one (Ref #407).
+        if (articleContextAvailability && cycleGeneration !== undefined) {
+          const transientObserved = batches.some(batch => batch.some(outcome =>
+            'category' in outcome && outcome.category === 'storage_transient',
+          ))
+          const didRealWork = batches.some(batch => batch.some(outcome =>
+            outcome.kind !== 'idle' && outcome.kind !== 'disabled' && outcome.kind !== 'shadow',
+          ))
+          if (!transientObserved && didRealWork) articleContextAvailability.recordHealthy(cycleGeneration)
+        }
         const deep = deepRuntime && !stopping && claimsEnabled() ? await deepRuntime.runCycle() : []
         return [...batches.flat(), ...deep]
       },
