@@ -91,6 +91,7 @@ function runtime(): FeedV3RuntimeStatusAvailability {
             succeeded: null, durationMs: null, providerCalls: 0, repairCalls: 0, failureCategory: null,
           },
           deepEnabled: true,
+          hermesCommand: { state: 'pending', failureClass: null, checkedAt: null },
           deep: {
             schemaVersion: 'myboon.deep_research_runtime_snapshot.v1', capturedAt: NOW, enabled: true,
             activeExecutions: 0, lastAuditAt: NOW, suspectedOrphans: 1,

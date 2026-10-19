@@ -1,10 +1,35 @@
 import { healthBackoffMs } from '../pipeline-store/health-gate'
 
+export type ArticleContextReader = 'managed' | 'legacy'
+
+export interface ArticleContextFailure {
+  readonly reader: ArticleContextReader | 'probe'
+  readonly errorClass: string
+}
+
+export class ArticleContextProbeError extends Error {
+  constructor(readonly failures: readonly ArticleContextFailure[]) {
+    super(`Article context storage is unavailable (${failures.map(f => `${f.reader}: ${f.errorClass}`).join(', ')})`)
+    this.name = 'ArticleContextProbeError'
+  }
+}
+
+/** Classifies an error by code or name only; never exposes message text. */
+export function errorClassOf(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' && /^[A-Z0-9][A-Z0-9_]{1,63}$/.test(code)) return code
+  }
+  if (error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error.name)) return error.name
+  return 'unknown'
+}
+
 export interface ArticleContextAvailabilitySnapshot {
   available: boolean | null
   lastCheckedAt: string | null
   nextProbeAt: string | null
   consecutiveFailures: number
+  lastFailure: readonly ArticleContextFailure[] | null
 }
 
 /** Checks storage before work is claimed; an outage never spends a work attempt. */
@@ -13,6 +38,7 @@ export class ArticleContextAvailabilityGate {
   private lastCheckedAt: number | null = null
   private nextProbeAt = 0
   private consecutiveFailures = 0
+  private lastFailure: readonly ArticleContextFailure[] | null = null
   private pending: Promise<boolean> | null = null
   private generation = 0
 
@@ -35,6 +61,7 @@ export class ArticleContextAvailabilityGate {
       lastCheckedAt: this.lastCheckedAt === null ? null : new Date(this.lastCheckedAt).toISOString(),
       nextProbeAt: this.nextProbeAt === 0 ? null : new Date(this.nextProbeAt).toISOString(),
       consecutiveFailures: this.consecutiveFailures,
+      lastFailure: this.lastFailure === null ? null : Object.freeze([...this.lastFailure]),
     }
   }
 
@@ -62,11 +89,15 @@ export class ArticleContextAvailabilityGate {
       if (generation !== this.generation) return false
       this.available = true
       this.consecutiveFailures = 0
+      this.lastFailure = null
       this.lastCheckedAt = this.now()
       this.nextProbeAt = this.lastCheckedAt + this.healthyIntervalMs
       return true
-    } catch {
+    } catch (error) {
       if (generation !== this.generation) return false
+      this.lastFailure = error instanceof ArticleContextProbeError
+        ? error.failures
+        : [{ reader: 'probe', errorClass: errorClassOf(error) }]
       this.available = false
       this.consecutiveFailures += 1
       this.lastCheckedAt = this.now()

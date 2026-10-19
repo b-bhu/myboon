@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { DatabaseCaConfigError } from './database-ca'
+import { TEST_CA_PEM } from './test-fixtures/database-ca-fixture'
 import { loadEntityManagerV4RuntimeConfig } from './runtime-config'
 
 function researchEnv():Record<string,string>{return {
@@ -50,12 +52,25 @@ test('follow-up allows exactly one provider call, preserves unknown costs, and r
 
 test('every research feature can consult explicitly supplied private knowledge while writer credentials stay required',()=>{
   for(const flag of ['ENTITY_V4_NOVELTY_ENABLED','ENTITY_V4_RESEARCH_REUSE_ENABLED','ENTITY_V4_FOLLOWUP_ENABLED']){
-    const env={...researchEnv(),[flag]:'1',MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL:'postgresql://fixture_executor@example.com/fixture',MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA:'fixture-ca'}
+    const env={...researchEnv(),[flag]:'1',MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL:'postgresql://fixture_executor@example.com/fixture',MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA:TEST_CA_PEM}
     const config=loadEntityManagerV4RuntimeConfig(env)
     assert.equal(config.databaseUrl,env.MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL)
-    assert.equal(config.databaseCa,'fixture-ca');assert.equal(config.managedWriterEnabled,false)
+    assert.equal(config.databaseCa,TEST_CA_PEM);assert.equal(config.managedWriterEnabled,false)
     delete (env as Record<string,string>).MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL
     assert.equal(loadEntityManagerV4RuntimeConfig(env).databaseUrl,null)
   }
   assert.throws(()=>loadEntityManagerV4RuntimeConfig({...researchEnv(),ENTITY_V4_MANAGED_WRITER_ENABLED:'1'}),/MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL.*required/)
+})
+
+test('database CA normalises literal newlines, is null when unset, and invalid PEM throws without leaking the value',()=>{
+  const base={...researchEnv(),ENTITY_V4_NOVELTY_ENABLED:'1',MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL:'postgresql://fixture_executor@example.com/fixture'}
+  assert.equal(loadEntityManagerV4RuntimeConfig({...base,MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA:TEST_CA_PEM.replaceAll('\n','\\n')}).databaseCa,TEST_CA_PEM)
+  assert.equal(loadEntityManagerV4RuntimeConfig({...base}).databaseCa,null)
+  const invalid=TEST_CA_PEM.replaceAll('\n','\\n').slice(0,80)
+  assert.throws(
+    ()=>loadEntityManagerV4RuntimeConfig({...base,MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA:invalid}),
+    (error:unknown)=>error instanceof DatabaseCaConfigError
+      &&error.message.includes('MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA')
+      &&!error.message.includes(invalid),
+  )
 })

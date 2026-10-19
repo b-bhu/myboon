@@ -3,6 +3,7 @@ import {
   HermesProviderCircuitOpenError,
   HermesService,
   extractJson,
+  hermesLocalFailureClass,
 } from '../hermes'
 import { InferenceGatewayError } from './errors'
 import type {
@@ -83,6 +84,16 @@ export function mapHermesInferenceError(
   if (typeof code === 'string' && CONNECTION_CODES.has(code)) {
     return new InferenceGatewayError('Hermes provider is unavailable', {
       category: 'provider_unavailable', retryable: true, ...metadata,
+    })
+  }
+
+  // A Hermes command that never reached a provider (missing binary, broken
+  // shebang, unreadable pool directory) is a local transport failure. The
+  // message names only the class: stderr/stdout text stays out of it.
+  const failureClass = hermesLocalFailureClass(error)
+  if (failureClass) {
+    return new InferenceGatewayError(`Hermes command failed locally (${failureClass})`, {
+      category: 'provider_unavailable', retryable: true, failureClass, ...metadata,
     })
   }
 

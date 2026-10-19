@@ -92,6 +92,7 @@ function runtime(mode: 'active' | 'shadow', onCycle: () => void): SharedResearch
         succeeded: null, durationMs: null, providerCalls: 0, repairCalls: 0, failureCategory: null,
       },
       deepEnabled: false,
+      hermesCommand: { state: 'pending', failureClass: null, checkedAt: null },
     },
     runCycle: async () => { onCycle(); return [] },
     stop: async () => undefined,
@@ -605,6 +606,36 @@ test('off and shadow research never evaluate active cutover authorization', asyn
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('a startup Hermes probe failure is reported in status without gating claims', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shared-research-hermes-probe-'))
+  const newsPath = join(dir, 'news-lane.sqlite')
+  new SqliteSignalPlatformStore(newsPath, 'news').close()
+  try {
+    const config = loadSharedResearchRunnerConfig({
+      FEED_V3_CUTOVER_POLICY: 'phase1',
+      FEED_V3_RESEARCH_MODE: 'shadow', FEED_V3_RESEARCH_SHADOW_SOURCES: 'news',
+      FEED_V3_SHADOW_SAMPLE_BASIS_POINTS: '100', NEWS_SQLITE_PATH: newsPath,
+      FEED_V3_RUNTIME_CONTROL_PATH: join(dir, 'control.json'),
+    })
+    const live = createLiveSharedResearchRuntime(config, {
+      probeHermesCommand: async () => ({ state: 'not_runnable', failureClass: 'exit_126' }),
+    })
+    try {
+      assert.equal(live.status.hermesCommand.state, 'pending')
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(live.status.hermesCommand.state, 'not_runnable')
+      assert.equal(live.status.hermesCommand.failureClass, 'exit_126')
+      assert.equal(typeof live.status.hermesCommand.checkedAt === 'string' && live.status.hermesCommand.checkedAt.length > 0, true)
+      // A locally broken Hermes CLI must not stop the runtime itself.
+      assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }])
+      assert.equal(live.status.hermesCommand.state, 'not_runnable')
+    } finally {
+      await live.stop()
+      live.close()
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('calendar and X use the registered pipeline store without a source-specific Research runner', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shared-research-sources-'))
   const pipelinePath = join(dir, 'polymarket-lane.sqlite')
@@ -897,6 +928,125 @@ test('article runtime checks both storage readers and waits between failed probe
     now += 270_000
     await live.runCycle()
     assert.deepEqual([managedReads, legacyReads, providerCalls], [3, 3, 0])
+  } finally {
+    await live?.stop()
+    live?.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a managed reader failure records the reader and its error class without message text', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'article-context-managed-failure-'))
+  const path = join(dir, 'news-lane.sqlite')
+  new SqliteSignalPlatformStore(path, 'news').close()
+  let now = Date.parse('2026-10-08T12:00:00Z')
+  let managedReads = 0
+  let live: SharedResearchRunnerRuntime | undefined
+  try {
+    const config = loadSharedResearchRunnerConfig({
+      NEWS_SQLITE_PATH: path,
+      FEED_V3_CUTOVER_POLICY: 'phase1',
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+      ENTITY_V4_ARTICLE_WORKFLOW_ENABLED: '1', ENTITY_V4_SOURCE_OWNERSHIP_ENABLED: '1',
+      ENTITY_V4_ACTIVE_SOURCES: 'news', ENTITY_V4_POLICY_VERSION: 'article.test.v1',
+      MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL: 'postgres://research:***@localhost/test',
+      ENTITY_V4_SYNTHESIS_POLICY_VERSION: 'synthesis.test.v1', ENTITY_V4_SYNTHESIS_MAX_INPUT_TOKENS: '16000',
+      ENTITY_V4_SYNTHESIS_MAX_OUTPUT_TOKENS: '4000', ENTITY_V4_SYNTHESIS_MAX_COST_USD_MICROS: 'unknown',
+      ENTITY_V4_ASSIGNMENT_POLICY_VERSION: 'assignment.test.v1', ENTITY_V4_ASSIGNMENT_MAX_PROVIDER_CALLS: '20',
+      ENTITY_V4_ASSIGNMENT_MAX_INPUT_TOKENS: '64000', ENTITY_V4_ASSIGNMENT_MAX_OUTPUT_TOKENS: '16000',
+      ENTITY_V4_ASSIGNMENT_MAX_COST_USD_MICROS: 'unknown',
+    })
+    live = createLiveSharedResearchRuntime(config, {
+      runtimeControl: { read: defaultRuntimeControl },
+      workerClock: { now: () => new Date(now), setInterval: () => 0, clearInterval: () => undefined },
+      createClassificationRuntime: () => ({
+        gateway: { classify: async () => { throw new Error('must not call a provider') }, recordPolicyOutcome: async () => undefined },
+        close: () => undefined,
+      }),
+      createManagedContext: () => ({
+        researchContext: async () => { throw new Error('probe must use article context') },
+        articleContext: async input => {
+          managedReads += 1
+          assert.equal(input.identityOnly, true)
+          assert.equal(input.limit, 1)
+          throw Object.assign(new Error('self signed certificate in certificate chain secret-url'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' })
+        },
+        close: async () => undefined,
+      }),
+      createLegacyReader: () => ({
+        entityIdsForSourceRef: async () => [], entitiesByIds: async () => [], recentMemories: async () => [],
+        searchEntities: async (_terms, limit, options) => {
+          assert.equal(limit, 1)
+          assert.equal(options?.exactOnly, true)
+          return []
+        },
+      }),
+    })
+    assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
+    assert.equal(managedReads, 1)
+    assert.deepEqual(live.status.articleContextAvailability?.lastFailure, [
+      { reader: 'managed', errorClass: 'SELF_SIGNED_CERT_IN_CHAIN' },
+    ])
+    const serialized = JSON.stringify(live.status)
+    assert.equal(serialized?.includes('secret-url'), false)
+    assert.equal(serialized?.includes('self signed certificate'), false)
+  } finally {
+    await live?.stop()
+    live?.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('reader failures are recorded in reader order when both storage readers reject', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'article-context-both-failures-'))
+  const path = join(dir, 'news-lane.sqlite')
+  new SqliteSignalPlatformStore(path, 'news').close()
+  let now = Date.parse('2026-10-08T12:00:00Z')
+  let live: SharedResearchRunnerRuntime | undefined
+  try {
+    const config = loadSharedResearchRunnerConfig({
+      NEWS_SQLITE_PATH: path,
+      FEED_V3_CUTOVER_POLICY: 'phase1',
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+      ENTITY_V4_ARTICLE_WORKFLOW_ENABLED: '1', ENTITY_V4_SOURCE_OWNERSHIP_ENABLED: '1',
+      ENTITY_V4_ACTIVE_SOURCES: 'news', ENTITY_V4_POLICY_VERSION: 'article.test.v1',
+      MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL: 'postgres://research:***@localhost/test',
+      ENTITY_V4_SYNTHESIS_POLICY_VERSION: 'synthesis.test.v1', ENTITY_V4_SYNTHESIS_MAX_INPUT_TOKENS: '16000',
+      ENTITY_V4_SYNTHESIS_MAX_OUTPUT_TOKENS: '4000', ENTITY_V4_SYNTHESIS_MAX_COST_USD_MICROS: 'unknown',
+      ENTITY_V4_ASSIGNMENT_POLICY_VERSION: 'assignment.test.v1', ENTITY_V4_ASSIGNMENT_MAX_PROVIDER_CALLS: '20',
+      ENTITY_V4_ASSIGNMENT_MAX_INPUT_TOKENS: '64000', ENTITY_V4_ASSIGNMENT_MAX_OUTPUT_TOKENS: '16000',
+      ENTITY_V4_ASSIGNMENT_MAX_COST_USD_MICROS: 'unknown',
+    })
+    live = createLiveSharedResearchRuntime(config, {
+      runtimeControl: { read: defaultRuntimeControl },
+      workerClock: { now: () => new Date(now), setInterval: () => 0, clearInterval: () => undefined },
+      createClassificationRuntime: () => ({
+        gateway: { classify: async () => { throw new Error('must not call a provider') }, recordPolicyOutcome: async () => undefined },
+        close: () => undefined,
+      }),
+      createManagedContext: () => ({
+        researchContext: async () => { throw new Error('probe must use article context') },
+        articleContext: async () => {
+          throw Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })
+        },
+        close: async () => undefined,
+      }),
+      createLegacyReader: () => ({
+        entityIdsForSourceRef: async () => [], entitiesByIds: async () => [], recentMemories: async () => [],
+        searchEntities: async () => {
+          throw new TypeError('fetch failed key=abc')
+        },
+      }),
+    })
+    assert.deepEqual(await live.runCycle(), [{ kind: 'idle' }, { kind: 'idle' }])
+    assert.deepEqual(live.status.articleContextAvailability?.lastFailure, [
+      { reader: 'managed', errorClass: 'ECONNREFUSED' },
+      { reader: 'legacy', errorClass: 'TypeError' },
+    ])
+    const serialized = JSON.stringify(live.status)
+    assert.equal(serialized?.includes('key=abc'), false)
   } finally {
     await live?.stop()
     live?.close()

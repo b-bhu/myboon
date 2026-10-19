@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { packageScriptArgs } from '../cli-args'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { normalizeDatabaseCa } from '../signal-platform/database-ca'
 import { PostgresKnowledgeOperationWriter } from './postgres-knowledge-writer'
 
 interface PlanningReconciliationArgs {
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
   const connectionString = process.env.MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL?.trim()
   if (!connectionString) throw new Error('Dedicated managed-writer database URL is required')
   const writer = new PostgresKnowledgeOperationWriter({
-    connectionString, ca: process.env.MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA?.trim() || null,
+    connectionString, ca: normalizeDatabaseCa('MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA', process.env.MYBOON_MANAGED_KNOWLEDGE_DATABASE_CA),
   })
   try {
     await writer.resolvePlanningDispatch({

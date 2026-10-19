@@ -123,6 +123,7 @@ function researchSnapshot(): NonNullable<FeedV3RuntimeStatusAvailability['resear
         failureCategory: null,
       },
       deepEnabled: false,
+      hermesCommand: { state: 'pending', failureClass: null, checkedAt: null },
     },
     recovery: { lastRunAt: null, recoveredBySource: {} },
   }

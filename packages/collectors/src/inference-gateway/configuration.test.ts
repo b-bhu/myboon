@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { HermesOneshotRequest } from '../hermes'
+import type { HermesCallRecord, HermesOneshotRequest } from '../hermes'
 import { DEFAULT_HERMES_PROFILE } from '../hermes'
 import {
   CONFIGURED_INFERENCE_WORKLOADS,
@@ -12,6 +12,7 @@ import {
   loadInferenceGatewayConfiguration,
   type InferenceBudget,
 } from '.'
+import { hermesCallLogObserver } from './configuration'
 
 const BUDGET: InferenceBudget = {
   maxProviderCalls: 2,
@@ -89,6 +90,50 @@ test('status snapshot is route-only, redacted, and marks investigate disabled wi
   assert.equal(serialized.includes(secret), false)
   assert.equal(serialized.includes('private-profile-name'), false)
   assert.equal(serialized.includes('API_KEY'), false)
+})
+
+test('the failed-call observer logs routing and failure class without command, profile, or process output', () => {
+  const lines: string[] = []
+  const observer = hermesCallLogObserver((line) => lines.push(line))
+  const record: HermesCallRecord = {
+    purpose: 'test.classify',
+    mode: 'oneshot',
+    command: '/secret/path',
+    requestedProfile: 'secret-profile',
+    requestedProvider: 'p',
+    requestedModel: 'm',
+    status: 'failed',
+    startedAt: '2026-10-19T00:00:00.000Z',
+    finishedAt: '2026-10-19T00:00:01.000Z',
+    durationMs: 12,
+    promptChars: 3,
+    stdoutChars: 8,
+    stderrChars: 40,
+    exitCode: null,
+    exitSignal: null,
+    failureClass: 'exit_126',
+    error: 'spawn /secret/path ENOENT',
+  }
+
+  observer(record)
+
+  assert.equal(lines.length, 1)
+  const parsed = JSON.parse(lines[0]!) as Record<string, unknown>
+  assert.equal(parsed.event, 'hermes_call_failed')
+  assert.equal(parsed.purpose, 'test.classify')
+  assert.equal(parsed.mode, 'oneshot')
+  assert.equal(parsed.status, 'failed')
+  assert.equal(parsed.provider, 'p')
+  assert.equal(parsed.model, 'm')
+  assert.equal(parsed.exitCode, null)
+  assert.equal(parsed.exitSignal, null)
+  assert.equal(parsed.failureClass, 'exit_126')
+  assert.equal(lines[0]!.includes('/secret/path'), false)
+  assert.equal(lines[0]!.includes('spawn'), false)
+  assert.equal(lines[0]!.includes('secret-profile'), false)
+
+  observer({ ...record, status: 'succeeded' })
+  assert.equal(lines.length, 1)
 })
 
 test('configured runtime passes profile and actual primary/fallback targets through Hermes oneshot', async () => {

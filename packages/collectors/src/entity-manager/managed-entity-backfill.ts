@@ -29,6 +29,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { Pool, type PoolClient } from 'pg'
+import { normalizeDatabaseCa } from '../signal-platform/database-ca'
 import { entityIdentityKey, entityIdentityKeys } from './identity-key'
 
 /**
@@ -272,7 +273,7 @@ export function createBackfillPool(connectionString: string): Pool {
   if (!/^postgres(ql)?:\/\//i.test(trimmed)) {
     throw new TypeError('MYBOON_ENTITY_BACKFILL_DATABASE_URL must be a postgres:// or postgresql:// URL')
   }
-  const ca = process.env.MYBOON_ENTITY_BACKFILL_DATABASE_CA?.trim()
+  const ca = normalizeDatabaseCa('MYBOON_ENTITY_BACKFILL_DATABASE_CA', process.env.MYBOON_ENTITY_BACKFILL_DATABASE_CA)
   const pool = new Pool({
     connectionString: trimmed,
     ssl: isLocalBackfillHost(backfillDatabaseHost(trimmed))

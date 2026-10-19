@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import test from 'node:test'
+import { DatabaseCaConfigError } from '../signal-platform/database-ca'
+import { TEST_CA_PEM } from '../signal-platform/test-fixtures/database-ca-fixture'
 import { entityIdentityKey } from './identity-key'
 import {
   ARTICLE_ONLY_STATUS, BACKFILL_BATCH_SIZE, BACKFILL_LEASE_OWNER, BACKFILL_MARKER_KEY, BACKFILL_OPERATION_ID,
@@ -245,6 +247,35 @@ test('nextBatchIds walks the whole list from a null cursor and terminates', () =
 test('runBackfill validates its options before opening anything', () => {
   assert.throws(() => parseBackfillArgs(['--write', '--report', 'r']), /--cursor is required in write mode/)
   assert.throws(() => createBackfillPool('not a url'), /must be a postgres/)
+})
+
+test('createBackfillPool normalises a literal-\\n database CA and rejects invalid PEM before building the pool', () => {
+  const setting = 'MYBOON_ENTITY_BACKFILL_DATABASE_CA'
+  const previous = process.env[setting]
+  try {
+    process.env[setting] = TEST_CA_PEM.replaceAll('\n', '\\n')
+    const pool = createBackfillPool('postgres://u:p@db.example.com/x')
+    try {
+      const ssl = pool.options.ssl
+      assert.equal(typeof ssl, 'object')
+      if (typeof ssl !== 'object' || ssl === null) throw new Error('non-local hosts must receive TLS options')
+      assert.equal(ssl.rejectUnauthorized, true)
+      assert.equal(ssl.ca, TEST_CA_PEM)
+    } finally {
+      void pool.end()
+    }
+    const invalid = TEST_CA_PEM.slice(0, 80)
+    process.env[setting] = invalid
+    assert.throws(
+      () => createBackfillPool('postgres://u:p@db.example.com/x'),
+      (error: unknown) => error instanceof DatabaseCaConfigError
+        && error.message.includes(setting)
+        && !error.message.includes(invalid),
+    )
+  } finally {
+    if (previous === undefined) delete process.env[setting]
+    else process.env[setting] = previous
+  }
 })
 
 test('isUuidText accepts canonical Postgres uuid text only', () => {

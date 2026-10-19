@@ -414,6 +414,74 @@ test('Hermes errors map timeout, circuit, authentication, and rate categories', 
   assert.equal(mapHermesInferenceError(Object.assign(new Error('busy'), { status: 429 }), PRIMARY).category, 'provider_rate_limited')
 })
 
+test('Hermes local command failures map to provider_unavailable with a distinct failureClass and no process output', () => {
+  const cases: Array<[unknown, 'spawn_enoent' | 'spawn_eacces' | 'exit_126' | 'exit_127' | 'limiter_eacces']> = [
+    [Object.assign(new Error('spawn /usr/local/bin/hermes ENOENT'), {
+      code: 'ENOENT', syscall: 'spawn /usr/local/bin/hermes', stderr: 'SECRET_STDERR',
+    }), 'spawn_enoent'],
+    [Object.assign(new Error('spawn /usr/local/bin/hermes EACCES'), {
+      code: 'EACCES', syscall: 'spawn /usr/local/bin/hermes', stderr: 'SECRET_STDERR',
+    }), 'spawn_eacces'],
+    [Object.assign(new Error('Hermes exited with code 126'), {
+      code: 126, stderr: '/usr/local/bin/hermes: bad interpreter: Permission denied SECRET_STDERR',
+    }), 'exit_126'],
+    [Object.assign(new Error('Hermes exited with code 127'), {
+      code: 127, stderr: 'not a dynamic executable SECRET_STDERR',
+    }), 'exit_127'],
+    [Object.assign(new Error("EACCES: permission denied, mkdir '/tmp/x'"), {
+      code: 'EACCES', syscall: 'mkdir', hermesFailureClass: 'limiter_eacces',
+    }), 'limiter_eacces'],
+  ]
+  assert.equal(new Set(cases.map(([, failureClass]) => failureClass)).size, 5)
+  for (const [error, failureClass] of cases) {
+    const mapped = mapHermesInferenceError(error, PRIMARY)
+    assert.equal(mapped.category, 'provider_unavailable')
+    assert.equal(mapped.retryable, true)
+    assert.equal(mapped.provider, PRIMARY.provider)
+    assert.equal(mapped.model, PRIMARY.model)
+    assert.equal(mapped.failureClass, failureClass)
+    assert.equal(mapped.message.includes('SECRET_STDERR'), false)
+  }
+})
+
+test('non-spawn ENOENT errors and existing provider mappings keep their previous route', () => {
+  const openEnoent = mapHermesInferenceError(
+    Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT', syscall: 'open' }), PRIMARY,
+  )
+  assert.equal(openEnoent.failureClass, undefined)
+  assert.equal(openEnoent.category, 'provider_unavailable')
+  assert.equal(openEnoent.retryable, true)
+
+  for (const [error, category, retryable] of [
+    [Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }), 'provider_unavailable', true],
+    [Object.assign(new Error('busy'), { status: 429 }), 'provider_rate_limited', true],
+    [Object.assign(new Error('denied'), { status: 401 }), 'provider_authentication', false],
+    [Object.assign(new Error('denied'), { statusCode: 403 }), 'provider_authentication', false],
+    [Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }), 'provider_timeout', true],
+  ] as const) {
+    const mapped = mapHermesInferenceError(error, PRIMARY)
+    assert.equal(mapped.category, category)
+    assert.equal(mapped.retryable, retryable)
+    assert.equal(mapped.failureClass, undefined)
+  }
+})
+
+test('a locally failed Hermes call keeps its failureClass through the gateway', async () => {
+  const mapped = mapHermesInferenceError(
+    Object.assign(new Error('Hermes exited with code 126'), { code: 126, stderr: 'SECRET_STDERR' }), PRIMARY,
+  )
+  const adapter = new QueueAdapter([mapped, mapped])
+  await assert.rejects(gateway(adapter).generateStructured(request()), (error: unknown) => {
+    assert.ok(error instanceof InferenceGatewayError)
+    assert.equal(error.failureClass, 'exit_126')
+    assert.equal(error.category, 'provider_unavailable')
+    assert.equal(error.retryable, true)
+    assert.equal(error.message.includes('SECRET_STDERR'), false)
+    return true
+  })
+  assert.equal(adapter.requests.length, 2)
+})
+
 test('provider call and repair budgets stop additional calls', async () => {
   const noCalls = new QueueAdapter([{ value: { answer: 'unused' } }])
   await assert.rejects(gateway(noCalls).generateStructured(request({

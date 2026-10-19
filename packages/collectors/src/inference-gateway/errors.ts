@@ -1,3 +1,4 @@
+import type { HermesLocalFailureClass } from '../hermes'
 import type { InferenceFailureCategory, InferenceTelemetry } from './types'
 
 export interface InferenceGatewayErrorOptions {
@@ -9,6 +10,8 @@ export interface InferenceGatewayErrorOptions {
   telemetry?: InferenceTelemetry
   /** True only when an adapter returned a provider response that was rejected locally. */
   providerResponseReceived?: boolean
+  /** Set only for Hermes failures that happen before any provider is reached. */
+  failureClass?: HermesLocalFailureClass
   cause?: unknown
 }
 
@@ -23,6 +26,7 @@ export class InferenceGatewayError extends Error {
   readonly model?: string
   readonly telemetry?: InferenceTelemetry
   readonly providerResponseReceived: boolean
+  readonly failureClass?: HermesLocalFailureClass
 
   constructor(message: string, options: InferenceGatewayErrorOptions) {
     super(message, { cause: options.cause })
@@ -35,6 +39,7 @@ export class InferenceGatewayError extends Error {
     this.model = options.model
     this.telemetry = options.telemetry
     this.providerResponseReceived = options.providerResponseReceived === true
+    this.failureClass = options.failureClass
   }
 
   withTelemetry(telemetry: InferenceTelemetry): InferenceGatewayError {
@@ -46,6 +51,7 @@ export class InferenceGatewayError extends Error {
       model: this.model,
       telemetry,
       providerResponseReceived: this.providerResponseReceived,
+      failureClass: this.failureClass,
       cause: this.cause,
     })
   }

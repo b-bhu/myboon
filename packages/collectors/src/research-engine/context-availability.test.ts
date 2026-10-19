@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ArticleContextAvailabilityGate } from './context-availability'
+import { ArticleContextAvailabilityGate, ArticleContextProbeError, errorClassOf } from './context-availability'
 
 // Health-gate jitter factor 0.8 + 0.4 * 0.5 = 1.0: the raw backoff curve
 // survives untouched, keeping these assertions deterministic.
@@ -123,4 +123,41 @@ test('the outage backoff now uses the shared 15-min jittered health curve (Ref #
   assert.equal(gate.snapshot().consecutiveFailures, 1)
   // random() = 0 lands on the jitter floor: 0.8 * 30s.
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 24_000)
+})
+
+test('a rejected probe records reader failures and clears them after recovery', async () => {
+  let now = Date.parse('2026-10-08T12:00:00Z')
+  let healthy = false
+  const gate = new ArticleContextAvailabilityGate(async () => {
+    if (!healthy) throw new ArticleContextProbeError([{ reader: 'managed', errorClass: 'SELF_SIGNED_CERT_IN_CHAIN' }])
+  }, () => now, undefined, EXACT_JITTER)
+  assert.equal(await gate.check(), false)
+  const snapshot = gate.snapshot()
+  assert.equal(snapshot.available, false)
+  assert.deepEqual(snapshot.lastFailure, [{ reader: 'managed', errorClass: 'SELF_SIGNED_CERT_IN_CHAIN' }])
+  assert.equal(Object.isFrozen(snapshot.lastFailure), true)
+  healthy = true
+  now += 30_000
+  assert.equal(await gate.check(), true)
+  assert.equal(gate.snapshot().lastFailure, null)
+})
+
+test('an unclassified probe failure exposes only the error name, never its message', async () => {
+  let now = 0
+  const gate = new ArticleContextAvailabilityGate(async () => {
+    throw new Error('db password=hunter2 offline')
+  }, () => now, undefined, EXACT_JITTER)
+  assert.equal(await gate.check(), false)
+  assert.deepEqual(gate.snapshot().lastFailure, [{ reader: 'probe', errorClass: 'Error' }])
+  assert.equal(JSON.stringify(gate.snapshot()).includes('hunter2'), false)
+})
+
+test('errorClassOf prefers a well-formed code, then the error name, never message text', () => {
+  assert.equal(errorClassOf(Object.assign(new Error('self signed certificate in certificate chain secret-url'), {
+    code: 'SELF_SIGNED_CERT_IN_CHAIN',
+  })), 'SELF_SIGNED_CERT_IN_CHAIN')
+  assert.equal(errorClassOf({ code: '57P01' }), '57P01')
+  assert.equal(errorClassOf(new TypeError('fetch failed key=abc')), 'TypeError')
+  assert.equal(errorClassOf('offline'), 'unknown')
+  assert.equal(errorClassOf(Object.assign(new Error('secret-url'), { code: 'bad code' })), 'Error')
 })

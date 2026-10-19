@@ -464,7 +464,7 @@ export class SharedResearchWorker {
     try {
       plan = buildRetrievalPlan(lease.work, this.retrievalLimits)
     } catch (error) {
-      return this.failWithoutExecution(store, lease, stage, 'permanent_source_error', errorMessage(error), timing)
+      return this.failWithoutExecution(store, lease, stage, 'permanent_source_error', failureDetail(error), timing)
     }
     const capturedSourceWorkflow = this.usesCapturedSourceWorkflow(lease.work)
     if (capturedSourceWorkflow) {
@@ -553,7 +553,7 @@ export class SharedResearchWorker {
         // work row is still recoverable. A later attempt retries the retrieval
         // rather than resuming from a half-written checkpoint.
         return this.failAfterExecution(
-          store, lease, stage, failureCategory(error, stage), errorMessage(error), false, timing,
+          store, lease, stage, failureCategory(error, stage), failureDetail(error), false, timing,
         )
       }
       if (!checkpoint.committed) return leaseLost(stage, lease.work)
@@ -570,7 +570,7 @@ export class SharedResearchWorker {
       return await this.advanceRetrievedWork(store, lease, signal!, [...reusedEvidence, ...evidence])
     } catch (error) {
       return this.failAfterExecution(
-        store, lease, stage, failureCategory(error, stage), errorMessage(error), retryable(error), timing,
+        store, lease, stage, failureCategory(error, stage), failureDetail(error), retryable(error), timing,
       )
     } finally {
       heartbeat.stop()
@@ -613,7 +613,7 @@ export class SharedResearchWorker {
       return await this.advanceRetrievedWork(store, lease, signal, evidence)
     } catch (error) {
       return this.failWithoutExecution(
-        store, lease, 'retrieval', failureCategory(error, 'retrieval'), errorMessage(error), timing,
+        store, lease, 'retrieval', failureCategory(error, 'retrieval'), failureDetail(error), timing,
       )
     }
   }
@@ -742,7 +742,7 @@ export class SharedResearchWorker {
         return handoff.run
       } catch (error) {
         return this.failWithoutExecution(store, lease, stage,
-          error instanceof ArticleResearchHold ? articleHoldFailureCategory(error) : error instanceof ResearchFollowupHold ? 'budget_exceeded' : failureCategory(error, stage), errorMessage(error), timing)
+          error instanceof ArticleResearchHold ? articleHoldFailureCategory(error) : error instanceof ResearchFollowupHold ? 'budget_exceeded' : failureCategory(error, stage), failureDetail(error), timing)
       }
     }
     const evidence = store.listEvidenceByWork(lease.work.workId, this.evidenceReadLimit).filter((artifact) =>
@@ -766,7 +766,7 @@ export class SharedResearchWorker {
           articleContext = await this.prepareArticleContext(signal!, lease, evidence)
         } catch (error) {
           if (error instanceof ArticleResearchHold && error.code === 'context_coverage_transient') {
-            return this.failWithoutExecution(store, lease, stage, articleHoldFailureCategory(error), errorMessage(error), timing, true)
+            return this.failWithoutExecution(store, lease, stage, articleHoldFailureCategory(error), failureDetail(error), timing, true)
           }
           // Permanent article holds retain the existing post-attempt behavior;
           // only a dependency outage is allowed to leave the attempt untouched.
@@ -804,7 +804,7 @@ export class SharedResearchWorker {
     } catch (error) {
       return this.failAfterExecution(
         store, lease, stage, error instanceof ArticleResearchHold ? articleHoldFailureCategory(error) : error instanceof ResearchFollowupHold ? 'budget_exceeded' : failureCategory(error, stage),
-        errorMessage(error), error instanceof ArticleResearchHold ? articleHoldMayRetry(error) : error instanceof ResearchFollowupHold ? false : retryable(error), timing,
+        failureDetail(error), error instanceof ArticleResearchHold ? articleHoldMayRetry(error) : error instanceof ResearchFollowupHold ? false : retryable(error), timing,
         error instanceof InferenceGatewayError && error.telemetry
           ? telemetryExecutionProvenance(error.telemetry)
           : undefined,
@@ -2067,6 +2067,21 @@ function boundedInteger(value: number, name: string, minimum: number, maximum: n
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Dead-letter/retry detail. Adds the structured local failure class and the
+ * route that the gateway error carries, without reproducing any process
+ * output — message text only, plus a bracketed provenance suffix.
+ */
+function failureDetail(error: unknown): string {
+  if (!(error instanceof InferenceGatewayError) || error.failureClass === undefined) {
+    return errorMessage(error)
+  }
+  const parts = [`failureClass=${error.failureClass}`]
+  if (error.provider !== undefined) parts.push(`provider=${error.provider}`)
+  if (error.model !== undefined) parts.push(`model=${error.model}`)
+  return `${errorMessage(error)} [${parts.join(' ')}]`
 }
 
 function truncate(value: string, max: number): string {
