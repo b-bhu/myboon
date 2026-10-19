@@ -56,6 +56,8 @@ export interface ManagedResearchContext {
 /** Private context used only to validate Researcher's prepared article placement. */
 export interface ManagedArticleContext extends ManagedResearchContext {
   candidateTruncated?: boolean
+  /** Echoed only when the caller asked for per-entity batching. */
+  perEntityLimit?: number
   /** Story entries retain their physical origin; legacy IDs never become managed IDs. */
   articleItems: Array<{
     itemId: string
@@ -114,6 +116,8 @@ export interface ManagedResearchContextQuery {
   historyMode?: 'recent' | 'targeted'
   identityOnly?: boolean
   limit?: number
+  /** Per-entity item budget for batched article context; clamped to 1..10. */
+  perEntityLimit?: number
 }
 
 export interface ManagedKnowledgeWriterOptions {
@@ -303,11 +307,21 @@ export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWrite
         historyMode: input.historyMode ?? 'targeted',
         identityOnly: input.identityOnly ?? false,
         limit: Math.min(32, Math.max(1, input.limit ?? 24)),
+        // Omitted unless requested, so today's function input stays unchanged.
+        ...(input.perEntityLimit === undefined ? {} : { perEntityLimit: Math.min(10, Math.max(1, Math.trunc(input.perEntityLimit))) }),
       })],
     )
     const context = result.rows[0].result
     this.combinedArticleHistory = typeof context.candidateTruncated === 'boolean' && Array.isArray(context.articleItems)
     return context
+  }
+
+  /** Availability probe: verifies EXECUTE without running the article function or loading context. */
+  async checkArticleContextAvailability(): Promise<void> {
+    const result = await this.pool.query<{ ok: boolean }>(
+      "select pg_catalog.has_function_privilege('managed_knowledge_private.article_context_v1(jsonb)', 'EXECUTE') as ok",
+    )
+    if (result.rows[0].ok !== true) throw new Error('Managed article context is not executable by this login')
   }
 
   /**

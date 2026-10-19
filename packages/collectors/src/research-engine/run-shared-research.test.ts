@@ -860,13 +860,11 @@ test('article runtime checks both storage readers and waits between failed probe
       }),
       createManagedContext: () => ({
         researchContext: async () => { throw new Error('probe must use article context') },
-        articleContext: async input => {
+        checkArticleContextAvailability: async () => {
           managedReads += 1
-          assert.equal(input.identityOnly, true)
-          assert.equal(input.limit, 1)
           if (!healthy) throw new Error('Connection terminated due to connection timeout')
-          return { entities: [], items: [], digest: 'fixture', watermark: null, truncated: false, candidateTruncated: false }
         },
+        articleContext: async () => { throw new Error('probe must not load article context') },
         close: async () => undefined,
       }),
       createLegacyReader: () => ({

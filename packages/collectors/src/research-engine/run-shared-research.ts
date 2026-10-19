@@ -618,14 +618,13 @@ export function createLiveSharedResearchRuntime(
         articleHistoryCache = new ArticleHistoryCache(config.historyCacheTtlMs,
           options.workerClock ? () => options.workerClock!.now().getTime() : undefined)
         articleContextAvailability = new ArticleContextAvailabilityGate(async () => {
-          if (!managed?.articleContext || !legacy?.searchEntities) throw new Error('Article context dependencies are not configured')
-          const source = [...v4Configuration.activeSources][0]
-          if (!source) throw new Error('Article context source is not configured')
+          if (!managed?.checkArticleContextAvailability || !legacy?.searchEntities) throw new Error('Article context dependencies are not configured')
           const labels = ['__myboon_database_availability_probe__']
-          // Probe both actual readers without loading article history or using
-          // a privileged/admin connection. Wait for both bounded requests.
+          // Probe both actual readers: the managed probe only checks that this
+          // login can EXECUTE the article function, without running it; legacy
+          // runs a bounded identity lookup. Wait for both.
           const results = await Promise.allSettled([
-            managed.articleContext({ source, sourceRefs: [], labels, identityOnly: true, limit: 1, historyMode: 'targeted' }),
+            managed.checkArticleContextAvailability(),
             legacy.searchEntities(labels, 1, { exactOnly: true }),
           ])
           if (results.some(result => result.status === 'rejected')) {

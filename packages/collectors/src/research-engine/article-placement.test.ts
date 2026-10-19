@@ -586,6 +586,25 @@ test('#5A batching flag on uses exactly three dispatches with the same membershi
   assert.deepEqual(Object.keys(relationshipQuestions), ['relationship_target_bitcoin', 'relationship_target_blackrock'])
 })
 
+test('#5A batched placement prefetches every selected entity history in one loadHistories call before any loadHistory', async () => {
+  const { gateway } = batchedGateway()
+  const base = batchedContext()
+  const events: string[] = []
+  const prefetchContext = {
+    ...base,
+    historyByEntity: new Map(),
+    loadHistories: async (entityIds: readonly string[]) => { events.push(`prefetch:${[...entityIds].sort().join(',')}`) },
+    loadHistory: async (entityId: string) => {
+      events.push(`load:${entityId}`)
+      return base.historyByEntity.get(entityId) ?? []
+    },
+  }
+  const result = await prepareArticlePlacement({ gateway, stableDecisionKey: 'k', signal, sourceText: 'BlackRock added Bitcoin.', context: prefetchContext, useBatching: true })
+  assert.deepEqual(result.memberships.map(m => m.entityId), ['bitcoin', 'blackrock'])
+  assert.equal(events[0], 'prefetch:bitcoin,blackrock')
+  assert.deepEqual(events.slice(1).sort(), ['load:bitcoin', 'load:blackrock'])
+})
+
 test('#5A batched Hermes fallback versions target the batch fallback registry', async () => {
   const articleText = 'BlackRock added $1.5 billion in Bitcoin holdings.'
   const { gateway, requests } = batchedGateway()
