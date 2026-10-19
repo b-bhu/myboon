@@ -1,3 +1,4 @@
+import { FUZZY_HOLD_MIN_SIMILARITY, type FuzzyEntityCandidate } from '../research-engine/fuzzy-entity-match'
 import type { ManagedArticleContext } from '../entity-manager/postgres-knowledge-writer'
 import { createHash } from 'node:crypto'
 import type { EntityMemoryReader, GateEntity, GateMemory, GateNoveltyEvidence } from './types'
@@ -29,6 +30,11 @@ export interface ManagedResearchContextPort {
     watermark: string | number | null
     truncated: boolean
   }>
+  /** #342 PR-2: trigram candidates on name_key; null when the SQL function is not installed. */
+  fuzzyEntityCandidates?(input: { name: string, minSimilarity: number }): Promise<{
+    nameKey: string
+    candidates: Array<{ id: string, name: string, slug: string | null, type: string | null, aliases: string[], summary: string | null, status: string | null, nameKey: string, similarity: number }>
+  } | null>
   /** Optional richer managed article lookup retaining legacy/managed origin. */
   articleContext?(input: {
     source: string
@@ -97,6 +103,11 @@ export interface ArticleResearchContext {
   widenCandidates?(terms: readonly string[]): Promise<Array<{ id: string, name: string, aliases: string[], summary: string | null, decisionSummary?: string | null, scope: Record<string, unknown> }>>
   /** Exact name/alias coverage before creation, across legacy and private identities. */
   findExactEntities?(labels: readonly string[]): Promise<ArticleResearchContext['candidates']>
+  /**
+   * #342 PR-2: managed near-duplicates of a creation proposal (trigram on
+   * name_key). null means the lookup is not installed yet: fuzzy is skipped.
+   */
+  findFuzzyEntities?(name: string): Promise<FuzzyEntityCandidate[] | null>
   /** Separate bounded source/development lookup; never replaces latest-five story context. */
   lookupOlderDuplicate?(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>
 }
@@ -265,6 +276,21 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
         if (legacy.length > 32 || managed.candidateTruncated) throw new Error('Exact article identity lookup is ambiguous beyond its candidate bound')
         return rankEntityCandidates([...legacy, ...managed.entities], labels).map(articleCandidate)
       },
+      ...(this.options.managed?.fuzzyEntityCandidates ? {
+        findFuzzyEntities: async (name: string) => {
+          try {
+            const found = await this.options.managed!.fuzzyEntityCandidates!({ name, minSimilarity: FUZZY_HOLD_MIN_SIMILARITY })
+            if (!found) return null
+            return found.candidates.map((row) => ({
+              id: row.id, name: row.name, aliases: [...(row.aliases ?? [])], summary: row.summary ?? null,
+              type: row.type ?? null, status: row.status ?? null, nameKey: row.nameKey, similarity: Number(row.similarity),
+            }))
+          } catch (error) {
+            this.recordFailure(`article managed fuzzy identity lookup: ${String(error).slice(0, 200)}`, error)
+            throw error
+          }
+        },
+      } : {}),
       lookupOlderDuplicate: (entityId) => {
         let pending = targetMemo.get(entityId)
         if (!pending) {
