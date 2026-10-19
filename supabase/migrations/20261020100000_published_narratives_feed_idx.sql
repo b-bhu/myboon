@@ -1,0 +1,21 @@
+-- #336 item 8: restore published_narratives_feed_idx, missing in prod (Linglong, Oct 20).
+-- supabase/migrations/20260605_polymarket_market_publisher.sql:89 creates this
+-- index, but production has drifted and lacks it. It serves the polymarket
+-- publisher's fetchRecentPublished
+-- (packages/collectors/src/polymarket/publisher.ts): the feed read is
+-- `select id, content_small, tags, content_type, created_at, source,
+-- primary_topic from public.published_narratives order by created_at desc
+-- limit n`, which seq-scans and sorts without this index.
+--
+-- NOT APPLIED. Needs Bucket's explicit yes (needs-bucket).
+-- Rollback: supabase/rollbacks/20261020100000_published_narratives_feed_idx.down.sql
+--
+-- No CONCURRENTLY: migrations run in a transaction and CONCURRENTLY cannot run
+-- inside one. The published_narratives table is small, so a normal build holds
+-- its lock for only a short time. If Bucket prefers a zero-lock build, run
+-- exactly this by hand outside a transaction instead:
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS published_narratives_feed_idx
+--     ON public.published_narratives (created_at DESC, priority DESC);
+-- then skip this migration file (both paths are equivalent and idempotent).
+
+CREATE INDEX IF NOT EXISTS published_narratives_feed_idx ON public.published_narratives (created_at DESC, priority DESC);
