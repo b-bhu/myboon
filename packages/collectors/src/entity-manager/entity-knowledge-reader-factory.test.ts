@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
@@ -41,4 +43,19 @@ test('createEntityKnowledgeReader builds the reader matching the source', () => 
     createEntityKnowledgeReader(db, { [ENTITY_KNOWLEDGE_READ_SOURCE_ENV]: 'managed' }) instanceof
       SupabaseManagedEntityKnowledgeReader,
   )
+})
+
+test('ecosystem config selects the managed read source for api, editor-draft and publisher', () => {
+  const nodeRequire = createRequire(__filename)
+  const ecosystemPath = resolve(__dirname, '..', '..', '..', '..', 'ecosystem.config.cjs')
+  const ecosystem = nodeRequire(ecosystemPath) as {
+    apps: Array<{ name: string, env?: Record<string, string | undefined> }>
+  }
+  const byName = new Map(ecosystem.apps.map((app) => [app.name, app]))
+  for (const name of ['myboon-api', 'myboon-editor-draft', 'myboon-publisher']) {
+    const app = byName.get(name)
+    assert.ok(app, `${name} must be registered in ecosystem.config.cjs`)
+    assert.equal(app.env?.ENTITY_V4_READ_SOURCE, 'managed')
+    assert.equal(entityKnowledgeReadSource(app.env ?? {}), 'managed')
+  }
 })

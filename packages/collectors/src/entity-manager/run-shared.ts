@@ -1,15 +1,12 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import {
   createConfiguredInferenceGateway,
   type InferenceCircuitStatusSnapshot,
   type InferenceTelemetryObserver,
 } from '../inference-gateway'
-import { createSupabaseHealthProbe, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { envFlag, loadDotenvChain, positiveInteger } from '../pipeline-store/cli-env'
 import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
-import { SupabaseHealthGate, waitForSupabaseRunOnce } from '../pipeline-store/health-gate'
 import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { resolveLaneSqlitePath } from '../lane-store/paths'
 import type { ExecutionTraceEvent, Signal } from '../signal-platform/contracts'
@@ -30,14 +27,11 @@ import {
   FileSqliteWriteHealthJournal,
   resolveSqliteWriteHealthJournalPath,
 } from '../signal-platform/sqlite-write-error-journal'
-import { EntityServiceCanonicalPacketProcessor } from './canonical-processor'
-import { GatewayCanonicalEntityPlanner } from './canonical-planner'
 import {
   AtomicEntityRuntimeHealthFile,
   EntityRuntimeHealthTracker,
   type EntityRuntimeHealthWriter,
 } from './entity-runtime-health'
-import { assertEntityMemoryMigrationReady } from './entity-memory-migration-verifier'
 import {
   SharedEntityWorker,
   type ActiveCycleResult,
@@ -48,7 +42,6 @@ import {
 import { sharedEntityWorkerConfig } from './shared-worker-config'
 import { SqliteEntityPacketWorkPort } from './sqlite-entity-work-port'
 import { SqliteEntityShadowObservationStore } from './sqlite-shadow-observation-store'
-import { SupabaseEntityMemoryStore } from './supabase-store'
 import { ManagedCanonicalPacketProcessor } from './managed-canonical-processor'
 import { PostgresKnowledgeOperationWriter, type ManagedKnowledgeWriterOptions } from './postgres-knowledge-writer'
 import type { CanonicalPacketProcessor } from './shared-worker'
@@ -70,8 +63,6 @@ export type SharedEntityCycleResult =
 
 export interface SharedEntityRuntime {
   mode: FeedV3RuntimeConfig['entityMode']
-  /** True only for active mode on the Supabase REST path. */
-  supabaseRest: boolean
   runCycle(): Promise<SharedEntityCycleResult>
   stop(input?: { abortActive?: boolean }): void
   close(): Promise<void>
@@ -94,7 +85,6 @@ export interface SharedEntityShutdownSignalPort {
 export interface CreateSharedEntityRuntimeOptions {
   env?: Readonly<Record<string, string | undefined>>
   storeFactory?: (path: string, sourceType: Signal['sourceType'], readOnly: boolean) => SqliteSignalPlatformStore
-  supabaseFactory?: (url: string, serviceRoleKey: string) => SupabaseClient
   ledgerFactory?: (path: string) => SqliteExecutionLedger
   gatewayFactory?: (
     env: Readonly<Record<string, string | undefined>>,
@@ -111,8 +101,8 @@ export interface CreateSharedEntityRuntimeOptions {
 }
 
 /**
- * Production composition boundary. Safe-off returns before opening SQLite,
- * reading Supabase credentials, or constructing inference providers.
+ * Production composition boundary. Safe-off returns before opening SQLite or
+ * constructing inference providers.
  */
 export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOptions = {}): SharedEntityRuntime {
   const env = options.env ?? process.env
@@ -138,6 +128,9 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
         path: runtime.cutoverReceiptPath!,
         required: [...runtime.entityActiveSources].map((sourceType) => ({ sourceType, stage: 'entity' })),
       })
+    }
+    if (!v4.managedWriterEnabled) {
+      throw new Error('Active shared Entity processing requires ENTITY_V4_MANAGED_WRITER_ENABLED=1 (the legacy public.entities writer was retired in #337)')
     }
   }
   const sourcePaths = new Map<Signal['sourceType'], string>()
@@ -194,61 +187,36 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
     }
     shadowObservations ??= noOpShadowObservations
     let processor: CanonicalPacketProcessor
-    let supabaseRest = false
     let executionLedger: SharedEntityWorkerOptions['executionLedger']
-    let activePreflight: (() => Promise<void>) | undefined
     let circuitSnapshot: (() => InferenceCircuitStatusSnapshot | null) | undefined
     let inferenceClaimsReady = () => true
 
     if (runtime.entityMode === 'active') {
       const observeInference: InferenceTelemetryObserver = (event) => healthTracker.observe(event, now().toISOString())
-      if (v4.managedWriterEnabled) {
-        const writer = (options.managedWriterFactory ?? ((input) => new PostgresKnowledgeOperationWriter(input)))({
-          connectionString: v4.databaseUrl!,ca: v4.databaseCa,
-        })
-        closables.push(writer)
-        let gateway: ReturnType<typeof createConfiguredInferenceGateway>['gateway'] | undefined
-        const lazyGateway = () => {
-          gateway ??= options.gatewayFactory
-            ? options.gatewayFactory(env,observeInference)
-            : createConfiguredInferenceGateway({env,observer: observeInference}).gateway
-          return gateway
-        }
-        circuitSnapshot = () => gateway?.circuitStatusSnapshot() ?? null
-        processor = new ManagedCanonicalPacketProcessor({
-          writer,ports,gatewayFactory: lazyGateway,policyVersion: v4.policyVersion!,
-          owner: safeWorkerId(env.FEED_V3_ENTITY_WORKER_ID),
-          assertOwnership(source) {
-            if (source !== 'news' && source !== 'polymarket') throw new Error('Managed Entity does not admit this source')
-            requireSourceOwnership({databasePath: sourcePaths.get(source)!,source,domain:'entity',owner:'shared',env})
-          },
-          executeOwned(source,action) {
-            if (source !== 'news' && source !== 'polymarket') throw new Error('Managed Entity does not admit this source')
-            return withSourceOwnershipOperation({databasePath: sourcePaths.get(source)!,source,domain:'entity',owner:'shared',env},action)
-          },
-        })
-      } else {
-      supabaseRest = true
-      const supabase = (options.supabaseFactory ?? createClient)(
-        required(env, 'SUPABASE_URL'),
-        required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
-      )
-      const entityStore = new SupabaseEntityMemoryStore(supabase)
-      if (!entityStore.createCanonicalEntity || !entityStore.findEntitiesByIdentity) {
-        throw new Error('Active shared Entity processing requires atomic canonical identity store capabilities.')
-      }
-      const gateway = options.gatewayFactory
-        ? options.gatewayFactory(env, observeInference)
-        : createConfiguredInferenceGateway({ env, observer: observeInference }).gateway
-      circuitSnapshot = () => gateway.circuitStatusSnapshot()
-      inferenceClaimsReady = () => typeof gateway.checkReadiness === 'function'
-        && gateway.checkReadiness('entity.extract').ready
-      processor = new EntityServiceCanonicalPacketProcessor({
-        store: entityStore,
-        planner: new GatewayCanonicalEntityPlanner({ gateway }),
+      const writer = (options.managedWriterFactory ?? ((input) => new PostgresKnowledgeOperationWriter(input)))({
+        connectionString: v4.databaseUrl!,ca: v4.databaseCa,
       })
-      activePreflight = async () => { await assertEntityMemoryMigrationReady(supabase) }
+      closables.push(writer)
+      let gateway: ReturnType<typeof createConfiguredInferenceGateway>['gateway'] | undefined
+      const lazyGateway = () => {
+        gateway ??= options.gatewayFactory
+          ? options.gatewayFactory(env,observeInference)
+          : createConfiguredInferenceGateway({env,observer: observeInference}).gateway
+        return gateway
       }
+      circuitSnapshot = () => gateway?.circuitStatusSnapshot() ?? null
+      processor = new ManagedCanonicalPacketProcessor({
+        writer,ports,gatewayFactory: lazyGateway,policyVersion: v4.policyVersion!,
+        owner: safeWorkerId(env.FEED_V3_ENTITY_WORKER_ID),
+        assertOwnership(source) {
+          if (source !== 'news' && source !== 'polymarket') throw new Error('Managed Entity does not admit this source')
+          requireSourceOwnership({databasePath: sourcePaths.get(source)!,source,domain:'entity',owner:'shared',env})
+        },
+        executeOwned(source,action) {
+          if (source !== 'news' && source !== 'polymarket') throw new Error('Managed Entity does not admit this source')
+          return withSourceOwnershipOperation({databasePath: sourcePaths.get(source)!,source,domain:'entity',owner:'shared',env},action)
+        },
+      })
 
       const ledgerByPath = new Map<string, SqliteExecutionLedger>()
       const ledgerBySource = new Map<Signal['sourceType'], SqliteExecutionLedger>()
@@ -269,10 +237,9 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
         },
       }
     } else {
-      processor = new EntityServiceCanonicalPacketProcessor({
-        store: failClosedShadowStore(),
-        planner: { async plan() { throw new Error('Shadow Entity worker cannot invoke the planner.') } },
-      })
+      processor = {
+        async process() { throw new Error('Shadow Entity worker cannot process packets.') },
+      }
     }
 
     const ownership = Object.fromEntries(
@@ -307,12 +274,12 @@ export function createSharedEntityRuntime(options: CreateSharedEntityRuntimeOpti
         ? () => entityClaimControl(runtimeControl).enabled && inferenceClaimsReady()
         : undefined,
     })
-    return managedRuntime(runtime.entityMode, worker, closables, activePreflight, runtimeControl, {
+    return managedRuntime(runtime.entityMode, worker, closables, runtimeControl, {
       writer: healthWriter,
       tracker: healthTracker,
       circuitSnapshot,
       now,
-    }, supabaseRest)
+    })
   } catch (error) {
     for (const resource of [...closables].reverse()) void Promise.resolve(resource.close()).catch(() => {})
     throw error
@@ -323,7 +290,6 @@ function managedRuntime(
   mode: Exclude<FeedV3RuntimeConfig['entityMode'], 'off'>,
   worker: WorkerRuntimePort,
   resources: Closable[],
-  preflight?: () => Promise<void>,
   runtimeControl?: RuntimeControlReadPort,
   health?: {
     writer: EntityRuntimeHealthWriter
@@ -331,18 +297,8 @@ function managedRuntime(
     circuitSnapshot?: () => InferenceCircuitStatusSnapshot | null
     now: () => Date
   },
-  supabaseRest = false,
 ): SharedEntityRuntime {
   let closed = false
-  let ready: Promise<void> | null = null
-  const ensureReady = async () => {
-    if (!preflight) return
-    ready ??= preflight().catch((error) => {
-      ready = null
-      throw error
-    })
-    await ready
-  }
   const writeHealth = async (
     lifecycleState: 'running' | 'draining' | 'stopped',
     control = entityClaimControl(runtimeControl!),
@@ -364,7 +320,6 @@ function managedRuntime(
   }
   return {
     mode,
-    supabaseRest,
     async runCycle() {
       if (closed) throw new Error('Shared Entity runtime is closed.')
       if (mode === 'active') {
@@ -374,7 +329,6 @@ function managedRuntime(
           return { mode, controlState: 'draining', controlStatus: control.status, result: emptyActiveCycleResult() }
         }
         try {
-          await ensureReady()
           return { mode, controlState: 'running', controlStatus: 'ok', result: await worker.runActiveCycle() }
         } finally {
           const finalControl = entityClaimControl(runtimeControl!)
@@ -447,7 +401,6 @@ function emptyActiveCycleResult(): ActiveCycleResult {
 function disabledRuntime(): SharedEntityRuntime {
   return {
     mode: 'off',
-    supabaseRest: false,
     async runCycle() { return { mode: 'off' } },
     stop() {},
     async close() {},
@@ -470,12 +423,6 @@ function configuredPath(value: string): string {
   return isAbsolute(value) ? value : resolve(PACKAGE_DIR, value)
 }
 
-function required(env: Readonly<Record<string, string | undefined>>, field: string): string {
-  const value = env[field]?.trim()
-  if (!value) throw new Error(`Missing required env var: ${field}`)
-  return value
-}
-
 function safeWorkerId(value: string | undefined): string {
   const workerId = value?.trim() || `shared-entity-${process.pid}`
   if (workerId.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(workerId)) throw new Error('Invalid FEED_V3_ENTITY_WORKER_ID')
@@ -483,13 +430,6 @@ function safeWorkerId(value: string | undefined): string {
 }
 
 const noOpShadowObservations: ShadowEntityObservationPort = { async observe() {} }
-
-function failClosedShadowStore(): SupabaseEntityMemoryStore {
-  return new SupabaseEntityMemoryStore({
-    from() { throw new Error('Shadow Entity worker cannot access Supabase.') },
-    rpc() { throw new Error('Shadow Entity worker cannot access Supabase.') },
-  } as unknown as SupabaseClient)
-}
 
 /** Keeps the CLI alive without opening durable/provider dependencies until stopped. */
 export function waitForSharedEntityShutdown(
@@ -514,32 +454,6 @@ export function waitForSharedEntityShutdown(
   })
 }
 
-/**
- * Active-mode Supabase REST gate: probe + interval gate + RUN_ONCE startup check
- * share the one bounded probe client. Shadow/off never touch Supabase, and
- * managed-writer active mode is also ungated: it writes through direct Postgres
- * and its activePreflight covers that dependency, so a missing Supabase env
- * must not make the worker exit at startup (Refs #346). Returns null when no
- * gate applies; env falls back to process.env to match the worker entrypoint.
- */
-export function createSharedEntityHealthGate(
-  runtime: Pick<SharedEntityRuntime, 'mode' | 'supabaseRest'>,
-  deps?: {
-    env?: NodeJS.ProcessEnv | Record<string, string | undefined>
-    createProbe?: (url: string, key: string) => () => Promise<void>
-  },
-): { gate: SupabaseHealthGate; runOnceCheck: () => Promise<void> } | null {
-  if (runtime.mode !== 'active' || !runtime.supabaseRest) return null
-  const { supabaseUrl, supabaseKey } = requireSupabaseEnv(deps?.env)
-  const probe = deps?.createProbe
-    ? deps.createProbe(supabaseUrl, supabaseKey)
-    : createSupabaseHealthProbe(supabaseUrl, supabaseKey)
-  return {
-    gate: new SupabaseHealthGate({ app: 'feed-v3:shared-entity-manager', probe }),
-    runOnceCheck: () => waitForSupabaseRunOnce({ app: 'feed-v3:shared-entity-manager', probe }),
-  }
-}
-
 async function main(): Promise<void> {
   loadDotenvChain()
   const runtime = createSharedEntityRuntime()
@@ -552,10 +466,8 @@ async function main(): Promise<void> {
     await waitForSharedEntityShutdown(() => runtime.close())
     return
   }
-  const supabaseHealth = createSharedEntityHealthGate(runtime)
   const run = async () => { process.stdout.write(`${JSON.stringify(await runtime.runCycle())}\n`) }
   if (envFlag(process.env.FEED_V3_ENTITY_RUN_ONCE)) {
-    if (supabaseHealth) await supabaseHealth.runOnceCheck()
     await run()
     await runtime.close()
     return
@@ -567,7 +479,6 @@ async function main(): Promise<void> {
     intervalMs: positiveInteger(process.env.FEED_V3_ENTITY_INTERVAL_MS, DEFAULT_INTERVAL_MS),
     runOnce: false,
     run,
-    ...(supabaseHealth ? { healthGate: supabaseHealth.gate } : {}),
   })
   if (interval === null) throw new Error('interval runner did not start')
   await waitForSharedEntityShutdown(async () => {

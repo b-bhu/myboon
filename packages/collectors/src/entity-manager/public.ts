@@ -12,12 +12,10 @@ import {
 } from './managed-entity-knowledge-reader'
 import { createEntityKnowledgeReader } from './entity-knowledge-reader-factory'
 import { SupabaseEntityKnowledgeReader } from './supabase-entity-knowledge-reader'
-import { SupabaseEntityMemoryStore } from './supabase-store'
 
 export * from './types'
 export * from './manual-adapter'
 export * from './entity-service'
-export * from './supabase-store'
 export {
   ENTITY_KNOWLEDGE_MAX_PAGE_SIZE,
   ENTITY_KNOWLEDGE_SCHEMA_VERSION,
@@ -228,5 +226,4 @@ export default {
   SupabaseManagedEntityKnowledgeReader,
   DualEntityKnowledgeReader,
   createEntityKnowledgeReader,
-  SupabaseEntityMemoryStore,
 }

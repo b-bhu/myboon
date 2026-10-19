@@ -9,7 +9,6 @@ import { createMarketHeatmapRoutes } from '../market-heatmap/routes.js'
 import { MarketHeatmapService } from '../market-heatmap/service.js'
 import { createWalletActivityRoutes, createWalletActivityService } from '../wallet-activity/index.js'
 import { clobRoutes } from '../clob.js'
-import { createInternalEntityCommandRoutes } from '../internal/entity-commands.js'
 import { createInternalEntityRoutes } from '../internal/entities.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
 import { createEntityKnowledgeRoutes } from '../entity-knowledge.js'
@@ -93,18 +92,10 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   if (!config.internalDashboardToken || Buffer.byteLength(config.internalDashboardToken, 'utf8') < 32) {
     console.warn('[api] INTERNAL_DASHBOARD_TOKEN must be at least 32 bytes; /internal routes will return 503.')
   }
-  if (!config.internalEntityWriteToken || Buffer.byteLength(config.internalEntityWriteToken, 'utf8') < 32) {
-    console.warn('[api] INTERNAL_ENTITY_WRITE_TOKEN must be at least 32 bytes; /internal/entity-commands routes will return 503.')
-  }
   if (!config.internalPolymarketCatalogWriteToken || Buffer.byteLength(config.internalPolymarketCatalogWriteToken, 'utf8') < 32) {
     console.warn('[api] INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN must be at least 32 bytes; Polymarket catalog writes will return 503.')
   }
 
-  app.route('/internal/entity-commands', createInternalEntityCommandRoutes({
-    supabaseUrl: config.supabaseUrl,
-    serviceRoleKey: config.supabaseServiceRoleKey,
-    internalWriteToken: config.internalEntityWriteToken,
-  }))
   // Mount specific internal route groups before the broad /internal router,
   // whose wildcard read-token middleware would otherwise intercept writes.
   app.route('/internal/polymarket/collections', createInternalPolymarketCatalogRoutes({
