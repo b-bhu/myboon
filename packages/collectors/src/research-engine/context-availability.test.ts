@@ -24,12 +24,17 @@ test('storage outage gates claims, backs off probes and resumes only after a suc
   assert.equal(await gate.check(), true)
   assert.equal(gate.claimsAllowed, true)
   assert.equal(probes, 2)
-  // A passing probe no longer clears the failure count; real work does (Ref #336).
-  assert.equal(gate.snapshot().consecutiveFailures, 1)
-  gate.recordHealthy(gate.currentGeneration)
+  // Healthy snapshot reads 0 even though a passing probe does not clear the
+  // internal counter (Ref #336): status consumers read >0 as degraded, and the
+  // curve keeps its own count.
   assert.equal(gate.snapshot().consecutiveFailures, 0)
+  // The persisted internal count survived the passing probe: the next failure
+  // lands on the NEXT curve step, the ~60 s band, not the first 30 s step.
   gate.invalidate()
   assert.equal(gate.claimsAllowed, false)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 60_000)
+  assert.equal(await gate.check(), false)
+  now += 30_000
   assert.equal(await gate.check(), false)
   now += 30_000
   assert.equal(await gate.check(), true)
@@ -186,17 +191,35 @@ test('recordHealthy resets only real work of the captured generation while avail
   assert.equal(gate.snapshot().consecutiveFailures, 1)
   now += 30_000
   await gate.check()
-  // With the gate up again, pre-invalidate work stays stale:
+  // With the gate up again the healthy snapshot reads 0 either way, so the
+  // oracle is the curve: pre-invalidate work stays stale, and the skipped
+  // reset keeps the internal count on step two for the next failure:
   gate.recordHealthy(stale)
-  assert.equal(gate.snapshot().consecutiveFailures, 1)
-  // ...and the skipped reset keeps the curve on step two for the next failure:
   gate.invalidate()
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 60_000)
   // After the gate recovers, current-generation work resets it to step one:
   now += 60_000
   await gate.check()
   gate.recordHealthy(gate.currentGeneration)
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
+})
+
+test('healthy snapshot reads 0; current-generation real work restarts the curve at step one (Ref #336)', async () => {
+  let now = 0
+  let healthy = false
+  const gate = new ArticleContextAvailabilityGate(async () => {
+    if (!healthy) throw new Error('offline')
+  }, () => now, undefined, EXACT_JITTER)
+  assert.equal(await gate.check(), false)
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  healthy = true
+  now += 30_000
+  assert.equal(await gate.check(), true)
+  // Healthy again: status consumers read 0 while the curve still holds the
+  // earlier failure; only real work resets it.
   assert.equal(gate.snapshot().consecutiveFailures, 0)
+  gate.recordHealthy(gate.currentGeneration)
   gate.invalidate()
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
 })

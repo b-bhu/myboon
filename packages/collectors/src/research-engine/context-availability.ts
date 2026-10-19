@@ -60,7 +60,11 @@ export class ArticleContextAvailabilityGate {
       available: this.available,
       lastCheckedAt: this.lastCheckedAt === null ? null : new Date(this.lastCheckedAt).toISOString(),
       nextProbeAt: this.nextProbeAt === 0 ? null : new Date(this.nextProbeAt).toISOString(),
-      consecutiveFailures: this.consecutiveFailures,
+      // Status consumers read consecutiveFailures > 0 as degraded (Ref #336):
+      // while the gate is healthy the snapshot reports 0 even before real work
+      // resets the counter. The internal back-off count is unchanged and keeps
+      // its own step until recordHealthy() clears it or a failure advances it.
+      consecutiveFailures: this.available === true ? 0 : this.consecutiveFailures,
       lastFailure: this.lastFailure === null ? null : Object.freeze([...this.lastFailure]),
     }
   }
