@@ -33,6 +33,20 @@ export interface ManagedEntityBinding extends EntityRecord {
   identityKey: string
 }
 
+/** #342 PR-2: one row of managed_knowledge_private.fuzzy_entity_candidates_v1. */
+export interface ManagedFuzzyEntityCandidate {
+  id: string
+  name: string
+  slug: string | null
+  type: string | null
+  aliases: string[]
+  summary: string | null
+  status: string | null
+  catalogEntityId: string | null
+  nameKey: string
+  similarity: number
+}
+
 export interface ManagedContextItem {
   itemId: string
   entityIds: string[]
@@ -308,6 +322,24 @@ export class PostgresKnowledgeOperationWriter implements KnowledgeOperationWrite
     const context = result.rows[0].result
     this.combinedArticleHistory = typeof context.candidateTruncated === 'boolean' && Array.isArray(context.articleItems)
     return context
+  }
+
+  /**
+   * #342 PR-2: trigram candidates on name_key for article creation dedupe.
+   * Returns null when the candidate function is not installed yet (42883), so
+   * deploying this code before the migration leaves creation unchanged.
+   */
+  async fuzzyEntityCandidates(input: { name: string, minSimilarity: number }): Promise<{ nameKey: string, candidates: ManagedFuzzyEntityCandidate[] } | null> {
+    try {
+      const result = await this.pool.query<{ result: { nameKey: string, candidates: ManagedFuzzyEntityCandidate[] } }>(
+        'select managed_knowledge_private.fuzzy_entity_candidates_v1($1::jsonb) as result',
+        [boundedJson({ name: input.name.slice(0, 500), minSimilarity: input.minSimilarity })],
+      )
+      return result.rows[0].result
+    } catch (error) {
+      if ((error as { code?: string }).code === '42883') return null
+      throw new Error(`Managed fuzzy entity lookup unavailable (${(error as { code?: string }).code ?? 'connection_failure'})`)
+    }
   }
 
   /**

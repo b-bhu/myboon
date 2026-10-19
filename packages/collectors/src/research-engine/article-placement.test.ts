@@ -1213,3 +1213,111 @@ test('#343 the save-uncertain environment turns the mode on and the per-call ove
     else process.env.ARTICLE_PLACEMENT_SAVE_UNCERTAIN = previous
   }
 })
+
+// #342 PR-2: fuzzy guard after an exact miss (single route).
+function fuzzyGateway(selectIds: string[]) {
+  const calls = { placement: 0, creation: 0 }
+  const gateway = { async classify<Value>(request: ClassificationRequest): Promise<ClassificationResult<Value>> {
+    let value: unknown; let answers: Record<string, JevAnswer>
+    if (request.workload.endsWith('entity_placement')) {
+      calls.placement++
+      const present = (request.state as { candidates: Array<{ id: string }> }).candidates.find(e => selectIds.includes(e.id))
+      value = present ? { entityId: present.id, disposition: 'selected' } : { entityId: null, disposition: 'no_match' }
+      answers = { placement: answer(present ? present.id : 'no_match') }
+    } else if (request.workload.endsWith('entity_proposal_validation')) { calls.creation++; throw new Error('creation reached') }
+    else if (request.workload.endsWith('story_relationship')) { value = { relationship: 'same_topic_only', priorItemId: null }; answers = { relationship_target: answer('same_topic_only') } }
+    else { value = { verdict: 'new_information' }; answers = { novelty: answer('new_information') } }
+    return { ...v4ClassificationResult(value as Value), workload: request.workload, decisionVersion: request.decisionVersion, answers }
+  } }
+  return { gateway, calls }
+}
+const fuzzyRow = (similarity: number, type = 'event') => ({ id: 'token2049-sg', name: 'Token2049 Singapore', aliases: [], summary: 'Conference.', type, status: 'review', nameKey: 'token2049singapore', similarity })
+const tokenProposal = async () => ({ name: 'TOKEN2049 Singapore 2026', type: 'event', aliases: [], summary: 'The 2026 edition.', scope: {} })
+function fuzzyContext(rows: unknown[] | null | Error, exact: unknown[] = []) {
+  let fuzzyCalls = 0
+  return { ctx: { candidates: [], historyByEntity: new Map(), coverageFailures: [] as string[],
+    findExactEntities: async () => exact as never,
+    findFuzzyEntities: async (name: string) => { fuzzyCalls++; assert.equal(name, 'TOKEN2049 Singapore 2026'); if (rows instanceof Error) throw rows; return rows as never } },
+  get fuzzyCalls() { return fuzzyCalls } }
+}
+
+test('#342 attach band: the near-duplicate is offered to placement and selected instead of creating', async () => {
+  const { gateway, calls } = fuzzyGateway(['token2049-sg'])
+  const f = fuzzyContext([fuzzyRow(0.9)])
+  const result = await prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-attach', sourceText: 'TOKEN2049 Singapore 2026 opens.', context: f.ctx, proposeCreation: tokenProposal })
+  assert.equal(result.memberships[0].entityId, 'token2049-sg')
+  assert.equal(result.memberships[0].creationProposal, null)
+  assert.equal(calls.placement, 2); assert.equal(calls.creation, 0)
+})
+
+test('#342 attach band declined by placement is a hold, not a duplicate', async () => {
+  const { gateway, calls } = fuzzyGateway([])
+  const f = fuzzyContext([fuzzyRow(0.9)])
+  await assert.rejects(prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-declined', sourceText: 'x', context: f.ctx, proposeCreation: tokenProposal }),
+    (e: unknown) => e instanceof ArticleResearchHold && e.code === 'entity_resolution_uncertain' && /near-duplicate/.test(e.message))
+  assert.equal(calls.creation, 0)
+})
+
+test('#342 hold band (0.6-0.85) holds without asking placement again', async () => {
+  const { gateway, calls } = fuzzyGateway(['token2049-sg'])
+  const f = fuzzyContext([fuzzyRow(0.82)])
+  await assert.rejects(prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-hold', sourceText: 'x', context: f.ctx, proposeCreation: tokenProposal }),
+    (e: unknown) => e instanceof ArticleResearchHold && e.code === 'entity_resolution_uncertain' && /may duplicate Token2049 Singapore/.test(e.message))
+  assert.equal(calls.placement, 1); assert.equal(calls.creation, 0)
+})
+
+test('#342 attach band with an incompatible type holds', async () => {
+  const { gateway, calls } = fuzzyGateway(['token2049-sg'])
+  const f = fuzzyContext([fuzzyRow(0.9, 'person')])
+  await assert.rejects(prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-type', sourceText: 'x', context: f.ctx, proposeCreation: tokenProposal }),
+    (e: unknown) => e instanceof ArticleResearchHold && /incompatible type/.test(e.message))
+  assert.equal(calls.creation, 0)
+})
+
+test('#342 below the bands, or lookup not installed, creation proceeds as before', async () => {
+  for (const rows of [[fuzzyRow(0.55)], [], null]) {
+    const { gateway, calls } = fuzzyGateway([])
+    const f = fuzzyContext(rows)
+    await assert.rejects(prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-none', sourceText: 'x', context: f.ctx, proposeCreation: tokenProposal }), /creation reached/)
+    assert.equal(calls.creation, 1); assert.equal(f.fuzzyCalls, 1)
+  }
+})
+
+test('#342 a failing fuzzy lookup is a coverage hold', async () => {
+  const { gateway, calls } = fuzzyGateway([])
+  const f = fuzzyContext(new Error('db down'))
+  await assert.rejects(prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-fail', sourceText: 'x', context: f.ctx, proposeCreation: tokenProposal }),
+    (e: unknown) => e instanceof ArticleResearchHold && e.code === 'context_coverage_unavailable')
+  assert.equal(calls.creation, 0)
+})
+
+test('#342 an exact match wins first: fuzzy is never consulted', async () => {
+  const exact = { id: 'token-exact', name: 'TOKEN2049 Singapore 2026', aliases: [], summary: 'x', scope: {} }
+  const { gateway } = fuzzyGateway(['token-exact'])
+  const f = fuzzyContext([fuzzyRow(0.9)], [exact])
+  const result = await prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-exact', sourceText: 'x', context: f.ctx, proposeCreation: tokenProposal })
+  assert.equal(result.memberships[0].entityId, 'token-exact')
+  assert.equal(f.fuzzyCalls, 0)
+})
+
+test('#342 batched route: hold band holds before the creation proposal is validated', async () => {
+  const { gateway, requests } = batchedGateway({
+    catalogue: () => ({ entityId: null, disposition: 'no_match', dispositions: { bitcoin: 'not_related', blackrock: 'not_related' } }),
+  })
+  const ctx = { ...batchedContext(), findExactEntities: async () => [] as never, findFuzzyEntities: async () => [fuzzyRow(0.7)] as never }
+  await assert.rejects(prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-batched', sourceText: 'x', context: ctx, useBatching: true, proposeCreation: tokenProposal }),
+    (e: unknown) => e instanceof ArticleResearchHold && e.code === 'entity_resolution_uncertain')
+  assert.equal(requests.some(r => r.workload.endsWith('entity_proposal_validation')), false)
+})
+
+test('#342 batched route: attach band is offered to one batched catalogue pass and selected', async () => {
+  let pass = 0
+  const { gateway } = batchedGateway({
+    catalogue: (state) => { pass++; const hit = state.candidates.find(c => c.id === 'token2049-sg')
+      return hit ? { entityId: 'token2049-sg', disposition: 'selected' as const, dispositions: {} as Record<string, 'related' | 'not_related' | 'uncertain'> } : { entityId: null, disposition: 'no_match' as const, dispositions: { bitcoin: 'not_related', blackrock: 'not_related' } as Record<string, 'related' | 'not_related' | 'uncertain'> } },
+    relationship: (state) => state.entities.map((entity) => ({ entityId: entity.id, relationship: 'same_topic_only', priorItemId: null })),
+  })
+  const ctx = { ...batchedContext(), findExactEntities: async () => [] as never, findFuzzyEntities: async () => [fuzzyRow(0.9)] as never }
+  const result = await prepareArticlePlacement({ gateway, signal, stableDecisionKey: 'fuzzy-batched-attach', sourceText: 'x', context: ctx, useBatching: true, proposeCreation: tokenProposal })
+  assert.equal(result.memberships[0].entityId, 'token2049-sg'); assert.equal(pass, 2)
+})

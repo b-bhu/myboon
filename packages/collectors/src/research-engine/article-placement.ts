@@ -38,6 +38,7 @@ import {
 import type { ArticleResearchContext } from '../research-gate/managed-context-reader'
 import { rankEntityCandidates } from '../research-gate/entity-candidates'
 import { entityIdentityLookupLabels } from '../entity-manager/identity-key'
+import { decideFuzzyEntityMatch, type FuzzyEntityCandidate } from './fuzzy-entity-match'
 import {
   ARTICLE_DECISION_SOURCE_MAX_CHARS,
   ARTICLE_DECISION_STATE_MAX_BYTES,
@@ -328,6 +329,22 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
         })
         selected = placement.value.entityId
         if (!selected) throw new ArticleResearchHold('entity_resolution_uncertain', 'An existing exact entity identity was found but placement could not resolve it; the identity will not be duplicated.')
+      }
+    }
+    if (!selected) {
+      // #342 PR-2: exact miss -> fuzzy guard. Attach band: offer the
+      // near-duplicate to placement once more; hold band: always a hold.
+      const fuzzy = await fuzzyCreationGuard(input, creationProposal)
+      if (fuzzy) {
+        candidates = rankEntityCandidates([fuzzy, ...candidates], [creationProposal.name, ...creationProposal.aliases])
+        placement = await input.gateway.classify<ArticleEntityPlacementDecision>({
+          workload: ARTICLE_ENTITY_PLACEMENT_WORKLOAD,
+          decisionVersion: version(ARTICLE_ENTITY_PLACEMENT_VERSION, ARTICLE_ENTITY_PLACEMENT_HERMES_FALLBACK_VERSION),
+          state: articleDecisionState('near-duplicate identity placement', { article: { title: input.signal.title, text: input.sourceText }, candidates: decisionCandidates(candidates) }),
+          trace: { stableDecisionKey: `${input.stableDecisionKey}:placement:fuzzy-identity`, correlationIds: { signalId: input.signal.signalId } },
+        })
+        selected = placement.value.entityId
+        if (!selected) throw new ArticleResearchHold('entity_resolution_uncertain', FUZZY_DECLINED_REASON)
       }
     }
     if (!selected) {
@@ -1097,6 +1114,47 @@ function logRelatedMentionRejections(route: 'single' | 'batched', input: Article
   console.info(`[research-engine:placement] ${JSON.stringify({ event: 'related_mention_rejected', route, signalId: input.signal.signalId, rejected: ids.length, entityIds: ids })}`)
 }
 
+const FUZZY_DECLINED_REASON = 'A near-duplicate entity was found but placement did not select it; the identity will not be duplicated.'
+
+/**
+ * #342 PR-2: run after an exact-identity miss, before the creation proposal is
+ * validated. Returns the attach-band candidate to offer placement again, null
+ * to continue with creation, or throws a hold. A lookup failure is a coverage
+ * hold like the exact lookup; a lookup that is not installed yet (null) skips.
+ */
+async function fuzzyCreationGuard(
+  input: ArticlePlacementInput, creationProposal: { name: string, type: string, aliases: string[] },
+): Promise<ArticleResearchContext['candidates'][number] | null> {
+  if (!input.context.findFuzzyEntities) return null
+  let found: FuzzyEntityCandidate[] | null
+  try { found = await input.context.findFuzzyEntities(creationProposal.name) }
+  catch {
+    throw new ArticleResearchHold(
+      input.context.coverageFailureKind === 'transient' ? 'context_coverage_transient' : 'context_coverage_unavailable',
+      'Near-duplicate entity lookup failed; no creation is allowed without complete identity coverage.',
+    )
+  }
+  if (found === null) {
+    console.info(`[research-engine:placement] ${JSON.stringify({ event: 'fuzzy_entity_guard', signalId: input.signal.signalId, outcome: 'skipped', reason: 'lookup_not_installed' })}`)
+    return null
+  }
+  const decided = decideFuzzyEntityMatch({ name: creationProposal.name, type: creationProposal.type }, found)
+  console.info(`[research-engine:placement] ${JSON.stringify({
+    event: 'fuzzy_entity_guard', signalId: input.signal.signalId, proposalName: creationProposal.name, outcome: decided.kind,
+    ...(decided.kind === 'none' ? { reason: decided.reason } : {}),
+    candidates: (decided.kind === 'attach_candidate' ? [decided.candidate] : decided.kind === 'hold' ? decided.candidates : [])
+      .map((candidate) => ({ id: candidate.id, name: candidate.name, type: candidate.type, status: candidate.status, similarity: candidate.similarity })),
+  })}`)
+  if (decided.kind === 'none') return null
+  if (decided.kind === 'hold') throw new ArticleResearchHold('entity_resolution_uncertain', decided.reason)
+  const candidate = decided.candidate
+  return {
+    id: candidate.id, name: candidate.name, aliases: [...candidate.aliases], summary: candidate.summary,
+    decisionSummary: articleCandidateDecisionSummary(candidate.summary),
+    scope: { type: candidate.type, status: candidate.status, source: 'managed_fuzzy', similarity: candidate.similarity },
+  }
+}
+
 /** Batched no-match path: exact-identity recovery first, then the proposal validation. */
 async function batchedCreationFallback(
   input: ArticlePlacementInput, stage: BatchedCatalogueStage, saveUncertain: boolean,
@@ -1122,6 +1180,13 @@ async function batchedCreationFallback(
       if (retry.selected) return batchedSelectedPreparation(input, retry, saveUncertain)
       throw new ArticleResearchHold('entity_resolution_uncertain', 'An existing exact entity identity was found but placement could not resolve it; the identity will not be duplicated.')
     }
+  }
+  // #342 PR-2: exact miss -> fuzzy guard (same rules as the single route).
+  const fuzzy = await fuzzyCreationGuard(input, creationProposal)
+  if (fuzzy) {
+    const retry = await batchedCatalogueStage(input, [fuzzy], [creationProposal.name, ...creationProposal.aliases])
+    if (retry.selected) return batchedSelectedPreparation(input, retry, saveUncertain)
+    throw new ArticleResearchHold('entity_resolution_uncertain', FUZZY_DECLINED_REASON)
   }
   const creationValidation = await input.gateway.classify<ArticleEntityProposalValidationDecision>({
     workload: ARTICLE_ENTITY_PROPOSAL_VALIDATION_WORKLOAD,
