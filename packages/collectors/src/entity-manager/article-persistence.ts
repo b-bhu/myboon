@@ -3,7 +3,7 @@ import { canonicalJson } from '../signal-platform/canonical-json'
 import { isArticleResearchPacket, ARTICLE_RESEARCH_PACKET_SCHEMA_VERSION, type ArticleEntityProposal, type ArticleResearchPacketV1, type ArticleResearchPacketV2, type ArticleV2EntityProposal, type ResearchPacket } from '../signal-platform/contracts'
 import { PlatformFailure } from '../signal-platform/failures'
 import { deriveManagedItemId, deriveProgressionOperationId } from './progression-processor'
-import { knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
+import { KnowledgeOperationStaleTargetError, knowledgeOperationSemanticDigest, type KnowledgeOperationReceipt } from './knowledge-operation-store'
 import type { ManagedArticleContext, ManagedEntityBinding, PostgresKnowledgeOperationWriter } from './postgres-knowledge-writer'
 import { entityIdentityKeys } from './identity-key'
 import { decideEntitySummaryUpdates, logEntitySummaryDecisions } from './entity-summary-update'
@@ -71,7 +71,10 @@ export class ArticlePersistenceProcessor {
       await this.raiseHold(packet, input.owner, 'Article creation proposal cannot be resolved while candidate context is truncated', 'entity_resolution')
     }
     const resolved = resolveMemberships(packet, context)
-    if (resolved.kind === 'hold') return this.raiseHold(packet, input.owner, resolved.reason, 'entity_resolution')
+    if (resolved.kind === 'hold') {
+      if (resolved.duplicate) logArticleEntityDuplicateHold({ source: 'ts_guard', workId: packet.workId, operationId, ...resolved.duplicate })
+      return this.raiseHold(packet, input.owner, resolved.reason, 'entity_resolution')
+    }
 
     // Research may have produced one exact primary reuse target plus related
     // entity history matches. The primary target is authoritative for the
@@ -133,12 +136,23 @@ export class ArticlePersistenceProcessor {
       }
       if (input.signal.aborted) throw hold('entity lease is no longer live', 'lease_fence')
       const itemId = duplicate.target ? null : deriveManagedItemId(operationId, 'article')
-      const committed = await this.writer.commitArticle({
-        operationId, workId: packetForCommit.workId, owner: lease.owner, epoch: lease.epoch, packet: packetForCommit,
-        contextDigest, contextWatermark: context.watermark, targetRevisions,
-        entities: resolved.entities, itemId, duplicateTarget: duplicate.target,
-        summaryUpdates: entitySummaries.updates, summaryDecisions: entitySummaries.decisions,
-      })
+      let committed: Awaited<ReturnType<PostgresKnowledgeOperationWriter['commitArticle']>>
+      try {
+        committed = await this.writer.commitArticle({
+          operationId, workId: packetForCommit.workId, owner: lease.owner, epoch: lease.epoch, packet: packetForCommit,
+          contextDigest, contextWatermark: context.watermark, targetRevisions,
+          entities: resolved.entities, itemId, duplicateTarget: duplicate.target,
+          summaryUpdates: entitySummaries.updates, summaryDecisions: entitySummaries.decisions,
+        })
+      } catch (error) {
+        // #378 option (c): the SQL writer's duplicate backstop names the
+        // colliding entity in its MK003 detail. Log it, then rethrow unchanged
+        // so the failure category and retry behaviour stay as they are.
+        if (error instanceof KnowledgeOperationStaleTargetError && error.targetId.startsWith(SQL_DUPLICATE_DETAIL_PREFIX)) {
+          logSqlDuplicateHold(packet.workId, operationId, error.targetId.slice(SQL_DUPLICATE_DETAIL_PREFIX.length), resolved.entities, context.entities)
+        }
+        throw error
+      }
       receiptOutcome(committed.receipt, operationId, packet.workId)
       return duplicate.target ? 'reused' : 'written'
     } finally {
@@ -169,7 +183,7 @@ export class ArticlePersistenceProcessor {
 
 function resolveMemberships(packet: ArticlePacket, context: ManagedArticleContext):
   | { kind: 'ok', entities: ManagedEntityBinding[] }
-  | { kind: 'hold', reason: string } {
+  | { kind: 'hold', reason: string, duplicate?: DuplicateHoldDetail } {
   const primary = packet.memberships.filter((proposal) => proposal.role === 'primary' && (proposal.placementDisposition === 'selected' || proposal.placementDisposition === 'no_match'))
   if (primary.length !== 1) return { kind: 'hold', reason: 'prepared article must contain exactly one resolvable primary entity' }
   const seen = new Set<string>()
@@ -194,7 +208,15 @@ function resolveMemberships(packet: ArticlePacket, context: ManagedArticleContex
     const id = deterministicUuid(`myboon.article_entity_v1:${identityKey}`)
     const existingDeterministic = collision.find((entity) => entity.id === id && entity.identityKey === identityKey && entity.status === 'active')
     if (collision.length > 0 && (!existingDeterministic || collision.some((entity) => entity.id !== existingDeterministic.id))) {
-      return { kind: 'hold', reason: `creation proposal for ${proposal.creationProposal.name} is equivalent to an existing identity` }
+      const blocking = collision.filter((entity) => entity.id !== existingDeterministic?.id)
+      return {
+        kind: 'hold',
+        reason: `creation proposal for ${proposal.creationProposal.name} is equivalent to an existing identity`,
+        duplicate: {
+          proposalName: proposal.creationProposal.name, proposalIdentityKey: identityKey,
+          blocking: blocking.map((entity) => blockingRow(entity, matchedField(entity, hintKeys))),
+        },
+      }
     }
     if (existingDeterministic) {
       if (!seen.has(existingDeterministic.id)) { seen.add(existingDeterministic.id); entities.push(existingDeterministic) }
@@ -306,6 +328,59 @@ export function retainPrimaryDuplicateTarget(packet: ArticlePacket): ArticlePack
   }
   const rebuiltV2: ArticleResearchPacketV2 = { ...packet, memberships: memberships as ArticleV2EntityProposal[] }
   return rebuiltV2
+}
+
+/** #378: one JSON log line per duplicate hold, naming the rows that caused it. */
+export const ARTICLE_ENTITY_DUPLICATE_HOLD_SCHEMA = 'myboon.article_entity_duplicate_hold.v1' as const
+const SQL_DUPLICATE_DETAIL_PREFIX = 'entity_resolution:'
+type DuplicateMatchedField = 'name' | 'slug' | 'alias' | 'unknown'
+interface DuplicateBlockingRow {
+  entityId: string
+  status: string | null
+  name: string | null
+  slug: string | null
+  identityKey: string | null
+  catalogEntityId: string | null
+  matchedField: DuplicateMatchedField
+}
+interface DuplicateHoldDetail { proposalName: string | null, proposalIdentityKey: string | null, blocking: DuplicateBlockingRow[] }
+
+function matchedField(entity: ManagedEntityBinding, hintKeys: Set<string>): DuplicateMatchedField {
+  const hits = (values: string[]) => [...entityIdentityKeys(values)].some((key) => hintKeys.has(key))
+  if (hits([entity.name])) return 'name'
+  if (entity.slug && hits([entity.slug])) return 'slug'
+  if (hits(entity.aliases ?? [])) return 'alias'
+  return 'unknown'
+}
+
+function blockingRow(entity: ManagedEntityBinding, field: DuplicateMatchedField): DuplicateBlockingRow {
+  return { entityId: entity.id, status: entity.status ?? null, name: entity.name ?? null, slug: entity.slug ?? null,
+    identityKey: entity.identityKey ?? null, catalogEntityId: entity.catalogEntityId ?? null, matchedField: field }
+}
+
+function logArticleEntityDuplicateHold(line: { source: 'ts_guard' | 'sql_writer', workId: string, operationId: string } & DuplicateHoldDetail): void {
+  console.info(`[entity-manager:article] ${JSON.stringify({
+    event: 'article_entity_duplicate_hold', schema: ARTICLE_ENTITY_DUPLICATE_HOLD_SCHEMA, source: line.source,
+    workId: line.workId, operationId: line.operationId, proposalName: line.proposalName, proposalIdentityKey: line.proposalIdentityKey,
+    blocking: line.blocking,
+  })}`)
+}
+
+function logSqlDuplicateHold(workId: string, operationId: string, entityId: string, bindings: ManagedEntityBinding[], contextEntities: ManagedEntityBinding[]): void {
+  // The proposal is one of the new (expected-absent) bindings this commit tried to create.
+  const created = bindings.filter((binding) => binding.revision === 'absent')
+  const known = contextEntities.find((entity) => entity.id === entityId)
+  const proposal = known
+    ? created.find((binding) => matchedField(known, entityIdentityKeys([binding.name, ...(binding.aliases ?? [])])) !== 'unknown') ?? created[0]
+    : created[0]
+  const hintKeys = proposal ? entityIdentityKeys([proposal.name, ...(proposal.aliases ?? [])]) : new Set<string>()
+  logArticleEntityDuplicateHold({
+    source: 'sql_writer', workId, operationId,
+    proposalName: proposal?.name ?? null, proposalIdentityKey: proposal?.identityKey ?? null,
+    blocking: [known
+      ? blockingRow(known, matchedField(known, hintKeys))
+      : { entityId, status: null, name: null, slug: null, identityKey: null, catalogEntityId: null, matchedField: 'unknown' }],
+  })
 }
 
 function receiptOutcome(receipt: KnowledgeOperationReceipt, operationId: string, workId: string): void {

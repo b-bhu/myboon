@@ -540,3 +540,168 @@ test('commitArticle sends the uncertain flag and confidence to the SQL writer un
   assert.deepEqual(memberships.map(({ placementUncertain, placementConfidence }) => ({ placementUncertain, placementConfidence })),
     [{ placementUncertain: true, placementConfidence: 0.44 }, { placementUncertain: false, placementConfidence: 0.91 }])
 })
+
+// #378: article_entity_duplicate_hold log line.
+function captureInfo(): { lines: string[], restore: () => void } {
+  const original = console.info
+  const lines: string[] = []
+  console.info = (...args: unknown[]) => { lines.push(String(args[0])) }
+  return { lines, restore: () => { console.info = original } }
+}
+function duplicateHoldLines(lines: string[]): Array<Record<string, any>> {
+  return lines.filter((line) => line.includes('"article_entity_duplicate_hold"'))
+    .map((line) => JSON.parse(line.slice(line.indexOf('{'))))
+}
+function freshPacket(memberships: ArticleEntityProposal[]): ArticleResearchPacketV1 {
+  return { ...packet(memberships), novelty: decision('new_information') }
+}
+function noMatchMembership(name: string, aliases: string[] = []) {
+  return {
+    ...proposal('primary', 'unused', ITEM_PRIMARY),
+    entityId: null, placementDisposition: 'no_match' as const, name, type: 'asset', aliases,
+    creationProposal: { name, type: 'asset', aliases, summary: 'A source-grounded identity proposal.', scope: {} },
+    creationDecision: decision('accept'),
+    relationship: null, relationshipDecision: null,
+    priorItemDecision: null, priorItemId: null, priorItemSource: null, duplicateTarget: null,
+  }
+}
+const REVIEW_BITCOIN = { id: 'entity-bitcoin-review', slug: 'bitcoin', name: 'Bitcoin', type: 'asset', aliases: [], summary: null,
+  status: 'review', show_in_carousel: false, metadata: {}, revision: 'entity-revision', catalogEntityId: null, identityKey: 'article:asset:bitcoin' }
+const ACTIVE_ETHEREUM = { id: 'entity-ethereum', slug: 'ethereum', name: 'Ethereum', type: 'asset', aliases: ['ETH'], summary: null,
+  status: 'active', show_in_carousel: false, metadata: {}, revision: 'entity-revision-eth', catalogEntityId: 'entity-ethereum', identityKey: 'catalog:ethereum' }
+function duplicateWriter(entities: unknown[], commitArticle: () => Promise<unknown>) {
+  const hold: { missingDependency?: string, reason?: string } = {}
+  const writer = {
+    findReceipt: async () => null,
+    articleContext: async () => ({ entities, items: [], digest: 'context-digest', watermark: 'watermark', truncated: false, articleItems: [] }),
+    savePlanningContext: async () => {},
+    acquireLease: async () => ({ owner: 'fixture-owner', epoch: 1 }),
+    releaseLease: async () => true,
+    commitArticle,
+    commitArticleHold: async (input: { missingDependency?: string, reason?: string }) => { Object.assign(hold, input); return {} },
+  } as any
+  return { writer, hold }
+}
+
+test('#378 a review row named Bitcoin holds "Bitcoin (BTC)" and logs exactly one duplicate-hold line naming it', async () => {
+  const input = freshPacket([noMatchMembership('Bitcoin (BTC)') as any])
+  const { writer, hold } = duplicateWriter([REVIEW_BITCOIN], async () => { throw new Error('must not commit') })
+  const captured = captureInfo()
+  try {
+    await assert.rejects(new ArticlePersistenceProcessor(writer, { placementFloor: 0.7 }).persist({
+      packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+    }), /entity_resolution/)
+  } finally { captured.restore() }
+  assert.equal(hold.missingDependency, 'entity_resolution')
+  assert.equal(hold.reason, 'creation proposal for Bitcoin (BTC) is equivalent to an existing identity')
+  const lines = duplicateHoldLines(captured.lines)
+  assert.equal(lines.length, 1)
+  assert.deepEqual(lines[0], {
+    event: 'article_entity_duplicate_hold', schema: 'myboon.article_entity_duplicate_hold.v1', source: 'ts_guard',
+    workId: input.workId, operationId: deriveProgressionOperationId(input.workId),
+    proposalName: 'Bitcoin (BTC)', proposalIdentityKey: 'article:asset:bitcoin (btc)',
+    blocking: [{ entityId: 'entity-bitcoin-review', status: 'review', name: 'Bitcoin', slug: 'bitcoin',
+      identityKey: 'article:asset:bitcoin', catalogEntityId: null, matchedField: 'name' }],
+  })
+})
+
+test('#378 an alias match is reported with matchedField alias', async () => {
+  const input = freshPacket([noMatchMembership('ETH') as any])
+  const { writer } = duplicateWriter([ACTIVE_ETHEREUM], async () => { throw new Error('must not commit') })
+  const captured = captureInfo()
+  try {
+    await assert.rejects(new ArticlePersistenceProcessor(writer, { placementFloor: 0.7 }).persist({
+      packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+    }), /entity_resolution/)
+  } finally { captured.restore() }
+  const lines = duplicateHoldLines(captured.lines)
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0]!.blocking[0].entityId, 'entity-ethereum')
+  assert.equal(lines[0]!.blocking[0].matchedField, 'alias')
+})
+
+test('#378 a proposal with no match logs no duplicate-hold line', async () => {
+  const input = freshPacket([noMatchMembership('Solana') as any])
+  const sentinel = new Error('commit reached')
+  const { writer } = duplicateWriter([ACTIVE_ETHEREUM], async () => { throw sentinel })
+  const captured = captureInfo()
+  try {
+    await assert.rejects(new ArticlePersistenceProcessor(writer, { placementFloor: 0.7 }).persist({
+      packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+    }), (error: unknown) => error === sentinel)
+  } finally { captured.restore() }
+  assert.equal(duplicateHoldLines(captured.lines).length, 0)
+})
+
+test('#378 SQL MK003 entity_resolution:<uuid> is logged with the context row and rethrown unchanged', async () => {
+  const { KnowledgeOperationStaleTargetError } = await import('./knowledge-operation-store')
+  const input = freshPacket([noMatchMembership('Ethereum Classic', ['Ethereum']) as any])
+  // Race: the context read missed the row the SQL backstop then saw, so the
+  // id is not in context and only the id is logged.
+  const sqlError = new KnowledgeOperationStaleTargetError('op', 'entity_resolution:entity-ethereum')
+  const { writer } = duplicateWriter([], async () => { throw sqlError })
+  const captured = captureInfo()
+  try {
+    await assert.rejects(new ArticlePersistenceProcessor(writer, { placementFloor: 0.7 }).persist({
+      packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+    }), (error: unknown) => error === sqlError)
+  } finally { captured.restore() }
+  const lines = duplicateHoldLines(captured.lines)
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0]!.source, 'sql_writer')
+  assert.equal(lines[0]!.proposalName, 'Ethereum Classic')
+  assert.deepEqual(lines[0]!.blocking, [{ entityId: 'entity-ethereum', status: null, name: null, slug: null, identityKey: null, catalogEntityId: null, matchedField: 'unknown' }])
+})
+
+test('#378 SQL MK003 naming a row present in context adds its details', async () => {
+  const { KnowledgeOperationStaleTargetError } = await import('./knowledge-operation-store')
+  const input = freshPacket([noMatchMembership('Solana') as any])
+  const named = { ...ACTIVE_ETHEREUM, id: 'entity-solana-catalog', name: 'Solana Foundation', slug: 'solana-foundation', aliases: ['Solana'], identityKey: 'catalog:solana-foundation', catalogEntityId: 'entity-solana-catalog' }
+  // A context row the TS guard does not match (no shared key), so the commit
+  // reaches SQL; its details are copied from context into the line.
+  const unrelated = { ...named, aliases: [] }
+  const sqlError = new KnowledgeOperationStaleTargetError('op', 'entity_resolution:entity-solana-catalog')
+  const { writer } = duplicateWriter([unrelated], async () => { throw sqlError })
+  const captured = captureInfo()
+  try {
+    await assert.rejects(new ArticlePersistenceProcessor(writer, { placementFloor: 0.7 }).persist({
+      packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+    }), (error: unknown) => error === sqlError)
+  } finally { captured.restore() }
+  const lines = duplicateHoldLines(captured.lines)
+  assert.equal(lines.length, 1)
+  assert.deepEqual(lines[0]!.blocking, [{ entityId: 'entity-solana-catalog', status: 'active', name: 'Solana Foundation', slug: 'solana-foundation',
+    identityKey: 'catalog:solana-foundation', catalogEntityId: 'entity-solana-catalog', matchedField: 'unknown' }])
+})
+
+test('#378 other MK003 details are rethrown without a duplicate-hold line', async () => {
+  const { KnowledgeOperationStaleTargetError } = await import('./knowledge-operation-store')
+  const input = freshPacket([noMatchMembership('Solana') as any])
+  for (const detail of ['entity_resolution', 'context', 'duplicate_target']) {
+    const sqlError = new KnowledgeOperationStaleTargetError('op', detail)
+    const { writer } = duplicateWriter([], async () => { throw sqlError })
+    const captured = captureInfo()
+    try {
+      await assert.rejects(new ArticlePersistenceProcessor(writer, { placementFloor: 0.7 }).persist({
+        packet: input, source: 'news', owner: 'fixture-owner', signal: new AbortController().signal,
+      }), (error: unknown) => error === sqlError)
+    } finally { captured.restore() }
+    assert.equal(duplicateHoldLines(captured.lines).length, 0, detail)
+  }
+})
+
+test('#378 the writer passes the MK003 detail through as targetId', async () => {
+  const { PostgresKnowledgeOperationWriter } = await import('./postgres-knowledge-writer')
+  const { KnowledgeOperationStaleTargetError } = await import('./knowledge-operation-store')
+  const writer = new PostgresKnowledgeOperationWriter({ connectionString: 'postgresql://writer_fixture@localhost/fixture' })
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001'
+  ;(writer as unknown as { pool: unknown }).pool = {
+    query: async () => { throw Object.assign(new Error('new article entity is equivalent to an existing identity'), { code: 'MK003', detail: `entity_resolution:${id}` }) },
+    end: async () => {},
+  }
+  await assert.rejects(writer.commitArticle({
+    operationId: 'op-1', workId: 'work-1', owner: 'owner', epoch: 1,
+    packet: packet([proposal('primary', 'entity-primary', ITEM_PRIMARY)]), contextDigest: 'digest',
+    contextWatermark: 'wm', targetRevisions: {}, entities: [], itemId: 'item-1', duplicateTarget: null,
+  }), (error: unknown) => error instanceof KnowledgeOperationStaleTargetError && error.targetId === `entity_resolution:${id}`)
+})
