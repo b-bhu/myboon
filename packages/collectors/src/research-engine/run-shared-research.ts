@@ -774,6 +774,11 @@ export function createLiveSharedResearchRuntime(
               articleContextAvailability?.invalidate()
               break
             }
+            // Only a batch with real outcomes completing without a storage
+            // transient proves the database actually answers (Ref #336).
+            if (batch.some(outcome =>
+              outcome.kind !== 'idle' && outcome.kind !== 'disabled' && outcome.kind !== 'shadow',
+            )) articleContextAvailability?.recordHealthy()
             if (batch.length === 0 || batch.some(outcome =>
               outcome.kind === 'idle' || outcome.kind === 'disabled' || outcome.kind === 'shadow',
             )) break

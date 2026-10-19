@@ -964,12 +964,11 @@ test('a managed reader failure records the reader and its error class without me
       }),
       createManagedContext: () => ({
         researchContext: async () => { throw new Error('probe must use article context') },
-        articleContext: async input => {
+        checkArticleContextAvailability: async () => {
           managedReads += 1
-          assert.equal(input.identityOnly, true)
-          assert.equal(input.limit, 1)
           throw Object.assign(new Error('self signed certificate in certificate chain secret-url'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' })
         },
+        articleContext: async () => { throw new Error('probe must not load article context') },
         close: async () => undefined,
       }),
       createLegacyReader: () => ({
@@ -1026,9 +1025,10 @@ test('reader failures are recorded in reader order when both storage readers rej
       }),
       createManagedContext: () => ({
         researchContext: async () => { throw new Error('probe must use article context') },
-        articleContext: async () => {
+        checkArticleContextAvailability: async () => {
           throw Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })
         },
+        articleContext: async () => { throw new Error('probe must not load article context') },
         close: async () => undefined,
       }),
       createLegacyReader: () => ({

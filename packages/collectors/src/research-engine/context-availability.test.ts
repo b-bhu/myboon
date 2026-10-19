@@ -24,6 +24,9 @@ test('storage outage gates claims, backs off probes and resumes only after a suc
   assert.equal(await gate.check(), true)
   assert.equal(gate.claimsAllowed, true)
   assert.equal(probes, 2)
+  // A passing probe no longer clears the failure count; real work does (Ref #336).
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  gate.recordHealthy()
   assert.equal(gate.snapshot().consecutiveFailures, 0)
   gate.invalidate()
   assert.equal(gate.claimsAllowed, false)
@@ -73,7 +76,8 @@ test('a successful old probe cannot reopen claims after a newer dependency failu
 test('healthy probes wait five minutes, but a newly observed outage retries after thirty seconds', async () => {
   let now = 0
   let probes = 0
-  const gate = new ArticleContextAvailabilityGate(async () => { probes += 1 }, () => now)
+  // Invalidate uses the shared curve through this.random, so pin the jitter.
+  const gate = new ArticleContextAvailabilityGate(async () => { probes += 1 }, () => now, undefined, EXACT_JITTER)
   assert.equal(await gate.check(), true)
   assert.equal(gate.snapshot().nextProbeAt, new Date(300_000).toISOString())
   now = 299_999
@@ -103,17 +107,43 @@ test('healthy cadence is bounded and configurable without changing outage backof
   }
 })
 
-test('repeated invalidation preserves an already known outage backoff', async () => {
+test('repeated invalidation keeps growing an already known outage backoff (Ref #336)', async () => {
   let now = 0
   const gate = new ArticleContextAvailabilityGate(async () => { throw new Error('offline') }, () => now, undefined, EXACT_JITTER)
-  for (const delay of [0, 30_000, 60_000, 120_000, 240_000]) {
+  // Invalidate on an already-down gate is itself a curve failure, so a failed
+  // probe plus invalidation advance two steps per cycle (30s+60s, 120s+240s,
+  // then the 900s cap) and never shorten the deadline back to a fresh step.
+  for (const delay of [0, 60_000, 240_000, 900_000, 900_000]) {
     now += delay
     assert.equal(await gate.check(), false)
-    const deadline = gate.snapshot().nextProbeAt
+    const probeDeadline = gate.snapshot().nextProbeAt
     gate.invalidate()
-    assert.equal(gate.snapshot().nextProbeAt, deadline)
+    assert.ok(Date.parse(gate.snapshot().nextProbeAt!) >= Date.parse(probeDeadline!))
   }
-  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 480_000)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 900_000)
+})
+
+test('invalidation keeps growing the retry while probes pass; recordHealthy resets it (Ref #336)', async () => {
+  let now = 0
+  const gate = new ArticleContextAvailabilityGate(async () => undefined, () => now, undefined, EXACT_JITTER)
+  assert.equal(await gate.check(), true)
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
+  now += 30_000
+  assert.equal(await gate.check(), true)
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 60_000)
+  now += 60_000
+  assert.equal(await gate.check(), true)
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 120_000)
+  // Record healthy only counts while the gate is up again: a passing probe
+  // plus recordHealthy put the next invalidate back on the first step.
+  gate.recordHealthy()
+  now += 120_000
+  assert.equal(await gate.check(), true)
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
 })
 
 test('the outage backoff now uses the shared 15-min jittered health curve (Ref #346)', async () => {

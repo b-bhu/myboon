@@ -195,6 +195,7 @@ expect() {
 }
 expect "perEntityLimit 0 rejected" 22023 "PERFORM managed_knowledge_private.article_context_v1('{\"source\":\"news\",\"sourceRefs\":[],\"labels\":[],\"entityIds\":[\"11111111-0000-4000-8000-000000000001\"],\"itemIds\":[],\"identityOnly\":false,\"limit\":5,\"historyMode\":\"recent\",\"perEntityLimit\":0}'::jsonb)"
 expect "perEntityLimit 11 rejected" 22023 "PERFORM managed_knowledge_private.article_context_v1('{\"source\":\"news\",\"sourceRefs\":[],\"labels\":[],\"entityIds\":[\"11111111-0000-4000-8000-000000000001\"],\"itemIds\":[],\"identityOnly\":false,\"limit\":5,\"historyMode\":\"recent\",\"perEntityLimit\":11}'::jsonb)"
+expect "perEntityLimit with empty entityIds rejected" 22023 "PERFORM managed_knowledge_private.article_context_v1('{\"source\":\"news\",\"sourceRefs\":[],\"labels\":[],\"entityIds\":[],\"itemIds\":[],\"identityOnly\":false,\"limit\":5,\"historyMode\":\"recent\",\"perEntityLimit\":5}'::jsonb)"
 
 echo "== rollback twice"
 "${PSQL[@]}" --single-transaction -f "$REPO/supabase/rollbacks/$DOWN" >/dev/null || { echo "FAIL rollback apply"; exit 1; }

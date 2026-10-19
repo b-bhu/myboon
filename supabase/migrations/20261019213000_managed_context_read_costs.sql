@@ -7,9 +7,10 @@
 -- with a revision digest that returns 'unavailable' only for non-active rows
 -- (status is NOT NULL), so digesting 1,107 entity revisions per call is
 -- avoidable: probe 286 ms -> 20 ms, one-entity recent history 408 ms -> 13 ms.
--- article_context_v1 gains an optional perEntityLimit (1..10) so history for
--- several entities loads in one call with per-entity top-5 rows matching the
--- per-entity calls; without the key its output stays byte-identical.
+-- article_context_v1 gains an optional perEntityLimit (1..10), which requires
+-- a non-empty entityIds, so history for several entities loads in one call
+-- with per-entity top-5 rows matching the per-entity calls; without the key
+-- its output stays byte-identical.
 --
 -- NOT APPLIED. Needs Bucket's explicit yes (needs-bucket).
 -- Rollback: supabase/rollbacks/20261019213000_managed_context_read_costs.down.sql
@@ -133,6 +134,9 @@ BEGIN
   per_entity := (input->>'perEntityLimit')::integer;
   IF per_entity IS NOT NULL AND (per_entity < 1 OR per_entity > 10) THEN
     RAISE EXCEPTION 'invalid per-entity history limit' USING ERRCODE='22023';
+  END IF;
+  IF per_entity IS NOT NULL AND jsonb_array_length(coalesce(input->'entityIds','[]'::jsonb)) = 0 THEN
+    RAISE EXCEPTION 'per-entity history limit requires entity ids' USING ERRCODE='22023';
   END IF;
   -- The legacy context function intentionally uses exact labels. Article
   -- placement also needs bounded narrative/scope candidates, while still
