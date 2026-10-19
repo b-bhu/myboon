@@ -18,6 +18,25 @@ BEGIN
     RAISE EXCEPTION 'anon expected 0 visible rows after RLS, saw %', visible;
   END IF;
 
+  -- TRUNCATE is not covered by RLS, so the grant must have been revoked.
+  BEGIN
+    TRUNCATE public.published_narratives;
+    RAISE EXCEPTION 'anon TRUNCATE unexpectedly succeeded';
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      IF SQLSTATE <> '42501' THEN
+        RAISE EXCEPTION 'anon TRUNCATE failed with SQLSTATE %, expected 42501', SQLSTATE;
+      END IF;
+      RAISE NOTICE 'anon TRUNCATE blocked as expected (SQLSTATE %, %)', SQLSTATE, SQLERRM;
+  END;
+
+  IF has_table_privilege('anon', 'public.published_narratives', 'REFERENCES') THEN
+    RAISE EXCEPTION 'anon still holds REFERENCES on public.published_narratives';
+  END IF;
+  IF has_table_privilege('anon', 'public.published_narratives', 'TRIGGER') THEN
+    RAISE EXCEPTION 'anon still holds TRIGGER on public.published_narratives';
+  END IF;
+
   UPDATE public.published_narratives SET content_small = 'x';
   GET DIAGNOSTICS touched = ROW_COUNT;
   IF touched <> 0 THEN
@@ -52,6 +71,25 @@ BEGIN
   SELECT count(*) INTO visible FROM public.published_narratives;
   IF visible <> 0 THEN
     RAISE EXCEPTION 'authenticated expected 0 visible rows after RLS, saw %', visible;
+  END IF;
+
+  -- TRUNCATE is not covered by RLS, so the grant must have been revoked.
+  BEGIN
+    TRUNCATE public.published_narratives;
+    RAISE EXCEPTION 'authenticated TRUNCATE unexpectedly succeeded';
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      IF SQLSTATE <> '42501' THEN
+        RAISE EXCEPTION 'authenticated TRUNCATE failed with SQLSTATE %, expected 42501', SQLSTATE;
+      END IF;
+      RAISE NOTICE 'authenticated TRUNCATE blocked as expected (SQLSTATE %, %)', SQLSTATE, SQLERRM;
+  END;
+
+  IF has_table_privilege('authenticated', 'public.published_narratives', 'REFERENCES') THEN
+    RAISE EXCEPTION 'authenticated still holds REFERENCES on public.published_narratives';
+  END IF;
+  IF has_table_privilege('authenticated', 'public.published_narratives', 'TRIGGER') THEN
+    RAISE EXCEPTION 'authenticated still holds TRIGGER on public.published_narratives';
   END IF;
 
   UPDATE public.published_narratives SET content_small = 'x';

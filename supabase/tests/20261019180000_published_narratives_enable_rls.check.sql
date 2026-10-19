@@ -12,7 +12,20 @@ SELECT check_name, pass FROM (VALUES
   ('04 service_role holds SELECT, INSERT and UPDATE on the table', 4,
      has_table_privilege('service_role', 'public.published_narratives', 'SELECT')
      AND has_table_privilege('service_role', 'public.published_narratives', 'INSERT')
-     AND has_table_privilege('service_role', 'public.published_narratives', 'UPDATE'))
+     AND has_table_privilege('service_role', 'public.published_narratives', 'UPDATE')),
+  ('05 anon holds none of TRUNCATE, REFERENCES and TRIGGER on the table', 5,
+     NOT has_table_privilege('anon', 'public.published_narratives', 'TRUNCATE')
+     AND NOT has_table_privilege('anon', 'public.published_narratives', 'REFERENCES')
+     AND NOT has_table_privilege('anon', 'public.published_narratives', 'TRIGGER')),
+  ('06 authenticated holds none of TRUNCATE, REFERENCES and TRIGGER on the table', 6,
+     NOT has_table_privilege('authenticated', 'public.published_narratives', 'TRUNCATE')
+     AND NOT has_table_privilege('authenticated', 'public.published_narratives', 'REFERENCES')
+     AND NOT has_table_privilege('authenticated', 'public.published_narratives', 'TRIGGER')),
+  ('07 service_role still holds SELECT, INSERT, UPDATE and DELETE on the table', 7,
+     has_table_privilege('service_role', 'public.published_narratives', 'SELECT')
+     AND has_table_privilege('service_role', 'public.published_narratives', 'INSERT')
+     AND has_table_privilege('service_role', 'public.published_narratives', 'UPDATE')
+     AND has_table_privilege('service_role', 'public.published_narratives', 'DELETE'))
 ) AS c(check_name, ord, pass)
 ORDER BY ord;
 
