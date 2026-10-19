@@ -46,6 +46,8 @@ export interface ManagedResearchContextPort {
     /** Recent reads ignore source/term filters; targeted reads use them for dedup. */
     historyMode?: 'recent' | 'targeted'
     identityOnly?: boolean
+    /** Per-entity item budget for a batched recent read; echoed in the result. */
+    perEntityLimit?: number
   }): Promise<{
     entities: Array<{
       id: string, slug: string, name: string, summary: string | null,
@@ -63,7 +65,10 @@ export interface ManagedResearchContextPort {
     watermark: string | number | null
     truncated: boolean
     candidateTruncated?: boolean
+    perEntityLimit?: number
   }>
+  /** Probes that this login may EXECUTE the article function without running it. */
+  checkArticleContextAvailability?(): Promise<void>
 }
 
 export type ArticleContextCoverageKind = 'transient' | 'permanent'
@@ -95,6 +100,8 @@ export interface ArticleResearchContext {
   historyByEntity: Map<string, Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>
   /** Fetch only selected entities after placement, then retain their latest five. */
   loadHistory?(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>
+  /** Prefetches the latest-five history for several entities in one managed call; loadHistory then reads the memo. */
+  loadHistories?(entityIds: readonly string[]): Promise<void>
   /** Lookup failures make placement unsafe; callers must hold before deciding. */
   coverageFailures: readonly string[]
   /** Whether all recorded coverage failures are temporary storage outages. */
@@ -225,19 +232,41 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
     const historyMemo = new Map<string, Promise<ArticleHistory[]>>()
     const targetMemo = new Map<string, Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>>>()
     const reader = this
+    const loadHistory = (entityId: string): Promise<ArticleHistory[]> => {
+      let pending = historyMemo.get(entityId)
+      if (!pending) {
+        pending = this.articleLatestHistory(entityId).then(history => {
+          historyByEntity.set(entityId, history)
+          return history
+        })
+        historyMemo.set(entityId, pending)
+      }
+      return pending
+    }
     return {
       candidates,
       historyByEntity,
-      loadHistory: (entityId) => {
-        let pending = historyMemo.get(entityId)
-        if (!pending) {
-          pending = this.articleLatestHistory(entityId).then(history => {
-            historyByEntity.set(entityId, history)
-            return history
-          })
-          historyMemo.set(entityId, pending)
+      loadHistory,
+      loadHistories: async (entityIds) => {
+        const remaining = [...new Set(entityIds)].filter((id) => !historyMemo.has(id))
+        if (remaining.length === 0) return
+        // Only the combined-coverage reader can serve several entities with one
+        // managed call; the batch promise is created lazily and shared by every id.
+        if (this.options.managed?.articleContext && this.options.managed.articleHistoryCoverage === 'legacy_and_managed') {
+          let batch: Promise<Map<string, ArticleHistory[]>> | undefined
+          const shared = () => (batch ??= this.combinedRecentHistory(remaining))
+          await Promise.all(remaining.map((id) => {
+            const pending = this.articleLatestHistory(id, async () => (await shared()).get(id) ?? [])
+              .then(history => {
+                historyByEntity.set(id, history)
+                return history
+              })
+            historyMemo.set(id, pending)
+            return pending
+          }))
+          return
         }
-        return pending
+        await Promise.all(remaining.map((id) => loadHistory(id)))
       },
       coverageFailures: this.failures,
       get coverageFailureKind() { return reader.coverageFailureKind },
@@ -326,33 +355,45 @@ export class InternalResearchEntityMemoryReader implements EntityMemoryReader {
     } catch (error) { this.recordFailure(`article managed catalogue search: ${String(error).slice(0, 200)}`, error); return [] }
   }
 
-  private async articleLatestHistory(entityId: string): Promise<Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }>> {
+  /**
+   * One shared recent read for several entities: per-id legacy latest-five in
+   * parallel with a single batched managed call. Falls back to one managed
+   * call per entity when the deployed function does not echo perEntityLimit.
+   */
+  private async combinedRecentHistory(entityIds: string[]): Promise<Map<string, ArticleHistory[]>> {
+    const managed = this.options.managed!
+    const [legacyList, context] = await Promise.all([
+      Promise.all(entityIds.map(id => this.legacyHistory(id, 5))),
+      managed.articleContext!({
+        source: this.options.source, sourceRefs: [], labels: [], entityIds, limit: 5, historyMode: 'recent',
+        // A single id stays on today's exact input; batches ask for per-entity top rows.
+        ...(entityIds.length > 1 ? { perEntityLimit: 5 } : {}),
+      }),
+    ])
+    // Never relabel an existing temporary reader failure as permanent.
+    if (this.failures.length > 0) throw this.coverageFailureError
+    // `truncated` also describes legacy planning items, not completeness
+    // of this intentionally bounded latest-five article timeline.
+    if (!Array.isArray(context.articleItems) || context.candidateTruncated !== false
+      || !entityIds.every(id => context.entities.some(entity => entity.id === id))) {
+      throw new Error('Combined recent history coverage is incomplete; fresh context is required')
+    }
+    if (entityIds.length > 1 && context.perEntityLimit !== 5) {
+      const perEntity = await Promise.all(entityIds.map(id => this.combinedRecentHistory([id])))
+      return new Map(entityIds.map((id, index) => [id, perEntity[index].get(id) ?? []]))
+    }
+    return new Map(entityIds.map((id, index) => [id, uniqueHistory([...legacyList[index], ...context.articleItems!.filter(item => item.entityId === id).map(item => ({
+      id: item.itemId, source: item.origin, title: item.title, summary: item.summary,
+      eventAt: item.eventAt ?? item.publishedAt ?? item.observedAt,
+    }))]).slice(0, 5)]))
+  }
+
+  private async articleLatestHistory(entityId: string, loadCombined?: () => Promise<ArticleHistory[]>): Promise<ArticleHistory[]> {
     const managed = this.options.managed
     if (managed?.articleContext && managed.articleHistoryCoverage === 'legacy_and_managed') {
       if (this.failures.length > 0) return []
       try {
-        const load = async () => {
-          // Retain the existing merge and tie boundaries. The private function
-          // and REST can choose different equal-date rows at the five-item cap.
-          const [legacy, context] = await Promise.all([
-            this.legacyHistory(entityId, 5),
-            managed.articleContext!({
-              source: this.options.source, sourceRefs: [], labels: [], entityIds: [entityId], limit: 5, historyMode: 'recent',
-            }),
-          ])
-          // Never relabel an existing temporary reader failure as permanent.
-          if (this.failures.length > 0) throw this.coverageFailureError
-          // `truncated` also describes legacy planning items, not completeness
-          // of this intentionally bounded latest-five article timeline.
-          if (!Array.isArray(context.articleItems) || context.candidateTruncated !== false
-            || !context.entities.some(entity => entity.id === entityId)) {
-            throw new Error('Combined recent history coverage is incomplete; fresh context is required')
-          }
-          return uniqueHistory([...legacy, ...context.articleItems.filter(item => item.entityId === entityId).map(item => ({
-            id: item.itemId, source: item.origin, title: item.title, summary: item.summary,
-            eventAt: item.eventAt ?? item.publishedAt ?? item.observedAt,
-          }))]).slice(0, 5)
-        }
+        const load = loadCombined ?? (async () => (await this.combinedRecentHistory([entityId])).get(entityId) ?? [])
         // Source and capability prevent accidental reuse across lookup semantics.
         const key = JSON.stringify([this.options.source, entityId, managed.articleHistoryCoverage, 'recent', 5])
         return this.options.historyCache && this.failures.length === 0

@@ -412,6 +412,9 @@ export async function prepareArticlePlacement(input: ArticlePlacementInput): Pro
     .filter((candidate) => related?.value.dispositions[candidate.id] === 'related'
       && !articleMentionsEntity(articleText, candidate))
     .map((candidate) => candidate.id)
+  await input.context.loadHistories?.([entity.id, ...relatedCandidates
+    .filter((candidate) => related?.value.dispositions[candidate.id] === 'related' && articleMentionsEntity(articleText, candidate))
+    .map((candidate) => candidate.id)])
   for (const candidate of relatedCandidates) {
     if (related?.value.dispositions[candidate.id] !== 'related') continue
     if (!articleMentionsEntity(articleText, candidate)) continue
@@ -995,6 +998,9 @@ async function batchedSelectedPreparation(
     && stage.dispositionByCandidate.get(candidate.id)?.outcome === 'related'
     && articleMentionsEntity(articleText, candidate))]
   logRelatedMentionRejections('batched', input, rejectedRelatedIds)
+  // Prefetch the latest-five history for every selected entity in one call;
+  // the loop below then reads them through the shared memoized loadHistory.
+  await input.context.loadHistories?.(selected.map((entity) => entity.id))
   // The latest-five history for every selected entity is loaded once and stays
   // in the shared context for the novelty stage and the writing handoff.
   const historyById = new Map<string, RelationshipHistoryItem[]>()

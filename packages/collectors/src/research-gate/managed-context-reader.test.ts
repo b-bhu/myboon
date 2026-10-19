@@ -149,7 +149,7 @@ function articleReader(input: {
   cache: ArticleHistoryCache
   managed: ManagedResearchContextPort
   source?: string
-  legacyRecent?: () => Promise<Array<{ id: string, entityId: string, memoryType: string, title: string, summary: string, eventAt: string }>>
+  legacyRecent?: (entityIds: readonly string[]) => Promise<Array<{ id: string, entityId: string, memoryType: string, title: string, summary: string, eventAt: string }>>
   legacyTargeted?: () => Promise<[]>
 }) {
   return new InternalResearchEntityMemoryReader({
@@ -325,4 +325,78 @@ test('coalesced recent history retains a legacy transient error for every partic
   assert.equal(second.coverageFailureKind, 'transient')
   assert.ok(first.coverageFailures.some(message => message.includes('schema cache unavailable')))
   assert.ok(second.coverageFailures.some(message => message.includes('schema cache unavailable')))
+})
+
+const batchIds = ['e-a', 'e-b', 'e-c']
+const batchEntity = (id: string) => ({ id, name: `Entity ${id}`, slug: `slug-${id}`, summary: null })
+const batchManagedItem = (id: string, index: number) => ({ itemId: `${id}-item-${index}`, entityId: id, origin: 'managed' as const,
+  title: `Managed ${id}`, summary: `Managed summary ${id} ${index}`, observedAt: '2026-10-01T12:00:00Z', eventAt: `2026-10-05T12:00:0${index}Z` })
+const batchLegacyRow = (id: string, index: number) => ({ id: `${id}-legacy-${index}`, entityId: id, memoryType: 'news_event',
+  title: `Legacy ${id}`, summary: `Legacy summary ${id} ${index}`, eventAt: `2026-10-04T12:00:0${index}Z` })
+const batchExpected = (id: string): Array<{ id: string, source: 'legacy' | 'managed', title: string, summary: string, eventAt: string }> => [
+  { id: `${id}-item-3`, source: 'managed', title: `Managed ${id}`, summary: `Managed summary ${id} 3`, eventAt: '2026-10-05T12:00:03Z' },
+  { id: `${id}-item-2`, source: 'managed', title: `Managed ${id}`, summary: `Managed summary ${id} 2`, eventAt: '2026-10-05T12:00:02Z' },
+  { id: `${id}-item-1`, source: 'managed', title: `Managed ${id}`, summary: `Managed summary ${id} 1`, eventAt: '2026-10-05T12:00:01Z' },
+  { id: `${id}-item-0`, source: 'managed', title: `Managed ${id}`, summary: `Managed summary ${id} 0`, eventAt: '2026-10-05T12:00:00Z' },
+  { id: `${id}-legacy-1`, source: 'legacy', title: `Legacy ${id}`, summary: `Legacy summary ${id} 1`, eventAt: '2026-10-04T12:00:01Z' },
+]
+
+test('loadHistories prefetches all requested entities in one managed batch and memoizes per-entity reads', async () => {
+  const cache = new ArticleHistoryCache()
+  const calls: Array<{ entityIds?: readonly string[], perEntityLimit?: number }> = []
+  const managed = combinedPort(async input => {
+    if (input.historyMode === 'recent') calls.push({ entityIds: input.entityIds, perEntityLimit: input.perEntityLimit })
+    return { entities: (input.entityIds ?? []).map(batchEntity), items: [], digest: 'fixture', watermark: null,
+      truncated: false, candidateTruncated: false,
+      ...(input.entityIds && input.entityIds.length > 1 ? { perEntityLimit: 5 } : {}),
+      articleItems: (input.entityIds ?? []).flatMap(id => [0, 1, 2, 3].map(i => batchManagedItem(id, i))) }
+  })
+  const reader = articleReader({ cache, managed, legacyRecent: async ([entityId]) => [batchLegacyRow(entityId, 0), batchLegacyRow(entityId, 1)] })
+  const context = await reader.articleContext()
+  await context.loadHistories!(['e-a', 'e-b', 'e-c', 'e-a'])
+  assert.deepEqual(calls, [{ entityIds: ['e-a', 'e-b', 'e-c'], perEntityLimit: 5 }])
+  for (const id of batchIds) {
+    const countBefore: number = calls.length
+    const history = await context.loadHistory!(id)
+    assert.equal(calls.length, countBefore, 'loadHistory reads the shared memo')
+    assert.deepEqual(history, batchExpected(id))
+    assert.deepEqual(context.historyByEntity.get(id), history)
+  }
+})
+
+test('a batched recent read that lacks the deployed perEntityLimit marker falls back to one call per entity without a coverage failure', async () => {
+  const cache = new ArticleHistoryCache()
+  const calls: Array<{ entityIds?: readonly string[], perEntityLimit?: number }> = []
+  const managed = combinedPort(async input => {
+    if (input.historyMode === 'recent') calls.push({ entityIds: input.entityIds, perEntityLimit: input.perEntityLimit })
+    return { entities: (input.entityIds ?? []).map(batchEntity), items: [], digest: 'fixture', watermark: null,
+      truncated: false, candidateTruncated: false,
+      articleItems: (input.entityIds ?? []).flatMap(id => [0, 1, 2, 3].map(i => batchManagedItem(id, i))) }
+  })
+  const reader = articleReader({ cache, managed, legacyRecent: async ([entityId]) => [batchLegacyRow(entityId, 0), batchLegacyRow(entityId, 1)] })
+  const context = await reader.articleContext()
+  await context.loadHistories!(batchIds)
+  assert.deepEqual(calls.map(call => call.entityIds), [batchIds, ['e-a'], ['e-b'], ['e-c']])
+  assert.equal(calls[0].perEntityLimit, 5, 'the batch still asked for per-entity rows')
+  assert.ok(calls.slice(1).every(call => call.perEntityLimit === undefined))
+  for (const id of batchIds) assert.deepEqual(await context.loadHistory!(id), batchExpected(id))
+  assert.deepEqual(context.coverageFailures, [])
+  assert.equal(context.coverageFailureKind, undefined)
+})
+
+test('a single-entity recent load sends no perEntityLimit', async () => {
+  const cache = new ArticleHistoryCache()
+  const calls: Array<{ entityIds?: readonly string[], perEntityLimit?: number }> = []
+  const managed = combinedPort(async input => {
+    if (input.historyMode === 'recent') calls.push({ entityIds: input.entityIds, perEntityLimit: input.perEntityLimit })
+    return { entities: (input.entityIds ?? []).map(batchEntity), items: [], digest: 'fixture', watermark: null,
+      truncated: false, candidateTruncated: false,
+      articleItems: (input.entityIds ?? []).flatMap(id => [batchManagedItem(id, 0)]) }
+  })
+  const reader = articleReader({ cache, managed, legacyRecent: async ([entityId]) => [batchLegacyRow(entityId, 0)] })
+  const context = await reader.articleContext()
+  assert.deepEqual((await context.loadHistory!(batchIds[0])).map(item => [item.id, item.source]), [['e-a-item-0', 'managed'], ['e-a-legacy-0', 'legacy']])
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].entityIds, ['e-a'])
+  assert.equal(calls[0].perEntityLimit, undefined)
 })
