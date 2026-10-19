@@ -42,10 +42,6 @@ export function expectedInternalToken(): string {
   return process.env.INTERNAL_DASHBOARD_TOKEN ?? ''
 }
 
-export function expectedInternalWriteToken(): string {
-  return process.env.INTERNAL_ENTITY_WRITE_TOKEN ?? ''
-}
-
 export function expectedInternalPolymarketCatalogWriteToken(): string {
   return process.env.INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN ?? ''
 }
@@ -193,7 +189,7 @@ export async function proxyInternalWriteApi(
   options: InternalWriteProxyOptions = {},
 ): Promise<NextResponse> {
   const session = await getInternalSession()
-  const writeToken = options.writeToken ?? expectedInternalWriteToken()
+  const writeToken = options.writeToken ?? ''
   const unavailableMessage = options.unavailableMessage ?? 'Internal Entity write service is unavailable'
   if (!isInternalDashboardConfigured() || !isStrongSecret(writeToken)) {
     return internalJson({ error: unavailableMessage }, 503)

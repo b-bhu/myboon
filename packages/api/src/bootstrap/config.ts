@@ -2,7 +2,6 @@ export type ApiConfig = {
   supabaseUrl: string
   supabaseServiceRoleKey: string
   internalDashboardToken?: string
-  internalEntityWriteToken?: string
   internalPolymarketCatalogWriteToken?: string
   port: number
   host: string
@@ -93,7 +92,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     supabaseUrl: supabaseUrl!,
     supabaseServiceRoleKey: supabaseServiceRoleKey!,
     internalDashboardToken: env.INTERNAL_DASHBOARD_TOKEN,
-    internalEntityWriteToken: env.INTERNAL_ENTITY_WRITE_TOKEN,
     internalPolymarketCatalogWriteToken: env.INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN,
     port: parseInt(env.PORT ?? '3000', 10),
     host: env.HOST ?? '0.0.0.0',

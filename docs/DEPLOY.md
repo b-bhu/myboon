@@ -1125,7 +1125,6 @@ SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 TOKENS_API_KEY=
 INTERNAL_DASHBOARD_TOKEN=
-INTERNAL_ENTITY_WRITE_TOKEN=
 INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN=
 PORT=3000
 ```
@@ -1142,14 +1141,12 @@ GitHub issues, CI logs, or browser-accessible `NEXT_PUBLIC_*` variables.
 INTERNAL_DASHBOARD_TOKEN=
 INTERNAL_DASHBOARD_SESSION_SECRET=
 INTERNAL_DASHBOARD_AUTH_BYPASS=0
-INTERNAL_ENTITY_WRITE_TOKEN=
 INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN=
 INTERNAL_API_BASE_URL=https://internal-api.example.com
 ```
 
 Use the same `INTERNAL_DASHBOARD_TOKEN` for the API and web deployments. Use a
-separate `INTERNAL_ENTITY_WRITE_TOKEN` for privileged preview/apply operations,
-and a separate `INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN` for catalog draft and
+separate `INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN` for catalog draft and
 publish operations. Configure write tokens only on the API and web server.
 Generate all secrets independently with at least 32 random bytes, for example:
 
