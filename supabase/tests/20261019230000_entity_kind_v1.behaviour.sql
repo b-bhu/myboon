@@ -1,8 +1,8 @@
 -- #342 PR-4 A behaviour check. Disposable DB only, run as a superuser, and
 -- EXPECTS the state the pg-test script builds: every repo migration applied,
 -- .preseed.sql committed (legacy rows 1a1..1a7), 20261019230000 applied.
--- Seeds its own probe rows inside the transaction, calls merge_entities_v1 as
--- a disposable executor LOGIN (the 20261019220000 pattern), prints
+-- Seeds its own probe rows inside the transaction, calls merge_entities_v1
+-- and writer_v1 as a disposable executor LOGIN (the 20261019220000 pattern), prints
 -- check|pass rows and ROLLBACKs everything - the committed preseed rows are
 -- exercised in-transaction only.
 \set ON_ERROR_STOP on
@@ -28,6 +28,76 @@ INSERT INTO res342 SELECT 'dry_pair', NULL,
   managed_knowledge_private.merge_entities_v1('00000000-0000-4000-8000-0000000001a1'::uuid,'00000000-0000-4000-8000-0000000001a3'::uuid)::text;
 INSERT INTO res342 SELECT 'apply_pair', NULL,
   managed_knowledge_private.merge_entities_v1('00000000-0000-4000-8000-0000000001a1'::uuid,'00000000-0000-4000-8000-0000000001a3'::uuid,false)::text;
+
+-- writer_v1 'source' retry probes: an in-flight source saved with a raw legacy
+-- hint type must re-save unchanged (no MK001) and must refuse a kind-mapped
+-- rewrite, so the managed writer keeps packet and binding types raw.
+DO $writer_probe$ DECLARE
+  packet jsonb; readiness jsonb; packet_canonical text; readiness_canonical text;
+  packet_digest text; readiness_digest text; mapped_packet jsonb;
+  source_input jsonb; mapped_input jsonb; st text; msg text;
+BEGIN
+  packet := jsonb_build_object(
+    'schemaVersion','myboon.research_packet.v1',
+    'workId','work-342-writer-retry',
+    'sourceType','news',
+    'packetId','packet-342-writer-retry',
+    'signalId','signal-342-writer-retry',
+    'completion','complete',
+    'limitations','[]'::jsonb,
+    'openQuestions','[]'::jsonb,
+    'claims','[]'::jsonb,
+    'evidence','[]'::jsonb,
+    'entityHints',jsonb_build_array(jsonb_build_object(
+      'name','DefiLlama','type','data provider','role','secondary_subject',
+      'aliases','[]'::jsonb,'source','research',
+      'claimRefs',jsonb_build_array('claim-342-raw'),
+      'evidenceRefs',jsonb_build_array('evidence-342-raw'))));
+  readiness := jsonb_build_object(
+    'schemaVersion','myboon.research_readiness.v1',
+    'workId',packet->>'workId',
+    'packetId',packet->>'packetId',
+    'signalId',packet->>'signalId',
+    'sourceType',packet->>'sourceType',
+    'packetCompletion',packet->>'completion',
+    'outcome','ready_for_entity');
+  packet_canonical := packet::text;
+  readiness_canonical := readiness::text;
+  packet_digest := encode(sha256(convert_to(packet_canonical,'UTF8')),'hex');
+  readiness_digest := encode(sha256(convert_to(readiness_canonical,'UTF8')),'hex');
+  source_input := jsonb_build_object(
+    'workId',packet->>'workId',
+    'source','news',
+    'packet',packet,
+    'packetCanonical',packet_canonical,
+    'packetDigest',packet_digest,
+    'readiness',readiness,
+    'readinessCanonical',readiness_canonical,
+    'readinessDigest',readiness_digest,
+    'sourceRefs','[]'::jsonb,
+    'evidence','[]'::jsonb);
+  mapped_packet := jsonb_set(packet,ARRAY['entityHints','0','type'],to_jsonb('organization'::text));
+  mapped_input := source_input || jsonb_build_object(
+    'packet',mapped_packet,
+    'packetCanonical',mapped_packet::text,
+    'packetDigest',encode(sha256(convert_to(mapped_packet::text,'UTF8')),'hex'));
+  BEGIN
+    PERFORM managed_knowledge_private.writer_v1('source',source_input);
+    st := 'OK'; msg := '';
+  EXCEPTION WHEN OTHERS THEN st := SQLSTATE; msg := SQLERRM; END;
+  INSERT INTO res342(key,state,note) VALUES('wr342_save',st,msg);
+  BEGIN
+    PERFORM managed_knowledge_private.writer_v1('source',source_input);
+    st := 'OK'; msg := '';
+  EXCEPTION WHEN OTHERS THEN st := SQLSTATE; msg := SQLERRM; END;
+  INSERT INTO res342(key,state,note) VALUES('wr342_retry_raw',st,msg);
+  BEGIN
+    PERFORM managed_knowledge_private.writer_v1('source',mapped_input);
+    st := 'NOERROR'; msg := 'kind-mapped packet unexpectedly accepted';
+  EXCEPTION WHEN OTHERS THEN st := SQLSTATE; msg := SQLERRM; END;
+  INSERT INTO res342(key,state,note) VALUES('wr342_retry_mapped',st,msg);
+END
+$writer_probe$;
 RESET SESSION AUTHORIZATION;
 
 -- Fill-path and CHECK probes (postgres superuser; nothing grants UPDATE(type)
@@ -120,6 +190,11 @@ SELECT check_name || '|' || pass FROM (
     (SELECT type FROM managed_knowledge_private.entities WHERE id = '00000000-0000-4000-8000-0000000002c4'::uuid) = 'unclassified'
   UNION ALL SELECT '12 linked fill path maps the catalogue legacy type conflict to event',
     (SELECT type FROM managed_knowledge_private.entities WHERE id = '00000000-0000-4000-8000-0000000002c5'::uuid) = 'event'
+  UNION ALL SELECT '13 retry of an old-type source with the raw packet succeeds (no MK001)',
+    (SELECT state FROM res342 WHERE key='wr342_save') = 'OK'
+    AND (SELECT state FROM res342 WHERE key='wr342_retry_raw') = 'OK'
+  UNION ALL SELECT '14 a kind-mapped rewrite of the same source raises MK001',
+    (SELECT state FROM res342 WHERE key='wr342_retry_mapped') = 'MK001'
 ) AS t(check_name, pass);
 
 ROLLBACK;
