@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
+import { createConfiguredInferenceGateway } from '../inference-gateway'
 import {
   RESEARCH_WORK_SCHEMA_VERSION,
   SIGNAL_SCHEMA_VERSION,
@@ -14,6 +15,7 @@ import { SharedResearchScheduler } from '../signal-platform/shared-scheduler'
 import { SqliteSignalPlatformStore } from '../signal-platform/sqlite-platform-store'
 import { defaultRuntimeControl, FileRuntimeControlStore } from '../signal-platform/runtime-control'
 import { operatorSignal, operatorWork } from '../signal-platform/operator-fixtures.test-support'
+import { withIsolatedV4Environment, operationsFixture } from '../signal-platform/v4-operations.test-support'
 import { claimReservation, recordDispatchIntent, recordUnknownOutcome } from './assignment-budget'
 import { researchRootAssignmentId } from './bounded-followup'
 import type { SharedResearchWorkPort } from './shared-worker'
@@ -29,6 +31,7 @@ import {
   runSharedResearchProcess,
   type SharedResearchRunnerRuntime,
 } from './run-shared-research'
+import { seedV4, v4Signal } from './v4-test-fixtures'
 
 test('shared Research entrypoint runs both directly and through PM2', () => {
   assert.equal(isSharedResearchProcessEntrypoint({ direct: true, nodeAppInstance: undefined }), true)
@@ -933,6 +936,121 @@ test('article runtime checks both storage readers and waits between failed probe
   }
 })
 
+test('the urgent storage transient outlives a sibling batch finishing real work in the same cycle', async () => {
+  // Ref #407: both workers run inside Promise.all, so a per-batch
+  // recordHealthy from the succeeding worker would erase the back-off step
+  // the urgent worker's invalidate() just advanced. The live runtime's gate
+  // jitter is Math.random (no seam), so the wait is asserted on the shared
+  // curve's jitter band: step one is 24s-36s, step two 48s-72s.
+  const restore = withIsolatedV4Environment()
+  const fx = operationsFixture()
+  let live: SharedResearchRunnerRuntime | undefined
+  let escapeRef: ReturnType<typeof setTimeout> | undefined
+  try {
+    fx.run(fx.receipt('initialize'))
+    fx.run(fx.receipt('resume_shared'))
+    seedV4(fx.store, v4Signal('news', 'urgent'))
+    seedV4(fx.store, v4Signal('news', 'background'), { priorityClass: 'P2' })
+    let now = Date.parse('2026-10-03T09:00:00.000Z')
+    // Hold both context reads in flight before either settles so the sibling
+    // batches genuinely race inside one cycle; the timeout is only an escape
+    // hatch against a silent fixture dead-lock.
+    let releaseBoth!: () => void
+    const bothClaimsArrived = new Promise<void>(resolve => { releaseBoth = resolve })
+    escapeRef = setTimeout(releaseBoth, 10_000)
+    let contextReads = 0
+    const config = loadSharedResearchRunnerConfig({
+      FEED_V3_CUTOVER_POLICY: 'phase1',
+      FEED_V3_RESEARCH_MODE: 'active', FEED_V3_RESEARCH_ACTIVE_SOURCES: 'news',
+      FEED_V3_LEGACY_RESEARCH_DISABLED_SOURCES: 'news', FEED_V3_TRIAGE_PROVIDER_HEALTH: 'healthy',
+      ENTITY_V4_SOURCE_OWNERSHIP_ENABLED: '1', ENTITY_V4_ACTIVE_SOURCES: 'news',
+      ENTITY_V4_POLICY_VERSION: 'offline.article.v1', ENTITY_V4_ARTICLE_WORKFLOW_ENABLED: '1',
+      ENTITY_V4_SYNTHESIS_POLICY_VERSION: 'offline.synthesis.v1', ENTITY_V4_SYNTHESIS_MAX_INPUT_TOKENS: '20000',
+      ENTITY_V4_SYNTHESIS_MAX_OUTPUT_TOKENS: '4000', ENTITY_V4_SYNTHESIS_MAX_COST_USD_MICROS: 'unknown',
+      ENTITY_V4_ASSIGNMENT_POLICY_VERSION: 'offline.assignment.v1', ENTITY_V4_ASSIGNMENT_MAX_PROVIDER_CALLS: '8',
+      ENTITY_V4_ASSIGNMENT_MAX_INPUT_TOKENS: '100000', ENTITY_V4_ASSIGNMENT_MAX_OUTPUT_TOKENS: '20000',
+      ENTITY_V4_ASSIGNMENT_MAX_COST_USD_MICROS: 'unknown',
+      MYBOON_MANAGED_KNOWLEDGE_DATABASE_URL: 'postgresql://myboon_internal_reader@offline.invalid/knowledge',
+      NEWS_SQLITE_PATH: fx.path, PIPELINE_SQLITE_PATH: join(fx.dir, 'unused.sqlite'),
+      SQLITE_WRITE_HEALTH_JOURNAL_PATH: join(fx.dir, 'health.json'),
+      [SHARED_RESEARCH_ENV.batchSize]: '1',
+      [SHARED_RESEARCH_ENV.urgentPriorities]: 'P0,P1', [SHARED_RESEARCH_ENV.backgroundPriorities]: 'P2,P3',
+    })
+    live = createLiveSharedResearchRuntime(config, {
+      runtimeControl: { read: defaultRuntimeControl },
+      workerClock: { now: () => new Date(now), setInterval: () => 1, clearInterval: () => undefined },
+      createInferenceRuntime: (input) => createConfiguredInferenceGateway({ ...input,
+        estimateTokens: () => 100,
+        serviceFactory: () => ({ oneshot: async () => { throw new Error('Offline provider access forbidden') } }),
+        adapterFactory: () => ({ generate: async () => { throw new Error('Offline provider access forbidden') } }),
+      }),
+      createClassificationRuntime: () => ({
+        gateway: { classify: async () => { throw new Error('Offline classification refused') }, recordPolicyOutcome: async () => undefined },
+        close: () => undefined,
+      }),
+      createManagedContext: () => ({
+        checkArticleContextAvailability: async () => undefined,
+        researchContext: async () => { throw new Error('article work must use the article context') },
+        articleContext: async (query) => {
+          contextReads += 1
+          if (contextReads === 2) releaseBoth()
+          await bothClaimsArrived
+          if (query.sourceRefs.includes('signal-urgent')) {
+            throw Object.assign(new Error('Could not query the database for the schema cache. Retrying.'), { code: 'PGRST002' })
+          }
+          // Land the sibling success strictly after the urgent worker's
+          // invalidate(): under the old per-batch recordHealthy this ordering
+          // reset the counter mid-cycle.
+          await new Promise(resolve => setTimeout(resolve, 50))
+          return { entities: [], items: [], articleItems: [], digest: 'offline', watermark: '1',
+            truncated: false, candidateTruncated: false }
+        },
+        close: async () => undefined,
+      }),
+      createLegacyReader: () => ({
+        entityIdsForSourceRef: async () => [], entitiesByIds: async () => [],
+        recentMemories: async () => [], searchEntities: async () => [],
+      }),
+    })
+    const first = await live.runCycle()
+    const firstWork = first.filter(outcome => outcome.kind !== 'idle' && outcome.kind !== 'disabled' && outcome.kind !== 'shadow')
+    assert.equal(firstWork.length, 2, JSON.stringify({ first, contextReads }))
+    // The urgent item held on the article context without spending an attempt.
+    const held = firstWork.find(outcome =>
+      'category' in outcome && outcome.category === 'storage_transient' && 'workId' in outcome && outcome.workId === 'work-signal-urgent')
+    assert.ok(held, `urgent item must hold on the storage transient: ${JSON.stringify({ first, contextReads })}`)
+    assert.ok(contextReads >= 2, `both workers must have entered their context reads: ${contextReads}`)
+    // The back-off grew to the first step and stayed there despite the sibling.
+    const availability = live.status.articleContextAvailability
+    assert.equal(availability?.available, false)
+    assert.equal(availability?.consecutiveFailures, 1)
+    const firstWaitMs = Date.parse(availability?.nextProbeAt ?? '0') - now
+    assert.ok(firstWaitMs >= 24_000 && firstWaitMs <= 36_000,
+      `first context back-off step must be about 30s, got ${firstWaitMs}ms`)
+    // Past the probe window and the 1s worker retry back-off: recovery
+    // promotes the held urgent item back to synthesis_pending on the runner's
+    // usual cadence while the sibling stays claimable as well.
+    now += 40_000
+    const recovered = await live.recoverExpired!({ now: new Date(now).toISOString(), limitPerSource: 10 })
+    assert.deepEqual(recovered, { news: ['work-signal-urgent'] }, JSON.stringify(recovered))
+    const second = await live.runCycle()
+    const secondTransient = second.find(outcome =>
+      'category' in outcome && outcome.category === 'storage_transient' && 'workId' in outcome && outcome.workId === 'work-signal-urgent')
+    assert.ok(secondTransient, `second cycle must hold the urgent item again: ${JSON.stringify(second)}`)
+    const availability2 = live.status.articleContextAvailability
+    assert.equal(availability2?.consecutiveFailures, 2)
+    const secondWaitMs = Date.parse(availability2?.nextProbeAt ?? '0') - now
+    assert.ok(secondWaitMs >= 48_000 && secondWaitMs <= 72_000,
+      `a second transient must grow the wait to about 60s, not reset it to 30s: got ${secondWaitMs}ms`)
+  } finally {
+    clearTimeout(escapeRef)
+    await live?.stop()
+    live?.close()
+    fx.dispose()
+    restore()
+  }
+})
+
 test('a managed reader failure records the reader and its error class without message text', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'article-context-managed-failure-'))
   const path = join(dir, 'news-lane.sqlite')
@@ -964,12 +1082,11 @@ test('a managed reader failure records the reader and its error class without me
       }),
       createManagedContext: () => ({
         researchContext: async () => { throw new Error('probe must use article context') },
-        articleContext: async input => {
+        checkArticleContextAvailability: async () => {
           managedReads += 1
-          assert.equal(input.identityOnly, true)
-          assert.equal(input.limit, 1)
           throw Object.assign(new Error('self signed certificate in certificate chain secret-url'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' })
         },
+        articleContext: async () => { throw new Error('probe must not load article context') },
         close: async () => undefined,
       }),
       createLegacyReader: () => ({
@@ -1026,9 +1143,10 @@ test('reader failures are recorded in reader order when both storage readers rej
       }),
       createManagedContext: () => ({
         researchContext: async () => { throw new Error('probe must use article context') },
-        articleContext: async () => {
+        checkArticleContextAvailability: async () => {
           throw Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })
         },
+        articleContext: async () => { throw new Error('probe must not load article context') },
         close: async () => undefined,
       }),
       createLegacyReader: () => ({

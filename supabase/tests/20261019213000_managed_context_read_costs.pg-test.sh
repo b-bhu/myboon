@@ -168,7 +168,10 @@ phase after
 compare after
 
 echo "== batching: one perEntityLimit call equals four single calls"
-batch_out=$("${CTX[@]}" -F'|' -e "
+# One statement (psql -c): with -t -A every row is 'PASS|<label>'; the script
+# requires exactly the five rows below (four per-entity equalities plus the
+# perEntityLimit echo) and no FAIL row - empty output counts as a failure.
+batch_out=$("${CTX[@]}" -F'|' -c "
 WITH batch AS (
   SELECT managed_knowledge_private.article_context_v1('{\"source\":\"news\",\"sourceRefs\":[],\"labels\":[],\"entityIds\":[\"11111111-0000-4000-8000-000000000001\",\"11111111-0000-4000-8000-000000000002\",\"11111111-0000-4000-8000-000000000222\",\"11111111-0000-4000-8000-000000000300\"],\"itemIds\":[],\"identityOnly\":false,\"limit\":5,\"historyMode\":\"recent\",\"perEntityLimit\":5}'::jsonb) b
 ), singles AS (
@@ -180,13 +183,21 @@ WITH batch AS (
   SELECT unnest(ARRAY['11111111-0000-4000-8000-000000000001','11111111-0000-4000-8000-000000000002','11111111-0000-4000-8000-000000000222','11111111-0000-4000-8000-000000000300']) AS eid, generate_series(1,4) AS n
 )
 SELECT CASE WHEN
-  (SELECT pg_catalog.jsonb_agg(v ORDER BY v->>'itemId') FROM jsonb_array_elements(batch.b->'articleItems') v WHERE v->>'entityId' = eids.eid)
-  = (SELECT pg_catalog.jsonb_agg(v ORDER BY v->>'itemId') FROM jsonb_array_elements(singles.s->'articleItems') v)
+  (SELECT COALESCE(pg_catalog.jsonb_agg(v ORDER BY v->>'itemId'), '[]'::jsonb) FROM jsonb_array_elements(batch.b->'articleItems') v WHERE v->>'entityId' = eids.eid)
+  = (SELECT COALESCE(pg_catalog.jsonb_agg(v ORDER BY v->>'itemId'), '[]'::jsonb) FROM jsonb_array_elements(singles.s->'articleItems') v)
   THEN 'PASS' ELSE 'FAIL' END, 'batched articleItems equal single articleItems for ' || eids.eid
-FROM batch, singles JOIN eids ON eids.n = singles.n;
-SELECT CASE WHEN (SELECT b->>'perEntityLimit' FROM batch) = '5' THEN 'PASS' ELSE 'FAIL' END, 'batched result carries perEntityLimit 5';")
+FROM batch, singles JOIN eids ON eids.n = singles.n
+UNION ALL
+SELECT CASE WHEN (SELECT b->>'perEntityLimit' FROM batch) = '5' THEN 'PASS' ELSE 'FAIL' END, 'batched result carries perEntityLimit 5';" 2>&1 || true)
 echo "$batch_out"
-if echo "$batch_out" | grep -q '^FAIL'; then echo "FAIL batching equality"; FAILS=$((FAILS+1)); else echo "PASS batching equality"; fi
+pass_rows=$(printf '%s\n' "$batch_out" | grep -c '^PASS|' || true)
+fail_rows=$(printf '%s\n' "$batch_out" | grep -c '^FAIL|' || true)
+if [[ -n "$batch_out" && "$pass_rows" -eq 5 && "$fail_rows" -eq 0 ]]; then
+  echo "PASS batching equality"
+else
+  echo "FAIL batching equality: expected exactly five PASS rows and no FAIL (got $pass_rows PASS, $fail_rows FAIL)"
+  FAILS=$((FAILS+1))
+fi
 
 expect() {
   local label=$1 want=$2 sql=$3 got
@@ -195,6 +206,7 @@ expect() {
 }
 expect "perEntityLimit 0 rejected" 22023 "PERFORM managed_knowledge_private.article_context_v1('{\"source\":\"news\",\"sourceRefs\":[],\"labels\":[],\"entityIds\":[\"11111111-0000-4000-8000-000000000001\"],\"itemIds\":[],\"identityOnly\":false,\"limit\":5,\"historyMode\":\"recent\",\"perEntityLimit\":0}'::jsonb)"
 expect "perEntityLimit 11 rejected" 22023 "PERFORM managed_knowledge_private.article_context_v1('{\"source\":\"news\",\"sourceRefs\":[],\"labels\":[],\"entityIds\":[\"11111111-0000-4000-8000-000000000001\"],\"itemIds\":[],\"identityOnly\":false,\"limit\":5,\"historyMode\":\"recent\",\"perEntityLimit\":11}'::jsonb)"
+expect "perEntityLimit with empty entityIds rejected" 22023 "PERFORM managed_knowledge_private.article_context_v1('{\"source\":\"news\",\"sourceRefs\":[],\"labels\":[],\"entityIds\":[],\"itemIds\":[],\"identityOnly\":false,\"limit\":5,\"historyMode\":\"recent\",\"perEntityLimit\":5}'::jsonb)"
 
 echo "== rollback twice"
 "${PSQL[@]}" --single-transaction -f "$REPO/supabase/rollbacks/$DOWN" >/dev/null || { echo "FAIL rollback apply"; exit 1; }

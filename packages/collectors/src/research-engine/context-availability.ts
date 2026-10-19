@@ -77,9 +77,27 @@ export class ArticleContextAvailabilityGate {
     const wasAvailable = this.available === true
     this.generation += 1
     this.available = false
+    // The cheap probe passing does not prove the database answers (Ref #336):
+    // a real call failing while available is another failure on the same
+    // curve, otherwise a too-slow database retries every 30 s forever.
+    this.consecutiveFailures += 1
     // A newly observed failure must not inherit the longer healthy deadline.
-    const retryAt = this.now() + 30_000
+    const retryAt = this.now() + healthBackoffMs(this.consecutiveFailures, this.random)
     this.nextProbeAt = wasAvailable ? retryAt : Math.max(this.nextProbeAt, retryAt)
+  }
+
+  /** Identity of the invalidation curve; captured once per cycle before its workers race. */
+  get currentGeneration(): number { return this.generation }
+
+  /**
+   * Only real successful work proves the database healthy; a probe cannot.
+   * Ignored unless the gate is still available and the generation captured at
+   * cycle start is current: a batch landing after a sibling's invalidate()
+   * must not erase the back-off step that failure just advanced (Ref #407).
+   */
+  recordHealthy(generation: number): void {
+    if (this.available !== true || generation !== this.generation) return
+    this.consecutiveFailures = 0
   }
 
   private async runProbe(): Promise<boolean> {
@@ -88,7 +106,8 @@ export class ArticleContextAvailabilityGate {
       await this.probe()
       if (generation !== this.generation) return false
       this.available = true
-      this.consecutiveFailures = 0
+      // A passing probe no longer resets consecutiveFailures; only real work
+      // via recordHealthy does, or a slow database would never back off.
       this.lastFailure = null
       this.lastCheckedAt = this.now()
       this.nextProbeAt = this.lastCheckedAt + this.healthyIntervalMs
