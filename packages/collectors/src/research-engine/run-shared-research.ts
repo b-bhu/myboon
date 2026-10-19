@@ -38,6 +38,7 @@ import { SupabaseEntityMemoryReader, InternalResearchEntityMemoryReader } from '
 import type { EntityMemoryReader } from '../research-gate/types'
 import type { ManagedResearchContextPort } from '../research-gate/managed-context-reader'
 import type { ClassificationGateway } from '../inference-gateway'
+import { HermesService, type HermesCommandProbe, type HermesLocalFailureClass } from '../hermes'
 import { PostgresKnowledgeOperationWriter, managedSignalSourceRefs } from '../entity-manager/postgres-knowledge-writer'
 import {
   SharedResearchScheduler,
@@ -78,7 +79,7 @@ import {
   type StandardSearchStatusSnapshot,
 } from './standard-search-configuration'
 import { StructuredResearchSynthesizer } from './structured-synthesizer'
-import { ArticleContextAvailabilityGate, type ArticleContextAvailabilitySnapshot } from './context-availability'
+import { ArticleContextAvailabilityGate, ArticleContextProbeError, errorClassOf, type ArticleContextAvailabilitySnapshot, type ArticleContextFailure } from './context-availability'
 import { ArticleHistoryCache } from '../research-gate/article-history-cache'
 import {
   AtomicResearchRuntimeStatusFile,
@@ -167,6 +168,12 @@ export interface SharedResearchRuntimeStatus {
   deepEnabled: boolean
   articleContextAvailability?: ArticleContextAvailabilitySnapshot
   deep?: DeepResearchRuntimeSnapshotV1
+  /** Startup-only Hermes CLI capability check; it never gates claims. */
+  hermesCommand: {
+    readonly state: 'pending' | HermesCommandProbe['state']
+    readonly failureClass: HermesLocalFailureClass | null
+    readonly checkedAt: string | null
+  }
   v4?: {
     configured: boolean
     composed: boolean
@@ -229,6 +236,8 @@ export interface CreateLiveSharedResearchRuntimeOptions {
   }
   createManagedContext?: (input: { connectionString: string, ca?: string | null }) => ManagedResearchContextPort & { close(): Promise<void> }
   createLegacyReader?: (env: Readonly<Record<string, string | undefined>>) => EntityMemoryReader
+  /** Overrides the startup Hermes CLI capability probe; defaults to a real probe. */
+  probeHermesCommand?: () => Promise<HermesCommandProbe>
   workerClock?: SharedWorkerClock
   createDeepRuntime?: (input: {
     stores: SharedResearchWorkPort[]
@@ -497,6 +506,28 @@ export function createLiveSharedResearchRuntime(
     stores.forEach((store) => store.close())
     throw error
   }
+  // Startup-only capability flag: fire once, never await, never gate claims.
+  // A locally broken Hermes CLI shows up in the status snapshot instead of
+  // stopping the worker.
+  const hermesCommand: {
+    state: 'pending' | HermesCommandProbe['state']
+    failureClass: HermesLocalFailureClass | null
+    checkedAt: string | null
+  } = { state: 'pending', failureClass: null, checkedAt: null }
+  const nowIso = () => (options.workerClock
+    ? options.workerClock.now().toISOString()
+    : new Date(Date.now()).toISOString())
+  void (options.probeHermesCommand ?? (() => new HermesService().probeCommand()))().then(
+    (probe) => {
+      hermesCommand.state = probe.state
+      hermesCommand.failureClass = probe.state === 'not_runnable' ? probe.failureClass : null
+      hermesCommand.checkedAt = nowIso()
+    },
+    () => {
+      hermesCommand.state = 'unknown'
+      hermesCommand.checkedAt = nowIso()
+    },
+  )
   const synthesizer = new StructuredResearchSynthesizer({ gateway: gatewayRuntime.gateway, promptVersion: config.promptVersion, requireArticlePreparation: v4Configuration.articleWorkflowEnabled })
   // Phase 1 intersects available capabilities with its exact light-only
   // admission policy. Full policy preserves the pre-Phase-1 capability set.
@@ -529,6 +560,7 @@ export function createLiveSharedResearchRuntime(
       }))),
       providerObservation: providerObservation.snapshot(),
       deepEnabled: config.deepEnabled,
+      hermesCommand: Object.freeze({ ...hermesCommand }),
       ...(articleContextAvailability ? { articleContextAvailability: articleContextAvailability.snapshot() } : {}),
       deep: deepRuntime?.status ?? deepResearchRuntimeSnapshot({ enabled: false }),
       v4: {
@@ -628,9 +660,12 @@ export function createLiveSharedResearchRuntime(
             managed.articleContext({ source, sourceRefs: [], labels, identityOnly: true, limit: 1, historyMode: 'targeted' }),
             legacy.searchEntities(labels, 1, { exactOnly: true }),
           ])
-          if (results.some(result => result.status === 'rejected')) {
+          const failures: ArticleContextFailure[] = []
+          if (results[0].status === 'rejected') failures.push({ reader: 'managed', errorClass: errorClassOf(results[0].reason) })
+          if (results[1].status === 'rejected') failures.push({ reader: 'legacy', errorClass: errorClassOf(results[1].reason) })
+          if (failures.length > 0) {
             articleHistoryCache?.clear()
-            throw new Error('Article context storage is unavailable')
+            throw new ArticleContextProbeError(failures)
           }
         }, options.workerClock ? () => options.workerClock!.now().getTime() : undefined,
         config.contextHealthyProbeIntervalMs)

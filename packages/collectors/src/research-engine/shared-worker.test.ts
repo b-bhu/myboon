@@ -612,6 +612,35 @@ test('synthesis failure without gateway telemetry does not invent route or usage
   } finally { fx.close() }
 })
 
+test('a local Hermes failure class lands in the stored failure detail with its route', async () => {
+  const fx = fixture()
+  try {
+    const item = work({ status: 'synthesis_pending' })
+    fx.store.appendSignal(signal())
+    fx.store.admitResearchWork(item)
+    fx.store.appendEvidence(evidence(item))
+    const ledger = new CapturingExecutionLedger()
+    const worker = new SharedResearchWorker(workerOptions([fx.store], {
+      stages: ['synthesis'], executionLedger: ledger,
+      synthesizer: {
+        synthesize: async () => {
+          throw new InferenceGatewayError('Hermes command failed locally (exit_126)', {
+            category: 'provider_unavailable', retryable: true,
+            provider: 'p', model: 'm', failureClass: 'exit_126',
+          })
+        },
+      } as unknown as StructuredResearchSynthesizer,
+    }))
+    assert.equal((await worker.runOnce()).kind, 'retry_wait')
+    const stored = fx.store.getResearchWork(item.workId)!
+    assert.equal(stored.failureCategory, 'provider_unavailable')
+    assert.ok(
+      stored.failureDetail?.includes('failureClass=exit_126 provider=p model=m'),
+      `unexpected failure detail: ${stored.failureDetail}`,
+    )
+  } finally { fx.close() }
+})
+
 test('ledger failure cannot change a successful fenced queue outcome', async () => {
   const fx = fixture()
   try {

@@ -1,5 +1,6 @@
 import type { ResearchDepth, Signal } from './contracts'
 import type { ProviderWorkloadHealth } from './triage-contracts'
+import { normalizeDatabaseCa } from './database-ca'
 
 export const FEED_V3_ENV = Object.freeze({
   intakeMode: 'FEED_V3_INTAKE_MODE',
@@ -362,7 +363,8 @@ export function loadEntityManagerV4RuntimeConfig(
   const policyVersion = enabled ? required(ENTITY_V4_ENV.policyVersion) : null
   const databaseUrl = managedWriterEnabled ? required(ENTITY_V4_ENV.databaseUrl)
     : researchEnabled ? env[ENTITY_V4_ENV.databaseUrl]?.trim() || null : null
-  const databaseCa = managedWriterEnabled || researchEnabled ? env[ENTITY_V4_ENV.databaseCa]?.trim() || null : null
+  const databaseCa = managedWriterEnabled || researchEnabled
+    ? normalizeDatabaseCa(ENTITY_V4_ENV.databaseCa, env[ENTITY_V4_ENV.databaseCa]) : null
   const explicitCost = (key:string) => {
     const raw=required(key)
     const value=raw==='unknown'?null:Number(raw)

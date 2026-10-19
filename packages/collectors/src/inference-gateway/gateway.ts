@@ -584,6 +584,7 @@ export class InferenceGateway {
             retryAfterMs: error.retryAfterMs,
             provider: error.provider ?? target.provider,
             model: error.model ?? target.model,
+            failureClass: error.failureClass,
             cause: error.cause ?? error,
           })
           : new InferenceGatewayError('Structured provider adapter failed', {
@@ -635,6 +636,7 @@ export class InferenceGateway {
           throw new InferenceGatewayError('Paid structured dispatch outcome is unknown; preserve the reservation and hold for reconciliation', {
             category: mapped.category, retryable: false,
             provider: mapped.provider, model: mapped.model,
+            failureClass: mapped.failureClass,
             cause: mapped,
           })
         }

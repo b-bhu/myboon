@@ -89,5 +89,6 @@ function status(): SharedResearchRuntimeStatus {
       providerCalls: 1, repairCalls: 0, failureCategory: null,
     },
     deepEnabled: false,
+    hermesCommand: { state: 'pending', failureClass: null, checkedAt: null },
   }
 }

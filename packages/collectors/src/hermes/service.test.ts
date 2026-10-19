@@ -9,7 +9,9 @@ import {
   HermesProviderCircuitBreaker,
   HermesProviderCircuitOpenError,
   HermesService,
+  hermesLocalFailureClass,
   type HermesCallRecord,
+  type HermesCommandProbe,
 } from './service'
 import { DEFAULT_HERMES_PROFILE } from './profile'
 
@@ -864,4 +866,121 @@ test('production structured circuits isolate provider-model targets and success 
   await assert.rejects(call(openProvider), HermesProviderCircuitOpenError)
   assert.equal(invocations.get(openProvider), 5)
   assert.equal(invocations.get(resetProvider), 10)
+})
+
+// ------------------------------------------------ local failure classes ---
+
+test('oneshot classifies a local exit-126 failure without leaking stderr into the record', async () => {
+  const records: HermesCallRecord[] = []
+  const { impl } = fakeSpawn((child) => {
+    child.stderr.emit('data', Buffer.from('SECRET_STDERR'))
+    child.emit('close', 126)
+  })
+  const service = new HermesService({
+    command: '/usr/local/bin/hermes',
+    spawnImpl: impl,
+    observer: (record) => records.push(record),
+  })
+
+  await assert.rejects(
+    service.oneshot({ purpose: 'test.exit-126', prompt: 'P', timeoutMs: 1000 }),
+    (error: Error & { hermesFailureClass?: unknown }) => {
+      assert.equal(error.hermesFailureClass, 'exit_126')
+      return true
+    },
+  )
+  assert.equal(records.length, 1)
+  assert.equal(records[0].status, 'failed')
+  assert.equal(records[0].exitCode, 126)
+  assert.equal(records[0].exitSignal, null)
+  assert.equal(records[0].failureClass, 'exit_126')
+  assert.equal(JSON.stringify(records[0]).includes('SECRET_STDERR'), false)
+})
+
+test('oneshot classifies a spawn failure reported by the child error event', async () => {
+  const records: HermesCallRecord[] = []
+  const { impl } = fakeSpawn((child) => {
+    child.emit('error', Object.assign(new Error('spawn hermes ENOENT'), { code: 'ENOENT', syscall: 'spawn hermes' }))
+  })
+  const service = new HermesService({
+    command: 'hermes',
+    spawnImpl: impl,
+    observer: (record) => records.push(record),
+  })
+
+  await assert.rejects(service.oneshot({ purpose: 'test.spawn-enoent', prompt: 'P', timeoutMs: 1000 }))
+  assert.equal(records.length, 1)
+  assert.equal(records[0].status, 'failed')
+  assert.equal(records[0].exitCode, null)
+  assert.equal(records[0].failureClass, 'spawn_enoent')
+})
+
+test('a structured limiter EACCES rejection is classified once without reaching Hermes', async () => {
+  const records: HermesCallRecord[] = []
+  const limiterError = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES', syscall: 'open' })
+  const { calls, impl } = fakeSpawn((child) => child.emit('close', 0))
+  const service = new HermesService({
+    command: 'hermes',
+    spawnImpl: impl,
+    structuredLimiter: { acquire: async () => { throw limiterError } },
+    observer: (record) => records.push(record),
+  })
+
+  await assert.rejects(
+    service.oneshot({ purpose: 'test.limiter-eacces', prompt: 'P', timeoutMs: 1000 }),
+    (error: unknown) => {
+      assert.equal(error, limiterError)
+      assert.equal((error as Error & { hermesFailureClass?: unknown }).hermesFailureClass, 'limiter_eacces')
+      return true
+    },
+  )
+  assert.equal(calls.length, 0)
+  assert.equal(records.length, 1)
+  assert.equal(records[0].status, 'failed')
+  assert.equal(records[0].failureClass, 'limiter_eacces')
+})
+
+test('the usage-receipt ENOENT read is not classified as a local Hermes failure', () => {
+  assert.equal(hermesLocalFailureClass(Object.assign(new Error('ENOENT'), { code: 'ENOENT', syscall: 'open' })), null)
+  assert.equal(hermesLocalFailureClass(new Error('plain failure')), null)
+  assert.equal(hermesLocalFailureClass(Object.assign(new Error('exited'), { code: 127 })), 'exit_127')
+})
+
+test('probeCommand reports runnable, locally-broken, or unknown without reading output', async () => {
+  const cases: Array<{ name: string, script?: (child: FakeChild) => void, expected: HermesCommandProbe }> = [
+    { name: 'exit 0', script: (child) => child.emit('close', 0), expected: { state: 'runnable' } },
+    { name: 'exit 1', script: (child) => child.emit('close', 1), expected: { state: 'runnable' } },
+    { name: 'exit 126', script: (child) => child.emit('close', 126), expected: { state: 'not_runnable', failureClass: 'exit_126' } },
+    { name: 'exit 127', script: (child) => child.emit('close', 127), expected: { state: 'not_runnable', failureClass: 'exit_127' } },
+    {
+      name: 'spawn ENOENT',
+      script: (child) => child.emit('error', Object.assign(new Error('spawn hermes ENOENT'), { code: 'ENOENT', syscall: 'spawn hermes' })),
+      expected: { state: 'not_runnable', failureClass: 'spawn_enoent' },
+    },
+  ]
+  for (const { name, script, expected } of cases) {
+    const { calls, impl } = fakeSpawn(script)
+    const service = new HermesService({ command: 'hermes', spawnImpl: impl })
+
+    const probe = await service.probeCommand(100)
+
+    assert.deepEqual(probe, expected, name)
+    assert.equal(calls[0].command, 'hermes')
+    assert.deepEqual(calls[0].args, ['--version'])
+  }
+})
+
+test('probeCommand resolves unknown when the command neither errors nor closes', async () => {
+  const { children, impl } = fakeSpawn() // child never closes
+  const service = new HermesService({ command: 'hermes', spawnImpl: impl })
+  // The probe timer is unref'd by design so a healthy process never waits on
+  // it; a live worker always has other handles keeping the loop alive, so
+  // hold the loop open here the same way while the probe times out.
+  const keepAlive = setTimeout(() => {}, 500)
+
+  const probe = await service.probeCommand(10)
+
+  clearTimeout(keepAlive)
+  assert.deepEqual(probe, { state: 'unknown' })
+  assert.equal(children[0].killedWith, 'SIGKILL')
 })

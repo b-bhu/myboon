@@ -1,4 +1,4 @@
-import { DEFAULT_HERMES_PROFILE, HermesService } from '../hermes'
+import { DEFAULT_HERMES_PROFILE, HermesService, type HermesCallObserver } from '../hermes'
 import { InferenceGateway, type InferenceGatewayOptions } from './gateway'
 import { InferenceGatewayError } from './errors'
 import { HermesStructuredAdapter } from './hermes-adapter'
@@ -65,6 +65,8 @@ export interface CreateConfiguredInferenceGatewayOptions {
   serviceFactory?: () => Pick<HermesService, 'oneshot'>
   adapterFactory?: (input: InferenceAdapterFactoryInput) => StructuredProviderAdapter
   observer?: InferenceTelemetryObserver
+  /** Replaces the default failed-call observer when the default stderr JSONL is unwanted. */
+  hermesObserver?: HermesCallObserver
   estimateTokens?: (text: string) => number
   now?: () => number
 }
@@ -148,12 +150,41 @@ export function inferenceGatewayStatus(
   })
 }
 
+/**
+ * Default failed-call observer: one JSONL line per failed or timed-out Hermes
+ * call on stderr. Routing metadata and the structured failure class only —
+ * never the command, profile, error messages, or any captured process output.
+ */
+export function hermesCallLogObserver(
+  write: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): HermesCallObserver {
+  return (record) => {
+    if (record.status === 'succeeded') return
+    try {
+      write(JSON.stringify({
+        event: 'hermes_call_failed',
+        purpose: record.purpose,
+        mode: record.mode,
+        status: record.status,
+        provider: record.requestedProvider,
+        model: record.requestedModel,
+        durationMs: record.durationMs,
+        exitCode: record.exitCode,
+        exitSignal: record.exitSignal,
+        failureClass: record.failureClass,
+      }))
+    } catch {
+      // Observability must never break the call it observes.
+    }
+  }
+}
+
 export function createInferenceGatewayFromConfiguration(
   configuration: InferenceGatewayConfiguration,
   options: Omit<CreateConfiguredInferenceGatewayOptions, 'env'> = {},
 ): InferenceGateway {
   validateConfiguration(configuration)
-  const service = options.serviceFactory?.() ?? new HermesService()
+  const service = options.serviceFactory?.() ?? new HermesService({ observer: options.hermesObserver ?? hermesCallLogObserver() })
   const adapter = options.adapterFactory?.({
     service,
     profile: configuration.hermesProfile,

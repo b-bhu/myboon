@@ -68,6 +68,43 @@ export const HERMES_PROVIDER_CIRCUIT_OPEN_CODE = 'HERMES_PROVIDER_CIRCUIT_OPEN'
 export type HermesCallMode = 'oneshot' | 'chat'
 export type HermesCallStatus = 'succeeded' | 'failed' | 'timed_out'
 
+/**
+ * Structured classes for failures that happen when the local `hermes` CLI
+ * cannot run at all. They never carry process output: stderr/stdout stays out
+ * of messages, status payloads and observers alike.
+ */
+export type HermesLocalFailureClass =
+  | 'spawn_enoent'
+  | 'spawn_eacces'
+  | 'exit_126'
+  | 'exit_127'
+  | 'limiter_eacces'
+
+export function isHermesLocalFailureClass(value: unknown): value is HermesLocalFailureClass {
+  return value === 'spawn_enoent' || value === 'spawn_eacces'
+    || value === 'exit_126' || value === 'exit_127' || value === 'limiter_eacces'
+}
+
+/**
+ * Pure, shape-based classification of a local Hermes command failure.
+ * Node spawn failures carry a `syscall` that starts with 'spawn'; process exit
+ * codes 126/127 mean the CLI could not be executed. Other ENOENT errors (for
+ * example the usage-receipt readFile) must not classify.
+ */
+export function hermesLocalFailureClass(error: unknown): HermesLocalFailureClass | null {
+  if (typeof error !== 'object' || error === null) return null
+  const value = error as { hermesFailureClass?: unknown, code?: unknown, syscall?: unknown }
+  if (Object.hasOwn(value, 'hermesFailureClass') && isHermesLocalFailureClass(value.hermesFailureClass)) {
+    return value.hermesFailureClass
+  }
+  const spawnSyscall = typeof value.syscall === 'string' && value.syscall.startsWith('spawn')
+  if (value.code === 'ENOENT' && spawnSyscall) return 'spawn_enoent'
+  if (value.code === 'EACCES' && spawnSyscall) return 'spawn_eacces'
+  if (value.code === 126) return 'exit_126'
+  if (value.code === 127) return 'exit_127'
+  return null
+}
+
 export interface HermesCallRecord {
   purpose: string
   mode: HermesCallMode
@@ -85,10 +122,22 @@ export interface HermesCallRecord {
   stdoutChars: number
   stderrChars: number
   exitCode: number | null
+  exitSignal: string | null
+  failureClass: HermesLocalFailureClass | null
   error: string | null
 }
 
 export type HermesCallObserver = (record: HermesCallRecord) => void
+
+/**
+ * One-shot capability check for the local Hermes CLI. `runnable` only proves
+ * the command started; it deliberately accepts any exit code other than 126
+ * and 127. It never carries child output.
+ */
+export type HermesCommandProbe =
+  | { state: 'runnable' }
+  | { state: 'not_runnable', failureClass: HermesLocalFailureClass }
+  | { state: 'unknown' }
 
 export class HermesProviderCircuitOpenError extends Error {
   readonly code = HERMES_PROVIDER_CIRCUIT_OPEN_CODE
@@ -235,6 +284,7 @@ type SpawnedOneshotError = Error & {
   code?: string | number | null
   killed?: boolean
   signal?: string
+  exitSignal?: string | null
 }
 
 export interface HermesServiceOptions {
@@ -588,6 +638,31 @@ export class HermesService {
       lease = await this.structuredLimiter.acquire(request.timeoutMs)
     } catch (error) {
       circuitBreaker.abort(permit)
+      // A concurrency-pool failure is never a Hermes run, so it can only
+      // contribute the EACCES pool-directory class here.
+      const limiterFailure = typeof error === 'object' && error !== null ? error as { code?: unknown } : null
+      const failureClass = limiterFailure?.code === 'EACCES' ? 'limiter_eacces' as const : null
+      if (failureClass !== null) Object.assign(limiterFailure!, { hermesFailureClass: failureClass })
+      const finishedAtMs = Date.now()
+      this.record({
+        purpose: request.purpose,
+        mode: 'oneshot',
+        command,
+        requestedProfile: profile ?? null,
+        requestedProvider: provider ?? null,
+        requestedModel: model ?? null,
+        status: 'failed',
+        startedAt: new Date(startedAtMs).toISOString(),
+        finishedAt: new Date(finishedAtMs).toISOString(),
+        durationMs: finishedAtMs - startedAtMs,
+        promptChars: request.prompt.length,
+        stdoutChars: 0,
+        stderrChars: 0,
+        exitCode: null,
+        exitSignal: null,
+        failureClass,
+        error: errorMessage(error).slice(0, 800),
+      })
       throw error
     }
     let ownedUsageDirectory: string | undefined
@@ -632,12 +707,20 @@ export class HermesService {
         stdoutChars: stdout.length,
         stderrChars: stderr.length,
         exitCode: 0,
+        exitSignal: null,
+        failureClass: null,
         error: null,
       })
       return { stdout, stderr, ...(usage ? { usage } : {}) }
     } catch (error) {
+      const failureClass = hermesLocalFailureClass(error)
+      if (failureClass !== null && typeof error === 'object' && error !== null) {
+        Object.assign(error, { hermesFailureClass: failureClass })
+      }
       circuitBreaker.failed(permit, retryableProviderFailure(error))
       const finishedAtMs = Date.now()
+      const errorCode = (error as { code?: unknown }).code
+      const exitSignal = (error as { exitSignal?: unknown }).exitSignal
       this.record({
         purpose: request.purpose,
         mode: 'oneshot',
@@ -652,7 +735,9 @@ export class HermesService {
         promptChars: request.prompt.length,
         stdoutChars: 0,
         stderrChars: 0,
-        exitCode: null,
+        exitCode: typeof errorCode === 'number' && Number.isInteger(errorCode) ? errorCode : null,
+        exitSignal: typeof exitSignal === 'string' ? exitSignal : null,
+        failureClass,
         error: errorMessage(error).slice(0, 800),
       })
       throw error
@@ -668,6 +753,46 @@ export class HermesService {
   async structured<T>(request: HermesOneshotRequest): Promise<HermesStructuredResult<T>> {
     const result = await this.oneshot(request)
     return { ...result, value: extractJson<T>(result.stdout) }
+  }
+
+  /**
+   * Startup check for whether the Hermes CLI can run at all. It spawns
+   * `--version` with all stdio ignored (the output is never read or stored),
+   * never uses the concurrency pools or circuit breaker, emits no call record
+   * and never rejects. Exit codes 126/127 mean the command cannot execute;
+   * every other exit counts as runnable because only executability is under
+   * test here.
+   */
+  probeCommand(timeoutMs = 30_000): Promise<HermesCommandProbe> {
+    const child = this.spawnImpl(this.command, ['--version'], {
+      shell: false,
+      stdio: ['ignore', 'ignore', 'ignore'],
+      env: { ...process.env },
+    })
+    child.unref?.()
+    return new Promise<HermesCommandProbe>((resolve) => {
+      let settled = false
+      const settle = (probe: HermesCommandProbe) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(probe)
+      }
+      const timer = setTimeout(() => {
+        try { child.kill('SIGKILL') } catch { /* cleanup must never throw from a timer */ }
+        settle({ state: 'unknown' })
+      }, timeoutMs)
+      timer.unref()
+      child.once('error', (error) => {
+        const failureClass = hermesLocalFailureClass(error)
+        settle(failureClass ? { state: 'not_runnable', failureClass } : { state: 'unknown' })
+      })
+      child.once('close', (code) => {
+        if (code === 126) settle({ state: 'not_runnable', failureClass: 'exit_126' })
+        else if (code === 127) settle({ state: 'not_runnable', failureClass: 'exit_127' })
+        else settle({ state: 'runnable' })
+      })
+    })
   }
 
   private runSpawnedOneshot(
@@ -741,7 +866,7 @@ export class HermesService {
         if (timedOut) return
         finish(Object.assign(error, { stdout, stderr }))
       })
-      child.once('close', (code) => {
+      child.once('close', (code, signal) => {
         if (timedOut) return
         if (code === 0) {
           finish()
@@ -749,6 +874,9 @@ export class HermesService {
         }
         finish(Object.assign(new Error(`Hermes exited with code ${code ?? 'none'}`), {
           code,
+          // Recorded separately from `signal`: the adapter treats a SIGTERM
+          // `signal` as a timeout, while `exitSignal` only says how the run ended.
+          exitSignal: signal ?? null,
           stdout,
           stderr,
         }))
@@ -804,6 +932,8 @@ export class HermesService {
         stdoutChars: 0,
         stderrChars: message.length,
         exitCode: null,
+        exitSignal: null,
+        failureClass: null,
         error: message.slice(0, 800),
       })
       return result
@@ -888,6 +1018,8 @@ export class HermesService {
           stdoutChars: stdout.length,
           stderrChars: stderr.length,
           exitCode,
+          exitSignal: null,
+          failureClass: null,
           error: status === 'succeeded' ? null : (stderr.slice(0, 800) || status),
         })
         resolve(result)

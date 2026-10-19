@@ -47,6 +47,7 @@ export class ClassificationDoubleFailureError extends InferenceGatewayError {
       model: cause.model,
       telemetry: cause.telemetry,
       providerResponseReceived: cause.providerResponseReceived,
+      failureClass: cause.failureClass,
       cause,
     })
     this.name = 'ClassificationDoubleFailureError'
@@ -61,6 +62,7 @@ export class ClassificationOutcomeUnknownError extends InferenceGatewayError {
       retryable: false,
       provider: cause.provider,
       model: cause.model,
+      failureClass: cause.failureClass,
       cause,
     })
     this.name = 'ClassificationOutcomeUnknownError'
@@ -670,6 +672,7 @@ function withProviderResponse(error: InferenceGatewayError): InferenceGatewayErr
     model: error.model,
     telemetry: error.telemetry,
     providerResponseReceived: true,
+    failureClass: error.failureClass,
     cause: error.cause,
   })
 }
