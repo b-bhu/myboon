@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { EntityKnowledgeMemoryV1, EntityKnowledgeReader } from '@myboon/collectors/entity-manager'
 import entityManager from '@myboon/collectors/entity-manager'
-import { createStoryRoutes } from './stories.js'
+import { createStoryRoutes, storySummary } from './stories.js'
 
 const { ENTITY_KNOWLEDGE_SCHEMA_VERSION } = entityManager
 
@@ -301,6 +301,82 @@ test('Story routes return a generic 500 response for database failures', async (
   } finally {
     console.error = originalConsoleError
   }
+})
+
+const SUMMARY_NOW = Date.parse('2026-10-20T00:00:00.000Z')
+const summaryEntity = { id: entityIds[0], slug: 'bitcoin', name: 'Bitcoin' } as unknown as Parameters<typeof storySummary>[0]
+function summaryMemory(summary: string, eventAt: string) {
+  return { entityId: entityIds[0], summary, eventAt, imageUrl: null, imageKind: null, imageAttribution: null } as unknown as Parameters<typeof storySummary>[1][number]
+}
+
+test('Story summary tracks the latest reported memory; a future-dated one never becomes updatedAt', () => {
+  const summary = storySummary(summaryEntity, [
+    summaryMemory('Scheduled announcement', '2099-10-29T21:00:00.000Z'),
+    summaryMemory('Latest reported development', '2026-07-12T00:00:00.000Z'),
+    summaryMemory('Older development', '2026-07-10T00:00:00.000Z'),
+  ], 3, SUMMARY_NOW)
+  assert.deepEqual(summary, {
+    storySlug: 'bitcoin',
+    name: 'Bitcoin',
+    latestDevelopment: 'Latest reported development',
+    eventCount: 3,
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    imageUrl: null,
+    imageKind: null,
+    imageAttribution: null,
+  })
+})
+
+test('Story detail clamps updatedAt to the request time when the newest memory is future-dated', async () => {
+  const startedAt = Date.now()
+  const response = await app(
+    async (input) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/entities')) {
+        return jsonResponse([{ id: entityIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      async getEntityMemoryEvents() {
+        return eventPage([
+          memory(entityIds[0], 'Scheduled announcement', '2099-10-29T21:00:00.000Z'),
+          memory(entityIds[0], 'Older reported development', '2026-07-10T00:00:00.000Z'),
+        ], 2)
+      },
+    },
+  ).request('/bitcoin')
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    story: { latestDevelopment: string, updatedAt: string },
+    events: Array<{ eventAt: string }>,
+  }
+  assert.equal(body.story.latestDevelopment, 'Scheduled announcement')
+  const updatedAt = Date.parse(body.story.updatedAt)
+  assert.ok(
+    Number.isFinite(updatedAt) && updatedAt >= startedAt && updatedAt <= Date.now(),
+    `updatedAt should be clamped to the request time, got ${body.story.updatedAt}`,
+  )
+  assert.deepEqual(body.events.map((event) => event.eventAt), [
+    '2099-10-29T21:00:00.000Z',
+    '2026-07-10T00:00:00.000Z',
+  ])
+})
+
+test('Story summary moves updatedAt forward when a new later reported memory arrives', () => {
+  const before = storySummary(summaryEntity, [
+    summaryMemory('Latest development', '2026-07-12T00:00:00.000Z'),
+    summaryMemory('Older development', '2026-07-10T00:00:00.000Z'),
+  ], 2, SUMMARY_NOW)
+  assert.equal(before?.updatedAt, '2026-07-12T00:00:00.000Z')
+
+  const after = storySummary(summaryEntity, [
+    summaryMemory('New development', '2026-07-13T09:30:00.000Z'),
+    summaryMemory('Latest development', '2026-07-12T00:00:00.000Z'),
+    summaryMemory('Older development', '2026-07-10T00:00:00.000Z'),
+  ], 3, SUMMARY_NOW)
+  assert.equal(after?.latestDevelopment, 'New development')
+  assert.equal(after?.updatedAt, '2026-07-13T09:30:00.000Z')
 })
 
 function memory(
