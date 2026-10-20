@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { runFirstThenInterval, startIntervalRunner } from '../pipeline-store/interval-runner'
+
+// The default onError appends JSONL entries to MYBOON_ERROR_LOG. Point the
+// whole file (including every spawned fixture child, which inherits this env)
+// at a throwaway directory so no test can write the operator's real
+// ~/myboon-logs/errors.jsonl.
+const errorLogDir = mkdtempSync(join(tmpdir(), 'interval-runner-error-log-'))
+process.env.MYBOON_ERROR_LOG = join(errorLogDir, 'errors.jsonl')
+test.after(() => { rmSync(errorLogDir, { recursive: true, force: true }) })
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -196,4 +207,141 @@ test('interval runner: KEEPS THE PROCESS ALIVE between ticks (daemon liveness)',
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('runFirstThenInterval: a failing first run is reported once and the interval still starts', async () => {
+  const firstError = new Error('supabase timeout')
+  const errors: Array<{ error: unknown; label: string }> = []
+  let runCount = 0
+
+  const handle = await runFirstThenInterval({
+    label: 'first-run-failure',
+    intervalMs: 10,
+    runOnce: false,
+    run: async () => {
+      runCount += 1
+      if (runCount === 1) throw firstError
+    },
+    onError: (error, info) => errors.push({ error, label: info.label }),
+  })
+
+  // A failing first run must resolve (not reject) and hand back a schedule.
+  assert.ok(handle, 'expected an interval handle when runOnce is false')
+  assert.deepEqual(errors, [{ error: firstError, label: 'first-run-failure' }])
+  // The schedule keeps ticking: later ticks still run after the failed first.
+  await wait(40)
+  assert.ok(runCount >= 2, `expected the interval to keep ticking after a failed first run, got ${runCount}`)
+  handle.stop()
+})
+
+test('runFirstThenInterval: in runOnce mode a failing first run still propagates and no interval starts', async () => {
+  const firstError = new Error('supabase timeout')
+  let runCount = 0
+
+  await assert.rejects(
+    runFirstThenInterval({
+      label: 'run-once-failure',
+      intervalMs: 10,
+      runOnce: true,
+      run: async () => {
+        runCount += 1
+        throw firstError
+      },
+    }),
+    (error) => error === firstError,
+  )
+
+  // Several interval boundaries later: the schedule was never started.
+  await wait(60)
+  assert.equal(runCount, 1)
+})
+
+test('runFirstThenInterval: in runOnce mode a successful first run resolves null and starts no interval', async () => {
+  let runCount = 0
+
+  const result = await runFirstThenInterval({
+    label: 'run-once-success',
+    intervalMs: 10,
+    runOnce: true,
+    run: async () => {
+      runCount += 1
+    },
+  })
+
+  await wait(60)
+  assert.equal(result, null)
+  assert.equal(runCount, 1)
+})
+
+test('runFirstThenInterval: a failing first run does not exit the worker (child-process regression)', async () => {
+  // Regression test for the PM2 restart loop: every run-*.ts daemon used to
+  // await its first run BEFORE starting the interval, so one failing first
+  // run (e.g. a Supabase timeout) escaped to main().catch() and
+  // process.exit(1) and PM2 restarted into the same failure forever. The
+  // fixture is a worker whose run always throws; in daemon mode it must stay
+  // alive past several interval boundaries and exit 0.
+  const { execFile } = await import('node:child_process')
+  const { resolve } = await import('node:path')
+  const fixturePath = resolve(__dirname, '../pipeline-store/run-first-then-interval.fixture.ts')
+  const tsxBin = resolve(__dirname, '../../node_modules/.bin/tsx')
+  const baseEnv: NodeJS.ProcessEnv = { ...process.env }
+  delete baseEnv.FIXTURE_RUN_ONCE
+
+  const runFixture = (env: NodeJS.ProcessEnv) => new Promise<{ code: number; stdout: string; stderr: string }>((resolvePromise) => {
+    execFile(tsxBin, [fixturePath], { timeout: 15_000, env }, (error, stdout, stderr) => {
+      const code = error === null
+        ? 0
+        : typeof error.code === 'number' ? error.code : 1
+      resolvePromise({ code, stdout, stderr })
+    })
+  })
+
+  // Daemon mode: the run always throws, yet the worker survives, ticks, and
+  // drains cleanly.
+  const daemon = await runFixture({ ...baseEnv })
+  assert.equal(daemon.code, 0, `daemon-mode child should exit 0; stderr=${JSON.stringify(daemon.stderr)}`)
+  const alive = daemon.stdout.match(/ALIVE ticks=(\d+)/)
+  assert.ok(alive, `expected ALIVE line, stdout=${JSON.stringify(daemon.stdout)}`)
+  assert.ok(Number(alive[1]) >= 2, `expected at least 2 ticks after the failed first run, got ${alive[1]}`)
+
+  // RUN_ONCE mode: unchanged - the failure propagates and exits non-zero.
+  const runOnce = await runFixture({ ...baseEnv, FIXTURE_RUN_ONCE: '1' })
+  assert.notEqual(runOnce.code, 0, `runOnce child should exit non-zero; stderr=${JSON.stringify(runOnce.stderr)}`)
+  assert.ok(!runOnce.stdout.includes('ALIVE'), `runOnce child must not stay alive; stdout=${JSON.stringify(runOnce.stdout)}`)
+})
+
+test('interval runner: default onError appends JSONL failure entries with consecutive failure counts', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'interval-runner-error-log-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const logPath = join(dir, 'errors.jsonl')
+  const saved = process.env.MYBOON_ERROR_LOG
+  process.env.MYBOON_ERROR_LOG = logPath
+  const consoleError = t.mock.method(console, 'error', () => {})
+  try {
+    const handle = startIntervalRunner({
+      label: 'jsonl-failing-runner',
+      intervalMs: 10,
+      run: async () => {
+        throw new Error('boom')
+      },
+    })
+    await wait(45)
+    handle.stop()
+  } finally {
+    if (saved === undefined) delete process.env.MYBOON_ERROR_LOG
+    else process.env.MYBOON_ERROR_LOG = saved
+  }
+  const lines = readFileSync(logPath, 'utf8').split('\n').filter((line) => line !== '')
+  assert.ok(lines.length >= 2, `expected at least two logged failures, got ${lines.length}`)
+  const entries = lines
+    .map((line) => JSON.parse(line) as { app: string; kind: string; message: string; count?: number })
+  assert.ok(
+    entries.every((entry) => entry.app === 'jsonl-failing-runner' && entry.kind === 'run_failed' && entry.message === 'boom'),
+    `unexpected entries: ${lines.join(', ')}`,
+  )
+  // A run that always fails must count its consecutive failures per runner.
+  assert.equal(entries[0].count, 1)
+  assert.equal(entries[1].count, 2)
+  // The existing console.error line is unchanged and stays quiet under the mock.
+  assert.equal(consoleError.mock.callCount(), lines.length)
 })

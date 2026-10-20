@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { resolveRef } from './identity-service.js'
+import type { TokenRegistryRow } from './registry/merge.js'
 import seedEntries from './seed/token-identities.seed.json' with { type: 'json' }
 
 const USDT_ENTRY = (seedEntries as Array<{ assetId: string; mint: string | null }>).find((e) => e.assetId === 'usdt')
@@ -36,9 +37,9 @@ test('registry miss for seeded USDC preserves its flag-off seed identity', () =>
 test('a non-seed registry row cannot hide the local seed identity', () => {
   const usdcMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
   const legacy = resolveRef(`mint:${usdcMint}`)
-  const registryRow = {
+  const registryRow: TokenRegistryRow = {
     mint: usdcMint, symbol: 'OTHER', name: 'Other', decimals: 3, icon_source_url: null,
-    verified: false, sources: { symbol: 'jupiter' }, upstream_seen_at: null, updated_at: null,
+    verified: false, sources: { symbol: 'jupiter' }, upstream_seen_at: null,
   }
   const registryResult = resolveRef(`mint:${usdcMint}`, { registryRowForMint: () => registryRow })
 

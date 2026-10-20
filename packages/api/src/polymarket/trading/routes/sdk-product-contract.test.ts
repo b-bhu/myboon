@@ -5,7 +5,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { Hono } from 'hono'
-import { serve } from '@hono/node-server'
+import { serve, type ServerType } from '@hono/node-server'
 import {
   createPublicClient,
   forkEnvironmentConfig,
@@ -18,7 +18,7 @@ const API_PORT = 39524
 const wallet = Wallet.createRandom()
 const secret = Buffer.from('sdk-contract-builder-secret').toString('base64')
 let upstream: Server
-let apiServer: Server
+let apiServer: ServerType
 let app: Hono
 let upstreamCalls = 0
 

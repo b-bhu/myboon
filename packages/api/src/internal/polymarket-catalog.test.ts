@@ -198,7 +198,8 @@ test('serves Polymarket-derived automatic sports options through read auth', asy
 })
 
 test('previews an automatic source through read auth without writing catalog state', async () => {
-  let previewed: PolymarketCatalogItemInput | null = null
+  // Array holder: a closure-assigned `let` narrows to `never` at the read site.
+  const previewedItems: PolymarketCatalogItemInput[] = []
   const preview: HydratedPolymarketCollection = {
     items: [{
       type: 'match',
@@ -232,7 +233,7 @@ test('previews an automatic source through read auth without writing catalog sta
       sport: 'epl',
     })),
     previewItem: async (item) => {
-      previewed = item
+      previewedItems.push(item)
       return preview
     },
   })
@@ -249,8 +250,8 @@ test('previews an automatic source through read auth without writing catalog sta
     headers: { Authorization: `Bearer ${readToken}` },
   })
   assert.equal(response.status, 200)
-  assert.deepEqual(previewed?.ruleConfig, { windowDays: 14, limit: 5, marketType: 'moneyline' })
-  assert.equal(previewed?.sourceSlug, 'epl')
+  assert.deepEqual(previewedItems[0]?.ruleConfig, { windowDays: 14, limit: 5, marketType: 'moneyline' })
+  assert.equal(previewedItems[0]?.sourceSlug, 'epl')
   const body = await response.json() as Record<string, unknown>
   assert.equal(body.count, 1)
   assert.deepEqual(body.items, preview.items)

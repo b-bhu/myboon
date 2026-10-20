@@ -3,6 +3,7 @@ import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabas
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { loadDotenvChain } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import {
   createProductionDeepResearchRuntime,
   SqliteDeepResearchExecutionRegistry,
@@ -192,6 +193,8 @@ export interface RunSharedResearchOptions {
   signal?: AbortSignal
   createRuntime?: (config: SharedResearchRunnerConfig) => SharedResearchRunnerRuntime
   onResult?: (result: SharedResearchRunnerCycleResult) => void
+  /** Interval mode only. Called when a cycle or expired-lease recovery rejects; the schedule then reschedules. */
+  onCycleError?: (error: unknown, info?: { phase: 'cycle' | 'recovery' }) => void
   wait?: (ms: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
   createStatusWriter?: (path: string) => ResearchRuntimeStatusWriter
@@ -273,6 +276,15 @@ export function loadSharedResearchRunnerConfig(
   })
 }
 
+function defaultOnCycleError(error: unknown, info?: { phase: 'cycle' | 'recovery' }): void {
+  process.stderr.write(`[feed-v3-shared-research] cycle failed: ${error instanceof Error ? error.message : 'unknown failure'}\n`)
+  appendErrorLog({
+    app: 'feed-v3-shared-research',
+    kind: info?.phase === 'recovery' ? 'recovery_failed' : 'cycle_failed',
+    error,
+  })
+}
+
 /** Disabled mode never invokes createRuntime and remains resident until signal. */
 export async function runSharedResearchLoop(options: RunSharedResearchOptions = {}): Promise<void> {
   const config = loadSharedResearchRunnerConfig(options.env)
@@ -330,10 +342,19 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
       controlObservation = readResearchRuntimeControl(runtimeControl)
       operatorControl = controlObservation.control
       if (runtime.recoverExpired !== undefined && observedAt >= nextRecoveryAt) {
-        const recovered = await runtime.recoverExpired({
-          now: new Date(observedAt).toISOString(), limitPerSource: config.recoveryLimitPerSource,
-        })
-        recovery = Object.freeze({ lastRunAt: new Date(observedAt).toISOString(), recoveredBySource: recovered })
+        try {
+          const recovered = await runtime.recoverExpired({
+            now: new Date(observedAt).toISOString(), limitPerSource: config.recoveryLimitPerSource,
+          })
+          recovery = Object.freeze({ lastRunAt: new Date(observedAt).toISOString(), recoveredBySource: recovered })
+        } catch (error) {
+          // One rejected recovery (e.g. a Supabase timeout) must not escape the
+          // loop and exit the daemon: report it like a failed cycle and
+          // reschedule. RUN_ONCE keeps its propagate-and-exit behaviour, and
+          // the last successful recovery snapshot stays in the status file.
+          if (config.runOnce) throw error
+          ;(options.onCycleError ?? defaultOnCycleError)(error, { phase: 'recovery' })
+        }
         nextRecoveryAt = now() + config.recoveryIntervalMs
         await writeStatus(operatorControl.desiredState === 'running' ? 'running' : 'draining')
         if (drainPromise !== null) break
@@ -355,10 +376,23 @@ export async function runSharedResearchLoop(options: RunSharedResearchOptions = 
       lastReportedControlState = 'running'
       const cycle = runtime.runCycle()
       const outcome = await Promise.race([
-        cycle.then((outcomes) => ({ kind: 'completed' as const, outcomes })),
+        cycle.then(
+          (outcomes) => ({ kind: 'completed' as const, outcomes }),
+          (error) => ({ kind: 'failed' as const, error }),
+        ),
         aborted.then(() => ({ kind: 'aborted' as const })),
       ])
       if (outcome.kind === 'aborted') break
+      if (outcome.kind === 'failed') {
+        // One bad tick (e.g. a Supabase timeout) must not escape the loop and
+        // exit the daemon: report it and reschedule, matching the interval
+        // runners. RUN_ONCE keeps its propagate-and-exit behaviour.
+        if (config.runOnce) throw outcome.error
+        ;(options.onCycleError ?? defaultOnCycleError)(outcome.error, { phase: 'cycle' })
+        await writeStatus('running')
+        nextCycleAt = now() + config.intervalMs
+        continue
+      }
       options.onResult?.({ kind: 'completed', status: runtime.status, outcomes: outcome.outcomes })
       await writeStatus('running')
       if (config.runOnce) break
@@ -988,6 +1022,7 @@ export function isSharedResearchProcessEntrypoint(input: {
 // `require.main` is not this module there. NODE_APP_INSTANCE is PM2's stable
 // execution marker and keeps imports/tests inert outside the process manager.
 if (isSharedResearchProcessEntrypoint()) {
+  installProcessErrorLogging('feed-v3-shared-research')
   loadSharedResearchProcessEnvironment()
   const controller = new AbortController()
   process.once('SIGTERM', () => controller.abort())
@@ -996,6 +1031,7 @@ if (isSharedResearchProcessEntrypoint()) {
     signal: controller.signal,
     onResult: (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
   }).catch((error) => {
+    appendErrorLog({ app: 'feed-v3-shared-research', kind: 'run_failed', error })
     process.stderr.write(`[feed-v3-shared-research] ${error instanceof Error ? error.message : 'unknown failure'}\n`)
     process.exitCode = 1
   })

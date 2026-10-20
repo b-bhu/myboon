@@ -1,11 +1,13 @@
 import { loadDotenvChain, requiredEnv } from '../pipeline-store/cli-env'
+import { appendErrorLog, installProcessErrorLogging } from '../pipeline-store/error-log'
 import { resolve } from 'node:path'
 
 loadDotenvChain()
+installProcessErrorLogging('polymarket-markets-data-engineer')
 
 import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client'
 import { withPipelineRun, PipelineStoreLedgerStore } from '../pipeline-ledger'
-import { startIntervalRunner } from '../pipeline-store/interval-runner'
+import { runFirstThenInterval } from '../pipeline-store/interval-runner'
 import { SqlitePipelineStore } from '../pipeline-store/sqlite-store'
 import { feedV3ModeForSource, loadFeedV3RuntimeConfig } from '../signal-platform/runtime-config'
 import { CanonicalSourceSignalIntake } from '../signal-platform/source-intake'
@@ -91,19 +93,17 @@ async function runOnce(): Promise<void> {
 
 async function main(): Promise<void> {
   requireSupabaseEnv()
-  await runOnce()
-
-  if (process.env.POLYMARKET_MARKETS_RUN_ONCE === '1') return
-
   const intervalMs = Number(process.env.POLYMARKET_MARKETS_RUN_INTERVAL_MS) || DEFAULT_RUN_INTERVAL_MS
-  startIntervalRunner({
+  await runFirstThenInterval({
     label: 'polymarket-markets-data-engineer',
     intervalMs,
+    runOnce: process.env.POLYMARKET_MARKETS_RUN_ONCE === '1',
     run: runOnce,
   })
 }
 
 main().catch((err) => {
+  appendErrorLog({ app: 'polymarket-markets-data-engineer', kind: 'run_failed', error: err })
   console.error('[polymarket-markets-data-engineer] fatal:', err)
   process.exit(1)
 })

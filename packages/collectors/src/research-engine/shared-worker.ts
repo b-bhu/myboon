@@ -67,7 +67,7 @@ import { durableResearchClassification } from './durable-classification'
 import { durablePrimarySynthesis, type PrimarySynthesisPolicy } from './durable-synthesis'
 import { durableArticleEntityProposal } from './durable-article-proposal'
 import type { ClassificationGateway } from '../inference-gateway'
-import { ArticleResearchHold, prepareArticlePlacement, articleLookupTerms } from './article-placement'
+import { ArticleResearchHold, prepareArticlePlacement, articleLookupTerms, parseArticlePlacementConfidenceFloors, parseArticlePlacementSaveUncertain } from './article-placement'
 import { isTransientContextFailure, type ArticleResearchContext } from '../research-gate/managed-context-reader'
 import type { D2AssignmentLimitsSnapshot } from './assignment-budget'
 import { capturedObservationDigest, resolveKnownObservation, assertKnownObservationResolution } from './known-observation'
@@ -304,6 +304,15 @@ export class SharedResearchWorker {
     }
     if (this.mode === 'active' && options.legacyClaimersActive !== false) {
       throw new SharedResearchWorkerConfigurationError('Active shared worker requires an explicit legacyClaimersActive=false topology guard')
+    }
+    // The article placement floors and the save-uncertain switch come from the
+    // process environment; a worker with an invalid value fails startup loudly
+    // instead of holding or mis-saving articles at run time.
+    try {
+      parseArticlePlacementConfidenceFloors()
+      parseArticlePlacementSaveUncertain()
+    } catch (error) {
+      throw new SharedResearchWorkerConfigurationError(error instanceof Error ? error.message : String(error))
     }
 
     const stores = new Map<ResearchWorkItem['sourceType'], SharedResearchWorkPort>()
