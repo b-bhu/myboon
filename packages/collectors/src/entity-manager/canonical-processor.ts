@@ -233,8 +233,8 @@ export function withCanonicalEntityTelemetry(error: unknown, telemetry: Inferenc
 
 /**
  * Canonical Feed V3 composition over the same EntityMemoryStore boundary used
- * by EntityService and SupabaseEntityMemoryStore. It does no direct SQL,
- * network, environment, queue, or lease work.
+ * by EntityService. It does no direct SQL, network, environment, queue, or
+ * lease work.
  */
 export class EntityServiceCanonicalPacketProcessor implements CanonicalPacketProcessor {
   private readonly canonLookup: EntityCanonLookup

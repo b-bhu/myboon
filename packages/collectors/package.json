@@ -32,8 +32,6 @@
     "hyperliquid:collector": "tsx src/hyperliquid/run-collector.ts",
     "hyperliquid:collector:sqlite": "HYPERLIQUID_STORAGE=sqlite tsx src/hyperliquid/run-collector.ts",
     "hyperliquid:sqlite:inspect": "tsx src/hyperliquid/inspect-sqlite.ts",
-    "entity-manager:polymarket": "tsx src/entity-manager/run-polymarket.ts",
-    "entity-manager:news": "tsx src/entity-manager/run-news.ts",
     "editor-draft": "tsx src/editor-draft/run.ts",
     "editor-draft:preview": "tsx src/editor-draft/preview.ts",
     "publisher": "tsx src/publisher/run.ts",

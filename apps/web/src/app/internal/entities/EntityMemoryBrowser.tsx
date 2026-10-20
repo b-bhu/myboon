@@ -10,7 +10,6 @@ import type {
   InternalEntityTimelineResponse,
 } from './types'
 import styles from './styles.module.css'
-import { CreateEntityPanel } from './CreateEntityPanel'
 
 type SortMode = 'updated_desc' | 'memory_count_desc' | 'name_asc'
 
@@ -37,7 +36,6 @@ export function EntityMemoryBrowser() {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [isLoadingMoreMemories, setIsLoadingMoreMemories] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
   const entityListRequest = useRef(0)
   const entityDetailRequest = useRef(0)
 
@@ -155,12 +153,6 @@ export function EntityMemoryBrowser() {
   async function logout() {
     await fetch('/internal/session', { method: 'DELETE', credentials: 'same-origin' })
     window.location.reload()
-  }
-
-  async function handleEntityApplied(entityId: string) {
-    await loadEntities()
-    setSelectedId(entityId)
-    setIsCreateOpen(false)
   }
 
   function toggleMemory(memoryId: string) {
@@ -282,10 +274,6 @@ export function EntityMemoryBrowser() {
               <span className="material-symbols-outlined" aria-hidden="true">monitoring</span>
               Polymarket
             </Link>
-            <button className={styles.textButton} type="button" onClick={() => setIsCreateOpen(true)}>
-              <span className="material-symbols-outlined" aria-hidden="true">add</span>
-              Create entity
-            </button>
             <button className={styles.iconButton} type="button" title="Reload" onClick={() => selectedId && loadSelectedEntity(selectedId)}>
               <span className="material-symbols-outlined" aria-hidden="true">refresh</span>
             </button>
@@ -393,9 +381,6 @@ export function EntityMemoryBrowser() {
           </aside>
         </section>
       </section>
-      {isCreateOpen ? (
-        <CreateEntityPanel onClose={() => setIsCreateOpen(false)} onApplied={handleEntityApplied} />
-      ) : null}
     </main>
   )
 }

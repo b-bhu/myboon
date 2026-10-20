@@ -615,10 +615,7 @@ export async function writeExtraction(
   // No longer writes a `source_marker` "processed" marker into entity_memories:
   // that table now forbids memory_type = 'source_marker' entirely (a Supabase
   // migration drops the CHECK constraint that used to permit it). Callers that
-  // need a processed/failed cursor must track it themselves - see
-  // entity-manager/run-polymarket.ts's fetchUnprocessedPolymarketPackets for
-  // the Polymarket lane, and entity-manager/run-news.ts for news (which still
-  // reads for this marker defensively; see the comment there).
+  // need a processed/failed cursor must track it themselves.
 
   const newsReconciliation = await reconcileNewsStoryMemories(
     store,

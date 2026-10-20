@@ -157,7 +157,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       env: {
         PORT: '3000',
-        ENTITY_V4_READ_SOURCE: 'dual',
+        ENTITY_V4_READ_SOURCE: 'managed',
       },
     },
     {
@@ -221,7 +221,7 @@ module.exports = {
         PIPELINE_SQLITE_PATH: '.data/polymarket-lane.sqlite',
         ...HERMES_ENV,
         HERMES_COMMAND: 'hermes',
-        ENTITY_V4_READ_SOURCE: 'dual',
+        ENTITY_V4_READ_SOURCE: 'managed',
         EDITOR_DRAFT_RUN_ONCE: '0',
         EDITOR_DRAFT_INTERVAL_MS: '3600000',
         EDITOR_DRAFT_BATCH_SIZE: '2',
@@ -246,7 +246,7 @@ module.exports = {
         NEWS_SQLITE_PATH: '.data/news-lane.sqlite',
         PIPELINE_SQLITE_PATH: '.data/polymarket-lane.sqlite',
         PUBLISHER_RUN_ONCE: '0',
-        ENTITY_V4_READ_SOURCE: 'dual',
+        ENTITY_V4_READ_SOURCE: 'managed',
         PUBLISHER_INTERVAL_MS: '300000',
         PUBLISHER_BATCH_SIZE: '10',
         PUBLISHER_PREVIEW_ONLY: '0',
