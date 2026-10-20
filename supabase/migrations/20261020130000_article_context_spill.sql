@@ -10,7 +10,9 @@
 -- 20k-row seed, work_mem 4MB = production): old 33,200kB external merge,
 -- new 0kB. Output is byte-identical except where the old ORDER BY never fixed
 -- it: one itemId linked to several requested entities with the same sort
--- time (rows' relative order was, and stays, unspecified).
+-- time. CTO decision on #420: entity_id::text is now the last key of the pick
+-- and aggregate order, so those rows come out in a fixed order. (The window
+-- partitions by entity, so it needs no extra key.)
 --
 -- NOT APPLIED. Needs Bucket's explicit yes (needs-bucket).
 -- Rollback: supabase/rollbacks/20261020130000_article_context_spill.down.sql
@@ -178,9 +180,9 @@ BEGIN
   ), picked AS (
     SELECT origin, item_id, entity_id, sort_at FROM ranked WHERE per_entity IS NULL OR entity_rank <= per_entity
     ORDER BY (item_id::text) IN (SELECT jsonb_array_elements_text(input->'itemIds')) DESC,
-    sort_at DESC, item_id::text LIMIT limit_count
+    sort_at DESC, item_id::text, entity_id::text LIMIT limit_count
   ), history AS (
-    SELECT picked.sort_at, picked.item_id,
+    SELECT picked.sort_at, picked.item_id, picked.entity_id,
       jsonb_build_object('itemId',i.id,'entityId',m.entity_id,'origin','managed','title',coalesce(a.title,i.note),
         'summary',coalesce(a.timeline_summary,i.note),'publishedAt',a.published_at,'eventAt',a.event_at,'observedAt',i.observed_at,
         'catalogEntityId',e.catalog_entity_id,'aliases',e.aliases,'metadata',e.metadata,'revision','item:' || h.revision::text) value
@@ -199,7 +201,7 @@ BEGIN
       ))
     )
     UNION ALL
-    SELECT picked.sort_at, picked.item_id,
+    SELECT picked.sort_at, picked.item_id, picked.entity_id,
       jsonb_build_object('itemId',m.id,'entityId',m.entity_id,'origin','legacy','title',m.title,'summary',m.summary,
         'publishedAt',NULL,'eventAt',m.event_at,'observedAt',m.observed_at,'catalogEntityId',m.entity_id,'aliases',e.aliases,'metadata',e.metadata,
         'revision','legacy:' || managed_knowledge_private.digest_v1(jsonb_build_object('id',m.id,'updatedAt',m.updated_at,'entityId',m.entity_id))) value
@@ -212,7 +214,7 @@ BEGIN
       OR m.source_ref_id IN (SELECT ref FROM source_refs)
     )
   )
-  SELECT coalesce(jsonb_agg(value ORDER BY sort_at DESC, item_id::text),'[]'::jsonb) INTO items FROM history;
+  SELECT coalesce(jsonb_agg(value ORDER BY sort_at DESC, item_id::text, entity_id::text),'[]'::jsonb) INTO items FROM history;
   RETURN base || jsonb_build_object('articleItems',items) || CASE WHEN per_entity IS NOT NULL THEN jsonb_build_object('perEntityLimit',per_entity) ELSE '{}'::jsonb END;
 END
 $body$;

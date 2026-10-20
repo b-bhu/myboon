@@ -141,6 +141,24 @@ tie_equal() {
   [[ "$(jq -cS "$q" "$1")" == "$(jq -cS "$q" "$2")" ]]
 }
 
+# determinism <phase>: with the #420 entity_id tie-breaker the new function's
+# c_itemids_only output is identical over 5 repeated calls, and rows sharing
+# an itemId (same sort time) come out in ascending entityId order.
+determinism() {
+  local ph=$1 i ref ok=1
+  ref="$TMP/res.c_itemids_only.$ph"
+  for i in 1 2 3 4 5; do
+    "${CTX[@]}" -f "$TMP/cases/c_itemids_only.sql" > "$TMP/rep.$i" 2>/dev/null || ok=0
+    cmp -s "$ref" "$TMP/rep.$i" || ok=0
+  done
+  if [[ $ok == 1 ]]; then echo "PASS c_itemids_only identical across 5 repeated runs ($ph)"; else echo "FAIL c_itemids_only differs across repeated runs ($ph)"; FAILS=$((FAILS+1)); fi
+  if jq -e '.articleItems as $a | [range(1;($a|length))] | all(($a[.-1].itemId != $a[.].itemId) or ($a[.-1].entityId < $a[.].entityId))' "$ref" >/dev/null; then
+    echo "PASS c_itemids_only same-itemId rows ordered by entityId ($ph)"
+  else
+    echo "FAIL c_itemids_only same-itemId rows not ordered by entityId ($ph)"; FAILS=$((FAILS+1))
+  fi
+}
+
 compare() {
   local ph=$1 f name
   for f in "$TMP"/cases/c_*.sql; do
@@ -207,6 +225,7 @@ echo "apply twice: OK"
 echo "== after migration"
 phase after
 compare after
+determinism after
 
 echo "== spill contrast, new function"
 for wm in "${LADDER[@]}"; do
@@ -265,6 +284,7 @@ echo "== re-apply migration and re-check"
 "${PSQL[@]}" --single-transaction -f "$M/$MIG" >/dev/null || { echo "FAIL migration re-apply 2"; exit 1; }
 phase after2
 compare after2
+determinism after2
 
 echo "== FAILS=$FAILS"
 exit $((FAILS>0))
