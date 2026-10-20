@@ -288,8 +288,13 @@ function safeHttpUrl(value: unknown): string | null {
   }
 }
 
-function storySummary(entity: SelectedEntity, memories: StoryMemory[], eventCount = memories.length): StorySummary | null {
-  const latest = memories.reduce<StoryMemory | null>((current, memory) => (
+/** Exposed for the #388 updatedAt guard tests. */
+export function storySummary(entity: SelectedEntity, memories: StoryMemory[], eventCount = memories.length, now = Date.now()): StorySummary | null {
+  // updatedAt tracks the newest memory that has already happened at request
+  // time; a future-dated (scheduled) memory only wins when nothing has
+  // happened yet, and then updatedAt is clamped to the request time.
+  const reported = memories.filter((memory) => Date.parse(memory.eventAt) <= now)
+  const latest = (reported.length ? reported : memories).reduce<StoryMemory | null>((current, memory) => (
     !current || Date.parse(memory.eventAt) > Date.parse(current.eventAt) ? memory : current
   ), null)
   if (!latest) return null
@@ -298,7 +303,7 @@ function storySummary(entity: SelectedEntity, memories: StoryMemory[], eventCoun
     name: entity.name,
     latestDevelopment: latest.summary,
     eventCount,
-    updatedAt: latest.eventAt,
+    updatedAt: Date.parse(latest.eventAt) <= now ? latest.eventAt : new Date(now).toISOString(),
     imageUrl: latest.imageUrl,
     imageKind: latest.imageKind,
     imageAttribution: latest.imageAttribution,

@@ -368,6 +368,20 @@ test('dual port sums the event totals to the exact count', async () => {
   assert.equal(result.totalCount, 7)
 })
 
+test('dual port orders a managed row with reported event_at ahead of and behind a legacy row', async () => {
+  const managedAhead = fakeRow({ id: MEMORY_ID_B, event_at: '2026-10-15T10:03:00+00:00' })
+  const legacyMiddle = fakeRow({ id: MEMORY_ID_A, entity_id: RAW_ENTITY_ID, event_at: '2026-10-15T10:01:00+00:00' })
+  const managedBehind = fakeRow({ id: MEMORY_ID_C, event_at: '2026-10-15T09:58:00+00:00' })
+  const port = new DualEntityKnowledgeQueryPort(
+    new StubPort([], { rows: [managedBehind, managedAhead], totalCount: 2 }),
+    new StubPort([], { rows: [legacyMiddle], totalCount: 1 }),
+  )
+
+  const result = await port.queryMemoryEvents({ entityId: RAW_ENTITY_ID, limit: 3 })
+  assert.deepEqual(result.rows, [managedAhead, legacyMiddle, managedBehind])
+  assert.equal(result.totalCount, 3)
+})
+
 test('dual port falls back to the managed port alone when the legacy port fails', async () => {
   const warnings: Record<string, unknown>[] = []
   const managedRows = [fakeRow()]
