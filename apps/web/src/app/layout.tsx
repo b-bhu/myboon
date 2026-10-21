@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Space_Grotesk, Inter } from 'next/font/google'
+import { Space_Grotesk, Inter, Geist_Mono } from 'next/font/google'
 import './globals.css'
 
 const spaceGrotesk = Space_Grotesk({
@@ -14,10 +14,30 @@ const inter = Inter({
   weight: ['400', '500', '600'],
 })
 
+const geistMono = Geist_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono',
+  weight: ['400', '500'],
+})
+
 export const metadata: Metadata = {
-  title: 'myboon | Know why the market moved',
+  metadataBase: new URL('https://myboon.tech'),
+  title: 'MyBoon: Understand markets. Act in the same app.',
   description:
-    'myboon tells you why the market moved and lets you act on it in the same app.',
+    'MyBoon tells you why the market moved and lets you act on it in the same app: researched stories, Solana apps and your own wallet.',
+  openGraph: {
+    type: 'website',
+    siteName: 'MyBoon',
+    url: '/',
+    title: 'MyBoon: Understand markets. Act in the same app.',
+    description: 'Every market move explained as it happens, with the trade one tap away on Solana.',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    site: '@myboonapp',
+    title: 'MyBoon: Understand markets. Act in the same app.',
+    description: 'Every market move explained as it happens, with the trade one tap away on Solana.',
+  },
 }
 
 export default function RootLayout({
@@ -34,7 +54,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${spaceGrotesk.variable} ${inter.variable} bg-background text-on-background font-body selection:bg-primary-container selection:text-on-primary-container`}
+        className={`${spaceGrotesk.variable} ${inter.variable} ${geistMono.variable} bg-background text-on-background font-body selection:bg-primary-container selection:text-on-primary-container`}
       >
         {children}
       </body>
