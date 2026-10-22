@@ -7,7 +7,7 @@ These versioned files are the handoff for [#301 Home layout redesign](https://gi
 - **Feed:** open `index.html?nav=feed`. Calendar is expanded, full width, split 50/50, with a 250px reference height; Smart wallet activity follows below it.
 - **Apps:** open `index.html?nav=apps`. This is the two-column launcher, not application interiors.
 - **Wallet and Swap:** open `wallet-inline.html`. Add `?embed=1` to hide the desktop notes. The approved design has a yellow upper section, dark inline composer, compact portfolio and a raised markets panel with 14% top corners. Spot/Perps/Meteora sits inside the panel.
-- The Wallet in `index.html`, its Swap sheet, and `swap-concept-a/b/c.html` are historical comparisons. They are retained only for context and existing reference navigation.
+- The Wallet in `index.html` and its Swap sheet are historical comparisons. They are retained only for context and existing reference navigation.
 
 Read the live GitHub issues for current scope and ownership. This reference branch contains documentation and mock assets, not the native implementation. Keep working on your implementation branch.
 

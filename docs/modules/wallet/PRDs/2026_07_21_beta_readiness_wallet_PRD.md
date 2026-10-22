@@ -65,10 +65,10 @@ The following decisions were confirmed during a requirements interview:
     trading surface in its own right. It does not duplicate any protocol's
     execution UI.
 
-## Design Decisions (from the wallet_mock.html design pass)
+## Design Decisions (from the Wallet mock design pass; current reference: home-redesign/wallet-inline.html)
 
 These were resolved after the initial decision interview, while iterating
-on `docs/mockups/wallet_mock.html`. They refine, and in a few cases override,
+on `docs/mockups/home-redesign/wallet-inline.html`. They refine, and in a few cases override,
 the visual assumptions implied above — this section is the current source of
 truth for how the screen looks and behaves, not just what data it shows.
 
@@ -320,5 +320,5 @@ These rules govern every number this screen shows:
 - [`docs/VISION.md`](../../../VISION.md)
 - [`docs/PRDs/beta readiness sprint PRD.md`](../../../PRDs/beta%20readiness%20sprint%20PRD.md)
 - [`docs/PRDs/meteora dlmm app PRD.md`](../../../PRDs/meteora%20dlmm%20app%20PRD.md)
-- [`docs/mockups/wallet_mock.html`](../../../mockups/wallet_mock.html) — the
+- [`docs/mockups/home-redesign/wallet-inline.html`](../../../mockups/home-redesign/wallet-inline.html) — the
   visual reference this PRD's design decisions section describes

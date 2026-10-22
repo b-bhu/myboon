@@ -110,7 +110,7 @@ This is the biggest product gap in the document. Everything else is polish by co
 ### Theme C — Decoys erode trust, and this is a money app
 
 Things that look interactive and aren't:
-- Swap: **unreachable** (nothing routes to `/swap` — only a stale entry in `feed.mock.ts`), header says **"Feed"** (`FeedHeader` hardcodes the title, takes no props), balances are `MOCK_BALANCES` constants that Half/Max compute against, CTA is a permanent `COMING SOON`, "Custom" slippage silently applies 0.5%, Market/Limit tabs are static `View`s
+- Swap: **unreachable** (nothing routes to `/swap`), header says **"Feed"** (`FeedHeader` hardcodes the title, takes no props), balances are `MOCK_BALANCES` constants that Half/Max compute against, CTA is a permanent `COMING SOON`, "Custom" slippage silently applies 0.5%, Market/Limit tabs are static `View`s
 - Home: Orca/Raydium/Kamino tiles are dimmed and dead on tap, with no label saying why
 - Home: Send/Receive/Transfer look enabled, show "Coming soon" on tap — a *different* convention from the tiles right above them
 - Phoenix: TP/SL fields accept input and are **silently ignored** on submit; "Remove All TP/SL" is permanently disabled
@@ -171,7 +171,7 @@ Nothing here is architectural. This is stopping the bleeding.
 | 3 | Fix `ConnectionSheet` to key on requested chain | Unblocks Polymarket setup | XS |
 | 4 | Typography floor pass (11/13/15px) | 226 rules under minimum; biggest visible win | S |
 | 5 | Either route to `/swap` or delete it | It ships in the bundle as a broken screen | XS |
-| 5b | Delete the 13 truly-orphaned files (see Part 4b) — **keep `BottomGlassNav` + `feed.mock`** | ~900 lines out; the tab bar gets mounted in NEXT instead | XS |
+| 5b | Delete the 13 truly-orphaned files (see Part 4b) — **keep `BottomGlassNav`** (`feed.mock.ts` was removed in PR #423) | ~900 lines out; the tab bar gets mounted in NEXT instead | XS |
 | 6 | Delete or honestly label every decoy | Trust; 4 "coming soon" sites + dead tiles + fake tabs | S |
 | 7 | Ship Receive (QR + copy) | Address already exists; converts a decoy into value | S |
 | 8 | Wire Phoenix TP/SL or remove the fields | Silently ignoring money input is indefensible | S |
@@ -234,7 +234,6 @@ The two marked ⚠️ are the unmounted tab bar. They are technically dead, but 
 | 29 | `features/feed/components/ProgressBar.tsx` | From the original app shell | 5 months |
 | 21 | `hooks/use-theme-color.ts` | Boilerplate; only consumer of `constants/theme.ts` | 7 months |
 | 21 | `hooks/use-color-scheme.web.ts` | Boilerplate | 7 months |
-| 8 | ⚠️ `features/feed/feed.mock.ts` | `BOTTOM_NAV_ITEMS` — nav config for that tab bar — **KEEP, see below** | 2 weeks |
 | 7 | `features/perps/perps.api.ts` | Barrel that nothing imports | 3 months |
 | 1 | `hooks/use-color-scheme.ts` | Boilerplate | 7 months |
 
@@ -263,7 +262,7 @@ This is the venue-adapter work in progress — the thing Theme E says the codeba
 
 Nine of the fifteen orphans were created by refactors that landed the new thing and left the old one in the tree. The 2-week-old cluster all traces to one commit, `2f02f20` ("one connection surface, consistent app routes and naming"). The habit to fix is deletion-as-part-of-the-refactor, not a periodic cleanup sweep.
 
-And the standout finding: **the tab bar and its nav config are sitting in the dead-code pile.** The single highest-impact fix in this document — Theme A, "it has the shape of a website" — is a component you already wrote, currently classified as junk. Don't delete `BottomGlassNav.tsx` and `feed.mock.ts`; mount them.
+And the standout finding: **the tab bar and its nav config are sitting in the dead-code pile.** The single highest-impact fix in this document — Theme A, "it has the shape of a website" — is a component you already wrote, currently classified as junk. Don't delete `BottomGlassNav.tsx`; mount it.
 
 ---
 

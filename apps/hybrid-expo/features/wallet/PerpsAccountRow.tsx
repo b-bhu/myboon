@@ -26,7 +26,7 @@ const ROW_LABEL: Record<'phoenix' | 'pacifica', string> = {
 };
 
 const ROW_TINT: Record<'phoenix' | 'pacifica', string> = {
-  // Faint per-protocol background wash, matching wallet_mock.html's
+  // Faint per-protocol background wash, matching docs/mockups/home-redesign/wallet-inline.html's
   // `.acc-row.{phoenix,pacifica}` gradient stops.
   phoenix: 'rgba(255,141,42,0.08)',
   pacifica: 'rgba(97,215,239,0.08)',
