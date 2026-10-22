@@ -28,12 +28,12 @@ export type HeroTile = { k: keyof typeof crops; x: number; y: number; w: number;
 
 export const heroTiles: { d: HeroTile[]; m: HeroTile[] } = {
   d: [
-    { k: 'drift', x: 12, y: 26, w: 220, r: -7, seg: 'b' },
-    { k: 'story', x: 33, y: 17, w: 250, r: 5, seg: 'b' },
+    { k: 'drift', x: 8, y: 26, w: 220, r: -7, seg: 'b' },
+    { k: 'story', x: 29, y: 17, w: 250, r: 5, seg: 'b' },
     { k: 'sol', x: 50, y: 62, w: 250, r: -4, seg: 'b' },
-    { k: 'swap', x: 76, y: 22, w: 230, r: 6, seg: 'g' },
-    { k: 'tabs', x: 87, y: 66, w: 250, r: -5, seg: 'g' },
-    { k: 'zec', x: 17, y: 66, w: 210, r: 4, seg: 'n' },
+    { k: 'swap', x: 80, y: 22, w: 230, r: 6, seg: 'g' },
+    { k: 'tabs', x: 90, y: 66, w: 250, r: -5, seg: 'g' },
+    { k: 'zec', x: 13, y: 66, w: 210, r: 4, seg: 'n' },
   ],
   m: [
     { k: 'story', x: 34, y: 18, w: 230, r: -6, seg: 'b' },

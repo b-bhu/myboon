@@ -9,17 +9,8 @@ import s from './landing.module.css'
 const MOBILE_BP = 600
 const useIso = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
-function useMobile() {
-  const [mobile, setMobile] = useState(false)
-  useIso(() => {
-    const q = window.matchMedia(`(max-width: ${MOBILE_BP - 1}px)`)
-    const on = () => setMobile(q.matches)
-    on()
-    q.addEventListener('change', on)
-    return () => q.removeEventListener('change', on)
-  }, [])
-  return mobile
-}
+/** Client-only breakpoint read; layout itself switches in CSS so SSR markup never changes. */
+const isMobile = () => window.matchMedia(`(max-width: ${MOBILE_BP - 1}px)`).matches
 
 function useReducedMotion() {
   const [reduced, setReduced] = useState(false)
@@ -53,7 +44,7 @@ function curve(pts: Pt[], axis: 'x' | 'y') {
 }
 
 /** Giant word stack (echo / main / echo) sized to a share of the container width. */
-function Words({ words, ratio, cap, color, className }: { words: [string, string, string]; ratio: number; cap: number; color: ColorToken; className?: string }) {
+function Words({ words, ratio, cap, color, className }: { words: [string, string, string]; ratio: [number, number]; cap: [number, number]; color: ColorToken; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const mainRef = useRef<HTMLSpanElement>(null)
   useIso(() => {
@@ -61,19 +52,20 @@ function Words({ words, ratio, cap, color, className }: { words: [string, string
     const main = mainRef.current
     if (!el || !main) return
     const fit = () => {
+      const m = isMobile() ? 1 : 0
       el.style.setProperty('--fs', '100px')
       const mw = main.getBoundingClientRect().width
       const W = el.parentElement?.clientWidth ?? window.innerWidth
-      if (mw) el.style.setProperty('--fs', `${Math.min((100 * W * ratio) / mw, cap)}px`)
+      if (mw) el.style.setProperty('--fs', `${Math.min((100 * W * ratio[m]) / mw, cap[m])}px`)
     }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(el.parentElement ?? el)
     document.fonts?.ready.then(fit)
     return () => ro.disconnect()
-  }, [ratio, cap])
+  }, [ratio[0], ratio[1], cap[0], cap[1]])
   return (
-    <div ref={ref} aria-hidden className={`${s.words} ${className ?? ''}`} style={{ '--fs': `${cap * 0.6}px`, '--wc': colors[color] } as CSSProperties}>
+    <div ref={ref} aria-hidden className={`${s.words} ${className ?? ''}`} style={{ '--fs': `${cap[0] * 0.6}px`, '--wc': colors[color] } as CSSProperties}>
       <span className={`${s.w} ${s.echo} ${s.echoB}`}>{words[0]}</span>
       <span ref={mainRef} className={`${s.w} ${s.main}`}>{words[1]}</span>
       <span className={`${s.w} ${s.echo} ${s.echoA}`}>{words[2]}</span>
@@ -85,7 +77,7 @@ function TileBody({ k, w, priority }: { k: TileKey; w: number; priority?: boolea
   if (k in apps) {
     const a = apps[k as keyof typeof apps]
     return (
-      <div className={`${s.card} ${s.app}`}>
+      <div className={`${s.card} ${s.app}`} aria-hidden>
         <div className={s.mk}>
           <Image src={a.logo} alt="" width={30} height={30} unoptimized />
         </div>
@@ -104,15 +96,15 @@ function TileBody({ k, w, priority }: { k: TileKey; w: number; priority?: boolea
   )
 }
 
-function Hero({ mobile }: { mobile: boolean }) {
+function Hero() {
   const ref = useRef<HTMLElement>(null)
   const [paths, setPaths] = useState({ p1: '', p2: '', all: '' })
-  const tiles = mobile ? heroTiles.m : heroTiles.d
 
   useIso(() => {
     const h = ref.current
     if (!h) return
     const build = () => {
+      const tiles = isMobile() ? heroTiles.m : heroTiles.d
       const W = h.clientWidth
       const H = h.clientHeight
       const pts = tiles.filter((t) => t.seg !== 'n').map((t) => [(t.x * W) / 100, (t.y * H) / 100, t.seg] as const)
@@ -126,14 +118,14 @@ function Hero({ mobile }: { mobile: boolean }) {
     const ro = new ResizeObserver(build)
     ro.observe(h)
     return () => ro.disconnect()
-  }, [tiles])
+  }, [])
 
   return (
     <section ref={ref} className={s.hero} id="hero">
       <nav className={s.nav}>
         <Image src="/branding/myboon-wordmark-header.png" alt="MyBoon" width={420} height={218} priority />
       </nav>
-      <Words words={['Understand.', 'Understand.', 'Act.']} ratio={mobile ? 0.94 : 0.9} cap={300} color="accent" />
+      <Words words={['Understand.', 'Understand.', 'Act.']} ratio={[0.9, 0.94]} cap={[300, 300]} color="accent" />
       <svg className={s.path} aria-hidden>
         <path d={paths.p1} fill="none" stroke={colors.primary} strokeWidth={2.2} strokeDasharray="1 7" strokeLinecap="round" />
         <path d={paths.p2} fill="none" stroke={colors.viridian} strokeWidth={2.2} strokeDasharray="1 7" strokeLinecap="round" />
@@ -143,37 +135,38 @@ function Hero({ mobile }: { mobile: boolean }) {
           </circle>
         )}
       </svg>
-      {tiles.map((t, i) => (
+      {(['d', 'm'] as const).flatMap((v) => heroTiles[v].map((t, i) => (
         <div
-          key={`${t.k}-${i}`}
-          className={s.tile}
+          key={`${v}-${t.k}-${i}`}
+          className={`${s.tile} ${v === 'd' ? s.dOnly : s.mOnly}`}
           style={{ left: `${t.x}%`, top: `${t.y}%`, width: t.w, '--r': `${t.r}deg`, '--d': `${5 + i * 0.7}s`, animationDelay: `-${i * 1.3}s` } as CSSProperties}
         >
-          <TileBody k={t.k} w={t.w} priority />
+          <TileBody k={t.k} w={t.w} priority={v === 'd'} />
         </div>
-      ))}
+      )))}
       <div className={s.copy}>
         <h1>
           Understand markets.<br className={s.mob} /> Act in the same app.
         </h1>
         <p>Every market move explained as it happens, with the trade one tap away on Solana.</p>
         {/* TODO(#422 Phase 2): link to /downloads instead of X once the Seeker listing is live. */}
-        <a className={s.btn} href={BETA_URL} target="_blank" rel="noopener noreferrer">
-          Join the beta
+        <a className={s.btn} href={BETA_URL} target="_blank" rel="noopener noreferrer" aria-label="Join the beta on X (opens in new tab)">
+          Join the beta on X ↗
         </a>
       </div>
     </section>
   )
 }
 
-function Showcase({ id, word, color, line, tiles, mobile }: { mobile: boolean; id: string; word: string; color: ColorToken; line: ReactNode; tiles: SecTile[] }) {
+function Showcase({ id, word, color, line, tiles }: { id: string; word: string; color: ColorToken; line: ReactNode; tiles: { d: SecTile[]; m: SecTile[] } }) {
   return (
-    <section className={s.sec} id={id} aria-label={word}>
-      <Words words={[word, word, word]} ratio={mobile ? 0.8 : 0.62} cap={mobile ? 200 : 380} color={color} />
-      {tiles.map((t, i) => (
+    <section className={s.sec} id={id} aria-labelledby={`${id}-h`}>
+      <h2 id={`${id}-h`} className={s.srOnly}>{word}</h2>
+      <Words words={[word, word, word]} ratio={[0.62, 0.8]} cap={[380, 200]} color={color} />
+      {(['d', 'm'] as const).flatMap((v) => tiles[v].map((t, i) => (
         <div
-          key={`${t.k}-${i}`}
-          className={s.tl}
+          key={`${v}-${t.k}-${i}`}
+          className={`${s.tl} ${v === 'd' ? s.dOnly : s.mOnly}`}
           data-dp={t.dp}
           data-ch={t.ch || undefined}
           style={{ left: `${t.x}%`, top: `${t.y}%`, width: t.w }}
@@ -182,14 +175,13 @@ function Showcase({ id, word, color, line, tiles, mobile }: { mobile: boolean; i
             <TileBody k={t.k} w={t.w} />
           </div>
         </div>
-      ))}
+      )))}
       <p className={s.line}>{line}</p>
     </section>
   )
 }
 
 export default function Landing() {
-  const mobile = useMobile()
   const reduced = useReducedMotion()
   const root = useRef<HTMLElement>(null)
   const [gp, setGp] = useState({ h: 0, g1: '', g2: '', all: '' })
@@ -198,7 +190,7 @@ export default function Landing() {
     const el = root.current
     if (!el) return
     const base = el.getBoundingClientRect()
-    const chain = [...el.querySelectorAll<HTMLElement>('[data-ch]')].sort((a, b) => Number(a.dataset.ch) - Number(b.dataset.ch))
+    const chain = [...el.querySelectorAll<HTMLElement>('[data-ch]')].filter((e) => e.offsetParent !== null).sort((a, b) => Number(a.dataset.ch) - Number(b.dataset.ch))
     const pts: Pt[] = chain.map((e) => {
       const r = e.getBoundingClientRect()
       return [r.left - base.left + r.width / 2, r.top - base.top + r.height / 2]
@@ -236,7 +228,7 @@ export default function Landing() {
       io?.disconnect()
       ro.disconnect()
     }
-  }, [mobile, reduced, measure])
+  }, [reduced, measure])
 
   // Light scroll parallax (transform only, rAF-throttled).
   useEffect(() => {
@@ -261,35 +253,39 @@ export default function Landing() {
       window.removeEventListener('scroll', on)
       cancelAnimationFrame(raf)
     }
-  }, [reduced, mobile])
+  }, [reduced])
 
-  const pick = (o: { d: SecTile[]; m: SecTile[] }) => (mobile ? o.m : o.d)
+  // Pause SMIL path dots while the tab is hidden.
+  useEffect(() => {
+    const el = root.current
+    if (!el) return
+    const on = () => el.querySelectorAll('svg').forEach((v) => (document.hidden ? v.pauseAnimations() : v.unpauseAnimations()))
+    document.addEventListener('visibilitychange', on)
+    return () => document.removeEventListener('visibilitychange', on)
+  }, [])
 
   return (
     <main ref={root} className={s.page} style={colorVars as CSSProperties}>
-      <Hero mobile={mobile} />
+      <Hero />
       <Showcase
         id="feed"
         word="Feed"
         color="primary"
-        mobile={mobile}
-        tiles={pick(sectionTiles.feed)}
+        tiles={sectionTiles.feed}
         line={<><b>Stories</b> explain why it moved. <b>Updates</b> keep you current. <b>The calendar</b> shows what’s next.</>}
       />
       <Showcase
         id="apps"
         word="Apps"
         color="viridian"
-        mobile={mobile}
-        tiles={pick(sectionTiles.apps)}
+        tiles={sectionTiles.apps}
         line={<>The best of Solana, one tap from the story. <b>Swap, perps, liquidity and predictions</b> in one app.</>}
       />
       <Showcase
         id="wallet"
         word="Wallet"
         color="accent"
-        mobile={mobile}
-        tiles={pick(sectionTiles.wallet)}
+        tiles={sectionTiles.wallet}
         line={<>Your own Solana wallet, built in. <b>Slide to swap</b> and you’re in the trade.</>}
       />
       <section className={s.end}>
@@ -297,8 +293,8 @@ export default function Landing() {
           Understand markets.<br />
           <span>Act in the same app.</span>
         </h2>
-        <a className={s.btn} href={BETA_URL} target="_blank" rel="noopener noreferrer">
-          Join the beta
+        <a className={s.btn} href={BETA_URL} target="_blank" rel="noopener noreferrer" aria-label="Join the beta on X (opens in new tab)">
+          Join the beta on X ↗
         </a>
       </section>
       <svg className={s.pagePath} height={gp.h} style={{ height: gp.h }} aria-hidden>
@@ -312,7 +308,7 @@ export default function Landing() {
       </svg>
       <footer className={s.footer}>
         <span>© 2026 MyBoon · Not financial advice.</span>
-        <a href={X_URL} target="_blank" rel="noopener noreferrer">Follow @myboonapp on X</a>
+        <a href={X_URL} target="_blank" rel="noopener noreferrer" aria-label="Follow @myboonapp on X (opens in new tab)">Follow @myboonapp on X ↗</a>
       </footer>
     </main>
   )
