@@ -1,13 +1,5 @@
-import HeroSection from '@/components/hero/HeroSection'
-import { FeaturesSection } from '@/components/features/FeaturesSection'
-import { FooterCTA } from '@/components/footer/FooterCTA'
+import Landing from '@/components/landing/Landing'
 
 export default function Home() {
-  return (
-    <main className="landing-page-gradient">
-      <HeroSection />
-      <FeaturesSection />
-      <FooterCTA />
-    </main>
-  )
+  return <Landing />
 }
