@@ -26,7 +26,7 @@ const ROW_LABEL: Record<'spot' | 'meteora', string> = {
 };
 
 const ROW_TINT: Record<'spot' | 'meteora', string> = {
-  // Faint per-protocol background wash, matching wallet_mock.html's
+  // Faint per-protocol background wash, matching docs/mockups/home-redesign/wallet-inline.html's
   // `.acc-row.{spot,meteora}` gradient stops.
   spot: 'rgba(153,69,255,0.07)',
   meteora: 'rgba(110,69,255,0.08)',

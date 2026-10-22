@@ -1214,7 +1214,7 @@ safety, fabricated-state removal, or the Alliance demo.
 - `docs/markets.md`
 - `docs/PRDs/entity memory browser PRD.md`
 - `docs/marketing/beta-discovery-plan.md`
-- `docs/mockups/home-no-tabs-codex-v2.html`
+- `docs/mockups/home-no-tabs-codex-v2.html` (removed in PR #423; current reference: `docs/mockups/home-redesign/index.html`)
 - Alliance ALL18 application: <https://alliance.xyz/apply>
 - Solana dApp Store submission guide:
   <https://docs.solanamobile.com/dapp-store/submit-new-app>

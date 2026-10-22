@@ -9,9 +9,9 @@ Read [HANDOFF.md](HANDOFF.md) for published references and fetch/extraction inst
 | Shared shell, Feed and Apps (#301–#303) | `index.html`, `home.css`, `home.js` |
 | Wallet and Swap (#304–#305) | `wallet-inline.html`, `wallet-inline.css`, `wallet-inline.js` |
 
-The Wallet inside `index.html`, its older Swap sheet, and the A/B/C Swap alternatives are historical. Use `wallet-inline.*` for the approved Wallet direction and the latest issue completion note for native scope. All HTML financial data remains illustrative and non-executing.
+The Wallet inside `index.html` and its older Swap sheet are historical (the A/B/C Swap alternatives were removed in PR #423). Use `wallet-inline.*` for the approved Wallet direction and the latest issue completion note for native scope. All HTML financial data remains illustrative and non-executing.
 
-Open `index.html`. This is the selected HTML prototype. Earlier Home concepts, screenshots and temporary design scripts have been removed. Three new Swap explorations are available in `swap-concepts.html`; the selected mock keeps its approved Swap while these alternatives are reviewed. This work does not implement the Expo screens or connect live services.
+Open `index.html`. This is the selected HTML prototype. Earlier Home concepts, screenshots and temporary design scripts have been removed. This work does not implement the Expo screens or connect live services.
 
 The palette follows `apps/hybrid-expo/theme/tokens.ts` and `apps/hybrid-expo/features/feed/feed.constants.ts`. Developing stories retain the compact cards already used on native Home. Native body type, restrained Avenir headings and small mono captions retain C’s visual identity.
 
@@ -100,16 +100,6 @@ The follow-up spacing adjustment brings the Max / dot / % text roughly 50% close
 
 Screenshots are in `evidence/wallet-inline-2026-10-07/`. These are rendered HTML mock checks, not native device verification. Native keyboard, wallet approval, actual execution/recovery, and production quote/slippage behavior are unchanged and outside this design pass. Local review URL: `http://localhost:8081/wallet-design-preview-305/wallet-inline.html`; direct file opening also works for the user. The ignored Metro preview directory contains copies of the existing reference files only.
 
-### Earlier bottom-sheet alternatives
-
-Open **Compare three Swap designs** in the selected mock, or open `swap-concepts.html` directly. The comparison shows three independent GPT-6.1 Sol/high explorations. Each opens Swap over the same sample Wallet total and four-action structure; the original Swap remains in `index.html`.
-
-- **A — Paired cards:** separate, equally weighted Pay and Receive cards; full-width amounts and an open rate/reverse row.
-- **B — Pay first:** a large editable Pay amount, compact Receive summary and an anchored review action in one connected surface.
-- **C — Asset first:** token identity on the left, equally weighted amounts aligned right and Reverse in the sheet header.
-
-Each standalone file supports `?embed=1` and includes decimal amount editing, local token selection, reversal, balance shortcuts, configurable sample slippage, a non-executing review, close/reopen and modal focus handling. These concepts use SOL/USDC samples; B and C also offer JUP. Custom slippage is limited to 5% for these previews. No live quotes, signing or transaction services are connected.
-
 ## Prototype behavior
 
 - Swipe/trackpad, Tab and arrow keys move between Stories. Full story opens the corresponding detail, and returning preserves the selected Story and vertical feed position.
@@ -122,7 +112,7 @@ Each standalone file supports `?embed=1` and includes decimal amount editing, lo
 
 All headlines, dates, wallets, transactions, prices, balances and charts are illustrative fixtures. Editorial images illustrate reports; they are not documentary images or live charts. Calendar and smart wallet activities remain planned features represented by samples.
 
-Files: `index.html` (review frame and app shell), `home.css` (selected design), `home.js` (fixtures and navigation), `swap.css` / `swap.js` (approved Swap preview), `wallet-inline.html` / `wallet-inline.css` / `wallet-inline.js` (inline action experiment), `swap-concepts.html` (comparison), `swap-concept-a.html` / `swap-concept-b.html` / `swap-concept-c.html` (standalone alternatives), `assets/` (the required logo/editorial files) and this README.
+Files: `index.html` (review frame and app shell), `home.css` (selected design), `home.js` (fixtures and navigation), `swap.css` / `swap.js` (approved Swap preview), `wallet-inline.html` / `wallet-inline.css` / `wallet-inline.js` (inline action experiment), `assets/` (the required logo/editorial files) and this README.
 
 ## Verification
 

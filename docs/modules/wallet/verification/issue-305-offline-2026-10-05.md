@@ -2,6 +2,8 @@
 
 # Issue 305 implementation and verification
 
+> Screenshot and log evidence for this report was removed from the repository in PR #423 (it stays in git history).
+
 Implementation is in the working checkout. Native acceptance is **unverified**. No native screenshots or interaction recording were produced: no Android device, installed Android emulator, or available iOS simulator was accessible, and the requester authorized **existing servers only**. There is an existing API on port 3000, but no Metro listener on port 8081. No server was launched or restarted.
 
 ## Specification and preserved work
@@ -36,35 +38,35 @@ Useful defects reproduced and repaired:
 - Unmount during approval and wallet switching during execution needed distinct cancellation/recovery guards. Submitted records remain scoped to their original wallet; old work cannot publish into a new session.
 - The routed screen was always active, and Home mounted a second connection sheet. Source audit found and repaired both integration defects.
 
-[First lifecycle regression run](issue-305-evidence/lifecycle-before-repair.txt) recorded four failures; [unmount/wallet-switch reproduction](issue-305-evidence/context-before-repair.txt) recorded two failures. These are historical repair evidence, not final results. The final 42-case controller/session/gesture run below passes all of them, including cancelled unresolved preparations and manual status-check failure recovery.
+First lifecycle regression run recorded four failures; unmount/wallet-switch reproduction recorded two failures. These are historical repair evidence, not final results. The final 42-case controller/session/gesture run below passes all of them, including cancelled unresolved preparations and manual status-check failure recovery.
 
 ## Exact checks
 
-All commands below run from `apps/hybrid-expo` except `git diff --check`, which runs from the repository root. Logs are adjacent in `issue-305-evidence/`. Final results are recorded after the final repair run.
+All commands below run from `apps/hybrid-expo` except `git diff --check`, which runs from the repository root. Final results are recorded after the final repair run.
 
 ```sh
 pnpm exec tsx --test features/swap/swap.math.test.ts features/swap/swap.pending.test.ts features/swap/swap-transaction-validation.test.ts
 ```
 
-Result: **29 passed, 0 failed**, exit 0. [Required swap log](issue-305-evidence/required-swap.txt).
+Result: **29 passed, 0 failed**, exit 0. Required swap log.
 
 ```sh
 pnpm exec tsx --test features/swap/swap.controller.integration.test.ts features/swap/swap.controller.core.test.ts features/wallet/wallet-action-gesture.test.ts
 ```
 
-Result: **42 passed, 0 failed**, exit 0: 30 actual-hook integration cases, 3 session/rate cases and 9 gesture scheduler cases. [New regression log](issue-305-evidence/controller-and-gestures.txt). React's test-renderer deprecation warning is emitted; these are controller tests, not native rendering tests.
+Result: **42 passed, 0 failed**, exit 0: 30 actual-hook integration cases, 3 session/rate cases and 9 gesture scheduler cases. New regression log. React's test-renderer deprecation warning is emitted; these are controller tests, not native rendering tests.
 
 ```sh
 pnpm exec tsx --test features/wallet/wallet.refresh.test.ts features/wallet/dormantBalance.test.ts features/wallet/components/connect.options.test.ts features/wallet/components/connect.filtering.test.ts
 ```
 
-Result: **37 passed, 0 failed**, exit 0. [Wallet regression log](issue-305-evidence/wallet.txt).
+Result: **37 passed, 0 failed**, exit 0. Wallet regression log.
 
 ```sh
 pnpm test:chain
 ```
 
-Result: **72 passed, 0 failed**, exit 0. This script runs only `features/chain/chain.test.ts`, `activation.test.ts` and `deferredCreation.test.ts`. [Chain regression log](issue-305-evidence/chain.txt).
+Result: **72 passed, 0 failed**, exit 0. This script runs only `features/chain/chain.test.ts`, `activation.test.ts` and `deferredCreation.test.ts`. Chain regression log.
 
 ```sh
 pnpm exec tsc --noEmit --pretty false -p tsconfig.swap.json
@@ -77,7 +79,7 @@ pnpm exec eslint features/home/HomeScreen.tsx features/home/components/HomeNavig
 git diff --check
 ```
 
-Result: **both passed**, exit 0; ESLint has no errors or warnings. [Static-check log](issue-305-evidence/static-checks.txt). Across the four scoped test commands above, **180 tests passed**, with no failed/skipped/cancelled tests.
+Result: **both passed**, exit 0; ESLint has no errors or warnings. Static-check log. Across the four scoped test commands above, **180 tests passed**, with no failed/skipped/cancelled tests.
 
 ## S01–S20 acceptance table
 
@@ -121,12 +123,9 @@ Statuses apply to the **whole requested scenario**, including native interaction
 | Keyboard, Android Back, large text, screen reader, reduced motion | Implemented hooks/labels/layout are source-reviewed; actual behavior unverified. |
 | Controlled native UI fixtures | Node fixture exists; no device fixture build or safe provider/API environment was configured in this run. Existing API health alone proves neither fixture support nor trade behavior. |
 
-[Native environment observations](issue-305-evidence/native-environment.txt) record the actual read-only commands and outputs. [Meteora preservation check](issue-305-evidence/meteora-preservation.txt) records all baseline checksum results.
+Native environment observations record the actual read-only commands and outputs. Meteora preservation check records all baseline checksum results.
 
-The saved [pre-edit Meteora checksums](issue-305-evidence/meteora-baseline.sha256) can be checked from the repository root:
+The saved pre-edit Meteora checksums were saved alongside this report.
 
-```sh
-shasum -a 256 -c docs/modules/wallet/verification/issue-305-evidence/meteora-baseline.sha256
-```
 
 To finish acceptance, provide an already-running configured native development build with a controlled API/provider fixture environment and Android devices/emulators at the required widths. Do not enable live transfers. Capture matched before/after native images and the requested interaction recording, then run each scenario above and update its status with device, OS, logical dimensions, build/commit, fixture case and attempt evidence. The current implementation must not be described as fully native-verified before those checks.

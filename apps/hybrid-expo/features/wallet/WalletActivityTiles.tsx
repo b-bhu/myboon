@@ -9,7 +9,7 @@ import { semantic, tokens } from '@/theme';
  *
  * These three are the only wallet-activity tiles designed and shipped in P0
  * (Deposit/Withdraw are explicitly out of scope — never designed in
- * wallet_mock.html, tracked as a future follow-up, per issue #241 and
+ * docs/mockups/home-redesign/wallet-inline.html, tracked as a future follow-up, per issue #241 and
  * TC-ACT-003). Tiles render fully-styled and tappable — no "Soon" badge, no
  * muted/disabled treatment, no lock icon (TC-ACT-001) — and tapping one shows
  * a small "Coming soon" tooltip anchored to that tile (TC-ACT-002), dismissed
