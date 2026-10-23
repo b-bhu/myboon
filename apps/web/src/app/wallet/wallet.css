@@ -362,3 +362,5 @@ body.embed .notes { display:none; } body.embed .presentation { display:block; pa
 .fd-card h2 { color:var(--ft); font:900 16px/20px var(--sans); letter-spacing:-.2px; }
 .fd-card p { color:var(--fdim); font-size:12px; line-height:17px; }
 .fd-card img { width:106px; min-height:132px; object-fit:cover; background:var(--fdp); }
+/* Robinhood Chain mark is thin; own scale (Base stays .62) */
+.wm .mk img.rh { transform:scale(.8); }

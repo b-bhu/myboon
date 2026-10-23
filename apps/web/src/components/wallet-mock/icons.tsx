@@ -19,15 +19,15 @@ export const Icon = ({ name, className = 'icon', w = 1.7 }: { name: IconName; cl
 )
 
 // Endpoint mark: official logo where we have one, else a letter tile. Same size everywhere; apps are rounded squares, chains are circles.
-// Base and Robinhood Chain marks sit at ~62% in a dark circle; avatar/coin logos fill their tile.
-const INSET = new Set(['base', 'robinhood'])
+// Base sits at ~62% and Robinhood Chain at ~80% in a dark circle; avatar/coin logos fill their tile.
+const INSET = new Set(['base'])
 const FULL = new Set(['drift', 'kamino', 'jupiter', 'hyperliquid', 'marginfi', 'aave', 'morpho', 'limitless', 'arbitrum', 'polygon', 'optimism', 'bnb', 'avalanche', 'hyperevm'])
 export function Mark({ k, className = '' }: { k: string; className?: string }) {
   if (k.startsWith('swap')) return <span className={`mk sw ${className}`} aria-label="swap"><Icon name="swapH" w={2.4} /></span>
   const x = BY[k]
   return (
     <span className={`mk ${x.g === 'chain' ? 'c' : ''} ${className}`} style={{ color: COL[k] || 'var(--dim)' }} aria-hidden="true">
-      {LOGO[k] ? <img src={LOGO[k]} alt="" className={INSET.has(k) ? 'inset' : FULL.has(k) ? 'full' : undefined} /> : x.n[0]}
+      {LOGO[k] ? <img src={LOGO[k]} alt="" className={k === 'robinhood' ? 'rh' : INSET.has(k) ? 'inset' : FULL.has(k) ? 'full' : undefined} /> : x.n[0]}
     </span>
   )
 }
