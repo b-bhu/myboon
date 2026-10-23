@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { colors, colorVars, type ColorToken } from '@/lib/tokens'
-import { apps, crops, heroTiles, sectionTiles, X_URL, type SecTile, type TileKey } from './data'
+import { apps, crops, heroTiles, sectionTiles, type SecTile, type TileKey } from './data'
 import s from './landing.module.css'
 
 const MOBILE_BP = 600
@@ -150,7 +150,7 @@ function Hero() {
         </h1>
         <p>Every market move explained as it happens, with the trade one tap away on Solana.</p>
         <a className={s.btn} href="/downloads">
-          Join the beta
+          Download
         </a>
       </div>
     </section>
@@ -293,7 +293,7 @@ export default function Landing() {
           <span>Act in the same app.</span>
         </h2>
         <a className={s.btn} href="/downloads">
-          Join the beta
+          Download
         </a>
       </section>
       <svg className={s.pagePath} height={gp.h} style={{ height: gp.h }} aria-hidden>
@@ -306,8 +306,8 @@ export default function Landing() {
         )}
       </svg>
       <footer className={s.footer}>
-        <span>© 2026 MyBoon · Not financial advice.</span>
-        <a href={X_URL} target="_blank" rel="noopener noreferrer" aria-label="Follow @myboonapp on X (opens in new tab)">Follow @myboonapp on X ↗</a>
+        <span>© 2026 MyBoon</span>
+        <a href="/downloads">Get MyBoon</a>
       </footer>
     </main>
   )

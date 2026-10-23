@@ -79,7 +79,7 @@ export default function Downloads({ variant, qrSvg }: { variant: Variant; qrSvg:
         <VariantGuard initial={variant} views={{ desktop: <Desktop qrSvg={qrSvg} />, android: <Android />, ios: <Ios /> }} />
       </div>
       <footer className={l.footer}>
-        <span>© 2026 MyBoon · Not financial advice.</span>
+        <span>© 2026 MyBoon</span>
         <a href={X_URL} target="_blank" rel="noopener noreferrer" aria-label="Follow @myboonapp on X (opens in new tab)">Follow @myboonapp on X ↗</a>
       </footer>
     </main>
