@@ -261,8 +261,10 @@ body.embed .notes { display:none; } body.embed .presentation { display:block; pa
 .wm-foot a { color:var(--dim); text-decoration:underline; text-underline-offset:2px; }
 .wm-foot a:hover { color:var(--ink); }
 .wm .mk img { width:14px; height:14px; }
-/* every endpoint icon: one size, one round container */
-.mv .mk,.mock-app .mk { border-radius:50%!important; }
+/* endpoint icons: one size; apps rounded squares, chains circles */
+.wm .mk.c { border-radius:50%!important; }
+/* Base square mark inset ~60% so its weight matches Solana and Ethereum */
+.wm .mk img.inset { transform:scale(.62); }
 .mv-wire { overflow:visible; }
 .mv-hop { position:absolute; transform:translate(-50%,-50%); width:22px; height:22px; border-radius:50%; border:2px solid; background:#031F2C; display:grid; place-items:center; z-index:1; pointer-events:none; }
 .mv-hop .mk { width:16px!important; height:16px!important; box-shadow:none!important; background:none!important; font-size:9px!important; }
@@ -295,6 +297,18 @@ body.embed .notes { display:none; } body.embed .presentation { display:block; pa
 .mock-story em { display:block; font:normal 11px var(--mono); color:var(--dim); margin-top:8px; }
 .mock-apps { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .mock-app { background:var(--card); border:1px solid var(--edge); border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:6px; }
-.mock-app .mk { width:36px; height:36px; display:grid; place-items:center; background:var(--deep); box-shadow:inset 0 0 0 1px var(--edge); font:700 15px var(--display); }
+.mock-app .mk { width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:var(--deep); box-shadow:inset 0 0 0 1px var(--edge); font:700 15px var(--display); }
 .mock-app .mk img { width:20px; height:20px; }
 .mock-app strong { font-size:14px; } .mock-app small { color:var(--dim); font-size:11px; }
+
+/* Review #434: 44px hit areas, opaque mode track, reduced motion, pin focus */
+.mv-modes { background:#031F2C; }
+.mv-modes button,.mv-tok button,.mv-chips button { position:relative; }
+.mv-modes button::after { content:""; position:absolute; inset:-6px 0; }
+.mv-tok button::after,.mv-chips button::after { content:""; position:absolute; inset:-11px -4px; }
+.mv-chips button::after { inset:-9px -3px; }
+.mv-pin::before { content:""; position:absolute; inset:-9px; }
+.mv-pin:focus-visible { outline-offset:-2px; }
+.mock-story.compact h2 { font-size:14px; margin:4px 0 0; }
+.mock-story.compact em { margin-top:6px; }
+@media (prefers-reduced-motion:reduce) { .mv-fade,.mv-note,.mv-route * { animation:none!important; transition:none!important; } }

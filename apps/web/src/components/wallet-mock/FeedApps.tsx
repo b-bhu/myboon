@@ -11,17 +11,16 @@ export const FeedScreen = () => (
   <main className="mock-screen">
     <h1>Today</h1>
     {STORIES.map((x) => (
-      <article key={x.t} className="mock-story">
-        {x.img && <img src={x.img} alt="" />}
-        <div><small>{x.tag}</small><h2>{x.t}</h2><p>{x.s}</p><em>{x.m}</em></div>
-      </article>
+      x.img
+        ? <article key={x.t} className="mock-story"><img src={x.img} alt="" /><div><small>{x.tag}</small><h2>{x.t}</h2><p>{x.s}</p><em>{x.m}</em></div></article>
+        : <article key={x.t} className="mock-story compact"><div><small>{x.tag}</small><h2>{x.t}</h2><em>{x.m}</em></div></article>
     ))}
   </main>
 )
 
 const APPS = [
   ['polymarket', 'Polymarket', 'Prediction markets'], ['pacifica', 'Pacifica', 'Perpetuals'], ['phoenix', 'Phoenix', 'Perpetuals'],
-  ['meteora', 'Meteora', 'Liquidity pools'], ['drift', 'Drift', 'Perpetuals'], ['kamino', 'Kamino', 'Lending'], ['jupiter', 'Jupiter', 'Swap'], ['marginfi', 'marginfi', 'Lending'],
+  ['meteora', 'Meteora', 'Liquidity pools'],
 ] as const
 export const AppsScreen = () => (
   <main className="mock-screen">

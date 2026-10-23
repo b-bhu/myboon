@@ -63,7 +63,7 @@ export function MoveCard({ initialScroll }: { initialScroll?: 'from' | 'to' }) {
   const swipe = useSwipe(() => dispatch({ type: 'run' }), s.stage === 'ready' && c.ok)
   const scrollBack = (side: Side) => {
     const r = side === 'f' ? rf.current : rt.current, o = r?.querySelector<HTMLElement>('.mv-row.on')
-    if (r && o) r.scrollTo({ top: Math.max(0, o.offsetTop - r.offsetTop - 80), behavior: 'smooth' })
+    if (r && o) r.scrollTo({ top: Math.max(0, o.offsetTop - r.offsetTop - 80), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
   }
 
   return (
@@ -148,11 +148,11 @@ function MoveSwipe({ s, swipe, onDone, onKey }: { s: MoveState; swipe: ReturnTyp
   else { lab = 'Done · example · tap to start again'; det = <><Mark k={s.to} />≈{fT(c.rec, s.tt)} {s.tt} in {T.n}</>; glyph = 'check' }
   const done = s.stage === 'pending' ? (s.step + 0.5) / P.steps.length : 0
   return (
-    <button className="swipe" id="mv-swipe" data-stage={s.stage} disabled={s.stage === 'ready' && !c.ok} aria-live="polite"
+    <button className="swipe" id="mv-swipe" data-stage={s.stage} disabled={s.stage === 'ready' && !c.ok}
       style={{ ['--done' as string]: done }} {...swipe}
       onClick={(e) => { if (s.stage === 'success') onDone(); else if (e.detail === 0 && s.stage === 'ready') onKey() }}>
       <span className="swipe-fill" aria-hidden="true" />
-      <span className="swipe-label">{lab}<strong>{det}</strong></span>
+      <span className="swipe-label" aria-live="polite">{lab}<strong>{det}</strong></span>
       <span className="swipe-thumb" aria-hidden="true"><Icon name={glyph} w={2.2} /></span>
     </button>
   )

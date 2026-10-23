@@ -44,19 +44,19 @@ export function WalletScreen() {
   )
 }
 
-type Tab = 'spot' | 'perps' | 'meteora'
+type Tab = 'wallet' | 'perps' | 'meteora'
 const ROWS: Record<Tab, { head: [string, string, string]; rows: [string, string, string, string, string, string?][] }> = {
-  spot: { head: ['Markets', 'Your spot balance', '$8,420.00'], rows: [['S', 'Solana', '20 SOL held', '$157.42', '+2.1%'], ['$', 'USD Coin', '4,743.6 USDC held', '$1.00', '0.0%', 'quiet'], ['J', 'Jupiter', '600 JUP held', '$0.88', '+1.3%'], ['₿', 'Bitcoin', 'BTC · No holdings', '$68,720.00', '+1.4%']] },
+  wallet: { head: ['Markets', 'Your balance', '$8,420.00'], rows: [['S', 'Solana', '20 SOL held', '$157.42', '+2.1%'], ['$', 'USD Coin', '4,743.6 USDC held', '$1.00', '0.0%', 'quiet'], ['J', 'Jupiter', '600 JUP held', '$0.88', '+1.3%'], ['₿', 'Bitcoin', 'BTC · No holdings', '$68,720.00', '+1.4%']] },
   perps: { head: ['Your positions', 'Account equity', '$1,650.00'], rows: [['S', 'SOL-PERP', 'Long · 3× · Phoenix', '$950.00', '+12.40 PnL'], ['₿', 'BTC-PERP', 'Short · 2× · Pacifica', '$700.00', '−4.12 PnL', 'negative']] },
   meteora: { head: ['Your pools', 'Liquidity value', '$2,412.56'], rows: [['S', 'SOL / USDC', 'In range', '$1,460.00', '$8.44 fees', 'quiet'], ['J', 'JUP / USDC', 'Out of range', '$952.56', '$3.18 fees', 'quiet']] },
 }
 function Accounts({ minHeight, radius }: { minHeight: number; radius: number }) {
-  const [tab, setTab] = useState<Tab>('spot'), d = ROWS[tab]
+  const [tab, setTab] = useState<Tab>('wallet'), d = ROWS[tab]
   return (
     <section className="market-panel" style={{ minHeight: minHeight || undefined, ['--panel-radius' as string]: radius + 'px' }} aria-label="Markets and positions">
       <div className="market-toolbar">
         <div className="market-tabs" role="tablist">
-          {(['spot', 'perps', 'meteora'] as const).map((t) => <button key={t} role="tab" aria-selected={t === tab} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
+          {(['wallet', 'perps', 'meteora'] as const).map((t) => <button key={t} role="tab" aria-selected={t === tab} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
         </div>
       </div>
       <div className="market-content">

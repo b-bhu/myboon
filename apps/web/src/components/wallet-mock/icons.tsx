@@ -17,13 +17,13 @@ export const Icon = ({ name, className = 'icon', w = 1.7 }: { name: IconName; cl
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{P[name]}</svg>
 )
 
-// Endpoint mark: official logo where we have one, else a letter tile. Same size, same round container for all.
+// Endpoint mark: official logo where we have one, else a letter tile. Same size everywhere; apps are rounded squares, chains are circles.
 export function Mark({ k, className = '' }: { k: string; className?: string }) {
   if (k.startsWith('swap')) return <span className={`mk sw ${className}`} aria-label="swap"><Icon name="swapH" w={2.4} /></span>
   const x = BY[k]
   return (
-    <span className={`mk ${className}`} style={{ color: COL[k] || 'var(--dim)' }} aria-hidden="true">
-      {LOGO[k] ? <img src={LOGO[k]} alt="" /> : x.n[0]}
+    <span className={`mk ${x.g === 'chain' ? 'c' : ''} ${className}`} style={{ color: COL[k] || 'var(--dim)' }} aria-hidden="true">
+      {LOGO[k] ? <img src={LOGO[k]} alt="" className={k === 'base' ? 'inset' : undefined} /> : x.n[0]}
     </span>
   )
 }
