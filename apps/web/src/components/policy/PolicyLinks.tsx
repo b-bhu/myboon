@@ -5,7 +5,7 @@ export function PolicyLinks() {
     <>
       <a href="/privacy">Privacy</a>
       <a href="/support">Support</a>
-      <a href="/delete-account">Delete account</a>
+      <a href="/delete-account">Delete data</a>
     </>
   )
 }

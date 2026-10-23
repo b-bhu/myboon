@@ -3,40 +3,28 @@ import PolicyPage from '@/components/policy/PolicyPage'
 import { SUPPORT_EMAIL } from '@/components/policy/PolicyLinks'
 
 export const metadata: Metadata = {
-  title: 'Delete your account · MyBoon',
-  description: 'How to delete your MyBoon account and data.',
+  title: 'Delete your data · MyBoon',
+  description: 'How to delete your MyBoon data.',
   alternates: { canonical: '/delete-account' },
 }
 
-const mailto = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Delete my MyBoon account')}`
+const mailto = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Delete my MyBoon data')}`
 
 export default function DeleteAccount() {
   return (
-    <PolicyPage kicker="Account" title="Delete your account" updated="23 October 2026"
-      lede="You can ask us to delete your MyBoon account at any time. Here’s how, and what happens to your wallet and data.">
-      <h2>Before you start: move your funds</h2>
-      <p>Deleting your account removes access to its embedded wallet through MyBoon. <b>Send any tokens you want to keep to another wallet first.</b> We can’t recover funds after deletion, because we never hold your keys.</p>
-
-      <h2>How to request deletion</h2>
+    <PolicyPage kicker="Account" title="Delete your data" updated="23 October 2026"
+      lede="The current version of MyBoon is read-only. You don’t need an account to use it, so there’s very little to delete.">
+      <h2>If you joined the waitlist</h2>
       <ol>
-        <li>Move your funds out, as above.</li>
-        <li>Email <a href={mailto}>{SUPPORT_EMAIL}</a> from the address you sign in with, with the subject “Delete my MyBoon account”. If you sign in with Google, use that Google address.</li>
-        <li>We’ll confirm the request by email and delete your account within 30 days.</li>
+        <li>Email <a href={mailto}>{SUPPORT_EMAIL}</a> from the address you signed up with, with the subject “Delete my MyBoon data”.</li>
+        <li>We’ll remove your email from the waitlist and confirm by email within 30 days.</li>
       </ol>
-      <p>You can sign out at any time from your profile settings, but signing out alone doesn’t delete your account.</p>
 
-      <h2>What gets deleted</h2>
-      <ul>
-        <li>Your MyBoon account and your Privy login (email or Google link).</li>
-        <li>The link between your account and its wallet addresses.</li>
-      </ul>
+      <h2>Data on your phone</h2>
+      <p>Settings such as your odds format stay on your phone. Uninstall the app, or clear its data in Android settings, to remove them.</p>
 
-      <h2>What stays</h2>
-      <ul>
-        <li>Blockchain transactions. They are public and permanent, and nobody can delete them.</li>
-        <li>Data held by apps you used, such as Polymarket, Jupiter, Phoenix, Pacifica or Meteora, under their own policies.</li>
-        <li>Settings stored on your phone, until you uninstall the app or clear its data.</li>
-      </ul>
+      <h2>Anything else</h2>
+      <p>The app doesn’t create accounts or wallets, so there’s nothing else to delete. If that changes in a future version, this page will explain how to delete them.</p>
     </PolicyPage>
   )
 }
