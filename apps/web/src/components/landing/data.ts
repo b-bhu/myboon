@@ -63,5 +63,3 @@ export const sectionTiles = {
 }
 
 export const X_URL = 'https://x.com/myboonapp'
-// TODO(#422 Phase 2): point "Join the beta" at /downloads once the Seeker listing / APK hosting is ready.
-export const BETA_URL = X_URL
