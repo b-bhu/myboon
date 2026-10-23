@@ -23,7 +23,7 @@ export function WalletScreen() {
     m(); const ro = new ResizeObserver(m); if (top.current) ro.observe(top.current); if (outer.current) ro.observe(outer.current)
     return () => ro.disconnect()
   }, [])
-  useEffect(() => { const u = new URL(location.href); u.searchParams.set('mode', mode); history.replaceState(null, '', u) }, [mode])
+  useEffect(() => { const u = new URL(location.href); u.searchParams.set('mode', mode); history.replaceState(null, '', u); const w = document.querySelector<HTMLElement>('.wm'); if (w) w.dataset.mode = mode }, [mode])
 
   const sc = q.get('scroll')
   return (
