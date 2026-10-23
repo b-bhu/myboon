@@ -60,7 +60,11 @@ export class ArticleContextAvailabilityGate {
       available: this.available,
       lastCheckedAt: this.lastCheckedAt === null ? null : new Date(this.lastCheckedAt).toISOString(),
       nextProbeAt: this.nextProbeAt === 0 ? null : new Date(this.nextProbeAt).toISOString(),
-      consecutiveFailures: this.consecutiveFailures,
+      // Status consumers read consecutiveFailures > 0 as degraded (Ref #336):
+      // while the gate is healthy the snapshot reports 0 even before real work
+      // resets the counter. The internal back-off count is unchanged and keeps
+      // its own step until recordHealthy() clears it or a failure advances it.
+      consecutiveFailures: this.available === true ? 0 : this.consecutiveFailures,
       lastFailure: this.lastFailure === null ? null : Object.freeze([...this.lastFailure]),
     }
   }
@@ -74,16 +78,22 @@ export class ArticleContextAvailabilityGate {
 
   /** A dependency can fail after a successful probe; stop the rest of the batch. */
   invalidate(): void {
-    const wasAvailable = this.available === true
+    // Identity bump first: workers holding the old cycle must not record health.
     this.generation += 1
+    // An invalidation while already down observes the same failure again: it
+    // must not advance the back-off curve nor push the retry deadline further
+    // (Ref #336). Only the transition out of available counts one step; two
+    // sibling invalidations in one cycle therefore count once. A gate that has
+    // never probed still counts: its in-flight probe result is stale and the
+    // new failure must open the retry deadline.
+    if (this.available === false) return
     this.available = false
     // The cheap probe passing does not prove the database answers (Ref #336):
     // a real call failing while available is another failure on the same
     // curve, otherwise a too-slow database retries every 30 s forever.
     this.consecutiveFailures += 1
     // A newly observed failure must not inherit the longer healthy deadline.
-    const retryAt = this.now() + healthBackoffMs(this.consecutiveFailures, this.random)
-    this.nextProbeAt = wasAvailable ? retryAt : Math.max(this.nextProbeAt, retryAt)
+    this.nextProbeAt = this.now() + healthBackoffMs(this.consecutiveFailures, this.random)
   }
 
   /** Identity of the invalidation curve; captured once per cycle before its workers race. */

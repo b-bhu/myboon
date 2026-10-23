@@ -24,12 +24,17 @@ test('storage outage gates claims, backs off probes and resumes only after a suc
   assert.equal(await gate.check(), true)
   assert.equal(gate.claimsAllowed, true)
   assert.equal(probes, 2)
-  // A passing probe no longer clears the failure count; real work does (Ref #336).
-  assert.equal(gate.snapshot().consecutiveFailures, 1)
-  gate.recordHealthy(gate.currentGeneration)
+  // Healthy snapshot reads 0 even though a passing probe does not clear the
+  // internal counter (Ref #336): status consumers read >0 as degraded, and the
+  // curve keeps its own count.
   assert.equal(gate.snapshot().consecutiveFailures, 0)
+  // The persisted internal count survived the passing probe: the next failure
+  // lands on the NEXT curve step, the ~60 s band, not the first 30 s step.
   gate.invalidate()
   assert.equal(gate.claimsAllowed, false)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 60_000)
+  assert.equal(await gate.check(), false)
+  now += 30_000
   assert.equal(await gate.check(), false)
   now += 30_000
   assert.equal(await gate.check(), true)
@@ -107,20 +112,46 @@ test('healthy cadence is bounded and configurable without changing outage backof
   }
 })
 
-test('repeated invalidation keeps growing an already known outage backoff (Ref #336)', async () => {
+test('a cycle advances one step: invalidate while down adds none (Ref #336)', async () => {
   let now = 0
   const gate = new ArticleContextAvailabilityGate(async () => { throw new Error('offline') }, () => now, undefined, EXACT_JITTER)
-  // Invalidate on an already-down gate is itself a curve failure, so a failed
-  // probe plus invalidation advance two steps per cycle (30s+60s, 120s+240s,
-  // then the 900s cap) and never shorten the deadline back to a fresh step.
-  for (const delay of [0, 60_000, 240_000, 900_000, 900_000]) {
+  // One failure per down cycle: the probe. invalidate() while down is the same
+  // failure observed again, so a failed cycle advances exactly one curve step
+  // (30s, 60s, 120s, 240s, then the 900s cap) instead of two.
+  for (const delay of [0, 30_000, 60_000, 120_000, 240_000, 480_000]) {
     now += delay
     assert.equal(await gate.check(), false)
+    const failures = gate.snapshot().consecutiveFailures
     const probeDeadline = gate.snapshot().nextProbeAt
     gate.invalidate()
-    assert.ok(Date.parse(gate.snapshot().nextProbeAt!) >= Date.parse(probeDeadline!))
+    assert.equal(gate.snapshot().consecutiveFailures, failures)
+    assert.equal(gate.snapshot().nextProbeAt, probeDeadline)
   }
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 900_000)
+})
+
+test('invalidate while down keeps the failure count and deadline; siblings count once (Ref #336)', async () => {
+  let now = 0
+  const gate = new ArticleContextAvailabilityGate(async () => { throw new Error('offline') }, () => now, undefined, EXACT_JITTER)
+  assert.equal(await gate.check(), false)
+  // Probe failure: step 1, about 30 s.
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  const firstDeadline = gate.snapshot().nextProbeAt
+  const generation = gate.currentGeneration
+  gate.invalidate()
+  assert.equal(gate.currentGeneration, generation + 1)
+  // invalidate() while down bumps the identity and stays down.
+  assert.equal(gate.snapshot().available, false)
+  // ...but neither the curve nor the deadline move; two sibling invalidations
+  // in the same cycle count once.
+  gate.invalidate()
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  assert.equal(gate.snapshot().nextProbeAt, firstDeadline)
+  now += 30_000
+  assert.equal(await gate.check(), false)
+  // The next cycle still follows the curve: one failed probe per cycle.
+  assert.equal(gate.snapshot().consecutiveFailures, 2)
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 60_000)
 })
 
 test('invalidation keeps growing the retry while probes pass; recordHealthy resets it (Ref #336)', async () => {
@@ -160,17 +191,35 @@ test('recordHealthy resets only real work of the captured generation while avail
   assert.equal(gate.snapshot().consecutiveFailures, 1)
   now += 30_000
   await gate.check()
-  // With the gate up again, pre-invalidate work stays stale:
+  // With the gate up again the healthy snapshot reads 0 either way, so the
+  // oracle is the curve: pre-invalidate work stays stale, and the skipped
+  // reset keeps the internal count on step two for the next failure:
   gate.recordHealthy(stale)
-  assert.equal(gate.snapshot().consecutiveFailures, 1)
-  // ...and the skipped reset keeps the curve on step two for the next failure:
   gate.invalidate()
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 60_000)
   // After the gate recovers, current-generation work resets it to step one:
   now += 60_000
   await gate.check()
   gate.recordHealthy(gate.currentGeneration)
+  gate.invalidate()
+  assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
+})
+
+test('healthy snapshot reads 0; current-generation real work restarts the curve at step one (Ref #336)', async () => {
+  let now = 0
+  let healthy = false
+  const gate = new ArticleContextAvailabilityGate(async () => {
+    if (!healthy) throw new Error('offline')
+  }, () => now, undefined, EXACT_JITTER)
+  assert.equal(await gate.check(), false)
+  assert.equal(gate.snapshot().consecutiveFailures, 1)
+  healthy = true
+  now += 30_000
+  assert.equal(await gate.check(), true)
+  // Healthy again: status consumers read 0 while the curve still holds the
+  // earlier failure; only real work resets it.
   assert.equal(gate.snapshot().consecutiveFailures, 0)
+  gate.recordHealthy(gate.currentGeneration)
   gate.invalidate()
   assert.equal(Date.parse(gate.snapshot().nextProbeAt!) - now, 30_000)
 })

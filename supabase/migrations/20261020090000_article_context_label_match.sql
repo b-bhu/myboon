@@ -1,0 +1,219 @@
+-- #336 item 1 (PR B): exact-then-trigram label matching in article_context_v1.
+-- NOT APPLIED. Needs Bucket's explicit yes (needs-bucket). Depends on
+-- 20261019210000 (pg_trgm in the extensions schema, the
+-- managed_entities_name_key_trgm GIN index and entity_name_key_v1; this
+-- migration re-creates neither) and on 20261019213000 (the body below is that
+-- migration's article_context_v1 verbatim except the marked #336 candidate
+-- edits). Measure in production (read-only, Oct 19): the label candidate
+-- filters position()-scanned lower(name), lower(summary) and the metadata
+-- column cast to text, for every active entity per label:
+-- ~16k calls at ~3.5 s in pg_stat_statements.
+-- This migration swaps those scans for:
+--   1. exact first: name/slug/alias equality on lower(btrim()) as before;
+--   2. then trigram on the managed store only: p.name_key OPERATOR(extensions.%)
+--      entity_name_key_v1(label) AND extensions.similarity(p.name_key, key)
+--      >= 0.6 (CTO floor), skipping labels whose key is ''. The % operator
+--      uses the session's pg_trgm.similarity_threshold for the GIN index
+--      scan (default 0.3, below this floor); the explicit >= 0.6 comparison
+--      prunes. No function-level SET of that GUC, per 20261019210000: a
+--      non-superuser cannot set the placeholder before pg_trgm is loaded.
+--   3. no position() substring scans over name, summary or the metadata text
+--      dump in the candidate WHERE filters, public (additional) or managed
+--      (private_additional). public.entities has no name_key or trigram
+--      index, so it matches exact labels only. identityOnly stays exact
+--      only. The articleItems history label matching on item titles,
+--      summaries and legacy memory text is unchanged and out of scope, as is
+--      legal-suffix stripping (TS compare-time, #408).
+-- Signature, SECURITY DEFINER, search_path=pg_catalog, ownership wrapper,
+-- existing grants (none re-stated here for these functions) and the
+-- perEntityLimit behaviour from 20261019213000 are unchanged.
+--
+-- Rollback: supabase/rollbacks/20261020090000_article_context_label_match.down.sql
+-- (restores the 20261019213000 article_context_v1 body verbatim).
+-- Idempotent: CREATE OR REPLACE only, unchanged signature.
+
+DO $access$
+BEGIN
+  PERFORM set_config('myboon.migration_had_owner_set',pg_has_role(current_user,'myboon_knowledge_owner','SET')::text,true);
+  PERFORM set_config('myboon.migration_had_owner_create',has_schema_privilege('myboon_knowledge_owner','managed_knowledge_private','CREATE')::text,true);
+  IF NOT pg_has_role(current_user,'myboon_knowledge_owner','SET') THEN
+    EXECUTE format('GRANT myboon_knowledge_owner TO %I WITH INHERIT FALSE, SET TRUE',current_user);
+  END IF;
+END
+$access$;
+GRANT CREATE ON SCHEMA managed_knowledge_private TO myboon_knowledge_owner;
+SET LOCAL ROLE myboon_knowledge_owner;
+
+CREATE OR REPLACE FUNCTION managed_knowledge_private.article_context_v1(input jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
+DECLARE base jsonb; items jsonb; candidate_entities jsonb; limit_count integer; candidate_truncated boolean; per_entity integer;
+BEGIN
+  IF NOT (pg_has_role(session_user,'myboon_knowledge_executor','member') OR pg_has_role(session_user,'myboon_knowledge_context_executor','member'))
+    OR pg_has_role(session_user,'myboon_knowledge_owner','member') OR pg_has_role(session_user,'service_role','member')
+    OR session_user IN ('authenticator','anon','authenticated','service_role') THEN
+    RAISE EXCEPTION 'dedicated managed context login required' USING ERRCODE = '42501';
+  END IF;
+  base := managed_knowledge_private.context_v1(input);
+  IF coalesce(input->>'historyMode','targeted') NOT IN ('recent','targeted') THEN
+    RAISE EXCEPTION 'invalid article history mode' USING ERRCODE='22023';
+  END IF;
+  per_entity := (input->>'perEntityLimit')::integer;
+  IF per_entity IS NOT NULL AND (per_entity < 1 OR per_entity > 10) THEN
+    RAISE EXCEPTION 'invalid per-entity history limit' USING ERRCODE='22023';
+  END IF;
+  IF per_entity IS NOT NULL AND jsonb_array_length(coalesce(input->'entityIds','[]'::jsonb)) = 0 THEN
+    RAISE EXCEPTION 'per-entity history limit requires entity ids' USING ERRCODE='22023';
+  END IF;
+  -- The legacy context function intentionally uses exact labels. Article
+  -- placement also needs bounded narrative/scope candidates, while still
+  -- returning the same complete profile shape for code-owned resolution.
+  -- #336: candidates match labels exactly or, managed store only, by trigram
+  -- similarity on name_key at the 0.6 floor (extensions schema from
+  -- 20261019210000); the per-entity position() scans over name, summary and
+  -- the metadata text dump are gone.
+  WITH labels AS (
+    SELECT lower(btrim(value)) AS label, managed_knowledge_private.entity_name_key_v1(value) AS label_key
+    FROM jsonb_array_elements_text(input->'labels') value
+  ), requested_public AS (
+    SELECT jsonb_build_object('id',e.id,'slug',e.slug,'name',e.name,'type',e.type,'aliases',e.aliases,'summary',e.summary,
+      'status',e.status,'show_in_carousel',false,'metadata',e.metadata,'created_at',e.created_at,'updated_at',e.updated_at,
+      'revision',managed_knowledge_private.entity_revision_v1(e.id),'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text) value
+    FROM public.entities e WHERE e.status='active' AND e.id::text IN (SELECT jsonb_array_elements_text(input->'entityIds'))
+  ), additional AS (
+    -- #336: public.entities is the legacy store with no name_key/trigram
+    -- index; its supplementary candidates are exact labels only.
+    SELECT jsonb_build_object('id',e.id,'slug',e.slug,'name',e.name,'type',e.type,'aliases',e.aliases,'summary',e.summary,
+      'status',e.status,'show_in_carousel',false,'metadata',e.metadata,'created_at',e.created_at,'updated_at',e.updated_at,
+      'revision',managed_knowledge_private.entity_revision_v1(e.id),'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text) value
+    FROM public.entities e WHERE e.status='active' AND EXISTS (
+      SELECT 1 FROM labels l WHERE lower(btrim(e.name))=l.label OR lower(btrim(e.slug))=l.label
+        OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(e.aliases) alias WHERE lower(btrim(alias))=l.label)
+    )
+  ), private_additional AS (
+    -- #337 PR-A: managed identity comes from the private columns, not binding.
+    SELECT jsonb_build_object('id',p.id,'slug',p.slug,'name',p.name,'type',p.type,'aliases',p.aliases,'summary',p.summary,
+      'status',p.status,'show_in_carousel',p.show_in_carousel,'metadata',p.metadata,'updated_at',p.updated_at,
+      'catalogEntityId',p.catalog_entity_id,'identityKey',p.identity_key,'revision',managed_knowledge_private.entity_revision_v1(p.id)) value
+    -- #336: a revision here reads 'unavailable' only when the row is not active
+    -- (status NOT NULL), so the column itself is the same predicate without
+    -- the per-row SHA-256 digest.
+    FROM managed_knowledge_private.entities p WHERE p.status = 'active' AND EXISTS (
+      SELECT 1 FROM labels l WHERE lower(btrim(p.name))=l.label
+        OR lower(btrim(p.slug))=l.label
+        OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(p.aliases) alias WHERE lower(btrim(alias))=l.label)
+        -- #336: trigram candidates at the 0.6 floor can use the
+        -- managed_entities_name_key_trgm GIN index (extensions.%; the % index
+        -- condition uses the session's default similarity threshold, the
+        -- explicit >= 0.6 below is the real floor). Empty label keys match
+        -- nothing.
+        OR (NOT coalesce((input->>'identityOnly')::boolean,false) AND l.label_key <> ''
+          AND p.name_key OPERATOR(extensions.%) l.label_key
+          AND extensions.similarity(p.name_key, l.label_key) >= 0.6)
+    )
+  ), requested_private AS (
+    SELECT jsonb_build_object('id',p.id,'slug',p.slug,'name',p.name,'type',p.type,'aliases',p.aliases,'summary',p.summary,
+      'status',p.status,'show_in_carousel',p.show_in_carousel,'metadata',p.metadata,'updated_at',p.updated_at,
+      'catalogEntityId',p.catalog_entity_id,'identityKey',p.identity_key,'revision',managed_knowledge_private.entity_revision_v1(p.id)) value
+    -- #336: a revision here reads 'unavailable' only when the row is not active
+    -- (status NOT NULL), so the column itself is the same predicate without
+    -- the per-row SHA-256 digest.
+    FROM managed_knowledge_private.entities p
+    WHERE p.status = 'active'
+      AND p.id::text IN (SELECT jsonb_array_elements_text(input->'entityIds'))
+  ), candidates AS (
+    -- `context_v1` is authoritative for the refreshed public binding. Keep it
+    -- ahead of supplementary public/private matches when IDs overlap.
+    SELECT value, 0 AS source_rank FROM requested_public
+    UNION ALL SELECT value, 1 FROM jsonb_array_elements(base->'entities') value
+    UNION ALL SELECT value, 2 FROM additional
+    UNION ALL SELECT value, 3 FROM requested_private
+    UNION ALL SELECT value, 4 FROM private_additional
+  ), deduplicated AS (
+    SELECT DISTINCT ON (value->>'id') value
+    FROM candidates
+    ORDER BY value->>'id', source_rank
+  ), ranked_entities AS (
+    SELECT value, ((value->>'id') IN (SELECT jsonb_array_elements_text(input->'entityIds'))) requested,
+      EXISTS(SELECT 1 FROM labels l WHERE l.label = lower(btrim(value->>'name'))
+        OR l.label = lower(btrim(value->>'slug'))
+        OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(coalesce(value->'aliases','[]'::jsonb)) alias WHERE lower(btrim(alias))=l.label)) exact_match,
+      (SELECT count(*) FROM labels l WHERE position(l.label in lower(coalesce(value->>'name',''))) > 0
+        OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(coalesce(value->'aliases','[]'::jsonb)) alias WHERE position(l.label in lower(alias)) > 0)) name_hits,
+      (SELECT count(*) FROM labels l WHERE position(l.label in lower(coalesce(value->>'summary',''))) > 0
+        OR position(l.label in lower(coalesce(value->'metadata','{}'::jsonb)::text)) > 0) context_hits
+    FROM deduplicated
+  ), eligible AS (
+    SELECT * FROM ranked_entities WHERE NOT coalesce((input->>'identityOnly')::boolean,false) OR requested OR exact_match
+  ), bounded AS (
+    SELECT * FROM eligible ORDER BY requested DESC,exact_match DESC,name_hits DESC,context_hits DESC,value->>'id' LIMIT 32
+  )
+  SELECT coalesce((SELECT jsonb_agg(value ORDER BY requested DESC,exact_match DESC,name_hits DESC,context_hits DESC,value->>'id') FROM bounded),'[]'::jsonb),
+    (SELECT count(*) > 32 FROM eligible)
+    INTO candidate_entities, candidate_truncated;
+  -- The aggregate above intentionally sees every durable-ID-deduplicated
+  -- candidate; it cannot reference a CTE from a later PL/pgSQL statement.
+  base := base || jsonb_build_object('entities',candidate_entities,
+    'candidateTruncated',candidate_truncated,'truncated',(base->>'truncated')::boolean OR candidate_truncated);
+  -- Batching: with perEntityLimit the budget is per requested entity instead
+  -- of global; context_v1 already bounds entityIds to 32, so at most 320.
+  limit_count := CASE WHEN per_entity IS NULL THEN greatest(1,least(coalesce((input->>'limit')::integer,24),32))
+    ELSE per_entity * greatest(1, jsonb_array_length(input->'entityIds')) END;
+  WITH labels AS (
+    SELECT lower(btrim(value)) AS label FROM jsonb_array_elements_text(input->'labels') value
+  ), source_refs AS (
+    SELECT value AS ref FROM jsonb_array_elements_text(input->'sourceRefs') value
+  ), entity_ids AS (
+    SELECT (value->>'id')::uuid AS id FROM jsonb_array_elements(base->'entities') value
+    WHERE jsonb_array_length(input->'entityIds')=0
+      OR value->>'id' IN (SELECT jsonb_array_elements_text(input->'entityIds'))
+  ), managed AS (
+    SELECT jsonb_build_object('itemId',i.id,'entityId',m.entity_id,'origin','managed','title',coalesce(a.title,i.note),
+      'summary',coalesce(a.timeline_summary,i.note),'publishedAt',a.published_at,'eventAt',a.event_at,'observedAt',i.observed_at,
+      'catalogEntityId',e.catalog_entity_id,'aliases',e.aliases,'metadata',e.metadata,'revision','item:' || h.revision::text) value
+    FROM managed_knowledge_private.memberships m JOIN managed_knowledge_private.items i ON i.id=m.item_id
+    JOIN managed_knowledge_private.item_heads h ON h.item_id=i.id JOIN managed_knowledge_private.entities e ON e.id=m.entity_id LEFT JOIN managed_knowledge_private.article_items a ON a.item_id=i.id
+    -- #343 PR-B: uncertain memberships are saved but never read back as story history.
+    WHERE m.removed_operation IS NULL AND NOT m.uncertain AND h.status='active' AND m.entity_id IN (SELECT id FROM entity_ids) AND (
+      coalesce(input->>'historyMode','targeted')='recent'
+      OR i.id::text IN (SELECT jsonb_array_elements_text(input->'itemIds'))
+      OR EXISTS(SELECT 1 FROM labels l WHERE position(l.label in lower(coalesce(a.title,i.note)))>0 OR position(l.label in lower(coalesce(a.timeline_summary,i.note)))>0)
+      OR EXISTS(SELECT 1 FROM managed_knowledge_private.item_sources s JOIN managed_knowledge_private.sources src ON src.work_id=s.work_id WHERE s.item_id=i.id AND (
+        src.source_refs ?| ARRAY(SELECT ref FROM source_refs)
+        OR src.packet->'article'->>'sourceUrl' IN (SELECT ref FROM source_refs)
+        OR src.packet->'sourceSignal'->>'canonicalUrl' IN (SELECT ref FROM source_refs)
+      ))
+    )
+  ), legacy AS (
+    SELECT jsonb_build_object('itemId',m.id,'entityId',m.entity_id,'origin','legacy','title',m.title,'summary',m.summary,
+      'publishedAt',NULL,'eventAt',m.event_at,'observedAt',m.observed_at,'catalogEntityId',m.entity_id,'aliases',e.aliases,'metadata',e.metadata,
+      'revision','legacy:' || managed_knowledge_private.digest_v1(jsonb_build_object('id',m.id,'updatedAt',m.updated_at,'entityId',m.entity_id))) value
+    FROM public.entity_memories m JOIN public.entities e ON e.id=m.entity_id WHERE m.entity_id IN (SELECT id FROM entity_ids) AND (
+      coalesce(input->>'historyMode','targeted')='recent'
+      OR m.id::text IN (SELECT jsonb_array_elements_text(input->'itemIds'))
+      OR EXISTS(SELECT 1 FROM labels l WHERE position(l.label in lower(m.title))>0 OR position(l.label in lower(m.summary))>0 OR position(l.label in lower(coalesce(m.body,'')))>0)
+      OR m.source_ref_id IN (SELECT ref FROM source_refs)
+    )
+  ), all_items AS (SELECT value FROM managed UNION ALL SELECT value FROM legacy), ranked AS (
+    SELECT value, row_number() OVER (PARTITION BY value->>'entityId'
+      ORDER BY coalesce((value->>'eventAt')::timestamptz,(value->>'publishedAt')::timestamptz,(value->>'observedAt')::timestamptz) DESC, value->>'itemId') AS entity_rank
+    FROM all_items
+  )
+  SELECT coalesce(jsonb_agg(value ORDER BY coalesce((value->>'eventAt')::timestamptz,(value->>'publishedAt')::timestamptz,(value->>'observedAt')::timestamptz) DESC,(value->>'itemId')),'[]'::jsonb) INTO items
+  FROM (SELECT value FROM ranked WHERE per_entity IS NULL OR entity_rank <= per_entity
+    ORDER BY (value->>'itemId') IN (SELECT jsonb_array_elements_text(input->'itemIds')) DESC,
+    coalesce((value->>'eventAt')::timestamptz,(value->>'publishedAt')::timestamptz,(value->>'observedAt')::timestamptz) DESC,value->>'itemId' LIMIT limit_count) bounded;
+  RETURN base || jsonb_build_object('articleItems',items) || CASE WHEN per_entity IS NOT NULL THEN jsonb_build_object('perEntityLimit',per_entity) ELSE '{}'::jsonb END;
+END
+$body$;
+
+RESET ROLE;
+DO $restore$
+BEGIN
+  IF current_setting('myboon.migration_had_owner_create')='false' THEN
+    REVOKE CREATE ON SCHEMA managed_knowledge_private FROM myboon_knowledge_owner;
+  END IF;
+  IF current_setting('myboon.migration_had_owner_set')='false' THEN
+    EXECUTE format('REVOKE SET OPTION FOR myboon_knowledge_owner FROM %I',current_user);
+  END IF;
+END
+$restore$;
