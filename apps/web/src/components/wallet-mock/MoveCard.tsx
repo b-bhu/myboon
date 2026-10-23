@@ -84,10 +84,9 @@ export function MoveCard({ initialScroll }: { initialScroll?: 'from' | 'to' }) {
         <input className="mv-in" id="mv-amt" inputMode="decimal" autoComplete="off" placeholder="0.00" value={s.amount} aria-invalid={c.over}
           readOnly={s.stage !== 'ready'} onChange={(e) => dispatch({ type: 'amount', value: e.target.value })} />
         <div className="unit">{s.ft}</div>
-        <div className="sub" id="mv-sub"><Mark k={s.from} /><Tk t={s.ft} /><b>{fT(c.bal, s.ft)}</b><span className="ar">→</span><Mark k={s.to} /><Tk t={s.tt} /><b>≈{fT(c.rec, s.tt)}</b></div>
+        <div className="sub" id="mv-sub"><Mark k={s.from} /><Tk t={s.ft} /><b>{fT(c.bal, s.ft)}</b><span className="ar">→</span>{h === 'solana' && <span className="via" aria-label="via Solana"><Mark k="solana" /></span>}<Mark k={s.to} /><Tk t={s.tt} /><b>≈{fT(c.rec, s.tt)}</b></div>
         <div className="mv-chips">{[25, 50, 75, 100].map((p) => <button key={p} disabled={s.stage !== 'ready'} onClick={() => dispatch({ type: 'pct', pct: p })}>{p === 100 ? 'Max' : p + '%'}</button>)}</div>
       </div>
-      <RouteRow s={s} />
       <MoveSwipe s={s} swipe={swipe} onDone={() => dispatch({ type: 'reset' })} onKey={() => dispatch({ type: 'run' })} />
     </div>
   )
@@ -120,22 +119,6 @@ function Column({ side, s, rows, onPick, onTok }: { side: Side; s: MoveState; ro
               <span key={cur} className="mv-fade"><Tk t={cur} />{cur}</span><Icon name="cycle" className="cyc" w={2.4} />
             </button>}
       </div>
-    </div>
-  )
-}
-
-function lit(s: MoveState) {
-  if (s.stage === 'success') return 99
-  if (s.stage !== 'pending') return -1
-  const P = check(s).P
-  return s.step > 0 ? P.steps[s.step - 1].node : 0
-}
-
-function RouteRow({ s }: { s: MoveState }) {
-  const { P } = check(s), L = lit(s)
-  return (
-    <div className="mv-route" data-live={s.stage !== 'ready' || undefined} aria-label="Route">
-      {P.nodes.map((k, i) => <span key={k + i} style={{ display: 'contents' }}>{i > 0 && <i className={i <= L ? 'lit' : ''} />}<Mark k={k} className={i <= L ? 'lit' : ''} /></span>)}
     </div>
   )
 }

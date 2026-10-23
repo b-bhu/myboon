@@ -1,13 +1,13 @@
 // Example data, ported as-is from the approved mock (/workspace/bounty/move/data.js).
-// Balances are illustrative. Apps beyond the first three are placeholders for scale.
+// Balances are illustrative.
 export type Group = 'app' | 'chain'
 export type Endpoint = { k: string; n: string; b: number; g: Group; ch: string }
 export type Token = 'USDC' | 'USDT' | 'SOL' | 'ETH'
 
-export const LOGO: Record<string, string> = {
-  polymarket: '/wallet-mock/polymarket.svg', phoenix: '/wallet-mock/phoenix.svg', pacifica: '/wallet-mock/pacifica.svg',
-  meteora: '/wallet-mock/meteora.svg', solana: '/wallet-mock/solana.svg', base: '/wallet-mock/base.svg', ethereum: '/wallet-mock/ethereum.svg',
-}
+const SVG = ['polymarket', 'phoenix', 'meteora', 'solana', 'base', 'ethereum', 'robinhood']
+const PNG = ['pacifica', 'drift', 'kamino', 'jupiter', 'hyperliquid', 'marginfi', 'aave', 'morpho', 'limitless', 'arbitrum', 'polygon', 'optimism', 'bnb', 'avalanche', 'hyperevm']
+// Every logo is served locally from /wallet-mock/ (sources listed in #435).
+export const LOGO: Record<string, string> = Object.fromEntries([...SVG.map((k) => [k, `/wallet-mock/${k}.svg`]), ...PNG.map((k) => [k, `/wallet-mock/${k}.png`])])
 export const COL: Record<string, string> = { polymarket: '#7FA8FF', phoenix: '#FF8D2A', pacifica: '#61D7EF', solana: '#B98AFF', base: '#5B8CFF', ethereum: '#C9D2FF', robinhood: '#CCFF00' }
 
 const APPS: [string, string, number, string][] = [['polymarket', 'Polymarket', 412.5, 'Polygon'], ['phoenix', 'Phoenix', 350, 'Solana'], ['pacifica', 'Pacifica', 200, 'Solana'], ['meteora', 'Meteora', 0, 'Solana'], ['drift', 'Drift', 0, 'Solana'], ['kamino', 'Kamino', 0, 'Solana'], ['jupiter', 'Jupiter', 0, 'Solana'], ['hyperliquid', 'Hyperliquid', 0, 'HyperEVM'], ['marginfi', 'marginfi', 0, 'Solana'], ['aave', 'Aave', 0, 'Base'], ['morpho', 'Morpho', 0, 'Base'], ['limitless', 'Limitless', 0, 'Base']]
