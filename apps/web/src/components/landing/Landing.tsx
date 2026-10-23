@@ -1,4 +1,5 @@
 'use client'
+import { PolicyLinks } from '@/components/policy/PolicyLinks'
 
 import Image from 'next/image'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -308,6 +309,7 @@ export default function Landing() {
       <footer className={s.footer}>
         <span>© 2026 MyBoon</span>
         <a href="/downloads">Get MyBoon</a>
+        <PolicyLinks />
       </footer>
     </main>
   )

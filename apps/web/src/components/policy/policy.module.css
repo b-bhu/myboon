@@ -1,0 +1,24 @@
+.page { position: relative; min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; background: var(--c-walletCore); color: var(--c-bone); font-family: var(--font-headline), system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+.nav { padding: 22px 40px; }
+.nav img { height: 48px; width: auto; display: block; }
+.body { flex: 1; width: 100%; max-width: 720px; margin: 0 auto; padding: 24px 24px 72px; }
+.kicker { font-family: var(--font-mono), monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-accent); }
+.body h1 { margin-top: 10px; font-size: 44px; font-weight: 700; letter-spacing: -0.04em; line-height: 1.05; }
+.lede { margin-top: 14px; font-size: 17px; line-height: 1.6; color: var(--c-textDim); }
+.body h2 { margin-top: 40px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.body p, .body li { font-size: 15.5px; line-height: 1.7; color: var(--c-textDim); }
+.body p { margin-top: 10px; }
+.body ul, .body ol { margin: 10px 0 0 20px; }
+.body ul { list-style: disc; }
+.body ol { list-style: decimal; }
+.body li { margin-top: 6px; }
+.body b { color: var(--c-bone); font-weight: 600; }
+.body a { color: var(--c-bone); text-decoration: underline; text-underline-offset: 3px; }
+.callout { margin-top: 24px; padding: 16px 18px; border-radius: 14px; background: var(--c-ground); border: 1px solid var(--c-borderMuted); }
+.callout p { margin-top: 0; }
+.meta { margin-top: 48px; font-family: var(--font-mono), monospace; font-size: 12px; color: var(--c-textFaint); }
+@media (max-width: 600px) {
+  .nav { padding: 18px 20px; }
+  .nav img { height: 40px; }
+  .body h1 { font-size: 34px; }
+}

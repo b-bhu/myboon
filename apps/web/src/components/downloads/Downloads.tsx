@@ -1,3 +1,4 @@
+import { PolicyLinks } from '@/components/policy/PolicyLinks'
 import Image from 'next/image'
 import type { CSSProperties } from 'react'
 import { colors, colorVars } from '@/lib/tokens'
@@ -81,6 +82,7 @@ export default function Downloads({ variant, qrSvg }: { variant: Variant; qrSvg:
       <footer className={l.footer}>
         <span>© 2026 MyBoon</span>
         <a href={X_URL} target="_blank" rel="noopener noreferrer" aria-label="Follow @myboonapp on X (opens in new tab)">Follow @myboonapp on X ↗</a>
+        <PolicyLinks />
       </footer>
     </main>
   )
