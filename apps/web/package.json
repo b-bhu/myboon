@@ -6,7 +6,7 @@
     "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start --port 3001",
-    "test": "tsx --test src/components/wallet-mock/*.test.ts"
+    "test": "tsx --test src/components/wallet-mock/*.test.ts src/components/landing/*.test.ts"
   },
   "dependencies": {
     "framer-motion": "^12.38.0",
