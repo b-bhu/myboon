@@ -27,6 +27,7 @@ import type { Activity, Position } from '@polymarket/client';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import { normalizePredictError } from './predict.errors';
 import { POLYMARKET_BUILDER_CODE } from './predict.signing';
+import { mapSdkPosition, mergeHeldPositions, summarizeHeldPositions } from './portfolio-summary';
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -1309,28 +1310,6 @@ function numberOrZero(value: unknown): number {
   return toNumber(value) ?? 0;
 }
 
-function mapSdkPosition(value: Position): PortfolioPosition {
-  return {
-    proxyWallet: value.wallet,
-    asset: value.assetId,
-    conditionId: value.conditionId,
-    size: numberOrZero(value.currentSize),
-    avgPrice: numberOrZero(value.avgPrice),
-    currentValue: numberOrZero(value.currentValue),
-    cashPnl: numberOrZero(value.unrealizedPnl),
-    percentPnl: numberOrZero(value.percentPnl),
-    curPrice: numberOrZero(value.currentPrice),
-    title: value.title ?? '',
-    slug: value.slug ?? '',
-    eventSlug: value.eventSlug ?? '',
-    outcome: value.outcome ?? '',
-    outcomeIndex: numberOrZero(value.outcomeIndex),
-    icon: value.icon ?? null,
-    endDate: value.endDate ?? null,
-    negativeRisk: value.negativeRisk,
-  };
-}
-
 function mapSdkClosedPosition(value: Position): ClosedPortfolioPosition {
   return {
     proxyWallet: value.wallet,
@@ -1404,14 +1383,16 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
     client.fetchPublicProfile({ address: client.account.wallet }),
     fetchRecentAccountTrades(client),
   ]);
-  const positions = sdkOpen.map(mapSdkPosition);
+  // Old v1 GET /positions returned every held position (redeemable rows
+  // included); v2 needs the OPEN + REDEEMABLE union, deduped by assetId (#426).
+  const positions = mergeHeldPositions(sdkOpen, sdkRedeemable).map(mapSdkPosition);
   const redeemablePositions = sdkRedeemable
     .map(mapSdkPosition)
     .filter((position) => position.currentValue >= 0.01);
   const closedPositions = sdkClosed.map(mapSdkClosedPosition);
   const activity = activities.map(mapSdkActivity);
-  const totalPnl = positions.reduce((sum, position) => sum + position.cashPnl, 0);
-  const cashOutNow = positions.reduce((sum, position) => sum + position.currentValue, 0);
+  // Old v1 summary formulas, applied to the deduped held-position union.
+  const heldSummary = summarizeHeldPositions(positions);
   const readyToCollect = redeemablePositions.reduce((sum, position) => sum + position.currentValue, 0);
   const totalRealizedPnl = closedPositions.reduce((sum, position) => sum + position.realizedPnl, 0);
   const totalCollected = activity
@@ -1433,11 +1414,11 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
       xUsername: profile.xUsername ?? null,
     } : null,
     summary: {
-      openPositions: positions.length,
-      totalPnl,
-      cashOutNow,
+      openPositions: heldSummary.openPositions,
+      totalPnl: heldSummary.totalPnl,
+      cashOutNow: heldSummary.cashOutNow,
       readyToCollect,
-      activePickCount: positions.length,
+      activePickCount: heldSummary.activePickCount,
       closedPickCount: closedPositions.length,
       activityCount: activity.length,
       hasActivity: activity.length > 0,
