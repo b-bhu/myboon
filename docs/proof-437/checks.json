@@ -194,5 +194,37 @@
   "tiles": 7,
   "hiddenCards": 0,
   "line": "Understand the market and act in the same app."
+ },
+ "layout": {
+  "390": {
+   "heroSwapToCtas": 128,
+   "feedStoryBelowHero": 35,
+   "walletPortfolioAboveWord": 127,
+   "walletWordAboveMove": 36,
+   "walletMoveAboveLine": 36,
+   "pacificaInside": {
+    "left": 32,
+    "right": 297,
+    "bottom": 168,
+    "xPct": 16,
+    "yPct": 68
+   },
+   "fail": []
+  },
+  "1440": {
+   "heroSwapToCtas": 52,
+   "feedStoryBelowHero": 157,
+   "walletPortfolioAboveWord": -78,
+   "walletWordAboveMove": -205,
+   "walletMoveAboveLine": 109,
+   "pacificaInside": {
+    "left": 238,
+    "right": 1131,
+    "bottom": 300,
+    "xPct": 19,
+    "yPct": 63
+   },
+   "fail": []
+  }
  }
 }

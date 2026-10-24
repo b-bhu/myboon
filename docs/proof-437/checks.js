@@ -39,4 +39,5 @@ for(const [n,w,h] of [['1440',1440,900],['390',390,844]]){
 // no JS
 {const pg=await b.newPage();await pg.setViewport({width:1440,height:900});await pg.setJavaScriptEnabled(false);await pg.goto('http://localhost:3437/',{waitUntil:'networkidle0'});
  res.nojs=await pg.evaluate(()=>({words:[...document.querySelectorAll('h1,h2')].map(e=>e.innerText.replace(/\s+/g,' ')),tiles:document.querySelectorAll('li[tabindex]').length,hiddenCards:[...document.querySelectorAll('[class*=tl] > div')].filter(e=>getComputedStyle(e).opacity!=='1').length,line:document.querySelector('#wallet p:last-child')?.innerText}));await pg.close()}
+res.layout={};for(const [n,w,h] of [['390',390,844],['1440',1440,900]])res.layout[n]=await require('./layout')(b,'http://localhost:3437/',w,h);
 console.log(JSON.stringify(res,null,1));await b.close()})();

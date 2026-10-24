@@ -254,7 +254,7 @@ function Hero({ reduced }: { reduced: boolean }) {
       const at = (x: number, y: number): Pt => [(x * W) / 100, (y * H) / 100]
       // Blue = understand (story, price), green = act (swap).
       const b = isMobile() ? [at(50, 36)] : [at(15, 27), at(17, 71)]
-      const g = [b[b.length - 1], isMobile() ? at(50, 56) : at(84, 70)]
+      const g = [b[b.length - 1], isMobile() ? at(50, 54) : at(84, 70)]
       const pre: Pt = [-40, b[0][1] - 60]
       const post: Pt = [W + 40, g[g.length - 1][1] + 80]
       setPaths({ p1: curve([pre, ...b], 'x'), p2: curve([...g, post], 'x'), all: curve([pre, ...b, ...g.slice(1), post], 'x') })
@@ -295,7 +295,7 @@ function Hero({ reduced }: { reduced: boolean }) {
       <div className={s.tile} style={{ ...place({ x: 17, y: 71, w: 230, r: 3 }, { x: 50, y: 36, w: 220, r: -2 }), '--d': '5.7s', animationDelay: '-1.3s' } as CSSProperties}>
         <PriceCard />
       </div>
-      <div className={s.tile} style={{ ...place({ x: 84, y: 70, w: 290, r: 3 }, { x: 50, y: 56, w: 270, r: 2 }), '--d': '6.4s', animationDelay: '-2.6s' } as CSSProperties}>
+      <div className={s.tile} style={{ ...place({ x: 84, y: 70, w: 290, r: 3 }, { x: 50, y: 54, w: 250, r: 2 }), '--d': '6.4s', animationDelay: '-2.6s' } as CSSProperties}>
         <SwapCard />
       </div>
       <div className={s.copy}>
@@ -341,7 +341,14 @@ export default function Landing() {
     const pac = c(q('#apps [data-node]'))
     const wal = c(q(`#wallet [data-node-${m ? 'm' : 'd'}]`))
     if (!start || !story || !pac || !wal || !feed) return
-    const pts: Pt[] = [start, story, [W * (m ? 0.05 : 0.04), feed.offsetTop + feed.offsetHeight * 0.55], [W * (m ? 0.04 : 0.03), pac[1]], pac, wal]
+    const pts: Pt[] = [start, story, [W * (m ? 0.05 : 0.04), feed.offsetTop + feed.offsetHeight * 0.55], [W * (m ? 0.04 : 0.03), pac[1]]]
+    if (m) {
+      // Mobile: the route ends at the Pacifica tile's left edge instead of running behind it.
+      const tile = q('#apps [data-node]')!.getBoundingClientRect()
+      pts.push([tile.left - base.left - 4, pac[1]])
+    } else {
+      pts.push(pac, wal)
+    }
     setGp({ h: el.scrollHeight, g1: curve(pts.slice(0, 3), 'y'), g2: curve(pts.slice(2), 'y'), all: curve(pts, 'y') })
   }, [])
 
@@ -388,6 +395,11 @@ export default function Landing() {
     let raf = 0
     const tick = () => {
       raf = 0
+      // Phones get no card parallax: at 390 it pushed cards into the big words and copy.
+      if (isMobile()) {
+        all().forEach((e) => e.style.removeProperty('--py'))
+        return
+      }
       const vh = window.innerHeight
       for (const e of all()) {
         const r = e.getBoundingClientRect()
@@ -463,7 +475,7 @@ export default function Landing() {
         </ul>
       </section>
 
-      <section className={s.sec} id="wallet" style={{ '--c': colors.accent } as CSSProperties}>
+      <section className={`${s.sec} ${s.wallet}`} id="wallet" style={{ '--c': colors.accent } as CSSProperties}>
         <Words word="Wallet" echo className={s.walletWords} />
         <Tl d={{ x: 16, y: 34, w: 300, r: -4, dp: 0.25 }} m={{ x: 50, y: 18, w: 300, r: -3 }} node="m"><PortfolioCard /></Tl>
         <Tl d={{ x: 85, y: 66, w: 290, r: 4, dp: 0.2 }} m={{ x: 50, y: 73, w: 300, r: 3 }} node="d"><MoveCard /></Tl>

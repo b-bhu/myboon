@@ -177,6 +177,8 @@
   .copy { bottom: calc(24px + env(safe-area-inset-bottom)); }
   .ctas a { width: 100%; justify-content: center; }
   .apps { height: 620px; min-height: 620px; }
+  /* Taller so the portfolio card clears the word and the Move card clears the line (>= 24px). */
+  .wallet { height: 980px; min-height: 980px; }
   .arcsD { display: none; }
   .arcsM { display: block; }
   .burst { width: 520px; height: 520px; }
