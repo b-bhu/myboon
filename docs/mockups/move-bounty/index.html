@@ -1,0 +1,257 @@
+<!doctype html>
+<!-- MyBoon Move · Direction C2 (patch bay). All balances, fees and times are EXAMPLE DATA. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="dark"><title>MyBoon · Move (prototype)</title>
+<link rel="stylesheet" href="ref/wallet-inline.css"><style>
+/* Move center. Scoped to #composer; everything else is the real Wallet (ref/wallet-inline.*) unchanged. */
+#mvc.mv{padding:10px 12px 12px}
+.mv .mk{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;flex-shrink:0;background:var(--card);box-shadow:inset 0 0 0 1px var(--edge);font:700 11px var(--display)}
+.mv .mk img{width:14px;height:14px}.mv .mk.c{border-radius:50%}
+.mv-bay{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr)}
+.mv-ch{display:flex;align-items:center;justify-content:space-between;height:30px;font-size:12px;color:var(--dim)}
+.mv-ch b{color:var(--ink);font-size:13px;font-weight:600}
+
+/* each column scrolls its full list, native momentum */
+.mv-rows{height:258px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none;display:flex;flex-direction:column;gap:2px;mask-image:linear-gradient(#000 88%,transparent)}
+.mv-rows::-webkit-scrollbar{display:none}
+.mv-row{flex:0 0 36px;width:100%;display:flex;align-items:center;gap:7px;padding:0 6px;border-radius:9px;text-align:left}
+.mv-row .t{min-width:0;display:flex;flex-direction:column;line-height:1.12}
+.mv-row .t strong{font-size:13px;font-weight:550}.mv-row .t small{font:10.5px var(--mono);color:var(--dim)}.mv-row .t small.w{font-family:var(--sans)}
+.mv-row.on{background:#FFD16618;box-shadow:inset 0 0 0 2px var(--gold)}.mv-row.off{opacity:.35}
+.mv-wire{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.mv-amt{text-align:center;padding:8px 0 6px;margin-top:4px;border-top:1px solid var(--edge)}
+.mv-amt .big{font:600 34px/1.05 var(--mono);letter-spacing:-2px}.mv-amt .big span{font:500 13px var(--sans);letter-spacing:0;color:var(--dim);margin-left:5px}
+.mv-amt .sub{font-size:11.5px;color:var(--dim);margin-top:2px}
+.mv-chips{display:flex;gap:6px;justify-content:center;margin-top:6px}
+.mv-chips button{height:26px;padding:0 11px;border-radius:999px;font-size:12px;font-weight:600;box-shadow:inset 0 0 0 1px var(--edge);color:var(--dim)}.mv-chips .on{color:var(--gold);box-shadow:inset 0 0 0 1px var(--gold)}
+
+.mv-grp{flex:0 0 18px;display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);letter-spacing:.2px;padding:0 6px}
+.mv-grp::after{content:"";flex:1;height:1px;background:#185A7099}
+.mv-note{font-size:11px;color:#FFE3A6;min-height:0;height:0;overflow:hidden;transition:height .15s}
+.mv-note.show{height:16px}
+.mv-in{width:100%;text-align:center;background:none;border:0;padding:0;font:600 34px/1.05 var(--mono);letter-spacing:-2px;color:var(--ink);outline:none}
+.mv-in::placeholder{color:#185A70}
+.mv-amt.err .mv-in{color:var(--pink)}.mv-amt .unit{font-size:13px;color:var(--dim)}
+.mv-amt .sub{display:flex;align-items:center;justify-content:center;gap:6px;font:12px var(--mono);color:var(--dim);margin-top:4px}
+.mv-amt .sub .mk{width:18px;height:18px;border-radius:5px}.mv-amt .sub .mk img{width:11px;height:11px}.mv-amt .sub b{color:var(--ink);font-weight:600}
+.mv-amt .sub .ar{color:var(--gold)}
+.mv-amt.err .sub{color:var(--pink)}
+.mv-route .mk{transition:box-shadow .3s,opacity .3s}
+.mv-route[data-live] .mk{opacity:.45}.mv-route[data-live] .mk.lit{opacity:1;box-shadow:inset 0 0 0 2px var(--gold)}
+.mv-route[data-live] i{background:var(--edge)}.mv-route[data-live] i.lit{background:var(--gold)}
+#mv-swipe .swipe-label strong{display:inline-flex;align-items:center;gap:6px}#mv-swipe .swipe-label .mk{width:18px;height:18px;border-radius:5px}#mv-swipe .swipe-label .mk img{width:11px;height:11px}
+#mv-swipe:disabled{opacity:.55}
+/* route: icons only, full width */
+.mv-route{display:flex;align-items:center;gap:6px;padding:8px 0;border-top:1px solid var(--edge);font-size:12px;color:var(--dim)}
+.mv-route i{flex:1;height:2px;background:var(--gold);border-radius:1px}
+.mv-route em{flex-shrink:0;margin-left:10px;font-style:normal}
+/* swipe: the real Swap .swipe styles; progress fill reused for the live status */
+#mv-swipe .swipe-fill{transition:width .5s cubic-bezier(.2,.8,.2,1)}
+#mv-swipe[data-stage=pending] .swipe-fill{width:calc(46px + (100% - 46px) * var(--done,0));background:#FFD16622}
+#mv-swipe[data-stage=success] .swipe-fill{width:100%;background:#06D6A01A}
+#mv-swipe svg{width:18px;height:18px}
+#mv-swipe[data-stage=pending] .swipe-thumb svg{animation:spin 1.4s linear infinite}
+.mv .tk{width:14px;height:14px;border-radius:50%;display:inline-grid;place-items:center;flex-shrink:0;background:var(--card);box-shadow:inset 0 0 0 1px currentColor;font:700 9px var(--sans)}
+.mv-tok{display:flex;gap:4px;height:28px;align-items:center;padding:4px 2px 0}
+.mv-tok button,.mv-tok span.s{height:22px;padding:0 7px 0 4px;border-radius:999px;display:inline-flex;align-items:center;gap:4px;font:600 11px var(--sans);color:var(--dim);box-shadow:inset 0 0 0 1px var(--edge)}
+.mv-tok .on{color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--gold);background:#FFD16612}
+.mv-tok span.s{color:var(--ink)}
+.mv .mk.sw{border-radius:50%;color:var(--gold)}.mv .mk.sw svg{width:13px;height:13px}
+.mv-pin{position:absolute;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;background:#031F2C;box-shadow:inset 0 0 0 1.5px var(--gold);z-index:2;padding:0}
+.mv-pin .mk{width:20px;height:20px;border-radius:6px;box-shadow:none}.mv-pin .mk img{width:12px;height:12px}
+.mv-pin::after{content:"";position:absolute;left:50%;width:0;height:0;border:4px solid transparent;transform:translateX(-50%)}
+.mv-pin[data-edge=top]::after{top:-7px;border-bottom-color:var(--gold)}.mv-pin[data-edge=bottom]::after{bottom:-7px;border-top-color:var(--gold)}
+.action-zone .action-heading{display:none}
+.mv-modes{display:flex;gap:4px;height:32px;margin:0 0 8px;padding:3px;border-radius:11px;background:#031F2C99;box-shadow:inset 0 0 0 1px var(--edge)}
+.mv-modes button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:5px;border-radius:8px;font:600 11px var(--sans);color:var(--dim)}
+.mv-modes svg{width:14px;height:14px}
+.mv-modes button[aria-pressed=true]{background:var(--gold);color:#031F2C}
+.mv-ph{display:flex;flex-direction:column;gap:10px;padding:4px 2px 2px}
+.mv-ph label{font-size:12px;color:var(--dim)}
+.mv-ph .fld{display:flex;align-items:center;gap:8px;height:44px;padding:0 12px;border-radius:11px;background:var(--card);box-shadow:inset 0 0 0 1px var(--edge)}
+.mv-ph .fld input{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--ink);font:14px var(--mono)}
+.mv-ph .fld input.big{font:600 26px var(--mono);letter-spacing:-1px}
+.mv-qr{width:148px;height:148px;margin:4px auto 0;border-radius:14px;background:#fff;padding:12px;display:grid;grid-template-columns:repeat(9,1fr);gap:2px}
+.mv-qr i{background:#031F2C;border-radius:1px}.mv-qr i.o{background:transparent}
+.mv-ph .addr{font:12px var(--mono);text-align:center;color:var(--ink);word-break:break-all}
+.mv-ph .btn{height:44px;border-radius:12px;background:var(--gold);color:#031F2C;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;gap:6px}
+.mv-ph .btn:disabled{opacity:.5}
+</style></head><body>
+<div class="presentation">
+<!-- Ref notes kept (hidden) because ref/wallet-inline.js binds its preview controls. -->
+<aside class="notes" hidden>
+  <a class="back-link" href="index.html?nav=wallet">← Selected Home mock</a>
+  <p class="eyebrow">WALLET · NEW DIRECTION</p>
+  <h1>Your next move,<br>right here.</h1>
+  <p>Yellow runs edge to edge behind Swap. A raised markets panel rounds into it below, keeping the account switcher and its details together.</p>
+  <div class="note-block"><strong>One space for four actions</strong><p>Tap the action name to choose Swap, Send, Receive or Transfer. Double-tap the reverse button to open the same menu.</p></div>
+  <div class="note-block"><strong>Review where you compose</strong><p>Balances sit under their tokens. Max and percentage shortcuts stay beside You pay. Token icons keep the inline rate and minimum compact; swipe to preview confirmation and success.</p></div>
+  <div class="note-block"><strong>Scroll your accounts</strong><p>Swap stays in place. Scroll the account panel over it; its rounded top gradually flattens as it reaches the header. Spot, Perps and Meteora stay within reach.</p></div>
+  <div class="preview-controls"><label for="preview-outcome">After swiping</label><select id="preview-outcome"><option value="success">Successful swap</option><option value="rejected">Wallet declined</option><option value="pending">Stay pending</option></select><button id="reset-preview">Reset preview ↺</button></div>
+  <p class="sample-note">Interactive samples only. Prices, holdings, addresses and positions are illustrative. Swiping simulates confirmation locally; nothing is signed or submitted.</p>
+  <a class="back-link" href="swap-concepts.html">Earlier Swap concepts ↗</a>
+ </aside>
+<section class="phone" aria-label="MyBoon Wallet prototype">
+  <div class="app-content" id="app-content">
+   <header class="masthead">
+    <span class="wordmark" role="img" aria-label="MyBoon"></span>
+    <div class="header-actions"><button class="icon-button" id="notifications" aria-label="Notifications"></button><button class="profile-button" id="profile" aria-label="Wallet account"><span class="avatar" aria-hidden="true">b</span></button></div>
+   </header>
+   <main class="wallet-scroll" id="wallet-scroll">
+    <div class="wallet-top">
+    <section class="action-zone" aria-label="Wallet action">
+     <div class="action-heading"><h1><button class="action-select" id="action-select" aria-haspopup="dialog"><span id="action-name">Swap</span><span id="action-chevron" aria-hidden="true"></span></button></h1></div>
+     <nav class="mv-modes" id="mv-modes" aria-label="Wallet mode"></nav>
+     <div class="composer" id="composer"></div>
+     <div class="composer" id="mvc"></div>
+    </section>
+    </div>
+    <div class="market-scroll" id="market-scroll" aria-label="Scrollable wallet accounts">
+    <div class="market-spacer" aria-hidden="true"></div>
+    <section class="market-panel" id="market-panel" aria-label="Markets and positions">
+     <div class="market-toolbar">
+     <div class="market-tabs" role="tablist" aria-label="Wallet accounts"><button id="tab-spot" role="tab" data-tab="spot" aria-controls="market-content" aria-selected="true">Spot</button><button id="tab-perps" role="tab" data-tab="perps" aria-controls="market-content" aria-selected="false" tabindex="-1">Perps</button><button id="tab-meteora" role="tab" data-tab="meteora" aria-controls="market-content" aria-selected="false" tabindex="-1">Meteora</button></div>
+     </div>
+     <div class="market-content" id="market-content" role="tabpanel" aria-labelledby="tab-spot" tabindex="0"></div>
+    </section>
+    </div>
+   </main>
+   <nav class="nav" aria-label="Main navigation"><a href="ref/index.html?nav=feed&amp;wallet-design=inline" data-nav-icon="feed">Feed</a><a href="ref/index.html?nav=apps&amp;wallet-design=inline" data-nav-icon="apps">Apps</a><button aria-current="page" id="wallet-nav" data-nav-icon="wallet">Wallet</button></nav>
+  </div>
+  <div class="modal-layer" id="modal-layer" hidden><button class="backdrop" id="modal-backdrop" aria-label="Close dialog" tabindex="-1"></button><section class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" tabindex="-1"><div class="grabber" aria-hidden="true"><span></span></div><header class="dialog-head"><h2 id="dialog-title"></h2><button class="icon-button" id="dialog-close" aria-label="Close dialog"></button></header><div class="dialog-body" id="dialog-body"></div></section></div>
+ </section>
+</div>
+<script src="data.js"></script>
+<script src="ref/wallet-inline.js"></script>
+<script>
+const st=Q.get('state')||'default';
+if(st==='swap'){document.body.innerHTML='<iframe style="width:390px;height:844px;border:0;display:block" src="ref/wallet-inline.html" title="MyBoon Wallet, Swap (unchanged design reference)" scrolling="no"></iframe>';}
+else{
+const EXPORT=Q.has('export');
+let MODE=['move','swap','send','receive'].includes(Q.get('mode'))?Q.get('mode'):'move';
+const S={from:Q.get('from')||'polymarket',to:Q.get('to')||'pacifica',ft:Q.get('ft')||'USDC',tt:Q.get('tt')||'USDC',amount:Q.get('amount')??'100.00',stage:'ready',step:0,travel:+(Q.get('swipe')||0),note:{f:'',t:''}};
+const ICON={right:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>',
+ spin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4a8 8 0 1 0 8 8"/></svg>',
+ check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12 4 4L19 6"/></svg>'};
+const CK=n=>ALL.find(x=>x.g==='chain'&&x.n===n)?.k;
+// Route model (example data): From → one chain hop → To. Polymarket exits to Solana through its own bridge.
+const SWG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg>';
+const nmk=k=>k.startsWith('swap')?`<span class="mk sw" aria-label="swap">${SWG}</span>`:mk(k);
+function plan(){
+ const F=BY[S.from],T=BY[S.to],h=hop(S.from,S.to),a=amt();
+ const swA=S.ft!=='USDC',swB=S.tt!=='USDC'&&!(swA&&S.ft===S.tt&&false);
+ const nodes=[S.from];if(swA)nodes.push('swapA');if(h)nodes.push(h);if(swB)nodes.push('swapB');nodes.push(S.to);
+ const L=nodes.length-1,at=chain=>{const i=nodes.indexOf(CK(chain));return i>0?i:L;};
+ const swFee=t=>+Math.max(0.02,a*PX[t]*0.003).toFixed(2);
+ const st=[];let cur=F.g==='chain'?F.n:F.ch;
+ if(F.g==='app')st.push({label:`Withdrawing ${S.ft} from ${F.n}`,fee:S.from==='polymarket'?0.05:0.01,node:0});
+ if(S.from==='polymarket'){st.push({label:'Bridging to Solana',fee:0.30,node:at('Solana')});cur='Solana';}
+ if(swA)st.push({label:`Swapping ${S.ft} → USDC`,fee:swFee(S.ft),node:nodes.indexOf('swapA')});
+ const dest=T.g==='chain'?T.n:T.ch;
+ if(cur!==dest)st.push({label:`Bridging to ${dest}`,fee:0.50,node:T.g==='chain'?L:at(dest)});
+ if(swB)st.push({label:`Swapping USDC → ${S.tt}`,fee:swFee(S.ft),node:nodes.indexOf('swapB')});
+ if(T.g==='app')st.push({label:`Depositing ${S.tt} to ${T.n}`,fee:0.05,node:L});
+ if(!st.length)st.push({label:`Moving to ${T.n}`,fee:0.01,node:L});
+ st[st.length-1].node=L;
+ const fee=st.reduce((x,y)=>x+y.fee,0);
+ return {nodes,steps:st,fee};}
+const amt=()=>{const v=parseFloat(S.amount);return isFinite(v)?v:0;};
+const check=()=>{const a=amt(),bl=bal(S.from,S.ft),P=plan(),rec=Math.max(0,(a*PX[S.ft]-P.fee)/PX[S.tt]);
+ return {a,bal:bl,rec,P,over:a>bl,ok:a>0&&a<=bl&&rec>0};};
+const label=x=>{const p=x.n.split(' ');return p.length>1&&x.n.length>11?{a:p[0],b:p.slice(1).join(' ')}:{a:x.n,b:null};};
+function list(side){const out=[];['app','chain'].forEach(g=>{let l=ALL.filter(x=>x.g===g);if(side==='f')l=[...l.filter(x=>hasBal(x.k)).sort((a,b)=>b.b-a.b),...l.filter(x=>!hasBal(x.k))];out.push({grp:g==='app'?'Apps':'Chains'},...l);});return out;}
+const row=(x,side)=>{if(x.grp)return `<div class="mv-grp" aria-hidden="true">${x.grp}</div>`;
+ const l=label(x),sel=(side==='f'?S.from:S.to)===x.k,off=side==='t'?x.k===S.from:!hasBal(x.k);
+ const sub=side==='f'?`<small>${sel?fT(bal(x.k,S.ft),S.ft)+(S.ft!=='USDC'?' '+S.ft:''):f2(x.b)}</small>`:(l.b?`<small class="w">${l.b}</small>`:'');
+ return `<button class="mv-row ${sel?'on':''} ${off?'off':''}" data-side="${side}" data-k="${x.k}" aria-pressed="${sel}" ${off?'aria-disabled="true"':''}>${mk(x.k)}<span class="t"><strong>${side==='t'?l.a:x.n}</strong>${sub}</span></button>`;};
+const column=side=>`<div id="c${side}"><div class="mv-ch"><b>${side==='f'?'From':'To'}</b></div><p class="mv-note ${S.note[side]?'show':''}" aria-live="polite">${S.note[side]}</p><div class="mv-rows" id="r${side}">${list(side).map(x=>row(x,side)).join('')}</div>${tokRow(side)}</div>`;
+function tokRow(side){const k=side==='f'?S.from:S.to,cur=side==='f'?S.ft:S.tt,l=toks(k);
+ if(l.length<2)return `<div class="mv-tok" aria-label="Token">${'<span class="s">'+tk(l[0])+l[0]+'</span>'}</div>`;
+ return `<div class="mv-tok" role="group" aria-label="${side==='f'?'From':'To'} token">${l.map(t=>`<button data-tok="${t}" data-side="${side}" class="${t===cur?'on':''}" aria-pressed="${t===cur}" ${S.stage!=='ready'?'disabled':''}>${tk(t)}${t}</button>`).join('')}</div>`;}
+function lit(){if(S.stage==='success')return 99;if(S.stage!=='pending')return -1;const P=plan();return S.step>0?P.steps[S.step-1].node:0;}
+function routeRow(){const {P}=check(),L=lit();let h='';P.nodes.forEach((k,i)=>{if(i)h+=`<i class="${i<=L?'lit':''}"></i>`;h+=nmk(k).replace('class="mk','class="mk'+(i<=L?' lit':''));});
+ return `<div class="mv-route" ${S.stage!=='ready'?'data-live':''} aria-label="Route">${h}</div>`;}
+function swipe(){const c=check(),P=c.P,T=BY[S.to];let lab,det,glyph;
+ if(S.stage==='ready'){lab='Swipe to move';det=c.over?`More than the ${fT(c.bal,S.ft)} ${S.ft} available`:c.ok?`${fT(c.a,S.ft)} ${S.ft} to ${T.n}`:'Enter an amount';glyph='right';}
+ else if(S.stage==='pending'){const x=P.steps[S.step];lab=`Step ${S.step+1} of ${P.steps.length}${x.sign&&S.step>0?' · approve in wallet':''}`;det=`${nmk(P.nodes[x.node])}${x.label}`;glyph='spin';}
+ else{lab='Done · example · tap to start again';det=`${mk(S.to)}≈${fT(c.rec,S.tt)} ${S.tt} in ${T.n}`;glyph='check';}
+ const done=S.stage==='pending'?(S.step+.5)/P.steps.length:0, dis=S.stage==='ready'&&!c.ok;
+ return `<button class="swipe" id="mv-swipe" data-stage="${S.stage}" ${dis?'disabled':''} style="--progress:${S.travel};--done:${done}" aria-live="polite" aria-label="${lab}. ${det.replace(/<[^>]+>/g,'')}. Sample only"><span class="swipe-fill" aria-hidden="true"></span><span class="swipe-label">${lab}<strong>${det}</strong></span><span class="swipe-thumb" aria-hidden="true">${ICON[glyph]}</span></button>`;}
+function amountBlock(){const c=check();
+ return `<div class="mv-amt ${c.over?'err':''}"><label class="sr-only" for="mv-amt">Amount in ${S.ft}</label><input class="mv-in" id="mv-amt" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${S.amount}" aria-invalid="${c.over}" aria-describedby="mv-sub"><div class="unit">${S.ft}</div>
+ <div class="sub" id="mv-sub">${mk(S.from)}${tk(S.ft)}<b>${fT(c.bal,S.ft)}</b><span class="ar">→</span>${mk(S.to)}${tk(S.tt)}<b>≈${fT(c.rec,S.tt)}</b></div>
+ <div class="mv-chips">${[25,50,75,100].map(p=>`<button data-pct="${p}" ${S.stage!=='ready'?'disabled':''}>${p===100?'Max':p+'%'}</button>`).join('')}</div></div>`;}
+function wire(){const w=document.getElementById('w');if(!w)return;w.innerHTML='';const bayEl=document.querySelector('.mv-bay'),bay=bayEl.getBoundingClientRect();
+ bayEl.querySelectorAll('.mv-pin').forEach(p=>p.remove());
+ const a=document.querySelector('#rf .mv-row.on'),b=document.querySelector('#rt .mv-row.on');if(!a||!b)return;
+ // anchor = the selected row if visible, else a pinned stub on the column edge it scrolled past
+ const anchor=(r,col,side,k)=>{const R=r.getBoundingClientRect(),C=col.getBoundingClientRect();
+  const edge=R.top<C.top-2?'top':R.bottom>C.bottom-30?'bottom':null;
+  if(!edge)return {x:side==='f'?R.right:R.left,y:R.top+R.height/2};
+  const p=document.createElement('button');p.className='mv-pin';p.dataset.edge=edge;p.dataset.pin=side;p.setAttribute('aria-label',`Selected ${BY[k].n}, scroll to it`);p.innerHTML=mk(k);
+  const y=edge==='top'?C.top+4:C.bottom-34,x=side==='f'?C.right-30:C.left+4;
+  p.style.left=(x-bay.left)+'px';p.style.top=(y-bay.top)+'px';bayEl.appendChild(p);
+  return {x:side==='f'?x+26:x,y:y+13};};
+ const A=anchor(a,document.getElementById('rf'),'f',S.from),B=anchor(b,document.getElementById('rt'),'t',S.to);
+ const x1=A.x-bay.left,y1=A.y-bay.top,x2=B.x-bay.left,y2=B.y-bay.top,mx=(x1+x2)/2,my=(y1+y2)/2,h=hop(S.from,S.to);
+ w.innerHTML=`<path d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}" stroke="#FFD166" stroke-width="2" fill="none"/>${h?`<circle cx="${mx}" cy="${my}" r="8" fill="#031F2C" stroke="${COL[h]||'#A9C3CC'}" stroke-width="2"/><text x="${mx}" y="${my+4}" text-anchor="middle" fill="${COL[h]||'#A9C3CC'}" font-size="10" font-weight="700">${h==='solana'?'◎':BY[h].n[0]}</text>`:''}`;}
+addEventListener('resize',()=>wire());
+const MI={move:'<path d="M4 8h13l-3-3M20 16H7l3 3"/>',swap:'<path d="M7 4v16l-3-3M17 20V4l3 3"/>',send:'<path d="M4 12 20 4l-6 16-3-7z"/>',receive:'<path d="M12 4v12m-5-5 5 5 5-5M5 20h14"/>'};
+function modes(){const n=document.getElementById('mv-modes');n.innerHTML=['move','swap','send','receive'].map(m=>`<button data-mode-tab="${m}" aria-pressed="${m===MODE}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${MI[m]}</svg>${m[0].toUpperCase()+m.slice(1)}</button>`).join('');}
+const sendMid=()=>`<div class="mv-ph"><label for="mv-to">To</label><div class="fld"><input id="mv-to" placeholder="Solana or EVM address" autocomplete="off"></div><label for="mv-samt">Amount</label><div class="fld">${tk('USDC')}<input id="mv-samt" class="big" inputmode="decimal" placeholder="0.00"><span style="color:var(--dim);font-size:12px">USDC</span></div><button class="btn" disabled>Send · example</button></div>`;
+const ADDR='7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU';
+const recvMid=()=>{let q='';for(let i=0;i<81;i++){const r=i/9|0,c=i%9,fin=(r<3&&c<3)||(r<3&&c>5)||(r>5&&c<3);q+=`<i class="${fin?((r%3===1&&c%3===1)?'o':''):(((i*7+r*3)%5<2)?'o':'')}"></i>`;}
+ return `<div class="mv-ph"><div class="mv-qr" role="img" aria-label="QR code placeholder">${q}</div><p class="addr" id="mv-addr">${ADDR}</p><button class="btn" id="mv-copy">Copy address</button><label style="text-align:center">Same address works on Solana. EVM: 0x4f…a91C (example)</label></div>`;};
+let first=true;
+function render(focusAmt){
+ const c=document.getElementById('mvc'),sf=document.getElementById('rf')?.scrollTop,stt=document.getElementById('rt')?.scrollTop,inp=document.getElementById('mv-amt'),caret=inp&&inp.selectionStart;
+ modes();const real=document.getElementById('composer');
+ real.hidden=MODE!=='swap';c.hidden=MODE==='swap';c.classList.add('mv');
+ if(MODE==='swap')return;
+ if(MODE!=='move'){c.innerHTML=MODE==='send'?sendMid():recvMid();return;}
+ c.innerHTML=`<div class="mv-bay">${column('f')}<div></div>${column('t')}<svg class="mv-wire" id="w"></svg></div>${amountBlock()}${routeRow()}${swipe()}`;
+ const rf=document.getElementById('rf'),rt=document.getElementById('rt');
+ if(first){first=false;[rf,rt].forEach(r=>{const o=r.querySelector('.on');if(o)r.scrollTop=Math.max(0,o.offsetTop-r.offsetTop-80);});if(Q.get('scroll')==='from')rf.scrollTop=9999;if(Q.get('scroll')==='to')rt.scrollTop=9999;}
+ else{rf.scrollTop=sf||0;rt.scrollTop=stt||0;}
+ [rf,rt].forEach(r=>r.addEventListener('scroll',wire,{passive:true}));
+ if(focusAmt){const i=document.getElementById('mv-amt');i.focus({preventScroll:true});try{i.setSelectionRange(caret,caret);}catch(e){}}
+ if(S.travel){const sw=document.getElementById('mv-swipe');sw.classList.add('dragging');sw.style.setProperty('--travel',((sw.offsetWidth-52)*S.travel)+'px');}
+ wire();}
+let timers=[],noteT={};
+window.__mvlog=[];
+function note(side,msg){S.note[side]=msg;clearTimeout(noteT[side]);noteT[side]=setTimeout(()=>{S.note[side]='';render();},2600);render();}
+function run(){const P=plan();S.stage='pending';S.step=0;S.travel=0;window.__mvlog=[P.steps[0].label];render();
+ const tick=()=>{if(S.step<P.steps.length-1){S.step++;window.__mvlog.push(P.steps[S.step].label);render();timers.push(setTimeout(tick,1400));}else{S.stage='success';window.__mvlog.push('Done');render();}};timers.push(setTimeout(tick,1400));}
+function reset(){timers.forEach(clearTimeout);timers=[];S.stage='ready';S.step=0;render();}
+window.__mv={S,plan,check,run,reset};
+addEventListener('load',()=>{
+ const sq=Q.get('status');
+ if(sq==='done')S.stage='success';else if(sq!=null){S.stage='pending';S.step=Math.min(+sq,plan().steps.length-1);}
+ render();
+  document.getElementById('mv-modes').addEventListener('click',e=>{const b=e.target.closest('[data-mode-tab]');if(!b||b.dataset.modeTab===MODE)return;if(S.stage==='pending')return;MODE=b.dataset.modeTab;if(MODE==='move')first=true;render();});
+ const c=document.getElementById('mvc');
+ c.addEventListener('input',e=>{if(e.target.id!=='mv-amt')return;let v=e.target.value.replace(',','.').replace(/[^\d.]/g,'');const p=v.split('.');if(p.length>2)v=p[0]+'.'+p.slice(1).join('');const dd=dec(S.ft);if(p[1]&&p[1].length>dd)v=p[0]+'.'+p[1].slice(0,dd);S.amount=v;render(true);});
+ c.addEventListener('click',e=>{
+  const pc=e.target.closest('[data-pct]');if(pc&&S.stage==='ready'){const b=bal(S.from,S.ft),m=10**dec(S.ft);S.amount=(Math.floor(b*+pc.dataset.pct/100*m)/m).toFixed(dec(S.ft));render();return;}
+  const pn=e.target.closest('.mv-pin');if(pn){const r=document.getElementById('r'+pn.dataset.pin),o=r.querySelector('.on');r.scrollTo({top:Math.max(0,o.offsetTop-r.offsetTop-80),behavior:'smooth'});return;}
+  const tb=e.target.closest('[data-tok]');if(tb){if(S.stage!=='ready')return;if(tb.dataset.side==='f'){S.ft=tb.dataset.tok;if(bal(S.from,S.ft)<amt())S.amount=fT(bal(S.from,S.ft),S.ft).replace(/,/g,'');}else S.tt=tb.dataset.tok;render();return;}
+  const r=e.target.closest('.mv-row');
+  if(r){if(S.stage!=='ready')return;const k=r.dataset.k,side=r.dataset.side;
+   if(side==='f'){if(!hasBal(k)){note('f',`${BY[k].n} has nothing to move`);return;}
+    if(k===S.to)S.to=S.from;                                   // picking the current To as From swaps the pair
+    S.from=k;if(!toks(k).includes(S.ft)||!bal(k,S.ft))S.ft=toks(k).find(t=>bal(k,t)>0)||'USDC';if(!toks(S.to).includes(S.tt))S.tt='USDC';S.note.f='';render();return;}
+   if(k===S.from){note('t',`${BY[k].n} is already your From`);return;}
+   S.to=k;if(!toks(k).includes(S.tt))S.tt='USDC';S.note.t='';render();return;}
+  if(e.target.closest('#mv-copy')){navigator.clipboard?.writeText(ADDR).catch(()=>{});e.target.closest('#mv-copy').textContent='Copied';return;}
+  const sw=e.target.closest('#mv-swipe');
+  if(sw){if(S.stage==='success'){reset();return;}if(e.detail===0&&S.stage==='ready'&&check().ok)run();}   // keyboard activation, as in the real Swap
+ });
+ // Same pointer pattern as ref/wallet-inline.js: drag the thumb right; past 86% confirms.
+ let ptr=null;
+ c.addEventListener('pointerdown',e=>{const sw=e.target.closest('#mv-swipe');if(!sw||sw.disabled||S.stage!=='ready'||e.button!==0)return;const r=sw.getBoundingClientRect();if(e.clientX>r.left+58)return;ptr={id:e.pointerId,x:e.clientX,max:r.width-52,travel:0};sw.setPointerCapture(e.pointerId);sw.classList.add('dragging');});
+ document.addEventListener('pointermove',e=>{if(!ptr||e.pointerId!==ptr.id)return;ptr.travel=Math.max(0,Math.min(ptr.max,e.clientX-ptr.x));const sw=document.getElementById('mv-swipe');sw.style.setProperty('--travel',ptr.travel+'px');sw.style.setProperty('--progress',String(ptr.travel/ptr.max));});
+ const end=(e,cancel)=>{if(!ptr||e.pointerId!==ptr.id)return;const ok=!cancel&&ptr.travel>=ptr.max*.86;ptr=null;const sw=document.getElementById('mv-swipe');sw.classList.remove('dragging');sw.style.setProperty('--travel','0px');sw.style.setProperty('--progress','0');if(ok)run();};
+ document.addEventListener('pointerup',e=>end(e));document.addEventListener('pointercancel',e=>end(e,true));
+});
+}
+</script>
+</body></html>
