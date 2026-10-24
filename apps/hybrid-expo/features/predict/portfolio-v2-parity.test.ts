@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Position } from '@polymarket/client';
-import { mapSdkPosition, mergeHeldPositions, summarizeHeldPositions } from './portfolio-summary';
+import { mapSdkPosition, mergeHeldPositions, summarizeHeldPositions, walkAllPages } from './portfolio-summary';
 
 // '@polymarket/client' re-exports the bindings *types* (its index.d.ts does
 // `export * from '@polymarket/bindings/data'`) but its runtime bundle does not
@@ -126,4 +126,136 @@ test('redeemable rows fold back in if the OPEN page stops listing them', async (
   assert.equal(positions.length, OLD_COUNT);
   assertSummaryMatchesOld(summarizeHeldPositions(positions));
   assertAssetIdsMatchOld(positions);
+});
+
+// --- Synthetic multi-page scenarios for the #445 totals walk ---
+
+interface SdkPage<T> {
+  items: T[];
+  hasMore: boolean;
+}
+
+function syntheticPosition(base: Position, assetId: string): Position {
+  // The SDK brands assetId (TokenId | PositionId); synthetic rows only feed
+  // the dedupe/map/summarize helpers, which treat it as an opaque string.
+  return { ...base, assetId: assetId as Position['assetId'] };
+}
+
+/** Cycle the parsed fixture rows into clones with distinct assetIds. */
+function syntheticRows(parsed: Position[], count: number, suffix: string): Position[] {
+  return Array.from({ length: count }, (_, i) =>
+    syntheticPosition(parsed[i % parsed.length], `${parsed[i % parsed.length].assetId}${suffix}-${i}`),
+  );
+}
+
+function chunkIntoPages<T>(rows: T[], perPage: number): SdkPage<T>[] {
+  const pages: SdkPage<T>[] = [];
+  for (let start = 0; start < rows.length; start += perPage) {
+    const isLastPage = start + perPage >= rows.length;
+    pages.push({ items: rows.slice(start, start + perPage), hasMore: !isLastPage });
+  }
+  return pages;
+}
+
+/** Fake v2 paginator: yields pages verbatim and counts how many were pulled. */
+function fakePaginator<T>(pages: SdkPage<T>[], pulled: { count: number }): AsyncGenerator<SdkPage<T>> {
+  return (async function* () {
+    for (const page of pages) {
+      pulled.count += 1;
+      yield page;
+    }
+  })();
+}
+
+test('over-cap wallet: summary totals cover every page while the returned list stays capped', async () => {
+  const positionSchema = await getPositionSchema();
+  const parsed = OPEN_DATA.map((row) => positionSchema.parse(row));
+
+  // 3 open pages of 50 = 150 held rows with distinct assetIds.
+  const openRows = syntheticRows(parsed, 150, '-open');
+  // Two redeemable pages of 20, each mixing duplicates of open assetIds with
+  // redeem-only rows (the deduped union grows by 20 new rows).
+  const redeemOnly = syntheticRows(parsed, 20, '-redeemable-only');
+  const redeemableRows: Position[] = [
+    ...openRows.slice(0, 10).map((row) => syntheticPosition(row, row.assetId)),
+    ...redeemOnly.slice(0, 10),
+    ...openRows.slice(10, 20).map((row) => syntheticPosition(row, row.assetId)),
+    ...redeemOnly.slice(10, 20),
+  ];
+
+  const openWalk = await walkAllPages(fakePaginator(chunkIntoPages(openRows, 50), { count: 0 }));
+  assert.equal(openWalk.partial, false);
+  assert.equal(openWalk.items.length, 150);
+  const redeemableWalk = await walkAllPages(fakePaginator(chunkIntoPages(redeemableRows, 20), { count: 0 }));
+  assert.equal(redeemableWalk.partial, false);
+  assert.equal(redeemableWalk.items.length, 40);
+
+  // Independent dedupe (contract: assetId union, open rows win) the summary
+  // numbers are checked against.
+  const expected = new Map<string, Position>();
+  for (const row of [...openRows, ...redeemableRows]) {
+    if (!expected.has(row.assetId)) expected.set(row.assetId, row);
+  }
+  const expectedRows = [...expected.values()];
+  assert.ok(expectedRows.length > 100, `synthetic wallet should exceed the 100-row list cap, got ${expectedRows.length}`);
+
+  const merged = mergeHeldPositions(openWalk.items, redeemableWalk.items).map(mapSdkPosition);
+  assert.equal(merged.length, expectedRows.length);
+
+  const summary = summarizeHeldPositions(merged, openWalk.partial || redeemableWalk.partial);
+  const expectedPnl = expectedRows.reduce((sum, row) => sum + Number(row.unrealizedPnl), 0);
+  const expectedValue = expectedRows.reduce((sum, row) => sum + Number(row.currentValue), 0);
+  assert.ok(Math.abs(summary.totalPnl - expectedPnl) <= 1e-6, `totalPnl ${summary.totalPnl} != ${expectedPnl}`);
+  assert.ok(Math.abs(summary.cashOutNow - expectedValue) <= 1e-6, `cashOutNow ${summary.cashOutNow} != ${expectedValue}`);
+  // The totals are not the sums of the capped first-100 list.
+  const cappedPnl = merged.slice(0, 100).reduce((sum, row) => sum + row.cashPnl, 0);
+  const cappedValue = merged.slice(0, 100).reduce((sum, row) => sum + row.currentValue, 0);
+  assert.ok(Math.abs(cappedPnl - expectedPnl) > 1e-6, 'capped and uncapped PnL sums unexpectedly match');
+  assert.ok(Math.abs(cappedValue - expectedValue) > 1e-6, 'capped and uncapped value sums unexpectedly match');
+
+  assert.equal(summary.totalPositionCount, merged.length);
+  assert.equal(summary.activePickCount, merged.length);
+  assert.equal(summary.totalsPartial, false);
+  // The returned list stays capped at 100 while the count covers all pages.
+  assert.equal(merged.slice(0, 100).length, 100);
+  assert.ok(summary.totalPositionCount > 100, `totalPositionCount ${summary.totalPositionCount} should exceed the cap`);
+});
+
+test('page walk stops at the 20-page ceiling and marks totals partial', async () => {
+  const positionSchema = await getPositionSchema();
+  const parsed = OPEN_DATA.map((row) => positionSchema.parse(row));
+
+  // 25 pages of 2 rows; every page reports hasMore=true except the last.
+  const rows = syntheticRows(parsed, 50, '-ceiling');
+  const pages = chunkIntoPages(rows, 2);
+  assert.equal(pages.length, 25);
+
+  const pulled = { count: 0 };
+  const walk = await walkAllPages(fakePaginator(pages, pulled));
+  assert.equal(walk.partial, true);
+  // Exactly 20 pages were consumed; page 21 is never requested.
+  assert.equal(pulled.count, 20);
+  assert.equal(walk.items.length, 40);
+
+  const summary = summarizeHeldPositions(walk.items.map(mapSdkPosition), walk.partial);
+  assert.equal(summary.totalsPartial, true);
+  assert.equal(summary.totalPositionCount, 40);
+});
+
+test('exactly 20 pages whose last page has hasMore=false is not partial', async () => {
+  const positionSchema = await getPositionSchema();
+  const parsed = OPEN_DATA.map((row) => positionSchema.parse(row));
+
+  const rows = syntheticRows(parsed, 20, '-exact');
+  const pages = chunkIntoPages(rows, 1); // 20 pages, last one hasMore=false
+  assert.equal(pages.length, 20);
+
+  const pulled = { count: 0 };
+  const walk = await walkAllPages(fakePaginator(pages, pulled));
+  assert.equal(walk.partial, false);
+  assert.equal(pulled.count, 20);
+
+  const summary = summarizeHeldPositions(walk.items.map(mapSdkPosition), walk.partial);
+  assert.equal(summary.totalsPartial, false);
+  assert.equal(summary.totalPositionCount, 20);
 });

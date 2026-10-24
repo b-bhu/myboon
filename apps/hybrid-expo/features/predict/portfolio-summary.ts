@@ -63,23 +63,69 @@ export function mergeHeldPositions(open: Position[], redeemable: Position[]): Po
   return merged;
 }
 
+/**
+ * Upper bound on Data API v2 pages walked per held-position status (issue #426,
+ * PR #445): summary totals must cover every held position, but the walk is
+ * bounded so a pathological backend cannot make it unbounded.
+ */
+export const HELD_POSITIONS_PAGE_CEILING = 20;
+
+/**
+ * Accumulate every page of a paginated SDK list without a list cap. Stops at
+ * maxPages pages: if that last consumed page still reported hasMore, the
+ * result is partial: true (totals built from it are lower bounds) — page
+ * maxPages + 1 is never requested. A page that reports hasMore but has no
+ * successor (paginator exhausted under the ceiling) is not partial.
+ */
+export async function walkAllPages<T>(
+  paginator: AsyncIterable<{ items: T[]; hasMore: boolean }>,
+  maxPages = HELD_POSITIONS_PAGE_CEILING,
+): Promise<{ items: T[]; partial: boolean }> {
+  const items: T[] = [];
+  let pages = 0;
+  let stoppedAtCeiling = false;
+  for await (const page of paginator) {
+    items.push(...page.items);
+    pages += 1;
+    if (pages >= maxPages) {
+      // Never request page maxPages + 1: whether more pages exist is taken
+      // from the flag on the last consumed page.
+      stoppedAtCeiling = page.hasMore;
+      break;
+    }
+  }
+  return { items, partial: stoppedAtCeiling };
+}
+
 export interface HeldPositionSummary {
   totalPnl: number;
   cashOutNow: number;
   activePickCount: number;
   openPositions: number;
+  /**
+   * True when the held-position page walk stopped at HELD_POSITIONS_PAGE_CEILING
+   * while the last page still reported more pages: the totals and
+   * totalPositionCount are then lower bounds, not exact totals.
+   */
+  totalsPartial: boolean;
+  /** Held-position count over all walked pages (deduped by assetId). */
+  totalPositionCount: number;
 }
 
 /**
  * Summary over the merged held positions, using exactly the old v1 formulas:
  * totalPnl = sum cashPnl, cashOutNow = sum currentValue,
- * activePickCount = openPositions = held positions count.
+ * activePickCount = openPositions = held positions count. `positions` is the
+ * deduped union from mergeHeldPositions(), so totalPositionCount equals its
+ * length; `partial` marks totals that the page ceiling truncated.
  */
-export function summarizeHeldPositions(positions: PortfolioPosition[]): HeldPositionSummary {
+export function summarizeHeldPositions(positions: PortfolioPosition[], partial = false): HeldPositionSummary {
   return {
     totalPnl: positions.reduce((sum, position) => sum + position.cashPnl, 0),
     cashOutNow: positions.reduce((sum, position) => sum + position.currentValue, 0),
     activePickCount: positions.length,
     openPositions: positions.length,
+    totalsPartial: partial,
+    totalPositionCount: positions.length,
   };
 }

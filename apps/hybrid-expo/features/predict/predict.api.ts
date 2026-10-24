@@ -27,7 +27,12 @@ import type { Activity, Position } from '@polymarket/client';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import { normalizePredictError } from './predict.errors';
 import { POLYMARKET_BUILDER_CODE } from './predict.signing';
-import { mapSdkPosition, mergeHeldPositions, summarizeHeldPositions } from './portfolio-summary';
+import {
+  mapSdkPosition,
+  mergeHeldPositions,
+  summarizeHeldPositions,
+  walkAllPages,
+} from './portfolio-summary';
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -1228,6 +1233,13 @@ export interface PortfolioData {
     cashOutNow?: number;
     readyToCollect?: number;
     activePickCount?: number;
+    /**
+     * Held-position totals cover all pages up to a 20-page ceiling per status
+     * (open, redeemable). When the ceiling is hit, the totals and
+     * totalPositionCount are lower bounds and totalsPartial is true.
+     */
+    totalsPartial: boolean;
+    totalPositionCount: number;
     closedPickCount?: number;
     activityCount?: number;
     hasActivity?: boolean;
@@ -1374,9 +1386,9 @@ export async function fetchActivity(client: SecureClient): Promise<ActivityItem[
 }
 
 export async function fetchPortfolio(client: SecureClient): Promise<PortfolioData> {
-  const [sdkOpen, sdkRedeemable, sdkClosed, value, activities, profile, recentTrades] = await Promise.all([
-    collectSdkPages(client.listPositions({ status: PositionStatus.Open }), OPEN_POSITIONS_CAP),
-    collectSdkPages(client.listPositions({ status: PositionStatus.Redeemable }), REDEEMABLE_POSITIONS_CAP),
+  const [openPage, redeemablePage, sdkClosed, value, activities, profile, recentTrades] = await Promise.all([
+    walkAllPages(client.listPositions({ status: PositionStatus.Open })),
+    walkAllPages(client.listPositions({ status: PositionStatus.Redeemable })),
     collectSdkPages(client.listPositions({ status: PositionStatus.Closed }), CLOSED_POSITIONS_CAP),
     client.fetchPortfolioValue(),
     collectSdkPages(client.listActivity(), ACTIVITY_CAP),
@@ -1385,14 +1397,19 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
   ]);
   // Old v1 GET /positions returned every held position (redeemable rows
   // included); v2 needs the OPEN + REDEEMABLE union, deduped by assetId (#426).
-  const positions = mergeHeldPositions(sdkOpen, sdkRedeemable).map(mapSdkPosition);
-  const redeemablePositions = sdkRedeemable
+  // Summary totals are computed over every walked page (bounded by a 20-page
+  // ceiling per status, flagged totalsPartial when hit), while the returned
+  // lists stay capped (#445).
+  const merged = mergeHeldPositions(openPage.items, redeemablePage.items).map(mapSdkPosition);
+  const positions = merged.slice(0, OPEN_POSITIONS_CAP);
+  const redeemablePositions = redeemablePage.items
+    .slice(0, REDEEMABLE_POSITIONS_CAP)
     .map(mapSdkPosition)
     .filter((position) => position.currentValue >= 0.01);
   const closedPositions = sdkClosed.map(mapSdkClosedPosition);
   const activity = activities.map(mapSdkActivity);
   // Old v1 summary formulas, applied to the deduped held-position union.
-  const heldSummary = summarizeHeldPositions(positions);
+  const heldSummary = summarizeHeldPositions(merged, openPage.partial || redeemablePage.partial);
   const readyToCollect = redeemablePositions.reduce((sum, position) => sum + position.currentValue, 0);
   const totalRealizedPnl = closedPositions.reduce((sum, position) => sum + position.realizedPnl, 0);
   const totalCollected = activity
@@ -1419,10 +1436,12 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
       cashOutNow: heldSummary.cashOutNow,
       readyToCollect,
       activePickCount: heldSummary.activePickCount,
+      totalsPartial: heldSummary.totalsPartial,
+      totalPositionCount: heldSummary.totalPositionCount,
       closedPickCount: closedPositions.length,
       activityCount: activity.length,
       hasActivity: activity.length > 0,
-      hasAnyPicks: positions.length + closedPositions.length > 0,
+      hasAnyPicks: merged.length + closedPositions.length > 0,
       totalCollected,
       totalRealizedPnl,
     },
