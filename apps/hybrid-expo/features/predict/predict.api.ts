@@ -20,12 +20,20 @@ import type {
   SportOutcomeDetail,
   TrendingMarket,
 } from '@/features/predict/predict.types';
-import { OrderSide, OrderType } from '@polymarket/client';
+import { OrderSide, OrderType, PositionStatus } from '@polymarket/client';
 import { fetchBalanceAllowance, fetchTransaction } from '@polymarket/client/actions';
 import type { SecureClient, TransactionHandle } from '@polymarket/client';
+import type { Activity, Position } from '@polymarket/client';
 import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
 import { normalizePredictError } from './predict.errors';
 import { POLYMARKET_BUILDER_CODE } from './predict.signing';
+import {
+  mapSdkPosition,
+  mergeHeldPositions,
+  sumReadyToCollect,
+  summarizeHeldPositions,
+  walkAllPages,
+} from './portfolio-summary';
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -1226,6 +1234,14 @@ export interface PortfolioData {
     cashOutNow?: number;
     readyToCollect?: number;
     activePickCount?: number;
+    /**
+     * Held-position totals cover all pages up to a 20-page ceiling per status
+     * (open, redeemable); readyToCollect sums every walked redeemable page.
+     * When the ceiling is hit, the totals and totalPositionCount are lower
+     * bounds and totalsPartial is true.
+     */
+    totalsPartial: boolean;
+    totalPositionCount: number;
     closedPickCount?: number;
     activityCount?: number;
     hasActivity?: boolean;
@@ -1280,106 +1296,127 @@ export async function fetchRecentAccountTrades(client: SecureClient): Promise<Re
   }));
 }
 
-async function collectSdkPages<T>(paginator: AsyncIterable<{ items: T[] }>): Promise<T[]> {
+async function collectSdkPages<T>(
+  paginator: AsyncIterable<{ items: T[]; hasMore: boolean }>,
+  cap = Number.POSITIVE_INFINITY,
+): Promise<T[]> {
   const items: T[] = [];
-  for await (const page of paginator) items.push(...page.items);
-  return items;
+  for await (const page of paginator) {
+    items.push(...page.items);
+    // Stop pulling pages once the cap is reached so we do not over-fetch.
+    if (items.length >= cap) break;
+  }
+  return items.slice(0, cap);
+}
+
+// Data API v2 caps per wallet: redeemable 50, closed 50, activity 500 (issue #426).
+// HELD_POSITIONS_CAP applies to the merged, deduped OPEN + REDEEMABLE
+// held-position list (`positions`), not to open rows only (issue #445).
+const HELD_POSITIONS_CAP = 100;
+const REDEEMABLE_POSITIONS_CAP = 50;
+const CLOSED_POSITIONS_CAP = 50;
+const ACTIVITY_CAP = 500;
+
+/** SDK timestamps are epoch MILLISECONDS in 0.12; app DTOs keep SECONDS. */
+function epochMsToSeconds(ms: number): number {
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
 }
 
 function numberOrZero(value: unknown): number {
   return toNumber(value) ?? 0;
 }
 
-function mapSdkPosition(value: unknown): PortfolioPosition {
-  const position = value as Record<string, unknown>;
+function mapSdkClosedPosition(value: Position): ClosedPortfolioPosition {
   return {
-    proxyWallet: typeof position.wallet === 'string' ? position.wallet : '',
-    asset: typeof position.tokenId === 'string' ? position.tokenId : '',
-    conditionId: typeof position.conditionId === 'string' ? position.conditionId : '',
-    size: numberOrZero(position.size),
-    avgPrice: numberOrZero(position.avgPrice),
-    currentValue: numberOrZero(position.currentValue),
-    cashPnl: numberOrZero(position.cashPnl),
-    percentPnl: numberOrZero(position.percentPnl),
-    curPrice: numberOrZero(position.curPrice),
-    title: typeof position.title === 'string' ? position.title : '',
-    slug: typeof position.slug === 'string' ? position.slug : '',
-    eventSlug: typeof position.eventSlug === 'string' ? position.eventSlug : '',
-    outcome: typeof position.outcome === 'string' ? position.outcome : '',
-    outcomeIndex: numberOrZero(position.outcomeIndex),
-    icon: typeof position.icon === 'string' ? position.icon : null,
-    endDate: typeof position.endDate === 'string' ? position.endDate : null,
-    negativeRisk: position.negativeRisk === true,
+    proxyWallet: value.wallet,
+    asset: value.assetId,
+    conditionId: value.conditionId,
+    avgPrice: numberOrZero(value.avgPrice),
+    totalBought: numberOrZero(value.totalSize),
+    realizedPnl: numberOrZero(value.realizedPnl),
+    curPrice: numberOrZero(value.currentPrice),
+    timestamp: value.lastEventAt !== undefined ? epochMsToSeconds(value.lastEventAt) : 0,
+    title: value.title ?? '',
+    slug: value.slug ?? '',
+    icon: value.icon ?? null,
+    eventSlug: value.eventSlug ?? '',
+    outcome: value.outcome ?? '',
+    outcomeIndex: numberOrZero(value.outcomeIndex),
+    oppositeOutcome: value.oppositeOutcome ?? '',
+    oppositeAsset: value.oppositeAssetId ?? '',
+    endDate: value.endDate ?? null,
   };
 }
 
-function mapSdkClosedPosition(value: unknown): ClosedPortfolioPosition {
-  const position = value as Record<string, unknown>;
+function mapSdkActivity(value: Activity): ActivityItem {
+  if (value.type === 'TRADE' && value.isCombo === false) {
+    return {
+      timestamp: epochMsToSeconds(value.timestamp),
+      type: value.type,
+      side: value.side,
+      size: numberOrZero(value.shares),
+      usdcSize: numberOrZero(value.amount),
+      price: numberOrZero(value.price),
+      asset: value.assetId,
+      conditionId: value.conditionId,
+      eventSlug: value.eventSlug,
+      outcomeIndex: value.outcomeIndex,
+      title: value.title,
+      slug: value.slug,
+      outcome: value.outcome,
+    };
+  }
+  // Non-CLOB rows (combo trades, SPLIT/MERGE/REDEEM, REWARD/DEPOSIT/...).
   return {
-    proxyWallet: typeof position.wallet === 'string' ? position.wallet : '',
-    asset: typeof position.tokenId === 'string' ? position.tokenId : '',
-    conditionId: typeof position.conditionId === 'string' ? position.conditionId : '',
-    avgPrice: numberOrZero(position.avgPrice),
-    totalBought: numberOrZero(position.totalBought),
-    realizedPnl: numberOrZero(position.realizedPnl),
-    curPrice: numberOrZero(position.curPrice),
-    timestamp: numberOrZero(position.timestamp),
-    title: typeof position.title === 'string' ? position.title : '',
-    slug: typeof position.slug === 'string' ? position.slug : '',
-    icon: typeof position.icon === 'string' ? position.icon : null,
-    eventSlug: typeof position.eventSlug === 'string' ? position.eventSlug : '',
-    outcome: typeof position.outcome === 'string' ? position.outcome : '',
-    outcomeIndex: numberOrZero(position.outcomeIndex),
-    oppositeOutcome: typeof position.oppositeOutcome === 'string' ? position.oppositeOutcome : '',
-    oppositeAsset: typeof position.oppositeTokenId === 'string' ? position.oppositeTokenId : '',
-    endDate: typeof position.endDate === 'string' ? position.endDate : null,
-  };
-}
-
-function mapSdkActivity(value: unknown): ActivityItem {
-  const activity = value as Record<string, unknown>;
-  const isTrade = activity.type === 'TRADE' && activity.isCombo !== true;
-  return {
-    timestamp: numberOrZero(activity.timestamp),
-    type: typeof activity.type === 'string' ? activity.type : 'UNKNOWN',
-    side: isTrade && typeof activity.side === 'string' ? activity.side : '',
-    size: isTrade ? numberOrZero(activity.shares) : 0,
-    usdcSize: numberOrZero(activity.amount),
-    price: isTrade ? numberOrZero(activity.price) : 0,
-    asset: isTrade && typeof activity.tokenId === 'string' ? activity.tokenId : undefined,
-    conditionId: typeof activity.conditionId === 'string' ? activity.conditionId : undefined,
-    eventSlug: typeof activity.eventSlug === 'string' ? activity.eventSlug : undefined,
-    outcomeIndex: isTrade ? numberOrZero(activity.outcomeIndex) : undefined,
-    title: typeof activity.title === 'string' ? activity.title : 'Account activity',
-    slug: typeof activity.slug === 'string' ? activity.slug : '',
-    outcome: isTrade && typeof activity.outcome === 'string' ? activity.outcome : '',
+    timestamp: epochMsToSeconds(value.timestamp),
+    type: value.type,
+    side: '',
+    size: 0,
+    usdcSize: numberOrZero('amount' in value ? value.amount : 0),
+    price: 0,
+    asset: undefined,
+    conditionId: 'conditionId' in value ? value.conditionId : undefined,
+    eventSlug: 'eventSlug' in value ? value.eventSlug : undefined,
+    outcomeIndex: undefined,
+    title: 'title' in value ? value.title : 'Account activity',
+    slug: 'slug' in value ? value.slug : '',
+    outcome: '',
   };
 }
 
 export async function fetchActivity(client: SecureClient): Promise<ActivityItem[]> {
-  const activities = await collectSdkPages(client.listActivity());
+  const activities = await collectSdkPages(client.listActivity(), ACTIVITY_CAP);
   return activities.map(mapSdkActivity);
 }
 
 export async function fetchPortfolio(client: SecureClient): Promise<PortfolioData> {
-  const [sdkPositions, sdkClosed, values, activities, profile, recentTrades] = await Promise.all([
-    collectSdkPages(client.listPositions()),
-    collectSdkPages(client.listClosedPositions()),
+  const [openPage, redeemablePage, sdkClosed, value, activities, profile, recentTrades] = await Promise.all([
+    walkAllPages(client.listPositions({ status: PositionStatus.Open })),
+    walkAllPages(client.listPositions({ status: PositionStatus.Redeemable })),
+    collectSdkPages(client.listPositions({ status: PositionStatus.Closed }), CLOSED_POSITIONS_CAP),
     client.fetchPortfolioValue(),
-    collectSdkPages(client.listActivity()),
+    collectSdkPages(client.listActivity(), ACTIVITY_CAP),
     client.fetchPublicProfile({ address: client.account.wallet }),
     fetchRecentAccountTrades(client),
   ]);
-  const positions = sdkPositions.map(mapSdkPosition);
-  const redeemablePositions = sdkPositions
-    .filter((position) => (position as unknown as Record<string, unknown>).redeemable === true)
+  // Old v1 GET /positions returned every held position (redeemable rows
+  // included); v2 needs the OPEN + REDEEMABLE union, deduped by assetId (#426).
+  // Summary totals are computed over every walked page (bounded by a 20-page
+  // ceiling per status, flagged totalsPartial when hit), while the returned
+  // lists stay capped (#445).
+  const merged = mergeHeldPositions(openPage.items, redeemablePage.items).map(mapSdkPosition);
+  const positions = merged.slice(0, HELD_POSITIONS_CAP);
+  const redeemablePositions = redeemablePage.items
+    .slice(0, REDEEMABLE_POSITIONS_CAP)
     .map(mapSdkPosition)
     .filter((position) => position.currentValue >= 0.01);
   const closedPositions = sdkClosed.map(mapSdkClosedPosition);
   const activity = activities.map(mapSdkActivity);
-  const totalPnl = positions.reduce((sum, position) => sum + position.cashPnl, 0);
-  const cashOutNow = positions.reduce((sum, position) => sum + position.currentValue, 0);
-  const readyToCollect = redeemablePositions.reduce((sum, position) => sum + position.currentValue, 0);
+  // Old v1 summary formulas, applied to the deduped held-position union.
+  const heldSummary = summarizeHeldPositions(merged, openPage.partial || redeemablePage.partial);
+  // Summed over every walked redeemable page, not just the first 50 rows kept
+  // in redeemablePositions; rows below $0.01 are excluded either way (#445).
+  const readyToCollect = sumReadyToCollect(redeemablePage.items.map(mapSdkPosition));
   const totalRealizedPnl = closedPositions.reduce((sum, position) => sum + position.realizedPnl, 0);
   const totalCollected = activity
     .filter((entry) => entry.type === 'REDEEM')
@@ -1387,7 +1424,7 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
 
   return {
     address: client.account.wallet,
-    portfolioValue: values.reduce((sum, value) => sum + numberOrZero(value.value), 0),
+    portfolioValue: numberOrZero(value.value),
     positions,
     redeemablePositions,
     closedPositions,
@@ -1400,15 +1437,17 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
       xUsername: profile.xUsername ?? null,
     } : null,
     summary: {
-      openPositions: positions.length,
-      totalPnl,
-      cashOutNow,
+      openPositions: heldSummary.openPositions,
+      totalPnl: heldSummary.totalPnl,
+      cashOutNow: heldSummary.cashOutNow,
       readyToCollect,
-      activePickCount: positions.length,
+      activePickCount: heldSummary.activePickCount,
+      totalsPartial: heldSummary.totalsPartial,
+      totalPositionCount: heldSummary.totalPositionCount,
       closedPickCount: closedPositions.length,
       activityCount: activity.length,
       hasActivity: activity.length > 0,
-      hasAnyPicks: positions.length + closedPositions.length > 0,
+      hasAnyPicks: merged.length + closedPositions.length > 0,
       totalCollected,
       totalRealizedPnl,
     },
