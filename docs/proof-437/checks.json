@@ -1,0 +1,230 @@
+{
+ "390": {
+  "ctasAboveFold": true,
+  "heroOverlaps": [
+   [
+    0,
+    1
+   ]
+  ],
+  "headingsPerSection": [
+   "hero:1",
+   "feed:1",
+   "apps:1",
+   "wallet:1",
+   "try:1"
+  ],
+  "spot": false,
+  "walletInHero": false,
+  "minFont": [
+   12,
+   "⇄"
+  ],
+  "decorAriaHidden": true,
+  "xLink": 2,
+  "tooltip": {
+   "tiles": 5,
+   "before": [
+    "0",
+    "0",
+    "0",
+    "0",
+    "0"
+   ],
+   "focused": "1",
+   "fv": true
+  },
+  "sliders": [
+   {
+    "enter": [
+     "100",
+     "Swapped (example)"
+    ],
+    "afterReset": [
+     "0",
+     "Slide to swap"
+    ],
+    "space": [
+     "100",
+     "Swapped (example)"
+    ],
+    "shortDrag": [
+     "0",
+     "Slide to swap"
+    ],
+    "fullDrag": [
+     "100",
+     "Swapped (example)"
+    ],
+    "afterReset2": [
+     "0",
+     "Slide to swap"
+    ]
+   },
+   {
+    "enter": [
+     "100",
+     "Moved (example)"
+    ],
+    "afterReset": [
+     "0",
+     "Slide to move"
+    ],
+    "space": [
+     "100",
+     "Moved (example)"
+    ],
+    "shortDrag": [
+     "0",
+     "Slide to move"
+    ],
+    "fullDrag": [
+     "100",
+     "Moved (example)"
+    ],
+    "afterReset2": [
+     "0",
+     "Slide to move"
+    ]
+   }
+  ]
+ },
+ "1440": {
+  "ctasAboveFold": true,
+  "heroOverlaps": [],
+  "headingsPerSection": [
+   "hero:1",
+   "feed:1",
+   "apps:1",
+   "wallet:1",
+   "try:1"
+  ],
+  "spot": false,
+  "walletInHero": false,
+  "minFont": [
+   12,
+   "●"
+  ],
+  "decorAriaHidden": true,
+  "xLink": 2,
+  "tooltip": {
+   "tiles": 7,
+   "before": [
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0"
+   ],
+   "focused": "1",
+   "fv": true
+  },
+  "hoverOpacity": "1",
+  "sliders": [
+   {
+    "enter": [
+     "100",
+     "Swapped (example)"
+    ],
+    "afterReset": [
+     "0",
+     "Slide to swap"
+    ],
+    "space": [
+     "100",
+     "Swapped (example)"
+    ],
+    "shortDrag": [
+     "0",
+     "Slide to swap"
+    ],
+    "fullDrag": [
+     "100",
+     "Swapped (example)"
+    ],
+    "afterReset2": [
+     "0",
+     "Slide to swap"
+    ]
+   },
+   {
+    "enter": [
+     "100",
+     "Moved (example)"
+    ],
+    "afterReset": [
+     "0",
+     "Slide to move"
+    ],
+    "space": [
+     "100",
+     "Moved (example)"
+    ],
+    "shortDrag": [
+     "0",
+     "Slide to move"
+    ],
+    "fullDrag": [
+     "100",
+     "Moved (example)"
+    ],
+    "afterReset2": [
+     "0",
+     "Slide to move"
+    ]
+   }
+  ]
+ },
+ "reduced": {
+  "animations": 0,
+  "dots": 0,
+  "hiddenTiles": 1,
+  "py": 0
+ },
+ "nojs": {
+  "words": [
+   "Understand. Understand. Act.",
+   "Feed Feed",
+   "Apps",
+   "Wallet Wallet",
+   "Available on the Solana dApp Store."
+  ],
+  "tiles": 7,
+  "hiddenCards": 0,
+  "line": "Understand the market and act in the same app."
+ },
+ "layout": {
+  "390": {
+   "heroSwapToCtas": 128,
+   "feedStoryBelowHero": 35,
+   "walletPortfolioAboveWord": 127,
+   "walletWordAboveMove": 36,
+   "walletMoveAboveLine": 36,
+   "pacificaInside": {
+    "left": 32,
+    "right": 297,
+    "bottom": 168,
+    "xPct": 16,
+    "yPct": 68
+   },
+   "fail": []
+  },
+  "1440": {
+   "heroSwapToCtas": 52,
+   "feedStoryBelowHero": 157,
+   "walletPortfolioAboveWord": -78,
+   "walletWordAboveMove": -205,
+   "walletMoveAboveLine": 109,
+   "pacificaInside": {
+    "left": 238,
+    "right": 1131,
+    "bottom": 300,
+    "xPct": 19,
+    "yPct": 63
+   },
+   "fail": []
+  }
+ }
+}
