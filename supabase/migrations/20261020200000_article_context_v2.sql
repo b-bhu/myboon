@@ -1,4 +1,4 @@
--- #420/#418 follow-up: article_context_v1 v2. The #420 rewrite (v1, 20261020130000,
+-- #420/#418 follow-up: article_context_v1, current version v3 (dedup on narrow keys; v2 = key-only join-back). The #420 rewrite (v1, 20261020130000,
 -- never merged, applied to prod then rolled back) ranked history candidates on
 -- narrow keys first, but its history CTE joined the picked rows back AND
 -- re-applied every filter predicate (entity_ids IN, historyMode/itemIds/labels
@@ -33,6 +33,8 @@ END
 $access$;
 GRANT CREATE ON SCHEMA managed_knowledge_private TO myboon_knowledge_owner;
 SET LOCAL ROLE myboon_knowledge_owner;
+
+SET LOCAL lock_timeout = '5s';
 
 CREATE OR REPLACE FUNCTION managed_knowledge_private.article_context_v1(input jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$

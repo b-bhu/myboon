@@ -18,6 +18,8 @@ $access$;
 GRANT CREATE ON SCHEMA managed_knowledge_private TO myboon_knowledge_owner;
 SET LOCAL ROLE myboon_knowledge_owner;
 
+SET LOCAL lock_timeout = '5s';
+
 CREATE OR REPLACE FUNCTION managed_knowledge_private.article_context_v1(input jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $body$
 DECLARE base jsonb; items jsonb; candidate_entities jsonb; limit_count integer; candidate_truncated boolean; per_entity integer;
