@@ -11,9 +11,10 @@
 -- by key only (memberships (item_id,entity_id) PK, items/item_heads/article_items
 -- item_id PK, entities/entity_memories id PK), so the duplicate full scan is gone
 -- and the returned rows are identical.
+-- #418 v3: candidate branches narrow to (id, source_rank, ord); ranking reads a slim jsonb, and the wide jsonb + revision are rebuilt only for the 32 returned entities; returned entities unchanged.
 --
 -- NOT APPLIED. Needs Bucket's explicit yes (needs-bucket). Supersedes the
--- unmerged 20261020130000_article_context_spill.sql (v1); only the history CTE
+-- unmerged 20261020130000_article_context_spill.sql (v1); only the candidate dedup, the history CTE
 -- and the picked materialization differ from v1.
 -- Rollback: supabase/rollbacks/20261020200000_article_context_v2.down.sql
 --   (restores the 20261019213000 article_context_v1 body that is live on prod).
@@ -59,14 +60,10 @@ BEGIN
   WITH labels AS (
     SELECT lower(btrim(value)) AS label FROM jsonb_array_elements_text(input->'labels') value
   ), requested_public AS (
-    SELECT jsonb_build_object('id',e.id,'slug',e.slug,'name',e.name,'type',e.type,'aliases',e.aliases,'summary',e.summary,
-      'status',e.status,'show_in_carousel',false,'metadata',e.metadata,'created_at',e.created_at,'updated_at',e.updated_at,
-      'revision',managed_knowledge_private.entity_revision_v1(e.id),'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text) value
+    SELECT e.id::text AS id, 0::bigint AS ord
     FROM public.entities e WHERE e.status='active' AND e.id::text IN (SELECT jsonb_array_elements_text(input->'entityIds'))
   ), additional AS (
-    SELECT jsonb_build_object('id',e.id,'slug',e.slug,'name',e.name,'type',e.type,'aliases',e.aliases,'summary',e.summary,
-      'status',e.status,'show_in_carousel',false,'metadata',e.metadata,'created_at',e.created_at,'updated_at',e.updated_at,
-      'revision',managed_knowledge_private.entity_revision_v1(e.id),'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text) value
+    SELECT e.id::text AS id, 0::bigint AS ord
     FROM public.entities e WHERE e.status='active' AND EXISTS (
       SELECT 1 FROM labels l WHERE lower(btrim(e.name))=l.label OR lower(btrim(e.slug))=l.label
         OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(e.aliases) alias WHERE lower(btrim(alias))=l.label)
@@ -74,13 +71,7 @@ BEGIN
         OR (NOT coalesce((input->>'identityOnly')::boolean,false) AND position(l.label in lower(coalesce(e.metadata::text,''))) > 0)
     )
   ), private_additional AS (
-    -- #337 PR-A: managed identity comes from the private columns, not binding.
-    SELECT jsonb_build_object('id',p.id,'slug',p.slug,'name',p.name,'type',p.type,'aliases',p.aliases,'summary',p.summary,
-      'status',p.status,'show_in_carousel',p.show_in_carousel,'metadata',p.metadata,'updated_at',p.updated_at,
-      'catalogEntityId',p.catalog_entity_id,'identityKey',p.identity_key,'revision',managed_knowledge_private.entity_revision_v1(p.id)) value
-    -- #336: a revision here reads 'unavailable' only when the row is not active
-    -- (status NOT NULL), so the column itself is the same predicate without
-    -- the per-row SHA-256 digest.
+    SELECT p.id::text AS id, 0::bigint AS ord
     FROM managed_knowledge_private.entities p WHERE p.status = 'active' AND EXISTS (
       SELECT 1 FROM labels l WHERE lower(btrim(p.name))=l.label
         OR lower(btrim(p.slug))=l.label
@@ -89,29 +80,53 @@ BEGIN
       OR (NOT coalesce((input->>'identityOnly')::boolean,false) AND position(l.label in lower(p.metadata::text)) > 0)
     )
   ), requested_private AS (
-    SELECT jsonb_build_object('id',p.id,'slug',p.slug,'name',p.name,'type',p.type,'aliases',p.aliases,'summary',p.summary,
-      'status',p.status,'show_in_carousel',p.show_in_carousel,'metadata',p.metadata,'updated_at',p.updated_at,
-      'catalogEntityId',p.catalog_entity_id,'identityKey',p.identity_key,'revision',managed_knowledge_private.entity_revision_v1(p.id)) value
-    -- #336: a revision here reads 'unavailable' only when the row is not active
-    -- (status NOT NULL), so the column itself is the same predicate without
-    -- the per-row SHA-256 digest.
+    SELECT p.id::text AS id, 0::bigint AS ord
     FROM managed_knowledge_private.entities p
     WHERE p.status = 'active'
       AND p.id::text IN (SELECT jsonb_array_elements_text(input->'entityIds'))
   ), candidates AS (
+    -- #418 v3: the branches above are narrowed to (id, source_rank, ord) so the
+    -- dedup below sorts narrow keys only, and rank_source keeps the winners
+    -- slim (only the keys the ranking reads). Before, every branch built the
+    -- full wide jsonb row (metadata, aliases, summary and the per-row revision
+    -- digest) for every match and DISTINCT ON sorted those wide rows; the
+    -- doubly referenced eligible (bounded + truncation count) materialized
+    -- them, so short labels like "us" match thousands of rows by substring
+    -- and spilled at work_mem=4MB. bounded_values rebuilds the wide jsonb row
+    -- and revision only for the 32 returned entities; results are
+    -- byte-identical.
     -- `context_v1` is authoritative for the refreshed public binding. Keep it
     -- ahead of supplementary public/private matches when IDs overlap.
-    SELECT value, 0 AS source_rank FROM requested_public
-    UNION ALL SELECT value, 1 FROM jsonb_array_elements(base->'entities') value
-    UNION ALL SELECT value, 2 FROM additional
-    UNION ALL SELECT value, 3 FROM requested_private
-    UNION ALL SELECT value, 4 FROM private_additional
+    SELECT id, 0 AS source_rank, ord FROM requested_public
+    UNION ALL SELECT value->>'id', 1, ordinality FROM jsonb_array_elements(base->'entities') WITH ORDINALITY AS t(value, ordinality)
+    UNION ALL SELECT id, 2, ord FROM additional
+    UNION ALL SELECT id, 3, ord FROM requested_private
+    UNION ALL SELECT id, 4, ord FROM private_additional
   ), deduplicated AS (
-    SELECT DISTINCT ON (value->>'id') value
-    FROM candidates
-    ORDER BY value->>'id', source_rank
+    SELECT DISTINCT ON (id) id, source_rank, ord FROM candidates
+    ORDER BY id, source_rank, ord
+  ), rank_source AS (
+    -- Ranks 0 and 2 built identical public rows today and ranks 3 and 4
+    -- identical private rows, so each key-joined rebuild below covers both
+    -- ranks; the base branch copies its picked element back by ordinality.
+    -- Slim ranking rows: only the keys ranked_entities reads; the full wide
+    -- row and the revision digest are rebuilt in bounded_values for the 32
+    -- returned entities.
+    SELECT d.id, d.source_rank, d.ord,
+      jsonb_build_object('id',e.id,'name',e.name,'slug',e.slug,'aliases',e.aliases,'summary',e.summary,'metadata',e.metadata) value
+    FROM deduplicated d JOIN public.entities e ON e.id::text = d.id
+    WHERE d.source_rank IN (0,2)
+    UNION ALL
+    SELECT d.id, d.source_rank, d.ord, (base->'entities')->(d.ord - 1)::integer value
+    FROM deduplicated d
+    WHERE d.source_rank = 1
+    UNION ALL
+    SELECT d.id, d.source_rank, d.ord,
+      jsonb_build_object('id',p.id,'name',p.name,'slug',p.slug,'aliases',p.aliases,'summary',p.summary,'metadata',p.metadata) value
+    FROM deduplicated d JOIN managed_knowledge_private.entities p ON p.id::text = d.id
+    WHERE d.source_rank IN (3,4)
   ), ranked_entities AS (
-    SELECT value, ((value->>'id') IN (SELECT jsonb_array_elements_text(input->'entityIds'))) requested,
+    SELECT id, source_rank, ord, ((value->>'id') IN (SELECT jsonb_array_elements_text(input->'entityIds'))) requested,
       EXISTS(SELECT 1 FROM labels l WHERE l.label = lower(btrim(value->>'name'))
         OR l.label = lower(btrim(value->>'slug'))
         OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(coalesce(value->'aliases','[]'::jsonb)) alias WHERE lower(btrim(alias))=l.label)) exact_match,
@@ -119,13 +134,38 @@ BEGIN
         OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(coalesce(value->'aliases','[]'::jsonb)) alias WHERE position(l.label in lower(alias)) > 0)) name_hits,
       (SELECT count(*) FROM labels l WHERE position(l.label in lower(coalesce(value->>'summary',''))) > 0
         OR position(l.label in lower(coalesce(value->'metadata','{}'::jsonb)::text)) > 0) context_hits
-    FROM deduplicated
+    FROM rank_source
   ), eligible AS (
     SELECT * FROM ranked_entities WHERE NOT coalesce((input->>'identityOnly')::boolean,false) OR requested OR exact_match
   ), bounded AS (
-    SELECT * FROM eligible ORDER BY requested DESC,exact_match DESC,name_hits DESC,context_hits DESC,value->>'id' LIMIT 32
+    SELECT * FROM eligible ORDER BY requested DESC,exact_match DESC,name_hits DESC,context_hits DESC,id LIMIT 32
+  ), bounded_values AS (
+    -- Same three branches as rank_source, but the full wide jsonb row and the
+    -- per-row revision digest are built only for the 32 returned entities.
+    SELECT jsonb_build_object('id',e.id,'slug',e.slug,'name',e.name,'type',e.type,'aliases',e.aliases,'summary',e.summary,
+      'status',e.status,'show_in_carousel',false,'metadata',e.metadata,'created_at',e.created_at,'updated_at',e.updated_at,
+      'revision',managed_knowledge_private.entity_revision_v1(e.id),'catalogEntityId',e.id,'identityKey','catalog:' || e.id::text) value,
+      b.requested, b.exact_match, b.name_hits, b.context_hits, b.id
+    FROM bounded b JOIN public.entities e ON e.id::text = b.id
+    WHERE b.source_rank IN (0,2)
+    UNION ALL
+    SELECT (base->'entities')->(b.ord - 1)::integer value,
+      b.requested, b.exact_match, b.name_hits, b.context_hits, b.id
+    FROM bounded b
+    WHERE b.source_rank = 1
+    UNION ALL
+    -- #337 PR-A: managed identity comes from the private columns, not binding.
+    SELECT jsonb_build_object('id',p.id,'slug',p.slug,'name',p.name,'type',p.type,'aliases',p.aliases,'summary',p.summary,
+      'status',p.status,'show_in_carousel',p.show_in_carousel,'metadata',p.metadata,'updated_at',p.updated_at,
+      'catalogEntityId',p.catalog_entity_id,'identityKey',p.identity_key,'revision',managed_knowledge_private.entity_revision_v1(p.id)) value,
+      b.requested, b.exact_match, b.name_hits, b.context_hits, b.id
+    -- #336: a revision here reads 'unavailable' only when the row is not active
+    -- (status NOT NULL), so the column itself is the same predicate without
+    -- the per-row SHA-256 digest.
+    FROM bounded b JOIN managed_knowledge_private.entities p ON p.id::text = b.id
+    WHERE b.source_rank IN (3,4)
   )
-  SELECT coalesce((SELECT jsonb_agg(value ORDER BY requested DESC,exact_match DESC,name_hits DESC,context_hits DESC,value->>'id') FROM bounded),'[]'::jsonb),
+  SELECT coalesce((SELECT jsonb_agg(value ORDER BY requested DESC,exact_match DESC,name_hits DESC,context_hits DESC,id) FROM bounded_values),'[]'::jsonb),
     (SELECT count(*) > 32 FROM eligible)
     INTO candidate_entities, candidate_truncated;
   -- The aggregate above intentionally sees every durable-ID-deduplicated
