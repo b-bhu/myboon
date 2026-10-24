@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
 # #418: run 20261020200000_article_context_v2 + its rollback on a THROWAWAY
 # local Postgres 17. Never points at Supabase. Proves byte-identical outputs for
-# the article_context_v1 matrix, the temp-disk contrast (per-call auto_explain
-# external-merge sort disks under small work_mem), the #420 determinism keys,
+# the article_context_v1 matrix, the temp-disk contrast (per-call temp blocks from
+# pg_stat_statements under small work_mem; no query logging), the #420 determinism keys,
 # and -- new for v2 -- that the history statement does not pay the #420 v1
 # join-back regression: against the v1 fixture (the unmerged 20261020130000
 # body, from the #420 review reference) with work_mem 4MB and enable_nestloop=off,
-# the new function's plan mentions no more 'Scan on entity_memories' lines than
-# the v1 one in the article_context history statement and its elapsed stays
-# under 1.2x the v1 elapsed (no re-evaluated predicates on the scan).
+# the new function scans entity_memories no more often than v1
+# (pg_stat_xact_user_tables) and its history statement's elapsed
+# (pg_stat_statements) stays under 1.2x the v1 elapsed (no re-evaluated predicates on the scan).
 # Usage: bash supabase/tests/20261020200000_article_context_v2.pg-test.sh
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${PG_BIN:-/usr/lib/postgresql/17/bin}
-TMP=$(mktemp -d /tmp/issue418v2.XXXX); PORT=55421; DB=db418v2
+TMP=$(mktemp -d "${PG_TEST_ROOT:-/home/box/work}/issue418v2.XXXX"); PORT=55421; DB=db418v2
 MIG=20261020200000_article_context_v2.sql
 DOWN=20261020200000_article_context_v2.down.sql
 FIX=20261020130000_article_context_spill.fixture.sql
 trap '"$BIN/pg_ctl" -D "$TMP/data" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 "$BIN/initdb" -D "$TMP/data" -U postgres -A trust >/dev/null
-"$BIN/pg_ctl" -D "$TMP/data" -o "-p $PORT -k $TMP -c listen_addresses='' -c session_preload_libraries=auto_explain -c auto_explain.log_min_duration=0 -c auto_explain.log_nested_statements=on -c auto_explain.log_analyze=on -c auto_explain.log_buffers=on" -l "$TMP/log" -w start >/dev/null
+"$BIN/pg_ctl" -D "$TMP/data" -o "-p $PORT -k $TMP -c listen_addresses='' -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c log_min_duration_statement=-1 -c log_statement=none" -l "$TMP/log" -w start >/dev/null
 "$BIN/createdb" -h "$TMP" -p $PORT -U postgres "$DB"
 PSQL=(psql -X -q -h "$TMP" -p $PORT -U postgres -d "$DB" -v ON_ERROR_STOP=1)
+"${PSQL[@]}" -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements" >/dev/null
 M=$REPO/supabase/migrations; T=$REPO/supabase/tests; R=$REPO/supabase/rollbacks; FAILS=0
 
 # Supabase shim (roles/schemas/extensions) for the throwaway cluster; NOT Supabase, NOT prod.
@@ -190,13 +191,13 @@ compare() {
 }
 
 # spill_run <work_mem> <label>: one ctx call of cases/spill.sql with that
-# work_mem and auto_explain (ANALYZE, BUFFERS, nested statements) enabled for
-# this session only; sums every "external merge  Disk: NkB" sort in the call.
-# (pg_stat_database temp counters lag per-backend flushes, so the per-call plan
-# log is the reliable signal.) Prints 'label wm: elapsed_ms=.. spill_kB=.. sorts=..'.
+# work_mem; spill_kB is the top-level call's temp_blks_written x 8kB from
+# pg_stat_statements (in-memory counters, no query logging), spilling_stmts the
+# nested statements that wrote temp blocks.
+# Prints 'label wm: elapsed_ms=.. spill_kB=.. spilling_stmts=..'.
 spill_run() {
-  local wm=$1 label=$2 off t0 t1 kb n
-  off=$(stat -c %s "$TMP/log")
+  local wm=$1 label=$2 t0 t1 kb n
+  "${READ[@]}" -c "SELECT pg_stat_statements_reset()" >/dev/null
   t0=$(date +%s%3N)
   if ! PGOPTIONS="-c work_mem=$wm" "${CTX[@]}" -f "$TMP/cases/spill.sql" \
       > "$TMP/spill.$label.$wm.out" 2> "$TMP/spill.$label.$wm.err"; then
@@ -204,11 +205,9 @@ spill_run() {
     return 0
   fi
   t1=$(date +%s%3N)
-  tail -c +$((off+1)) "$TMP/log" > "$TMP/plan.$label.$wm"
-  kb=$(grep -o 'external merge  Disk: [0-9]*kB' "$TMP/plan.$label.$wm" | grep -o '[0-9]*' | awk '{s+=$1} END{print s+0}')
-  n=$(grep -c 'external merge' "$TMP/plan.$label.$wm" || true)
-  echo "$label $wm: elapsed_ms=$((t1-t0)) spill_kB=$kb external_sorts=$n"
-  grep -A2 'WindowAgg' "$TMP/plan.$label.$wm" | grep -m1 -A0 'Sort ' >/dev/null || true
+  kb=$("${READ[@]}" -c "SELECT COALESCE(sum(temp_blks_written),0)*8 FROM pg_stat_statements WHERE toplevel AND query LIKE '%article_context_v1%'")
+  n=$("${READ[@]}" -c "SELECT count(*) FROM pg_stat_statements WHERE NOT toplevel AND temp_blks_written > 0")
+  echo "$label $wm: elapsed_ms=$((t1-t0)) spill_kB=$kb spilling_stmts=$n"
 }
 kb_of() { sed -n 's/.*spill_kB=\([0-9]*\).*/\1/p'; }
 
@@ -260,42 +259,26 @@ done
 # entity_memories was seq-scanned a second time evaluating the label
 # position() predicates. Deploy the v1 fixture (the old, regressed body),
 # then v2 again, and compare the article_context history statement, i.e. the
-# auto_explain nested statement whose plan reads entity_memories, run at the
+# nested statement that reads entity_memories, run at the
 # production work_mem with enable_nestloop=off (hash/seq plans) on the
 # targeted case that carries labels + sourceRefs + entityIds.
 echo "== no duplicate scan: v1 fixture vs v2 (history statement, enable_nestloop=off)"
 declare -A DUP_MS DUP_SCANS
 scan_run() {
-  local label=$1 off
-  off=$(stat -c %s "$TMP/log")
-  if ! PGOPTIONS='-c work_mem=4MB -c enable_nestloop=off' "${CTX[@]}" -f "$TMP/cases/c_targeted_body.sql" \
-      > "$TMP/dup.$label.out" 2> "$TMP/dup.$label.err"; then
+  local label=$1
+  "${READ[@]}" -c "SELECT pg_stat_statements_reset()" >/dev/null
+  # One transaction: pg_stat_xact_user_tables shows this call's scans on
+  # entity_memories before any stats flush. No plan logging involved.
+  if ! { echo "BEGIN;"; cat "$TMP/cases/c_targeted_body.sql"; echo "SELECT 'SCANS=' || (seq_scan + idx_scan) FROM pg_stat_xact_user_tables WHERE relname = 'entity_memories'; COMMIT;"; } \
+      | PGOPTIONS='-c work_mem=4MB -c enable_nestloop=off' "${CTX[@]}" > "$TMP/dup.$label.out" 2> "$TMP/dup.$label.err"; then
     echo "FAIL no-duplicate-scan call $label: $(tail -2 "$TMP/dup.$label.err" | tr '\n' ' ' | cut -c1-220)"
     FAILS=$((FAILS+1)); return 1
   fi
-  tail -c +$((off+1)) "$TMP/log" > "$TMP/dup.log.$label"
-  # The history statement of article_context_v1 is the only nested statement
-  # whose PLAN opens entity_memories scan nodes ('Scan on ...' in the plan
-  # text; CONTEXT echoes of other nested statements can mention the table name
-  # without scanning it); its log header carries its duration.
-  awk -v out="$TMP/dup.hist.$label" '
-    function emit() {
-      if (!done && hist ~ /Scan on (public\.)?entity_memories/) { print dur; print hist; done = 1 }
-    }
-    /duration: [0-9.]+ ms +plan:/ {
-      emit(); hist = $0
-      if (match($0, /duration: [0-9.]+ ms/)) dur = substr($0, RSTART, RLENGTH)
-      next
-    }
-    { hist = hist "\n" $0 }
-    END { emit() }  # no exit: the matched block may be the last one in the window
-  ' "$TMP/dup.log.$label" > "$TMP/dup.hist.$label"
-  if [[ -s "$TMP/dup.hist.$label" ]]; then
-    DUP_MS[$label]=$(sed -n 's/.*duration: \([0-9.]*\) ms.*/\1/p' "$TMP/dup.hist.$label" | head -1)
-    DUP_SCANS[$label]=$(grep -cE 'Scan on (public\.)?entity_memories' "$TMP/dup.hist.$label" || true)
-    return 0
-  fi
-  echo "FAIL no-duplicate-scan plan for $label: no history statement with entity_memories in $(wc -l < "$TMP/dup.log.$label") log lines"
+  DUP_SCANS[$label]=$(sed -n 's/^SCANS=\([0-9]*\)$/\1/p' "$TMP/dup.$label.out" | tail -1)
+  # History statement: the slowest nested statement reading entity_memories.
+  DUP_MS[$label]=$("${READ[@]}" -c "SELECT round(max(total_exec_time)::numeric, 3) FROM pg_stat_statements WHERE NOT toplevel AND query ILIKE '%entity_memories%'")
+  if [[ -n "${DUP_SCANS[$label]}" && -n "${DUP_MS[$label]}" ]]; then return 0; fi
+  echo "FAIL no-duplicate-scan stats for $label: scans='${DUP_SCANS[$label]}' ms='${DUP_MS[$label]}'"
   FAILS=$((FAILS+1)); return 1
 }
 if "${PSQL[@]}" --single-transaction -f "$T/$FIX" >/dev/null; then
@@ -303,9 +286,9 @@ if "${PSQL[@]}" --single-transaction -f "$T/$FIX" >/dev/null; then
     echo "no duplicate scan: old scans=${DUP_SCANS[old]} elapsed_ms=${DUP_MS[old]} / new scans=${DUP_SCANS[new]} elapsed_ms=${DUP_MS[new]}"
     if [[ -n "${DUP_SCANS[old]}" && -n "${DUP_SCANS[new]}" ]]; then
       if (( DUP_SCANS[new] <= DUP_SCANS[old] )); then
-        echo "PASS entity_memories scans in history statement, v2 <= v1 (${DUP_SCANS[new]} <= ${DUP_SCANS[old]})"
+        echo "PASS entity_memories scans per call, v2 <= v1 (${DUP_SCANS[new]} <= ${DUP_SCANS[old]})"
       else
-        echo "FAIL entity_memories scans in history statement increased (v1 ${DUP_SCANS[old]}, v2 ${DUP_SCANS[new]})"; FAILS=$((FAILS+1))
+        echo "FAIL entity_memories scans per call increased (v1 ${DUP_SCANS[old]}, v2 ${DUP_SCANS[new]})"; FAILS=$((FAILS+1))
       fi
       if awk "BEGIN{exit !(${DUP_MS[new]} < 1.2 * ${DUP_MS[old]})}"; then
         echo "PASS history statement elapsed ${DUP_MS[new]}ms < 1.2 x ${DUP_MS[old]}ms (v1 re-filtered second scan gone)"
