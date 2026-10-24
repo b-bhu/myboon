@@ -104,7 +104,8 @@ export interface HeldPositionSummary {
   openPositions: number;
   /**
    * True when the held-position page walk stopped at HELD_POSITIONS_PAGE_CEILING
-   * while the last page still reported more pages: the totals and
+   * while the last page still reported more pages: the totals (including the
+   * readyToCollect sum over every walked redeemable page) and
    * totalPositionCount are then lower bounds, not exact totals.
    */
   totalsPartial: boolean;
@@ -128,4 +129,17 @@ export function summarizeHeldPositions(positions: PortfolioPosition[], partial =
     totalsPartial: partial,
     totalPositionCount: positions.length,
   };
+}
+
+/**
+ * Sum of the collectible value over redeemable rows, excluding rows below
+ * $0.01 (the same threshold fetchPortfolio() applies to the returned
+ * redeemablePositions list). Called over every walked redeemable page so the
+ * sum covers the full REDEEMABLE walk, not just the rows that fit in the
+ * returned 50-row list.
+ */
+export function sumReadyToCollect(redeemable: PortfolioPosition[]): number {
+  return redeemable
+    .filter((position) => position.currentValue >= 0.01)
+    .reduce((sum, position) => sum + position.currentValue, 0);
 }

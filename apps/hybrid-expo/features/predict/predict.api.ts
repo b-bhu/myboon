@@ -30,6 +30,7 @@ import { POLYMARKET_BUILDER_CODE } from './predict.signing';
 import {
   mapSdkPosition,
   mergeHeldPositions,
+  sumReadyToCollect,
   summarizeHeldPositions,
   walkAllPages,
 } from './portfolio-summary';
@@ -1235,8 +1236,9 @@ export interface PortfolioData {
     activePickCount?: number;
     /**
      * Held-position totals cover all pages up to a 20-page ceiling per status
-     * (open, redeemable). When the ceiling is hit, the totals and
-     * totalPositionCount are lower bounds and totalsPartial is true.
+     * (open, redeemable); readyToCollect sums every walked redeemable page.
+     * When the ceiling is hit, the totals and totalPositionCount are lower
+     * bounds and totalsPartial is true.
      */
     totalsPartial: boolean;
     totalPositionCount: number;
@@ -1307,8 +1309,10 @@ async function collectSdkPages<T>(
   return items.slice(0, cap);
 }
 
-// Data API v2 caps per wallet: open 100, redeemable 50, closed 50, activity 500 (issue #426).
-const OPEN_POSITIONS_CAP = 100;
+// Data API v2 caps per wallet: redeemable 50, closed 50, activity 500 (issue #426).
+// HELD_POSITIONS_CAP applies to the merged, deduped OPEN + REDEEMABLE
+// held-position list (`positions`), not to open rows only (issue #445).
+const HELD_POSITIONS_CAP = 100;
 const REDEEMABLE_POSITIONS_CAP = 50;
 const CLOSED_POSITIONS_CAP = 50;
 const ACTIVITY_CAP = 500;
@@ -1401,7 +1405,7 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
   // ceiling per status, flagged totalsPartial when hit), while the returned
   // lists stay capped (#445).
   const merged = mergeHeldPositions(openPage.items, redeemablePage.items).map(mapSdkPosition);
-  const positions = merged.slice(0, OPEN_POSITIONS_CAP);
+  const positions = merged.slice(0, HELD_POSITIONS_CAP);
   const redeemablePositions = redeemablePage.items
     .slice(0, REDEEMABLE_POSITIONS_CAP)
     .map(mapSdkPosition)
@@ -1410,7 +1414,9 @@ export async function fetchPortfolio(client: SecureClient): Promise<PortfolioDat
   const activity = activities.map(mapSdkActivity);
   // Old v1 summary formulas, applied to the deduped held-position union.
   const heldSummary = summarizeHeldPositions(merged, openPage.partial || redeemablePage.partial);
-  const readyToCollect = redeemablePositions.reduce((sum, position) => sum + position.currentValue, 0);
+  // Summed over every walked redeemable page, not just the first 50 rows kept
+  // in redeemablePositions; rows below $0.01 are excluded either way (#445).
+  const readyToCollect = sumReadyToCollect(redeemablePage.items.map(mapSdkPosition));
   const totalRealizedPnl = closedPositions.reduce((sum, position) => sum + position.realizedPnl, 0);
   const totalCollected = activity
     .filter((entry) => entry.type === 'REDEEM')

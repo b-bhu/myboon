@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Position } from '@polymarket/client';
-import { mapSdkPosition, mergeHeldPositions, summarizeHeldPositions, walkAllPages } from './portfolio-summary';
+import { mapSdkPosition, mergeHeldPositions, summarizeHeldPositions, sumReadyToCollect, walkAllPages } from './portfolio-summary';
 
 // '@polymarket/client' re-exports the bindings *types* (its index.d.ts does
 // `export * from '@polymarket/bindings/data'`) but its runtime bundle does not
@@ -258,4 +258,40 @@ test('exactly 20 pages whose last page has hasMore=false is not partial', async 
   const summary = summarizeHeldPositions(walk.items.map(mapSdkPosition), walk.partial);
   assert.equal(summary.totalsPartial, false);
   assert.equal(summary.totalPositionCount, 20);
+});
+
+test('readyToCollect sums collectible redeemable value over every page, past the 50-row list cap', async () => {
+  const positionSchema = await getPositionSchema();
+  const parsed = OPEN_DATA.map((row) => positionSchema.parse(row));
+
+  // 60 redeemable rows over 3 pages of 20: 55 collectible rows worth
+  // 1.00 .. 55.00 USDC, then 5 dust rows below the 0.01 threshold.
+  const rows = syntheticRows(parsed, 60, '-ready').map((row, i) => ({
+    ...row,
+    // DecimalString is a tagged string on the SDK Position (same reason
+    // syntheticPosition casts assetId); mapSdkPosition() re-parses it.
+    currentValue: (i < 55 ? `${i + 1}.00` : '0.005') as Position['currentValue'],
+  }));
+
+  const pulled = { count: 0 };
+  const walk = await walkAllPages(fakePaginator(chunkIntoPages(rows, 20), pulled));
+  assert.equal(walk.partial, false);
+  assert.equal(walk.items.length, 60);
+  assert.equal(pulled.count, 3);
+
+  const mapped = walk.items.map(mapSdkPosition);
+  // Hand-computed collectible total: 1 + 2 + ... + 55 = 55 * 56 / 2.
+  const expectedTotal = (55 * 56) / 2;
+  const collected = sumReadyToCollect(mapped);
+  assert.ok(Math.abs(collected - expectedTotal) <= 1e-6, `readyToCollect ${collected} != hand-computed ${expectedTotal}`);
+
+  // Rows below 0.01 are excluded entirely.
+  const dust = mapped.filter((position) => position.currentValue < 0.01);
+  assert.equal(dust.length, 5);
+  assert.equal(sumReadyToCollect(dust), 0);
+
+  // Pre-fix behaviour (issue #445): only the first 50 walked rows were summed,
+  // under-counting whenever later pages hold collectible rows.
+  const firstFifty = sumReadyToCollect(mapped.slice(0, 50));
+  assert.ok(firstFifty < collected, `first-50 sum ${firstFifty} should be below the all-pages sum ${collected}`);
 });
