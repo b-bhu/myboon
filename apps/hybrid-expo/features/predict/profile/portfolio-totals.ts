@@ -18,3 +18,13 @@ export function formatShowingLabel(summary: TotalsSummary | null | undefined): s
 export function formatApproxTotal(formatted: string, summary: TotalsSummary | null | undefined): string {
   return summary?.totalsPartial && formatted !== '--' ? `≈ ${formatted}` : formatted;
 }
+
+/**
+ * #454 review: a loaded portfolio with no cashOutNow in its summary is
+ * "unknown", not $0. Only a real API number is shown.
+ */
+export function resolveCashOutNow(
+  portfolio: { summary?: { cashOutNow?: number | null } | null } | null | undefined,
+): number | null {
+  return portfolio ? (portfolio.summary?.cashOutNow ?? null) : null;
+}
