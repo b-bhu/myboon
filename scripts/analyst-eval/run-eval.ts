@@ -40,7 +40,8 @@ const HERMES_BIN = 'hermes';
 const HERMES_ARGS_BASE = ['--safe-mode', '-t', 'clarify', '-m', 'glm-5.3-flash', '--provider', 'ollama-cloud'];
 const SIGNAL_BUDGET_MS = 180_000; // per-signal budget across all hermes calls
 const MAX_TOOL_CALLS = 10; // matches V4 analyst limit
-const SIGNAL_TOKEN_BUDGET = 20_000; // past this, the model must file on its next turn
+const SIGNAL_TOKEN_BUDGET = 25_000; // per-signal token budget
+const FILE_TURN_RESERVE = 10_000; // ~one hermes call's fixed overhead, kept for the filing turn
 const RESULTS_PER_KIND = 5;
 const SEARCH_TIMEOUT_MS = 15_000;
 const TOKEN_CAP = 3_000_000; // stop the whole run across results/pass-*/
@@ -193,9 +194,17 @@ function renderTurn(turn: TurnLine): string {
   return `search_atlas ${JSON.stringify(turn.query)} -> ${turn.resultText}`;
 }
 
+/** Skill text for the forced filing turn: the search tool is not offered. */
+export function fileOnlySkill(skill: string): string {
+  return skill
+    .split('\n')
+    .filter((line) => !/search_atlas|^\s*Results list|^- Search first/.test(line))
+    .join('\n');
+}
+
 /** The model must file now: tool-call cap reached or per-signal token budget spent. */
 export function mustFile(toolCalls: number, tokens: number): boolean {
-  return toolCalls >= MAX_TOOL_CALLS || tokens >= SIGNAL_TOKEN_BUDGET;
+  return toolCalls >= MAX_TOOL_CALLS || tokens >= SIGNAL_TOKEN_BUDGET - FILE_TURN_RESERVE;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -254,14 +263,15 @@ async function runSignal(
     }
 
     const remainingMs = SIGNAL_BUDGET_MS - (Date.now() - startedAt);
+    const forced = mustFile(toolCalls, tokens);
     const prompt = [
-      skill,
+      forced ? fileOnlySkill(skill) : skill,
       '## Signal',
       JSON.stringify(signalView(signal)),
       '## Tool transcript',
       turns.length === 0 ? '(none)' : turns.map((t, k) => `${k + 1}. ${renderTurn(t)}`).join('\n'),
-      mustFile(toolCalls, tokens)
-        ? 'Tool budget used up: reply with your {"final": ...} decision now. No more searches.'
+      forced
+        ? 'Search budget used up. File now with what you have: reply with only your {"final": ...} decision.'
         : `(tool calls used: ${toolCalls}/${MAX_TOOL_CALLS}) Reply with one JSON object.`,
     ].join('\n');
     const usagePath = join(usageDir, `usage-${usageCounter.n++}.json`);
@@ -309,9 +319,9 @@ async function runSignal(
     const reply = extracted.value;
 
     if (reply.tool === 'search_atlas' && typeof reply.query === 'string') {
-      if (mustFile(toolCalls, tokens)) {
+      if (forced) {
         needsReview = true;
-        error = `needs review: still searching after the tool budget (${toolCalls}/${MAX_TOOL_CALLS} calls, ${tokens} tokens)`;
+        error = `needs review: did not file on the forced filing turn (${toolCalls}/${MAX_TOOL_CALLS} calls, ${tokens} tokens)`;
         break;
       }
       try {

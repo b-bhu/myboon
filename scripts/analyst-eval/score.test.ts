@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { fileOnlySkill, mustFile } from './run-eval.js';
+import { readFileSync } from 'node:fs';
 import { parseLabelsCsv, renderMarkdown, scoreRun, type LabelRow, type RunRecord } from './score.js';
 
 const SHELF_MAIN = '11111111-1111-4111-8111-111111111111';
@@ -315,5 +317,20 @@ describe('parseLabelsCsv', () => {
 
   it('rejects a file with the wrong header', () => {
     expect(() => parseLabelsCsv('id,shelf\nabc,competitions')).toThrow(/signal_id/);
+  });
+});
+describe('run-eval filing turn', () => {
+  it('forces filing once ~10k of the 25k budget remains or 10 tools are used', () => {
+    expect(mustFile(1, 14_999)).toBe(false);
+    expect(mustFile(1, 15_000)).toBe(true);
+    expect(mustFile(10, 0)).toBe(true);
+  });
+
+  it('does not offer the search tool on the forced filing turn', () => {
+    const skill = readFileSync(new URL('./analyst.SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toContain('search_atlas');
+    const fileOnly = fileOnlySkill(skill);
+    expect(fileOnly).not.toContain('search_atlas');
+    expect(fileOnly).toContain('"final"');
   });
 });
