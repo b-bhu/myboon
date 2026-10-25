@@ -24,7 +24,7 @@ import { fetchPortfolio, fetchClobBalance, fetchOpenOrders, cancelOrder, placeBe
 import type { OpenOrder, PortfolioPosition } from '@/features/predict/predict.api';
 import { getPredictMarketHref } from '@/features/predict/predict.navigation';
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
-import { getPositionSellQuote, usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
+import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
@@ -45,6 +45,7 @@ import {
   getPredictProfileSetupCopy,
 } from '@/features/predict/profile/profile-state';
 import { remainingOrderCost } from '@/features/predict/profile/profile-portfolio-state';
+import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel } from '@/features/predict/profile/portfolio-totals';
 import { usePredictProfileStore } from '@/features/predict/profile/profile-store';
 import { semantic, tokens } from '@/theme';
 
@@ -650,16 +651,11 @@ export default function PredictProfileScreen() {
     quotes: sellQuotes,
     booksByAsset: sellQuoteBooks,
   } = usePositionSellQuotes(positions);
-  const cashOutNow = useMemo(() => {
-    if (positions.length === 0) return 0;
-    let total = 0;
-    for (const position of positions) {
-      const quote = getPositionSellQuote(sellQuotes, position);
-      if (!quote || quote.estimatedProceeds === null) return null;
-      total += quote.estimatedProceeds;
-    }
-    return total;
-  }, [positions, sellQuotes]);
+  // #447: totals come from the API summary (every page, up to the ceiling),
+  // never re-summed over the capped list.
+  const portfolioSummary = portfolio?.summary ?? null;
+  const cashOutNow = portfolioSummary?.cashOutNow ?? (portfolio ? 0 : null);
+  const showingLabel = formatShowingLabel(portfolioSummary);
   const readyToCollect = portfolio?.summary.readyToCollect ?? redeemablePositions.reduce((sum, p) => sum + (p.currentValue ?? 0), 0);
   const waitingPickValue = openOrders.reduce((sum, order) => sum + getOrderCost(order), 0);
   const activePicksValue = cashOutNow === null ? null : cashOutNow + waitingPickValue;
@@ -803,7 +799,7 @@ export default function PredictProfileScreen() {
                 </Pressable>
               </View>
               <View style={styles.moneyValueRow}>
-                <Text style={styles.moneyTotal}>{truncateUsd(predictValue)}</Text>
+                <Text style={styles.moneyTotal}>{formatApproxTotal(truncateUsd(predictValue), portfolioSummary)}</Text>
                 <Text style={styles.moneyUnit}>pUSD value</Text>
               </View>
               <Text style={styles.moneyCaption}>
@@ -813,6 +809,9 @@ export default function PredictProfileScreen() {
                     ? `Approximately ${formatProfileCurrency(predictValue, 'INR', usdToInrRate)} across your Predict account`
                     : 'Available cash, positions and ready payouts'}
               </Text>
+              {portfolioSummary?.totalsPartial ? (
+                <Text style={styles.moneyApproxNote}>{APPROX_TOTAL_NOTE}</Text>
+              ) : null}
               <View style={styles.moneyBar}>
                 {cashBalance !== null && cashBalance > 0 && (
                   <View style={[styles.moneyBarSeg, styles.moneyBarAvailable, { flex: Math.max(cashBalance, 0.01) }]} />
@@ -874,6 +873,9 @@ export default function PredictProfileScreen() {
               </View>
             </View>
 
+            {showingLabel ? (
+              <Text style={styles.showingLabel}>{showingLabel}</Text>
+            ) : null}
             <ProfilePortfolioTabs
               positions={positions}
               openOrders={openOrders}
@@ -1702,6 +1704,8 @@ const styles = StyleSheet.create({
     letterSpacing: -1.5,
   },
   moneyUnit: { fontFamily: 'monospace', fontSize: 9, color: semantic.text.faint },
+  moneyApproxNote: { paddingTop: 4, fontFamily: 'monospace', fontSize: 9, lineHeight: 13, color: semantic.text.faint },
+  showingLabel: { paddingHorizontal: 4, fontFamily: 'monospace', fontSize: 9, lineHeight: 13, color: semantic.text.faint },
   moneyCaption: { paddingTop: 6, fontFamily: 'monospace', fontSize: 9, lineHeight: 13, color: semantic.text.dim },
   moneyBar: {
     flexDirection: 'row',
