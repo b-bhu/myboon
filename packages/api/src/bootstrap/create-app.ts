@@ -117,6 +117,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     supabaseUrl: config.supabaseUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
     memoryReader: entityKnowledgeReader,
+    source: process.env.STORIES_SOURCE === 'atlas' ? 'atlas' : 'legacy',
   }))
   app.route('/narratives', createNarrativeRoutes({
     supabaseUrl: config.supabaseUrl,
