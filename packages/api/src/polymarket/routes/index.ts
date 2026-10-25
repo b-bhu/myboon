@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import type { PolymarketCatalogStore } from '../catalog/contracts.js'
 import type { UpDownReadService } from '../read/updown.js'
-import { createPolymarketAccountRoutes } from './accounts.js'
 import { createPolymarketCollectionRoutes } from './collections.js'
 import { createPolymarketMarketRoutes } from './markets.js'
 import { createPolymarketSearchRoutes } from './search.js'
@@ -21,6 +20,5 @@ export function createPolymarketReadRoutes(config: PolymarketReadRoutesConfig = 
   routes.route('/', createPolymarketSearchRoutes())
   routes.route('/', createPolymarketMarketRoutes())
   routes.route('/', createPolymarketSportsRoutes())
-  routes.route('/', createPolymarketAccountRoutes())
   return routes
 }

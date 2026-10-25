@@ -1,7 +1,6 @@
 import { isDomeAvailable } from '../../dome.js'
 
 const GAMMA_BASE = 'https://gamma-api.polymarket.com'
-const DATA_API_BASE = 'https://data-api.polymarket.com'
 const CLOB_BASE = process.env.CLOB_HOST || 'https://clob.polymarket.com'
 
 // --- TTL cache for Gamma API responses ---
@@ -23,10 +22,6 @@ export async function gammaFetchCached<T>(path: string): Promise<T | null> {
   const data = await res.json() as T
   gammaCache.set(path, { data, expiresAt: now + CACHE_TTL_MS })
   return data
-}
-
-export async function dataApiFetch(path: string): Promise<Response> {
-  return fetch(`${DATA_API_BASE}/${path}`)
 }
 
 export async function clobFetch(path: string, options?: RequestInit): Promise<Response> {
