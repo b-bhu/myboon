@@ -32,6 +32,8 @@ jobs:
       - run: pnpm --filter hybrid-expo test
       - run: pnpm --filter @myboon/shared test
       - run: pnpm --filter @myboon/tx-parser test
+      - run: pnpm --filter @myboon/contracts test
+      - run: pnpm --filter @myboon/contracts typecheck
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix
       - run: pnpm --filter @myboon/api typecheck
