@@ -76,11 +76,13 @@ export function createWaitlistRoutes(config: WaitlistRoutesConfig): Hono {
   }
 
   function normalizeXHandle(value: unknown): { ok: true; handle: string | null } | { ok: false } {
-    if (value === undefined) return { ok: true, handle: null }
-    // Contract: any present non-string (including null) is a bad handle.
+    // Contract: absent or explicit null is "no handle"; a present non-string,
+    // or a string that is empty/whitespace-only, is a bad handle ("@" alone
+    // strips to nothing and fails the handle regex below).
+    if (value === undefined || value === null) return { ok: true, handle: null }
     if (typeof value !== 'string') return { ok: false }
     const trimmed = value.trim()
-    if (!trimmed) return { ok: true, handle: null }
+    if (!trimmed) return { ok: false }
     const handle = trimmed.startsWith('@') ? trimmed.slice(1) : trimmed
     return X_HANDLE_RE.test(handle) ? { ok: true, handle } : { ok: false }
   }

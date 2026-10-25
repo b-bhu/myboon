@@ -116,9 +116,27 @@ test('xHandle keeps one stripped @, rejects oversized, hyphenated and non-string
 
   const empty = buildApp()
   await empty.post({ email: 'a@example.com', xHandle: '   ' })
-  assert.equal(empty.requests[0].body.x_handle, null)
+  assert.equal(empty.requests.length, 0, 'whitespace-only xHandle must be rejected before upstream')
   await empty.post({ email: 'b@example.com' })
-  assert.equal(empty.requests[1].body.x_handle, null)
+  assert.equal(empty.requests[0].body.x_handle, null)
+})
+
+test('xHandle null means no handle and the signup still answers 201', async () => {
+  const h = buildApp()
+  const response = await h.post({ email: 'a@example.com', xHandle: null })
+  assert.equal(response.status, 201)
+  assert.equal(h.requests.length, 1)
+  assert.equal(h.requests[0].body.x_handle, null)
+})
+
+test('empty (and whitespace-only, or bare @) xHandle answers 400 invalid_x_handle', async () => {
+  const h = buildApp({ rateLimit: { max: 100 } })
+  for (const xHandle of ['', '   ', '@']) {
+    const response = await h.post({ email: 'a@example.com', xHandle })
+    assert.equal(response.status, 400, `expected 400 for xHandle ${JSON.stringify(xHandle)}`)
+    assert.deepEqual(await response.json(), { error: 'invalid_x_handle' })
+  }
+  assert.equal(h.requests.length, 0)
 })
 
 test('source is trimmed, truncated to 64 chars, and null for empty or non-string', async () => {
