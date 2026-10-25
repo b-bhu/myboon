@@ -1,4 +1,6 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
+import { getConnInfo } from '@hono/node-server/conninfo'
 
 // Table shape (public.waitlist: id uuid, email text, x_handle text, source
 // text, created_at timestamptz, unique index on lower(email)) is owned by a
@@ -25,10 +27,22 @@ export interface WaitlistRoutesConfig {
   rateLimit?: Partial<WaitlistRateLimit>
 }
 
-function clientIp(c: { req: { header(name: string): string | undefined } }): string {
-  const direct = c.req.header('cf-connecting-ip') ?? c.req.header('x-real-ip')
-  if (direct?.trim()) return direct.trim().slice(0, 80)
-  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || 'anonymous'
+function clientIp(c: Context): string {
+  // nginx is the only entry point (the API itself listens on 127.0.0.1:3000)
+  // and overwrites X-Real-IP with the real client address, so that header is
+  // the one trusted identity for the per-IP rate limit. X-Forwarded-For and
+  // cf-connecting-ip are deliberately ignored: nothing here strips them, so a
+  // client could forge a fresh value per request to mint new limit buckets.
+  const realIp = c.req.header('x-real-ip')
+  if (realIp?.trim()) return realIp.trim().slice(0, 80)
+  // Without the header, fall back to the socket's remote address. Hono's
+  // in-memory Request adapter (app.request in tests) has no socket, hence the
+  // catch; everything socket-less shares the 'anonymous' bucket.
+  try {
+    return getConnInfo(c).remote.address?.trim().slice(0, 80) || 'anonymous'
+  } catch {
+    return 'anonymous'
+  }
 }
 
 /**
