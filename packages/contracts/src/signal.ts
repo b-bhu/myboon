@@ -77,6 +77,6 @@ export function parseSignal(input: unknown): Signal {
 }
 
 /** Safe variant of {@link parseSignal} that returns the parse result instead of throwing. */
-export function safeParseSignal(input: unknown): z.SafeParseReturnType<unknown, Signal> {
+export function safeParseSignal(input: unknown) {
   return signalSchema.safeParse(input);
 }

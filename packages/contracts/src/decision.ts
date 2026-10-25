@@ -67,8 +67,7 @@ export function parseDecision(input: unknown): Decision {
 }
 
 /** Safe variant of {@link parseDecision} that returns the parse result instead of throwing. */
-export function safeParseDecision(input: unknown): z.SafeParseReturnType<unknown, Decision> {
+export function safeParseDecision(input: unknown) {
   return decisionSchema.safeParse(input);
 }
 
-export { DECISION_SCHEMA_VERSION };

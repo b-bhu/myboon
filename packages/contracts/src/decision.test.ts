@@ -37,6 +37,8 @@ describe('decisionSchema (file)', () => {
     const decision = parseDecision(validFileDecision);
 
     expect(decision.decision_type).toBe('file');
+    if (decision.decision_type !== 'file') expect.unreachable('expected a file decision');
+
     expect(decision.schema_version).toBe(1);
     expect(decision.shelves).toHaveLength(2);
     expect(decision.target_item_id).toBeNull();
@@ -86,6 +88,8 @@ describe('decisionSchema (merge)', () => {
     const decision = parseDecision(validMergeDecision);
 
     expect(decision.decision_type).toBe('merge');
+    if (decision.decision_type !== 'merge') expect.unreachable('expected a merge decision');
+
     expect(decision.target_item_id).toBe(uuidA);
     expect(decision.merged_into_id).toBe(uuidB);
   });
