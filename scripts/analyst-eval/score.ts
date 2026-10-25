@@ -38,6 +38,8 @@ export interface RunRecord {
   api_calls: number;
   hermes_calls: number;
   overrun: boolean;
+  /** Still searching after the tool budget: not a crash, flagged for a human. Absent in pre-pass-2 records. */
+  needs_review?: boolean;
 }
 
 export interface ScoreSignal {
@@ -56,6 +58,7 @@ export interface ScoreRow {
   decision_valid: boolean;
   parse_ok: boolean;
   overrun: boolean;
+  needs_review: boolean;
   skipped: boolean;
   target_agree: boolean | null; // null = no label to compare
   expected_action: string | null;
@@ -94,6 +97,7 @@ export interface ScoreResult {
   parseFailures: number;
   invalidDecisions: number;
   overruns: number;
+  needsReview: number;
   missing: number; // labeled signals with no run record
   totalTokens: number;
   meanTokens: number | null;
@@ -210,9 +214,10 @@ export function scoreRun(
     targetAgree: rows.filter((r) => r.target_agree === true).length,
     skipCount: validDecisions.filter((r) => r.skipped).length,
     skipRate: validDecisions.length > 0 ? validDecisions.filter((r) => r.skipped).length / validDecisions.length : null,
-    parseFailures: withRun.filter((r) => !r.parse_ok).length,
+    parseFailures: withRun.filter((r) => !r.parse_ok && !r.needs_review).length,
     invalidDecisions: withRun.filter((r) => r.parse_ok && !r.decision_valid).length,
     overruns: withRun.filter((r) => r.overrun).length,
+    needsReview: withRun.filter((r) => r.needs_review).length,
     missing: labeledRows.filter((r) => !r.has_run).length,
     totalTokens: sum((r) => r.tokens),
     meanTokens: withRun.length > 0 ? sum((r) => r.tokens) / withRun.length : null,
@@ -277,6 +282,7 @@ function evalRow(
     decision_valid: decisionValid,
     parse_ok: run?.parse_ok ?? false,
     overrun: run?.overrun ?? false,
+    needs_review: run?.needs_review ?? false,
     skipped: file !== null && file.action === 'skip',
     target_agree: targetAgree,
     expected_action: expectedAction,
@@ -304,6 +310,7 @@ export function renderMarkdown(pass: number, r: ScoreResult): string {
     const expected = row.labeled ? row.expected_main_shelf : null;
     let got: string;
     if (!row.has_run) got = 'no-run';
+    else if (row.needs_review) got = 'needs-review';
     else if (!row.parse_ok) got = 'parse-fail';
     else if (!row.decision_valid) got = 'invalid-decision';
     else got = row.got_main_shelf ?? 'unknown-shelf';
@@ -320,7 +327,7 @@ export function renderMarkdown(pass: number, r: ScoreResult): string {
   lines.push(`overall: ${r.pass ? 'PASS' : 'FAIL'}`);
   lines.push(`target_item_id agreement: ${r.targetAgree}/${r.targetTotal}`);
   lines.push(`skip rate: ${r.skipCount}/${r.recordCount} decisions${r.skipRate === null ? '' : ` (${(r.skipRate * 100).toFixed(1)}%)`}`);
-  lines.push(`parse failures: ${r.parseFailures}, overruns: ${r.overruns}, invalid decisions: ${r.invalidDecisions}`);
+  lines.push(`parse failures: ${r.parseFailures}, overruns: ${r.overruns}, needs review: ${r.needsReview}, invalid decisions: ${r.invalidDecisions}`);
   lines.push(`tokens: ${Math.round(r.totalTokens)} total${r.meanTokens === null ? '' : `, ${Math.round(r.meanTokens)} mean`}`);
   lines.push(`cost: $${r.totalCost.toFixed(2)}, api_calls: ${r.totalApiCalls}, seconds: ${r.totalSeconds.toFixed(1)} total${r.meanSeconds === null ? '' : `, ${r.meanSeconds.toFixed(1)} mean`}`);
   const uncertain = r.rows.filter((row) => row.uncertain);

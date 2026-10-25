@@ -39,7 +39,9 @@ const LABELS_PATH = join(FIXTURES, 'labels.csv');
 const HERMES_BIN = 'hermes';
 const HERMES_ARGS_BASE = ['--safe-mode', '-t', 'clarify', '-m', 'glm-5.3-flash', '--provider', 'ollama-cloud'];
 const SIGNAL_BUDGET_MS = 180_000; // per-signal budget across all hermes calls
-const MAX_TOOL_CALLS = 10;
+const MAX_TOOL_CALLS = 10; // matches V4 analyst limit
+const SIGNAL_TOKEN_BUDGET = 20_000; // past this, the model must file on its next turn
+const RESULTS_PER_KIND = 5;
 const SEARCH_TIMEOUT_MS = 15_000;
 const TOKEN_CAP = 3_000_000; // stop the whole run across results/pass-*/
 const COST_CAP_USD = 5;
@@ -61,7 +63,8 @@ interface TurnLine {
   resultText: string;
 }
 
-function parseArgs(argv: readonly string[]): { pass: number; limit: number | null; out: string | null; noLabels: boolean } {
+function parseArgs(argv: readonly string[]): { pass: number; limit: number | null; out: string | null; noLabels: boolean; maxTokens: number | null } {
+  let maxTokens: number | null = null;
   let pass = NaN;
   let limit: number | null = null;
   let out: string | null = null;
@@ -72,8 +75,9 @@ function parseArgs(argv: readonly string[]): { pass: number; limit: number | nul
     else if (arg === '--limit') limit = Number(argv[++i]);
     else if (arg === '--out') out = argv[++i] ?? null;
     else if (arg === '--no-labels') noLabels = true;
+    else if (arg === '--max-tokens') maxTokens = Number(argv[++i]);
     else {
-      console.error(`usage: tsx scripts/analyst-eval/run-eval.ts --pass <1..3> [--limit N] [--out dir] [--no-labels] (unknown arg: ${arg})`);
+      console.error(`usage: tsx scripts/analyst-eval/run-eval.ts --pass <1..3> [--limit N] [--out dir] [--no-labels] [--max-tokens N] (unknown arg: ${arg})`);
       process.exit(2);
     }
   }
@@ -81,7 +85,13 @@ function parseArgs(argv: readonly string[]): { pass: number; limit: number | nul
     console.error('refusing to run: --pass must be an integer 1..3');
     process.exit(2);
   }
-  return { pass, limit: Number.isFinite(limit) && limit !== null ? limit : null, out, noLabels };
+  return {
+    pass,
+    limit: Number.isFinite(limit) && limit !== null ? limit : null,
+    out,
+    noLabels,
+    maxTokens: maxTokens !== null && Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : null,
+  };
 }
 
 function loadSignals(): Signal[] {
@@ -172,7 +182,7 @@ function signalView(signal: Signal): Record<string, unknown> {
 }
 
 function trimShelf(s: AtlasShelf): Record<string, unknown> {
-  return { id: s.id, slug: s.slug, name: s.name, aliases: s.aliases };
+  return { id: s.id, slug: s.slug, name: s.name, aliases: (s.aliases ?? []).slice(0, 3) };
 }
 
 function trimItem(s: AtlasItem): Record<string, unknown> {
@@ -180,7 +190,12 @@ function trimItem(s: AtlasItem): Record<string, unknown> {
 }
 
 function renderTurn(turn: TurnLine): string {
-  return `tool call: search_atlas ${JSON.stringify({ query: turn.query })}\nresult: ${turn.resultText}`;
+  return `search_atlas ${JSON.stringify(turn.query)} -> ${turn.resultText}`;
+}
+
+/** The model must file now: tool-call cap reached or per-signal token budget spent. */
+export function mustFile(toolCalls: number, tokens: number): boolean {
+  return toolCalls >= MAX_TOOL_CALLS || tokens >= SIGNAL_TOKEN_BUDGET;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -201,6 +216,7 @@ async function runSignal(
   usageDir: string,
   usageCounter: { n: number },
   base: UsageTotals,
+  passCap: { cap: number | null; spent: number },
 ): Promise<SignalOutcome> {
   const startedAt = Date.now();
   const turns: TurnLine[] = [];
@@ -213,11 +229,13 @@ async function runSignal(
   let parseOk = false;
   let error: string | null = null;
   let overrun = false;
+  let needsReview = false;
 
   while (true) {
     // Spend cap: recorded spend across all passes + everything accrued so far in
     // this run (including this in-flight signal).
-    if (base.tokens + tokens >= TOKEN_CAP || base.cost + cost >= COST_CAP_USD) {
+    const overPass = passCap.cap !== null && passCap.spent + tokens >= passCap.cap;
+    if (overPass || base.tokens + tokens >= TOKEN_CAP || base.cost + cost >= COST_CAP_USD) {
       const spent = `tokens=${base.tokens + tokens}, cost=$${(base.cost + cost).toFixed(2)}`;
       if (hermesCalls === 0) {
         console.log(`stopped by spend cap before first hermes call (${spent})`);
@@ -239,12 +257,12 @@ async function runSignal(
     const prompt = [
       skill,
       '## Signal',
-      JSON.stringify(signalView(signal), null, 2),
+      JSON.stringify(signalView(signal)),
       '## Tool transcript',
-      turns.length === 0 ? '(no tool calls yet)' : turns.map((t, k) => `turn ${k + 1}/${MAX_TOOL_CALLS}:\n${renderTurn(t)}`).join('\n\n'),
-      `(tool calls used so far: ${toolCalls}/${MAX_TOOL_CALLS})`,
-      '',
-      'Reply with one JSON object.',
+      turns.length === 0 ? '(none)' : turns.map((t, k) => `${k + 1}. ${renderTurn(t)}`).join('\n'),
+      mustFile(toolCalls, tokens)
+        ? 'Tool budget used up: reply with your {"final": ...} decision now. No more searches.'
+        : `(tool calls used: ${toolCalls}/${MAX_TOOL_CALLS}) Reply with one JSON object.`,
     ].join('\n');
     const usagePath = join(usageDir, `usage-${usageCounter.n++}.json`);
 
@@ -291,16 +309,16 @@ async function runSignal(
     const reply = extracted.value;
 
     if (reply.tool === 'search_atlas' && typeof reply.query === 'string') {
-      if (toolCalls + 1 > MAX_TOOL_CALLS) {
-        overrun = true;
-        error = `overrun: model requested tool call ${toolCalls + 1} > ${MAX_TOOL_CALLS}`;
+      if (mustFile(toolCalls, tokens)) {
+        needsReview = true;
+        error = `needs review: still searching after the tool budget (${toolCalls}/${MAX_TOOL_CALLS} calls, ${tokens} tokens)`;
         break;
       }
       try {
         const result = await withTimeout(searchAtlas(reply.query, { env: process.env }), SEARCH_TIMEOUT_MS, `search_atlas "${reply.query}"`);
         turns.push({
           query: reply.query,
-          resultText: JSON.stringify({ shelves: result.shelves.map(trimShelf), items: result.items.map(trimItem) }),
+          resultText: JSON.stringify({ shelves: result.shelves.slice(0, RESULTS_PER_KIND).map(trimShelf), items: result.items.slice(0, RESULTS_PER_KIND).map(trimItem) }),
         });
       } catch (err) {
         turns.push({
@@ -334,6 +352,7 @@ async function runSignal(
     api_calls: apiCalls,
     hermes_calls: hermesCalls,
     overrun,
+    needs_review: needsReview,
   };
   return { record, stopped: false };
 }
@@ -370,10 +389,11 @@ async function main(): Promise<void> {
   const usageDir = mkdtempSync(join(os.tmpdir(), 'analyst-eval-usage-'));
   try {
     let stopped = false;
+    const passCap = { cap: args.maxTokens, spent: 0 };
     for (const signal of signals) {
       if (done.has(signal.signal_id)) continue;
       const usageCounter = { n: 0 };
-      const outcome = await runSignal(signal, skill, usageDir, usageCounter, base);
+      const outcome = await runSignal(signal, skill, usageDir, usageCounter, base, passCap);
       if (outcome.stopped) {
         stopped = true;
         break;
@@ -381,12 +401,13 @@ async function main(): Promise<void> {
       if (outcome.record === null) continue;
       appendFileSync(runsPath, `${JSON.stringify(outcome.record)}\n`);
       done.add(signal.signal_id);
+      passCap.spent += outcome.record.tokens;
       const rec = outcome.record;
       const tag = rec.decision !== null && rec.parse_ok ? 'ok' : `error: ${rec.error ?? 'unknown'}`;
       console.log(`${rec.signal_id.slice(0, 8)} tools=${rec.tool_calls} turns=${rec.hermes_calls} ${rec.seconds}s tokens=${rec.tokens} ${tag}`);
     }
     const ran = done.size - alreadyDone;
-    const summary = stopped ? 'STOPPED EARLY: spend cap reached (tokens >= 3M or cost >= $5)' : 'run complete';
+    const summary = stopped ? `STOPPED EARLY: spend cap reached (pass tokens=${passCap.spent}, cap ${args.maxTokens ?? 'none'}; total cap 3M / $5)` : 'run complete';
     console.log(`${summary}; new records: ${ran}, previously recorded: ${alreadyDone}, out: ${runsPath}`);
   } finally {
     rmSync(usageDir, { recursive: true, force: true });

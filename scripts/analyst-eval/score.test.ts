@@ -184,6 +184,21 @@ describe('scoreRun', () => {
     expect(result.accuracy).toBe(0);
   });
 
+  it('counts a tool-budget hit as needs review, not a parse failure or overrun', () => {
+    const result = scoreRun([signal('cd'), signal('ce')], [label('cd', 'competitions'), label('ce', 'competitions')], [
+      run({ signal_id: SIG('cd'), parse_ok: false, needs_review: true, tool_calls: 10, error: 'needs review: still searching after the tool budget' }),
+      run({ signal_id: SIG('ce'), decision: decision(SIG('ce'), { main: SHELF_MAIN }) }),
+    ], SLUGS);
+    expect(result.needsReview).toBe(1);
+    expect(result.parseFailures).toBe(0);
+    expect(result.overruns).toBe(0);
+    expect(result.rows[0]!.ok).toBe(false);
+    expect(result.correctCount).toBe(1);
+    const md = renderMarkdown(2, result);
+    expect(md).toContain('needs-review');
+    expect(md).toContain('needs review: 1');
+  });
+
   it('counts schema-invalid decisions and missing main role as wrong', () => {
     const badShelves = run({
       signal_id: SIG('dd'),
