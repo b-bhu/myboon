@@ -1,4 +1,4 @@
--- Rollback for 20261025120000_atlas_service_role_read.sql: revokes exactly what it granted.
+-- Rollback for 20261025114823_atlas_service_role_read.sql: revokes exactly what it granted.
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
