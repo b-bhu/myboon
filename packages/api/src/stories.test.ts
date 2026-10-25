@@ -20,6 +20,7 @@ const atlasShelfIds = [
   '01a17278-acb3-7ccd-8ec1-4a9d8baf672f',
   '01a17278-acb3-7ccd-8ec1-4a9d8baf6730',
   '01a17278-acb3-7ccd-8ec1-4a9d8baf6731',
+  '01a17278-acb3-7ccd-8ec1-4a9d8baf6732',
 ]
 
 type StoryMemoryReader = Pick<EntityKnowledgeReader, 'getEntityMemoryEvents'>
@@ -89,6 +90,7 @@ test('Story list selects and caps Entities, reads bounded latest memories, and a
         imageUrl: 'https://cdn.example.com/latest.jpg',
         imageKind: 'content',
         imageAttribution: 'Example News',
+        shelfType: null,
       },
       {
         storySlug: 'story-2',
@@ -99,6 +101,7 @@ test('Story list selects and caps Entities, reads bounded latest memories, and a
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
+        shelfType: null,
       },
     ],
   })
@@ -150,6 +153,7 @@ test('Story detail returns the selected Entity timeline newest-first with pagina
       imageUrl: null,
       imageKind: null,
       imageAttribution: null,
+      shelfType: null,
     },
     events: [
       {
@@ -333,6 +337,7 @@ test('Story summary tracks the latest reported memory; a future-dated one never 
     imageUrl: null,
     imageKind: null,
     imageAttribution: null,
+    shelfType: null,
   })
 })
 
@@ -412,7 +417,7 @@ test('Story Atlas list selects active carousel shelves, caps and orders them, an
     requests.push({ url, headers })
     assert.equal(headers['Accept-Profile'], 'atlas')
     if (url.pathname.endsWith('/shelves')) {
-      assert.equal(url.searchParams.get('select'), 'id,slug,name')
+      assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
       assert.equal(url.searchParams.get('show_in_carousel'), 'eq.true')
       assert.equal(url.searchParams.get('status'), 'eq.active')
       assert.equal(url.searchParams.get('order'), 'updated_at.desc')
@@ -450,6 +455,7 @@ test('Story Atlas list selects active carousel shelves, caps and orders them, an
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
+        shelfType: null,
       },
       {
         storySlug: 'story-2',
@@ -460,6 +466,7 @@ test('Story Atlas list selects active carousel shelves, caps and orders them, an
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
+        shelfType: null,
       },
     ],
   })
@@ -498,9 +505,171 @@ test('Story Atlas list returns a shelf with a production UUIDv7 id', async () =>
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
+        shelfType: null,
       },
     ],
   })
+})
+
+test('Story Atlas list carries the shelf card image with kind content and the shelf type', async () => {
+  const shelfRows = [
+    { id: atlasShelfIds[0], slug: 'story-1', name: 'Story 1', type: 'news', image: 'https://cdn.example.com/shelf.jpg' },
+    { id: atlasShelfIds[1], slug: 'story-2', name: 'Story 2', type: 'topic', image: null },
+  ]
+  const itemShelfIds = shelfRows.map((row) => row.id)
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    assert.equal(headers['Accept-Profile'], 'atlas')
+    if (url.pathname.endsWith('/shelves')) {
+      assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
+      assert.equal(url.searchParams.get('status'), 'eq.active')
+      return jsonResponse(shelfRows)
+    }
+    if (url.pathname.endsWith('/items')) {
+      const shelfId = String(url.searchParams.get('main_shelf_id') ?? '').replace(/^eq\./, '')
+      assert.ok(itemShelfIds.includes(shelfId))
+      if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
+      return jsonResponse([
+        { id: 'item-1', title: 'Latest development', summary: 'Latest summary', occurred_at: '2026-07-12T00:00:00.000Z' },
+      ])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const response = await app(fetchImpl, undefined, 'atlas').request('/')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    stories: [
+      {
+        storySlug: 'story-1',
+        name: 'Story 1',
+        latestDevelopment: 'Latest summary',
+        eventCount: 1,
+        updatedAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: 'https://cdn.example.com/shelf.jpg',
+        imageKind: 'content',
+        imageAttribution: null,
+        shelfType: 'news',
+      },
+      {
+        storySlug: 'story-2',
+        name: 'Story 2',
+        latestDevelopment: 'Latest summary',
+        eventCount: 1,
+        updatedAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
+        shelfType: 'topic',
+      },
+    ],
+  })
+})
+
+test('Story Atlas shelf image and shelf type also flow into the detail story summary', async () => {
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    assert.equal(headers['Accept-Profile'], 'atlas')
+    if (url.pathname.endsWith('/shelves')) {
+      assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
+      assert.equal(url.searchParams.get('slug'), 'eq.us-and-iran')
+      assert.equal(url.searchParams.get('status'), 'eq.active')
+      return jsonResponse([
+        { id: atlasShelfIds[0], slug: 'us-and-iran', name: 'US and Iran', type: 'news', image: 'https://cdn.example.com/shelf.jpg' },
+      ])
+    }
+    if (url.pathname.endsWith('/items')) {
+      if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
+      return jsonResponse([
+        { id: 'item-1', title: 'Latest development', summary: 'Latest event', occurred_at: '2026-07-12T00:00:00.000Z' },
+      ])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const response = await app(fetchImpl, undefined, 'atlas').request('/us-and-iran')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { story: Record<string, unknown> }
+  assert.deepEqual(body.story, {
+    storySlug: 'us-and-iran',
+    name: 'US and Iran',
+    latestDevelopment: 'Latest event',
+    eventCount: 1,
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    imageUrl: 'https://cdn.example.com/shelf.jpg',
+    imageKind: 'content',
+    imageAttribution: null,
+    shelfType: 'news',
+  })
+})
+
+test('Story Atlas shelf images fail closed on empty and non-https values', async () => {
+  const shelfRows = [
+    { id: atlasShelfIds[0], slug: 'story-1', name: 'Story 1', type: 'news', image: '' },
+    { id: atlasShelfIds[1], slug: 'story-2', name: 'Story 2', type: 'news', image: '   ' },
+    { id: atlasShelfIds[2], slug: 'story-3', name: 'Story 3', type: 'news', image: 'http://cdn.example.com/shelf.jpg' },
+    { id: atlasShelfIds[3], slug: 'story-4', name: 'Story 4', type: 'news', image: { url: 'https://cdn.example.com/shelf.jpg' } },
+  ]
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    assert.equal(headers['Accept-Profile'], 'atlas')
+    if (url.pathname.endsWith('/shelves')) {
+      return jsonResponse(shelfRows)
+    }
+    if (url.pathname.endsWith('/items')) {
+      if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
+      return jsonResponse([
+        { id: 'item-1', title: 'Latest development', summary: 'Latest summary', occurred_at: '2026-07-12T00:00:00.000Z' },
+      ])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const response = await app(fetchImpl, undefined, 'atlas').request('/')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { stories: Array<{ storySlug: string; imageUrl: string | null; imageKind: string | null; imageAttribution: string | null; shelfType: string | null }> }
+  assert.deepEqual(body.stories.map((story) => [
+    story.storySlug,
+    story.imageUrl,
+    story.imageKind,
+    story.imageAttribution,
+    story.shelfType,
+  ]), [
+    ['story-1', null, null, null, 'news'],
+    ['story-2', null, null, null, 'news'],
+    ['story-3', null, null, null, 'news'],
+    ['story-4', null, null, null, 'news'],
+  ])
+})
+
+test('Story Atlas shelves select the card image through card->image->>url; the legacy Entity select does not', async () => {
+  const atlasShelfSelects: Array<string | null> = []
+  const atlasResponse = await app(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/shelves')) {
+      atlasShelfSelects.push(url.searchParams.get('select'))
+      return jsonResponse([])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }, undefined, 'atlas').request('/')
+  assert.equal(atlasResponse.status, 200)
+  assert.deepEqual(await atlasResponse.json(), { stories: [] })
+  assert.deepEqual(atlasShelfSelects, ['id,slug,name,type,image:card->image->>url'])
+  assert.equal(atlasShelfSelects[0]?.includes('card->image->>url'), true)
+
+  const legacyEntitySelects: Array<string | null> = []
+  const legacyResponse = await app(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/entities')) {
+      legacyEntitySelects.push(url.searchParams.get('select'))
+      return jsonResponse([])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }).request('/')
+  assert.equal(legacyResponse.status, 200)
+  assert.deepEqual(await legacyResponse.json(), { stories: [] })
+  assert.deepEqual(legacyEntitySelects, ['id,slug,name'])
+  assert.equal(legacyEntitySelects[0]?.includes('card->image->>url'), false)
 })
 
 test('Story Atlas detail pages items newest-first with pagination fields', async () => {
@@ -552,6 +721,7 @@ test('Story Atlas detail pages items newest-first with pagination fields', async
       imageUrl: null,
       imageKind: null,
       imageAttribution: null,
+      shelfType: null,
     },
     events: [
       { text: 'Second event', eventAt: '2026-07-11T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null },

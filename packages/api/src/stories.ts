@@ -13,12 +13,20 @@ const REQUEST_TIMEOUT_MS = 10_000
 const SAFE_STORY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const ENTITY_SELECT = 'id,slug,name'
+// Atlas shelves carry the story card image inside the jsonb `card` column
+// (card.image = { url, source }); the PostgREST alias reads it as plain text.
+const ATLAS_SHELF_SELECT = 'id,slug,name,type,image:card->image->>url'
 const ATLAS_ITEM_SELECT = 'id,title,summary,occurred_at'
 
 interface EntityRow {
   id: unknown
   slug: unknown
   name: unknown
+}
+
+interface AtlasShelfRow extends EntityRow {
+  type: unknown
+  image: unknown
 }
 
 interface AtlasItemRow {
@@ -32,6 +40,10 @@ interface SelectedEntity {
   id: string
   slug: string
   name: string
+  /** Atlas shelf type; null on legacy Entities. */
+  type: string | null
+  /** Atlas shelf card image URL; null on legacy Entities. */
+  imageUrl: string | null
 }
 
 interface StoryMemory {
@@ -54,6 +66,8 @@ export interface StorySummary {
   imageUrl: string | null
   imageKind: StoryImageKind | null
   imageAttribution: string | null
+  /** Atlas shelf type (lets the client pick a placeholder per type); null on legacy. */
+  shelfType: string | null
 }
 
 export interface StoryEvent {
@@ -207,26 +221,26 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
 
   async function atlasSelectedEntities(): Promise<SelectedEntity[]> {
     const params = new URLSearchParams({
-      select: ENTITY_SELECT,
+      select: ATLAS_SHELF_SELECT,
       show_in_carousel: 'eq.true',
       status: 'eq.active',
       order: 'updated_at.desc',
       limit: String(MAX_STORIES),
     })
-    const rows = await readRows<EntityRow>('shelves', params, 'atlas')
-    return rows.map(selectedEntity).filter((row): row is SelectedEntity => row !== null).slice(0, MAX_STORIES)
+    const rows = await readRows<AtlasShelfRow>('shelves', params, 'atlas')
+    return rows.map(atlasSelectedEntity).filter((row): row is SelectedEntity => row !== null).slice(0, MAX_STORIES)
   }
 
   async function atlasSelectedEntityBySlug(storySlug: string): Promise<SelectedEntity | null> {
     const params = new URLSearchParams({
-      select: ENTITY_SELECT,
+      select: ATLAS_SHELF_SELECT,
       slug: `eq.${storySlug}`,
       show_in_carousel: 'eq.true',
       status: 'eq.active',
       limit: '1',
     })
-    const rows = await readRows<EntityRow>('shelves', params, 'atlas')
-    return selectedEntity(rows[0])
+    const rows = await readRows<AtlasShelfRow>('shelves', params, 'atlas')
+    return atlasSelectedEntity(rows[0])
   }
 
   async function atlasItemsTotal(shelfId: string): Promise<number> {
@@ -360,7 +374,29 @@ function selectedEntity(row: EntityRow | undefined): SelectedEntity | null {
   if (!row || typeof row.id !== 'string' || !UUID_RE.test(row.id)) return null
   if (typeof row.slug !== 'string' || !SAFE_STORY_SLUG_RE.test(row.slug)) return null
   if (typeof row.name !== 'string' || !row.name.trim()) return null
-  return { id: row.id, slug: row.slug, name: row.name.trim() }
+  return { id: row.id, slug: row.slug, name: row.name.trim(), type: null, imageUrl: null }
+}
+
+/** Atlas shelf: extends the validated legacy projection with the shelf type and card image. */
+function atlasSelectedEntity(row: AtlasShelfRow | undefined): SelectedEntity | null {
+  const entity = selectedEntity(row)
+  if (!entity || !row) return null
+  return {
+    ...entity,
+    type: atlasShelfType(row.type),
+    imageUrl: atlasShelfImageUrl(row.image),
+  }
+}
+
+/** Atlas shelf type: trimmed text; null when absent or blank. */
+function atlasShelfType(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/** Atlas card image: only a trimmed https: URL is accepted; empty, whitespace, http:, non-string or invalid URLs yield null. */
+function atlasShelfImageUrl(value: unknown): string | null {
+  const url = safeHttpUrl(value)
+  return url !== null && new URL(url).protocol === 'https:' ? url : null
 }
 
 function storyMemory(row: EntityKnowledgeMemoryV1): StoryMemory | null {
@@ -458,15 +494,21 @@ export function storySummary(entity: SelectedEntity, memories: StoryMemory[], ev
     !current || Date.parse(memory.eventAt) > Date.parse(current.eventAt) ? memory : current
   ), null)
   if (!latest) return null
+  // Atlas shelves carry their image on the selected entity and atlas memories
+  // carry none; legacy Entities never carry one, so the shelf image (when
+  // present) wins and legacy keeps the memory image untouched.
+  const shelfImage = entity.imageUrl ?? null
+  const imageUrl = shelfImage ?? latest.imageUrl
   return {
     storySlug: entity.slug,
     name: entity.name,
     latestDevelopment: latest.summary,
     eventCount,
     updatedAt: Date.parse(latest.eventAt) <= now ? latest.eventAt : new Date(now).toISOString(),
-    imageUrl: latest.imageUrl,
-    imageKind: latest.imageKind,
-    imageAttribution: latest.imageAttribution,
+    imageUrl,
+    imageKind: imageUrl ? (shelfImage ? 'content' : latest.imageKind) : null,
+    imageAttribution: shelfImage ? null : latest.imageAttribution,
+    shelfType: entity.type ?? null,
   }
 }
 
