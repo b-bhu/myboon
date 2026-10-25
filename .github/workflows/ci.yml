@@ -35,3 +35,10 @@ jobs:
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix
       - run: pnpm --filter @myboon/api typecheck
+
+  migrations-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # squawk on the V4 atlas migrations (#441). Older migrations predate the linter.
+      - run: npx -y squawk-cli@2.70.0 --pg-version 17 supabase/migrations/*atlas*.sql
