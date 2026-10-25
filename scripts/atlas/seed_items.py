@@ -5,9 +5,10 @@ Read-only on the source. Scope: items whose head status = 'active' (1989).
 - item_key       = source item id (stable; upsert key)
 - title/summary  = article_items.title / timeline_summary; note-only items: first sentence of note / note
 - occurred_at    = coalesce(article event_at, published_at); null for note-only items
-- main shelf     = the single live membership with role in (primary, primary_subject) -> atlas.shelves.legacy_entity_id
+- main shelf     = the single live membership with role in (primary, primary_subject) -> atlas.shelves.legacy_entity_id;
+                   if none, the single live `subject` membership (CTO, Oct 25)
 - also_affects   = other live memberships (related, subject, commentator), excluding the main shelf
-Items with zero or 2+ main memberships are NOT seeded (no guessing); they are written to
+Items with 2+ main memberships, or no main and not exactly one subject, are NOT seeded (no guessing); they are written to
 <out_dir>/unresolved.tsv for review.
 
 Each batch: one transaction, lock_timeout 5s, atlas.reason set (history via trigger).
@@ -48,24 +49,33 @@ def main():
                                            where removed_operation is null"""):
         mem[item_id].append((ent, role))
     rows, links, unresolved = [], [], []
+    n_subj = 0
     for item_id, title, summ, occ, note in items:
         ms = mem.get(item_id, [])
         mains = sorted({e for e, r in ms if r in MAIN})
+        subj = sorted({e for e, r in ms if r == 'subject'})
+        via_subject = not mains and len(subj) == 1
+        if via_subject:
+            mains = subj
         bad = [e for e, _ in ms if e not in active_ents]
         if len(mains) != 1 or bad:
-            unresolved.append((item_id, len(mains), ','.join(sorted({r for _, r in ms})) or '-',
-                               'inactive_entity' if bad else ('no_main' if not mains else 'multiple_main'),
-                               (title or note or '')[:120].replace('\t', ' ').replace('\n', ' ')))
+            reason = ('inactive_entity' if bad else 'no_membership' if not ms
+                      else 'multiple_main' if len(mains) > 1
+                      else 'multiple_subject_no_main' if subj else 'no_main_or_subject')
+            cands = ';'.join(f'{e}:{r}' for e, r in sorted(set(ms)))
+            unresolved.append((item_id, reason, cands or '-',
+                               (title or (note and note_title(note)) or '')[:160].replace('\t', ' ').replace('\n', ' ')))
             continue
         if title is None:
             title, summ = note_title(note), note
         assert title, item_id
+        n_subj += via_subject
         rows.append(f"({lit(item_id)},{lit(title)},{lit(summ)},{lit(occ)}::timestamptz,{lit(mains[0])}::uuid)")
         for e in sorted({e for e, r in ms if r in ALSO and e != mains[0]}):
             links.append((len(rows) - 1, f"({lit(item_id)},{lit(e)}::uuid)"))
         assert {r for _, r in ms} <= MAIN | ALSO, (item_id, ms)
     with open(out / 'unresolved.tsv', 'w') as f:
-        f.write('item_id\tmain_count\troles\treason\ttitle\n')
+        f.write('item_id\treason\tcandidates(entity_id:role)\ttitle\n')
         for u in unresolved:
             f.write('\t'.join(map(str, u)) + '\n')
     n = 0
@@ -103,7 +113,7 @@ where (t.title, t.summary, t.occurred_at, t.main_shelf_id)
 {link_sql}commit;
 """
         (out / f'batch_{n:02d}.sql').write_text(sql)
-    print(f'{len(items)} active items: {len(rows)} seedable, {len(links)} also_affects links, '
+    print(f'{len(items)} active items: {len(rows)} seedable ({n_subj} via single subject), {len(links)} also_affects links, '
           f'{len(unresolved)} unresolved -> {n} batches in {out}')
 
 if __name__ == '__main__':
