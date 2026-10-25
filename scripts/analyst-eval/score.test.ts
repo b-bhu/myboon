@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseLabelsCsv, scoreRun, type LabelRow, type RunRecord } from './score.js';
+import { parseLabelsCsv, renderMarkdown, scoreRun, type LabelRow, type RunRecord } from './score.js';
 
 const SHELF_MAIN = '11111111-1111-4111-8111-111111111111';
 const SHELF_OTHER = '22222222-2222-4222-8222-222222222222';
@@ -64,7 +64,7 @@ const label = (seed: string, shelf: string, extra: Partial<LabelRow> = {}): Labe
 
 describe('scoreRun', () => {
   it('scores a correct main shelf as ok and passes at 100% accuracy', () => {
-    const result = scoreRun([signal('aa')], [label('aa', 'competitions')], [run({
+    const result = scoreRun([signal('aa')], [label('aa', 'competitions', { expected_action: 'keep' })], [run({
       signal_id: SIG('aa'),
       decision: decision(SIG('aa'), { main: SHELF_MAIN }),
     })], SLUGS);
@@ -77,23 +77,87 @@ describe('scoreRun', () => {
     expect(result.rows[0]!.confidence).toBe(0.9);
   });
 
-  it('scores a wrong main shelf and applies the 43/50 pass mark', () => {
+  it('applies 31/36 main shelf and 43/50 keep/skip, both required', () => {
     const ids = Array.from({ length: 50 }, (_, i) => hexSeed(i));
     const signals = ids.map(signal);
-    const labels = ids.map((seed) => label(seed, 'competitions'));
-    const runs = ids.map((seed, i) => run({
+    // 36 shelf-labelled, 14 blank shelf; all 50 have expected_action keep.
+    const labels = ids.map((seed, i) => label(seed, i < 36 ? 'competitions' : '', { expected_action: 'keep' }));
+    const build = (mainOk: number, actionOk: number) => ids.map((seed, i) => run({
       signal_id: SIG(seed),
-      decision: decision(SIG(seed), { main: i < 43 ? SHELF_MAIN : SHELF_OTHER }),
+      decision: decision(SIG(seed), {
+        main: i < mainOk ? SHELF_MAIN : SHELF_OTHER,
+        action: i < actionOk ? 'keep' : 'skip',
+      }),
     }));
-    const result = scoreRun(signals, labels, runs, SLUGS);
-    expect(result.correctCount).toBe(43);
-    expect(result.labeledCount).toBe(50);
-    expect(result.accuracy).toBe(0.86);
-    expect(result.pass).toBe(true);
+    const atMarks = scoreRun(signals, labels, build(31, 43), SLUGS);
+    expect(atMarks.labeledCount).toBe(36);
+    expect(atMarks.correctCount).toBe(31);
+    expect(atMarks.actionTotal).toBe(50);
+    expect(atMarks.actionAgreeCount).toBe(43);
+    expect(atMarks.mainPass).toBe(true);
+    expect(atMarks.actionPass).toBe(true);
+    expect(atMarks.pass).toBe(true);
 
-    const oneLess = scoreRun(signals, labels, runs.slice(0, 42).concat(runs.slice(43).map((r) => ({ ...r, decision: decision(r.signal_id, { main: SHELF_OTHER }) }))), SLUGS);
-    expect(oneLess.correctCount).toBe(42);
-    expect(oneLess.pass).toBe(false);
+    const shelfShort = scoreRun(signals, labels, build(30, 50), SLUGS);
+    expect(shelfShort.correctCount).toBe(30);
+    expect(shelfShort.actionPass).toBe(true);
+    expect(shelfShort.pass).toBe(false);
+
+    const actionShort = scoreRun(signals, labels, build(36, 42), SLUGS);
+    expect(actionShort.mainPass).toBe(true);
+    expect(actionShort.actionAgreeCount).toBe(42);
+    expect(actionShort.pass).toBe(false);
+  });
+
+  it('scores keep/skip on blank-shelf rows, treats merge as keep and no decision as a miss', () => {
+    const MERGED = '66666666-6666-4666-8666-666666666666';
+    const signals = ['aa', 'ab', 'ac', 'ad'].map(signal);
+    const labels = [
+      label('aa', '', { expected_action: 'skip' }),
+      label('ab', 'competitions', { expected_action: 'keep' }),
+      label('ac', 'competitions', { expected_action: 'keep' }),
+      label('ad', 'competitions', { expected_action: '' }),
+    ];
+    const runs = [
+      run({ signal_id: SIG('aa'), decision: decision(SIG('aa'), { main: SHELF_MAIN, action: 'skip' }) }),
+      run({
+        signal_id: SIG('ab'),
+        decision: {
+          decision_type: 'merge', schema_version: 1, signal_id: SIG('ab'), analyst_version: 'x',
+          reason: 'dup', confidence: 0.8, target_item_id: ITEM_ONE, merged_into_id: MERGED,
+        },
+      }),
+      run({ signal_id: SIG('ac'), parse_ok: false }),
+      run({ signal_id: SIG('ad'), decision: decision(SIG('ad'), { main: SHELF_MAIN }) }),
+    ];
+    const result = scoreRun(signals, labels, runs, SLUGS);
+    expect(result.rows.map((r) => r.got_action)).toEqual(['skip', 'keep', null, 'keep']);
+    expect(result.rows.map((r) => r.action_agree)).toEqual([true, true, false, null]);
+    expect(result.actionTotal).toBe(3);
+    expect(result.actionAgreeCount).toBe(2);
+  });
+
+  it('reports UNCERTAIN labels separately as soft misses', () => {
+    const signals = ['aa', 'ab', 'ac'].map(signal);
+    const labels = [
+      label('aa', 'competitions', { expected_action: 'keep', notes: 'UNCERTAIN: could be markets' }),
+      label('ab', 'competitions', { expected_action: 'skip', notes: 'uncertain, noise' }),
+      label('ac', 'competitions', { expected_action: 'keep', notes: 'clear' }),
+    ];
+    const runs = [
+      run({ signal_id: SIG('aa'), decision: decision(SIG('aa'), { main: SHELF_OTHER }) }), // shelf miss
+      run({ signal_id: SIG('ab'), decision: decision(SIG('ab'), { main: SHELF_MAIN, action: 'skip' }) }), // hit
+      run({ signal_id: SIG('ac'), decision: decision(SIG('ac'), { main: SHELF_OTHER }) }), // hard miss
+    ];
+    const result = scoreRun(signals, labels, runs, SLUGS);
+    expect(result.rows.map((r) => r.uncertain)).toEqual([true, true, false]);
+    expect(result.uncertainCount).toBe(2);
+    expect(result.uncertainMisses).toBe(1);
+    expect(result.correctCount).toBe(1); // uncertain rows still count in the headline score
+    const md = renderMarkdown(1, result);
+    expect(md).toContain('UNCERTAIN labels (soft misses): 1/2 missed');
+    expect(md).toContain('keep/skip agreement: 3/3');
+    expect(md).toContain('overall: FAIL');
   });
 
   it('counts a parse failure as wrong', () => {

@@ -13,7 +13,9 @@ import { getShelvesByIds } from './tools/search_atlas.js';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(SCRIPT_DIR, 'fixtures');
 const RESULTS = join(SCRIPT_DIR, 'results');
-const PASS_MARK = 0.85; // 43/50
+/** Pass needs BOTH: main shelf >= 31/36 labelled signals and keep/skip >= 43/50 (CTO, #442). */
+export const MAIN_PASS_MARK = 31 / 36;
+export const ACTION_PASS_MARK = 43 / 50;
 
 export interface LabelRow {
   signal_id: string;
@@ -56,6 +58,10 @@ export interface ScoreRow {
   overrun: boolean;
   skipped: boolean;
   target_agree: boolean | null; // null = no label to compare
+  expected_action: string | null;
+  got_action: 'keep' | 'skip' | null; // file -> its action, merge -> keep, none -> null
+  action_agree: boolean | null; // null = no expected_action label
+  uncertain: boolean; // label notes flag UNCERTAIN (soft miss when wrong)
   tool_calls: number | null;
   seconds: number | null;
   tokens: number | null;
@@ -73,7 +79,14 @@ export interface ScoreResult {
   labeledCount: number; // rows with expected_main_shelf
   correctCount: number; // labeled rows with ok
   accuracy: number | null; // null when no labels
-  pass: boolean; // accuracy >= PASS_MARK
+  mainPass: boolean; // accuracy >= 31/36
+  actionTotal: number; // rows with expected_action
+  actionAgreeCount: number;
+  actionAccuracy: number | null;
+  actionPass: boolean; // >= 43/50
+  pass: boolean; // mainPass && actionPass
+  uncertainCount: number;
+  uncertainMisses: number; // uncertain rows that are a main-shelf or keep/skip miss (soft)
   targetTotal: number;
   targetAgree: number;
   skipCount: number;
@@ -171,6 +184,13 @@ export function scoreRun(
   const sum = (pick: (r: ScoreRow) => number | null) => withRun.reduce((acc, r) => acc + (pick(r) ?? 0), 0);
 
   const accuracy = labeledRows.length > 0 ? correctCount(rows) / labeledRows.length : null;
+  const actionRows = rows.filter((r) => r.action_agree !== null);
+  const actionAgreeCount = actionRows.filter((r) => r.action_agree === true).length;
+  const actionAccuracy = actionRows.length > 0 ? actionAgreeCount / actionRows.length : null;
+  const EPS = 1e-9;
+  const mainPass = accuracy !== null && accuracy + EPS >= MAIN_PASS_MARK;
+  const actionPass = actionAccuracy !== null && actionAccuracy + EPS >= ACTION_PASS_MARK;
+  const uncertainRows = rows.filter((r) => r.uncertain);
   return {
     rows,
     rowCount: rows.length,
@@ -178,7 +198,14 @@ export function scoreRun(
     labeledCount: labeledRows.length,
     correctCount: correctCount(rows),
     accuracy,
-    pass: accuracy !== null && accuracy >= PASS_MARK,
+    mainPass,
+    actionTotal: actionRows.length,
+    actionAgreeCount,
+    actionAccuracy,
+    actionPass,
+    pass: mainPass && actionPass,
+    uncertainCount: uncertainRows.length,
+    uncertainMisses: uncertainRows.filter(isMiss).length,
     targetTotal: rows.filter((r) => r.has_target_label).length,
     targetAgree: rows.filter((r) => r.target_agree === true).length,
     skipCount: validDecisions.filter((r) => r.skipped).length,
@@ -194,6 +221,10 @@ export function scoreRun(
     totalSeconds: sum((r) => r.seconds),
     meanSeconds: withRun.length > 0 ? sum((r) => r.seconds) / withRun.length : null,
   };
+}
+
+function isMiss(r: ScoreRow): boolean {
+  return (r.labeled && !r.ok) || r.action_agree === false;
 }
 
 function correctCount(rows: readonly ScoreRow[]): number {
@@ -214,6 +245,15 @@ function evalRow(
     ? parsed.data
     : null;
   const decisionValid = file !== null;
+  const anyDecision = parsed.success && parsed.data.signal_id === signal.signal_id && !(run?.overrun ?? false)
+    ? parsed.data
+    : null;
+  const gotAction: 'keep' | 'skip' | null = anyDecision === null
+    ? null
+    : anyDecision.decision_type === 'file' ? anyDecision.action : 'keep';
+  const expectedAction = label !== undefined && label.expected_action.trim() !== '' ? label.expected_action.trim() : null;
+  const actionAgree = expectedAction === null ? null : gotAction === expectedAction;
+  const uncertain = label !== undefined && /UNCERTAIN/i.test(label.notes);
   const mainShelf = file !== null ? file.shelves.find((s) => s.role === 'main')! : null;
   const gotSlug = mainShelf === null ? null : (shelfSlugById.get(mainShelf.shelf_id) ?? null);
 
@@ -239,6 +279,10 @@ function evalRow(
     overrun: run?.overrun ?? false,
     skipped: file !== null && file.action === 'skip',
     target_agree: targetAgree,
+    expected_action: expectedAction,
+    got_action: gotAction,
+    action_agree: actionAgree,
+    uncertain,
     tool_calls: run?.tool_calls ?? null,
     seconds: run?.seconds ?? null,
     tokens: run?.tokens ?? null,
@@ -254,8 +298,8 @@ export function renderMarkdown(pass: number, r: ScoreResult): string {
   const lines: string[] = [];
   lines.push(`# Analyst eval — pass ${pass}`, '');
   lines.push(`signals: ${r.rowCount}, runs: ${r.recordCount}, labeled: ${r.labeledCount}, labeled without run: ${r.missing}`, '');
-  lines.push('| signal_id | expected | got | conf | tools | s | tokens | ok |');
-  lines.push('|---|---|---|---|---|---|---|---|');
+  lines.push('| signal_id | expected | got | action exp/got | conf | tools | s | tokens | ok |');
+  lines.push('|---|---|---|---|---|---|---|---|---|');
   for (const row of r.rows) {
     const expected = row.labeled ? row.expected_main_shelf : null;
     let got: string;
@@ -263,17 +307,31 @@ export function renderMarkdown(pass: number, r: ScoreResult): string {
     else if (!row.parse_ok) got = 'parse-fail';
     else if (!row.decision_valid) got = 'invalid-decision';
     else got = row.got_main_shelf ?? 'unknown-shelf';
-    lines.push(`| ${row.signal_id.slice(0, 8)} | ${expected ?? '—'} | ${got} | ${row.confidence === null ? '' : row.confidence.toFixed(2)} | ${row.tool_calls ?? ''} | ${row.seconds === null ? '' : row.seconds.toFixed(1)} | ${row.tokens ?? ''} | ${row.ok ? '✓' : row.labeled ? '✗' : '—'} |`);
+    lines.push(`| ${row.signal_id.slice(0, 8)} | ${expected ?? '—'} | ${got} | ${row.expected_action ?? '—'}/${row.got_action ?? '—'}${row.action_agree === false ? ' ✗' : ''}${row.uncertain ? ' (U)' : ''} | ${row.confidence === null ? '' : row.confidence.toFixed(2)} | ${row.tool_calls ?? ''} | ${row.seconds === null ? '' : row.seconds.toFixed(1)} | ${row.tokens ?? ''} | ${row.ok ? '✓' : row.labeled ? '✗' : '—'} |`);
   }
   lines.push('');
+  const pct = (x: number | null) => `${((x ?? 0) * 100).toFixed(1)}%`;
   lines.push(r.labeledCount === 0
-    ? 'main-shelf accuracy: no labels (threshold 43/50 = 85%)'
-    : `main-shelf accuracy: ${r.correctCount}/${r.labeledCount} = ${((r.accuracy ?? 0) * 100).toFixed(1)}% — ${r.pass ? 'PASS' : 'FAIL'} (threshold 43/50 = 85%)`);
+    ? 'main-shelf accuracy: no labels (needs >= 31/36)'
+    : `main-shelf accuracy: ${r.correctCount}/${r.labeledCount} = ${pct(r.accuracy)} — ${r.mainPass ? 'ok' : 'below'} (needs >= 31/36)`);
+  lines.push(r.actionTotal === 0
+    ? 'keep/skip agreement: no labels (needs >= 43/50)'
+    : `keep/skip agreement: ${r.actionAgreeCount}/${r.actionTotal} = ${pct(r.actionAccuracy)} — ${r.actionPass ? 'ok' : 'below'} (needs >= 43/50)`);
+  lines.push(`overall: ${r.pass ? 'PASS' : 'FAIL'}`);
   lines.push(`target_item_id agreement: ${r.targetAgree}/${r.targetTotal}`);
   lines.push(`skip rate: ${r.skipCount}/${r.recordCount} decisions${r.skipRate === null ? '' : ` (${(r.skipRate * 100).toFixed(1)}%)`}`);
   lines.push(`parse failures: ${r.parseFailures}, overruns: ${r.overruns}, invalid decisions: ${r.invalidDecisions}`);
   lines.push(`tokens: ${Math.round(r.totalTokens)} total${r.meanTokens === null ? '' : `, ${Math.round(r.meanTokens)} mean`}`);
   lines.push(`cost: $${r.totalCost.toFixed(2)}, api_calls: ${r.totalApiCalls}, seconds: ${r.totalSeconds.toFixed(1)} total${r.meanSeconds === null ? '' : `, ${r.meanSeconds.toFixed(1)} mean`}`);
+  const uncertain = r.rows.filter((row) => row.uncertain);
+  if (uncertain.length > 0) {
+    lines.push('', `## UNCERTAIN labels (soft misses): ${r.uncertainMisses}/${r.uncertainCount} missed`, '');
+    lines.push('| signal_id | expected shelf | got | action exp/got | miss |');
+    lines.push('|---|---|---|---|---|');
+    for (const row of uncertain) {
+      lines.push(`| ${row.signal_id.slice(0, 8)} | ${row.expected_main_shelf ?? '—'} | ${row.got_main_shelf ?? '—'} | ${row.expected_action ?? '—'}/${row.got_action ?? '—'} | ${isMiss(row) ? 'soft' : ''} |`);
+    }
+  }
   return `${lines.join('\n')}\n`;
 }
 
