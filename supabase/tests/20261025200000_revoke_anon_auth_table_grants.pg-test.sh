@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #397 local proof: up -> down -> up for 20260824122705 and 20261025200000 on a
+# #397 local proof: up -> down -> up for 20260824122705 and 20261025140056 on a
 # throwaway Postgres. The 9 tables are stubs carrying prod's Oct 25 grants.
 set -euo pipefail
 BIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
@@ -27,8 +27,8 @@ grant select on public.entities to myboon_knowledge_owner;
 SQL
 snap() { P -At -c "select coalesce(string_agg(table_name||':'||grantee||':'||privilege_type, ',' order by 1),'') from (select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema='public' and grantee <> 'postgres' order by 1,2,3) g"; }
 upd() { P -At -c "select to_regclass('public.polymarket_updown_reference_prices') is not null"; }
-up() { P -1 -f $M/20260824122705_polymarket_updown_reference_prices.sql; P -1 -f $M/20261025200000_revoke_anon_auth_table_grants.sql; }
-down() { P -f $R/20261025200000_revoke_anon_auth_table_grants.down.sql; P -f $R/20260824122705_polymarket_updown_reference_prices.down.sql; }
+up() { P -1 -f $M/20260824122705_polymarket_updown_reference_prices.sql; P -1 -f $M/20261025140056_revoke_anon_auth_table_grants.sql; }
+down() { P -f $R/20261025140056_revoke_anon_auth_table_grants.down.sql; P -f $R/20260824122705_polymarket_updown_reference_prices.down.sql; }
 before=$(snap)
 up; up1=$(snap)
 P -At -c "select count(*) from information_schema.role_table_grants where table_schema='public' and grantee in ('anon','authenticated')" | grep -qx 0 && echo "up1: anon/authenticated grants = 0"

@@ -5,7 +5,7 @@ Repo `main`: 69 migration files (+1 new here). Prod history: 34 rows.
 
 Counts: 16 recorded with the same version, 18 recorded under a different version (same name),
 27 unrecorded but effects present or superseded (mark applied), 3 partially applied, 4 not applied
-and owned elsewhere (decision), 1 not applied and run here (20260824), 1 new (20261025200000).
+and owned elsewhere (decision), 1 not applied and run here (20260824), 1 new (20261025140056).
 
 ## Steps (each needs CTO approval on #397, after a backup; Bucket/DB Guy runs them)
 
@@ -16,17 +16,17 @@ and owned elsewhere (decision), 1 not applied and run here (20260824), 1 new (20
 3. Record the 27 present/superseded migrations (26 versions; `20260706` covers two files):
    - `supabase migration repair --status applied 20260401 20260402 20260508 20260626 20260706 20260715160100 20260716062349 20260730 20260731 20260802161500 20260803120000 20260826175053 20261011090000 20261015120000 20261016180000 20261017093000 20261017120000 20261017180000 20261017210000 20261019120000 20261019210000 20261019213000 20261019230000 20261019231000 20261020100000 20261020170000`
 4. Decisions before push (otherwise `db push --include-all` would run them):
-   - 20260710041040 partial: recommend mark applied; its revokes are in 20261025200000, the stats RPC stays absent (API falls back on 404).
+   - 20260710041040 partial: recommend mark applied; its revokes are in 20261025140056, the stats RPC stays absent (API falls back on 404).
    - 20260728 partial: recommend mark applied now and file a follow-up for `entity_memories_check` + the index rebuild (ACCESS EXCLUSIVE on entity_memories).
    - 20261019220000 partial: owner policies missing; ask merge owner (#342) whether to re-run the policy block.
    - 20260714153008 / 20261019180000: #396 decides; recommend mark 20260714153008 applied as superseded.
    - 20261019190000, 20261019200000: still pending their own needs-bucket issues (#390, #378).
-5. `supabase db push --dry-run` must list only 20260824122705 and 20261025200000 (plus any decided above).
+5. `supabase db push --dry-run` must list only 20260824122705 and 20261025140056 (plus any decided above).
 6. `supabase db push` (both files set lock_timeout 5s / statement_timeout 30s).
 7. Verify: grants query shows zero anon/authenticated rows on the 9 tables; updown table exists; /narratives and /stories counts unchanged; security advisor.
 8. Correct the stale "NOT APPLIED" headers for the migrations now confirmed present.
 
-Rollback: `supabase/rollbacks/20261025200000_revoke_anon_auth_table_grants.down.sql`,
+Rollback: `supabase/rollbacks/20261025140056_revoke_anon_auth_table_grants.down.sql`,
 `supabase/rollbacks/20260824122705_polymarket_updown_reference_prices.down.sql`; history steps
 revert with the inverse `migration repair` commands.
 
@@ -59,7 +59,7 @@ group by 1, 2 order by 1, 2;
 | `20260703_publisher_v1_editor_drafts` | recorded as 20260703163836 | repoint history (revert 20260703163836, apply 20260703) |
 | `20260706_news_source_state` | superseded: tables dropped by applied 20260818145731 | mark applied |
 | `20260706_pipeline_runs` | present, unrecorded | mark applied |
-| `20260710041040_internal_entity_browser_security` | PARTIAL: RLS on, but revokes never ran and internal_entity_memory_stats() missing (API tolerates 404). Revokes folded into 20261025200000 | decision |
+| `20260710041040_internal_entity_browser_security` | PARTIAL: RLS on, but revokes never ran and internal_entity_memory_stats() missing (API tolerates 404). Revokes folded into 20261025140056 | decision |
 | `20260714131443_entity_carousel_flag` | recorded (same version) | none |
 | `20260714153008_secure_published_narratives` | NOT applied: RLS off on published_narratives; superseded by #396 / 20261019180000 | decision (own issue) |
 | `20260715160100_polymarket_catalog_v1` | present, unrecorded | mark applied |
@@ -111,4 +111,4 @@ group by 1, 2 order by 1, 2;
 | `20261025100300_atlas_shelves_carousel` | recorded as 20261025095043 | repoint history (revert 20261025095043, apply 20261025100300) |
 | `20261025114300_waitlist` | recorded (same version) | none |
 | `20261025114823_atlas_service_role_read` | recorded (same version) | none |
-| `20261025200000_revoke_anon_auth_table_grants` | new (#397) | run |
+| `20261025140056_revoke_anon_auth_table_grants` | new (#397) | run |

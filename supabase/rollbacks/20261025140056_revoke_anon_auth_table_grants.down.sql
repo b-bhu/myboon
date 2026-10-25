@@ -1,4 +1,4 @@
--- Rollback for 20261025200000_revoke_anon_auth_table_grants.sql: restores the
+-- Rollback for 20261025140056_revoke_anon_auth_table_grants.sql: restores the
 -- exact anon / authenticated grants prod held on Oct 25, 2026 (#397 audit).
 begin;
 set local lock_timeout = '5s';

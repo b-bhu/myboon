@@ -9,8 +9,8 @@
 -- service_role and myboon_knowledge_owner grants are untouched.
 -- Also covers the unrun revokes of 20260710041040 (entities, entity_memories,
 -- entity_published_history).
--- NOT APPLIED. Needs CTO approval on #397 (needs-bucket).
--- Rollback: supabase/rollbacks/20261025200000_revoke_anon_auth_table_grants.down.sql
+-- Applied on prod Oct 25 2026 (CTO-approved), recorded as 20261025140056.
+-- Rollback: supabase/rollbacks/20261025140056_revoke_anon_auth_table_grants.down.sql
 
 SET lock_timeout = '5s';
 SET statement_timeout = '30s';
