@@ -16,9 +16,13 @@ Items upsert on item_key and only update when a value differs; links insert on c
 Shelves are resolved inside the DB via legacy_entity_id, so a row whose shelf is missing is skipped,
 never inserted with a guess. A rerun changes 0 rows and writes 0 history rows.
 
-usage: seed_items.py <cleanup.sqlite> <out_dir> [batch_size]
+Per-item overrides (CTO picks, Oct 25): scripts/atlas/main_shelf_picks_oct25.tsv
+(item_id, main_shelf_slug, also_affects_slugs (comma list), drop, reason). A picked item uses the
+picked main shelf and exactly the picked also_affects; drop = yes keeps the item out of Atlas.
+
+usage: seed_items.py <cleanup.sqlite> <out_dir> [batch_size] [picks.tsv]
 """
-import re, sqlite3, sys, pathlib
+import csv, re, sqlite3, sys, pathlib
 from collections import defaultdict
 
 MAIN = {'primary', 'primary_subject'}
@@ -34,10 +38,23 @@ def note_title(note):
 def main():
     db, out = sys.argv[1], pathlib.Path(sys.argv[2])
     size = int(sys.argv[3]) if len(sys.argv) > 3 else 200
+    picks_path = sys.argv[4] if len(sys.argv) > 4 else pathlib.Path(__file__).with_name('main_shelf_picks_oct25.tsv')
     out.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
     active_ents = {r[0] for r in c.execute(
         "select id from managed_knowledge_private__entities where status = 'active'")}
+    slug_id = dict(c.execute(
+        "select slug, id from managed_knowledge_private__entities where status = 'active'"))
+    picks = {}
+    for r in csv.DictReader(open(picks_path), delimiter='\t'):
+        assert r['item_id'] not in picks, r['item_id']
+        assert r['drop'] in ('yes', 'no'), r
+        if r['drop'] == 'yes':
+            picks[r['item_id']] = None
+        else:
+            also = [x.strip() for x in r['also_affects_slugs'].split(',') if x.strip()]
+            main = slug_id[r['main_shelf_slug'].strip()]
+            picks[r['item_id']] = (main, sorted({slug_id[x] for x in also} - {main}))
     items = c.execute("""
         select h.item_id, a.title, a.timeline_summary, coalesce(a.event_at, a.published_at), i.note
         from managed_knowledge_private__item_heads h
@@ -49,9 +66,21 @@ def main():
                                            where removed_operation is null"""):
         mem[item_id].append((ent, role))
     rows, links, unresolved = [], [], []
-    n_subj = 0
+    n_subj = n_pick = 0
+    dropped = []
     for item_id, title, summ, occ, note in items:
         ms = mem.get(item_id, [])
+        if item_id in picks:
+            if picks[item_id] is None:
+                dropped.append(item_id)
+                continue
+            if title is None:
+                title, summ = note_title(note), note
+            main, also = picks[item_id]
+            n_pick += 1
+            rows.append(f"({lit(item_id)},{lit(title)},{lit(summ)},{lit(occ)}::timestamptz,{lit(main)}::uuid)")
+            links.extend((len(rows) - 1, f"({lit(item_id)},{lit(e)}::uuid)") for e in also)
+            continue
         mains = sorted({e for e, r in ms if r in MAIN})
         subj = sorted({e for e, r in ms if r == 'subject'})
         via_subject = not mains and len(subj) == 1
@@ -74,6 +103,8 @@ def main():
         for e in sorted({e for e, r in ms if r in ALSO and e != mains[0]}):
             links.append((len(rows) - 1, f"({lit(item_id)},{lit(e)}::uuid)"))
         assert {r for _, r in ms} <= MAIN | ALSO, (item_id, ms)
+    assert set(picks) <= {i[0] for i in items}, 'pick for an unknown/inactive item'
+    (out / 'dropped.txt').write_text(''.join(d + '\n' for d in dropped))
     with open(out / 'unresolved.tsv', 'w') as f:
         f.write('item_id\treason\tcandidates(entity_id:role)\ttitle\n')
         for u in unresolved:
@@ -113,7 +144,7 @@ where (t.title, t.summary, t.occurred_at, t.main_shelf_id)
 {link_sql}commit;
 """
         (out / f'batch_{n:02d}.sql').write_text(sql)
-    print(f'{len(items)} active items: {len(rows)} seedable ({n_subj} via single subject), {len(links)} also_affects links, '
+    print(f'{len(items)} active items: {len(rows)} seedable ({n_subj} via single subject, {n_pick} via picks), {len(dropped)} dropped, {len(links)} also_affects links, '
           f'{len(unresolved)} unresolved -> {n} batches in {out}')
 
 if __name__ == '__main__':
