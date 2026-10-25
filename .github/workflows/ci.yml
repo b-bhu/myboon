@@ -41,4 +41,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # squawk on the V4 atlas migrations (#441). Older migrations predate the linter.
-      - run: npx -y squawk-cli@2.70.0 --pg-version 17 supabase/migrations/*atlas*.sql
+      - run: npx -y squawk-cli@2.70.0 --pg-version 17 supabase/migrations/*atlas*.sql supabase/rollbacks/*atlas*.down.sql
