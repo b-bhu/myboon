@@ -20,7 +20,7 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -48,6 +48,8 @@ import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { useWallet } from '@/hooks/useWallet';
 import { selectMwaDisconnect } from '@/features/wallet/signOut';
 import { semantic, tokens } from '@/theme';
+import { WaitlistSheet } from '@/features/waitlist/WaitlistSheet';
+import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
 
 type ConnectStep =
   | { kind: 'options' }
@@ -73,7 +75,16 @@ function isUserCancelled(error: unknown): boolean {
   return /plugin closed|user rejected|user denied|request rejected|cancell?ed/i.test(message);
 }
 
-export function ConnectionSheet({
+/**
+ * In the waitlist build (#432) every connect entry point opens the waitlist
+ * instead; the full build renders the connection sheet unchanged.
+ */
+export function ConnectionSheet(props: ComponentProps<typeof FullConnectionSheet>) {
+  if (WAITLIST_MODE) return <WaitlistSheet visible={props.visible} onClose={props.onClose} />;
+  return <FullConnectionSheet {...props} />;
+}
+
+function FullConnectionSheet({
   visible,
   chain,
   onClose,
