@@ -27,6 +27,8 @@ import {
   RAYDIUM_MARK_SVG,
 } from '@/features/home/marketBrandAssets';
 import { HomeWalletOverview } from '@/features/wallet/HomeWalletOverview';
+import { WaitlistProfileContent } from '@/features/waitlist/WaitlistProfileScreen';
+import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
 import { WalletSecondarySheet } from '@/features/wallet/WalletSecondarySheet';
 import { HomeFeedOverview } from '@/features/home/components/HomeFeedOverview';
 import { HomeNavigation, type HomeDestination } from '@/features/home/components/HomeNavigation';
@@ -353,6 +355,8 @@ export default function HomeScreen() {
       </View>
 
       <View style={[styles.destination, destination !== 'wallet' && styles.hiddenDestination]}>
+        {/* Waitlist build (#432): no wallet; the tab is the waitlist + settings. */}
+        {WAITLIST_MODE ? <WaitlistProfileContent /> : (
           <HomeWalletOverview
             active={walletSectionVisible}
             surfaceVersion={surfaceVersion}
@@ -384,6 +388,7 @@ export default function HomeScreen() {
               />
             ))}
           />
+        )}
       </View>
       <HomeNavigation
         selected={destination}

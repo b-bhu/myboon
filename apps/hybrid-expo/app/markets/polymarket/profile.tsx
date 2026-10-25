@@ -1,3 +1,5 @@
+import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
+import { WaitlistProfileScreen } from '@/features/waitlist/WaitlistProfileScreen';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -97,7 +99,13 @@ function getOrderCost(order: OpenOrder): number {
   return remainingOrderCost(order) ?? 0;
 }
 
-export default function PredictProfileScreen() {
+// Waitlist build (#432): profile has no wallet parts.
+export default function PredictProfileRoute() {
+  if (WAITLIST_MODE) return <WaitlistProfileScreen />;
+  return <PredictProfileScreen />;
+}
+
+function PredictProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   // Solana is read only as a withdrawal destination — never as this screen's

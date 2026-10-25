@@ -42,6 +42,7 @@ export default function RootLayout() {
                         }}
                       />
                       <Stack.Screen name="spot" options={{ headerShown: false }} />
+                      <Stack.Screen name="waitlist" options={{ headerShown: false }} />
                       <Stack.Screen name="markets/polymarket" options={{ headerShown: false }} />
                       <Stack.Screen name="markets/polymarket/profile" options={{ headerShown: false }} />
                       <Stack.Screen name="markets/polymarket/market/[slug]" options={{ headerShown: false }} />
