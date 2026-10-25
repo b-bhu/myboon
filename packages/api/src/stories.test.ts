@@ -15,6 +15,13 @@ const entityIds = [
   '00000000-0000-4000-8000-000000000006',
 ]
 
+// Prod Atlas ids are UUIDv7 (e.g. 01a17278-acb3-7ccd-8ec1-4a9d8baf672f); the legacy Entity ids above are v4.
+const atlasShelfIds = [
+  '01a17278-acb3-7ccd-8ec1-4a9d8baf672f',
+  '01a17278-acb3-7ccd-8ec1-4a9d8baf6730',
+  '01a17278-acb3-7ccd-8ec1-4a9d8baf6731',
+]
+
 type StoryMemoryReader = Pick<EntityKnowledgeReader, 'getEntityMemoryEvents'>
 
 function app(
@@ -24,11 +31,13 @@ function app(
       return { schemaVersion: ENTITY_KNOWLEDGE_SCHEMA_VERSION, items: [], totalCount: 0, nextCursor: null, hasMore: false }
     },
   },
+  source?: 'legacy' | 'atlas',
 ) {
   return createStoryRoutes({
     supabaseUrl: 'https://project.supabase.co',
     serviceRoleKey: 'service-role-test-key',
     memoryReader,
+    ...(source ? { source } : {}),
     fetch: fetchImpl,
   })
 }
@@ -378,6 +387,363 @@ test('Story summary moves updatedAt forward when a new later reported memory arr
   assert.equal(after?.latestDevelopment, 'New development')
   assert.equal(after?.updatedAt, '2026-07-13T09:30:00.000Z')
 })
+
+test('Story Atlas list selects active carousel shelves, caps and orders them, and maps latest items', async () => {
+  const requests: Array<{ url: URL; headers: Record<string, string> }> = []
+  const shelfRows = [
+    { id: atlasShelfIds[0], slug: 'story-1', name: 'Story 1', status: 'active', show_in_carousel: true },
+    { id: atlasShelfIds[1], slug: 'story-2', name: 'Story 2', status: 'active', show_in_carousel: true },
+    { id: atlasShelfIds[2], slug: 'story-3', name: 'Story 3', status: 'active', show_in_carousel: true },
+  ]
+  const itemsByShelf: Record<string, { latest: unknown; total: number }> = {
+    [atlasShelfIds[0]]: {
+      latest: { id: 'item-1', title: 'Latest development', summary: '  Latest summary  ', occurred_at: '2026-07-12T00:00:00.000Z' },
+      total: 2,
+    },
+    [atlasShelfIds[1]]: {
+      latest: { id: 'item-2', title: 'Only title', summary: null, occurred_at: '2026-07-09T00:00:00.000Z' },
+      total: 1,
+    },
+    [atlasShelfIds[2]]: { latest: null, total: 0 },
+  }
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    requests.push({ url, headers })
+    assert.equal(headers['Accept-Profile'], 'atlas')
+    if (url.pathname.endsWith('/shelves')) {
+      assert.equal(url.searchParams.get('select'), 'id,slug,name')
+      assert.equal(url.searchParams.get('show_in_carousel'), 'eq.true')
+      assert.equal(url.searchParams.get('status'), 'eq.active')
+      assert.equal(url.searchParams.get('order'), 'updated_at.desc')
+      assert.equal(url.searchParams.get('limit'), '5')
+      return jsonResponse(shelfRows)
+    }
+    if (url.pathname.endsWith('/items')) {
+      const shelfId = String(url.searchParams.get('main_shelf_id') ?? '').replace(/^eq\./, '')
+      assert.ok(shelfId in itemsByShelf, `unexpected shelf: ${shelfId}`)
+      assert.equal(url.searchParams.get('status'), 'eq.active')
+      assert.equal(url.searchParams.get('merged_into_id'), 'is.null')
+      assert.equal(url.searchParams.get('occurred_at'), 'not.is.null')
+      assert.equal(url.searchParams.get('order'), 'occurred_at.desc,id.desc')
+      if (headers.Prefer === 'count=exact') {
+        assert.equal(headers.Range, '0-0')
+        assert.equal(url.searchParams.has('limit'), false)
+        return jsonResponse([], itemsByShelf[shelfId].total)
+      }
+      assert.equal(url.searchParams.get('limit'), '1')
+      assert.equal(url.searchParams.get('offset'), '0')
+      return jsonResponse(itemsByShelf[shelfId].latest ? [itemsByShelf[shelfId].latest] : [])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const response = await app(fetchImpl, undefined, 'atlas').request('/')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    stories: [
+      {
+        storySlug: 'story-1',
+        name: 'Story 1',
+        latestDevelopment: 'Latest summary',
+        eventCount: 2,
+        updatedAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
+      },
+      {
+        storySlug: 'story-2',
+        name: 'Story 2',
+        latestDevelopment: 'Only title',
+        eventCount: 1,
+        updatedAt: '2026-07-09T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
+      },
+    ],
+  })
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/shelves')).length, 1)
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/items')).length, 6)
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entities')).length, 0)
+})
+
+test('Story Atlas list returns a shelf with a production UUIDv7 id', async () => {
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    assert.equal(headers['Accept-Profile'], 'atlas')
+    if (url.pathname.endsWith('/shelves')) {
+      return jsonResponse([{ id: atlasShelfIds[0], slug: 'story-v7', name: 'Story v7' }])
+    }
+    if (url.pathname.endsWith('/items')) {
+      assert.equal(url.searchParams.get('main_shelf_id'), `eq.${atlasShelfIds[0]}`)
+      if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
+      return jsonResponse([
+        { id: 'item-1', title: 'Latest development', summary: 'Latest summary', occurred_at: '2026-07-12T00:00:00.000Z' },
+      ])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const response = await app(fetchImpl, undefined, 'atlas').request('/')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    stories: [
+      {
+        storySlug: 'story-v7',
+        name: 'Story v7',
+        latestDevelopment: 'Latest summary',
+        eventCount: 1,
+        updatedAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
+      },
+    ],
+  })
+})
+
+test('Story Atlas detail pages items newest-first with pagination fields', async () => {
+  const requests: Array<{ url: URL; headers: Record<string, string> }> = []
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    requests.push({ url, headers })
+    assert.equal(headers['Accept-Profile'], 'atlas')
+    if (url.pathname.endsWith('/shelves')) {
+      assert.equal(url.searchParams.get('slug'), 'eq.us-and-iran')
+      assert.equal(url.searchParams.get('show_in_carousel'), 'eq.true')
+      assert.equal(url.searchParams.get('status'), 'eq.active')
+      assert.equal(url.searchParams.get('limit'), '1')
+      return jsonResponse([{ id: atlasShelfIds[0], slug: 'us-and-iran', name: 'US and Iran' }])
+    }
+    if (url.pathname.endsWith('/items')) {
+      assert.equal(url.searchParams.get('main_shelf_id'), `eq.${atlasShelfIds[0]}`)
+      assert.equal(url.searchParams.get('status'), 'eq.active')
+      assert.equal(url.searchParams.get('merged_into_id'), 'is.null')
+      assert.equal(url.searchParams.get('occurred_at'), 'not.is.null')
+      assert.equal(url.searchParams.get('order'), 'occurred_at.desc,id.desc')
+      if (headers.Prefer === 'count=exact') {
+        assert.equal(headers.Range, '0-0')
+        return jsonResponse([], 5)
+      }
+      const offset = Number(url.searchParams.get('offset'))
+      if (offset === 0) {
+        return jsonResponse([
+          { id: 'item-newest', title: 'First', summary: 'Latest event', occurred_at: '2026-07-12T00:00:00.000Z' },
+        ])
+      }
+      return jsonResponse([
+        { id: 'item-2', title: 'Second', summary: 'Second event', occurred_at: '2026-07-11T00:00:00.000Z' },
+        { id: 'item-3', title: 'Third', summary: 'Third event', occurred_at: '2026-07-10T00:00:00.000Z' },
+      ])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const response = await app(fetchImpl, undefined, 'atlas').request('/us-and-iran?limit=2&offset=1')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    story: {
+      storySlug: 'us-and-iran',
+      name: 'US and Iran',
+      latestDevelopment: 'Latest event',
+      eventCount: 5,
+      updatedAt: '2026-07-12T00:00:00.000Z',
+      imageUrl: null,
+      imageKind: null,
+      imageAttribution: null,
+    },
+    events: [
+      { text: 'Second event', eventAt: '2026-07-11T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null },
+      { text: 'Third event', eventAt: '2026-07-10T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null },
+    ],
+    pagination: {
+      limit: 2,
+      offset: 1,
+      total: 5,
+      hasMore: true,
+      nextOffset: 3,
+    },
+  })
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/items')).length, 3)
+})
+
+test('Story Atlas detail reuses the first page row as the latest at offset 0', async () => {
+  let itemRequests = 0
+  const rows = [
+    { id: 'item-1', title: 'First', summary: 'Latest event', occurred_at: '2026-07-12T00:00:00.000Z' },
+    { id: 'item-2', title: 'Second', summary: 'Second event', occurred_at: '2026-07-11T00:00:00.000Z' },
+    { id: 'item-3', title: 'Third', summary: 'Third event', occurred_at: '2026-07-10T00:00:00.000Z' },
+  ]
+  const response = await app(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    if (url.pathname.endsWith('/shelves')) {
+      return jsonResponse([{ id: atlasShelfIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+    }
+    if (url.pathname.endsWith('/items')) {
+      itemRequests += 1
+      if (headers.Prefer === 'count=exact') return jsonResponse([], 3)
+      assert.equal(url.searchParams.get('limit'), '20')
+      assert.equal(url.searchParams.get('offset'), '0')
+      return jsonResponse(rows)
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }, undefined, 'atlas').request('/bitcoin')
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    story: { latestDevelopment: string, eventCount: number },
+    events: Array<{ text: string, eventAt: string }>,
+    pagination: { limit: number, offset: number, total: number, hasMore: boolean, nextOffset: number | null },
+  }
+  assert.equal(body.story.latestDevelopment, 'Latest event')
+  assert.equal(body.story.eventCount, 3)
+  assert.deepEqual(body.events.map((event) => [event.text, event.eventAt]), [
+    ['Latest event', '2026-07-12T00:00:00.000Z'],
+    ['Second event', '2026-07-11T00:00:00.000Z'],
+    ['Third event', '2026-07-10T00:00:00.000Z'],
+  ])
+  assert.deepEqual(body.pagination, { limit: 20, offset: 0, total: 3, hasMore: false, nextOffset: null })
+  assert.equal(itemRequests, 2)
+})
+
+test('Story Atlas detail returns 404 when the shelf is not selected', async () => {
+  let requests = 0
+  const response = await app(async (input: RequestInfo | URL) => {
+    requests += 1
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/shelves')) return jsonResponse([])
+    throw new Error(`Unexpected request: ${url}`)
+  }, undefined, 'atlas').request('/bitcoin')
+  assert.equal(response.status, 404)
+  assert.deepEqual(await response.json(), { error: 'Story not found' })
+  assert.equal(requests, 1)
+})
+
+test('Story Atlas failures return the generic 500 response', async () => {
+  const originalConsoleError = console.error
+  console.error = () => undefined
+  try {
+    const shelvesDown = await app(
+      async () => new Response('atlas shelves down', { status: 503 }),
+      undefined,
+      'atlas',
+    ).request('/')
+    assert.equal(shelvesDown.status, 500)
+    assert.deepEqual(await shelvesDown.json(), { error: 'Unable to load Stories' })
+
+    const itemsDown = await app(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/shelves')) {
+        return jsonResponse([{ id: atlasShelfIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+      }
+      return new Response('atlas items down', { status: 503 })
+    }, undefined, 'atlas').request('/bitcoin')
+    assert.equal(itemsDown.status, 500)
+    assert.deepEqual(await itemsDown.json(), { error: 'Unable to load Stories' })
+
+    const countMissing = await app(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      if (url.pathname.endsWith('/shelves')) {
+        return jsonResponse([{ id: atlasShelfIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+      }
+      if (headers.Prefer === 'count=exact') {
+        return new Response('[]', { headers: { 'Content-Type': 'application/json' } })
+      }
+      return jsonResponse([
+        { id: 'item-1', title: 'First', summary: 'Latest event', occurred_at: '2026-07-12T00:00:00.000Z' },
+      ])
+    }, undefined, 'atlas').request('/bitcoin')
+    assert.equal(countMissing.status, 500)
+    assert.deepEqual(await countMissing.json(), { error: 'Unable to load Stories' })
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('Story routes default to the legacy source when source is omitted or legacy', async () => {
+  for (const source of [undefined, 'legacy'] as const) {
+    const requests: Array<{ url: URL; init?: RequestInit }> = []
+    const response = await app(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      requests.push({ url, init })
+      if (url.pathname.endsWith('/entities')) return jsonResponse([])
+      throw new Error(`Unexpected request: ${url}`)
+    }, undefined, source).request('/')
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { stories: [] })
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0]?.url.pathname.endsWith('/entities'), true)
+    assert.equal(requests[0]?.url.pathname.endsWith('/shelves'), false)
+    assert.equal((requests[0]?.init?.headers as Record<string, string>)['Accept-Profile'], undefined)
+  }
+})
+
+test('Contract: Atlas and legacy Story responses share key sets and value types', async () => {
+  const legacyReader: StoryMemoryReader = {
+    async getEntityMemoryEvents() {
+      return eventPage([
+        memory(entityIds[0], 'Latest development', '2026-07-12T00:00:00.000Z'),
+      ], 1)
+    },
+  }
+  const legacyRow = { id: entityIds[0], slug: 'contract-slug', name: 'Contract Story' }
+  const atlasRow = { id: atlasShelfIds[0], slug: 'contract-slug', name: 'Contract Story' }
+  const legacyFetch = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/entities')) return jsonResponse([legacyRow])
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const atlasFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    if (url.pathname.endsWith('/shelves')) return jsonResponse([atlasRow])
+    if (url.pathname.endsWith('/items')) {
+      if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
+      return jsonResponse([
+        { id: 'item-1', title: 'Latest development', summary: 'Latest development', occurred_at: '2026-07-12T00:00:00.000Z' },
+      ])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+
+  const legacyList = await app(legacyFetch, legacyReader).request('/')
+  const atlasList = await app(atlasFetch, undefined, 'atlas').request('/')
+  assert.equal(legacyList.status, 200)
+  assert.equal(atlasList.status, 200)
+  const legacyListBody = await legacyList.json()
+  const atlasListBody = await atlasList.json()
+  assert.deepEqual(atlasListBody, legacyListBody)
+  assert.deepEqual(shapeOf(atlasListBody), shapeOf(legacyListBody))
+
+  const legacyDetail = await app(legacyFetch, legacyReader).request('/contract-slug')
+  const atlasDetail = await app(atlasFetch, undefined, 'atlas').request('/contract-slug')
+  assert.equal(legacyDetail.status, 200)
+  assert.equal(atlasDetail.status, 200)
+  const legacyDetailBody = await legacyDetail.json()
+  const atlasDetailBody = await atlasDetail.json()
+  assert.deepEqual(atlasDetailBody, legacyDetailBody)
+  assert.deepEqual(shapeOf(atlasDetailBody), shapeOf(legacyDetailBody))
+})
+
+/**
+ * Structural fingerprint for the Atlas/legacy contract: keys and value types
+ * per level, array element order preserved, `null` kept distinct from a
+ * missing key.
+ */
+function shapeOf(value: unknown): unknown {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return value.map(shapeOf)
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, shapeOf(entry)]),
+    )
+  }
+  return typeof value
+}
 
 function memory(
   entityId: string,
