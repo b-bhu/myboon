@@ -38,11 +38,13 @@ function buildApp(config: Partial<WaitlistRoutesConfig> = {}) {
   return {
     requests,
     setNextResponse: (make: () => Response) => { nextResponse = make },
-    post(body: unknown, ip = IP_A): Promise<Response> {
+    post(body: unknown, ip: string | undefined = IP_A, extraHeaders: Record<string, string> = {}): Promise<Response> {
+      const headers: Record<string, string> = { 'content-type': 'application/json', ...extraHeaders }
+      if (ip !== undefined) headers['x-real-ip'] = ip
       return Promise.resolve(app.request('/waitlist', {
         method: 'POST',
         body: typeof body === 'string' ? body : JSON.stringify(body),
-        headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+        headers,
       }))
     },
   }
@@ -176,6 +178,40 @@ test('the limit is checked before validation, so junk requests burn budget', asy
   const valid = await h.post({ email: 'valid@example.com' })
   assert.equal(valid.status, 429)
   assert.deepEqual(await valid.json(), { error: 'rate_limited' })
+})
+
+test('spoofed X-Forwarded-For per request cannot escape the X-Real-IP limit', async () => {
+  const h = buildApp({ rateLimit: { max: 2 } })
+  for (let i = 0; i < 5; i += 1) {
+    const response = await h.post({ email: `spoof${i}@example.com` }, IP_A, {
+      'x-forwarded-for': `10.9.9.${i}`,
+    })
+    assert.equal(response.status, i < 2 ? 201 : 429, `request ${i} must not mint a fresh bucket`)
+  }
+  assert.equal(h.requests.length, 2, 'rate-limited requests must not reach upstream')
+})
+
+test('different X-Real-IP values get separate rate-limit buckets', async () => {
+  const h = buildApp({ rateLimit: { max: 1 } })
+  const first = await h.post({ email: 'a@example.com' }, IP_A)
+  assert.equal(first.status, 201)
+  const againSameIp = await h.post({ email: 'a2@example.com' }, IP_A)
+  assert.equal(againSameIp.status, 429)
+  const otherIp = await h.post({ email: 'b@example.com' }, IP_B)
+  assert.equal(otherIp.status, 201, 'a distinct X-Real-IP has its own budget')
+})
+
+test('X-Forwarded-For alone does not create separate buckets', async () => {
+  const h = buildApp({ rateLimit: { max: 2 } })
+  for (let i = 0; i < 3; i += 1) {
+    // No X-Real-IP: every request falls back to the same socket-less key, so
+    // distinct forwarded-for values must not widen the budget.
+    const response = await h.post({ email: `xff${i}@example.com` }, undefined, {
+      'x-forwarded-for': `198.51.100.${i}`,
+    })
+    assert.equal(response.status, i < 2 ? 201 : 429)
+  }
+  assert.equal(h.requests.length, 2, 'rate-limited requests must not reach upstream')
 })
 
 test('upstream 500 answers 500 waitlist_unavailable', async () => {
