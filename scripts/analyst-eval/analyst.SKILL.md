@@ -13,7 +13,7 @@ Every turn, reply with ONLY one JSON object, no prose or fences:
   "decision_type": "file", "schema_version": 1, "analyst_version": "analyst-eval-0.1",
   "signal_id": "<signal_id copied verbatim>",
   "reason": "<one short line>", "confidence": <0..1>,
-  "shelves": [{"shelf_id": "<uuid from results>", "role": "main"}],
+  "shelves": [{"shelf_id": "<uuid from results, or \"none\">", "role": "main"}],
   "target_item_id": "<item uuid from results, or null>",
   "item_key": "<stable lowercase hyphenated slug, no dates>",
   "action": "keep" | "skip"}}
@@ -21,7 +21,8 @@ Every turn, reply with ONLY one JSON object, no prose or fences:
 ## Rules
 
 - Search first, usually 1-2 searches. File as soon as a result shows the right shelf; never search again to confirm. Hard limit: 10 searches.
-- Exactly one "main" shelf; extra shelves only with role "also_affects", no repeats. shelf_id must come from results.
+- Exactly one "main" shelf; extra shelves only with role "also_affects", no repeats. shelf_id must be a uuid from results; never a slug or a made-up id, never an empty list.
+- If no shelf in the results fits, file "shelves": [{"shelf_id": "none", "role": "main"}] and say why in "reason" (required). Still set item_key and action.
 - target_item_id: an item from results only when the signal continues that story (then reuse its item_key); else null.
 - action "skip" only for noise: routine updates, chatter, rumors, not newsworthy alone. Otherwise "keep". Skips still need a main shelf and item_key.
 - confidence 0.9+ only for unambiguous matches.

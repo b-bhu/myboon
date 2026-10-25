@@ -13,6 +13,24 @@ import { getShelvesByIds } from './tools/search_atlas.js';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(SCRIPT_DIR, 'fixtures');
 const RESULTS = join(SCRIPT_DIR, 'results');
+/** Explicit "no shelf fits" main shelf (#442 option a). */
+export const NONE_SHELF = 'none';
+const NONE_PLACEHOLDER_UUID = '00000000-0000-4000-8000-000000000000';
+
+/**
+ * A "none" main shelf (exactly one shelf, role main, non-empty reason) is swapped for a placeholder
+ * uuid so the #440 contract can validate the rest; returns isNone so callers can undo it.
+ */
+export function normalizeNoneShelf(decision: unknown): { decision: unknown; isNone: boolean } {
+  if (decision === null || typeof decision !== 'object') return { decision, isNone: false };
+  const d = decision as Record<string, unknown>;
+  const shelves = d.shelves;
+  if (!Array.isArray(shelves) || shelves.length !== 1) return { decision, isNone: false };
+  const only = shelves[0] as Record<string, unknown> | null;
+  if (only?.shelf_id !== NONE_SHELF || only.role !== 'main') return { decision, isNone: false };
+  if (typeof d.reason !== 'string' || d.reason.trim() === '') return { decision, isNone: false };
+  return { decision: { ...d, shelves: [{ shelf_id: NONE_PLACEHOLDER_UUID, role: 'main' }] }, isNone: true };
+}
 /** Pass needs BOTH: main shelf >= 31/36 labelled signals and keep/skip >= 43/50 (CTO, #442). */
 export const MAIN_PASS_MARK = 31 / 36;
 export const ACTION_PASS_MARK = 43 / 50;
@@ -40,6 +58,8 @@ export interface RunRecord {
   overrun: boolean;
   /** Still searching after the tool budget: not a crash, flagged for a human. Absent in pre-pass-2 records. */
   needs_review?: boolean;
+  /** Shelf ids returned by search_atlas for this signal (pass 2+); the main shelf must be one of them. */
+  seen_shelf_ids?: string[];
 }
 
 export interface ScoreSignal {
@@ -71,6 +91,7 @@ export interface ScoreRow {
   cost_usd: number | null;
   api_calls: number | null;
   hermes_calls: number | null;
+  labeled_none: boolean; // label row says no shelf fits
   /** ok = valid decision, no overrun, and (unlabeled or expected main shelf hit). */
   ok: boolean;
 }
@@ -98,6 +119,8 @@ export interface ScoreResult {
   invalidDecisions: number;
   overruns: number;
   needsReview: number;
+  noneTotal: number; // label rows with no shelf
+  noneCorrect: number; // ...where the model filed `none`
   missing: number; // labeled signals with no run record
   totalTokens: number;
   meanTokens: number | null;
@@ -218,6 +241,8 @@ export function scoreRun(
     invalidDecisions: withRun.filter((r) => r.parse_ok && !r.decision_valid).length,
     overruns: withRun.filter((r) => r.overrun).length,
     needsReview: withRun.filter((r) => r.needs_review).length,
+    noneTotal: rows.filter((r) => r.labeled_none).length,
+    noneCorrect: rows.filter((r) => r.labeled_none && r.ok).length,
     missing: labeledRows.filter((r) => !r.has_run).length,
     totalTokens: sum((r) => r.tokens),
     meanTokens: withRun.length > 0 ? sum((r) => r.tokens) / withRun.length : null,
@@ -245,12 +270,17 @@ function evalRow(
   const labeled = label !== undefined && label.expected_main_shelf !== '';
   const hasTargetLabel = label !== undefined && label.expected_target_item_id !== '';
 
-  const parsed = run?.decision == null ? { success: false as const } : safeParseDecision(run.decision);
+  const normalized = normalizeNoneShelf(run?.decision);
+  const isNone = normalized.isNone;
+  const parsed = run?.decision == null ? { success: false as const } : safeParseDecision(normalized.decision);
   const file = parsed.success && parsed.data.decision_type === 'file' && parsed.data.signal_id === signal.signal_id
     ? parsed.data
     : null;
-  const decisionValid = file !== null;
-  const anyDecision = parsed.success && parsed.data.signal_id === signal.signal_id && !(run?.overrun ?? false)
+  // Every real shelf must exist in atlas and (when recorded) have come from this signal's search results.
+  const seen = run?.seen_shelf_ids === undefined ? null : new Set(run.seen_shelf_ids);
+  const shelvesKnown = file === null || isNone || file.shelves.every((s) => shelfSlugById.has(s.shelf_id) && (seen === null || seen.has(s.shelf_id)));
+  const decisionValid = file !== null && shelvesKnown;
+  const anyDecision = parsed.success && parsed.data.signal_id === signal.signal_id && !(run?.overrun ?? false) && shelvesKnown
     ? parsed.data
     : null;
   const gotAction: 'keep' | 'skip' | null = anyDecision === null
@@ -260,7 +290,9 @@ function evalRow(
   const actionAgree = expectedAction === null ? null : gotAction === expectedAction;
   const uncertain = label !== undefined && /UNCERTAIN/i.test(label.notes);
   const mainShelf = file !== null ? file.shelves.find((s) => s.role === 'main')! : null;
-  const gotSlug = mainShelf === null ? null : (shelfSlugById.get(mainShelf.shelf_id) ?? null);
+  const gotSlug = mainShelf === null ? null : isNone ? NONE_SHELF : (shelfSlugById.get(mainShelf.shelf_id) ?? null);
+  // A label row with a blank shelf means no atlas shelf fits: only an explicit `none` is right.
+  const labeledNone = label !== undefined && !labeled;
 
   const targetAgree = !hasTargetLabel
     ? null
@@ -268,13 +300,14 @@ function evalRow(
   const ok = run !== undefined
     && decisionValid
     && !run.overrun
-    && (!labeled || gotSlug === label!.expected_main_shelf);
+    && (labeled ? gotSlug === label!.expected_main_shelf : labeledNone ? gotSlug === NONE_SHELF : true);
 
   return {
     signal_id: signal.signal_id,
     has_run: run !== undefined,
     labeled,
     has_target_label: hasTargetLabel,
+    labeled_none: labeledNone,
     expected_main_shelf: labeled ? label!.expected_main_shelf : null,
     expected_target_item_id: hasTargetLabel ? label!.expected_target_item_id : null,
     got_main_shelf: gotSlug,
@@ -307,14 +340,14 @@ export function renderMarkdown(pass: number, r: ScoreResult): string {
   lines.push('| signal_id | expected | got | action exp/got | conf | tools | s | tokens | ok |');
   lines.push('|---|---|---|---|---|---|---|---|---|');
   for (const row of r.rows) {
-    const expected = row.labeled ? row.expected_main_shelf : null;
+    const expected = row.labeled ? row.expected_main_shelf : row.labeled_none ? NONE_SHELF : null;
     let got: string;
     if (!row.has_run) got = 'no-run';
     else if (row.needs_review) got = 'needs-review';
     else if (!row.parse_ok) got = 'parse-fail';
     else if (!row.decision_valid) got = 'invalid-decision';
     else got = row.got_main_shelf ?? 'unknown-shelf';
-    lines.push(`| ${row.signal_id.slice(0, 8)} | ${expected ?? '—'} | ${got} | ${row.expected_action ?? '—'}/${row.got_action ?? '—'}${row.action_agree === false ? ' ✗' : ''}${row.uncertain ? ' (U)' : ''} | ${row.confidence === null ? '' : row.confidence.toFixed(2)} | ${row.tool_calls ?? ''} | ${row.seconds === null ? '' : row.seconds.toFixed(1)} | ${row.tokens ?? ''} | ${row.ok ? '✓' : row.labeled ? '✗' : '—'} |`);
+    lines.push(`| ${row.signal_id.slice(0, 8)} | ${expected ?? '—'} | ${got} | ${row.expected_action ?? '—'}/${row.got_action ?? '—'}${row.action_agree === false ? ' ✗' : ''}${row.uncertain ? ' (U)' : ''} | ${row.confidence === null ? '' : row.confidence.toFixed(2)} | ${row.tool_calls ?? ''} | ${row.seconds === null ? '' : row.seconds.toFixed(1)} | ${row.tokens ?? ''} | ${row.ok ? '✓' : row.labeled || row.labeled_none ? '✗' : '—'} |`);
   }
   lines.push('');
   const pct = (x: number | null) => `${((x ?? 0) * 100).toFixed(1)}%`;
@@ -324,6 +357,7 @@ export function renderMarkdown(pass: number, r: ScoreResult): string {
   lines.push(r.actionTotal === 0
     ? 'keep/skip agreement: no labels (needs >= 43/50)'
     : `keep/skip agreement: ${r.actionAgreeCount}/${r.actionTotal} = ${pct(r.actionAccuracy)} — ${r.actionPass ? 'ok' : 'below'} (needs >= 43/50)`);
+  lines.push(`no-shelf signals filed as none: ${r.noneCorrect}/${r.noneTotal} (outside the 31/36 gate)`);
   lines.push(`overall: ${r.pass ? 'PASS' : 'FAIL'}`);
   lines.push(`target_item_id agreement: ${r.targetAgree}/${r.targetTotal}`);
   lines.push(`skip rate: ${r.skipCount}/${r.recordCount} decisions${r.skipRate === null ? '' : ` (${(r.skipRate * 100).toFixed(1)}%)`}`);
@@ -391,9 +425,9 @@ async function main(): Promise<void> {
   const shelfIds = new Set<string>();
   for (const run of runs) {
     if (run.decision == null) continue;
-    const parsed = safeParseDecision(run.decision);
+    const parsed = safeParseDecision(normalizeNoneShelf(run.decision).decision);
     if (parsed.success && parsed.data.decision_type === 'file') {
-      for (const shelf of parsed.data.shelves) shelfIds.add(shelf.shelf_id);
+      for (const shelf of parsed.data.shelves) if (shelf.shelf_id !== NONE_PLACEHOLDER_UUID) shelfIds.add(shelf.shelf_id);
     }
   }
   let slugById = new Map<string, string>();

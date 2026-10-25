@@ -239,6 +239,7 @@ async function runSignal(
   let error: string | null = null;
   let overrun = false;
   let needsReview = false;
+  const seenShelfIds = new Set<string>();
 
   while (true) {
     // Spend cap: recorded spend across all passes + everything accrued so far in
@@ -271,7 +272,7 @@ async function runSignal(
       '## Tool transcript',
       turns.length === 0 ? '(none)' : turns.map((t, k) => `${k + 1}. ${renderTurn(t)}`).join('\n'),
       forced
-        ? 'Search budget used up. File now with what you have: reply with only your {"final": ...} decision.'
+        ? 'Search budget used up. File now with what you have: reply with only your {"final": ...} decision. If no shelf in the results fits, use main shelf_id "none" with a short reason.'
         : `(tool calls used: ${toolCalls}/${MAX_TOOL_CALLS}) Reply with one JSON object.`,
     ].join('\n');
     const usagePath = join(usageDir, `usage-${usageCounter.n++}.json`);
@@ -326,6 +327,7 @@ async function runSignal(
       }
       try {
         const result = await withTimeout(searchAtlas(reply.query, { env: process.env }), SEARCH_TIMEOUT_MS, `search_atlas "${reply.query}"`);
+        for (const shelf of result.shelves.slice(0, RESULTS_PER_KIND)) seenShelfIds.add(shelf.id);
         turns.push({
           query: reply.query,
           resultText: JSON.stringify({ shelves: result.shelves.slice(0, RESULTS_PER_KIND).map(trimShelf), items: result.items.slice(0, RESULTS_PER_KIND).map(trimItem) }),
@@ -363,6 +365,7 @@ async function runSignal(
     hermes_calls: hermesCalls,
     overrun,
     needs_review: needsReview,
+    seen_shelf_ids: [...seenShelfIds],
   };
   return { record, stopped: false };
 }

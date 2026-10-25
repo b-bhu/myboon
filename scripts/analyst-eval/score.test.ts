@@ -201,6 +201,46 @@ describe('scoreRun', () => {
     expect(md).toContain('needs review: 1');
   });
 
+  it('scores an explicit none against a no-shelf label as correct and a picked shelf as a miss', () => {
+    const none = (seed: string, reason = 'no atlas shelf covers this') => ({
+      ...decision(SIG(seed), { main: SHELF_MAIN }),
+      shelves: [{ shelf_id: 'none', role: 'main' }],
+      reason,
+    });
+    const result = scoreRun(
+      [signal('d1'), signal('d2'), signal('d3'), signal('d4')],
+      [label('d1', ''), label('d2', ''), label('d3', 'competitions'), label('d4', '')],
+      [
+        run({ signal_id: SIG('d1'), decision: none('d1') }),
+        run({ signal_id: SIG('d2'), decision: decision(SIG('d2'), { main: SHELF_MAIN }) }),
+        run({ signal_id: SIG('d3'), decision: none('d3') }),
+        run({ signal_id: SIG('d4'), decision: none('d4', '  ') }),
+      ],
+      SLUGS,
+    );
+    const [d1, d2, d3, d4] = result.rows;
+    expect(d1!.got_main_shelf).toBe('none');
+    expect(d1!.ok).toBe(true);
+    expect(d2!.decision_valid).toBe(true);
+    expect(d2!.ok).toBe(false);
+    expect(d3!.ok).toBe(false); // labeled shelf, model said none
+    expect(d4!.decision_valid).toBe(false); // none needs a reason
+    expect(result.noneCorrect).toBe(1);
+    expect(result.noneTotal).toBe(3);
+    expect(result.labeledCount).toBe(1); // no-shelf rows stay outside the 31/36 gate
+    expect(renderMarkdown(2, result)).toContain('no-shelf signals filed as none: 1/3');
+  });
+
+  it('rejects an empty shelves list and a shelf the signal never saw in search results', () => {
+    const result = scoreRun([signal('e1'), signal('e2')], [label('e1', 'competitions'), label('e2', 'competitions')], [
+      run({ signal_id: SIG('e1'), decision: { ...decision(SIG('e1'), { main: SHELF_MAIN }), shelves: [] } }),
+      run({ signal_id: SIG('e2'), seen_shelf_ids: [SHELF_OTHER], decision: decision(SIG('e2'), { main: SHELF_MAIN }) }),
+    ], SLUGS);
+    expect(result.rows[0]!.decision_valid).toBe(false);
+    expect(result.rows[1]!.decision_valid).toBe(false);
+    expect(result.correctCount).toBe(0);
+  });
+
   it('counts schema-invalid decisions and missing main role as wrong', () => {
     const badShelves = run({
       signal_id: SIG('dd'),
@@ -264,13 +304,15 @@ describe('scoreRun', () => {
     expect(result.rows[1]!.labeled).toBe(false);
   });
 
-  it('marks a valid decision on an unknown shelf id with a null slug', () => {
+  it('treats a shelf id not in atlas as an invalid decision and a miss, whatever the label', () => {
     const UNKNOWN = '55555555-5555-4555-8555-555555555555';
-    const result = scoreRun([signal('aa')], [label('aa', 'competitions')], [run({
-      signal_id: SIG('aa'),
-      decision: decision(SIG('aa'), { main: UNKNOWN }),
-    })], SLUGS);
-    expect(result.rows[0]!.decision_valid).toBe(true);
+    const result = scoreRun([signal('aa'), signal('ab')], [label('aa', 'competitions'), label('ab', '')], [
+      run({ signal_id: SIG('aa'), decision: decision(SIG('aa'), { main: UNKNOWN }) }),
+      run({ signal_id: SIG('ab'), decision: decision(SIG('ab'), { main: UNKNOWN }) }),
+    ], SLUGS);
+    expect(result.rows[1]!.decision_valid).toBe(false);
+    expect(result.rows[1]!.ok).toBe(false);
+    expect(result.rows[0]!.decision_valid).toBe(false);
     expect(result.rows[0]!.got_main_shelf).toBeNull();
     expect(result.rows[0]!.ok).toBe(false);
   });
