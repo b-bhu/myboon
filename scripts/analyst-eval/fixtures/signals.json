@@ -1,0 +1,1002 @@
+[
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "f09f97d69a45408b792816073b643cbc4374cb4f143fe0645c2af118dee20f24",
+    "source": "news",
+    "source_id": "sig_c4574fb2f958c3bafcc6afdd5666f159",
+    "occurred_at": "2026-09-13T10:27:27.000Z",
+    "fetched_at": "2026-09-13T10:43:06.178Z",
+    "priority": 0,
+    "text": "Bin plays Kai'Sa top for the first time in his career",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "46c30629-1263-493b-96ae-f1b66fa67cd6",
+      "legacy_entity_id": "13cf9fcd-06d2-4d8b-b0fb-b5320abdacd5"
+    },
+    "unusual_score": null,
+    "excerpt": "In the LPL 2026 Grand Finals, Bilibili Gaming top laner Chen \"Bin\" Zebin picked the marksman Kai'Sa in the top lane for the first time in his professional career, an unconventional use of a bot-lane carry champion.",
+    "raw_hash": "0bf34943d65477ce101c0d3a888a81ea8dca644c88c29fcd2edffcaee31fe3db"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "18b2f6b3a8a98d598608ba6da9f054d5e2734916002ebb0ecf124d4deb453926",
+    "source": "news",
+    "source_id": "sig_12e0ce4a0b917f21d8758f3e673e11f7",
+    "occurred_at": "2026-09-14T08:37:35.000Z",
+    "fetched_at": "2026-09-14T08:53:06.251Z",
+    "priority": 0,
+    "text": "Wirtz output declined sharply in early 2026/27",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "3fef950f-4990-43e8-8218-b4c33cce6fb6",
+      "legacy_entity_id": "1f38e783-bcff-4d39-9e98-4e550a1202ae"
+    },
+    "unusual_score": null,
+    "excerpt": "In his first full Liverpool season (2025/26) Wirtz produced five goals and three assists across 33 appearances. Through his first five matches of the 2026/27 campaign he registered just one assist and zero goals.",
+    "raw_hash": "c7e8da439c44e53de59ea4e75af92f4c8628fb1e0314fb8878e0399b7c4094af"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "daea9cb4a467a7dbd785dc369407320e6e1bf8a429fdf76d42d8ab291e03d718",
+    "source": "news",
+    "source_id": "sig_ff3ac5bcf644562e17d4e54050904cd4",
+    "occurred_at": "2026-09-18T13:29:42.000Z",
+    "fetched_at": "2026-09-18T13:43:06.572Z",
+    "priority": 0,
+    "text": "Goldman Sachs dismisses US earnings bubble fears",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "d3678548-536a-4147-b35b-7cbf923d9293",
+      "legacy_entity_id": "c799e42b-e782-4711-aa92-b3bd6e0d837e"
+    },
+    "unusual_score": null,
+    "excerpt": "Crypto Briefing-reported analysis by Goldman strategist Ben Snider contends the S&P 500's ~30% year-over-year profit growth in Q1 and Q2 2026 reflects genuine economic strength, and corporate profit growth is driven by real AI investment rather than speculative excess.",
+    "raw_hash": "3d04eac822d8100b1ca3902eef15fdfc85522f04b379f57318ec6043dd2d6cd4"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "ab19f5d0325e6e9294522ed560f47ab406be0f853d4333220883a3aa1a921612",
+    "source": "news",
+    "source_id": "sig_06637367a640a89ed9d6603dd63480a1",
+    "occurred_at": "2026-09-15T20:14:19.000Z",
+    "fetched_at": "2026-09-15T20:33:06.368Z",
+    "priority": 0,
+    "text": "Two consecutive Pichichi trophies at Real Madrid",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "c2ce0167-4619-4467-8d21-a0eb0e9bda26",
+      "legacy_entity_id": "afdbf309-6548-4766-bd99-822c29ebb41c"
+    },
+    "unusual_score": null,
+    "excerpt": "Mbappé won the Pichichi with 31 goals in his 2024/25 debut and a second consecutive Pichichi with 25 goals in 2025/26.",
+    "raw_hash": "cdbdeaadc541a20c2d423fe59900d8872162da36e7b976c041c66b4ba9df17c6"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "6f73df22f63e148e29ecb5ee9c464437dca946c26b38c58b2cf9b500c8b7e4ed",
+    "source": "news",
+    "source_id": "sig_d1fa24d455119d1261d1abc40d2702f3",
+    "occurred_at": "2026-09-14T07:39:25.000Z",
+    "fetched_at": "2026-09-14T07:53:06.247Z",
+    "priority": 0,
+    "text": "Capital B treasury metrics: €87,854 avg per BTC, 2.19% YTD BTC Yield",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "91d12365-373a-426b-be9b-84e0a01aed56",
+      "legacy_entity_id": "e9545519-36f6-416f-8270-2b11688f035f"
+    },
+    "unusual_score": null,
+    "excerpt": "Capital B's average cost sits at €87,854 per BTC. Year-to-date it reports a BTC Yield of 2.19%, equating to a BTC Gain of 61.9 BTC and a BTC € Gain of €4.2m, on a total strategic balance of 3,525 BTC.",
+    "raw_hash": "efda8c4e8dd23115184b193f2229babeb16ab2e38570c98765bec2d547568d06"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "031fa99aba3e9d6978df23a9ef558326f54f714b20d505ea0f55bb200ce729c7",
+    "source": "news",
+    "source_id": "sig_6c5f5123169551ca52d2e14e6fa2f371",
+    "occurred_at": "2026-09-14T10:54:01.000Z",
+    "fetched_at": "2026-09-14T11:13:06.256Z",
+    "priority": 0,
+    "text": "SanDisk plunges ~6% premarket as DeepSeek V4.1 Flash raises memory-demand concerns",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "8dcfb8ab-6474-483e-a949-4081363af350",
+      "legacy_entity_id": "e985394f-3ff1-45ed-a735-489e32a6968b"
+    },
+    "unusual_score": null,
+    "excerpt": "On 2026-09-14 (event date), SanDisk (SNDK) declined ~6% in premarket trading to $1,542.06. Catalyst: release of DeepSeek V4.1 Flash, which reportedly runs on substantially reduced HBM and solid-state storage requirements, fueling worries about future NAND flash demand.",
+    "raw_hash": "47a13481458fc6ead44c13feab5c4066cb468cb0062c24fb710f2f2761f66f0d"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "13bc1e55af47037e8049121ad5d55d4906dd9856e448d38e528baa34b85b72f9",
+    "source": "news",
+    "source_id": "sig_24b8c8a052bab94b41db1df2d6244f12",
+    "occurred_at": "2026-09-14T09:16:07.000Z",
+    "fetched_at": "2026-09-14T09:33:06.253Z",
+    "priority": 0,
+    "text": "BitMine Chairman Tom Lee forecasts strong crypto market over next 12 months",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "7a4935e4-c8b8-4632-a8b1-cc22a4638931",
+      "legacy_entity_id": "eeb16e8f-bfc4-4e55-8b79-4a1ceac1a2d5"
+    },
+    "unusual_score": null,
+    "excerpt": "Utku Yanık (Bitcoin Sistemi EN) reported that Tom Lee, Chairman of BitMine (BMNR), a company that accumulates Ethereum, said he expects the cryptocurrency market to show a very strong outlook over the next 12 months.",
+    "raw_hash": "27adcca1496baa45da523d692f7928315b2c797bc3b70f56632117d60702637f"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "ca8a4a7f51b9b950feb9682e8b994ae8ffcd23514736451b4cde61b9b3f5a76f",
+    "source": "news",
+    "source_id": "sig_1ed846e03cfac9e02944292841b3e4ea",
+    "occurred_at": "2026-09-18T02:13:35.000Z",
+    "fetched_at": "2026-09-18T02:23:06.532Z",
+    "priority": 0,
+    "text": "ORBIO issued on Pons, liquidity pool backed by Nvidia stock tokens",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "549d4988-592b-4ef9-99e6-fe8e868eebc5",
+      "legacy_entity_id": "0f5aca1e-0135-41ba-907b-70e9aa98df69"
+    },
+    "unusual_score": null,
+    "excerpt": "ORBIO is issued on the Pons platform, with its liquidity pool backed by Nvidia stock tokens.",
+    "raw_hash": "5bf183aa1f1a5a5ef979109b68ed1204df81c16dba3d7fbdb879951659090f4e"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "7af0842a6fe0647282252b64ac80ee74762d49b33a53e3ee667da51c2aaca6c0",
+    "source": "news",
+    "source_id": "sig_fc0887973804bf6d1c0820291e9a6e65",
+    "occurred_at": "2026-09-14T09:55:48.000Z",
+    "fetched_at": "2026-09-14T10:53:06.261Z",
+    "priority": 0,
+    "text": "Symbiosis to reveal compensation framework for affected liquidity providers",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "da89fbad-911f-4be3-b262-d279baefce78",
+      "legacy_entity_id": "d3e88ab2-867b-4ce9-ace4-c4eddeca468b"
+    },
+    "unusual_score": null,
+    "excerpt": "Symbiosis stated it will disclose a compensation framework for liquidity providers affected by the Bitcoin bridge exploit; timing and terms are not yet specified.",
+    "raw_hash": "d33336cffa1087d94887e5b53aea89df0b0823758718c12bf27e6694463ac6f8"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "42dc3a1161670db3582e3aa00b9d0bfbce6e90393657439a9b6e69a68476879a",
+    "source": "news",
+    "source_id": "sig_e9305cc79124ad8854fe37c4730ebbfa",
+    "occurred_at": "2026-09-24T16:03:50.000Z",
+    "fetched_at": "2026-09-24T16:12:50.580Z",
+    "priority": 0,
+    "text": "Solana holds 4-hour Supertrend near $116 as $119.90-$120 resistance looms",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "c106e8e5-c735-4454-a03d-7dae4bedea53",
+      "legacy_entity_id": "51b07a6f-0cf0-4f5e-9901-805fdf22eb41"
+    },
+    "unusual_score": null,
+    "excerpt": "On Sep. 24, 2026 Solana rebounded to about $116.05 (up 0.92% from a $114.99 daily open) after trading as low as $112.52, following a pullback from a recent high near $120. Its 4-hour Supertrend stood at $112.38 beneath price, keeping the short-term signal bullish, with 4-hour RSI at 55.58 against a 60.39 moving average. Daily Bollinger resistance sits at $119.90 (midpoint $106.19) and CoinGlass's three-day liquidation heatmap shows a concentrated band of estimated leveraged positions near $120 w",
+    "raw_hash": "515c717a47f5f1aae26f0d9eaf7e8e0280898374a6a59bc37231b921f1b7d3cb"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "3d8254584440108b74017565c936a0e83bf923d1c0f761991688d33c05a7de81",
+    "source": "news",
+    "source_id": "sig_ae0bb838e203159eb819d23733efda83",
+    "occurred_at": "2026-09-13T08:14:41.000Z",
+    "fetched_at": "2026-09-13T08:23:06.175Z",
+    "priority": 0,
+    "text": "Flybrain market cap rebounds past $14M, price +60% in 24h",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "8198ab88-b199-47ee-9d0b-3e664606fa35",
+      "legacy_entity_id": "2ae652b1-8ab3-4b44-859e-1ae1b745e853"
+    },
+    "unusual_score": null,
+    "excerpt": "Flybrain (on the Robinhood chain) rebounded to a market cap exceeding roughly $14.03 million, surging over 60% in price over 24 hours with about $6.5 million trading volume in the same period. Figures rely solely on unverified GMGN data cited by Lookonchain.",
+    "raw_hash": "3f85481d4af30da801cd72989fd336e3049a5883dea02823a1629da1c6d85eed"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "105846600d124aa9f5edf4c4ee7212f6c0ef0d1a713fe667b20075cb8b591c8b",
+    "source": "news",
+    "source_id": "sig_88ca5401999ab4f7c9dd404de26f2422",
+    "occurred_at": "2026-09-17T04:30:32.000Z",
+    "fetched_at": "2026-09-17T04:43:06.464Z",
+    "priority": 0,
+    "text": "Derivatives slide: open interest, volume and futures netflow all negative",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "38369d10-f97e-402f-8215-5bef9b41303b",
+      "legacy_entity_id": "d6ae35bd-5d71-4955-8efa-c552f12c0373"
+    },
+    "unusual_score": null,
+    "excerpt": "Jupiter's Open Interest dropped 15% to $55.7 million while derivatives volume dropped 6% to $69 million. Per CoinGlass, Jupiter Futures saw $16.8 million in outflows and inflows of $13.97 million, pushing Futures netflow down 172% to -$2.8 million.",
+    "raw_hash": "7e018f2afaa38354606829d82c0e03397a9e27c6a04b2134b5925cc99c0b1a73"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "eda0abe8d0dbfec7fb4921da7e25e88d9286dfaaa8d662aa7a99ad07a0a712f5",
+    "source": "news",
+    "source_id": "sig_15362bb3f3e6724f82ea8c3e5836a20c",
+    "occurred_at": "2026-09-14T17:53:50.000Z",
+    "fetched_at": "2026-09-14T18:03:06.274Z",
+    "priority": 0,
+    "text": "Brockman steps up operational role in 2026",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "066ed89c-bdf0-443c-a5ca-363ac03484f2",
+      "legacy_entity_id": "6439ae48-deef-4e3c-ad84-122e4ab4fa64"
+    },
+    "unusual_score": null,
+    "excerpt": "Greg Brockman assumed a more significant operational role in 2026, particularly guiding OpenAI product development.",
+    "raw_hash": "b91808e8e8a1aa6a31b95ab85a5756ecdf1342548838f28879ab7494e3dd2519"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "55179198f84c4f710d506c5abf726591b6fce4563172d76f5c34e152cabf2d8c",
+    "source": "news",
+    "source_id": "sig_ee57d47facd674078d118012856043be",
+    "occurred_at": "2026-09-16T01:09:16.000Z",
+    "fetched_at": "2026-09-16T02:03:06.378Z",
+    "priority": 0,
+    "text": "Meta delayed Muse and uses external evaluators",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "a4a03bcf-3e8f-45b4-88a8-aee321bce277",
+      "legacy_entity_id": "14de02f2-c62e-46c4-807a-a4c5addc91b7"
+    },
+    "unusual_score": null,
+    "excerpt": "Mark Zuckerberg said Meta delayed its Muse model from an initial April release date for months to bolster safety and security, acting on its own without waiting for industry-wide rules, and that Meta Superintelligence Labs (MSL) already uses independent evaluators, arguing rival labs could adopt similar outside review.",
+    "raw_hash": "e768030b6c8777d37088f852bc7a24693d013974bf437a90221822714305c3d6"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "405673308d74433093d7c8e42beadcbe8c48ffb2547b49752d6c558ad47b31fd",
+    "source": "news",
+    "source_id": "sig_eab9a74c8a259a1a69bba7c3417b3f03",
+    "occurred_at": "2026-09-16T12:11:18.000Z",
+    "fetched_at": "2026-09-16T12:23:06.428Z",
+    "priority": 0,
+    "text": "Trinity open-weight model family scale and training cost",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "ff5b98e5-4e07-4fea-95af-63210e517c0e",
+      "legacy_entity_id": "ae54411e-55fe-4fe4-b4fc-d48a1371d82c"
+    },
+    "unusual_score": null,
+    "excerpt": "Arcee AI trained its Trinity family of open-weight models for about $20M using 2,048 Nvidia Blackwell B300 GPUs over roughly six months. The family spans a 6B Nano, a 26B Mini, and a Large/Thinking flagship with 400B total parameters and ~13B active via mixture-of-experts.",
+    "raw_hash": "0a57e29bf95ae9e921db931341531c666864edea54a558dcb7a219101b845e28"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "cea30c889bdc3141b0af99aee0ab1ff2aee7e226c8d47900a14e8d15a7077228",
+    "source": "news",
+    "source_id": "sig_187b6897d99d03d5cfea9b9cc7da0984",
+    "occurred_at": "2026-09-14T23:15:55.000Z",
+    "fetched_at": "2026-09-14T23:33:06.292Z",
+    "priority": 0,
+    "text": "USDC annualized velocity 741x versus USDT 74x",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "28c1a4af-d402-4cb4-8e8a-67b410f44fad",
+      "legacy_entity_id": "8d4923c0-c259-4e47-83a6-db59b46289a4"
+    },
+    "unusual_score": null,
+    "excerpt": "USDC annualized velocity reached 741x compared to USDT's 74x, reflecting far higher turnover.",
+    "raw_hash": "66653f2ce6be4a0b40eae13478983ae832e64098ed882bd348d6b8dea1163e63"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "62f14393fc40b36368e817b3a1173040bba94b0b923f4ed2b354f148074040ab",
+    "source": "news",
+    "source_id": "sig_1a0bc3d6c6cb982a7461a5090e83b70d",
+    "occurred_at": "2026-09-16T17:46:25.000Z",
+    "fetched_at": "2026-09-16T18:03:06.435Z",
+    "priority": 0,
+    "text": "Epoch AI data center research scaled in earnest from mid-2025",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "6ab1dd16-df8f-49c8-8558-0b762b1332be",
+      "legacy_entity_id": "bc29cb9b-4fa8-4bad-98cb-6098d164f242"
+    },
+    "unusual_score": null,
+    "excerpt": "Epoch AI previously maintained a more limited GPU Clusters database; the amplified AI Data Centers project kicked off in earnest around mid-2025. Moving 22% to 46% global compute coverage in roughly two years suggests Epoch AI is adding facilities faster than new ones come online.",
+    "raw_hash": "eb933133faa2678e9b0685695b125f7a9a6777a2524970f0b3fcb8ab6a8eeb5a"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "72b652c67af86db7c2399acc9a5032c6faccaa1e946f895d4fc469cbdc4e295f",
+    "source": "news",
+    "source_id": "sig_cdf54e88d649c7ae2ec8b29c550e91ab",
+    "occurred_at": "2026-09-15T08:49:08.000Z",
+    "fetched_at": "2026-09-15T08:53:06.321Z",
+    "priority": 0,
+    "text": "STANDARD average entry cost and unrealized profit on the position",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "6b9c45a1-6a20-4531-bf9a-f1d53e06cc7e",
+      "legacy_entity_id": "979cbac5-4941-49cb-8e59-c7ed60c5b461"
+    },
+    "unusual_score": null,
+    "excerpt": "Per on-chain analyst Ai Yi and the article, the average cost of STANDARD purchases by investors is $0.18707, and the address reportedly holds roughly $105,000 in unrealized profit on the position, a return of approximately 48.8%. Purchase by a single address is not treated as a definitive price indicator.",
+    "raw_hash": "0694d7425e2306b67b739b00d70d97904f3c224c645986a4ef2a0bafdda59f4b"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "6baf9c9b356a29b4c983bdeb73a98b9c84736170ea4e2c96cc80d56885836409",
+    "source": "news",
+    "source_id": "sig_b251305705bbe7878eebe296ef3acd97",
+    "occurred_at": "2026-09-24T13:09:00.000Z",
+    "fetched_at": "2026-09-24T13:12:50.573Z",
+    "priority": 0,
+    "text": "Anthropic biology lab reports first result: CRISPR-like phage DNA enzyme system found",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "443251f2-1ec3-4ccc-8251-b96954d30344",
+      "legacy_entity_id": "f4867351-964f-4c2f-9bd0-d59378c97ead"
+    },
+    "unusual_score": null,
+    "excerpt": "Anthropic's new biology lab reported its first result: an AI-driven screen of 200,000+ enzymes by roughly 950 agents over 21 hours surfaced a previously unknown phage DNA enzyme system carrying a long repeat array resembling CRISPR. Anthropic states the system's function is not yet understood. Reported second-hand via an @tokens X post quoting @AnthropicAI; no primary publication, enzyme name, or independent corroboration is available, so the figures and the 'first result' framing remain source-",
+    "raw_hash": "48b8ac22a34a2b4e6c5d8460184aa138eb1f509f92ebc9507497e09f292b8d12"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "0f3f5567b019baf7601881d671ee549887ee9a3fbfaa2c0278cd9fb44b71aff5",
+    "source": "news",
+    "source_id": "sig_cb7524efddb1d945aa335b8741fc516b",
+    "occurred_at": "2026-09-14T13:14:49.000Z",
+    "fetched_at": "2026-09-14T13:33:06.260Z",
+    "priority": 0,
+    "text": "Gladbach dismisses head coach Eugen Polanski after Freiburg defeat",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "67bbfc74-dbb0-4711-ba59-1a49eb9ea3e2",
+      "legacy_entity_id": "80345414-30d4-4e54-8d20-2bdfb440ef37"
+    },
+    "unusual_score": null,
+    "excerpt": "Borussia Mönchengladbach parted ways with head coach Eugen Polanski on September 13, 2026, one day after a 5-0 defeat to SC Freiburg, marking the first coaching change of the 2026/27 Bundesliga season.",
+    "raw_hash": "6a5b76430ceac676bfc8f2a2e2fc8152d19d4c537f19d729255a272c6882af70"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "0d3129344fb1dd694d1ccf229c0c010af2f8f0e5ec29911d622163b1ae81df89",
+    "source": "news",
+    "source_id": "sig_e5c26538c0daf1bc569f80f00a4125e6",
+    "occurred_at": "2026-09-18T09:00:36.000Z",
+    "fetched_at": "2026-09-18T09:13:06.553Z",
+    "priority": 0,
+    "text": "September earnings and buyback",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "79cdaa64-1c91-4407-804f-87ca5ea11fa2",
+      "legacy_entity_id": "0120dd82-22c0-4bf5-b598-60d103b7fdf7"
+    },
+    "unusual_score": null,
+    "excerpt": "The PONS protocol generated roughly $19.64 million in Earnings so far in September and channeled $13.82 million into its buyback program.",
+    "raw_hash": "9afd7b078098b2f8412ba6fb41344238f171169c63b9ec3aba32c02c8703b4fd"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "039671e9e8bc683534265afc376c73fec66f9dfd8b8b31a61c847c56d5d7866f",
+    "source": "news",
+    "source_id": "sig_3a7ff8b5f0042f54953481bc502e9ea1",
+    "occurred_at": "2026-09-16T04:06:11.000Z",
+    "fetched_at": "2026-09-16T04:23:06.388Z",
+    "priority": 0,
+    "text": "BTC fell ~2.5% alongside the outflow, trading near $75,700",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "cd0cd91e-c7e8-45f0-b79a-c658c9622a85",
+      "legacy_entity_id": "50d844ce-4fab-45ed-8b04-7898d3ab1dfd"
+    },
+    "unusual_score": null,
+    "excerpt": "Cointelegraph links the ~$450M withdrawal to Bitcoin dropping 2.5%, with Fidelity and BlackRock funds leading outflows; CoinMarketCap data cited places Bitcoin at $75,700, down 2.5% over 24 hours at time of writing.",
+    "raw_hash": "842593918eb892a879116bef557a4e00596655a122bbb4bb0f4700255e7fa6ae"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "c1cb9186c688de166c2044c7d314a2ab2e09b3725095ebc2e63888d76d91b5df",
+    "source": "news",
+    "source_id": "sig_b57152270da855434811565e02e6d233",
+    "occurred_at": "2026-09-15T12:45:00.000Z",
+    "fetched_at": "2026-09-15T12:53:06.329Z",
+    "priority": 0,
+    "text": "@getstonkoptions launches on Solana",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "158eec8f-7397-472b-a1d2-f065e9f3fb09",
+      "legacy_entity_id": "725f4aa7-8acf-4936-abc7-c3280456b201"
+    },
+    "unusual_score": null,
+    "excerpt": "@getstonkoptions announced its launch on Solana, routing fees from stock-paired token launches to verified employees and paying them in tokenized shares of their employer.",
+    "raw_hash": "c31c352389d5841cc745a46f58042366e4158bf664decb386b0a3eb761379e65"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "b7f7e637dafc11eaf55f16bca134a7a47d29c7fc58a0d913edbbdc2b8c86570f",
+    "source": "news",
+    "source_id": "sig_78daf4b8a2b46f7040f0755dcc129106",
+    "occurred_at": "2026-09-14T16:03:03.000Z",
+    "fetched_at": "2026-09-14T16:23:06.269Z",
+    "priority": 0,
+    "text": "Pixelmon ceases game development after publisher evaluation falls short",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "9625f8b5-735b-4d67-8fb2-df8060fa1b7a",
+      "legacy_entity_id": "b45461c5-589d-401a-814f-7fce6aca4e13"
+    },
+    "unusual_score": null,
+    "excerpt": "On September 14, Pixelmon announced it would cease all game development, lay off its gaming team, and take titles offline after roughly three weeks of external publisher evaluation focused on player acquisition and retention returned a lukewarm verdict; publishers suggested further polishing and testing, but management chose to shut down rather than invest in the uncertain outcome.",
+    "raw_hash": "4ac7197bbe01023189e830e96b5b6259d9522c3a51a23f4d63068dd8edfa6456"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "aa7e12c92469e15fb27dec238897490e9374b70324600725b9ca15d3052dd59e",
+    "source": "news",
+    "source_id": "sig_990fcb6ef6e826a0acfc5e6fc6dd743f",
+    "occurred_at": "2026-09-15T16:25:59.000Z",
+    "fetched_at": "2026-09-15T16:43:06.351Z",
+    "priority": 0,
+    "text": "Spotlighted in Claude for Small Business launch",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "5412bcfa-2fcb-4134-8a9d-ceb2754ee2aa",
+      "legacy_entity_id": "ceddf370-b0d3-4e38-8d15-37615699c255"
+    },
+    "unusual_score": null,
+    "excerpt": "On September 15, 2026, Expensify was spotlighted as part of Anthropic's 'Claude for Small Business,' an initiative that debuted with 27 integrations and 43 workflows aimed at SMBs.",
+    "raw_hash": "64acb19d025939cae6be5403ee4a5785b37e5cef263b63784d5eafaf7f035472"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "56acc17ac73e658027e18f8b8298788fc3791b9c0e002084a18e9e1454ff6973",
+    "source": "news",
+    "source_id": "sig_6c305e3c3fab4ed1f77813f73cc24198",
+    "occurred_at": "2026-09-13T03:11:32.000Z",
+    "fetched_at": "2026-09-13T03:23:06.142Z",
+    "priority": 0,
+    "text": "GPT-6 Astra scores 62.7% standard, 99.9% with Provider Adapter",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "827cb7a3-0420-4f66-b2fc-e5079a18904a",
+      "legacy_entity_id": "595ea4f9-6632-4808-8596-6e67f79c7bc4"
+    },
+    "unusual_score": null,
+    "excerpt": "GPT-6 Astra made significant gains but scored 62.7% under the unified Standard harness, and 99.9% when paired with OpenAI's proprietary Provider Adapter.",
+    "raw_hash": "5d52ec94c670faabd69ae203c3511ab5b546db9ec4104dabba4d4957a81ca753"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "8a1e45c988cf8c78f7a3f333005ae34c92622866d6c5d32a0e8cb2391e85a660",
+    "source": "news",
+    "source_id": "sig_97cea345224c31e60a6609ac1cac7b77",
+    "occurred_at": "2026-09-13T16:26:31.000Z",
+    "fetched_at": "2026-09-13T16:43:06.203Z",
+    "priority": 0,
+    "text": "Shadow fleet oil pricing and maritime disruption context",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "5b97c42b-6e17-4353-acbd-897534dbf4d4",
+      "legacy_entity_id": "8f9cd347-708c-4220-b2de-77604ad74574"
+    },
+    "unusual_score": null,
+    "excerpt": "The shadow fleet framework lets Moscow sell oil above the $60-per-barrel price cap set by Western nations in December 2022, and shipping activity through the Kerch Strait and Sea of Azov has faced significant disruption as a result of the campaign.",
+    "raw_hash": "bf30048f6d5f4768609737842b33bb1e13e67b0e9ad86c9a7f91c300fc9e94a5"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "ecb93db5c736e540e00f3af35e97a825f970bd6a98aa2a40c64e6459e80501b6",
+    "source": "news",
+    "source_id": "sig_a0e1b1ab3c96f0f61143586e090f4faa",
+    "occurred_at": "2026-09-15T06:20:00.000Z",
+    "fetched_at": "2026-09-15T07:13:06.315Z",
+    "priority": 0,
+    "text": "AMC shares rose 15% on Aron's September 4 criticism; AMC token market ($2.8M) dwarfs company value ($2.6B)",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "f62695dc-6797-45d9-af2d-fed69c5f0c25",
+      "legacy_entity_id": "c84ed00d-19b3-4acf-bc91-a93b1bf9256a"
+    },
+    "unusual_score": null,
+    "excerpt": "On September 4 Adam Aron called the tokens contemptible and said AMC had nothing to do with them, and AMC shares climbed 15% that morning to $2.92. The entire AMC stock-token market was valued at roughly $2.8 million, a tiny fraction of AMC's own ~$2.6 billion market capitalization, underscoring that the token market is a marginal off-chain derivative of the real equity.",
+    "raw_hash": "90e1c8eba17c1c7950d19255e7ddfb1da8943d2ace704f5a32ae5b4ddfd8006f"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "4a25b01074f133dbc55b884b08d2dc6c27fe75c4c2ce8fbf74496c27fd1025cb",
+    "source": "news",
+    "source_id": "sig_cc45436b4e674e0e84266d2581927ac2",
+    "occurred_at": "2026-09-15T06:00:33.000Z",
+    "fetched_at": "2026-09-15T06:23:06.318Z",
+    "priority": 0,
+    "text": "Unlock price impact is not necessarily bearish",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "566e1e16-cd66-4041-bcee-c07bb862b6d9",
+      "legacy_entity_id": "3f78ccd2-ddd0-4113-9307-c485318a4bb9"
+    },
+    "unusual_score": null,
+    "excerpt": "Canton's tokenomics allocate CC rewards across app providers, validators, and super validators. CC held ascending trendline support near $0.096 after rejection at a $0.125 supply zone, trading above all key EMAs at press time. A big unlock does not necessarily mean selling, especially to network stakeholders; immediate price impact depends on how much new supply reaches the market.",
+    "raw_hash": "f8a861215f6cf64bbb57f623debe2059191d7aa2e73ba6c29ce8ce9ff3d6f011"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "174901b48fe7838d2854d538bb5508fea6ca283c3320fb3f277ee5b73d51b572",
+    "source": "news",
+    "source_id": "sig_5c121e0cc3a6cdaee6c199ffd564aa52",
+    "occurred_at": "2026-09-14T18:03:46.000Z",
+    "fetched_at": "2026-09-14T18:23:06.273Z",
+    "priority": 0,
+    "text": "Claude for Financial Advisors functionality and Schwab Advisor Services network",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "a0377058-1466-4d17-8e16-5dab7d283a8a",
+      "legacy_entity_id": "9d50817a-5be8-4da9-aea6-b4b2a57ca666"
+    },
+    "unusual_score": null,
+    "excerpt": "Schwab Advisor Services provides custody, technology, and business support to independent RIAs across a network of 16,000+ firms. Claude for Financial Advisors supports meeting preparation, portfolio explanations, financial planning updates, and client communications, and connects with CRM, custody, portfolio reporting, financial planning, estate planning, and meeting platforms.",
+    "raw_hash": "5f96f17a5ec6c5a2d32fa751974fbae39f3074041fd5e09e2ef514989c0b81cd"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "027bb04e1a2f18bb3a52a3879bb83f14ee8e4f6a531c508ce3f453dd9c40d6ac",
+    "source": "news",
+    "source_id": "sig_d6180a943bc1213138fd6e7756afb85a",
+    "occurred_at": "2026-09-18T09:25:55.000Z",
+    "fetched_at": "2026-09-18T10:03:06.560Z",
+    "priority": 0,
+    "text": "NearKat surges 115% after StonkFun launch; rewards holders in NEAR",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "a9df5ff5-3dda-4121-94c5-cb8b637d0a20",
+      "legacy_entity_id": "74f1115d-2982-470f-8db7-962facd82cea"
+    },
+    "unusual_score": null,
+    "excerpt": "NearKat, a memecoin launched on the StonkFun launchpad, is up 115% in the past 24 hours and rewards holders in $NEAR rather than its own token.",
+    "raw_hash": "3bf29ac347a9f693007f058c68d33e169775257ff5e070a61b64eb74fa289abb"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "8ace0bf3cd8f8e6a6ec238c68fff6f9ff8d92c219e223e8f187cbc02a0b2c4ae",
+    "source": "news",
+    "source_id": "sig_91668beb5c9c9f31fefde62b0cb848cf",
+    "occurred_at": "2026-09-17T21:06:39.000Z",
+    "fetched_at": "2026-09-17T21:23:06.519Z",
+    "priority": 0,
+    "text": "Duquesne's Amazon holding valued at roughly $129M at end of June 2026",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "c4e56ab1-c9aa-4068-b180-1597f5478ea9",
+      "legacy_entity_id": "8c485f15-326c-4d3e-84d3-f6a1da775838"
+    },
+    "unusual_score": null,
+    "excerpt": "The fund's Amazon common-stock position was worth about $129 million at the close of Q2 2026, reflecting its large 541,600-share stake.",
+    "raw_hash": "18a0355a89402fa4caa598aeb9d041604604d40d1adb302d20b92e4dca4892a9"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "8aa3e67e4f1989746c5967454afc9a41c8eac285d7e12fce82adec7c49838c3e",
+    "source": "news",
+    "source_id": "sig_f2c6e5e1cf2515ebe9fe04a45a643d4a",
+    "occurred_at": "2026-09-16T08:36:44.000Z",
+    "fetched_at": "2026-09-16T09:03:06.410Z",
+    "priority": 0,
+    "text": "Digital euro pilot merchant application deadline Oct 27",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "ab568fdc-e324-4d4b-885c-cce927af82f2",
+      "legacy_entity_id": "b747ad9f-4b36-475b-a3a0-e8471be02239"
+    },
+    "unusual_score": null,
+    "excerpt": "E-commerce and mobile-commerce merchants in the euro area may apply for the digital euro pilot until Oct. 27.",
+    "raw_hash": "4415f087fae5353bb63868ebe58e997d91cab881edd39ec6c62fff0a0eb1faa8"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "513dcfb1eadfdbc4dee0f484865d975c44d29d35ab2249a05bcf74b4211fd80b",
+    "source": "news",
+    "source_id": "sig_be411d90bfdfadd9c5b173d848abba6d",
+    "occurred_at": "2026-09-14T11:38:44.000Z",
+    "fetched_at": "2026-09-14T11:53:06.259Z",
+    "priority": 0,
+    "text": "CRA penalty exposure for wallet makers like Trezor",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "b42437c2-fd20-4a4b-a6f4-1eeb3438b2c2",
+      "legacy_entity_id": "31b5b533-76eb-47cc-b99b-437aa877129c"
+    },
+    "unusual_score": null,
+    "excerpt": "Under CRA Articles 13 and 14, non-compliant companies can face an administrative fine up to 15 million euros (~$17.3M) or 2.5% of worldwide annual turnover, whichever is higher; supplying incorrect, incomplete, or misleading information can draw a fine up to 5 million euros. This quantifies the compliance risk Trezor carries as a CRA-covered wallet maker.",
+    "raw_hash": "780e5cc5e5789808d5a7c40673e1443d05287e666c8ba669b0d5f21352118b0a"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "73d0fb62a1c929c91a88ccae3f79d1f87ae62a9de074d6effb5cf88733b1e3db",
+    "source": "news",
+    "source_id": "sig_a5d83732d78cfd09aedc8249bfb2f9d9",
+    "occurred_at": "2026-09-16T11:35:54.000Z",
+    "fetched_at": "2026-09-16T11:53:06.418Z",
+    "priority": 0,
+    "text": "FIFA Article 17 amendment to take effect January 1, 2027",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "fcf13024-2bea-469c-a736-7d6a0a132dc9",
+      "legacy_entity_id": "88bf12ce-5ad1-471c-86e3-f27364841b81"
+    },
+    "unusual_score": null,
+    "excerpt": "FIFA has amended Article 17 of its transfer regulations, effective January 1, 2027, with changes aimed at addressing very high release clauses that lock players into contracts regardless of market realities — directly relevant to Álvarez's €500M clause.",
+    "raw_hash": "6650be74522cb2a57425a9a1ad7a01e89f7d7051a840488173ab0051f3a5728d"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "67ca321c29e5d8add2132e2e942a4f87c9f1f667c07b8fc2bfa1f5a5a50a9c9e",
+    "source": "news",
+    "source_id": "sig_cdcbcdeb7646875b38dd9b0a79c1700b",
+    "occurred_at": "2026-09-16T17:52:43.000Z",
+    "fetched_at": "2026-09-16T18:13:06.434Z",
+    "priority": 0,
+    "text": "Prediction-market optimism on Ukraine recapturing Crimea ticks up",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "b67d003d-a61e-40e6-86b0-7d274fa912d3",
+      "legacy_entity_id": "5572c721-4849-4f5a-bd88-f25795d5e818"
+    },
+    "unusual_score": null,
+    "excerpt": "Crypto Briefing interprets the reported killing as evidence of increased Ukrainian tactical capability and reports prediction-market pricing for Ukraine recapturing Crimea by end of year remains low but shows increased optimism after the event; this causal market interpretation is unverified per the source.",
+    "raw_hash": "38c3dd5c6d29774049cb6447479e0e803093c6b84b47646dc64f0beb47913df5"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "6079815f4f0e66df1dcc165fed3a7337c98c5fcf12e134162620f02c759a99c9",
+    "source": "news",
+    "source_id": "sig_c9586e30fbca46066127b50994dca189",
+    "occurred_at": "2026-09-15T14:55:10.000Z",
+    "fetched_at": "2026-09-15T15:13:06.339Z",
+    "priority": 0,
+    "text": "PBoC under pressure to loosen monetary policy",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "1fe47516-ec1e-4306-ba5d-d9edc6e86ed5",
+      "legacy_entity_id": "1d1e5138-4899-4680-ac49-cc30634e4ab1"
+    },
+    "unusual_score": null,
+    "excerpt": "The People's Bank of China faces pressure to loosen monetary conditions to prevent growth stalling, in contrast to the Fed and Bank of England dealing with sticky inflation.",
+    "raw_hash": "3b837a9acbe5e1cc68cf59644ead805bdeb7b6b1ab17bb09808cc453e02baa2e"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "46fea764af43bc36a3be8d2e1b0b6f8f1b9e7aba19b6d024ec15925adf6241c8",
+    "source": "news",
+    "source_id": "sig_5211f105c808e76c9f6654c7edfe23e3",
+    "occurred_at": "2026-09-14T13:04:44.000Z",
+    "fetched_at": "2026-09-14T13:23:06.258Z",
+    "priority": 0,
+    "text": "CUDA-Q is QPU-agnostic, supports ~75% of public QPUs",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "8f1e808f-8078-4715-aedb-da85168ec729",
+      "legacy_entity_id": "79ba90cb-7555-4d25-a675-6b1aaa2b1652"
+    },
+    "unusual_score": null,
+    "excerpt": "The CUDA-Q platform is QPU-agnostic and, by some estimates, supports roughly 75% of publicly available quantum processors, positioning NVIDIA's CUDA-Q as a cross-vendor software layer for hybrid quantum-classical computing.",
+    "raw_hash": "1e06415380e5ac3593365c421b30f90286fac5c15f22b13c97ca80789f95fb49"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "4770166de5d212b29fe6de8afc9df11be0a9249644f554081ba8b65316ba81ca",
+    "source": "news",
+    "source_id": "sig_5ca08b546f7b9243c456886db731542e",
+    "occurred_at": "2026-09-18T01:04:19.000Z",
+    "fetched_at": "2026-09-18T01:13:06.530Z",
+    "priority": 0,
+    "text": "Nostra hit by oracle attack on Starknet money market",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "98906bcc-c73f-4402-8265-ee8bbc0ac596",
+      "legacy_entity_id": "0625c2a9-dfec-425c-8557-9ed322ea081f"
+    },
+    "unusual_score": null,
+    "excerpt": "Per PeckShield monitoring (as reported by Lookonchain), DeFi protocol Nostra fell victim to an oracle attack on its Starknet money market.",
+    "raw_hash": "5071bb0a07655c910941f6e2bca6694bb28d65098eb6122daf1219061843fb65"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "7038e40ab6c61318584f2517a17289c9d76fb28c443f94f0b718f13231134c41",
+    "source": "news",
+    "source_id": "sig_4937579419472fd93bca6049798e9b43",
+    "occurred_at": "2026-09-15T09:01:05.000Z",
+    "fetched_at": "2026-09-15T09:23:06.327Z",
+    "priority": 0,
+    "text": "Strive's prior week accumulated 1,375 BTC for ~$109 million",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "4e8e67e8-4f95-4b7b-b450-4eb9a223816b",
+      "legacy_entity_id": "c04711b9-aa0e-4395-978f-a7b224996bf5"
+    },
+    "unusual_score": null,
+    "excerpt": "The week before, between Aug. 31 and Sept. 4, Strive bought 1,375 BTC for about $109 million at an average of $79,281 apiece, funded 70/30 between SATA and common stock.",
+    "raw_hash": "c608f3e7bf2d60092383b1c96457f782d5040d0c6087736f6828b50beef1de5c"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "dd730b8ae273d97cdfb46b4eafeda6fd05075559a6fd393a33e029b8374820d0",
+    "source": "news",
+    "source_id": "sig_e69b0e8d964882a29c9172946596605f",
+    "occurred_at": "2026-09-18T05:03:05.000Z",
+    "fetched_at": "2026-09-18T05:13:06.540Z",
+    "priority": 0,
+    "text": "GMGN data: BONER mcap around $58.85M at retrieval",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "451464b3-953a-4323-9dad-6c1e467056b4",
+      "legacy_entity_id": "37fe1d73-83f7-4856-843d-52ab4fa44dee"
+    },
+    "unusual_score": null,
+    "excerpt": "Per GMGN market data cited by Lookonchain, BONER (crypto-stock token on the Robinhood chain) traded near a $58.85 million market cap with a >40% 24h increase; figure is time-sensitive and not independently verified.",
+    "raw_hash": "218f27fb9839b59ad3fbfe7bba74ef1be998630f8d7e0daf3d8029893ad4dc07"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "c4d15bae3b03a78b9caeb4428ccf6b2fa518cbf4421b051e2491261b8cc4ac32",
+    "source": "news",
+    "source_id": "sig_c8efc4ae98b7bf93b48d772ca0989c2a",
+    "occurred_at": "2026-09-14T10:47:51.000Z",
+    "fetched_at": "2026-09-14T11:03:06.256Z",
+    "priority": 0,
+    "text": "Starlink subscribers, Falcon launches, and orbital share scaled sharply by 2026",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "1eafefe8-d4ce-4e34-bfdf-429d2f228de0",
+      "legacy_entity_id": "47d0f69d-18a1-488f-b0df-229485d7922f"
+    },
+    "unusual_score": null,
+    "excerpt": "Starlink subscribers more than doubled from under 6M (June 2025) to over 12M (June 2026); Falcon family launches grew from under 50 (2021) to over 150 (2025); and SpaceX's share of worldwide orbital mass deployment climbed from ~45% (Jan 2021) to ~80%.",
+    "raw_hash": "3492da813eb902a6f0183425306f2833f1e0958eab292db2e3e8f32f9bdc5773"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "5011e08f9fe269cf93795e1f6a1a924800693c1ba6a3a93bd2142712124690af",
+    "source": "news",
+    "source_id": "sig_af9eea6602252034df2a8ec0260aa1b9",
+    "occurred_at": "2026-09-17T23:00:46.000Z",
+    "fetched_at": "2026-09-17T23:13:06.522Z",
+    "priority": 0,
+    "text": "Arbitrum monthly revenue run-rate surged to ~$5M (5x since July)",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "43464ae9-4028-4be9-93b4-6805debbb727",
+      "legacy_entity_id": "e501c8c8-6728-485e-a2db-abad0f177236"
+    },
+    "unusual_score": null,
+    "excerpt": "Arbitrum's monthly revenue run-rate roughly tripled contextually — now about $5M, a fivefold increase since July — with Robinhood Chain activity strengthening the revenue profile.",
+    "raw_hash": "5e2979a9ba885699f9dee5e662ca7e258c91ad7d3601c134e05d977e5412ba8c"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "6e05c95cf1abdd502aa4ebbf708e634ed18065a40a7298442a0978a96036992f",
+    "source": "news",
+    "source_id": "sig_a64334f3f88268ffe5103ec167026c44",
+    "occurred_at": "2026-09-15T16:00:36.000Z",
+    "fetched_at": "2026-09-15T16:23:06.348Z",
+    "priority": 0,
+    "text": "The Daily Hodl reports Michigan couple's $136,660 Club Keno lottery win",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "3d8a3712-2fc3-4478-84cb-b6db9ec5b582",
+      "legacy_entity_id": "68869995-c0b1-41b6-b585-6697a6a3ee46"
+    },
+    "unusual_score": null,
+    "excerpt": "The Daily Hodl published a news article dated 2026-09-15 covering how a Michigan couple won $136,660 after the husband accidentally replayed the wrong Club Keno ticket during a night out. Single-source report (The Daily Hodl, per its account citing UPI); identities beyond Washtenaw County are not independently verified.",
+    "raw_hash": "8df287180863f0dfdc674c008757473e8916c3dfc4ecd3f909170ff84d8277a2"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "2b578dca174b8cf5886ac2d22a79695ebe3a6277d932a8afb0ed7a3f750685ef",
+    "source": "news",
+    "source_id": "sig_f4706aec507cfa3060dcb32e163adcaf",
+    "occurred_at": "2026-09-17T15:03:40.000Z",
+    "fetched_at": "2026-09-17T15:23:06.505Z",
+    "priority": 0,
+    "text": "mezii player profile",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "fe745fb8-7c71-46cc-8914-26c6b7740830",
+      "legacy_entity_id": "4b8d9911-2001-485f-920e-35b4c98edb19"
+    },
+    "unusual_score": null,
+    "excerpt": "Mezii is a 27-year-old British rifler who joined Vitality in November 2023 and was part of the back-to-back Major victories in 2025.",
+    "raw_hash": "4705b8a40b38b00296f94d2d9119e4168eb35f8ea0e75a12f04faf8996ee8941"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "67e8eb051df3c1af2d7dd050017d7acce1f1cbe1a85ea904510512d39ffac371",
+    "source": "news",
+    "source_id": "sig_0c15eb952f19c60e581fbd3c24fb6a1f",
+    "occurred_at": "2026-09-16T12:17:43.000Z",
+    "fetched_at": "2026-09-16T12:33:06.419Z",
+    "priority": 0,
+    "text": "NanoGPT integrates THORChain API for cross-chain crypto payments",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "6206e0ef-c5fb-48ea-92bb-c229d9acad0b",
+      "legacy_entity_id": "d8e57baa-fa56-423d-81d7-0820893796dd"
+    },
+    "unusual_score": null,
+    "excerpt": "NanoGPT integrated with THORChain via THORChain's API to support crypto payments across different blockchain networks without requiring users to move assets through a centralized exchange; note this is THORChain's self-reported characterization and the mechanics are not independently verifiable from the supplied material.",
+    "raw_hash": "eb9c34fdb89f337c5d447443f15f5096a6fb7d1e7db8ffab23bfd11249ec7fb8"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "d9b7dd80d0361f5667a67c6f4e8796d6e8d624143a830853310ca7ca736e1b2b",
+    "source": "news",
+    "source_id": "sig_6c9db40f5c61b39c65e2321e9d56e437",
+    "occurred_at": "2026-09-17T12:32:41.000Z",
+    "fetched_at": "2026-09-17T12:43:06.492Z",
+    "priority": 0,
+    "text": "US, Australia, New Zealand carved out of ICG distribution territory",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "a1a10963-322a-4f87-bd7c-81392c26c97a",
+      "legacy_entity_id": "8c996cf9-41f0-4985-82a0-5a7ec95ce314"
+    },
+    "unusual_score": null,
+    "excerpt": "The exclusion of the US from the exclusive distribution agreement's territory suggests ICG may be preserving optionality for US-focused distribution partnerships or its own direct efforts in the US market.",
+    "raw_hash": "0c2a0472b28a95a97ef7b2c618c6a6255a02fb261056daa073453c9184d037b7"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "f83365bd571bcd50a436a26c01ae6a5a8e24163a6b5588192010f66bb4f5c1a6",
+    "source": "news",
+    "source_id": "sig_63a700b2b7cf9a7b1204dfe51a8a5142",
+    "occurred_at": "2026-09-13T19:14:36.000Z",
+    "fetched_at": "2026-09-13T19:33:06.211Z",
+    "priority": 0,
+    "text": "Civil-liberties backlash and defense over a16z-backed Flock's surveillance",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "63173798-1dac-4687-a18a-6daf618c356a",
+      "legacy_entity_id": "76bb04b2-2475-4385-bce2-c7670869210e"
+    },
+    "unusual_score": null,
+    "excerpt": "Flock's network records vehicle movements at scale and shares data across jurisdictions; critics allege warrantless tracking and broad data-retention rights, some municipalities have canceled or paused deployments, while Flock and supporters counter that searches are logged, retention is short, customers own the data, and the alternative to crime prevention is worse.",
+    "raw_hash": "eeb32b8bcea4059870d1b51997c271db8e4b8b5c11e494979200c401b7bcfc75"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "4204474437341f809e61dcb556e8198c7259c2fc7d6ae1c0748299cee9b3279f",
+    "source": "news",
+    "source_id": "sig_9fbb35a1c9c2eb03674dad8ddf4e9990",
+    "occurred_at": "2026-09-16T04:04:40.000Z",
+    "fetched_at": "2026-09-16T04:23:06.388Z",
+    "priority": 0,
+    "text": "Proposition 40 profile: 5% billionaire wealth tax, labor-backed, contested",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "a5262d41-6d45-4254-8223-c2bc022960b3",
+      "legacy_entity_id": "2e093231-8118-4772-a4c4-866e05c7ef04"
+    },
+    "unusual_score": null,
+    "excerpt": "Proposition 40 is a California 2026 ballot measure imposing a one-time 5% tax on billionaire wealth, primarily backed by labor groups such as SEIU-UHW, with fluctuating support in prior polls occasionally passing 50%; the climate is divided, with Democrats and labor in favor while Governor Gavin Newsom and business groups oppose.",
+    "raw_hash": "260fd6473aac12b3bd44e9c8af2ec783c91755852e22f8bce80ce4007b38dfa0"
+  },
+  {
+    "type": "news",
+    "numbers": {},
+    "schema_version": 1,
+    "signal_id": "4912cc004974351aa3bb2cc8996dbfad0310b1d233f81bd79da87e1ee7c671b8",
+    "source": "news",
+    "source_id": "sig_5061e7f40d1b601daf8df3d9113c1b1a",
+    "occurred_at": "2026-09-13T18:47:07.000Z",
+    "fetched_at": "2026-09-13T19:03:06.210Z",
+    "priority": 0,
+    "text": "DeepSeek named in industrial-scale distillation allegations",
+    "link": null,
+    "raw_ids": {
+      "memory_id": "9ef895a3-00bc-4245-9b3e-2bff96387c89",
+      "legacy_entity_id": "69dae251-bc9d-4351-a805-454f73153a06"
+    },
+    "unusual_score": null,
+    "excerpt": "The September 2026 US advisory names DeepSeek alongside Moonshot AI, Alibaba, MiniMax, StepFun, and Z.AI as companies allegedly engaged in industrial-scale distillation of US AI technologies, a regulatory/security pressure signal that could bear on DeepSeek's frontier-model ambitions.",
+    "raw_hash": "00569971f039495a946df2f1812528f989d94ed273f064cbc5cee3040603afe6"
+  }
+]
