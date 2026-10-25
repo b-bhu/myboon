@@ -1,0 +1,51 @@
+signal_id,expected_main_shelf,expected_target_item_id,expected_action,notes
+f09f97d69a45408b792816073b643cbc4374cb4f143fe0645c2af118dee20f24,,,keep,No esports/LPL shelf in atlas; main shelf left blank (unscored)
+18b2f6b3a8a98d598608ba6da9f054d5e2734916002ebb0ecf124d4deb453926,,,keep,No football/Wirtz/Liverpool shelf; blank (unscored)
+daea9cb4a467a7dbd785dc369407320e6e1bf8a429fdf76d42d8ab291e03d718,goldman-sachs,,keep,Goldman strategist view on earnings; new item
+ab19f5d0325e6e9294522ed560f47ab406be0f853d4333220883a3aa1a921612,,,skip,"No football shelf; old season stats, not news; blank (unscored)"
+6f73df22f63e148e29ecb5ee9c464437dca946c26b38c58b2cf9b500c8b7e4ed,capital-b,,keep,Capital B BTC treasury metrics; new item
+031fa99aba3e9d6978df23a9ef558326f54f714b20d505ea0f55bb200ce729c7,sandisk,,keep,SNDK premarket drop on DeepSeek; new item
+13bc1e55af47037e8049121ad5d55d4906dd9856e448d38e528baa34b85b72f9,tom-lee,,skip,UNCERTAIN: Tom Lee forecast; tom-lee vs bitmine-immersion-technologies (legacy entity); generic forecast = noise
+ca8a4a7f51b9b950feb9682e8b994ae8ffcd23514736451b4cde61b9b3f5a76f,pons,,skip,"UNCERTAIN: ORBIO token on Pons; thin, low-signal"
+7af0842a6fe0647282252b64ac80ee74762d49b33a53e3ee667da51c2aaca6c0,,,keep,No Symbiosis shelf; bridge exploit follow-up; blank (unscored)
+42dc3a1161670db3582e3aa00b9d0bfbce6e90393657439a9b6e69a68476879a,solana,,skip,SOL technical-analysis chatter
+3d8254584440108b74017565c936a0e83bf923d1c0f761991688d33c05a7de81,robinhood-chain,,skip,UNCERTAIN: Flybrain memecoin pump on Robinhood chain; no own shelf
+105846600d124aa9f5edf4c4ee7212f6c0ef0d1a713fe667b20075cb8b591c8b,jupiter,,keep,JUP derivatives data slide; new item
+eda0abe8d0dbfec7fb4921da7e25e88d9286dfaaa8d662aa7a99ad07a0a712f5,openai,,keep,Brockman operational role at OpenAI
+55179198f84c4f710d506c5abf726591b6fce4563172d76f5c34e152cabf2d8c,muse,,keep,UNCERTAIN: Meta Muse delay; muse vs meta vs mark-zuckerberg (legacy entity)
+405673308d74433093d7c8e42beadcbe8c48ffb2547b49752d6c558ad47b31fd,,,keep,No Arcee AI shelf; blank (unscored)
+cea30c889bdc3141b0af99aee0ab1ff2aee7e226c8d47900a14e8d15a7077228,usdc,,keep,USDC velocity vs USDT
+62f14393fc40b36368e817b3a1173040bba94b0b923f4ed2b354f148074040ab,ai-industry,,skip,UNCERTAIN: Epoch AI background; no Epoch shelf
+72b652c67af86db7c2399acc9a5032c6faccaa1e946f895d4fc469cbdc4e295f,,,skip,No STANDARD token shelf; wallet PnL chatter; blank (unscored)
+6baf9c9b356a29b4c983bdeb73a98b9c84736170ea4e2c96cc80d56885836409,anthropic,,keep,Anthropic biology lab first result
+0f3f5567b019baf7601881d671ee549887ee9a3fbfaa2c0278cd9fb44b71aff5,,,keep,No football/Bundesliga shelf; blank (unscored)
+0d3129344fb1dd694d1ccf229c0c010af2f8f0e5ec29911d622163b1ae81df89,pons,,keep,PONS September earnings and buyback
+039671e9e8bc683534265afc376c73fec66f9dfd8b8b31a61c847c56d5d7866f,bitcoin,,keep,UNCERTAIN: BTC drop with ETF outflows; bitcoin vs bitcoin-etf-flows
+c1cb9186c688de166c2044c7d314a2ab2e09b3725095ebc2e63888d76d91b5df,solana,,keep,UNCERTAIN: @getstonkoptions launch on Solana; no own shelf
+b7f7e637dafc11eaf55f16bca134a7a47d29c7fc58a0d913edbbdc2b8c86570f,,,keep,No Pixelmon shelf; blank (unscored)
+aa7e12c92469e15fb27dec238897490e9374b70324600725b9ca15d3052dd59e,anthropic-claude,,keep,UNCERTAIN: Expensify in Claude for Small Business; anthropic-claude vs anthropic
+56acc17ac73e658027e18f8b8298788fc3791b9c0e002084a18e9e1454ff6973,openai-gpt-models,,keep,GPT-6 Astra benchmark; new item (October items postdate signal)
+8a1e45c988cf8c78f7a3f333005ae34c92622866d6c5d32a0e8cb2391e85a660,russia,,skip,UNCERTAIN: Shadow fleet background context; russia vs crude-oil-wti
+ecb93db5c736e540e00f3af35e97a825f970bd6a98aa2a40c64e6459e80501b6,,,keep,No AMC shelf; tokenized-stock story; blank (unscored)
+4a25b01074f133dbc55b884b08d2dc6c27fe75c4c2ce8fbf74496c27fd1025cb,canton-network,,skip,CC price/unlock TA chatter
+174901b48fe7838d2854d538bb5508fea6ca283c3320fb3f277ee5b73d51b572,charles-schwab,,keep,UNCERTAIN: Claude for Financial Advisors on Schwab network; charles-schwab vs anthropic-claude
+027bb04e1a2f18bb3a52a3879bb83f14ee8e4f6a531c508ce3f453dd9c40d6ac,near-protocol,,skip,UNCERTAIN: NearKat memecoin pump; no own shelf
+8ace0bf3cd8f8e6a6ec238c68fff6f9ff8d92c219e223e8f187cbc02a0b2c4ae,amazon,,skip,Duquesne 13F stake value; not Amazon news
+8aa3e67e4f1989746c5967454afc9a41c8eac285d7e12fce82adec7c49838c3e,european-union,,keep,UNCERTAIN: Digital euro pilot deadline; no ECB/digital-euro shelf
+513dcfb1eadfdbc4dee0f484865d975c44d29d35ab2249a05bcf74b4211fd80b,european-union,,keep,UNCERTAIN: EU Cyber Resilience Act fines for wallet makers; ledger/trezor alternative
+73d0fb62a1c929c91a88ccae3f79d1f87ae62a9de074d6effb5cf88733b1e3db,,,keep,No FIFA/football shelf; blank (unscored)
+67ca321c29e5d8add2132e2e942a4f87c9f1f667c07b8fc2bfa1f5a5a50a9c9e,russia-ukraine-war,,keep,Crimea prediction-market odds; polymarket could be also_affects
+6079815f4f0e66df1dcc165fed3a7337c98c5fcf12e134162620f02c759a99c9,peoples-bank-of-china,,keep,PBoC easing pressure
+46fea764af43bc36a3be8d2e1b0b6f8f1b9e7aba19b6d024ec15925adf6241c8,nvidia,,keep,CUDA-Q QPU coverage
+4770166de5d212b29fe6de8afc9df11be0a9249644f554081ba8b65316ba81ca,starknet,,keep,UNCERTAIN: Nostra oracle attack on Starknet; no Nostra shelf
+7038e40ab6c61318584f2517a17289c9d76fb28c443f94f0b718f13231134c41,strive-inc,,keep,"Strive 1,375 BTC buy; new item (existing items are later buys)"
+dd730b8ae273d97cdfb46b4eafeda6fd05075559a6fd393a33e029b8374820d0,robinhood-chain,,skip,UNCERTAIN: BONER memecoin mcap; no own shelf
+c4d15bae3b03a78b9caeb4428ccf6b2fa518cbf4421b051e2491261b8cc4ac32,spacex,,keep,Starlink/Falcon scale stats
+5011e08f9fe269cf93795e1f6a1a924800693c1ba6a3a93bd2142712124690af,arbitrum,,keep,Arbitrum revenue run-rate
+6e05c95cf1abdd502aa4ebbf708e634ed18065a40a7298442a0978a96036992f,,,skip,"Lottery story, off-topic; blank (unscored)"
+2b578dca174b8cf5886ac2d22a79695ebe3a6277d932a8afb0ed7a3f750685ef,,,skip,"Player profile, no CS2 shelf; blank (unscored)"
+67e8eb051df3c1af2d7dd050017d7acce1f1cbe1a85ea904510512d39ffac371,thorchain,,keep,NanoGPT THORChain integration
+d9b7dd80d0361f5667a67c6f4e8796d6e8d624143a830853310ca7ca736e1b2b,,,keep,No ICG shelf; blank (unscored)
+f83365bd571bcd50a436a26c01ae6a5a8e24163a6b5588192010f66bb4f5c1a6,a16z,,keep,"UNCERTAIN: Flock surveillance backlash; Flock is subject, a16z only backer"
+4204474437341f809e61dcb556e8198c7259c2fc7d6ae1c0748299cee9b3279f,,,keep,No Prop 40/California tax shelf; blank (unscored)
+4912cc004974351aa3bb2cc8996dbfad0310b1d233f81bd79da87e1ee7c671b8,deepseek,01a172ce-f2c7-7d66-af64-c6235960a247,keep,Matches existing item: US officials accuse six Chinese AI firms of distillation
