@@ -13,7 +13,9 @@
 -- roles (the revoke loop, belt and braces as in #441/#485).
 -- service_role: the Story analyst connects as service_role (one shared team
 -- login, per CTO, #485 review). New grants only what is missing: select on
--- this table, and select+insert on atlas.decisions -- #449 (20261025114823)
+-- this table, insert on atlas.decisions plus select on only its conflict-target columns
+-- (signal_id, analyst_version), and select (text, excerpt, occurred_at) on atlas.signals for the
+-- analyst signal read (#486 DB Guy review) -- #449 (20261025114823)
 -- already granted USAGE on schema atlas plus select on atlas.shelves and
 -- atlas.items, and #474 (20261026011119) the scout's queue surface. Nothing
 -- is needed on atlas.uuidv7(): #441's default function privileges left it
@@ -50,4 +52,7 @@ begin
 end $$;
 
 grant select on table atlas.routing_rules to service_role;
-grant select, insert on table atlas.decisions to service_role;
+grant insert on table atlas.decisions to service_role;
+-- ON CONFLICT (signal_id, analyst_version) needs SELECT on the conflict-target columns.
+grant select (signal_id, analyst_version) on table atlas.decisions to service_role;
+grant select (text, excerpt, occurred_at) on table atlas.signals to service_role;
