@@ -171,9 +171,9 @@ const V4_APPS = [
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     env: {
       V4_STAGE: 'scout-news',
-      // Off-switch is this value; edit to 'true'/'false' then
-      // `pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env` (MYBOON_V4_RUNTIME_ENABLED=1 set).
-      SCOUT_ENABLED: 'false',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env`
+      SCOUT_ENABLED: process.env.SCOUT_ENABLED ?? 'false',
     },
   },
 ]

@@ -49,12 +49,13 @@ pm2 stop myboon-v4-scout-news
 ```
 
 `pm2 stop` only kills the current tick; with `cron_restart`, PM2 brings a
-stopped app back at the next 15-minute tick. The off-switch is setting
-`SCOUT_ENABLED` in `ecosystem.config.cjs` (not .env): edit the value to
-`'false'` (the ecosystem file carries it), then
+stopped app back at the next 15-minute tick. The off-switch is the
+`SCOUT_ENABLED` shell variable. `ecosystem.config.cjs` reads it from
+`process.env` and defaults to `'false'`, so never edit the tracked file on
+the VPS (it would leave the deploy checkout dirty):
 
 ```sh
-MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env
+SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env
 ```
 
 With `'false'`, each cron tick exits 0 immediately, before any DB client
@@ -111,9 +112,8 @@ credential values in tickets or chat.
 
 ## Rollback
 
-Pause the stage with the off-switch, not `pm2 delete`: set
-`SCOUT_ENABLED: 'false'` in `ecosystem.config.cjs`, then
-`pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env` (MYBOON_V4_RUNTIME_ENABLED=1 set). With `'false'` every
+Pause the stage with the off-switch, not `pm2 delete`: run
+`SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env`. With `'false'` every
 tick exits 0 immediately, before any DB or network work.
 
 Fully removing the app from the PM2 list (`pm2 delete
