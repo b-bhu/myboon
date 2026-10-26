@@ -25,7 +25,7 @@ function fakeSource(values: FakeValues, failing: string[] = []): {
   const source: V4HealthSource = {
     async queueDepth() {
       if (shouldFail('queueDepth')) throw new Error('queueDepth unavailable')
-      return values.queueDepth ?? 0
+      return values.queueDepth === undefined ? 0 : values.queueDepth
     },
     async oldestClaimAgeMs() {
       if (shouldFail('oldestClaimAgeMs')) throw new Error('oldestClaimAgeMs unavailable')
@@ -34,11 +34,11 @@ function fakeSource(values: FakeValues, failing: string[] = []): {
     async leaseExpiries(_stage, sinceMs) {
       windows.leaseExpiries.push(sinceMs)
       if (shouldFail('leaseExpiries')) throw new Error('leaseExpiries unavailable')
-      return values.leaseExpiries ?? 0
+      return values.leaseExpiries === undefined ? 0 : values.leaseExpiries
     },
     async deadLetterCount() {
       if (shouldFail('deadLetterCount')) throw new Error('deadLetterCount unavailable')
-      return values.deadLetterCount ?? 0
+      return values.deadLetterCount === undefined ? 0 : values.deadLetterCount
     },
     async advisoryLockHolder() {
       if (shouldFail('advisoryLockHolder')) throw new Error('advisoryLockHolder unavailable')
@@ -47,19 +47,20 @@ function fakeSource(values: FakeValues, failing: string[] = []): {
     async signalsSince(_stage, sinceMs) {
       windows.signalsSince.push(sinceMs)
       if (shouldFail('signalsSince')) throw new Error('signalsSince unavailable')
-      return values.signalsSince ?? 0
+      return values.signalsSince === undefined ? 0 : values.signalsSince
     },
   }
   return { source, windows }
 }
 
+// Fields whose reads may legitimately answer null instead of a number.
 type FakeValues = {
-  queueDepth?: number
+  queueDepth?: number | null
   oldestClaimAgeMs?: number | null
-  leaseExpiries?: number
-  deadLetterCount?: number
+  leaseExpiries?: number | null
+  deadLetterCount?: number | null
   advisoryLockHolder?: { pid: number; since: string } | null
-  signalsSince?: number
+  signalsSince?: number | null
 }
 
 function lineCollector(): { lines: string[]; write: (line: string) => void } {
@@ -175,6 +176,39 @@ test('a legitimate null advisory-lock holder carries no error entry', async () =
   const snapshot = await takeHealthSnapshot(STAGE, source, fixedNow)
 
   assert.equal(snapshot.advisoryLockHolder, null)
+  assert.deepEqual(snapshot.errors, [])
+})
+
+test('null metric values are plain nulls, not errors, across every nullable field', async () => {
+  const { source } = fakeSource({
+    queueDepth: null,
+    oldestClaimAgeMs: null,
+    leaseExpiries: null,
+    deadLetterCount: null,
+    advisoryLockHolder: null,
+    signalsSince: null,
+  })
+
+  const snapshot = await takeHealthSnapshot(STAGE, source, fixedNow)
+
+  assert.equal(snapshot.queueDepth, null)
+  assert.equal(snapshot.oldestClaimAgeMs, null)
+  assert.equal(snapshot.leaseExpiriesLastHour, null)
+  assert.equal(snapshot.deadLetterCount, null)
+  assert.equal(snapshot.advisoryLockHolder, null)
+  assert.equal(snapshot.signalsPerHour, null)
+  assert.deepEqual(snapshot.errors, [])
+})
+
+test('a null read rides alongside healthy reads without an error entry', async () => {
+  const { source } = fakeSource({ queueDepth: 3, leaseExpiries: 1, deadLetterCount: null, signalsSince: 8 })
+
+  const snapshot = await takeHealthSnapshot(STAGE, source, fixedNow)
+
+  assert.equal(snapshot.queueDepth, 3)
+  assert.equal(snapshot.leaseExpiriesLastHour, 1)
+  assert.equal(snapshot.deadLetterCount, null)
+  assert.equal(snapshot.signalsPerHour, 8)
   assert.deepEqual(snapshot.errors, [])
 })
 

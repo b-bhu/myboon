@@ -3,41 +3,49 @@
  *
  * One snapshot per stage, assembled from an injected health source. No
  * database client, no table names, and no env reads live here: the caller
- * wires the source. Every metric read is independent — a failed read turns
- * that field to null, records a "<field>: <message>" entry, and the snapshot
- * still comes back.
+ * wires the source. Every metric read is independent — a read that throws
+ * turns that field to null, records a "<field>: <message>" entry, and the
+ * snapshot still comes back. A null RETURN from the source is not a failure:
+ * it means the metric is not readable with the current grants and carries no
+ * error entry.
  */
 
+// Sprint 2 scope is the scout stage only; the union still names the later
+// stages so the type does not churn when they arrive, but the runtime itself
+// only ever runs and snapshots 'scout-news'.
 export type V4Stage = 'scout-news' | 'analyst' | 'entity-manager'
 
 /**
  * Injected source of queue and lock facts.
  *
- * TODO(#444 wiring): implement against the #440/#441 queue tables
+ * A null return means "not readable with the current grants" — the source
+ * reports it as null without querying, never as a fabricated zero or an
+ * error. See createAtlasHealthSource for the service_role-backed source.
  */
 export interface V4HealthSource {
   /** Items waiting in the stage's queue right now. */
-  queueDepth(stage: V4Stage): Promise<number>
+  queueDepth(stage: V4Stage): Promise<number | null>
   /** Age in ms of the oldest open claim, or null when nothing is claimed. */
   oldestClaimAgeMs(stage: V4Stage): Promise<number | null>
   /**
    * Number of leases that expired inside the window [sinceMs, now]:
    * work that stalled and will be (or was) requeued.
    */
-  leaseExpiries(stage: V4Stage, sinceMs: number): Promise<number>
+  leaseExpiries(stage: V4Stage, sinceMs: number): Promise<number | null>
   /** Items parked in the stage's dead-letter queue. */
-  deadLetterCount(stage: V4Stage): Promise<number>
+  deadLetterCount(stage: V4Stage): Promise<number | null>
   /** Holder of the advisory lock, or null when no process owns it. */
   advisoryLockHolder(): Promise<{ pid: number; since: string } | null>
   /** Signals produced for the stage inside the window [sinceMs, now]. */
-  signalsSince(stage: V4Stage, sinceMs: number): Promise<number>
+  signalsSince(stage: V4Stage, sinceMs: number): Promise<number | null>
 }
 
 export interface V4HealthSnapshot {
   stage: V4Stage
   /** Snapshot time, ISO 8601, from the injected clock. */
   at: string
-  // Every metric below is null when its read failed (see errors).
+  // Every metric below is null when its read threw (see errors) or when the
+  // source reported it unreadable with the current grants (no error entry).
   queueDepth: number | null
   oldestClaimAgeMs: number | null
   leaseExpiriesLastHour: number | null

@@ -63,7 +63,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts && tsx src/tokens/types.test.ts && tsx src/supabase-client.test.ts && tsx src/v4-runtime/health.test.ts",
+    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts && tsx src/tokens/types.test.ts && tsx src/supabase-client.test.ts && tsx src/v4-runtime/health.test.ts && tsx src/v4-runtime/atlas-health-source.test.ts",
     "test:meteora": "tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts",
     "test:spot": "tsx src/spot/data-api.test.ts",
     "test:mobile-signing": "tsx src/pacific/mobile-signing.test.ts"

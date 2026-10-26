@@ -138,73 +138,39 @@ const COLLECTOR_OWNERSHIP_KEYS = [
 const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
   .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
 
-// #444 V4 runtime stage runners. All three live in packages/scout-news:
-//   myboon-v4-scout-news     -> src/run-scout.ts
-//   myboon-v4-analyst        -> src/run-analyst.ts
-//   myboon-v4-entity-manager -> src/run-entity-manager.ts
-// The scripts are placeholders until issue #440 wires the runners; the
-// packages/scout-news package itself is not on main yet, so these entries may
-// fail to start if launched early.
+// #444 V4 runtime, Sprint 2 scope: the scout stage only. The analyst and
+// entity-manager stage entries are Sprint 2 work and stay out of the process
+// list until their runners are wired.
+//   myboon-v4-scout-news -> src/run-scout.ts
+// (renames to src/run.ts when PR #473 merges)
+// The scout runs one cycle and exits; PM2 starts it again at every 15-minute
+// cron tick (cron_restart). autorestart stays off so a failing run neither
+// loops nor hides in backoff: the crash state is visible until the next
+// scheduled tick, and the health line carries what actually failed.
 // NOT registered by default: V4_APPS joins `apps` only when
 // MYBOON_V4_RUNTIME_ENABLED=1, so plain `pm2 start/reload` of this file never
-// registers the V4 apps. After go-live, reloads of this file must also set
-// MYBOON_V4_RUNTIME_ENABLED=1 or the V4 apps are left out of the reload.
+// registers the V4 app. After go-live, reloads of this file must also set
+// MYBOON_V4_RUNTIME_ENABLED=1 or the V4 app is left out of the reload.
 // Go-live sequence (only after CTO approval, following Backend Dev local e2e):
 //   1. Back up the current process list BEFORE anything else:
 //        cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
-//   2. MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only \
-//        myboon-v4-scout-news,myboon-v4-analyst,myboon-v4-entity-manager
+//   2. MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-v4-scout-news
 //   3. pm2 save   (persists the new list; dump backup is the rollback path)
 const V4_APPS = [
   {
     name: 'myboon-v4-scout-news',
-    script: 'src/run-scout.ts',
+    script: 'src/run-scout.ts', // becomes src/run.ts when PR #473 merges
     interpreter: TSX,
     cwd: `${ROOT}/packages/scout-news`,
     watch: false,
-    autorestart: true,
-    max_restarts: 10,
-    min_uptime: 30000,
-    exp_backoff_restart_delay: 2000,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '*/15 * * * *',
     max_memory_restart: '300M',
     kill_timeout: 30000,
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     env: {
       V4_STAGE: 'scout-news',
-    },
-  },
-  {
-    name: 'myboon-v4-analyst',
-    script: 'src/run-analyst.ts',
-    interpreter: TSX,
-    cwd: `${ROOT}/packages/scout-news`,
-    watch: false,
-    autorestart: true,
-    max_restarts: 10,
-    min_uptime: 30000,
-    exp_backoff_restart_delay: 2000,
-    max_memory_restart: '300M',
-    kill_timeout: 30000,
-    log_date_format: 'YYYY-MM-DD HH:mm:ss',
-    env: {
-      V4_STAGE: 'analyst',
-    },
-  },
-  {
-    name: 'myboon-v4-entity-manager',
-    script: 'src/run-entity-manager.ts',
-    interpreter: TSX,
-    cwd: `${ROOT}/packages/scout-news`,
-    watch: false,
-    autorestart: true,
-    max_restarts: 10,
-    min_uptime: 30000,
-    exp_backoff_restart_delay: 2000,
-    max_memory_restart: '400M',
-    kill_timeout: 30000,
-    log_date_format: 'YYYY-MM-DD HH:mm:ss',
-    env: {
-      V4_STAGE: 'entity-manager',
     },
   },
 ]
