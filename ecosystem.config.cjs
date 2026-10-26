@@ -138,7 +138,7 @@ const COLLECTOR_OWNERSHIP_KEYS = [
 const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
   .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
 
-// #444 V4 runtime, Sprint 2 scope: the scout stage only. The analyst and
+// #444 V4 runtime, Sprint 1 scope: the scout stage only. The analyst and
 // entity-manager stage entries are Sprint 2 work and stay out of the process
 // list until their runners are wired.
 //   myboon-v4-scout-news -> src/run-scout.ts
@@ -171,6 +171,9 @@ const V4_APPS = [
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     env: {
       V4_STAGE: 'scout-news',
+      // Off-switch is this value; edit to 'true'/'false' then
+      // `pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env` (MYBOON_V4_RUNTIME_ENABLED=1 set).
+      SCOUT_ENABLED: 'false',
     },
   },
 ]

@@ -1,6 +1,6 @@
 # V4 runtime runbook (#444, scout stage)
 
-One PM2 app at Sprint 2: the news scout, hosted by `packages/scout-news`.
+One PM2 app in Sprint 1: the news scout, hosted by `packages/scout-news`.
 
 | PM2 app | Script | Stage |
 | --- | --- | --- |
@@ -48,15 +48,17 @@ the dump backup taken first is the rollback path.
 pm2 stop myboon-v4-scout-news
 ```
 
-`pm2 stop` only kills the current tick. With `cron_restart`, PM2 brings a
-stopped app back at the next 15-minute tick, so a real pause is:
+`pm2 stop` only kills the current tick; with `cron_restart`, PM2 brings a
+stopped app back at the next 15-minute tick. The off-switch is setting
+`SCOUT_ENABLED` in `ecosystem.config.cjs` (not .env): edit the value to
+`'false'` (the ecosystem file carries it), then
 
 ```sh
-pm2 delete myboon-v4-scout-news
+MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env
 ```
 
-`pm2 save` after a `delete` keeps the smaller list pinned; re-adding the app
-later starts from the ecosystem file again.
+With `'false'`, each cron tick exits 0 immediately, before any DB client
+or network connection is created: nothing runs and nothing is written.
 
 ## Logs
 
@@ -109,15 +111,17 @@ credential values in tickets or chat.
 
 ## Rollback
 
-```sh
-pm2 delete myboon-v4-scout-news
-cp ~/.pm2/dump.pm2.bak-<timestamp> ~/.pm2/dump.pm2
-pm2 resurrect
-pm2 save
-```
+Pause the stage with the off-switch, not `pm2 delete`: set
+`SCOUT_ENABLED: 'false'` in `ecosystem.config.cjs`, then
+`pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env` (MYBOON_V4_RUNTIME_ENABLED=1 set). With `'false'` every
+tick exits 0 immediately, before any DB or network work.
 
-`resurrect` restores the pre-V4 process list from the backup; `pm2 save`
-re-pins it.
+Fully removing the app from the PM2 list (`pm2 delete
+myboon-v4-scout-news`, then `pm2 save`) is not the off-switch; that
+process-list change needs CTO approval. If it is approved, back up the
+process list first (the dump backup step from Start), then delete and
+`pm2 save`; re-adding the app later starts from the ecosystem file
+again.
 
 ## Out of scope
 
