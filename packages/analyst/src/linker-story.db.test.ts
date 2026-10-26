@@ -233,13 +233,26 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
     expect(slugs).toEqual(['bitcoin', 'eth', 'sec', 'uniswap', 'xrp']);
   });
 
-  it('CTO should-fix 4: the decision row keeps the item probability as well as the entity probability', async () => {
+  it('CTO should-fix 4: the decision row stores entity/item probabilities and margins as numeric columns; reason is the outcome only', async () => {
     await addItem('btc-etf', 'bitcoin', 'Bitcoin ETF approvals', 2);
     await addSignal('s-prob', 'Bitcoin ETF inflows hit a record');
-    const jev = scriptedJev((s) => ({ entity: ['bitcoin', 0.95, 0.02], item: [s.candidates[0].items[0].id, 0.88, 0.05] }));
+    await addSignal('s-new', 'Bitcoin miners form a new alliance');
+    const jev = scriptedJev((s) => (/miners/.test(s.signal.text)
+      ? { entity: ['bitcoin', 0.91, 0.04], item: ['new_story', 0.77, 0.12] }
+      : { entity: ['bitcoin', 0.95, 0.02], item: [s.candidates[0].items[0].id, 0.88, 0.05] }));
     await runAnalystOnce(pool, { jev, ...opts });
-    const d = (await pool.query('select confidence, reason from atlas.decisions where signal_id = $1', ['s-prob'])).rows[0];
-    expect(d.confidence).toBeCloseTo(0.95);
-    expect(d.reason).toMatch(/item_p=0\.880/);
+    const rows = (await pool.query(
+      `select signal_id, confidence, reason, entity_p::float8 entity_p, entity_margin::float8 entity_margin,
+              item_p::float8 item_p, item_margin::float8 item_margin,
+              pg_typeof(entity_p)::text t from atlas.decisions where signal_id in ('s-prob','s-new') order by signal_id`)).rows;
+    expect(rows).toHaveLength(2);
+    const [n, l] = rows;
+    expect(l).toMatchObject({ signal_id: 's-prob', reason: 'linked', t: 'numeric' });
+    expect(l.entity_p).toBeCloseTo(0.95); expect(l.entity_margin).toBeCloseTo(0.93);
+    expect(l.item_p).toBeCloseTo(0.88); expect(l.item_margin).toBeCloseTo(0.83);
+    expect(l.confidence).toBeCloseTo(0.95);
+    expect(n).toMatchObject({ signal_id: 's-new', reason: 'new_story' });
+    expect(n.item_p).toBeCloseTo(0.77); expect(n.item_margin).toBeCloseTo(0.65);
+    await expect(pool.query(`update atlas.decisions set item_p = 1.5 where signal_id = 's-prob'`)).rejects.toThrow(/check/);
   });
 });
