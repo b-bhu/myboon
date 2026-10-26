@@ -3,8 +3,8 @@
  *
  * The gate runs before any DB client or network is created: when the gate
  * decides "off", it never calls `run`, so no client, pool, or socket is
- * ever opened for a disabled stage. When the PM2 entry is repointed to
- * `src/run.ts` after #473 merges, that runner must be wrapped by the same
+ * ever opened for a disabled stage. The PM2 entry runs
+ * `src/run.ts`, which is wrapped by this
  * gate.
  */
 

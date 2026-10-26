@@ -4,7 +4,7 @@ One PM2 app in Sprint 1: the news scout, hosted by `packages/scout-news`.
 
 | PM2 app | Script | Stage |
 | --- | --- | --- |
-| `myboon-v4-scout-news` | `src/run-scout.ts` | `scout-news` |
+| `myboon-v4-scout-news` | `src/run.ts` | `scout-news` |
 
 The script renames to `src/run.ts` when PR #473 merges. The analyst and
 entity-manager stage apps are Sprint 2 work; they join this runbook when

@@ -141,7 +141,7 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 // #444 V4 runtime, Sprint 1 scope: the scout stage only. The analyst and
 // entity-manager stage entries are Sprint 2 work and stay out of the process
 // list until their runners are wired.
-//   myboon-v4-scout-news -> src/run-scout.ts
+//   myboon-v4-scout-news -> src/run.ts
 // (renames to src/run.ts when PR #473 merges)
 // The scout runs one cycle and exits; PM2 starts it again at every 15-minute
 // cron tick (cron_restart). autorestart stays off so a failing run neither
@@ -159,7 +159,7 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 const V4_APPS = [
   {
     name: 'myboon-v4-scout-news',
-    script: 'src/run-scout.ts', // becomes src/run.ts when PR #473 merges
+    script: 'src/run.ts',
     interpreter: TSX,
     cwd: `${ROOT}/packages/scout-news`,
     watch: false,
