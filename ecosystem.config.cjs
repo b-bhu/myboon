@@ -138,6 +138,45 @@ const COLLECTOR_OWNERSHIP_KEYS = [
 const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
   .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
 
+// #444 V4 runtime, Sprint 1 scope: the scout stage only. The analyst and
+// entity-manager stage entries are Sprint 2 work and stay out of the process
+// list until their runners are wired.
+//   myboon-v4-scout-news -> src/run.ts
+// The scout runs one cycle and exits; PM2 starts it again at every 15-minute
+// cron tick (cron_restart). autorestart stays off so a failing run neither
+// loops nor hides in backoff: the crash state is visible until the next
+// scheduled tick, and the health line carries what actually failed.
+// NOT registered by default: V4_APPS joins `apps` only when
+// MYBOON_V4_RUNTIME_ENABLED=1, so plain `pm2 start/reload` of this file never
+// registers the V4 app. After go-live, reloads of this file must also set
+// MYBOON_V4_RUNTIME_ENABLED=1 or the V4 app is left out of the reload.
+// Go-live sequence (only after CTO approval, following Backend Dev local e2e):
+//   1. Back up the current process list BEFORE anything else:
+//        cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
+//   2. MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-v4-scout-news
+//   3. pm2 save   (persists the new list; dump backup is the rollback path)
+const V4_APPS = [
+  {
+    name: 'myboon-v4-scout-news',
+    script: 'src/run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/scout-news`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '*/15 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'scout-news',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env`
+      SCOUT_ENABLED: process.env.SCOUT_ENABLED ?? 'false',
+    },
+  },
+]
+
 module.exports = {
   apps: [
     {
@@ -325,5 +364,8 @@ module.exports = {
         FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS: '60000',
       },
     },
+    // #444: V4 apps are gated. Absent from the list unless the invoking shell
+    // sets MYBOON_V4_RUNTIME_ENABLED=1.
+    ...(process.env.MYBOON_V4_RUNTIME_ENABLED === '1' ? V4_APPS : []),
   ],
 }

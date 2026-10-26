@@ -6,6 +6,7 @@
 import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client';
 
 import { runScoutOnce } from './scout.js';
+import { runGatedScout } from '@myboon/shared/v4-runtime';
 
 async function main(): Promise<void> {
   const { supabaseUrl, supabaseKey } = requireSupabaseEnv(process.env);
@@ -13,7 +14,8 @@ async function main(): Promise<void> {
   await runScoutOnce({ db });
 }
 
-main().catch((error: unknown) => {
+// SCOUT_ENABLED gate (#444): off exits 0 before any client is created.
+runGatedScout({ run: main }).catch((error: unknown) => {
   // PostgREST errors carry a message; log the message only, never a URL or key.
   const message = error instanceof Error ? error.message : String(error);
   console.error(`scout-news: run failed: ${message}`);
