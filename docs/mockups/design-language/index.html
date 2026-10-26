@@ -1,0 +1,318 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MyBoon Design Language · v1</title>
+<style>
+:root{
+--walletCore:#031F2C;--ground:#063343;--surface:#073B4C;--surface2:#083D50;--lift:#0A4A60;--border:#185A70;
+--bone:#F5FAFC;--dim:#9CB8C2;--faint:#6B95A1;--primary:#118AB2;--viridian:#06D6A0;--gold:#FFD166;--vermillion:#EF476F;
+--app-brand:#F2994A;
+--s4:4px;--s8:8px;--s12:12px;--s16:16px;--s24:24px;--s32:32px;
+--r-card:8px;--r-btn:6px;--r-sheet:12px;--r-chip:4px;
+--t34:34px;--t28:28px;--t20:20px;--t18:18px;--t15:15px;--t14:14px;--t12:12px;--t11:11px;
+--sans:Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--walletCore);color:var(--bone);font-family:var(--sans);font-size:var(--t15)}
+.m{font-family:var(--mono)}
+.lbl{font-family:var(--mono);font-size:var(--t11);letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.wrap{display:flex;align-items:flex-start}
+nav{position:sticky;top:0;flex:0 0 220px;height:100vh;overflow:auto;border-right:1px solid var(--border);padding:var(--s24) var(--s16);background:var(--walletCore)}
+nav a{display:block;color:var(--dim);text-decoration:none;font-size:var(--t14);padding:6px 0}
+nav a:hover{color:var(--bone)}
+nav .lbl{margin:var(--s16) 0 var(--s4)}
+main{flex:1;min-width:0;padding:var(--s32)}
+header{border-bottom:1px solid var(--border);padding-bottom:var(--s24);margin-bottom:var(--s8)}
+h1{font-size:var(--t28);margin:var(--s8) 0}
+header p{color:var(--dim);font-size:var(--t14);margin:0}
+h2.grp{font-size:var(--t20);margin:var(--s32) 0 0;color:var(--dim);font-weight:500}
+section{display:flex;gap:var(--s32);flex-wrap:wrap;padding:var(--s32) 0;border-bottom:1px solid var(--border)}
+section h3{font-size:var(--t20);margin:0 0 var(--s12);font-weight:600}
+.phone{flex:0 0 360px;width:360px;background:var(--walletCore);border:1px solid var(--border);border-radius:var(--r-sheet);padding:var(--s16);position:relative;overflow:hidden}
+.phone.surface{background:var(--surface)}
+.spec{flex:1;min-width:260px;max-width:520px}
+.spec ul{margin:0 0 var(--s16);padding-left:18px;color:var(--dim);font-size:var(--t14);line-height:1.6}
+.tok{font-family:var(--mono);font-size:var(--t12);color:var(--faint);border-top:1px solid var(--border);padding-top:var(--s12)}
+.stack>*+*{margin-top:var(--s12)}
+/* foundations */
+.sw{display:flex;align-items:center;gap:var(--s12);padding:6px 0}
+.sw i{flex:0 0 40px;height:40px;border-radius:var(--r-btn);border:1px solid var(--border)}
+.sw b{font-weight:500;font-size:var(--t14);display:block}.sw small{font-family:var(--mono);font-size:var(--t11);color:var(--faint)}
+.ts{display:flex;align-items:baseline;gap:var(--s12);padding:4px 0;border-bottom:1px solid var(--border)}
+.ts .lbl{flex:0 0 28px}
+.sp{display:flex;align-items:center;gap:var(--s12);padding:4px 0}.sp i{background:var(--lift);height:16px;border:1px solid var(--border)}
+.shp{display:grid;grid-template-columns:1fr 1fr;gap:var(--s12)}.shp div{height:64px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:flex-end;padding:var(--s8)}
+.icons{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s16);text-align:center}
+.icons svg{width:24px;height:24px;stroke:var(--bone);fill:none;stroke-width:1.6;stroke-linecap:square;stroke-linejoin:miter}
+.icons .lbl{margin-top:var(--s4)}
+.hp{border:1px solid var(--border);border-radius:var(--r-card);padding:var(--s12);background:var(--surface);display:flex;justify-content:space-between;align-items:center;font-size:var(--t14)}
+/* components */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:var(--s12);cursor:pointer}
+.card .t{font-size:var(--t18);font-weight:600;line-height:1.3}
+.card .x{font-size:var(--t15);color:var(--dim);margin-top:var(--s4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{display:flex;justify-content:space-between;align-items:center;margin-top:var(--s8)}
+.link{color:var(--gold);font-size:var(--t12);text-decoration:none}
+.car{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:var(--s16);margin:0 -16px;padding:0 var(--s16);scrollbar-width:none}
+.car::-webkit-scrollbar{display:none}
+.car .card{flex:0 0 100%;scroll-snap-align:center}
+.dots{display:flex;gap:var(--s4);justify-content:center;margin-top:var(--s12)}.dots i{width:8px;height:3px;background:var(--border)}.dots i.on{width:20px;background:var(--gold)}
+.seg{display:flex;border:1px solid var(--border);border-radius:var(--r-btn);padding:2px}
+.seg button{flex:1;background:none;border:0;color:var(--dim);font:500 var(--t14) var(--sans);padding:var(--s8);border-radius:var(--r-chip);cursor:pointer}
+.seg button.on{background:var(--lift);color:var(--bone)}
+.tabbar{display:flex;justify-content:space-around;border-top:1px solid var(--border);padding-top:var(--s8);margin-top:var(--s16)}
+.tabbar div{text-align:center;color:var(--faint);font-size:var(--t11)}.tabbar svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:square;display:block;margin:0 auto 2px}
+.tabbar .on{color:var(--gold)}
+.btn{display:flex;align-items:center;justify-content:center;gap:var(--s8);height:48px;border-radius:var(--r-btn);font:600 var(--t15) var(--sans);background:none;width:100%;border:1px solid var(--border);color:var(--bone)}
+.btn.pri{border-color:var(--ctx,var(--gold));color:var(--ctx,var(--gold))}
+.btn.ter{border:0;color:var(--ctx,var(--gold));height:auto;font-size:var(--t14)}
+.app{--ctx:var(--app-brand)}
+.ctxhead{display:flex;align-items:center;gap:var(--s8);font-size:var(--t14);color:var(--dim)}.ctxhead i{width:14px;height:14px;border-radius:var(--r-chip);background:var(--ctx,var(--gold))}
+.track{position:relative;height:52px;border:1px solid var(--ctx,var(--gold));border-radius:var(--r-btn);display:flex;align-items:center;justify-content:center;color:var(--ctx,var(--gold));font-weight:600;font-size:var(--t14);overflow:hidden;user-select:none;touch-action:none}
+.track .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(255,209,102,.15)}
+.knob{position:absolute;left:3px;top:3px;width:44px;height:44px;border-radius:var(--r-chip);background:var(--gold);display:flex;align-items:center;justify-content:center;cursor:grab}
+.knob svg{width:20px;height:20px;stroke:var(--walletCore);fill:none;stroke-width:1.6;stroke-linecap:square}
+.track.done{color:var(--viridian);border-color:var(--viridian)}
+.dimbg{position:absolute;inset:0;background:rgba(2,15,22,.6)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--ground);border-top:1px solid var(--border);border-radius:var(--r-sheet) var(--r-sheet) 0 0;padding:var(--s8) var(--s16) var(--s24)}
+.grab{width:36px;height:4px;background:var(--border);margin:0 auto var(--s16)}
+.amt{background:var(--ground);border:1px solid var(--border);border-radius:var(--r-card);padding:var(--s12)}
+.amt .row{display:flex;justify-content:space-between;align-items:center;margin:var(--s8) 0}
+.amt .n{font:700 var(--t34) var(--mono)}
+.tokc{display:flex;align-items:center;gap:var(--s8);font-size:var(--t14)}
+.field{border:1px solid var(--border);border-radius:var(--r-btn);padding:var(--s12);font-size:var(--t15);margin-top:var(--s4)}
+.field.focus{border-color:var(--gold)}.field.err{border-color:var(--vermillion)}
+.errt{color:var(--vermillion);font-size:var(--t12);margin-top:var(--s4)}
+.toast{background:var(--lift);border:1px solid var(--border);border-radius:var(--r-btn);padding:var(--s12);display:flex;gap:var(--s12);align-items:center;font-size:var(--t14)}
+.toast .sub{font-size:var(--t12);color:var(--dim)}
+.st{width:18px;height:18px;flex:none;fill:none;stroke-width:1.6;stroke-linecap:square}
+.banner{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-btn);padding:var(--s12);display:flex;gap:var(--s12);font-size:var(--t14)}
+.blk{height:56px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card)}
+.ntitle{display:flex;align-items:center;gap:var(--s8);font-size:var(--t15);font-weight:600}
+.unread{width:6px;height:6px;background:var(--gold);flex:none}
+.read .ntitle{color:var(--dim);font-weight:500}
+.skel i{display:block;background:var(--lift);height:12px;border-radius:2px}
+.empty{text-align:center;padding:var(--s32) var(--s16)}
+.empty svg{width:32px;height:32px;stroke:var(--faint);fill:none;stroke-width:1.6;stroke-linecap:square}
+.spin{width:16px;height:16px;border:1.6px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:r .8s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+.parked{border:1px dashed var(--border);border-radius:var(--r-card);padding:var(--s24);text-align:center;color:var(--dim);font-size:var(--t14)}
+@media (max-width:800px){.wrap{display:block}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:0 var(--s12)}nav .lbl{flex-basis:100%}main{padding:var(--s16)}.phone{flex-basis:100%;width:100%}}
+</style></head><body><div class="wrap">
+<nav>
+<div class="lbl">Foundations</div>
+<a href="#colour">Colour roles</a><a href="#type">Typography</a><a href="#spacing">Spacing</a><a href="#shape">Shape</a><a href="#icons">Icons</a><a href="#haptics">Haptics</a>
+<div class="lbl">Components</div>
+<a href="#cards">Cards</a><a href="#carousel">Carousel</a><a href="#tabs">Tabs</a><a href="#buttons">Buttons</a><a href="#swipe">Swipe-to-confirm</a><a href="#sheet">Bottom sheet</a><a href="#forms">Forms</a><a href="#alerts">Alerts &amp; toasts</a><a href="#notifs">Notifications</a><a href="#signing">Signing</a><a href="#states">Loading &amp; empty</a>
+</nav>
+<main>
+<header><div class="lbl">MyBoon Design Language · v1 · Oct 26, 2026</div><h1>Component catalog</h1><p>Every approved rule, rendered live. DESIGN.md is the written spec; if this page and DESIGN.md disagree, DESIGN.md wins.</p></header>
+
+<h2 class="grp">Foundations</h2>
+<section id="colour"><div class="phone stack">
+<div class="lbl">Backgrounds</div>
+<div class="sw"><i style="background:var(--walletCore)"></i><div><b>Wallet core · Feed screen</b><small>walletCore #031F2C</small></div></div>
+<div class="sw"><i style="background:var(--ground)"></i><div><b>Ground · sheets, glance cards</b><small>ground #063343</small></div></div>
+<div class="sw"><i style="background:var(--surface)"></i><div><b>Surface · story cards, Apps screen</b><small>#073B4C</small></div></div>
+<div class="sw"><i style="background:var(--surface2)"></i><div><b>Surface 2 · Apps cards</b><small>#083D50</small></div></div>
+<div class="sw"><i style="background:var(--lift)"></i><div><b>Lift · tiles, active segment, toasts</b><small>lift #0A4A60</small></div></div>
+<div class="sw"><i style="background:var(--border)"></i><div><b>Border · 1px hairlines</b><small>border #185A70</small></div></div>
+<div class="lbl">Text</div>
+<div class="sw"><i style="background:var(--bone)"></i><div><b>Bone · primary text</b><small>bone #F5FAFC</small></div></div>
+<div class="sw"><i style="background:var(--dim)"></i><div><b>Dim · secondary text</b><small>dim #9CB8C2</small></div></div>
+<div class="sw"><i style="background:var(--faint)"></i><div><b>Faint · labels, captions</b><small>faint #6B95A1</small></div></div>
+<div class="lbl">Accent and meaning</div>
+<div class="sw"><i style="background:var(--gold)"></i><div><b>Gold · small links, active tab, MAX, unread</b><small>accent #FFD166</small></div></div>
+<div class="sw"><i style="background:var(--viridian)"></i><div><b>Viridian · up, success</b><small>viridian #06D6A0</small></div></div>
+<div class="sw"><i style="background:var(--vermillion)"></i><div><b>Vermillion · down, error</b><small>vermillion #EF476F</small></div></div>
+<div class="sw"><i style="background:var(--primary)"></i><div><b>Primary blue · Apps top band only</b><small>primary #118AB2</small></div></div>
+</div><div class="spec"><h3>Colour roles</h3><ul>
+<li>Feed: screen walletCore, story cards surface, glance cards ground.</li>
+<li>Apps: screen surface, cards surface 2, icon tiles lift. Blue only on the Apps top band.</li>
+<li>Wallet: gold floods the header; dark scroll panel below.</li>
+<li>Gold is restrained: small action links, bottom-tab active icon and label, MAX, unread square, primary outline buttons on MyBoon screens. Never a fill outside Wallet's header.</li>
+<li>Viridian and vermillion carry meaning (up/down, success/error), never decoration.</li>
+<li>Blue or green as a general accent is not allowed. Colours come only from tokens.ts.</li>
+</ul><div class="tok">source tokens.ts · border 1px border</div></div></section>
+
+<section id="type"><div class="phone">
+<div class="ts"><span class="lbl">34</span><span class="m" style="font-size:var(--t34);font-weight:700">$1,240.50</span></div>
+<div class="ts"><span class="lbl">28</span><span style="font-size:var(--t28);font-weight:600">Wallet</span></div>
+<div class="ts"><span class="lbl">20</span><span style="font-size:var(--t20);font-weight:600">Trending markets</span></div>
+<div class="ts"><span class="lbl">18</span><span style="font-size:var(--t18);font-weight:600">Fed holds rates steady</span></div>
+<div class="ts"><span class="lbl">15</span><span style="font-size:var(--t15)">Reading text for stories.</span></div>
+<div class="ts"><span class="lbl">14</span><span style="font-size:var(--t14);color:var(--dim)">Secondary text, list values</span></div>
+<div class="ts"><span class="lbl">12</span><span style="font-size:var(--t12);color:var(--dim)">Captions, sources, links</span></div>
+<div class="ts"><span class="lbl">11</span><span class="lbl">2H AGO · REUTERS</span></div>
+<div style="margin-top:var(--s12);font-size:var(--t14)">Price <span class="m" style="color:var(--viridian)">+4.2%</span> · <span class="m" style="color:var(--vermillion)">−1.8%</span></div>
+</div><div class="spec"><h3>Typography</h3><ul>
+<li>Text uses the system font (Roboto on Android). No custom font.</li>
+<li>Numbers (prices, balances, percentages) are monospace.</li>
+<li>Small labels and timestamps are monospace, uppercase, 1px letter spacing, faint.</li>
+<li>Only these sizes: 34 big numbers, 28 screen title (once per screen), 20 section header, 18 card title, 15 reading, 14 secondary, 12 captions and links, 11 mono labels.</li>
+</ul><div class="tok">sizes 34 · 28 · 20 · 18 · 15 · 14 · 12 · 11 · labels mono 11 +1px tracking</div></div></section>
+
+<section id="spacing"><div class="phone">
+<div class="sp"><i style="width:4px"></i><span class="lbl">4</span></div><div class="sp"><i style="width:8px"></i><span class="lbl">8</span></div><div class="sp"><i style="width:12px"></i><span class="lbl">12 · card padding, card gap</span></div><div class="sp"><i style="width:16px"></i><span class="lbl">16 · screen margin</span></div><div class="sp"><i style="width:24px"></i><span class="lbl">24 · between sections</span></div><div class="sp"><i style="width:32px"></i><span class="lbl">32</span></div>
+</div><div class="spec"><h3>Spacing</h3><ul>
+<li>Only 4, 8, 12, 16, 24, 32.</li><li>Screen edge margin 16, card padding 12, 12 between cards, 24 between sections.</li>
+</ul><div class="tok">--s4 · --s8 · --s12 · --s16 · --s24 · --s32</div></div></section>
+
+<section id="shape"><div class="phone"><div class="shp">
+<div style="border-radius:var(--r-card)"><span class="lbl">Card 8</span></div>
+<div style="border-radius:var(--r-btn);background:var(--lift)"><span class="lbl">Button · tile 6</span></div>
+<div style="border-radius:var(--r-sheet) var(--r-sheet) 0 0;background:var(--ground)"><span class="lbl">Sheet 12 top</span></div>
+<div style="border-radius:var(--r-chip);height:32px;align-self:end"><span class="lbl">Chip 4</span></div>
+</div></div><div class="spec"><h3>Shape and depth</h3><ul>
+<li>Cards 8, buttons and app tiles 6, bottom sheet top corners 12, chips 4.</li>
+<li>1px hairline border on cards, tiles and sheets.</li>
+<li>No shadows. Depth comes from the background ladder.</li>
+<li>No coloured side stripes or left-border accents, anywhere.</li>
+</ul><div class="tok">--r-card 8 · --r-btn 6 · --r-sheet 12 · --r-chip 4 · border 1px border</div></div></section>
+
+<section id="icons"><div class="phone"><div class="icons">
+<div><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h4"/></svg><div class="lbl">Feed</div></div>
+<div><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><div class="lbl">Apps</div></div>
+<div><svg viewBox="0 0 24 24"><path d="M3 7h18v12H3zM3 7l3-3h12l3 3M16 13h2"/></svg><div class="lbl">Wallet</div></div>
+<div><svg viewBox="0 0 24 24"><path d="M6 10a6 6 0 0 1 12 0v5l2 2H4l2-2zM10 20h4"/></svg><div class="lbl">Alerts</div></div>
+<div><svg viewBox="0 0 24 24"><path d="M4 12h14M13 6l6 6-6 6"/></svg><div class="lbl">Send</div></div>
+<div><svg viewBox="0 0 24 24"><path d="M4 17l6-6 4 4 6-8"/></svg><div class="lbl">Chart</div></div>
+<div><svg viewBox="0 0 24 24"><path d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM15 15l5 5"/></svg><div class="lbl">Search</div></div>
+<div><svg viewBox="0 0 24 24"><path d="M7 4v16M17 20V4M3 8l4-4 4 4M13 16l4 4 4-4"/></svg><div class="lbl">Swap</div></div>
+</div></div><div class="spec"><h3>Icons</h3><ul>
+<li>Thin outline, 1.6 stroke, square ends.</li><li>Selected bottom-tab icon and label turn gold; others faint.</li><li>Prefer icons over text labels where meaning is clear. No dropdowns.</li>
+</ul><div class="tok">24px · stroke 1.6 · linecap square · fill none</div></div></section>
+
+<section id="haptics"><div class="phone stack">
+<div class="hp">Trade or send confirmed<span class="lbl">Success</span></div>
+<div class="hp">Swipe-to-confirm completes<span class="lbl">Heavy</span></div>
+<div class="hp">Pull to refresh triggers<span class="lbl">Light</span></div>
+</div><div class="spec"><h3>Haptics</h3><ul><li>Vibrate only on these three moments. Nothing else.</li></ul><div class="tok">3 events · no haptics on taps, tabs or scroll</div></div></section>
+
+<h2 class="grp">Components</h2>
+<section id="cards"><div class="phone stack">
+<div class="card"><div class="t">Fed holds rates, signals two cuts in 2027</div><div class="x">Markets price a 62% chance of a March cut.</div><div class="meta"><span class="lbl">2H AGO · REUTERS</span><a class="link">Trade →</a></div></div>
+<div class="card"><div class="t">SOL breaks $240 on ETF inflows</div><div class="meta"><span class="lbl">5H AGO · COINDESK</span><a class="link">Open →</a></div></div>
+</div><div class="spec"><h3>Cards</h3><ul>
+<li>Always boxed: tab's card colour, 1px border, 8 corners. Never unboxed lists.</li>
+<li>Compact layout: 18 title first, optional one line of 15 text, then one mono meta line (time · source) with the gold link on the right.</li>
+<li>Padding 12. The whole card is tappable; the gold link only names the destination.</li>
+</ul><div class="tok">radius 8 · padding 12 · gap 12 · border 1px border · title 18 · text 15 · meta 11 mono</div></div></section>
+
+<section id="carousel"><div class="phone">
+<div class="car" id="car">
+<div class="card"><div class="t">Will BTC close above $120k?</div><div class="x">Polymarket · 58% yes</div><div class="meta"><span class="lbl">ENDS DEC 31</span><a class="link">Trade →</a></div></div>
+<div class="card"><div class="t">ETH staking yield hits 4%</div><div class="x">Liquid staking demand rises.</div><div class="meta"><span class="lbl">1H AGO · THE BLOCK</span><a class="link">Read →</a></div></div>
+<div class="card"><div class="t">Meteora DLMM pool of the week</div><div class="x">SOL–USDC, 32% APR.</div><div class="meta"><span class="lbl">METEORA</span><a class="link">Open →</a></div></div>
+</div><div class="dots" id="dots"><i class="on"></i><i></i><i></i></div>
+</div><div class="spec"><h3>Carousel</h3><ul>
+<li>Full width and paged: one card fills the row inside the 16 screen margins; swipe to page.</li>
+<li>Page indicator below: short bars, the active one wider and gold, others border colour.</li>
+<li>Sits directly on the screen background, never inside a card.</li>
+</ul><div class="tok">snap per card · bars 8×3 · active 20×3 gold · gap 4 · try scrolling it</div></div></section>
+
+<section id="tabs"><div class="phone">
+<div class="seg" data-seg><button class="on">Markets</button><button>Positions</button><button>Activity</button></div>
+<div class="tabbar">
+<div class="on"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h8"/></svg>Feed</div>
+<div><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>Apps</div>
+<div><svg viewBox="0 0 24 24"><path d="M3 7h18v12H3zM16 13h2"/></svg>Wallet</div></div>
+</div><div class="spec"><h3>Tabs</h3><ul>
+<li>In-screen tabs are always a segmented control: one bordered box, 6 corners, 2 inner padding.</li>
+<li>Active segment is filled with lift and text is bone; inactive text is dim.</li>
+<li>No underline tabs and no chip tabs. Filter lists with a segmented control or search.</li>
+<li>Bottom tab bar: outline icons; active icon and label gold.</li>
+</ul><div class="tok">radius 6 · inner pad 2 · active fill lift · text 14 · click the segments</div></div></section>
+
+<section id="buttons"><div class="phone stack">
+<div class="ctxhead"><i></i>MyBoon screen · gold</div>
+<button class="btn pri">Buy</button><button class="btn">Cancel</button><button class="btn ter">View details →</button>
+<div class="app stack" style="border-top:1px solid var(--border);padding-top:var(--s12)">
+<div class="ctxhead"><i></i>Inside Meteora · app brand colour</div>
+<button class="btn pri">Add liquidity</button><button class="btn ter">Pool info →</button></div>
+</div><div class="spec"><h3>Buttons</h3><ul>
+<li>Primary is an outline: 1px border and text, no fill, 6 corners, 15 semibold, 48 tall.</li>
+<li>Primary takes the context accent: gold on MyBoon's own screens, the app's brand colour inside an integrated app (Polymarket, Phoenix, Meteora…). Brand colours live in one map.</li>
+<li>Secondary is a hairline border outline with bone text. Tertiary is a text link in the context accent.</li>
+<li>One primary per screen.</li>
+</ul><div class="tok">height 48 · radius 6 · border 1px var(--ctx) · text 15/600 · app brand colour shown is a placeholder</div></div></section>
+
+<section id="swipe"><div class="phone stack">
+<div class="lbl">Drag the knob</div>
+<div class="track" id="trk"><span class="fill" id="fill"></span><span class="knob" id="knob"><svg viewBox="0 0 24 24"><path d="M4 12h14M13 6l6 6-6 6"/></svg></span><span id="tl" style="position:relative">Swipe to buy · $50</span></div>
+</div><div class="spec"><h3>Swipe-to-confirm</h3><ul>
+<li>Used for every trade and send.</li>
+<li>Outline track 52 tall, 6 corners, in the context accent; solid square 44 knob with an arrow.</li>
+<li>Label states the action and amount.</li>
+<li>Track fills faintly behind the knob; releasing before the end snaps back. Completion fires the confirm haptic.</li>
+</ul><div class="tok">track 52 · radius 6 · knob 44 radius 4 · fill accent 15%</div></div></section>
+
+<section id="sheet"><div class="phone" style="height:360px">
+<div class="blk"></div><div class="blk" style="margin-top:12px"></div>
+<div class="dimbg"></div>
+<div class="sheet"><div class="grab"></div><div style="font-size:var(--t18);font-weight:600">Buy “Yes”</div><div style="font-size:var(--t14);color:var(--dim);margin:var(--s4) 0 var(--s16)">Will BTC close above $120k?</div><button class="btn pri">Continue</button></div>
+</div><div class="spec"><h3>Bottom sheet</h3><ul>
+<li>Grabber only, no close button.</li><li>Background ground, 12 top corners, hairline top border; the screen behind dims.</li>
+<li>Close by dragging down or tapping the dimmed area. Opens at content height.</li>
+</ul><div class="tok">bg ground · radius 12 12 0 0 · border-top 1px · grabber 36×4</div></div></section>
+
+<section id="forms"><div class="phone stack">
+<div class="amt"><div class="lbl">You send</div><div class="row"><span class="n">50.00</span><span class="tokc">USDC <a class="link m">MAX</a></span></div><div class="lbl">Balance 212.40 USDC</div></div>
+<div><div class="lbl">Address</div><div class="field" style="color:var(--faint)">Solana address or .sol</div></div>
+<div><div class="lbl">Memo · focus</div><div class="field focus">Rent split</div></div>
+<div><div class="lbl">Address · error</div><div class="field err m" style="font-size:var(--t14)">7xKp…invalid</div><div class="errt">This isn't a valid Solana address.</div></div>
+</div><div class="spec"><h3>Forms</h3><ul>
+<li>Money amounts use the amount-first card: mono label, 34 mono bold number, token and gold MAX on the right, mono balance line under.</li>
+<li>Other fields are boxed: 1px border, 6 corners, 12 padding, 15 text, mono capital label above.</li>
+<li>The border turns the context accent on focus.</li>
+<li>Errors: vermillion 12 text directly under the field. Never a popup for field errors.</li>
+</ul><div class="tok">amount card radius 8 · number 34 mono · field radius 6 · padding 12 · error 12 vermillion</div></div></section>
+
+<section id="alerts"><div class="phone stack">
+<div class="lbl">Success · top toast</div>
+<div class="toast"><svg class="st" viewBox="0 0 24 24" stroke="var(--viridian)"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg><div style="flex:1">Bought 50 USDC of “Yes”<div class="sub m">TX 4F2A…9C1</div></div><a class="link">View</a></div>
+<div class="lbl" style="margin-top:var(--s24)">Error · inline banner</div>
+<div class="banner"><svg class="st" viewBox="0 0 24 24" stroke="var(--vermillion)"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16v1"/></svg><div>Transaction failed: not enough SOL for fees.<div style="margin-top:var(--s8)"><a class="link">Add SOL →</a></div></div></div>
+</div><div class="spec"><h3>Alerts and toasts</h3><ul>
+<li>Success: a toast drops from the top (lift fill, hairline, 6 corners) with a viridian outline icon and a gold “View” link. Auto-dismisses after 3s; swipe up to dismiss.</li>
+<li>Errors: an inline banner on the screen where the problem is, with a vermillion outline icon and a gold fix link. It stays until fixed.</li>
+<li>Never coloured side stripes or left-border accents.</li>
+</ul><div class="tok">radius 6 · padding 12 · icon 18 stroke 1.6 · toast 3s</div></div></section>
+
+<section id="notifs"><div class="phone stack">
+<div class="lbl">Today</div>
+<div class="card"><div class="ntitle"><span class="unread"></span>SOL crossed $240</div><div class="meta"><span class="lbl">2M · PRICE ALERT</span></div></div>
+<div class="card"><div class="ntitle"><span class="unread"></span>Your “Yes” position is up 12%</div><div class="meta"><span class="lbl">1H · POSITION</span></div></div>
+<div class="lbl" style="margin-top:var(--s24)">Yesterday</div>
+<div class="card read"><div class="ntitle">Received 25 USDC</div><div class="meta"><span class="lbl">1D · TRANSFER</span></div></div>
+</div><div class="spec"><h3>Notifications</h3><ul>
+<li>Boxed cards, grouped by day under mono faint labels.</li>
+<li>Unread: a small 6px gold square before the title (an allowed gold exception). Read: title in dim.</li>
+<li>Meta line: age · kind. No filter until volume needs it.</li>
+</ul><div class="tok">card radius 8 · padding 12 · unread 6×6 gold square · day gap 24</div></div></section>
+
+<section id="signing"><div class="phone"><div class="parked"><div class="lbl" style="margin-bottom:var(--s8)">Parked</div>Signing screen on hold.<br>External wallets (Phantom, Solflare) show their own signing UI.</div></div><div class="spec"><h3>Signing</h3><ul>
+<li>Parked. Our pre-sign summary versus the embedded wallet flow needs its own pass before a rule is locked.</li>
+</ul><div class="tok">no tokens yet</div></div></section>
+
+<section id="states"><div class="phone stack">
+<div class="lbl">Loading</div>
+<div class="card skel"><i style="width:80%;height:16px"></i><i style="width:60%;margin-top:var(--s8)"></i><i style="width:40%;height:8px;margin-top:var(--s12)"></i></div>
+<div class="card skel"><i style="width:70%;height:16px"></i><i style="width:40%;height:8px;margin-top:var(--s12)"></i></div>
+<button class="btn pri"><span class="spin"></span>Buying…</button>
+<div class="lbl" style="margin-top:var(--s16)">Empty</div>
+<div class="card empty"><svg viewBox="0 0 24 24"><path d="M6 10a6 6 0 0 1 12 0v5l2 2H4l2-2zM10 20h4"/></svg><div style="font-size:var(--t18);font-weight:600;margin-top:var(--s12)">No alerts yet</div><div style="font-size:var(--t14);color:var(--dim);margin:var(--s4) 0 var(--s16)">Set a price alert to hear when a market moves.</div><button class="btn pri">Create alert</button></div>
+</div><div class="spec"><h3>Loading and empty</h3><ul>
+<li>Lists load with skeleton cards: boxed cards with lift bars shaped like title, text and meta. No full-screen spinners.</li>
+<li>A spinner appears only inside a button while its action runs.</li>
+<li>Empty state: centred faint outline icon (32), 18 title, one 14 dim line, one outline primary button.</li>
+</ul><div class="tok">skeleton bars lift · icon 32 faint · title 18 · line 14 dim</div></div></section>
+</main></div>
+<script>
+document.querySelectorAll('[data-seg]').forEach(s=>s.addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;s.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===e.target))}));
+const car=document.getElementById('car'),dots=[...document.querySelectorAll('#dots i')];
+car.addEventListener('scroll',()=>{const i=Math.round(car.scrollLeft/(car.clientWidth));dots.forEach((d,j)=>d.classList.toggle('on',i===j))});
+const trk=document.getElementById('trk'),knob=document.getElementById('knob'),fill=document.getElementById('fill'),tl=document.getElementById('tl');
+let x0=null,max=0;
+function set(x){knob.style.left=(3+x)+'px';fill.style.width=(x+47)+'px'}
+knob.addEventListener('pointerdown',e=>{x0=e.clientX;max=trk.clientWidth-50;knob.setPointerCapture(e.pointerId);knob.style.transition=fill.style.transition='none'});
+knob.addEventListener('pointermove',e=>{if(x0===null)return;set(Math.max(0,Math.min(max,e.clientX-x0)))});
+knob.addEventListener('pointerup',e=>{const d=e.clientX-x0;x0=null;if(d>=max-4){set(max);trk.classList.add('done');tl.textContent='Confirmed';setTimeout(()=>{trk.classList.remove('done');tl.textContent='Swipe to buy · $50';knob.style.transition=fill.style.transition='all .2s';set(0);fill.style.width='0'},1500)}else{knob.style.transition=fill.style.transition='all .2s';set(0);fill.style.width='0'}});
+</script></body></html>
