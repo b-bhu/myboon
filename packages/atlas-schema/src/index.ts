@@ -45,8 +45,9 @@ export async function createThrowawayDatabase(adminUrl: string): Promise<Throwaw
   const admin = new pg.Client({ connectionString: adminUrl });
   await admin.connect();
   try {
-    for (const role of ['anon', 'authenticated', 'service_role']) {
-      await admin.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = '${role}') then create role ${role} nologin; end if; end $$`);
+    // Mirror Supabase: service_role bypasses RLS, anon/authenticated do not.
+    for (const [role, attrs] of [['anon', 'nologin'], ['authenticated', 'nologin'], ['service_role', 'nologin bypassrls']] as const) {
+      await admin.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = '${role}') then create role ${role} ${attrs}; end if; exception when duplicate_object or unique_violation then null; end $$`);
     }
     await admin.query(`create database ${name}`);
   } finally {
