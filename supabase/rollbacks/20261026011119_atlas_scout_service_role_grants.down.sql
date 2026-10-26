@@ -1,4 +1,4 @@
--- Rollback for 20261026063000_atlas_scout_service_role_grants.sql: revokes exactly what it granted.
+-- Rollback for 20261026011119_atlas_scout_service_role_grants.sql: revokes exactly what it granted.
 -- Leaves #449's USAGE on schema atlas and SELECT on shelves/items in place.
 begin;
 set local lock_timeout = '5s';

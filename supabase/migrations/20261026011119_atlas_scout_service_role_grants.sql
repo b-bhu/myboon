@@ -11,7 +11,7 @@
 --   atlas.queue_*       execute
 -- Nothing for decision_queue, anon or authenticated. service_role already has USAGE
 -- on schema atlas (#449) and EXECUTE on atlas.uuidv7(). It bypasses RLS on Supabase.
--- Rollback: supabase/rollbacks/20261026063000_atlas_scout_service_role_grants.down.sql
+-- Rollback: supabase/rollbacks/20261026011119_atlas_scout_service_role_grants.down.sql
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
