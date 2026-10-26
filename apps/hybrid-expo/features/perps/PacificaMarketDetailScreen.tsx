@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { WAITLIST_MODE, WAITLIST_PITCH, waitlistLabel } from '@/features/waitlist/waitlist.mode';
 import * as Haptics from 'expo-haptics';
 import { useWallet } from '@/hooks/useWallet';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
@@ -556,10 +557,10 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
               <View style={styles.disconnectedCta}>
                 <MaterialIcons name="lock" size={32} color={semantic.text.dim} />
                 <Text style={styles.disconnectedText}>
-                  Connect your wallet to trade {symbol} perpetuals
+                  {WAITLIST_MODE ? WAITLIST_PITCH : `Connect your wallet to trade ${symbol} perpetuals`}
                 </Text>
                 <Pressable style={styles.connectWalletBtn} onPress={() => connectSheet.open('solana')}>
-                  <Text style={styles.connectWalletText}>Connect wallet</Text>
+                  <Text style={styles.connectWalletText}>{waitlistLabel('Connect wallet')}</Text>
                 </Pressable>
               </View>
             ) : hasAccount === false ? (

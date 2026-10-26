@@ -1,13 +1,17 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { tokens } from '@/theme';
+import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
 
 export type HomeDestination = 'feed' | 'apps' | 'wallet';
 
 const destinations = [
   { id: 'feed', label: 'Feed', icon: 'dynamic-feed' },
   { id: 'apps', label: 'Apps', icon: 'apps' },
-  { id: 'wallet', label: 'Wallet', icon: 'account-balance-wallet' },
+  // Waitlist build (#432): the wallet tab holds the profile (waitlist + settings).
+  WAITLIST_MODE
+    ? ({ id: 'wallet', label: 'Profile', icon: 'person-outline' } as const)
+    : ({ id: 'wallet', label: 'Wallet', icon: 'account-balance-wallet' } as const),
 ] as const;
 
 export function HomeNavigation({
