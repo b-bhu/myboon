@@ -1,4 +1,11 @@
-CREATE TABLE public.polymarket_updown_reference_prices (
+-- Never applied to prod (#397 audit, Oct 25 2026): the table is absent and the
+-- version has no history row. Made rerunnable (IF NOT EXISTS) with timeouts
+-- before its first apply. Rollback:
+-- supabase/rollbacks/20260824122705_polymarket_updown_reference_prices.down.sql
+SET lock_timeout = '5s';
+SET statement_timeout = '30s';
+
+CREATE TABLE IF NOT EXISTS public.polymarket_updown_reference_prices (
   round_slug text PRIMARY KEY,
   asset text NOT NULL CHECK (asset IN ('btc', 'eth')),
   duration text NOT NULL CHECK (duration IN ('hourly', 'daily')),
