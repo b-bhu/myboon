@@ -8,7 +8,21 @@
  */
 import type { Pool } from 'pg';
 
-export type JevAnswer = { answer: unknown; probability: number | null; runnerUp: unknown; modelVersion: string };
+export type JevAnswer = {
+  answer: unknown;
+  probability: number | null;
+  runnerUp: unknown;
+  modelVersion: string;
+  /**
+   * Per-question choices with per-choice probabilities over the call's own
+   * criteria (#479): choice, its probability and the runner-up probability
+   * (second-highest probability of the same question's other criteria
+   * choices, 0 when there is none). TypeSafeJev fills this only when the call
+   * carried per-call questions ({state, questions}); scripted ports may always
+   * provide it.
+   */
+  questions?: Record<string, { choice: string; probability: number; runnerUpProbability: number }>;
+};
 
 export interface JevPort { modelVersion: string; decide(input: unknown, signal: AbortSignal): Promise<JevAnswer> }
 
@@ -16,7 +30,7 @@ export type JevStatus = 'success' | 'error' | 'timeout';
 
 export type JevCallOptions = { signalId: string; stage: string; inputCase: unknown; timeoutMs: number };
 
-export type JevCallResult = { status: 'success' } | { status: 'error' | 'timeout'; error: string };
+export type JevCallResult = { status: 'success'; answer: JevAnswer } | { status: 'error' | 'timeout'; error: string };
 
 type Settled =
   | { status: 'success'; answer: JevAnswer }
@@ -58,7 +72,9 @@ function settle(jev: JevPort, input: unknown, timeoutMs: number, ac: AbortContro
  * One Jev call for one signal, timed and logged whatever the outcome. The
  * model version comes from the port itself, so it is recorded even when
  * decide() throws, times out or returns a malformed answer (logged as
- * 'error'). Throws only when the database write itself fails.
+ * 'error'). Throws only when the database write itself fails. The success
+ * result carries the validated answer so the caller never needs to call
+ * decide() a second time (one Jev call per signal, #479).
  */
 export async function callJev(pool: Pool, jev: JevPort, o: JevCallOptions): Promise<JevCallResult> {
   const startedAt = Date.now();
@@ -85,7 +101,7 @@ export async function callJev(pool: Pool, jev: JevPort, o: JevCallOptions): Prom
     ],
   );
 
-  if (settled.status === 'success') return { status: 'success' };
+  if (settled.status === 'success') return { status: 'success', answer: settled.answer };
   if (settled.status === 'error') return { status: 'error', error: settled.error };
   return { status: 'timeout', error: `jev timeout after ${o.timeoutMs}ms` };
 }

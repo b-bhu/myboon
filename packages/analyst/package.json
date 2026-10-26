@@ -15,7 +15,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "jev:record": "tsx scripts/jev-record.ts"
+    "jev:record": "tsx scripts/jev-record.ts",
+    "analyst:once": "tsx scripts/analyst-run.ts"
   },
   "dependencies": {
     "@myboon/atlas-schema": "workspace:*",

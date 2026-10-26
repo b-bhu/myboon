@@ -5,12 +5,13 @@
  * (signal-states.db.test.ts) drive exactly this API against a throwaway
  * local database. TypeSafeJev is the real-Jev JevPort implementation
  * (#485), with the recorded-fixture replay for offline verification.
+ *
+ * #479 adds the Linker + Story analyst: runAnalystOnce claims signals,
+ * shortlists shelves by alias, makes ONE logged Jev call per signal, and
+ * files the decision in the same transaction that advances the state.
  */
 export * from './states.js';
 export * from './jev.js';
 export * from './typesafe-jev.js';
 export * from './stage.js';
-// #479 test-first stub; implementation follows.
-export async function runAnalystOnce(_pool: import('pg').Pool, _o: { jev: import('./jev.js').JevPort; limit: number; leaseMs: number; backoffMs: number; timeoutMs: number }): Promise<unknown> {
-  throw new Error('not implemented (#479)');
-}
+export * from './analyst.js';

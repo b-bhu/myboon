@@ -50,13 +50,17 @@ export async function claimSignals(
  * raises from SQL ('illegal transition from -> to') when o.to is not allowed
  * from the row's current state. An advance starts the next stage with a full
  * retry budget (attempts reset, available_at = now()).
+ *
+ * The runner only needs Pool's query surface, so a checked-out PoolClient
+ * works too -- #479 finishes the decision insert and the advance inside one
+ * transaction on the same client.
  */
 export async function completeClaim(
-  pool: Pool,
+  db: Pick<Pool, 'query'>,
   claim: Claim,
   o: { to: string; parkReason?: string },
 ): Promise<boolean> {
-  const { rows } = await pool.query<{ ok: boolean }>(
+  const { rows } = await db.query<{ ok: boolean }>(
     'select atlas.signal_advance($1, $2::uuid, $3, $4) as ok',
     [claim.signalId, claim.token, o.to, o.parkReason ?? null],
   );
