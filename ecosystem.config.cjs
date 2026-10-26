@@ -142,7 +142,6 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 // entity-manager stage entries are Sprint 2 work and stay out of the process
 // list until their runners are wired.
 //   myboon-v4-scout-news -> src/run.ts
-// (renames to src/run.ts when PR #473 merges)
 // The scout runs one cycle and exits; PM2 starts it again at every 15-minute
 // cron tick (cron_restart). autorestart stays off so a failing run neither
 // loops nor hides in backoff: the crash state is visible until the next
