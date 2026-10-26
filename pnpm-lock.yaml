@@ -425,9 +425,6 @@ importers:
       '@myboon/shared':
         specifier: workspace:*
         version: link:../shared
-      pg:
-        specifier: 8.16.3
-        version: 8.16.3
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
@@ -435,6 +432,9 @@ importers:
       '@types/pg':
         specifier: 8.15.5
         version: 8.15.5
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -4918,7 +4918,7 @@ packages:
 
   bunyan@1.8.15:
     resolution: {integrity: sha512-0tECWShh6wUysgucJcBAoYegf3JJoZWibxdqhTm7OHPeT42qdjkZ29QCMcKwbgU1kiH+auSIasNRXMLWXafXig==}
-    engines: {'0': node >=0.10.0}
+    engines: {node: '>=0.10.0'}
     hasBin: true
 
   bytes@3.1.2:

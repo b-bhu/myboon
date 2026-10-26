@@ -1,75 +1,106 @@
 /**
- * Thin typed wrappers around the existing atlas queue functions (they are
- * defined by supabase/migrations/20261025100100_atlas_queues.sql — this
- * package runs no SQL migrations of its own).
+ * Thin typed wrappers around the atlas queue functions for whoever consumes
+ * the signal queue (the functions are defined by
+ * supabase/migrations/20261025100100_atlas_queues.sql — this package runs no
+ * SQL migrations of its own). Every wrapper is one
+ * db.schema('atlas').rpc(...) call and throws a `scout-news:` Error naming
+ * the rpc and the PostgREST message — never a URL or key — when it fails.
  *
- * Bigint columns (id, attempts) arrive from node-postgres as strings, so those
- * row fields stay strings here; uuid and text arrive as strings, timestamptz
- * as Date.
+ * PostgREST delivers the function results as JSON: bigint id and attempts
+ * arrive as numbers, uuid and text as strings, timestamptz as an ISO
+ * datetime string.
  */
-import type { Queryable } from './store.js';
+import type { AtlasClaimedRow, AtlasDb, AtlasFailOutcome, AtlasRpcData } from './store.js';
 
 export const CLAIM_LIMIT = 10;
 export const LEASE = '5 minutes';
 /** Heartbeat cadence for consumers; must stay well inside LEASE. */
 export const HEARTBEAT_MS = 60000;
 
-export const SQL_CLAIM = `select * from atlas.queue_claim('signal_queue', $1, $2::interval)`;
-export const SQL_HEARTBEAT = `select atlas.queue_heartbeat('signal_queue', $1, $2, $3::interval)`;
-export const SQL_COMPLETE = `select atlas.queue_complete('signal_queue', $1, $2)`;
-export const SQL_FAIL = `select atlas.queue_fail('signal_queue', $1, $2, $3, $4::interval)`;
+/** Consumer-facing aliases (same names as before the Supabase switch). */
+export type ClaimedSignalRow = AtlasClaimedRow;
+export type FailOutcome = AtlasFailOutcome;
 
-/** One claimed row of the signal queue (ref_id is the signal_id). */
-export type ClaimedSignalRow = {
-  id: string;
-  ref_id: string;
-  attempts: string;
-  lease_token: string;
-  lease_expires_at: Date;
-};
+/** queue_claim: the claimed rows, or [] when PostgREST answered with anything else. */
+function claimedRows(data: AtlasRpcData | null): AtlasClaimedRow[] {
+  return Array.isArray(data) ? data : [];
+}
 
-export type FailOutcome = 'retry' | 'dead_letter' | 'lost_lease';
+/** queue_fail: the function's outcome, or lost_lease when the lease is gone. */
+function failOutcome(data: AtlasRpcData | null): AtlasFailOutcome {
+  return data === 'retry' || data === 'dead_letter' ? data : 'lost_lease';
+}
 
-/** Claim up to `limit` ready (or lease-expired) rows and lease them to this client. */
+/** Claim up to `limit` ready (or lease-expired) rows and lease them to this consumer. */
 export async function claim(
-  client: Queryable,
+  db: AtlasDb,
   limit: number = CLAIM_LIMIT,
   lease: string = LEASE,
 ): Promise<ClaimedSignalRow[]> {
-  const result = await client.query<ClaimedSignalRow>(SQL_CLAIM, [limit, lease]);
-  return result.rows;
+  const { data, error } = await db.schema('atlas').rpc('queue_claim', {
+    p_queue: 'signal_queue',
+    p_limit: limit,
+    p_lease: lease,
+  });
+  if (error) {
+    throw new Error(`scout-news: queue_claim failed: ${error.message}`);
+  }
+  return claimedRows(data);
 }
 
 /** Extend a lease. False when the token no longer owns the row. */
 export async function heartbeat(
-  client: Queryable,
+  db: AtlasDb,
   id: string | number,
   token: string,
   lease: string = LEASE,
 ): Promise<boolean> {
-  const result = await client.query<{ queue_heartbeat: boolean }>(SQL_HEARTBEAT, [id, token, lease]);
-  return result.rows[0]?.queue_heartbeat ?? false;
+  const { data, error } = await db.schema('atlas').rpc('queue_heartbeat', {
+    p_queue: 'signal_queue',
+    p_id: id,
+    p_token: token,
+    p_lease: lease,
+  });
+  if (error) {
+    throw new Error(`scout-news: queue_heartbeat failed: ${error.message}`);
+  }
+  return data === true;
 }
 
 /** Done: remove the queue row. False when the token no longer owns it. */
 export async function complete(
-  client: Queryable,
+  db: AtlasDb,
   id: string | number,
   token: string,
 ): Promise<boolean> {
-  const result = await client.query<{ queue_complete: boolean }>(SQL_COMPLETE, [id, token]);
-  return result.rows[0]?.queue_complete ?? false;
+  const { data, error } = await db.schema('atlas').rpc('queue_complete', {
+    p_queue: 'signal_queue',
+    p_id: id,
+    p_token: token,
+  });
+  if (error) {
+    throw new Error(`scout-news: queue_complete failed: ${error.message}`);
+  }
+  return data === true;
 }
 
 /** Failed: retry with backoff, dead-letter at max_attempts, or lost_lease. */
 export async function fail(
-  client: Queryable,
+  db: AtlasDb,
   id: string | number,
   token: string,
   error: string,
   backoff: string = '30 seconds',
 ): Promise<FailOutcome> {
-  const result = await client.query<{ queue_fail: FailOutcome }>(SQL_FAIL, [id, token, error, backoff]);
-  const outcome = result.rows[0]?.queue_fail;
-  return outcome ?? 'lost_lease';
+  const { data, error: rpcError } = await db.schema('atlas').rpc('queue_fail', {
+    p_queue: 'signal_queue',
+    p_id: id,
+    p_token: token,
+    p_error: error,
+    p_backoff: backoff,
+  });
+  if (rpcError) {
+    throw new Error(`scout-news: queue_fail failed: ${rpcError.message}`);
+  }
+  return failOutcome(data);
 }

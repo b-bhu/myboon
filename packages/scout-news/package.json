@@ -1,7 +1,7 @@
 {
   "name": "@myboon/scout-news",
   "version": "0.1.0",
-  "description": "Issue #444 news scout: fetch the tokens.xyz feed once, map to V4 Signal, insert + enqueue in one transaction",
+  "description": "Issue #444 news scout: fetch the tokens.xyz feed once, map to V4 Signal, insert + enqueue through the Supabase client (service_role)",
   "private": true,
   "type": "module",
   "main": "src/scout.ts",
@@ -19,12 +19,12 @@
   },
   "dependencies": {
     "@myboon/contracts": "workspace:*",
-    "@myboon/shared": "workspace:*",
-    "pg": "8.16.3"
+    "@myboon/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
     "@types/pg": "8.15.5",
+    "pg": "8.16.3",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }

@@ -1,35 +1,20 @@
 /**
- * CLI entry: run the scout once against a real database, then exit.
- * DATABASE_URL is read from the environment and NEVER logged.
+ * CLI entry: run the scout once against Supabase (service_role), then exit.
+ * SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are read from the environment
+ * and NEVER logged.
  */
-import { Pool } from 'pg';
+import { createSupabaseClient, requireSupabaseEnv } from '@myboon/shared/supabase-client';
 
 import { runScoutOnce } from './scout.js';
 
 async function main(): Promise<void> {
-  const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (!databaseUrl) {
-    console.error('scout-news: DATABASE_URL is required');
-    process.exitCode = 1;
-    return;
-  }
-
-  const pool = new Pool({
-    connectionString: databaseUrl,
-    max: 2,
-    connectionTimeoutMillis: 10_000,
-    application_name: 'myboon_scout_news',
-  });
-  try {
-    await runScoutOnce({ pool });
-  } finally {
-    await pool.end();
-  }
+  const { supabaseUrl, supabaseKey } = requireSupabaseEnv(process.env);
+  const db = createSupabaseClient(supabaseUrl, supabaseKey);
+  await runScoutOnce({ db });
 }
 
 main().catch((error: unknown) => {
-  // Connection errors can carry host details but never the URL's credentials;
-  // log the message only, never the connection string.
+  // PostgREST errors carry a message; log the message only, never a URL or key.
   const message = error instanceof Error ? error.message : String(error);
   console.error(`scout-news: run failed: ${message}`);
   process.exitCode = 1;
