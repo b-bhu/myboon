@@ -10,3 +10,7 @@ export * from './states.js';
 export * from './jev.js';
 export * from './typesafe-jev.js';
 export * from './stage.js';
+// #479 test-first stub; implementation follows.
+export async function runAnalystOnce(_pool: import('pg').Pool, _o: { jev: import('./jev.js').JevPort; limit: number; leaseMs: number; backoffMs: number; timeoutMs: number }): Promise<unknown> {
+  throw new Error('not implemented (#479)');
+}
