@@ -181,4 +181,19 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
     expect(await state('s-none')).toMatchObject({ state: 'parked', park_reason: expect.stringMatching(/no_match/) });
     expect(jev.calls).toBe(0);
   });
+
+  it('runs as service_role (DB Guy #486): signal read, linker, items, decision insert and advance', async () => {
+    await addItem('btc-etf', 'bitcoin', 'Bitcoin ETF approvals', 2);
+    await addSignal('s-svc', 'Bitcoin ETF inflows hit a record');
+    const svc = new Pool({ connectionString: db.url, max: 2, options: '-c role=service_role' });
+    try {
+      expect((await svc.query('select current_user u')).rows[0].u).toBe('service_role');
+      const jev = scriptedJev((s) => ({ entity: ['bitcoin', 0.95, 0.02], item: [s.candidates[0].items[0].id, 0.9, 0.05] }));
+      await runAnalystOnce(svc, { jev, ...opts });
+    } finally {
+      await svc.end();
+    }
+    expect(await state('s-svc')).toMatchObject({ state: 'analysed' });
+    expect(await decisions('s-svc')).toEqual([expect.objectContaining({ action: 'keep', shelves: ['bitcoin'], target_item_id: item['btc-etf'] })]);
+  });
 });
