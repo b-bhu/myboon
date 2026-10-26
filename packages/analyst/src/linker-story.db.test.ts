@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
-import { admitSignals, runAnalystOnce, type JevAnswer, type JevPort } from './index.js';
+import { admitSignals, runAnalystOnce, sweepExpiredClaims, type JevAnswer, type JevPort } from './index.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const DAY = 86_400_000;
@@ -195,5 +195,51 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
     }
     expect(await state('s-svc')).toMatchObject({ state: 'analysed' });
     expect(await decisions('s-svc')).toEqual([expect.objectContaining({ action: 'keep', shelves: ['bitcoin'], target_item_id: item['btc-etf'] })]);
+  });
+
+  it('CTO must-fix 2: Jev slower than the lease, two runners: one Jev call and one decision per signal', async () => {
+    for (const id of ['s-l1', 's-l2', 's-l3']) await addSignal(id, `Bitcoin update ${id}`);
+    const slow: JevPort = {
+      modelVersion: 'scripted-jev',
+      async decide(input: unknown) {
+        await new Promise((r) => setTimeout(r, 100));
+        const st = (input as { state: StoryState }).state;
+        void st;
+        const q = (c: string, p: number, r: number) => ({ choice: c, probability: p, runnerUpProbability: r });
+        return { answer: {}, probability: 0.95, runnerUp: null, modelVersion: 'scripted-jev', questions: { entity: q('bitcoin', 0.95, 0.02), item: q('new_story', 0.9, 0.05) } };
+      },
+    };
+    const short = { limit: 3, leaseMs: 150, backoffMs: 60_000, timeoutMs: 1000 };
+    const a = runAnalystOnce(pool, { jev: slow, ...short });
+    await new Promise((r) => setTimeout(r, 170));
+    await sweepExpiredClaims(pool);
+    const b = runAnalystOnce(pool, { jev: slow, ...short });
+    await Promise.all([a, b]);
+    const perSignal = (await pool.query(
+      `select s.signal_id, (select count(*)::int from atlas.jev_decisions j where j.signal_id = s.signal_id) jev,
+              (select count(*)::int from atlas.decisions d where d.signal_id = s.signal_id) dec, ss.state
+         from atlas.signals s join atlas.signal_states ss using (signal_id) order by 1`)).rows;
+    expect(perSignal).toEqual(['s-l1', 's-l2', 's-l3'].map((id) => ({ signal_id: id, jev: 1, dec: 1, state: 'analysed' })));
+  });
+
+  it('CTO should-fix 3: routing rules apply to the full ranked list before the cap of 5', async () => {
+    const { rows } = await pool.query(`insert into atlas.shelves (slug, name, type, aliases) values ('eth','eth','asset',$1) returning id`, [['ETH']]);
+    shelf.eth = rows[0].id;
+    await pool.query('insert into atlas.routing_rules (token_shelf_id, project_shelf_id, route_to_shelf_id) values ($1,$2,$2)', [shelf.uni, shelf.uniswap]);
+    await addSignal('s-six', 'Uniswap and $UNI rally with Bitcoin, ETH and XRP as the SEC weighs in');
+    const jev = scriptedJev(() => ({ entity: ['uniswap', 0.95, 0.02], item: ['new_story', 0.9, 0.05] }));
+    await runAnalystOnce(pool, { jev, ...opts });
+    const slugs = (await sentState('s-six')).candidates.map((c) => c.slug).sort();
+    expect(slugs).toEqual(['bitcoin', 'eth', 'sec', 'uniswap', 'xrp']);
+  });
+
+  it('CTO should-fix 4: the decision row keeps the item probability as well as the entity probability', async () => {
+    await addItem('btc-etf', 'bitcoin', 'Bitcoin ETF approvals', 2);
+    await addSignal('s-prob', 'Bitcoin ETF inflows hit a record');
+    const jev = scriptedJev((s) => ({ entity: ['bitcoin', 0.95, 0.02], item: [s.candidates[0].items[0].id, 0.88, 0.05] }));
+    await runAnalystOnce(pool, { jev, ...opts });
+    const d = (await pool.query('select confidence, reason from atlas.decisions where signal_id = $1', ['s-prob'])).rows[0];
+    expect(d.confidence).toBeCloseTo(0.95);
+    expect(d.reason).toMatch(/item_p=0\.880/);
   });
 });
