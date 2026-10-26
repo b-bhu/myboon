@@ -79,9 +79,9 @@ describe.skipIf(ADMIN_URL === '')('#478 signal states and Jev decision log (loca
       await pool.query(
         `insert into atlas.signals (signal_id, schema_version, source, source_id, type, priority, occurred_at, fetched_at, text, link)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [s.signalId, s.schemaVersion, s.source, s.sourceId, s.type, s.priority, s.occurredAt, s.fetchedAt, s.text, s.link],
+        [s.signal_id, s.schema_version, s.source, s.source_id, s.type, s.priority, s.occurred_at, s.fetched_at, s.text, s.link],
       );
-      await pool.query('insert into atlas.signal_queue (signal_id) values ($1)', [s.signalId]);
+      await pool.query('insert into atlas.signal_queue (signal_id) values ($1)', [s.signal_id]);
     }
     expect(await admitSignals(pool)).toBe(newsSampleSignals.length);
   });
@@ -94,7 +94,7 @@ describe.skipIf(ADMIN_URL === '')('#478 signal states and Jev decision log (loca
   });
 
   it('rejects unknown states and a parked signal without a reason', async () => {
-    const id = newsSampleSignals[0].signalId;
+    const id = newsSampleSignals[0].signal_id;
     await expect(pool.query(`update atlas.signal_states set state = 'bogus' where signal_id = $1`, [id])).rejects.toThrow();
     await expect(pool.query(`update atlas.signal_states set state = 'parked', park_reason = null where signal_id = $1`, [id])).rejects.toThrow();
   });
@@ -132,7 +132,7 @@ describe.skipIf(ADMIN_URL === '')('#478 signal states and Jev decision log (loca
   });
 
   it('every Jev call (success, error or timeout) writes exactly one jev_decisions row', async () => {
-    const [a, b, c] = newsSampleSignals.map((s) => s.signalId);
+    const [a, b, c] = newsSampleSignals.map((s) => s.signal_id);
     const ok = await callJev(pool, scriptedJev([{ answer: okAnswer }]), { signalId: a, stage: 'linker', inputCase: { title: 'a' }, timeoutMs: 200 });
     const err = await callJev(pool, scriptedJev([{ error: 'upstream 502' }]), { signalId: b, stage: 'linker', inputCase: { title: 'b' }, timeoutMs: 200 });
     const slow = await callJev(pool, scriptedJev(['timeout']), { signalId: c, stage: 'linker', inputCase: { title: 'c' }, timeoutMs: 50 });
@@ -148,14 +148,14 @@ describe.skipIf(ADMIN_URL === '')('#478 signal states and Jev decision log (loca
   });
 
   it('Jev down: the signal stays waiting, is retried with backoff, and after the cap is dead_lettered, never lost', async () => {
-    const target = newsSampleSignals[0].signalId;
+    const target = newsSampleSignals[0].signal_id;
     await pool.query(`delete from atlas.signal_states where signal_id <> $1`, [target]);
     await pool.query('update atlas.signal_states set max_attempts = 3 where signal_id = $1', [target]);
     const jev = scriptedJev([{ error: 'connect ECONNREFUSED' }]);
     const opts = { stage: 'linker', from: 'received', to: 'analysed', jev, limit: 10, leaseMs: 60_000, timeoutMs: 100 } as const;
 
     await runStageOnce(pool, { ...opts, backoffMs: 60_000 });
-    let row = (await pool.query('select state, attempts, available_at > now() as backing_off, last_error from atlas.signal_states where signal_id = $1', [target])).rows[0];
+    let row = (await pool.query('select state, attempts::int as attempts, available_at > now() as backing_off, last_error from atlas.signal_states where signal_id = $1', [target])).rows[0];
     expect(row).toMatchObject({ state: 'received', attempts: 1, backing_off: true });
     expect(row.last_error).toContain('ECONNREFUSED');
     // while backing off it is not picked up again
@@ -165,12 +165,12 @@ describe.skipIf(ADMIN_URL === '')('#478 signal states and Jev decision log (loca
     // backoff grows with attempts
     await pool.query('update atlas.signal_states set available_at = now() where signal_id = $1', [target]);
     await runStageOnce(pool, { ...opts, backoffMs: 60_000 });
-    row = (await pool.query(`select state, attempts, available_at - now() > interval '90 seconds' as doubled from atlas.signal_states where signal_id = $1`, [target])).rows[0];
+    row = (await pool.query(`select state, attempts::int as attempts, available_at - now() > interval '90 seconds' as doubled from atlas.signal_states where signal_id = $1`, [target])).rows[0];
     expect(row).toMatchObject({ state: 'received', attempts: 2, doubled: true });
 
     await pool.query('update atlas.signal_states set available_at = now() where signal_id = $1', [target]);
     await runStageOnce(pool, { ...opts, backoffMs: 60_000 });
-    row = (await pool.query('select state, attempts, previous_state, claim_token from atlas.signal_states where signal_id = $1', [target])).rows[0];
+    row = (await pool.query('select state, attempts::int as attempts, previous_state, claim_token from atlas.signal_states where signal_id = $1', [target])).rows[0];
     expect(row).toMatchObject({ state: 'dead_lettered', attempts: 3, previous_state: 'received', claim_token: null });
     expect(await count('select count(*) n from atlas.jev_decisions where signal_id = $1', [target])).toBe(3);
     expect(await count('select count(*) n from atlas.signals where signal_id = $1', [target])).toBe(1);
