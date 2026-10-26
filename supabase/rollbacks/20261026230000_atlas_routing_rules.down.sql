@@ -1,4 +1,5 @@
--- squawk-ignore-file ban-drop-table, prefer-robust-stmts
+-- squawk-ignore-file ban-drop-table, ban-drop-column, prefer-robust-stmts
+-- ban-drop-column: the four decisions probability columns are added by the paired migration only.
 -- Why: rollback of the routing_rules migration; the table is tiny and has no
 -- dependents, and no client uses atlas yet, while DROP without IF EXISTS keeps
 -- the rollback honest about a half-applied state (as in the #485 rollback).
@@ -15,5 +16,11 @@ revoke select on table atlas.routing_rules from service_role;
 revoke insert on table atlas.decisions from service_role;
 revoke select (signal_id, analyst_version) on table atlas.decisions from service_role;
 revoke select (text, excerpt, occurred_at) on table atlas.signals from service_role;
+
+alter table atlas.decisions
+  drop column item_margin,
+  drop column item_p,
+  drop column entity_margin,
+  drop column entity_p;
 
 drop table atlas.routing_rules;

@@ -236,8 +236,6 @@ function readStoryPicks(answer: JevAnswer, slugs: string[]): StoryPicks {
 }
 
 const pp = (n: number) => n.toFixed(2);
-/** Decision-row probabilities keep three decimals for the daily review. */
-const p3 = (n: number) => n.toFixed(3);
 
 /**
  * Files the decision and advances to 'analysed' in ONE transaction on one
@@ -248,7 +246,7 @@ const p3 = (n: number) => n.toFixed(3);
 async function fileDecision(
   pool: Pool,
   claim: Claim,
-  d: { confidence: number; shelves: string[]; targetItemId: string | null; reason: string },
+  d: { confidence: number; shelves: string[]; targetItemId: string | null; reason: 'linked' | 'new_story'; entityP: number; entityMargin: number; itemP: number; itemMargin: number },
 ): Promise<boolean> {
   const client = await pool.connect();
   try {
@@ -256,10 +254,11 @@ async function fileDecision(
     try {
       await client.query(
         `insert into atlas.decisions
-           (schema_version, signal_id, analyst_version, decision_type, action, confidence, shelves, target_item_id, reason)
-         values (1, $1, $2, 'file', 'keep', $3, $4::jsonb, $5, $6)
+           (schema_version, signal_id, analyst_version, decision_type, action, confidence, shelves, target_item_id, reason,
+            entity_p, entity_margin, item_p, item_margin)
+         values (1, $1, $2, 'file', 'keep', $3, $4::jsonb, $5, $6, $7, $8, $9, $10)
          on conflict (signal_id, analyst_version) do nothing`,
-        [claim.signalId, ANALYST_VERSION, d.confidence, JSON.stringify(d.shelves), d.targetItemId, d.reason],
+        [claim.signalId, ANALYST_VERSION, d.confidence, JSON.stringify(d.shelves), d.targetItemId, d.reason, d.entityP, d.entityMargin, d.itemP, d.itemMargin],
       );
       const advanced = await completeClaim(client, claim, { to: 'analysed' });
       if (!advanced) {
@@ -388,7 +387,11 @@ async function analyseClaims(pool: Pool, claims: Claim[], o: AnalystOptions, run
       confidence: picks.entityP,
       shelves: [picked.slug],
       targetItemId: isLinked ? picks.item : null,
-      reason: `${isLinked ? 'linked' : 'new_story'} entity_p=${p3(picks.entityP)} entity_margin=${p3(picks.entityMargin)} item_p=${p3(picks.itemP)} item_margin=${p3(picks.itemMargin)}`,
+      reason: isLinked ? 'linked' : 'new_story',
+      entityP: picks.entityP,
+      entityMargin: picks.entityMargin,
+      itemP: picks.itemP,
+      itemMargin: picks.itemMargin,
     })) {
       run.analysed += 1;
     }

@@ -51,6 +51,23 @@ begin
   end loop;
 end $$;
 
+-- #486 (CTO): the Story decision's probabilities as real columns, not packed into
+-- reason. atlas.decisions is empty in prod; nullable, so no rewrite and no default.
+-- Checks go in NOT VALID then VALIDATE to keep the lock short.
+alter table atlas.decisions
+  add column entity_p      numeric,
+  add column entity_margin numeric,
+  add column item_p        numeric,
+  add column item_margin   numeric;
+alter table atlas.decisions add constraint decisions_entity_p_range      check (entity_p between 0 and 1) not valid;
+alter table atlas.decisions add constraint decisions_entity_margin_range check (entity_margin between 0 and 1) not valid;
+alter table atlas.decisions add constraint decisions_item_p_range        check (item_p between 0 and 1) not valid;
+alter table atlas.decisions add constraint decisions_item_margin_range   check (item_margin between 0 and 1) not valid;
+alter table atlas.decisions validate constraint decisions_entity_p_range;
+alter table atlas.decisions validate constraint decisions_entity_margin_range;
+alter table atlas.decisions validate constraint decisions_item_p_range;
+alter table atlas.decisions validate constraint decisions_item_margin_range;
+
 grant select on table atlas.routing_rules to service_role;
 grant insert on table atlas.decisions to service_role;
 -- ON CONFLICT (signal_id, analyst_version) needs SELECT on the conflict-target columns.

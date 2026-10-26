@@ -73,8 +73,8 @@ describe('StoryCase v1', () => {
 
 describe('StoryOutcome', () => {
   it('accepts every outcome kind', () => {
-    expect(parseStoryOutcome({ outcome: 'linked', slug: 'xrp', item_id: '01890a5d-ac96-774b-bcce-b302099a8057' }).outcome).toBe('linked');
-    expect(parseStoryOutcome({ outcome: 'new_story', slug: 'xrp' }).outcome).toBe('new_story');
+    expect(parseStoryOutcome({ outcome: 'linked', slug: 'xrp', item_id: '01890a5d-ac96-774b-bcce-b302099a8057', probabilities: { entity_p: 0.95, entity_margin: 0.9, item_p: 0.8, item_margin: 0.5 } }).outcome).toBe('linked');
+    expect(parseStoryOutcome({ outcome: 'new_story', slug: 'xrp', probabilities: { entity_p: 0.95, entity_margin: 0.9, item_p: 0.8, item_margin: 0.5 } }).outcome).toBe('new_story');
     expect(parseStoryOutcome({ outcome: 'parked', park_reason: 'below_cutoff: entity p=0.80 margin=0.75' })).toMatchObject({ outcome: 'parked' });
     expect(parseStoryOutcome({ outcome: 'failed', error: 'jev 503' })).toMatchObject({ outcome: 'failed' });
     expect(STORY_OUTCOMES).toHaveLength(storyOutcomeSchema.options.length);
@@ -82,6 +82,8 @@ describe('StoryOutcome', () => {
 
   it('rejects a malformed outcome', () => {
     expect(() => parseStoryOutcome({ outcome: 'linked', slug: 'xrp', item_id: 'not-a-uuid' })).toThrow();
+    expect(() => parseStoryOutcome({ outcome: 'new_story', slug: 'xrp' })).toThrow();
+    expect(() => parseStoryOutcome({ outcome: 'new_story', slug: 'xrp', probabilities: { entity_p: 1.2, entity_margin: 0.9, item_p: 0.8, item_margin: 0.5 } })).toThrow();
     expect(() => parseStoryOutcome({ outcome: 'parked' })).toThrow();
     expect(() => parseStoryOutcome({ outcome: 'unknown' })).toThrow();
   });

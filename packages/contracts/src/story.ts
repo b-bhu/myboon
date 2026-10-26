@@ -65,17 +65,29 @@ export type StoryCandidateItem = z.output<typeof storyCandidateItemSchema>;
 export const STORY_OUTCOMES = ['linked', 'new_story', 'parked', 'failed'] as const;
 export type StoryOutcomeKind = (typeof STORY_OUTCOMES)[number];
 
+const unit = z.number().min(0).max(1);
+/** Mirrors atlas.decisions entity_p / entity_margin / item_p / item_margin (#486). */
+export const storyProbabilitiesSchema = z.object({
+  entity_p: unit,
+  entity_margin: unit,
+  item_p: unit,
+  item_margin: unit,
+});
+export type StoryProbabilities = z.output<typeof storyProbabilitiesSchema>;
+
 export const storyOutcomeSchema = z.discriminatedUnion('outcome', [
   /** The signal updates an existing item: decisions.reason 'linked'. */
   z.object({
     outcome: z.literal('linked'),
     slug: z.string().min(1),
     item_id: z.uuid(),
+    probabilities: storyProbabilitiesSchema,
   }),
   /** The signal starts a new item under the shelf: decisions.reason 'new_story'. */
   z.object({
     outcome: z.literal('new_story'),
     slug: z.string().min(1),
+    probabilities: storyProbabilitiesSchema,
   }),
   /** Padded below the cutoffs or disagreeing: signal parked with a reason.
    * Covers no_match, below_cutoff (<entity|item>), adds_nothing, disagreeing_pick. */
