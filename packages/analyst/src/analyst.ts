@@ -68,8 +68,8 @@ function aliasRegExp(alias: string): RegExp {
 
 /**
  * The shortlist (D23): rank active shelves by distinct alias hits, then total
- * alias length, then slug; cap at five; then drop one side of every routing
- * rule whose token AND project shelf both made the list (the route_to shelf
+ * alias length, then slug; drop one side of every routing
+ * rule whose token AND project shelf both matched, then cap at five (the route_to shelf
  * stays). The route_to shelf is always one of the pair (SQL check), so a rule
  * only ever shrinks the shortlist.
  */
@@ -82,7 +82,9 @@ export function linkShortlist(shelves: ShelfAliases[], rules: RoutingRuleRow[], 
     .filter((s) => s.hits > 0);
   scored.sort((a, b) => b.hits - a.hits || b.aliasLength - a.aliasLength || (a.shelf.slug < b.shelf.slug ? -1 : a.shelf.slug > b.shelf.slug ? 1 : 0));
 
-  let shortlist = scored.slice(0, SHORTLIST_MAX).map((s) => s.shelf);
+  // Rules run on the full ranked list, then the cap (CTO #486 review): a dropped
+  // pair side must not cost the next-ranked shelf its place.
+  let shortlist = scored.map((s) => s.shelf);
   for (const rule of rules) {
     const tokenIndex = shortlist.findIndex((s) => s.id === rule.token_shelf_id);
     const projectIndex = shortlist.findIndex((s) => s.id === rule.project_shelf_id);
@@ -92,7 +94,7 @@ export function linkShortlist(shelves: ShelfAliases[], rules: RoutingRuleRow[], 
       : shortlist[projectIndex].id;
     shortlist = shortlist.filter((s) => s.id === keepId || (s.id !== rule.token_shelf_id && s.id !== rule.project_shelf_id));
   }
-  return shortlist;
+  return shortlist.slice(0, SHORTLIST_MAX);
 }
 
 function toIso(value: Date | string | null): string | null {
@@ -234,6 +236,8 @@ function readStoryPicks(answer: JevAnswer, slugs: string[]): StoryPicks {
 }
 
 const pp = (n: number) => n.toFixed(2);
+/** Decision-row probabilities keep three decimals for the daily review. */
+const p3 = (n: number) => n.toFixed(3);
 
 /**
  * Files the decision and advances to 'analysed' in ONE transaction on one
@@ -244,7 +248,7 @@ const pp = (n: number) => n.toFixed(2);
 async function fileDecision(
   pool: Pool,
   claim: Claim,
-  d: { confidence: number; shelves: string[]; targetItemId: string | null; reason: 'linked' | 'new_story' },
+  d: { confidence: number; shelves: string[]; targetItemId: string | null; reason: string },
 ): Promise<boolean> {
   const client = await pool.connect();
   try {
@@ -280,11 +284,23 @@ async function retryClaim(pool: Pool, claim: Claim, error: string, run: AnalystR
   if (result === 'dead_lettered') run.deadLettered += 1;
 }
 
+/**
+ * Works up to o.limit signals, claiming ONE at a time (claim, analyse, next
+ * claim), so a lease only ever has to cover a single Jev call (CTO #486
+ * review: a batch lease lapsed mid-run and allowed a second Jev call).
+ */
 export async function runAnalystOnce(pool: Pool, o: AnalystOptions): Promise<AnalystRun> {
   const run: AnalystRun = { claimed: 0, analysed: 0, parked: 0, retried: 0, deadLettered: 0 };
-  const claims = await claimSignals(pool, { state: 'received', limit: o.limit, leaseMs: o.leaseMs, worker: WORKER });
-  run.claimed = claims.length;
-  if (claims.length === 0) return run;
+  for (let i = 0; i < o.limit; i++) {
+    const claims = await claimSignals(pool, { state: 'received', limit: 1, leaseMs: o.leaseMs, worker: WORKER });
+    if (claims.length === 0) break;
+    run.claimed += 1;
+    await analyseClaims(pool, claims, o, run);
+  }
+  return run;
+}
+
+async function analyseClaims(pool: Pool, claims: Claim[], o: AnalystOptions, run: AnalystRun): Promise<void> {
 
   const { rows: signalRows } = await pool.query<SignalRow>(
     'select signal_id, text, excerpt, occurred_at from atlas.signals where signal_id = any($1)',
@@ -372,10 +388,9 @@ export async function runAnalystOnce(pool: Pool, o: AnalystOptions): Promise<Ana
       confidence: picks.entityP,
       shelves: [picked.slug],
       targetItemId: isLinked ? picks.item : null,
-      reason: isLinked ? 'linked' : 'new_story',
+      reason: `${isLinked ? 'linked' : 'new_story'} entity_p=${p3(picks.entityP)} entity_margin=${p3(picks.entityMargin)} item_p=${p3(picks.itemP)} item_margin=${p3(picks.itemMargin)}`,
     })) {
       run.analysed += 1;
     }
   }
-  return run;
 }
