@@ -2,12 +2,15 @@
  * #478: the logged Jev client. Exactly one atlas.jev_decisions row per call --
  * success, error or timeout -- with the measured latency. A Jev failure never
  * surfaces as an exception: the decision log and the returned status carry it.
+ * Each call runs under its own AbortController; at timeout the controller is
+ * aborted, so ports backed by HTTP stop the in-flight request instead of
+ * waiting it out.
  */
 import type { Pool } from 'pg';
 
 export type JevAnswer = { answer: unknown; probability: number | null; runnerUp: unknown; modelVersion: string };
 
-export interface JevPort { modelVersion: string; decide(input: unknown): Promise<JevAnswer> }
+export interface JevPort { modelVersion: string; decide(input: unknown, signal: AbortSignal): Promise<JevAnswer> }
 
 export type JevStatus = 'success' | 'error' | 'timeout';
 
@@ -32,13 +35,16 @@ function answerProblem(a: JevAnswer | undefined): string | null {
   return null;
 }
 
-/** Races decide() against the timeout; never rejects either way. */
-function settle(jev: JevPort, input: unknown, timeoutMs: number): Promise<Settled> {
+/** Races decide() against the timeout, aborting the call's signal at the deadline; never rejects either way. */
+function settle(jev: JevPort, input: unknown, timeoutMs: number, ac: AbortController): Promise<Settled> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<Settled>((resolve) => {
-    timer = setTimeout(() => resolve({ status: 'timeout' }), timeoutMs);
+    timer = setTimeout(() => {
+      ac.abort();
+      resolve({ status: 'timeout' });
+    }, timeoutMs);
   });
-  const decision = Promise.resolve().then(() => jev.decide(input)).then(
+  const decision = Promise.resolve().then(() => jev.decide(input, ac.signal)).then(
     (answer): Settled => {
       const problem = answerProblem(answer);
       return problem ? { status: 'error', error: `invalid_answer: ${problem}` } : { status: 'success', answer };
@@ -56,7 +62,8 @@ function settle(jev: JevPort, input: unknown, timeoutMs: number): Promise<Settle
  */
 export async function callJev(pool: Pool, jev: JevPort, o: JevCallOptions): Promise<JevCallResult> {
   const startedAt = Date.now();
-  const settled: Settled = await settle(jev, o.inputCase, o.timeoutMs);
+  const ac = new AbortController();
+  const settled: Settled = await settle(jev, o.inputCase, o.timeoutMs, ac);
   const latencyMs = Date.now() - startedAt;
 
   const isSuccess = settled.status === 'success';

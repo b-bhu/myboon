@@ -19,7 +19,8 @@ export async function admitSignals(pool: Pool): Promise<number> {
  * Claim up to o.limit signals in o.state for o.worker. Lease and backoff times
  * arrive as milliseconds and are converted to intervals explicitly, because
  * make_interval() only takes whole seconds and short leases (the tests use
- * 100ms) would otherwise round to zero.
+ * 100ms) would otherwise round to zero. The terminal states ('dead_lettered',
+ * 'deleted') are never claimable and raise from SQL.
  */
 export async function claimSignals(
   pool: Pool,
@@ -45,7 +46,10 @@ export async function claimSignals(
 
 /**
  * Move a claimed signal to o.to ('analysed', 'parked', 'discarded', ...). False
- * when the claim no longer owns the row (swept, expired or advanced elsewhere).
+ * when the claim no longer owns the row (swept, expired or advanced elsewhere);
+ * raises from SQL ('illegal transition from -> to') when o.to is not allowed
+ * from the row's current state. An advance starts the next stage with a full
+ * retry budget (attempts reset, available_at = now()).
  */
 export async function completeClaim(
   pool: Pool,
@@ -76,7 +80,7 @@ export async function failClaim(
   return outcome;
 }
 
-/** Clear expired claims (crashed workers) so their signals become claimable again. */
+/** Clear expired claims (crashed workers) so their signals become claimable again; claims whose attempt cap is reached are dead-lettered (row + one atlas.dead_letter entry). */
 export async function sweepExpiredClaims(pool: Pool): Promise<number> {
   const { rows } = await pool.query<{ n: number }>('select atlas.signal_sweep() as n');
   return rows[0]?.n ?? 0;
