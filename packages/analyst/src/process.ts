@@ -13,6 +13,7 @@
  *      is recorded and never blocks the outcome.
  */
 import { claimNext, failClaim, finishClaim, type Db } from './states.js';
+import type { Interpretation } from './linker-story.js';
 import { DeciderError, type Decider, type DecisionCase, type DeciderAnswer } from './deciders.js';
 
 /** Analyst version written on every decision row. */
@@ -22,7 +23,9 @@ export type ProcessOptions = {
   primary: Decider;
   fallback: Decider;
   shadow: Decider;
-  buildCase(signal: { signal_id: string; text: string | null; excerpt: string | null; link: string | null }): DecisionCase;
+  buildCase(signal: { signal_id: string; text: string | null; excerpt: string | null; link: string | null }, db: Db): DecisionCase | Promise<DecisionCase>;
+  /** Turns the deciding answer into the finish status and extra decision columns (#479). Default: analysed. */
+  interpret?(answer: DeciderAnswer, c: DecisionCase): Interpretation;
   promptVersion: string;
   leaseMs: number;
   timeoutMs: number;
