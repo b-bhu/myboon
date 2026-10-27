@@ -141,7 +141,7 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 // #444 V4 runtime, Sprint 1 scope: the scout stage only. The analyst and
 // entity-manager stage entries are Sprint 2 work and stay out of the process
 // list until their runners are wired.
-//   myboon-v4-scout-news -> src/run.ts
+//   myboon-scout -> src/run.ts
 // The scout runs one cycle and exits; PM2 starts it again at every 15-minute
 // cron tick (cron_restart). autorestart stays off so a failing run neither
 // loops nor hides in backoff: the crash state is visible until the next
@@ -153,11 +153,11 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 // Go-live sequence (only after CTO approval, following Backend Dev local e2e):
 //   1. Back up the current process list BEFORE anything else:
 //        cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
-//   2. MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-v4-scout-news
+//   2. MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-scout
 //   3. pm2 save   (persists the new list; dump backup is the rollback path)
 const V4_APPS = [
   {
-    name: 'myboon-v4-scout-news',
+    name: 'myboon-scout',
     script: 'src/run.ts',
     interpreter: TSX,
     cwd: `${ROOT}/packages/scout-news`,
@@ -171,7 +171,7 @@ const V4_APPS = [
     env: {
       V4_STAGE: 'scout-news',
       // Off-switch: set in the shell, never by editing this tracked file:
-      // `SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env`
+      // `SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-scout --update-env`
       SCOUT_ENABLED: process.env.SCOUT_ENABLED ?? 'false',
     },
   },
