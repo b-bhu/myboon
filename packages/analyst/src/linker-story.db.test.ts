@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
-import { admitSignals, runAnalystOnce, sweepExpiredClaims, type JevAnswer, type JevPort } from './index.js';
+import { AnalystConfigError, admitSignals, assertAnalystTiming, runAnalystOnce, sweepExpiredClaims, type JevAnswer, type JevPort } from './index.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const DAY = 86_400_000;
@@ -197,7 +197,7 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
     expect(await decisions('s-svc')).toEqual([expect.objectContaining({ action: 'keep', shelves: ['bitcoin'], target_item_id: item['btc-etf'] })]);
   });
 
-  it('CTO must-fix 2: Jev slower than the lease, two runners: one Jev call and one decision per signal', async () => {
+  it('CTO must-fix 2: a batch that outlives one lease (3 x 100ms Jev vs 150ms lease), two runners: one Jev call and one decision per signal', async () => {
     for (const id of ['s-l1', 's-l2', 's-l3']) await addSignal(id, `Bitcoin update ${id}`);
     const slow: JevPort = {
       modelVersion: 'scripted-jev',
@@ -209,7 +209,7 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
         return { answer: {}, probability: 0.95, runnerUp: null, modelVersion: 'scripted-jev', questions: { entity: q('bitcoin', 0.95, 0.02), item: q('new_story', 0.9, 0.05) } };
       },
     };
-    const short = { limit: 3, leaseMs: 150, backoffMs: 60_000, timeoutMs: 1000 };
+    const short = { limit: 3, leaseMs: 150, backoffMs: 60_000, timeoutMs: 120 };
     const a = runAnalystOnce(pool, { jev: slow, ...short });
     await new Promise((r) => setTimeout(r, 170));
     await sweepExpiredClaims(pool);
@@ -254,5 +254,17 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
     expect(n).toMatchObject({ signal_id: 's-new', reason: 'new_story' });
     expect(n.item_p).toBeCloseTo(0.77); expect(n.item_margin).toBeCloseTo(0.65);
     await expect(pool.query(`update atlas.decisions set item_p = 1.5 where signal_id = 's-prob'`)).rejects.toThrow(/check/);
+  });
+
+  it('startup check: refuses to run when the lease is not longer than the Jev timeout plus a 20% margin', async () => {
+    expect(() => assertAnalystTiming({ leaseMs: 60_000, timeoutMs: 30_000 })).not.toThrow();
+    for (const bad of [{ leaseMs: 30_000, timeoutMs: 30_000 }, { leaseMs: 20_000, timeoutMs: 30_000 }, { leaseMs: 36_000, timeoutMs: 30_000 }]) {
+      expect(() => assertAnalystTiming(bad)).toThrow(AnalystConfigError);
+    }
+    await addSignal('s-cfg', 'Bitcoin ETF inflows hit a record');
+    const jev = scriptedJev(() => ({ entity: ['bitcoin', 0.95, 0.02], item: ['new_story', 0.9, 0.05] }));
+    await expect(runAnalystOnce(pool, { jev, limit: 5, leaseMs: 30_000, backoffMs: 1000, timeoutMs: 30_000 })).rejects.toBeInstanceOf(AnalystConfigError);
+    expect(jev.calls).toBe(0);
+    expect(await state('s-cfg')).toMatchObject({ state: 'received', attempts: 0 });
   });
 });
