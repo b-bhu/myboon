@@ -7,7 +7,7 @@
  *   POST {model, state, questions: {pick: {type: 'choice', instructions, criteria}}}
  *   <-  {model, answers: {pick: {choice, probabilities}}}
  *
- * The response model must match the configured one exactly. HTTP 402 maps to
+ * The response model must match the configured one exactly. HTTP 402 and 429 map to
  * out_of_credit, a request that dies on the abort signal to timeout, and every
  * other failure to error - all as DeciderError, whose messages are redacted so
  * the API token never leaves this file. Token values are never logged.
@@ -101,7 +101,8 @@ export class SystemOneDecider implements Decider {
     }
 
     if (!response.ok) {
-      const kind: DeciderKind = response.status === 402 ? 'out_of_credit' : 'error';
+      // 402 payment required and 429 quota/rate limit are both credit-or-quota failures.
+      const kind: DeciderKind = response.status === 402 || response.status === 429 ? 'out_of_credit' : 'error';
       throw new DeciderError(kind, `${this.name} HTTP ${response.status}: ${await failureDetail(response, this.apiToken)}`);
     }
 

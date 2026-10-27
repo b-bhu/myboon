@@ -142,8 +142,13 @@ async function decideTimed(d: Decider, c: DecisionCase, timeoutMs: number): Prom
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const started = Date.now();
+  // Race the deadline too: a client that ignores the abort signal must not hold
+  // the claim past timeoutMs or keep Clef from taking over.
+  const deadline = new Promise<never>((_, reject) => {
+    ac.signal.addEventListener('abort', () => reject(new DeciderError('timeout', `${d.name} timed out after ${timeoutMs} ms`)), { once: true });
+  });
   try {
-    const answer = await d.decide(c, ac.signal);
+    const answer = await Promise.race([d.decide(c, ac.signal), deadline]);
     return { answer, latencyMs: Math.max(0, Date.now() - started) };
   } catch (e) {
     if (e instanceof DeciderError) throw e;
