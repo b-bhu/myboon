@@ -192,6 +192,40 @@ describe.skipIf(ADMIN_URL === '')('#478 V4 signal status, decider slot and decis
     console.log('#478 final counts per status:', JSON.stringify(await statusCounts()));
   });
 
+  it('CTO must-fix: a signal that crashes the worker every time ends dead at the attempt cap, never lost', async () => {
+    const target = ids[0];
+    await pool.query(`update atlas.signals set next_attempt_at = now() + interval '1 hour' where signal_id <> $1`, [target]);
+    for (let i = 1; i <= 3; i++) {
+      const c = await claimNext(pool, { leaseMs: 30, worker: 'crashy', maxAttempts: 3 });
+      expect(c?.signalId).toBe(target);
+      expect(c?.attempts).toBe(i);
+      await sleep(70); // crash: never finishes or fails
+    }
+    expect(await claimNext(pool, { leaseMs: 30, worker: 'crashy', maxAttempts: 3 })).toBeNull();
+    const s = await sig(target);
+    expect(s).toMatchObject({ status: 'dead', attempts: 3, claim_token: null, last_error: 'claim expired after max attempts' });
+    expect(Number((await pool.query('select count(*) n from atlas.signals')).rows[0].n)).toBe(ids.length);
+  });
+
+  it('DB Guy: signal_finish returns false (and writes no decision) when its final update hits 0 rows', async () => {
+    const target = ids[0];
+    await pool.query(`update atlas.signals set next_attempt_at = now() + interval '1 hour' where signal_id <> $1`, [target]);
+    const c = await claimNext(pool, { leaseMs: 60_000, worker: 'w', maxAttempts: 3 });
+    // Simulate the claim vanishing between the check and the update: a trigger skips the row.
+    const client = await pool.connect();
+    try {
+      await client.query(`create function public.t478_skip() returns trigger language plpgsql as $$ begin return null; end $$`);
+      await client.query(`create trigger t478_skip before update on atlas.signals for each row execute function public.t478_skip()`);
+      const ok = await finishClaim(client, c!, { status: 'analysed', decision: { schema_version: 1, signal_id: target, analyst_version: 'a', decision_type: 'file', action: 'keep' } });
+      expect(ok).toBe(false);
+      expect(Number((await client.query('select count(*) n from atlas.decisions where signal_id = $1', [target])).rows[0].n)).toBe(0);
+    } finally {
+      await client.query('drop trigger if exists t478_skip on atlas.signals');
+      await client.query('drop function if exists public.t478_skip()');
+      client.release();
+    }
+  });
+
   it('service_role can claim, finish and fail through the granted surface; anon gets nothing', async () => {
     const svc = new Pool({ connectionString: db.url, max: 2, options: '-c role=service_role' });
     try {
@@ -262,5 +296,39 @@ describe.skipIf(ADMIN_URL === '')('#478 migration on the pre-migration shape (lo
     } finally {
       await pool.end();
     }
+  });
+
+  it('DB Guy blocker 1: rollback re-seeds signal_queue from received, unclaimed signals', async () => {
+    const pool = new Pool({ connectionString: db.url, max: 2 });
+    try {
+      for (const s of newsSampleSignals) {
+        await pool.query(`insert into atlas.signals (signal_id, schema_version, source, source_id, type, text) values ($1,$2,$3,$4,$5,$6)`,
+          [s.signal_id, s.schema_version, s.source, s.source_id, s.type, s.text]);
+      }
+      const [a, b] = newsSampleSignals.map((s) => s.signal_id);
+      await pool.query(`update atlas.signals set status = 'analysed' where signal_id = $1`, [a]);
+      await pool.query(`update atlas.signals set claim_token = gen_random_uuid(), claim_expires_at = now() + interval '1 minute' where signal_id = $1`, [b]);
+      const received = Number((await pool.query(`select count(*) n from atlas.signals where status = 'received' and claim_token is null`)).rows[0].n);
+      expect(received).toBe(newsSampleSignals.length - 2);
+      await applySqlFile(db.url, join(ROLLBACKS_DIR, ROLLBACK));
+      const queued = (await pool.query(`select signal_id, status, attempts::int attempts from atlas.signal_queue order by signal_id`)).rows;
+      expect(queued).toHaveLength(received);
+      expect(queued.every((q) => q.status === 'ready' && q.attempts === 0)).toBe(true);
+      await pool.query('truncate atlas.signals cascade');
+      await applySqlFile(db.url, join(MIGRATIONS_DIR, MIGRATION));
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('DB Guy blocker 2: the rollback is one transaction with set local timeouts', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const sql = (await readFile(join(ROLLBACKS_DIR, ROLLBACK), 'utf8'))
+      .split('\n').filter((l) => !/^\s*--/.test(l) && l.trim() !== '').join('\n');
+    expect(sql.trimStart().toLowerCase().startsWith('begin;')).toBe(true);
+    expect(sql.trimEnd().toLowerCase().endsWith('commit;')).toBe(true);
+    expect(sql).toMatch(/set local lock_timeout/i);
+    expect(sql).toMatch(/set local statement_timeout/i);
+    expect(sql).not.toMatch(/^set (lock|statement)_timeout/im);
   });
 });
