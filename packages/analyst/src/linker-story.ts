@@ -55,7 +55,7 @@ function aliasRegExp(alias: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}_])${body}(?![\\p{L}\\p{N}_])`, 'iu');
 }
 
-export function linkShortlist(shelves: ShelfRow[], rules: RoutingRule[], text: string): ShelfRow[] {
+export function linkShortlist(shelves: ShelfRow[], rules: readonly RoutingRule[], text: string): ShelfRow[] {
   const scored = shelves
     .map((shelf) => {
       const hits = shelf.aliases.filter((a) => a.length > 0 && aliasRegExp(a).test(text));
@@ -108,12 +108,42 @@ async function loadItems(db: Db, shelfIds: string[]): Promise<Map<string, StoryI
 const entityOf = (choice: string) => (choice === ADDS_NOTHING ? ADDS_NOTHING : choice.slice(0, choice.indexOf('/')));
 const pp = (n: number) => n.toFixed(2);
 
-export function linkerStory(o: { routingRules: RoutingRule[] }) {
+/** No routing rules until Bucket provides the seed rules (#479 dependency). */
+export const DEFAULT_ROUTING_RULES: readonly RoutingRule[] = Object.freeze([]);
+
+export class RoutingRuleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RoutingRuleError';
+  }
+}
+
+/** Load-time check: non-empty distinct slugs, routeTo on one side of its pair, each pair once. */
+export function validateRoutingRules(rules: readonly RoutingRule[]): readonly RoutingRule[] {
+  const pairs = new Set<string>();
+  rules.forEach((r, i) => {
+    const at = `routing rule ${i} (${JSON.stringify(r)})`;
+    if (![r.tokenSlug, r.projectSlug, r.routeTo].every((s) => typeof s === 'string' && s.trim() !== '')) {
+      throw new RoutingRuleError(`${at}: slugs must be non-empty`);
+    }
+    if (r.tokenSlug === r.projectSlug) throw new RoutingRuleError(`${at}: token and project slugs must differ`);
+    if (r.routeTo !== r.tokenSlug && r.routeTo !== r.projectSlug) {
+      throw new RoutingRuleError(`${at}: routeTo must be the token or the project slug`);
+    }
+    const key = [r.tokenSlug, r.projectSlug].sort().join('|');
+    if (pairs.has(key)) throw new RoutingRuleError(`${at}: duplicate pair`);
+    pairs.add(key);
+  });
+  return rules;
+}
+
+export function linkerStory(o: { routingRules?: readonly RoutingRule[] } = {}) {
+  const routingRules = validateRoutingRules(o.routingRules ?? DEFAULT_ROUTING_RULES);
   async function buildCase(signal: SignalIn, db: Db): Promise<DecisionCase> {
     const text = [signal.text, signal.excerpt].filter(Boolean).join('\n');
     const shelves = (await db.query<ShelfRow>(
       "select id::text as id, slug, name, type, aliases from atlas.shelves where status = 'active'")).rows;
-    const shortlist = linkShortlist(shelves, o.routingRules, text);
+    const shortlist = linkShortlist(shelves, routingRules, text);
     if (shortlist.length === 0) throw new ParkSignal('no_match');
     const items = await loadItems(db, shortlist.map((s) => s.id));
     const candidates: StoryCandidate[] = shortlist.map((s) => ({ slug: s.slug, name: s.name, type: s.type, items: items.get(s.id) ?? [] }));
@@ -164,7 +194,3 @@ export function linkerStory(o: { routingRules: RoutingRule[] }) {
   return { buildCase, interpret };
 }
 
-// Stubs for the #490 nits (implemented in the next commit).
-export const DEFAULT_ROUTING_RULES: readonly RoutingRule[] = [] as RoutingRule[];
-export class RoutingRuleError extends Error {}
-export function validateRoutingRules(rules: readonly RoutingRule[]): readonly RoutingRule[] { return rules; }
