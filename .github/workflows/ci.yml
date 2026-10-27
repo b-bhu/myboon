@@ -19,6 +19,20 @@ jobs:
 
   checks:
     runs-on: ubuntu-latest
+    services:
+      # Local Postgres for the atlas-driven suites (analyst throwaway DBs,
+      # scout DB-side tests seed their own databases via the env vars below).
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -34,6 +48,12 @@ jobs:
       - run: pnpm --filter @myboon/tx-parser test
       - run: pnpm --filter @myboon/contracts test
       - run: pnpm --filter @myboon/contracts typecheck
+      - run: pnpm --filter @myboon/analyst test
+        env:
+          ANALYST_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      - run: pnpm --filter @myboon/analyst typecheck
+      - run: pnpm --filter @myboon/scout-news test
+      - run: pnpm --filter @myboon/scout-news typecheck
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix
       - run: pnpm --filter @myboon/api typecheck

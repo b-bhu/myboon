@@ -11,7 +11,7 @@ const OTHER_STAGE: V4Stage = 'analyst'
 const SINCE_MS = Date.parse('2026-10-25T12:00:00.000Z') - 3_600_000
 const EXPECTED_SINCE = new Date(SINCE_MS).toISOString()
 
-type RecordedFilter = { op: 'eq' | 'gte' | 'lt'; column: string; value: string }
+type RecordedFilter = { op: 'eq' | 'gte' | 'lt' | 'is' | 'not'; column: string; value: string | null; op2?: string }
 
 /** One atlas query: the chain calls recorded as they are built. */
 type RecordedQuery = {
@@ -56,6 +56,14 @@ function fakeAtlasClient(result: FakeResult): { client: SupabaseClient; queries:
               record.filters.push({ op: 'lt', column, value })
               return chain
             },
+            is(column: string, value: null) {
+              record.filters.push({ op: 'is', column, value })
+              return chain
+            },
+            not(column: string, op: 'is', value: null) {
+              record.filters.push({ op: 'not', column, value, op2: op })
+              return chain
+            },
             then<TResult1 = FakeResult, TResult2 = never>(
               onFulfilled?: ((value: FakeResult) => TResult1 | PromiseLike<TResult1>) | null | undefined,
               onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null | undefined,
@@ -75,7 +83,7 @@ function errorResult(message: string): FakeResult {
   return { count: null, error: { message } }
 }
 
-test('queueDepth counts ready signal_queue rows in the atlas schema', async () => {
+test('queueDepth counts received, unclaimed atlas.signals rows (the claimable queue) in the atlas schema', async () => {
   const { client, queries } = fakeAtlasClient({ count: 5, error: null })
   const source = createAtlasHealthSource(client)
 
@@ -85,10 +93,13 @@ test('queueDepth counts ready signal_queue rows in the atlas schema', async () =
   assert.equal(queries.length, 1)
   assert.deepEqual(queries[0], {
     schema: 'atlas',
-    table: 'signal_queue',
-    select: '*',
+    table: 'signals',
+    select: 'status,claim_token',
     countOptions: { count: 'exact', head: true },
-    filters: [{ op: 'eq', column: 'status', value: 'ready' }],
+    filters: [
+      { op: 'eq', column: 'status', value: 'received' },
+      { op: 'is', column: 'claim_token', value: null },
+    ],
   })
 })
 
@@ -109,7 +120,7 @@ test('signalsSince counts windowed atlas.signals rows selecting only the granted
   })
 })
 
-test('leaseExpiries counts leases expired between since and the read time', async () => {
+test('leaseExpiries counts received claims that expired between since and the read time', async () => {
   const startOfTest = Date.now()
   const { client, queries } = fakeAtlasClient({ count: 2, error: null })
   const source = createAtlasHealthSource(client)
@@ -119,31 +130,45 @@ test('leaseExpiries counts leases expired between since and the read time', asyn
   assert.equal(expiries, 2)
   assert.equal(queries.length, 1)
   assert.deepEqual(queries[0]?.schema, 'atlas')
-  assert.deepEqual(queries[0]?.table, 'signal_queue')
-  assert.deepEqual(queries[0]?.select, '*')
+  assert.deepEqual(queries[0]?.table, 'signals')
+  assert.deepEqual(queries[0]?.select, 'status,claim_token,claim_expires_at')
   assert.deepEqual(queries[0]?.countOptions, { count: 'exact', head: true })
   const filters = queries[0]?.filters ?? []
-  assert.deepEqual(filters.slice(0, 2), [
-    { op: 'eq', column: 'status', value: 'leased' },
-    { op: 'gte', column: 'lease_expires_at', value: EXPECTED_SINCE },
+  assert.deepEqual(filters.slice(0, 3), [
+    { op: 'eq', column: 'status', value: 'received' },
+    { op: 'not', column: 'claim_token', value: null, op2: 'is' },
+    { op: 'gte', column: 'claim_expires_at', value: EXPECTED_SINCE },
   ])
   // The upper bound comes from the wall clock at read time; only its shape
   // and bounds are assertable.
-  const upperBound = filters[2]
+  const upperBound = filters[3]
   assert.equal(upperBound?.op, 'lt')
+  assert.equal(upperBound?.column, 'claim_expires_at')
   const upperMs = Date.parse(upperBound?.value ?? '')
-  assert.ok(Number.isFinite(upperMs), 'the lease upper bound is a parseable timestamp')
+  assert.ok(Number.isFinite(upperMs), 'the claim upper bound is a parseable timestamp')
   assert.ok(upperMs >= Date.parse(EXPECTED_SINCE), 'the window is not inverted')
   assert.ok(upperMs <= startOfTest + 60_000, 'the upper bound is the read time, not a wild future date')
 })
 
-test('deadLetterCount and advisoryLockHolder are null without querying the database', async () => {
+test('deadLetterCount counts dead signals now that status is readable', async () => {
   const { client, queries } = fakeAtlasClient({ count: 1, error: null })
   const source = createAtlasHealthSource(client)
 
-  assert.equal(await source.deadLetterCount(SCOUT), null)
+  assert.equal(await source.deadLetterCount(SCOUT), 1)
+  assert.deepEqual(queries[0], {
+    schema: 'atlas',
+    table: 'signals',
+    select: 'status',
+    countOptions: { count: 'exact', head: true },
+    filters: [{ op: 'eq', column: 'status', value: 'dead' }],
+  })
+})
+
+test('advisoryLockHolder is null without querying the database', async () => {
+  const { client, queries } = fakeAtlasClient({ count: 1, error: null })
+  const source = createAtlasHealthSource(client)
+
   assert.equal(await source.advisoryLockHolder(), null)
-  // INSERT-only grant on dead_letter; no PostgREST view on advisory locks.
   assert.equal(queries.length, 0)
 })
 
@@ -156,13 +181,13 @@ test('oldestClaimAgeMs is null for every stage: no claim-start column exists', a
 })
 
 test('a supabase error propagates as a thrown Error, not as a null value', async () => {
-  const { client, queries } = fakeAtlasClient(errorResult('permission denied for table signal_queue'))
+  const { client, queries } = fakeAtlasClient(errorResult('permission denied for table signals'))
   const source = createAtlasHealthSource(client)
 
-  await assert.rejects(source.queueDepth(SCOUT), { message: 'permission denied for table signal_queue' })
-  await assert.rejects(source.signalsSince(SCOUT, SINCE_MS), { message: 'permission denied for table signal_queue' })
+  await assert.rejects(source.queueDepth(SCOUT), { message: 'permission denied for table signals' })
+  await assert.rejects(source.signalsSince(SCOUT, SINCE_MS), { message: 'permission denied for table signals' })
   // The null-bearing fields stay null even when the granted reads fail.
-  assert.equal(await source.deadLetterCount(SCOUT), null)
+  assert.equal(await source.advisoryLockHolder(), null)
   assert.equal(queries.length, 2)
 })
 
@@ -170,7 +195,7 @@ test('a head count without a count number fails loudly instead of reporting zero
   const { client } = fakeAtlasClient({ count: null, error: null })
   const source = createAtlasHealthSource(client)
 
-  await assert.rejects(source.queueDepth(SCOUT), { message: 'signal_queue count was unavailable' })
+  await assert.rejects(source.queueDepth(SCOUT), { message: 'signals count was unavailable' })
 })
 
 test('every metric is null for a stage other than scout-news, without touching atlas', async () => {
