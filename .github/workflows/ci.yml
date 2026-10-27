@@ -57,7 +57,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "create role anon nologin" -c "create role authenticated nologin" -c "create role service_role nologin bypassrls" -c "create database scout_test"
+          for r in anon authenticated service_role; do
+            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "do \$\$ begin create role $r nologin; exception when duplicate_object then null; end \$\$"
+          done
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "create database scout_test"
           for f in $(ls supabase/migrations/*_atlas*.sql | grep -v _atlas_tool_log | sort); do
             psql -h 127.0.0.1 -U postgres -d scout_test -v ON_ERROR_STOP=1 -q -f "$f"
           done
