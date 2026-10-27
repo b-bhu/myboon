@@ -1,21 +1,23 @@
 /**
- * V4 health source backed by the atlas schema, scout stage only (#444).
+ * V4 health source backed by the atlas schema, scout stage only (#444, #478).
  *
  * The runner connects as service_role. Its atlas grants come from migrations
- * 20261026011119 (scout service_role grants) and 20261026011428 (atlas.signals
- * created_at / enqueued_at column grant). What service_role may read decides
- * what this source may query:
+ * 20261026011119 (scout service_role grants) and 20261027120000 (signal
+ * status column grants). What service_role may read decides what this source
+ * may query:
  *
- *   atlas.signal_queue — full SELECT (id, signal_id, priority, status,
- *                        attempts, max_attempts, available_at, lease_token,
- *                        lease_expires_at, last_error, created_at)
- *   atlas.signals      — SELECT only on signal_id, source, source_id and the
- *                        dedicated columns grant (created_at, enqueued_at)
- *   atlas.dead_letter  — INSERT only: the dead-letter depth is NOT readable
+ *   atlas.signals — SELECT only on signal_id, source, source_id (20261026011119),
+ *                   created_at (20261026011428) and the status/claim columns
+ *                   (status, parked_reason, claim_token, claim_expires_at,
+ *                   claimed_by, attempts, last_error, next_attempt_at, text,
+ *                   excerpt, link, occurred_at). priority is NOT readable, so
+ *                   signals readers never select it.
  *
- * priority exists on atlas.signals only outside its SELECT grant, so signals
- * readers never select it. Every metric is a head count: no rows travel over
- * the wire, which keeps the snapshot cheap enough to run every cycle.
+ * The signal_queue table is gone (#478): the scout's insert defaults a new
+ * signal to status 'received', unclaimed and due, so the queue depth is the
+ * count of received rows still waiting for a claim. Every metric is a head
+ * count: no rows travel over the wire, which keeps the snapshot cheap enough
+ * to run every cycle.
  *
  * Where a metric is not backed by these grants the method returns null —
  * "not readable with current grants" — without querying for it. A null is a
@@ -40,6 +42,8 @@ interface CountQuery extends PromiseLike<CountResult> {
   eq(column: string, value: string): CountQuery
   gte(column: string, value: string): CountQuery
   lt(column: string, value: string): CountQuery
+  is(column: string, value: null): CountQuery
+  not(column: string, op: 'is', value: null): CountQuery
 }
 
 interface AtlasTable {
@@ -76,13 +80,22 @@ export function createAtlasHealthSource(client: SupabaseClient): V4HealthSource 
   }
 
   return {
+    // queueDepth: received signals still waiting for a claim. The claimable
+    // predicate on the DB is status = 'received' and claim_token is null and
+    // next_attempt_at <= now(); the head-count API cannot express the due
+    // time, so any row with a future next_attempt_at (backing off) is
+    // included in the depth until it is claimed again.
     async queueDepth(stage: V4Stage): Promise<number | null> {
       if (stage !== SCOUT_STAGE) return null
-      return exactCount('signal_queue', '*', (query) => query.eq('status', 'ready'))
+      return exactCount('signals', 'status,claim_token', (query) =>
+        query.eq('status', 'received').is('claim_token', null),
+      )
     },
 
-    // signal_queue stores no claim-start timestamp: lease_expires_at says
-    // when a claim dies, not when it was claimed. No claim age to read yet.
+    // Received rows currently claimed (claim_token set). Leases wait inside
+    // the claim expiry; without a claim-start timestamp the age and a plain
+    // in-flight read are not readable, so only the windowed expiry count
+    // below reports claim activity.
     async oldestClaimAgeMs(): Promise<number | null> {
       return null
     },
@@ -90,21 +103,24 @@ export function createAtlasHealthSource(client: SupabaseClient): V4HealthSource 
     async leaseExpiries(stage: V4Stage, sinceMs: number): Promise<number | null> {
       if (stage !== SCOUT_STAGE) return null
       const sinceIso = new Date(sinceMs).toISOString()
-      // Upper bound is the read time, not the snapshot clock: leases still
-      // open at query time have not expired yet.
+      // Upper bound is the read time, not the snapshot clock: claims whose
+      // claim_expires_at passed the read time count as expired work waiting
+      // to be retaken.
       const nowIso = new Date().toISOString()
-      return exactCount('signal_queue', '*', (query) =>
+      return exactCount('signals', 'status,claim_token,claim_expires_at', (query) =>
         query
-          .eq('status', 'leased')
-          .gte('lease_expires_at', sinceIso)
-          .lt('lease_expires_at', nowIso),
+          .eq('status', 'received')
+          .not('claim_token', 'is', null)
+          .gte('claim_expires_at', sinceIso)
+          .lt('claim_expires_at', nowIso),
       )
     },
 
-    // INSERT-only grant on atlas.dead_letter. Never query it; the snapshot
-    // reads null instead of a fabricated zero.
-    async deadLetterCount(): Promise<number | null> {
-      return null
+    // 'dead' is where failed attempts land (#478), and status is now
+    // readable: the dead-letter depth is the count of dead signals.
+    async deadLetterCount(stage: V4Stage): Promise<number | null> {
+      if (stage !== SCOUT_STAGE) return null
+      return exactCount('signals', 'status', (query) => query.eq('status', 'dead'))
     },
 
     // Postgres advisory locks are not visible through the PostgREST API.

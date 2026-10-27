@@ -10,6 +10,11 @@
       "import": "./src/index.ts",
       "default": "./src/index.ts",
       "types": "./src/index.ts"
+    },
+    "./test-fixtures": {
+      "import": "./src/test-fixtures/news-samples.ts",
+      "default": "./src/test-fixtures/news-samples.ts",
+      "types": "./src/test-fixtures/news-samples.ts"
     }
   },
   "scripts": {

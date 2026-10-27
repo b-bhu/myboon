@@ -75,19 +75,19 @@ run, so 15-minute cadence is the expected rate.
 
 ## Health numbers (`health` log lines)
 
-Service_role's atlas grants (20261026011119, 20261026011428) decide what the
-health source can read. A metric it cannot read reports `null` with **no**
-`errors` entry; a null is expected there, not a fault. A non-empty `errors`
-array is a real failed read.
+Service_role's atlas grants (20261026011119, 20261026011428, 20261027120000)
+decide what the health source can read. A metric it cannot read reports
+`null` with **no** `errors` entry; a null is expected there, not a fault. A
+non-empty `errors` array is a real failed read.
 
 | Field | Meaning | Healthy | Bad |
 | --- | --- | --- | --- |
-| `queueDepth` | `ready` rows in `atlas.signal_queue` | Small, drains at the next tick | Growing for consecutive ticks: the scout enqueues faster than downstream consumes |
-| `oldestClaimAgeMs` | Age of the oldest open claim | Always `null` (no claim-start column is granted) | — |
-| `leaseExpiriesLastHour` | Leases that expired in the last hour | 0 | Sustained counts: claimants are dying mid-item |
-| `deadLetterCount` | Items parked in `atlas.dead_letter` | Always `null` (INSERT-only grant) | Triage dead letters in the DB with a role that can read them; null does NOT mean zero |
+| `queueDepth` | `received`, unclaimed rows in `atlas.signals` (#478: the scout insert is the handoff) | Small, drains at the next claim | Growing for consecutive ticks: the analyst is not claiming |
+| `oldestClaimAgeMs` | Age of the oldest open claim | Always `null` (no claim-start column exists) | — |
+| `leaseExpiriesLastHour` | Claims that expired in the last hour (claimed rows whose `claim_expires_at` passed) | 0 | Sustained counts: claimants are dying mid-item |
+| `deadLetterCount` | Rows with `status = 'dead'` in `atlas.signals` (status is readable since 20261027120000) | 0 for a healthy analyst | Growing: attempts hit the cap; triage `last_error` in the DB |
 | `advisoryLockHolder` | PID + start time of the lock owner | Always `null` (not exposed via PostgREST) | — |
-| `signalsPerHour` | New `atlas.signals` rows in the window | Matches the scout's per-run enqueue rate | 0 across consecutive ticks while the scout still logs enqueue work: wiring or grant drift |
+| `signalsPerHour` | New `atlas.signals` rows in the window | Matches the scout's per-run insert rate | 0 across consecutive ticks while the scout still logs insert work: wiring or grant drift |
 
 Any field with an entry in `errors` is one failed read among the six;
 consecutive snapshots with the same entry mean the grant or schema is

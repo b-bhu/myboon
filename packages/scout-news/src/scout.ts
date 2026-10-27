@@ -1,13 +1,13 @@
 /**
- * The scout run: first heal anything the previous run inserted but never
- * enqueued (sweepUnqueued), then fetch the tokens.xyz feed ONCE, map every
- * usable item to a V4 Signal, and insert + enqueue + stamp through the
- * Supabase client. Pure orchestration — the fetcher is injectable for tests,
- * the db client handles all DB behavior.
+ * The scout run: fetch the tokens.xyz feed ONCE, map every usable item to a
+ * V4 Signal, and insert through the Supabase client. The insert is the
+ * handoff to the analyst (status 'received', unclaimed, due); there is no
+ * queue row, no enqueue stamp and no sweep. Pure orchestration — the fetcher
+ * is injectable for tests, the db client handles all DB behavior.
  */
 import type { Signal } from '@myboon/contracts';
 import type { AtlasDb } from './store.js';
-import { insertSignals, sweepUnqueued } from './store.js';
+import { insertSignals } from './store.js';
 import { fetchFeed } from '@myboon/shared/news-feed';
 
 import { NEWS_SIGNAL_SOURCE, feedItemToSignal } from './map.js';
@@ -18,9 +18,6 @@ export interface ScoutCounts {
   invalid: number;
   inserted: number;
   duplicates: number;
-  enqueued: number;
-  /** Crash-recovery sweep: signals re-enqueued by sweepUnqueued this run. */
-  swept: number;
 }
 
 export interface RunScoutOnceOptions {
@@ -32,18 +29,14 @@ export interface RunScoutOnceOptions {
 }
 
 /**
- * Sweep, fetch, map (skipping and counting items that fail
- * `feedItemToSignal`), store. Throws when the sweep, the feed fetch or the
- * store calls fail; returns the counts. The sweep opens the run so a crash
- * from a previous pass is repaired before fresh work starts.
+ * Fetch, map (skipping and counting items that fail `feedItemToSignal`),
+ * store. Throws when the feed fetch or the store call fails; returns the
+ * counts. One JSON line per run is logged, the operational record of a scout
+ * pass.
  */
 export async function runScoutOnce({ db, fetcher = fetchFeed, now = () => new Date() }: RunScoutOnceOptions): Promise<ScoutCounts> {
-  // Heal first: re-enqueue and stamp the signals the last run left unstamped
-  // (a crash after the signals insert). Nothing new is fetched until the
-  // heal is done, so the stranded set never grows.
-  const { enqueued: swept } = await sweepUnqueued(db, now());
-
   const fetchedAt = now();
+
   const feed = await fetcher({ limit: 50 });
 
   const signals: Signal[] = [];
@@ -56,7 +49,7 @@ export async function runScoutOnce({ db, fetcher = fetchFeed, now = () => new Da
     }
   }
 
-  const { inserted, duplicates, enqueued } = await insertSignals(db, signals);
+  const { inserted, duplicates } = await insertSignals(db, signals);
 
   const counts: ScoutCounts = {
     fetched: feed.items.length,
@@ -64,10 +57,7 @@ export async function runScoutOnce({ db, fetcher = fetchFeed, now = () => new Da
     invalid,
     inserted,
     duplicates,
-    enqueued,
-    swept,
   };
-  // One JSON line per run, the operational record of a scout pass.
   console.log(
     JSON.stringify({ run: 'scout_news_once', source: NEWS_SIGNAL_SOURCE, ...counts }),
   );
