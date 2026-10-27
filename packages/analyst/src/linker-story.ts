@@ -163,3 +163,8 @@ export function linkerStory(o: { routingRules: RoutingRule[] }) {
 
   return { buildCase, interpret };
 }
+
+// Stubs for the #490 nits (implemented in the next commit).
+export const DEFAULT_ROUTING_RULES: readonly RoutingRule[] = [] as RoutingRule[];
+export class RoutingRuleError extends Error {}
+export function validateRoutingRules(rules: readonly RoutingRule[]): readonly RoutingRule[] { return rules; }
