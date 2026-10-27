@@ -82,7 +82,7 @@ export function HomeWalletOverview({
   const [panelCovered, setPanelCovered] = useState(false);
   const coveredRef = useRef(false);
   const scrollY = useSharedValue(0);
-  const accountScrollRef = useRef<ScrollView | null>(null);
+  const accountScrollRef = useRef<Animated.ScrollView>(null);
   const wasActive = useRef(active);
   const previousSurfaceVersion = useRef(surfaceVersion);
   const { width } = useWindowDimensions();
