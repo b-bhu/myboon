@@ -1321,11 +1321,11 @@ The assignee should read these in order before changing implementation:
 
 1. `docs/modules/wallet/PRDs/2026_08_12_wallet_completion_meme_trader_PRD.md`
    — this document; authoritative product and P0 integration scope.
-2. `docs/mockups/home-redesign/wallet-inline.html` — current Spot layout and
+2. `docs/mockups/design-language/wallet-mock.html` — current Spot layout and
    interaction reference: table-first Terminal, bottom search, bottom
    Terminal/Profile tabs, one inline expansion, the four-window momentum strip,
    and the P0-safe current-value Profile.
-3. `docs/mockups/home-redesign/wallet-inline.html` — current inline Wallet
+3. `docs/mockups/design-language/wallet-mock.html` — current inline Wallet
    Swap and prefilled Buy/Sell Trade Sheet reference, including custom
    slippage, simulated balance changes, Review, signing, submission, confirmed,
    failed, and unknown states.
@@ -1343,7 +1343,7 @@ The assignee should read these in order before changing implementation:
 
 Supporting visual context:
 
-- `docs/mockups/home-redesign/wallet-inline.html` — current Wallet visual
+- `docs/mockups/design-language/wallet-mock.html` — current Wallet visual
   language and account rows (replaces the earlier Wallet mocks removed in PR #423).
 - `docs/modules/wallet/PRDs/2026_07_26_wallet_connectivity_restructure_PRD.md`
   — historical wallet-platform context only. If it conflicts with the current
