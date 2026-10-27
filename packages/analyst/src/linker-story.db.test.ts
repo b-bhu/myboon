@@ -185,7 +185,7 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
   it('successful pick: the decision stores shortlist, item ids, probabilities and runner-up margin; status analysed', async () => {
     await setText('Ripple XRP SEC news');
     const jev = story('jev', linkTo('xrp', /SEC/, 0.9));
-    await processNext(pool, opts({ primary: jev, fallback: story('clef', 'error'), shadow: story('clef', linkTo('xrp', /price 0/)) }));
+    await processNext(pool, opts({ primary: jev, fallback: story('clef', 'error'), shadow: story('clef', linkTo("xrp", /move 0$/)) }));
     const [d] = await decisions();
     const c = jev.seen[0];
     expect(d.shortlist).toEqual(c.shortlist);

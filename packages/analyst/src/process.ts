@@ -13,7 +13,7 @@
  *      is recorded and never blocks the outcome.
  */
 import { claimNext, failClaim, finishClaim, type Db } from './states.js';
-import type { Interpretation } from './linker-story.js';
+import { ParkSignal, type Interpretation } from './linker-story.js';
 import { DeciderError, type Decider, type DecisionCase, type DeciderAnswer } from './deciders.js';
 
 /** Analyst version written on every decision row. */
@@ -34,7 +34,7 @@ export type ProcessOptions = {
   worker: string;
 };
 
-export type ProcessResult = { signalId: string; result: 'decided' | 'failed' };
+export type ProcessResult = { signalId: string; result: 'decided' | 'parked' | 'failed' | 'lost_claim' };
 
 /** What the shadow contributed, recorded on the decision's shadow_* columns. */
 type ShadowRecord =
@@ -63,7 +63,17 @@ export async function processNext(db: Db, o: ProcessOptions): Promise<ProcessRes
     return { signalId: claim.signalId, result: 'failed' };
   }
 
-  const c = o.buildCase(row);
+  let c: DecisionCase;
+  try {
+    c = await o.buildCase(row, db);
+  } catch (e) {
+    if (e instanceof ParkSignal) {
+      await finishClaim(db, claim, { status: 'parked', parkedReason: e.reason });
+      return { signalId: claim.signalId, result: 'parked' };
+    }
+    await failClaim(db, claim, { error: `case: ${e instanceof Error ? e.message : String(e)}`, backoffMs: o.backoffMs, maxAttempts: o.maxAttempts });
+    return { signalId: claim.signalId, result: 'failed' };
+  }
   const shadow = runShadow(o.shadow, c, o.timeoutMs);
 
   let primaryError: DeciderError | null = null;
@@ -89,6 +99,13 @@ export async function processNext(db: Db, o: ProcessOptions): Promise<ProcessRes
   }
 
   const shadowRecord = await shadow.settled;
+  let interp: Interpretation;
+  try {
+    interp = o.interpret ? o.interpret(decided.answer, c) : { status: 'analysed', fields: {} };
+  } catch (e) {
+    await failClaim(db, claim, { error: `${deciding.name}: ${e instanceof Error ? e.message : String(e)}`, backoffMs: o.backoffMs, maxAttempts: o.maxAttempts });
+    return { signalId: claim.signalId, result: 'failed' };
+  }
   const probabilities = decided.answer.probabilities;
   const choice = decided.answer.choice;
   const confidence = probabilities[choice] ?? 0;
@@ -116,9 +133,11 @@ export async function processNext(db: Db, o: ProcessOptions): Promise<ProcessRes
     shadow_latency_ms: shadowRecord.ok ? shadowRecord.latencyMs : null,
     shadow_outcome: shadowRecord.ok ? 'decided' : shadowRecord.kind,
     shadow_model_version: o.shadow.modelVersion,
+    ...interp.fields,
   };
-  await finishClaim(db, claim, { status: 'analysed', decision });
-  return { signalId: claim.signalId, result: 'decided' };
+  const written = await finishClaim(db, claim, { status: interp.status, parkedReason: interp.parkedReason, decision });
+  if (!written) return { signalId: claim.signalId, result: 'lost_claim' };
+  return { signalId: claim.signalId, result: interp.status === 'parked' ? 'parked' : 'decided' };
 }
 
 function primaryFails(o: ProcessOptions, e: unknown): string {
