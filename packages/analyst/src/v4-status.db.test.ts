@@ -11,6 +11,7 @@ import { newsSampleSignals } from '@myboon/contracts/test-fixtures';
 import { MIGRATIONS_DIR, ROLLBACKS_DIR, applySqlFile, createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
 import {
+  SystemOneDecider,
   DeciderError,
   claimNext,
   failClaim,
@@ -122,6 +123,25 @@ describe.skipIf(ADMIN_URL === '')('#478 V4 signal status, decider slot and decis
     expect(d).toMatchObject({ decided_by: 'clef', model_name: 'clef', model_version: 'clef-test', outcome: 'decided' });
     expect(d.primary_error).toMatch(failure === 'timeout' ? /timeout/ : failure === 'out_of_credit' ? /out_of_credit/ : /error/);
   });
+
+  // CTO #488: Clef takes over on ANY Jev failure, through the real Jev client, not only HTTP 402.
+  const jevFailures: Array<[string, typeof fetch, RegExp]> = [
+    ['HTTP 500', async () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500, headers: { 'content-type': 'application/json' } }), /^error: jev HTTP 500/],
+    ['HTTP 429 quota', async () => new Response(JSON.stringify({ detail: 'quota exceeded' }), { status: 429, headers: { 'content-type': 'application/json' } }), /^out_of_credit: jev HTTP 429/],
+    ['timeout (server never answers, ignores abort)', () => new Promise<Response>(() => {}), /^timeout: jev/],
+    ['network error', async () => { throw new TypeError('fetch failed: ECONNREFUSED'); }, /^error: jev: fetch failed/],
+    ['non-Error throw', async () => { throw 'socket hang up'; }, /^error: jev: socket hang up/],
+  ];
+  it.each(jevFailures)('real Jev client, %s: Clef decides and the Jev failure is recorded', async (_label, fetchImpl, recorded) => {
+    const target = ids[0];
+    await pool.query(`update atlas.signals set next_attempt_at = now() + interval '1 hour' where signal_id <> $1`, [target]);
+    const jev = new SystemOneDecider({ name: 'jev', model: 'jev-test', endpoint: 'http://jev.invalid/v1/systemone', apiToken: 'test-token', fetchImpl });
+    const res = await processNext(pool, opts({ primary: jev, fallback: scripted('clef', [YES]), shadow: scripted('clef', [YES]), timeoutMs: 150 }));
+    expect(res).toMatchObject({ signalId: target, result: 'decided' });
+    const [d] = await decisionsFor(target);
+    expect(d).toMatchObject({ decided_by: 'clef', outcome: 'decided' });
+    expect(d.primary_error).toMatch(recorded);
+  }, 5_000);
 
   it('Jev and Clef both fail: attempts, last_error, backoff; after the cap status = dead, never lost', async () => {
     const target = ids[0];
