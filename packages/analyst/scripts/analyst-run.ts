@@ -18,7 +18,7 @@
  */
 import { Pool } from 'pg';
 
-import { admitSignals, jevFromEnv, runAnalystOnce, type JevQuestion } from '../src/index.js';
+import { admitSignals, assertAnalystTiming, jevFromEnv, runAnalystOnce, type JevQuestion } from '../src/index.js';
 
 /**
  * Constructor question skeleton: the per-call questions ({state, questions},
@@ -53,6 +53,13 @@ function optionalIntEnv(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+const timing = {
+  leaseMs: optionalIntEnv('ANALYST_LEASE_MS', 60_000),
+  timeoutMs: optionalIntEnv('ANALYST_JEV_TIMEOUT_MS', 30_000),
+};
+// Refuse to start before touching the DB or Jev (AnalystConfigError).
+assertAnalystTiming(timing);
+
 const pool = new Pool({ connectionString: requiredEnv('ANALYST_DATABASE_URL') });
 const jev = jevFromEnv(storyQuestions);
 
@@ -61,9 +68,9 @@ try {
   const run = await runAnalystOnce(pool, {
     jev,
     limit: optionalIntEnv('ANALYST_LIMIT', 50),
-    leaseMs: optionalIntEnv('ANALYST_LEASE_MS', 60_000),
+    leaseMs: timing.leaseMs,
     backoffMs: optionalIntEnv('ANALYST_BACKOFF_MS', 60_000),
-    timeoutMs: optionalIntEnv('ANALYST_JEV_TIMEOUT_MS', 30_000),
+    timeoutMs: timing.timeoutMs,
   });
   console.log(JSON.stringify({ admitted, ...run }));
 } finally {

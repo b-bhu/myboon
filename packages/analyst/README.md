@@ -26,7 +26,7 @@ Env vars:
   never printed, logged or written. This entrypoint is the only place real Jev may be
   called — tests use scripted ports only.
 - `ANALYST_LIMIT` (default 50), `ANALYST_LEASE_MS` (default 60000), `ANALYST_BACKOFF_MS`
-  (default 60000), `ANALYST_JEV_TIMEOUT_MS` (default 30000): optional knobs.
+  (default 60000), `ANALYST_JEV_TIMEOUT_MS` (default 30000): optional knobs. The analyst refuses to start (`AnalystConfigError`) unless `ANALYST_LEASE_MS` > 1.2 × `ANALYST_JEV_TIMEOUT_MS`.
 
 Nothing here creates or reads a `.env` file — provide the values yourself. The PM2 wiring
 (process name, cwd, restart policy, log rotation) belongs to the systems manager; this

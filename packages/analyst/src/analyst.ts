@@ -283,12 +283,39 @@ async function retryClaim(pool: Pool, claim: Claim, error: string, run: AnalystR
   if (result === 'dead_lettered') run.deadLettered += 1;
 }
 
+/** Thrown at startup when the analyst configuration is unsafe to run. */
+export class AnalystConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AnalystConfigError';
+  }
+}
+
+/** The lease must outlive one Jev call by this share of the timeout (claim + DB writes + clock slack). */
+export const LEASE_MARGIN_RATIO = 0.2;
+
+/**
+ * Fail fast (CTO #486 review): a lease that is not longer than the Jev timeout
+ * plus a 20% margin can lapse during a single call, letting another worker
+ * reclaim the signal and call Jev twice.
+ */
+export function assertAnalystTiming(o: { leaseMs: number; timeoutMs: number }): void {
+  const ok = Number.isFinite(o.leaseMs) && Number.isFinite(o.timeoutMs) && o.timeoutMs > 0
+    && o.leaseMs > o.timeoutMs * (1 + LEASE_MARGIN_RATIO);
+  if (!ok) {
+    throw new AnalystConfigError(
+      `lease ${o.leaseMs}ms must be greater than the Jev timeout ${o.timeoutMs}ms plus ${LEASE_MARGIN_RATIO * 100}%`,
+    );
+  }
+}
+
 /**
  * Works up to o.limit signals, claiming ONE at a time (claim, analyse, next
  * claim), so a lease only ever has to cover a single Jev call (CTO #486
  * review: a batch lease lapsed mid-run and allowed a second Jev call).
  */
 export async function runAnalystOnce(pool: Pool, o: AnalystOptions): Promise<AnalystRun> {
+  assertAnalystTiming(o);
   const run: AnalystRun = { claimed: 0, analysed: 0, parked: 0, retried: 0, deadLettered: 0 };
   for (let i = 0; i < o.limit; i++) {
     const claims = await claimSignals(pool, { state: 'received', limit: 1, leaseMs: o.leaseMs, worker: WORKER });
