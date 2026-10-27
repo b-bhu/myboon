@@ -169,13 +169,24 @@ alter table atlas.signals drop column enqueued_at;
 -- 5. Claim surface. SECURITY INVOKER, so every caller needs the table grants
 -- below. No lock and no transaction is held by these functions; the caller
 -- runs one statement per step and the Jev/Clef work happens in between.
-create function atlas.signal_claim(p_lease interval, p_worker text)
+-- Expired claims at the attempt cap become dead here (a worker that crashes on a
+-- signal never reaches signal_fail); below the cap they are handed out again.
+create function atlas.signal_claim(p_lease interval, p_worker text, p_max_attempts integer)
 returns table (signal_id text, claim_token uuid, attempts integer)
 language plpgsql
 security invoker
 set search_path = ''
 as $$
 begin
+  update atlas.signals s
+     set status = 'dead',
+         last_error = 'claim expired after max attempts',
+         claim_token = null,
+         claim_expires_at = null,
+         claimed_by = null
+   where s.status = 'received'
+     and s.claim_expires_at < pg_catalog.now()
+     and s.attempts >= p_max_attempts;
   return query
     update atlas.signals s
        set claim_token = atlas.uuidv7(),
@@ -202,6 +213,7 @@ set search_path = ''
 as $$
 declare
   v_valid_claim boolean;
+  v_n integer;
 begin
   if p_status not in ('analysed', 'parked', 'written', 'deleted') then
     raise exception 'invalid finish status %', p_status;
@@ -213,6 +225,19 @@ begin
               and s.claim_expires_at >= pg_catalog.now())
     into v_valid_claim;
   if not v_valid_claim then
+    return false;
+  end if;
+  update atlas.signals s
+     set status = p_status,
+         parked_reason = case when p_status = 'parked' then p_parked_reason else null end,
+         claim_token = null,
+         claim_expires_at = null,
+         claimed_by = null
+   where s.signal_id = p_signal_id
+     and s.claim_token = p_token
+     and s.claim_expires_at >= pg_catalog.now();
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then
     return false;
   end if;
   if p_decision is not null then
@@ -230,15 +255,6 @@ begin
       from jsonb_populate_record(null::atlas.decisions, p_decision) d
      on conflict (signal_id) do nothing;
   end if;
-  update atlas.signals s
-     set status = p_status,
-         parked_reason = case when p_status = 'parked' then p_parked_reason else null end,
-         claim_token = null,
-         claim_expires_at = null,
-         claimed_by = null
-   where s.signal_id = p_signal_id
-     and s.claim_token = p_token
-     and s.claim_expires_at >= pg_catalog.now();
   return true;
 end $$;
 
@@ -286,12 +302,12 @@ end $$;
 -- WHERE or RETURNING, UPDATE on the ones they set, INSERT on decisions plus the
 -- ON CONFLICT arbiter column). Nothing for anon or authenticated.
 revoke all on function
-  atlas.signal_claim(interval, text),
+  atlas.signal_claim(interval, text, integer),
   atlas.signal_finish(text, uuid, text, text, jsonb),
   atlas.signal_fail(text, uuid, text, interval, integer)
   from public;
 grant execute on function
-  atlas.signal_claim(interval, text),
+  atlas.signal_claim(interval, text, integer),
   atlas.signal_finish(text, uuid, text, text, jsonb),
   atlas.signal_fail(text, uuid, text, interval, integer)
   to service_role;

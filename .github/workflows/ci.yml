@@ -52,7 +52,18 @@ jobs:
         env:
           ANALYST_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       - run: pnpm --filter @myboon/analyst typecheck
+      # scout.db.test.ts needs a disposable DB with the atlas migrations applied (tool_log needs pg_cron; skipped).
+      - name: Prepare scout test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "create role anon nologin" -c "create role authenticated nologin" -c "create role service_role nologin bypassrls" -c "create database scout_test"
+          for f in $(ls supabase/migrations/*_atlas*.sql | grep -v _atlas_tool_log | sort); do
+            psql -h 127.0.0.1 -U postgres -d scout_test -v ON_ERROR_STOP=1 -q -f "$f"
+          done
       - run: pnpm --filter @myboon/scout-news test
+        env:
+          SCOUT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/scout_test
       - run: pnpm --filter @myboon/scout-news typecheck
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix

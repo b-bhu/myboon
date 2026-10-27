@@ -44,7 +44,7 @@ type Decided = { answer: DeciderAnswer; latencyMs: number };
 type SignalRow = { signal_id: string; text: string | null; excerpt: string | null; link: string | null };
 
 export async function processNext(db: Db, o: ProcessOptions): Promise<ProcessResult | null> {
-  const claim = await claimNext(db, { leaseMs: o.leaseMs, worker: o.worker });
+  const claim = await claimNext(db, { leaseMs: o.leaseMs, worker: o.worker, maxAttempts: o.maxAttempts });
   if (!claim) return null;
 
   const row = (await db.query<SignalRow>(

@@ -12,13 +12,19 @@
 -- created (20261025100100_atlas_queues, 20261026011119_atlas_scout_service_role_grants,
 -- 20261026011428_atlas_signals_enqueued_at), and the original atlas.queue_* bodies
 -- copied verbatim from 20261025100100 (create-or-replace keeps the EXECUTE grants).
-set lock_timeout = '5s';
-set statement_timeout = '60s';
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
+
+-- 0. Capture the signals still waiting for the analyst BEFORE status is dropped,
+-- so the recreated signal_queue holds them again (DB Guy, #488).
+create temporary table t478_requeue on commit drop as
+  select signal_id, priority from atlas.signals where status = 'received' and claim_token is null;
 
 -- 1. The new claim surface.
 drop function atlas.signal_fail(text, uuid, text, interval, integer);
 drop function atlas.signal_finish(text, uuid, text, text, jsonb);
-drop function atlas.signal_claim(interval, text);
+drop function atlas.signal_claim(interval, text, integer);
 
 -- 2. Column grants the migration added (signals/decisions).
 revoke select (status, parked_reason, claim_token, claim_expires_at, claimed_by, attempts,
@@ -174,3 +180,9 @@ begin
 end $$;
 
 grant select, insert, update, delete on table atlas.signal_queue to service_role;
+
+-- 9. Re-seed the queue (ready, 0 attempts) for the captured received signals.
+insert into atlas.signal_queue (signal_id, priority)
+select signal_id, priority from t478_requeue;
+
+commit;

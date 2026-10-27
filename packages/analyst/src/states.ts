@@ -2,7 +2,7 @@
  * Signal claim state on atlas.signals (#478), driven by the SQL functions
  * created by supabase/migrations/20261027120000_atlas_signal_status.sql:
  *
- *   claimNext   -> atlas.signal_claim(p_lease interval, p_worker text)
+ *   claimNext   -> atlas.signal_claim(p_lease interval, p_worker text, p_max_attempts integer)
  *   finishClaim -> atlas.signal_finish(p_signal_id, p_token, p_status,
  *                                      p_parked_reason, p_decision jsonb)
  *   failClaim   -> atlas.signal_fail(p_signal_id, p_token, p_error,
@@ -22,14 +22,16 @@ export type Db = Pick<Pool, 'query'>;
 /** One live claim: the returned token must be handed back to finish or fail. */
 export type Claim = { signalId: string; token: string; attempts: number };
 
-export type ClaimNextOptions = { leaseMs: number; worker: string };
+/** maxAttempts: an expired claim at or above it becomes dead instead of being handed out. Default 5. */
+export type ClaimNextOptions = { leaseMs: number; worker: string; maxAttempts?: number };
+export const DEFAULT_MAX_ATTEMPTS = 5;
 
 /** The due received signal with claims first by next_attempt_at, or null when nothing is due. */
 export async function claimNext(db: Db, o: ClaimNextOptions): Promise<Claim | null> {
   const { rows } = await db.query<{ signal_id: string; claim_token: string; attempts: number }>(
     `select signal_id, claim_token, attempts
-       from atlas.signal_claim(($1 || ' milliseconds')::interval, $2)`,
-    [o.leaseMs, o.worker],
+       from atlas.signal_claim(($1 || ' milliseconds')::interval, $2, $3)`,
+    [o.leaseMs, o.worker, o.maxAttempts ?? DEFAULT_MAX_ATTEMPTS],
   );
   const row = rows[0];
   return row ? { signalId: row.signal_id, token: row.claim_token, attempts: row.attempts } : null;
