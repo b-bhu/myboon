@@ -8,6 +8,7 @@ import { WaitlistSheet } from '@/features/waitlist/WaitlistSheet';
 import {
   PRIVACY_URL,
   TERMS_URL,
+  DELETE_ACCOUNT_URL,
   WAITLIST_CTA,
   WAITLIST_PITCH,
 } from '@/features/waitlist/waitlist.mode';
@@ -57,6 +58,8 @@ export function WaitlistProfileContent({ bottomPadding = 24 }: { bottomPadding?:
         <LinkRow label="Privacy policy" url={PRIVACY_URL} />
         <View style={styles.divider} />
         <LinkRow label="Terms of service" url={TERMS_URL} />
+        <View style={styles.divider} />
+        <LinkRow label="Delete account" url={DELETE_ACCOUNT_URL} />
       </View>
       <WaitlistSheet visible={sheetOpen} onClose={() => setSheetOpen(false)} />
     </ScrollView>

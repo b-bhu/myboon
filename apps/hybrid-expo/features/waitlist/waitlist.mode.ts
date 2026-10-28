@@ -12,6 +12,7 @@ export const WAITLIST_PITCH = 'Wallet and trading are coming soon. Join for earl
 export const WAITLIST_SOURCE = 'app-v1.0.5';
 export const PRIVACY_URL = 'https://myboon.tech/privacy';
 export const TERMS_URL = 'https://myboon.tech/terms';
+export const DELETE_ACCOUNT_URL = 'https://myboon.tech/delete-account';
 
 /** The label a wallet/trade button shows: the waitlist CTA in waitlist mode. */
 export function waitlistLabel(fullLabel: string): string {
