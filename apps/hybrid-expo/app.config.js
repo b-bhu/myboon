@@ -173,9 +173,37 @@ function assertRequiredEnvIsPresent(env) {
   );
 }
 
+/**
+ * Android permissions that Expo or its libraries merge into the manifest but
+ * the app never uses. The Seeker dApp Store rejected 1.0.5 with "Permissions
+ * need attention (PER-001)" while these were declared.
+ *
+ * - SYSTEM_ALERT_WINDOW: Expo's default Android template, only for the debug
+ *   dev menu.
+ * - READ/WRITE_EXTERNAL_STORAGE: expo-file-system's config plugin; we never
+ *   touch shared storage.
+ * - USE_BIOMETRIC/USE_FINGERPRINT: androidx.biometric via expo-secure-store;
+ *   nothing calls SecureStore with `requireAuthentication: true`.
+ *
+ * Blocked for every build, not only the dApp Store profile, so all artifacts
+ * declare the same permissions. Expo writes `tools:node="remove"` entries,
+ * which also strip copies merged from library manifests.
+ */
+const BLOCKED_ANDROID_PERMISSIONS = [
+  'android.permission.SYSTEM_ALERT_WINDOW',
+  'android.permission.READ_EXTERNAL_STORAGE',
+  'android.permission.WRITE_EXTERNAL_STORAGE',
+  'android.permission.USE_BIOMETRIC',
+  'android.permission.USE_FINGERPRINT',
+];
+
 module.exports = ({ config }) => {
   assertClientCredentialsAreAbsent(process.env, config);
   assertE2EStubIsFencedOff(process.env);
   assertRequiredEnvIsPresent(process.env);
+  config.android = config.android ?? {};
+  config.android.blockedPermissions = [
+    ...new Set([...(config.android.blockedPermissions ?? []), ...BLOCKED_ANDROID_PERMISSIONS]),
+  ];
   return config;
 };
