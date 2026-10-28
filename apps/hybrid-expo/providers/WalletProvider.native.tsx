@@ -9,7 +9,7 @@ const commitmentOrConfig = { commitment: 'confirmed' as const, wsEndpoint: SOLAN
 
 const identity = {
   name: 'myboon',
-  uri: 'https://myboon.xyz',
+  uri: 'https://myboon.tech',
   icon: 'favicon.png',
 };
 
