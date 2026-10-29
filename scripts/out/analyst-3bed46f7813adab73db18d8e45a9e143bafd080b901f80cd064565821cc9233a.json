@@ -1,22 +1,22 @@
 {
   "signal_id": "3bed46f7813adab73db18d8e45a9e143bafd080b901f80cd064565821cc9233a",
-  "summary": "The signal reports that Elon Musk is looking at Stanley Druckenmiller's move into Hyperliquid as a model for US crypto derivatives. It connects two high-profile investors with a leading decentralized perpetuals exchange. If accurate, it signals growing mainstream and institutional interest in on-chain derivatives infrastructure in the US market.",
+  "summary": "The headline reports that Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a template for US crypto derivatives. Druckenmiller reportedly took a position in Hyperliquid, and Musk's apparent interest could signal mainstream US adoption of the DeFi derivatives platform. The claim is unconfirmed headline-level news, but it ties a high-profile US figure to Hyperliquid and the broader push to bring crypto derivatives onshore in the US.",
   "decision": "ignore",
-  "reason": "The signal is speculative clickbait — a rumor that Musk is merely 'eyeing' Druckenmiller's Hyperliquid position with no primary source, confirmation, or concrete action, so it adds no reliable intelligence worth tracking.",
+  "reason": "The signal is speculative headline chatter about Musk merely 'eyeing' Druckenmiller's Hyperliquid position, with no confirmed action, verifiable detail, or concrete development to record.",
   "targets": [],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Is there credible evidence that Elon Musk is pursuing a Hyperliquid-style crypto derivatives play in the US?",
+        "question": "Signal summary: \"The headline reports that Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a template for US crypto derivatives. Druckenmiller reportedly took a position in Hyperliquid, and Musk's apparent interest could signal mainstream US adoption of the DeFi derivatives platform. The claim is unconfirmed headline-level news, but it ties a high-profile US figure to Hyperliquid and the broader push to bring crypto derivatives onshore in the US.\". Is this signal about something worth tracking for crypto and market users? Answer keep or ignore.",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "ignore",
         "probabilities": {
-          "keep": 0.04,
-          "ignore": 0.96
+          "keep": 0.27,
+          "ignore": 0.73
         },
         "provider": "jev"
       }

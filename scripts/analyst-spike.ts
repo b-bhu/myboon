@@ -22,7 +22,7 @@ type Shelf = { slug: string; name: string; type: string; aliases: string[] };
 type Candidate = { slug: string; name: string; type: string };
 type Mention = { name: string; type: string; search_terms: string[] };
 type SignalInput = { signal_id: string; text: string; source: string | null; link: string | null };
-type Target = { entity: string; kind: 'existing' | 'new'; type: string; angle: Angle; note: string };
+type Target = { entity: string; kind: 'existing' | 'new'; type: string; angle: Angle | null; note: string };
 type EntityQuestion = { mention: string; question: string; best_shelf_slug: string | null; candidates: Candidate[] };
 type KeptDraft = { mention: string; mentionType: string; kind: 'existing' | 'new'; candidates: Candidate[]; best_shelf_slug: string | null };
 type JevEntry = { question: string; choices: string[]; answer: string | null; probabilities: Record<string, number> | null; provider: 'jev' | 'clef'; error?: string };
@@ -33,10 +33,23 @@ type AnalystResult = {
 };
 
 const SYSTEM_PROMPT =
-  'You are the analyst. You receive one signal. Act like a human analyst: read it, dissect it (who, what, why it matters), then decide where it should live. ' +
-  'Build a clear small question for the decision tool for each decision: first whether the signal is worth keeping, then for each entity it touches whether it ' +
-  'belongs to an existing entity, needs a new one, or is not related. Use the entity tool to see what exists. After the decision tool answers, decide the angle ' +
-  'for each entity: what is forming there. Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. Return only the structured output.';
+  'You are the analyst. You receive one signal, the way a market analyst hears news, posts and talk as it happens. Your job is not to check whether it is true. ' +
+  'It is to understand what is being said, who it touches, and what it could mean for them. Read it, dissect it (who, what, why it matters), then decide where ' +
+  'it should live. Ask the decision tool first whether this signal is worth keeping, then, for each entity it touches, whether it belongs to an existing entity, ' +
+  'needs a new one, or is not related. Use the entity tool to see what exists. After the decision tool answers, decide the angle for each entity: what is forming ' +
+  'there, written the way it was said (reported, rumored, announced). Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. ' +
+  'Return only the structured output.';
+
+/** Fixed decision-tool questions, written by code (the LLM never writes them). */
+function keepQuestionFor(summary: string): string {
+  return `Signal summary: "${summary}". Is this signal about something worth tracking for crypto and market users? Answer keep or ignore.`;
+}
+function entityQuestionFor(mention: string, candidates: Candidate[]): string {
+  const shown = candidates.length > 0
+    ? ` Candidate existing entities: ${candidates.map((c) => `${c.slug} (${c.name}, ${c.type})`).join('; ')}.`
+    : ' The entity search found no existing entities for it.';
+  return `This signal touches "${mention}".${shown} Does "${mention}" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.`;
+}
 
 const ANALYST_MODEL = process.env.ANALYST_MODEL ?? 'glm-5.3-flash';
 const LLM_URL = 'https://ollama.com/v1/chat/completions';
@@ -171,35 +184,19 @@ function toMentions(raw: unknown): Mention[] {
     .slice(0, 3);
 }
 
-/** Turn 2 shape: questions come from the LLM, candidates only from this script's own search. */
-function toEntityQuestions(raw: unknown, mentions: Mention[], byMention: Map<string, Candidate[]>): EntityQuestion[] {
-  const rows = Array.isArray(raw) ? raw : [];
-  const parsed = new Map<string, Record<string, unknown>>();
-  for (const row of rows) parsed.set(str(asRec(row).mention).toLowerCase(), asRec(row));
-  return mentions
-    .map((mention, index): EntityQuestion | null => {
-      const rec = parsed.get(mention.name.toLowerCase()) ?? (rows.length === mentions.length ? asRec(rows[index]) : null);
-      if (!rec) return null;
-      const fallback = `Does this signal concern ${mention.name}: an existing entity, a new one, or is it not related?`;
-      const candidates = byMention.get(mention.name.toLowerCase()) ?? [];
-      return { mention: mention.name, question: str(rec.question) || fallback, best_shelf_slug: str(rec.best_shelf_slug) || null, candidates };
-    })
-    .filter((q): q is EntityQuestion => q !== null);
-}
-
 async function analyze(signal: SignalInput, shelves: Shelf[]): Promise<AnalystResult> {
   const request = { signal_id: signal.signal_id, text: signal.text, source: signal.source, link: signal.link };
 
   // Turn 1: dissect the signal and shape the keep question.
   const turn1 = await step(
     `Signal:\n${JSON.stringify(request, null, 2)}\n\nReply with JSON only:\n` +
-      '{"summary": string, "keep_question": string, "mentions": [{"name": string, "type": string, "search_terms": string[]}]}\n' +
-      'summary: 2-3 sentences (who, what, why it matters). keep_question: one short question, keep or ignore. ' +
+      '{"summary": string, "mentions": [{"name": string, "type": string, "search_terms": string[]}]}\n' +
+      'summary: 2-3 sentences (who, what, why it matters). ' +
       'mentions: at most 3 entities this signal touches, each with a type guess and search_terms.'
   );
   const summary = str(turn1.summary);
-  const keepQuestion = str(turn1.keep_question);
-  if (!summary || !keepQuestion) throw new Error('no summary/keep_question in the first reply');
+  if (!summary) throw new Error('no summary in the first reply');
+  const keepQuestion = keepQuestionFor(summary);
   const mentions = toMentions(turn1.mentions);
 
   // Decision 1: is the signal worth keeping at all?
@@ -221,27 +218,24 @@ async function analyze(signal: SignalInput, shelves: Shelf[]): Promise<AnalystRe
     candidates: searchShelves([mention.name, ...mention.search_terms], shelves),
   }));
 
-  // Turn 2: one routing question per mention.
-  const turn2 = await step(
-    `Entity search results per mention (the entity tool output):\n${JSON.stringify(searchRows, null, 2)}\n\n` +
-      'Reply with JSON only:\n{"entity_questions": [{"mention": string, "question": string, "best_shelf_slug": string | null}]}\n' +
-      'For every mention: question is one short question for the decision tool (existing entity, new one, or not related); ' +
-      'best_shelf_slug is the closest candidate slug, or null when none fit.'
-  );
-  const byMention = new Map(searchRows.map((row) => [row.mention.toLowerCase(), row.candidates]));
-  const entityQuestions = toEntityQuestions(turn2.entity_questions, mentions, byMention);
-  if (entityQuestions.length === 0) throw new Error('no entity_questions in the second reply');
-
+  // Fixed per-entity questions; best shelf is the entity tool's top-ranked candidate.
+  const entityQuestions: EntityQuestion[] = searchRows.map((row) => ({
+    mention: row.mention, question: entityQuestionFor(row.mention, row.candidates),
+    best_shelf_slug: row.candidates[0]?.slug ?? null, candidates: row.candidates,
+  }));
   // Decision 2: one verdict per mention; this code owns kind and sanity.
   const kept: KeptDraft[] = [];
   const unclearReasons: string[] = [];
+  const doubts: Target[] = [];
   for (const eq of entityQuestions) {
     const state = { signal: signal.text, summary, mention: eq.mention, candidates: eq.candidates };
     const verdict = await ask(eq.question, ['existing', 'new', 'not_related'], state, eq.candidates);
     if (!verdict.ok) return resultOf(signal, 'unclear', `The decision tool was unreachable. ${verdict.error}`, [], summary);
     if (verdict.choice === 'not_related') continue;
     if (verdict.choice === 'existing' && eq.candidates.length === 0) {
-      unclearReasons.push(`The decision tool placed "${eq.mention}" in an existing entity, but the entity search found no candidate shelves.`);
+      const why = `The decision tool placed "${eq.mention}" in an existing entity, but the entity search found no candidate shelves.`;
+      unclearReasons.push(why);
+      doubts.push({ entity: kebabSlug(eq.mention), kind: 'existing', type: mentions.find((m) => m.name === eq.mention)?.type ?? 'unknown', angle: null, note: why });
       continue;
     }
     const kind: 'existing' | 'new' = verdict.choice === 'new' ? 'new' : 'existing';
@@ -256,20 +250,19 @@ async function analyze(signal: SignalInput, shelves: Shelf[]): Promise<AnalystRe
   // Turn 3: route the kept entities; kinds are fixed by the decider answers above.
   let reason = '';
   const targets: Target[] = [];
-  if (kept.length > 0) {
+  if (kept.length > 0 && unclearReasons.length === 0) {
     const turn3 = await step(
       `The decision tool has answered; each kind below is fixed and cannot change.\n${JSON.stringify(kept, null, 2)}\n\n` +
         'Reply with JSON only:\n' +
-        '{"targets": [{"mention": string, "entity": string, "type": string, "angle": "new_story" | "existing_story" | "plain_update", "note": string}], "reason": string}\n' +
-        'entity: for kind "existing", one of that mention\'s candidate slugs (prefer best_shelf_slug); for kind "new", a kebab-case ' +
-        'slug. note: one line on what is forming there. Include a target for every kept mention, none for anything judged not related.'
+        '{"targets": [{"mention": string, "type": string, "angle": "new_story" | "existing_story" | "plain_update", "note": string}], "reason": string}\n' +
+        'One row per kept mention, no others: entities are fixed by code. note: one line on what is forming there.'
     );
     reason = str(turn3.reason);
     const rows = Array.isArray(turn3.targets) ? turn3.targets : [];
     if (rows.length === 0) throw new Error('no targets in the third reply');
     buildTargets(rows, kept, targets, unclearReasons);
   }
-  if (unclearReasons.length > 0) return resultOf(signal, 'unclear', unclearReasons.join(' '), targets, summary);
+  if (unclearReasons.length > 0) return resultOf(signal, 'unclear', unclearReasons.join(' '), doubts, summary);
   return resultOf(signal, 'keep', reason || 'The decision tool answered keep and every kept entity is routed.', targets, summary);
 }
 
@@ -284,15 +277,13 @@ function buildTargets(rows: unknown[], kept: KeptDraft[], targets: Target[], unc
     if (!(ANGLES as readonly string[]).includes(angle)) { unclearReasons.push(`No valid angle was given for "${draft.mention}".`); return; }
     if (draft.kind === 'existing') {
       const slugs = draft.candidates.map((c) => c.slug);
-      const requested = str(row?.entity);
-      let entity: string | null = slugs.includes(requested) ? requested : null;
-      if (!entity && draft.best_shelf_slug && slugs.includes(draft.best_shelf_slug)) entity = draft.best_shelf_slug;
+      const entity: string | null = draft.best_shelf_slug && slugs.includes(draft.best_shelf_slug) ? draft.best_shelf_slug : null;
       if (!entity) { unclearReasons.push(`The decision tool placed "${draft.mention}" in an existing entity, but no chosen candidate slug is valid.`); return; }
       const matched = draft.candidates.find((c) => c.slug === entity);
       targets.push({ entity, kind: 'existing', type: str(row?.type) || matched?.type || draft.mentionType, angle: angle as Angle, note: str(row?.note) });
       return;
     }
-    const entity = kebabSlug(str(row?.entity) || draft.mention);
+    const entity = kebabSlug(draft.mention);
     if (!entity) { unclearReasons.push(`No usable slug for the new entity "${draft.mention}".`); return; }
     targets.push({ entity, kind: 'new', type: str(row?.type) || draft.mentionType, angle: angle as Angle, note: str(row?.note) });
   });
