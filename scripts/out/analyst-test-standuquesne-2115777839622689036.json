@@ -1,0 +1,93 @@
+{
+  "signal_id": "test-standuquesne-2115777839622689036",
+  "summary": "An angel investor announces on X their investment in trade(xyz), a trading platform building on Hyperliquid. The post highlights a partnership between trade(xyz) and ICE (Intercontinental Exchange) to bring 24/7 perpetual futures on Hyperliquid to the United States. This matters because it signals major TradFi-crypto convergence: one of the world's largest exchange operators is backing US-accessible perpetual futures via a Hyperliquid-based platform.",
+  "decision": "keep",
+  "reason": "All three mentions resolved to existing entities. trade.xyz gets a new_story angle since the ICE partnership is a formative, potentially defining development for the protocol. ICE gets a new_story angle as this marks a fresh strategic move into crypto perpetuals. Hyperliquid is an existing_story, adding to its established narrative of institutional and TradFi integration.",
+  "targets": [
+    {
+      "entity": "trade-xyz",
+      "kind": "existing",
+      "type": "protocol",
+      "angle": "new_story",
+      "note": "A defining partnership is forming: trade.xyz teaming with ICE to launch 24/7 US-accessible perpetual futures on Hyperliquid, potentially its breakout moment."
+    },
+    {
+      "entity": "intercontinental-exchange-ice",
+      "kind": "existing",
+      "type": "organization",
+      "angle": "new_story",
+      "note": "A new TradFi-crypto convergence thread: ICE, a major traditional exchange operator, entering crypto perps via a Hyperliquid-based platform for US users."
+    },
+    {
+      "entity": "hyperliquid",
+      "kind": "existing",
+      "type": "protocol",
+      "angle": "existing_story",
+      "note": "Another chapter in Hyperliquid's ongoing institutional-adoption story: its infrastructure now underpinning ICE-backed US perpetual futures."
+    }
+  ],
+  "debug": {
+    "model": "glm-5.3-flash",
+    "jev": [
+      {
+        "question": "Should we track the ICE-trade(xyz) partnership to launch 24/7 perpetual futures on Hyperliquid for US users?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "answer": "keep",
+        "probabilities": {
+          "keep": 0.9,
+          "ignore": 0.1
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Does this refer to the existing Trade.XYZ protocol, or is it a new/unrelated entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 0.89,
+          "new": 0.08,
+          "not_related": 0.03
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Does this refer to the existing Intercontinental Exchange (ICE) organization, or is it a new/unrelated entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 1,
+          "new": 0,
+          "not_related": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Does this refer to the existing Hyperliquid protocol (rather than the HYPE asset or Hyperliquid Strategies), or is it a new/unrelated entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 1,
+          "new": 0,
+          "not_related": 0
+        },
+        "provider": "jev"
+      }
+    ],
+    "llm_turns": 3
+  }
+}
