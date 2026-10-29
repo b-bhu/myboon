@@ -1,0 +1,26 @@
+{
+  "signal_id": "3bed46f7813adab73db18d8e45a9e143bafd080b901f80cd064565821cc9233a",
+  "summary": "The signal reports that Elon Musk is looking at Stanley Druckenmiller's move into Hyperliquid as a model for US crypto derivatives. It connects two high-profile investors with a leading decentralized perpetuals exchange. If accurate, it signals growing mainstream and institutional interest in on-chain derivatives infrastructure in the US market.",
+  "decision": "ignore",
+  "reason": "The signal is speculative clickbait — a rumor that Musk is merely 'eyeing' Druckenmiller's Hyperliquid position with no primary source, confirmation, or concrete action, so it adds no reliable intelligence worth tracking.",
+  "targets": [],
+  "debug": {
+    "model": "glm-5.3-flash",
+    "jev": [
+      {
+        "question": "Is there credible evidence that Elon Musk is pursuing a Hyperliquid-style crypto derivatives play in the US?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "answer": "ignore",
+        "probabilities": {
+          "keep": 0.04,
+          "ignore": 0.96
+        },
+        "provider": "jev"
+      }
+    ],
+    "llm_turns": 2
+  }
+}

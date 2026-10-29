@@ -1,0 +1,26 @@
+{
+  "signal_id": "0d4c3fb8ff4265b631a4859cf5594055e100972b1d336776aed0d11abff2a81b",
+  "summary": "Crypto news account tokens_xyz reports that real-world assets (RWA) on Solana have surpassed $5 billion in value, a claimed all-time high. If accurate, this marks a notable growth milestone for tokenized assets on the Solana network and signals momentum in the RWA sector. The figure comes from a single unverified source and should be corroborated before being treated as a confirmed datapoint.",
+  "decision": "ignore",
+  "reason": "It is a transient market statistic from a single unverified account with no new entity, event, or actionable development, so it adds no lasting value beyond a headline number.",
+  "targets": [],
+  "debug": {
+    "model": "glm-5.3-flash",
+    "jev": [
+      {
+        "question": "Is the $5B Solana RWA milestone corroborated by on-chain data or other sources?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "answer": "ignore",
+        "probabilities": {
+          "keep": 0.23,
+          "ignore": 0.77
+        },
+        "provider": "jev"
+      }
+    ],
+    "llm_turns": 2
+  }
+}

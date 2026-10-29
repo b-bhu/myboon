@@ -1,0 +1,71 @@
+{
+  "signal_id": "f89d45bbd398a54e02a11569426a5c7b171205d46823b41afbfe60fb027cd563",
+  "summary": "Kalshi, the US-regulated prediction markets platform, raised $1 billion at a $40 billion valuation, with its non-sports revenue run rate surpassing $1 billion. The round signals rapid growth and diversification beyond sports event contracts. It matters because it cements Kalshi as a dominant player in prediction markets, a sector increasingly overlapping with crypto-native platforms.",
+  "decision": "keep",
+  "reason": "Kalshi maps cleanly to the existing kalshi entity, and the funding round is significant enough to open a new story rather than a plain update. The Prediction Markets mention was ruled 'existing' but had no sector entity and a null best_shelf_slug; rather than misfiling it as unrelated, it is attached to the only candidate, polymarket, as competitive-landscape context — a slightly imperfect fit worth flagging if a true prediction-markets sector entity is created later.",
+  "targets": [
+    {
+      "entity": "kalshi",
+      "kind": "existing",
+      "type": "organization",
+      "angle": "new_story",
+      "note": "A new chapter is forming: $1B raise at $40B valuation with non-sports revenue topping $1B marks Kalshi's shift from sports contracts to diversified prediction-market dominance."
+    },
+    {
+      "entity": "polymarket",
+      "kind": "existing",
+      "type": "organization",
+      "angle": "existing_story",
+      "note": "No dedicated sector shelf exists, so per the tool's 'existing' verdict this lands on Polymarket: its chief rival's $40B valuation and non-sports growth sharpen the competitive-pressure story."
+    }
+  ],
+  "debug": {
+    "model": "glm-5.3-flash",
+    "jev": [
+      {
+        "question": "Is Kalshi's $1B raise at a $40B valuation worth tracking for the prediction markets space?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "answer": "keep",
+        "probabilities": {
+          "keep": 1,
+          "ignore": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Does this funding news belong to the existing Kalshi entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 1,
+          "new": 0,
+          "not_related": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Is this sector-level signal related to Polymarket, or does it need a new prediction-markets sector entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 0.76,
+          "new": 0.23,
+          "not_related": 0.01
+        },
+        "provider": "jev"
+      }
+    ],
+    "llm_turns": 3
+  }
+}

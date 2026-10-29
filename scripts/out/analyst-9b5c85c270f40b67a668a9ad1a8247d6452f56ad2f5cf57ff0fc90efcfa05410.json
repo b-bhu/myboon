@@ -1,0 +1,79 @@
+{
+  "signal_id": "9b5c85c270f40b67a668a9ad1a8247d6452f56ad2f5cf57ff0fc90efcfa05410",
+  "summary": "Crypto media outlet tokens_xyz reports that roughly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the BVI as the leading domiciles. This signals regulatory arbitrage: issuers are structuring tokenized-equity vehicles offshore to sidestep US securities constraints. It matters because it maps where tokenized-equity issuance infrastructure and jurisdictional competition are concentrating.",
+  "decision": "unclear",
+  "reason": "The decision tool placed \"ADGM\" in an existing entity, but the entity search found no candidate shelves. The decision tool placed \"BVI\" in an existing entity, but the entity search found no candidate shelves.",
+  "targets": [
+    {
+      "entity": "tokenization-rwa",
+      "kind": "existing",
+      "type": "topic",
+      "angle": "existing_story",
+      "note": "A regulatory-arbitrage angle is forming within tokenization: tokenized-equity issuance is concentrating in offshore domiciles (Jersey, ADGM, BVI) to avoid US securities constraints."
+    }
+  ],
+  "debug": {
+    "model": "glm-5.3-flash",
+    "jev": [
+      {
+        "question": "Does this add meaningful new signal about where tokenized stocks are being issued?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "answer": "keep",
+        "probabilities": {
+          "keep": 0.95,
+          "ignore": 0.05
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Does this signal about tokenized stock issuance belong to the existing tokenization-rwa entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 0.92,
+          "new": 0.07,
+          "not_related": 0.01
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Should ADGM be created as a new jurisdiction entity, or is it not related to any existing entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 1,
+          "new": 0,
+          "not_related": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "Should BVI be created as a new jurisdiction entity, or is it not related to any existing entity?",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 0.99,
+          "new": 0,
+          "not_related": 0.01
+        },
+        "provider": "jev"
+      }
+    ],
+    "llm_turns": 3
+  }
+}
