@@ -64,12 +64,11 @@ scenarios() {
      select d.signal_id||':'||(t->>'entity'), d.summary, s.id, d.signal_id, t->>'angle', t->>'note'
        from atlas.decisions d cross join jsonb_array_elements(d.targets) t join atlas.shelves s on s.slug = t->>'entity'
       where d.signal_id = 'test-standuquesne-2115777839622689036'
-     on conflict (item_key) do nothing;
-     insert into atlas.item_signals (item_id, signal_id) select id, signal_id from atlas.items where signal_id='test-standuquesne-2115777839622689036' on conflict do nothing;"
+     on conflict (item_key) do nothing;"
   for i in 1 2; do  # second pass = same signal filed twice
     run "keep-3-targets finish pass $i" "reset role; update atlas.signals set claim_token='00000000-0000-0000-0000-000000000001', claim_expires_at=now()+interval '5 min' where signal_id='test-standuquesne-2115777839622689036'; set role service_role; select atlas.signal_finish('test-standuquesne-2115777839622689036','00000000-0000-0000-0000-000000000001','analysed',null,'$KEEP'::jsonb); $FILE"
   done
-  run "keep: 1 decision, 3 items on 3 shelves, 3 item_signals" "do \$\$ begin if (select count(*) from atlas.decisions where signal_id='test-standuquesne-2115777839622689036')<>1 or (select count(distinct main_shelf_id) from atlas.items where signal_id='test-standuquesne-2115777839622689036')<>3 or (select count(*) from atlas.items where signal_id='test-standuquesne-2115777839622689036')<>3 or (select count(*) from atlas.item_signals where signal_id='test-standuquesne-2115777839622689036')<>3 then raise exception 'counts wrong'; end if; end \$\$"
+  run "keep: 1 decision, 3 items on 3 shelves, item_signals empty" "do \$\$ begin if (select count(*) from atlas.decisions where signal_id='test-standuquesne-2115777839622689036')<>1 or (select count(distinct main_shelf_id) from atlas.items where signal_id='test-standuquesne-2115777839622689036')<>3 or (select count(*) from atlas.items where signal_id='test-standuquesne-2115777839622689036')<>3 or exists (select 1 from atlas.item_signals) then raise exception 'counts wrong'; end if; end \$\$"
   run "ignore -> analysed, empty targets, no items" "update atlas.signals set claim_token='00000000-0000-0000-0000-000000000002', claim_expires_at=now()+interval '5 min' where signal_id='sig-ignore'; set role service_role; select atlas.signal_finish('sig-ignore','00000000-0000-0000-0000-000000000002','analysed',null,'{\"schema_version\":1,\"signal_id\":\"sig-ignore\",\"analyst_version\":\"analyst-v5\",\"summary\":\"gm\",\"decision\":\"ignore\",\"reason\":\"noise\",\"targets\":[]}'::jsonb); reset role; do \$\$ begin if (select targets from atlas.decisions where signal_id='sig-ignore')<>'[]' or (select status from atlas.signals where signal_id='sig-ignore')<>'analysed' or exists(select 1 from atlas.items where signal_id='sig-ignore') then raise exception 'ignore wrong'; end if; end \$\$"
   run "unclear -> parked" "update atlas.signals set claim_token='00000000-0000-0000-0000-000000000003', claim_expires_at=now()+interval '5 min' where signal_id='sig-unclear'; set role service_role; select atlas.signal_finish('sig-unclear','00000000-0000-0000-0000-000000000003','parked','decision tool unreachable','{\"schema_version\":1,\"signal_id\":\"sig-unclear\",\"analyst_version\":\"analyst-v5\",\"decision\":\"unclear\",\"reason\":\"timeout\",\"targets\":[]}'::jsonb); reset role; do \$\$ begin if (select status from atlas.signals where signal_id='sig-unclear')<>'parked' then raise exception 'not parked'; end if; end \$\$"
   local T='{"entity":"a","kind":"existing","type":"protocol","angle":"new_story","note":"n"}'
@@ -82,6 +81,7 @@ scenarios() {
   rej "unclear finished as analysed rejected" "update atlas.signals set claim_token='00000000-0000-0000-0000-000000000004', claim_expires_at=now()+interval '5 min' where signal_id='sig-new'; select atlas.signal_finish('sig-new','00000000-0000-0000-0000-000000000004','analysed',null,'{\"schema_version\":1,\"signal_id\":\"sig-new\",\"analyst_version\":\"v\",\"decision\":\"unclear\",\"targets\":[]}'::jsonb)"
   run "kind:new -> proposed shelf holds the item" "set role service_role; insert into atlas.shelves (slug,name,type,status) values ('adgm','Abu Dhabi Global Market (ADGM)','place','proposed'); insert into atlas.items (item_key,title,main_shelf_id,signal_id,angle,note) select 'sig-new:adgm','ADGM framework',id,'sig-new','new_story','their announcement' from atlas.shelves where slug='adgm';"
   run "legacy decision migrated to 1-element targets" "do \$\$ begin if (select decision||jsonb_array_length(targets)||(targets->0->>'entity') from atlas.decisions where signal_id='sig-legacy') <> 'keep1hyperliquid' then raise exception 'legacy wrong'; end if; end \$\$"
+  if "${PSQL[@]}" -c "set role service_role; insert into atlas.item_signals (item_id, signal_id) select id, signal_id from atlas.items where signal_id is not null limit 1" >/dev/null 2>"$TMP/err"; then bad "$tag service_role insert into item_signals (accepted)"; else grep -q "permission denied for table item_signals" "$TMP/err" && ok "$tag service_role cannot insert into item_signals" || bad "$tag item_signals insert failed oddly: $(head -1 "$TMP/err")"; fi
   run "service_role can insert into tool_log" "set role service_role; insert into atlas.tool_log (tool) values ('jev');"
   # leave the proposed shelf out so the rollback can run
   "${PSQL[@]}" -c "delete from atlas.items where signal_id='sig-new'; delete from atlas.shelves where slug='adgm'" >/dev/null 2>&1
@@ -95,7 +95,8 @@ echo "== up ==";   "${PSQL[@]}" -f "$UP" >/dev/null && ok "up applied" || bad "u
 scenarios up1
 echo "== EXPLAIN shelf timeline =="
 "${PSQL[@]}" -c "set enable_seqscan=off; explain select id,title,angle,note,created_at from atlas.items where main_shelf_id=(select id from atlas.shelves where slug='hyperliquid') and status='active' order by created_at desc, id desc limit 20"
-echo "== down blocked while a signal has several items =="
+echo "== down blocked while a signal has several items (links seeded as superuser) =="
+"${PSQL[@]}" -c "insert into atlas.item_signals (item_id, signal_id) select id, signal_id from atlas.items where signal_id is not null" >/dev/null
 "${PSQL[@]}" -f "$DOWN" >/dev/null 2>"$TMP/err" && bad "down should refuse" || { grep -q "rollback blocked" "$TMP/err" && ok "down refused: $(grep -o 'rollback blocked[^;]*' "$TMP/err")" || bad "down failed oddly: $(head -1 "$TMP/err")"; }
 "${PSQL[@]}" -c "delete from atlas.item_signals" >/dev/null
 echo "== down =="

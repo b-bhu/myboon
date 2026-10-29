@@ -15,7 +15,6 @@ begin
     execute 'revoke insert on atlas.tool_log from service_role';
   end if;
 end $$;
-revoke select, insert on atlas.item_signals from service_role;
 revoke insert (slug, name, type, aliases, summary, status) on atlas.shelves from service_role;
 revoke insert (item_key, title, summary, main_shelf_id, occurred_at, signal_id, angle, note)
   on atlas.items from service_role;

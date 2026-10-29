@@ -20,8 +20,8 @@
 --   atlas.signal_finish also stores summary/decision/targets, defaults an omitted
 --                    decision_type to file (populate_record nulled it), and enforces
 --                    keep|ignore -> analysed, unclear -> parked.
---   Grants: service_role insert on items/shelves/item_signals (entity manager,
---                    #482), insert on atlas.tool_log (analyst tool calls, #504).
+--   Grants: service_role insert on items/shelves (entity manager #482 writes
+--                    items.signal_id only; item_signals gets no new grant), insert on atlas.tool_log (analyst tool calls, #504).
 -- Rollback: supabase/rollbacks/20261029180000_atlas_analyst_targets.down.sql
 begin;
 set local lock_timeout = '5s';
@@ -181,7 +181,6 @@ grant select (summary, decision, targets) on atlas.decisions to service_role;
 grant insert (item_key, title, summary, main_shelf_id, occurred_at, signal_id, angle, note)
   on atlas.items to service_role;
 grant insert (slug, name, type, aliases, summary, status) on atlas.shelves to service_role;
-grant select, insert on atlas.item_signals to service_role;
 -- atlas.tool_log needs pg_cron and is skipped on plain local Postgres, hence the guard.
 do $$
 begin
