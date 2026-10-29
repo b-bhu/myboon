@@ -2,7 +2,8 @@
 # #503 (D36) acceptance test on a THROWAWAY local Postgres 17. Never points at Supabase.
 # 1. applies every atlas migration before #503 and shows the acceptance scenarios FAIL,
 # 2. applies #503, runs the scenarios (as service_role), 3. down, checks the old shape
-# and that data survived, 4. up again and reruns the scenarios.
+# and that data survived; every rollback guard refuses (schema unchanged) until the
+# data the old schema cannot hold is cleared, 4. up again and reruns the scenarios.
 # Usage: bash supabase/tests/20261029180000_atlas_analyst_targets.pg-test.sh
 set -uo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -95,16 +96,36 @@ echo "== up ==";   "${PSQL[@]}" -f "$UP" >/dev/null && ok "up applied" || bad "u
 scenarios up1
 echo "== EXPLAIN shelf timeline =="
 "${PSQL[@]}" -c "set enable_seqscan=off; explain select id,title,angle,note,created_at from atlas.items where main_shelf_id=(select id from atlas.shelves where slug='hyperliquid') and status='active' order by created_at desc, id desc limit 20"
-echo "== down blocked while a signal has several items (links seeded as superuser) =="
-"${PSQL[@]}" -c "insert into atlas.item_signals (item_id, signal_id) select id, signal_id from atlas.items where signal_id is not null" >/dev/null
-"${PSQL[@]}" -f "$DOWN" >/dev/null 2>"$TMP/err" && bad "down should refuse" || { grep -q "rollback blocked" "$TMP/err" && ok "down refused: $(grep -o 'rollback blocked[^;]*' "$TMP/err")" || bad "down failed oddly: $(head -1 "$TMP/err")"; }
-"${PSQL[@]}" -c "delete from atlas.item_signals" >/dev/null
+echo "== down guards: each must refuse before any change =="
+S=(psql -X -q -h "$TMP" -p $PORT -U postgres -d "$DB")
+refuses() { # name, setup sql, expected message fragment, undo sql
+  "${PSQL[@]}" -c "$2" >/dev/null || { bad "guard $1 setup"; return; }
+  local cols_before; cols_before=$("${S[@]}" -t -c "select count(*) from information_schema.columns where table_schema='atlas'")
+  if "${PSQL[@]}" -f "$DOWN" >/dev/null 2>"$TMP/err"; then bad "guard $1: down ran"
+  elif grep -q "$3" "$TMP/err" && [[ $cols_before == $("${S[@]}" -t -c "select count(*) from information_schema.columns where table_schema='atlas'") ]]; then ok "guard $1 refused, schema unchanged ($(grep -o 'rollback blocked[^(;]*' "$TMP/err" | head -1))"
+  else bad "guard $1 failed oddly: $(head -1 "$TMP/err")"; fi
+  [[ -n ${4:-} ]] && "${PSQL[@]}" -c "$4" >/dev/null
+}
+ITEMS='atlas.items has signal_id/angle/note'
+D36='atlas.decisions has D36 data'
+refuses "live D36 data (as left by scenarios)" "select 1" "rollback blocked"
+"${PSQL[@]}" -c "delete from atlas.item_signals; update atlas.items set signal_id=null, angle=null, note=null" >/dev/null
+I1="(select id from atlas.items order by id limit 1)"
+refuses "items.signal_id"  "update atlas.items set signal_id='sig-ignore' where id=$I1" "$ITEMS" "update atlas.items set signal_id=null"
+refuses "items.angle"      "update atlas.items set angle='new_story' where id=$I1"     "$ITEMS" "update atlas.items set angle=null"
+refuses "items.note"       "update atlas.items set note='n' where id=$I1"              "$ITEMS" "update atlas.items set note=null"
+refuses "decision unclear" "select 1" "unclear decisions" "delete from atlas.decisions where decision='unclear'"
+refuses "decision without action (D36 keep/ignore)" "select 1" "$D36" "delete from atlas.decisions where signal_id <> 'sig-legacy'"
+refuses "decisions.summary" "update atlas.decisions set summary='s' where signal_id='sig-legacy'" "$D36" "update atlas.decisions set summary=null where signal_id='sig-legacy'"
+refuses "decisions 2+ targets" "update atlas.decisions set targets=targets||jsonb_build_array(jsonb_set(targets->0,'{entity}','\"trade-xyz\"')) where signal_id='sig-legacy'" "$D36" "update atlas.decisions set targets=jsonb_build_array(targets->0) where signal_id='sig-legacy'"
+refuses "proposed shelf" "insert into atlas.shelves (slug,name,type,status) values ('adgm','ADGM','place','proposed')" "proposed rows" "delete from atlas.shelves where slug='adgm'"
+refuses "signal linked to several items" "insert into atlas.item_signals (item_id, signal_id) select id, 'sig-ignore' from atlas.items order by id limit 2" "several items" "delete from atlas.item_signals"
 echo "== down =="
 "${PSQL[@]}" -c "select count(*) as items_before_down from atlas.items" -t | xargs echo items before down:
 "${PSQL[@]}" -f "$DOWN" >/dev/null && ok "down applied" || bad "down"
 "${PSQL[@]}" -t -c "select count(*) from atlas.items" | xargs echo items after down:
 "${PSQL[@]}" -t -c "select count(*) from information_schema.columns where table_schema='atlas' and ((table_name='decisions' and column_name in ('summary','decision','targets')) or (table_name='items' and column_name in ('signal_id','angle','note')))" | grep -q '^ *0$' && ok "down: new columns gone" || bad "down: columns remain"
-"${PSQL[@]}" -t -c "select action from atlas.decisions where signal_id='test-standuquesne-2115777839622689036'" | grep -q keep && ok "down: action refilled, decision row intact" || bad "down: action"
+"${PSQL[@]}" -t -c "select action||':'||reason from atlas.decisions where signal_id='sig-legacy'" | grep -q 'keep:old one-target row' && ok "down: legacy decision row intact" || bad "down: legacy decision"
 "${PSQL[@]}" -t -c "select has_table_privilege('service_role','atlas.tool_log','insert')" | grep -q f && ok "down: tool_log insert revoked" || bad "down: tool_log"
 "${PSQL[@]}" -t -c "select prosrc like '%targets%' from pg_proc where proname='signal_finish'" | grep -q f && ok "down: old signal_finish restored" || bad "down: signal_finish"
 echo "== up again =="

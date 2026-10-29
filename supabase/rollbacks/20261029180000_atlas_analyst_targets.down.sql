@@ -3,11 +3,40 @@
 -- transaction. Old rows keep their data (action is refilled from decision first).
 -- decisions/items are tiny (0 and ~2k rows), so plain DROP INDEX and SET NOT NULL hold
 -- their locks for milliseconds.
--- Rollback of 20261029180000 (#503). Refuses to run while proposed shelves exist,
--- because the old status check cannot hold them; retire or delete them first.
+-- Rollback of 20261029180000 (#503). Lossless or nothing: before any change it refuses
+-- to run while data exists that the old schema cannot hold:
+--   atlas.items with signal_id, angle or note set (signal links, D36 angle/note);
+--   atlas.decisions written by D36 (action null), with a summary, decision 'unclear'
+--     (would become skip) or more than one target. Legacy rows (action set, targets
+--     derived from shelves by the up backfill) roll back losslessly;
+--   proposed shelves, and signals linked to several items in item_signals.
+-- Export and clear that data first (take a backup), then rerun.
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
+
+-- Guards first: nothing below runs if any of these raise.
+do $$
+begin
+  if exists (select 1 from atlas.items
+              where signal_id is not null or angle is not null or note is not null) then
+    raise exception 'rollback blocked: atlas.items has signal_id/angle/note data that would be dropped';
+  end if;
+  if exists (select 1 from atlas.decisions where decision = 'unclear') then
+    raise exception 'rollback blocked: atlas.decisions has unclear decisions (old schema would turn them into skip)';
+  end if;
+  if exists (select 1 from atlas.decisions
+              where action is null or summary is not null
+                 or pg_catalog.jsonb_array_length(targets) > 1) then
+    raise exception 'rollback blocked: atlas.decisions has D36 data (summary, targets or decision without action) that would be dropped';
+  end if;
+  if exists (select 1 from atlas.shelves where status = 'proposed') then
+    raise exception 'rollback blocked: atlas.shelves has proposed rows';
+  end if;
+  if exists (select 1 from atlas.item_signals group by signal_id having count(*) > 1) then
+    raise exception 'rollback blocked: a signal links to several items; the old unique (signal_id) cannot hold';
+  end if;
+end $$;
 
 do $$
 begin

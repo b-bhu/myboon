@@ -57,6 +57,19 @@ alter table atlas.decisions add column decision text null;
 alter table atlas.decisions add column targets jsonb not null default '[]'::jsonb;
 alter table atlas.decisions alter column action drop not null;
 
+-- The backfill copies shelves.type into targets[].type; stop with a clear message if a
+-- referenced shelf type is outside the validator's 9-value enum (prod: 0 decisions).
+do $$
+begin
+  if exists (
+       select 1 from atlas.decisions d
+         join atlas.shelves s on s.slug = coalesce(d.shelves -> 0 ->> 'slug', d.shelves ->> 0)
+        where d.action = 'keep'
+          and s.type not in ('organization','asset','protocol','person','topic','place','event','product','regulation')) then
+    raise exception 'backfill blocked: a kept decision points at a shelf whose type is outside the target type enum';
+  end if;
+end $$;
+
 update atlas.decisions d
    set decision = case d.action when 'keep' then 'keep' else 'ignore' end,
        targets = case
@@ -85,6 +98,8 @@ alter table atlas.decisions add constraint decisions_targets_only_on_keep
 alter table atlas.decisions validate constraint decisions_targets_only_on_keep;
 
 -- 3. atlas.items: one item per (signal, shelf) with angle and note.
+-- Nothing in the database ties items.angle/note to the matching decisions.targets
+-- entry; the entity manager (#482) copies them when it files the item.
 alter table atlas.items add column signal_id text null;
 alter table atlas.items add column angle text null;
 alter table atlas.items add column note text null;
@@ -111,6 +126,8 @@ alter table atlas.shelves add constraint shelves_status_check
 alter table atlas.shelves validate constraint shelves_status_check;
 
 -- 5. signal_finish stores the contract and ties decision to status.
+-- decision_type falls back to 'file' (the column default, the only non-merge value);
+-- analyst-v1 D36 rows are filings, merges still send decision_type = 'merge'.
 create or replace function atlas.signal_finish(p_signal_id text, p_token uuid, p_status text, p_parked_reason text, p_decision jsonb)
 returns boolean
 language plpgsql
