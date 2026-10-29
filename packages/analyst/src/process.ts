@@ -160,7 +160,7 @@ function runShadow(d: Decider, c: DecisionCase, timeoutMs: number): { settled: P
  * a DeciderError('timeout'); anything else that is not already a DeciderError
  * becomes a DeciderError('error').
  */
-async function decideTimed(d: Decider, c: DecisionCase, timeoutMs: number): Promise<Decided> {
+export async function decideTimed(d: Decider, c: DecisionCase, timeoutMs: number): Promise<Decided> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const started = Date.now();
