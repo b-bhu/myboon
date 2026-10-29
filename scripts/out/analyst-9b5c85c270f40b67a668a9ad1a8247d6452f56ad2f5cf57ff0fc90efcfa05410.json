@@ -1,36 +1,36 @@
 {
   "signal_id": "9b5c85c270f40b67a668a9ad1a8247d6452f56ad2f5cf57ff0fc90efcfa05410",
-  "summary": "Cryptobriefing (relayed by the tokens_xyz account) reports that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI as the leading issuance jurisdictions. The figure points to tokenized equity issuance concentrating in offshore and non-US regulatory regimes rather than under US oversight. It matters because it maps where the tokenized stocks market is actually domiciled and which jurisdictions are capturing that issuance.",
+  "summary": "A Crypto Briefing report relayed by the tokens_xyz account says nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the British Virgin Islands leading as issuance hubs. This points to tokenized-equity issuance clustering in offshore and crypto-friendly jurisdictions, likely reflecting US regulatory constraints. It matters for jurisdictions competing to attract tokenized securities business and for tracking the US's shrinking share of the emerging sector.",
   "decision": "keep",
-  "reason": "The decision tool mapped the sector mention to the existing tokenization-rwa topic, so the 91% statistic lands there as an existing_story — it's a news report, not an announcement by any issuer. Jersey and ADGM were judged new with no candidates, so each opens a new_story as jurisdictions being named leaders in offshore tokenized stock issuance. BVI was named in the signal but not kept by the decision tool, so no row is added.",
+  "reason": "The signal is a news report on tokenized stock issuance geography: it updates the existing tokenization/RWA topic with a market-structure statistic, and starts new stories for Jersey and ADGM as newly named tokenization hubs.",
   "targets": [
     {
       "entity": "tokenization-rwa",
       "kind": "existing",
       "type": "topic",
-      "angle": "existing_story",
-      "note": "Report (via tokens_xyz, per Cryptobriefing): nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI in front — a data point showing tokenized equity issuance concentrating in offshore jurisdictions, filed under the existing tokenization-of-RWA story."
+      "angle": "plain_update",
+      "note": "A Crypto Briefing report (relayed by tokens_xyz) says nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI in front — a data point on where tokenized equity issuance is actually landing."
     },
     {
       "entity": "jersey",
       "kind": "new",
       "type": "jurisdiction",
       "angle": "new_story",
-      "note": "Reported as a front-runner jurisdiction for tokenized stock issuance outside the US — a new story forming around Jersey capturing tokenized equity issuance."
+      "note": "A Crypto Briefing report names Jersey as one of the leading jurisdictions for tokenized stock issuance, marking its emergence as a hub for tokenized equities."
     },
     {
       "entity": "adgm",
       "kind": "new",
       "type": "jurisdiction",
       "angle": "new_story",
-      "note": "Named alongside Jersey and BVI as a leading non-US venue for tokenized stock issuance — a new story forming around ADGM emerging as a hub for tokenized equities."
+      "note": "A Crypto Briefing report names ADGM (Abu Dhabi Global Market) as a leading venue for tokenized stock issuance, marking its emergence as a hub capturing issuance that avoids the US."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Cryptobriefing (relayed by the tokens_xyz account) reports that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI as the leading issuance jurisdictions. The figure points to tokenized equity issuance concentrating in offshore and non-US regulatory regimes rather than under US oversight. It matters because it maps where the tokenized stocks market is actually domiciled and which jurisdictions are capturing that issuance.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"A Crypto Briefing report relayed by the tokens_xyz account says nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the British Virgin Islands leading as issuance hubs. This points to tokenized-equity issuance clustering in offshore and crypto-friendly jurisdictions, likely reflecting US regulatory constraints. It matters for jurisdictions competing to attract tokenized securities business and for tracking the US's shrinking share of the emerging sector.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
@@ -51,8 +51,8 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.62,
-          "new": 0.38,
+          "existing": 0.68,
+          "new": 0.32,
           "not_related": 0
         },
         "provider": "jev"
@@ -82,11 +82,56 @@
           "not_related": 0.01
         },
         "provider": "jev"
+      },
+      {
+        "question": "For \"Tokenized stocks\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "plain_update",
+        "probabilities": {
+          "new_story": 0,
+          "existing_story": 0.11,
+          "plain_update": 0.89
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Jersey\" (a new entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "new_story",
+        "probabilities": {
+          "new_story": 0.99,
+          "existing_story": 0.01,
+          "plain_update": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"ADGM\" (a new entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "new_story",
+        "probabilities": {
+          "new_story": 0.99,
+          "existing_story": 0.01,
+          "plain_update": 0
+        },
+        "provider": "jev"
       }
     ],
     "shadow_clef": [
       {
-        "question": "Signal summary: \"Cryptobriefing (relayed by the tokens_xyz account) reports that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI as the leading issuance jurisdictions. The figure points to tokenized equity issuance concentrating in offshore and non-US regulatory regimes rather than under US oversight. It matters because it maps where the tokenized stocks market is actually domiciled and which jurisdictions are capturing that issuance.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"A Crypto Briefing report relayed by the tokens_xyz account says nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the British Virgin Islands leading as issuance hubs. This points to tokenized-equity issuance clustering in offshore and crypto-friendly jurisdictions, likely reflecting US regulatory constraints. It matters for jurisdictions competing to attract tokenized securities business and for tracking the US's shrinking share of the emerging sector.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
@@ -94,7 +139,7 @@
         "jev_answer": "keep",
         "jev_confidence": 0.97,
         "clef_answer": "keep",
-        "clef_confidence": 0.8702,
+        "clef_confidence": 0.8613,
         "agree": true
       },
       {
@@ -105,9 +150,9 @@
           "not_related"
         ],
         "jev_answer": "existing",
-        "jev_confidence": 0.62,
+        "jev_confidence": 0.68,
         "clef_answer": "existing",
-        "clef_confidence": 0.9377,
+        "clef_confidence": 0.9385,
         "agree": true
       },
       {
@@ -119,7 +164,7 @@
         "jev_answer": "new",
         "jev_confidence": 0.94,
         "clef_answer": "not_related",
-        "clef_confidence": 0.6018,
+        "clef_confidence": 0.7141,
         "agree": false
       },
       {
@@ -131,10 +176,49 @@
         "jev_answer": "new",
         "jev_confidence": 0.99,
         "clef_answer": "new",
-        "clef_confidence": 0.716,
+        "clef_confidence": 0.7491,
+        "agree": true
+      },
+      {
+        "question": "For \"Tokenized stocks\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "plain_update",
+        "jev_confidence": 0.89,
+        "clef_answer": "plain_update",
+        "clef_confidence": 0.5245,
+        "agree": true
+      },
+      {
+        "question": "For \"Jersey\" (a new entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "new_story",
+        "jev_confidence": 0.99,
+        "clef_answer": "new_story",
+        "clef_confidence": 0.9726,
+        "agree": true
+      },
+      {
+        "question": "For \"ADGM\" (a new entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "new_story",
+        "jev_confidence": 0.99,
+        "clef_answer": "new_story",
+        "clef_confidence": 0.9749,
         "agree": true
       }
     ],
-    "llm_turns": 2
+    "llm_turns": 3
   }
 }

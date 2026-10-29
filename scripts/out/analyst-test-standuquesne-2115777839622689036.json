@@ -1,44 +1,44 @@
 {
   "signal_id": "test-standuquesne-2115777839622689036",
-  "summary": "An X user (standuquesne) announces they are an investor in trade.xyz and highlights its partnership with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States. This is an investor's announcement of their stake, relayed alongside news of a major exchange partnership. It matters because it signals institutional (ICE) involvement in extending Hyperliquid-style perpetual futures to US markets through trade.xyz.",
+  "summary": "An investor (standuquesne on X) announced they have invested in trade.xyz as the platform partners with Intercontinental Exchange (ICE) to bring 24/7 perpetual futures built on Hyperliquid to the United States. This is an investor's personal post relaying the news, not an official company statement, so the partnership details are secondhand. If accurate, it would mark a major traditional exchange operator (ICE) entering US crypto perpetuals through a Hyperliquid-based platform.",
   "decision": "keep",
-  "reason": "All three mentions were confirmed as existing entities. The signal is an investor's own announcement of his Trade.XYZ stake, with the ICE partnership and Hyperliquid perps as the context he relays — so Trade.XYZ carries the primary story, while ICE and Hyperliquid receive it as third-party report/talk rather than first-party announcements.",
+  "reason": "All three mentions map to existing shelves. trade.xyz and ICE each get a new story: an investor's post claims a partnership bringing 24/7 Hyperliquid perps to the US, a first for both. Hyperliquid continues its existing story of US expansion via regulated partners. The signal is an investor's X post, so it's framed as talk/claim rather than official announcement.",
   "targets": [
     {
       "entity": "trade-xyz",
       "kind": "existing",
       "type": "protocol",
       "angle": "new_story",
-      "note": "Investor standuquesne announces his stake in Trade.XYZ as it partners with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States — investor backing plus a major exchange partnership forming the story."
+      "note": "An investor in trade.xyz posted that the protocol is partnering with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States — a claimed institutional tie-up opening a US market, though relayed by an investor rather than announced by the company itself."
     },
     {
       "entity": "intercontinental-exchange-ice",
       "kind": "existing",
       "type": "organization",
-      "angle": "existing_story",
-      "note": "Relayed by an investor, not ICE itself: ICE is partnering with Trade.XYZ to bring 24/7 perpetual futures on Hyperliquid to the US — another step in ICE's push into round-the-clock crypto derivatives."
+      "angle": "new_story",
+      "note": "Per an investor's post, ICE is partnering with trade.xyz to offer 24/7 perpetual futures on Hyperliquid to US users — a reported first step for the legacy exchange operator into US crypto perps, pending official confirmation."
     },
     {
       "entity": "hyperliquid",
       "kind": "existing",
       "type": "protocol",
       "angle": "existing_story",
-      "note": "Talk that Trade.XYZ and ICE will bring 24/7 perpetual futures on Hyperliquid to US markets — Hyperliquid's perp model reaching regulated US access through an exchange partnership."
+      "note": "Talk of a trade.xyz–ICE partnership would route Hyperliquid-based perpetual futures to US traders through regulated channels, another step in the ongoing story of Hyperliquid's push into the American market."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"An X user (standuquesne) announces they are an investor in trade.xyz and highlights its partnership with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States. This is an investor's announcement of their stake, relayed alongside news of a major exchange partnership. It matters because it signals institutional (ICE) involvement in extending Hyperliquid-style perpetual futures to US markets through trade.xyz.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"An investor (standuquesne on X) announced they have invested in trade.xyz as the platform partners with Intercontinental Exchange (ICE) to bring 24/7 perpetual futures built on Hyperliquid to the United States. This is an investor's personal post relaying the news, not an official company statement, so the partnership details are secondhand. If accurate, it would mark a major traditional exchange operator (ICE) entering US crypto perpetuals through a Hyperliquid-based platform.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.92,
-          "ignore": 0.08
+          "keep": 0.95,
+          "ignore": 0.05
         },
         "provider": "jev"
       },
@@ -58,7 +58,7 @@
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"ICE (Intercontinental Exchange)\". Candidate existing entities: intercontinental-exchange-ice (Intercontinental Exchange (ICE), organization). Does \"ICE (Intercontinental Exchange)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Intercontinental Exchange (ICE)\". Candidate existing entities: intercontinental-exchange-ice (Intercontinental Exchange (ICE), organization). Does \"Intercontinental Exchange (ICE)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -86,19 +86,64 @@
           "not_related": 0
         },
         "provider": "jev"
+      },
+      {
+        "question": "For \"trade.xyz\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "new_story",
+        "probabilities": {
+          "new_story": 0.91,
+          "existing_story": 0.08,
+          "plain_update": 0.01
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Intercontinental Exchange (ICE)\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "new_story",
+        "probabilities": {
+          "new_story": 0.63,
+          "existing_story": 0.35,
+          "plain_update": 0.02
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Hyperliquid\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "existing_story",
+        "probabilities": {
+          "new_story": 0.01,
+          "existing_story": 0.98,
+          "plain_update": 0.01
+        },
+        "provider": "jev"
       }
     ],
     "shadow_clef": [
       {
-        "question": "Signal summary: \"An X user (standuquesne) announces they are an investor in trade.xyz and highlights its partnership with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States. This is an investor's announcement of their stake, relayed alongside news of a major exchange partnership. It matters because it signals institutional (ICE) involvement in extending Hyperliquid-style perpetual futures to US markets through trade.xyz.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"An investor (standuquesne on X) announced they have invested in trade.xyz as the platform partners with Intercontinental Exchange (ICE) to bring 24/7 perpetual futures built on Hyperliquid to the United States. This is an investor's personal post relaying the news, not an official company statement, so the partnership details are secondhand. If accurate, it would mark a major traditional exchange operator (ICE) entering US crypto perpetuals through a Hyperliquid-based platform.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "jev_answer": "keep",
-        "jev_confidence": 0.92,
+        "jev_confidence": 0.95,
         "clef_answer": "keep",
-        "clef_confidence": 0.9567,
+        "clef_confidence": 0.9512,
         "agree": true
       },
       {
@@ -111,11 +156,11 @@
         "jev_answer": "existing",
         "jev_confidence": 0.99,
         "clef_answer": "existing",
-        "clef_confidence": 0.9875,
+        "clef_confidence": 0.9865,
         "agree": true
       },
       {
-        "question": "This signal touches \"ICE (Intercontinental Exchange)\". Candidate existing entities: intercontinental-exchange-ice (Intercontinental Exchange (ICE), organization). Does \"ICE (Intercontinental Exchange)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Intercontinental Exchange (ICE)\". Candidate existing entities: intercontinental-exchange-ice (Intercontinental Exchange (ICE), organization). Does \"Intercontinental Exchange (ICE)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -124,7 +169,7 @@
         "jev_answer": "existing",
         "jev_confidence": 1,
         "clef_answer": "existing",
-        "clef_confidence": 0.9888,
+        "clef_confidence": 0.9912,
         "agree": true
       },
       {
@@ -137,10 +182,49 @@
         "jev_answer": "existing",
         "jev_confidence": 1,
         "clef_answer": "existing",
-        "clef_confidence": 0.9875,
+        "clef_confidence": 0.9863,
+        "agree": true
+      },
+      {
+        "question": "For \"trade.xyz\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "new_story",
+        "jev_confidence": 0.91,
+        "clef_answer": "new_story",
+        "clef_confidence": 0.8918,
+        "agree": true
+      },
+      {
+        "question": "For \"Intercontinental Exchange (ICE)\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "new_story",
+        "jev_confidence": 0.63,
+        "clef_answer": "new_story",
+        "clef_confidence": 0.8241,
+        "agree": true
+      },
+      {
+        "question": "For \"Hyperliquid\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "existing_story",
+        "jev_confidence": 0.98,
+        "clef_answer": "existing_story",
+        "clef_confidence": 0.8386,
         "agree": true
       }
     ],
-    "llm_turns": 2
+    "llm_turns": 3
   }
 }

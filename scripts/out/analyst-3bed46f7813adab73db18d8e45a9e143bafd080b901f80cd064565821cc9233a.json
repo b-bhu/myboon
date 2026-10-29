@@ -1,64 +1,49 @@
 {
   "signal_id": "3bed46f7813adab73db18d8e45a9e143bafd080b901f80cd064565821cc9233a",
-  "summary": "A Crypto Briefing report (relayed by tokens_xyz) says Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. Druckenmiller's Hyperliquid position drawing Musk's attention could signal growing mainstream and institutional interest in the decentralized perps exchange and the US crypto derivatives market. This is reported interest and market talk, not a confirmed announcement from Musk or Druckenmiller.",
+  "summary": "Crypto Briefing reports that Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. The signal is a news report, not an announcement from Musk, Druckenmiller, or Hyperliquid themselves, so the claims remain at the report/talk level. It matters because it ties a prominent investor's Hyperliquid positioning to potential high-profile interest in US crypto derivatives markets.",
   "decision": "keep",
-  "reason": "Musk and Hyperliquid already have shelves, so this report slots into their existing stories as reported interest, not announcements from the parties themselves. Druckenmiller has no shelf yet and the signal centers on his Hyperliquid move, so a new entity is opened with this as its founding story. All three angles are framed as reports/talk since neither Musk nor Druckenmiller made the statement themselves.",
+  "reason": "All three mentions kept per the decision tool: Musk and Hyperliquid as plain updates on existing shelves (reported interest, nothing announced), Druckenmiller as a new story since this signal introduces him.",
   "targets": [
     {
       "entity": "elon-musk",
       "kind": "existing",
       "type": "person",
-      "angle": "existing_story",
-      "note": "Reported, not announced: Crypto Briefing says Musk is eyeing Druckenmiller's Hyperliquid move as a reference for US crypto derivatives — his interest in the space is what's forming here."
-    },
-    {
-      "entity": "hyperliquid",
-      "kind": "existing",
-      "type": "protocol",
-      "angle": "existing_story",
-      "note": "Talk building around the protocol: Druckenmiller's reported position and Musk's reported interest feed the ongoing story of high-profile money looking at Hyperliquid."
+      "angle": "plain_update",
+      "note": "Reported (Crypto Briefing): Musk is eyeing Druckenmiller's Hyperliquid move as a reference for US crypto derivatives — reported interest, not an announcement from Musk."
     },
     {
       "entity": "stanley-druckenmiller",
       "kind": "new",
       "type": "person",
       "angle": "new_story",
-      "note": "New entity opened by this signal: a report that Druckenmiller has a Hyperliquid position, which Musk is now reportedly eyeing — his crypto move is the story starting here."
+      "note": "New story: Druckenmiller's reported move into Hyperliquid is drawing attention, with Crypto Briefing reporting that Musk is watching it for US crypto derivatives."
+    },
+    {
+      "entity": "hyperliquid",
+      "kind": "existing",
+      "type": "protocol",
+      "angle": "plain_update",
+      "note": "Reported (Crypto Briefing): the protocol is again the venue of prominent-investor interest, now cited as the model Musk is eyeing for US crypto derivatives."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"A Crypto Briefing report (relayed by tokens_xyz) says Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. Druckenmiller's Hyperliquid position drawing Musk's attention could signal growing mainstream and institutional interest in the decentralized perps exchange and the US crypto derivatives market. This is reported interest and market talk, not a confirmed announcement from Musk or Druckenmiller.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"Crypto Briefing reports that Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. The signal is a news report, not an announcement from Musk, Druckenmiller, or Hyperliquid themselves, so the claims remain at the report/talk level. It matters because it ties a prominent investor's Hyperliquid positioning to potential high-profile interest in US crypto derivatives markets.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.91,
-          "ignore": 0.09
+          "keep": 0.84,
+          "ignore": 0.16
         },
         "provider": "jev"
       },
       {
         "question": "This signal touches \"Elon Musk\". Candidate existing entities: elon-musk (Elon Musk, person). Does \"Elon Musk\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
-        "choices": [
-          "existing",
-          "new",
-          "not_related"
-        ],
-        "answer": "existing",
-        "probabilities": {
-          "existing": 1,
-          "new": 0,
-          "not_related": 0
-        },
-        "provider": "jev"
-      },
-      {
-        "question": "This signal touches \"Hyperliquid\". Candidate existing entities: hyperliquid (Hyperliquid, protocol); hype (HYPE, asset); hyperliquid-strategies (Hyperliquid Strategies, organization). Does \"Hyperliquid\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -84,19 +69,79 @@
           "not_related": 0.02
         },
         "provider": "jev"
+      },
+      {
+        "question": "This signal touches \"Hyperliquid\". Candidate existing entities: hyperliquid (Hyperliquid, protocol); hype (HYPE, asset); hyperliquid-strategies (Hyperliquid Strategies, organization). Does \"Hyperliquid\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 1,
+          "new": 0,
+          "not_related": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Elon Musk\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "plain_update",
+        "probabilities": {
+          "new_story": 0.02,
+          "existing_story": 0.03,
+          "plain_update": 0.95
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Stanley Druckenmiller\" (a new entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "new_story",
+        "probabilities": {
+          "new_story": 0.96,
+          "existing_story": 0.03,
+          "plain_update": 0.01
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Hyperliquid\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "plain_update",
+        "probabilities": {
+          "new_story": 0,
+          "existing_story": 0.26,
+          "plain_update": 0.74
+        },
+        "provider": "jev"
       }
     ],
     "shadow_clef": [
       {
-        "question": "Signal summary: \"A Crypto Briefing report (relayed by tokens_xyz) says Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. Druckenmiller's Hyperliquid position drawing Musk's attention could signal growing mainstream and institutional interest in the decentralized perps exchange and the US crypto derivatives market. This is reported interest and market talk, not a confirmed announcement from Musk or Druckenmiller.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"Crypto Briefing reports that Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. The signal is a news report, not an announcement from Musk, Druckenmiller, or Hyperliquid themselves, so the claims remain at the report/talk level. It matters because it ties a prominent investor's Hyperliquid positioning to potential high-profile interest in US crypto derivatives markets.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "jev_answer": "keep",
-        "jev_confidence": 0.91,
+        "jev_confidence": 0.84,
         "clef_answer": "keep",
-        "clef_confidence": 0.9514,
+        "clef_confidence": 0.92,
         "agree": true
       },
       {
@@ -109,7 +154,19 @@
         "jev_answer": "existing",
         "jev_confidence": 1,
         "clef_answer": "existing",
-        "clef_confidence": 0.9942,
+        "clef_confidence": 0.9933,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Stanley Druckenmiller\". The entity search found no existing entities for it. Does \"Stanley Druckenmiller\" need a new entity, or is it not related? Answer new or not_related.",
+        "choices": [
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "new",
+        "jev_confidence": 0.98,
+        "clef_answer": "new",
+        "clef_confidence": 0.8475,
         "agree": true
       },
       {
@@ -122,22 +179,49 @@
         "jev_answer": "existing",
         "jev_confidence": 1,
         "clef_answer": "existing",
-        "clef_confidence": 0.9881,
+        "clef_confidence": 0.9876,
         "agree": true
       },
       {
-        "question": "This signal touches \"Stanley Druckenmiller\". The entity search found no existing entities for it. Does \"Stanley Druckenmiller\" need a new entity, or is it not related? Answer new or not_related.",
+        "question": "For \"Elon Musk\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
         "choices": [
-          "new",
-          "not_related"
+          "new_story",
+          "existing_story",
+          "plain_update"
         ],
-        "jev_answer": "new",
-        "jev_confidence": 0.98,
-        "clef_answer": "new",
-        "clef_confidence": 0.8953,
+        "jev_answer": "plain_update",
+        "jev_confidence": 0.95,
+        "clef_answer": "plain_update",
+        "clef_confidence": 0.7128,
         "agree": true
+      },
+      {
+        "question": "For \"Stanley Druckenmiller\" (a new entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "new_story",
+        "jev_confidence": 0.96,
+        "clef_answer": "new_story",
+        "clef_confidence": 0.9071,
+        "agree": true
+      },
+      {
+        "question": "For \"Hyperliquid\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "plain_update",
+        "jev_confidence": 0.74,
+        "clef_answer": "existing_story",
+        "clef_confidence": 0.7042,
+        "agree": false
       }
     ],
-    "llm_turns": 2
+    "llm_turns": 3
   }
 }

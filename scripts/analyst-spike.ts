@@ -24,7 +24,7 @@ type Mention = { name: string; type: string; search_terms: string[] };
 type SignalInput = { signal_id: string; text: string; source: string | null; link: string | null };
 type Target = { entity: string; kind: 'existing' | 'new'; type: string; angle: Angle | null; note: string };
 type EntityQuestion = { mention: string; question: string; best_shelf_slug: string | null; candidates: Candidate[] };
-type KeptDraft = { mention: string; mentionType: string; kind: 'existing' | 'new'; candidates: Candidate[]; best_shelf_slug: string | null };
+type KeptDraft = { mention: string; mentionType: string; kind: 'existing' | 'new'; candidates: Candidate[]; best_shelf_slug: string | null; angle?: Angle };
 type JevEntry = { question: string; choices: string[]; answer: string | null; probabilities: Record<string, number> | null; provider: 'jev' | 'clef'; error?: string };
 type ShadowEntry = { question: string; choices: string[]; jev_answer: string | null; jev_confidence: number | null; clef_answer: string | null; clef_confidence: number | null; agree: boolean | null; error?: string };
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
@@ -42,6 +42,11 @@ const SYSTEM_PROMPT =
   'The signal comes from a source (a news site, an account, a feed). The source is only the messenger; don\'t treat it as an entity unless the news is about the source itself. ' +
   'Your note is what you\'d want to read months later. Say who said it: if the entity itself says it, it\'s their announcement; if a news site or someone else says it, it\'s their report; if people are just talking, it\'s talk. Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. ' +
   'Return only the structured output.';
+
+function angleQuestionFor(mention: string, kind: 'existing' | 'new'): string {
+  return `For "${mention}" (${kind === 'new' ? 'a new entity' : 'an existing entity'}), what does this signal do there? ` +
+    'new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.';
+}
 
 /** Fixed decision-tool questions, written by code (the LLM never writes them). */
 function keepQuestionFor(summary: string): string {
@@ -197,6 +202,19 @@ function searchShelves(terms: string[], shelves: Shelf[]): Candidate[] {
   return [...ranked.values()].sort((a, b) => a.rank - b.rank).slice(0, 5).map(({ shelf }) => ({ slug: shelf.slug, name: shelf.name, type: shelf.type }));
 }
 
+/** Short canonical slug for new entities: prefer an abbreviation (in parens or the all-caps side), else kebab of the name. */
+function canonicalSlug(mention: string): string {
+  const paren = mention.match(/^(.*?)\s+\(([^)]+)\)\s*$/);
+  if (paren) {
+    const [outer, inner] = [paren[1].trim(), paren[2].trim()];
+    const isAbbr = (v: string): boolean => /^[A-Z0-9.&$-]{2,10}$/.test(v.replace(/\s+/g, ''));
+    if (isAbbr(outer)) return kebabSlug(outer);
+    if (isAbbr(inner)) return kebabSlug(inner);
+    return kebabSlug(outer);
+  }
+  return kebabSlug(mention);
+}
+
 function kebabSlug(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
 
 function toMentions(raw: unknown): Mention[] {
@@ -254,7 +272,6 @@ async function analyze(signal: SignalInput, shelves: Shelf[]): Promise<AnalystRe
   // Decision 2: one verdict per mention; this code owns kind and sanity.
   const kept: KeptDraft[] = [];
   const unclearReasons: string[] = [];
-  const doubts: Target[] = [];
   for (const eq of entityQuestions) {
     const state = { signal: signal.text, summary, mention: eq.mention, candidates: eq.candidates };
     const choices = eq.candidates.length > 0 ? ['existing', 'new', 'not_related'] : ['new', 'not_related'];
@@ -270,22 +287,38 @@ async function analyze(signal: SignalInput, shelves: Shelf[]): Promise<AnalystRe
     return resultOf(signal, 'keep', 'The decision tool said keep, but every mentioned entity was judged not related, so there is nothing to route.', [], summary);
   }
 
-  // Turn 3: route the kept entities; kinds are fixed by the decider answers above.
+  // Turn 3: the LLM reasons about what is forming per kept entity (context for Jev only; it does not pick the angle).
   let reason = '';
   const targets: Target[] = [];
   if (kept.length > 0 && unclearReasons.length === 0) {
     const turn3 = await step(
       `The decision tool has answered; each kind below is fixed and cannot change.\n${JSON.stringify(kept, null, 2)}\n\n` +
-        'Reply with JSON only:\n' +
-        '{"targets": [{"mention": string, "type": string, "angle": "new_story" | "existing_story" | "plain_update", "note": string}], "reason": string}\n' +
-        'One row per kept mention, no others: entities are fixed by code. note: one line on what is forming there.'
+        'Reply with JSON only:\n{"reasoning": [{"mention": string, "reasoning": string}]}\n' +
+        'One row per kept mention: one or two sentences on what this signal means for that entity and whether it starts something new, ' +
+        'continues an ongoing story, or is a minor update. Do not pick an angle; the decision tool will.'
     );
-    reason = str(turn3.reason);
-    const rows = Array.isArray(turn3.targets) ? turn3.targets : [];
-    if (rows.length === 0) throw new Error('no targets in the third reply');
+    const reasoningRows = Array.isArray(turn3.reasoning) ? turn3.reasoning.map(asRec) : [];
+    // Decision 3: Jev picks the angle for each kept entity with a fixed question.
+    for (const [index, draft] of kept.entries()) {
+      const row = reasoningRows.find((r) => str(r.mention).toLowerCase() === draft.mention.toLowerCase()) ?? reasoningRows[index];
+      const reasoning = str(row?.reasoning);
+      const verdict = await ask(angleQuestionFor(draft.mention, draft.kind), [...ANGLES], { signal: signal.text, summary, mention: draft.mention, kind: draft.kind, reasoning }, draft.candidates);
+      if (!verdict.ok) return resultOf(signal, 'unclear', `The decision tool was unreachable. ${verdict.error}`, [], summary);
+      draft.angle = verdict.choice as Angle;
+    }
+    // Turn 4: the LLM writes only the note, matching Jev's angle.
+    const turn4 = await step(
+      `The decision tool has picked each angle; kind and angle below are fixed and cannot change.\n` +
+        `${JSON.stringify(kept.map((k) => ({ mention: k.mention, kind: k.kind, angle: k.angle })), null, 2)}\n\n` +
+        'Reply with JSON only:\n{"targets": [{"mention": string, "type": string, "note": string}], "reason": string}\n' +
+        'One row per kept mention, no others. note: one line on what is forming there, written to match the given angle.'
+    );
+    reason = str(turn4.reason);
+    const rows = Array.isArray(turn4.targets) ? turn4.targets : [];
+    if (rows.length === 0) throw new Error('no targets in the note reply');
     buildTargets(rows, kept, targets, unclearReasons);
   }
-  if (unclearReasons.length > 0) return resultOf(signal, 'unclear', unclearReasons.join(' '), doubts, summary);
+  if (unclearReasons.length > 0) return resultOf(signal, 'unclear', unclearReasons.join(' '), [], summary);
   return resultOf(signal, 'keep', reason || 'The decision tool answered keep and every kept entity is routed.', targets, summary);
 }
 
@@ -296,8 +329,8 @@ function buildTargets(rows: unknown[], kept: KeptDraft[], targets: Target[], unc
   kept.forEach((draft, index) => {
     let row = byMention.get(draft.mention.toLowerCase());
     if (!row && rows.length === kept.length) row = asRec(rows[index]);
-    const angle = str(row?.angle);
-    if (!(ANGLES as readonly string[]).includes(angle)) { unclearReasons.push(`No valid angle was given for "${draft.mention}".`); return; }
+    const angle = draft.angle ?? '';
+    if (!(ANGLES as readonly string[]).includes(angle)) { unclearReasons.push(`The decision tool gave no valid angle for "${draft.mention}".`); return; }
     if (draft.kind === 'existing') {
       const slugs = draft.candidates.map((c) => c.slug);
       const entity: string | null = draft.best_shelf_slug && slugs.includes(draft.best_shelf_slug) ? draft.best_shelf_slug : null;
@@ -306,7 +339,7 @@ function buildTargets(rows: unknown[], kept: KeptDraft[], targets: Target[], unc
       targets.push({ entity, kind: 'existing', type: str(row?.type) || matched?.type || draft.mentionType, angle: angle as Angle, note: str(row?.note) });
       return;
     }
-    const entity = kebabSlug(draft.mention);
+    const entity = canonicalSlug(draft.mention);
     if (!entity) { unclearReasons.push(`No usable slug for the new entity "${draft.mention}".`); return; }
     targets.push({ entity, kind: 'new', type: str(row?.type) || draft.mentionType, angle: angle as Angle, note: str(row?.note) });
   });

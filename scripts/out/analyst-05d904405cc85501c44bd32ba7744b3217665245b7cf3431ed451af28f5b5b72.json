@@ -1,36 +1,36 @@
 {
   "signal_id": "05d904405cc85501c44bd32ba7744b3217665245b7cf3431ed451af28f5b5b72",
-  "summary": "Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B. The headline notes pushback from the issuers themselves, meaning the underlying companies appear to object to these tokenized versions of their stock. The signal matters because it captures rapid growth in tokenized equities alongside rising friction between crypto platforms and the companies whose shares are being tokenized without their blessing.",
+  "summary": "Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put Apple, Alphabet, Microsoft, and Amazon onchain as tokenized stocks, with the tokenized stock market reaching $3.84B. The report notes pushback from issuers over the tokenization of their shares. This matters because it shows major public equities moving onto crypto rails at scale while traditional issuers resist the trend.",
   "decision": "keep",
-  "reason": "All three mentions were confirmed as existing shelves. Base is the subject of the report, so its tokenized-stock expansion is an existing story developing there. Coinbase appears only as Base's backer, making it a plain update rather than a story about Coinbase itself. The $3.84B market size and issuer pushback are data points for the tokenization/RWA topic, continuing its existing story. Framed as a Crowdfund Insider report, not an announcement by any of the entities.",
+  "reason": "All three mentions continue existing stories: Base's tokenized equities rollout, Coinbase's tokenization strategy, and the broader RWA tokenization growth narrative, each now with the added tension of issuer pushback.",
   "targets": [
     {
       "entity": "base",
       "kind": "existing",
       "type": "protocol",
       "angle": "existing_story",
-      "note": "Report: Base has put tokenized Apple, Alphabet, Microsoft and Amazon shares onchain, extending its tokenized-stock offering as the sector hits $3.84B amid pushback from the underlying issuers."
+      "note": "Crowdfund Insider reports Base has put Apple, Alphabet, Microsoft and Amazon onchain as tokenized stocks, extending its ongoing tokenized equities expansion as the market hits $3.84B."
     },
     {
       "entity": "coinbase",
       "kind": "existing",
       "type": "organization",
-      "angle": "plain_update",
-      "note": "Report: mentioned only as the backer of Base — its supported L2 is now hosting tokenized big-tech stocks, a side effect of its ecosystem push rather than a Coinbase announcement."
+      "angle": "existing_story",
+      "note": "Per Crowdfund Insider, Coinbase's push to bring mega-cap public equities onchain through Base continues, now meeting reported pushback from the issuers themselves."
     },
     {
       "entity": "tokenization-rwa",
       "kind": "existing",
       "type": "topic",
       "angle": "existing_story",
-      "note": "Report: tokenized stock market cap reaches $3.84B, with major US equities going onchain even as the companies themselves push back against unauthorized tokenized versions of their shares."
+      "note": "Crowdfund Insider reports tokenized stocks reaching $3.84B with mega-caps like Apple and Microsoft now onchain, continuing the sector's growth story amid rising issuer resistance."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B. The headline notes pushback from the issuers themselves, meaning the underlying companies appear to object to these tokenized versions of their stock. The signal matters because it captures rapid growth in tokenized equities alongside rising friction between crypto platforms and the companies whose shares are being tokenized without their blessing.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put Apple, Alphabet, Microsoft, and Amazon onchain as tokenized stocks, with the tokenized stock market reaching $3.84B. The report notes pushback from issuers over the tokenization of their shares. This matters because it shows major public equities moving onto crypto rails at scale while traditional issuers resist the trend.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
@@ -58,7 +58,7 @@
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"Coinbase\". Candidate existing entities: coinbase (Coinbase, organization); base (Base, protocol); electric-coin-company (Electric Coin Company, organization); eurc (EURC, asset); meme-coins (Meme coins, topic). Does \"Coinbase\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Coinbase\". Candidate existing entities: coinbase (Coinbase, organization); base (Base, protocol). Does \"Coinbase\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -81,16 +81,61 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.78,
-          "new": 0.22,
+          "existing": 0.79,
+          "new": 0.21,
           "not_related": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Base\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "existing_story",
+        "probabilities": {
+          "new_story": 0,
+          "existing_story": 0.99,
+          "plain_update": 0.01
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Coinbase\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "existing_story",
+        "probabilities": {
+          "new_story": 0.01,
+          "existing_story": 0.97,
+          "plain_update": 0.02
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "For \"Tokenized stocks\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "answer": "existing_story",
+        "probabilities": {
+          "new_story": 0,
+          "existing_story": 0.98,
+          "plain_update": 0.02
         },
         "provider": "jev"
       }
     ],
     "shadow_clef": [
       {
-        "question": "Signal summary: \"Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B. The headline notes pushback from the issuers themselves, meaning the underlying companies appear to object to these tokenized versions of their stock. The signal matters because it captures rapid growth in tokenized equities alongside rising friction between crypto platforms and the companies whose shares are being tokenized without their blessing.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put Apple, Alphabet, Microsoft, and Amazon onchain as tokenized stocks, with the tokenized stock market reaching $3.84B. The report notes pushback from issuers over the tokenization of their shares. This matters because it shows major public equities moving onto crypto rails at scale while traditional issuers resist the trend.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
@@ -98,7 +143,7 @@
         "jev_answer": "keep",
         "jev_confidence": 0.97,
         "clef_answer": "keep",
-        "clef_confidence": 0.9522,
+        "clef_confidence": 0.9532,
         "agree": true
       },
       {
@@ -111,11 +156,11 @@
         "jev_answer": "existing",
         "jev_confidence": 1,
         "clef_answer": "existing",
-        "clef_confidence": 0.9864,
+        "clef_confidence": 0.9906,
         "agree": true
       },
       {
-        "question": "This signal touches \"Coinbase\". Candidate existing entities: coinbase (Coinbase, organization); base (Base, protocol); electric-coin-company (Electric Coin Company, organization); eurc (EURC, asset); meme-coins (Meme coins, topic). Does \"Coinbase\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Coinbase\". Candidate existing entities: coinbase (Coinbase, organization); base (Base, protocol). Does \"Coinbase\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -124,7 +169,7 @@
         "jev_answer": "existing",
         "jev_confidence": 1,
         "clef_answer": "existing",
-        "clef_confidence": 0.9907,
+        "clef_confidence": 0.9873,
         "agree": true
       },
       {
@@ -135,12 +180,51 @@
           "not_related"
         ],
         "jev_answer": "existing",
-        "jev_confidence": 0.78,
+        "jev_confidence": 0.79,
         "clef_answer": "existing",
-        "clef_confidence": 0.7918,
+        "clef_confidence": 0.8281,
+        "agree": true
+      },
+      {
+        "question": "For \"Base\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "existing_story",
+        "jev_confidence": 0.99,
+        "clef_answer": "existing_story",
+        "clef_confidence": 0.9256,
+        "agree": true
+      },
+      {
+        "question": "For \"Coinbase\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "existing_story",
+        "jev_confidence": 0.97,
+        "clef_answer": "existing_story",
+        "clef_confidence": 0.829,
+        "agree": true
+      },
+      {
+        "question": "For \"Tokenized stocks\" (an existing entity), what does this signal do there? new_story: it starts a new story; existing_story: it continues a story already forming; plain_update: a minor update. Answer new_story, existing_story or plain_update.",
+        "choices": [
+          "new_story",
+          "existing_story",
+          "plain_update"
+        ],
+        "jev_answer": "existing_story",
+        "jev_confidence": 0.98,
+        "clef_answer": "existing_story",
+        "clef_confidence": 0.9256,
         "agree": true
       }
     ],
-    "llm_turns": 2
+    "llm_turns": 3
   }
 }
