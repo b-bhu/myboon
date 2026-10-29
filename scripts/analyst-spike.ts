@@ -26,10 +26,11 @@ type Target = { entity: string; kind: 'existing' | 'new'; type: string; angle: A
 type EntityQuestion = { mention: string; question: string; best_shelf_slug: string | null; candidates: Candidate[] };
 type KeptDraft = { mention: string; mentionType: string; kind: 'existing' | 'new'; candidates: Candidate[]; best_shelf_slug: string | null };
 type JevEntry = { question: string; choices: string[]; answer: string | null; probabilities: Record<string, number> | null; provider: 'jev' | 'clef'; error?: string };
+type ShadowEntry = { question: string; choices: string[]; jev_answer: string | null; jev_confidence: number | null; clef_answer: string | null; clef_confidence: number | null; agree: boolean | null; error?: string };
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 type AnalystResult = {
   signal_id: string; summary: string; decision: Decision; reason: string; targets: Target[];
-  debug: { model: string; jev: JevEntry[]; llm_turns: number };
+  debug: { model: string; jev: JevEntry[]; shadow_clef: ShadowEntry[]; llm_turns: number };
 };
 
 const SYSTEM_PROMPT =
@@ -38,7 +39,8 @@ const SYSTEM_PROMPT =
   'it should live. Ask the decision tool first whether this signal is worth keeping, then, for each entity it touches, whether it belongs to an existing entity, ' +
   'needs a new one, or is not related. Use the entity tool to see what exists. After the decision tool answers, decide the angle for each entity: what is forming ' +
   'there, written the way it was said: if someone announces it, it\'s announced; if people are talking about it, it\'s talk. Don\'t make it sound weaker or stronger than it is. ' +
-  'The signal comes from a source (a news site, an account, a feed). The source is only the messenger; don\'t treat it as an entity unless the news is about the source itself. Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. ' +
+  'The signal comes from a source (a news site, an account, a feed). The source is only the messenger; don\'t treat it as an entity unless the news is about the source itself. ' +
+  'Your note is what you\'d want to read months later. Say who said it: if the entity itself says it, it\'s their announcement; if a news site or someone else says it, it\'s their report; if people are just talking, it\'s talk. Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. ' +
   'Return only the structured output.';
 
 /** Fixed decision-tool questions, written by code (the LLM never writes them). */
@@ -61,6 +63,7 @@ const LLM_URL = 'https://ollama.com/v1/chat/completions';
 // One session: every step below shares this single history.
 const history: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
 const jevLog: JevEntry[] = [];
+const shadowLog: ShadowEntry[] = [];
 let llmTurns = 0;
 
 function str(value: unknown, fallback = ''): string { return typeof value === 'string' ? value : fallback; }
@@ -139,14 +142,35 @@ async function ask(question: string, choices: string[], state: unknown, candidat
     ['jev', JEV_MODEL, JEV_ENDPOINT, process.env.JEV_API_TOKEN],
     ['clef', CLEF_MODEL, CLEF_ENDPOINT, process.env.OLLAMA_API_KEY],
   ] as const;
+  // Clef shadow: same case in parallel; recorded only, never decides.
+  const clefToken = process.env.OLLAMA_API_KEY;
+  const shadow: Promise<AttemptAnswer> = clefToken
+    ? attempt('clef', CLEF_MODEL, CLEF_ENDPOINT, clefToken, kase)
+    : Promise.resolve({ error: 'OLLAMA_API_KEY is not set' });
+  const recordShadow = async (jev: AttemptAnswer | null): Promise<void> => {
+    const clef = await shadow;
+    const jevAnswer = jev && !('error' in jev) ? jev.choice : null;
+    const jevConf = jev && !('error' in jev) ? jev.probabilities[jev.choice] ?? null : null;
+    const entry: ShadowEntry = { question, choices, jev_answer: jevAnswer, jev_confidence: jevConf, clef_answer: null, clef_confidence: null, agree: null };
+    if ('error' in clef) entry.error = clef.error;
+    else {
+      entry.clef_answer = clef.choice;
+      entry.clef_confidence = clef.probabilities[clef.choice] ?? null;
+      entry.agree = jevAnswer === null ? null : jevAnswer === clef.choice;
+    }
+    shadowLog.push(entry);
+  };
   const failures: Partial<Record<'jev' | 'clef', string>> = {};
+  let jevResult: AttemptAnswer | null = null;
   for (const [provider, model, endpoint, token] of providers) {
     if (!token) continue;
     const answer = await attempt(provider, model, endpoint, token, kase);
+    if (provider === 'jev') { jevResult = answer; await recordShadow(answer); }
     log(provider, answer);
     if ('error' in answer) failures[provider] = answer.error;
     else return { ok: true, ...answer };
   }
+  if (jevResult === null) await recordShadow(null);
   const parts = [
     failures.jev ? `jev failed (${failures.jev})` : 'JEV_API_TOKEN is not set',
     failures.clef ? `clef failed (${failures.clef})` : 'OLLAMA_API_KEY is not set',
@@ -237,12 +261,6 @@ async function analyze(signal: SignalInput, shelves: Shelf[]): Promise<AnalystRe
     const verdict = await ask(eq.question, choices, state, eq.candidates);
     if (!verdict.ok) return resultOf(signal, 'unclear', `The decision tool was unreachable. ${verdict.error}`, [], summary);
     if (verdict.choice === 'not_related') continue;
-    if (verdict.choice === 'existing' && eq.candidates.length === 0) {
-      const why = `The decision tool placed "${eq.mention}" in an existing entity, but the entity search found no candidate shelves.`;
-      unclearReasons.push(why);
-      doubts.push({ entity: kebabSlug(eq.mention), kind: 'existing', type: mentions.find((m) => m.name === eq.mention)?.type ?? 'unknown', angle: null, note: why });
-      continue;
-    }
     const kind: 'existing' | 'new' = verdict.choice === 'new' ? 'new' : 'existing';
     const mention = mentions.find((item) => item.name === eq.mention);
     kept.push({ mention: eq.mention, mentionType: mention?.type ?? 'unknown', kind, candidates: eq.candidates, best_shelf_slug: eq.best_shelf_slug });
@@ -295,7 +313,7 @@ function buildTargets(rows: unknown[], kept: KeptDraft[], targets: Target[], unc
 }
 
 function resultOf(signal: SignalInput, decision: Decision, reason: string, targets: Target[], summary = ''): AnalystResult {
-  return { signal_id: signal.signal_id, summary, decision, reason, targets, debug: { model: ANALYST_MODEL, jev: jevLog, llm_turns: llmTurns } };
+  return { signal_id: signal.signal_id, summary, decision, reason, targets, debug: { model: ANALYST_MODEL, jev: jevLog, shadow_clef: shadowLog, llm_turns: llmTurns } };
 }
 
 function writeAndPrint(result: AnalystResult): void {

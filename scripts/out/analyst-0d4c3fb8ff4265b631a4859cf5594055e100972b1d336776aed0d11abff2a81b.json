@@ -1,37 +1,37 @@
 {
   "signal_id": "0d4c3fb8ff4265b631a4859cf5594055e100972b1d336776aed0d11abff2a81b",
-  "summary": "The Tokens account (tokens_xyz) announced that real-world assets (RWA) on the Solana blockchain have surpassed $5 billion in total value, a new all-time high. This is a milestone for Solana's tokenized asset ecosystem, signaling growing adoption of RWAs on the network. It matters as a momentum indicator for both Solana and the broader real-world asset tokenization sector.",
+  "summary": "The crypto account tokens_xyz reported that real-world assets (RWA) on Solana surpassed $5 billion in total value, marking a new all-time high. This is a third-party report of a milestone, not an official Solana announcement. It matters because it signals growing adoption of tokenized real-world assets within the Solana ecosystem.",
   "decision": "keep",
-  "reason": "The decision tool mapped both mentions to existing entities: Solana (asset, slug 'solana') and the tokenization/RWA topic (slug 'tokenization-rwa'). The signal is a breaking announcement of a record milestone, so it extends each entity's ongoing story rather than starting a new one.",
+  "reason": "The decision tool mapped both mentions to existing entities (solana, tokenization-rwa), so both are kept as existing stories. The signal is a milestone metric reported by a third-party account, not an announcement by either entity, so it lands as a plain update on each rather than a new story.",
   "targets": [
     {
       "entity": "solana",
       "kind": "existing",
       "type": "asset",
-      "angle": "existing_story",
-      "note": "Announced milestone: real-world assets on Solana surpassed $5 billion, a new all-time high — a growth marker for Solana's tokenized-asset ecosystem."
+      "angle": "plain_update",
+      "note": "Reported by tokens_xyz: real-world asset value on Solana surpassed $5 billion, a new all-time high — a milestone data point in the ongoing RWA-on-Solana growth story, not an announcement from Solana itself."
     },
     {
       "entity": "tokenization-rwa",
       "kind": "existing",
       "type": "topic",
-      "angle": "existing_story",
-      "note": "Announced milestone feeding the tokenization narrative: RWA value on Solana hitting a $5B all-time high signals accelerating adoption on a major chain."
+      "angle": "plain_update",
+      "note": "Third-party report that tokenized RWA on Solana crossed $5B ATH — another growth marker for the tokenization sector, framed as reported news rather than sector-wide talk."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"The Tokens account (tokens_xyz) announced that real-world assets (RWA) on the Solana blockchain have surpassed $5 billion in total value, a new all-time high. This is a milestone for Solana's tokenized asset ecosystem, signaling growing adoption of RWAs on the network. It matters as a momentum indicator for both Solana and the broader real-world asset tokenization sector.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"The crypto account tokens_xyz reported that real-world assets (RWA) on Solana surpassed $5 billion in total value, marking a new all-time high. This is a third-party report of a milestone, not an official Solana announcement. It matters because it signals growing adoption of tokenized real-world assets within the Solana ecosystem.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.98,
-          "ignore": 0.02
+          "keep": 0.97,
+          "ignore": 0.03
         },
         "provider": "jev"
       },
@@ -51,7 +51,7 @@
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"Real-World Assets (RWA)\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Real-World Assets (RWA)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Real-world assets\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Real-world assets\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -59,11 +59,51 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.97,
-          "new": 0.03,
+          "existing": 0.99,
+          "new": 0.01,
           "not_related": 0
         },
         "provider": "jev"
+      }
+    ],
+    "shadow_clef": [
+      {
+        "question": "Signal summary: \"The crypto account tokens_xyz reported that real-world assets (RWA) on Solana surpassed $5 billion in total value, marking a new all-time high. This is a third-party report of a milestone, not an official Solana announcement. It matters because it signals growing adoption of tokenized real-world assets within the Solana ecosystem.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "jev_answer": "keep",
+        "jev_confidence": 0.97,
+        "clef_answer": "keep",
+        "clef_confidence": 0.9643,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Solana\". Candidate existing entities: solana (Solana, asset); solana-dvp (Solana DvP, protocol); sunrise (Sunrise, protocol); jito (Jito, protocol). Does \"Solana\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9808,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Real-world assets\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Real-world assets\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 0.99,
+        "clef_answer": "existing",
+        "clef_confidence": 0.8315,
+        "agree": true
       }
     ],
     "llm_turns": 2

@@ -1,49 +1,64 @@
 {
   "signal_id": "3bed46f7813adab73db18d8e45a9e143bafd080b901f80cd064565821cc9233a",
-  "summary": "Elon Musk is reportedly eyeing Stanley Druckenmiller's move into Hyperliquid, the crypto derivatives platform, in the context of US crypto derivatives. The signal links two high-profile investors to Hyperliquid, suggesting growing mainstream and US-focused interest in the decentralized derivatives exchange. It matters because Musk's attention could raise Hyperliquid's profile and signal momentum for US crypto derivatives adoption.",
+  "summary": "A Crypto Briefing report (relayed by tokens_xyz) says Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. Druckenmiller's Hyperliquid position drawing Musk's attention could signal growing mainstream and institutional interest in the decentralized perps exchange and the US crypto derivatives market. This is reported interest and market talk, not a confirmed announcement from Musk or Druckenmiller.",
   "decision": "keep",
-  "reason": "All three mentions are kept: Musk and Hyperliquid map to existing shelves (elon-musk, hyperliquid), while Druckenmiller has no existing entity and needs a new one. The signal is reported interest ('eyes'), not an announcement, so each angle is written as talk rather than confirmed action.",
+  "reason": "Musk and Hyperliquid already have shelves, so this report slots into their existing stories as reported interest, not announcements from the parties themselves. Druckenmiller has no shelf yet and the signal centers on his Hyperliquid move, so a new entity is opened with this as its founding story. All three angles are framed as reports/talk since neither Musk nor Druckenmiller made the statement themselves.",
   "targets": [
     {
       "entity": "elon-musk",
       "kind": "existing",
       "type": "person",
       "angle": "existing_story",
-      "note": "Talk, not announced: Musk is reported to be eyeing Druckenmiller's Hyperliquid move as a template for US crypto derivatives — his crypto interest narrative gains a new thread."
-    },
-    {
-      "entity": "stanley-druckenmiller",
-      "kind": "new",
-      "type": "person",
-      "angle": "new_story",
-      "note": "New entity forming around Druckenmiller's Hyperliquid position, which is now being cited as the move Musk wants to follow."
+      "note": "Reported, not announced: Crypto Briefing says Musk is eyeing Druckenmiller's Hyperliquid move as a reference for US crypto derivatives — his interest in the space is what's forming here."
     },
     {
       "entity": "hyperliquid",
       "kind": "existing",
       "type": "protocol",
       "angle": "existing_story",
-      "note": "Talk of high-profile US investors (Druckenmiller, now Musk) circling Hyperliquid for crypto derivatives — mainstream attention building, nothing confirmed."
+      "note": "Talk building around the protocol: Druckenmiller's reported position and Musk's reported interest feed the ongoing story of high-profile money looking at Hyperliquid."
+    },
+    {
+      "entity": "stanley-druckenmiller",
+      "kind": "new",
+      "type": "person",
+      "angle": "new_story",
+      "note": "New entity opened by this signal: a report that Druckenmiller has a Hyperliquid position, which Musk is now reportedly eyeing — his crypto move is the story starting here."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Elon Musk is reportedly eyeing Stanley Druckenmiller's move into Hyperliquid, the crypto derivatives platform, in the context of US crypto derivatives. The signal links two high-profile investors to Hyperliquid, suggesting growing mainstream and US-focused interest in the decentralized derivatives exchange. It matters because Musk's attention could raise Hyperliquid's profile and signal momentum for US crypto derivatives adoption.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"A Crypto Briefing report (relayed by tokens_xyz) says Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. Druckenmiller's Hyperliquid position drawing Musk's attention could signal growing mainstream and institutional interest in the decentralized perps exchange and the US crypto derivatives market. This is reported interest and market talk, not a confirmed announcement from Musk or Druckenmiller.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.88,
-          "ignore": 0.12
+          "keep": 0.91,
+          "ignore": 0.09
         },
         "provider": "jev"
       },
       {
         "question": "This signal touches \"Elon Musk\". Candidate existing entities: elon-musk (Elon Musk, person). Does \"Elon Musk\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "answer": "existing",
+        "probabilities": {
+          "existing": 1,
+          "new": 0,
+          "not_related": 0
+        },
+        "provider": "jev"
+      },
+      {
+        "question": "This signal touches \"Hyperliquid\". Candidate existing entities: hyperliquid (Hyperliquid, protocol); hype (HYPE, asset); hyperliquid-strategies (Hyperliquid Strategies, organization). Does \"Hyperliquid\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -69,6 +84,33 @@
           "not_related": 0.02
         },
         "provider": "jev"
+      }
+    ],
+    "shadow_clef": [
+      {
+        "question": "Signal summary: \"A Crypto Briefing report (relayed by tokens_xyz) says Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. Druckenmiller's Hyperliquid position drawing Musk's attention could signal growing mainstream and institutional interest in the decentralized perps exchange and the US crypto derivatives market. This is reported interest and market talk, not a confirmed announcement from Musk or Druckenmiller.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "jev_answer": "keep",
+        "jev_confidence": 0.91,
+        "clef_answer": "keep",
+        "clef_confidence": 0.9514,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Elon Musk\". Candidate existing entities: elon-musk (Elon Musk, person). Does \"Elon Musk\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9942,
+        "agree": true
       },
       {
         "question": "This signal touches \"Hyperliquid\". Candidate existing entities: hyperliquid (Hyperliquid, protocol); hype (HYPE, asset); hyperliquid-strategies (Hyperliquid Strategies, organization). Does \"Hyperliquid\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
@@ -77,13 +119,23 @@
           "new",
           "not_related"
         ],
-        "answer": "existing",
-        "probabilities": {
-          "existing": 1,
-          "new": 0,
-          "not_related": 0
-        },
-        "provider": "jev"
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9881,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Stanley Druckenmiller\". The entity search found no existing entities for it. Does \"Stanley Druckenmiller\" need a new entity, or is it not related? Answer new or not_related.",
+        "choices": [
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "new",
+        "jev_confidence": 0.98,
+        "clef_answer": "new",
+        "clef_confidence": 0.8953,
+        "agree": true
       }
     ],
     "llm_turns": 2

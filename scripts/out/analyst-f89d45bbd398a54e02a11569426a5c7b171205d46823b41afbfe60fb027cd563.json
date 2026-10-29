@@ -1,30 +1,37 @@
 {
   "signal_id": "f89d45bbd398a54e02a11569426a5c7b171205d46823b41afbfe60fb027cd563",
-  "summary": "Kalshi, the prediction markets platform, has raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate exceeding $1 billion. The round reflects strong investor confidence and highlights Kalshi's growth beyond sports event contracts into broader event markets. It underscores Kalshi's position as a leading player in the rapidly expanding prediction market sector.",
+  "summary": "Cointelegraph reports that prediction markets platform Kalshi raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate surpassing $1 billion. The round marks a major milestone for Kalshi, signaling rapid growth and successful diversification beyond sports-related event contracts. It underscores the broader expansion of the prediction markets sector into general-purpose event trading.",
   "decision": "keep",
-  "reason": "The decision tool matched Kalshi to the existing entity 'kalshi'; the signal is a funding announcement about that company, so it extends its existing story rather than creating a new one. The source (tokens_xyz) is only the messenger relaying Cointelegraph's report, not an entity itself.",
+  "reason": "Kalshi maps to the existing 'kalshi' shelf, so the funding report continues its story; Prediction Markets has no existing entity and this signal is a strong seed for a new sector shelf. Both mentions are kept.",
   "targets": [
     {
       "entity": "kalshi",
       "kind": "existing",
       "type": "organization",
       "angle": "existing_story",
-      "note": "Announced: Kalshi closes a $1B round at a $40B valuation, with non-sports revenue run rate topping $1B — a major funding milestone in its growth beyond sports markets."
+      "note": "Cointelegraph reports Kalshi raised $1B at a $40B valuation, with non-sports revenue run rate topping $1B — a major growth milestone in the company's scaling story."
+    },
+    {
+      "entity": "prediction-markets",
+      "kind": "new",
+      "type": "sector",
+      "angle": "new_story",
+      "note": "Sector story forming: Kalshi's reported $1B raise at $40B valuation and $1B+ non-sports run rate signals prediction markets maturing beyond sports into general-purpose event trading."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Kalshi, the prediction markets platform, has raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate exceeding $1 billion. The round reflects strong investor confidence and highlights Kalshi's growth beyond sports event contracts into broader event markets. It underscores Kalshi's position as a leading player in the rapidly expanding prediction market sector.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"Cointelegraph reports that prediction markets platform Kalshi raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate surpassing $1 billion. The round marks a major milestone for Kalshi, signaling rapid growth and successful diversification beyond sports-related event contracts. It underscores the broader expansion of the prediction markets sector into general-purpose event trading.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.78,
-          "ignore": 0.22
+          "keep": 0.89,
+          "ignore": 0.11
         },
         "provider": "jev"
       },
@@ -42,6 +49,58 @@
           "not_related": 0
         },
         "provider": "jev"
+      },
+      {
+        "question": "This signal touches \"Prediction Markets\". The entity search found no existing entities for it. Does \"Prediction Markets\" need a new entity, or is it not related? Answer new or not_related.",
+        "choices": [
+          "new",
+          "not_related"
+        ],
+        "answer": "new",
+        "probabilities": {
+          "new": 0.99,
+          "not_related": 0.01
+        },
+        "provider": "jev"
+      }
+    ],
+    "shadow_clef": [
+      {
+        "question": "Signal summary: \"Cointelegraph reports that prediction markets platform Kalshi raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate surpassing $1 billion. The round marks a major milestone for Kalshi, signaling rapid growth and successful diversification beyond sports-related event contracts. It underscores the broader expansion of the prediction markets sector into general-purpose event trading.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "jev_answer": "keep",
+        "jev_confidence": 0.89,
+        "clef_answer": "keep",
+        "clef_confidence": 0.8143,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Kalshi\". Candidate existing entities: kalshi (Kalshi, organization). Does \"Kalshi\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9933,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Prediction Markets\". The entity search found no existing entities for it. Does \"Prediction Markets\" need a new entity, or is it not related? Answer new or not_related.",
+        "choices": [
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "new",
+        "jev_confidence": 0.99,
+        "clef_answer": "new",
+        "clef_confidence": 0.7065,
+        "agree": true
       }
     ],
     "llm_turns": 2

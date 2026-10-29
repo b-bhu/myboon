@@ -1,36 +1,36 @@
 {
   "signal_id": "05d904405cc85501c44bd32ba7744b3217665245b7cf3431ed451af28f5b5b72",
-  "summary": "Coinbase-backed Base has put tokenized versions of Apple, Alphabet, Microsoft and Amazon shares onchain, helping push the total tokenized stock market to $3.84B. The milestone comes amid pushback from the issuers themselves, signaling friction between onchain equity products and the traditional companies whose shares are being tokenized. It matters because it shows tokenized equities scaling on Base even as the underlying issuers resist.",
+  "summary": "Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B. The headline notes pushback from the issuers themselves, meaning the underlying companies appear to object to these tokenized versions of their stock. The signal matters because it captures rapid growth in tokenized equities alongside rising friction between crypto platforms and the companies whose shares are being tokenized without their blessing.",
   "decision": "keep",
-  "reason": "All three mentions map to existing shelves. Base is the actor of the announcement, so its tokenized equities storyline continues rather than starts anew. Coinbase is named only as the backer, making it a plain update with no direct action of its own. The $3.84B milestone and issuer pushback extend the ongoing tokenization-of-RWA storyline rather than opening a new one.",
+  "reason": "All three mentions were confirmed as existing shelves. Base is the subject of the report, so its tokenized-stock expansion is an existing story developing there. Coinbase appears only as Base's backer, making it a plain update rather than a story about Coinbase itself. The $3.84B market size and issuer pushback are data points for the tokenization/RWA topic, continuing its existing story. Framed as a Crowdfund Insider report, not an announcement by any of the entities.",
   "targets": [
     {
       "entity": "base",
       "kind": "existing",
       "type": "protocol",
       "angle": "existing_story",
-      "note": "As announced: Base is putting Apple, Alphabet, Microsoft and Amazon onchain, extending its tokenized equities lineup to mega-cap US stocks."
+      "note": "Report: Base has put tokenized Apple, Alphabet, Microsoft and Amazon shares onchain, extending its tokenized-stock offering as the sector hits $3.84B amid pushback from the underlying issuers."
     },
     {
       "entity": "coinbase",
       "kind": "existing",
       "type": "organization",
       "angle": "plain_update",
-      "note": "Coinbase appears only as Base's backer; no direct Coinbase action is announced, so this just reinforces its standing behind Base's stock tokenization push."
+      "note": "Report: mentioned only as the backer of Base — its supported L2 is now hosting tokenized big-tech stocks, a side effect of its ecosystem push rather than a Coinbase announcement."
     },
     {
       "entity": "tokenization-rwa",
       "kind": "existing",
       "type": "topic",
       "angle": "existing_story",
-      "note": "The tokenized stock market is reported at $3.84B, with issuer pushback framing the sector's growth as happening amid friction from the underlying companies."
+      "note": "Report: tokenized stock market cap reaches $3.84B, with major US equities going onchain even as the companies themselves push back against unauthorized tokenized versions of their shares."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Coinbase-backed Base has put tokenized versions of Apple, Alphabet, Microsoft and Amazon shares onchain, helping push the total tokenized stock market to $3.84B. The milestone comes amid pushback from the issuers themselves, signaling friction between onchain equity products and the traditional companies whose shares are being tokenized. It matters because it shows tokenized equities scaling on Base even as the underlying issuers resist.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B. The headline notes pushback from the issuers themselves, meaning the underlying companies appear to object to these tokenized versions of their stock. The signal matters because it captures rapid growth in tokenized equities alongside rising friction between crypto platforms and the companies whose shares are being tokenized without their blessing.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
@@ -73,7 +73,7 @@
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"Tokenized Stocks\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Tokenized Stocks\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Tokenized stocks\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Tokenized stocks\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -81,11 +81,64 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.8,
-          "new": 0.2,
+          "existing": 0.78,
+          "new": 0.22,
           "not_related": 0
         },
         "provider": "jev"
+      }
+    ],
+    "shadow_clef": [
+      {
+        "question": "Signal summary: \"Crowdfund Insider reports that Base, the Coinbase-backed layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B. The headline notes pushback from the issuers themselves, meaning the underlying companies appear to object to these tokenized versions of their stock. The signal matters because it captures rapid growth in tokenized equities alongside rising friction between crypto platforms and the companies whose shares are being tokenized without their blessing.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "jev_answer": "keep",
+        "jev_confidence": 0.97,
+        "clef_answer": "keep",
+        "clef_confidence": 0.9522,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Base\". Candidate existing entities: base (Base, protocol). Does \"Base\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9864,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Coinbase\". Candidate existing entities: coinbase (Coinbase, organization); base (Base, protocol); electric-coin-company (Electric Coin Company, organization); eurc (EURC, asset); meme-coins (Meme coins, topic). Does \"Coinbase\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9907,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Tokenized stocks\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Tokenized stocks\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 0.78,
+        "clef_answer": "existing",
+        "clef_confidence": 0.7918,
+        "agree": true
       }
     ],
     "llm_turns": 2

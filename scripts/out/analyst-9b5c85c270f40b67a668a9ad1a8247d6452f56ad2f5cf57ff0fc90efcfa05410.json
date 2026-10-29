@@ -1,44 +1,44 @@
 {
   "signal_id": "9b5c85c270f40b67a668a9ad1a8247d6452f56ad2f5cf57ff0fc90efcfa05410",
-  "summary": "Reported market data shared via Cryptobriefing states that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the BVI leading as issuance domiciles. The figure matters because it shows tokenized-equity issuance is concentrating in offshore, crypto-friendly jurisdictions rather than the US, shaping where issuers incorporate and how regulators on both sides may respond.",
+  "summary": "Cryptobriefing (relayed by the tokens_xyz account) reports that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI as the leading issuance jurisdictions. The figure points to tokenized equity issuance concentrating in offshore and non-US regulatory regimes rather than under US oversight. It matters because it maps where the tokenized stocks market is actually domiciled and which jurisdictions are capturing that issuance.",
   "decision": "keep",
-  "reason": "The decision tool mapped tokenized stocks to the existing tokenization-rwa topic, so the statistic lands there as a plain update to an ongoing story. Jersey and ADGM have no existing entities, and the signal gives each a distinct, recurring role (leading issuance domiciles for tokenized stocks), so new entities are warranted with a new_story angle. The signal is reported data via media, so all notes are phrased as talk, not announcements.",
+  "reason": "The decision tool mapped the sector mention to the existing tokenization-rwa topic, so the 91% statistic lands there as an existing_story — it's a news report, not an announcement by any issuer. Jersey and ADGM were judged new with no candidates, so each opens a new_story as jurisdictions being named leaders in offshore tokenized stock issuance. BVI was named in the signal but not kept by the decision tool, so no row is added.",
   "targets": [
     {
       "entity": "tokenization-rwa",
       "kind": "existing",
       "type": "topic",
-      "angle": "plain_update",
-      "note": "Reported figure — ~91% of tokenized stocks issued outside the US — a data point updating the ongoing tokenization-of-RWA story, not an announcement."
+      "angle": "existing_story",
+      "note": "Report (via tokens_xyz, per Cryptobriefing): nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI in front — a data point showing tokenized equity issuance concentrating in offshore jurisdictions, filed under the existing tokenization-of-RWA story."
     },
     {
       "entity": "jersey",
       "kind": "new",
       "type": "jurisdiction",
       "angle": "new_story",
-      "note": "New story forming: Jersey cited as a leading domicile for tokenized stock issuance, per reported market data — talk, not an official claim."
+      "note": "Reported as a front-runner jurisdiction for tokenized stock issuance outside the US — a new story forming around Jersey capturing tokenized equity issuance."
     },
     {
       "entity": "adgm",
       "kind": "new",
       "type": "jurisdiction",
       "angle": "new_story",
-      "note": "New story forming: ADGM named among the top non-US jurisdictions for tokenized equity issuance, as reported — emerging hub narrative."
+      "note": "Named alongside Jersey and BVI as a leading non-US venue for tokenized stock issuance — a new story forming around ADGM emerging as a hub for tokenized equities."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Reported market data shared via Cryptobriefing states that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the BVI leading as issuance domiciles. The figure matters because it shows tokenized-equity issuance is concentrating in offshore, crypto-friendly jurisdictions rather than the US, shaping where issuers incorporate and how regulators on both sides may respond.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"Cryptobriefing (relayed by the tokens_xyz account) reports that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI as the leading issuance jurisdictions. The figure points to tokenized equity issuance concentrating in offshore and non-US regulatory regimes rather than under US oversight. It matters because it maps where the tokenized stocks market is actually domiciled and which jurisdictions are capturing that issuance.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.98,
-          "ignore": 0.02
+          "keep": 0.97,
+          "ignore": 0.03
         },
         "provider": "jev"
       },
@@ -51,8 +51,8 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.65,
-          "new": 0.35,
+          "existing": 0.62,
+          "new": 0.38,
           "not_related": 0
         },
         "provider": "jev"
@@ -65,8 +65,8 @@
         ],
         "answer": "new",
         "probabilities": {
-          "new": 0.93,
-          "not_related": 0.07
+          "new": 0.94,
+          "not_related": 0.06
         },
         "provider": "jev"
       },
@@ -82,6 +82,57 @@
           "not_related": 0.01
         },
         "provider": "jev"
+      }
+    ],
+    "shadow_clef": [
+      {
+        "question": "Signal summary: \"Cryptobriefing (relayed by the tokens_xyz account) reports that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM and BVI as the leading issuance jurisdictions. The figure points to tokenized equity issuance concentrating in offshore and non-US regulatory regimes rather than under US oversight. It matters because it maps where the tokenized stocks market is actually domiciled and which jurisdictions are capturing that issuance.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "jev_answer": "keep",
+        "jev_confidence": 0.97,
+        "clef_answer": "keep",
+        "clef_confidence": 0.8702,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Tokenized stocks\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Tokenized stocks\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 0.62,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9377,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Jersey\". The entity search found no existing entities for it. Does \"Jersey\" need a new entity, or is it not related? Answer new or not_related.",
+        "choices": [
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "new",
+        "jev_confidence": 0.94,
+        "clef_answer": "not_related",
+        "clef_confidence": 0.6018,
+        "agree": false
+      },
+      {
+        "question": "This signal touches \"ADGM\". The entity search found no existing entities for it. Does \"ADGM\" need a new entity, or is it not related? Answer new or not_related.",
+        "choices": [
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "new",
+        "jev_confidence": 0.99,
+        "clef_answer": "new",
+        "clef_confidence": 0.716,
+        "agree": true
       }
     ],
     "llm_turns": 2

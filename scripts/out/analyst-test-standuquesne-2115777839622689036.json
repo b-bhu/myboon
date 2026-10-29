@@ -1,49 +1,49 @@
 {
   "signal_id": "test-standuquesne-2115777839622689036",
-  "summary": "An investor posting on X announces they have invested in trade(xyz), which is partnering with ICE (Intercontinental Exchange) to bring 24/7 perpetual futures built on Hyperliquid to the United States. The signal is an announced investment plus a partnership claim tying a major traditional exchange operator to crypto perpetuals infrastructure. It matters because it suggests institutional momentum toward regulated, round-the-clock perpetual futures access in the US market.",
+  "summary": "An X user (standuquesne) announces they are an investor in trade.xyz and highlights its partnership with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States. This is an investor's announcement of their stake, relayed alongside news of a major exchange partnership. It matters because it signals institutional (ICE) involvement in extending Hyperliquid-style perpetual futures to US markets through trade.xyz.",
   "decision": "keep",
-  "reason": "All three entities exist on shelves. The investment and ICE partnership are announced by the investor, so trade(xyz) and ICE each get a new_story centered on that announcement. Hyperliquid is only the underlying venue named in the partnership, so it takes a plain_update reflecting how it was said.",
+  "reason": "All three mentions were confirmed as existing entities. The signal is an investor's own announcement of his Trade.XYZ stake, with the ICE partnership and Hyperliquid perps as the context he relays — so Trade.XYZ carries the primary story, while ICE and Hyperliquid receive it as third-party report/talk rather than first-party announcements.",
   "targets": [
     {
       "entity": "trade-xyz",
       "kind": "existing",
       "type": "protocol",
       "angle": "new_story",
-      "note": "Announced: an investor says trade(xyz) is partnering with ICE to bring 24/7 perpetual futures on Hyperliquid to the US — a funding-plus-partnership story forming around the protocol."
+      "note": "Investor standuquesne announces his stake in Trade.XYZ as it partners with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States — investor backing plus a major exchange partnership forming the story."
     },
     {
       "entity": "intercontinental-exchange-ice",
       "kind": "existing",
       "type": "organization",
-      "angle": "new_story",
-      "note": "Announced via the investor's post: ICE is partnering with trade(xyz) to launch US-accessible 24/7 perps — a new leg of ICE's move into on-chain derivatives."
+      "angle": "existing_story",
+      "note": "Relayed by an investor, not ICE itself: ICE is partnering with Trade.XYZ to bring 24/7 perpetual futures on Hyperliquid to the US — another step in ICE's push into round-the-clock crypto derivatives."
     },
     {
       "entity": "hyperliquid",
       "kind": "existing",
       "type": "protocol",
-      "angle": "plain_update",
-      "note": "Talk of Hyperliquid perps reaching US users through the trade(xyz)-ICE partnership — a distribution/regulatory update to Hyperliquid's story, not its own announcement."
+      "angle": "existing_story",
+      "note": "Talk that Trade.XYZ and ICE will bring 24/7 perpetual futures on Hyperliquid to US markets — Hyperliquid's perp model reaching regulated US access through an exchange partnership."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"An investor posting on X announces they have invested in trade(xyz), which is partnering with ICE (Intercontinental Exchange) to bring 24/7 perpetual futures built on Hyperliquid to the United States. The signal is an announced investment plus a partnership claim tying a major traditional exchange operator to crypto perpetuals infrastructure. It matters because it suggests institutional momentum toward regulated, round-the-clock perpetual futures access in the US market.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "question": "Signal summary: \"An X user (standuquesne) announces they are an investor in trade.xyz and highlights its partnership with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States. This is an investor's announcement of their stake, relayed alongside news of a major exchange partnership. It matters because it signals institutional (ICE) involvement in extending Hyperliquid-style perpetual futures to US markets through trade.xyz.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.94,
-          "ignore": 0.06
+          "keep": 0.92,
+          "ignore": 0.08
         },
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"trade(xyz)\". Candidate existing entities: trade-xyz (Trade.XYZ, protocol). Does \"trade(xyz)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"trade.xyz\". Candidate existing entities: trade-xyz (Trade.XYZ, protocol). Does \"trade.xyz\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -86,6 +86,59 @@
           "not_related": 0
         },
         "provider": "jev"
+      }
+    ],
+    "shadow_clef": [
+      {
+        "question": "Signal summary: \"An X user (standuquesne) announces they are an investor in trade.xyz and highlights its partnership with ICE to bring 24/7 perpetual futures on Hyperliquid to the United States. This is an investor's announcement of their stake, relayed alongside news of a major exchange partnership. It matters because it signals institutional (ICE) involvement in extending Hyperliquid-style perpetual futures to US markets through trade.xyz.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
+        "choices": [
+          "keep",
+          "ignore"
+        ],
+        "jev_answer": "keep",
+        "jev_confidence": 0.92,
+        "clef_answer": "keep",
+        "clef_confidence": 0.9567,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"trade.xyz\". Candidate existing entities: trade-xyz (Trade.XYZ, protocol). Does \"trade.xyz\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 0.99,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9875,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"ICE (Intercontinental Exchange)\". Candidate existing entities: intercontinental-exchange-ice (Intercontinental Exchange (ICE), organization). Does \"ICE (Intercontinental Exchange)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9888,
+        "agree": true
+      },
+      {
+        "question": "This signal touches \"Hyperliquid\". Candidate existing entities: hyperliquid (Hyperliquid, protocol); hype (HYPE, asset); hyperliquid-strategies (Hyperliquid Strategies, organization). Does \"Hyperliquid\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "choices": [
+          "existing",
+          "new",
+          "not_related"
+        ],
+        "jev_answer": "existing",
+        "jev_confidence": 1,
+        "clef_answer": "existing",
+        "clef_confidence": 0.9875,
+        "agree": true
       }
     ],
     "llm_turns": 2
