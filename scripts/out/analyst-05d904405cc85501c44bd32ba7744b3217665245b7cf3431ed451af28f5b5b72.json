@@ -1,44 +1,44 @@
 {
   "signal_id": "05d904405cc85501c44bd32ba7744b3217665245b7cf3431ed451af28f5b5b72",
-  "summary": "CoinfeedInsider reports that Base, the Coinbase-backed Ethereum layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B in total value. The growth of onchain equities is happening amid pushback from the underlying issuers, the public companies whose shares are being tokenized. This matters because it marks a scaling milestone for tokenized equities on a major crypto network while highlighting emerging friction between crypto platforms and traditional stock issuers.",
+  "summary": "Coinbase-backed Base has put tokenized versions of Apple, Alphabet, Microsoft and Amazon shares onchain, helping push the total tokenized stock market to $3.84B. The milestone comes amid pushback from the issuers themselves, signaling friction between onchain equity products and the traditional companies whose shares are being tokenized. It matters because it shows tokenized equities scaling on Base even as the underlying issuers resist.",
   "decision": "keep",
-  "reason": "The decision tool kept all three mentions as existing entities: Base resolves to the base protocol shelf, Coinbase is mapped by code onto the same base shelf (its role is inseparable from Base's tokenized-stocks move), and Tokenized Stocks resolves to the tokenization-rwa topic shelf. The signal is a reported announcement (CrowdfundInsider) that advances each existing narrative rather than opening a new one, so all angles are existing_story with the framing written as it was reported.",
+  "reason": "All three mentions map to existing shelves. Base is the actor of the announcement, so its tokenized equities storyline continues rather than starts anew. Coinbase is named only as the backer, making it a plain update with no direct action of its own. The $3.84B milestone and issuer pushback extend the ongoing tokenization-of-RWA storyline rather than opening a new one.",
   "targets": [
     {
       "entity": "base",
       "kind": "existing",
       "type": "protocol",
       "angle": "existing_story",
-      "note": "Base is forming as the leading onchain venue for tokenized US mega-cap equities, now carrying Apple, Alphabet, Microsoft and Amazon as reported stock tokens push the market to $3.84B."
+      "note": "As announced: Base is putting Apple, Alphabet, Microsoft and Amazon onchain, extending its tokenized equities lineup to mega-cap US stocks."
     },
     {
-      "entity": "base",
+      "entity": "coinbase",
       "kind": "existing",
-      "type": "protocol",
-      "angle": "existing_story",
-      "note": "Per the decision tool this mention files under the Base shelf: Coinbase's backing is the force behind Base's tokenized-stocks push, so its angle is written inside the Base story rather than as a separate Coinbase development."
+      "type": "organization",
+      "angle": "plain_update",
+      "note": "Coinbase appears only as Base's backer; no direct Coinbase action is announced, so this just reinforces its standing behind Base's stock tokenization push."
     },
     {
       "entity": "tokenization-rwa",
       "kind": "existing",
       "type": "topic",
       "angle": "existing_story",
-      "note": "The tokenization-of-RWA narrative is scaling to a $3.84B milestone with blue-chip equities onchain, while issuer pushback emerges as the key friction point in the story."
+      "note": "The tokenized stock market is reported at $3.84B, with issuer pushback framing the sector's growth as happening amid friction from the underlying companies."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"CoinfeedInsider reports that Base, the Coinbase-backed Ethereum layer-2 network, has put tokenized versions of Apple, Alphabet, Microsoft, and Amazon shares onchain, as the tokenized stock market reaches $3.84B in total value. The growth of onchain equities is happening amid pushback from the underlying issuers, the public companies whose shares are being tokenized. This matters because it marks a scaling milestone for tokenized equities on a major crypto network while highlighting emerging friction between crypto platforms and traditional stock issuers.\". Is this signal about something worth tracking for crypto and market users? Answer keep or ignore.",
+        "question": "Signal summary: \"Coinbase-backed Base has put tokenized versions of Apple, Alphabet, Microsoft and Amazon shares onchain, helping push the total tokenized stock market to $3.84B. The milestone comes amid pushback from the issuers themselves, signaling friction between onchain equity products and the traditional companies whose shares are being tokenized. It matters because it shows tokenized equities scaling on Base even as the underlying issuers resist.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.94,
-          "ignore": 0.06
+          "keep": 0.97,
+          "ignore": 0.03
         },
         "provider": "jev"
       },
@@ -58,7 +58,7 @@
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"Coinbase\". Candidate existing entities: base (Base, protocol); coinbase (Coinbase, organization). Does \"Coinbase\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Coinbase\". Candidate existing entities: coinbase (Coinbase, organization); base (Base, protocol); electric-coin-company (Electric Coin Company, organization); eurc (EURC, asset); meme-coins (Meme coins, topic). Does \"Coinbase\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -81,8 +81,8 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.78,
-          "new": 0.22,
+          "existing": 0.8,
+          "new": 0.2,
           "not_related": 0
         },
         "provider": "jev"

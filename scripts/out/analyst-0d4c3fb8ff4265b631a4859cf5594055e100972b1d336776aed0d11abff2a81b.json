@@ -1,44 +1,37 @@
 {
   "signal_id": "0d4c3fb8ff4265b631a4859cf5594055e100972b1d336776aed0d11abff2a81b",
-  "summary": "Tokens (tokens_xyz), a crypto analytics and news account, reports that real-world assets (RWA) on Solana have surpassed $5 billion in value, marking a new all-time high. This milestone signals accelerating adoption of tokenized real-world assets on the Solana blockchain. It matters because it strengthens Solana's positioning in the competitive RWA/tokenization sector relative to other chains.",
+  "summary": "The Tokens account (tokens_xyz) announced that real-world assets (RWA) on the Solana blockchain have surpassed $5 billion in total value, a new all-time high. This is a milestone for Solana's tokenized asset ecosystem, signaling growing adoption of RWAs on the network. It matters as a momentum indicator for both Solana and the broader real-world asset tokenization sector.",
   "decision": "keep",
-  "reason": "Solana and the RWA/tokenization topic are existing entities, and the signal is a reported all-time-high milestone that extends their ongoing growth narratives rather than starting new ones. Tokens (tokens_xyz) is confirmed new with no candidates, so it opens a new story as a media account source.",
+  "reason": "The decision tool mapped both mentions to existing entities: Solana (asset, slug 'solana') and the tokenization/RWA topic (slug 'tokenization-rwa'). The signal is a breaking announcement of a record milestone, so it extends each entity's ongoing story rather than starting a new one.",
   "targets": [
     {
       "entity": "solana",
       "kind": "existing",
       "type": "asset",
       "angle": "existing_story",
-      "note": "Reported milestone: real-world assets on Solana surpassed $5 billion, a new all-time high, feeding the ongoing story of Solana's RWA growth."
+      "note": "Announced milestone: real-world assets on Solana surpassed $5 billion, a new all-time high — a growth marker for Solana's tokenized-asset ecosystem."
     },
     {
       "entity": "tokenization-rwa",
       "kind": "existing",
       "type": "topic",
       "angle": "existing_story",
-      "note": "Reported data point: Solana's RWA value crossing $5B ATH adds to the broader tokenization sector's growth narrative."
-    },
-    {
-      "entity": "tokens-tokens-xyz",
-      "kind": "new",
-      "type": "media_account",
-      "angle": "new_story",
-      "note": "New entity forming: a crypto analytics/news account (@tokens) that reports market milestones like Solana's RWA ATH."
+      "note": "Announced milestone feeding the tokenization narrative: RWA value on Solana hitting a $5B all-time high signals accelerating adoption on a major chain."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Tokens (tokens_xyz), a crypto analytics and news account, reports that real-world assets (RWA) on Solana have surpassed $5 billion in value, marking a new all-time high. This milestone signals accelerating adoption of tokenized real-world assets on the Solana blockchain. It matters because it strengthens Solana's positioning in the competitive RWA/tokenization sector relative to other chains.\". Is this signal about something worth tracking for crypto and market users? Answer keep or ignore.",
+        "question": "Signal summary: \"The Tokens account (tokens_xyz) announced that real-world assets (RWA) on the Solana blockchain have surpassed $5 billion in total value, a new all-time high. This is a milestone for Solana's tokenized asset ecosystem, signaling growing adoption of RWAs on the network. It matters as a momentum indicator for both Solana and the broader real-world asset tokenization sector.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.96,
-          "ignore": 0.04
+          "keep": 0.98,
+          "ignore": 0.02
         },
         "provider": "jev"
       },
@@ -66,24 +59,9 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.98,
-          "new": 0.02,
+          "existing": 0.97,
+          "new": 0.03,
           "not_related": 0
-        },
-        "provider": "jev"
-      },
-      {
-        "question": "This signal touches \"Tokens (tokens_xyz)\". The entity search found no existing entities for it. Does \"Tokens (tokens_xyz)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
-        "choices": [
-          "existing",
-          "new",
-          "not_related"
-        ],
-        "answer": "new",
-        "probabilities": {
-          "existing": 0.07,
-          "new": 0.92,
-          "not_related": 0.01
         },
         "provider": "jev"
       }

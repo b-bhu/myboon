@@ -1,57 +1,35 @@
 {
   "signal_id": "f89d45bbd398a54e02a11569426a5c7b171205d46823b41afbfe60fb027cd563",
-  "summary": "Cointelegraph reports that prediction-market platform Kalshi has raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate surpassing $1 billion. The round signals rapid maturation of event-contract trading beyond sports betting, positioning Kalshi among the most valuable private fintech exchanges. The valuation jump and diversified revenue could intensify competition with Polymarket and traditional betting/exchange venues.",
+  "summary": "Kalshi, the prediction markets platform, has raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate exceeding $1 billion. The round reflects strong investor confidence and highlights Kalshi's growth beyond sports event contracts into broader event markets. It underscores Kalshi's position as a leading player in the rapidly expanding prediction market sector.",
   "decision": "keep",
-  "reason": "Decision tool confirmed both mentions map to existing entities. Kalshi's funding round and valuation jump are a substantive new development warranting a new story; Cointelegraph appears only as the source, so it gets a plain update.",
+  "reason": "The decision tool matched Kalshi to the existing entity 'kalshi'; the signal is a funding announcement about that company, so it extends its existing story rather than creating a new one. The source (tokens_xyz) is only the messenger relaying Cointelegraph's report, not an entity itself.",
   "targets": [
     {
       "entity": "kalshi",
       "kind": "existing",
       "type": "organization",
-      "angle": "new_story",
-      "note": "Reported: Kalshi announced a $1B raise at a $40B valuation, with non-sports revenue run rate topping $1B — a fresh funding-and-growth milestone forming on its shelf."
-    },
-    {
-      "entity": "cointelegraph",
-      "kind": "existing",
-      "type": "organization",
-      "angle": "plain_update",
-      "note": "Cointelegraph is the reporting outlet on Kalshi's raise; nothing new forming about the outlet itself beyond its coverage."
+      "angle": "existing_story",
+      "note": "Announced: Kalshi closes a $1B round at a $40B valuation, with non-sports revenue run rate topping $1B — a major funding milestone in its growth beyond sports markets."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Cointelegraph reports that prediction-market platform Kalshi has raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate surpassing $1 billion. The round signals rapid maturation of event-contract trading beyond sports betting, positioning Kalshi among the most valuable private fintech exchanges. The valuation jump and diversified revenue could intensify competition with Polymarket and traditional betting/exchange venues.\". Is this signal about something worth tracking for crypto and market users? Answer keep or ignore.",
+        "question": "Signal summary: \"Kalshi, the prediction markets platform, has raised $1 billion in a funding round at a $40 billion valuation, with its non-sports revenue run rate exceeding $1 billion. The round reflects strong investor confidence and highlights Kalshi's growth beyond sports event contracts into broader event markets. It underscores Kalshi's position as a leading player in the rapidly expanding prediction market sector.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.98,
-          "ignore": 0.02
+          "keep": 0.78,
+          "ignore": 0.22
         },
         "provider": "jev"
       },
       {
         "question": "This signal touches \"Kalshi\". Candidate existing entities: kalshi (Kalshi, organization). Does \"Kalshi\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
-        "choices": [
-          "existing",
-          "new",
-          "not_related"
-        ],
-        "answer": "existing",
-        "probabilities": {
-          "existing": 1,
-          "new": 0,
-          "not_related": 0
-        },
-        "provider": "jev"
-      },
-      {
-        "question": "This signal touches \"Cointelegraph\". Candidate existing entities: cointelegraph (Cointelegraph, organization). Does \"Cointelegraph\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",

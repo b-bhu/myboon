@@ -37,18 +37,22 @@ const SYSTEM_PROMPT =
   'It is to understand what is being said, who it touches, and what it could mean for them. Read it, dissect it (who, what, why it matters), then decide where ' +
   'it should live. Ask the decision tool first whether this signal is worth keeping, then, for each entity it touches, whether it belongs to an existing entity, ' +
   'needs a new one, or is not related. Use the entity tool to see what exists. After the decision tool answers, decide the angle for each entity: what is forming ' +
-  'there, written the way it was said (reported, rumored, announced). Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. ' +
+  'there, written the way it was said: if someone announces it, it\'s announced; if people are talking about it, it\'s talk. Don\'t make it sound weaker or stronger than it is. ' +
+  'The signal comes from a source (a news site, an account, a feed). The source is only the messenger; don\'t treat it as an entity unless the news is about the source itself. Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. ' +
   'Return only the structured output.';
 
 /** Fixed decision-tool questions, written by code (the LLM never writes them). */
 function keepQuestionFor(summary: string): string {
-  return `Signal summary: "${summary}". Is this signal about something worth tracking for crypto and market users? Answer keep or ignore.`;
+  return `Signal summary: "${summary}". Would a crypto trader or market watcher care about this, even if it is only talk for now?`;
 }
 function entityQuestionFor(mention: string, candidates: Candidate[]): string {
   const shown = candidates.length > 0
     ? ` Candidate existing entities: ${candidates.map((c) => `${c.slug} (${c.name}, ${c.type})`).join('; ')}.`
     : ' The entity search found no existing entities for it.';
-  return `This signal touches "${mention}".${shown} Does "${mention}" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.`;
+  const ask = candidates.length > 0
+    ? `Does "${mention}" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.`
+    : `Does "${mention}" need a new entity, or is it not related? Answer new or not_related.`;
+  return `This signal touches "${mention}".${shown} ${ask}`;
 }
 
 const ANALYST_MODEL = process.env.ANALYST_MODEL ?? 'glm-5.3-flash';
@@ -150,7 +154,7 @@ async function ask(question: string, choices: string[], state: unknown, candidat
   return { ok: false, error: parts.join('; ') };
 }
 
-/** Entity tool: match terms against name/slug/aliases, exact first, then whole-word (terms < 3 chars exact-only). */
+/** Entity tool: match terms against name/slug/aliases; an exact match on the first term (the mention name) ranks first, then other exact, then whole-word (terms < 3 chars exact-only). */
 function searchShelves(terms: string[], shelves: Shelf[]): Candidate[] {
   const wordMatch = (value: string, needle: string): boolean =>
     new RegExp(`(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(value);
@@ -161,7 +165,7 @@ function searchShelves(terms: string[], shelves: Shelf[]): Candidate[] {
       const haystacks = [shelf.name, shelf.slug, ...shelf.aliases].map((v) => v.trim().toLowerCase());
       const exact = haystacks.includes(term);
       if (!exact && (term.length < 3 || !haystacks.some((v) => wordMatch(v, term)))) continue;
-      const rank = exact ? 0 : 1;
+      const rank = exact ? (term === query[0] ? -1 : 0) : 1;
       const previous = ranked.get(shelf.slug);
       if (!previous || rank < previous.rank) ranked.set(shelf.slug, { rank, shelf });
     }
@@ -229,7 +233,8 @@ async function analyze(signal: SignalInput, shelves: Shelf[]): Promise<AnalystRe
   const doubts: Target[] = [];
   for (const eq of entityQuestions) {
     const state = { signal: signal.text, summary, mention: eq.mention, candidates: eq.candidates };
-    const verdict = await ask(eq.question, ['existing', 'new', 'not_related'], state, eq.candidates);
+    const choices = eq.candidates.length > 0 ? ['existing', 'new', 'not_related'] : ['new', 'not_related'];
+    const verdict = await ask(eq.question, choices, state, eq.candidates);
     if (!verdict.ok) return resultOf(signal, 'unclear', `The decision tool was unreachable. ${verdict.error}`, [], summary);
     if (verdict.choice === 'not_related') continue;
     if (verdict.choice === 'existing' && eq.candidates.length === 0) {

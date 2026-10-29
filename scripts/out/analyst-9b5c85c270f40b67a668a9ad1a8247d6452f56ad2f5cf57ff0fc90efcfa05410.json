@@ -1,42 +1,49 @@
 {
   "signal_id": "9b5c85c270f40b67a668a9ad1a8247d6452f56ad2f5cf57ff0fc90efcfa05410",
-  "summary": "Per a Cryptobriefing report shared by tokens_xyz, nearly 91% of tokenized stocks are issued outside the US, with Jersey, Abu Dhabi Global Market (ADGM) and the British Virgin Islands (BVI) leading as issuance jurisdictions. The stat points to regulatory arbitrage, with tokenized-equity issuers favoring offshore and UAE free-zone frameworks over US securities rules. It matters because it positions these three jurisdictions as the dominant domiciles for tokenized stocks and underscores how marginal the US is in this market segment.",
-  "decision": "unclear",
-  "reason": "The decision tool placed \"Jersey\" in an existing entity, but the entity search found no candidate shelves. The decision tool placed \"British Virgin Islands (BVI)\" in an existing entity, but the entity search found no candidate shelves.",
+  "summary": "Reported market data shared via Cryptobriefing states that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the BVI leading as issuance domiciles. The figure matters because it shows tokenized-equity issuance is concentrating in offshore, crypto-friendly jurisdictions rather than the US, shaping where issuers incorporate and how regulators on both sides may respond.",
+  "decision": "keep",
+  "reason": "The decision tool mapped tokenized stocks to the existing tokenization-rwa topic, so the statistic lands there as a plain update to an ongoing story. Jersey and ADGM have no existing entities, and the signal gives each a distinct, recurring role (leading issuance domiciles for tokenized stocks), so new entities are warranted with a new_story angle. The signal is reported data via media, so all notes are phrased as talk, not announcements.",
   "targets": [
     {
-      "entity": "jersey",
+      "entity": "tokenization-rwa",
       "kind": "existing",
-      "type": "jurisdiction",
-      "angle": null,
-      "note": "The decision tool placed \"Jersey\" in an existing entity, but the entity search found no candidate shelves."
+      "type": "topic",
+      "angle": "plain_update",
+      "note": "Reported figure — ~91% of tokenized stocks issued outside the US — a data point updating the ongoing tokenization-of-RWA story, not an announcement."
     },
     {
-      "entity": "british-virgin-islands-bvi",
-      "kind": "existing",
+      "entity": "jersey",
+      "kind": "new",
       "type": "jurisdiction",
-      "angle": null,
-      "note": "The decision tool placed \"British Virgin Islands (BVI)\" in an existing entity, but the entity search found no candidate shelves."
+      "angle": "new_story",
+      "note": "New story forming: Jersey cited as a leading domicile for tokenized stock issuance, per reported market data — talk, not an official claim."
+    },
+    {
+      "entity": "adgm",
+      "kind": "new",
+      "type": "jurisdiction",
+      "angle": "new_story",
+      "note": "New story forming: ADGM named among the top non-US jurisdictions for tokenized equity issuance, as reported — emerging hub narrative."
     }
   ],
   "debug": {
     "model": "glm-5.3-flash",
     "jev": [
       {
-        "question": "Signal summary: \"Per a Cryptobriefing report shared by tokens_xyz, nearly 91% of tokenized stocks are issued outside the US, with Jersey, Abu Dhabi Global Market (ADGM) and the British Virgin Islands (BVI) leading as issuance jurisdictions. The stat points to regulatory arbitrage, with tokenized-equity issuers favoring offshore and UAE free-zone frameworks over US securities rules. It matters because it positions these three jurisdictions as the dominant domiciles for tokenized stocks and underscores how marginal the US is in this market segment.\". Is this signal about something worth tracking for crypto and market users? Answer keep or ignore.",
+        "question": "Signal summary: \"Reported market data shared via Cryptobriefing states that nearly 91% of tokenized stocks are issued outside the US, with Jersey, ADGM (Abu Dhabi Global Market) and the BVI leading as issuance domiciles. The figure matters because it shows tokenized-equity issuance is concentrating in offshore, crypto-friendly jurisdictions rather than the US, shaping where issuers incorporate and how regulators on both sides may respond.\". Would a crypto trader or market watcher care about this, even if it is only talk for now?",
         "choices": [
           "keep",
           "ignore"
         ],
         "answer": "keep",
         "probabilities": {
-          "keep": 0.96,
-          "ignore": 0.04
+          "keep": 0.98,
+          "ignore": 0.02
         },
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"Jersey\". The entity search found no existing entities for it. Does \"Jersey\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Tokenized stocks\". Candidate existing entities: tokenization-rwa (Tokenization of real-world assets, topic). Does \"Tokenized stocks\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
         "choices": [
           "existing",
           "new",
@@ -44,43 +51,39 @@
         ],
         "answer": "existing",
         "probabilities": {
-          "existing": 0.69,
-          "new": 0.3,
-          "not_related": 0.01
+          "existing": 0.65,
+          "new": 0.35,
+          "not_related": 0
         },
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"Abu Dhabi Global Market (ADGM)\". The entity search found no existing entities for it. Does \"Abu Dhabi Global Market (ADGM)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"Jersey\". The entity search found no existing entities for it. Does \"Jersey\" need a new entity, or is it not related? Answer new or not_related.",
         "choices": [
-          "existing",
           "new",
           "not_related"
         ],
         "answer": "new",
         "probabilities": {
-          "existing": 0.49,
-          "new": 0.51,
-          "not_related": 0
+          "new": 0.93,
+          "not_related": 0.07
         },
         "provider": "jev"
       },
       {
-        "question": "This signal touches \"British Virgin Islands (BVI)\". The entity search found no existing entities for it. Does \"British Virgin Islands (BVI)\" belong to an existing entity, need a new entity, or is it not related? Answer existing, new or not_related.",
+        "question": "This signal touches \"ADGM\". The entity search found no existing entities for it. Does \"ADGM\" need a new entity, or is it not related? Answer new or not_related.",
         "choices": [
-          "existing",
           "new",
           "not_related"
         ],
-        "answer": "existing",
+        "answer": "new",
         "probabilities": {
-          "existing": 0.72,
-          "new": 0.28,
-          "not_related": 0
+          "new": 0.99,
+          "not_related": 0.01
         },
         "provider": "jev"
       }
     ],
-    "llm_turns": 1
+    "llm_turns": 2
   }
 }
