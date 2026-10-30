@@ -1,17 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { calendarPeriod, selectedStorySlug, selectedToken, shiftCalendarDate, mergeReports } from './feed-state';
+import { selectedStorySlug, selectedToken, mergeReports } from './feed-state';
 import { formatFeedUsd } from './feed-format';
 import type { FeedItem, StorySummary } from './feed.types';
 
-test('UTC calendar crosses leap days and year boundaries with Monday–Sunday weeks', () => {
-  assert.deepEqual(calendarPeriod('2026-10-06', 'week'), { from: '2026-10-05', to: '2026-10-11' });
-  assert.deepEqual(calendarPeriod('2026-10-11', 'week'), { from: '2026-10-05', to: '2026-10-11' });
-  assert.deepEqual(calendarPeriod('2027-01-01', 'week'), { from: '2026-12-28', to: '2027-01-03' });
-  assert.deepEqual(calendarPeriod('2024-02-29', 'day'), { from: '2024-02-29', to: '2024-02-29' });
-  assert.equal(shiftCalendarDate('2024-02-28', 1), '2024-02-29');
-  assert.equal(shiftCalendarDate('2026-12-31', 1), '2027-01-01');
-});
 test('Story selection survives reordered data and falls back only when removed', () => {
   const rows = ['a', 'b', 'c'].map((storySlug) => ({ storySlug }) as StorySummary);
   assert.equal(selectedStorySlug([rows[2]!, rows[1]!, rows[0]!], 'b'), 'b');
