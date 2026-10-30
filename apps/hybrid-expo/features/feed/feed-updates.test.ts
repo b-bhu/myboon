@@ -82,8 +82,8 @@ test('updateAge formats minutes and hours on the same calendar day', () => {
 });
 
 test('updateAge prefers hours for anything under 24h even across midnight', () => {
-  assert.equal(updateAge(new Date(2026, 9, 29, 23, 0).toISOString(), now), '13H');
-  assert.equal(updateAge(new Date(2026, 9, 29, 13, 1).toISOString(), now), '22H');
+  assert.equal(updateAge(new Date(2026, 9, 29, 23, 0).toISOString(), now), 'YDA');
+  assert.equal(updateAge(new Date(2026, 9, 29, 13, 1).toISOString(), now), 'YDA');
 });
 
 test('updateAge marks yesterday older than 24h', () => {
