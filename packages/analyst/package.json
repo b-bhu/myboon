@@ -16,7 +16,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "analyst:once": "tsx src/run.ts",
-    "analyst:catchup": "tsx src/catchup.ts"
+    "analyst:catchup": "tsx src/catchup.ts",
+    "entity-manager:once": "tsx src/entity-manager-run.ts"
   },
   "dependencies": {
     "@myboon/atlas-schema": "workspace:*",
