@@ -193,9 +193,12 @@ export function nextBigEvent(events: CalendarEvent[], now: Date): CalendarEvent 
   return upcoming.sort(byInstantThenTitle)[0] ?? null;
 }
 
+/** How long after an event starts it still reads 'NOW' (15 minutes). */
+export const NOW_WINDOW_MS = 15 * 60_000;
+
 /**
  * Caps when-label for a target instant: '2D 07H' from one day out, '07H 05M'
- * inside the final day, 'NOW' during the first minute after the moment, then
+ * inside the final day, 'NOW' during the first NOW_WINDOW_MS after the moment, then
  * time-ago floored ('5M AGO', '2H AGO', '3D AGO'); '' for unusable targets.
  */
 export function countdown(target: string, now: Date): string {
@@ -203,7 +206,7 @@ export function countdown(target: string, now: Date): string {
   if (Number.isNaN(targetMs)) return '';
   const elapsed = now.getTime() - targetMs;
   if (elapsed >= 0) {
-    if (elapsed < 60_000) return 'NOW';
+    if (elapsed < NOW_WINDOW_MS) return 'NOW';
     if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}M AGO`;
     if (elapsed < DAY_MS) return `${Math.floor(elapsed / 3_600_000)}H AGO`;
     return `${Math.floor(elapsed / DAY_MS)}D AGO`;
@@ -217,7 +220,7 @@ export function countdown(target: string, now: Date): string {
 
 /**
  * Spoken form of countdown(): 'in 2d 07h', 'in 7h 05m', 'now' during the
- * first minute, then '5m ago', '2h ago', '3d ago'; '' for unusable targets.
+ * first 15 minutes (NOW_WINDOW_MS), then '5m ago', '2h ago', '3d ago'; '' for unusable targets.
  */
 export function countdownLower(target: string, now: Date): string {
   const text = countdown(target, now);
