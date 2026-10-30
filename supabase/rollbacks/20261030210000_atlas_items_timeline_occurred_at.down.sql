@@ -1,4 +1,4 @@
--- squawk-ignore-file require-concurrent-index-creation
+-- squawk-ignore-file require-concurrent-index-creation, require-concurrent-index-deletion
 -- Rollback for supabase/migrations/20261030210000_atlas_items_timeline_occurred_at.sql (#391):
 -- rebuild the write-time timeline index (main_shelf_id, created_at DESC, id DESC) that
 -- 20261029180000_atlas_analyst_targets.sql created, then drop the occurred_at one. Both steps are

@@ -1,4 +1,4 @@
--- squawk-ignore-file require-concurrent-index-creation
+-- squawk-ignore-file require-concurrent-index-creation, require-concurrent-index-deletion
 -- #391: the shelf timeline orders by signal time, not write time. Every item filed since #482
 -- copies its signal's occurred_at, and the reader (packages/analyst/src/linker-story.ts, loadItems)
 -- walks each shelf's timeline over (occurred_at DESC, id) with created_at as the older-row tiebreak,
