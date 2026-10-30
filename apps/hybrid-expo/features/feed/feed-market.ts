@@ -51,12 +51,12 @@ const withFiniteChange = (token: HeatmapToken): boolean =>
  */
 /** Stablecoins kept out of movers and the table (they never "move"). */
 export const STABLECOIN_SYMBOLS: ReadonlySet<string> = new Set([
-  'USDC', 'USDT', 'USDG', 'PYUSD', 'USDS', 'USDE', 'FDUSD', 'DAI', 'USDH', 'UXD', 'USD1',
+  'USDC', 'USDT', 'USDG', 'PYUSD', 'USDS', 'USDE', 'FDUSD', 'DAI', 'USDH', 'UXD', 'USD1', 'JUPUSD',
 ]);
 
-/** True for listed stablecoins and their jl- / wrapped (w-) / bridged (.e) variants. */
+/** True for listed stablecoins and their jl- / wrapped (w-) / syrup- / bridged (.e) variants. */
 export function isStablecoin(token: { symbol: string }): boolean {
-  const base = token.symbol.trim().toUpperCase().replace(/^(JL|W)(?=USD|DAI|PYUSD|FDUSD)/, '').replace(/\.E$/, '');
+  const base = token.symbol.trim().toUpperCase().replace(/^(JL|W|SYRUP)(?=USD|DAI|PYUSD|FDUSD)/, '').replace(/\.E$/, '');
   return STABLECOIN_SYMBOLS.has(base);
 }
 
