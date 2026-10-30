@@ -1,31 +1,22 @@
 /**
- * V4 scout off-switch gate (#444).
- *
- * The gate runs before any DB client or network is created: when the gate
- * decides "off", it never calls `run`, so no client, pool, or socket is
+ * V4 scout off-switch gate (#444), the scout instance of the shared stage gate
+ * (#512). The gate runs before any DB client or network is created: when the
+ * gate decides "off", it never calls `run`, so no client, pool, or socket is
  * ever opened for a disabled stage. The PM2 entry runs
  * `src/run.ts`, which is wrapped by this
  * gate.
  */
+import { isStageEnabled, runGatedStage, type ProcessEnvLike } from './stage-gate'
 
-/** The exact string that turns the scout on; anything else is off. */
-const SCOUT_ENABLED_VALUE = 'true'
-
-const DISABLED_LOG_LINE = JSON.stringify({
-  level: 'info',
-  stage: 'scout-news',
-  msg: 'scout disabled (SCOUT_ENABLED != "true"); exiting',
-})
-
-/** Env is NodeJS.ProcessEnv-shaped: keys may be absent or undefined. */
-type ProcessEnvLike = Record<string, string | undefined>
+const SCOUT_ENABLED_FLAG = 'SCOUT_ENABLED'
+const SCOUT_DISABLED_MSG = 'scout disabled (SCOUT_ENABLED != "true"); exiting'
 
 /**
  * True only when env.SCOUT_ENABLED is exactly 'true'. An unset or
  * differently-cased value ('TRUE', '1', ...) is off.
  */
 export function isScoutEnabled(env: ProcessEnvLike = process.env): boolean {
-  return env.SCOUT_ENABLED === SCOUT_ENABLED_VALUE
+  return isStageEnabled(SCOUT_ENABLED_FLAG, env)
 }
 
 export interface RunGatedScoutOptions {
@@ -43,15 +34,13 @@ export interface RunGatedScoutOptions {
  * Off: one JSON info line, exit 0, and `run` is never called. On: await run().
  */
 export async function runGatedScout(opts: RunGatedScoutOptions): Promise<void> {
-  const env = opts.env ?? process.env
-  const exit = opts.exit ?? process.exit
-  const log = opts.log ?? ((line: string) => { process.stdout.write(line + '\n') })
-
-  if (!isScoutEnabled(env)) {
-    log(DISABLED_LOG_LINE)
-    exit(0)
-    return
-  }
-
-  await opts.run()
+  await runGatedStage({
+    flag: SCOUT_ENABLED_FLAG,
+    stage: 'scout-news',
+    disabledMsg: SCOUT_DISABLED_MSG,
+    env: opts.env,
+    exit: opts.exit,
+    log: opts.log,
+    run: opts.run,
+  })
 }

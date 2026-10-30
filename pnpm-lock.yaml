@@ -314,6 +314,9 @@ importers:
       '@myboon/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@myboon/shared':
+        specifier: workspace:*
+        version: link:../shared
       pg:
         specifier: 8.16.3
         version: 8.16.3

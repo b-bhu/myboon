@@ -14,11 +14,13 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "analyst:once": "tsx src/run.ts"
   },
   "dependencies": {
     "@myboon/atlas-schema": "workspace:*",
     "@myboon/contracts": "workspace:*",
+    "@myboon/shared": "workspace:*",
     "pg": "8.16.3"
   },
   "devDependencies": {
