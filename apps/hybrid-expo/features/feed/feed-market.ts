@@ -49,7 +49,19 @@ const withFiniteChange = (token: HeatmapToken): boolean =>
  * whole range, not negatives-only), volume by volumeUsd desc. Tokens without
  * a change never appear in the change modes; ties break by symbol asc.
  */
+/** Stablecoins kept out of movers and the table (they never "move"). */
+export const STABLECOIN_SYMBOLS: ReadonlySet<string> = new Set([
+  'USDC', 'USDT', 'USDG', 'PYUSD', 'USDS', 'USDE', 'FDUSD', 'DAI', 'USDH', 'UXD', 'USD1',
+]);
+
+/** True for listed stablecoins and their jl- / wrapped (w-) / bridged (.e) variants. */
+export function isStablecoin(token: { symbol: string }): boolean {
+  const base = token.symbol.trim().toUpperCase().replace(/^(JL|W)(?=USD|DAI|PYUSD|FDUSD)/, '').replace(/\.E$/, '');
+  return STABLECOIN_SYMBOLS.has(base);
+}
+
 export function movers(tokens: HeatmapToken[], mode: MoverMode, n = 3): HeatmapToken[] {
+  tokens = tokens.filter((token) => !isStablecoin(token));
   if (mode === 'volume') {
     return [...tokens].sort((a, b) => b.volumeUsd - a.volumeUsd || bySymbolAsc(a, b)).slice(0, n);
   }
@@ -62,7 +74,7 @@ export function movers(tokens: HeatmapToken[], mode: MoverMode, n = 3): HeatmapT
 
 /** Market-table rows: volumeUsd desc, ties by symbol asc. */
 export function tableRows(tokens: HeatmapToken[]): HeatmapToken[] {
-  return [...tokens].sort((a, b) => b.volumeUsd - a.volumeUsd || bySymbolAsc(a, b));
+  return tokens.filter((token) => !isStablecoin(token)).sort((a, b) => b.volumeUsd - a.volumeUsd || bySymbolAsc(a, b));
 }
 
 /** Up/down tile counts; zero and unknown changes are neither (heatmapTone). */

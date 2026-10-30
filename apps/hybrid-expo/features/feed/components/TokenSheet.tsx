@@ -9,7 +9,6 @@ import { heatmapTone } from '../token-heatmap-layout';
 import type { HeatmapToken } from '../token-heatmap.types';
 import { FeedSheet } from './ui/FeedSheet';
 import { MockOnly } from './ui/SampleDataLabel';
-import { TokenSparkline } from './token-sparkline';
 
 interface TokenSheetProps {
   token: HeatmapToken | null;
@@ -32,7 +31,7 @@ const toneColor = (change: number | null): string => {
  * with a tone-tinted letter tile, big mono price with change, the volume /
  * mkt cap / liquidity boxes and the trade buttons (Swap primary, Phoenix
  * perps secondary when the token has one). Price and figures are real heatmap
- * values; the sparkline and "why it moved" card are sample-gated mocks.
+ * values; the "why it moved" card is a sample-gated mock.
  */
 export function TokenSheet({ token, interval, onClose }: TokenSheetProps) {
   const router = useRouter();
@@ -78,11 +77,6 @@ export function TokenSheet({ token, interval, onClose }: TokenSheetProps) {
           </View>
           {news ? (
             <View style={styles.sample}>
-              <MockOnly>
-                <View style={styles.sparkCard}>
-                  <TokenSparkline address={token.address} change={token.priceChangePct} width={220} height={56} />
-                </View>
-              </MockOnly>
               <MockOnly>
                 <View style={styles.newsCard}>
                   <Text style={styles.newsHeading}>Why it moved</Text>
@@ -227,14 +221,6 @@ const styles = StyleSheet.create({
   sample: {
     marginTop: FEED_TOKENS.space.md,
     gap: FEED_TOKENS.space.sm,
-  },
-  sparkCard: {
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: FEED_TOKENS.colors.border,
-    borderRadius: FEED_TOKENS.radius.card,
-    backgroundColor: FEED_TOKENS.colors.card,
-    padding: FEED_TOKENS.space.md,
   },
   newsCard: {
     borderWidth: 1,
