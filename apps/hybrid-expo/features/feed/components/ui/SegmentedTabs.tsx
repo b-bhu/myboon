@@ -1,7 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { FEED_TOKENS } from '../../feed-design';
-import '../../react-test-instance-tojson';
 
 export type SegmentedTabOption = {
   key: string;

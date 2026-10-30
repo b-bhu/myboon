@@ -1,10 +1,5 @@
 import { Platform } from 'react-native';
 
-// Dev-support side effect: arms the react-test-renderer instance toJSON shim
-// in test processes before any component tests run. Inert in app builds (see
-// react-test-instance-tojson.ts).
-import './react-test-instance-tojson';
-
 export { FEED_TOKENS } from './feed-tokens';
 export type {
   FeedBoxTone,

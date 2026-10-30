@@ -548,7 +548,9 @@ test('SegmentedTabs: active/inactive states and presses report the option key', 
   const segments = renderer.root.findAllByProps({ accessibilityRole: 'tab' });
   assert.equal(segments.length, options.length, 'every option renders as a tab segment');
 
-  const segmentByLabel = (label: string) => segments.find((node) => textFromJson(node.toJSON()).includes(label));
+  const textFromInstance = (node: { children: ReadonlyArray<unknown> } | string): string =>
+    typeof node === 'string' ? node : node.children.map((c) => textFromInstance(c as { children: ReadonlyArray<unknown> } | string)).join('');
+  const segmentByLabel = (label: string) => segments.find((node) => textFromInstance(node).includes(label));
   for (const option of options) {
     const segment = segmentByLabel(option.label);
     assert.ok(segment, `segment for ${option.label} rendered`);
