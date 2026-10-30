@@ -211,7 +211,7 @@ const SIBLING_PATHS: Record<string, string> = {
 type LoadOptions = { feedMocksEnv?: string | undefined };
 
 function loadFeedModule(relativePath: string, options: LoadOptions = {}): Record<string, unknown> {
-  const filePath = fileURLToPath(new URL(relativePath, import.meta.url));
+  const filePath = fileURLToPath(new URL(relativePath, import.meta.url).href);
   const transpiled = ts.transpileModule(readFileSync(filePath, 'utf8'), {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -453,7 +453,7 @@ test('FeedBox: bordered container with tone backgrounds, custom style merge and 
 
   let renderer = await mount(FeedBox, {}, React.createElement('Text', null, 'Balance'));
   assert.equal(renderer.root.findAllByType('Pressable' as never).length, 0, 'without onPress renders a plain View');
-  const boxStyle = styleOfNode(renderer.root.findByType('View'));
+  const boxStyle = styleOfNode(renderer.root.findByType('View' as never));
   assert.equal(boxStyle.borderWidth, 1);
   assert.equal(boxStyle.borderColor, tokens.colors.border);
   assert.equal(boxStyle.borderRadius, 8);
@@ -462,13 +462,13 @@ test('FeedBox: bordered container with tone backgrounds, custom style merge and 
   assert.ok(textNodes(renderer).includes('Balance'));
 
   renderer = await mount(FeedBox, { tone: 'card', style: { margin: 4 } }, React.createElement('Text'));
-  const cardStyle = styleOfNode(renderer.root.findByType('View'));
+  const cardStyle = styleOfNode(renderer.root.findByType('View' as never));
   assert.equal(cardStyle.backgroundColor, tokens.colors.card);
   assert.equal(cardStyle.margin, 4, 'explicit style merges in');
   assert.equal(cardStyle.padding, 12, 'explicit style keeps the base chrome');
 
   renderer = await mount(FeedBox, { tone: 'lift' });
-  assert.equal(styleOfNode(renderer.root.findByType('View')).backgroundColor, tokens.colors.lift);
+  assert.equal(styleOfNode(renderer.root.findByType('View' as never)).backgroundColor, tokens.colors.lift);
 });
 
 test('FeedBox: pressing the pressable variant calls onPress', async () => {
@@ -481,7 +481,7 @@ test('FeedBox: pressing the pressable variant calls onPress', async () => {
     { onPress: () => { pressCount += 1; }, testID: 'wallet-box' },
     React.createElement('Text', null, 'Net worth'),
   );
-  const pressable = renderer.root.findByType('Pressable');
+  const pressable = renderer.root.findByType('Pressable' as never);
   const pressableStyle = styleOfNode(pressable);
   assert.equal(pressableStyle.borderWidth, 1);
   assert.equal(pressableStyle.borderColor, tokens.colors.border);
@@ -601,7 +601,7 @@ test('FeedSheet: modal shell with backdrop close, grabber and no Close label; hi
     React.createElement('Text', null, 'Story'),
   );
 
-  const modal = renderer.root.findByType('Modal');
+  const modal = renderer.root.findByType('Modal' as never);
   assert.equal(modal.props.visible, true);
   assert.equal(modal.props.transparent, true);
   assert.equal(modal.props.animationType, 'slide');
@@ -637,7 +637,7 @@ test('FeedSheet: modal shell with backdrop close, grabber and no Close label; hi
   assert.ok(!texts.includes('Close'), 'sheet does not render a Close label');
 
   const hidden = await mount(FeedSheet, { visible: false, onClose: () => {} });
-  assert.equal(hidden.root.findByType('Modal').props.visible, false);
+  assert.equal(hidden.root.findByType('Modal' as never).props.visible, false);
 });
 
 test('SampleDataLabel and MockOnly gate the sample tag on the mocks flag', async () => {

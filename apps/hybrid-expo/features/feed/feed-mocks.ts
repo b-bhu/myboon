@@ -1,7 +1,7 @@
 /**
  * Mock gating for the Feed redesign prototype (issue #494).
  *
- * The flag reads EXPO_PUBLIC_FEED_MOCKS at module load, so values are baked in
+ * The flag reads process.env.EXPO_PUBLIC_FEED_MOCKS (literal form, so Expo inlines it) at module load, so values are baked in
  * at bundle time and only flip in development builds. Only the strings
  * "1", "true" and "on" (trimmed, case-insensitive) enable mocks.
  */
@@ -15,7 +15,7 @@ export function isFeedMocksEnabled(value: string | undefined): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'on';
 }
 
-export const FEED_MOCKS = isFeedMocksEnabled(process.env[MOCK_ENV_KEY]);
+export const FEED_MOCKS = isFeedMocksEnabled(process.env.EXPO_PUBLIC_FEED_MOCKS);
 
 /** A story stays active for STORY_ACTIVE_DAYS. Invalid dates are never active. */
 export function isStoryActive(updatedAt: string, now: Date = new Date()): boolean {
