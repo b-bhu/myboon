@@ -11,8 +11,8 @@ interface UpdateRowProps {
 
 /**
  * Text-only "All updates" row (issue #496, DESIGN.md §7 + feed-mock.html
- * #s-allupdates): boxed card, title first, one-line summary, mono-cap meta.
- * No image. The whole card is tappable and opens the news sheet.
+ * #s-allupdates): plain hairline row, title first, one-line summary, mono-cap meta.
+ * No image. The whole row is tappable and opens the news sheet.
  */
 export function UpdateRowCard({ item, now, onPress }: UpdateRowProps) {
   return (
@@ -32,12 +32,9 @@ export function UpdateRowCard({ item, now, onPress }: UpdateRowProps) {
 const styles = StyleSheet.create({
   card: {
     minHeight: 44,
-    borderRadius: FEED_TOKENS.radius.card,
-    borderWidth: 1,
-    borderColor: FEED_TOKENS.colors.border,
-    backgroundColor: FEED_TOKENS.colors.card,
-    padding: FEED_TOKENS.space.md,
-    marginBottom: FEED_TOKENS.space.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: FEED_TOKENS.colors.border,
+    paddingVertical: FEED_TOKENS.space.md,
     gap: FEED_TOKENS.space.sm,
   },
   title: {

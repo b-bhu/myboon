@@ -56,10 +56,11 @@ export function updateAge(iso: string, now: Date): string {
   const ms = now.getTime() - date.getTime();
   if (ms < 60_000) return 'NOW';
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}M`;
-  // Under 24h (or still inside the same local calendar day) reads as hours,
-  // so late-night updates stay hour-based across midnight.
-  if (calendarDayDistance(iso, now) === 0 || ms < 24 * 3_600_000) return `${Math.floor(ms / 3_600_000)}H`;
-  if (calendarDayDistance(iso, now) === 1) return 'YDA';
+  // Same local day reads as hours; the previous local day always reads 'YDA'
+  // so ages match the YESTERDAY header they sit under.
+  const days = calendarDayDistance(iso, now);
+  if (days === 1) return 'YDA';
+  if (days === 0 || ms < 24 * 3_600_000) return `${Math.floor(ms / 3_600_000)}H`;
   return `${date.getDate()} ${MONTHS[date.getMonth()]}`.toUpperCase();
 }
 
