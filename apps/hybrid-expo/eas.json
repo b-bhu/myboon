@@ -23,6 +23,13 @@
         "EXPO_PUBLIC_API_BASE_URL": "https://api.myboon.tech"
       }
     },
+    "dapp-store-waitlist": {
+      "extends": "dapp-store",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.myboon.tech",
+        "EXPO_PUBLIC_WAITLIST_MODE": "1"
+      }
+    },
     "preview": {
       "distribution": "internal",
       "android": {

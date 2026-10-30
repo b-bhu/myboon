@@ -4,7 +4,7 @@ One PM2 app in Sprint 1: the news scout, hosted by `packages/scout-news`.
 
 | PM2 app | Script | Stage |
 | --- | --- | --- |
-| `myboon-v4-scout-news` | `src/run.ts` | `scout-news` |
+| `myboon-scout` | `src/run.ts` | `scout-news` |
 
 The analyst and
 entity-manager stage apps are Sprint 2 work; they join this runbook when
@@ -19,7 +19,7 @@ restart-loop into `errored`.
 The scout runs once per cycle and exits. PM2 starts it every 15 minutes
 (`cron_restart: '*/15 * * * *'`) with `autorestart: false`. It is not a
 resident process: `pm2 status` shows it `stopped` between ticks, and a
-one-off manual run (`pm2 start myboon-v4-scout-news --update-env`) makes an
+one-off manual run (`pm2 start myboon-scout --update-env`) makes an
 extra cycle.
 
 ## Off by default
@@ -35,7 +35,7 @@ CTO approves go-live after Backend Dev's local e2e passes. Then:
 
 ```sh
 cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
-MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-v4-scout-news
+MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-scout
 pm2 save
 ```
 
@@ -45,7 +45,7 @@ the dump backup taken first is the rollback path.
 ## Stop
 
 ```sh
-pm2 stop myboon-v4-scout-news
+pm2 stop myboon-scout
 ```
 
 `pm2 stop` only kills the current tick; with `cron_restart`, PM2 brings a
@@ -55,7 +55,7 @@ stopped app back at the next 15-minute tick. The off-switch is the
 the VPS (it would leave the deploy checkout dirty):
 
 ```sh
-SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env
+SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-scout --update-env
 ```
 
 With `'false'`, each cron tick exits 0 immediately, before any DB client
@@ -66,7 +66,7 @@ or network connection is created: nothing runs and nothing is written.
 The app writes one JSON line per event (`{ ts, level, stage, msg, ... }`):
 
 ```sh
-pm2 logs myboon-v4-scout-news --lines 200 | jq -c 'select(.level != "info")'
+pm2 logs myboon-scout --lines 200 | jq -c 'select(.level != "info")'
 ```
 
 `health` lines carry the snapshot numbers below; filter with
@@ -113,11 +113,11 @@ credential values in tickets or chat.
 ## Rollback
 
 Pause the stage with the off-switch, not `pm2 delete`: run
-`SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-v4-scout-news --update-env`. With `'false'` every
+`SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-scout --update-env`. With `'false'` every
 tick exits 0 immediately, before any DB or network work.
 
 Fully removing the app from the PM2 list (`pm2 delete
-myboon-v4-scout-news`, then `pm2 save`) is not the off-switch; that
+myboon-scout`, then `pm2 save`) is not the off-switch; that
 process-list change needs CTO approval. If it is approved, back up the
 process list first (the dump backup step from Start), then delete and
 `pm2 save`; re-adding the app later starts from the ecosystem file
