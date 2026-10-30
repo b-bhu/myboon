@@ -13,6 +13,7 @@ import { parseAnalystConfig } from './config.js';
 import type { Decider } from './deciders.js';
 import { CLEF_ENDPOINT, CLEF_MODEL, JEV_ENDPOINT, JEV_MODEL, SystemOneDecider } from './deciders.js';
 import { PgDecisionSink, processNextD36, shelfSearchFromDb, type D36Options } from './d36-worker.js';
+import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { createOllamaLlm, type JevLogEntry, type Llm } from './session.js';
 import type { Db } from './states.js';
 
@@ -74,7 +75,7 @@ export async function analystMain(o: AnalystMainOptions): Promise<RunSummary> {
 
   const pool = o.createPool
     ? o.createPool(c.databaseUrl)
-    : new Pool({ connectionString: c.databaseUrl, max: 2 });
+    : new Pool({ ...analystPoolConfig(c.databaseUrl, loadAnalystDatabaseCa(o.env)), max: 2 });
 
   try {
     const llm = o.createLlm ? o.createLlm(c) : createOllamaLlm({ apiKey: c.ollamaApiKey, model: c.llmModel, timeoutMs: c.timeoutMs });
