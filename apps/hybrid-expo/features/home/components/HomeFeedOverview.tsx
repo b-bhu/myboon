@@ -5,9 +5,7 @@ import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/compone
 import { DevelopingStoryCard, StoryCarouselSkeleton, TodayCarousel } from '@/features/feed/components/StoryCarousel';
 import { SectionHeader } from '@/features/feed/components/ui/SectionHeader';
 import { FeedSectionState } from '@/features/feed/components/feed-section-state';
-import { MarketCalendar } from '@/features/feed/components/market-calendar';
-import { TokenStats } from '@/features/feed/components/token-stats';
-import { SmartWalletActivity } from '@/features/feed/components/smart-wallet-activity';
+import { MarketsCarousel } from '@/features/feed/components/MarketsCarousel';
 import { fetchFeedItems } from '@/features/feed/feed.api';
 import { fetchStories } from '@/features/feed/stories.api';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
@@ -65,9 +63,7 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
         {developing ? <DevelopingStoryCard story={developing} onWatch={(target) => router.push(storyHref(target.storySlug))} /> : null}
         {stories.data && !developing && !stories.error ? <FeedSectionState title="No developing story" text="Active stories from the last 7 days appear here." /> : null}
       </View>
-      <MarketCalendar active={active} refreshVersion={refreshVersion} />
-      <SmartWalletActivity active={active} refreshVersion={refreshVersion} />
-      <TokenStats active={active} refreshVersion={refreshVersion} />
+      <MarketsCarousel active={active} refreshVersion={refreshVersion} />
     </Animated.ScrollView>
 {stories.pending || reports.pending ? <Pressable accessibilityRole="button" accessibilityLabel="Apply new Feed updates" onPress={() => { stories.apply(); reports.apply(); }} style={styles.newUpdates}><Text style={styles.action}>New updates ↓</Text></Pressable> : null}
 
