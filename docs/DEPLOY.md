@@ -26,6 +26,41 @@ production path is researcher → entity-manager → editor-draft → publisher.
 
 ---
 
+## Analyst worker (myboon-analyst)
+
+`myboon-analyst` (`packages/analyst`) runs one cycle and exits; PM2 starts it
+again at the hourly cron tick (`0 * * * *`, `autorestart` off). The seven
+persistent registrations in the table above are unchanged: like the gated
+scout, the analyst joins the process list only when
+`MYBOON_V4_RUNTIME_ENABLED=1`, and a plain `pm2 start/reload` of the ecosystem
+file never registers it. Secrets (`ANALYST_DATABASE_URL`, `OLLAMA_API_KEY`,
+`JEV_API_TOKEN`) come only from the sourced `.env`; they are never set in the
+ecosystem file. Config check: `pnpm exec tsx scripts/check-ecosystem.ts`.
+
+The hourly tick is sized to the worst-case decider wall time per run:
+20 signals x 4 asks x (primary + fallback) 2 x 20s = 3200s (~53 min) < 60 min.
+PM2 runs one process per app and `cron_restart` restarts (kills) rather than
+starting a second copy, so runs never overlap. A killed run's signal stays
+claimed until its 300s lease expires and is retried with backoff.
+
+```bash
+# Go-live (register). Back up the process list BEFORE anything else:
+cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
+
+# From the repo root as the PM2 user. Source the .env silently —
+# never echo it; secrets must stay out of history and the ecosystem file:
+set -a; . ./.env; set +a
+MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-analyst
+pm2 save
+
+# Switch on / off (ANALYST_ENABLED defaults to false; set in the shell,
+# never by editing the tracked ecosystem file):
+ANALYST_ENABLED=true MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-analyst --update-env && pm2 save
+ANALYST_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-analyst --update-env && pm2 save
+```
+
+---
+
 ## Hermes CLI prerequisite
 
 The shared Research worker, shared Entity worker, and editor-draft can shell
