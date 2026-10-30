@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { fetchWalletActivity } from './wallet-activity.api';
-import { groupByWallet, rankRows, shortAddress, signedUsd, walletSample, walletSubline } from './feed-wallets';
+import { groupByWallet, leaderboardRankLabel, rankRows, shortAddress, signedUsd, walletSample, walletSubline } from './feed-wallets';
 import type { WalletRow } from './feed-wallets';
 import { FEED_TOKENS, monoFontFamily } from './feed-design';
 import { FEED_MOCKS } from './feed-mocks';
@@ -90,7 +90,7 @@ export default function WalletsScreen() {
             <View style={styles.table}>
               <View style={styles.headerRow}>
                 <Text style={styles.headLeft}># · Wallet</Text>
-                <Text style={styles.headRight}>{FEED_MOCKS ? '30d PnL · Win' : 'Volume'}</Text>
+                <Text style={styles.headRight}>{leaderboardRankLabel(FEED_MOCKS)}</Text>
               </View>
               {ranked.map((row) => {
                 const sample = walletSample(row.address);
