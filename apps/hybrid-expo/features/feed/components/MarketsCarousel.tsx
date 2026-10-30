@@ -5,7 +5,7 @@ import { FEED_TOKENS, monoFontFamily } from '../feed-design';
 import { carouselIndex } from '../feed-home';
 import { SectionHeader } from './ui/SectionHeader';
 import { CalendarSlide } from './CalendarSlide';
-import { SmartWalletActivity } from './smart-wallet-activity';
+import { WalletsSlide } from './WalletsSlide';
 import { TokenStats } from './token-stats';
 
 const SLIDES = [
@@ -18,8 +18,8 @@ const SLIDES = [
  * "Markets now" paged carousel (feed-mock.html #s-home .bar second section +
  * #s-slides, DESIGN.md §7/§8): three full-width slides — calendar, smart
  * wallets, token market — with the mono label row above and the gold bars
- * pager below. Slide one introduces the Calendar; the other two keep the
- * existing section components unchanged.
+ * pager below. The calendar and wallets slides are the redesign cards; the
+ * market slide keeps the existing section unchanged.
  */
 export function MarketsCarousel({ active, refreshVersion }: { active: boolean; refreshVersion: number }) {
   const [slideWidth, setSlideWidth] = useState(0);
@@ -67,7 +67,7 @@ export function MarketsCarousel({ active, refreshVersion }: { active: boolean; r
                 <CalendarSlide active={active} refreshVersion={refreshVersion} />
               </View>
               <View style={{ width: slideWidth }} onLayout={measure(1)}>
-                <SmartWalletActivity active={active} refreshVersion={refreshVersion} />
+                <WalletsSlide active={active} refreshVersion={refreshVersion} />
               </View>
               <View style={{ width: slideWidth }} onLayout={measure(2)}>
                 <TokenStats active={active} refreshVersion={refreshVersion} />
