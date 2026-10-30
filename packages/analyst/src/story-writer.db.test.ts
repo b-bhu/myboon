@@ -64,10 +64,20 @@ describe.skipIf(ADMIN_URL === '')('#505 story writer (local Postgres)', () => {
       [SIGNAL.signal_id, SIGNAL.source ?? 'tokens_xyz', SIGNAL.text, SIGNAL.link]);
   });
 
-  const item = async (key: string, angle: string, note: string, at = 'now()') => (await pool.query<{ id: string }>(
-    `insert into atlas.items (item_key, title, summary, main_shelf_id, signal_id, angle, note, occurred_at)
-     values ($1, $2, $3, $4, $5, $6, $3, ${at}) returning id`,
-    [key, note, note, shelfId, SIGNAL.signal_id, angle])).rows[0].id;
+  /** One item per signal (items are unique per (signal, shelf)): k1 uses the real signal, others get a copy. */
+  const item = async (key: string, angle: string, note: string, at = 'now()') => {
+    const signalId = key === 'k1' ? SIGNAL.signal_id : `${SIGNAL.signal_id}-${key}`;
+    if (signalId !== SIGNAL.signal_id) {
+      await pool.query(
+        `insert into atlas.signals (signal_id, schema_version, source, source_id, type, text, link, occurred_at)
+         values ($1, 1, $2, $3, 'news', $4, $5, now())`,
+        [signalId, SIGNAL.source ?? 'tokens_xyz', `src-${key}`, SIGNAL.text, SIGNAL.link]);
+    }
+    return (await pool.query<{ id: string }>(
+      `insert into atlas.items (item_key, title, summary, main_shelf_id, signal_id, angle, note, occurred_at)
+       values ($1, $2, $3, $4, $5, $6, $3, ${at}) returning id`,
+      [key, note, note, shelfId, signalId, angle])).rows[0].id;
+  };
   const stories = async () => (await pool.query(
     'select id, shelf_id, status, title, summary from atlas.stories order by created_at')).rows;
   const links = async () => (await pool.query('select story_id, item_id from atlas.story_items')).rows;

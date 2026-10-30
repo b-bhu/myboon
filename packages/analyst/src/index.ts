@@ -10,6 +10,7 @@
  *   searchShelves, processNextD36, InMemoryDecisionSink, PgDecisionSink (atlas.decisions)
  * - Worker entrypoint (#512): parseAnalystConfig, AnalystConfig, AnalystConfigError,
  *   runAnalystOnce, RunSummary, analystMain
+ * - Story writer (#505): writeStories, WriteStoriesOptions, WriteStoriesResult
  */
 export * from './config.js';
 export * from './deciders.js';
@@ -19,3 +20,4 @@ export * from './linker-story.js';
 export * from './session.js';
 export * from './d36-worker.js';
 export * from './runner.js';
+export * from './story-writer.js';
