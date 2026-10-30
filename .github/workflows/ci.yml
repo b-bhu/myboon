@@ -52,18 +52,10 @@ jobs:
         env:
           ANALYST_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       - run: pnpm --filter @myboon/analyst typecheck
-      # scout.db.test.ts needs a disposable DB with the atlas migrations applied (tool_log needs pg_cron; skipped).
+      # scout.db.test.ts needs a disposable DB with the atlas migrations applied. Same applier as the
+      # analyst throwaway DBs (@myboon/atlas-schema), incl. its local tool_log stand-in (no pg_cron).
       - name: Prepare scout test database
-        env:
-          PGPASSWORD: postgres
-        run: |
-          for r in anon authenticated service_role; do
-            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "do \$\$ begin create role $r nologin; exception when duplicate_object then null; end \$\$"
-          done
-          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "create database scout_test"
-          for f in $(ls supabase/migrations/*_atlas*.sql | grep -v _atlas_tool_log | sort); do
-            psql -h 127.0.0.1 -U postgres -d scout_test -v ON_ERROR_STOP=1 -q -f "$f"
-          done
+        run: pnpm exec tsx packages/atlas-schema/scripts/prepare-db.ts postgres://postgres:postgres@127.0.0.1:5432/postgres scout_test
       - run: pnpm --filter @myboon/scout-news test
         env:
           SCOUT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/scout_test

@@ -51,27 +51,19 @@ export interface ThrowawayDatabase {
   drop(): Promise<void>;
 }
 
-/** Create a fresh database on a LOCAL server, add the Supabase roles, apply every atlas migration. */
-export async function createThrowawayDatabase(
-  adminUrl: string,
-  opts: { before?: string } = {},
-): Promise<ThrowawayDatabase> {
-  assertLocalUrl(adminUrl);
-  const name = `atlas_test_${randomBytes(4).toString('hex')}`;
-  const admin = new pg.Client({ connectionString: adminUrl });
-  await admin.connect();
-  try {
-    // Mirror Supabase: service_role bypasses RLS, anon/authenticated do not.
-    for (const [role, attrs] of [['anon', 'nologin'], ['authenticated', 'nologin'], ['service_role', 'nologin bypassrls']] as const) {
-      await admin.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = '${role}') then create role ${role} ${attrs}; end if; exception when duplicate_object or unique_violation then null; end $$`);
-    }
-    await admin.query(`create database ${name}`);
-  } finally {
-    await admin.end();
+/** Mirror Supabase: service_role bypasses RLS, anon/authenticated do not. Idempotent. */
+export async function ensureSupabaseRoles(client: pg.Client): Promise<void> {
+  for (const [role, attrs] of [['anon', 'nologin'], ['authenticated', 'nologin'], ['service_role', 'nologin bypassrls']] as const) {
+    await client.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = '${role}') then create role ${role} ${attrs}; end if; exception when duplicate_object or unique_violation then null; end $$`);
   }
-  const u = new URL(adminUrl);
-  u.pathname = `/${name}`;
-  const url = u.toString();
+}
+
+/**
+ * Apply every atlas migration (in order) to an existing LOCAL database. The pg_cron
+ * tool_log migration is replaced by TOOL_LOG_STAND_IN; other LOCAL_SKIP files are skipped.
+ */
+export async function applyAtlasSchema(url: string, opts: { before?: string } = {}): Promise<void> {
+  assertLocalUrl(url);
   const c = new pg.Client({ connectionString: url });
   await c.connect();
   try {
@@ -83,6 +75,27 @@ export async function createThrowawayDatabase(
   } finally {
     await c.end();
   }
+}
+
+/** Create a fresh database on a LOCAL server, add the Supabase roles, apply every atlas migration. */
+export async function createThrowawayDatabase(
+  adminUrl: string,
+  opts: { before?: string } = {},
+): Promise<ThrowawayDatabase> {
+  assertLocalUrl(adminUrl);
+  const name = `atlas_test_${randomBytes(4).toString('hex')}`;
+  const admin = new pg.Client({ connectionString: adminUrl });
+  await admin.connect();
+  try {
+    await ensureSupabaseRoles(admin);
+    await admin.query(`create database ${name}`);
+  } finally {
+    await admin.end();
+  }
+  const u = new URL(adminUrl);
+  u.pathname = `/${name}`;
+  const url = u.toString();
+  await applyAtlasSchema(url, opts);
   return {
     url,
     name,
