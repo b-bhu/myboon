@@ -52,12 +52,12 @@ export class PgDecisionSink implements DecisionSink {
     try {
       await client.query('begin');
       try {
-        const decisions = await client.query<{ id: string }>(
+        const decisions = await client.query<{ signal_id: string }>(
           `insert into atlas.decisions
              (schema_version, signal_id, analyst_version, decision_type, summary, decision, reason, targets)
            values ($1, $2, $3, 'file', $4, $5, $6, $7::jsonb)
            on conflict (signal_id) do nothing
-           returning id`,
+           returning signal_id`,
           [output.schema_version, output.signal_id, output.analyst_version, output.summary, output.decision, output.reason, JSON.stringify(output.targets)],
         );
         if (decisions.rows.length === 0) {
