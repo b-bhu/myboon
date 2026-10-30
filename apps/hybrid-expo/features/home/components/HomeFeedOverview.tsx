@@ -3,7 +3,6 @@ import { Animated, Pressable, RefreshControl, StyleSheet, Text, View, type Scrol
 import { useRouter } from 'expo-router';
 import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
 import { DevelopingStoryCard, StoryCarouselSkeleton, TodayCarousel } from '@/features/feed/components/StoryCarousel';
-import { StorySheet } from '@/features/feed/components/StorySheet';
 import { SectionHeader } from '@/features/feed/components/ui/SectionHeader';
 import { FeedSectionState } from '@/features/feed/components/feed-section-state';
 import { MarketCalendar } from '@/features/feed/components/market-calendar';
@@ -13,8 +12,9 @@ import { fetchFeedItems } from '@/features/feed/feed.api';
 import { fetchStories } from '@/features/feed/stories.api';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
 import { developingStory, todayLabel, todaySlides } from '@/features/feed/feed-home';
+import { showAllStoriesLink, storyHref } from '@/features/feed/feed-stories';
 import { FEED_COLORS as color } from '@/features/feed/feed.constants';
-import type { FeedItem, StorySummary } from '@/features/feed/feed.types';
+import type { FeedItem } from '@/features/feed/feed.types';
 import { useFeedSection } from '@/features/feed/use-feed-section';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 
@@ -28,7 +28,6 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
   const stories = useFeedSection(fetchSelectedStories, active);
   const reports = useFeedSection(fetchToday, active);
   const [refreshing, setRefreshing] = useState(false);
-  const [story, setStory] = useState<StorySummary | null>(null);
   const [report, setReport] = useState<NarrativeSheetItem | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [, setClock] = useState(0);
@@ -60,10 +59,10 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
         {reports.data && !slides.length && !reports.error ? <FeedSectionState title="No published updates yet" text="New reports will appear here." /> : null}
       </View>
       <View style={styles.section}>
-        <SectionHeader title="Developing story" linkLabel={developing ? 'All stories →' : undefined} onLinkPress={developing ? () => setStory(developing) : undefined} />
+        <SectionHeader title="Developing story" linkLabel={showAllStoriesLink(stories.data) ? 'All stories →' : undefined} onLinkPress={showAllStoriesLink(stories.data) ? () => router.push('/stories') : undefined} />
         {stories.loading && !stories.data ? <StoryCarouselSkeleton /> : null}
         {stories.error ? <FeedSectionState title="Developing story unavailable" text={stories.data?.length ? 'Showing the last loaded Stories.' : 'Developing story could not be loaded.'} onRetry={() => { void stories.load(); }} /> : null}
-        {developing ? <DevelopingStoryCard story={developing} onWatch={setStory} /> : null}
+        {developing ? <DevelopingStoryCard story={developing} onWatch={(target) => router.push(storyHref(target.storySlug))} /> : null}
         {stories.data && !developing && !stories.error ? <FeedSectionState title="No developing story" text="Active stories from the last 7 days appear here." /> : null}
       </View>
       <MarketCalendar active={active} refreshVersion={refreshVersion} />
@@ -73,7 +72,6 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
 {stories.pending || reports.pending ? <Pressable accessibilityRole="button" accessibilityLabel="Apply new Feed updates" onPress={() => { stories.apply(); reports.apply(); }} style={styles.newUpdates}><Text style={styles.action}>New updates ↓</Text></Pressable> : null}
 
     <NarrativeSheet item={report} onClose={() => setReport(null)} />
-    <StorySheet story={story} onClose={() => setStory(null)} />
   </>;
 }
 const styles = StyleSheet.create({
