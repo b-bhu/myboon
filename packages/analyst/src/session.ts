@@ -11,6 +11,7 @@ import {
   parseAnalystOutput,
   type Angle,
   type AnalystOutput,
+  type ShelfType,
 } from '@myboon/contracts';
 
 /** Analyst version written on every D36 output. */
@@ -18,6 +19,12 @@ export const ANALYST_D36_VERSION = 'analyst-504-v1';
 
 /** Fixed keep question, written by code (the LLM never writes it). */
 export const KEEP_QUESTION = 'Would a crypto trader or market watcher care about this, even if it is only talk for now?';
+
+/** The keep result when nothing is left to route (no mentions, all not related, or all new targets dropped). */
+const NOTHING_TO_ROUTE = 'The decision tool said keep, but every mentioned entity was judged not related, so there is nothing to route.';
+
+/** The allowed entity-type values for the LLM's JSON shapes, generated from the contracts' SHELF_TYPES. */
+const SHELF_TYPE_VALUES = SHELF_TYPES.map((t) => `"${t}"`).join(' | ');
 
 export const SYSTEM_PROMPT =
   'You are the analyst. You receive one signal, the way a market analyst hears news, posts and talk as it happens. Your job is not to check whether it is true. ' +
@@ -124,40 +131,9 @@ function looserMatch(haystacks: string[], term: string, wordMatch: (value: strin
   return null;
 }
 
-/** Map a free-form entity type onto a shelf type; null when it maps onto none. */
-export function mapShelfType(raw: string): (typeof SHELF_TYPES)[number] | null {
-  const type = raw.trim().toLowerCase();
-  if ((SHELF_TYPES as readonly string[]).includes(type)) return type as (typeof SHELF_TYPES)[number];
-  switch (type) {
-    case 'jurisdiction':
-    case 'country':
-    case 'region':
-    case 'city':
-      return 'place';
-    case 'sector':
-    case 'industry':
-    case 'theme':
-    case 'narrative':
-      return 'topic';
-    case 'company':
-    case 'exchange':
-    case 'fund':
-      return 'organization';
-    case 'token':
-    case 'coin':
-      return 'asset';
-    case 'chain':
-    case 'network':
-    case 'blockchain':
-    case 'dex':
-    case 'platform':
-      return 'protocol';
-    case 'law':
-    case 'bill':
-      return 'regulation';
-    default:
-      return null;
-  }
+/** True only for the exact shelf types from the contracts, after trim + lowercase; no synonym mapping (the #508 rule). */
+export function isShelfType(raw: string): raw is ShelfType {
+  return (SHELF_TYPES as readonly string[]).includes(raw.trim().toLowerCase());
 }
 
 /** Short canonical slug for new entities: prefer an abbreviation in brackets (with whitespace before it), else kebab of the name. */
@@ -274,9 +250,9 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const request = { signal_id: signal.signal_id, text: signal.text, source: signal.source ?? null, link: signal.link ?? null };
   const turn1 = await step(
     `Signal:\n${JSON.stringify(request, null, 2)}\n\nReply with JSON only:\n` +
-      '{"summary": string, "mentions": [{"name": string, "type": string, "search_terms": string[]}]}\n' +
+      `{"summary": string, "mentions": [{"name": string, "type": ${SHELF_TYPE_VALUES}, "search_terms": string[]}]}\n` +
       'summary: 2-3 sentences (who, what, why it matters). ' +
-      'mentions: at most 3 entities this signal touches, each with a type guess and search_terms.',
+      'mentions: at most 3 entities this signal touches, each with a type (exactly one of the listed values) and search_terms.',
   );
   const summary = str(turn1.summary);
   if (!summary) throw new Error('no summary in the first reply');
@@ -319,7 +295,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   }
 
   if (kept.length === 0) {
-    return final('keep', 'The decision tool said keep, but every mentioned entity was judged not related, so there is nothing to route.', []);
+    return final('keep', NOTHING_TO_ROUTE, []);
   }
 
   // Turn 3: the LLM reasons about what is forming per kept entity (context for Jev only; it does not pick the angle).
@@ -352,8 +328,9 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const turn4 = await step(
     'The decision tool has picked each angle; kind and angle below are fixed and cannot change.\n' +
       `${JSON.stringify(kept.map((k) => ({ mention: k.mention, kind: k.kind, angle: k.angle })), null, 2)}\n\n` +
-      'Reply with JSON only:\n{"targets": [{"mention": string, "type": string, "note": string}], "reason": string}\n' +
-      'One row per kept mention, no others. note: one line on what is forming there, written to match the given angle.',
+      `{"targets": [{"mention": string, "type": ${SHELF_TYPE_VALUES}, "note": string}], "reason": string}\n` +
+      'One row per kept mention, no others. type is exactly one of the listed values, the type of that entity. ' +
+      'note: one line on what is forming there, written to match the given angle.',
   );
   const reason = str(turn4.reason);
   const rows = Array.isArray(turn4.targets) ? turn4.targets : [];
@@ -363,34 +340,55 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const unclearReasons: string[] = [];
   buildTargets(rows, kept, targets, unclearReasons);
   if (unclearReasons.length > 0) return unclear(unclearReasons.join(' '));
+  if (targets.length === 0) return final('keep', NOTHING_TO_ROUTE, []);
   return final('keep', reason || 'The decision tool answered keep and every kept entity is routed.', targets);
 }
 
-/** Enforce decision-tool-fixed kind and angle plus candidate validity on the LLM's routing. */
+/**
+ * Enforce decision-tool-fixed kind and angle plus candidate validity on the LLM's routing. Existing
+ * targets carry the matched shelf's own type (the LLM's type is ignored, even when missing or invalid);
+ * a NEW target whose LLM type is not one of the shelf types is dropped silently, like a not_related
+ * verdict (the #508 rule), and unclearReasons stays reserved for code/decision-tool failures.
+ */
 function buildTargets(rows: unknown[], kept: KeptDraft[], targets: AnalystOutput['targets'], unclearReasons: string[]): void {
   const byMention = new Map<string, Record<string, unknown>>();
   for (const row of rows) byMention.set(str(asRec(row).mention).toLowerCase(), asRec(row));
   const seen = new Set<string>();
   kept.forEach((draft, index) => {
     const row = byMention.get(draft.mention.toLowerCase()) ?? (rows.length === kept.length ? asRec(rows[index]) : {});
-    const askedType = str(row.type) || draft.mentionType || draft.candidates[0]?.type || '';
-    const type = mapShelfType(askedType);
-    if (!type) {
-      unclearReasons.push(`The type "${askedType}" does not map onto a shelf type for "${draft.mention}".`);
-      return;
-    }
     if (!draft.angle) {
       unclearReasons.push(`The decision tool gave no valid angle for "${draft.mention}".`);
       return;
     }
-    const entity = draft.kind === 'existing' ? draft.candidates[0]?.slug ?? '' : canonicalSlug(draft.mention);
+    if (draft.kind === 'existing') {
+      const matched = draft.candidates[0];
+      if (!matched) {
+        unclearReasons.push(`The entity search found no candidate for the existing entity "${draft.mention}".`);
+        return;
+      }
+      if (!seen.has(matched.slug)) {
+        seen.add(matched.slug);
+        // shelves.type mirrors SHELF_TYPES (the atlas type check), so the shelf's own type always parses.
+        targets.push({
+          entity: matched.slug,
+          kind: 'existing',
+          type: matched.type as ShelfType,
+          angle: draft.angle,
+          note: str(row.note),
+        });
+      }
+      return;
+    }
+    const askedType = (str(row.type) || draft.mentionType).trim().toLowerCase();
+    if (!isShelfType(askedType)) return; // free text on a NEW target: dropped like a not_related verdict
+    const entity = canonicalSlug(draft.mention);
     if (!entity) {
-      unclearReasons.push(`No usable slug for the new entity "${draft.mention}" (kind ${draft.kind}).`);
+      unclearReasons.push(`No usable slug for the new entity "${draft.mention}".`);
       return;
     }
     if (seen.has(entity)) return;
     seen.add(entity);
-    targets.push({ entity, kind: draft.kind, type, angle: draft.angle, note: str(row.note) });
+    targets.push({ entity, kind: 'new', type: askedType, angle: draft.angle, note: str(row.note) });
   });
 }
 
