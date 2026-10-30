@@ -30,9 +30,18 @@ export default function CalendarScreen() {
 
   const fetchMonth = useCallback((signal: AbortSignal) => {
     const range = monthRange(monthDate);
-    // Widen both edges by a day so events that shift across a local midnight
-    // are fetched; the display filters back to the month by local day.
-    return fetchCalendar(shiftDate(range.from, -1), shiftDate(range.to, 1), signal);
+    // Events can shift across a local midnight, so also read the day on each
+    // side. The API caps a request at 31 days, so the edge days are separate
+    // best-effort requests; the month request owns status and errors.
+    const before = shiftDate(range.from, -1);
+    const after = shiftDate(range.to, 1);
+    const edge = (day: string) => fetchCalendar(day, day, signal).then((result) => result.events).catch(() => []);
+    return Promise.all([fetchCalendar(range.from, range.to, signal), edge(before), edge(after)])
+      .then(([month, early, late]) => {
+        const seen = new Set(month.events.map((event) => event.id));
+        const extra = [...early, ...late].filter((event) => !seen.has(event.id));
+        return { ...month, range: { ...month.range, from: before, to: after }, events: [...extra, ...month.events] };
+      });
   }, [monthDate]);
   const section = useFeedSection(fetchMonth);
   useFocusedAppStateInterval(() => { void section.load(); }, 5 * 60_000);
