@@ -18,7 +18,7 @@ import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystOutput } from '@myboon/contr
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
 import { InMemoryDecisionSink, PgDecisionSink, processNextD36, shelfSearchFromDb, type D36Options } from './d36-worker.js';
-import type { ChatMessage, JevLogEntry, Llm } from './session.js';
+import { createOllamaLlm, type ChatMessage, type JevLogEntry, type Llm } from './session.js';
 import { spikeCases, spikeShelves } from './test-fixtures/d36-spike.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
@@ -144,6 +144,18 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     const r = await processNextD36(svcPool, opts({ llm: kalshiLlm({ fail: true }) }));
     expect(r?.result).toBe('failed');
     expect(await sig()).toMatchObject({ status: 'received', attempts: 1 });
+    expect(sink.outputs()).toHaveLength(0);
+  });
+
+  it('the Ollama LLM call hangs: it aborts at timeoutMs and takes the same retry path (Refs #512)', async () => {
+    const hang = (async (_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)))) as unknown as typeof fetch;
+    const llm = createOllamaLlm({ apiKey: 'sk-secret', model: 'm', fetchImpl: hang, timeoutMs: 50 });
+    const r = await processNextD36(svcPool, opts({ llm }));
+    expect(r?.result).toBe('failed');
+    const s = await sig();
+    expect(s).toMatchObject({ status: 'received', attempts: 1, claim_token: null });
+    expect(s.last_error).toMatch(/LLM timed out after 50ms/);
     expect(sink.outputs()).toHaveLength(0);
   });
 
