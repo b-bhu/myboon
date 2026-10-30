@@ -190,10 +190,10 @@ test('marketSample gates on withMock: explicit on is true, explicit off is null'
   assert.equal(marketSample(false), null);
 });
 test('isStablecoin matches the stablecoin list and its jl/wrapped/bridged variants', () => {
-  for (const symbol of ['USDC', 'usdt', 'USDG', 'PYUSD', 'USDS', 'jlUSDC', 'JLUSDT', 'wUSDC', 'USDC.e', 'USDT.E', 'FDUSD', 'USDe', 'DAI']) {
+  for (const symbol of ['JupUSD', 'syrupUSDC', 'USDC', 'usdt', 'USDG', 'PYUSD', 'USDS', 'jlUSDC', 'JLUSDT', 'wUSDC', 'USDC.e', 'USDT.E', 'FDUSD', 'USDe', 'DAI']) {
     assert.equal(isStablecoin(make(symbol)), true, symbol);
   }
-  for (const symbol of ['SOL', 'JUP', 'USD1X', 'WIF', 'BUSDX', 'JLP', 'W']) {
+  for (const symbol of ['SOL', 'JUP', 'JupSOL', 'JitoSOL', 'syrupSOL', 'USD1X', 'WIF', 'BUSDX', 'JLP', 'W']) {
     assert.equal(isStablecoin(make(symbol)), false, symbol);
   }
 });
