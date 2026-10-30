@@ -1,19 +1,5 @@
 import type { FeedItem, StorySummary } from './feed.types';
 
-export type CalendarMode = 'day' | 'week';
-
-export function shiftCalendarDate(date: string, days: number): string {
-  const value = new Date(`${date}T12:00:00Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
-}
-
-export function calendarPeriod(date: string, mode: CalendarMode) {
-  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
-  const from = mode === 'day' ? date : shiftCalendarDate(date, -((weekday + 6) % 7));
-  return { from, to: mode === 'day' ? from : shiftCalendarDate(from, 6) };
-}
-
 export function selectedStorySlug(stories: StorySummary[], slug: string | null): string | null {
   return stories.find((story) => story.storySlug === slug)?.storySlug ?? stories[0]?.storySlug ?? null;
 }
