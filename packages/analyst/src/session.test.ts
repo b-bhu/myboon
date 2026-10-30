@@ -335,4 +335,20 @@ describe('#504 entity search, slugs and type mapping', () => {
     await expect(failing([{ role: 'user', content: 'x' }])).rejects.toThrow(/500/);
     await failing([{ role: 'user', content: 'x' }]).catch((e: Error) => expect(e.message).not.toContain('sk-secret'));
   });
+
+  it('the Ollama LLM client aborts a hung fetch after timeoutMs and fails like any other call (Refs #512, found in #516 review)', async () => {
+    let signal: AbortSignal | undefined;
+    const hang = (async (_url: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Promise<Response>((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+    }) as unknown as typeof fetch;
+    const llm = createOllamaLlm({ apiKey: 'sk-secret', model: 'm', fetchImpl: hang, timeoutMs: 50 });
+    const started = Date.now();
+    const err = await llm([{ role: 'user', content: 'x' }]).then(() => null, (e: Error) => e);
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.message).toMatch(/LLM timed out after 50ms/);
+    expect(err?.message).not.toContain('sk-secret');
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
 });
