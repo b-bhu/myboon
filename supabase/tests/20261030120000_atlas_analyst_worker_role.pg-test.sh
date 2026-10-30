@@ -22,6 +22,7 @@ bad() { echo "FAIL $1"; FAILS=$((FAILS+1)); }
 for f in $(ls "$REPO"/supabase/migrations/*_atlas*.sql | sort); do
   b=$(basename "$f")
   [[ $b == 20261030120000_* ]] && continue   # applied below (up/down/up)
+  [[ $b > 20261030120000 ]] && continue      # later migrations are not part of this test
   if [[ $b == 20261025100200_atlas_tool_log.sql ]]; then
     # tool_log stand-in (same shape, no pg_cron); RLS on parent and partition, like tool_log_maintain.
     "${PSQL[@]}" -c "create table atlas.tool_log (id bigint generated always as identity, logged_at timestamptz not null default now(), run_id text, tool text not null, input jsonb, output jsonb, duration_ms bigint, error text, primary key (logged_at, id)) partition by range (logged_at); alter table atlas.tool_log enable row level security; create policy analyst_read on atlas.tool_log for select to atlas_analyst using (true); create table atlas.tool_log_d partition of atlas.tool_log default; alter table atlas.tool_log_d enable row level security;" >/dev/null || { echo "tool_log stand-in failed"; exit 1; }
