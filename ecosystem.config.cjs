@@ -138,23 +138,26 @@ const COLLECTOR_OWNERSHIP_KEYS = [
 const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
   .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
 
-// #444 V4 runtime, Sprint 1 scope: the scout stage only. The analyst and
-// entity-manager stage entries are Sprint 2 work and stay out of the process
-// list until their runners are wired.
-//   myboon-scout -> src/run.ts
-// The scout runs one cycle and exits; PM2 starts it again at every 15-minute
+// #444 V4 runtime, Sprint 1 scope: the scout stage. #391 adds the analyst
+// worker to this list; the entity-manager stage entry stays out of the process
+// list until its runner is wired.
+//   myboon-scout   -> packages/scout-news/src/run.ts (15-minute cron tick)
+//   myboon-analyst -> packages/analyst/src/run.ts    (hourly cron tick)
+// Each V4 app runs one cycle and exits; PM2 starts it again at the next
 // cron tick (cron_restart). autorestart stays off so a failing run neither
 // loops nor hides in backoff: the crash state is visible until the next
 // scheduled tick, and the health line carries what actually failed.
 // NOT registered by default: V4_APPS joins `apps` only when
 // MYBOON_V4_RUNTIME_ENABLED=1, so plain `pm2 start/reload` of this file never
-// registers the V4 app. After go-live, reloads of this file must also set
-// MYBOON_V4_RUNTIME_ENABLED=1 or the V4 app is left out of the reload.
+// registers the V4 apps. After go-live, reloads of this file must also set
+// MYBOON_V4_RUNTIME_ENABLED=1 or the V4 apps are left out of the reload.
 // Go-live sequence (only after CTO approval, following Backend Dev local e2e):
 //   1. Back up the current process list BEFORE anything else:
 //        cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
 //   2. MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-scout
 //   3. pm2 save   (persists the new list; dump backup is the rollback path)
+// Analyst go-live is the same sequence with:
+//   MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-analyst
 const V4_APPS = [
   {
     name: 'myboon-scout',
@@ -173,6 +176,40 @@ const V4_APPS = [
       // Off-switch: set in the shell, never by editing this tracked file:
       // `SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-scout --update-env`
       SCOUT_ENABLED: process.env.SCOUT_ENABLED ?? 'false',
+    },
+  },
+  {
+    // Secrets ANALYST_DATABASE_URL, OLLAMA_API_KEY and JEV_API_TOKEN are never
+    // set in this file; they come from the sourced .env. Hourly tick because
+    // worst-case decider time per run is 20 signals x 4 asks x (primary +
+    // fallback) 2 x 20s = 3200s (~53 min) < 60 min. PM2 runs one process per
+    // app and cron_restart restarts (kills) rather than starting a second
+    // copy, so runs never overlap. A killed run's signal stays claimed until
+    // its 300s lease expires and is retried with backoff.
+    name: 'myboon-analyst',
+    script: 'src/run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/analyst`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '0 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'analyst',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `ANALYST_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-analyst --update-env`
+      ANALYST_ENABLED: process.env.ANALYST_ENABLED ?? 'false',
+      ANALYST_WORKER: 'myboon-analyst',
+      ANALYST_LLM_MODEL: 'glm-5.3-flash',
+      ANALYST_MAX_SIGNALS_PER_RUN: '20',
+      ANALYST_LEASE_MS: '300000',
+      ANALYST_TIMEOUT_MS: '20000',
+      ANALYST_BACKOFF_MS: '60000',
+      ANALYST_MAX_ATTEMPTS: '3',
+      ANALYST_SHADOW: 'false',
     },
   },
 ]
