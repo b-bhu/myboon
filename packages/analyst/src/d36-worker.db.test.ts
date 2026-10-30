@@ -182,6 +182,29 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(await processNextD36(svcPool, opts({}))).toBeNull();
   });
 
+  it('a signal older than 24h is parked backlog_skip_24h before the LLM, deciders or sink run (#391)', async () => {
+    await pool.query("update atlas.signals set occurred_at = now() - interval '25 hours' where signal_id = $1", [KALSHI.signal_id]);
+    const llm = kalshiLlm();
+    const r = await processNextD36(svcPool, opts({ llm, sink: new PgDecisionSink(svcPool) }));
+    expect(r).toMatchObject({ signalId: KALSHI.signal_id, result: 'parked' });
+    // Never LLM'd: the session started with zero turns and not a single decider call was logged.
+    expect(llm.turns).toBe(0);
+    expect(logs).toHaveLength(0);
+    // signal_claim counts one attempt per claim, so a claim followed by the park is attempts 1.
+    expect(await sig()).toMatchObject({ status: 'parked', parked_reason: 'backlog_skip_24h', claim_token: null, attempts: 1 });
+    expect((await pool.query('select count(*)::int n from atlas.decisions')).rows[0].n).toBe(0);
+    expect((await pool.query('select count(*)::int n from atlas.items')).rows[0].n).toBe(0);
+  });
+
+  it('a signal at 23h is still analysed as before (the 24h rule only parks older ones, #391)', async () => {
+    await pool.query("update atlas.signals set occurred_at = now() - interval '23 hours' where signal_id = $1", [KALSHI.signal_id]);
+    const llm = kalshiLlm();
+    const r = await processNextD36(svcPool, opts({ llm }));
+    expect(r?.result).toBe('analysed');
+    expect(llm.turns).toBe(3);
+    expect(await sig()).toMatchObject({ status: 'analysed', parked_reason: null });
+  });
+
   it('the same signal processed twice gives one atlas.decisions row (PgDecisionSink)', async () => {
     await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool) }));
     await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
@@ -435,6 +458,61 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       expect(logs).toHaveLength(1);
       expect(logs[0]).toMatchObject({ event: 'target_reclassified', signal_id: 'sig-482-f', entity: 'coinbase' });
       expect(typeof logs[0].reason).toBe('string');
+    });
+
+    describe('#391 catch-up: allowNewEntities false', () => {
+      const sinkNoNew = (onLog: (e: Record<string, unknown>) => void) =>
+        new PgDecisionSink(svcPool, onLog, { allowNewEntities: false });
+
+      it('a kind-new target with no shelf is dropped: no shelves row, no item, target_dropped with the fixed reason', async () => {
+        await addSignal('sig-391-a', '2026-10-30T09:00:00.000Z');
+        const drops: Record<string, unknown>[] = [];
+        await sinkNoNew((e) => { drops.push(e); }).save(out('sig-391-a', [tgt('fresh-391', 'new', 'organization', 'new_story')]));
+        expect(await n('select count(*)::int n from atlas.shelves where slug = $1', ['fresh-391'])).toBe(0);
+        expect((await itemsOf('fresh-391')).rows).toHaveLength(0);
+        // The decisions row is still written and stores the output as-is, dropped target included.
+        expect(await n('select count(*)::int n from atlas.decisions where signal_id = $1', ['sig-391-a'])).toBe(1);
+        expect(drops).toEqual([
+          { event: 'target_dropped', signal_id: 'sig-391-a', entity: 'fresh-391', reason: 'new-entity creation disabled (catch-up)' },
+        ]);
+      });
+
+      it('a kind-new target on a proposed shelf is dropped (no item on the proposed shelf)', async () => {
+        await addSignal('sig-391-b', '2026-10-30T09:00:00.000Z');
+        await addSignal('sig-391-c', '2026-10-30T10:00:00.000Z');
+        await new PgDecisionSink(svcPool).save(out('sig-391-b', [tgt('fresh-proposed-391', 'new', 'topic', 'new_story')]));
+        expect((await itemsOf('fresh-proposed-391')).rows).toHaveLength(1);
+        const drops: Record<string, unknown>[] = [];
+        await sinkNoNew((e) => { drops.push(e); }).save(out('sig-391-c', [tgt('fresh-proposed-391', 'new', 'topic', 'new_story')]));
+        expect(await n('select count(*)::int n from atlas.shelves where slug = $1', ['fresh-proposed-391'])).toBe(1);
+        // The item count is unchanged: the second save filed nothing, and it logged the drop.
+        expect(drops).toEqual([
+          { event: 'target_dropped', signal_id: 'sig-391-c', entity: 'fresh-proposed-391', reason: 'new-entity creation disabled (catch-up)' },
+        ]);
+      });
+
+      it('a kind-new target on a retired slug is dropped with the fixed reason (not the retired wording)', async () => {
+        await addSignal('sig-391-d', '2026-10-30T09:00:00.000Z');
+        await pool.query("insert into atlas.shelves (slug, name, type, status) values ('gone-391', 'Gone 391', 'organization', 'retired')");
+        const drops: Record<string, unknown>[] = [];
+        await sinkNoNew((e) => { drops.push(e); }).save(out('sig-391-d', [tgt('gone-391', 'new', 'organization', 'new_story')]));
+        expect((await itemsOf('gone-391')).rows).toHaveLength(0);
+        expect(drops).toEqual([
+          { event: 'target_dropped', signal_id: 'sig-391-d', entity: 'gone-391', reason: 'new-entity creation disabled (catch-up)' },
+        ]);
+      });
+
+      it('a kind-new target on an active slug still files there with target_reclassified (#511)', async () => {
+        await addSignal('sig-391-e', '2026-10-30T09:00:00.000Z');
+        const logs391: Record<string, unknown>[] = [];
+        await sinkNoNew((e) => { logs391.push(e); }).save(out('sig-391-e', [tgt('coinbase', 'new', 'organization', 'new_story')]));
+        expect(await n('select count(*)::int n from atlas.shelves where slug = $1', ['coinbase'])).toBe(1);
+        const items = (await itemsOf('coinbase')).rows;
+        expect(items).toHaveLength(1);
+        expect(items[0]).toMatchObject({ signal_id: 'sig-391-e' });
+        expect(logs391).toHaveLength(1);
+        expect(logs391[0]).toMatchObject({ event: 'target_reclassified', signal_id: 'sig-391-e', entity: 'coinbase' });
+      });
     });
   });
 });

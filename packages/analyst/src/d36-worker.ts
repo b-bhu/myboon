@@ -4,7 +4,10 @@
  * claim never spans the session: claimNext picks the signal, the LLM and deciders run inside the
  * live claim lease, and finish/fail records the outcome (the sink persists the decision; no decision
  * payload rides the finish call). A shadow decider, when set, sees every case in parallel and its
- * answers are never recorded.
+ * answers are never recorded. The standing #391 rule parks any signal older than 24 hours
+ * (occurred_at, judged in SQL with the claim's row read) with reason BACKLOG_SKIP_REASON before the
+ * session runs, and PgDecisionSink's `allowNewEntities: false` drops kind-new targets so a catch-up
+ * run cannot create shelves.
  */
 import type { AnalystOutput } from '@myboon/contracts';
 import type { Pool, PoolClient } from 'pg';
@@ -14,6 +17,12 @@ import { decideTimed } from './process.js';
 import type { Ask, AskInput, AskResult, EntitySearch, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
 import { runSession, searchShelves } from './session.js';
 import { claimNext, failClaim, finishClaim, type Db } from './states.js';
+
+/** The fixed parked_reason for the #391 standing rule: a signal older than 24h is parked in the claim path, never analysed. */
+export const BACKLOG_SKIP_REASON = 'backlog_skip_24h';
+
+/** The target_dropped reason when PgDecisionSink is created with allowNewEntities: false (the #391 catch-up run). */
+const NEW_ENTITY_DISABLED_REASON = 'new-entity creation disabled (catch-up)';
 
 /** Where finished outputs go: in-memory for tests, or atlas.decisions (+ atlas.items) via PgDecisionSink. */
 export interface DecisionSink {
@@ -42,7 +51,10 @@ export class InMemoryDecisionSink implements DecisionSink {
  * needs an active shelf and throws when it is missing; a kind new target reuses a shelf whose status
  * is proposed, files on an already active slug with a target_reclassified log line (#511), and only a
  * retired slug drops the target (a target_dropped log line, no item, no throw: the other targets
- * still file and the row stores the output as-is).
+ * still file and the row stores the output as-is). With `{ allowNewEntities: false }` (#391
+ * catch-up) the active-slug reclassification still files there, but every other kind-new target —
+ * a proposed shelf, a retired slug, or no row at all — is dropped through the same target_dropped
+ * path: no shelf is proposed or inserted, no item lands on a proposed shelf.
  * `on conflict (signal_id)` makes the second save of the same signal a no-op commit (items are not
  * rewritten), and any failure rolls the transaction back so nothing is written.
  */
@@ -50,10 +62,13 @@ export class PgDecisionSink implements DecisionSink {
   private readonly pool: Pool;
   /** Where dropped targets are logged; the default keeps them on the worker's stdout. */
   private readonly log: (e: Record<string, unknown>) => void;
+  /** False only for the #391 catch-up run: kind-new targets never create shelves. */
+  private readonly allowNewEntities: boolean;
 
-  constructor(pool: Pool, log?: (e: Record<string, unknown>) => void) {
+  constructor(pool: Pool, log?: (e: Record<string, unknown>) => void, o: { allowNewEntities?: boolean } = {}) {
     this.pool = pool;
     this.log = log ?? ((e) => console.log(JSON.stringify(e)));
+    this.allowNewEntities = o.allowNewEntities ?? true;
   }
 
   async save(output: AnalystOutput): Promise<void> {
@@ -75,7 +90,7 @@ export class PgDecisionSink implements DecisionSink {
         }
         if (output.decision === 'keep') {
           await lockShelfSlugs(client, output.targets);
-          await fileItems(client, output, this.log);
+          await fileItems(client, output, this.log, this.allowNewEntities);
         }
         await client.query('commit');
       } catch (e) {
@@ -96,11 +111,16 @@ async function lockShelfSlugs(client: PoolClient, targets: AnalystOutput['target
 }
 
 /** One entity item per keep target, filed on the target's shelf in the sink's open transaction; each item copies the signal's occurred_at (#482). */
-async function fileItems(client: PoolClient, output: AnalystOutput, log: (e: Record<string, unknown>) => void): Promise<void> {
+async function fileItems(
+  client: PoolClient,
+  output: AnalystOutput,
+  log: (e: Record<string, unknown>) => void,
+  allowNewEntities: boolean,
+): Promise<void> {
   for (const target of output.targets) {
     const mainShelfId = target.kind === 'existing'
       ? await activeShelfId(client, target.entity)
-      : await proposedShelfId(client, target.entity, target.type, output.signal_id, log);
+      : await proposedShelfId(client, target.entity, target.type, output.signal_id, log, allowNewEntities);
     if (mainShelfId === null) continue; // dropped target: already logged, the other targets in the output still file
     await client.query(
       `insert into atlas.items (item_key, title, summary, main_shelf_id, signal_id, angle, note, occurred_at)
@@ -120,22 +140,41 @@ async function activeShelfId(client: PoolClient, slug: string): Promise<string> 
   throw new Error(`target ${slug}: no active shelf`);
 }
 
-/** The shelf for a kind new target: reuse a proposed shelf; an already active slug files on that existing shelf with a target_reclassified log line (#511); null drops a retired slug with its target_dropped log line (#482); else propose one (name = slug). */
+/**
+ * The shelf for a kind new target: reuse a proposed shelf; an already active slug files on that
+ * existing shelf with a target_reclassified log line (#511); a retired slug drops the target
+ * (target_dropped, no item, no throw, #482); else propose one (name = slug). With
+ * `allowNewEntities = false` (#391 catch-up) the retired/no-row/proposed cases all drop through the
+ * same target_dropped path with the fixed catch-up reason: never insert a shelf.
+ */
 async function proposedShelfId(
   client: PoolClient,
   slug: string,
   type: string,
   signalId: string,
   log: (e: Record<string, unknown>) => void,
+  allowNewEntities: boolean,
 ): Promise<string | null> {
   const { rows } = await client.query<{ id: string; status: string }>('select id, status from atlas.shelves where slug = $1', [slug]);
-  if (rows[0] && rows[0].status === 'proposed') return rows[0].id;
+  if (rows[0] && rows[0].status === 'proposed') {
+    if (!allowNewEntities) {
+      log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: NEW_ENTITY_DISABLED_REASON });
+      return null;
+    }
+    return rows[0].id;
+  }
   if (rows[0] && rows[0].status === 'active') {
     log({ event: 'target_reclassified', signal_id: signalId, entity: slug, reason: `shelf ${slug} is already active; filed as existing` });
     return rows[0].id;
   }
   if (rows[0]) {
-    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: `shelf ${slug} is ${rows[0].status}, not proposed or active` });
+    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: allowNewEntities
+      ? `shelf ${slug} is ${rows[0].status}, not proposed or active`
+      : NEW_ENTITY_DISABLED_REASON });
+    return null;
+  }
+  if (!allowNewEntities) {
+    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: NEW_ENTITY_DISABLED_REASON });
     return null;
   }
   const inserted = await client.query<{ id: string }>(
@@ -197,8 +236,13 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
   const claim = await claimNext(db, { leaseMs: o.leaseMs, worker: o.worker, maxAttempts: o.maxAttempts });
   if (!claim) return null;
 
-  const row = (await db.query<{ signal_id: string; source: string | null; text: string | null; link: string | null }>(
-    'select signal_id, source, text, link from atlas.signals where signal_id = $1',
+  const row = (await db.query<{
+    signal_id: string; source: string | null; text: string | null; link: string | null; occurred_at: Date | null; stale: boolean;
+  }>(
+    `select signal_id, source, text, link,
+            occurred_at,
+            (occurred_at < now() - interval '24 hours') as stale
+       from atlas.signals where signal_id = $1`,
     [claim.signalId],
   )).rows[0];
   if (!row) {
@@ -208,6 +252,15 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
       maxAttempts: o.maxAttempts,
     });
     return { signalId: claim.signalId, result: 'failed' };
+  }
+
+  // #391 standing catch-up rule, judged in SQL inside the same select that reads
+  // the row: a signal more than 24h old is parked with a fixed reason and the
+  // LLM, deciders and sink never run on it (a null occurred_at is never stale).
+  if (row.stale === true) {
+    const written = await finishClaim(db, claim, { status: 'parked', parkedReason: BACKLOG_SKIP_REASON });
+    if (!written) return { signalId: claim.signalId, result: 'lost_claim' };
+    return { signalId: claim.signalId, result: 'parked' };
   }
 
   const logJev: (e: JevLogEntry) => void =

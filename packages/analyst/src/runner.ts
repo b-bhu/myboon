@@ -54,7 +54,8 @@ function lineSink(o: { log?: (line: string) => void }): (line: string) => void {
   return o.log ?? ((line: string) => { console.log(line); });
 }
 
-function defaultDeciders(c: AnalystConfig): { primary: Decider; fallback: Decider; shadow: Decider | null } {
+/** The Jev/Clef decider slot (#512): Jev primary, Clef fallback, a Clef shadow when ANALYST_SHADOW is on. Shared with the catch-up script. */
+export function defaultDeciders(c: AnalystConfig): { primary: Decider; fallback: Decider; shadow: Decider | null } {
   return {
     primary: new SystemOneDecider({ name: 'jev', model: JEV_MODEL, endpoint: JEV_ENDPOINT, apiToken: c.jevApiToken }),
     fallback: new SystemOneDecider({ name: 'clef', model: CLEF_MODEL, endpoint: CLEF_ENDPOINT, apiToken: c.ollamaApiKey }),

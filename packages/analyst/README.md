@@ -21,6 +21,25 @@ tables: everything it touches is created by
   when Jev errors/times out/is out of credit, then `finishClaim` with the
   decision row (full provenance: probabilities, runner-up margin, latency,
   decided_by, shadow answer) or `failClaim` with the last error.
+- `src/runner.ts` — `runAnalystOnce` / `analystMain` (#512): one pass over due
+  signals, one summary line, always ends the pool.
+- `src/d36-worker.ts` — the D36 worker (#504): claim, one LLM session per
+  signal with Jev/Clef as the decision tool, the sink, plus the standing rule
+  that a signal older than 24 hours is parked `backlog_skip_24h` (#391) before
+  the LLM runs. `PgDecisionSink` takes `{ allowNewEntities: false }` to drop
+  every kind-new target (active slugs still file) so a catch-up run cannot
+  create shelves.
+- `src/catchup.ts` — the #391 one-off catch-up CLI (confirm-gated, Ollama
+  quota guard, no new entities); `src/ollama-quota.ts` reads ollama.com's
+  `/api/balance` for its quota guard.
+
+## Configuration knobs (`src/config.ts`, all optional, positive integers)
+
+- `ANALYST_MAX_SIGNALS_PER_RUN` — default **40** signals per run.
+- `ANALYST_LEASE_MS` (default 300000, 5 min), `ANALYST_TIMEOUT_MS` (20000),
+  `ANALYST_BACKOFF_MS` (60000), `ANALYST_MAX_ATTEMPTS` (3).
+- `ANALYST_LLM_MODEL` (default `glm-5.3-flash`), `ANALYST_WORKER`
+  (default `<hostname>:<pid>`), `ANALYST_SHADOW` (`true` enables the Clef shadow).
 
 The analyst connects as `service_role` (only the granted columns and functions
 exist to it). Jev and Clef are never contacted by the tests; see

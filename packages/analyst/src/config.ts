@@ -65,7 +65,7 @@ export function parseAnalystConfig(env: Env): AnalystConfig {
     ollamaApiKey: requireString(env, 'OLLAMA_API_KEY'),
     jevApiToken: requireString(env, 'JEV_API_TOKEN'),
     llmModel: optionalString(env, 'ANALYST_LLM_MODEL', 'glm-5.3-flash'),
-    maxSignalsPerRun: optionalPositiveInt(env, 'ANALYST_MAX_SIGNALS_PER_RUN', 20),
+    maxSignalsPerRun: optionalPositiveInt(env, 'ANALYST_MAX_SIGNALS_PER_RUN', 40),
     leaseMs: optionalPositiveInt(env, 'ANALYST_LEASE_MS', 300_000),
     timeoutMs: optionalPositiveInt(env, 'ANALYST_TIMEOUT_MS', 20_000),
     backoffMs: optionalPositiveInt(env, 'ANALYST_BACKOFF_MS', 60_000),
