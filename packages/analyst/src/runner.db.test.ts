@@ -1,7 +1,8 @@
 /**
  * #512 analyst worker run, on a throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL). The worker pool
- * runs as a test analyst_worker role with DB Guy's grants and RLS policies (mirrored below, RLS on),
- * so the test proves they suffice; DB Guy ships the real role migration separately. The LLM, Jev
+ * runs as the analyst_worker role from the real migration 20261030120000_atlas_analyst_worker_role.sql
+ * (#514, applied by createThrowawayDatabase with its tool_log stand-in), RLS on, so the test proves
+ * those grants and policies suffice. The LLM, Jev
  * and Clef are scripted. One run processes due signals up to the cap, writes through
  * PgDecisionSink, logs one summary line and ends its pool.
  */
@@ -18,49 +19,6 @@ import { spikeCases, spikeShelves } from './test-fixtures/d36-spike.js';
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const KALSHI = spikeCases[5].signal;
 
-/**
- * Mirror of DB Guy's analyst_worker grant + RLS policy SQL on #512 (issuecomment-6517565746; the real
- * migration is 20261030120000_analyst_worker_role.sql, his PR). decisions/items/shelves use the same
- * INSERT and SELECT column lists service_role has today (20261025114823, 20261027120000, 20261029180000).
- * atlas.tool_log is skipped on plain local Postgres (pg_cron), so its sequence grant and policy are guarded.
- * RLS stays on for every atlas table (atlas_core enables it).
- */
-const ANALYST_WORKER_GRANTS = `
-  do $$ begin
-    if not exists (select 1 from pg_roles where rolname = 'analyst_worker') then
-      create role analyst_worker nologin noinherit;
-    end if;
-  end $$;
-  grant usage on schema atlas to analyst_worker;
-  grant select (signal_id, source, source_id, status, text, excerpt, link, occurred_at, created_at,
-                attempts, claim_token, claim_expires_at, claimed_by, last_error, next_attempt_at, parked_reason)
-    on atlas.signals to analyst_worker;
-  grant update (status, attempts, claim_token, claim_expires_at, claimed_by, last_error, next_attempt_at, parked_reason)
-    on atlas.signals to analyst_worker;
-  grant insert on atlas.decisions to analyst_worker;
-  grant select (signal_id, summary, decision, targets) on atlas.decisions to analyst_worker;
-  grant select on atlas.items to analyst_worker;
-  grant insert (item_key, title, summary, main_shelf_id, occurred_at, signal_id, angle, note) on atlas.items to analyst_worker;
-  grant select on atlas.shelves to analyst_worker;
-  grant insert (slug, name, type, aliases, summary, status) on atlas.shelves to analyst_worker;
-  grant execute on function atlas.signal_claim, atlas.signal_fail, atlas.signal_finish,
-                            atlas.analyst_targets_valid to analyst_worker;
-  create policy analyst_worker_select on atlas.signals   for select to analyst_worker using (true);
-  create policy analyst_worker_update on atlas.signals   for update to analyst_worker using (true) with check (true);
-  create policy analyst_worker_select on atlas.decisions for select to analyst_worker using (true);
-  create policy analyst_worker_insert on atlas.decisions for insert to analyst_worker with check (true);
-  create policy analyst_worker_select on atlas.items     for select to analyst_worker using (true);
-  create policy analyst_worker_insert on atlas.items     for insert to analyst_worker with check (true);
-  create policy analyst_worker_select on atlas.shelves   for select to analyst_worker using (true);
-  create policy analyst_worker_insert on atlas.shelves   for insert to analyst_worker with check (true);
-  do $$ begin
-    if pg_catalog.to_regclass('atlas.tool_log') is not null then
-      execute 'grant insert on atlas.tool_log to analyst_worker';
-      execute 'grant usage on sequence atlas.tool_log_id_seq to analyst_worker';
-      execute 'create policy analyst_worker_insert on atlas.tool_log for insert to analyst_worker with check (true)';
-    end if;
-  end $$;
-`;
 
 type Rule = (c: DecisionCase) => string | 'error';
 function scripted(name: 'jev' | 'clef', rule: Rule): Decider {
@@ -114,7 +72,6 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
     pool = new Pool({ connectionString: db.url, max: 2 });
-    await pool.query(ANALYST_WORKER_GRANTS);
     workerPool = workerPoolFor(db.url);
   });
   afterAll(async () => { await workerPool?.end(); await pool?.end(); await db?.drop(); });
