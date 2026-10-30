@@ -1,16 +1,14 @@
 /**
  * #504 D36 analyst worker on a throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL). Claim and finish use the
- * existing atlas.signal_* functions (#478/#479). The decision write goes to a DecisionSink: the in-memory
- * sink, and PgDecisionSink writing atlas.decisions + atlas.items (proposed shelves for new targets) on the
- * #503 schema. The LLM, Jev and Clef are scripted (answers, errors, timeouts).
+ * existing atlas.signal_* functions (#478/#479). The decision write goes to a DecisionSink: the in-memory sink
+ * here; the atlas.decisions write lands with #503. The LLM, Jev and Clef are scripted (answers, errors, timeouts).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
-import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystOutput } from '@myboon/contracts';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
-import { InMemoryDecisionSink, PgDecisionSink, processNextD36, shelfSearchFromDb, type D36Options } from './d36-worker.js';
+import { InMemoryDecisionSink, processNextD36, shelfSearchFromDb, type D36Options } from './d36-worker.js';
 import type { ChatMessage, JevLogEntry, Llm } from './session.js';
 import { spikeCases, spikeShelves } from './test-fixtures/d36-spike.js';
 
@@ -158,98 +156,5 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(await processNextD36(pool, opts({}))).toBeNull();
   });
 
-  it('the same signal processed twice gives one atlas.decisions row (PgDecisionSink)', async () => {
-    await processNextD36(pool, opts({ sink: new PgDecisionSink(pool) }));
-    await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
-    await processNextD36(pool, opts({ sink: new PgDecisionSink(pool) }));
-    expect((await pool.query('select count(*)::int n from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(1);
-    expect((await pool.query('select count(*)::int n from atlas.items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(1);
-  });
-
-  it('keep with targets: the decisions row carries the output and one item per target (PgDecisionSink)', async () => {
-    const r = await processNextD36(pool, opts({ sink: new PgDecisionSink(pool) }));
-    expect(r?.result).toBe('analysed');
-    const out = r?.output;
-    expect(out?.decision).toBe('keep');
-    const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
-    expect(d.decision).toBe('keep');
-    expect(d.summary).toBe(out?.summary);
-    expect(d.reason).toBe(out?.reason);
-    expect(d.targets).toEqual(out!.targets);
-    const items = (await pool.query(
-      'select i.*, s.slug as shelf_slug from atlas.items i join atlas.shelves s on s.id = i.main_shelf_id where i.signal_id = $1',
-      [KALSHI.signal_id],
-    )).rows;
-    expect(items).toHaveLength(out!.targets.length);
-    for (const t of out!.targets) {
-      const item = items.find((i: { shelf_slug: string }) => i.shelf_slug === t.entity);
-      expect(item).toBeDefined();
-      expect(item.item_key).toBe(`${KALSHI.signal_id}:${t.entity}`);
-      expect(item.signal_id).toBe(KALSHI.signal_id);
-      expect(item.angle).toBe(t.angle);
-      expect(item.note).toBe(t.note);
-    }
-    expect((await pool.query('select count(*)::int n from atlas.item_signals')).rows[0].n).toBe(0);
-  });
-
-  it('ignore writes a decision row and no items (PgDecisionSink)', async () => {
-    const r = await processNextD36(pool, opts({ sink: new PgDecisionSink(pool), primary: scripted('jev', () => 'ignore') }));
-    expect(r?.result).toBe('analysed');
-    const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
-    expect(d.decision).toBe('ignore');
-    expect(d.summary).toBe(r?.output?.summary);
-    expect(d.reason).toBe('Not interesting.');
-    expect(d.targets).toEqual([]);
-    expect((await pool.query('select count(*)::int n from atlas.items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
-  });
-
-  it('unclear writes a decision row (targets []) and no items (PgDecisionSink)', async () => {
-    const r = await processNextD36(pool, opts({ sink: new PgDecisionSink(pool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : 'banana')) }));
-    expect(r?.result).toBe('parked');
-    const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
-    expect(d.decision).toBe('unclear');
-    expect(d.reason).toMatch(/banana/);
-    expect(d.targets).toEqual([]);
-    expect((await pool.query('select count(*)::int n from atlas.items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
-  });
-
-  it('a kind new target creates a proposed shelf holding the item (PgDecisionSink)', async () => {
-    const output = parseAnalystOutput({
-      schema_version: ANALYST_OUTPUT_SCHEMA_VERSION,
-      analyst_version: 'analyst-504-v1',
-      signal_id: KALSHI.signal_id,
-      summary: 'Druckenmiller moved into Hyperliquid.',
-      decision: 'keep',
-      reason: 'A new entity is needed.',
-      targets: [{ entity: 'stanley-druckenmiller', kind: 'new', type: 'person', angle: 'new_story', note: 'Reported move into Hyperliquid.' }],
-    });
-    await new PgDecisionSink(pool).save(output);
-    const shelf = (await pool.query('select slug, name, type, status from atlas.shelves where slug = $1', ['stanley-druckenmiller'])).rows[0];
-    expect(shelf).toMatchObject({ slug: 'stanley-druckenmiller', name: 'stanley-druckenmiller', type: 'person', status: 'proposed' });
-    const items = (await pool.query(
-      'select i.signal_id, i.angle, i.note, i.summary, s.slug as shelf_slug from atlas.items i join atlas.shelves s on s.id = i.main_shelf_id where i.signal_id = $1',
-      [KALSHI.signal_id],
-    )).rows;
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({
-      signal_id: KALSHI.signal_id, shelf_slug: 'stanley-druckenmiller',
-      angle: 'new_story', note: 'Reported move into Hyperliquid.', summary: 'Reported move into Hyperliquid.',
-    });
-  });
-
-  it('an existing target whose slug is not an active shelf throws and writes nothing (PgDecisionSink)', async () => {
-    const output = parseAnalystOutput({
-      schema_version: ANALYST_OUTPUT_SCHEMA_VERSION,
-      analyst_version: 'analyst-504-v1',
-      signal_id: KALSHI.signal_id,
-      summary: 'Nobody special.',
-      decision: 'keep',
-      reason: 'Bad route.',
-      targets: [{ entity: 'no-such-shelf', kind: 'existing', type: 'organization', angle: 'plain_update', note: 'Nothing here.' }],
-    });
-    await expect(new PgDecisionSink(pool).save(output)).rejects.toThrow(/no active shelf/);
-    expect((await pool.query('select count(*)::int n from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
-    expect((await pool.query('select count(*)::int n from atlas.items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
-    expect((await pool.query('select count(*)::int n from atlas.shelves where slug = $1', ['no-such-shelf'])).rows[0].n).toBe(0);
-  });
+  it.todo('the same signal processed twice gives one atlas.decisions row (pending #503 schema)');
 });

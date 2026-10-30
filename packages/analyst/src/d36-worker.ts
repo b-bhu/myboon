@@ -2,11 +2,12 @@
  * #504 D36 worker: claims one due signal, runs the D36 session over it with the decision tool wired
  * to primary + fallback deciders, saves the output to a DecisionSink and finishes the claim. The
  * claim never spans the session: claimNext picks the signal, the LLM and deciders run inside the
- * live claim lease, and finish/fail records the outcome (no decision payload here; the
- * atlas.decisions sink lands with #503). A shadow decider, when set, sees every case in parallel
- * and its answers are never recorded.
+ * live claim lease, and finish/fail records the outcome (the sink persists the decision; no decision
+ * payload rides the finish call). A shadow decider, when set, sees every case in parallel and its
+ * answers are never recorded.
  */
 import type { AnalystOutput } from '@myboon/contracts';
+import type { Pool, PoolClient } from 'pg';
 
 import type { DecisionCase, Decider } from './deciders.js';
 import { decideTimed } from './process.js';
@@ -14,7 +15,7 @@ import type { Ask, AskInput, AskResult, EntitySearch, JevLogEntry, Llm, SignalIn
 import { runSession, searchShelves } from './session.js';
 import { claimNext, failClaim, finishClaim, type Db } from './states.js';
 
-/** Where finished outputs go; the atlas.decisions sink lands with #503. */
+/** Where finished outputs go: in-memory for tests, or atlas.decisions (+ atlas.items) via PgDecisionSink. */
 export interface DecisionSink {
   save(output: AnalystOutput): Promise<void>;
 }
@@ -32,12 +33,85 @@ export class InMemoryDecisionSink implements DecisionSink {
   }
 }
 
-/** atlas.decisions sink (#503 schema): not implemented yet (tests first). */
+/**
+ * The atlas.decisions sink on the #503 schema, one transaction per save: insert the decision row,
+ * then (keep) one entity item per target on its shelf. A kind existing target needs an active shelf
+ * and throws when it is missing; a kind new target reuses any shelf with that slug or proposes one.
+ * `on conflict (signal_id)` makes the second save of the same signal a no-op commit (items are not
+ * rewritten), and any failure rolls the transaction back so nothing is written.
+ */
 export class PgDecisionSink implements DecisionSink {
-  constructor(_pool: unknown) {}
-  async save(_output: AnalystOutput): Promise<void> {
-    throw new Error('PgDecisionSink not implemented');
+  private readonly pool: Pool;
+
+  constructor(pool: Pool) {
+    this.pool = pool;
   }
+
+  async save(output: AnalystOutput): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      try {
+        const decisions = await client.query<{ id: string }>(
+          `insert into atlas.decisions
+             (schema_version, signal_id, analyst_version, decision_type, summary, decision, reason, targets)
+           values ($1, $2, $3, 'file', $4, $5, $6, $7::jsonb)
+           on conflict (signal_id) do nothing
+           returning id`,
+          [output.schema_version, output.signal_id, output.analyst_version, output.summary, output.decision, output.reason, JSON.stringify(output.targets)],
+        );
+        if (decisions.rows.length === 0) {
+          await client.query('commit');
+          return;
+        }
+        if (output.decision === 'keep') await fileItems(client, output);
+        await client.query('commit');
+      } catch (e) {
+        await client.query('rollback');
+        throw e;
+      }
+    } finally {
+      client.release();
+    }
+  }
+}
+
+/** One entity item per keep target, filed on the target's shelf in the sink's open transaction. */
+async function fileItems(client: PoolClient, output: AnalystOutput): Promise<void> {
+  for (const target of output.targets) {
+    const mainShelfId = target.kind === 'existing'
+      ? await activeShelfId(client, target.entity)
+      : await proposedShelfId(client, target.entity, target.type);
+    await client.query(
+      `insert into atlas.items (item_key, title, summary, main_shelf_id, signal_id, angle, note)
+         values ($1, $2, $3, $4, $5, $6, $7)
+       on conflict do nothing`,
+      [`${output.signal_id}:${target.entity}`, itemTitle(output.summary, target.note), target.note, mainShelfId, output.signal_id, target.angle, target.note],
+    );
+  }
+}
+
+/** The active shelf for a kind existing target, or throw: the item has nowhere to land. */
+async function activeShelfId(client: PoolClient, slug: string): Promise<string> {
+  const { rows } = await client.query<{ id: string }>(`select id from atlas.shelves where slug = $1 and status = 'active'`, [slug]);
+  if (rows[0]) return rows[0].id;
+  throw new Error(`target ${slug}: no active shelf`);
+}
+
+/** The shelf for a kind new target: reuse any shelf with that slug (any status), else propose one. */
+async function proposedShelfId(client: PoolClient, slug: string, type: string): Promise<string> {
+  const { rows } = await client.query<{ id: string }>('select id from atlas.shelves where slug = $1', [slug]);
+  if (rows[0]) return rows[0].id;
+  const inserted = await client.query<{ id: string }>(
+    `insert into atlas.shelves (slug, name, type, status) values ($1, $1, $2, 'proposed') returning id`,
+    [slug, type],
+  );
+  return inserted.rows[0].id;
+}
+
+/** The item title: the signal summary, or the target note when the summary is empty, capped at 200 chars. */
+function itemTitle(summary: string, note: string): string {
+  return (summary.length > 0 ? summary : note).slice(0, 200);
 }
 
 /** Entity search over the DB shelves: one read-only select per call, then the in-memory matcher. */

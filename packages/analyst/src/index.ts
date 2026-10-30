@@ -7,7 +7,7 @@
  * - orchestration: processNext with ProcessOptions
  * - Linker + Story (#479): linkerStory, linkShortlist, routing rules (validateRoutingRules, DEFAULT_ROUTING_RULES)
  * - D36 analyst session + worker (#504): runSession, createOllamaLlm,
- *   searchShelves, processNextD36, InMemoryDecisionSink
+ *   searchShelves, processNextD36, InMemoryDecisionSink, PgDecisionSink (atlas.decisions)
  */
 export * from './deciders.js';
 export * from './states.js';
