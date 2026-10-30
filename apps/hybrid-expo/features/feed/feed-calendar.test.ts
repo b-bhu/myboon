@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   EVENT_REACTION_SAMPLE,
+  NOW_WINDOW_MS,
   countdown,
   countdownLower,
   eventCountdown,
@@ -194,15 +195,18 @@ test('countdown shows zero-padded hours and minutes inside the last day', () => 
 test('countdown reads exactly 24 hours as one day', () => {
   assert.equal(countdown('2026-10-31T12:00:00Z', now), '1D 00H');
 });
-test('countdown says NOW only during the first minute after the moment', () => {
-  assert.equal(countdown('2026-10-30T12:00:00Z', now), 'NOW');
-  assert.equal(countdown('2026-10-30T11:59:59Z', now), 'NOW');
-  assert.equal(countdown('2026-10-30T11:59:01Z', now), 'NOW');
-  // Minute one flips to time-ago, floored.
-  assert.equal(countdown('2026-10-30T11:59:00Z', now), '1M AGO');
+test('NOW_WINDOW_MS is the 15-minute NOW window', () => {
+  assert.equal(NOW_WINDOW_MS, 15 * 60_000);
 });
-test('countdown speaks time-ago in caps after the first minute', () => {
-  assert.equal(countdown('2026-10-30T11:55:00Z', now), '5M AGO');
+test('countdown says NOW during the first 15 minutes after the moment', () => {
+  assert.equal(countdown('2026-10-30T12:00:00Z', now), 'NOW');
+  assert.equal(countdown('2026-10-30T11:59:00Z', now), 'NOW');
+  assert.equal(countdown('2026-10-30T11:45:01Z', now), 'NOW');
+  // Minute fifteen flips to time-ago, floored.
+  assert.equal(countdown('2026-10-30T11:45:00Z', now), '15M AGO');
+});
+test('countdown speaks time-ago in caps after the NOW window', () => {
+  assert.equal(countdown('2026-10-30T11:40:00Z', now), '20M AGO');
   assert.equal(countdown('2026-10-30T10:00:00Z', now), '2H AGO');
   assert.equal(countdown('2026-10-27T12:00:00Z', now), '3D AGO');
   // Floored: extra hours never round a day up.
@@ -219,8 +223,9 @@ test('countdownLower speaks the countdown in lower case', () => {
 });
 test('countdownLower echoes the NOW window and time-ago', () => {
   assert.equal(countdownLower('2026-10-30T12:00:00Z', now), 'now');
-  assert.equal(countdownLower('2026-10-30T11:59:01Z', now), 'now');
-  assert.equal(countdownLower('2026-10-30T11:55:00Z', now), '5m ago');
+  assert.equal(countdownLower('2026-10-30T11:45:01Z', now), 'now');
+  assert.equal(countdownLower('2026-10-30T11:45:00Z', now), '15m ago');
+  assert.equal(countdownLower('2026-10-30T11:40:00Z', now), '20m ago');
   assert.equal(countdownLower('2026-10-30T10:00:00Z', now), '2h ago');
   assert.equal(countdownLower('2026-10-27T12:00:00Z', now), '3d ago');
   assert.equal(countdownLower('2026-10-29T10:30:00Z', now), '1d ago');
@@ -233,7 +238,7 @@ test('eventCountdown mirrors countdown for timed events', () => {
   assert.equal(eventCountdown(timed('2026-11-01T19:00:00Z'), now), '2D 07H');
   assert.equal(eventCountdown(timed('2026-10-30T19:05:00Z'), now), '07H 05M');
   assert.equal(eventCountdown(timed('2026-10-30T12:00:00Z'), now), 'NOW');
-  assert.equal(eventCountdown(timed('2026-10-30T11:55:00Z'), now), '5M AGO');
+  assert.equal(eventCountdown(timed('2026-10-30T11:40:00Z'), now), '20M AGO');
   assert.equal(eventCountdown(timed('2026-10-27T12:00:00Z'), now), '3D AGO');
 });
 
@@ -435,9 +440,9 @@ test('eventWhen speaks the future countdown for timed events', { skip: IST_SKIP 
   assert.equal(eventWhen(timed('2026-11-01T19:00:00Z'), istNow), 'in 2d 07h');
   assert.equal(eventWhen(timed('2026-10-30T19:05:00Z'), istNow), 'in 7h 05m');
   assert.equal(eventWhen(timed('2026-10-30T12:00:00Z'), istNow), 'now');
-  assert.equal(eventWhen(timed('2026-10-30T11:59:01Z'), istNow), 'now');
-  assert.equal(eventWhen(timed('2026-10-30T11:59:00Z'), istNow), '1m ago');
-  assert.equal(eventWhen(timed('2026-10-30T11:55:00Z'), istNow), '5m ago');
+  assert.equal(eventWhen(timed('2026-10-30T11:50:00Z'), istNow), 'now');
+  assert.equal(eventWhen(timed('2026-10-30T11:45:00Z'), istNow), '15m ago');
+  assert.equal(eventWhen(timed('2026-10-30T11:40:00Z'), istNow), '20m ago');
   assert.equal(eventWhen(timed('2026-10-30T10:00:00Z'), istNow), '2h ago');
   assert.equal(eventWhen(timed('2026-10-27T12:00:00Z'), istNow), '3d ago');
 });
