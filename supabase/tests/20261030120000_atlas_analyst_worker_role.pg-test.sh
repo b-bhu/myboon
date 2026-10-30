@@ -2,13 +2,13 @@
 # #512 analyst_worker role test on a THROWAWAY local Postgres 17. Never points at Supabase.
 # Applies every atlas migration, then up / down / up of 20261030120000, then runs the
 # analyst path as analyst_worker (must pass) and the forbidden actions (must be refused).
-# Usage: bash supabase/tests/20261030120000_analyst_worker_role.pg-test.sh
+# Usage: bash supabase/tests/20261030120000_atlas_analyst_worker_role.pg-test.sh
 set -uo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${PG_BIN:-/usr/lib/postgresql/17/bin}
 TMP=$(mktemp -d /tmp/issue512pg.XXXX); PORT=$((50000 + RANDOM % 10000)); DB=db512
-UP=$REPO/supabase/migrations/20261030120000_analyst_worker_role.sql
-DOWN=$REPO/supabase/rollbacks/20261030120000_analyst_worker_role.down.sql
+UP=$REPO/supabase/migrations/20261030120000_atlas_analyst_worker_role.sql
+DOWN=$REPO/supabase/rollbacks/20261030120000_atlas_analyst_worker_role.down.sql
 trap '"$BIN/pg_ctl" -D "$TMP/data" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 "$BIN/initdb" -D "$TMP/data" -U postgres -A trust >/dev/null
 "$BIN/pg_ctl" -D "$TMP/data" -o "-p $PORT -k $TMP -c listen_addresses=''" -l "$TMP/log" -w start >/dev/null
@@ -21,6 +21,7 @@ bad() { echo "FAIL $1"; FAILS=$((FAILS+1)); }
 "${PSQL[@]}" -c "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;" >/dev/null
 for f in $(ls "$REPO"/supabase/migrations/*_atlas*.sql | sort); do
   b=$(basename "$f")
+  [[ $b == 20261030120000_* ]] && continue   # applied below (up/down/up)
   if [[ $b == 20261025100200_atlas_tool_log.sql ]]; then
     # tool_log stand-in (same shape, no pg_cron); RLS on parent and partition, like tool_log_maintain.
     "${PSQL[@]}" -c "create table atlas.tool_log (id bigint generated always as identity, logged_at timestamptz not null default now(), run_id text, tool text not null, input jsonb, output jsonb, duration_ms bigint, error text, primary key (logged_at, id)) partition by range (logged_at); alter table atlas.tool_log enable row level security; create policy analyst_read on atlas.tool_log for select to atlas_analyst using (true); create table atlas.tool_log_d partition of atlas.tool_log default; alter table atlas.tool_log_d enable row level security;" >/dev/null || { echo "tool_log stand-in failed"; exit 1; }

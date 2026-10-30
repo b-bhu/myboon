@@ -4,7 +4,7 @@
 -- Grants are the subset of service_role's atlas grants that packages/analyst uses:
 -- signal_claim/finish/fail, PgDecisionSink (decisions, items, shelves), signal reads,
 -- tool_log. RLS is on for every atlas table, so each grant gets a matching policy.
--- Rollback: supabase/rollbacks/20261030120000_analyst_worker_role.down.sql
+-- Rollback: supabase/rollbacks/20261030120000_atlas_analyst_worker_role.down.sql
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
