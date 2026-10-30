@@ -176,7 +176,7 @@ describe.skipIf(ADMIN_URL === '')('#478 V4 signal status, decider slot and decis
     expect(await statusCounts()).toMatchObject({ analysed: 2 });
   });
 
-  it('reprocessing (rerun or expired claim) leaves at most one decision and one entity_item per signal', async () => {
+  it('reprocessing (rerun or expired claim) leaves at most one decision per signal; a signal may link several items (#503, D36)', async () => {
     const target = ids[0];
     await pool.query(`update atlas.signals set next_attempt_at = now() + interval '1 hour' where signal_id <> $1`, [target]);
     const deciders = { primary: scripted('jev', [YES]), fallback: scripted('clef', [YES]), shadow: scripted('clef', [YES]) };
@@ -188,6 +188,7 @@ describe.skipIf(ADMIN_URL === '')('#478 V4 signal status, decider slot and decis
     const shelf = (await pool.query(`insert into atlas.shelves (slug, name, type) values ('t','T','topic') returning id`)).rows[0].id;
     const items = (await pool.query(`insert into atlas.items (item_key, title, main_shelf_id) values ('i1','I1',$1), ('i2','I2',$1) returning id`, [shelf])).rows;
     await pool.query('insert into atlas.item_signals (item_id, signal_id) values ($1, $2)', [items[0].id, target]);
+    await pool.query('insert into atlas.item_signals (item_id, signal_id) values ($1, $2)', [items[1].id, target]); // #503: up to 3 items per signal
     await expect(pool.query('insert into atlas.item_signals (item_id, signal_id) values ($1, $2)', [items[1].id, target])).rejects.toThrow(/unique|duplicate/);
   });
 
