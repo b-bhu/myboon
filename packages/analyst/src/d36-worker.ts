@@ -35,16 +35,24 @@ export class InMemoryDecisionSink implements DecisionSink {
 
 /**
  * The atlas.decisions sink on the #503 schema, one transaction per save: insert the decision row,
- * then (keep) one entity item per target on its shelf. A kind existing target needs an active shelf
- * and throws when it is missing; a kind new target reuses any shelf with that slug or proposes one.
+ * then (keep) one entity item per target on its shelf. Per #482 the filing serialises per entity:
+ * before touching any shelf it takes one advisory lock per target slug, in sorted slug order inside
+ * this transaction, so two saves for one entity cannot race; every item copies the signal's
+ * occurred_at so a shelf timeline orders by signal time, not write order. A kind existing target
+ * needs an active shelf and throws when it is missing; a kind new target reuses only a shelf whose
+ * status is proposed, and a slug already active or retired drops the target (a target_dropped log
+ * line, no item, no throw: the other targets still file and the row stores the output as-is).
  * `on conflict (signal_id)` makes the second save of the same signal a no-op commit (items are not
  * rewritten), and any failure rolls the transaction back so nothing is written.
  */
 export class PgDecisionSink implements DecisionSink {
   private readonly pool: Pool;
+  /** Where dropped targets are logged; the default keeps them on the worker's stdout. */
+  private readonly log: (e: Record<string, unknown>) => void;
 
-  constructor(pool: Pool) {
+  constructor(pool: Pool, log?: (e: Record<string, unknown>) => void) {
     this.pool = pool;
+    this.log = log ?? ((e) => console.log(JSON.stringify(e)));
   }
 
   async save(output: AnalystOutput): Promise<void> {
@@ -64,7 +72,10 @@ export class PgDecisionSink implements DecisionSink {
           await client.query('commit');
           return;
         }
-        if (output.decision === 'keep') await fileItems(client, output);
+        if (output.decision === 'keep') {
+          await lockShelfSlugs(client, output.targets);
+          await fileItems(client, output, this.log);
+        }
         await client.query('commit');
       } catch (e) {
         await client.query('rollback');
@@ -76,15 +87,25 @@ export class PgDecisionSink implements DecisionSink {
   }
 }
 
-/** One entity item per keep target, filed on the target's shelf in the sink's open transaction. */
-async function fileItems(client: PoolClient, output: AnalystOutput): Promise<void> {
+/** One advisory lock per target slug, sorted so two saves of overlapping slugs take locks in the same order and cannot deadlock (#482). */
+async function lockShelfSlugs(client: PoolClient, targets: AnalystOutput['targets']): Promise<void> {
+  for (const slug of targets.map((t) => t.entity).sort()) {
+    await client.query("select pg_advisory_xact_lock(hashtext('atlas.shelf:' || $1))", [slug]);
+  }
+}
+
+/** One entity item per keep target, filed on the target's shelf in the sink's open transaction; each item copies the signal's occurred_at (#482). */
+async function fileItems(client: PoolClient, output: AnalystOutput, log: (e: Record<string, unknown>) => void): Promise<void> {
   for (const target of output.targets) {
     const mainShelfId = target.kind === 'existing'
       ? await activeShelfId(client, target.entity)
-      : await proposedShelfId(client, target.entity, target.type);
+      : await proposedShelfId(client, target.entity, target.type, output.signal_id, log);
+    if (mainShelfId === null) continue; // dropped target: already logged, the other targets in the output still file
     await client.query(
-      `insert into atlas.items (item_key, title, summary, main_shelf_id, signal_id, angle, note)
-         values ($1, $2, $3, $4, $5, $6, $7)
+      `insert into atlas.items (item_key, title, summary, main_shelf_id, signal_id, angle, note, occurred_at)
+         select $1, $2, $3, $4, $5, $6, $7, s.occurred_at
+           from atlas.signals s
+          where s.signal_id = $5
        on conflict do nothing`,
       [`${output.signal_id}:${target.entity}`, itemTitle(output.summary, target.note), target.note, mainShelfId, output.signal_id, target.angle, target.note],
     );
@@ -98,10 +119,20 @@ async function activeShelfId(client: PoolClient, slug: string): Promise<string> 
   throw new Error(`target ${slug}: no active shelf`);
 }
 
-/** The shelf for a kind new target: reuse any shelf with that slug (any status), else propose one. */
-async function proposedShelfId(client: PoolClient, slug: string, type: string): Promise<string> {
-  const { rows } = await client.query<{ id: string }>('select id from atlas.shelves where slug = $1', [slug]);
-  if (rows[0]) return rows[0].id;
+/** The shelf for a kind new target: reuse only a proposed shelf, else propose one (name = slug); null drops the target (slug is already active or retired) with its target_dropped log line (#482). */
+async function proposedShelfId(
+  client: PoolClient,
+  slug: string,
+  type: string,
+  signalId: string,
+  log: (e: Record<string, unknown>) => void,
+): Promise<string | null> {
+  const { rows } = await client.query<{ id: string; status: string }>('select id, status from atlas.shelves where slug = $1', [slug]);
+  if (rows[0] && rows[0].status === 'proposed') return rows[0].id;
+  if (rows[0]) {
+    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: `shelf ${slug} is ${rows[0].status}, not proposed` });
+    return null;
+  }
   const inserted = await client.query<{ id: string }>(
     `insert into atlas.shelves (slug, name, type, status) values ($1, $1, $2, 'proposed') returning id`,
     [slug, type],
