@@ -25,6 +25,7 @@ for f in $(ls "$REPO"/supabase/migrations/*_atlas*.sql | sort); do
   b=$(basename "$f")
   [[ $b == 20261025100200_atlas_tool_log.sql ]] && continue   # needs pg_cron
   [[ $b == 20261029180000_* ]] && continue
+  [[ $b > 20261029180000 ]] && continue   # later migrations are not part of this test
   "${PSQL[@]}" -f "$f" >/dev/null || { echo "apply $b failed"; exit 1; }
 done
 # tool_log stand-in (same shape, no pg_cron) so the #503 grant/revoke is exercised.
