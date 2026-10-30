@@ -77,7 +77,7 @@ export async function analystMain(o: AnalystMainOptions): Promise<RunSummary> {
     : new Pool({ connectionString: c.databaseUrl, max: 2 });
 
   try {
-    const llm = o.createLlm ? o.createLlm(c) : createOllamaLlm({ apiKey: c.ollamaApiKey, model: c.llmModel });
+    const llm = o.createLlm ? o.createLlm(c) : createOllamaLlm({ apiKey: c.ollamaApiKey, model: c.llmModel, timeoutMs: c.timeoutMs });
     const { primary, fallback, shadow } = o.createDeciders ? o.createDeciders(c) : defaultDeciders(c);
 
     const opts: D36Options = {

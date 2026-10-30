@@ -69,27 +69,41 @@ export type JevLogEntry = {
 
 /**
  * The Ollama completion client: POST {model, messages, temperature 0, stream false} with the key as
- * a bearer. Its errors carry the HTTP status and a snippet of the body with the key redacted; the
- * key value is never logged.
+ * a bearer. The fetch and body read abort after `timeoutMs` (default 20s) and surface as one
+ * "LLM timed out after Nms" error (Refs #512); other errors carry the HTTP status and a snippet of
+ * the body with the key redacted; the key value is never logged.
  */
-export function createOllamaLlm(o: { apiKey: string; model: string; fetchImpl?: typeof fetch; url?: string }): Llm {
+export function createOllamaLlm(o: { apiKey: string; model: string; fetchImpl?: typeof fetch; url?: string; timeoutMs?: number }): Llm {
   const url = o.url ?? 'https://ollama.com/v1/chat/completions';
   const fetchImpl = o.fetchImpl ?? fetch;
+  const timeoutMs = o.timeoutMs ?? 20_000;
   return async (messages: ChatMessage[]): Promise<string> => {
-    const response = await fetchImpl(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${o.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: o.model, messages, temperature: 0, stream: false }),
-    });
-    if (!response.ok) {
-      throw new Error(`LLM HTTP ${response.status}: ${snip(redact(await response.text(), o.apiKey))}`);
+    try {
+      const response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${o.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: o.model, messages, temperature: 0, stream: false }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) {
+        throw new Error(`LLM HTTP ${response.status}: ${snip(redact(await response.text(), o.apiKey))}`);
+      }
+      const payload = asRec(await response.json());
+      const choices = Array.isArray(payload.choices) ? (payload.choices as unknown[]) : [];
+      const content = str(asRec(asRec(choices[0]).message).content);
+      if (!content.trim()) throw new Error('LLM reply has no content');
+      return content;
+    } catch (err) {
+      if (isTimeoutAbort(err)) throw new Error(`LLM timed out after ${timeoutMs}ms`);
+      throw err;
     }
-    const payload = asRec(await response.json());
-    const choices = Array.isArray(payload.choices) ? (payload.choices as unknown[]) : [];
-    const content = str(asRec(asRec(choices[0]).message).content);
-    if (!content.trim()) throw new Error('LLM reply has no content');
-    return content;
   };
+}
+
+/** True only for an aborted fetch or body read: AbortSignal.timeout rejects with 'TimeoutError', other aborts with 'AbortError'. */
+function isTimeoutAbort(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null | undefined)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
 }
 
 function redact(text: string, secret: string): string {
