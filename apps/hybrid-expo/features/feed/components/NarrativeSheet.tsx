@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { TakeActionApps } from '@/features/feed/components/TakeActionApps';
-import { fetchNarrativeDetail, toShortDate } from '@/features/feed/feed.api';
+import { fetchNarrativeDetail } from '@/features/feed/feed.api';
 import type { NarrativeDetail } from '@/features/feed/feed.api';
-import { FEED_COLORS } from '@/features/feed/feed.constants';
+import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
+import { newsSheetHeight, shouldDismissSheet, updateAge } from '@/features/feed/feed-updates';
 import { useReducedMotion } from '../use-reduced-motion';
 
 function normalizeArticleText(text: string): string {
@@ -75,20 +76,50 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   const [retry, setRetry] = useState(0);
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const { height: screenHeight } = useWindowDimensions();
-  const sheetHeight = Math.round(screenHeight * 0.88);
+  const sheetHeight = newsSheetHeight(screenHeight);
   const translateY = useRef(new Animated.Value(1000)).current;
+  const dragY = useRef(new Animated.Value(0)).current;
   const [detail, setDetail] = useState<NarrativeDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const itemId = item?.id;
 
+  // Always-current close callback for the pan-release handler.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
   useEffect(() => {
+    dragY.setValue(0);
     Animated.timing(translateY, {
       toValue: item ? 0 : sheetHeight,
       duration: reducedMotion ? 0 : item ? 260 : 220,
       useNativeDriver: true,
     }).start();
-  }, [item, sheetHeight, translateY, reducedMotion]);
+  }, [item, sheetHeight, translateY, dragY, reducedMotion]);
+
+  const panResponder = useMemo(() => {
+    const settle = () => {
+      if (reducedMotion) {
+        Animated.timing(dragY, { toValue: 0, duration: 0, useNativeDriver: true }).start();
+      } else {
+        Animated.spring(dragY, { toValue: 0, bounciness: 0, useNativeDriver: true }).start();
+      }
+    };
+    return PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) => gesture.dy > 4 && gesture.dy > Math.abs(gesture.dx),
+      onPanResponderMove: (_event, gesture) => {
+        dragY.setValue(Math.max(0, gesture.dy));
+      },
+      onPanResponderRelease: (_event, gesture) => {
+        if (shouldDismissSheet(Math.max(0, gesture.dy), gesture.vy, sheetHeight)) {
+          onCloseRef.current();
+          return;
+        }
+        settle();
+      },
+      onPanResponderTerminate: settle,
+    });
+  }, [dragY, sheetHeight, reducedMotion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,6 +155,8 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   const publishedAt = detail?.publishedAt ?? item?.createdAt ?? '';
   const imageUrl = detail?.imageUrl ?? item?.imageUrl ?? null;
   const imageKind = detail?.imageKind ?? item?.imageKind ?? null;
+  const age = updateAge(publishedAt, new Date());
+  const meta = age ? `${age} · LATEST` : 'LATEST';
 
   return (
     <Modal
@@ -133,25 +166,17 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <Pressable style={styles.scrim} onPress={onClose} accessibilityLabel="Close Feed item" />
-      <Animated.View style={[styles.sheet, { height: sheetHeight + 16, transform: [{ translateY }] }]}>
-        <View style={styles.handle} />
-        <View style={styles.sheetHeader}>
-          <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>FULL FEED</Text>
-            <Text style={styles.date}>{publishedAt ? toShortDate(publishedAt) : ''}</Text>
-          </View>
-          <Pressable
-            onPress={onClose}
-            accessibilityRole="button"
-            accessibilityLabel="Close Feed item"
-            style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.closeText}>×</Text>
-          </Pressable>
+      <Pressable style={styles.scrim} onPress={onClose} accessibilityLabel="Close news" />
+      <Animated.View
+        style={[styles.sheet, { height: sheetHeight, transform: [{ translateY: Animated.add(translateY, dragY) }] }]}
+      >
+        <View style={styles.grabberArea} {...panResponder.panHandlers}>
+          <View style={styles.grabber} />
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+          <Text style={styles.meta}>{meta}</Text>
+          <Text style={styles.title}>{title}</Text>
           {imageUrl && imageKind === 'content' && failedImage !== imageUrl ? (
             <Image
               source={imageUrl}
@@ -162,8 +187,6 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
               accessibilityLabel={detail?.imageAttribution ?? item?.imageAttribution ?? title}
             />
           ) : null}
-          <Text style={styles.title}>{title}</Text>
-          <View style={styles.divider} />
           <Text style={styles.lead}>{summary}</Text>
 
           {loading ? <Text style={styles.loadingText}>Loading the full Feed item…</Text> : null}
@@ -171,7 +194,7 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
             <View style={styles.stateCard}>
               <Text style={styles.stateTitle}>Full Feed item unavailable</Text>
               <Text style={styles.stateText}>The shorter update is still available above.</Text>
-              <Pressable accessibilityRole="button" onPress={() => setRetry((value) => value + 1)} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: FEED_COLORS.accent }}>Try again</Text></Pressable>
+              <Pressable accessibilityRole="button" onPress={() => setRetry((value) => value + 1)} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: FEED_TOKENS.colors.accent }}>Try again</Text></Pressable>
             </View>
           ) : null}
           {detail?.content ? (
@@ -191,157 +214,132 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
 const styles = StyleSheet.create({
   scrim: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(4, 30, 39, 0.76)',
+    backgroundColor: 'rgba(2, 24, 33, 0.8)',
   },
   sheet: {
     position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: -16,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopLeftRadius: FEED_TOKENS.radius.sheet,
+    borderTopRightRadius: FEED_TOKENS.radius.sheet,
     borderWidth: 1,
-    borderColor: FEED_COLORS.borderSoft,
-    backgroundColor: FEED_COLORS.card,
+    borderBottomWidth: 0,
+    borderColor: FEED_TOKENS.colors.border,
+    backgroundColor: FEED_TOKENS.colors.ground,
     overflow: 'hidden',
     borderCurve: 'continuous',
   },
-  handle: {
-    alignSelf: 'center',
-    width: 56,
+  grabberArea: {
+    height: 24,
+    alignItems: 'center',
+  },
+  grabber: {
+    width: 36,
     height: 4,
-    marginTop: 12,
+    marginTop: 8,
     borderRadius: 2,
-    backgroundColor: FEED_COLORS.borderSoft,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  headerCopy: {
-    flex: 1,
-    gap: 4,
-  },
-  eyebrow: {
-    color: FEED_COLORS.accent,
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1.1,
-  },
-  date: {
-    color: FEED_COLORS.textFaint,
-    fontSize: 11,
-  },
-  closeButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: FEED_COLORS.borderSoft,
-    backgroundColor: FEED_COLORS.cardDeep,
-  },
-  closeText: {
-    color: FEED_COLORS.text,
-    fontSize: 20,
-    lineHeight: 22,
+    backgroundColor: FEED_TOKENS.colors.border,
   },
   content: {
     paddingHorizontal: 16,
-    paddingTop: 24,
-    paddingBottom: 52,
+    paddingTop: 8,
+    paddingBottom: 32,
+  },
+  meta: {
+    color: FEED_TOKENS.colors.textFaint,
+    fontFamily: monoFontFamily(),
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  title: {
+    color: FEED_TOKENS.colors.text,
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '700',
+    marginTop: 12,
   },
   heroImage: {
     width: '100%',
     height: 210,
-    borderRadius: 10,
-    marginBottom: 20,
-    backgroundColor: FEED_COLORS.cardDeep,
+    borderRadius: FEED_TOKENS.radius.card,
+    marginTop: 12,
+    backgroundColor: FEED_TOKENS.colors.card,
     borderCurve: 'continuous',
   },
-  title: {
-    color: FEED_COLORS.text,
-    fontSize: 24,
-    lineHeight: 29,
-    fontWeight: '900',
-  },
-  divider: {
-    height: 1,
-    marginVertical: 18,
-    backgroundColor: FEED_COLORS.border,
-  },
   lead: {
-    color: '#D7E7EB',
+    color: FEED_TOKENS.colors.text,
     fontSize: 15,
     lineHeight: 22,
-    fontWeight: '800',
+    marginTop: 12,
   },
   sectionLabel: {
-    color: FEED_COLORS.accent,
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1.1,
-    marginTop: 26,
-    marginBottom: 14,
+    color: FEED_TOKENS.colors.textFaint,
+    fontFamily: monoFontFamily(),
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginTop: 24,
+    marginBottom: 12,
   },
   articleBody: {
-    gap: 14,
+    gap: 12,
   },
   articleHeading: {
-    color: FEED_COLORS.text,
-    fontSize: 16,
+    color: FEED_TOKENS.colors.text,
+    fontSize: 18,
     lineHeight: 23,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   articleText: {
-    color: FEED_COLORS.textDim,
-    fontSize: 14,
+    color: FEED_TOKENS.colors.textDim,
+    fontSize: 15,
     lineHeight: 22,
   },
   bulletList: {
-    gap: 10,
+    gap: 8,
   },
   bulletRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 9,
+    gap: 8,
   },
   bulletMarker: {
-    color: FEED_COLORS.accent,
-    fontSize: 14,
+    color: FEED_TOKENS.colors.accent,
+    fontSize: 15,
     lineHeight: 22,
   },
   bulletText: {
     flex: 1,
   },
   stateCard: {
-    borderRadius: 8,
+    borderRadius: FEED_TOKENS.radius.card,
     borderWidth: 1,
-    borderColor: FEED_COLORS.border,
-    padding: 14,
-    gap: 6,
+    borderColor: FEED_TOKENS.colors.border,
+    backgroundColor: FEED_TOKENS.colors.card,
+    padding: 16,
+    gap: 8,
     marginTop: 24,
   },
   stateTitle: {
-    color: FEED_COLORS.text,
+    color: FEED_TOKENS.colors.text,
     fontSize: 15,
-    fontWeight: '800',
+    lineHeight: 20,
+    fontWeight: '700',
   },
   stateText: {
-    color: FEED_COLORS.textDim,
-    fontSize: 13,
-    lineHeight: 19,
+    color: FEED_TOKENS.colors.textDim,
+    fontSize: 12,
+    lineHeight: 18,
   },
   loadingText: {
-    color: FEED_COLORS.textDim,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 22,
-  },
-  pressed: {
-    opacity: 0.72,
+    color: FEED_TOKENS.colors.textDim,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 16,
   },
 });
