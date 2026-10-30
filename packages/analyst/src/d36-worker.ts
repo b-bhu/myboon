@@ -32,6 +32,14 @@ export class InMemoryDecisionSink implements DecisionSink {
   }
 }
 
+/** atlas.decisions sink (#503 schema): not implemented yet (tests first). */
+export class PgDecisionSink implements DecisionSink {
+  constructor(_pool: unknown) {}
+  async save(_output: AnalystOutput): Promise<void> {
+    throw new Error('PgDecisionSink not implemented');
+  }
+}
+
 /** Entity search over the DB shelves: one read-only select per call, then the in-memory matcher. */
 export function shelfSearchFromDb(db: Db): EntitySearch {
   return async (terms: string[]) => {
