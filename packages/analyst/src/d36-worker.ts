@@ -49,12 +49,14 @@ export class InMemoryDecisionSink implements DecisionSink {
  * this transaction, so two saves for one entity cannot race; every item copies the signal's
  * occurred_at so a shelf timeline orders by signal time, not write order. A kind existing target
  * needs an active shelf and throws when it is missing; a kind new target reuses a shelf whose status
- * is proposed, files on an already active slug with a target_reclassified log line (#511), and only a
- * retired slug drops the target (a target_dropped log line, no item, no throw: the other targets
- * still file and the row stores the output as-is). With `{ allowNewEntities: false }` (#391
- * catch-up) the active-slug reclassification still files there, but every other kind-new target —
- * a proposed shelf, a retired slug, or no row at all — is dropped through the same target_dropped
- * path: no shelf is proposed or inserted, no item lands on a proposed shelf.
+ * is proposed, files on an already active slug with a target_reclassified log line (#511), and a
+ * retired slug drops the target unless an active shelf aliases it (#480: filed there with a
+ * target_redirected log line, allowNewEntities or not). A drop is a target_dropped log line, no item,
+ * no throw: the other targets still file and the row stores the output as-is. With
+ * `{ allowNewEntities: false }` (#391 catch-up) the reclassification and alias redirect still file,
+ * but every other kind-new target — a proposed shelf, an unaliased retired slug, or no row at all —
+ * is dropped through the same target_dropped path: no shelf is proposed or inserted, no item lands
+ * on a proposed shelf.
  * `on conflict (signal_id)` makes the second save of the same signal a no-op commit (items are not
  * rewritten), and any failure rolls the transaction back so nothing is written.
  */
@@ -142,10 +144,12 @@ async function activeShelfId(client: PoolClient, slug: string): Promise<string> 
 
 /**
  * The shelf for a kind new target: reuse a proposed shelf; an already active slug files on that
- * existing shelf with a target_reclassified log line (#511); a retired slug drops the target
- * (target_dropped, no item, no throw, #482); else propose one (name = slug). With
- * `allowNewEntities = false` (#391 catch-up) the retired/no-row/proposed cases all drop through the
- * same target_dropped path with the fixed catch-up reason: never insert a shelf.
+ * existing shelf with a target_reclassified log line (#511); a retired slug aliased by an active
+ * shelf files there with a target_redirected log line (#480, regardless of allowNewEntities); a
+ * retired slug with no active alias drops the target (target_dropped, no item, no throw, #482);
+ * else propose one (name = slug). With `allowNewEntities = false` (#391 catch-up) the proposed/
+ * unaliased-retired/no-row cases all drop through the same target_dropped path with the fixed
+ * catch-up reason: never insert a shelf.
  */
 async function proposedShelfId(
   client: PoolClient,
@@ -168,6 +172,16 @@ async function proposedShelfId(
     return rows[0].id;
   }
   if (rows[0]) {
+    // A retired slug the entity manager aliased into an active shelf still files there, regardless
+    // of allowNewEntities: filing on an existing active shelf creates no shelf (#480 CTO decision 3).
+    const redirected = await client.query<{ id: string; slug: string }>(
+      "select id, slug from atlas.shelves where status = 'active' and $1 = any(aliases) order by slug limit 1",
+      [slug],
+    );
+    if (redirected.rows[0]) {
+      log({ event: 'target_redirected', signal_id: signalId, entity: slug, shelf: redirected.rows[0].slug, reason: `shelf ${slug} is ${rows[0].status}; alias of ${redirected.rows[0].slug}, filed there` });
+      return redirected.rows[0].id;
+    }
     log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: allowNewEntities
       ? `shelf ${slug} is ${rows[0].status}, not proposed or active`
       : NEW_ENTITY_DISABLED_REASON });

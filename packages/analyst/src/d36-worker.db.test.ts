@@ -439,6 +439,49 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       expect(targets.map((t) => t.entity).sort()).toEqual(['fresh-filed', 'gone-entity']);
     });
 
+    it('a kind new target on a retired slug aliased by an active shelf files on that shelf with a target_redirected log (#480)', async () => {
+      await addSignal('sig-480-d3', '2026-10-30T09:00:00.000Z');
+      await pool.query(
+        'insert into atlas.shelves (slug, name, type, status, aliases) values ($1, $2, $3, $4, $5)',
+        ['alias-home', 'Alias Home', 'organization', 'active', ['old-proposed']],
+      );
+      await pool.query(
+        "insert into atlas.shelves (slug, name, type, status) values ('old-proposed', 'Old Proposed', 'organization', 'retired')",
+      );
+      const redirects: Record<string, unknown>[] = [];
+      const sink = new PgDecisionSink(svcPool, (e: Record<string, unknown>) => { redirects.push(e); });
+      await sink.save(out('sig-480-d3', [tgt('old-proposed', 'new', 'organization', 'new_story')]));
+      // Nothing lands on the retired slug; the item is filed on the active alias shelf.
+      expect((await itemsOf('old-proposed')).rows).toHaveLength(0);
+      const items = (await itemsOf('alias-home')).rows;
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ signal_id: 'sig-480-d3' });
+      expect(redirects).toEqual([
+        { event: 'target_redirected', signal_id: 'sig-480-d3', entity: 'old-proposed', shelf: 'alias-home',
+          reason: 'shelf old-proposed is retired; alias of alias-home, filed there' },
+      ]);
+    });
+
+    it('the retired-slug redirect runs with allowNewEntities false too: the catch-up sink files on the active alias shelf (#480)', async () => {
+      await addSignal('sig-480-d4', '2026-10-30T09:00:00.000Z');
+      await pool.query(
+        'insert into atlas.shelves (slug, name, type, status, aliases) values ($1, $2, $3, $4, $5)',
+        ['alias-home-391', 'Alias Home 391', 'organization', 'active', ['gone-aliased-391']],
+      );
+      await pool.query(
+        "insert into atlas.shelves (slug, name, type, status) values ('gone-aliased-391', 'Gone Aliased 391', 'organization', 'retired')",
+      );
+      const redirects: Record<string, unknown>[] = [];
+      await new PgDecisionSink(svcPool, (e: Record<string, unknown>) => { redirects.push(e); }, { allowNewEntities: false })
+        .save(out('sig-480-d4', [tgt('gone-aliased-391', 'new', 'organization', 'new_story')]));
+      expect((await itemsOf('gone-aliased-391')).rows).toHaveLength(0);
+      expect((await itemsOf('alias-home-391')).rows).toHaveLength(1);
+      expect(redirects).toEqual([
+        { event: 'target_redirected', signal_id: 'sig-480-d4', entity: 'gone-aliased-391', shelf: 'alias-home-391',
+          reason: 'shelf gone-aliased-391 is retired; alias of alias-home-391, filed there' },
+      ]);
+    });
+
     it('a kind new target on an active slug files on that shelf with a target_reclassified log (#511)', async () => {
       await addSignal('sig-482-f', '2026-10-30T09:00:00.000Z');
       const logs: Record<string, unknown>[] = [];
