@@ -4,7 +4,8 @@
  *
  * Written against the schema proposed on #505 (spec-covered rows #1-#5 only): atlas.stories.shelf_id,
  * atlas.stories.status ('open'), and analyst_worker grants on stories/story_items. A null stories.summary
- * means the text is pending. Not covered yet (waiting on CTO): one-open-story-per-entity and closing stories.
+ * means the text is pending. CTO answers: existing_story with no open story starts one; merged items are skipped; no
+ * one-open-story index and no closing of stories.
  *
  * Expected API (not built yet): `writeStories(db, { llm, log }) => { linked, written, pending }` from
  * './story-writer.js'. The module is imported lazily so each scenario fails on its own until it exists.
@@ -14,6 +15,7 @@ import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 import type { ChatMessage, Llm } from './session.js';
 import { spikeCases } from './test-fixtures/d36-spike.js';
+import { applyStoriesSchema505 } from './test-fixtures/stories-schema-505.js'; // TEMPORARY until DB Guy's migration
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const SIGNAL = spikeCases[5].signal; // a real scout signal (Cointelegraph via tokens_xyz)
@@ -44,6 +46,7 @@ describe.skipIf(ADMIN_URL === '')('#505 story writer (local Postgres)', () => {
 
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
+    await applyStoriesSchema505(db.url); // TEMPORARY until DB Guy's migration
     pool = new Pool({ connectionString: db.url, max: 4 });
     worker = new Pool({ connectionString: db.url, max: 4 });
     worker.on('connect', (c) => c.query('set role analyst_worker'));
@@ -136,5 +139,26 @@ describe.skipIf(ADMIN_URL === '')('#505 story writer (local Postgres)', () => {
     expect(llm.calls).toBe(0);
     expect((await pool.query('select id, angle, note, updated_at from atlas.items order by id')).rows).toEqual(before);
     expect(await stories()).toHaveLength(1);
+  });
+
+  it('existing_story with no open story on the entity starts a new story (CTO, #505)', async () => {
+    const writeStories = await load();
+    const id = await item('k1', 'existing_story', 'Cointelegraph reports the raise.');
+    await writeStories(worker, { llm: glm() });
+    const s = await stories();
+    expect(s).toHaveLength(1);
+    expect(s[0]).toMatchObject({ shelf_id: shelfId, status: 'open' });
+    expect(await links()).toEqual([{ story_id: s[0].id, item_id: id }]);
+  });
+
+  it('merged items are skipped (CTO, #505)', async () => {
+    const writeStories = await load();
+    const live = await item('k1', 'new_story', 'Cointelegraph reports the raise.');
+    const dup = await item('k2', 'new_story', 'Duplicate of the raise.');
+    await pool.query(`update atlas.items set status = 'merged', merged_into_id = $1 where id = $2`, [live, dup]);
+    const llm = glm();
+    await writeStories(worker, { llm });
+    expect((await links()).map((l) => l.item_id)).toEqual([live]);
+    expect(JSON.stringify(llm.seen)).not.toContain('Duplicate of the raise.');
   });
 });

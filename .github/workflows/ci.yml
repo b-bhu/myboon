@@ -62,6 +62,7 @@ jobs:
       - run: pnpm --filter @myboon/scout-news typecheck
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix
+      - run: pnpm --filter @myboon/api test:entity-timeline
       - run: pnpm --filter @myboon/api typecheck
 
   migrations-lint:
