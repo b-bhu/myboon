@@ -1,5 +1,8 @@
 /**
- * #504 D36 analyst worker on a throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL). Claim and finish use the
+ * #504 D36 analyst worker on a throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL). The worker (claims,
+ * signal reads, shelf search) and PgDecisionSink run on a second pool whose connections set role
+ * service_role, so the tests prove the migration grants suffice; the admin/superuser pool stays for
+ * setup only (truncate, seed shelves/signals, resets) and assertion reads. Claim and finish use the
  * existing atlas.signal_* functions (#478/#479). The decision write goes to a DecisionSink: the in-memory
  * sink, and PgDecisionSink writing atlas.decisions + atlas.items (proposed shelves for new targets) on the
  * #503 schema. The LLM, Jev and Clef are scripted (answers, errors, timeouts).
@@ -52,12 +55,15 @@ function kalshiLlm(o: { fail?: boolean } = {}): Llm & { turns: number } {
 
 describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', () => {
   let db: ThrowawayDatabase;
+  /** The admin pool: setup only (truncate, seed shelves/signals, resets) and assertion reads. */
   let pool: Pool;
+  /** The worker/sink pool: same throwaway DB with every connection running as service_role. */
+  let svcPool: Pool;
   let sink: InMemoryDecisionSink;
   const logs: JevLogEntry[] = [];
   const opts = (o: Partial<D36Options>): D36Options => ({
     llm: kalshiLlm(), primary: scripted('jev', keepAll), fallback: scripted('clef', keepAll), shadow: null,
-    search: shelfSearchFromDb(pool), sink, log: (e) => logs.push(e),
+    search: shelfSearchFromDb(svcPool), sink, log: (e) => logs.push(e),
     leaseMs: 60_000, timeoutMs: 100, backoffMs: 60_000, maxAttempts: 3, worker: 'w504', ...o,
   });
   const sig = async () => (await pool.query(
@@ -66,8 +72,10 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
     pool = new Pool({ connectionString: db.url, max: 4 });
+    svcPool = new Pool({ connectionString: db.url, max: 4 });
+    svcPool.on('connect', (c) => c.query('set role service_role'));
   });
-  afterAll(async () => { await pool?.end(); await db?.drop(); });
+  afterAll(async () => { await pool?.end(); await svcPool?.end(); await db?.drop(); });
   beforeEach(async () => {
     logs.length = 0;
     sink = new InMemoryDecisionSink();
@@ -83,7 +91,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   it('keep: the signal is analysed and one output with Jev-decided targets is saved', async () => {
-    const r = await processNextD36(pool, opts({}));
+    const r = await processNextD36(svcPool, opts({}));
     expect(r).toMatchObject({ signalId: KALSHI.signal_id, result: 'analysed' });
     expect(await sig()).toMatchObject({ status: 'analysed', claim_token: null });
     expect(sink.outputs()).toHaveLength(1);
@@ -93,13 +101,13 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   it('ignore: the signal is analysed and the output has a reason and no targets', async () => {
-    const r = await processNextD36(pool, opts({ primary: scripted('jev', () => 'ignore') }));
+    const r = await processNextD36(svcPool, opts({ primary: scripted('jev', () => 'ignore') }));
     expect(r?.result).toBe('analysed');
     expect(sink.outputs()[0]).toMatchObject({ decision: 'ignore', reason: 'Not interesting.', targets: [] });
   });
 
   it('unclear: the signal is parked with the reason', async () => {
-    const r = await processNextD36(pool, opts({ primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : 'banana')) }));
+    const r = await processNextD36(svcPool, opts({ primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : 'banana')) }));
     expect(r?.result).toBe('parked');
     const s = await sig();
     expect(s.status).toBe('parked');
@@ -109,7 +117,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
 
   it('Jev times out: Clef answers (fallback) and the signal is analysed', async () => {
     const clef = scripted('clef', keepAll);
-    const r = await processNextD36(pool, opts({ primary: scripted('jev', () => 'timeout'), fallback: clef }));
+    const r = await processNextD36(svcPool, opts({ primary: scripted('jev', () => 'timeout'), fallback: clef }));
     expect(r?.result).toBe('analysed');
     expect(clef.calls).toBe(3);
     expect(logs.every((l) => l.provider === 'clef')).toBe(true);
@@ -117,7 +125,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   it('Jev and Clef both fail: the signal stays unfinished (received, claim cleared, attempt counted) and is retried', async () => {
-    const r = await processNextD36(pool, opts({ primary: scripted('jev', () => 'error'), fallback: scripted('clef', () => 'timeout') }));
+    const r = await processNextD36(svcPool, opts({ primary: scripted('jev', () => 'error'), fallback: scripted('clef', () => 'timeout') }));
     expect(r?.result).toBe('failed');
     const s = await sig();
     expect(s).toMatchObject({ status: 'received', attempts: 1, claim_token: null });
@@ -125,11 +133,11 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(s.last_error).toMatch(/clef/);
     expect(sink.outputs()).toHaveLength(0);
     await pool.query('update atlas.signals set next_attempt_at = now() where signal_id = $1', [KALSHI.signal_id]);
-    expect((await processNextD36(pool, opts({})))?.result).toBe('analysed');
+    expect((await processNextD36(svcPool, opts({})))?.result).toBe('analysed');
   });
 
   it('the LLM fails: the signal stays unfinished and is retried', async () => {
-    const r = await processNextD36(pool, opts({ llm: kalshiLlm({ fail: true }) }));
+    const r = await processNextD36(svcPool, opts({ llm: kalshiLlm({ fail: true }) }));
     expect(r?.result).toBe('failed');
     expect(await sig()).toMatchObject({ status: 'received', attempts: 1 });
     expect(sink.outputs()).toHaveLength(0);
@@ -137,37 +145,37 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
 
   it('the Clef shadow is off by default and never changes the output when on', async () => {
     const shadow = scripted('clef', () => 'ignore');
-    await processNextD36(pool, opts({}));
+    await processNextD36(svcPool, opts({}));
     expect(shadow.calls).toBe(0);
     await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
     sink = new InMemoryDecisionSink();
-    await processNextD36(pool, opts({ shadow, sink }));
+    await processNextD36(svcPool, opts({ shadow, sink }));
     expect(shadow.calls).toBe(3);
     expect(sink.outputs()[0]).toMatchObject({ decision: 'keep', targets: [{ entity: 'kalshi' }] });
   });
 
   it('the same signal processed twice keeps one output in the sink', async () => {
-    await processNextD36(pool, opts({}));
+    await processNextD36(svcPool, opts({}));
     await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
-    await processNextD36(pool, opts({}));
+    await processNextD36(svcPool, opts({}));
     expect(sink.outputs()).toHaveLength(1);
   });
 
   it('nothing due: returns null', async () => {
     await pool.query("update atlas.signals set next_attempt_at = now() + interval '1 hour'");
-    expect(await processNextD36(pool, opts({}))).toBeNull();
+    expect(await processNextD36(svcPool, opts({}))).toBeNull();
   });
 
   it('the same signal processed twice gives one atlas.decisions row (PgDecisionSink)', async () => {
-    await processNextD36(pool, opts({ sink: new PgDecisionSink(pool) }));
+    await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool) }));
     await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
-    await processNextD36(pool, opts({ sink: new PgDecisionSink(pool) }));
+    await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool) }));
     expect((await pool.query('select count(*)::int n from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(1);
     expect((await pool.query('select count(*)::int n from atlas.items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(1);
   });
 
   it('keep with targets: the decisions row carries the output and one item per target (PgDecisionSink)', async () => {
-    const r = await processNextD36(pool, opts({ sink: new PgDecisionSink(pool) }));
+    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool) }));
     expect(r?.result).toBe('analysed');
     const out = r?.output;
     expect(out?.decision).toBe('keep');
@@ -193,7 +201,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   it('ignore writes a decision row and no items (PgDecisionSink)', async () => {
-    const r = await processNextD36(pool, opts({ sink: new PgDecisionSink(pool), primary: scripted('jev', () => 'ignore') }));
+    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool), primary: scripted('jev', () => 'ignore') }));
     expect(r?.result).toBe('analysed');
     const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
     expect(d.decision).toBe('ignore');
@@ -204,7 +212,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   it('unclear writes a decision row (targets []) and no items (PgDecisionSink)', async () => {
-    const r = await processNextD36(pool, opts({ sink: new PgDecisionSink(pool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : 'banana')) }));
+    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : 'banana')) }));
     expect(r?.result).toBe('parked');
     const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
     expect(d.decision).toBe('unclear');
@@ -223,7 +231,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       reason: 'A new entity is needed.',
       targets: [{ entity: 'stanley-druckenmiller', kind: 'new', type: 'person', angle: 'new_story', note: 'Reported move into Hyperliquid.' }],
     });
-    await new PgDecisionSink(pool).save(output);
+    await new PgDecisionSink(svcPool).save(output);
     const shelf = (await pool.query('select slug, name, type, status from atlas.shelves where slug = $1', ['stanley-druckenmiller'])).rows[0];
     expect(shelf).toMatchObject({ slug: 'stanley-druckenmiller', name: 'stanley-druckenmiller', type: 'person', status: 'proposed' });
     const items = (await pool.query(
@@ -247,7 +255,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       reason: 'Bad route.',
       targets: [{ entity: 'no-such-shelf', kind: 'existing', type: 'organization', angle: 'plain_update', note: 'Nothing here.' }],
     });
-    await expect(new PgDecisionSink(pool).save(output)).rejects.toThrow(/no active shelf/);
+    await expect(new PgDecisionSink(svcPool).save(output)).rejects.toThrow(/no active shelf/);
     expect((await pool.query('select count(*)::int n from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
     expect((await pool.query('select count(*)::int n from atlas.items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
     expect((await pool.query('select count(*)::int n from atlas.shelves where slug = $1', ['no-such-shelf'])).rows[0].n).toBe(0);
