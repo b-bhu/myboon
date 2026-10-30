@@ -17,6 +17,7 @@ import {
   tableRows,
   treemapCaption,
   upDownCounts,
+  isStablecoin,
 } from './feed-market';
 import type { HeatmapToken } from './token-heatmap.types';
 
@@ -187,4 +188,25 @@ test('sampleNews is generic sample copy with a relative age, deterministic per t
 test('marketSample gates on withMock: explicit on is true, explicit off is null', () => {
   assert.equal(marketSample(true), true);
   assert.equal(marketSample(false), null);
+});
+test('isStablecoin matches the stablecoin list and its jl/wrapped/bridged variants', () => {
+  for (const symbol of ['USDC', 'usdt', 'USDG', 'PYUSD', 'USDS', 'jlUSDC', 'JLUSDT', 'wUSDC', 'USDC.e', 'USDT.E', 'FDUSD', 'USDe', 'DAI']) {
+    assert.equal(isStablecoin(make(symbol)), true, symbol);
+  }
+  for (const symbol of ['SOL', 'JUP', 'USD1X', 'WIF', 'BUSDX', 'JLP', 'W']) {
+    assert.equal(isStablecoin(make(symbol)), false, symbol);
+  }
+});
+
+test('movers and tableRows leave stablecoins out', () => {
+  const tokens = [
+    make('USDG', { priceChangePct: 9, volumeUsd: 900 }),
+    make('jlUSDC', { priceChangePct: -9, volumeUsd: 800 }),
+    make('SOL', { priceChangePct: 2, volumeUsd: 500 }),
+    make('BONK', { priceChangePct: -3, volumeUsd: 100 }),
+  ];
+  assert.deepEqual(movers(tokens, 'gainers').map((t) => t.symbol), ['SOL', 'BONK']);
+  assert.deepEqual(movers(tokens, 'losers').map((t) => t.symbol), ['BONK', 'SOL']);
+  assert.deepEqual(movers(tokens, 'volume').map((t) => t.symbol), ['SOL', 'BONK']);
+  assert.deepEqual(tableRows(tokens).map((t) => t.symbol), ['SOL', 'BONK']);
 });
