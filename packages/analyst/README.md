@@ -26,3 +26,8 @@ The analyst connects as `service_role` (only the granted columns and functions
 exist to it). Jev and Clef are never contacted by the tests; see
 `src/v4-status.db.test.ts` (local Postgres via `ANALYST_TEST_ADMIN_URL`) and
 `src/deciders.test.ts` (fake fetch).
+
+## Environment
+
+- `ANALYST_DATABASE_CA_FILE` — optional PEM CA file the pool trusts instead of
+  the bundled Supabase Root 2021 CA (`certs/supabase-prod-ca-2021.crt`).
