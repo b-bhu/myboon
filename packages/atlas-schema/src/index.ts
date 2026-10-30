@@ -21,6 +21,18 @@ export const ROLLBACKS_DIR = join(here, '..', '..', '..', 'supabase', 'rollbacks
  */
 export const LOCAL_SKIP = new Set(['20261025100200_atlas_tool_log.sql']);
 
+const TOOL_LOG_MIGRATION = '20261025100200_atlas_tool_log.sql';
+
+/**
+ * Local stand-in for atlas.tool_log (same columns, identity sequence atlas.tool_log_id_seq,
+ * RLS on), without pg_cron or partitions, so later migrations that grant on it apply unmodified.
+ */
+const TOOL_LOG_STAND_IN = `create table atlas.tool_log (
+  id bigint generated always as identity, logged_at timestamptz not null default now(),
+  run_id text, tool text not null, input jsonb, output jsonb, duration_ms bigint, error text,
+  primary key (logged_at, id));
+alter table atlas.tool_log enable row level security;`;
+
 /** Atlas migrations in apply order (file names start with a timestamp). */
 export async function atlasMigrationFiles(dir = MIGRATIONS_DIR): Promise<string[]> {
   return (await readdir(dir)).filter((f) => f.includes('_atlas') && f.endsWith('.sql') && !LOCAL_SKIP.has(f)).sort();
@@ -39,6 +51,32 @@ export interface ThrowawayDatabase {
   drop(): Promise<void>;
 }
 
+/** Mirror Supabase: service_role bypasses RLS, anon/authenticated do not. Idempotent. */
+export async function ensureSupabaseRoles(client: pg.Client): Promise<void> {
+  for (const [role, attrs] of [['anon', 'nologin'], ['authenticated', 'nologin'], ['service_role', 'nologin bypassrls']] as const) {
+    await client.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = '${role}') then create role ${role} ${attrs}; end if; exception when duplicate_object or unique_violation then null; end $$`);
+  }
+}
+
+/**
+ * Apply every atlas migration (in order) to an existing LOCAL database. The pg_cron
+ * tool_log migration is replaced by TOOL_LOG_STAND_IN; other LOCAL_SKIP files are skipped.
+ */
+export async function applyAtlasSchema(url: string, opts: { before?: string } = {}): Promise<void> {
+  assertLocalUrl(url);
+  const c = new pg.Client({ connectionString: url });
+  await c.connect();
+  try {
+    const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.includes('_atlas') && f.endsWith('.sql')).sort();
+    for (const f of files.filter((f) => opts.before === undefined || f < opts.before!)) {
+      if (f === TOOL_LOG_MIGRATION) await c.query(TOOL_LOG_STAND_IN);
+      else if (!LOCAL_SKIP.has(f)) await c.query(await readFile(join(MIGRATIONS_DIR, f), 'utf8'));
+    }
+  } finally {
+    await c.end();
+  }
+}
+
 /** Create a fresh database on a LOCAL server, add the Supabase roles, apply every atlas migration. */
 export async function createThrowawayDatabase(
   adminUrl: string,
@@ -49,10 +87,7 @@ export async function createThrowawayDatabase(
   const admin = new pg.Client({ connectionString: adminUrl });
   await admin.connect();
   try {
-    // Mirror Supabase: service_role bypasses RLS, anon/authenticated do not.
-    for (const [role, attrs] of [['anon', 'nologin'], ['authenticated', 'nologin'], ['service_role', 'nologin bypassrls']] as const) {
-      await admin.query(`do $$ begin if not exists (select 1 from pg_roles where rolname = '${role}') then create role ${role} ${attrs}; end if; exception when duplicate_object or unique_violation then null; end $$`);
-    }
+    await ensureSupabaseRoles(admin);
     await admin.query(`create database ${name}`);
   } finally {
     await admin.end();
@@ -60,15 +95,7 @@ export async function createThrowawayDatabase(
   const u = new URL(adminUrl);
   u.pathname = `/${name}`;
   const url = u.toString();
-  const c = new pg.Client({ connectionString: url });
-  await c.connect();
-  try {
-    for (const f of (await atlasMigrationFiles()).filter((f) => opts.before === undefined || f < opts.before!)) {
-      await c.query(await readFile(join(MIGRATIONS_DIR, f), 'utf8'));
-    }
-  } finally {
-    await c.end();
-  }
+  await applyAtlasSchema(url, opts);
   return {
     url,
     name,
