@@ -2,7 +2,7 @@
  * #505 story writer (D36), tests first. Throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL) seeded with a
  * real scout signal; the writer runs as analyst_worker. GLM is a scripted Llm (answers and errors).
  *
- * Written against the schema proposed on #505 (spec-covered rows #1-#5 only): atlas.stories.shelf_id,
+ * Runs on DB Guy's stories migration 20261030160000 (CTO-approved rows #1-#5): atlas.stories.shelf_id,
  * atlas.stories.status ('open'), and analyst_worker grants on stories/story_items. A null stories.summary
  * means the text is pending. CTO answers: existing_story with no open story starts one; merged items are skipped; no
  * one-open-story index and no closing of stories.
@@ -15,7 +15,6 @@ import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 import type { ChatMessage, Llm } from './session.js';
 import { spikeCases } from './test-fixtures/d36-spike.js';
-import { applyStoriesSchema505 } from './test-fixtures/stories-schema-505.js'; // TEMPORARY until DB Guy's migration
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const SIGNAL = spikeCases[5].signal; // a real scout signal (Cointelegraph via tokens_xyz)
@@ -46,7 +45,6 @@ describe.skipIf(ADMIN_URL === '')('#505 story writer (local Postgres)', () => {
 
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
-    await applyStoriesSchema505(db.url); // TEMPORARY until DB Guy's migration
     pool = new Pool({ connectionString: db.url, max: 4 });
     worker = new Pool({ connectionString: db.url, max: 4 });
     worker.on('connect', (c) => c.query('set role analyst_worker'));
