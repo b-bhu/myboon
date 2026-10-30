@@ -48,26 +48,26 @@ echo "== up / down / down / up =="
 [[ $(q "$EXISTS") == "t" ]] && ok "up: atlas.entity_reviews exists" || bad "up state: table missing"
 [[ $(q "$RLS_ON") == "t" ]] && ok "up: RLS enabled on entity_reviews" || bad "up: RLS off"
 [[ $(q "select has_table_privilege('service_role','atlas.entity_reviews','select')::text || has_table_privilege('service_role','atlas.entity_reviews','insert')::text
-        || (not has_table_privilege('service_role','atlas.entity_reviews','update'))::text || (not has_table_privilege('service_role','atlas.entity_reviews','delete'))::text") == "tttt" ]] \
+        || (not has_table_privilege('service_role','atlas.entity_reviews','update'))::text || (not has_table_privilege('service_role','atlas.entity_reviews','delete'))::text") == "truetruetruetrue" ]] \
   && ok "service_role: select + insert on entity_reviews, no table-level update/delete" || bad "service_role entity_reviews table grants wrong"
-[[ $(q "select has_column_privilege('service_role','atlas.entity_reviews','label','update')::text || (not has_column_privilege('service_role','atlas.entity_reviews','shelf_id','update'))::text") == "tt" ]] \
+[[ $(q "select has_column_privilege('service_role','atlas.entity_reviews','label','update')::text || (not has_column_privilege('service_role','atlas.entity_reviews','shelf_id','update'))::text") == "truetrue" ]] \
   && ok "service_role: update (label) only on entity_reviews" || bad "service_role entity_reviews column update wrong"
 [[ $(q "select has_column_privilege('service_role','atlas.shelves','status','update')::text || has_column_privilege('service_role','atlas.shelves','aliases','update')::text
-        || (not has_column_privilege('service_role','atlas.shelves','name','update'))::text || (not has_column_privilege('service_role','atlas.shelves','type','update'))::text") == "tttt" ]] \
+        || (not has_column_privilege('service_role','atlas.shelves','name','update'))::text || (not has_column_privilege('service_role','atlas.shelves','type','update'))::text") == "truetruetruetrue" ]] \
   && ok "service_role: update (status, aliases) on shelves, nothing else" || bad "service_role shelves update wrong"
-[[ $(q "select has_column_privilege('service_role','atlas.items','main_shelf_id','update')::text || (not has_column_privilege('service_role','atlas.items','title','update'))::text") == "tt" ]] \
+[[ $(q "select has_column_privilege('service_role','atlas.items','main_shelf_id','update')::text || (not has_column_privilege('service_role','atlas.items','title','update'))::text") == "truetrue" ]] \
   && ok "service_role: update (main_shelf_id) on items only" || bad "service_role items update wrong"
-[[ $(q "select has_column_privilege('service_role','atlas.decisions','id','select')::text || has_column_privilege('service_role','atlas.decisions','signal_id','select')::text") == "tt" ]] \
+[[ $(q "select has_column_privilege('service_role','atlas.decisions','id','select')::text || has_column_privilege('service_role','atlas.decisions','signal_id','select')::text") == "truetrue" ]] \
   && ok "service_role: select (id, signal_id) on decisions" || bad "service_role decisions select wrong"
 [[ $(q "select (not has_table_privilege('analyst_worker','atlas.entity_reviews','select'))::text || (not has_table_privilege('analyst_worker','atlas.entity_reviews','insert'))::text
-        || (not has_column_privilege('analyst_worker','atlas.shelves','status','update'))::text || (not has_column_privilege('analyst_worker','atlas.items','main_shelf_id','update'))::text") == "tttt" ]] \
+        || (not has_column_privilege('analyst_worker','atlas.shelves','status','update'))::text || (not has_column_privilege('analyst_worker','atlas.items','main_shelf_id','update'))::text") == "truetruetruetrue" ]] \
   && ok "analyst_worker: nothing on entity_reviews, no shelf/item update grants" || bad "analyst_worker grants present"
 
 "${PSQL[@]}" -f "$DOWN" >/dev/null && ok "down applied"    || bad "down"
 [[ $(q "$EXISTS") == "f" ]] && ok "down: table gone (grants went with it)" || bad "down state: table still there"
-[[ $(q "select has_column_privilege('service_role','atlas.decisions','id','select')::text || has_column_privilege('service_role','atlas.decisions','signal_id','select')::text") == "ft" ]] \
+[[ $(q "select has_column_privilege('service_role','atlas.decisions','id','select')::text || has_column_privilege('service_role','atlas.decisions','signal_id','select')::text") == "falsetrue" ]] \
   && ok "down: our decisions (id) select revoked, the pre-existing (signal_id) grant kept" || bad "down decisions grants wrong"
-[[ $(q "select (not has_column_privilege('service_role','atlas.shelves','status','update'))::text || (not has_column_privilege('service_role','atlas.items','main_shelf_id','update'))::text") == "tt" ]] \
+[[ $(q "select (not has_column_privilege('service_role','atlas.shelves','status','update'))::text || (not has_column_privilege('service_role','atlas.items','main_shelf_id','update'))::text") == "truetrue" ]] \
   && ok "down: shelves/items update grants revoked" || bad "down column grants wrong"
 "${PSQL[@]}" -f "$DOWN" >/dev/null 2>&1 && ok "down rerun (idempotent)" || bad "down rerun"
 "${PSQL[@]}" -f "$UP"   >/dev/null && ok "up again applied" || bad "up again"

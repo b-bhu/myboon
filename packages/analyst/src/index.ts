@@ -12,6 +12,7 @@
  *   runAnalystOnce, RunSummary, analystMain
  * - Catch-up (#391): catchupMain, parseCatchupArgs; the ollama-quota guard
  *   (readOllamaQuota, createQuotaGuard)
+ * - Timed entity manager (#480): reviewProposedShelves, parseEntityManagerConfig
  */
 export * from './config.js';
 export * from './deciders.js';
@@ -23,3 +24,5 @@ export * from './d36-worker.js';
 export * from './runner.js';
 export * from './ollama-quota.js';
 export * from './catchup.js';
+export * from './entity-manager.js';
+export * from './entity-manager-config.js';
