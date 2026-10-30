@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STORY_SAMPLE,
+  showAllStoriesLink,
   splitStories,
   storyAge,
   storyCountLabel,
@@ -158,4 +159,10 @@ test('STORY_SAMPLE carries three catch-up points and three key numbers', () => {
 test('storySample gates the bundle on the mocks flag: null when off, the bundle itself when on', () => {
   assert.equal(storySample(false), null);
   assert.equal(storySample(true), STORY_SAMPLE);
+});
+test('showAllStoriesLink hides the Home link when there are no stories', () => {
+  assert.equal(showAllStoriesLink(null), false);
+  assert.equal(showAllStoriesLink(undefined), false);
+  assert.equal(showAllStoriesLink([]), false);
+  assert.equal(showAllStoriesLink([{ storySlug: 'a', name: 'A', latestDevelopment: 'x', eventCount: 1, updatedAt: '2026-10-01T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null }]), true);
 });
