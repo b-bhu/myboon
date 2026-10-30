@@ -142,7 +142,7 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 // worker to this list; the entity-manager stage entry stays out of the process
 // list until its runner is wired.
 //   myboon-scout   -> packages/scout-news/src/run.ts (15-minute cron tick)
-//   myboon-analyst -> packages/analyst/src/run.ts    (hourly cron tick)
+//   myboon-analyst -> packages/analyst/src/run.ts    (30-min cron tick)
 // Each V4 app runs one cycle and exits; PM2 starts it again at the next
 // cron tick (cron_restart). autorestart stays off so a failing run neither
 // loops nor hides in backoff: the crash state is visible until the next
@@ -180,11 +180,13 @@ const V4_APPS = [
   },
   {
     // Secrets ANALYST_DATABASE_URL, OLLAMA_API_KEY and JEV_API_TOKEN are never
-    // set in this file; they come from the sourced .env. Hourly tick because
-    // worst-case decider time per run is 20 signals x 4 asks x (primary +
-    // fallback) 2 x 20s = 3200s (~53 min) < 60 min. PM2 runs one process per
-    // app and cron_restart restarts (kills) rather than starting a second
-    // copy, so runs never overlap. A killed run's signal stays claimed until
+    // set in this file; they come from the sourced .env. 30-min tick (#391).
+    // Typical run is ~7.5 min for 20 signals (first prod run, Oct 30). Worst
+    // case is 20 signals x 4 asks x (primary + fallback) 2 x 20s = 3200s, so a
+    // rare slow run is cut short by the next tick. That is safe: PM2 runs one
+    // process per app and cron_restart restarts (kills) rather than starting a
+    // second copy, so runs never overlap; finished signals are already
+    // committed (one transaction per save, on conflict no-op). A killed run's signal stays claimed until
     // its 300s lease expires and is retried with backoff.
     name: 'myboon-analyst',
     script: 'src/run.ts',
@@ -193,7 +195,7 @@ const V4_APPS = [
     watch: false,
     // One run per tick, then exit; autorestart must not fight that exit.
     autorestart: false,
-    cron_restart: '0 * * * *',
+    cron_restart: '*/30 * * * *',
     max_memory_restart: '300M',
     kill_timeout: 30000,
     log_date_format: 'YYYY-MM-DD HH:mm:ss',

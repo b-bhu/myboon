@@ -29,7 +29,7 @@ production path is researcher → entity-manager → editor-draft → publisher.
 ## Analyst worker (myboon-analyst)
 
 `myboon-analyst` (`packages/analyst`) runs one cycle and exits; PM2 starts it
-again at the hourly cron tick (`0 * * * *`, `autorestart` off). The seven
+again at the 30-minute cron tick (`*/30 * * * *`, `autorestart` off). The seven
 persistent registrations in the table above are unchanged: like the gated
 scout, the analyst joins the process list only when
 `MYBOON_V4_RUNTIME_ENABLED=1`, and a plain `pm2 start/reload` of the ecosystem
@@ -37,9 +37,10 @@ file never registers it. Secrets (`ANALYST_DATABASE_URL`, `OLLAMA_API_KEY`,
 `JEV_API_TOKEN`) come only from the sourced `.env`; they are never set in the
 ecosystem file. Config check: `pnpm exec tsx scripts/check-ecosystem.ts`.
 
-The hourly tick is sized to the worst-case decider wall time per run:
-20 signals x 4 asks x (primary + fallback) 2 x 20s = 3200s (~53 min) < 60 min.
-PM2 runs one process per app and `cron_restart` restarts (kills) rather than
+A typical run takes ~7.5 min for 20 signals (first prod run, Oct 30, 2026).
+The worst case is 20 signals x 4 asks x (primary + fallback) 2 x 20s = 3200s
+(~53 min), so a rare slow run is cut short by the next tick. That is safe:
+finished signals are already committed (one transaction per save). PM2 runs one process per app and `cron_restart` restarts (kills) rather than
 starting a second copy, so runs never overlap. A killed run's signal stays
 claimed until its 300s lease expires and is retried with backoff.
 
