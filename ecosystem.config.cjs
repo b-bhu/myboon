@@ -206,7 +206,7 @@ const V4_APPS = [
       ANALYST_ENABLED: process.env.ANALYST_ENABLED ?? 'false',
       ANALYST_WORKER: 'myboon-analyst',
       ANALYST_LLM_MODEL: 'glm-5.3-flash',
-      ANALYST_MAX_SIGNALS_PER_RUN: '20',
+      ANALYST_MAX_SIGNALS_PER_RUN: '40',
       ANALYST_LEASE_MS: '300000',
       ANALYST_TIMEOUT_MS: '20000',
       ANALYST_BACKOFF_MS: '60000',

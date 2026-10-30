@@ -22,11 +22,11 @@ function errorOf(env: Record<string, string | undefined>): Error {
 }
 
 describe('#512 parseAnalystConfig', () => {
-  it('applies the defaults: 20 signals per run, glm-5.3-flash, shadow off', () => {
+  it('applies the defaults: 40 signals per run, glm-5.3-flash, shadow off', () => {
     const c = parseAnalystConfig(base);
     expect(c).toMatchObject({
       databaseUrl: CANARY_URL, ollamaApiKey: CANARY_OLLAMA, jevApiToken: CANARY_JEV,
-      llmModel: 'glm-5.3-flash', maxSignalsPerRun: 20, shadow: false,
+      llmModel: 'glm-5.3-flash', maxSignalsPerRun: 40, shadow: false,
     });
     for (const k of ['leaseMs', 'timeoutMs', 'backoffMs', 'maxAttempts'] as const) {
       expect(Number.isSafeInteger(c[k]) && c[k] > 0).toBe(true);
