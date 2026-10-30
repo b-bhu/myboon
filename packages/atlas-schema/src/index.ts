@@ -21,6 +21,18 @@ export const ROLLBACKS_DIR = join(here, '..', '..', '..', 'supabase', 'rollbacks
  */
 export const LOCAL_SKIP = new Set(['20261025100200_atlas_tool_log.sql']);
 
+const TOOL_LOG_MIGRATION = '20261025100200_atlas_tool_log.sql';
+
+/**
+ * Local stand-in for atlas.tool_log (same columns, identity sequence atlas.tool_log_id_seq,
+ * RLS on), without pg_cron or partitions, so later migrations that grant on it apply unmodified.
+ */
+const TOOL_LOG_STAND_IN = `create table atlas.tool_log (
+  id bigint generated always as identity, logged_at timestamptz not null default now(),
+  run_id text, tool text not null, input jsonb, output jsonb, duration_ms bigint, error text,
+  primary key (logged_at, id));
+alter table atlas.tool_log enable row level security;`;
+
 /** Atlas migrations in apply order (file names start with a timestamp). */
 export async function atlasMigrationFiles(dir = MIGRATIONS_DIR): Promise<string[]> {
   return (await readdir(dir)).filter((f) => f.includes('_atlas') && f.endsWith('.sql') && !LOCAL_SKIP.has(f)).sort();
@@ -63,8 +75,10 @@ export async function createThrowawayDatabase(
   const c = new pg.Client({ connectionString: url });
   await c.connect();
   try {
-    for (const f of (await atlasMigrationFiles()).filter((f) => opts.before === undefined || f < opts.before!)) {
-      await c.query(await readFile(join(MIGRATIONS_DIR, f), 'utf8'));
+    const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.includes('_atlas') && f.endsWith('.sql')).sort();
+    for (const f of files.filter((f) => opts.before === undefined || f < opts.before!)) {
+      if (f === TOOL_LOG_MIGRATION) await c.query(TOOL_LOG_STAND_IN);
+      else if (!LOCAL_SKIP.has(f)) await c.query(await readFile(join(MIGRATIONS_DIR, f), 'utf8'));
     }
   } finally {
     await c.end();
