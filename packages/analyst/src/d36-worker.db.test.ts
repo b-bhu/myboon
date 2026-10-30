@@ -3,9 +3,13 @@
  * signal reads, shelf search) and PgDecisionSink run on a second pool whose connections set role
  * service_role, so the tests prove the migration grants suffice; the admin/superuser pool stays for
  * setup only (truncate, seed shelves/signals, resets) and assertion reads. Claim and finish use the
- * existing atlas.signal_* functions (#478/#479). The decision write goes to a DecisionSink: the in-memory
- * sink, and PgDecisionSink writing atlas.decisions + atlas.items (proposed shelves for new targets) on the
- * #503 schema. The LLM, Jev and Clef are scripted (answers, errors, timeouts).
+ * existing atlas.signal_* functions (#478/#479). The decision write goes to a DecisionSink: the
+ * in-memory sink, and PgDecisionSink writing atlas.decisions + atlas.items (proposed shelves for new
+ * targets) on the #503 schema. The LLM, Jev and Clef are scripted (answers, errors, timeouts).
+ *
+ * #482 filing rules (tests written first; sink changes follow): per-slug advisory-lock serialisation,
+ * items stamped with the signal's occurred_at, and a kind new target whose slug is an active or retired
+ * shelf dropped (logged, no item) instead of reused.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
@@ -259,5 +263,147 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect((await pool.query('select count(*)::int n from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
     expect((await pool.query('select count(*)::int n from atlas.items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
     expect((await pool.query('select count(*)::int n from atlas.shelves where slug = $1', ['no-such-shelf'])).rows[0].n).toBe(0);
+  });
+
+  describe('#482 filing rules (PgDecisionSink, tests first)', () => {
+    type ItemRow = {
+      item_key: string; signal_id: string; occurred_at: Date | null;
+      shelf_slug: string; shelf_status: string; signal_occurred_at: Date | null;
+    };
+    /** Extra signal with a fixed occurred_at: the sink must copy it onto every filed item. */
+    const addSignal = (signalId: string, occurredAt: string) => pool.query(
+      `insert into atlas.signals (signal_id, schema_version, source, source_id, type, text, link, occurred_at)
+         values ($1, 1, 'tokens_xyz', $2, 'news', $3, null, $4::timestamptz)`,
+      [signalId, `${signalId}-src`, `Signal ${signalId} for #482.`, occurredAt],
+    );
+    const tgt = (entity: string, kind: 'existing' | 'new', type: string, angle: string) =>
+      ({ entity, kind, type, angle, note: `Note on ${entity}.` });
+    const out = (signalId: string, targets: { entity: string; kind: 'existing' | 'new'; type: string; angle: string; note: string }[]) =>
+      parseAnalystOutput({
+        schema_version: ANALYST_OUTPUT_SCHEMA_VERSION,
+        analyst_version: 'analyst-504-v1',
+        signal_id: signalId,
+        summary: `Summary for ${signalId}.`,
+        decision: 'keep',
+        reason: 'Worth filing.',
+        targets,
+      });
+    /** Items joined to their shelf and signal (for occurred_at and timeline-order reads). */
+    const itemsOf = (slug?: string) => pool.query<ItemRow>(
+      `select i.item_key, i.signal_id, i.occurred_at, s.slug as shelf_slug, s.status as shelf_status,
+              (select occurred_at from atlas.signals where signal_id = i.signal_id) as signal_occurred_at
+         from atlas.items i join atlas.shelves s on s.id = i.main_shelf_id
+        where ($1::text is null or s.slug = $1::text)
+        order by i.occurred_at, i.item_key`,
+      [slug ?? null],
+    );
+    const n = (sql: string, params: unknown[] = []) => pool.query<{ n: number }>(sql, params).then((r) => r.rows[0].n);
+
+    it('3 keep targets land on 3 shelves, each item stamped with the signal occurred_at', async () => {
+      await addSignal('sig-482-a', '2026-10-30T09:00:00.000Z');
+      await new PgDecisionSink(svcPool).save(out('sig-482-a', [
+        tgt('base', 'existing', 'protocol', 'existing_story'),
+        tgt('coinbase', 'existing', 'organization', 'plain_update'),
+        tgt('stanley-druckenmiller', 'new', 'person', 'new_story'),
+      ]));
+      expect(await n('select count(*)::int n from atlas.decisions where signal_id = $1', ['sig-482-a'])).toBe(1);
+      expect(await n('select count(*)::int n from atlas.shelves where slug = $1', ['stanley-druckenmiller'])).toBe(1);
+      const items = (await itemsOf()).rows;
+      expect(items.map((i) => i.shelf_slug).sort()).toEqual(['base', 'coinbase', 'stanley-druckenmiller']);
+      for (const i of items) expect(i.occurred_at?.getTime()).toBe(i.signal_occurred_at?.getTime());
+    });
+
+    it('saving the same output twice still leaves 3 items and 1 decision', async () => {
+      await addSignal('sig-482-b', '2026-10-30T09:00:00.000Z');
+      const output = out('sig-482-b', [
+        tgt('base', 'existing', 'protocol', 'plain_update'),
+        tgt('hyperliquid', 'existing', 'protocol', 'plain_update'),
+        tgt('fresh-twice', 'new', 'topic', 'new_story'),
+      ]);
+      const sink = new PgDecisionSink(svcPool);
+      await sink.save(output);
+      await sink.save(output);
+      expect(await n('select count(*)::int n from atlas.decisions where signal_id = $1', ['sig-482-b'])).toBe(1);
+      expect((await itemsOf()).rows).toHaveLength(3);
+    });
+
+    it('a second signal with a new target on the same slug reuses the proposed shelf (1 shelf, 2 items)', async () => {
+      await addSignal('sig-482-c1', '2026-10-30T09:00:00.000Z');
+      await addSignal('sig-482-c2', '2026-10-30T10:00:00.000Z');
+      const sink = new PgDecisionSink(svcPool);
+      await sink.save(out('sig-482-c1', [tgt('fresh-proposed', 'new', 'topic', 'new_story')]));
+      await sink.save(out('sig-482-c2', [tgt('fresh-proposed', 'new', 'topic', 'new_story')]));
+      const shelves = (await pool.query<{ slug: string; name: string; status: string }>(
+        'select slug, name, status from atlas.shelves where slug = $1', ['fresh-proposed'],
+      )).rows;
+      expect(shelves).toHaveLength(1);
+      expect(shelves[0]).toMatchObject({ slug: 'fresh-proposed', name: 'fresh-proposed', status: 'proposed' });
+      const items = (await itemsOf('fresh-proposed')).rows;
+      expect(items).toHaveLength(2);
+      expect(items.map((i) => i.signal_id).sort()).toEqual(['sig-482-c1', 'sig-482-c2']);
+    });
+
+    it('two concurrent saves for one new entity both succeed: 1 shelf, 2 items in signal-time order', async () => {
+      await addSignal('sig-482-d1', '2026-10-30T10:00:00.000Z');
+      await addSignal('sig-482-d2', '2026-10-30T11:00:00.000Z');
+      const sink = new PgDecisionSink(svcPool);
+      const targets = [tgt('fresh-race', 'new', 'organization', 'new_story')];
+      await Promise.all([sink.save(out('sig-482-d1', targets)), sink.save(out('sig-482-d2', targets))]);
+      expect(await n('select count(*)::int n from atlas.shelves where slug = $1', ['fresh-race'])).toBe(1);
+      const items = (await itemsOf('fresh-race')).rows;
+      expect(items).toHaveLength(2);
+      // Timeline order: earlier signal first, by occurred_at, not by write order.
+      expect(items.map((i) => i.signal_id)).toEqual(['sig-482-d1', 'sig-482-d2']);
+    });
+
+    it('a save waits while another transaction holds the advisory lock on the slug', async () => {
+      await addSignal('sig-482-d3', '2026-10-30T09:00:00.000Z');
+      const holder = await pool.connect();
+      try {
+        await holder.query('begin');
+        await holder.query("select pg_advisory_xact_lock(hashtext('atlas.shelf:' || $1))", ['fresh-lock']);
+        let settled = false;
+        const done = new PgDecisionSink(svcPool)
+          .save(out('sig-482-d3', [tgt('fresh-lock', 'new', 'organization', 'new_story')]))
+          .then(() => { settled = true; });
+        await new Promise((r) => setTimeout(r, 200));
+        expect(settled).toBe(false);
+        await holder.query('commit');
+        await done;
+        expect(settled).toBe(true);
+        expect(await n('select count(*)::int n from atlas.shelves where slug = $1', ['fresh-lock'])).toBe(1);
+        expect(await n('select count(*)::int n from atlas.items i join atlas.shelves s on s.id = i.main_shelf_id where s.slug = $1', ['fresh-lock'])).toBe(1);
+      } finally {
+        try { await holder.query('rollback'); } catch { /* committed above */ }
+        holder.release();
+      }
+    });
+
+    it('a new target on a retired or an active slug is dropped: logged, no item, the rest still filed', async () => {
+      await addSignal('sig-482-e', '2026-10-30T09:00:00.000Z');
+      await pool.query(
+        "insert into atlas.shelves (slug, name, type, status) values ('gone-entity', 'Gone Entity', 'organization', 'retired')",
+      );
+      const drops: Record<string, unknown>[] = [];
+      const sink = new PgDecisionSink(svcPool, (e: Record<string, unknown>) => { drops.push(e); });
+      await sink.save(out('sig-482-e', [
+        tgt('gone-entity', 'new', 'organization', 'new_story'), // retired shelf -> dropped
+        tgt('coinbase', 'new', 'organization', 'new_story'), // active shelf -> dropped
+        tgt('fresh-filed', 'new', 'organization', 'new_story'), // still filed
+      ]));
+      expect((await itemsOf('gone-entity')).rows).toHaveLength(0);
+      expect((await itemsOf('coinbase')).rows).toHaveLength(0);
+      expect((await itemsOf('fresh-filed')).rows).toHaveLength(1);
+      expect(drops.map((d) => d.entity).sort()).toEqual(['coinbase', 'gone-entity']);
+      for (const d of drops) {
+        expect(d).toMatchObject({ event: 'target_dropped', signal_id: 'sig-482-e' });
+        expect(typeof d.reason).toBe('string');
+      }
+      // The decisions row still stores the output as-is, dropped targets included.
+      const targets = (await pool.query<{ targets: { entity: string }[] }>(
+        'select targets from atlas.decisions where signal_id = $1', ['sig-482-e'],
+      )).rows[0].targets;
+      expect(targets.map((t) => t.entity).sort()).toEqual(['coinbase', 'fresh-filed', 'gone-entity']);
+    });
   });
 });
