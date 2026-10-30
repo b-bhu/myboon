@@ -24,6 +24,12 @@ const SLIDES = [
 export function MarketsCarousel({ active, refreshVersion }: { active: boolean; refreshVersion: number }) {
   const [slideWidth, setSlideWidth] = useState(0);
   const [current, setCurrent] = useState(0);
+  // Pager height follows the visible slide so a short slide leaves no gap.
+  const [heights, setHeights] = useState<number[]>([]);
+  const measure = (index: number) => (event: { nativeEvent: { layout: { height: number } } }) => {
+    const height = event.nativeEvent.layout.height;
+    setHeights((prev) => (prev[index] === height ? prev : Object.assign([...prev], { [index]: height })));
+  };
   // Same paged pattern as TodayCarousel: full-width slides, one snap per swipe.
   const track = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (slideWidth > 0) setCurrent(carouselIndex(event.nativeEvent.contentOffset.x, slideWidth, SLIDES.length));
@@ -54,14 +60,16 @@ export function MarketsCarousel({ active, refreshVersion }: { active: boolean; r
               scrollEventThrottle={16}
               onScroll={track}
               onMomentumScrollEnd={track}
+              style={heights[current] ? { height: heights[current] } : undefined}
+              contentContainerStyle={styles.track}
             >
-              <View style={{ width: slideWidth }}>
+              <View style={{ width: slideWidth }} onLayout={measure(0)}>
                 <CalendarSlide active={active} refreshVersion={refreshVersion} />
               </View>
-              <View style={{ width: slideWidth }}>
+              <View style={{ width: slideWidth }} onLayout={measure(1)}>
                 <SmartWalletActivity active={active} refreshVersion={refreshVersion} />
               </View>
-              <View style={{ width: slideWidth }}>
+              <View style={{ width: slideWidth }} onLayout={measure(2)}>
                 <TokenStats active={active} refreshVersion={refreshVersion} />
               </View>
             </ScrollView>
@@ -78,6 +86,9 @@ export function MarketsCarousel({ active, refreshVersion }: { active: boolean; r
 }
 
 const styles = StyleSheet.create({
+  track: {
+    alignItems: 'flex-start',
+  },
   section: {
     gap: FEED_TOKENS.space.sm,
   },
