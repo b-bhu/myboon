@@ -247,3 +247,7 @@ export function rankRows(rows: WalletRow[], enabled?: boolean): WalletRankedRow[
 export function swapHref(activity: WalletActivity): SwapHref {
   return { pathname: '/swap', params: { mode: 'buy', token: activity.tokenAddress, caller: 'feed' } };
 }
+/** Leaderboard right-hand header: without mocks the ranking is swap volume, not profit. */
+export function leaderboardRankLabel(mocksEnabled: boolean): string {
+  return mocksEnabled ? '30d PnL · Win' : 'Ranked by volume · 30d';
+}

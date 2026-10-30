@@ -14,6 +14,7 @@ import {
   walletLabelText,
   walletSample,
   walletSubline,
+  leaderboardRankLabel,
 } from './feed-wallets';
 import type { WalletActivity, WalletLabel } from './wallet-activity.types';
 import type { WalletRow } from './feed-wallets';
@@ -302,4 +303,8 @@ test('swapHref points at the swap screen in buy mode for the tapped token', () =
     pathname: '/swap',
     params: { mode: 'buy', token: WIF.address, caller: 'feed' },
   });
+});
+test('leaderboardRankLabel says volume when mocks are off and PnL when on', () => {
+  assert.equal(leaderboardRankLabel(false), 'Ranked by volume · 30d');
+  assert.equal(leaderboardRankLabel(true), '30d PnL · Win');
 });
