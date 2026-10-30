@@ -1,28 +1,18 @@
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { FEED_TOKENS, monoFontFamily } from '../feed-design';
-import { countdownLower, eventFigures, eventMetaLabel, eventReactionSample } from '../feed-calendar';
+import { eventFigures, eventLocalDate, eventLocalTime, eventMetaLabel, eventReactionSample, eventWhen } from '../feed-calendar';
 import type { CalendarEvent } from '../calendar.types';
 import { FeedSheet } from './ui/FeedSheet';
 import { SampleDataLabel } from './ui/SampleDataLabel';
 
 /**
  * View-level date/time glue shared by the calendar surfaces (slide, sheet,
- * screen). All times are UTC, labelled per market-calendar.tsx.
+ * screen). All days and times follow the device's local zone; no zone label.
  */
 
 export function calendarDateLabel(date: string, options: Intl.DateTimeFormatOptions): string {
-  return new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { ...options, timeZone: 'UTC' });
-}
-
-export function eventTimeLabel(event: CalendarEvent): string {
-  return event.timePrecision === 'time' && event.startsAt
-    ? `${new Date(event.startsAt).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' })} UTC`
-    : 'All day';
-}
-
-/** Countdown target: the start when timed, otherwise the end of that UTC day. */
-export function eventCountdownTarget(event: CalendarEvent): string {
-  return event.timePrecision === 'time' && event.startsAt ? event.startsAt : `${event.date}T23:59:59Z`;
+  // Local noon keeps the calendar date stable across zones and DST edges.
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', options);
 }
 
 /** One-figure summary line, e.g. 'Est 4.25%' / 'EPS est $5.25'. Empty when absent. */
@@ -55,11 +45,11 @@ export function CalendarEventSheet({ event, onClose }: CalendarEventSheetProps) 
           </Text>
           <Text style={styles.title}>{event.title}</Text>
           <Text style={styles.when}>
-            {calendarDateLabel(event.date, { weekday: 'short', day: 'numeric', month: 'short' })}
+            {calendarDateLabel(eventLocalDate(event), { weekday: 'short', day: 'numeric', month: 'short' })}
             {' · '}
-            {eventTimeLabel(event)}
+            {eventLocalTime(event)}
             {' · '}
-            {countdownLower(eventCountdownTarget(event), now)}
+            {eventWhen(event, now)}
           </Text>
           <View style={styles.figures}>
             {eventFigures(event).map((figure) => (

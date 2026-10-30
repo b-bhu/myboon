@@ -5,12 +5,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { fetchCalendar } from './calendar.api';
 import type { CalendarEvent } from './calendar.types';
-import { eventMetaLabel, eventsByDay, isHighImpact, monthGrid, monthRange, shiftMonth } from './feed-calendar';
+import { eventLocalDate, eventLocalTime, eventMetaLabel, eventWhen, eventsByDay, isHighImpact, localDateKey, monthGrid, monthRange, shiftDate, shiftMonth } from './feed-calendar';
 import { FEED_TOKENS, monoFontFamily } from './feed-design';
 import { useFeedSection } from './use-feed-section';
 import { FeedBox } from './components/ui/FeedBox';
 import { FeedSectionState } from './components/feed-section-state';
-import { CalendarEventSheet, calendarDateLabel, eventFigureSummary, eventTimeLabel } from './components/CalendarEventSheet';
+import { CalendarEventSheet, calendarDateLabel, eventFigureSummary } from './components/CalendarEventSheet';
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const;
 
@@ -18,28 +18,35 @@ const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const;
  * Full-screen Calendar (issue #498, markup per feed-mock.html #s-calendar,
  * DESIGN.md §7): top bar, month header with arrows, Monday-first month grid
  * with today ring / selected fill / impact dots, then the selected day's
- * event list. One month of calendar events per fetch; times in UTC.
+ * event list. One month of calendar events per fetch; days and times follow
+ * the device's local zone.
  */
 export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [monthDate, setMonthDate] = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
+  const [monthDate, setMonthDate] = useState(() => `${localDateKey(new Date()).slice(0, 7)}-01`);
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [sheetEvent, setSheetEvent] = useState<CalendarEvent | null>(null);
 
   const fetchMonth = useCallback((signal: AbortSignal) => {
     const range = monthRange(monthDate);
-    return fetchCalendar(range.from, range.to, signal);
+    // Widen both edges by a day so events that shift across a local midnight
+    // are fetched; the display filters back to the month by local day.
+    return fetchCalendar(shiftDate(range.from, -1), shiftDate(range.to, 1), signal);
   }, [monthDate]);
   const section = useFeedSection(fetchMonth);
   useFocusedAppStateInterval(() => { void section.load(); }, 5 * 60_000);
 
   const { from, to } = monthRange(monthDate);
+  const fetchFrom = shiftDate(from, -1);
+  const fetchTo = shiftDate(to, 1);
   // Keep the last month on screen while the next one loads.
-  const data = section.data?.range.from === from && section.data.range.to === to ? section.data : null;
+  const data = section.data?.range.from === fetchFrom && section.data.range.to === fetchTo ? section.data : null;
   const usable = !!data && data.status !== 'unavailable';
 
-  const today = new Date().toISOString().slice(0, 10);
+  // One instant per render so the today ring and event labels agree.
+  const now = new Date();
+  const today = localDateKey(now);
   // Default selection: today when it is on this grid, otherwise day one.
   const selectedDay = pickedDay ?? (today.slice(0, 7) === monthDate.slice(0, 7) ? today : monthDate);
   const stepMonth = (delta: number) => {
@@ -48,7 +55,12 @@ export default function CalendarScreen() {
   };
 
   const grid = monthGrid(monthDate);
-  const byDay = usable ? eventsByDay(data.events) : {};
+  const byDay = usable
+    ? eventsByDay(data.events.filter((event) => {
+      const day = eventLocalDate(event);
+      return day >= from && day <= to;
+    }))
+    : {};
   const dayEvents = byDay[selectedDay] ?? [];
   const sourceNotes = usable
     ? data.sources.filter((source) => source.status !== 'ready')
@@ -85,7 +97,6 @@ export default function CalendarScreen() {
           <Text accessibilityRole="header" style={styles.monthLabel}>
             {calendarDateLabel(monthDate, { month: 'long', year: 'numeric' })}
           </Text>
-          <Text style={styles.utcLabel}>UTC</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Previous month"
@@ -178,12 +189,14 @@ export default function CalendarScreen() {
                   key={event.id}
                   tone="ground"
                   onPress={() => setSheetEvent(event)}
-                  accessibilityLabel={`${event.title}, ${calendarDateLabel(selectedDay, { weekday: 'short', day: 'numeric', month: 'long' })}, ${eventTimeLabel(event)}`}
+                  accessibilityLabel={`${event.title}, ${calendarDateLabel(selectedDay, { weekday: 'short', day: 'numeric', month: 'long' })}, ${eventLocalTime(event)}, ${eventWhen(event, now)}`}
                 >
-                  <Text style={styles.eventTime}>{eventTimeLabel(event)}</Text>
+                  <Text style={styles.eventTime}>{eventLocalTime(event)}</Text>
                   <Text style={styles.eventTitle} numberOfLines={2}>{event.title}</Text>
                   <Text style={styles.eventContext}>
                     {eventMetaLabel(event)}
+                    {' · '}
+                    {eventWhen(event, now)}
                     {summary ? ` · ${summary}` : ''}
                   </Text>
                 </FeedBox>
@@ -253,12 +266,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 1,
     textTransform: 'uppercase',
-  },
-  utcLabel: {
-    color: FEED_TOKENS.colors.textFaint,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
   },
   step: {
     width: 32,

@@ -4,24 +4,25 @@ import { useRouter } from 'expo-router';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { fetchCalendar } from '../calendar.api';
 import type { CalendarEvent, CalendarResult } from '../calendar.types';
-import { countdown, countdownLower, nextBigEvent, weekCount } from '../feed-calendar';
+import { eventCountdown, eventLocalDate, eventLocalTime, eventWhen, isHighImpact, localDateKey, nextBigEvent, shiftDate, weekCount } from '../feed-calendar';
 import { FEED_TOKENS, monoFontFamily } from '../feed-design';
 import { useFeedSection } from '../use-feed-section';
 import { FeedSectionState } from './feed-section-state';
 import { FeedBox } from './ui/FeedBox';
-import { CalendarEventSheet, calendarDateLabel, eventCountdownTarget, eventFigureSummary, eventTimeLabel } from './CalendarEventSheet';
+import { CalendarEventSheet, calendarDateLabel, eventFigureSummary } from './CalendarEventSheet';
 
 interface CalendarSlideProps {
   active: boolean;
   refreshVersion: number;
 }
 
-// Always resolves the rolling seven-day window (today..+6 UTC) at call time,
-// so a tick past midnight rolls the window forward with the next fetch.
+// Fetch one day past both edges of the rolling week (today-1 .. +7 local) so
+// events that shift across a local midnight are included; display filters
+// back to today..+6 by local day below.
 const fetchWeek = (signal: AbortSignal): Promise<CalendarResult> => {
   const now = new Date();
-  const from = now.toISOString().slice(0, 10);
-  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 6)).toISOString().slice(0, 10);
+  const from = shiftDate(localDateKey(now), -1);
+  const to = shiftDate(localDateKey(now), 7);
   return fetchCalendar(from, to, signal);
 };
 
@@ -49,8 +50,20 @@ export function CalendarSlide({ active, refreshVersion }: CalendarSlideProps) {
   const now = new Date();
   const data = section.data;
   const usable = !!data && data.status !== 'unavailable';
-  const event = usable ? nextBigEvent(data.events, now) : null;
-  const othersThisWeek = usable ? weekCount(data.events, now) - 1 : 0;
+  // Keep only events whose local day is inside the shown week.
+  const weekFrom = localDateKey(now);
+  const weekTo = shiftDate(weekFrom, 6);
+  const weekEvents = usable
+    ? data.events.filter((event) => {
+      const day = eventLocalDate(event);
+      return day >= weekFrom && day <= weekTo;
+    })
+    : [];
+  const event = usable ? nextBigEvent(weekEvents, now) : null;
+  // '+N this week' now counts only high-impact macro events; subtract the
+  // shown card only when it is itself counted (high impact), never below zero.
+  const weekTotal = weekCount(weekEvents, now);
+  const othersThisWeek = Math.max(0, weekTotal - (event !== null && isHighImpact(event) ? 1 : 0));
   const summary = event ? eventFigureSummary(event) : '';
 
   return (
@@ -64,7 +77,7 @@ export function CalendarSlide({ active, refreshVersion }: CalendarSlideProps) {
         <FeedBox
           tone="ground"
           onPress={() => setSheetEvent(event)}
-          accessibilityLabel={`Next big event: ${event.title}, ${countdownLower(eventCountdownTarget(event), now)}`}
+          accessibilityLabel={`Next big event: ${event.title}, ${eventWhen(event, now)}`}
           style={styles.card}
         >
           <View style={styles.headerRow}>
@@ -82,14 +95,14 @@ export function CalendarSlide({ active, refreshVersion }: CalendarSlideProps) {
             </Pressable>
           </View>
           <View style={styles.countdownRow}>
-            <Text style={styles.countdown}>{countdown(eventCountdownTarget(event), now)}</Text>
+            <Text style={styles.countdown}>{eventCountdown(event, now)}</Text>
             <Text style={styles.until}>until</Text>
           </View>
           <Text style={styles.title} numberOfLines={2}>{event.title}</Text>
           <Text style={styles.metaLine} numberOfLines={1}>
-            {calendarDateLabel(event.date, { weekday: 'short', day: 'numeric', month: 'short' })}
+            {calendarDateLabel(eventLocalDate(event), { weekday: 'short', day: 'numeric', month: 'short' })}
             {' · '}
-            {eventTimeLabel(event)}
+            {eventLocalTime(event)}
             {summary ? ` · ${summary}` : ''}
           </Text>
           {othersThisWeek > 0 ? (
