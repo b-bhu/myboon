@@ -8,8 +8,8 @@
  * targets) on the #503 schema. The LLM, Jev and Clef are scripted (answers, errors, timeouts).
  *
  * #482 filing rules (tests written first; sink changes follow): per-slug advisory-lock serialisation,
- * items stamped with the signal's occurred_at, and a kind new target whose slug is an active or retired
- * shelf dropped (logged, no item) instead of reused.
+ * items stamped with the signal's occurred_at, and kind-new slugs: reuse only a proposed shelf, file on
+ * an active shelf with a target_reclassified log (#511), drop a retired slug (target_dropped, no item).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
@@ -379,7 +379,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       }
     });
 
-    it('a new target on a retired or an active slug is dropped: logged, no item, the rest still filed', async () => {
+    it('a kind new target on a retired slug is dropped: target_dropped log, no item, the rest still filed', async () => {
       await addSignal('sig-482-e', '2026-10-30T09:00:00.000Z');
       await pool.query(
         "insert into atlas.shelves (slug, name, type, status) values ('gone-entity', 'Gone Entity', 'organization', 'retired')",
@@ -388,22 +388,41 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       const sink = new PgDecisionSink(svcPool, (e: Record<string, unknown>) => { drops.push(e); });
       await sink.save(out('sig-482-e', [
         tgt('gone-entity', 'new', 'organization', 'new_story'), // retired shelf -> dropped
-        tgt('coinbase', 'new', 'organization', 'new_story'), // active shelf -> dropped
         tgt('fresh-filed', 'new', 'organization', 'new_story'), // still filed
       ]));
       expect((await itemsOf('gone-entity')).rows).toHaveLength(0);
-      expect((await itemsOf('coinbase')).rows).toHaveLength(0);
       expect((await itemsOf('fresh-filed')).rows).toHaveLength(1);
-      expect(drops.map((d) => d.entity).sort()).toEqual(['coinbase', 'gone-entity']);
+      expect(drops.map((d) => d.entity)).toEqual(['gone-entity']);
       for (const d of drops) {
         expect(d).toMatchObject({ event: 'target_dropped', signal_id: 'sig-482-e' });
         expect(typeof d.reason).toBe('string');
       }
-      // The decisions row still stores the output as-is, dropped targets included.
+      // The decisions row still stores the output as-is, dropped target included.
       const targets = (await pool.query<{ targets: { entity: string }[] }>(
         'select targets from atlas.decisions where signal_id = $1', ['sig-482-e'],
       )).rows[0].targets;
-      expect(targets.map((t) => t.entity).sort()).toEqual(['coinbase', 'fresh-filed', 'gone-entity']);
+      expect(targets.map((t) => t.entity).sort()).toEqual(['fresh-filed', 'gone-entity']);
+    });
+
+    it('a kind new target on an active slug files on that shelf with a target_reclassified log (#511)', async () => {
+      await addSignal('sig-482-f', '2026-10-30T09:00:00.000Z');
+      const logs: Record<string, unknown>[] = [];
+      const sink = new PgDecisionSink(svcPool, (e: Record<string, unknown>) => { logs.push(e); });
+      await sink.save(out('sig-482-f', [tgt('coinbase', 'new', 'organization', 'new_story')]));
+      // The item lands on the existing active shelf: no new shelf, status stays active.
+      const shelves = (await pool.query<{ slug: string; status: string }>(
+        'select slug, status from atlas.shelves where slug = $1', ['coinbase'],
+      )).rows;
+      expect(shelves).toHaveLength(1);
+      expect(shelves[0]).toMatchObject({ slug: 'coinbase', status: 'active' });
+      const items = (await itemsOf('coinbase')).rows;
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ signal_id: 'sig-482-f' });
+      expect(items[0].occurred_at?.getTime()).toBe(items[0].signal_occurred_at?.getTime());
+      // One reclassification log with the signal, entity and a reason.
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toMatchObject({ event: 'target_reclassified', signal_id: 'sig-482-f', entity: 'coinbase' });
+      expect(typeof logs[0].reason).toBe('string');
     });
   });
 });
