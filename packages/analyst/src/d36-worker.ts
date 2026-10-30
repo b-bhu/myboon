@@ -39,9 +39,10 @@ export class InMemoryDecisionSink implements DecisionSink {
  * before touching any shelf it takes one advisory lock per target slug, in sorted slug order inside
  * this transaction, so two saves for one entity cannot race; every item copies the signal's
  * occurred_at so a shelf timeline orders by signal time, not write order. A kind existing target
- * needs an active shelf and throws when it is missing; a kind new target reuses only a shelf whose
- * status is proposed, and a slug already active or retired drops the target (a target_dropped log
- * line, no item, no throw: the other targets still file and the row stores the output as-is).
+ * needs an active shelf and throws when it is missing; a kind new target reuses a shelf whose status
+ * is proposed, files on an already active slug with a target_reclassified log line (#511), and only a
+ * retired slug drops the target (a target_dropped log line, no item, no throw: the other targets
+ * still file and the row stores the output as-is).
  * `on conflict (signal_id)` makes the second save of the same signal a no-op commit (items are not
  * rewritten), and any failure rolls the transaction back so nothing is written.
  */
@@ -119,7 +120,7 @@ async function activeShelfId(client: PoolClient, slug: string): Promise<string> 
   throw new Error(`target ${slug}: no active shelf`);
 }
 
-/** The shelf for a kind new target: reuse only a proposed shelf, else propose one (name = slug); null drops the target (slug is already active or retired) with its target_dropped log line (#482). */
+/** The shelf for a kind new target: reuse a proposed shelf; an already active slug files on that existing shelf with a target_reclassified log line (#511); null drops a retired slug with its target_dropped log line (#482); else propose one (name = slug). */
 async function proposedShelfId(
   client: PoolClient,
   slug: string,
@@ -129,8 +130,12 @@ async function proposedShelfId(
 ): Promise<string | null> {
   const { rows } = await client.query<{ id: string; status: string }>('select id, status from atlas.shelves where slug = $1', [slug]);
   if (rows[0] && rows[0].status === 'proposed') return rows[0].id;
+  if (rows[0] && rows[0].status === 'active') {
+    log({ event: 'target_reclassified', signal_id: signalId, entity: slug, reason: `shelf ${slug} is already active; filed as existing` });
+    return rows[0].id;
+  }
   if (rows[0]) {
-    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: `shelf ${slug} is ${rows[0].status}, not proposed` });
+    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: `shelf ${slug} is ${rows[0].status}, not proposed or active` });
     return null;
   }
   const inserted = await client.query<{ id: string }>(
