@@ -10,12 +10,25 @@ interface FeedCardProps {
   onPress: (item: FeedItem) => void;
 }
 
-export function FeedCard({ item, onPress }: FeedCardProps) {
+/** Any Feed item-ish row with content-image fields (FeedItem, StorySummary). */
+export type ContentImageSource = Pick<FeedItem, 'imageKind' | 'imageUrl'>;
+
+/**
+ * Shared content-image handling for Feed cards: once a URL fails to load it is
+ * hidden for the rest of the session instead of showing a broken image.
+ */
+export function useContentImageFailed(source: ContentImageSource) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
+  const hasContentImage = source.imageKind === 'content' && Boolean(source.imageUrl) && failedImage !== source.imageUrl;
+  const onImageError = () => { if (source.imageUrl) setFailedImage(source.imageUrl); };
+  return { hasContentImage, onImageError };
+}
+
+export function FeedCard({ item, onPress }: FeedCardProps) {
   const { fontScale } = useWindowDimensions();
+  const { hasContentImage, onImageError } = useContentImageFailed(item);
   const date = toRelativeTime(item.createdAt);
   const source = reportSourceName(item.sourceName);
-  const hasContentImage = item.imageKind === 'content' && Boolean(item.imageUrl) && failedImage !== item.imageUrl;
   const category = item.category === 'feed' ? 'Latest' : item.category;
   const accessibilityLabel = source ? `${item.headline}, ${source}, ${date}` : `${item.headline}, ${date}`;
 
@@ -30,7 +43,7 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
         {hasContentImage ? (
           <Image
             source={item.imageUrl}
-            onError={() => setFailedImage(item.imageUrl ?? null)}
+            onError={onImageError}
             style={styles.leadImage}
             contentFit="cover"
             transition={180}
@@ -76,7 +89,7 @@ export function FeedCard({ item, onPress }: FeedCardProps) {
       {hasContentImage ? (
         <Image
           source={item.imageUrl}
-          onError={() => setFailedImage(item.imageUrl ?? null)}
+          onError={onImageError}
           style={styles.thumbnail}
           contentFit="cover"
           transition={180}
