@@ -12,7 +12,7 @@ import { fetchFeedItems } from '@/features/feed/feed.api';
 import { fetchStories } from '@/features/feed/stories.api';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
 import { developingStory, todayLabel, todaySlides } from '@/features/feed/feed-home';
-import { storyHref } from '@/features/feed/feed-stories';
+import { showAllStoriesLink, storyHref } from '@/features/feed/feed-stories';
 import { FEED_COLORS as color } from '@/features/feed/feed.constants';
 import type { FeedItem } from '@/features/feed/feed.types';
 import { useFeedSection } from '@/features/feed/use-feed-section';
@@ -59,7 +59,7 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
         {reports.data && !slides.length && !reports.error ? <FeedSectionState title="No published updates yet" text="New reports will appear here." /> : null}
       </View>
       <View style={styles.section}>
-        <SectionHeader title="Developing story" linkLabel="All stories →" onLinkPress={() => router.push('/stories')} />
+        <SectionHeader title="Developing story" linkLabel={showAllStoriesLink(stories.data) ? 'All stories →' : undefined} onLinkPress={showAllStoriesLink(stories.data) ? () => router.push('/stories') : undefined} />
         {stories.loading && !stories.data ? <StoryCarouselSkeleton /> : null}
         {stories.error ? <FeedSectionState title="Developing story unavailable" text={stories.data?.length ? 'Showing the last loaded Stories.' : 'Developing story could not be loaded.'} onRetry={() => { void stories.load(); }} /> : null}
         {developing ? <DevelopingStoryCard story={developing} onWatch={(target) => router.push(storyHref(target.storySlug))} /> : null}

@@ -74,7 +74,7 @@ export function storyMeta(story: StorySummary, now: Date): string {
 }
 
 /** Story route for a slug; encoding keeps spaces and slashes one segment deep. */
-export function storyHref(slug: string): string {
+export function storyHref(slug: string): `/story/${string}` {
   return `/story/${encodeURIComponent(slug)}`;
 }
 
@@ -144,4 +144,9 @@ export const STORY_SAMPLE: StorySampleBundle = {
 /** Sample story page content only when mocks are active; null otherwise. */
 export function storySample(enabled?: boolean): StorySampleBundle | null {
   return withMock(STORY_SAMPLE, enabled);
+}
+
+/** Home shows "All stories →" only when the stories list has at least one story. */
+export function showAllStoriesLink(stories: StorySummary[] | null | undefined): boolean {
+  return Array.isArray(stories) && stories.length > 0;
 }
