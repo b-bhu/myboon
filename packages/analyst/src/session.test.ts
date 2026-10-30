@@ -258,7 +258,27 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
     const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'new' }, angle: { Kalshi: 'new_story' } }), search: async () => [] });
     expect(out.decision).toBe('keep');
     expect(out.targets).toEqual([]);
-    expect(out.reason).toBe('The decision tool said keep, but every mentioned entity was judged not related, so there is nothing to route.');
+    expect(out.reason).toBe('The decision tool said keep, but every mentioned entity was judged not related or dropped as a target, so there is nothing to route.');
+  });
+
+  it('the T4 note prompt says "Reply with JSON only:" immediately before the targets JSON shape line', async () => {
+    const c = spikeCases[5];
+    const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
+    await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing' }, angle: { Kalshi: 'existing_story' } }), search });
+    const call = llm.calls[2]; // the third call carries the full history; its last message is the T4 note prompt
+    const prompt = call[call.length - 1].content;
+    expect(prompt).toContain('The decision tool has picked each angle');
+    expect(prompt).toContain('Reply with JSON only:\n{"targets": ');
+  });
+
+  it('the decision tool keeps a NEW entity and turn 4 returns an invalid type for it: it is dropped, targets [] and the nothing-to-route reason', async () => {
+    const c = spikeCases[0];
+    const mentions: Mention[] = [{ name: 'Backpack', type: 'organization', search_terms: [] }];
+    const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Backpack', type: 'crypto exchange', note: 'n' }]));
+    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Backpack: 'new' }, angle: { Backpack: 'new_story' } }), search: async () => [] });
+    expect(out.decision).toBe('keep');
+    expect(out.targets).toEqual([]);
+    expect(out.reason).toBe('The decision tool said keep, but every mentioned entity was judged not related or dropped as a target, so there is nothing to route.');
   });
 
   it('every Jev call is logged with question, choices, answer and confidence', async () => {

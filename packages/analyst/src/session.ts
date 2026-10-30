@@ -21,7 +21,7 @@ export const ANALYST_D36_VERSION = 'analyst-504-v1';
 export const KEEP_QUESTION = 'Would a crypto trader or market watcher care about this, even if it is only talk for now?';
 
 /** The keep result when nothing is left to route (no mentions, all not related, or all new targets dropped). */
-const NOTHING_TO_ROUTE = 'The decision tool said keep, but every mentioned entity was judged not related, so there is nothing to route.';
+const NOTHING_TO_ROUTE = 'The decision tool said keep, but every mentioned entity was judged not related or dropped as a target, so there is nothing to route.';
 
 /** The allowed entity-type values for the LLM's JSON shapes, generated from the contracts' SHELF_TYPES. */
 const SHELF_TYPE_VALUES = SHELF_TYPES.map((t) => `"${t}"`).join(' | ');
@@ -328,6 +328,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const turn4 = await step(
     'The decision tool has picked each angle; kind and angle below are fixed and cannot change.\n' +
       `${JSON.stringify(kept.map((k) => ({ mention: k.mention, kind: k.kind, angle: k.angle })), null, 2)}\n\n` +
+      'Reply with JSON only:\n' +
       `{"targets": [{"mention": string, "type": ${SHELF_TYPE_VALUES}, "note": string}], "reason": string}\n` +
       'One row per kept mention, no others. type is exactly one of the listed values, the type of that entity. ' +
       'note: one line on what is forming there, written to match the given angle.',
