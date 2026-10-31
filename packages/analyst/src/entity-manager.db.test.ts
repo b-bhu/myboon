@@ -59,16 +59,6 @@ function scriptedLlm(
   return llm;
 }
 
-/**
- * TEMPORARY test schema: atlas.shelves.entity_reviewed_at (CTO, Oct 31) is being added to #538 by
- * DB Guy but isn't on its head yet. Idempotent, so it's a no-op once his migration has it.
- * Remove when #538 carries the column.
- */
-const SHELVES_REVIEWED_AT_SCHEMA = `
-  alter table atlas.shelves add column if not exists entity_reviewed_at timestamptz null;
-  grant select (entity_reviewed_at), update (entity_reviewed_at) on atlas.shelves to entity_worker;
-`;
-
 const aliasReply = (slug: string, reason = 'same entity'): string =>
   JSON.stringify({ decision: 'alias', alias_of: slug, reason });
 const rejectReply = (reason = 'not a real entity'): string =>
@@ -146,7 +136,6 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
     pool = new Pool({ connectionString: db.url, max: 2 });
-    await pool.query(SHELVES_REVIEWED_AT_SCHEMA);
     emPool = rolePoolFor(db.url, 'entity_worker');
     workerPool = rolePoolFor(db.url, 'analyst_worker');
   });
