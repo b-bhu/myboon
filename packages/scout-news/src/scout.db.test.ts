@@ -138,13 +138,13 @@ describe.skipIf(TEST_DATABASE_URL === '')('scout-news DB-side behavior against a
     }
 
     // No signal_states / jev_decisions / signal_queue revival; the signal
-    // queue functions refuse the signal queue now.
+    // queue functions were dropped with decision_queue in #537.
     const tables = await pool.query<{ tablename: string }>(
       `select tablename from pg_tables
         where schemaname = 'atlas' and tablename in ('signal_queue','signal_states','jev_decisions')`,
     );
     expect(tables.rows).toHaveLength(0);
-    await expect(pool.query(`select atlas.queue_claim('signal_queue', 10, '5 minutes')`)).rejects.toThrow(/unknown queue signal_queue/);
+    await expect(pool.query(`select atlas.queue_claim('signal_queue', 10, '5 minutes')`)).rejects.toThrow(/function atlas\.queue_claim\(.*\) does not exist/);
     const enqueuedAt = await pool.query<{ count: string }>(
       `select count(*)::text from information_schema.columns
         where table_schema = 'atlas' and table_name = 'signals' and column_name = 'enqueued_at'`,

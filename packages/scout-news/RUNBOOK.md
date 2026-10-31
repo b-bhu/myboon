@@ -127,8 +127,8 @@ again.
 
 - Alerting/monitoring rules for these snapshots are a later decision, not
   part of #444.
-- The analyst and entity-manager stages, and any decision_queue reads, are
+- The analyst and entity-manager stages, are
   Sprint 2 work; the service_role grants above stay scoped to what the scout
   needs.
-- The dead-letter review flow (triage, retries) lives with the queue work;
-  the health line only surfaces what the grants allow.
+- atlas.decision_queue, atlas.dead_letter and the queue_* functions were
+  dropped in #537; the health line only surfaces what the grants allow.
