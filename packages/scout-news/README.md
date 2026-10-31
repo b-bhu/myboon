@@ -99,6 +99,6 @@ call relies on — `insert ... on conflict (source, source_id) do nothing
 returning signal_id` — with `pg` (test-only dependency) against a real
 database, plus the handoff contract: the inserted signal is received,
 unclaimed and due, enqueued_at is gone, signal_queue is gone and
-`atlas.queue_claim('signal_queue', ...)` raises `unknown queue`. It
+`atlas.queue_claim` no longer exists (dropped in #537). It
 truncates atlas.signals (cascade) before every test — point it at a
 disposable database only.
