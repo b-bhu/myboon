@@ -1,7 +1,7 @@
 /**
  * #480 the timed entity manager, on a throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL). The job
  * pool runs as entity_worker (the PM2 entry's login role, #534) with the decisions grants from the
- * approved entity_reviews drop (ENTITY_DECISIONS_SCHEMA below), the DB role checks mirror
+ * real migrations (20261031090000, #538), the DB role checks mirror
  * runner.db.test.ts acting as analyst_worker, and the LLM is scripted. Verdicts are recorded on the
  * analyst's own atlas.decisions row per signal (entity_* columns, UPDATE only); atlas.entity_reviews
  * no longer exists. What this pins:
@@ -34,36 +34,6 @@ import { createQuotaGuard } from './ollama-quota.js';
 import type { ChatMessage, Llm } from './session.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
-
-/**
- * TEMPORARY test schema for the approved #480 change (CTO, Oct 31): the five entity_* columns on
- * atlas.decisions, entity_worker's grant swap and update policy, then the entity_reviews drop.
- * DB Guy's migration PR was not open yet when this was written, so this mirrors the approved
- * columns exactly and is idempotent (a no-op once his migration is in the chain). Remove it when
- * his migration merges and this branch is rebased.
- */
-const ENTITY_DECISIONS_SCHEMA = `
-  alter table atlas.decisions
-    add column if not exists entity_outcome text null,
-    add column if not exists entity_alias_target_id uuid null references atlas.shelves (id),
-    add column if not exists entity_reviewed_at timestamptz null,
-    add column if not exists entity_model_name text null,
-    add column if not exists entity_reason text null;
-  do $$ begin
-    if not exists (select 1 from pg_constraint where conname = 'decisions_entity_outcome_check') then
-      alter table atlas.decisions add constraint decisions_entity_outcome_check
-        check (entity_outcome in ('alias', 'reject', 'new'));
-    end if;
-  end $$;
-  grant select (id, signal_id, entity_outcome, entity_reviewed_at) on atlas.decisions to entity_worker;
-  grant update (entity_outcome, entity_alias_target_id, entity_reviewed_at, entity_model_name, entity_reason)
-    on atlas.decisions to entity_worker;
-  -- Any UPDATE re-checks decisions_targets_valid, which calls this validator with invoker rights.
-  grant execute on function atlas.analyst_targets_valid(jsonb) to entity_worker;
-  drop policy if exists entity_worker_update on atlas.decisions;
-  create policy entity_worker_update on atlas.decisions for update to entity_worker using (true) with check (true);
-  drop table if exists atlas.entity_reviews cascade;
-`;
 
 /**
  * Scripted LLM; the reply may be a string, an Error, or per-prompt text. `onCall` runs while the
@@ -168,7 +138,6 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
     // entity_reviews until Backend Dev's #539 moves it to atlas.decisions and removes the pin.
     db = await createThrowawayDatabase(ADMIN_URL, { before: '20261031090000' });
     pool = new Pool({ connectionString: db.url, max: 2 });
-    await pool.query(ENTITY_DECISIONS_SCHEMA);
     emPool = rolePoolFor(db.url, 'entity_worker');
     workerPool = rolePoolFor(db.url, 'analyst_worker');
   });
