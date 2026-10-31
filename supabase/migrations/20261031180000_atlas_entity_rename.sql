@@ -4,8 +4,11 @@
 --                         Copied first to atlas.item_shelves_bak_541 (no grants); the rollback restores it.
 --   atlas.shelves      -> atlas.entities
 --   atlas.items        -> atlas.entity_items
---   columns: entity_items.main_shelf_id -> main_entity_id, stories.shelf_id -> entity_id.
---            item_id / item_key / decisions.shelves are kept (see PR).
+--   columns: entity_items.main_shelf_id -> main_entity_id, stories.shelf_id -> entity_id,
+--            decisions.shelves -> entities (jsonb; all prod rows are '[]', no check depends on it).
+--            item_id / item_key / target_item_id / item_ids are kept (CTO).
+--   atlas.signal_finish: body moves to decisions.entities, so the payload key "shelves" becomes
+--            "entities". atlas.analyst_targets_valid validates targets[].entity only: unchanged.
 -- Renames are catalog-only (no rewrite, no data copy). Grants, column grants, RLS policies, FKs
 -- and triggers are bound to the table OID, so atlas_analyst / analyst_worker / entity_worker /
 -- service_role keep exactly the same privileges.
@@ -50,6 +53,7 @@ select pg_temp.ren('rel', '.shelves', '.entities', 'alter table atlas.shelves re
 select pg_temp.ren('rel', '.items', '.entity_items', 'alter table atlas.items rename to entity_items');
 -- columns
 select pg_temp.ren('col', 'entity_items.main_shelf_id', 'entity_items.main_entity_id', 'alter table atlas.entity_items rename column main_shelf_id to main_entity_id');
+select pg_temp.ren('col', 'decisions.shelves', 'decisions.entities', 'alter table atlas.decisions rename column shelves to entities');
 select pg_temp.ren('col', 'stories.shelf_id', 'stories.entity_id', 'alter table atlas.stories rename column shelf_id to entity_id');
 -- indexes (pkey / unique constraints are renamed with their index)
 select pg_temp.ren('rel', '.shelves_pkey', '.entities_pkey', 'alter index atlas.shelves_pkey rename to entities_pkey');
@@ -79,4 +83,72 @@ select pg_temp.ren('trg', 'entities.shelves_touch', 'entities.entities_touch', '
 select pg_temp.ren('trg', 'entity_items.items_history', 'entity_items.entity_items_history', 'alter trigger items_history on atlas.entity_items rename to entity_items_history');
 select pg_temp.ren('trg', 'entity_items.items_touch', 'entity_items.entity_items_touch', 'alter trigger items_touch on atlas.entity_items rename to entity_items_touch');
 select pg_temp.ren('trg', 'entities.shelves_history', 'entities.entities_history', 'alter trigger shelves_history on atlas.entities rename to entities_history');
+
+-- signal_finish reads the analyst payload through jsonb_populate_record(null::atlas.decisions, ...),
+-- so its jsonb key follows the column name: the payload key is now "entities" (CTO, #541).
+-- Same signature; CREATE OR REPLACE keeps the owner and EXECUTE grants
+-- (postgres, service_role, analyst_worker).
+CREATE OR REPLACE FUNCTION atlas.signal_finish(p_signal_id text, p_token uuid, p_status text, p_parked_reason text, p_decision jsonb)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SET search_path TO ''
+AS $function$
+declare
+  v_valid_claim boolean;
+  v_n integer;
+  -- Only D36 writers send decision; the legacy Linker + Story writer (action
+  -- keep/skip, may park) is mapped into decision below but not status-checked.
+  v_decision text := p_decision ->> 'decision';
+begin
+  if p_status not in ('analysed', 'parked', 'written', 'deleted') then
+    raise exception 'invalid finish status %', p_status;
+  end if;
+  if v_decision in ('keep', 'ignore') and p_status <> 'analysed' then
+    raise exception 'decision % needs status analysed, got %', v_decision, p_status;
+  elsif v_decision = 'unclear' and p_status <> 'parked' then
+    raise exception 'decision unclear needs status parked, got %', p_status;
+  end if;
+  select exists (
+           select 1 from atlas.signals s
+            where s.signal_id = p_signal_id
+              and s.claim_token = p_token
+              and s.claim_expires_at >= pg_catalog.now())
+    into v_valid_claim;
+  if not v_valid_claim then
+    return false;
+  end if;
+  update atlas.signals s
+     set status = p_status,
+         parked_reason = case when p_status = 'parked' then p_parked_reason else null end,
+         claim_token = null,
+         claim_expires_at = null,
+         claimed_by = null
+   where s.signal_id = p_signal_id
+     and s.claim_token = p_token
+     and s.claim_expires_at >= pg_catalog.now();
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then
+    return false;
+  end if;
+  if p_decision is not null then
+    insert into atlas.decisions
+      (schema_version, signal_id, analyst_version, decision_type, action, confidence,
+       reason, shortlist, item_ids, prompt_version, model_name, model_version,
+       decided_by, answer, probabilities, runner_up_margin, latency_ms, outcome,
+       primary_error, shadow_answer, shadow_probabilities, shadow_latency_ms,
+       shadow_outcome, shadow_model_version, target_item_id, entities, item_key,
+       summary, decision, targets)
+    select d.schema_version, d.signal_id, d.analyst_version, coalesce(d.decision_type, 'file'), d.action, d.confidence,
+           d.reason, d.shortlist, d.item_ids, d.prompt_version, d.model_name, d.model_version,
+           d.decided_by, d.answer, d.probabilities, d.runner_up_margin, d.latency_ms, d.outcome,
+           d.primary_error, d.shadow_answer, d.shadow_probabilities, d.shadow_latency_ms,
+           d.shadow_outcome, d.shadow_model_version, d.target_item_id, coalesce(d.entities, '[]'::jsonb), d.item_key,
+           d.summary,
+           coalesce(d.decision, case d.action when 'keep' then 'keep' when 'skip' then 'ignore' end),
+           coalesce(d.targets, '[]'::jsonb)
+      from jsonb_populate_record(null::atlas.decisions, p_decision) d
+     on conflict (signal_id) do nothing;
+  end if;
+  return true;
+end $function$;
 commit;

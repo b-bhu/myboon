@@ -41,7 +41,7 @@ insert into atlas.item_shelves (item_id, shelf_id, role)
 SQL
 
 # Name-sensitive fingerprint of every object on the touched tables (must match after down).
-TABS="'shelves','items','item_shelves','stories','entities','entity_items'"
+TABS="'shelves','items','item_shelves','stories','entities','entity_items','decisions'"
 FP="select md5(string_agg(x, E'\n' order by x)) from (
   select 'col '||table_name||'.'||column_name||' '||udt_name||' '||is_nullable||' '||coalesce(column_default,'') x
     from information_schema.columns where table_schema='atlas' and table_name in ($TABS)
@@ -51,6 +51,7 @@ FP="select md5(string_agg(x, E'\n' order by x)) from (
   union all select 'acl '||relname||' '||coalesce(relacl::text,'')||' '||relrowsecurity::text from pg_class where relnamespace='atlas'::regnamespace and relname <> 'item_shelves_bak_541'
   union all select 'colacl '||attrelid::regclass::text||'.'||attname||' '||attacl::text from pg_attribute where attacl is not null and attrelid in (select oid from pg_class where relnamespace='atlas'::regnamespace)
   union all select 'trg '||pg_get_triggerdef(oid) from pg_trigger where not tgisinternal
+  union all select 'fn '||pg_get_functiondef(oid)||' '||coalesce(proacl::text,'')||' '||proowner::regrole::text from pg_proc where pronamespace='atlas'::regnamespace
 ) s"
 # Name-blind privilege fingerprint keyed by OID + attnum (must match after up: grants follow the OID).
 PRIV="select md5(string_agg(x, E'\n' order by x)) from (
@@ -62,6 +63,7 @@ COUNTS="select (select count(*) from atlas.%s)||'/'||(select count(*) from atlas
 OLDCNT=$(q "$(printf "$COUNTS" shelves items)")
 LINKS=$(q "select count(*) from atlas.item_shelves")
 BEFORE=$(q "$FP"); PBEFORE=$(q "$PRIV")
+SFACL=$(q "select proacl::text from pg_proc where oid='atlas.signal_finish(text,uuid,text,text,jsonb)'::regprocedure")
 [[ $OLDCNT/$LINKS == 2/1/1 ]] && ok "seeded 2/1/1 rows" || bad "seed counts $OLDCNT/$LINKS"
 
 NEWNAMES="select count(*) from pg_class where relnamespace='atlas'::regnamespace and relname in ('entities','entity_items')"
@@ -87,6 +89,26 @@ echo "== up / up / down / down / up =="
 [[ $(q "$FP") == "$BEFORE" ]] && ok "down rerun: fingerprint still matches" || bad "down rerun fingerprint differs"
 [[ $(q "$(printf "$COUNTS" shelves items)")/$(q "select count(*) from atlas.item_shelves") == "$OLDCNT/$LINKS" ]] && ok "down: row counts unchanged (incl. item_shelves)" || bad "down counts"
 "${PSQL[@]}" -f "$UP"   >/dev/null && ok "up again applied" || bad "up again"
+
+SHELF="select string_agg(x, '; ') from (
+  select 'rel '||relname x from pg_class where relnamespace='atlas'::regnamespace and relname ~* 'shel[fv]' and relname <> 'item_shelves_bak_541'
+  union all select 'col '||c.relname||'.'||attname from pg_attribute a join pg_class c on c.oid=a.attrelid where c.relnamespace='atlas'::regnamespace and c.relname <> 'item_shelves_bak_541' and c.relkind <> 'i' and a.attnum>0 and not attisdropped and attname ~* 'shel[fv]'
+  union all select 'con '||conname from pg_constraint where connamespace='atlas'::regnamespace and (conname ~* 'shel[fv]' or pg_get_constraintdef(oid) ~* 'shel[fv]')
+  union all select 'trg '||tgname from pg_trigger where not tgisinternal and tgrelid in (select oid from pg_class where relnamespace='atlas'::regnamespace) and pg_get_triggerdef(oid) ~* 'shel[fv]'
+  union all select 'pol '||policyname from pg_policies where schemaname='atlas' and (policyname||coalesce(qual,'')||coalesce(with_check,'')) ~* 'shel[fv]'
+  union all select 'fn '||proname from pg_proc where pronamespace='atlas'::regnamespace and (proname ~* 'shel[fv]' or prosrc ~* 'shel[fv]')
+  union all select 'cmt '||objoid from pg_description where description ~* 'shel[fv]' and (classoid <> 'pg_class'::regclass or objoid in (select oid from pg_class where relnamespace='atlas'::regnamespace))
+  union all select 'view '||viewname from pg_views where schemaname='atlas' and definition ~* 'shel[fv]'
+) s"
+[[ -z $(q "$SHELF") ]] && ok "up: zero 'shelf'/'shelves' in atlas names, defs, function bodies, policies, comments" || bad "shelf left: $(q "$SHELF")"
+[[ $(q "select proacl::text from pg_proc where oid='atlas.signal_finish(text,uuid,text,text,jsonb)'::regprocedure") == "$SFACL" ]] && ok "signal_finish: same signature and EXECUTE grants" || bad "signal_finish grants"
+"${PSQL[@]}" >/dev/null <<'SQL'
+insert into atlas.signals (signal_id, schema_version, source, source_id, type, text, link, occurred_at, status, claim_token, claim_expires_at)
+  values ('s-2', 1, 'x', '2', 'news', 't', null, now(), 'received', '00000000-0000-4000-8000-000000000002', now() + interval '5 minutes');
+SQL
+out=$("${PSQL[@]}" -t -A -c "set role analyst_worker; select atlas.signal_finish('s-2', '00000000-0000-4000-8000-000000000002', 'analysed', null, jsonb_build_object('schema_version',1,'signal_id','s-2','analyst_version','v541','summary','s','decision','keep','reason','r','decided_by','jev','decision_type','file','entities','[\"kalshi\"]'::jsonb,'targets','[]'::jsonb))" 2>&1)
+[[ $out == t ]] && ok "signal_finish as analyst_worker accepts payload key 'entities'" || bad "signal_finish: $out"
+[[ $(q "select entities::text from atlas.decisions where signal_id='s-2'") == '["kalshi"]' ]] && ok "payload 'entities' lands in decisions.entities" || bad "decisions.entities: $(q "select entities::text from atlas.decisions where signal_id='s-2'")"
 
 echo "== behaviour after up =="
 AS="set role entity_worker;"

@@ -32,6 +32,7 @@ select pg_temp.ren('rel', '.entity_items', '.items', 'alter table atlas.entity_i
 select pg_temp.ren('rel', '.entities', '.shelves', 'alter table atlas.entities rename to shelves');
 -- columns
 select pg_temp.ren('col', 'items.main_entity_id', 'items.main_shelf_id', 'alter table atlas.items rename column main_entity_id to main_shelf_id');
+select pg_temp.ren('col', 'decisions.entities', 'decisions.shelves', 'alter table atlas.decisions rename column entities to shelves');
 select pg_temp.ren('col', 'stories.entity_id', 'stories.shelf_id', 'alter table atlas.stories rename column entity_id to shelf_id');
 -- indexes (pkey / unique constraints are renamed with their index)
 select pg_temp.ren('rel', '.entities_pkey', '.shelves_pkey', 'alter index atlas.entities_pkey rename to shelves_pkey');
@@ -61,6 +62,72 @@ select pg_temp.ren('trg', 'shelves.entities_touch', 'shelves.shelves_touch', 'al
 select pg_temp.ren('trg', 'items.entity_items_history', 'items.items_history', 'alter trigger entity_items_history on atlas.items rename to items_history');
 select pg_temp.ren('trg', 'items.entity_items_touch', 'items.items_touch', 'alter trigger entity_items_touch on atlas.items rename to items_touch');
 select pg_temp.ren('trg', 'shelves.entities_history', 'shelves.shelves_history', 'alter trigger entities_history on atlas.shelves rename to shelves_history');
+
+-- signal_finish: exact prod definition as of 2026-10-31 (reads decisions.shelves)
+CREATE OR REPLACE FUNCTION atlas.signal_finish(p_signal_id text, p_token uuid, p_status text, p_parked_reason text, p_decision jsonb)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SET search_path TO ''
+AS $function$
+declare
+  v_valid_claim boolean;
+  v_n integer;
+  -- Only D36 writers send decision; the legacy Linker + Story writer (action
+  -- keep/skip, may park) is mapped into decision below but not status-checked.
+  v_decision text := p_decision ->> 'decision';
+begin
+  if p_status not in ('analysed', 'parked', 'written', 'deleted') then
+    raise exception 'invalid finish status %', p_status;
+  end if;
+  if v_decision in ('keep', 'ignore') and p_status <> 'analysed' then
+    raise exception 'decision % needs status analysed, got %', v_decision, p_status;
+  elsif v_decision = 'unclear' and p_status <> 'parked' then
+    raise exception 'decision unclear needs status parked, got %', p_status;
+  end if;
+  select exists (
+           select 1 from atlas.signals s
+            where s.signal_id = p_signal_id
+              and s.claim_token = p_token
+              and s.claim_expires_at >= pg_catalog.now())
+    into v_valid_claim;
+  if not v_valid_claim then
+    return false;
+  end if;
+  update atlas.signals s
+     set status = p_status,
+         parked_reason = case when p_status = 'parked' then p_parked_reason else null end,
+         claim_token = null,
+         claim_expires_at = null,
+         claimed_by = null
+   where s.signal_id = p_signal_id
+     and s.claim_token = p_token
+     and s.claim_expires_at >= pg_catalog.now();
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then
+    return false;
+  end if;
+  if p_decision is not null then
+    insert into atlas.decisions
+      (schema_version, signal_id, analyst_version, decision_type, action, confidence,
+       reason, shortlist, item_ids, prompt_version, model_name, model_version,
+       decided_by, answer, probabilities, runner_up_margin, latency_ms, outcome,
+       primary_error, shadow_answer, shadow_probabilities, shadow_latency_ms,
+       shadow_outcome, shadow_model_version, target_item_id, shelves, item_key,
+       summary, decision, targets)
+    select d.schema_version, d.signal_id, d.analyst_version, coalesce(d.decision_type, 'file'), d.action, d.confidence,
+           d.reason, d.shortlist, d.item_ids, d.prompt_version, d.model_name, d.model_version,
+           d.decided_by, d.answer, d.probabilities, d.runner_up_margin, d.latency_ms, d.outcome,
+           d.primary_error, d.shadow_answer, d.shadow_probabilities, d.shadow_latency_ms,
+           d.shadow_outcome, d.shadow_model_version, d.target_item_id, coalesce(d.shelves, '[]'::jsonb), d.item_key,
+           d.summary,
+           coalesce(d.decision, case d.action when 'keep' then 'keep' when 'skip' then 'ignore' end),
+           coalesce(d.targets, '[]'::jsonb)
+      from jsonb_populate_record(null::atlas.decisions, p_decision) d
+     on conflict (signal_id) do nothing;
+  end if;
+  return true;
+end $function$;
+
 -- links table
 create table if not exists atlas.item_shelves (
   item_id    uuid not null,
