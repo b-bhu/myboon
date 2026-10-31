@@ -1,11 +1,68 @@
--- squawk-ignore-file require-concurrent-index-creation, prefer-robust-stmts
--- (indexes are on freshly created empty tables)
--- Rollback for 20261031090000_atlas_drop_decision_queue_dead_letter.
--- Recreates prod DDL, grants and policies as read on 2026-10-31. DATA IS NOT RESTORED
--- (both tables were empty). Idempotent.
-set lock_timeout = '5s';
-set statement_timeout = '60s';
+-- squawk-ignore-file require-concurrent-index-creation, prefer-robust-stmts, ban-drop-column
+-- (indexes are on freshly created empty tables; dropping the entity_* columns is the rollback)
+-- Rollback for 20261031090000_atlas_entity_review_on_decisions. Idempotent. One transaction.
+-- Restores prod DDL, grants and policies as read on 2026-10-31. DATA IS NOT RESTORED: the
+-- entity_* values on decisions are lost, and entity_reviews / decision_queue / dead_letter come
+-- back empty (all three had 0 rows when this was written).
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
 
+-- entity_reviews (DDL from 20261030230000) + its service_role and entity_worker grants/policies
+create table if not exists atlas.entity_reviews (
+  id              uuid primary key default atlas.uuidv7(),
+  shelf_id        uuid not null references atlas.shelves (id),
+  signal_id       text not null references atlas.signals (signal_id),
+  decision_id     uuid null references atlas.decisions (id),
+  outcome         text not null,
+  alias_target_id uuid null references atlas.shelves (id),
+  applied         boolean not null,
+  label           text null,
+  decided_by      text not null,
+  model_name      text null,
+  reason          text null,
+  reviewed_at     timestamptz not null default now(),
+  constraint entity_reviews_outcome_check check (outcome in ('alias', 'reject', 'new')),
+  constraint entity_reviews_alias_target_check check ((outcome = 'alias') = (alias_target_id is not null)),
+  constraint entity_reviews_label_check check (label in ('right', 'wrong'))
+);
+create index if not exists entity_reviews_shelf_reviewed_idx on atlas.entity_reviews (shelf_id, reviewed_at desc);
+create index if not exists entity_reviews_decision_id_idx on atlas.entity_reviews (decision_id) where decision_id is not null;
+alter table atlas.entity_reviews enable row level security;
+grant select, insert on atlas.entity_reviews to service_role;
+grant update (label) on atlas.entity_reviews to service_role;
+grant select (id, shelf_id, outcome, reviewed_at) on atlas.entity_reviews to entity_worker;
+grant insert (shelf_id, signal_id, decision_id, outcome, alias_target_id, applied, decided_by,
+              model_name, reason)
+  on atlas.entity_reviews to entity_worker;
+drop policy if exists entity_worker_select on atlas.entity_reviews;
+create policy entity_worker_select on atlas.entity_reviews for select to entity_worker using (true);
+drop policy if exists entity_worker_insert on atlas.entity_reviews;
+create policy entity_worker_insert on atlas.entity_reviews for insert to entity_worker with check (true);
+
+-- decisions: back to select (id, signal_id) for entity_worker, no update, no new columns
+drop policy if exists entity_worker_update on atlas.decisions;
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = 'atlas'
+              and table_name = 'decisions' and column_name = 'entity_outcome') then
+    revoke select (entity_outcome, entity_reviewed_at) on atlas.decisions from entity_worker;
+    revoke update (entity_outcome, entity_alias_target_id, entity_reviewed_at, entity_model_name,
+                   entity_reason) on atlas.decisions from entity_worker;
+  end if;
+end $$;
+revoke execute on function atlas.analyst_targets_valid(jsonb) from entity_worker;
+grant select (id, signal_id) on atlas.decisions to entity_worker;
+drop index if exists atlas.decisions_entity_unreviewed_idx;
+drop index if exists atlas.decisions_entity_alias_target_id_idx;
+alter table atlas.decisions
+  drop column if exists entity_outcome,
+  drop column if exists entity_alias_target_id,
+  drop column if exists entity_reviewed_at,
+  drop column if exists entity_model_name,
+  drop column if exists entity_reason;
+
+-- queue tables and functions
 create table if not exists atlas.decision_queue (
   id bigint generated always as identity primary key,
   decision_id uuid not null unique references atlas.decisions(id),
@@ -134,3 +191,5 @@ revoke all on function atlas.queue_claim(text, integer, interval), atlas.queue_h
   atlas.queue_complete(text, bigint, uuid), atlas.queue_fail(text, bigint, uuid, text, interval) from public, anon, authenticated;
 grant execute on function atlas.queue_claim(text, integer, interval), atlas.queue_heartbeat(text, bigint, uuid, interval),
   atlas.queue_complete(text, bigint, uuid), atlas.queue_fail(text, bigint, uuid, text, interval) to service_role;
+
+commit;
