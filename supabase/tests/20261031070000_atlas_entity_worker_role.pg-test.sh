@@ -41,7 +41,10 @@ echo "== up / down / down / up =="
 [[ $(q "$POL") == 0 ]] && ok "down: policies gone" || bad "down: policies remain"
 "${PSQL[@]}" -f "$DOWN" >/dev/null && ok "down rerun (idempotent)" || bad "down rerun"
 "${PSQL[@]}" -f "$UP"   >/dev/null && ok "up again applied" || bad "up again"
-"${PSQL[@]}" -f "$UP"   >/dev/null 2>&1 && bad "up rerun unexpectedly succeeded (policies would duplicate)" || ok "up rerun refused (one-shot by design; down then up is the rerun path)"
+"${PSQL[@]}" -f "$UP"   >/dev/null && ok "up rerun (idempotent)" || bad "up rerun"
+[[ $(q "$POL") == 7 ]] && ok "up rerun: still 7 policies" || bad "up rerun policies: $(q "$POL")"
+[[ $(q "select rolconnlimit from pg_roles where rolname='entity_worker'") == 5 ]] && ok "connection limit 5" || bad "connlimit"
+[[ $(q "select array_to_string(array(select unnest(setconfig) order by 1), ',') from pg_db_role_setting where setrole='entity_worker'::regrole and setdatabase=0") == "lock_timeout=5s,statement_timeout=60s" ]] && ok "role timeouts set" || bad "role timeouts"
 [[ $(q "select rolcanlogin::text||rolinherit::text||rolbypassrls::text||rolsuper::text from pg_roles where rolname='entity_worker'") == "falsefalsefalsefalse" ]] \
   && ok "role is nologin noinherit, no bypassrls, not super" || bad "role attrs"
 
