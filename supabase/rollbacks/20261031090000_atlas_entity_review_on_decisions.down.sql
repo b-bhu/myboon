@@ -53,8 +53,6 @@ begin
 end $$;
 revoke execute on function atlas.analyst_targets_valid(jsonb) from entity_worker;
 grant select (id, signal_id) on atlas.decisions to entity_worker;
-drop index if exists atlas.decisions_entity_unreviewed_idx;
-drop index if exists atlas.decisions_entity_alias_target_id_idx;
 alter table atlas.decisions
   drop column if exists entity_outcome,
   drop column if exists entity_alias_target_id,
