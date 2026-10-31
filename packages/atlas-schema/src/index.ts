@@ -19,7 +19,7 @@ export const ROLLBACKS_DIR = join(here, '..', '..', '..', 'supabase', 'rollbacks
  * Skipped locally: the tool log needs the pg_cron extension, which a plain local
  * Postgres lacks, and no analyst stage reads it.
  */
-export const LOCAL_SKIP = new Set(['20261025100200_atlas_tool_log.sql']);
+export const LOCAL_SKIP = new Set(['20261025100200_atlas_tool_log.sql', '20261031200000_atlas_tool_log_14_ahead.sql']);
 
 const TOOL_LOG_MIGRATION = '20261025100200_atlas_tool_log.sql';
 
