@@ -1,10 +1,11 @@
 /**
- * #480 the timed entity manager: reviews every atlas.shelves row with status='proposed' and lets
- * the LLM decide alias (fold into an existing ACTIVE shelf), reject (retire, items stay), or new
+ * #480 the timed entity manager: reviews every atlas.shelves row with status='proposed' that has a
+ * signal waiting for its verdict (a decisions row with entity_reviewed_at null) and lets the LLM
+ * decide alias (fold into an existing ACTIVE shelf), reject (retire, items stay), or new
  * (deserves its own entity; the shelf stays proposed, activation is #530). Only alias and reject
- * are applied; `new` writes applied=false review rows only and parks the shelf behind the token
- * rule (no LLM call for a shelf whose latest review is `new` until a new item lands there).
- * Applied verdicts run inside one transaction per shelf, taking the same per-slug advisory locks
+ * are applied; `new` writes nothing but the verdict, stamped onto the signals' existing
+ * atlas.decisions rows, and the shelf is picked up again only when a new unreviewed signal lands
+ * there. Applied verdicts run inside one transaction per shelf, taking the same per-slug advisory locks
  * as PgDecisionSink (#482) in sorted slug order and re-checking the shelf is still proposed before
  * writing, so a raced shelf is skipped without any writes. Failures are per-shelf the run
  * (one entity_review_failed line, nothing written) and the quota guard stops the run fail-closed.
@@ -22,9 +23,9 @@ export type EntityManagerSummary = {
   aliased: number;
   /** Verdict reject applied: shelf retired, items stay. */
   rejected: number;
-  /** Verdict new: shelf stays proposed, applied-false review rows only. */
+  /** Verdict new: shelf stays proposed, verdict recorded on the signals' decisions rows only. */
   kept_new: number;
-  /** Eligible shelves left untouched without a verdict: token-rule skips and raced shelves. */
+  /** Eligible shelves left untouched without a verdict: raced shelves. */
   skipped: number;
   /** Reviewed shelves whose verdict or LLM call failed; nothing written for them (fail-open per shelf). */
   failed: number;
@@ -37,7 +38,7 @@ export type EntityManagerSummary = {
 export type EntityManagerOptions = {
   /** The chat client (same Llm type as the analyst session). */
   llm: Llm;
-  /** Written to entity_reviews.model_name on every written row. */
+  /** Written to atlas.decisions.entity_model_name on every reviewed signal. */
   modelName: string;
   /** Hard cap on reviewed shelves per run (default 40 from config). */
   maxShelves: number;
@@ -62,9 +63,18 @@ export async function reviewProposedShelves(db: Pool, o: EntityManagerOptions): 
     reviewed: 0, aliased: 0, rejected: 0, kept_new: 0, skipped: 0, failed: 0, llm_calls: 0, stop_reason: 'idle',
   };
 
-  // Slug order: the deterministic side of the maxShelves cap (the first N slugs are the ones reviewed).
+  // Slug order: the deterministic side of the maxShelves cap (the first N slugs are the ones
+  // reviewed). Only shelves with at least one signal whose decisions row has no entity_reviewed_at.
   const shelves = (await db.query<{ id: string; slug: string; name: string; type: string }>(
-    `select id, slug, name, type from atlas.shelves where status = 'proposed' order by slug`,
+    `select s.id, s.slug, s.name, s.type
+       from atlas.shelves s
+      where s.status = 'proposed'
+        and exists (select 1
+                      from atlas.items i
+                      join atlas.decisions d on d.signal_id = i.signal_id
+                     where i.main_shelf_id = s.id
+                       and d.entity_reviewed_at is null)
+      order by s.slug`,
   )).rows;
   if (shelves.length === 0) {
     log({ event: 'entity_manager_run', ...summary });
@@ -85,10 +95,6 @@ export async function reviewProposedShelves(db: Pool, o: EntityManagerOptions): 
     if (summary.reviewed >= o.maxShelves) {
       summary.stop_reason = 'max'; // the cap left this shelf (and any after it) pending
       break;
-    }
-    if (await skipReviewedNew(db, shelf.id)) {
-      summary.skipped += 1;
-      continue;
     }
     if (o.quota) {
       const check = await o.quota.check();
@@ -117,7 +123,7 @@ export async function reviewProposedShelves(db: Pool, o: EntityManagerOptions): 
           'select distinct signal_id from atlas.items where main_shelf_id = $1 and signal_id is not null',
           [shelf.id],
         )).rows.map((r) => r.signal_id);
-        await insertReviews(db, shelf.id, signalIds, 'new', null, false, o, verdict.reason);
+        await recordVerdict(db, signalIds, 'new', null, o, verdict.reason);
         summary.kept_new += 1;
         summary.reviewed += 1;
         continue;
@@ -140,23 +146,6 @@ export async function reviewProposedShelves(db: Pool, o: EntityManagerOptions): 
 
   log({ event: 'entity_manager_run', ...summary });
   return summary;
-}
-
-/**
- * The token rule: skip the shelf (no LLM call) when its latest entity_reviews row is outcome 'new'
- * and no item on it was created after that review — the answer would not change.
- */
-async function skipReviewedNew(db: Pool, shelfId: string): Promise<boolean> {
-  const { rows } = await db.query<{ outcome: string; has_newer: boolean }>(
-    `with latest as (
-       select outcome, reviewed_at from atlas.entity_reviews
-        where shelf_id = $1 order by reviewed_at desc, id desc limit 1)
-     select outcome, exists (select 1 from atlas.items i
-                              where i.main_shelf_id = $1 and i.created_at > latest.reviewed_at) as has_newer
-       from latest`,
-    [shelfId],
-  );
-  return rows[0] !== undefined && rows[0].outcome === 'new' && !rows[0].has_newer;
 }
 
 function reviewPrompt(
@@ -236,9 +225,9 @@ async function activeShelfId(db: Pool, slug: string): Promise<string | null> {
  * that the proposed shelf is still proposed ('raced' when it is not), then write. Alias
  * moves the non-duplicate items (an item whose (signal_id, target) already exists stays
  * put), appends the proposed slug to the target's aliases once and retires the shelf;
- * reject only retires it (the items stay). Review rows always cover the DISTINCT signals
- * on the shelf as the locked transaction sees it, one row per signal with its decision
- * linked when one exists (latest atlas.decisions row for the signal; ids are uuidv7).
+ * reject only retires it (the items stay). The verdict is recorded by UPDATING the existing
+ * atlas.decisions row of each DISTINCT signal on the shelf as the locked transaction sees
+ * it (the five entity_* columns only; that row is the signal's own decision).
  */
 async function applyVerdict(
   db: Pool,
@@ -291,7 +280,7 @@ async function applyVerdict(
         );
       }
       await client.query(`update atlas.shelves set status = 'retired' where id = $1`, [proposed.id]);
-      await insertReviewsOnClient(client, proposed.id, signalIds, decision, aliasTargetId, true, o, reason);
+      await recordVerdict(client, signalIds, decision, aliasTargetId, o, reason);
       await client.query('commit');
       return 'applied';
     } catch (e) {
@@ -307,38 +296,25 @@ function slugsUnique(slugs: string[]): string[] {
   return [...new Set(slugs)];
 }
 
-/** The review rows behind one verdict: one row per distinct signal on the shelf. */
-async function insertReviews(
-  db: Pool,
-  shelfId: string,
-  signalIds: string[],
-  outcome: 'alias' | 'reject' | 'new',
-  aliasTargetId: string | null,
-  applied: boolean,
-  o: EntityManagerOptions,
-  reason: string,
-): Promise<void> {
-  await insertReviewsOnClient(db, shelfId, signalIds, outcome, aliasTargetId, applied, o, reason);
-}
-
-async function insertReviewsOnClient(
+/**
+ * The verdict behind one review: stamped onto the signals' existing atlas.decisions rows —
+ * the five entity_* columns only, one update per reviewed signal (alias_target_id set for
+ * alias, null otherwise).
+ */
+async function recordVerdict(
   client: Pick<Pool, 'query'>,
-  shelfId: string,
   signalIds: string[],
   outcome: 'alias' | 'reject' | 'new',
   aliasTargetId: string | null,
-  applied: boolean,
   o: EntityManagerOptions,
   reason: string,
 ): Promise<void> {
   await client.query(
-    `insert into atlas.entity_reviews
-       (shelf_id, signal_id, decision_id, outcome, alias_target_id, applied, decided_by, model_name, reason)
-     select $1, signal_ids.signal_id,
-            (select d.id from atlas.decisions d where d.signal_id = signal_ids.signal_id order by d.id desc limit 1),
-            $2, $3, $4, 'entity-manager', $5, $6
-       from unnest($7::text[]) as signal_ids (signal_id)`,
-    [shelfId, outcome, aliasTargetId, applied, o.modelName, reason, signalIds],
+    `update atlas.decisions
+        set entity_outcome = $1, entity_alias_target_id = $2, entity_reviewed_at = now(),
+            entity_model_name = $3, entity_reason = $4
+      where signal_id = any($5::text[])`,
+    [outcome, aliasTargetId, o.modelName, reason, signalIds],
   );
 }
 

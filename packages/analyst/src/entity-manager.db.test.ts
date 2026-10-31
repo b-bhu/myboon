@@ -1,15 +1,19 @@
 /**
  * #480 the timed entity manager, on a throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL). The job
- * pool runs as service_role (the role the PM2 entry will use), the DB role checks mirror
- * runner.db.test.ts acting as analyst_worker, and the LLM is scripted. What this pins:
+ * pool runs as entity_worker (the PM2 entry's login role, #534) with the decisions grants from the
+ * approved entity_reviews drop (ENTITY_DECISIONS_SCHEMA below), the DB role checks mirror
+ * runner.db.test.ts acting as analyst_worker, and the LLM is scripted. Verdicts are recorded on the
+ * analyst's own atlas.decisions row per signal (entity_* columns, UPDATE only); atlas.entity_reviews
+ * no longer exists. What this pins:
  *   - alias: 1 transaction moves the proposed shelf's items to the active target (skipping any item
  *     whose (signal_id, target) already exists, so that item stays put), appends the proposed slug
- *     to the target aliases once, retires the shelf, and writes one entity_reviews row per distinct
- *     signal (applied=true, decision linked, alias_target_id set);
- *   - reject: shelf retired, items stay, applied=true rows; the existing drop-at-filing behaviour
+ *     to the target aliases once, retires the shelf, and each distinct
+ *     signal's decisions row gets entity_outcome 'alias' + entity_alias_target_id;
+ *   - reject: shelf retired, items stay, entity_outcome 'reject'; the existing drop-at-filing behaviour
  *     still drops a kind-new filing for the retired slug (d36-worker.ts is untouched);
- *   - new: shelf stays proposed with applied=false rows; the next run makes NO LLM call for it
- *     until a new item lands there, then it is reviewed again;
+ *   - new: shelf stays proposed with entity_outcome 'new'; a shelf is only selected while one of its
+ *     signals has a null entity_reviewed_at, so the next run makes NO LLM call for it until a new
+ *     (unreviewed) signal lands there, then it is reviewed again;
  *   - invalid JSON, unknown or non-active alias_of, LLM error and LLM timeout change nothing and
  *     log entity_review_failed;
  *   - a quota guard stop makes no LLM call (stop_reason 'quota'); maxShelves truncates (stop_reason
@@ -30,6 +34,36 @@ import { createQuotaGuard } from './ollama-quota.js';
 import type { ChatMessage, Llm } from './session.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
+
+/**
+ * TEMPORARY test schema for the approved #480 change (CTO, Oct 31): the five entity_* columns on
+ * atlas.decisions, entity_worker's grant swap and update policy, then the entity_reviews drop.
+ * DB Guy's migration PR was not open yet when this was written, so this mirrors the approved
+ * columns exactly and is idempotent (a no-op once his migration is in the chain). Remove it when
+ * his migration merges and this branch is rebased.
+ */
+const ENTITY_DECISIONS_SCHEMA = `
+  alter table atlas.decisions
+    add column if not exists entity_outcome text null,
+    add column if not exists entity_alias_target_id uuid null references atlas.shelves (id),
+    add column if not exists entity_reviewed_at timestamptz null,
+    add column if not exists entity_model_name text null,
+    add column if not exists entity_reason text null;
+  do $$ begin
+    if not exists (select 1 from pg_constraint where conname = 'decisions_entity_outcome_check') then
+      alter table atlas.decisions add constraint decisions_entity_outcome_check
+        check (entity_outcome in ('alias', 'reject', 'new'));
+    end if;
+  end $$;
+  grant select (id, signal_id, entity_outcome, entity_reviewed_at) on atlas.decisions to entity_worker;
+  grant update (entity_outcome, entity_alias_target_id, entity_reviewed_at, entity_model_name, entity_reason)
+    on atlas.decisions to entity_worker;
+  -- Any UPDATE re-checks decisions_targets_valid, which calls this validator with invoker rights.
+  grant execute on function atlas.analyst_targets_valid(jsonb) to entity_worker;
+  drop policy if exists entity_worker_update on atlas.decisions;
+  create policy entity_worker_update on atlas.decisions for update to entity_worker using (true) with check (true);
+  drop table if exists atlas.entity_reviews cascade;
+`;
 
 /**
  * Scripted LLM; the reply may be a string, an Error, or per-prompt text. `onCall` runs while the
@@ -62,10 +96,10 @@ const rejectReply = (reason = 'not a real entity'): string =>
 const newReply = (reason = 'deserves its own entity'): string =>
   JSON.stringify({ decision: 'new', alias_of: null, reason });
 
-describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, service_role role)', () => {
+describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, entity_worker role)', () => {
   let db: ThrowawayDatabase;
   let pool: PoolType;
-  let svcPool: PoolType;
+  let emPool: PoolType;
   let workerPool: PoolType;
 
   const rolePoolFor = (url: string, role: string): PoolType => {
@@ -78,7 +112,7 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
     return { events, log: (e: Record<string, unknown>) => { events.push(e); } };
   };
   const review = (llm: Llm, o: Partial<EntityManagerOptions> = {}) =>
-    reviewProposedShelves(svcPool, { llm, modelName: 'glm-5.3-flash', maxShelves: 40, timeoutMs: 1_000, log: () => {}, ...o });
+    reviewProposedShelves(emPool, { llm, modelName: 'glm-5.3-flash', maxShelves: 40, timeoutMs: 1_000, log: () => {}, ...o });
 
   const seedShelf = async (slug: string, o: { status?: string; name?: string; aliases?: string[] } = {}) => {
     await pool.query('insert into atlas.shelves (slug, name, type, aliases, status) values ($1, $2, $3, $4, $5)', [
@@ -114,8 +148,15 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
   };
   const shelfStatus = async (slug: string): Promise<string> =>
     (await pool.query<{ status: string }>('select status from atlas.shelves where slug = $1', [slug])).rows[0]!.status;
+  /** Signals whose decisions row carries an entity verdict. */
   const reviewCount = async (): Promise<number> =>
-    (await pool.query<{ n: number }>('select count(*)::int n from atlas.entity_reviews')).rows[0]!.n;
+    (await pool.query<{ n: number }>('select count(*)::int n from atlas.decisions where entity_reviewed_at is not null')).rows[0]!.n;
+  const verdicts = async () =>
+    (await pool.query<{ signal_id: string; entity_outcome: string | null; entity_alias_target_id: string | null;
+      entity_model_name: string | null; entity_reason: string | null; reviewed: boolean; decision: string; reason: string }>(
+      `select signal_id, entity_outcome, entity_alias_target_id, entity_model_name, entity_reason,
+              entity_reviewed_at is not null as reviewed, decision, reason
+         from atlas.decisions order by signal_id`)).rows;
   const itemHomes = async (signalIds: string[]) =>
     (await pool.query<{ signal_id: string; slug: string }>(
       'select signal_id, (select slug from atlas.shelves where id = main_shelf_id) slug from atlas.items where signal_id = any($1) order by signal_id, slug',
@@ -127,21 +168,19 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
     // entity_reviews until Backend Dev's #539 moves it to atlas.decisions and removes the pin.
     db = await createThrowawayDatabase(ADMIN_URL, { before: '20261031090000' });
     pool = new Pool({ connectionString: db.url, max: 2 });
-    svcPool = rolePoolFor(db.url, 'service_role');
+    await pool.query(ENTITY_DECISIONS_SCHEMA);
+    emPool = rolePoolFor(db.url, 'entity_worker');
     workerPool = rolePoolFor(db.url, 'analyst_worker');
   });
   afterAll(async () => {
     await workerPool?.end();
-    await svcPool?.end();
+    await emPool?.end();
     await pool?.end();
     await db?.drop();
   });
   beforeEach(async () => {
     await pool.query('truncate atlas.item_signals, atlas.items, atlas.decisions, atlas.signals cascade');
     await pool.query('delete from atlas.shelves');
-    if ((await pool.query("select to_regclass('atlas.entity_reviews') is not null as ok")).rows[0]?.ok) {
-      await pool.query('truncate atlas.entity_reviews cascade');
-    }
     // The active target present in every test: slug 'kalshi' with alias 'Kalshi Inc', which the
     // shortlist terms (slug with '-' -> ' ') match, so the model can alias onto it.
     await seedShelf('kalshi', { name: 'Kalshi', aliases: ['Kalshi Inc'] });
@@ -174,17 +213,12 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
     expect((await pool.query<{ aliases: string[] }>("select aliases from atlas.shelves where slug = 'kalshi'")).rows[0]!.aliases)
       .toEqual(['Kalshi Inc', 'kalshi-inc']);
     expect(await shelfStatus('kalshi-inc')).toBe('retired');
-    const reviews = (await pool.query<{ signal_id: string; outcome: string; alias_target_id: string; applied: boolean;
-      decided_by: string; model_name: string; reason: string; linked: boolean }>(
-      `select r.signal_id, r.outcome, r.alias_target_id, r.applied, r.decided_by, r.model_name, r.reason,
-              r.decision_id = (select id from atlas.decisions d where d.signal_id = r.signal_id) as linked
-         from atlas.entity_reviews r
-        where r.shelf_id = (select id from atlas.shelves where slug = 'kalshi-inc')
-        order by r.signal_id`)).rows;
-    expect(reviews).toHaveLength(2);
-    for (const r of reviews) {
-      expect(r).toMatchObject({ outcome: 'alias', alias_target_id: xId, applied: true, decided_by: 'entity-manager',
-        model_name: 'glm-5.3-flash', reason: 'same entity', linked: true });
+    // One verdict per signal, on the analyst's own decisions row; the analyst fields are untouched.
+    const rows = await verdicts();
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r).toMatchObject({ entity_outcome: 'alias', entity_alias_target_id: xId, entity_model_name: 'glm-5.3-flash',
+        entity_reason: 'same entity', reviewed: true, decision: 'keep', reason: 'kept' });
     }
     expect(events.filter((e) => e['event'] === 'entity_manager_run')).toHaveLength(1);
   });
@@ -201,12 +235,9 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
       { signal_id: 's1', slug: 'kalshi-inc' },
       { signal_id: 's2', slug: 'kalshi-inc' },
     ]);
-    const rows = (await pool.query<{ outcome: string; applied: boolean; alias_target_id: string | null }>(
-      'select outcome, applied, alias_target_id from atlas.entity_reviews order by signal_id',
-    )).rows;
-    expect(rows).toEqual([
-      { outcome: 'reject', applied: true, alias_target_id: null },
-      { outcome: 'reject', applied: true, alias_target_id: null },
+    expect((await verdicts()).map((r) => [r.signal_id, r.entity_outcome, r.entity_alias_target_id, r.reviewed])).toEqual([
+      ['s1', 'reject', null, true],
+      ['s2', 'reject', null, true],
     ]);
 
     // Existing d36-worker behaviour is preserved: a later kind-new target for the now-retired
@@ -231,7 +262,7 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
     expect(await shelfStatus('kalshi-inc')).toBe('retired');
   });
 
-  it('new: the shelf stays proposed with applied=false rows; reruns make no LLM call until a new item lands', async () => {
+  it('new: the shelf stays proposed with entity_outcome new; reruns make no LLM call until an unreviewed signal lands', async () => {
     await seedProposed('kalshi-inc', { signals: ['s1'] });
 
     const llm1 = scriptedLlm(newReply());
@@ -239,15 +270,17 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
     expect(run1).toEqual({ reviewed: 1, aliased: 0, rejected: 0, kept_new: 1, skipped: 0, failed: 0, llm_calls: 1, stop_reason: 'idle' });
     expect(await shelfStatus('kalshi-inc')).toBe('proposed');
     expect(await itemHomes(['s1'])).toEqual([{ signal_id: 's1', slug: 'kalshi-inc' }]);
-    expect((await pool.query<{ outcome: string; applied: boolean }>('select outcome, applied from atlas.entity_reviews')).rows)
-      .toEqual([{ outcome: 'new', applied: false }]);
+    expect((await verdicts()).map((r) => [r.signal_id, r.entity_outcome, r.entity_reason])).toEqual([
+      ['s1', 'new', 'deserves its own entity'],
+    ]);
+    const firstStamp = (await pool.query<{ t: Date }>("select entity_reviewed_at t from atlas.decisions where signal_id = 's1'")).rows[0]!.t;
 
-    // Second run: the latest review row is outcome 'new' and nothing newer landed -> no LLM call.
+    // Second run: every signal on the shelf already has entity_reviewed_at -> not selected, no LLM call.
     const llm2 = scriptedLlm(newReply());
     const run2 = await review(llm2);
-    expect(run2).toEqual({ reviewed: 0, aliased: 0, rejected: 0, kept_new: 0, skipped: 1, failed: 0, llm_calls: 0, stop_reason: 'idle' });
+    expect(run2).toEqual({ reviewed: 0, aliased: 0, rejected: 0, kept_new: 0, skipped: 0, failed: 0, llm_calls: 0, stop_reason: 'idle' });
     expect(llm2.calls).toBe(0);
-    expect(await reviewCount()).toBe(1); // no new rows from the skipped run
+    expect(await reviewCount()).toBe(1);
 
     // A new item lands on the shelf: the next run reviews it again.
     await seedSignal('s2', { onShelf: 'kalshi-inc' });
@@ -255,8 +288,10 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
     const run3 = await review(llm3);
     expect(run3).toEqual({ reviewed: 1, aliased: 0, rejected: 0, kept_new: 1, skipped: 0, failed: 0, llm_calls: 1, stop_reason: 'idle' });
     expect(llm3.calls).toBe(1);
-    expect(await reviewCount()).toBe(3); // run 1 wrote one row per signal (s1); run 3 wrote s1 + s2
-    expect((await pool.query<{ n: number }>("select count(*)::int n from atlas.entity_reviews where signal_id = 's2'")).rows[0]!.n).toBe(1);
+    expect(await reviewCount()).toBe(2); // s1 re-stamped, s2 stamped: one verdict per signal
+    expect((await verdicts()).map((r) => [r.signal_id, r.entity_outcome])).toEqual([['s1', 'new'], ['s2', 'new']]);
+    const secondStamp = (await pool.query<{ t: Date }>("select entity_reviewed_at t from atlas.decisions where signal_id = 's1'")).rows[0]!.t;
+    expect(secondStamp.getTime()).toBeGreaterThanOrEqual(firstStamp.getTime());
   });
 
   it('invalid JSON: nothing changes, the failure is logged and the run continues', async () => {
@@ -381,5 +416,20 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, serv
     expect((await pool.query<{ aliases: string[] }>("select aliases from atlas.shelves where slug = 'kalshi'")).rows[0]!.aliases)
       .toEqual(xAliasesBefore);
     expect(events).not.toContainEqual(expect.objectContaining({ event: 'entity_review_failed' }));
+  });
+
+  it('atlas.entity_reviews is gone and a proposed shelf with no unreviewed signal is never sent', async () => {
+    expect((await pool.query("select to_regclass('atlas.entity_reviews') is null as gone")).rows[0]!.gone).toBe(true);
+    await seedShelf('empty-proposed', { status: 'proposed' }); // no items, so no signal to review
+    await seedProposed('kalshi-inc', { signals: ['s1'] });
+    await pool.query("update atlas.decisions set entity_outcome = 'new', entity_reviewed_at = now() where signal_id = 's1'");
+    const llm = scriptedLlm(rejectReply());
+
+    const s = await review(llm);
+
+    expect(s).toEqual({ reviewed: 0, aliased: 0, rejected: 0, kept_new: 0, skipped: 0, failed: 0, llm_calls: 0, stop_reason: 'idle' });
+    expect(llm.calls).toBe(0);
+    expect(await shelfStatus('empty-proposed')).toBe('proposed');
+    expect(await shelfStatus('kalshi-inc')).toBe('proposed');
   });
 });
