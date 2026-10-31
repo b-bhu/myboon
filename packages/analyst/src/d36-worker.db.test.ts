@@ -482,6 +482,40 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       ]);
     });
 
+    it('a kind new target on a brand-new slug that only an active shelf aliases files there with a target_redirected log, no proposed shelf (#480)', async () => {
+      await addSignal('sig-480-d5', '2026-10-30T09:00:00.000Z');
+      await pool.query(
+        'insert into atlas.shelves (slug, name, type, status, aliases) values ($1, $2, $3, $4, $5)',
+        ['alias-only-home', 'Alias Only Home', 'organization', 'active', ['alias-only-slug']],
+      );
+      const redirects: Record<string, unknown>[] = [];
+      await new PgDecisionSink(svcPool, (e: Record<string, unknown>) => { redirects.push(e); })
+        .save(out('sig-480-d5', [tgt('alias-only-slug', 'new', 'organization', 'new_story')]));
+      expect((await pool.query('select 1 from atlas.shelves where slug = $1', ['alias-only-slug'])).rows).toHaveLength(0);
+      expect((await itemsOf('alias-only-home')).rows).toHaveLength(1);
+      expect(redirects).toEqual([
+        { event: 'target_redirected', signal_id: 'sig-480-d5', entity: 'alias-only-slug', shelf: 'alias-only-home',
+          reason: 'no shelf alias-only-slug; alias of alias-only-home, filed there' },
+      ]);
+    });
+
+    it('the alias-only redirect runs with allowNewEntities false too (#480)', async () => {
+      await addSignal('sig-480-d6', '2026-10-30T09:00:00.000Z');
+      await pool.query(
+        'insert into atlas.shelves (slug, name, type, status, aliases) values ($1, $2, $3, $4, $5)',
+        ['alias-only-home-391', 'Alias Only Home 391', 'organization', 'active', ['alias-only-391']],
+      );
+      const redirects: Record<string, unknown>[] = [];
+      await new PgDecisionSink(svcPool, (e: Record<string, unknown>) => { redirects.push(e); }, { allowNewEntities: false })
+        .save(out('sig-480-d6', [tgt('alias-only-391', 'new', 'organization', 'new_story')]));
+      expect((await pool.query('select 1 from atlas.shelves where slug = $1', ['alias-only-391'])).rows).toHaveLength(0);
+      expect((await itemsOf('alias-only-home-391')).rows).toHaveLength(1);
+      expect(redirects).toEqual([
+        { event: 'target_redirected', signal_id: 'sig-480-d6', entity: 'alias-only-391', shelf: 'alias-only-home-391',
+          reason: 'no shelf alias-only-391; alias of alias-only-home-391, filed there' },
+      ]);
+    });
+
     it('a kind new target on an active slug files on that shelf with a target_reclassified log (#511)', async () => {
       await addSignal('sig-482-f', '2026-10-30T09:00:00.000Z');
       const logs: Record<string, unknown>[] = [];
