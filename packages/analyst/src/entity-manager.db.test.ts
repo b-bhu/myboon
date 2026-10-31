@@ -59,6 +59,16 @@ function scriptedLlm(
   return llm;
 }
 
+/**
+ * TEMPORARY test schema: atlas.shelves.entity_reviewed_at (CTO, Oct 31) is being added to #538 by
+ * DB Guy but isn't on its head yet. Idempotent, so it's a no-op once his migration has it.
+ * Remove when #538 carries the column.
+ */
+const SHELVES_REVIEWED_AT_SCHEMA = `
+  alter table atlas.shelves add column if not exists entity_reviewed_at timestamptz null;
+  grant select (entity_reviewed_at), update (entity_reviewed_at) on atlas.shelves to entity_worker;
+`;
+
 const aliasReply = (slug: string, reason = 'same entity'): string =>
   JSON.stringify({ decision: 'alias', alias_of: slug, reason });
 const rejectReply = (reason = 'not a real entity'): string =>
@@ -136,6 +146,7 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
     pool = new Pool({ connectionString: db.url, max: 2 });
+    await pool.query(SHELVES_REVIEWED_AT_SCHEMA);
     emPool = rolePoolFor(db.url, 'entity_worker');
     workerPool = rolePoolFor(db.url, 'analyst_worker');
   });
@@ -359,6 +370,29 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
     ]);
     expect(await reviewCount()).toBe(1);
     expect(events).toContainEqual(expect.objectContaining({ event: 'entity_manager_run', stop_reason: 'max' }));
+  });
+
+  it('two proposed shelves sharing one signal, cap 1: both are reviewed across two runs', async () => {
+    await seedProposed('aaa-shared', { signals: ['shared-s1'] });
+    await seedShelf('bbb-shared', { status: 'proposed' });
+    await pool.query(
+      `insert into atlas.items (item_key, title, main_shelf_id, signal_id, angle, note)
+       select 'shared-s1:bbb-shared', 'On bbb-shared', s.id, 'shared-s1', 'new_story', 'note' from atlas.shelves s where s.slug = 'bbb-shared'`,
+    );
+    const llm = scriptedLlm(newReply());
+    const first = await review(llm, { maxShelves: 1 });
+    expect(first.reviewed).toBe(1);
+    const second = await review(llm, { maxShelves: 1 });
+    expect(second.reviewed).toBe(1);
+    expect(llm.calls).toBe(2);
+    expect(llm.prompts.some((p) => p.includes('aaa-shared'))).toBe(true);
+    expect(llm.prompts.some((p) => p.includes('bbb-shared'))).toBe(true);
+    const stamped = (await pool.query<{ slug: string }>(
+      "select slug from atlas.shelves where entity_reviewed_at is not null order by slug")).rows.map((r) => r.slug);
+    expect(stamped).toEqual(['aaa-shared', 'bbb-shared']);
+    const third = await review(llm, { maxShelves: 1 });
+    expect(third.reviewed).toBe(0);
+    expect(llm.calls).toBe(2);
   });
 
   it('a shelf that is no longer proposed at apply time (race) is skipped without any writes', async () => {
