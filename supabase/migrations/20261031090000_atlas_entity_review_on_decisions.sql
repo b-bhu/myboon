@@ -1,4 +1,4 @@
--- squawk-ignore-file ban-drop-table, ban-drop-function, prefer-robust-stmts
+-- squawk-ignore-file ban-drop-table, ban-drop-function, prefer-robust-stmts, require-concurrent-index-creation
 -- #480 / #537: the entity manager records its verdict on atlas.decisions instead of a separate
 -- audit table. entity_worker gets NO insert on decisions (CTO), only column select/update.
 --   1. Add nullable entity_* columns to atlas.decisions (FK added NOT VALID, then validated).
@@ -9,10 +9,10 @@
 --   4. Drop atlas.decision_queue, atlas.dead_letter (0 rows each) and the 4 queue_* functions.
 -- History: decisions_history (AFTER INSERT/UPDATE/DELETE, atlas.write_history uses to_jsonb(new))
 -- records the new columns on UPDATE with no change.
--- NOT one transaction: VALIDATE and CREATE INDEX CONCURRENTLY run on their own. Apply statement
--- by statement (psql -f), not through apply_migration's single transaction. Every step is rerunnable.
--- DO NOT APPLY until Backend Dev's entity manager PR is deployed: the current worker writes
--- atlas.entity_reviews and would break.
+-- Steps: columns + FK NOT VALID, VALIDATE, two plain indexes (decisions is ~2k rows, the SHARE lock
+-- is brief; lock_timeout 5s / statement_timeout 60s), then grants/policy/drops. Every step is rerunnable.
+-- Deploy order: deploy #539 (entity manager stays STOPPED), apply this, then start the entity manager.
+-- DO NOT APPLY before #539 is merged and deployed: the current worker writes atlas.entity_reviews.
 -- Rollback: supabase/rollbacks/20261031090000_atlas_entity_review_on_decisions.down.sql
 
 -- 1. columns (catalog-only: nullable, no defaults) + FK NOT VALID
@@ -43,13 +43,12 @@ set lock_timeout = '5s';
 set statement_timeout = '60s';
 alter table atlas.decisions validate constraint decisions_entity_alias_target_id_fkey;
 
--- index for the FK (shelf deletes / alias lookups); concurrently, outside a transaction
-set statement_timeout = '0';
-create index concurrently if not exists decisions_entity_alias_target_id_idx
+-- index for the FK (shelf deletes / alias lookups); plain create index, table is ~2k rows
+create index if not exists decisions_entity_alias_target_id_idx
   on atlas.decisions (entity_alias_target_id) where entity_alias_target_id is not null;
 -- Partial index for the "not yet reviewed" lookup. Local EXPLAIN ANALYZE, 2,000 rows (prod has
 -- ~2,000), oldest 90% reviewed: 0.44 ms (seq scan + sort) without it, 0.034 ms with it.
-create index concurrently if not exists decisions_entity_unreviewed_idx
+create index if not exists decisions_entity_unreviewed_idx
   on atlas.decisions (id) where entity_reviewed_at is null;
 
 -- 2-4. grants, policy, drops
