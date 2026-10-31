@@ -21,22 +21,23 @@ declare const require: (moduleId: string) => unknown;
 
 type ReducedMotionHook = () => boolean;
 
-let useReducedMotionHook: ReducedMotionHook | null = null;
+let resolvedHook: ReducedMotionHook | null = null;
 try {
   const reducedMotionModule = require('../../use-reduced-motion') as {
     useReducedMotion?: ReducedMotionHook;
   };
-  useReducedMotionHook =
+  resolvedHook =
     typeof reducedMotionModule?.useReducedMotion === 'function'
       ? reducedMotionModule.useReducedMotion
       : null;
 } catch {
-  useReducedMotionHook = null;
+  resolvedHook = null;
 }
 
-function useMaybeReducedMotion(): boolean {
-  return useReducedMotionHook ? useReducedMotionHook() : false;
-}
+// Resolved to a non-null constant at module scope so the component calls this
+// hook unconditionally on every render (react-hooks/rules-of-hooks).
+const noReducedMotion: ReducedMotionHook = () => false;
+const useMaybeReducedMotion: ReducedMotionHook = resolvedHook ?? noReducedMotion;
 
 const CLOSE_DRAG_DISTANCE = 80;
 const CLOSE_DRAG_VELOCITY = 0.8;
