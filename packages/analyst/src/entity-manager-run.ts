@@ -1,12 +1,12 @@
 /**
  * #480 CLI entry: the ENTITY_MANAGER_ENABLED gate, then the timed entity
- * manager reviews every proposed shelf once and exits. ENTITY_MANAGER_DATABASE_URL
+ * manager reviews every proposed entity once and exits. ENTITY_MANAGER_DATABASE_URL
  * and OLLAMA_API_KEY are read from the environment and NEVER logged.
  */
 import { runGatedStage } from '@myboon/shared/v4-runtime';
 import { Pool } from 'pg';
 
-import { reviewProposedShelves } from './entity-manager.js';
+import { reviewProposedEntities } from './entity-manager.js';
 import { parseEntityManagerConfig } from './entity-manager-config.js';
 import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { createOllamaLlm } from './session.js';
@@ -20,10 +20,10 @@ runGatedStage({
     const c = parseEntityManagerConfig(process.env);
     const pool = new Pool({ ...analystPoolConfig(c.databaseUrl, loadAnalystDatabaseCa(process.env)), max: 2 });
     try {
-      await reviewProposedShelves(pool, {
+      await reviewProposedEntities(pool, {
         llm: createOllamaLlm({ apiKey: c.ollamaApiKey, model: c.llmModel, timeoutMs: c.timeoutMs }),
         modelName: c.llmModel,
-        maxShelves: c.maxShelves,
+        maxEntities: c.maxEntities,
         quota: createQuotaGuard({ read: () => readOllamaQuota(c.ollamaApiKey) }),
         timeoutMs: c.timeoutMs,
         // entity_manager_run / entity_review_failed land on stdout as JSON lines, like the analyst.

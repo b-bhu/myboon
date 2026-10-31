@@ -1,7 +1,7 @@
 /**
  * Issue #479 acceptance scenarios: one analyst job (Linker + Story) on the #478
- * claim, decider slot and decision provenance. Throwaway LOCAL Postgres; shelves are
- * the entities and items their raw items; Jev/Clef are scripted and answer from the
+ * claim, decider slot and decision provenance. Throwaway LOCAL Postgres; the active
+ * entities and their raw items; Jev/Clef are scripted and answer from the
  * case they are shown. Assertions read DB state.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -54,7 +54,7 @@ const linkTo = (slug: string, title: RegExp, p = 0.95): Answerer => (c) => {
 describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => {
   let db: ThrowawayDatabase;
   let pool: Pool;
-  const shelf: Record<string, string> = {};
+  const entity: Record<string, string> = {};
   const item: Record<string, string> = {};
   const target = newsSampleSignals[0].signal_id;
   const rules: RoutingRule[] = [{ tokenSlug: 'uni-token', projectSlug: 'uniswap', routeTo: 'uniswap' }];
@@ -72,14 +72,14 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
   const decisions = async () => (await pool.query('select * from atlas.decisions where signal_id = $1', [target])).rows;
   const setText = (text: string) => pool.query('update atlas.signals set text = $2, excerpt = null where signal_id = $1', [target, text]);
 
-  async function addShelf(slug: string, aliases: string[], type = 'asset') {
-    const r = await pool.query(`insert into atlas.shelves (slug, name, type, aliases) values ($1,$1,$2,$3) returning id`, [slug, type, aliases]);
-    shelf[slug] = r.rows[0].id;
+  async function addEntity(slug: string, aliases: string[], type = 'asset') {
+    const r = await pool.query(`insert into atlas.entities (slug, name, type, aliases) values ($1,$1,$2,$3) returning id`, [slug, type, aliases]);
+    entity[slug] = r.rows[0].id;
   }
   async function addItem(key: string, slug: string, title: string, daysAgo: number) {
     const r = await pool.query(
-      `insert into atlas.items (item_key, title, main_shelf_id, occurred_at) values ($1,$2,$3, now() - make_interval(secs => $4)) returning id`,
-      [key, title, shelf[slug], daysAgo * DAY / 1000]);
+      `insert into atlas.entity_items (item_key, title, main_entity_id, occurred_at) values ($1,$2,$3, now() - make_interval(secs => $4)) returning id`,
+      [key, title, entity[slug], daysAgo * DAY / 1000]);
     item[key] = r.rows[0].id;
   }
 
@@ -89,14 +89,14 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
   });
   afterAll(async () => { await pool?.end(); await db?.drop(); });
   beforeEach(async () => {
-    await pool.query('truncate atlas.item_signals, atlas.decisions, atlas.signals, atlas.items, atlas.shelves cascade');
+    await pool.query('truncate atlas.item_signals, atlas.decisions, atlas.signals, atlas.entity_items, atlas.entities cascade');
     for (const s of newsSampleSignals) {
       await pool.query(
         `insert into atlas.signals (signal_id, schema_version, source, source_id, type, text, link, occurred_at, next_attempt_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8, case when $1 = $9 then now() else now() + interval '1 hour' end)`,
         [s.signal_id, s.schema_version, s.source, s.source_id, s.type, s.text, s.link, s.occurred_at, target]);
     }
-    await addShelf('xrp', ['XRP', 'Ripple']);
+    await addEntity('xrp', ['XRP', 'Ripple']);
     await addItem('xrp-sec', 'xrp', 'SEC v Ripple: court schedule', 22);
     for (let i = 0; i < 5; i++) await addItem(`xrp-price-${i}`, 'xrp', `XRP price move ${i}`, i + 0.5);
   });
@@ -113,9 +113,9 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
   });
 
   it('$UNI/Uniswap routing rule is applied before the cap of 5 and the shortlist follows it', async () => {
-    await addShelf('uni-token', ['$UNI', 'UNI token']);
-    await addShelf('uniswap', ['Uniswap', '$UNI'], 'protocol');
-    for (const s of ['aave', 'curve', 'lido', 'maker', 'compound']) await addShelf(s, [s]);
+    await addEntity('uni-token', ['$UNI', 'UNI token']);
+    await addEntity('uniswap', ['Uniswap', '$UNI'], 'protocol');
+    for (const s of ['aave', 'curve', 'lido', 'maker', 'compound']) await addEntity(s, [s]);
     await setText('$UNI and UNI token rally as Uniswap fee switch passes; aave, curve, lido, maker and compound follow');
     const jev = story('jev', linkTo('uniswap', /never/));
     await processNext(pool, opts({ primary: jev, fallback: story('clef', 'error'), shadow: story('clef', 'error') }));
@@ -141,7 +141,7 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
   });
 
   it('entity and item picks that disagree park the signal (top choice is off the most likely entity)', async () => {
-    await addShelf('ripple-labs', ['Ripple'], 'organization');
+    await addEntity('ripple-labs', ['Ripple'], 'organization');
     await addItem('rl-cfo', 'ripple-labs', 'Ripple Labs hires a CFO', 2);
     await setText('Ripple XRP SEC news');
     // Top single choice is the xrp SEC item (0.4), but ripple-labs holds 0.6 in total.
@@ -196,6 +196,15 @@ describe.skipIf(ADMIN_URL === '')('#479 Linker + Story (local Postgres)', () => 
     expect(d).toMatchObject({ outcome: 'decided', decided_by: 'jev', shadow_outcome: 'decided', prompt_version: 'story-479-v1' });
     expect(d.shadow_answer).toEqual({ choice: `xrp/${item['xrp-price-0']}` });
     expect(await sig()).toMatchObject({ status: 'analysed' });
+  });
+
+  it('a keep pick writes the linked entity into the decisions row entities array (via the finish payload, #541)', async () => {
+    await setText('Ripple XRP SEC news');
+    await processNext(pool, opts({ primary: story('jev', linkTo('xrp', /SEC/)), fallback: story('clef', 'error'), shadow: story('clef', 'error') }));
+    const [d] = await decisions();
+    // The Linker+Story decision payload carries `entities` through atlas.signal_finish
+    // onto atlas.decisions.entities; a file pick always names its one linked entity.
+    expect(d.entities).toEqual([{ entity_id: entity['xrp'], slug: 'xrp' }]);
   });
 
   it('no alias match: parked no_match without a decider call (the no-match path is the next issue)', async () => {

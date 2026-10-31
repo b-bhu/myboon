@@ -13,26 +13,26 @@ const decisionFields = {
   confidence: z.number().min(0).max(1),
 };
 
-const shelfSchema = z.object({
-  shelf_id: z.uuid(),
-  role: z.union([z.literal('main'), z.literal('also_affects')]),
+const entitySchema = z.object({
+  entity_id: z.uuid(),
+  role: z.literal('main'),
 });
 
-const shelvesSchema = z
-  .array(shelfSchema)
+const entitiesSchema = z
+  .array(entitySchema)
   .min(1)
-  .refine((shelves) => shelves.filter((shelf) => shelf.role === 'main').length === 1, {
-    message: 'exactly one shelf must have role main',
+  .refine((entities) => entities.filter((entity) => entity.role === 'main').length === 1, {
+    message: 'exactly one entity must have role main',
   })
   .refine(
-    (shelves) => new Set(shelves.map((shelf) => shelf.shelf_id)).size === shelves.length,
-    { message: 'shelf_id must not be duplicated' },
+    (entities) => new Set(entities.map((entity) => entity.entity_id)).size === entities.length,
+    { message: 'entity_id must not be duplicated' },
   );
 
 const fileDecisionSchemaBase = z.object({
   decision_type: z.literal('file'),
   ...decisionFields,
-  shelves: shelvesSchema,
+  entities: entitiesSchema,
   /** null = the signal does not map to an existing item (file to a new one). */
   target_item_id: z.uuid().nullable(),
   item_key: z.string().min(1),

@@ -1,26 +1,26 @@
 /**
  * #504 D36 analyst session, pure (no DB). The LLM and Jev are scripted; the entity search runs over the spike's
- * read-only shelves snapshot subset. Scenarios from the issue's acceptance list.
+ * read-only entity snapshot subset. Scenarios from the issue's acceptance list.
  */
 import { describe, expect, it } from 'vitest';
 
-import { SHELF_TYPES } from '@myboon/contracts';
+import { ENTITY_TYPES } from '@myboon/contracts';
 
 import {
   KEEP_QUESTION,
   SYSTEM_PROMPT,
   canonicalSlug,
   createOllamaLlm,
-  isShelfType,
+  isEntityType,
   runSession,
-  searchShelves,
+  searchEntities,
   type Ask,
   type AskInput,
   type ChatMessage,
   type JevLogEntry,
   type Llm,
 } from './session.js';
-import { spikeCases, spikeShelves } from './test-fixtures/d36-spike.js';
+import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 
 type Mention = { name: string; type: string; search_terms: string[] };
 
@@ -53,7 +53,7 @@ function scriptedJev(o: { keep: string; existence?: Record<string, string>; angl
   return ask;
 }
 
-const search = async (terms: string[]) => searchShelves(terms, spikeShelves);
+const search = async (terms: string[]) => searchEntities(terms, spikeEntities);
 
 /** Per spike case: the mentions the scripted LLM lists (names from the v5 Jev questions, search terms scripted). */
 const MENTIONS: Record<string, Mention[]> = {
@@ -120,11 +120,11 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
       const llm = scriptedLlm(keepReplies(c.v5.summary, mentions, kept));
       const out = await runSession(c.signal, { llm, ask: scriptedJev(jev), search });
       expect(out.decision).toBe(c.v5.decision);
-      // Strict type rules: an existing target carries the shelf's own type; a kept new target with a
-      // non-shelf type is dropped like not_related (the v5 fixtures classed Jersey/ADGM 'jurisdiction').
+      // Strict type rules: an existing target carries the entity's own type; a kept new target with a
+      // non-entity type is dropped like not_related (the v5 fixtures classed Jersey/ADGM 'jurisdiction').
       const want = c.v5.targets.flatMap((t): { entity: string; kind: 'existing' | 'new'; type: string; angle: string }[] => {
-        if (t.kind === 'existing') return [{ entity: t.entity, kind: t.kind, type: spikeShelves.find((s) => s.slug === t.entity)?.type ?? t.type, angle: t.angle }];
-        return isShelfType(t.type) ? [{ entity: t.entity, kind: t.kind, type: t.type, angle: t.angle }] : [];
+        if (t.kind === 'existing') return [{ entity: t.entity, kind: t.kind, type: spikeEntities.find((s) => s.slug === t.entity)?.type ?? t.type, angle: t.angle }];
+        return isEntityType(t.type) ? [{ entity: t.entity, kind: t.kind, type: t.type, angle: t.angle }] : [];
       });
       expect(out.targets.map(({ entity, kind, type, angle }) => ({ entity, kind, type, angle }))).toEqual(want);
       expect(out.signal_id).toBe(c.signal.signal_id);
@@ -198,7 +198,7 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
     expect(out.reason).toMatch(/banana/);
   });
 
-  it('a free-text type on an existing target keeps the signal with the shelf type (no parking)', async () => {
+  it('a free-text type on an existing target keeps the signal with the entity type (no parking)', async () => {
     const c = spikeCases[0]; // any keep signal works; the mentions are scripted below
     const mentions: Mention[] = [{ name: 'Hyperliquid', type: 'crypto platform', search_terms: ['HYPE'] }];
     const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Hyperliquid', type: 'crypto platform', note: 'n' }]));
@@ -207,7 +207,7 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
     expect(out.targets).toEqual([{ entity: 'hyperliquid', kind: 'existing', type: 'protocol', angle: 'existing_story', note: 'n' }]);
   });
 
-  it('a kept NEW target with a free-text type is dropped like not_related; the existing target keeps its shelf type', async () => {
+  it('a kept NEW target with a free-text type is dropped like not_related; the existing target keeps its entity type', async () => {
     const c = spikeCases[0];
     const mentions: Mention[] = [
       { name: 'Backpack', type: 'crypto exchange / company', search_terms: [] },
@@ -232,7 +232,7 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
     expect(out.reason).toMatch(/judged not related/);
   });
 
-  it('an existing target takes the shelf type even when the LLM names a different shelf type', async () => {
+  it('an existing target takes the entity type even when the LLM names a different entity type', async () => {
     const c = spikeCases[3];
     const mentions: Mention[] = [{ name: 'Solana', type: 'protocol', search_terms: [] }];
     const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Solana', type: 'protocol', note: 'n' }]));
@@ -241,18 +241,18 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
     expect(out.targets).toEqual([{ entity: 'solana', kind: 'existing', type: 'asset', angle: 'existing_story', note: 'n' }]);
   });
 
-  it('the T1 dissect and T4 notes prompts tell the LLM that type is one of the nine SHELF_TYPES', async () => {
+  it('the T1 dissect and T4 notes prompts tell the LLM that type is one of the nine ENTITY_TYPES', async () => {
     const c = spikeCases[5];
     const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
     await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing' }, angle: { Kalshi: 'existing_story' } }), search });
     // Turn 1 (dissect) is the first LLM call, turn 4 (notes) the third; each call is [system, user].
     const prompts = [llm.calls[0][1].content, llm.calls[2][1].content];
     for (const prompt of prompts) {
-      for (const t of SHELF_TYPES) expect(prompt).toContain(`"${t}"`);
+      for (const t of ENTITY_TYPES) expect(prompt).toContain(`"${t}"`);
     }
   });
 
-  it('a kept NEW target with a type no shelf has: dropped like not_related, the same result as the all-not-related path', async () => {
+  it('a kept NEW target with a type no entity has: dropped like not_related, the same result as the all-not-related path', async () => {
     const c = spikeCases[5];
     const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'media_account', note: 'n' }]));
     const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'new' }, angle: { Kalshi: 'new_story' } }), search: async () => [] });
@@ -299,10 +299,10 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
 
 describe('#504 entity search, slugs and type mapping', () => {
   it('an exact name/alias/slug match on the mention ranks first (Coinbase -> coinbase, not base)', () => {
-    expect(searchShelves(['Coinbase', 'Base'], spikeShelves)[0].slug).toBe('coinbase');
-    expect(searchShelves(['HYPE'], spikeShelves)[0].slug).toBe('hyperliquid');
-    expect(searchShelves(['trade-xyz'], spikeShelves)[0].slug).toBe('trade-xyz');
-    expect(searchShelves(['Jersey'], spikeShelves)).toEqual([]);
+    expect(searchEntities(['Coinbase', 'Base'], spikeEntities)[0].slug).toBe('coinbase');
+    expect(searchEntities(['HYPE'], spikeEntities)[0].slug).toBe('hyperliquid');
+    expect(searchEntities(['trade-xyz'], spikeEntities)[0].slug).toBe('trade-xyz');
+    expect(searchEntities(['Jersey'], spikeEntities)).toEqual([]);
   });
 
   it('canonicalSlug prefers a bracketed abbreviation', () => {
@@ -313,13 +313,13 @@ describe('#504 entity search, slugs and type mapping', () => {
     expect(canonicalSlug('Stanley Druckenmiller')).toBe('stanley-druckenmiller');
   });
 
-  it('isShelfType is strict: only the nine shelf types after trim + lowercase, no synonyms', () => {
-    for (const t of SHELF_TYPES) expect(isShelfType(t)).toBe(true);
-    expect(isShelfType(' Organization ')).toBe(true);
-    expect(isShelfType('jurisdiction')).toBe(false);
-    expect(isShelfType('sector')).toBe(false);
-    expect(isShelfType('media_account')).toBe(false);
-    expect(isShelfType('')).toBe(false);
+  it('isEntityType is strict: only the nine entity types after trim + lowercase, no synonyms', () => {
+    for (const t of ENTITY_TYPES) expect(isEntityType(t)).toBe(true);
+    expect(isEntityType(' Organization ')).toBe(true);
+    expect(isEntityType('jurisdiction')).toBe(false);
+    expect(isEntityType('sector')).toBe(false);
+    expect(isEntityType('media_account')).toBe(false);
+    expect(isEntityType('')).toBe(false);
   });
 
   it('the Ollama LLM client sends temperature 0 and never puts the key in errors', async () => {

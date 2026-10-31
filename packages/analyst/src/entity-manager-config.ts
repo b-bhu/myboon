@@ -17,8 +17,8 @@ export type EntityManagerConfig = {
   ollamaApiKey: string;
   /** Non-secret: the chat model the reviewer asks. */
   llmModel: string;
-  /** Non-secret: hard cap on reviewed shelves per run. */
-  maxShelves: number;
+  /** Non-secret: hard cap on reviewed entities per run. */
+  maxEntities: number;
   /** Non-secret: per-LLM-call timeout in ms. */
   timeoutMs: number;
 };
@@ -44,7 +44,7 @@ export function parseEntityManagerConfig(env: Env): EntityManagerConfig {
     databaseUrl,
     ollamaApiKey,
     llmModel: env['ENTITY_MANAGER_LLM_MODEL']?.trim() || 'glm-5.3-flash',
-    maxShelves: optionalPositiveInt(env, 'ENTITY_MANAGER_MAX_SHELVES', 40),
+    maxEntities: optionalPositiveInt(env, 'ENTITY_MANAGER_MAX_ENTITIES', 40),
     timeoutMs: optionalPositiveInt(env, 'ENTITY_MANAGER_TIMEOUT_MS', 20_000),
   };
 }

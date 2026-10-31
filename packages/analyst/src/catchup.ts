@@ -4,7 +4,7 @@
  * safe against the 30-minute cron), while
  *   - the standing 24h rule in processNextD36 parks every signal older than 24 hours without an
  *     LLM call (parked_reason backlog_skip_24h), so only the fresh backlog is analysed,
- *   - PgDecisionSink runs with allowNewEntities: false, so a catch-up run cannot create shelves
+ *   - PgDecisionSink runs with allowNewEntities: false, so a catch-up run cannot create entities
  *     (an already active slug still files) and items copy the signal's occurred_at via the sink,
  *   - guard.check() runs before every signal and stops the loop fail-closed (Ollama balance below
  *     15% remaining, or the balance endpoint unreadable; reads are cached to <= 1/min).
@@ -25,7 +25,7 @@ import { Pool } from 'pg';
 import type { AnalystConfig } from './config.js';
 import { parseAnalystConfig } from './config.js';
 import type { Decider } from './deciders.js';
-import { PgDecisionSink, processNextD36, shelfSearchFromDb, type D36Options } from './d36-worker.js';
+import { PgDecisionSink, processNextD36, entitySearchFromDb, type D36Options } from './d36-worker.js';
 import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { defaultDeciders } from './runner.js';
 import { createOllamaLlm, type JevLogEntry, type Llm } from './session.js';
@@ -172,8 +172,8 @@ export async function catchupMain(o: CatchupMainOptions): Promise<CatchupSummary
       primary: counted(primary),
       fallback: counted(fallback),
       shadow: shadow === null ? null : counted(shadow),
-      search: shelfSearchFromDb(pool),
-      // No new entities during catch-up: a proposed shelf gets no item and no shelf is inserted.
+      search: entitySearchFromDb(pool),
+      // No new entities during catch-up: a proposed entity gets no item and no entity is inserted.
       sink: new PgDecisionSink(pool, (e) => { log(JSON.stringify(e)); }, { allowNewEntities: false }),
       log: (e: JevLogEntry) => { log(JSON.stringify({ event: 'jev_call', ...e })); },
       leaseMs: c.leaseMs,

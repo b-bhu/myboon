@@ -140,7 +140,7 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 
 // #444 V4 runtime, Sprint 1 scope: the scout stage. #391 adds the analyst
 // worker; #480 adds the timed entity manager (the only stage scheduled twice:
-// :00 and :45, so a proposed shelf is picked up within 45 minutes).
+// :00 and :45, so a proposed entity is picked up within 45 minutes).
 //   myboon-scout            -> packages/scout-news/src/run.ts                (15-min cron tick)
 //   myboon-analyst          -> packages/analyst/src/run.ts                    (30-min cron tick)
 //   myboon-entity-manager   -> packages/analyst/src/entity-manager-run.ts     (cron '0,45 * * * *')
@@ -218,14 +218,14 @@ const V4_APPS = [
     },
   },
   {
-    // #480 the timed entity manager: reviews every proposed shelf, LLM decides
+    // #480 the timed entity manager: reviews every proposed entity, LLM decides
     // alias/reject/new; alias and reject are applied, `new` stays proposed.
-    // :00/:45 ticks so proposed shelves never wait longer than 45 minutes.
+    // :00/:45 ticks so proposed entities never wait longer than 45 minutes.
     // Secrets ENTITY_MANAGER_DATABASE_URL and OLLAMA_API_KEY are never set in
-    // this file; they come from the sourced .env. One run of 40 shelves is a
+    // this file; they come from the sourced .env. One run of 40 entities is a
     // few minutes at the 20s per-call timeout; cron_restart restarts (kills)
     // rather than overlapping runs, and applied verdicts are committed
-    // per-shelf, so a killed run only leaves its remaining shelves proposed.
+    // per-entity, so a killed run only leaves its remaining entities proposed.
     name: 'myboon-entity-manager',
     script: 'src/entity-manager-run.ts',
     interpreter: TSX,
@@ -243,7 +243,7 @@ const V4_APPS = [
       // `ENTITY_MANAGER_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env`
       ENTITY_MANAGER_ENABLED: process.env.ENTITY_MANAGER_ENABLED ?? 'false',
       ENTITY_MANAGER_LLM_MODEL: 'glm-5.3-flash',
-      ENTITY_MANAGER_MAX_SHELVES: '40',
+      ENTITY_MANAGER_MAX_ENTITIES: '40',
       ENTITY_MANAGER_TIMEOUT_MS: '20000',
     },
   },
