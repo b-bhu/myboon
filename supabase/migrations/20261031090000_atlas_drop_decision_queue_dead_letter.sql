@@ -1,9 +1,11 @@
+-- squawk-ignore-file ban-drop-table, ban-drop-function
 -- #537: drop the unused decision queue and dead letter, plus the 4 queue_* functions
 -- that only served decision_queue (CTO confirmed). Both tables had 0 rows on prod
 -- on 2026-10-31; Bucket asked for no backup. Rollback recreates the DDL, grants and
 -- policies, but not data.
 -- DO NOT APPLY until Backend Dev's entity manager PR is deployed (see PR).
 set lock_timeout = '5s';
+set statement_timeout = '60s';
 
 drop function if exists atlas.queue_claim(text, integer, interval);
 drop function if exists atlas.queue_heartbeat(text, bigint, uuid, interval);

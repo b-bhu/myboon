@@ -1,7 +1,9 @@
+-- squawk-ignore-file require-concurrent-index-creation, prefer-robust-stmts  (indexes on freshly created empty tables)
 -- Rollback for 20261031090000_atlas_drop_decision_queue_dead_letter.
 -- Recreates prod DDL, grants and policies as read on 2026-10-31. DATA IS NOT RESTORED
 -- (both tables were empty). Idempotent.
 set lock_timeout = '5s';
+set statement_timeout = '60s';
 
 create table if not exists atlas.decision_queue (
   id bigint generated always as identity primary key,
