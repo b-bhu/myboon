@@ -3,7 +3,8 @@
 -- audit table. entity_worker gets NO insert on decisions (CTO), only column select/update.
 --   1. Add nullable entity_* columns to atlas.decisions (FK added NOT VALID, then validated).
 --   2. entity_worker on decisions: select (id, signal_id, entity_outcome, entity_reviewed_at),
---      update of the five entity_* columns, one RLS update policy. shelves/items grants unchanged.
+--      update of the five entity_* columns, one RLS update policy. shelves: new nullable entity_reviewed_at,
+--      entity_worker gets select + update on that one column (existing shelves RLS policies cover it).
 --   3. Drop entity_worker's grants/policies on atlas.entity_reviews, then the table (0 rows on
 --      prod, 2026-10-31).
 --   4. Drop atlas.decision_queue, atlas.dead_letter (0 rows each) and the 4 queue_* functions.
@@ -11,8 +12,8 @@
 -- records the new columns on UPDATE with no change.
 -- Steps: columns + FK NOT VALID, VALIDATE, two plain indexes (decisions is ~2k rows, the SHARE lock
 -- is brief; lock_timeout 5s / statement_timeout 60s), then grants/policy/drops. Every step is rerunnable.
--- Deploy order: merge and apply #538 first with the entity manager STOPPED; then #539 is rebased and
--- deployed. The entity manager must stay stopped until #539 is deployed (current code writes entity_reviews).
+-- Deploy order (Backend Dev + CTO): deploy #539 with the entity manager STOPPED, apply this
+-- migration, then start the entity manager. Do not apply before #539 is merged and deployed.
 -- Rollback: supabase/rollbacks/20261031090000_atlas_entity_review_on_decisions.down.sql
 
 -- 1. columns (catalog-only: nullable, no defaults) + FK NOT VALID
@@ -26,6 +27,8 @@ alter table atlas.decisions
   add column if not exists entity_reviewed_at timestamptz,
   add column if not exists entity_model_name text,
   add column if not exists entity_reason text;
+-- per-shelf review stamp (CTO): the entity manager picks proposed shelves not yet reviewed
+alter table atlas.shelves add column if not exists entity_reviewed_at timestamptz;
 do $$
 begin
   if not exists (select 1 from pg_catalog.pg_constraint
@@ -62,6 +65,8 @@ grant update (entity_outcome, entity_alias_target_id, entity_reviewed_at, entity
   on atlas.decisions to entity_worker;
 -- decisions_targets_valid calls this with the caller's rights on UPDATE (Backend Dev, #539)
 grant execute on function atlas.analyst_targets_valid(jsonb) to entity_worker;
+-- shelves: the existing entity_worker_select / entity_worker_update policies (20261031070000) cover it
+grant select (entity_reviewed_at), update (entity_reviewed_at) on atlas.shelves to entity_worker;
 drop policy if exists entity_worker_update on atlas.decisions;
 create policy entity_worker_update on atlas.decisions for update to entity_worker
   using (true) with check (true);

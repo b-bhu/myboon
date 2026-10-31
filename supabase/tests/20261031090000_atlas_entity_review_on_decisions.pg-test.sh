@@ -31,12 +31,12 @@ done
 
 FP="select md5(string_agg(x, E'\n' order by x)) from (
   select 'col '||table_name||'.'||column_name||' '||udt_name||' '||is_nullable||' '||coalesce(column_default,'')||' '||coalesce(identity_generation,'') x
-    from information_schema.columns where table_schema='atlas' and table_name in ('decision_queue','dead_letter','entity_reviews','decisions')
-  union all select 'idx '||indexdef from pg_indexes where schemaname='atlas' and tablename in ('decision_queue','dead_letter','entity_reviews','decisions')
-  union all select 'con '||conrelid::regclass::text||' '||conname||' '||pg_get_constraintdef(oid) from pg_constraint where conrelid in (select oid from pg_class where relnamespace='atlas'::regnamespace and relname in ('decision_queue','dead_letter','entity_reviews','decisions'))
-  union all select 'pol '||tablename||' '||policyname||' '||cmd||' '||array_to_string(roles,',')||' '||coalesce(qual,'')||' '||coalesce(with_check,'') from pg_policies where schemaname='atlas' and tablename in ('decision_queue','dead_letter','entity_reviews','decisions')
-  union all select 'acl '||relname||' '||coalesce(relacl::text,'')||' '||relrowsecurity::text from pg_class where relnamespace='atlas'::regnamespace and relname in ('decision_queue','dead_letter','entity_reviews','decisions')
-  union all select 'colacl '||attrelid::regclass::text||'.'||attname||' '||attacl::text from pg_attribute where attrelid in (select oid from pg_class where relnamespace='atlas'::regnamespace and relname in ('decision_queue','dead_letter','entity_reviews','decisions')) and attacl is not null
+    from information_schema.columns where table_schema='atlas' and table_name in ('decision_queue','dead_letter','entity_reviews','decisions','shelves')
+  union all select 'idx '||indexdef from pg_indexes where schemaname='atlas' and tablename in ('decision_queue','dead_letter','entity_reviews','decisions','shelves')
+  union all select 'con '||conrelid::regclass::text||' '||conname||' '||pg_get_constraintdef(oid) from pg_constraint where conrelid in (select oid from pg_class where relnamespace='atlas'::regnamespace and relname in ('decision_queue','dead_letter','entity_reviews','decisions','shelves'))
+  union all select 'pol '||tablename||' '||policyname||' '||cmd||' '||array_to_string(roles,',')||' '||coalesce(qual,'')||' '||coalesce(with_check,'') from pg_policies where schemaname='atlas' and tablename in ('decision_queue','dead_letter','entity_reviews','decisions','shelves')
+  union all select 'acl '||relname||' '||coalesce(relacl::text,'')||' '||relrowsecurity::text from pg_class where relnamespace='atlas'::regnamespace and relname in ('decision_queue','dead_letter','entity_reviews','decisions','shelves')
+  union all select 'colacl '||attrelid::regclass::text||'.'||attname||' '||attacl::text from pg_attribute where attrelid in (select oid from pg_class where relnamespace='atlas'::regnamespace and relname in ('decision_queue','dead_letter','entity_reviews','decisions','shelves')) and attacl is not null
   union all select 'fn '||pg_get_functiondef(oid)||' '||coalesce(proacl::text,'') from pg_proc where pronamespace='atlas'::regnamespace and proname in ('queue_claim','queue_heartbeat','queue_complete','queue_fail','analyst_targets_valid')
 ) s"
 OBJ="select (select count(*) from pg_class where relnamespace='atlas'::regnamespace and relname in ('decision_queue','dead_letter','entity_reviews') and relkind='r') + (select count(*) from pg_proc where pronamespace='atlas'::regnamespace and proname in ('queue_claim','queue_heartbeat','queue_complete','queue_fail'))"
@@ -88,10 +88,24 @@ refuse "update non-entity column" "update atlas.decisions set decision='drop' wh
 refuse "select entity_reason (not granted)" "select entity_reason from atlas.decisions"
 refuse "delete from decisions" "delete from atlas.decisions"
 
+echo "== entity_worker on shelves =="
+[[ $(q "select count(*) from information_schema.columns where table_schema='atlas' and table_name='shelves' and column_name='entity_reviewed_at' and is_nullable='YES' and column_default is null and data_type='timestamp with time zone'") == 1 ]] && ok "shelves.entity_reviewed_at timestamptz, nullable, no default" || bad "shelves column"
+SUPD="update atlas.shelves set entity_reviewed_at=now() where slug='kalshi' and entity_reviewed_at is null"
+out=$("${PSQL[@]}" -t -A -c "begin; $AS $SUPD returning (entity_reviewed_at is not null); rollback;" 2>&1)
+[[ $out == t ]] && ok "UPDATE shelves.entity_reviewed_at as entity_worker (rolled back)" || bad "shelves update: $out"
+[[ $(q "select count(*) from atlas.shelves where entity_reviewed_at is not null") == 0 ]] && ok "rolled back: shelves stamp not left" || bad "shelves update leaked"
+refuse "update shelves.name" "update atlas.shelves set name='x' where slug='kalshi'"
+refuse "update shelves.summary" "update atlas.shelves set summary='x' where slug='kalshi'"
+refuse "update shelves.slug" "update atlas.shelves set slug='x' where slug='kalshi'"
+
 echo "== history trigger =="
 "${PSQL[@]}" -c "$UPD" >/dev/null
 h=$(q "select changed ?& array['entity_outcome','entity_alias_target_id','entity_reviewed_at','entity_model_name','entity_reason'] from atlas.history where table_name='decisions' and op='UPDATE' order by id desc limit 1")
 [[ $h == t ]] && ok "decisions_history logs UPDATE with all 5 entity_* columns" || bad "history: $h"
+
+"${PSQL[@]}" -c "$SUPD" >/dev/null
+h=$(q "select changed ? 'entity_reviewed_at' from atlas.history where table_name='shelves' and op='UPDATE' order by id desc limit 1")
+[[ $h == t ]] && ok "shelves_history logs UPDATE of entity_reviewed_at" || bad "shelves history: $h"
 
 echo "== $PASS passed, $REFUSED refused, $FAILS failures =="
 [[ $FAILS == 0 ]]

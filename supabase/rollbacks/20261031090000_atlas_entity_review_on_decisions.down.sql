@@ -59,6 +59,15 @@ alter table atlas.decisions
   drop column if exists entity_reviewed_at,
   drop column if exists entity_model_name,
   drop column if exists entity_reason;
+-- shelves.entity_reviewed_at (column grants go with the column)
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = 'atlas'
+              and table_name = 'shelves' and column_name = 'entity_reviewed_at') then
+    revoke select (entity_reviewed_at), update (entity_reviewed_at) on atlas.shelves from entity_worker;
+  end if;
+end $$;
+alter table atlas.shelves drop column if exists entity_reviewed_at;
 
 -- queue tables and functions
 create table if not exists atlas.decision_queue (
