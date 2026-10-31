@@ -7,7 +7,9 @@
  * answers are never recorded. The standing #391 rule parks any signal older than 24 hours
  * (occurred_at, judged in SQL with the claim's row read) with reason BACKLOG_SKIP_REASON before the
  * session runs, and PgDecisionSink's `allowNewEntities: false` drops kind-new targets so a catch-up
- * run cannot create entities.
+ * run cannot create entities. A failed attempt (missing signal row, or the session/sink save
+ * throwing) fails the claim and logs one structured `signal_failed` line whose `reason` comes
+ * from classifySignalFailure, so the retry/dead story of every signal is on stdout.
  */
 import type { AnalystOutput } from '@myboon/contracts';
 import type { Pool, PoolClient } from 'pg';
@@ -230,6 +232,8 @@ export type D36Options = {
   search: EntitySearch;
   sink: DecisionSink;
   log?: (e: JevLogEntry) => void;
+  /** One `signal_failed` record per failed attempt, logged after failClaim; default prints JSON to stdout. */
+  failLog?: (e: Record<string, unknown>) => void;
   leaseMs: number;
   timeoutMs: number;
   backoffMs: number;
@@ -244,6 +248,20 @@ function asMessage(e: unknown): string {
 }
 
 /**
+ * Why a per-signal attempt failed, for the event's `reason` field: timeout when the message says it
+ * timed out, parse for a SyntaxError or a JSON/parse message, db for a pg error (a string `code`
+ * property) or anything the sink save threw, else other. The missing-row branch needs none of the
+ * error shape, so it reports `missing_row` directly.
+ */
+export function classifySignalFailure(e: unknown, stage: 'session' | 'sink'): string {
+  const message = asMessage(e);
+  if (/timed out|timeout/i.test(message)) return 'timeout';
+  if (e instanceof SyntaxError || /json|parse/i.test(message)) return 'parse';
+  if (stage === 'sink' || typeof (e as { code?: unknown } | null | undefined)?.['code'] === 'string') return 'db';
+  return 'other';
+}
+
+/**
  * Pick up a due signal and run the D36 session on it, or null when nothing is due. Unclear is parked
  * with the output's reason; anything the session throws fails the claim (retry with backoff, dead at
  * the cap); a lost claim is reported without changing the signal.
@@ -251,6 +269,17 @@ function asMessage(e: unknown): string {
 export async function processNextD36(db: Db, o: D36Options): Promise<D36Result | null> {
   const claim = await claimNext(db, { leaseMs: o.leaseMs, worker: o.worker, maxAttempts: o.maxAttempts });
   if (!claim) return null;
+
+  /** One structured line per failed attempt, after failClaim has recorded the outcome. */
+  const failLog: (e: Record<string, unknown>) => void =
+    o.failLog ?? ((e: Record<string, unknown>) => { console.log(JSON.stringify(e)); });
+  /** lost_claim also reports: the attempt failed, only the signal is someone else's to retry. */
+  const signalFailed = (reason: string, error: string, outcome: 'retry' | 'dead' | 'lost_claim'): void => {
+    failLog({
+      event: 'signal_failed', signal_id: claim.signalId, attempt: claim.attempts, reason, error,
+      dead: outcome === 'dead', ...(outcome === 'lost_claim' ? { lost_claim: true } : {}),
+    });
+  };
 
   const row = (await db.query<{
     signal_id: string; source: string | null; text: string | null; link: string | null; occurred_at: Date | null; stale: boolean;
@@ -262,11 +291,13 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
     [claim.signalId],
   )).rows[0];
   if (!row) {
-    await failClaim(db, claim, {
-      error: `${o.primary.name}: signal row missing after claim`,
+    const error = `${o.primary.name}: signal row missing after claim`;
+    const outcome = await failClaim(db, claim, {
+      error,
       backoffMs: o.backoffMs,
       maxAttempts: o.maxAttempts,
     });
+    signalFailed('missing_row', error, outcome);
     return { signalId: claim.signalId, result: 'failed' };
   }
 
@@ -320,11 +351,15 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
   const deps: SessionDeps = { llm: o.llm, ask, search: o.search, log: logJev };
 
   let output: AnalystOutput;
+  // `sink.save` and the session throw differently: the stage tags the failure reason.
+  let stage: 'session' | 'sink' = 'session';
   try {
     output = await runSession(signal, deps);
+    stage = 'sink';
     await o.sink.save(output);
   } catch (e) {
-    await failClaim(db, claim, { error: asMessage(e), backoffMs: o.backoffMs, maxAttempts: o.maxAttempts });
+    const outcome = await failClaim(db, claim, { error: asMessage(e), backoffMs: o.backoffMs, maxAttempts: o.maxAttempts });
+    signalFailed(classifySignalFailure(e, stage), asMessage(e), outcome);
     return { signalId: claim.signalId, result: 'failed' };
   }
 
