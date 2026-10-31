@@ -1,6 +1,6 @@
 /**
  * #504 fixtures from spike v5 (spike/analyst-one-file @ 7a261b4e): six real scout signals, the v5 outputs
- * (Jev answers + targets), and the subset of atlas.shelves (read-only snapshot, Oct 29 2026) they touch.
+ * (Jev answers + targets), and the subset of atlas.entities (read-only snapshot, Oct 29 2026) they touch.
  */
 export type SpikeCase = {
   signal: { signal_id: string; source: string | null; text: string; link: string | null };
@@ -10,9 +10,9 @@ export type SpikeCase = {
     jev: { question: string; choices: string[]; answer: string; probabilities: Record<string, number> }[];
   };
 };
-export type SpikeShelf = { slug: string; name: string; type: string; aliases: string[] };
+export type SpikeEntity = { slug: string; name: string; type: string; aliases: string[] };
 
-export const spikeShelves: SpikeShelf[] = [
+export const spikeEntities: SpikeEntity[] = [
  {
   "slug": "base",
   "name": "Base",
@@ -179,7 +179,7 @@ export const spikeCases: SpikeCase[] = [
   "v5": {
    "summary": "An investor (standuquesne on X) announced they have invested in trade.xyz as the platform partners with Intercontinental Exchange (ICE) to bring 24/7 perpetual futures built on Hyperliquid to the United States. This is an investor's personal post relaying the news, not an official company statement, so the partnership details are secondhand. If accurate, it would mark a major traditional exchange operator (ICE) entering US crypto perpetuals through a Hyperliquid-based platform.",
    "decision": "keep",
-   "reason": "All three mentions map to existing shelves. trade.xyz and ICE each get a new story: an investor's post claims a partnership bringing 24/7 Hyperliquid perps to the US, a first for both. Hyperliquid continues its existing story of US expansion via regulated partners. The signal is an investor's X post, so it's framed as talk/claim rather than official announcement.",
+   "reason": "All three mentions map to existing entities. trade.xyz and ICE each get a new story: an investor's post claims a partnership bringing 24/7 Hyperliquid perps to the US, a first for both. Hyperliquid continues its existing story of US expansion via regulated partners. The signal is an investor's X post, so it's framed as talk/claim rather than official announcement.",
    "targets": [
     {
      "entity": "trade-xyz",
@@ -447,7 +447,7 @@ export const spikeCases: SpikeCase[] = [
   "v5": {
    "summary": "Crypto Briefing reports that Elon Musk is eyeing Stanley Druckenmiller's move into Hyperliquid as a reference point for US crypto derivatives. The signal is a news report, not an announcement from Musk, Druckenmiller, or Hyperliquid themselves, so the claims remain at the report/talk level. It matters because it ties a prominent investor's Hyperliquid positioning to potential high-profile interest in US crypto derivatives markets.",
    "decision": "keep",
-   "reason": "All three mentions kept per the decision tool: Musk and Hyperliquid as plain updates on existing shelves (reported interest, nothing announced), Druckenmiller as a new story since this signal introduces him.",
+   "reason": "All three mentions kept per the decision tool: Musk and Hyperliquid as plain updates on existing entities (reported interest, nothing announced), Druckenmiller as a new story since this signal introduces him.",
    "targets": [
     {
      "entity": "elon-musk",

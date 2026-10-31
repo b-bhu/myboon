@@ -9,7 +9,7 @@ rows, plans, all_ms = [], [], []
 for r in csv.DictReader(open(qfile), delimiter='\t'):
     top = [l.split('\t') for l in sql(f"select * from search_test.search({lit(r['query'])}, 5)").splitlines()]
     slugs = [t[1] for t in top]
-    pos = slugs.index(r['expected_shelf']) + 1 if r['expected_shelf'] in slugs else None
+    pos = slugs.index(r['expected_entity']) + 1 if r['expected_entity'] in slugs else None
     ms = []
     for i in range(11):
         p = json.loads(sql(f"explain (analyze, buffers, format json) select * from search_test.search({lit(r['query'])}, 5)"))[0]
@@ -22,7 +22,7 @@ p95 = statistics.quantiles(all_ms, n=20, method='inclusive')[18]; mx = max(all_m
 ok = h1 >= 16 and h5 >= 19 and p95 <= 50 and mx <= 100
 L = ['| # | kind | query | expected | hit@1 | hit@5 (pos) | top 5 | p95 ms | max ms |', '|---|---|---|---|---|---|---|---|---|']
 for r, slugs, pos, q95, qmx in rows:
-    L.append(f"| {r['n']} | {r['kind']} | {r['query'][:70]} | `{r['expected_shelf']}` | {'Y' if pos == 1 else 'N'} | {'Y (' + str(pos) + ')' if pos else 'N'} | {', '.join(slugs)} | {q95:.2f} | {qmx:.2f} |")
+    L.append(f"| {r['n']} | {r['kind']} | {r['query'][:70]} | `{r['expected_entity']}` | {'Y' if pos == 1 else 'N'} | {'Y (' + str(pos) + ')' if pos else 'N'} | {', '.join(slugs)} | {q95:.2f} | {qmx:.2f} |")
 L.append(f"\n**hit@1 {h1}/20 (bar 16), hit@5 {h5}/20 (bar 19), p95 {p95:.2f} ms (bar 50), max {mx:.2f} ms (bar 100), over 10 warm runs x 20 queries -> {'PASS' if ok else 'FAIL'}**")
 (out / 'results.md').write_text('\n'.join(L) + '\n'); (out / 'plans.txt').write_text('\n'.join(plans))
 print('\n'.join(L))

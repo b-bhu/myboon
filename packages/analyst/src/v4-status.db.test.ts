@@ -185,8 +185,8 @@ describe.skipIf(ADMIN_URL === '')('#478 V4 signal status, decider slot and decis
     await processNext(pool, opts(deciders));
     expect(await decisionsFor(target)).toHaveLength(1);
     await expect(pool.query(`insert into atlas.decisions (schema_version, signal_id, analyst_version, action) values (1, $1, 'other-version', 'keep')`, [target])).rejects.toThrow(/unique|duplicate/);
-    const shelf = (await pool.query(`insert into atlas.shelves (slug, name, type) values ('t','T','topic') returning id`)).rows[0].id;
-    const items = (await pool.query(`insert into atlas.items (item_key, title, main_shelf_id) values ('i1','I1',$1), ('i2','I2',$1) returning id`, [shelf])).rows;
+    const entity = (await pool.query(`insert into atlas.entities (slug, name, type) values ('t','T','topic') returning id`)).rows[0].id;
+    const items = (await pool.query(`insert into atlas.entity_items (item_key, title, main_entity_id) values ('i1','I1',$1), ('i2','I2',$1) returning id`, [entity])).rows;
     await pool.query('insert into atlas.item_signals (item_id, signal_id) values ($1, $2)', [items[0].id, target]);
     await pool.query('insert into atlas.item_signals (item_id, signal_id) values ($1, $2)', [items[1].id, target]); // #503: up to 3 items per signal
     await expect(pool.query('insert into atlas.item_signals (item_id, signal_id) values ($1, $2)', [items[1].id, target])).rejects.toThrow(/unique|duplicate/);

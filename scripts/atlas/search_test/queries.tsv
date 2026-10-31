@@ -1,16 +1,16 @@
-n	kind	query	expected_shelf	source
-1	headline	Drift Protocol attacker moves 13,400 ETH to Tornado Cash after two months of silence	drift-protocol-attacker	headline 2026-10-20, item main shelf
-2	headline	Samsung converts Pyeongtaek P4 line to dedicated DRAM with 2027 capacity target	samsung-electronics	headline 2026-10-20, item main shelf
-3	headline	Bank of England warns of AI herding risk as FX market tightens AI governance	bank-of-england	headline 2026-10-20, item main shelf
-4	headline	Sophon Chain sets Nov. 25 deadline for users to withdraw assets ahead of mainnet shutdown	sophon-chain	headline 2026-10-20, item main shelf
-5	headline	October LPR quotes released: 1-year rate holds at 3%, 5-year-plus at 3.5%	loan-prime-rate-lpr	headline 2026-10-20, item main shelf
-6	headline	Richard Heart reportedly detained in Istanbul on Finnish Interpol Red Notice	detention-of-richard-heart-in-istanbul	headline 2026-10-17, item main shelf
-7	headline	Unitree Technology shares surge over 10% with turnover above 2.6 billion yuan	unitree-robotics	headline 2026-10-20, item main shelf (alias-only name)
-8	headline	Bitcoin falls below $82,000 after hotter-than-expected September CPI print	bitcoin	headline 2026-10-14, item main shelf (us-cpi also plausible)
-9	headline	WTI crude oil surges above $100 per barrel	crude-oil-wti	headline 2026-10-16, item main shelf
-10	headline	Bank of Russia adds Sberbank to crypto exchange operator register	sberbank	headline 2026-10-14, item main shelf (russia also plausible)
-11	headline	Anthropic signs first Canadian data center lease with EverWind in Nova Scotia	anthropic	headline 2026-10-17, item main shelf
-12	headline	Ramp applies for a US national trust bank charter	ramp	headline 2026-10-20, item main shelf
+n	kind	query	expected_entity	source
+1	headline	Drift Protocol attacker moves 13,400 ETH to Tornado Cash after two months of silence	drift-protocol-attacker	headline 2026-10-20, item main entity
+2	headline	Samsung converts Pyeongtaek P4 line to dedicated DRAM with 2027 capacity target	samsung-electronics	headline 2026-10-20, item main entity
+3	headline	Bank of England warns of AI herding risk as FX market tightens AI governance	bank-of-england	headline 2026-10-20, item main entity
+4	headline	Sophon Chain sets Nov. 25 deadline for users to withdraw assets ahead of mainnet shutdown	sophon-chain	headline 2026-10-20, item main entity
+5	headline	October LPR quotes released: 1-year rate holds at 3%, 5-year-plus at 3.5%	loan-prime-rate-lpr	headline 2026-10-20, item main entity
+6	headline	Richard Heart reportedly detained in Istanbul on Finnish Interpol Red Notice	detention-of-richard-heart-in-istanbul	headline 2026-10-17, item main entity
+7	headline	Unitree Technology shares surge over 10% with turnover above 2.6 billion yuan	unitree-robotics	headline 2026-10-20, item main entity (alias-only name)
+8	headline	Bitcoin falls below $82,000 after hotter-than-expected September CPI print	bitcoin	headline 2026-10-14, item main entity (us-cpi also plausible)
+9	headline	WTI crude oil surges above $100 per barrel	crude-oil-wti	headline 2026-10-16, item main entity
+10	headline	Bank of Russia adds Sberbank to crypto exchange operator register	sberbank	headline 2026-10-14, item main entity (russia also plausible)
+11	headline	Anthropic signs first Canadian data center lease with EverWind in Nova Scotia	anthropic	headline 2026-10-17, item main entity
+12	headline	Ramp applies for a US national trust bank charter	ramp	headline 2026-10-20, item main entity
 13	label	us	united-states	short label from #418 traffic
 14	label	ETH	ethereum	ticker alias
 15	label	IBIT	us-spot-bitcoin-etfs	ticker alias

@@ -7,12 +7,12 @@
  * - orchestration: processNext with ProcessOptions
  * - Linker + Story (#479): linkerStory, linkShortlist, routing rules (validateRoutingRules, DEFAULT_ROUTING_RULES)
  * - D36 analyst session + worker (#504): runSession, createOllamaLlm,
- *   searchShelves, processNextD36, InMemoryDecisionSink, PgDecisionSink (atlas.decisions)
+ *   searchEntities, processNextD36, InMemoryDecisionSink, PgDecisionSink (atlas.decisions)
  * - Worker entrypoint (#512): parseAnalystConfig, AnalystConfig, AnalystConfigError,
  *   runAnalystOnce, RunSummary, analystMain
  * - Catch-up (#391): catchupMain, parseCatchupArgs; the ollama-quota guard
  *   (readOllamaQuota, createQuotaGuard)
- * - Timed entity manager (#480): reviewProposedShelves, parseEntityManagerConfig
+ * - Timed entity manager (#480): reviewProposedEntities, parseEntityManagerConfig
  */
 export * from './config.js';
 export * from './deciders.js';

@@ -4,7 +4,7 @@
  * Clef are scripted and the quota guard is injected, so catchupMain runs end-to-end through its
  * injectable createPool/createLlm/createDeciders/quota: three fresh signals are analysed through
  * the LLM, the one older than 24h is parked backlog_skip_24h without an LLM call, counters and
- * log lines come out, no shelf is created, and a low quota stops before any claim.
+ * log lines come out, no entity is created, and a low quota stops before any claim.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
@@ -14,7 +14,7 @@ import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
 import { catchupMain, parseCatchupArgs } from './catchup.js';
 import { createQuotaGuard, type QuotaCheck } from './ollama-quota.js';
 import type { ChatMessage, Llm } from './session.js';
-import { spikeCases, spikeShelves } from './test-fixtures/d36-spike.js';
+import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const KALSHI = spikeCases[5].signal;
@@ -157,10 +157,10 @@ describe.skipIf(ADMIN_URL === '')('#391 catchup run (local Postgres, analyst_wor
   });
   afterAll(async () => { await workerPool?.end(); await pool?.end(); await db?.drop(); });
   beforeEach(async () => {
-    await pool.query('truncate atlas.item_signals, atlas.items, atlas.decisions, atlas.signals cascade');
-    await pool.query('delete from atlas.shelves');
-    for (const s of spikeShelves) {
-      await pool.query('insert into atlas.shelves (slug, name, type, aliases) values ($1, $2, $3, $4)', [s.slug, s.name, s.type, s.aliases]);
+    await pool.query('truncate atlas.item_signals, atlas.entity_items, atlas.decisions, atlas.signals cascade');
+    await pool.query('delete from atlas.entities');
+    for (const s of spikeEntities) {
+      await pool.query('insert into atlas.entities (slug, name, type, aliases) values ($1, $2, $3, $4)', [s.slug, s.name, s.type, s.aliases]);
     }
   });
 
@@ -190,16 +190,16 @@ describe.skipIf(ADMIN_URL === '')('#391 catchup run (local Postgres, analyst_wor
     await expect(pool.query("select count(*)::int n from atlas.signals where status = 'parked' and parked_reason = 'backlog_skip_24h'"))
       .resolves.toMatchObject({ rows: [{ n: 1 }] });
     expect(await statuses()).toEqual([{ status: 'analysed', n: 3 }, { status: 'parked', n: 1 }]);
-    // Items keep the signal's occurred_at, and only the pre-existing shelves exist.
-    const items = (await pool.query<{ occurred_at: Date; signal_occurred_at: Date; shelf_slug: string }>(
+    // Items keep the signal's occurred_at, and only the pre-existing entities exist.
+    const items = (await pool.query<{ occurred_at: Date; signal_occurred_at: Date; entity_slug: string }>(
       `select i.occurred_at, (select occurred_at from atlas.signals where signal_id = i.signal_id) as signal_occurred_at,
-              s.slug as shelf_slug
-         from atlas.items i join atlas.shelves s on s.id = i.main_shelf_id order by i.occurred_at`,
+              s.slug as entity_slug
+         from atlas.entity_items i join atlas.entities s on s.id = i.main_entity_id order by i.occurred_at`,
     )).rows;
     expect(items).toHaveLength(3);
     for (const i of items) expect(i.occurred_at?.getTime()).toBe(i.signal_occurred_at?.getTime());
-    expect(items.every((i) => i.shelf_slug === 'kalshi')).toBe(true);
-    expect((await pool.query('select count(*)::int n from atlas.shelves')).rows[0].n).toBe(spikeShelves.length);
+    expect(items.every((i) => i.entity_slug === 'kalshi')).toBe(true);
+    expect((await pool.query('select count(*)::int n from atlas.entities')).rows[0].n).toBe(spikeEntities.length);
   });
 
   it('a weekly remaining of 10% stops after the first check with nothing claimed', async () => {

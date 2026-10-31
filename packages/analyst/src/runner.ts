@@ -12,7 +12,7 @@ import type { AnalystConfig } from './config.js';
 import { parseAnalystConfig } from './config.js';
 import type { Decider } from './deciders.js';
 import { CLEF_ENDPOINT, CLEF_MODEL, JEV_ENDPOINT, JEV_MODEL, SystemOneDecider } from './deciders.js';
-import { PgDecisionSink, processNextD36, shelfSearchFromDb, type D36Options } from './d36-worker.js';
+import { PgDecisionSink, processNextD36, entitySearchFromDb, type D36Options } from './d36-worker.js';
 import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { createOllamaLlm, type JevLogEntry, type Llm } from './session.js';
 import type { Db } from './states.js';
@@ -87,7 +87,7 @@ export async function analystMain(o: AnalystMainOptions): Promise<RunSummary> {
       primary,
       fallback,
       shadow,
-      search: shelfSearchFromDb(pool),
+      search: entitySearchFromDb(pool),
       sink: new PgDecisionSink(pool, (e) => { log(JSON.stringify(e)); }),
       log: (e: JevLogEntry) => { log(JSON.stringify({ event: 'jev_call', ...e })); },
       leaseMs: c.leaseMs,

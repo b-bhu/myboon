@@ -13,9 +13,9 @@ const REQUEST_TIMEOUT_MS = 10_000
 const SAFE_STORY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const ENTITY_SELECT = 'id,slug,name'
-// Atlas shelves carry the story card image inside the jsonb `card` column
+// Atlas entities carry the story card image inside the jsonb `card` column
 // (card.image = { url, source }); the PostgREST alias reads it as plain text.
-const ATLAS_SHELF_SELECT = 'id,slug,name,type,image:card->image->>url'
+const ATLAS_ENTITY_SELECT = 'id,slug,name,type,image:card->image->>url'
 const ATLAS_ITEM_SELECT = 'id,title,summary,occurred_at'
 
 interface EntityRow {
@@ -24,7 +24,7 @@ interface EntityRow {
   name: unknown
 }
 
-interface AtlasShelfRow extends EntityRow {
+interface AtlasEntityRow extends EntityRow {
   type: unknown
   image: unknown
 }
@@ -40,9 +40,9 @@ interface SelectedEntity {
   id: string
   slug: string
   name: string
-  /** Atlas shelf type; null on legacy Entities. */
+  /** Atlas entity type; null on legacy Entities. */
   type: string | null
-  /** Atlas shelf card image URL; null on legacy Entities. */
+  /** Atlas entity card image URL; null on legacy Entities. */
   imageUrl: string | null
 }
 
@@ -66,8 +66,8 @@ export interface StorySummary {
   imageUrl: string | null
   imageKind: StoryImageKind | null
   imageAttribution: string | null
-  /** Atlas shelf type (lets the client pick a placeholder per type); null on legacy. */
-  shelfType: string | null
+  /** Atlas entity type (lets the client pick a placeholder per type); null on legacy. */
+  entityType: string | null
 }
 
 export interface StoryEvent {
@@ -221,78 +221,78 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
 
   async function atlasSelectedEntities(): Promise<SelectedEntity[]> {
     const params = new URLSearchParams({
-      select: ATLAS_SHELF_SELECT,
+      select: ATLAS_ENTITY_SELECT,
       show_in_carousel: 'eq.true',
       status: 'eq.active',
       order: 'updated_at.desc',
       limit: String(MAX_STORIES),
     })
-    const rows = await readRows<AtlasShelfRow>('shelves', params, 'atlas')
+    const rows = await readRows<AtlasEntityRow>('entities', params, 'atlas')
     return rows.map(atlasSelectedEntity).filter((row): row is SelectedEntity => row !== null).slice(0, MAX_STORIES)
   }
 
   async function atlasSelectedEntityBySlug(storySlug: string): Promise<SelectedEntity | null> {
     const params = new URLSearchParams({
-      select: ATLAS_SHELF_SELECT,
+      select: ATLAS_ENTITY_SELECT,
       slug: `eq.${storySlug}`,
       show_in_carousel: 'eq.true',
       status: 'eq.active',
       limit: '1',
     })
-    const rows = await readRows<AtlasShelfRow>('shelves', params, 'atlas')
+    const rows = await readRows<AtlasEntityRow>('entities', params, 'atlas')
     return atlasSelectedEntity(rows[0])
   }
 
-  async function atlasItemsTotal(shelfId: string): Promise<number> {
-    const response = await fetchImpl(restUrl('items', atlasItemFilterParams(shelfId)), {
+  async function atlasItemsTotal(entityId: string): Promise<number> {
+    const response = await fetchImpl(restUrl('entity_items', atlasItemFilterParams(entityId)), {
       headers: { ...restHeaders('atlas'), Prefer: 'count=exact', Range: '0-0' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
     if (!response.ok) {
-      throw new Error(`Supabase read failed for items: ${response.status}`)
+      throw new Error(`Supabase read failed for entity_items: ${response.status}`)
     }
     const total = contentRangeTotal(response.headers.get('Content-Range'))
     if (total === null) throw new Error('Supabase returned an invalid items count')
     return total
   }
 
-  async function atlasStoryMemories(shelfIds: string[]): Promise<{
+  async function atlasStoryMemories(entityIds: string[]): Promise<{
     memoriesByEntity: Map<string, StoryMemory[]>,
     totalsByEntity: Map<string, number>,
   }> {
     const grouped = new Map<string, StoryMemory[]>()
     const totals = new Map<string, number>()
-    if (shelfIds.length === 0) return { memoriesByEntity: grouped, totalsByEntity: totals }
-    await Promise.all(shelfIds.filter((shelfId) => UUID_RE.test(shelfId)).map(async (shelfId) => {
+    if (entityIds.length === 0) return { memoriesByEntity: grouped, totalsByEntity: totals }
+    await Promise.all(entityIds.filter((entityId) => UUID_RE.test(entityId)).map(async (entityId) => {
       const [latestRows, total] = await Promise.all([
-        readRows<AtlasItemRow>('items', atlasItemParams(shelfId, 1, 0), 'atlas'),
-        atlasItemsTotal(shelfId),
+        readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, 1, 0), 'atlas'),
+        atlasItemsTotal(entityId),
       ])
       const expected = total > 0 ? 1 : 0
-      const memory = atlasMemory(latestRows[0], shelfId)
-      if (latestRows.length !== expected || (expected === 1 && (!memory || memory.entityId !== shelfId))) {
+      const memory = atlasMemory(latestRows[0], entityId)
+      if (latestRows.length !== expected || (expected === 1 && (!memory || memory.entityId !== entityId))) {
         throw new Error('Atlas item page was incomplete')
       }
-      if (memory) grouped.set(shelfId, [memory])
-      totals.set(shelfId, total)
+      if (memory) grouped.set(entityId, [memory])
+      totals.set(entityId, total)
     }))
     return { memoriesByEntity: grouped, totalsByEntity: totals }
   }
 
-  async function atlasItemPage(shelfId: string, limit: number, offset: number): Promise<{
+  async function atlasItemPage(entityId: string, limit: number, offset: number): Promise<{
     memories: StoryMemory[]
     total: number
     latest: StoryMemory | null
   }> {
-    if (!UUID_RE.test(shelfId)) return { memories: [], total: 0, latest: null }
+    if (!UUID_RE.test(entityId)) return { memories: [], total: 0, latest: null }
     const [rows, total] = await Promise.all([
-      readRows<AtlasItemRow>('items', atlasItemParams(shelfId, limit, offset), 'atlas'),
-      atlasItemsTotal(shelfId),
+      readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, limit, offset), 'atlas'),
+      atlasItemsTotal(entityId),
     ])
     const memories: StoryMemory[] = []
     for (const row of rows) {
-      const memory = atlasMemory(row, shelfId)
-      if (!memory || memory.entityId !== shelfId) throw new Error('Atlas item page was incomplete')
+      const memory = atlasMemory(row, entityId)
+      if (!memory || memory.entityId !== entityId) throw new Error('Atlas item page was incomplete')
       memories.push(memory)
     }
     const expected = Math.min(limit, Math.max(0, total - offset))
@@ -302,8 +302,8 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       if (offset === 0) {
         latest = memories[0] ?? null
       } else {
-        const latestRows = await readRows<AtlasItemRow>('items', atlasItemParams(shelfId, 1, 0), 'atlas')
-        latest = atlasMemory(latestRows[0], shelfId)
+        const latestRows = await readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, 1, 0), 'atlas')
+        latest = atlasMemory(latestRows[0], entityId)
       }
       if (!latest) throw new Error('Atlas item page was incomplete')
     }
@@ -377,24 +377,24 @@ function selectedEntity(row: EntityRow | undefined): SelectedEntity | null {
   return { id: row.id, slug: row.slug, name: row.name.trim(), type: null, imageUrl: null }
 }
 
-/** Atlas shelf: extends the validated legacy projection with the shelf type and card image. */
-function atlasSelectedEntity(row: AtlasShelfRow | undefined): SelectedEntity | null {
+/** Atlas entity: extends the validated legacy projection with the entity type and card image. */
+function atlasSelectedEntity(row: AtlasEntityRow | undefined): SelectedEntity | null {
   const entity = selectedEntity(row)
   if (!entity || !row) return null
   return {
     ...entity,
-    type: atlasShelfType(row.type),
-    imageUrl: atlasShelfImageUrl(row.image),
+    type: atlasEntityType(row.type),
+    imageUrl: atlasEntityImageUrl(row.image),
   }
 }
 
-/** Atlas shelf type: trimmed text; null when absent or blank. */
-function atlasShelfType(value: unknown): string | null {
+/** Atlas entity type: trimmed text; null when absent or blank. */
+function atlasEntityType(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 /** Atlas card image: only a trimmed https: URL is accepted; empty, whitespace, http:, non-string or invalid URLs yield null. */
-function atlasShelfImageUrl(value: unknown): string | null {
+function atlasEntityImageUrl(value: unknown): string | null {
   const url = safeHttpUrl(value)
   return url !== null && new URL(url).protocol === 'https:' ? url : null
 }
@@ -411,10 +411,10 @@ function storyMemory(row: EntityKnowledgeMemoryV1): StoryMemory | null {
   }
 }
 
-function atlasItemFilterParams(shelfId: string): URLSearchParams {
+function atlasItemFilterParams(entityId: string): URLSearchParams {
   return new URLSearchParams({
     select: ATLAS_ITEM_SELECT,
-    main_shelf_id: `eq.${shelfId}`,
+    main_entity_id: `eq.${entityId}`,
     status: 'eq.active',
     merged_into_id: 'is.null',
     occurred_at: 'not.is.null',
@@ -422,21 +422,21 @@ function atlasItemFilterParams(shelfId: string): URLSearchParams {
   })
 }
 
-function atlasItemParams(shelfId: string, limit: number, offset: number): URLSearchParams {
-  const params = atlasItemFilterParams(shelfId)
+function atlasItemParams(entityId: string, limit: number, offset: number): URLSearchParams {
+  const params = atlasItemFilterParams(entityId)
   params.set('limit', String(limit))
   params.set('offset', String(offset))
   return params
 }
 
-function atlasMemory(row: AtlasItemRow | undefined, shelfId: string): StoryMemory | null {
+function atlasMemory(row: AtlasItemRow | undefined, entityId: string): StoryMemory | null {
   if (!row) return null
   const title = typeof row.title === 'string' ? row.title.trim() : ''
   const summary = typeof row.summary === 'string' && row.summary.trim() ? row.summary.trim() : title
   const occurredAt = typeof row.occurred_at === 'string' ? row.occurred_at : ''
   if (!summary || !occurredAt || !Number.isFinite(Date.parse(occurredAt))) return null
   return {
-    entityId: shelfId,
+    entityId,
     summary,
     eventAt: occurredAt,
     imageUrl: null,
@@ -494,11 +494,11 @@ export function storySummary(entity: SelectedEntity, memories: StoryMemory[], ev
     !current || Date.parse(memory.eventAt) > Date.parse(current.eventAt) ? memory : current
   ), null)
   if (!latest) return null
-  // Atlas shelves carry their image on the selected entity and atlas memories
-  // carry none; legacy Entities never carry one, so the shelf image (when
+  // Atlas entities carry their image on the selected entity and atlas memories
+  // carry none; legacy Entities never carry one, so the entity image (when
   // present) wins and legacy keeps the memory image untouched.
-  const shelfImage = entity.imageUrl ?? null
-  const imageUrl = shelfImage ?? latest.imageUrl
+  const entityImage = entity.imageUrl ?? null
+  const imageUrl = entityImage ?? latest.imageUrl
   return {
     storySlug: entity.slug,
     name: entity.name,
@@ -506,9 +506,9 @@ export function storySummary(entity: SelectedEntity, memories: StoryMemory[], ev
     eventCount,
     updatedAt: Date.parse(latest.eventAt) <= now ? latest.eventAt : new Date(now).toISOString(),
     imageUrl,
-    imageKind: imageUrl ? (shelfImage ? 'content' : latest.imageKind) : null,
-    imageAttribution: shelfImage ? null : latest.imageAttribution,
-    shelfType: entity.type ?? null,
+    imageKind: imageUrl ? (entityImage ? 'content' : latest.imageKind) : null,
+    imageAttribution: entityImage ? null : latest.imageAttribution,
+    entityType: entity.type ?? null,
   }
 }
 

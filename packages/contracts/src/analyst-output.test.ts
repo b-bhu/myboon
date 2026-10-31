@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ANALYST_OUTPUT_SCHEMA_VERSION, SHELF_TYPES, parseAnalystOutput, safeParseAnalystOutput } from './analyst-output.js';
+import { ANALYST_OUTPUT_SCHEMA_VERSION, ENTITY_TYPES, parseAnalystOutput, safeParseAnalystOutput } from './analyst-output.js';
 
 const target = (entity: string, over: Record<string, unknown> = {}) => ({
   entity, kind: 'existing', type: 'protocol', angle: 'existing_story', note: 'Reported by a news site.', ...over,
@@ -32,7 +32,7 @@ describe('#504 analyst output contract (D36)', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects duplicate entities, a bad angle, a bad kind and a non-shelf type', () => {
+  it('rejects duplicate entities, a bad angle, a bad kind and a non-entity type', () => {
     expect(safeParseAnalystOutput({ ...base, targets: [target('a'), target('a')] }).success).toBe(false);
     expect(safeParseAnalystOutput({ ...base, targets: [target('a', { angle: 'big_story' })] }).success).toBe(false);
     expect(safeParseAnalystOutput({ ...base, targets: [target('a', { kind: 'maybe' })] }).success).toBe(false);
@@ -48,7 +48,7 @@ describe('#504 analyst output contract (D36)', () => {
     expect(safeParseAnalystOutput({ ...base, decision: 'ignore' }).success).toBe(false);
   });
 
-  it('shelf types match the atlas.shelves type check', () => {
-    expect([...SHELF_TYPES].sort()).toEqual(['asset', 'event', 'organization', 'person', 'place', 'product', 'protocol', 'regulation', 'topic']);
+  it('entity types match the atlas.entities type check', () => {
+    expect([...ENTITY_TYPES].sort()).toEqual(['asset', 'event', 'organization', 'person', 'place', 'product', 'protocol', 'regulation', 'topic']);
   });
 });

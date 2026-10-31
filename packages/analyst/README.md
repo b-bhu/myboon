@@ -28,7 +28,7 @@ tables: everything it touches is created by
   that a signal older than 24 hours is parked `backlog_skip_24h` (#391) before
   the LLM runs. `PgDecisionSink` takes `{ allowNewEntities: false }` to drop
   every kind-new target (active slugs still file) so a catch-up run cannot
-  create shelves.
+  create entities.
 - `src/catchup.ts` — the #391 one-off catch-up CLI (confirm-gated, Ollama
   quota guard, no new entities); `src/ollama-quota.ts` reads ollama.com's
   `/api/balance` for its quota guard.

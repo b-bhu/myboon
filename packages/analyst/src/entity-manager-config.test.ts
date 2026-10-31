@@ -1,7 +1,7 @@
 /**
  * #480 entity manager config: parsed from env once at startup. Secrets (ENTITY_MANAGER_DATABASE_URL,
  * OLLAMA_API_KEY) are required and never appear in an error; the non-secret knobs have defaults
- * (glm-5.3-flash, 40 shelves, 20000ms) and are validated as positive integers.
+ * (glm-5.3-flash, 40 entities, 20000ms) and are validated as positive integers.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -21,12 +21,12 @@ function errorOf(env: Record<string, string | undefined>): Error {
 }
 
 describe('#480 parseEntityManagerConfig', () => {
-  it('applies the defaults: glm-5.3-flash, 40 shelves per run, 20000ms timeout', () => {
+  it('applies the defaults: glm-5.3-flash, 40 entities per run, 20000ms timeout', () => {
     expect(parseEntityManagerConfig(base)).toEqual({
       databaseUrl: CANARY_URL,
       ollamaApiKey: CANARY_OLLAMA,
       llmModel: 'glm-5.3-flash',
-      maxShelves: 40,
+      maxEntities: 40,
       timeoutMs: 20_000,
     });
   });
@@ -35,13 +35,13 @@ describe('#480 parseEntityManagerConfig', () => {
     const c = parseEntityManagerConfig({
       ...base,
       ENTITY_MANAGER_LLM_MODEL: 'glm-x',
-      ENTITY_MANAGER_MAX_SHELVES: '5',
+      ENTITY_MANAGER_MAX_ENTITIES: '5',
       ENTITY_MANAGER_TIMEOUT_MS: '900',
     });
-    expect(c).toMatchObject({ llmModel: 'glm-x', maxShelves: 5, timeoutMs: 900 });
+    expect(c).toMatchObject({ llmModel: 'glm-x', maxEntities: 5, timeoutMs: 900 });
   });
 
-  for (const key of ['ENTITY_MANAGER_MAX_SHELVES', 'ENTITY_MANAGER_TIMEOUT_MS'] as const) {
+  for (const key of ['ENTITY_MANAGER_MAX_ENTITIES', 'ENTITY_MANAGER_TIMEOUT_MS'] as const) {
     it(`${key} must be a positive integer`, () => {
       for (const v of ['0', '-1', '1.5', 'abc', '1e3']) {
         const e = errorOf({ ...base, [key]: v });
@@ -71,7 +71,7 @@ describe('#480 parseEntityManagerConfig', () => {
   it('no error message ever carries a secret value', () => {
     const errors = [
       errorOf({ ...base, OLLAMA_API_KEY: undefined }),
-      errorOf({ ...base, ENTITY_MANAGER_MAX_SHELVES: 'x' }),
+      errorOf({ ...base, ENTITY_MANAGER_MAX_ENTITIES: 'x' }),
       errorOf({ ...base, ENTITY_MANAGER_DATABASE_URL: 'not a url canary-db-secret' }),
       errorOf({ ...base, ENTITY_MANAGER_DATABASE_URL: undefined }),
     ];

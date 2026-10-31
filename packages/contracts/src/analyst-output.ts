@@ -3,8 +3,8 @@ import { z } from 'zod';
 /** Schema version of the analyst output form (#504). Bumped on breaking changes. */
 export const ANALYST_OUTPUT_SCHEMA_VERSION = 1;
 
-/** The 9 shelf types; mirrors the atlas.shelves type check (see analyst-output.test.ts). */
-export const SHELF_TYPES = [
+/** The 9 entity types; mirrors the atlas.entities type check (see analyst-output.test.ts). */
+export const ENTITY_TYPES = [
   'organization',
   'asset',
   'protocol',
@@ -16,7 +16,7 @@ export const SHELF_TYPES = [
   'regulation',
 ] as const;
 
-export type ShelfType = (typeof SHELF_TYPES)[number];
+export type EntityType = (typeof ENTITY_TYPES)[number];
 
 /** What a signal can do to an entity once it is placed there. */
 export const ANGLES = ['new_story', 'existing_story', 'plain_update'] as const;
@@ -26,7 +26,7 @@ export type Angle = (typeof ANGLES)[number];
 const analystTargetSchema = z.object({
   entity: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'entity must be a lowercase kebab-case slug'),
   kind: z.enum(['existing', 'new']),
-  type: z.enum(SHELF_TYPES),
+  type: z.enum(ENTITY_TYPES),
   angle: z.enum(ANGLES),
   note: z.string(),
 });

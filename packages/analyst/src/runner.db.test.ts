@@ -11,10 +11,10 @@ import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
-import { PgDecisionSink, shelfSearchFromDb, type D36Options } from './d36-worker.js';
+import { PgDecisionSink, entitySearchFromDb, type D36Options } from './d36-worker.js';
 import { analystMain, runAnalystOnce } from './runner.js';
 import type { ChatMessage, Llm } from './session.js';
-import { spikeCases, spikeShelves } from './test-fixtures/d36-spike.js';
+import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const KALSHI = spikeCases[5].signal;
@@ -55,7 +55,7 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
   };
   const opts = (o: Partial<D36Options> = {}): D36Options => ({
     llm: kalshiLlm, primary: scripted('jev', keepAll), fallback: scripted('clef', keepAll), shadow: null,
-    search: shelfSearchFromDb(workerPool), sink: new PgDecisionSink(workerPool, () => {}), log: () => {},
+    search: entitySearchFromDb(workerPool), sink: new PgDecisionSink(workerPool, () => {}), log: () => {},
     leaseMs: 60_000, timeoutMs: 1_000, backoffMs: 60_000, maxAttempts: 3, worker: 'w512', ...o,
   });
   const seedSignals = async (n: number) => {
@@ -76,18 +76,18 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
   });
   afterAll(async () => { await workerPool?.end(); await pool?.end(); await db?.drop(); });
   beforeEach(async () => {
-    await pool.query('truncate atlas.item_signals, atlas.items, atlas.decisions, atlas.signals cascade');
-    await pool.query('delete from atlas.shelves');
-    for (const s of spikeShelves) {
-      await pool.query('insert into atlas.shelves (slug, name, type, aliases) values ($1, $2, $3, $4)', [s.slug, s.name, s.type, s.aliases]);
+    await pool.query('truncate atlas.item_signals, atlas.entity_items, atlas.decisions, atlas.signals cascade');
+    await pool.query('delete from atlas.entities');
+    for (const s of spikeEntities) {
+      await pool.query('insert into atlas.entities (slug, name, type, aliases) values ($1, $2, $3, $4)', [s.slug, s.name, s.type, s.aliases]);
     }
   });
 
   it('RLS is on for every atlas table the worker touches', async () => {
     const { rows } = await pool.query<{ relname: string; on: boolean }>(
       `select c.relname, c.relrowsecurity as on from pg_class c join pg_namespace n on n.oid = c.relnamespace
-        where n.nspname = 'atlas' and c.relname = any($1) order by c.relname`, [['decisions', 'items', 'shelves', 'signals']]);
-    expect(rows).toEqual(['decisions', 'items', 'shelves', 'signals'].map((relname) => ({ relname, on: true })));
+        where n.nspname = 'atlas' and c.relname = any($1) order by c.relname`, [['decisions', 'entities', 'entity_items', 'signals']]);
+    expect(rows).toEqual(['decisions', 'entities', 'entity_items', 'signals'].map((relname) => ({ relname, on: true })));
   });
 
   it('processes every due signal as analyst_worker and writes decisions and items through PgDecisionSink', async () => {
@@ -97,7 +97,7 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
     expect(s).toEqual({ processed: 3, analysed: 3, parked: 0, failed: 0, lost_claim: 0 });
     expect(await statuses()).toEqual([{ status: 'analysed', n: 3 }]);
     expect((await pool.query('select count(*)::int n from atlas.decisions')).rows[0].n).toBe(3);
-    expect((await pool.query('select count(*)::int n from atlas.items')).rows[0].n).toBe(3);
+    expect((await pool.query('select count(*)::int n from atlas.entity_items')).rows[0].n).toBe(3);
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ event: 'analyst_run', processed: 3, analysed: 3 });
   });
