@@ -24,6 +24,7 @@ import {
 } from '../polymarket/read/updown-prices.js'
 import { spotRoutes } from '../spot.js'
 import { createStoryRoutes } from '../stories.js'
+import { createEntityTimelineRoutes } from '../entity-timeline.js'
 import { createSwapRoutes } from '../swap.js'
 import { createWaitlistRoutes } from '../waitlist.js'
 import { createSqliteSwapExecutionStore } from '../swap/store.js'
@@ -118,6 +119,10 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     serviceRoleKey: config.supabaseServiceRoleKey,
     memoryReader: entityKnowledgeReader,
     source: process.env.STORIES_SOURCE === 'atlas' ? 'atlas' : 'legacy',
+  }))
+  app.route('/entities', createEntityTimelineRoutes({
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.supabaseServiceRoleKey,
   }))
   app.route('/narratives', createNarrativeRoutes({
     supabaseUrl: config.supabaseUrl,

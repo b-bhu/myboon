@@ -13,6 +13,7 @@
  * - Catch-up (#391): catchupMain, parseCatchupArgs; the ollama-quota guard
  *   (readOllamaQuota, createQuotaGuard)
  * - Timed entity manager (#480): reviewProposedEntities, parseEntityManagerConfig
+ * - Story writer (#505): writeStories, WriteStoriesOptions, WriteStoriesResult
  */
 export * from './config.js';
 export * from './deciders.js';
@@ -26,3 +27,4 @@ export * from './ollama-quota.js';
 export * from './catchup.js';
 export * from './entity-manager.js';
 export * from './entity-manager-config.js';
+export * from './story-writer.js';
