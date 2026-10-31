@@ -1,11 +1,16 @@
 /**
- * #480 the timed entity manager: reviews every atlas.shelves row with status='proposed' that has a
- * signal waiting for its verdict (a decisions row with entity_reviewed_at null) and lets the LLM
+ * #480 the timed entity manager: reviews atlas.shelves rows with status='proposed' whose own stamp
+ * marks them pending — shelves.entity_reviewed_at null (never reviewed), or at least one item on
+ * the shelf created after the stored stamp (a new item re-opens the review) — and lets the LLM
  * decide alias (fold into an existing ACTIVE shelf), reject (retire, items stay), or new
  * (deserves its own entity; the shelf stays proposed, activation is #530). Only alias and reject
  * are applied; `new` writes nothing but the verdict, stamped onto the signals' existing
- * atlas.decisions rows, and the shelf is picked up again only when a new unreviewed signal lands
- * there. Applied verdicts run inside one transaction per shelf, taking the same per-slug advisory locks
+ * atlas.decisions rows. A completed review (alias, reject, or new) stamps the shelf's own
+ * entity_reviewed_at — alias and reject inside the apply transaction, new right after the verdict;
+ * failed, raced and capped shelves are not stamped — so the shelf is picked up again only when a
+ * new item lands there. The stamp is per shelf, so two proposed shelves sharing one signal are
+ * reviewed independently: reviewing one leaves the other pending (#480). Applied verdicts run
+ * inside one transaction per shelf, taking the same per-slug advisory locks
  * as PgDecisionSink (#482) in sorted slug order and re-checking the shelf is still proposed before
  * writing, so a raced shelf is skipped without any writes. Failures are per-shelf the run
  * (one entity_review_failed line, nothing written) and the quota guard stops the run fail-closed.
@@ -63,18 +68,22 @@ export async function reviewProposedShelves(db: Pool, o: EntityManagerOptions): 
     reviewed: 0, aliased: 0, rejected: 0, kept_new: 0, skipped: 0, failed: 0, llm_calls: 0, stop_reason: 'idle',
   };
 
-  // Slug order: the deterministic side of the maxShelves cap (the first N slugs are the ones
-  // reviewed). Only shelves with at least one signal whose decisions row has no entity_reviewed_at.
+  // Stamp order with a stable slug tiebreak (the deterministic side of the maxShelves cap — the
+  // first N shelves are the ones reviewed). A shelf is pending until a review stamps its own
+  // entity_reviewed_at (#480), and pending again when an item lands after that stamp; the stamp
+  // is per shelf, so shared signals don't hold other shelves back. The tiebreak is slug only:
+  // s.created_at is not in entity_worker's column grant (20261031070000), and Postgres denies any
+  // query referencing an ungranted column, order clause included.
   const shelves = (await db.query<{ id: string; slug: string; name: string; type: string }>(
     `select s.id, s.slug, s.name, s.type
        from atlas.shelves s
       where s.status = 'proposed'
-        and exists (select 1
-                      from atlas.items i
-                      join atlas.decisions d on d.signal_id = i.signal_id
-                     where i.main_shelf_id = s.id
-                       and d.entity_reviewed_at is null)
-      order by s.slug`,
+        and (s.entity_reviewed_at is null
+             or exists (select 1
+                          from atlas.items i
+                         where i.main_shelf_id = s.id
+                           and i.created_at > s.entity_reviewed_at))
+      order by s.entity_reviewed_at nulls first, s.slug`,
   )).rows;
   if (shelves.length === 0) {
     log({ event: 'entity_manager_run', ...summary });
@@ -124,6 +133,8 @@ export async function reviewProposedShelves(db: Pool, o: EntityManagerOptions): 
           [shelf.id],
         )).rows.map((r) => r.signal_id);
         await recordVerdict(db, signalIds, 'new', null, o, verdict.reason);
+        // The stamp closes this shelf's review (#480); it re-opens only when a new item lands.
+        await db.query('update atlas.shelves set entity_reviewed_at = now() where id = $1', [shelf.id]);
         summary.kept_new += 1;
         summary.reviewed += 1;
         continue;
@@ -227,7 +238,9 @@ async function activeShelfId(db: Pool, slug: string): Promise<string | null> {
  * put), appends the proposed slug to the target's aliases once and retires the shelf;
  * reject only retires it (the items stay). The verdict is recorded by UPDATING the existing
  * atlas.decisions row of each DISTINCT signal on the shelf as the locked transaction sees
- * it (the five entity_* columns only; that row is the signal's own decision).
+ * it (the five entity_* columns only; that row is the signal's own decision). Both
+ * branches then stamp the shelf's entity_reviewed_at (the per-shelf pending marker, #480)
+ * in the same transaction; a race or a failure rolls the whole thing back, stamp included.
  */
 async function applyVerdict(
   db: Pool,
@@ -281,6 +294,7 @@ async function applyVerdict(
       }
       await client.query(`update atlas.shelves set status = 'retired' where id = $1`, [proposed.id]);
       await recordVerdict(client, signalIds, decision, aliasTargetId, o, reason);
+      await client.query('update atlas.shelves set entity_reviewed_at = now() where id = $1', [proposed.id]);
       await client.query('commit');
       return 'applied';
     } catch (e) {
