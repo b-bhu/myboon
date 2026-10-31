@@ -17,7 +17,9 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-s
 import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystOutput } from '@myboon/contracts';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
-import { InMemoryDecisionSink, PgDecisionSink, processNextD36, entitySearchFromDb, type D36Options } from './d36-worker.js';
+import {
+  InMemoryDecisionSink, PgDecisionSink, classifySignalFailure, processNextD36, entitySearchFromDb, type D36Options,
+} from './d36-worker.js';
 import { createOllamaLlm, type ChatMessage, type JevLogEntry, type Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 
@@ -157,6 +159,25 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(s).toMatchObject({ status: 'received', attempts: 1, claim_token: null });
     expect(s.last_error).toMatch(/LLM timed out after 50ms/);
     expect(sink.outputs()).toHaveLength(0);
+  });
+
+  it('a signal_failed line is logged for every failed attempt: retry then dead at the attempt cap', async () => {
+    const lines: Record<string, unknown>[] = [];
+    const failOpts = (): D36Options => opts({ llm: kalshiLlm({ fail: true }), failLog: (e) => { lines.push(e); } });
+    expect(await processNextD36(svcPool, failOpts())).toMatchObject({ result: 'failed' });
+    // Exactly one line per attempt, with the claim's attempt number and failClaim's outcome.
+    expect(lines).toEqual([
+      { event: 'signal_failed', signal_id: KALSHI.signal_id, attempt: 1, reason: 'other', error: 'LLM HTTP 500', dead: false },
+    ]);
+    await pool.query('update atlas.signals set next_attempt_at = now() where signal_id = $1', [KALSHI.signal_id]);
+    await processNextD36(svcPool, failOpts());
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatchObject({ attempt: 2, dead: false });
+    await pool.query('update atlas.signals set next_attempt_at = now() where signal_id = $1', [KALSHI.signal_id]);
+    expect(await processNextD36(svcPool, failOpts())).toMatchObject({ result: 'failed' });
+    expect(lines[2]).toMatchObject({ event: 'signal_failed', signal_id: KALSHI.signal_id, attempt: 3, dead: true });
+    expect(lines[2]).not.toHaveProperty('lost_claim');
+    expect(await sig()).toMatchObject({ status: 'dead', attempts: 3 });
   });
 
   it('the Clef shadow is off by default and never changes the output when on', async () => {
@@ -591,5 +612,29 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
         expect(logs391[0]).toMatchObject({ event: 'target_reclassified', signal_id: 'sig-391-e', entity: 'coinbase' });
       });
     });
+  });
+});
+
+describe('classifySignalFailure (pure, no database)', () => {
+  it('timeout: a message saying timed out/timeout wins, whichever stage failed', () => {
+    expect(classifySignalFailure(new Error('LLM timed out after 50ms'), 'session')).toBe('timeout');
+    expect(classifySignalFailure(new Error('decider request timeout'), 'session')).toBe('timeout');
+    expect(classifySignalFailure(new Error('pool connection timed out'), 'sink')).toBe('timeout');
+  });
+
+  it('parse: a SyntaxError or a JSON/parse message, even from the sink stage', () => {
+    expect(classifySignalFailure(new SyntaxError('Unexpected token o'), 'session')).toBe('parse');
+    expect(classifySignalFailure(new Error('reply has no JSON object: oops'), 'session')).toBe('parse');
+    expect(classifySignalFailure(new Error('failed to parse the sink output'), 'sink')).toBe('parse');
+  });
+
+  it('db: a pg error (a string code) or whatever sink.save threw', () => {
+    expect(classifySignalFailure({ code: '42703', message: 'column "x" does not exist' }, 'session')).toBe('db');
+    expect(classifySignalFailure(new Error('target kalshi: no active entity'), 'sink')).toBe('db');
+  });
+
+  it('other: an LLM HTTP error and a non-error value', () => {
+    expect(classifySignalFailure(new Error('LLM HTTP 500'), 'session')).toBe('other');
+    expect(classifySignalFailure(null, 'session')).toBe('other');
   });
 });

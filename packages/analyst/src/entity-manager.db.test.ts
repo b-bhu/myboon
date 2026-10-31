@@ -14,8 +14,9 @@
  *   - new: entity stays proposed with entity_outcome 'new'; an entity is only selected while one of its
  *     signals has a null entity_reviewed_at, so the next run makes NO LLM call for it until a new
  *     (unreviewed) signal lands there, then it is reviewed again;
- *   - invalid JSON, unknown or non-active alias_of, LLM error and LLM timeout change nothing and
- *     log entity_review_failed;
+ *   - invalid JSON is retried once in the same run (entity_review_parse_retry, llm_calls counts both
+ *     calls); a second bad reply fails with retried: true in the log, while unknown or non-active
+ *     alias_of, LLM error and LLM timeout never retry;
  *   - a quota guard stop makes no LLM call (stop_reason 'quota'); maxEntities truncates (stop_reason
  *     'max'); an entity that is no longer proposed at apply time is skipped without writes.
  * Counter contract (mirrors catchup): reviewed = aliased + rejected + kept_new + failed; skipped =
@@ -261,19 +262,39 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
     expect(secondStamp.getTime()).toBeGreaterThanOrEqual(firstStamp.getTime());
   });
 
-  it('invalid JSON: nothing changes, the failure is logged and the run continues', async () => {
+  it('invalid JSON: one same-run retry happens, then the failure is logged as retried and nothing is stamped', async () => {
     await seedProposed('kalshi-inc', { signals: ['s1'] });
     const llm = scriptedLlm('oops, not json');
     const { events, log } = logOf();
 
     const s = await review(llm, { log });
 
-    expect(s).toEqual({ reviewed: 1, aliased: 0, rejected: 0, kept_new: 0, skipped: 0, failed: 1, llm_calls: 1, stop_reason: 'idle' });
+    expect(s).toEqual({ reviewed: 1, aliased: 0, rejected: 0, kept_new: 0, skipped: 0, failed: 1, llm_calls: 2, stop_reason: 'idle' });
+    expect(llm.calls).toBe(2); // the bounded retry: one call more, never a third
     expect(await entityStatus('kalshi-inc')).toBe('proposed');
     expect(await itemHomes(['s1'])).toEqual([{ signal_id: 's1', slug: 'kalshi-inc' }]);
     expect(await reviewCount()).toBe(0);
-    expect(events).toContainEqual(expect.objectContaining({ event: 'entity_review_failed', entity: 'kalshi-inc' }));
+    // The retry is announced before the second call; the failure log carries retried: true.
+    expect(events[0]).toEqual({ event: 'entity_review_parse_retry', entity: 'kalshi-inc' });
+    expect(events).toContainEqual(expect.objectContaining({ event: 'entity_review_failed', entity: 'kalshi-inc', retried: true }));
     expect(events.filter((e) => e['event'] === 'entity_manager_run')).toHaveLength(1);
+  });
+
+  it('a garbled reply is retried once in the same run: the second reply parses and the verdict applies', async () => {
+    await seedProposed('kalshi-inc', { signals: ['s1'] });
+    const replies: (string | Error)[] = ['oops, not json', aliasReply('kalshi')];
+    const llm = scriptedLlm(() => replies.shift() as string);
+    const { events, log } = logOf();
+
+    const s = await review(llm, { log });
+
+    expect(s).toEqual({ reviewed: 1, aliased: 1, rejected: 0, kept_new: 0, skipped: 0, failed: 0, llm_calls: 2, stop_reason: 'idle' });
+    expect(llm.calls).toBe(2);
+    expect(await entityStatus('kalshi-inc')).toBe('retired');
+    expect(await itemHomes(['s1'])).toEqual([{ signal_id: 's1', slug: 'kalshi' }]);
+    expect(await reviewCount()).toBe(1);
+    expect(events).toContainEqual({ event: 'entity_review_parse_retry', entity: 'kalshi-inc' });
+    expect(events.filter((e) => e['event'] === 'entity_review_failed')).toHaveLength(0);
   });
 
   for (const [label, targetSlug] of [

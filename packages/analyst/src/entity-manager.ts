@@ -12,8 +12,11 @@
  * reviewed independently: reviewing one leaves the other pending (#480). Applied verdicts run
  * inside one transaction per entity, taking the same per-slug advisory locks
  * as PgDecisionSink (#482) in sorted slug order and re-checking the entity is still proposed before
- * writing, so a raced entity is skipped without any writes. Failures are per-entity the run
- * (one entity_review_failed line, nothing written) and the quota guard stops the run fail-closed.
+ * writing, so a raced entity is skipped without any writes. A garbled reply (anything parseVerdict
+ * throws) is retried once in the same run with the same prompt — a timeout, an LLM error or an
+ * alias-target error never retries — and a second bad reply fails the entity. Failures are
+ * per-entity the run (one entity_review_failed line, nothing written) and the quota guard stops the
+ * run fail-closed.
  */
 import type { Pool } from 'pg';
 
@@ -117,11 +120,23 @@ export async function reviewProposedEntities(db: Pool, o: EntityManagerOptions):
       'select signal_id, title, note from atlas.entity_items where main_entity_id = $1 order by created_at desc, id desc',
       [entity.id],
     );
+    const prompt = reviewPrompt(entity, items.slice(0, 10), active);
     summary.llm_calls += 1;
-    let reply: string;
+    let retried = false;
     try {
-      reply = await askTimed(o.llm, reviewPrompt(entity, items.slice(0, 10), active), o.timeoutMs);
-      const verdict = parseVerdict(reply);
+      let reply = await askTimed(o.llm, prompt, o.timeoutMs);
+      let verdict: Verdict;
+      try {
+        verdict = parseVerdict(reply);
+      } catch {
+        // One bounded same-run retry for a parse failure: one garbled reply must not fail an
+        // entity that talks fine, and a timeout/LLM/alias-target error must never multiply.
+        log({ event: 'entity_review_parse_retry', entity: entity.slug });
+        summary.llm_calls += 1;
+        retried = true;
+        reply = await askTimed(o.llm, prompt, o.timeoutMs);
+        verdict = parseVerdict(reply);
+      }
       const targetId = verdict.decision === 'alias' ? await activeEntityId(db, verdict.aliasOf as string) : null;
       if (verdict.decision === 'alias' && targetId === null) {
         throw new Error(`alias_of ${verdict.aliasOf} is not an active entity`);
@@ -151,7 +166,7 @@ export async function reviewProposedEntities(db: Pool, o: EntityManagerOptions):
     } catch (e) {
       summary.reviewed += 1;
       summary.failed += 1;
-      log({ event: 'entity_review_failed', entity: entity.slug, error: asMessage(e) });
+      log({ event: 'entity_review_failed', entity: entity.slug, error: asMessage(e), ...(retried ? { retried: true } : {}) });
     }
   }
 
