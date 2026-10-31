@@ -100,5 +100,16 @@ refuse "insert story_items.created_at" "insert into atlas.story_items (story_id,
 refuse "select atlas.history"      "select count(*) from atlas.history"
 refuse "alter table stories"       "alter table atlas.stories add column x int"
 
+echo "== forward: apply every later atlas migration (incl. #541 rename) =="
+# Assertions above are pinned to this migration's point in history (pre-#541 names).
+# This section checks the same objects under their current names after all migrations.
+for f in $(ls "$REPO"/supabase/migrations/*_atlas*.sql | sort); do
+  b=$(basename "$f"); [[ $b > 20261030160000_~ ]] || continue
+  "${PSQL[@]}" -f "$f" >/dev/null || { bad "apply $b"; continue; }
+done
+q "select count(*) from information_schema.columns where table_schema='atlas' and table_name='stories' and column_name in ('entity_id','status')" | grep -qx 2 && ok "after all: stories.entity_id + status" || bad "after all: stories columns"
+q "select pg_get_indexdef('atlas.stories_entity_open_idx'::regclass)" | grep -q "(entity_id, created_at DESC) WHERE (status = 'open'::text)" && ok "after all: stories_entity_open_idx shape" || bad "after all: index"
+q "select count(*) from atlas.stories where id='$SID'" | grep -qx 1 && ok "after all: story row survives rename" || bad "after all: story row"
+
 echo "RESULT: $PASS passed, $REFUSED refused as required, $FAILS failures"
 [[ $FAILS -eq 0 ]]
