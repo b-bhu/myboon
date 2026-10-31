@@ -11,8 +11,8 @@
 -- records the new columns on UPDATE with no change.
 -- Steps: columns + FK NOT VALID, VALIDATE, two plain indexes (decisions is ~2k rows, the SHARE lock
 -- is brief; lock_timeout 5s / statement_timeout 60s), then grants/policy/drops. Every step is rerunnable.
--- Deploy order: deploy #539 (entity manager stays STOPPED), apply this, then start the entity manager.
--- DO NOT APPLY before #539 is merged and deployed: the current worker writes atlas.entity_reviews.
+-- Deploy order: merge and apply #538 first with the entity manager STOPPED; then #539 is rebased and
+-- deployed. The entity manager must stay stopped until #539 is deployed (current code writes entity_reviews).
 -- Rollback: supabase/rollbacks/20261031090000_atlas_entity_review_on_decisions.down.sql
 
 -- 1. columns (catalog-only: nullable, no defaults) + FK NOT VALID
