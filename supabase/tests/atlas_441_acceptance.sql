@@ -24,7 +24,7 @@ do $$ begin
     insert into atlas.item_signals (item_id, signal_id) select id, 's1' from atlas.entity_items where item_key = 'i1';
     raise exception 'FAIL: duplicate item_signals accepted';
   exception when unique_violation then raise notice 'PASS 1c item_signals PK(item_id, signal_id) rejects duplicate'; end;
-  insert into atlas.stories (slug, title) values ('st1', 'Story 1');
+  insert into atlas.stories (slug, title, entity_id) select 'st1', 'Story 1', id from atlas.entities where slug = 't-main';
   insert into atlas.story_items (story_id, item_id) select s.id, i.id from atlas.stories s, atlas.entity_items i where s.slug = 'st1' and i.item_key = 'i1';
   begin
     insert into atlas.story_items (story_id, item_id) select s.id, i.id from atlas.stories s, atlas.entity_items i where s.slug = 'st1' and i.item_key = 'i1';
@@ -36,14 +36,8 @@ do $$ begin
   exception when unique_violation then raise notice 'PASS 1e entities UNIQUE(slug) rejects duplicate'; end;
 end $$;
 
--- 2. One main shelf: a second main fails, an item without one fails, self-merge fails.
+-- 2. One main entity (entity_items.main_entity_id; the links table was dropped in #541): an item without one fails, self-merge fails.
 do $$ begin
-  begin
-    insert into atlas.entity_item_links (item_id, entity_id, role) select i.id, s.id, 'main' from atlas.entity_items i, atlas.entities s where i.item_key = 'i1' and s.slug = 't-other';
-    raise exception 'FAIL: second main shelf accepted';
-  exception when check_violation then raise notice 'PASS 2a second main shelf rejected (entity_item_links role is also_affects only; main is items.main_entity_id)'; end;
-  insert into atlas.entity_item_links (item_id, entity_id) select i.id, s.id from atlas.entity_items i, atlas.entities s where i.item_key = 'i1' and s.slug = 't-other';
-  raise notice 'PASS 2b also_affects link accepted';
   begin
     insert into atlas.entity_items (item_key, title) values ('i2', 'No shelf');
     raise exception 'FAIL: item without main shelf accepted';
