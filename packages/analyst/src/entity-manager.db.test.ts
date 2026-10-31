@@ -134,9 +134,7 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
     )).rows;
 
   beforeAll(async () => {
-    // Pinned to the schema before #537 (entity_reviews dropped): this code still writes
-    // entity_reviews until Backend Dev's #539 moves it to atlas.decisions and removes the pin.
-    db = await createThrowawayDatabase(ADMIN_URL, { before: '20261031090000' });
+    db = await createThrowawayDatabase(ADMIN_URL);
     pool = new Pool({ connectionString: db.url, max: 2 });
     emPool = rolePoolFor(db.url, 'entity_worker');
     workerPool = rolePoolFor(db.url, 'analyst_worker');
