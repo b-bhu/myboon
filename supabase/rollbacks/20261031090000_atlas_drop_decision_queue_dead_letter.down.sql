@@ -1,4 +1,5 @@
--- squawk-ignore-file require-concurrent-index-creation, prefer-robust-stmts  (indexes on freshly created empty tables)
+-- squawk-ignore-file require-concurrent-index-creation, prefer-robust-stmts
+-- (indexes are on freshly created empty tables)
 -- Rollback for 20261031090000_atlas_drop_decision_queue_dead_letter.
 -- Recreates prod DDL, grants and policies as read on 2026-10-31. DATA IS NOT RESTORED
 -- (both tables were empty). Idempotent.
