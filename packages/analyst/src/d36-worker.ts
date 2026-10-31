@@ -145,7 +145,8 @@ async function activeShelfId(client: PoolClient, slug: string): Promise<string> 
 /**
  * The shelf for a kind new target: reuse a proposed shelf; an already active slug files on that
  * existing shelf with a target_reclassified log line (#511); a retired slug aliased by an active
- * shelf files there with a target_redirected log line (#480, regardless of allowNewEntities); a
+ * shelf files there with a target_redirected log line, as does a slug with no row that an active
+ * shelf aliases (#480, regardless of allowNewEntities); a
  * retired slug with no active alias drops the target (target_dropped, no item, no throw, #482);
  * else propose one (name = slug). With `allowNewEntities = false` (#391 catch-up) the proposed/
  * unaliased-retired/no-row cases all drop through the same target_dropped path with the fixed
@@ -171,17 +172,18 @@ async function proposedShelfId(
     log({ event: 'target_reclassified', signal_id: signalId, entity: slug, reason: `shelf ${slug} is already active; filed as existing` });
     return rows[0].id;
   }
+  // A retired or row-less slug that an active shelf lists in its aliases files on that shelf,
+  // regardless of allowNewEntities: filing on an existing active shelf creates no shelf (#480).
+  const redirected = await client.query<{ id: string; slug: string }>(
+    "select id, slug from atlas.shelves where status = 'active' and $1 = any(aliases) order by slug limit 1",
+    [slug],
+  );
+  if (redirected.rows[0]) {
+    const why = rows[0] ? `shelf ${slug} is ${rows[0].status}` : `no shelf ${slug}`;
+    log({ event: 'target_redirected', signal_id: signalId, entity: slug, shelf: redirected.rows[0].slug, reason: `${why}; alias of ${redirected.rows[0].slug}, filed there` });
+    return redirected.rows[0].id;
+  }
   if (rows[0]) {
-    // A retired slug the entity manager aliased into an active shelf still files there, regardless
-    // of allowNewEntities: filing on an existing active shelf creates no shelf (#480 CTO decision 3).
-    const redirected = await client.query<{ id: string; slug: string }>(
-      "select id, slug from atlas.shelves where status = 'active' and $1 = any(aliases) order by slug limit 1",
-      [slug],
-    );
-    if (redirected.rows[0]) {
-      log({ event: 'target_redirected', signal_id: signalId, entity: slug, shelf: redirected.rows[0].slug, reason: `shelf ${slug} is ${rows[0].status}; alias of ${redirected.rows[0].slug}, filed there` });
-      return redirected.rows[0].id;
-    }
     log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: allowNewEntities
       ? `shelf ${slug} is ${rows[0].status}, not proposed or active`
       : NEW_ENTITY_DISABLED_REASON });
