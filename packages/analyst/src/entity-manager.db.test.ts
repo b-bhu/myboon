@@ -419,11 +419,13 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
     expect(events).not.toContainEqual(expect.objectContaining({ event: 'entity_review_failed' }));
   });
 
-  it('atlas.entity_reviews is gone and a proposed shelf with no unreviewed signal is never sent', async () => {
+  it('atlas.entity_reviews is gone and a reviewed proposed shelf with no newer item is never sent', async () => {
     expect((await pool.query("select to_regclass('atlas.entity_reviews') is null as gone")).rows[0]!.gone).toBe(true);
-    await seedShelf('empty-proposed', { status: 'proposed' }); // no items, so no signal to review
+    await seedShelf('empty-proposed', { status: 'proposed' }); // no items
     await seedProposed('kalshi-inc', { signals: ['s1'] });
     await pool.query("update atlas.decisions set entity_outcome = 'new', entity_reviewed_at = now() where signal_id = 's1'");
+    // Both shelves already reviewed (the per-shelf stamp is after every item on them).
+    await pool.query("update atlas.shelves set entity_reviewed_at = now() + interval '1 second' where status = 'proposed'");
     const llm = scriptedLlm(rejectReply());
 
     const s = await review(llm);
