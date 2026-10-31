@@ -32,6 +32,11 @@ export default function RootLayout() {
                   <Stack>
                       <Stack.Screen name="index" options={{ headerShown: false }} />
                       <Stack.Screen name="feed" options={{ headerShown: false }} />
+                      <Stack.Screen name="stories" options={{ headerShown: false }} />
+                      <Stack.Screen name="calendar" options={{ headerShown: false }} />
+                      <Stack.Screen name="wallets" options={{ headerShown: false }} />
+                      <Stack.Screen name="market" options={{ headerShown: false }} />
+                      <Stack.Screen name="story/[slug]" options={{ headerShown: false }} />
                       <Stack.Screen
                         name="swap"
                         options={{

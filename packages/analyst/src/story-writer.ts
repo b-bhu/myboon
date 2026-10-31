@@ -2,7 +2,7 @@
  * #505 story writer: groups an entity's new analyst items (angles new_story / existing_story) into
  * atlas.stories. Runs as analyst_worker, which may only insert stories/story_items and update a
  * story's title, summary and updated_at — never the items themselves; plain_update items are never
- * touched and never sent to the LLM. Per shelf the linking happens in one transaction behind the
+ * touched and never sent to the LLM. Per entity the linking happens in one transaction behind the
  * `story:` advisory lock, and it commits BEFORE the LLM runs: for every story that just gained an
  * item or is still waiting for its text (summary null), GLM is called once with the notes of all
  * its linked items, oldest first, and must answer a JSON {"title","text"} from those notes only. A
@@ -25,7 +25,7 @@ export type WriteStoriesOptions = {
 export type WriteStoriesResult = { linked: number; written: number; pending: number };
 
 /** A story candidate item: the title is never null, the note can be. */
-type CandidateItem = { id: string; title: string; note: string | null; angle: string; main_shelf_id: string };
+type CandidateItem = { id: string; title: string; note: string | null; angle: string; main_entity_id: string };
 
 const asMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -40,21 +40,21 @@ export async function writeStories(db: Pool, o: WriteStoriesOptions): Promise<Wr
   const client = await db.connect();
   try {
     const items = (await client.query<CandidateItem>(
-      `select id, title, note, angle, main_shelf_id
-         from atlas.items
+      `select id, title, note, angle, main_entity_id
+         from atlas.entity_items
         where status = 'active'
           and angle in ('new_story', 'existing_story')
-          and not exists (select 1 from atlas.story_items si where si.item_id = atlas.items.id)
+          and not exists (select 1 from atlas.story_items si where si.item_id = atlas.entity_items.id)
         order by occurred_at asc nulls last, created_at asc, id asc`,
     )).rows;
-    const byShelf = new Map<string, CandidateItem[]>();
+    const byEntity = new Map<string, CandidateItem[]>();
     for (const item of items) {
-      const onShelf = byShelf.get(item.main_shelf_id) ?? [];
-      onShelf.push(item);
-      byShelf.set(item.main_shelf_id, onShelf);
+      const onEntity = byEntity.get(item.main_entity_id) ?? [];
+      onEntity.push(item);
+      byEntity.set(item.main_entity_id, onEntity);
     }
-    for (const [shelfId, onShelf] of byShelf) {
-      await linkShelfItems(client, shelfId, onShelf, touched);
+    for (const [entityId, onEntity] of byEntity) {
+      await linkEntityItems(client, entityId, onEntity, touched);
     }
   } finally {
     client.release();
@@ -67,29 +67,29 @@ export async function writeStories(db: Pool, o: WriteStoriesOptions): Promise<Wr
 }
 
 /**
- * One shelf, one transaction: the advisory lock serialises story writers on this shelf, so a writer
+ * One entity, one transaction: the advisory lock serialises story writers on this entity, so a writer
  * that raced ahead of us commits its links first and our re-read then finds the items already
  * linked. The commit lands before any GLM call.
  */
-async function linkShelfItems(client: PoolClient, shelfId: string, candidates: CandidateItem[], touched: string[]): Promise<void> {
+async function linkEntityItems(client: PoolClient, entityId: string, candidates: CandidateItem[], touched: string[]): Promise<void> {
   await client.query('begin');
   try {
-    await client.query("select pg_advisory_xact_lock(hashtext('story:' || $1))", [shelfId]);
-    const shelf = (await client.query<{ slug: string }>('select slug from atlas.shelves where id = $1', [shelfId])).rows[0];
-    if (!shelf) throw new Error(`shelf ${shelfId} missing`);
+    await client.query("select pg_advisory_xact_lock(hashtext('story:' || $1))", [entityId]);
+    const entity = (await client.query<{ slug: string }>('select slug from atlas.entities where id = $1', [entityId])).rows[0];
+    if (!entity) throw new Error(`entity ${entityId} missing`);
     const items = (await client.query<CandidateItem>(
       `select id, title, note, angle
-         from atlas.items
+         from atlas.entity_items
         where id = any($1)
           and status = 'active'
           and angle in ('new_story', 'existing_story')
-          and not exists (select 1 from atlas.story_items si where si.item_id = atlas.items.id)
+          and not exists (select 1 from atlas.story_items si where si.item_id = atlas.entity_items.id)
         order by occurred_at asc nulls last, created_at asc, id asc`,
       [candidates.map((item) => item.id)],
     )).rows;
     for (const item of items) {
-      const open = item.angle === 'existing_story' ? await latestOpenStory(client, shelfId) : null;
-      const storyId = open ?? (await insertStory(client, shelfId, shelf.slug, item));
+      const open = item.angle === 'existing_story' ? await latestOpenStory(client, entityId) : null;
+      const storyId = open ?? (await insertStory(client, entityId, entity.slug, item));
       await client.query(
         'insert into atlas.story_items (story_id, item_id, position) values ($1, $2, $3)',
         [storyId, item.id, await nextPosition(client, storyId)],
@@ -103,25 +103,25 @@ async function linkShelfItems(client: PoolClient, shelfId: string, candidates: C
   }
 }
 
-/** The shelf's latest open story (created_at desc, id desc), or null when none is open. */
-async function latestOpenStory(client: PoolClient, shelfId: string): Promise<string | null> {
+/** The entity's latest open story (created_at desc, id desc), or null when none is open. */
+async function latestOpenStory(client: PoolClient, entityId: string): Promise<string | null> {
   const { rows } = await client.query<{ id: string }>(
     `select id from atlas.stories
-      where shelf_id = $1 and status = 'open'
+      where entity_id = $1 and status = 'open'
       order by created_at desc, id desc
       limit 1`,
-    [shelfId],
+    [entityId],
   );
   return rows[0]?.id ?? null;
 }
 
-/** One open story on the shelf: item title first, GLM text later; slug is <shelf slug>-<8 hex chars of a fresh id>. */
-async function insertStory(client: PoolClient, shelfId: string, shelfSlug: string, item: CandidateItem): Promise<string> {
+/** One open story on the entity: item title first, GLM text later; slug is <entity slug>-<8 hex chars of a fresh id>. */
+async function insertStory(client: PoolClient, entityId: string, entitySlug: string, item: CandidateItem): Promise<string> {
   const { rows } = await client.query<{ id: string }>(
-    `insert into atlas.stories (shelf_id, slug, title, summary, status)
+    `insert into atlas.stories (entity_id, slug, title, summary, status)
      values ($1, $2 || '-' || substring(gen_random_uuid()::text from 1 for 8), $3, null, 'open')
      returning id`,
-    [shelfId, shelfSlug, item.title],
+    [entityId, entitySlug, item.title],
   );
   return rows[0].id;
 }
@@ -162,7 +162,7 @@ async function storyNotes(db: Db, storyId: string): Promise<string[]> {
   const { rows } = await db.query<{ title: string; note: string | null }>(
     `select i.title, i.note
        from atlas.story_items si
-       join atlas.items i on i.id = si.item_id
+       join atlas.entity_items i on i.id = si.item_id
       where si.story_id = $1
       order by i.occurred_at asc nulls last, i.created_at asc, i.id asc`,
     [storyId],

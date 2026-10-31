@@ -24,7 +24,6 @@ export default function FeedScreen() {
     <FeedList items={pages.items} onCardPress={openReport} refreshing={pages.loading && pages.items.length > 0}
       onRefresh={() => { void pages.refresh(); }} onEndReached={() => { if (!pages.olderError) void pages.loadMore(); }} loadingMore={pages.loadingMore}
       header={<View style={styles.header}>
-        <Text style={styles.context}>Published reports · Newest first</Text>
         {pages.error && pages.items.length ? <FeedSectionState title="Refresh unavailable" text="Your loaded reports are still available." onRetry={() => { void pages.refresh(); }} /> : null}
       </View>}
       empty={<FeedSectionState title={pages.loading ? 'Loading updates…' : pages.error ? 'Updates unavailable' : 'No published updates yet'} loading={pages.loading} text={pages.error ?? undefined} onRetry={pages.error ? () => { void pages.refresh(); } : undefined} />}
@@ -36,7 +35,6 @@ export default function FeedScreen() {
 }
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.screen }, header: { paddingBottom: 12, gap: 12 },
-  context: { color: color.textDim, fontSize: 12, lineHeight: 18 },
   updates: { position: 'absolute', left: 16, right: 16, zIndex: 2, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 8, borderWidth: 1, borderColor: color.border, backgroundColor: color.card },
   action: { color: color.accent, fontSize: 13, fontWeight: '700' },
 });

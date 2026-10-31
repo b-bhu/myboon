@@ -12,7 +12,8 @@ import type { AnalystConfig } from './config.js';
 import { parseAnalystConfig } from './config.js';
 import type { Decider } from './deciders.js';
 import { CLEF_ENDPOINT, CLEF_MODEL, JEV_ENDPOINT, JEV_MODEL, SystemOneDecider } from './deciders.js';
-import { PgDecisionSink, processNextD36, shelfSearchFromDb, type D36Options } from './d36-worker.js';
+import { PgDecisionSink, processNextD36, entitySearchFromDb, type D36Options } from './d36-worker.js';
+import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { createOllamaLlm, type JevLogEntry, type Llm } from './session.js';
 import type { Db } from './states.js';
 
@@ -53,7 +54,8 @@ function lineSink(o: { log?: (line: string) => void }): (line: string) => void {
   return o.log ?? ((line: string) => { console.log(line); });
 }
 
-function defaultDeciders(c: AnalystConfig): { primary: Decider; fallback: Decider; shadow: Decider | null } {
+/** The Jev/Clef decider slot (#512): Jev primary, Clef fallback, a Clef shadow when ANALYST_SHADOW is on. Shared with the catch-up script. */
+export function defaultDeciders(c: AnalystConfig): { primary: Decider; fallback: Decider; shadow: Decider | null } {
   return {
     primary: new SystemOneDecider({ name: 'jev', model: JEV_MODEL, endpoint: JEV_ENDPOINT, apiToken: c.jevApiToken }),
     fallback: new SystemOneDecider({ name: 'clef', model: CLEF_MODEL, endpoint: CLEF_ENDPOINT, apiToken: c.ollamaApiKey }),
@@ -74,7 +76,7 @@ export async function analystMain(o: AnalystMainOptions): Promise<RunSummary> {
 
   const pool = o.createPool
     ? o.createPool(c.databaseUrl)
-    : new Pool({ connectionString: c.databaseUrl, max: 2 });
+    : new Pool({ ...analystPoolConfig(c.databaseUrl, loadAnalystDatabaseCa(o.env)), max: 2 });
 
   try {
     const llm = o.createLlm ? o.createLlm(c) : createOllamaLlm({ apiKey: c.ollamaApiKey, model: c.llmModel, timeoutMs: c.timeoutMs });
@@ -85,7 +87,7 @@ export async function analystMain(o: AnalystMainOptions): Promise<RunSummary> {
       primary,
       fallback,
       shadow,
-      search: shelfSearchFromDb(pool),
+      search: entitySearchFromDb(pool),
       sink: new PgDecisionSink(pool, (e) => { log(JSON.stringify(e)); }),
       log: (e: JevLogEntry) => { log(JSON.stringify({ event: 'jev_call', ...e })); },
       leaseMs: c.leaseMs,

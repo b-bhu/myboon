@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#441: seed atlas.shelves from the finalized entity copy (cleanup.sqlite, final pass Oct 25).
+"""#441: seed atlas.entities from the finalized entity copy (cleanup.sqlite, final pass Oct 25).
 
 Reads managed_knowledge_private__entities (incl. show_in_carousel -> show_in_carousel) where status = 'active' (558 rows), read-only.
 Writes one SQL file per batch. Each batch is an upsert keyed on the natural key `slug`;
@@ -37,11 +37,11 @@ def main():
     for i in range(0, len(vals), size):
         n += 1
         body = ',\n'.join(vals[i:i + size])
-        sql = f"""-- atlas.shelves seed batch {n} ({len(vals[i:i+size])} rows), #441, source cleanup.sqlite final pass Oct 25
+        sql = f"""-- atlas.entities seed batch {n} ({len(vals[i:i+size])} rows), #441, source cleanup.sqlite final pass Oct 25
 begin;
 set local lock_timeout = '5s';
 set local atlas.reason = 'seed #441 from cleanup.sqlite final pass (cleanup-2026-10-25)';
-insert into atlas.shelves as s (slug, name, type, aliases, summary, card, legacy_entity_id, show_in_carousel)
+insert into atlas.entities as s (slug, name, type, aliases, summary, card, legacy_entity_id, show_in_carousel)
 values
 {body}
 on conflict (slug) do update set

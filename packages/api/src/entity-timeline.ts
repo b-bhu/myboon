@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 
 // #505 entity timeline: GET /entities/:slug/timeline returns one atlas entity's active items
 // (angle, note, signal link, time) and its stories, newest first. Read-only PostgREST (atlas
-// profile): the shelf is looked up first (404 when unknown), then items and stories in parallel.
+// profile): the entity is looked up first (404 when unknown), then items and stories in parallel.
 // Any Supabase failure is a 502 without upstream detail, so the service key never leaks.
 
 const REQUEST_TIMEOUT_MS = 10_000
@@ -10,11 +10,11 @@ const MAX_ITEMS = 50
 const MAX_STORIES = 20
 // Same slug shape as the stories routes.
 const SAFE_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
-const SHELF_SELECT = 'id,slug,name,type'
+const ENTITY_SELECT = 'id,slug,name,type'
 const ITEM_SELECT = 'id,title,angle,note,occurred_at,created_at,signal:signals(link)'
 const STORY_SELECT = 'id,slug,title,summary,status,created_at,updated_at,story_items(item_id)'
 
-interface ShelfRow {
+interface EntityRow {
   id: unknown
   slug: unknown
   name: unknown
@@ -82,33 +82,33 @@ export function createEntityTimelineRoutes(config: EntityTimelineRoutesConfig): 
     }
 
     try {
-      const shelves = await readRows<ShelfRow>('shelves', new URLSearchParams({
-        select: SHELF_SELECT,
+      const entities = await readRows<EntityRow>('entities', new URLSearchParams({
+        select: ENTITY_SELECT,
         slug: `eq.${slug}`,
         limit: '1',
       }))
-      const shelf = shelves[0]
-      if (!shelf || typeof shelf.id !== 'string' || !shelf.id) {
+      const entity = entities[0]
+      if (!entity || typeof entity.id !== 'string' || !entity.id) {
         return c.json({ error: 'Entity not found' }, 404)
       }
 
       const [items, stories] = await Promise.all([
-        readRows<ItemRow>('items', new URLSearchParams({
+        readRows<ItemRow>('entity_items', new URLSearchParams({
           select: ITEM_SELECT,
-          main_shelf_id: `eq.${shelf.id}`,
+          main_entity_id: `eq.${entity.id}`,
           status: 'eq.active',
           order: 'occurred_at.desc.nullslast,created_at.desc',
           limit: String(MAX_ITEMS),
         })),
         readRows<StoryRow>('stories', new URLSearchParams({
           select: STORY_SELECT,
-          shelf_id: `eq.${shelf.id}`,
+          entity_id: `eq.${entity.id}`,
           order: 'updated_at.desc',
           limit: String(MAX_STORIES),
         })),
       ])
       return c.json({
-        entity: { slug: shelf.slug, name: shelf.name, type: shelf.type },
+        entity: { slug: entity.slug, name: entity.name, type: entity.type },
         items: items.map(itemTimeline),
         stories: stories.map(storyTimeline),
       })

@@ -16,7 +16,7 @@ const entityIds = [
 ]
 
 // Prod Atlas ids are UUIDv7 (e.g. 01a17278-acb3-7ccd-8ec1-4a9d8baf672f); the legacy Entity ids above are v4.
-const atlasShelfIds = [
+const atlasEntityIds = [
   '01a17278-acb3-7ccd-8ec1-4a9d8baf672f',
   '01a17278-acb3-7ccd-8ec1-4a9d8baf6730',
   '01a17278-acb3-7ccd-8ec1-4a9d8baf6731',
@@ -90,7 +90,7 @@ test('Story list selects and caps Entities, reads bounded latest memories, and a
         imageUrl: 'https://cdn.example.com/latest.jpg',
         imageKind: 'content',
         imageAttribution: 'Example News',
-        shelfType: null,
+        entityType: null,
       },
       {
         storySlug: 'story-2',
@@ -101,7 +101,7 @@ test('Story list selects and caps Entities, reads bounded latest memories, and a
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
-        shelfType: null,
+        entityType: null,
       },
     ],
   })
@@ -153,7 +153,7 @@ test('Story detail returns the selected Entity timeline newest-first with pagina
       imageUrl: null,
       imageKind: null,
       imageAttribution: null,
-      shelfType: null,
+      entityType: null,
     },
     events: [
       {
@@ -337,7 +337,7 @@ test('Story summary tracks the latest reported memory; a future-dated one never 
     imageUrl: null,
     imageKind: null,
     imageAttribution: null,
-    shelfType: null,
+    entityType: null,
   })
 })
 
@@ -393,40 +393,40 @@ test('Story summary moves updatedAt forward when a new later reported memory arr
   assert.equal(after?.updatedAt, '2026-07-13T09:30:00.000Z')
 })
 
-test('Story Atlas list selects active carousel shelves, caps and orders them, and maps latest items', async () => {
+test('Story Atlas list selects active carousel entities, caps and orders them, and maps latest items', async () => {
   const requests: Array<{ url: URL; headers: Record<string, string> }> = []
-  const shelfRows = [
-    { id: atlasShelfIds[0], slug: 'story-1', name: 'Story 1', status: 'active', show_in_carousel: true },
-    { id: atlasShelfIds[1], slug: 'story-2', name: 'Story 2', status: 'active', show_in_carousel: true },
-    { id: atlasShelfIds[2], slug: 'story-3', name: 'Story 3', status: 'active', show_in_carousel: true },
+  const entityRows = [
+    { id: atlasEntityIds[0], slug: 'story-1', name: 'Story 1', status: 'active', show_in_carousel: true },
+    { id: atlasEntityIds[1], slug: 'story-2', name: 'Story 2', status: 'active', show_in_carousel: true },
+    { id: atlasEntityIds[2], slug: 'story-3', name: 'Story 3', status: 'active', show_in_carousel: true },
   ]
-  const itemsByShelf: Record<string, { latest: unknown; total: number }> = {
-    [atlasShelfIds[0]]: {
+  const itemsByEntity: Record<string, { latest: unknown; total: number }> = {
+    [atlasEntityIds[0]]: {
       latest: { id: 'item-1', title: 'Latest development', summary: '  Latest summary  ', occurred_at: '2026-07-12T00:00:00.000Z' },
       total: 2,
     },
-    [atlasShelfIds[1]]: {
+    [atlasEntityIds[1]]: {
       latest: { id: 'item-2', title: 'Only title', summary: null, occurred_at: '2026-07-09T00:00:00.000Z' },
       total: 1,
     },
-    [atlasShelfIds[2]]: { latest: null, total: 0 },
+    [atlasEntityIds[2]]: { latest: null, total: 0 },
   }
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
     requests.push({ url, headers })
     assert.equal(headers['Accept-Profile'], 'atlas')
-    if (url.pathname.endsWith('/shelves')) {
+    if (url.pathname.endsWith('/entities')) {
       assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
       assert.equal(url.searchParams.get('show_in_carousel'), 'eq.true')
       assert.equal(url.searchParams.get('status'), 'eq.active')
       assert.equal(url.searchParams.get('order'), 'updated_at.desc')
       assert.equal(url.searchParams.get('limit'), '5')
-      return jsonResponse(shelfRows)
+      return jsonResponse(entityRows)
     }
-    if (url.pathname.endsWith('/items')) {
-      const shelfId = String(url.searchParams.get('main_shelf_id') ?? '').replace(/^eq\./, '')
-      assert.ok(shelfId in itemsByShelf, `unexpected shelf: ${shelfId}`)
+    if (url.pathname.endsWith('/entity_items')) {
+      const entityId = String(url.searchParams.get('main_entity_id') ?? '').replace(/^eq\./, '')
+      assert.ok(entityId in itemsByEntity, `unexpected entity: ${entityId}`)
       assert.equal(url.searchParams.get('status'), 'eq.active')
       assert.equal(url.searchParams.get('merged_into_id'), 'is.null')
       assert.equal(url.searchParams.get('occurred_at'), 'not.is.null')
@@ -434,11 +434,11 @@ test('Story Atlas list selects active carousel shelves, caps and orders them, an
       if (headers.Prefer === 'count=exact') {
         assert.equal(headers.Range, '0-0')
         assert.equal(url.searchParams.has('limit'), false)
-        return jsonResponse([], itemsByShelf[shelfId].total)
+        return jsonResponse([], itemsByEntity[entityId].total)
       }
       assert.equal(url.searchParams.get('limit'), '1')
       assert.equal(url.searchParams.get('offset'), '0')
-      return jsonResponse(itemsByShelf[shelfId].latest ? [itemsByShelf[shelfId].latest] : [])
+      return jsonResponse(itemsByEntity[entityId].latest ? [itemsByEntity[entityId].latest] : [])
     }
     throw new Error(`Unexpected request: ${url}`)
   }
@@ -455,7 +455,7 @@ test('Story Atlas list selects active carousel shelves, caps and orders them, an
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
-        shelfType: null,
+        entityType: null,
       },
       {
         storySlug: 'story-2',
@@ -466,25 +466,24 @@ test('Story Atlas list selects active carousel shelves, caps and orders them, an
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
-        shelfType: null,
+        entityType: null,
       },
     ],
   })
-  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/shelves')).length, 1)
-  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/items')).length, 6)
-  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entities')).length, 0)
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entities')).length, 1)
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entity_items')).length, 6)
 })
 
-test('Story Atlas list returns a shelf with a production UUIDv7 id', async () => {
+test('Story Atlas list returns an entity with a production UUIDv7 id', async () => {
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
     assert.equal(headers['Accept-Profile'], 'atlas')
-    if (url.pathname.endsWith('/shelves')) {
-      return jsonResponse([{ id: atlasShelfIds[0], slug: 'story-v7', name: 'Story v7' }])
+    if (url.pathname.endsWith('/entities')) {
+      return jsonResponse([{ id: atlasEntityIds[0], slug: 'story-v7', name: 'Story v7' }])
     }
-    if (url.pathname.endsWith('/items')) {
-      assert.equal(url.searchParams.get('main_shelf_id'), `eq.${atlasShelfIds[0]}`)
+    if (url.pathname.endsWith('/entity_items')) {
+      assert.equal(url.searchParams.get('main_entity_id'), `eq.${atlasEntityIds[0]}`)
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
       return jsonResponse([
         { id: 'item-1', title: 'Latest development', summary: 'Latest summary', occurred_at: '2026-07-12T00:00:00.000Z' },
@@ -505,30 +504,30 @@ test('Story Atlas list returns a shelf with a production UUIDv7 id', async () =>
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
-        shelfType: null,
+        entityType: null,
       },
     ],
   })
 })
 
-test('Story Atlas list carries the shelf card image with kind content and the shelf type', async () => {
-  const shelfRows = [
-    { id: atlasShelfIds[0], slug: 'story-1', name: 'Story 1', type: 'news', image: 'https://cdn.example.com/shelf.jpg' },
-    { id: atlasShelfIds[1], slug: 'story-2', name: 'Story 2', type: 'topic', image: null },
+test('Story Atlas list carries the entity card image with kind content and the entity type', async () => {
+  const entityRows = [
+    { id: atlasEntityIds[0], slug: 'story-1', name: 'Story 1', type: 'news', image: 'https://cdn.example.com/entity.jpg' },
+    { id: atlasEntityIds[1], slug: 'story-2', name: 'Story 2', type: 'topic', image: null },
   ]
-  const itemShelfIds = shelfRows.map((row) => row.id)
+  const itemEntityIds = entityRows.map((row) => row.id)
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
     assert.equal(headers['Accept-Profile'], 'atlas')
-    if (url.pathname.endsWith('/shelves')) {
+    if (url.pathname.endsWith('/entities')) {
       assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
       assert.equal(url.searchParams.get('status'), 'eq.active')
-      return jsonResponse(shelfRows)
+      return jsonResponse(entityRows)
     }
-    if (url.pathname.endsWith('/items')) {
-      const shelfId = String(url.searchParams.get('main_shelf_id') ?? '').replace(/^eq\./, '')
-      assert.ok(itemShelfIds.includes(shelfId))
+    if (url.pathname.endsWith('/entity_items')) {
+      const entityId = String(url.searchParams.get('main_entity_id') ?? '').replace(/^eq\./, '')
+      assert.ok(itemEntityIds.includes(entityId))
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
       return jsonResponse([
         { id: 'item-1', title: 'Latest development', summary: 'Latest summary', occurred_at: '2026-07-12T00:00:00.000Z' },
@@ -546,10 +545,10 @@ test('Story Atlas list carries the shelf card image with kind content and the sh
         latestDevelopment: 'Latest summary',
         eventCount: 1,
         updatedAt: '2026-07-12T00:00:00.000Z',
-        imageUrl: 'https://cdn.example.com/shelf.jpg',
+        imageUrl: 'https://cdn.example.com/entity.jpg',
         imageKind: 'content',
         imageAttribution: null,
-        shelfType: 'news',
+        entityType: 'news',
       },
       {
         storySlug: 'story-2',
@@ -560,26 +559,26 @@ test('Story Atlas list carries the shelf card image with kind content and the sh
         imageUrl: null,
         imageKind: null,
         imageAttribution: null,
-        shelfType: 'topic',
+        entityType: 'topic',
       },
     ],
   })
 })
 
-test('Story Atlas shelf image and shelf type also flow into the detail story summary', async () => {
+test('Story Atlas entity image and entity type also flow into the detail story summary', async () => {
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
     assert.equal(headers['Accept-Profile'], 'atlas')
-    if (url.pathname.endsWith('/shelves')) {
+    if (url.pathname.endsWith('/entities')) {
       assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
       assert.equal(url.searchParams.get('slug'), 'eq.us-and-iran')
       assert.equal(url.searchParams.get('status'), 'eq.active')
       return jsonResponse([
-        { id: atlasShelfIds[0], slug: 'us-and-iran', name: 'US and Iran', type: 'news', image: 'https://cdn.example.com/shelf.jpg' },
+        { id: atlasEntityIds[0], slug: 'us-and-iran', name: 'US and Iran', type: 'news', image: 'https://cdn.example.com/entity.jpg' },
       ])
     }
-    if (url.pathname.endsWith('/items')) {
+    if (url.pathname.endsWith('/entity_items')) {
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
       return jsonResponse([
         { id: 'item-1', title: 'Latest development', summary: 'Latest event', occurred_at: '2026-07-12T00:00:00.000Z' },
@@ -596,28 +595,28 @@ test('Story Atlas shelf image and shelf type also flow into the detail story sum
     latestDevelopment: 'Latest event',
     eventCount: 1,
     updatedAt: '2026-07-12T00:00:00.000Z',
-    imageUrl: 'https://cdn.example.com/shelf.jpg',
+    imageUrl: 'https://cdn.example.com/entity.jpg',
     imageKind: 'content',
     imageAttribution: null,
-    shelfType: 'news',
+    entityType: 'news',
   })
 })
 
-test('Story Atlas shelf images fail closed on empty and non-https values', async () => {
-  const shelfRows = [
-    { id: atlasShelfIds[0], slug: 'story-1', name: 'Story 1', type: 'news', image: '' },
-    { id: atlasShelfIds[1], slug: 'story-2', name: 'Story 2', type: 'news', image: '   ' },
-    { id: atlasShelfIds[2], slug: 'story-3', name: 'Story 3', type: 'news', image: 'http://cdn.example.com/shelf.jpg' },
-    { id: atlasShelfIds[3], slug: 'story-4', name: 'Story 4', type: 'news', image: { url: 'https://cdn.example.com/shelf.jpg' } },
+test('Story Atlas entity images fail closed on empty and non-https values', async () => {
+  const entityRows = [
+    { id: atlasEntityIds[0], slug: 'story-1', name: 'Story 1', type: 'news', image: '' },
+    { id: atlasEntityIds[1], slug: 'story-2', name: 'Story 2', type: 'news', image: '   ' },
+    { id: atlasEntityIds[2], slug: 'story-3', name: 'Story 3', type: 'news', image: 'http://cdn.example.com/entity.jpg' },
+    { id: atlasEntityIds[3], slug: 'story-4', name: 'Story 4', type: 'news', image: { url: 'https://cdn.example.com/entity.jpg' } },
   ]
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
     assert.equal(headers['Accept-Profile'], 'atlas')
-    if (url.pathname.endsWith('/shelves')) {
-      return jsonResponse(shelfRows)
+    if (url.pathname.endsWith('/entities')) {
+      return jsonResponse(entityRows)
     }
-    if (url.pathname.endsWith('/items')) {
+    if (url.pathname.endsWith('/entity_items')) {
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
       return jsonResponse([
         { id: 'item-1', title: 'Latest development', summary: 'Latest summary', occurred_at: '2026-07-12T00:00:00.000Z' },
@@ -627,13 +626,13 @@ test('Story Atlas shelf images fail closed on empty and non-https values', async
   }
   const response = await app(fetchImpl, undefined, 'atlas').request('/')
   assert.equal(response.status, 200)
-  const body = await response.json() as { stories: Array<{ storySlug: string; imageUrl: string | null; imageKind: string | null; imageAttribution: string | null; shelfType: string | null }> }
+  const body = await response.json() as { stories: Array<{ storySlug: string; imageUrl: string | null; imageKind: string | null; imageAttribution: string | null; entityType: string | null }> }
   assert.deepEqual(body.stories.map((story) => [
     story.storySlug,
     story.imageUrl,
     story.imageKind,
     story.imageAttribution,
-    story.shelfType,
+    story.entityType,
   ]), [
     ['story-1', null, null, null, 'news'],
     ['story-2', null, null, null, 'news'],
@@ -642,20 +641,20 @@ test('Story Atlas shelf images fail closed on empty and non-https values', async
   ])
 })
 
-test('Story Atlas shelves select the card image through card->image->>url; the legacy Entity select does not', async () => {
-  const atlasShelfSelects: Array<string | null> = []
+test('Story Atlas entities select the card image through card->image->>url; the legacy Entity select does not', async () => {
+  const atlasEntitySelects: Array<string | null> = []
   const atlasResponse = await app(async (input: RequestInfo | URL) => {
     const url = new URL(String(input))
-    if (url.pathname.endsWith('/shelves')) {
-      atlasShelfSelects.push(url.searchParams.get('select'))
+    if (url.pathname.endsWith('/entities')) {
+      atlasEntitySelects.push(url.searchParams.get('select'))
       return jsonResponse([])
     }
     throw new Error(`Unexpected request: ${url}`)
   }, undefined, 'atlas').request('/')
   assert.equal(atlasResponse.status, 200)
   assert.deepEqual(await atlasResponse.json(), { stories: [] })
-  assert.deepEqual(atlasShelfSelects, ['id,slug,name,type,image:card->image->>url'])
-  assert.equal(atlasShelfSelects[0]?.includes('card->image->>url'), true)
+  assert.deepEqual(atlasEntitySelects, ['id,slug,name,type,image:card->image->>url'])
+  assert.equal(atlasEntitySelects[0]?.includes('card->image->>url'), true)
 
   const legacyEntitySelects: Array<string | null> = []
   const legacyResponse = await app(async (input: RequestInfo | URL) => {
@@ -679,15 +678,15 @@ test('Story Atlas detail pages items newest-first with pagination fields', async
     const headers = (init?.headers ?? {}) as Record<string, string>
     requests.push({ url, headers })
     assert.equal(headers['Accept-Profile'], 'atlas')
-    if (url.pathname.endsWith('/shelves')) {
+    if (url.pathname.endsWith('/entities')) {
       assert.equal(url.searchParams.get('slug'), 'eq.us-and-iran')
       assert.equal(url.searchParams.get('show_in_carousel'), 'eq.true')
       assert.equal(url.searchParams.get('status'), 'eq.active')
       assert.equal(url.searchParams.get('limit'), '1')
-      return jsonResponse([{ id: atlasShelfIds[0], slug: 'us-and-iran', name: 'US and Iran' }])
+      return jsonResponse([{ id: atlasEntityIds[0], slug: 'us-and-iran', name: 'US and Iran' }])
     }
-    if (url.pathname.endsWith('/items')) {
-      assert.equal(url.searchParams.get('main_shelf_id'), `eq.${atlasShelfIds[0]}`)
+    if (url.pathname.endsWith('/entity_items')) {
+      assert.equal(url.searchParams.get('main_entity_id'), `eq.${atlasEntityIds[0]}`)
       assert.equal(url.searchParams.get('status'), 'eq.active')
       assert.equal(url.searchParams.get('merged_into_id'), 'is.null')
       assert.equal(url.searchParams.get('occurred_at'), 'not.is.null')
@@ -721,7 +720,7 @@ test('Story Atlas detail pages items newest-first with pagination fields', async
       imageUrl: null,
       imageKind: null,
       imageAttribution: null,
-      shelfType: null,
+      entityType: null,
     },
     events: [
       { text: 'Second event', eventAt: '2026-07-11T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null },
@@ -735,7 +734,7 @@ test('Story Atlas detail pages items newest-first with pagination fields', async
       nextOffset: 3,
     },
   })
-  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/items')).length, 3)
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entity_items')).length, 3)
 })
 
 test('Story Atlas detail reuses the first page row as the latest at offset 0', async () => {
@@ -748,10 +747,10 @@ test('Story Atlas detail reuses the first page row as the latest at offset 0', a
   const response = await app(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
-    if (url.pathname.endsWith('/shelves')) {
-      return jsonResponse([{ id: atlasShelfIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+    if (url.pathname.endsWith('/entities')) {
+      return jsonResponse([{ id: atlasEntityIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
     }
-    if (url.pathname.endsWith('/items')) {
+    if (url.pathname.endsWith('/entity_items')) {
       itemRequests += 1
       if (headers.Prefer === 'count=exact') return jsonResponse([], 3)
       assert.equal(url.searchParams.get('limit'), '20')
@@ -777,12 +776,12 @@ test('Story Atlas detail reuses the first page row as the latest at offset 0', a
   assert.equal(itemRequests, 2)
 })
 
-test('Story Atlas detail returns 404 when the shelf is not selected', async () => {
+test('Story Atlas detail returns 404 when the entity is not selected', async () => {
   let requests = 0
   const response = await app(async (input: RequestInfo | URL) => {
     requests += 1
     const url = new URL(String(input))
-    if (url.pathname.endsWith('/shelves')) return jsonResponse([])
+    if (url.pathname.endsWith('/entities')) return jsonResponse([])
     throw new Error(`Unexpected request: ${url}`)
   }, undefined, 'atlas').request('/bitcoin')
   assert.equal(response.status, 404)
@@ -794,18 +793,18 @@ test('Story Atlas failures return the generic 500 response', async () => {
   const originalConsoleError = console.error
   console.error = () => undefined
   try {
-    const shelvesDown = await app(
-      async () => new Response('atlas shelves down', { status: 503 }),
+    const entitiesDown = await app(
+      async () => new Response('atlas entities down', { status: 503 }),
       undefined,
       'atlas',
     ).request('/')
-    assert.equal(shelvesDown.status, 500)
-    assert.deepEqual(await shelvesDown.json(), { error: 'Unable to load Stories' })
+    assert.equal(entitiesDown.status, 500)
+    assert.deepEqual(await entitiesDown.json(), { error: 'Unable to load Stories' })
 
     const itemsDown = await app(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
-      if (url.pathname.endsWith('/shelves')) {
-        return jsonResponse([{ id: atlasShelfIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+      if (url.pathname.endsWith('/entities')) {
+        return jsonResponse([{ id: atlasEntityIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
       }
       return new Response('atlas items down', { status: 503 })
     }, undefined, 'atlas').request('/bitcoin')
@@ -815,8 +814,8 @@ test('Story Atlas failures return the generic 500 response', async () => {
     const countMissing = await app(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
       const headers = (init?.headers ?? {}) as Record<string, string>
-      if (url.pathname.endsWith('/shelves')) {
-        return jsonResponse([{ id: atlasShelfIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
+      if (url.pathname.endsWith('/entities')) {
+        return jsonResponse([{ id: atlasEntityIds[0], slug: 'bitcoin', name: 'Bitcoin' }])
       }
       if (headers.Prefer === 'count=exact') {
         return new Response('[]', { headers: { 'Content-Type': 'application/json' } })
@@ -845,7 +844,6 @@ test('Story routes default to the legacy source when source is omitted or legacy
     assert.deepEqual(await response.json(), { stories: [] })
     assert.equal(requests.length, 1)
     assert.equal(requests[0]?.url.pathname.endsWith('/entities'), true)
-    assert.equal(requests[0]?.url.pathname.endsWith('/shelves'), false)
     assert.equal((requests[0]?.init?.headers as Record<string, string>)['Accept-Profile'], undefined)
   }
 })
@@ -859,7 +857,7 @@ test('Contract: Atlas and legacy Story responses share key sets and value types'
     },
   }
   const legacyRow = { id: entityIds[0], slug: 'contract-slug', name: 'Contract Story' }
-  const atlasRow = { id: atlasShelfIds[0], slug: 'contract-slug', name: 'Contract Story' }
+  const atlasRow = { id: atlasEntityIds[0], slug: 'contract-slug', name: 'Contract Story' }
   const legacyFetch = async (input: RequestInfo | URL) => {
     const url = new URL(String(input))
     if (url.pathname.endsWith('/entities')) return jsonResponse([legacyRow])
@@ -868,8 +866,8 @@ test('Contract: Atlas and legacy Story responses share key sets and value types'
   const atlasFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
-    if (url.pathname.endsWith('/shelves')) return jsonResponse([atlasRow])
-    if (url.pathname.endsWith('/items')) {
+    if (url.pathname.endsWith('/entities')) return jsonResponse([atlasRow])
+    if (url.pathname.endsWith('/entity_items')) {
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
       return jsonResponse([
         { id: 'item-1', title: 'Latest development', summary: 'Latest development', occurred_at: '2026-07-12T00:00:00.000Z' },

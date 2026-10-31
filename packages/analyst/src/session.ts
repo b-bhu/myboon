@@ -2,16 +2,16 @@
  * #504 D36 analyst session, pure (no DB): one LLM session dissects a signal and proposes where it should
  * live; every decision is made by the decision tool (Jev, falling back to Clef) through the injected
  * `ask`. The LLM never overrules the decision tool; this code owns kind and candidate validity, and the
- * entity matching runs over whatever `search` is wired to (see shelfSearchFromDb in d36-worker.ts).
+ * entity matching runs over whatever `search` is wired to (see entitySearchFromDb in d36-worker.ts).
  */
 import {
   ANGLES,
   ANALYST_OUTPUT_SCHEMA_VERSION,
-  SHELF_TYPES,
+  ENTITY_TYPES,
   parseAnalystOutput,
   type Angle,
   type AnalystOutput,
-  type ShelfType,
+  type EntityType,
 } from '@myboon/contracts';
 
 /** Analyst version written on every D36 output. */
@@ -23,8 +23,8 @@ export const KEEP_QUESTION = 'Would a crypto trader or market watcher care about
 /** The keep result when nothing is left to route (no mentions, all not related, or all new targets dropped). */
 const NOTHING_TO_ROUTE = 'The decision tool said keep, but every mentioned entity was judged not related or dropped as a target, so there is nothing to route.';
 
-/** The allowed entity-type values for the LLM's JSON shapes, generated from the contracts' SHELF_TYPES. */
-const SHELF_TYPE_VALUES = SHELF_TYPES.map((t) => `"${t}"`).join(' | ');
+/** The allowed entity-type values for the LLM's JSON shapes, generated from the contracts' ENTITY_TYPES. */
+const ENTITY_TYPE_VALUES = ENTITY_TYPES.map((t) => `"${t}"`).join(' | ');
 
 export const SYSTEM_PROMPT =
   'You are the analyst. You receive one signal, the way a market analyst hears news, posts and talk as it happens. Your job is not to check whether it is true. ' +
@@ -45,9 +45,9 @@ export type SignalInput = { signal_id: string; text: string; source?: string | n
 
 export type Candidate = { slug: string; name: string; type: string };
 
-export type ShelfLike = { slug: string; name: string; type: string; aliases: string[] };
+export type EntityLike = { slug: string; name: string; type: string; aliases: string[] };
 
-/** The entity tool: match a mention's name and search terms against the shelves. */
+/** The entity tool: match a mention's name and search terms against the entities. */
 export type EntitySearch = (terms: string[]) => Promise<Candidate[]>;
 
 export type AskInput = { question: string; choices: string[]; state: Record<string, unknown>; shortlist: Candidate[] };
@@ -111,30 +111,30 @@ function redact(text: string, secret: string): string {
 }
 
 /**
- * Entity search over an in-memory shelves list: case-insensitive over name/slug/aliases. Rank:
+ * Entity search over an in-memory entity list: case-insensitive over name/slug/aliases. Rank:
  * exact match on terms[0] (the mention name) first, then exact on other terms, then whole-word
  * match (terms < 3 chars exact only), then substring (so tickers like HYPE resolve to Hyperliquid);
  * max 5, first match per slug by rank.
  */
-export function searchShelves(terms: string[], shelves: ShelfLike[]): Candidate[] {
+export function searchEntities(terms: string[], entities: EntityLike[]): Candidate[] {
   const wordMatch = (value: string, needle: string): boolean =>
     new RegExp(`(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(value);
   const query = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0))];
-  const ranked = new Map<string, { rank: number; shelf: ShelfLike }>();
+  const ranked = new Map<string, { rank: number; entity: EntityLike }>();
   for (const term of query) {
-    for (const shelf of shelves) {
-      const haystacks = [shelf.name, shelf.slug, ...shelf.aliases].map((v) => v.trim().toLowerCase());
+    for (const entity of entities) {
+      const haystacks = [entity.name, entity.slug, ...entity.aliases].map((v) => v.trim().toLowerCase());
       const exact = haystacks.includes(term);
       const rank = exact ? (term === query[0] ? -1 : 0) : looserMatch(haystacks, term, wordMatch);
       if (rank === null) continue;
-      const previous = ranked.get(shelf.slug);
-      if (!previous || rank < previous.rank) ranked.set(shelf.slug, { rank, shelf });
+      const previous = ranked.get(entity.slug);
+      if (!previous || rank < previous.rank) ranked.set(entity.slug, { rank, entity });
     }
   }
   return [...ranked.values()]
     .sort((a, b) => a.rank - b.rank)
     .slice(0, 5)
-    .map(({ shelf }) => ({ slug: shelf.slug, name: shelf.name, type: shelf.type }));
+    .map(({ entity }) => ({ slug: entity.slug, name: entity.name, type: entity.type }));
 }
 
 /** Whole-word match, or substring as a last resort; null when the term matches nothing. */
@@ -145,9 +145,9 @@ function looserMatch(haystacks: string[], term: string, wordMatch: (value: strin
   return null;
 }
 
-/** True only for the exact shelf types from the contracts, after trim + lowercase; no synonym mapping (the #508 rule). */
-export function isShelfType(raw: string): raw is ShelfType {
-  return (SHELF_TYPES as readonly string[]).includes(raw.trim().toLowerCase());
+/** True only for the exact entity types from the contracts, after trim + lowercase; no synonym mapping (the #508 rule). */
+export function isEntityType(raw: string): raw is EntityType {
+  return (ENTITY_TYPES as readonly string[]).includes(raw.trim().toLowerCase());
 }
 
 /** Short canonical slug for new entities: prefer an abbreviation in brackets (with whitespace before it), else kebab of the name. */
@@ -264,7 +264,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const request = { signal_id: signal.signal_id, text: signal.text, source: signal.source ?? null, link: signal.link ?? null };
   const turn1 = await step(
     `Signal:\n${JSON.stringify(request, null, 2)}\n\nReply with JSON only:\n` +
-      `{"summary": string, "mentions": [{"name": string, "type": ${SHELF_TYPE_VALUES}, "search_terms": string[]}]}\n` +
+      `{"summary": string, "mentions": [{"name": string, "type": ${ENTITY_TYPE_VALUES}, "search_terms": string[]}]}\n` +
       'summary: 2-3 sentences (who, what, why it matters). ' +
       'mentions: at most 3 entities this signal touches, each with a type (exactly one of the listed values) and search_terms.',
   );
@@ -343,7 +343,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
     'The decision tool has picked each angle; kind and angle below are fixed and cannot change.\n' +
       `${JSON.stringify(kept.map((k) => ({ mention: k.mention, kind: k.kind, angle: k.angle })), null, 2)}\n\n` +
       'Reply with JSON only:\n' +
-      `{"targets": [{"mention": string, "type": ${SHELF_TYPE_VALUES}, "note": string}], "reason": string}\n` +
+      `{"targets": [{"mention": string, "type": ${ENTITY_TYPE_VALUES}, "note": string}], "reason": string}\n` +
       'One row per kept mention, no others. type is exactly one of the listed values, the type of that entity. ' +
       'note: one line on what is forming there, written to match the given angle.',
   );
@@ -361,8 +361,8 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
 
 /**
  * Enforce decision-tool-fixed kind and angle plus candidate validity on the LLM's routing. Existing
- * targets carry the matched shelf's own type (the LLM's type is ignored, even when missing or invalid);
- * a NEW target whose LLM type is not one of the shelf types is dropped silently, like a not_related
+ * targets carry the matched entity's own type (the LLM's type is ignored, even when missing or invalid);
+ * a NEW target whose LLM type is not one of the entity types is dropped silently, like a not_related
  * verdict (the #508 rule), and unclearReasons stays reserved for code/decision-tool failures.
  */
 function buildTargets(rows: unknown[], kept: KeptDraft[], targets: AnalystOutput['targets'], unclearReasons: string[]): void {
@@ -383,11 +383,11 @@ function buildTargets(rows: unknown[], kept: KeptDraft[], targets: AnalystOutput
       }
       if (!seen.has(matched.slug)) {
         seen.add(matched.slug);
-        // shelves.type mirrors SHELF_TYPES (the atlas type check), so the shelf's own type always parses.
+        // entities.type mirrors ENTITY_TYPES (the atlas type check), so the entity's own type always parses.
         targets.push({
           entity: matched.slug,
           kind: 'existing',
-          type: matched.type as ShelfType,
+          type: matched.type as EntityType,
           angle: draft.angle,
           note: str(row.note),
         });
@@ -395,7 +395,7 @@ function buildTargets(rows: unknown[], kept: KeptDraft[], targets: AnalystOutput
       return;
     }
     const askedType = (str(row.type) || draft.mentionType).trim().toLowerCase();
-    if (!isShelfType(askedType)) return; // free text on a NEW target: dropped like a not_related verdict
+    if (!isEntityType(askedType)) return; // free text on a NEW target: dropped like a not_related verdict
     const entity = canonicalSlug(draft.mention);
     if (!entity) {
       unclearReasons.push(`No usable slug for the new entity "${draft.mention}".`);

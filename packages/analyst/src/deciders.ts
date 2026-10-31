@@ -25,7 +25,7 @@ export class DeciderError extends Error {
 export type DecisionCase = {
   question: string;
   choices: string[];
-  /** Shortlisted candidate shelves (the case the decider ranks against). */
+  /** Shortlisted candidate entities (the case the decider ranks against). */
   shortlist: unknown[];
   itemIds: string[];
   state: unknown;

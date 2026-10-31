@@ -10,14 +10,13 @@ const validFileDecision = {
   schema_version: DECISION_SCHEMA_VERSION,
   signal_id: 'a'.repeat(64),
   analyst_version: 'analyst-v1',
-  shelves: [
-    { shelf_id: uuidA, role: 'main' },
-    { shelf_id: uuidB, role: 'also_affects' },
+  entities: [
+    { entity_id: uuidA, role: 'main' },
   ],
   target_item_id: null,
   item_key: 'polymarket/us-iran-deal',
   action: 'keep',
-  reason: 'matches existing shelf',
+  reason: 'matches existing entity',
   confidence: 0.8,
 };
 
@@ -40,28 +39,28 @@ describe('decisionSchema (file)', () => {
     if (decision.decision_type !== 'file') expect.unreachable('expected a file decision');
 
     expect(decision.schema_version).toBe(1);
-    expect(decision.shelves).toHaveLength(2);
+    expect(decision.entities).toHaveLength(1);
     expect(decision.target_item_id).toBeNull();
   });
 
-  it('rejects shelves with zero main roles', () => {
+  it('rejects an entity whose role is not main (the second role is dropped, #541)', () => {
     const result = safeParseDecision({
       ...validFileDecision,
-      shelves: [
-        { shelf_id: uuidA, role: 'also_affects' },
-        { shelf_id: uuidB, role: 'also_affects' },
+      entities: [
+        { entity_id: uuidA, role: 'main' },
+        { entity_id: uuidB, role: 'secondary' },
       ],
     });
 
     expect(result.success).toBe(false);
   });
 
-  it('rejects shelves with two main roles', () => {
+  it('rejects entities with two main roles', () => {
     const result = safeParseDecision({
       ...validFileDecision,
-      shelves: [
-        { shelf_id: uuidA, role: 'main' },
-        { shelf_id: uuidB, role: 'main' },
+      entities: [
+        { entity_id: uuidA, role: 'main' },
+        { entity_id: uuidB, role: 'main' },
       ],
     });
 

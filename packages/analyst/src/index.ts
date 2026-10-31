@@ -7,9 +7,12 @@
  * - orchestration: processNext with ProcessOptions
  * - Linker + Story (#479): linkerStory, linkShortlist, routing rules (validateRoutingRules, DEFAULT_ROUTING_RULES)
  * - D36 analyst session + worker (#504): runSession, createOllamaLlm,
- *   searchShelves, processNextD36, InMemoryDecisionSink, PgDecisionSink (atlas.decisions)
+ *   searchEntities, processNextD36, InMemoryDecisionSink, PgDecisionSink (atlas.decisions)
  * - Worker entrypoint (#512): parseAnalystConfig, AnalystConfig, AnalystConfigError,
  *   runAnalystOnce, RunSummary, analystMain
+ * - Catch-up (#391): catchupMain, parseCatchupArgs; the ollama-quota guard
+ *   (readOllamaQuota, createQuotaGuard)
+ * - Timed entity manager (#480): reviewProposedEntities, parseEntityManagerConfig
  * - Story writer (#505): writeStories, WriteStoriesOptions, WriteStoriesResult
  */
 export * from './config.js';
@@ -20,4 +23,8 @@ export * from './linker-story.js';
 export * from './session.js';
 export * from './d36-worker.js';
 export * from './runner.js';
+export * from './ollama-quota.js';
+export * from './catchup.js';
+export * from './entity-manager.js';
+export * from './entity-manager-config.js';
 export * from './story-writer.js';

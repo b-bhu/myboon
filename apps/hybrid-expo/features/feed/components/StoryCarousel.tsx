@@ -1,10 +1,14 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Image } from 'expo-image';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import type { ViewStyle } from 'react-native';
+import type { NativeScrollEvent, NativeSyntheticEvent, ViewStyle } from 'react-native';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
-import { toShortDate } from '@/features/feed/feed.api';
-import type { StorySummary } from '@/features/feed/feed.types';
+import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
+import { reportSourceName, toRelativeTime, toShortDate } from '@/features/feed/feed.api';
+import { carouselIndex, slideTag } from '@/features/feed/feed-home';
+import type { FeedItem, StorySummary } from '@/features/feed/feed.types';
+import { FeedBox } from './ui/FeedBox';
+import { useContentImageFailed } from './FeedCard';
 import { selectedStorySlug } from '../feed-state';
 
 const CARD_WIDTH = 288;
@@ -143,6 +147,152 @@ export function StoryCarouselSkeleton() {
       </View>
       <View style={[styles.compactCard, styles.skeletonPeek]} />
     </View>
+  );
+}
+
+interface TodayCarouselProps {
+  items: FeedItem[];
+  onPress: (item: FeedItem) => void;
+}
+
+/**
+ * "Today" paged carousel (feed-mock.html .slide/.bars): one full-width boxed
+ * card per view, gold progress bars below. No auto-advance — safe for
+ * reduced motion; the active bar follows manual swipes only.
+ */
+export function TodayCarousel({ items, onPress }: TodayCarouselProps) {
+  const [slideWidth, setSlideWidth] = useState(0);
+  const [active, setActive] = useState(0);
+  if (!items.length) return null;
+  const current = Math.min(active, items.length - 1);
+  const track = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (slideWidth > 0) setActive(carouselIndex(event.nativeEvent.contentOffset.x, slideWidth, items.length));
+  };
+  return (
+    <View
+      onLayout={(event) => {
+        const width = event.nativeEvent.layout.width;
+        if (width > 0) setSlideWidth(width);
+      }}
+    >
+      {slideWidth > 0 ? (
+        <>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onScroll={track}
+            onMomentumScrollEnd={track}
+          >
+            {items.map((item) => (
+              <View key={item.id} style={{ width: slideWidth }}>
+                <TodaySlide item={item} onPress={onPress} />
+              </View>
+            ))}
+          </ScrollView>
+          <View style={styles.todayBars} accessibilityLabel={`Update ${current + 1} of ${items.length}`}>
+            {items.map((item, index) => (
+              <View key={item.id} style={[styles.todayBar, index === current && styles.todayBarActive]} />
+            ))}
+          </View>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function TodaySlide({ item, onPress }: { item: FeedItem; onPress: (item: FeedItem) => void }) {
+  const { hasContentImage, onImageError } = useContentImageFailed(item);
+  const tag = slideTag(item);
+  const time = toRelativeTime(item.createdAt);
+  const source = reportSourceName(item.sourceName);
+  const tagChip = tag ? (
+    <View
+      style={[styles.todaySlideTagChrome, hasContentImage ? styles.todaySlideTag : styles.todaySlideTagInline]}
+      accessibilityElementsHidden
+    >
+      <Text style={styles.todaySlideTagText}>{tag}</Text>
+    </View>
+  ) : null;
+  return (
+    <FeedBox
+      tone="ground"
+      onPress={() => onPress(item)}
+      accessibilityLabel={`${item.headline}, ${tag}, ${time}`}
+      style={styles.todaySlide}
+    >
+      {hasContentImage && item.imageUrl ? (
+        <View style={styles.todaySlideImageWrap}>
+          <Image
+            source={item.imageUrl}
+            onError={onImageError}
+            style={styles.todaySlideImage}
+            contentFit="cover"
+            transition={180}
+            accessibilityLabel={item.imageAttribution ? `${item.headline}, ${item.imageAttribution}` : item.headline}
+          />
+          {tagChip}
+        </View>
+      ) : null}
+      <View style={styles.todaySlideCopy}>
+        {!hasContentImage && tagChip}
+        <View style={styles.todaySlideMeta}>
+          <Text style={styles.monoLabel} numberOfLines={1}>{time}</Text>
+          {source ? <Text style={[styles.monoLabel, styles.todaySlideMetaSource]} numberOfLines={1}>{source}</Text> : null}
+        </View>
+        <Text style={styles.todaySlideHeadline} numberOfLines={3}>{item.headline}</Text>
+        <Text style={styles.todaySlideBody} numberOfLines={2}>{item.description}</Text>
+      </View>
+    </FeedBox>
+  );
+}
+
+interface DevelopingStoryCardProps {
+  story: StorySummary;
+  onWatch: (story: StorySummary) => void;
+}
+
+/** "Developing story" card (feed-mock.html .card.story): whole card opens the story. */
+export function DevelopingStoryCard({ story, onWatch }: DevelopingStoryCardProps) {
+  const { hasContentImage, onImageError } = useContentImageFailed(story);
+  const filled = Math.min(3, Math.max(0, story.eventCount));
+  return (
+    <FeedBox
+      tone="ground"
+      onPress={() => onWatch(story)}
+      accessibilityLabel={`Watch full story: ${story.name}, updated ${toRelativeTime(story.updatedAt)}`}
+    >
+      <View style={styles.developingTop}>
+        {hasContentImage && story.imageUrl ? (
+          <Image
+            source={story.imageUrl}
+            onError={onImageError}
+            style={styles.developingImage}
+            contentFit="cover"
+            transition={180}
+            accessibilityLabel={story.imageAttribution ? `${story.name}, ${story.imageAttribution}` : story.name}
+          />
+        ) : null}
+        <View style={styles.developingHeader}>
+          <Text style={styles.monoLabel}>{story.eventCount} updates</Text>
+          <Text style={styles.developingTitle} numberOfLines={2}>{story.name}</Text>
+          <View style={styles.developingTimeline} accessibilityElementsHidden>
+            {Array.from({ length: 3 }, (_, index) => (
+              <Fragment key={index}>
+                {index > 0 ? <View style={styles.developingTimelineLink} /> : null}
+                <View style={[styles.developingTimelineSquare, index < filled && styles.developingTimelineSquareOn]} />
+              </Fragment>
+            ))}
+          </View>
+        </View>
+      </View>
+      <Text style={styles.developingBody} numberOfLines={2}>{story.latestDevelopment}</Text>
+      <View style={styles.developingFooter}>
+        <Text style={styles.monoLabel}>Updated {toRelativeTime(story.updatedAt)}</Text>
+        <Text style={styles.developingWatch} accessibilityElementsHidden>WATCH FULL STORY</Text>
+      </View>
+    </FeedBox>
   );
 }
 
@@ -333,5 +483,167 @@ const styles = StyleSheet.create({
   },
   skeletonBodyShort: {
     width: '64%',
+  },
+  // Shared small mono label (DESIGN.md §2: mono, uppercase, 1px letterspacing).
+  monoLabel: {
+    color: FEED_TOKENS.colors.textDim,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  // Today slide (mock .slide): boxed card, image bleed, 12 padding copy block.
+  todaySlide: {
+    width: '100%',
+    padding: 0,
+    overflow: 'hidden',
+  },
+  todaySlideImageWrap: {
+    height: 178,
+    backgroundColor: FEED_TOKENS.colors.card,
+  },
+  todaySlideImage: {
+    width: '100%',
+    height: 178,
+    backgroundColor: FEED_TOKENS.colors.card,
+  },
+  // Tag chip (mock .slide .tag): chrome carries the visuals; over the image
+  // the chip is absolute (left/top 12), inline it stays in normal flow.
+  todaySlideTag: {
+    position: 'absolute',
+    left: FEED_TOKENS.space.md,
+    top: FEED_TOKENS.space.md,
+  },
+  todaySlideTagChrome: {
+    alignSelf: 'flex-start',
+    backgroundColor: FEED_TOKENS.colors.screen,
+    borderWidth: 1,
+    borderColor: FEED_TOKENS.colors.border,
+    borderRadius: FEED_TOKENS.radius.chip,
+    paddingVertical: FEED_TOKENS.space.xs,
+    paddingHorizontal: FEED_TOKENS.space.sm,
+  },
+  todaySlideTagInline: {
+    position: 'relative',
+    marginBottom: FEED_TOKENS.space.sm,
+  },
+  todaySlideTagText: {
+    color: FEED_TOKENS.colors.textDim,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  todaySlideCopy: {
+    padding: FEED_TOKENS.space.md,
+    gap: FEED_TOKENS.space.sm,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  todaySlideMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: FEED_TOKENS.space.sm,
+  },
+  todaySlideMetaSource: {
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  todaySlideHeadline: {
+    color: FEED_TOKENS.colors.text,
+    fontSize: FEED_TOKENS.type.section,
+    lineHeight: 25,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  todaySlideBody: {
+    color: FEED_TOKENS.colors.textDim,
+    fontSize: FEED_TOKENS.type.body,
+    lineHeight: 21,
+  },
+  // Progress bars (mock .bars): one flex bar per slide, active one gold.
+  todayBars: {
+    flexDirection: 'row',
+    gap: FEED_TOKENS.space.xs,
+    marginTop: FEED_TOKENS.space.sm,
+  },
+  todayBar: {
+    flex: 1,
+    height: 3,
+    borderRadius: 0,
+    backgroundColor: FEED_TOKENS.colors.textFaint,
+    opacity: 0.5,
+  },
+  todayBarActive: {
+    backgroundColor: FEED_TOKENS.colors.accent,
+    opacity: 1,
+  },
+  // Developing story card (mock .card.story): 84 image left, hairline footer.
+  developingImage: {
+    width: 84,
+    height: 84,
+    borderRadius: FEED_TOKENS.radius.button,
+    backgroundColor: FEED_TOKENS.colors.card,
+  },
+  developingTop: {
+    flexDirection: 'row',
+    gap: FEED_TOKENS.space.md,
+  },
+  developingHeader: {
+    flex: 1,
+    minWidth: 0,
+  },
+  developingTitle: {
+    marginTop: FEED_TOKENS.space.xs,
+    color: FEED_TOKENS.colors.text,
+    fontSize: FEED_TOKENS.type.cardTitle,
+    lineHeight: 23,
+    fontWeight: '700',
+  },
+  developingTimeline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: FEED_TOKENS.space.xs,
+    marginTop: FEED_TOKENS.space.xs,
+    marginBottom: FEED_TOKENS.space.sm,
+  },
+  developingTimelineSquare: {
+    width: 6,
+    height: 6,
+    borderWidth: 1,
+    borderColor: FEED_TOKENS.colors.textFaint,
+  },
+  developingTimelineSquareOn: {
+    backgroundColor: FEED_TOKENS.colors.text,
+    borderColor: FEED_TOKENS.colors.text,
+  },
+  developingTimelineLink: {
+    width: 14,
+    height: 1,
+    backgroundColor: FEED_TOKENS.colors.border,
+  },
+  developingBody: {
+    color: FEED_TOKENS.colors.textDim,
+    fontSize: FEED_TOKENS.type.body,
+    lineHeight: 21,
+  },
+  developingFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: FEED_TOKENS.space.sm,
+    borderTopWidth: 1,
+    borderTopColor: FEED_TOKENS.colors.border,
+    marginTop: FEED_TOKENS.space.sm,
+    paddingTop: FEED_TOKENS.space.sm,
+  },
+  developingWatch: {
+    color: FEED_TOKENS.colors.accent,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
 });

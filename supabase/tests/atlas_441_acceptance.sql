@@ -1,9 +1,10 @@
 -- #441 acceptance tests. Run on an EMPTY local/branch DB after the atlas migrations, never on prod.
+-- Targets the schema after 20261031180000_atlas_entity_rename (#541).
 -- Each block raises on failure; everything runs in one transaction and is rolled back.
 \set ON_ERROR_STOP 1
 begin;
 
-insert into atlas.shelves (slug, name, type) values ('t-main','T Main','topic'), ('t-other','T Other','topic');
+insert into atlas.entities (slug, name, type) values ('t-main','T Main','topic'), ('t-other','T Other','topic');
 
 -- 1. Unique keys reject duplicates.
 do $$ begin
@@ -17,46 +18,40 @@ do $$ begin
     insert into atlas.decisions (schema_version, signal_id, analyst_version, action) values (1, 's1', 'a1', 'skip');
     raise exception 'FAIL: duplicate (signal_id, analyst_version) accepted';
   exception when unique_violation then raise notice 'PASS 1b decisions UNIQUE(signal_id, analyst_version) rejects duplicate'; end;
-  insert into atlas.items (item_key, title, main_shelf_id) select 'i1', 'Item 1', id from atlas.shelves where slug = 't-main';
-  insert into atlas.item_signals (item_id, signal_id) select id, 's1' from atlas.items where item_key = 'i1';
+  insert into atlas.entity_items (item_key, title, main_entity_id) select 'i1', 'Item 1', id from atlas.entities where slug = 't-main';
+  insert into atlas.item_signals (item_id, signal_id) select id, 's1' from atlas.entity_items where item_key = 'i1';
   begin
-    insert into atlas.item_signals (item_id, signal_id) select id, 's1' from atlas.items where item_key = 'i1';
+    insert into atlas.item_signals (item_id, signal_id) select id, 's1' from atlas.entity_items where item_key = 'i1';
     raise exception 'FAIL: duplicate item_signals accepted';
   exception when unique_violation then raise notice 'PASS 1c item_signals PK(item_id, signal_id) rejects duplicate'; end;
-  insert into atlas.stories (slug, title) values ('st1', 'Story 1');
-  insert into atlas.story_items (story_id, item_id) select s.id, i.id from atlas.stories s, atlas.items i where s.slug = 'st1' and i.item_key = 'i1';
+  insert into atlas.stories (slug, title, entity_id) select 'st1', 'Story 1', id from atlas.entities where slug = 't-main';
+  insert into atlas.story_items (story_id, item_id) select s.id, i.id from atlas.stories s, atlas.entity_items i where s.slug = 'st1' and i.item_key = 'i1';
   begin
-    insert into atlas.story_items (story_id, item_id) select s.id, i.id from atlas.stories s, atlas.items i where s.slug = 'st1' and i.item_key = 'i1';
+    insert into atlas.story_items (story_id, item_id) select s.id, i.id from atlas.stories s, atlas.entity_items i where s.slug = 'st1' and i.item_key = 'i1';
     raise exception 'FAIL: duplicate story_items accepted';
   exception when unique_violation then raise notice 'PASS 1d story_items PK(story_id, item_id) rejects duplicate'; end;
   begin
-    insert into atlas.shelves (slug, name, type) values ('t-main', 'Dup', 'topic');
+    insert into atlas.entities (slug, name, type) values ('t-main', 'Dup', 'topic');
     raise exception 'FAIL: duplicate shelf slug accepted';
-  exception when unique_violation then raise notice 'PASS 1e shelves UNIQUE(slug) rejects duplicate'; end;
+  exception when unique_violation then raise notice 'PASS 1e entities UNIQUE(slug) rejects duplicate'; end;
 end $$;
 
--- 2. One main shelf: a second main fails, an item without one fails, self-merge fails.
+-- 2. One main entity (entity_items.main_entity_id; the links table was dropped in #541): an item without one fails, self-merge fails.
 do $$ begin
   begin
-    insert into atlas.item_shelves (item_id, shelf_id, role) select i.id, s.id, 'main' from atlas.items i, atlas.shelves s where i.item_key = 'i1' and s.slug = 't-other';
-    raise exception 'FAIL: second main shelf accepted';
-  exception when check_violation then raise notice 'PASS 2a second main shelf rejected (item_shelves role is also_affects only; main is items.main_shelf_id)'; end;
-  insert into atlas.item_shelves (item_id, shelf_id) select i.id, s.id from atlas.items i, atlas.shelves s where i.item_key = 'i1' and s.slug = 't-other';
-  raise notice 'PASS 2b also_affects link accepted';
-  begin
-    insert into atlas.items (item_key, title) values ('i2', 'No shelf');
+    insert into atlas.entity_items (item_key, title) values ('i2', 'No shelf');
     raise exception 'FAIL: item without main shelf accepted';
   exception when not_null_violation then raise notice 'PASS 2c item without main shelf rejected'; end;
   begin
-    update atlas.items set status = 'merged', merged_into_id = id where item_key = 'i1';
+    update atlas.entity_items set status = 'merged', merged_into_id = id where item_key = 'i1';
     raise exception 'FAIL: self-merge accepted';
   exception when check_violation then raise notice 'PASS 2d merged_into_id = id rejected'; end;
 end $$;
 
 -- 3. History is append-only and stores changed fields only.
 do $$ declare v jsonb; begin
-  update atlas.items set title = 'Item 1 renamed' where item_key = 'i1';
-  select changed into v from atlas.history where table_name = 'items' and op = 'UPDATE' order by id desc limit 1;
+  update atlas.entity_items set title = 'Item 1 renamed' where item_key = 'i1';
+  select changed into v from atlas.history where table_name = 'entity_items' and op = 'UPDATE' order by id desc limit 1;
   if v <> '{"title": "Item 1 renamed"}'::jsonb then raise exception 'FAIL: history changed = %', v; end if;
   raise notice 'PASS 3a history UPDATE row = %', v;
   begin update atlas.history set reason = 'x'; raise exception 'FAIL: history update allowed';
@@ -68,7 +63,7 @@ end $$;
 -- 4. Read-only role cannot write any atlas table (and can read).
 do $$ declare t record; n int := 0; begin
   set local role atlas_analyst;
-  perform count(*) from atlas.items;
+  perform count(*) from atlas.entity_items;
   for t in select c.relname from pg_class c where c.relnamespace = 'atlas'::regnamespace and c.relkind in ('r','p') loop
     begin
       execute format('insert into atlas.%I default values', t.relname);
@@ -84,7 +79,7 @@ do $$ begin
   create table atlas.zz_future (id int);
   if not has_table_privilege('atlas_analyst', 'atlas.zz_future', 'SELECT') then raise exception 'FAIL: no default SELECT'; end if;
   if has_table_privilege('atlas_analyst', 'atlas.zz_future', 'INSERT') then raise exception 'FAIL: default INSERT'; end if;
-  if has_schema_privilege('anon', 'atlas', 'USAGE') or has_table_privilege('authenticated', 'atlas.items', 'SELECT') then raise exception 'FAIL: API roles have access'; end if;
+  if has_schema_privilege('anon', 'atlas', 'USAGE') or has_table_privilege('authenticated', 'atlas.entity_items', 'SELECT') then raise exception 'FAIL: API roles have access'; end if;
   drop table atlas.zz_future;
   raise notice 'PASS 4b future atlas tables get SELECT only for atlas_analyst; anon/authenticated have no access';
 end $$;
