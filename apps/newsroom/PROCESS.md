@@ -54,18 +54,18 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 | End card | locked (approved Nov 1, 2026) | locked/bookends |
 | Overlays: logo, lower third, BREAKING bar | locked (approved Nov 1, 2026) | src/chrome |
 | Price ticker (BTC, ETH, SOL… daily %) | locked (approved Nov 1, 2026) | src/chrome, data per episode |
-| Screenshot push-in style (OVER VISUAL) | awaiting approval | src/components/OverVisual.tsx |
-| Cut rules | awaiting approval | "Cut rules" below |
+| Screenshot push-in style (OVER VISUAL) | locked (approved Nov 1, 2026) | src/components/OverVisual.tsx |
+| Cut rules | locked (approved Nov 1, 2026) | "Cut rules" below |
 | QC checklist | done | step 8 |
 
-## Screenshot push-in style (awaiting approval)
+## Screenshot push-in style (locked Nov 1, 2026)
 - Real asset only, on the set backdrop (walletCore #031F2C). No blur, gradient, shadow or glow: 1 px borderMuted edge, 4 px radius.
 - Fitted inside the OVER VISUAL safe area x160 y160 1600x720 (clears logo bug and the lower-third/ticker slot). `post`: centred, 92% of safe height. `chart`: full safe width.
 - One push-in 1.00 → 1.06, ease-out cubic, lands 0.5 s before the end and holds. Shot = voice line + 0.3 s. Optional focus point (0-1) for gentle drift. No pans, rotation or whoosh.
 - Optional highlight: plain #FFD166 3 px rectangle, wipes on in 0.3 s at a set time. Off by default. No arrows, circles or emoji.
 - Logo and ticker stay on top.
 
-## Cut rules (awaiting approval)
+## Cut rules (locked Nov 1, 2026)
 - Hard cuts only. No transitions, dissolves or whooshes.
 - Cut on line boundaries.
 - OVER VISUAL holds for the voice line plus about 0.3 s.
