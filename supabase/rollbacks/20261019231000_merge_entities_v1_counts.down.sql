@@ -1,4 +1,6 @@
 -- Rollback for 20261019231000_merge_entities_v1_counts.sql (#342 PR-4 B).
+-- (#549: the 20261019220000 file was deleted; its verbatim copy is the test fixture
+-- supabase/tests/fixtures/20261019220000_merge_entities_v1.prior-state.sql.)
 -- Restores the 20261019220000_merge_entities_v1 function: the body, its
 -- REVOKE/GRANT pair and its COMMENT are copied verbatim from the committed
 -- 20261019220000 migration (git 90688d08), so the stored definition is

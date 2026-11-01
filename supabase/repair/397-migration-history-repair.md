@@ -29,9 +29,9 @@ and owned elsewhere (decision), 1 not applied and run here (20260824), 1 new (20
 4. Decisions before push (otherwise `db push --include-all` would run them):
    - 20260710041040 partial: recommend mark applied; its revokes are in 20261025140056, the stats RPC stays absent (API falls back on 404).
    - 20260728 partial: recommend mark applied now and file a follow-up for `entity_memories_check` + the index rebuild (ACCESS EXCLUSIVE on entity_memories).
-   - 20261019220000 partial: owner policies missing; ask merge owner (#342) whether to re-run the policy block.
+   - 20261019220000 partial: owner policies missing. Resolved in #549: file deleted, not applied.
    - 20260714153008 / 20261019180000: #396 decides; recommend mark 20260714153008 applied as superseded.
-   - 20261019190000, 20261019200000: still pending their own needs-bucket issues (#390, #378).
+   - 20261019190000: file deleted in #549. 20261019200000 (#378): still pending, goes with #484.
 5. `supabase db push --dry-run` must list only 20260824122705 and 20261101090000 (plus any decided above).
 6. `supabase db push` (both files set lock_timeout 5s / statement_timeout 30s).
 7. Verify: grants query shows zero anon/authenticated rows on the 9 tables; updown table exists; /narratives and /stories counts unchanged; security advisor.
@@ -57,19 +57,19 @@ group by 1, 2 order by 1, 2;
 | `20260402_pacific_tracked` | superseded: pacific_tracked dropped by applied retire_v2_feed_tables | mark applied |
 | `20260508_ai_explanations` | present, unrecorded | mark applied |
 | `20260602_polymarket_markets_data_engineer` | recorded as 20260602151211 | repoint history (revert 20260602151211, apply 20260602) |
-| `20260603_polymarket_market_researcher` | recorded as 20260603122419 | repoint history (revert 20260603122419, apply 20260603) |
-| `20260603_polymarket_markets_remove_snapshots` | recorded as 20260603053807 | repoint history (revert 20260603053807, apply 20260603) |
-| `20260604_polymarket_market_editor` | recorded as 20260604152337 | repoint history (revert 20260604152337, apply 20260604) |
+| `20260603122419_polymarket_market_researcher` (was `20260603_polymarket_market_researcher`) | recorded as 20260603122419 | resolved by #549: file renamed to the prod version (content md5 matches) |
+| `20260603053807_polymarket_markets_remove_snapshots` (was `20260603_polymarket_markets_remove_snapshots`) | recorded as 20260603053807 | resolved by #549: file renamed to the prod version (content md5 matches) |
+| `20260604152337_polymarket_market_editor` (was `20260604_polymarket_market_editor`) | recorded as 20260604152337 | resolved by #549: file renamed to the prod version (content md5 matches) |
 | `20260605_polymarket_market_publisher` | recorded as 20260606044250 | repoint history (revert 20260606044250, apply 20260605) |
-| `20260606_retire_v2_feed_tables` | recorded as 20260606140326 | repoint history (revert 20260606140326, apply 20260606) |
-| `20260607_polymarket_researcher_optimization` | recorded as 20260622110309 | repoint history (revert 20260622110309, apply 20260607) |
+| `20260606140326_retire_v2_feed_tables` (was `20260606_retire_v2_feed_tables`) | recorded as 20260606140326 | resolved by #549: file renamed to the prod version (content md5 matches) |
+| `20260622110309_polymarket_researcher_optimization` (was `20260607_polymarket_researcher_optimization`) | recorded as 20260622110309 | resolved by #549: file renamed to the prod version (content md5 matches) |
 | `20260624_entity_manager_v1` | recorded as 20260624133832 | repoint history (revert 20260624133832, apply 20260624) |
-| `20260625_entity_memories_primary_model` | recorded as 20260625114141 | repoint history (revert 20260625114141, apply 20260625) |
+| `20260625114141_entity_memories_primary_model` (was `20260625_entity_memories_primary_model`) | recorded as 20260625114141 | resolved by #549: file renamed to the prod version (content md5 matches) |
 | `20260626_hyperliquid_perps_connector_v1` | superseded: tables absent; collector uses local SQLite, no Supabase reader | mark applied |
-| `20260701_editor_drafts_v1` | recorded as 20260701160531 | repoint history (revert 20260701160531, apply 20260701) |
-| `20260703_publisher_v1_editor_drafts` | recorded as 20260703163836 | repoint history (revert 20260703163836, apply 20260703) |
-| `20260706_news_source_state` | superseded: tables dropped by applied 20260818145731 | mark applied |
-| `20260706_pipeline_runs` | present, unrecorded | mark applied |
+| `20260701160531_editor_drafts_v1` (was `20260701_editor_drafts_v1`) | recorded as 20260701160531 | resolved by #549: file renamed to the prod version (content md5 matches) |
+| `20260703163836_publisher_v1_editor_drafts` (was `20260703_publisher_v1_editor_drafts`) | recorded as 20260703163836 | resolved by #549: file renamed to the prod version (content md5 matches) |
+| `20260706000000_news_source_state` (was `20260706_news_source_state`) | superseded: tables dropped by applied 20260818145731 | mark applied (#549 repair file, section B2) |
+| `20260706000100_pipeline_runs` (was `20260706_pipeline_runs`) | present, unrecorded | mark applied (#549 repair file, section B1) |
 | `20260710041040_internal_entity_browser_security` | PARTIAL: RLS on, but revokes never ran and internal_entity_memory_stats() missing (API tolerates 404). Revokes folded into 20261025140056 | decision |
 | `20260714131443_entity_carousel_flag` | recorded (same version) | none |
 | `20260714153008_secure_published_narratives` | NOT applied: RLS off on published_narratives; superseded by #396 / 20261019180000 | decision (own issue) |
@@ -103,19 +103,19 @@ group by 1, 2 order by 1, 2;
 | `20261017120000_managed_entity_columns` | present, unrecorded | mark applied |
 | `20261017180000_entity_summary_article_refresh` | present, unrecorded | mark applied |
 | `20261017210000_managed_entity_knowledge_reader` | present, unrecorded | mark applied |
-| `20261018090000_published_entity_managed_ids` | recorded as 20261018004252 | repoint history (revert 20261018004252, apply 20261018090000) |
+| `20261018004252_published_entity_managed_ids` (was `20261018090000_published_entity_managed_ids`) | recorded as 20261018004252 | resolved by #549: file renamed to the prod version (content md5 matches) |
 | `20261019120000_entity_memories_read_only_archive` | present, unrecorded | mark applied |
 | `20261019180000_published_narratives_enable_rls` | superseded (Nov 1): RLS on via 20261025140436 | mark applied |
-| `20261019190000_published_managed_memory_ownership` | NOT applied: managed_owned_memory_ids_v1 absent, guard has old body | decision (own issue) |
+| `20261019190000_published_managed_memory_ownership` | NOT applied: managed_owned_memory_ids_v1 absent, guard has old body | file deleted in #549 (no caller on main) |
 | `20261019200000_article_writer_collision_detail` | NOT applied: article_writer_v1 lacks collision detail | decision (own issue) |
 | `20261019210000_managed_entity_fuzzy_candidates` | present, unrecorded | mark applied |
 | `20261019213000_managed_context_read_costs` | present, unrecorded | mark applied |
-| `20261019220000_merge_entities_v1` | PARTIAL: merge_entities_v1 present (231000 body), but its merge_entities_owner_* policies are absent | decision |
+| `20261019220000_merge_entities_v1` | PARTIAL: merge_entities_v1 present (231000 body), but its merge_entities_owner_* policies are absent | file deleted in #549 (function superseded by 20261019231000; test fixture kept in supabase/tests/fixtures) |
 | `20261019230000_entity_kind_v1` | present, unrecorded | mark applied |
 | `20261019231000_merge_entities_v1_counts` | present, unrecorded | mark applied |
 | `20261020100000_published_narratives_feed_idx` | present, unrecorded | mark applied |
 | `20261020170000_managed_event_at_reported` | present, unrecorded | mark applied |
-| `20261020200000_article_context_v2` | recorded as 20261024162849 | repoint history (revert 20261024162849, apply 20261020200000) |
+| `20261024162849_article_context_v2` (was `20261020200000_article_context_v2`) | recorded as 20261024162849 | resolved by #549: file renamed to the prod version (content md5 matches) |
 | `20261025100000_atlas_core` | recorded (same version, re-pointed before Nov 1) | none |
 | `20261025100100_atlas_queues` | recorded (same version) | none |
 | `20261025100200_atlas_tool_log` | recorded (same version) | none |

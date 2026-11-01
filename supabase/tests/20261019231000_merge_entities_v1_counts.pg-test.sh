@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # #342 PR-4 B: apply every repo migration BEFORE 20261019231000 (including
-# 20261019220000 and 20261019230000), capture the PR-3 merge body, apply the
+# 20261019220000 - now replayed from supabase/tests/fixtures - and 20261019230000), capture the PR-3 merge body, apply the
 # counts migration, run the checks and behaviour cases (certain-row collisions
 # and the suppressed-row 40001), then the down file and prove the PR-3 body is
 # restored byte-for-byte - on a THROWAWAY local Postgres 17. Never points at
@@ -30,8 +30,11 @@ for m in "$REPO"/supabase/migrations/*.sql; do
   # Only migrations strictly before the counts migration: it must still apply
   # on the state they leave behind, and nothing after it may be required.
   [[ $(basename "$m") < ${M}.sql ]] || continue
+  # #549: 20261019220000 was deleted from migrations; replay its fixture at the old slot.
+  if [[ -z ${PRIOR342:-} && $(basename "$m") > 20261019220000 ]]; then apply "$REPO/supabase/tests/fixtures/20261019220000_merge_entities_v1.prior-state.sql"; PRIOR342=1; fi
   apply "$m"; count=$((count + 1))
 done
+[[ -n ${PRIOR342:-} ]] || apply "$REPO/supabase/tests/fixtures/20261019220000_merge_entities_v1.prior-state.sql"
 echo "migrations applied before $M: $count"
 BODY0=$(body)
 echo "== apply $M (single transaction)"; apply "$REPO/supabase/migrations/$M.sql"; echo "migration: OK"

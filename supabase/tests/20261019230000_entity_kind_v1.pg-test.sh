@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # #342 PR-4 A: apply every repo migration BEFORE 20261019230000 (including
-# 20261019220000), seed legacy-type rows, then apply the kind migration and run
+# 20261019220000, now replayed from supabase/tests/fixtures), seed legacy-type rows, then apply the kind migration and run
 # its checks, behaviour cases and the down file - on a THROWAWAY local
 # Postgres 17. Later migrations (e.g. 20261019231000) are NOT applied, so this
 # exercises the migration standalone. Never points at Supabase; never runs
@@ -29,8 +29,11 @@ for m in "$REPO"/supabase/migrations/*.sql; do
   # Only migrations strictly before the kind migration: it must still apply on
   # the state they leave behind, and nothing after it may be required.
   [[ $(basename "$m") < ${M}.sql ]] || continue
+  # #549: 20261019220000 was deleted from migrations; replay its fixture at the old slot.
+  if [[ -z ${PRIOR342:-} && $(basename "$m") > 20261019220000 ]]; then apply "$REPO/supabase/tests/fixtures/20261019220000_merge_entities_v1.prior-state.sql"; PRIOR342=1; fi
   apply "$m"; count=$((count + 1))
 done
+[[ -n ${PRIOR342:-} ]] || apply "$REPO/supabase/tests/fixtures/20261019220000_merge_entities_v1.prior-state.sql"
 echo "migrations applied before $M: $count"
 echo "== preseed legacy-type rows (committed BEFORE the migration)"
 apply "$T.preseed.sql"; echo "preseed: OK"
