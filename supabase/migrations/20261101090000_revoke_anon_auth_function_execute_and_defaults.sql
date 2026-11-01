@@ -25,6 +25,12 @@ REVOKE EXECUTE ON FUNCTION
   public.touch_ai_explanations_updated_at()
 FROM PUBLIC, anon, authenticated;
 
+-- Nit 1 (CTO): prod already holds service_role=X/postgres on all 5 (explicit, not via PUBLIC).
+-- Re-stated here so the intent survives any future ACL reset; a no-op on prod.
+-- token_source_rank has no callers (no pg_depend, prosrc, view, index, default, policy
+-- or check references; code reads token_registry via REST only), so no worker role needs it.
+GRANT EXECUTE ON FUNCTION public.token_source_rank(text) TO service_role;
+
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;

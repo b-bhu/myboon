@@ -1,5 +1,6 @@
 -- Rollback for 20261101090000_revoke_anon_auth_function_execute_and_defaults.sql: restores the exact
 -- function ACLs and postgres/public default privileges prod held on Nov 1, 2026.
+-- service_role's EXECUTE on token_source_rank pre-dates the migration, so it is kept.
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';

@@ -16,7 +16,7 @@ P <<'SQL'
 create function public.entity_manager_create_entity_v1(p_slug text, p_name text, p_type text, p_aliases jsonb, p_summary text, p_status text, p_show_in_carousel boolean, p_metadata jsonb, p_identity_slugs text[], p_identity_names text[], p_identity_aliases text[]) returns int language sql as 'select 1';
 create function public.entity_manager_verify_migration_v1() returns int language sql as 'select 1';
 create function public.entity_memory_compat_identity_v1() returns trigger language plpgsql as 'begin return new; end';
-create function public.token_source_rank(src text) returns int language sql immutable as 'select 1';
+create function public.token_source_rank(src text) returns int language sql immutable as $f$ select case src when 'seed' then 3 when 'jupiter' then 2 when 'meteora' then 1 else 0 end $f$;
 create function public.touch_ai_explanations_updated_at() returns trigger language plpgsql as 'begin new.v := now(); return new; end';
 revoke execute on function public.entity_manager_create_entity_v1(text,text,text,jsonb,text,text,boolean,jsonb,text[],text[],text[]), public.entity_manager_verify_migration_v1(), public.entity_memory_compat_identity_v1() from public;
 grant execute on all functions in schema public to anon, authenticated, service_role;
@@ -34,6 +34,9 @@ down() { P -f supabase/rollbacks/$V.down.sql; }
 before=$(snap); echo "before: anon/auth executable public fns=$(anon_fns), default-acl entries naming anon/auth=$(anon_defs)"
 up; up1=$(snap); echo "up1: anon/auth executable public fns=$(anon_fns), default-acl entries naming anon/auth=$(anon_defs)"
 P -At -c "select has_function_privilege('service_role','public.token_source_rank(text)','execute') and has_function_privilege('service_role','public.entity_manager_verify_migration_v1()','execute')" | grep -qx t && echo "up1: service_role keeps EXECUTE"
+P -At -c "select array(select unnest(proacl)::text order by 1)::text from pg_proc where oid='public.token_source_rank(text)'::regprocedure" | grep -qx '{postgres=X/postgres,service_role=X/postgres}' && echo "up1: token_source_rank ACL = {postgres, service_role}"
+P -At -c "set role service_role; select public.token_source_rank('seed')" | grep -qx 3 && echo "up1: service_role calls token_source_rank OK"
+P -At -c "set role anon; select public.token_source_rank('seed')" 2>/dev/null && exit 1 || echo "up1: anon denied on token_source_rank"
 P -c "insert into public.ai_explanations values (1, null); update public.ai_explanations set id=2" && echo "up1: trigger still fires after PUBLIC revoke"
 P -c "create table public.new_after_up (id serial)"; P -At -c "select count(*) from information_schema.role_table_grants where table_name='new_after_up' and grantee in ('anon','authenticated')" | grep -qx 0 && echo "up1: new public table gets no anon/auth grants"; P -c "drop table public.new_after_up"
 P -At -c "select count(*) from atlas.entities" >/dev/null && echo "up1: atlas schema (post-#542 entities) intact"
