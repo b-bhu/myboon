@@ -1,4 +1,15 @@
-# #397 prod migration history repair plan (DRAFT, nothing applied)
+# #397 prod migration history repair plan (nothing applied by this PR)
+
+## Nov 1, 2026 refresh (read-only recheck of `supabase_migrations.schema_migrations`, 50 rows)
+
+- Repo `main` + this PR: 86 files, 84 distinct versions. 36 prod rows match a repo version exactly; 14 prod rows are old timestamps of repo files (step 2).
+- Since Oct 25 the 4 atlas rows (`20261025095010/095024/095034/095043`) were re-pointed to `20261025100000..100300`, and 16 new rows were recorded with repo versions:
+  `20261025140056`, `20261025140436` (repo copies from #492), `20261025141526`, `20261026011119`, `20261026011428`, `20261027120000`, `20261027180000`, `20261029180000`, `20261030120000`, `20261030160000`, `20261030210000`, `20261030230000`, `20261031070000`, `20261031090000` (renumbered), `20261031180000` (entity rename, #542), `20261031200000` (tool_log 14 ahead, #546).
+- `20261025140056` and `20261025140436` are applied, so they are no longer "run" steps. `20261019180000` (RLS on published_narratives) is now superseded by `20261025140436` → mark applied.
+- New in this PR: `20261101090000_revoke_anon_auth_function_execute_and_defaults` → run.
+- The 14 prod-only versions: `20260602151211 20260603053807 20260603122419 20260604152337 20260606044250 20260606140326 20260622110309 20260624133832 20260625114141 20260701160531 20260703163836 20260910143705 20261018004252 20261024162849`.
+- Rows below that say "Prod state (Oct 25)" are from the Oct 25 audit; only the rows named above were rechecked on Nov 1.
+
 
 Audit: Oct 25, 2026, read-only (`list_migrations`, `information_schema`, `pg_catalog`) against prod.
 Repo `main`: 69 migration files (+1 new here). Prod history: 34 rows.
@@ -10,9 +21,9 @@ and owned elsewhere (decision), 1 not applied and run here (20260824), 1 new (20
 ## Steps (each needs CTO approval on #397, after a backup; Bucket/DB Guy runs them)
 
 1. Snapshot: `select * from supabase_migrations.schema_migrations` and the grants query below.
-2. Re-point the 18 renamed rows to the repo versions (history only, no schema change):
-   - `supabase migration repair --status reverted 20260602151211 20260603122419 20260603053807 20260604152337 20260606044250 20260606140326 20260622110309 20260624133832 20260625114141 20260701160531 20260703163836 20260910143705 20261018004252 20261024162849 20261025095010 20261025095024 20261025095034 20261025095043`
-   - `supabase migration repair --status applied 20260602 20260603 20260604 20260605 20260606 20260607 20260624 20260625 20260701 20260703 20260729 20261018090000 20261020200000 20261025100000 20261025100100 20261025100200 20261025100300`
+2. Re-point the 14 renamed rows (Nov 1: the 4 atlas rows are already done) to the repo versions (history only, no schema change):
+   - `supabase migration repair --status reverted 20260602151211 20260603122419 20260603053807 20260604152337 20260606044250 20260606140326 20260622110309 20260624133832 20260625114141 20260701160531 20260703163836 20260910143705 20261018004252 20261024162849`
+   - `supabase migration repair --status applied 20260602 20260603 20260604 20260605 20260606 20260607 20260624 20260625 20260701 20260703 20260729 20261018090000 20261020200000`
 3. Record the 27 present/superseded migrations (26 versions; `20260706` covers two files):
    - `supabase migration repair --status applied 20260401 20260402 20260508 20260626 20260706 20260715160100 20260716062349 20260730 20260731 20260802161500 20260803120000 20260826175053 20261011090000 20261015120000 20261016180000 20261017093000 20261017120000 20261017180000 20261017210000 20261019120000 20261019210000 20261019213000 20261019230000 20261019231000 20261020100000 20261020170000`
 4. Decisions before push (otherwise `db push --include-all` would run them):
@@ -21,12 +32,12 @@ and owned elsewhere (decision), 1 not applied and run here (20260824), 1 new (20
    - 20261019220000 partial: owner policies missing; ask merge owner (#342) whether to re-run the policy block.
    - 20260714153008 / 20261019180000: #396 decides; recommend mark 20260714153008 applied as superseded.
    - 20261019190000, 20261019200000: still pending their own needs-bucket issues (#390, #378).
-5. `supabase db push --dry-run` must list only 20260824122705 and 20261025140056 (plus any decided above).
+5. `supabase db push --dry-run` must list only 20260824122705 and 20261101090000 (plus any decided above).
 6. `supabase db push` (both files set lock_timeout 5s / statement_timeout 30s).
 7. Verify: grants query shows zero anon/authenticated rows on the 9 tables; updown table exists; /narratives and /stories counts unchanged; security advisor.
 8. Correct the stale "NOT APPLIED" headers for the migrations now confirmed present.
 
-Rollback: `supabase/rollbacks/20261025140056_revoke_anon_auth_table_grants.down.sql`,
+Rollback: `supabase/rollbacks/20261101090000_revoke_anon_auth_function_execute_and_defaults.down.sql`,
 `supabase/rollbacks/20260824122705_polymarket_updown_reference_prices.down.sql`; history steps
 revert with the inverse `migration repair` commands.
 
@@ -94,7 +105,7 @@ group by 1, 2 order by 1, 2;
 | `20261017210000_managed_entity_knowledge_reader` | present, unrecorded | mark applied |
 | `20261018090000_published_entity_managed_ids` | recorded as 20261018004252 | repoint history (revert 20261018004252, apply 20261018090000) |
 | `20261019120000_entity_memories_read_only_archive` | present, unrecorded | mark applied |
-| `20261019180000_published_narratives_enable_rls` | NOT applied: RLS still off on published_narratives (#396) | decision (own issue) |
+| `20261019180000_published_narratives_enable_rls` | superseded (Nov 1): RLS on via 20261025140436 | mark applied |
 | `20261019190000_published_managed_memory_ownership` | NOT applied: managed_owned_memory_ids_v1 absent, guard has old body | decision (own issue) |
 | `20261019200000_article_writer_collision_detail` | NOT applied: article_writer_v1 lacks collision detail | decision (own issue) |
 | `20261019210000_managed_entity_fuzzy_candidates` | present, unrecorded | mark applied |
@@ -105,10 +116,13 @@ group by 1, 2 order by 1, 2;
 | `20261020100000_published_narratives_feed_idx` | present, unrecorded | mark applied |
 | `20261020170000_managed_event_at_reported` | present, unrecorded | mark applied |
 | `20261020200000_article_context_v2` | recorded as 20261024162849 | repoint history (revert 20261024162849, apply 20261020200000) |
-| `20261025100000_atlas_core` | recorded as 20261025095010 | repoint history (revert 20261025095010, apply 20261025100000) |
-| `20261025100100_atlas_queues` | recorded as 20261025095024 | repoint history (revert 20261025095024, apply 20261025100100) |
-| `20261025100200_atlas_tool_log` | recorded as 20261025095034 | repoint history (revert 20261025095034, apply 20261025100200) |
-| `20261025100300_atlas_shelves_carousel` | recorded as 20261025095043 | repoint history (revert 20261025095043, apply 20261025100300) |
+| `20261025100000_atlas_core` | recorded (same version, re-pointed before Nov 1) | none |
+| `20261025100100_atlas_queues` | recorded (same version) | none |
+| `20261025100200_atlas_tool_log` | recorded (same version) | none |
+| `20261025100300_atlas_shelves_carousel` | recorded (same version) | none |
 | `20261025114300_waitlist` | recorded (same version) | none |
 | `20261025114823_atlas_service_role_read` | recorded (same version) | none |
-| `20261025140056_revoke_anon_auth_table_grants` | new (#397) | run |
+| `20261025140056_revoke_anon_auth_table_grants` | recorded (same version, Oct 25) | none |
+| `20261025140436_rls_published_narratives_pin_search_path` | recorded (same version) | none |
+| `20261025141526` … `20261031200000` (14 atlas files) | recorded (same version, Nov 1 check) | none |
+| `20261101090000_revoke_anon_auth_function_execute_and_defaults` | new (#397 refresh) | run |
