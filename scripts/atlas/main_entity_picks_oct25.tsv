@@ -1,0 +1,128 @@
+item_id	main_entity_slug	drop	reason
+4ef8f5ec-5f2f-5002-8355-36223134118e	kraken	no	Kraken's parent Payward is the actor integrating SGB Net
+b6bfc276-e85a-57a5-a633-23b1499b1619	gmgn	no	GMGN is the actor moving the ETH
+c4eb92a3-7395-577d-a7ef-12f218c1626f	saudi-arabia	no	Saudi pipeline status is the cause; oil is the effect
+dd6b06f3-5233-5ef2-a06f-37feb0e0a2b8	bitmine-immersion-technologies	no	BitMine is the buyer
+f097fc99-b9c6-58bb-a9e5-420a19bca349	strategy-microstrategy	no	Strategy's BTC P&L leads the story
+028bd2ef-6093-5a3f-8b16-ffe46df8658a	altcoin-season	no	Story is the Altcoin Season Index rotation
+63e5d9ab-883a-5e54-bfa7-8ba80ea70ea1	agent-payments-protocol	no	Closest: AI-agent payments tool launch (Tempo has no entity)
+8814204e-4b27-5f69-8e43-e74f6fa7674b	stablecoins	no	Euro stablecoin consortium; no SwissBorg entity
+00440575-a1bb-53d4-8502-1153532530e1	donald-trump	no	Trump administration tariff decision
+01195663-6d5d-5215-a5e6-4105a29047a6	uniswap	no	UNI whale accumulation; liquidation tag off-topic
+0281ec48-665e-546e-94b5-b7ec333719cf	google	no	Google is the deal maker
+08f9489d-3456-5738-a361-04292845af0f	tokenization-rwa	no	Tokenized-stock collateral product
+0966480c-37af-582a-8abd-10cbd72311c4	anthropic-claude	no	Built with Claude; Adobe is affected
+0a6b43fc-c774-58ec-a8c6-78ef7c358d95		yes	Promotional MemeToro explainer, no news
+0d07a34d-a888-59c1-9831-5104a6d881bc	u-s-stocks	no	US market open
+10706140-2b28-53bc-be2c-0843eb6c0d43		yes	Generic sector snapshot, no clear subject
+1e8660d4-4b84-5c89-849e-1cd7fa9de485	israel	no	Israeli airstrikes are the cause
+1ecba8b3-5a8a-584a-829e-340b6a676509	donald-trump	no	Trump's dividend promise
+1ed39e2d-5223-5efc-912a-e44e172faf93	hype	no	HYPE ETF flows
+1efd5837-de8b-591a-b791-335b971f97c3	polymarket	no	Polymarket hire is the headline event
+204d5a5f-bd42-5626-bf56-c82fc1f35b19	spot-eth-altcoin-etfs	no	Altcoin spot ETF flows
+207bc882-3010-5e8f-9086-c3dee1f49d79	bitcoin	no	BTC exchange liquidity report
+21e421cc-3379-526d-a8dc-06032eb49dfb	yemen	no	Yemeni government strikes
+2363e486-afdd-55ef-bd27-6cd4063a4069	meme-coins	no	Meme coin price spike
+298eeae8-e591-588e-a94d-500eaac6fc8c	crypto-margin-liquidation	no	Leverage/liquidation retrospective
+2af2baf3-c244-5c20-94fc-83818655254e	moonpay	no	MoonPay PayBox launch
+2c0e914b-2f79-5629-90fc-3045acbd8192	bitcoin	no	Bull-run analysis led by BTC
+2d73ccb1-21eb-547e-9946-26340db5c603	yemen	no	Saudi-led/Yemeni govt advance
+2dc4f914-5ac5-5cd1-9ca6-7de0d4a986f6	bitcoin	no	Whale shorting majors, BTC first
+2f3d30a5-4263-577d-aa97-131871c0af78	openai-gpt-models	no	Claim about GPT model
+38a6d157-fe24-5f65-8145-c5b0417effd9	bitwise	no	Bitwise CEO's remarks
+3a641052-2a25-5a76-ab10-0ca60b9e3a82	binance	no	Binance listing is the cause
+3c24ecdc-eb1b-568a-94bd-bb1e036b6be9	coingecko	no	CoinGecko trending list
+3dd398fd-c5cf-580d-97a7-8ea2da2b0ffe	ripple	no	Ripple partnership
+3e99265d-85a5-5333-bb5e-214d387c5af7	united-states	no	Taxable activity, US largest
+3f815bd6-b21a-533c-afba-088b913a6ba2	microsoft	no	Microsoft near high on chip plans
+42125ff9-c916-5e58-be3a-6099b6f9338b	google	no	Google DeepMind Gemini launch
+42aa372b-fc0e-5a5b-94c4-984dbba6bbbe	ripple	no	Ripple partnership
+43e74b0a-b188-5c0c-bb0a-28bb8bedd6cc	sunrise	no	Tokenized AVGO via Sunrise
+445d788a-a86a-53f2-98bf-cbcc4b04f3dd	houthi-movement	no	Campaign against Houthis
+470e8a48-6178-54cc-9bc8-ca1a18beb02b	hype	no	HyperLabs HYPE unstake/OTC
+49055aff-a36a-572f-8e9e-e4a96fbf3b7f	ripple	no	Ripple Prime brokerage deal
+4990b26d-a4ab-5176-8a66-29b8a061b6d1	2026-us-midterm-elections	no	Senate race odds
+4bc53d7a-296b-57c2-8cf6-61e1b7642c60	nvidia	no	DBS view on Nvidia valuation
+4d88ef52-8804-5c5d-9df8-4d42ab1cc4a4	u-s-stocks	no	Market open awaiting minutes
+50ff69da-c546-57c7-a6fc-7c9db0a83fd7		yes	Promotional MemeToro guide
+513acd4d-92bf-5e1d-8ce1-aaf2fcdf59d3	stablecoins	no	P2P stablecoin growth in China
+5e0f28d7-7452-5e0a-86b8-130b97b71515	tokenization-rwa	no	Tokenized asset transparency report
+5e72fa8b-8548-589f-a7d6-51978562cbe6	crude-oil-wti	no	Venezuela oil outlook
+5f759b38-d55e-51c9-86a8-9f128999976b	hyperliquid	no	Hyperliquid whale positioning
+62e12aaa-fdf7-55a0-b2a1-0da81b2c41dc	hype	no	Lead brief is HyperLabs OTC; mixed digest
+636058e3-347e-52fc-b355-2501778779c2	ray-dalio	no	Dalio's warning
+63e73040-f440-552a-96cd-e1a506f1ddce	us-spot-bitcoin-etfs	no	ETF momentum
+640fa749-61e4-5d90-a5d7-9519cb8ecf45	ethereum	no	ETH whale to Tornado Cash
+659e951c-ea87-5f39-9a75-08f43a84b917	ripple	no	Ripple expansion
+66a8089c-b2bd-587a-a56f-9374814d4fae	tokenization-rwa	no	Tokenized equities record
+6821d63f-fd65-5732-8204-f50f6ba68a2d	bitcoin	no	BTC whale short
+69bab685-4e13-57b9-b0bb-218b2ee503ef	hype	no	HYPE holder accumulation
+6b2573ee-af46-522d-9b86-07b6cc609589	xrp	no	TD buy signals, XRP first
+6dcdf960-5f9d-5c1a-8c3b-ecf1cec705ed	xrp	no	XRP whale outflows
+6e3ec0e5-b267-50bb-9138-6bf32ce5e44c	lido-dao	no	Product built on Lido V3
+755c9e5c-2fba-5227-bff3-f0e54b34d263	google	no	Google nuclear deal
+75c95f23-643c-55d0-a097-9304654f3901	united-states	no	White House manufacturing review
+779da414-f7ab-568e-846b-5b369f6d0bf2	ripple	no	Ripple partnerships
+7cbe6965-34b6-5e8c-85f3-d7fff86211b3	uniswap	no	TSV built on Uniswap v4
+7e7dc71a-30f3-5285-b3b9-5fe9f494c6e3	meme-coins	no	Meme coin spike
+7ef67a2d-b326-5d0d-aaf2-f2227e604772	ethereum	no	Ether Q3 outperformance
+80657c81-74dc-5e6f-bb25-398ee1ede91b	kucoin	no	Withdrawals from KuCoin/Gate
+80e8a6d0-2608-5228-9fce-85703e606101	sp-500	no	S&P record
+841ede27-73bc-5219-bde4-342caf9c12d2	digital-gilt-instrument-digit	no	UK DIGIT pilot banks
+8431a962-8005-5d83-992c-308cf2b40c47	yemen	no	Yemeni forces strike Houthis
+85e242c6-f485-5e15-a267-aaf4a177193b	u-s-stocks	no	Chip stocks weaken at open
+873bc57b-44d2-5e93-ad35-4d2d62cb4ca1	hype	no	HyperLabs HYPE OTC
+8795a6eb-571b-526b-b5e5-a3b704fecff0		yes	Paid press release
+8833b457-79cd-56d2-9356-0de93243b178		yes	Promotional MemeToro article
+8ade7cdb-d9e9-57ab-969f-51cb819d79a9	yemen	no	Airstrike on Houthis
+8d0e68f2-6a98-565b-ab9a-5b27299e042d		yes	Promotional MemeToro explainer
+8eeafc9b-1d72-5098-813a-ce0745b40665	backpack	no	Backpack exec remarks
+949754b1-481f-5710-85b5-01748e4d4826	aave	no	Aave V4 BTC collateral
+97723196-491f-55fa-8e8f-6872b03b82c9	palantir-technologies	no	Palantir exec on AI
+99beaf0f-327f-52ed-9a07-0debbdcd17a6	ethereum	no	ETH swing buy
+9a5e8396-e368-51af-9dcb-2cd012183d02	kraken	no	Kraken co-CEO remarks
+9b9135a3-424d-598c-bc6d-08e93c03ce4a	tokenization-rwa	no	Tokenized stock DEX volume
+9ed6918e-87bd-51ba-a284-93756c9d5ac3	samsung-electronics	no	Samsung Wallet USDC rollout
+9eea9e9f-4253-503a-882e-6d972d77e8ab	meme-coins	no	Meme coin spike
+9f881fd7-e235-5892-8004-11ccdc87c793	us-federal-reserve	no	Fed official's rate view
+a2f9cdd7-9724-5e4a-862c-598a888095ae	russia-ukraine-war	no	Ukraine drone plan
+a4403f41-3efd-50b1-bc5a-ad3a448d1468	robinhood-chain	no	Robinhood Chain ecosystem
+a8839f41-f14f-55a5-b4b1-45b2e850c3d3	donald-trump	no	Trump's statement
+a99ca9ea-08fd-5c8d-b09f-79cfb95f1d5a	jpmorgan-chase	no	JPM desk call after Fed remarks
+aa5fcac3-1373-5c6e-b4ab-7c5bd45b10dd	ripple	no	Ripple Prime deal
+aa7306ef-a69b-545d-ba85-2c161a71c490	south-korea	no	Korea crypto economy report
+aba63337-7192-5f8a-b8d2-88bd9d7de17b	bitcoin	no	BTC weekly outlook
+ad39ceb6-8ba8-553a-83c4-c1d9316c1ee8	nvidia	no	Nvidia financing MoUs
+aecd98d2-50d0-5bb3-9dd4-fe3f3492ff0a	hype	no	HyperLabs unstake
+b0b08dc3-1be3-53a0-b816-3f3430f10232	machi	no	Machi's trades
+b462a512-a4ea-56d6-a14d-fc09582c341d	china	no	Chinese tech stocks fall
+b4c83135-8d9b-519b-9273-597736e9652b	u-s-stocks	no	Futures open lower
+b56a11d9-4f2c-50e6-ab98-3fa4c3d87f7e	ethereum	no	ETH whale long
+b87582be-9670-5410-9412-6756f8289b7f	stripe	no	Stripe expansion
+bcca5d5d-b6ce-5c2a-b8e5-3cdbd987d759	hype	no	HYPE ETF flows
+becdf89a-06bc-565c-a578-b57c39963da0	houthi-movement	no	Houthi attack is the cause
+c20dec7c-c613-5736-aade-ecfa2ef90c95	russia-ukraine-war	no	Ukraine AI on battlefield
+c53daea4-5557-5961-a1ac-0fa59d29be0a	bitcoin	no	BTC trader short
+c60273bf-5a86-5bf3-8a55-bbb95817e788		yes	Promotional MemeToro watchlist
+c63b5cbb-5176-5a0c-8f59-986d1a7ad435	houthi-movement	no	Campaign against Houthis
+cd293061-c19b-517c-a4eb-13be0cdb1174	kelsier-ventures	no	LIBRA class action ruling
+cdf8d151-64f3-5eba-a406-19258abe1a67	zcash	no	Zcash lobbying
+d295340f-f617-5024-8bb4-3ceb90af1cd0	jupiter	no	Jupiter Lend record
+d60e18df-99eb-551a-9d5d-dce854eb2e59	bitcoin	no	BTC drop headline; China tag wrong
+d866e931-9ded-5e9f-a842-def5b354a65e	donald-trump	no	Trump's proposal
+d9c20cf1-3a56-5e7f-aa21-d544d89be915	binance	no	Binance BTC outflow
+e31b3e69-929b-58f2-a8ce-a5bd84a46ab9	china	no	China blockchain strategy
+e50a8491-164f-5ad7-a772-d1e86da16d9a	aave	no	Aave V4 Equities Hub
+e5731099-5552-5d8b-bc46-66b34194c5f8	tokenization-rwa	no	Tokenization remarks
+e66423ea-91bd-5b14-96be-b1d6ffa8272c	dell-technologies	no	Dell CEO memory outlook; oil tag wrong
+e90624d0-0777-5d1d-8901-de6fed5fa02a	hype	no	HyperLabs HYPE movement
+ebaa9c55-b18c-5c4b-818d-44e09791052e	australia	no	ASIC proposal
+eca858ac-66ef-5b92-ac00-159a2dcea6e1	hype	no	HyperLabs unstake
+eed0faf3-dd50-5df4-a3d5-6cf2bd752ae9	standard-chartered	no	StanChart custody plan
+eff64843-7bea-5a76-9af6-95a5f57e0899	european-union	no	EU DSA designation
+f5475c98-4946-5e44-bc45-597c32d61b81	coldcard	no	Coldcard attacker moves funds
+f66e6449-f141-50b9-a2c7-70e9dd98bf26	hype	no	HYPE hedge trade
+f7baaec5-99c1-534b-b250-6b973a76effc	crude-oil-wti	no	Brent forecast raise
+f92fd1b8-887c-5883-bcee-01a93a5c4734	bitcoin	no	BTC long by trader
+ff75c4cb-5f6b-5bcd-ae86-54cb43bb1a4b	us-spot-bitcoin-etfs	no	ETF outflows
+6a773869-b434-5112-924a-a5b30fa7c494	bitcoin	no	BTC move ahead of FOMC minutes

@@ -2,7 +2,7 @@
   "expo": {
     "name": "myboon",
     "slug": "myboon",
-    "version": "1.0.4",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/app-icon-v2.png",
     "scheme": "myboon",
@@ -18,7 +18,6 @@
     },
     "android": {
       "package": "xyz.myboon.app",
-      "versionCode": 5,
       "adaptiveIcon": {
         "backgroundColor": "#073B4C",
         "foregroundImage": "./assets/images/android-icon-foreground-v2.png",

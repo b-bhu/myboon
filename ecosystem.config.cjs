@@ -138,6 +138,117 @@ const COLLECTOR_OWNERSHIP_KEYS = [
 const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
   .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
 
+// #444 V4 runtime, Sprint 1 scope: the scout stage. #391 adds the analyst
+// worker; #480 adds the timed entity manager (the only stage scheduled twice:
+// :00 and :45, so a proposed entity is picked up within 45 minutes).
+//   myboon-scout            -> packages/scout-news/src/run.ts                (15-min cron tick)
+//   myboon-analyst          -> packages/analyst/src/run.ts                    (30-min cron tick)
+//   myboon-entity-manager   -> packages/analyst/src/entity-manager-run.ts     (cron '0,45 * * * *')
+// Each V4 app runs one cycle and exits; PM2 starts it again at the next
+// cron tick (cron_restart). autorestart stays off so a failing run neither
+// loops nor hides in backoff: the crash state is visible until the next
+// scheduled tick, and the health line carries what actually failed.
+// NOT registered by default: V4_APPS joins `apps` only when
+// MYBOON_V4_RUNTIME_ENABLED=1, so plain `pm2 start/reload` of this file never
+// registers the V4 apps. After go-live, reloads of this file must also set
+// MYBOON_V4_RUNTIME_ENABLED=1 or the V4 apps are left out of the reload.
+// Go-live sequence (only after CTO approval, following Backend Dev local e2e):
+//   1. Back up the current process list BEFORE anything else:
+//        cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
+//   2. MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-scout
+//   3. pm2 save   (persists the new list; dump backup is the rollback path)
+// Analyst go-live is the same sequence with:
+//   MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-analyst
+// Entity-manager go-live is that same sequence with --only myboon-entity-manager;
+// it is the systems manager's call after CTO approval, never this file's default.
+const V4_APPS = [
+  {
+    name: 'myboon-scout',
+    script: 'src/run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/scout-news`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '*/15 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'scout-news',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `SCOUT_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-scout --update-env`
+      SCOUT_ENABLED: process.env.SCOUT_ENABLED ?? 'false',
+    },
+  },
+  {
+    // Secrets ANALYST_DATABASE_URL, OLLAMA_API_KEY and JEV_API_TOKEN are never
+    // set in this file; they come from the sourced .env. 30-min tick (#391).
+    // Typical run is ~7.5 min for 20 signals (first prod run, Oct 30). Worst
+    // case is 20 signals x 4 asks x (primary + fallback) 2 x 20s = 3200s, so a
+    // rare slow run is cut short by the next tick. That is safe: PM2 runs one
+    // process per app and cron_restart restarts (kills) rather than starting a
+    // second copy, so runs never overlap; finished signals are already
+    // committed (one transaction per save, on conflict no-op). A killed run's signal stays claimed until
+    // its 300s lease expires and is retried with backoff.
+    name: 'myboon-analyst',
+    script: 'src/run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/analyst`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '*/30 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'analyst',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `ANALYST_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-analyst --update-env`
+      ANALYST_ENABLED: process.env.ANALYST_ENABLED ?? 'false',
+      ANALYST_WORKER: 'myboon-analyst',
+      ANALYST_LLM_MODEL: 'glm-5.3-flash',
+      ANALYST_MAX_SIGNALS_PER_RUN: '40',
+      ANALYST_LEASE_MS: '300000',
+      ANALYST_TIMEOUT_MS: '20000',
+      ANALYST_BACKOFF_MS: '60000',
+      ANALYST_MAX_ATTEMPTS: '3',
+      ANALYST_SHADOW: 'false',
+    },
+  },
+  {
+    // #480 the timed entity manager: reviews every proposed entity, LLM decides
+    // alias/reject/new; alias and reject are applied, `new` stays proposed.
+    // :00/:45 ticks so proposed entities never wait longer than 45 minutes.
+    // Secrets ENTITY_MANAGER_DATABASE_URL and OLLAMA_API_KEY are never set in
+    // this file; they come from the sourced .env. One run of 40 entities is a
+    // few minutes at the 20s per-call timeout; cron_restart restarts (kills)
+    // rather than overlapping runs, and applied verdicts are committed
+    // per-entity, so a killed run only leaves its remaining entities proposed.
+    name: 'myboon-entity-manager',
+    script: 'src/entity-manager-run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/analyst`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '0,45 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'entity-manager',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `ENTITY_MANAGER_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env`
+      ENTITY_MANAGER_ENABLED: process.env.ENTITY_MANAGER_ENABLED ?? 'false',
+      ENTITY_MANAGER_LLM_MODEL: 'glm-5.3-flash',
+      ENTITY_MANAGER_MAX_ENTITIES: '40',
+      ENTITY_MANAGER_TIMEOUT_MS: '20000',
+    },
+  },
+]
+
 module.exports = {
   apps: [
     {
@@ -325,5 +436,8 @@ module.exports = {
         FEED_V3_ENTITY_RUNTIME_STATUS_STALE_MS: '60000',
       },
     },
+    // #444: V4 apps are gated. Absent from the list unless the invoking shell
+    // sets MYBOON_V4_RUNTIME_ENABLED=1.
+    ...(process.env.MYBOON_V4_RUNTIME_ENABLED === '1' ? V4_APPS : []),
   ],
 }

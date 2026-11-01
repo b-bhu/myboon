@@ -1,3 +1,5 @@
+import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
+import { WaitlistProfileScreen } from '@/features/waitlist/WaitlistProfileScreen';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -45,7 +47,7 @@ import {
   getPredictProfileSetupCopy,
 } from '@/features/predict/profile/profile-state';
 import { remainingOrderCost } from '@/features/predict/profile/profile-portfolio-state';
-import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel } from '@/features/predict/profile/portfolio-totals';
+import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel, resolveCashOutNow } from '@/features/predict/profile/portfolio-totals';
 import { usePredictProfileStore } from '@/features/predict/profile/profile-store';
 import { semantic, tokens } from '@/theme';
 
@@ -98,7 +100,13 @@ function getOrderCost(order: OpenOrder): number {
   return remainingOrderCost(order) ?? 0;
 }
 
-export default function PredictProfileScreen() {
+// Waitlist build (#432): profile has no wallet parts.
+export default function PredictProfileRoute() {
+  if (WAITLIST_MODE) return <WaitlistProfileScreen />;
+  return <PredictProfileScreen />;
+}
+
+function PredictProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   // Solana is read only as a withdrawal destination — never as this screen's
@@ -654,7 +662,7 @@ export default function PredictProfileScreen() {
   // #447: totals come from the API summary (every page, up to the ceiling),
   // never re-summed over the capped list.
   const portfolioSummary = portfolio?.summary ?? null;
-  const cashOutNow = portfolioSummary?.cashOutNow ?? (portfolio ? 0 : null);
+  const cashOutNow = resolveCashOutNow(portfolio);
   const showingLabel = formatShowingLabel(portfolioSummary);
   const readyToCollect = portfolio?.summary.readyToCollect ?? redeemablePositions.reduce((sum, p) => sum + (p.currentValue ?? 0), 0);
   const waitingPickValue = openOrders.reduce((sum, order) => sum + getOrderCost(order), 0);

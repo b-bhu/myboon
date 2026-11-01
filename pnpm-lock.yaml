@@ -306,6 +306,34 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/analyst:
+    dependencies:
+      '@myboon/atlas-schema':
+        specifier: workspace:*
+        version: link:../atlas-schema
+      '@myboon/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@myboon/shared':
+        specifier: workspace:*
+        version: link:../shared
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.19.10
+      '@types/pg':
+        specifier: 8.15.5
+        version: 8.15.5
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.10)(jiti@2.6.1)(jsdom@30.1.2(@noble/hashes@2.2.0))(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/api:
     dependencies:
       '@ellipsis-labs/rise':
@@ -361,6 +389,25 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  packages/atlas-schema:
+    dependencies:
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.19.10
+      '@types/pg':
+        specifier: 8.15.5
+        version: 8.15.5
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.10)(jiti@2.6.1)(jsdom@30.1.2(@noble/hashes@2.2.0))(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/collectors:
     dependencies:
       '@mozilla/readability':
@@ -400,6 +447,47 @@ importers:
       typescript:
         specifier: ^5.3.3
         version: 5.9.3
+
+  packages/contracts:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.19.10
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.10)(jiti@2.6.1)(jsdom@30.1.2(@noble/hashes@2.2.0))(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/scout-news:
+    dependencies:
+      '@myboon/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@myboon/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.19.10
+      '@types/pg':
+        specifier: 8.15.5
+        version: 8.15.5
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.10)(jiti@2.6.1)(jsdom@30.1.2(@noble/hashes@2.2.0))(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/shared:
     dependencies:
@@ -1599,7 +1687,7 @@ packages:
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
-    engines: {node: '>=0.10.0'}
+    engines: {'0': node >=0.10.0}
 
   '@expo/cli@54.0.27':
     resolution: {integrity: sha512-BxKOr6e8wmUwhGSyEVKY+CHWgS3Cre9ibgx1QWcdCenKTVKAz62qGmYL51q0lCcKg6vQY+4Usw9RK5Il4ZFaIA==}

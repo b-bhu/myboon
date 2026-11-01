@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel } from './portfolio-totals';
+import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel, resolveCashOutNow } from './portfolio-totals';
 
 test('no showing label at or under the cap, or without a summary', () => {
   assert.equal(formatShowingLabel(null), null);
@@ -23,4 +23,12 @@ test('approx marker only when partial', () => {
   assert.equal(formatApproxTotal('$1,234.56', null), '$1,234.56');
   assert.equal(formatApproxTotal('--', { totalsPartial: true, totalPositionCount: 2628 }), '--');
   assert.equal(APPROX_TOTAL_NOTE, 'Approximate: very large wallet');
+});
+
+test('resolveCashOutNow: unknown (null) when loaded portfolio has no cashOutNow, never $0', () => {
+  assert.equal(resolveCashOutNow(null), null);
+  assert.equal(resolveCashOutNow({ summary: null }), null);
+  assert.equal(resolveCashOutNow({ summary: {} }), null);
+  assert.equal(resolveCashOutNow({ summary: { cashOutNow: 0 } }), 0);
+  assert.equal(resolveCashOutNow({ summary: { cashOutNow: 42.5 } }), 42.5);
 });

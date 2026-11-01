@@ -19,6 +19,20 @@ jobs:
 
   checks:
     runs-on: ubuntu-latest
+    services:
+      # Local Postgres for the atlas-driven suites (analyst throwaway DBs,
+      # scout DB-side tests seed their own databases via the env vars below).
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -27,11 +41,26 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsx scripts/check-ecosystem.ts
       # No package defines a typecheck script yet; the root test script is a placeholder, so it is not run.
       - run: pnpm --filter hybrid-expo lint
       - run: pnpm --filter hybrid-expo test
       - run: pnpm --filter @myboon/shared test
       - run: pnpm --filter @myboon/tx-parser test
+      - run: pnpm --filter @myboon/contracts test
+      - run: pnpm --filter @myboon/contracts typecheck
+      - run: pnpm --filter @myboon/analyst test
+        env:
+          ANALYST_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      - run: pnpm --filter @myboon/analyst typecheck
+      # scout.db.test.ts needs a disposable DB with the atlas migrations applied. Same applier as the
+      # analyst throwaway DBs (@myboon/atlas-schema), incl. its local tool_log stand-in (no pg_cron).
+      - name: Prepare scout test database
+        run: pnpm exec tsx packages/atlas-schema/scripts/prepare-db.ts postgres://postgres:postgres@127.0.0.1:5432/postgres scout_test
+      - run: pnpm --filter @myboon/scout-news test
+        env:
+          SCOUT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/scout_test
+      - run: pnpm --filter @myboon/scout-news typecheck
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix
       - run: pnpm --filter @myboon/api typecheck

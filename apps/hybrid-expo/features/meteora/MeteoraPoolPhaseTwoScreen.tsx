@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { waitlistLabel } from '@/features/waitlist/waitlist.mode';
 import type {
   MeteoraFreshness,
   MeteoraPoolDetail,
@@ -1384,7 +1385,7 @@ export function MeteoraPoolPhaseTwoScreen({
   const reviewBlocker = !review || reviewCurrent ? null : previewExpired
     ? 'This quote expired. Go back to refresh and review the updated position.'
     : 'The position details changed. Go back and review the updated quote.';
-  const footerLabel = !walletReady ? 'Connect wallet' : canReview ? 'Review position' : cta.label;
+  const footerLabel = !walletReady ? waitlistLabel('Connect wallet') : canReview ? 'Review position' : cta.label;
   const footerDisabled = walletReady && cta.disabled;
   const footerBusy = walletReady && cta.busy;
   const ctaForeground = footerDisabled && operationState !== 'success' && operationState !== 'error'

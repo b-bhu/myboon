@@ -24,6 +24,20 @@ test('development and release config need no client RPC credentials', () => {
   }
 });
 
+test('every build blocks the unused Android permissions the dApp Store flagged (PER-001)', () => {
+  for (const flags of [{}, { EAS_BUILD: 'true', EAS_BUILD_PROFILE: 'dapp-store-waitlist' }, { EAS_BUILD_PROFILE: 'production' }]) {
+    const config = evaluate({ ...publicEnv, ...flags }, { android: { blockedPermissions: ['android.permission.CAMERA'] } });
+    assert.deepEqual([...config.android.blockedPermissions].sort(), [
+      'android.permission.CAMERA',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.USE_BIOMETRIC',
+      'android.permission.USE_FINGERPRINT',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+    ]);
+  }
+});
+
 test('public Jupiter/provider secrets and retired RPC overrides fail without printing values', () => {
   for (const name of [
     'EXPO_PUBLIC_JUP_API_KEY', 'EXPO_PUBLIC_JUPITER_API_KEY', 'EXPO_PUBLIC_JUPITER_KEY',

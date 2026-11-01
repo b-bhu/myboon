@@ -25,6 +25,7 @@ import {
 import { spotRoutes } from '../spot.js'
 import { createStoryRoutes } from '../stories.js'
 import { createSwapRoutes } from '../swap.js'
+import { createWaitlistRoutes } from '../waitlist.js'
 import { createSqliteSwapExecutionStore } from '../swap/store.js'
 import {
   iconSourceUrlForAssetId,
@@ -116,6 +117,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     supabaseUrl: config.supabaseUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
     memoryReader: entityKnowledgeReader,
+    source: process.env.STORIES_SOURCE === 'atlas' ? 'atlas' : 'legacy',
   }))
   app.route('/narratives', createNarrativeRoutes({
     supabaseUrl: config.supabaseUrl,
@@ -183,6 +185,11 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/polymarket', createPolymarketReadRoutes({
     catalogStore: polymarketCatalogStore,
     upDownService,
+  }))
+
+  app.route('/waitlist', createWaitlistRoutes({
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.supabaseServiceRoleKey,
   }))
 
   return app
