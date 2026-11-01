@@ -1,7 +1,7 @@
 <!doctype html>
-<!-- MyBoon internal Atlas dashboard (#555). View-only mock. ALL ROWS ARE SAMPLE DATA. Columns match packages/api/src/internal/atlas-browse.ts (#552). -->
+<!-- Atlas internal dashboard (#555): standalone internal tool on the shared computer, reads the #552 API. View-only mock. ALL ROWS ARE SAMPLE DATA. Columns match packages/api/src/internal/atlas-browse.ts (#552). -->
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="robots" content="noindex"><title>Atlas · MyBoon internal</title>
+<meta name="robots" content="noindex"><title>Atlas · internal dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#031F2C;--card:#063343;--surf:#073B4C;--lift:#0A4A60;--edge:#185A70;--bone:#F5FAFC;--dim:#9CB8C2;--faint:#6B95A1;--green:#06D6A0;--gold:#FFD166;--red:#EF476F;--blue:#118AB2;
@@ -77,7 +77,7 @@ a.lk{color:var(--bone);text-decoration:underline;text-decoration-color:var(--edg
 }
 @media (min-width:721px){.active{display:none}}
 </style></head><body>
-<header><div class="bar"><h1>Atlas <span>· internal</span></h1><div class="sp"></div><span class="who mono">signed in · internal session</span><button class="out">Sign out</button></div>
+<header><div class="bar"><h1>Atlas <span>· internal</span></h1><div class="sp"></div><span class="who mono">signed in · internal session</span><span class="who mono" id="upd">updated 14:30</span><button class="out" data-refresh title="Refetch this tab with the same filters">↻ Refresh</button></div>
 <nav class="tabs" id="tabs"></nav></header>
 <main><div class="filters" id="filters"></div><div id="body"></div></main>
 <div class="scrim" id="scrim"></div><aside class="detail" id="detail" aria-label="Signal detail"></aside>
@@ -99,12 +99,13 @@ for(let i=0;i<34;i++){const s=SRC[i%SRC.length];const sid='sig_'+(0x9f3a10-i*37)
 const ENTITIES=ENT.map((e,i)=>({id:'ent_'+(0x3b00+i*7).toString(16),slug:e[0],name:e[1],type:e[2],aliases:{solana:['SOL'],jupiter:['JUP','Jup'],'federal-reserve':['Fed','FOMC'],bitcoin:['BTC'],'jerome-powell':['Powell']}[e[0]]||[],summary:'Sample summary for '+e[1]+'.',status:i===11?'proposed':i===8?'retired':'active',show_in_carousel:i<5,created_at:ago(60*24*(40-i)),updated_at:ago(i*47+9),entity_reviewed_at:i%3?ago(i*90+30):null}));
 // ---------- STATE ----------
 const Q=new URLSearchParams(location.search);
-const S={tab:Q.get('tab')||'signals',shown:Q.get('shown')?+Q.get('shown'):10,mock:Q.get('state')||'live',f:{since:'24h'},detail:Q.get('detail'),sheet:Q.has('sheet')};
+function defF(t){return t==='entities'?{}:{since:'24h'}}
+const S={tab:Q.get('tab')||'signals',shown:Q.get('shown')?+Q.get('shown'):10,mock:Q.get('state')||'live',f:defF(Q.get('tab')||'signals'),detail:Q.get('detail'),sheet:Q.has('sheet')};
 if(Q.get('f'))Object.assign(S.f,JSON.parse(Q.get('f')));
 const TABS={signals:['Signals',SIGNALS,'GET /internal/atlas/signals'],analyst:['Analyst decisions',DECS,'GET /internal/atlas/analyst'],entities:['Entities',ENTITIES,'GET /internal/atlas/entities'],items:['Entity items',ITEMS,'GET /internal/atlas/entity-items']};
 const FIL={signals:[['since','time'],['source','sel',['x','rss','birdeye','jupiter']],['q','text','Search text (7d max)']],
  analyst:[['since','time'],['decision','seg',['keep','ignore','unclear']],['entity','text','entity slug'],['signal_id','text','signal_id']],
- entities:[['since','time'],['type','sel',['organization','asset','protocol','person','topic','place','event','product','regulation']],['status','sel',['active','proposed','retired']],['carousel','seg',['true','false']],['q','text','name, slug or alias']],
+ entities:[['type','sel',['organization','asset','protocol','person','topic','place','event','product','regulation']],['status','sel',['active','proposed','retired']],['carousel','seg',['true','false']],['q','text','name, slug or alias']],
  items:[['since','time'],['angle','seg',['new_story','existing_story','plain_update']],['entity','text','entity slug'],['signal_id','text','signal_id']]};
 const WIN=['1h','24h','7d','30d'];const winMin={'1h':60,'24h':1440,'7d':10080,'30d':43200};
 const rel=iso=>{const m=Math.round((NOW-Date.parse(iso))/60000);return m<60?m+'m':m<1440?Math.floor(m/60)+'h '+(m%60)+'m':Math.floor(m/1440)+'d'};
@@ -137,8 +138,8 @@ function render(){
  if(S.mock==='loading'){body.innerHTML=`<div class="tw"><table><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${Array.from({length:8},()=>`<tr class="sk">${cols.map(()=>'<td><div style="width:'+(40+Math.random()*50)+'%"></div></td>').join('')}</tr>`).join('')}</tbody></table></div>`;count('loading…');return}
  if(S.mock==='error'){body.innerHTML=`<div class="tw"><div class="state"><b>Couldn’t load ${TABS[S.tab][0].toLowerCase()}</b>The API returned 502 (upstream read failed). Your filters are kept.<br><button class="retry" data-retry>Retry</button></div></div>`;count('');return}
  const all=S.mock==='empty'?[]:rows();const show=all.slice(0,S.shown);
- if(!all.length){body.innerHTML=`<div class="tw"><div class="state"><b>No ${TABS[S.tab][0].toLowerCase()} match</b>Nothing in the last ${S.f.since||'window'} with these filters.<br><button class="retry" data-clear>Clear filters</button></div></div>`;count('0 rows');return}
- body.innerHTML=(S.mock==='moreerr'?`<div class="banner"><span>Couldn’t load more. The rows above are kept.</span><button class="clear" data-retry>Retry</button></div>`:'')+`<div class="tw"><table><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${show.map(r=>`<tr class="r ${S.detail&&(r.signal_id===S.detail)&&S.tab==='signals'?'sel':''}" data-row="${r.signal_id||''}" data-slug="${r.slug||''}">${cols.map(c=>`<td data-m="${c[2]}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table>
+ if(!all.length){body.innerHTML=`<div class="tw"><div class="state"><b>No ${TABS[S.tab][0].toLowerCase()} match</b>${S.f.since?'Nothing in the last '+S.f.since+' with these filters.':'Nothing matches these filters.'}<br><button class="retry" data-clear>Clear filters</button></div></div>`;count('0 rows');return}
+ body.innerHTML=(S.mock==='moreerr'?`<div class="banner"><span>Couldn’t load more. The rows above are kept.</span><button class="clear" data-retry>Retry</button></div>`:'')+`<div class="tw"><table><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${show.map(r=>`<tr class="r ${S.detail&&(r.signal_id===S.detail)?'sel':''}" data-row="${r.signal_id||''}" data-slug="${r.slug||''}">${cols.map(c=>`<td data-m="${c[2]}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table>
  <div class="more">${show.length<all.length?`<button data-more>Load more</button><span class="faint mono" style="font-size:11px">${show.length} shown · next cursor</span>`:`<span class="faint mono" style="font-size:11px">End · ${show.length} rows</span>`}</div></div>`;
  count(`${show.length} rows · ${TABS[S.tab][2]}`);
 }
@@ -155,10 +156,10 @@ function openSheet(){const sh=document.getElementById('sheet');sh.innerHTML=`<di
  sh.classList.add('on');document.getElementById('sscrim').classList.add('on')}
 function closeSheet(){document.getElementById('sheet').classList.remove('on');document.getElementById('sscrim').classList.remove('on')}
 function mockbar(){document.getElementById('mockbar').innerHTML='<span>mock state</span>'+['live','loading','empty','error','moreerr'].map(m=>`<button data-mock="${m}" class="${S.mock===m?'on':''}">${m}</button>`).join('')}
-document.addEventListener('click',e=>{const t=e.target.closest('[data-tab],[data-set],[data-clear],[data-more],[data-sig],[data-ent],[data-row],[data-close],[data-sheet],[data-apply],[data-mock],[data-retry],#scrim,#sscrim');if(!t)return;
- if(t.dataset.tab){S.tab=t.dataset.tab;S.f={since:'24h'};S.shown=10;closeDetail();return}
+document.addEventListener('click',e=>{const t=e.target.closest('[data-tab],[data-set],[data-clear],[data-more],[data-sig],[data-ent],[data-row],[data-close],[data-sheet],[data-apply],[data-mock],[data-retry],[data-refresh],#scrim,#sscrim');if(!t)return;
+ if(t.dataset.tab){S.tab=t.dataset.tab;S.f=defF(S.tab);S.shown=10;closeDetail();return}
  if(t.dataset.set!==undefined){const[k,v]=t.dataset.set.split(':');S.f[k]=v;S.shown=10;render();if(t.closest('#sheet'))openSheet();return}
- if(t.dataset.clear!==undefined){S.f={since:'24h'};S.shown=10;render();if(t.closest('#sheet'))openSheet();return}
+ if(t.dataset.clear!==undefined){S.f=defF(S.tab);S.shown=10;render();if(t.closest('#sheet'))openSheet();return}
  if(t.dataset.more!==undefined){S.shown+=10;render();return}
  if(t.dataset.ent){e.stopPropagation();S.tab='items';S.f={since:'30d',entity:t.dataset.ent};S.shown=10;closeDetail();closeSheet();return}
  if(t.dataset.sig){e.stopPropagation();openDetail(t.dataset.sig);return}
@@ -167,7 +168,8 @@ document.addEventListener('click',e=>{const t=e.target.closest('[data-tab],[data
  if(t.dataset.apply!==undefined||t.id==='sscrim'){closeSheet();return}
  if(t.dataset.mock){S.mock=t.dataset.mock;mockbar();render();return}
  if(t.dataset.retry!==undefined){S.mock='live';mockbar();render();return}
- if(t.dataset.row!==undefined&&S.tab==='signals'){openDetail(t.dataset.row);return}
+ if(t.dataset.row){openDetail(t.dataset.row);return}
+ if(t.dataset.refresh!==undefined){S.mock='loading';render();setTimeout(()=>{S.mock='live';S.shown=10;document.getElementById('upd').textContent='updated just now';render()},600);return}
  if(t.dataset.slug){S.tab='items';S.f={since:'30d',entity:t.dataset.slug};S.shown=10;render()}});
 document.addEventListener('change',e=>{const s=e.target.dataset.sel;if(s){S.f[s]=e.target.value;S.shown=10;render()}});
 document.addEventListener('keydown',e=>{const k=e.target.dataset&&e.target.dataset.in;if(k&&e.key==='Enter'){S.f[k]=e.target.value.trim();S.shown=10;render()}if(e.key==='Escape'){closeDetail();closeSheet()}});
