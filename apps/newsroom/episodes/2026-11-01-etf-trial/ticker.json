@@ -1,0 +1,11 @@
+{
+  "_note": "EXAMPLE DATA ONLY. Fake numbers for layout testing. Never air.",
+  "items": [
+    { "symbol": "BTC", "price": 12345.67, "changePct": 1.23 },
+    { "symbol": "ETH", "price": 1234.56, "changePct": -0.98 },
+    { "symbol": "SOL", "price": 123.45, "changePct": 0 },
+    { "symbol": "XRP", "price": 1.2345, "changePct": 4.56 },
+    { "symbol": "DOGE", "price": 0.1234, "changePct": -3.21 },
+    { "symbol": "BNB", "price": 234.56, "changePct": 0.12 }
+  ]
+}
