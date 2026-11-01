@@ -1,4 +1,4 @@
--- #418 test seed for 20261020200000_article_context_v2: runs AFTER
+-- #418 test seed for 20261024162849_article_context_v2: runs AFTER
 -- supabase/tests/20261019213000_managed_context_read_costs.seed.sql
 -- on the throwaway cluster only. Adds on top of that seed:
 -- - a managed "tie entity" (id 11111111-0000-4000-8000-0000000021fd) whose items

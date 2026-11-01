@@ -1,7 +1,81 @@
--- Rollback for 20261019190000_published_managed_memory_ownership.sql (#390).
--- Restores the guard body of 20261018090000 verbatim, then drops the helper.
--- No data is touched.
+-- Rollback for 20261018004252_published_entity_managed_ids.sql (#337 PR-D).
+-- Restores the pre-PR-D state:
+--   * entity_publication_relationship_guard_v1 returns to its exact pre-PR-D
+--     body, copied verbatim from
+--     20260921153932_harden_entity_catalog_review_boundaries.sql (public
+--     stores only); afterwards the function body no longer references the
+--     managed helpers and both managed helpers are dropped.
+--   * read_managed_entities_v1 (the managed entity lookup) is dropped.
+--   * the owner's UPDATE(updated_at) lease on
+--     managed_knowledge_private.entities is revoked.
+-- It also restores the entity_id FKs to public.entities with their default
+-- names (only if absent).
+--
+-- Rows whose entity_id points only at the managed store
+-- (managed_knowledge_private.entities, absent from public.entities) would
+-- break the re-added FK, so they are NULLed first, matching the
+-- ON DELETE SET NULL semantics; entity_slug/entity_name text columns are kept.
+-- That NULLing only runs with the explicit guard, otherwise the rollback
+-- refuses and reports both counts:
+--   SET LOCAL myboon.rollback_null_managed_entity_ids = 'on';
 
+DROP FUNCTION IF EXISTS public.read_managed_entities_v1(uuid[]);
+
+DO $null_managed$
+DECLARE
+  narratives_managed bigint;
+  history_managed bigint;
+BEGIN
+  SELECT count(*) INTO narratives_managed
+    FROM public.published_narratives n
+    WHERE n.entity_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.entities e WHERE e.id = n.entity_id);
+  SELECT count(*) INTO history_managed
+    FROM public.entity_published_history h
+    WHERE h.entity_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.entities e WHERE e.id = h.entity_id);
+  IF narratives_managed = 0 AND history_managed = 0 THEN
+    RETURN;
+  END IF;
+  IF current_setting('myboon.rollback_null_managed_entity_ids', true) IS DISTINCT FROM 'on' THEN
+    RAISE EXCEPTION 'rollback would strand % published_narratives and % entity_published_history rows with managed-only entity ids, refusing to re-add the entity_id FKs; run with SET LOCAL myboon.rollback_null_managed_entity_ids = ''on'' to NULL those entity_id values first',
+      narratives_managed, history_managed;
+  END IF;
+  UPDATE public.published_narratives
+    SET entity_id = NULL
+    WHERE entity_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.entities e WHERE e.id = entity_id);
+  UPDATE public.entity_published_history
+    SET entity_id = NULL
+    WHERE entity_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.entities e WHERE e.id = entity_id);
+  RAISE NOTICE 'nulled managed-only entity_id on % published_narratives and % entity_published_history rows', narratives_managed, history_managed;
+END
+$null_managed$;
+
+DO $restore_fks$
+BEGIN
+  IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'published_narratives_entity_id_fkey'
+    AND conrelid = 'public.published_narratives'::regclass) THEN
+    ALTER TABLE public.published_narratives
+      ADD CONSTRAINT published_narratives_entity_id_fkey
+      FOREIGN KEY (entity_id) REFERENCES public.entities(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'entity_published_history_entity_id_fkey'
+    AND conrelid = 'public.entity_published_history'::regclass) THEN
+    ALTER TABLE public.entity_published_history
+      ADD CONSTRAINT entity_published_history_entity_id_fkey
+      FOREIGN KEY (entity_id) REFERENCES public.entities(id) ON DELETE SET NULL;
+  END IF;
+END
+$restore_fks$;
+
+-- entity_publication_relationship_guard_v1 returns to its exact pre-PR-D
+-- body: copied verbatim from 20260921153932_harden_entity_catalog_review_boundaries.sql
+-- (counts only public.entity_memories and status-checks Entity ids in the
+-- catalogue only). Restored BEFORE the managed helpers are dropped: this
+-- restored body no longer references them, and CREATE OR REPLACE keeps the
+-- function's ACLs (REVOKE/GRANT from 20260921153932 still apply).
 CREATE OR REPLACE FUNCTION public.entity_publication_relationship_guard_v1()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -20,8 +94,6 @@ DECLARE
   referenced_status text;
   requested_memory_count integer;
   found_memory_count integer;
-  managed_memory_ids uuid[];
-  locked_managed_memory_ids uuid[];
   memory_ownership_before jsonb;
   memory_ownership_after jsonb;
   narrative_relationship_before jsonb;
@@ -78,27 +150,11 @@ BEGIN
   INTO requested_memory_count
   FROM jsonb_array_elements(source_memory_ids) AS item(value);
 
-  -- #337 PR-D: source memories may live in either store. Requested ids
-  -- missing from public.entity_memories are checked against active managed
-  -- item heads (unlocked here; they are locked after the Entity loop below).
-  -- Managed memories produce no row in either memory_ownership snapshot.
-  managed_memory_ids := public.managed_active_memory_ids_v1(
-    (SELECT pg_catalog.array_agg(DISTINCT item.memory_id::uuid)
-     FROM jsonb_array_elements_text(source_memory_ids) AS item(memory_id)
-     WHERE NOT EXISTS (
-       SELECT 1 FROM public.entity_memories AS memory
-       WHERE memory.id = item.memory_id::uuid
-     )), false);
-  SELECT count(DISTINCT found.memory_id)
+  SELECT count(DISTINCT memory.id)
   INTO found_memory_count
-  FROM (
-    SELECT item.memory_id::uuid AS memory_id
-    FROM jsonb_array_elements_text(source_memory_ids) AS item(memory_id)
-    JOIN public.entity_memories AS memory
-      ON memory.id = item.memory_id::uuid
-    UNION
-    SELECT pg_catalog.unnest(managed_memory_ids)
-  ) AS found;
+  FROM public.entity_memories AS memory
+  JOIN jsonb_array_elements_text(source_memory_ids) AS item(memory_id)
+    ON memory.id = item.memory_id::uuid;
 
   IF found_memory_count IS DISTINCT FROM requested_memory_count THEN
     RAISE EXCEPTION 'source_memory_ids contains a missing memory'
@@ -153,30 +209,14 @@ BEGIN
     FOR KEY SHARE;
 
     IF NOT FOUND THEN
-      -- #337 PR-D: article-only Entities exist only in the managed store. The
-      -- helper locks the row FOR KEY SHARE and returns its status, or NULL
-      -- when the id is absent from both stores.
-      referenced_status := public.managed_entity_lock_status_v1(referenced_entity_id);
-      IF referenced_status IS NULL THEN
-        RAISE EXCEPTION 'publication relationship references a missing Entity'
-          USING ERRCODE = '23503';
-      END IF;
+      RAISE EXCEPTION 'publication relationship references a missing Entity'
+        USING ERRCODE = '23503';
     END IF;
     IF referenced_status <> 'active' THEN
       RAISE EXCEPTION 'publication relationship references an archived Entity; resolve and retry'
         USING ERRCODE = '40001';
     END IF;
   END LOOP;
-
-  -- #337 PR-D: managed memory heads are locked only now, after every Entity
-  -- lock, then re-read; a head retracted or corrected while waiting fails.
-  IF pg_catalog.cardinality(managed_memory_ids) > 0 THEN
-    locked_managed_memory_ids := public.managed_active_memory_ids_v1(managed_memory_ids, true);
-    IF locked_managed_memory_ids IS DISTINCT FROM managed_memory_ids THEN
-      RAISE EXCEPTION 'publication managed memory changed while waiting; resolve and retry'
-        USING ERRCODE = '40001';
-    END IF;
-  END IF;
 
   -- Entity locks are acquired before dependency-row locks, matching merge and
   -- rollback ordering. Re-reading ownership after a wait prevents a writer
@@ -230,4 +270,13 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-DROP FUNCTION IF EXISTS public.managed_owned_memory_ids_v1(uuid[], uuid, boolean);
+
+-- The managed helpers go after the guard above is restored: its verbatim
+-- body no longer references them, and the trigger function that could
+-- otherwise call them was already dropped.
+DROP FUNCTION IF EXISTS public.managed_active_memory_ids_v1(uuid[], boolean);
+DROP FUNCTION IF EXISTS public.managed_entity_lock_status_v1(uuid);
+
+-- The row-lock lease added by the PR-D migration is revoked; no pre-PR-D
+-- writer needed UPDATE on managed_knowledge_private.entities.
+REVOKE UPDATE (updated_at) ON managed_knowledge_private.entities FROM myboon_knowledge_owner;

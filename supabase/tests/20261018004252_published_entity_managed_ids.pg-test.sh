@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # #337 PR-D: run 20261018090000 + its rollback on a THROWAWAY local Postgres 17.
-# Never points at Supabase. Usage: bash supabase/tests/20261018090000_published_entity_managed_ids.pg-test.sh
+# Never points at Supabase. Usage: bash supabase/tests/20261018004252_published_entity_managed_ids.pg-test.sh
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${PG_BIN:-/usr/lib/postgresql/17/bin}
@@ -87,9 +87,9 @@ expect "baseline: article-only entity C rejected" 23503 "$(ins "$C" '[]')"
 expect "baseline: managed-only memory rejected" 23503 "$(ins "$A" "$MI1")"
 
 echo "== apply migration (single transaction)"
-"${PSQL[@]}" --single-transaction -f "$M/20261018090000_published_entity_managed_ids.sql" >/dev/null || { echo "FAIL migration"; exit 1; }; echo "migration: OK"
+"${PSQL[@]}" --single-transaction -f "$M/20261018004252_published_entity_managed_ids.sql" >/dev/null || { echo "FAIL migration"; exit 1; }; echo "migration: OK"
 echo "== post-migration check file"
-CHK=$("${PSQL[@]}" -t -A -F'|' -f "$REPO/supabase/tests/20261018090000_published_entity_managed_ids.check.sql")
+CHK=$("${PSQL[@]}" -t -A -F'|' -f "$REPO/supabase/tests/20261018004252_published_entity_managed_ids.check.sql")
 echo "$CHK"; if echo "$CHK" | grep -q '|f$'; then echo "FAIL check file"; FAILS=$((FAILS+1)); else echo "PASS check file"; fi
 
 echo "== trigger cases (published_narratives and entity_published_history)"
@@ -115,11 +115,11 @@ for r in service_role anon authenticated; do w=OK; [[ $r != service_role ]] && w
 
 echo "== rollback"
 "${PSQL[@]}" -c "INSERT INTO public.published_narratives(entity_id, entity_slug, source_memory_ids) VALUES ($C,'c','[]')"
-if "${PSQL[@]}" --single-transaction -f "$REPO/supabase/rollbacks/20261018090000_published_entity_managed_ids.down.sql" >"$TMP/rb1" 2>&1; then
+if "${PSQL[@]}" --single-transaction -f "$REPO/supabase/rollbacks/20261018004252_published_entity_managed_ids.down.sql" >"$TMP/rb1" 2>&1; then
   echo "FAIL rollback did not refuse"; FAILS=$((FAILS+1)); else echo "PASS rollback refused: $(grep -o 'rollback would strand.*' "$TMP/rb1" | cut -c1-120)"; fi
-PGOPTIONS='-c myboon.rollback_null_managed_entity_ids=on' "${PSQL[@]}" --single-transaction -f "$REPO/supabase/rollbacks/20261018090000_published_entity_managed_ids.down.sql" >/dev/null && echo "rollback with NULL opt-in: OK"
+PGOPTIONS='-c myboon.rollback_null_managed_entity_ids=on' "${PSQL[@]}" --single-transaction -f "$REPO/supabase/rollbacks/20261018004252_published_entity_managed_ids.down.sql" >/dev/null && echo "rollback with NULL opt-in: OK"
 "${PSQL[@]}" -t -A -c "SELECT 'stranded row after rollback: entity_id='||coalesce(entity_id::text,'NULL')||' slug='||entity_slug FROM public.published_narratives WHERE entity_slug='c'"
-RCHK=$("${PSQL[@]}" -t -A -F'|' -f "$REPO/supabase/tests/20261018090000_published_entity_managed_ids.rollback.check.sql")
+RCHK=$("${PSQL[@]}" -t -A -F'|' -f "$REPO/supabase/tests/20261018004252_published_entity_managed_ids.rollback.check.sql")
 echo "$RCHK"; if echo "$RCHK" | grep -q '|f$'; then echo "FAIL rollback check file"; FAILS=$((FAILS+1)); else echo "PASS rollback check file"; fi
 expect "after rollback: article-only C rejected again" 23503 "$(ins "$C" '[]')"
 expect "after rollback: managed-only memory rejected again" 23503 "$(ins "$A" "$MI1")"

@@ -1,4 +1,4 @@
--- Fixture for supabase/tests/20261020200000_article_context_v2.pg-test.sh: the
+-- Fixture for supabase/tests/20261024162849_article_context_v2.pg-test.sh: the
 -- unmerged 20261020130000 (#420 v1) body, copied verbatim from the review
 -- reference. Deployed to the THROWAWAY test cluster only as part of that test
 -- (the "old" side of the no-duplicate-scan check); never a migration in its own

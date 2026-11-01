@@ -1,4 +1,4 @@
--- Read-only post-migration check for 20261018090000_published_entity_managed_ids.sql (#337 PR-D).
+-- Read-only post-migration check for 20261018004252_published_entity_managed_ids.sql (#337 PR-D).
 -- Only SELECTs on pg_catalog / information_schema. Every row should be pass = true.
 WITH fn AS (
   SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prorettype, p.proowner

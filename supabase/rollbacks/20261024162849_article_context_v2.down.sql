@@ -1,4 +1,4 @@
--- Rollback for 20261020200000_article_context_v2.sql (#418 v2 join-back by key).
+-- Rollback for 20261024162849_article_context_v2.sql (#418 v2 join-back by key).
 -- Restores the 20261019213000 article_context_v1 definition verbatim, which is
 -- the body live on prod now (#420's v1 narrow-key rewrite was never merged, so
 -- it is not a rollback target). Only article_context_v1 changes in the v2
