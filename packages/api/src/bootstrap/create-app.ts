@@ -9,6 +9,7 @@ import { createMarketHeatmapRoutes } from '../market-heatmap/routes.js'
 import { MarketHeatmapService } from '../market-heatmap/service.js'
 import { createWalletActivityRoutes, createWalletActivityService } from '../wallet-activity/index.js'
 import { clobRoutes } from '../clob.js'
+import { createInternalAtlasBrowseRoutes } from '../internal/atlas-browse.js'
 import { createInternalEntityRoutes } from '../internal/entities.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
 import { createEntityKnowledgeRoutes } from '../entity-knowledge.js'
@@ -106,6 +107,11 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   }))
   app.route('/internal/entity-knowledge', createEntityKnowledgeRoutes({
     reader: entityKnowledgeReader,
+    internalToken: config.internalDashboardToken,
+  }))
+  app.route('/internal/atlas', createInternalAtlasBrowseRoutes({
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.supabaseServiceRoleKey,
     internalToken: config.internalDashboardToken,
   }))
   app.route('/internal', createInternalEntityRoutes({
