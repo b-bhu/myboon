@@ -49,7 +49,7 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 | Camera marks | defined above | — |
 | Hank voice: orion 1.1x | done | locked/voices |
 | Marcus voice: altair 1.1x (on hold) | done | locked/voices |
-| Intro (Hank solo, wide center) | awaiting approval | locked/bookends |
+| Intro (Hank solo, wide center) | locked (approved Nov 1, 2026) | locked/bookends |
 | Sign-off | to make | locked/bookends |
 | End card | to make | locked/bookends |
 | Overlays: logo, lower third, BREAKING bar | to build | src/chrome |

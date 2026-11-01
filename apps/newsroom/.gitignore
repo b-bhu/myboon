@@ -5,7 +5,4 @@ episodes/**/*.mp4
 episodes/**/*.mp3
 episodes/**/*.wav
 episodes/**/*.mov
-# TODO: decide how locked/ media is stored (git LFS, bucket, or committed small files). Don't commit big files meanwhile.
-locked/**/*.mp4
-locked/**/*.mov
-locked/**/*.wav
+# locked/ media (mp4/mp3/jpg/png) is small and IS committed.
