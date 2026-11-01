@@ -45,7 +45,7 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 | One-chair newsroom set | to make | locked/studio |
 | Hank master frame (centered) | to make | locked/studio |
 | Look line | done | locked/hosts |
-| Colours, fonts, logo (from app tokens) | to bring | locked/chrome, locked/fonts |
+| Colours, fonts, logo (from app tokens) | awaiting approval | locked/chrome, locked/fonts |
 | Camera marks | defined above | — |
 | Hank voice: orion 1.1x | done | locked/voices |
 | Marcus voice: altair 1.1x (on hold) | done | locked/voices |
