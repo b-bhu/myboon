@@ -50,8 +50,8 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 | Hank voice: orion 1.1x | done | locked/voices |
 | Marcus voice: altair 1.1x (on hold) | done | locked/voices |
 | Intro (Hank solo, wide center) | locked (approved Nov 1, 2026) | locked/bookends |
-| Sign-off | to make | locked/bookends |
-| End card | to make | locked/bookends |
+| Sign-off | awaiting approval | locked/bookends |
+| End card | awaiting approval | locked/bookends |
 | Overlays: logo, lower third, BREAKING bar | to build | src/chrome |
 | Price ticker (BTC, ETH, SOL… daily %) | to build | src/chrome, data per episode |
 | Screenshot push-in style | to build | src/visuals |
