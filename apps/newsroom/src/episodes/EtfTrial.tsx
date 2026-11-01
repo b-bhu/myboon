@@ -1,12 +1,12 @@
-import { AbsoluteFill, Audio, OffthreadVideo, Sequence, staticFile } from "remotion";
+import { Audio, OffthreadVideo, Sequence, staticFile } from "remotion";
 import { OverVisual, overVisualFrames } from "../components/OverVisual";
-import { Overlays } from "../chrome/Overlays";
+import { EpisodeShell, END_CARD_FRAMES } from "../components/EpisodeShell";
 
 // TRIAL episode 2026-11-01-etf-trial (not for publishing). Sheet: episodes/2026-11-01-etf-trial/sheet.md
 const E = "episodes/2026-11-01-etf-trial";
 const FPS = 30;
-const INTRO = 152; // intro_v1.mp4 = 5.067 s
-const END = 92; // endcard_v1.mp4 = 3.05 s
+// intro_v1.mp4 is 5.07 s; last word ends ~4.52 s. Trimmed to 143 f (4.77 s) so the gap into row 2 is ~0.3 s.
+const INTRO = 143;
 const chart = { src: `${E}/visuals/chart_crop.png`, w: 930, h: 765 };
 const post = { src: `${E}/visuals/post_body.png`, w: 1155, h: 236 };
 
@@ -21,13 +21,16 @@ export const ROWS: Row[] = [
     highlight: { x: 0.004, y: 0.395, w: 0.988, h: 0.425, at: 0.6 } },
 ];
 const rowFrames = ROWS.map((r) => overVisualFrames(r.line, FPS));
-const newsFrames = rowFrames.reduce((a, b) => a + b, 0);
-export const ETF_TRIAL_FRAMES = INTRO + newsFrames + END;
+const BODY = INTRO + rowFrames.reduce((a, b) => a + b, 0);
+export const ETF_TRIAL_FRAMES = BODY + END_CARD_FRAMES;
 
 export const EtfTrial: React.FC = () => {
   let at = INTRO;
   return (
-    <AbsoluteFill style={{ backgroundColor: "#031F2C" }}>
+    <EpisodeShell bodyFrames={BODY} tickerSlug="2026-11-01-etf-trial" lowerThirds={[
+      { from: 30, durationInFrames: 90, name: "HANK WALSH", role: "Lead Anchor" },
+      { from: INTRO, durationInFrames: rowFrames[0], headline: "BITCOIN ETFs SEE $643M IN OUTFLOWS" },
+    ]}>
       <Sequence durationInFrames={INTRO}><OffthreadVideo src={staticFile("locked/bookends/intro_v1.mp4")} /></Sequence>
       {ROWS.map((r, i) => {
         const from = at; at += rowFrames[i];
@@ -39,11 +42,6 @@ export const EtfTrial: React.FC = () => {
           </Sequence>
         );
       })}
-      <Sequence from={INTRO} durationInFrames={newsFrames}>
-        <Overlays tickerSlug="2026-11-01-etf-trial"
-          lowerThirds={[{ from: 0, durationInFrames: rowFrames[0], headline: "BITCOIN ETFs SEE $643M IN OUTFLOWS" }]} />
-      </Sequence>
-      <Sequence from={INTRO + newsFrames} durationInFrames={END}><OffthreadVideo src={staticFile("locked/bookends/endcard_v1.mp4")} /></Sequence>
-    </AbsoluteFill>
+    </EpisodeShell>
   );
 };

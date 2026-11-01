@@ -24,7 +24,7 @@ If a step is not here, we don't do it. If we change how we work, we change this 
 4. **Assets locked for the episode.** All screenshots/charts in `visuals/`, `ticker.json` filled. Nothing generated before this.
 5. **Voice.** Every line voiced with `scripts/voice.ts` in the locked voice. Bibhu listens and approves. The voice track is the timeline.
 6. **ON CAM shots.** Generate only ON CAM rows, from the character's locked master frame (currently Hank), starting at the camera mark where the previous ON CAM ended. One take each; max 2 retakes after a failed check. Frame check: seated, one desk, screen dark, no warping, no generated text.
-7. **Edit (Remotion).** Locked intro → rows in sheet order → sign-off → end card. Hard cuts only. Overlays: logo, lower third, price ticker, BREAKING bar when needed.
+7. **Edit (Remotion).** Locked intro → rows in sheet order → sign-off → end card. Hard cuts only. Overlays: logo bug and price ticker on from frame 0 and continuous until the hard cut to the end card (one layer via `EpisodeShell`, never per row); anchor lower third (name/role) over the intro ~1.0–4.0 s; other lower thirds and BREAKING bar only where the sheet says.
 8. **QC.** Frames every 0.5 s and at every cut; transcript vs sheet word for word; gaps >0.4 s; loudness −14 LUFS, peak ≤ −1 dBTP; every number on screen matches approved facts; final cut checked row by row against the sheet.
 9. **Delivery.** Cut + short QC report to Bibhu. Bibhu uploads. We never post.
 
@@ -52,11 +52,17 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 | Intro (Hank solo, wide center) | locked (approved Nov 1, 2026) | locked/bookends |
 | Sign-off | on hold: lip sync doesn't match (Bibhu, Nov 1) | locked/bookends |
 | End card | locked (approved Nov 1, 2026) | locked/bookends |
-| Overlays: logo, lower third, BREAKING bar | locked (approved Nov 1, 2026) | src/chrome |
+| Overlays: logo, lower third, BREAKING bar | locked (approved Nov 1, 2026); always-on rule below | src/chrome, src/components/EpisodeShell.tsx |
 | Price ticker (BTC, ETH, SOL… daily %) | locked (approved Nov 1, 2026) | src/chrome, data per episode |
 | Screenshot push-in style (OVER VISUAL) | locked (approved Nov 1, 2026) | src/components/OverVisual.tsx |
 | Cut rules | locked (approved Nov 1, 2026) | "Cut rules" below |
 | QC checklist | done | step 8 |
+
+## Overlays rule (locked Nov 1, 2026)
+- Like a live news channel: logo bug and price ticker are on screen from the first frame of the episode, over the intro, every ON CAM shot and every OVER VISUAL, continuously, until the hard cut to the end card. The end card is clean.
+- One overlays layer for the whole episode body (`src/components/EpisodeShell.tsx`). Rows never mount their own overlays; overlays never fade out or re-enter between rows. The logo's one-time fade-in happens at frame 0 only.
+- The anchor is named on first appearance: lower third with name/role (currently "HANK WALSH / Lead Anchor") over the intro, ~1.0–4.0 s.
+- Other lower thirds and the BREAKING bar appear only where the sheet says, never both at once.
 
 ## Screenshot push-in style (locked Nov 1, 2026)
 - Real asset only, on the set backdrop (walletCore #031F2C). No blur, gradient, shadow or glow: 1 px borderMuted edge, 4 px radius.

@@ -21,3 +21,9 @@ Host: Hank (orion 1.1x). No video generation. No sign-off (on hold). No BREAKING
 
 ## QC (v1)
 Duration 23.89 s, 1080p30. Integrated -14.1 LUFS, true peak -2.6 dBTP. Transcript matches script word for word. No silence > 0.4 s inside a line (gaps only at intro→row 2 cut and end card). No black frames; only freeze = end card hold. No clicks at cuts. No SoSoValue visible. Facts match source.
+
+## v2 (Nov 1, 2026): always-on overlays rule
+- Logo bug + mock ticker on from frame 0 (logo fades in once, 0–0.5 s) through intro and all rows, one layer via `EpisodeShell`; hard cut to a clean end card.
+- Lower third "HANK WALSH / Lead Anchor" over the intro, 1.0–4.0 s.
+- Intro trimmed 5.07 → 4.77 s (143 f): gap from last intro word to row 2 is 0.28 s (was 0.58 s).
+- QC v2: 23.59 s; -14.1 LUFS, true peak -2.7 dBTP; transcript word for word; no silence > 0.35 s inside the body; no clicks at cuts; no black frames; only freeze = end card hold.
