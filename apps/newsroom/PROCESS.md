@@ -42,8 +42,8 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 ## Locked items
 | Item | Status | Location |
 |---|---|---|
-| One-chair newsroom set | awaiting approval | locked/studio |
-| Hank master frame (centered) | to make | locked/studio |
+| One-chair newsroom set | locked (approved Nov 1, 2026) | locked/studio |
+| Hank master frame (centered) | awaiting approval | locked/hosts |
 | Look line | done | locked/hosts |
 | Colours, fonts, logo (from app tokens) | locked (approved Nov 1, 2026) | locked/chrome, locked/fonts |
 | Camera marks | defined above | — |
