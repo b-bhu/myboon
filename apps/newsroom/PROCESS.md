@@ -50,13 +50,16 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 | Hank voice: orion 1.1x | done | locked/voices |
 | Marcus voice: altair 1.1x (on hold) | done | locked/voices |
 | Intro (Hank solo, wide center) | locked (approved Nov 1, 2026) | locked/bookends |
-| Sign-off | awaiting approval | locked/bookends |
-| End card | awaiting approval | locked/bookends |
-| Overlays: logo, lower third, BREAKING bar | to build | src/chrome |
-| Price ticker (BTC, ETH, SOL… daily %) | to build | src/chrome, data per episode |
+| Sign-off | on hold: lip sync doesn't match (Bibhu, Nov 1) | locked/bookends |
+| End card | locked (approved Nov 1, 2026) | locked/bookends |
+| Overlays: logo, lower third, BREAKING bar | awaiting approval | src/chrome |
+| Price ticker (BTC, ETH, SOL… daily %) | awaiting approval | src/chrome, data per episode |
 | Screenshot push-in style | to build | src/visuals |
 | Cut rules: hard cuts, no transitions, no whoosh | done | this file |
 | QC checklist | done | step 8 |
+
+## Open issues
+- Lip sync on TTS-over-mute takes needs a method: sign-off mouth movement does not match the Orion voice (Bibhu, Nov 1). Test a lip-sync method before any more ON CAM takes are locked.
 
 ## Banned
 Code-built number cards, PSA filler, on-screen source lines, AI tags, date/time stamps, whoosh SFX, hosts standing or off the desk, camera moves that never land, invented or restyled sets/characters/graphics.
