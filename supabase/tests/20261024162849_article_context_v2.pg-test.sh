@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #418: run 20261020200000_article_context_v2 + its rollback on a THROWAWAY
+# #418: run 20261024162849_article_context_v2 + its rollback on a THROWAWAY
 # local Postgres 17. Never points at Supabase. Proves byte-identical outputs for
 # the article_context_v1 matrix, the temp-disk contrast (per-call temp blocks from
 # pg_stat_statements under small work_mem; no query logging), the #420 determinism keys,
@@ -9,13 +9,13 @@
 # the new function scans entity_memories no more often than v1
 # (pg_stat_xact_user_tables) and its history statement's elapsed
 # (pg_stat_statements) stays under 1.2x the v1 elapsed (no re-evaluated predicates on the scan).
-# Usage: bash supabase/tests/20261020200000_article_context_v2.pg-test.sh
+# Usage: bash supabase/tests/20261024162849_article_context_v2.pg-test.sh
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${PG_BIN:-/usr/lib/postgresql/17/bin}
 TMP=$(mktemp -d "${PG_TEST_ROOT:-/home/box/work}/issue418v2.XXXX"); PORT=55421; DB=db418v2
-MIG=20261020200000_article_context_v2.sql
-DOWN=20261020200000_article_context_v2.down.sql
+MIG=20261024162849_article_context_v2.sql
+DOWN=20261024162849_article_context_v2.down.sql
 FIX=20261020130000_article_context_spill.fixture.sql
 trap '"$BIN/pg_ctl" -D "$TMP/data" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 "$BIN/initdb" -D "$TMP/data" -U postgres -A trust >/dev/null

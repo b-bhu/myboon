@@ -1,3 +1,6 @@
+-- TEST FIXTURE ONLY (#549). The deleted 20261019220000_merge_entities_v1 migration, verbatim
+-- from main 3c988574. It was never fully applied on prod (#549); the #342 pg-tests replay it
+-- at its old slot so 20261019230000/20261019231000 keep their original prior state.
 -- #342 PR-3: managed entity merge with a ONE-HOP redirect. NOT APPLIED. Needs
 -- Bucket's explicit yes (needs-bucket). No survivor rule and no type enum are
 -- chosen here: the caller names the survivor explicitly and a type difference

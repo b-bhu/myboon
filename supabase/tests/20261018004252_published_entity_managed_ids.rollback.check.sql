@@ -1,4 +1,4 @@
--- Read-only post-rollback check for supabase/rollbacks/20261018090000_published_entity_managed_ids.down.sql (#337 PR-D).
+-- Read-only post-rollback check for supabase/rollbacks/20261018004252_published_entity_managed_ids.down.sql (#337 PR-D).
 -- Only SELECTs on pg_catalog. Every row should be pass = true. Seeding lives in the pg-test fixture.
 SELECT check_name, pass FROM (VALUES
   ('01 PR-D functions and helpers dropped', 1, to_regprocedure('public.read_managed_entities_v1(uuid[])') IS NULL
