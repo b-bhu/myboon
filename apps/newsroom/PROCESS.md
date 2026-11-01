@@ -52,11 +52,26 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 | Intro (Hank solo, wide center) | locked (approved Nov 1, 2026) | locked/bookends |
 | Sign-off | on hold: lip sync doesn't match (Bibhu, Nov 1) | locked/bookends |
 | End card | locked (approved Nov 1, 2026) | locked/bookends |
-| Overlays: logo, lower third, BREAKING bar | awaiting approval | src/chrome |
-| Price ticker (BTC, ETH, SOL… daily %) | awaiting approval | src/chrome, data per episode |
-| Screenshot push-in style | to build | src/visuals |
-| Cut rules: hard cuts, no transitions, no whoosh | done | this file |
+| Overlays: logo, lower third, BREAKING bar | locked (approved Nov 1, 2026) | src/chrome |
+| Price ticker (BTC, ETH, SOL… daily %) | locked (approved Nov 1, 2026) | src/chrome, data per episode |
+| Screenshot push-in style (OVER VISUAL) | awaiting approval | src/components/OverVisual.tsx |
+| Cut rules | awaiting approval | "Cut rules" below |
 | QC checklist | done | step 8 |
+
+## Screenshot push-in style (awaiting approval)
+- Real asset only, on the set backdrop (walletCore #031F2C). No blur, gradient, shadow or glow: 1 px borderMuted edge, 4 px radius.
+- Fitted inside the OVER VISUAL safe area x160 y160 1600x720 (clears logo bug and the lower-third/ticker slot). `post`: centred, 92% of safe height. `chart`: full safe width.
+- One push-in 1.00 → 1.06, ease-out cubic, lands 0.5 s before the end and holds. Shot = voice line + 0.3 s. Optional focus point (0-1) for gentle drift. No pans, rotation or whoosh.
+- Optional highlight: plain #FFD166 3 px rectangle, wipes on in 0.3 s at a set time. Off by default. No arrows, circles or emoji.
+- Logo and ticker stay on top.
+
+## Cut rules (awaiting approval)
+- Hard cuts only. No transitions, dissolves or whooshes.
+- Cut on line boundaries.
+- OVER VISUAL holds for the voice line plus about 0.3 s.
+- Never cut mid-move: moves must land.
+- No frozen frame longer than a hold.
+- The camera never jumps between ON CAM shots: follow the camera marks.
 
 ## Open issues
 - Lip sync on TTS-over-mute takes needs a method: sign-off mouth movement does not match the Orion voice (Bibhu, Nov 1). Test a lip-sync method before any more ON CAM takes are locked.

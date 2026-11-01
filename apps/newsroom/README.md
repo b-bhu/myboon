@@ -31,3 +31,7 @@ Preview: `npx remotion render src/index.ts OverlaysPreview out/overlays_preview.
 ## Ticker data
 Schema in `src/ticker.ts`: `{ "items": [{ "symbol", "price", "changePct" }] }` at `episodes/<slug>/ticker.json` (served via `public/episodes` symlink). Bibhu supplies the numbers each episode.
 **`episodes/_example/ticker.json` is FAKE EXAMPLE DATA for layout only. Never air it, never invent real numbers.**
+
+## OVER VISUAL (src/components/OverVisual.tsx), awaiting approval
+`<OverVisual src assetWidth assetHeight mode="post|chart" lineSeconds focus? highlight? />`. Use `overVisualFrames(lineSeconds, fps)` for the Sequence length (line + 0.3 s). Push 1.00→1.06 ease-out, lands 0.5 s before the end. Safe area `overVisualSafe` in `src/chrome/layout.ts`. Put `<Overlays>` on top. Episode visuals go in `episodes/<slug>/visuals/` (not committed).
+Preview: `npx remotion render src/index.ts OverVisualPreview out/overvisual_preview.mp4`.
