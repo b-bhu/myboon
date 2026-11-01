@@ -42,10 +42,10 @@ Fixed marks: **center**, **20° left**, **20° right**. Each ON CAM shot is one 
 ## Locked items
 | Item | Status | Location |
 |---|---|---|
-| One-chair newsroom set | to make | locked/studio |
+| One-chair newsroom set | awaiting approval | locked/studio |
 | Hank master frame (centered) | to make | locked/studio |
 | Look line | done | locked/hosts |
-| Colours, fonts, logo (from app tokens) | awaiting approval | locked/chrome, locked/fonts |
+| Colours, fonts, logo (from app tokens) | locked (approved Nov 1, 2026) | locked/chrome, locked/fonts |
 | Camera marks | defined above | — |
 | Hank voice: orion 1.1x | done | locked/voices |
 | Marcus voice: altair 1.1x (on hold) | done | locked/voices |
