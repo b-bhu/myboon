@@ -23,15 +23,27 @@ tables: everything it touches is created by
   decided_by, shadow answer) or `failClaim` with the last error.
 - `src/runner.ts` — `runAnalystOnce` / `analystMain` (#512): one pass over due
   signals, one summary line, always ends the pool.
-- `src/d36-worker.ts` — the D36 worker (#504): claim, one LLM session per
+- `src/signal-worker.ts` (renamed from `d36-worker.ts` in #559) — the signal worker (#504): claim, one LLM session per
   signal with Jev/Clef as the decision tool, the sink, plus the standing rule
   that a signal older than 24 hours is parked `backlog_skip_24h` (#391) before
   the LLM runs. `PgDecisionSink` takes `{ allowNewEntities: false }` to drop
   every kind-new target (active slugs still file) so a catch-up run cannot
   create entities.
+- `src/item-wording.ts` (#559) — entity item title and summary. Title = the
+  LLM's turn-1 `headline` (asked for at most 90 chars), or the summary's first
+  whole sentence when there is none; never sliced. Summary = the signal
+  summary, stored as `''` when it would just repeat the note. Both strip source
+  lead-ins ("According to X,", "Per X:", "X reports that", "shared by X",
+  "via @x"). The prompt in `session.ts` forbids naming the source, publisher,
+  sharer or account; the source link stays on `atlas.signals.link`. Existing
+  items are not rewritten.
 - `src/catchup.ts` — the #391 one-off catch-up CLI (confirm-gated, Ollama
   quota guard, no new entities); `src/ollama-quota.ts` reads ollama.com's
   `/api/balance` for its quota guard.
+
+There is no package entry point: `src/index.ts` was removed in #559 (nothing
+imported `@myboon/analyst`). Import from the module that owns a symbol, and run
+the CLIs via the `analyst:*` / `entity-manager:once` scripts.
 
 ## Configuration knobs (`src/config.ts`, all optional, positive integers)
 

@@ -10,7 +10,7 @@
  *     to the target aliases once, retires the entity, and each distinct
  *     signal's decisions row gets entity_outcome 'alias' + entity_alias_target_id;
  *   - reject: entity retired, items stay, entity_outcome 'reject'; the existing drop-at-filing behaviour
- *     still drops a kind-new filing for the retired slug (d36-worker.ts is untouched);
+ *     still drops a kind-new filing for the retired slug (signal-worker.ts is untouched);
  *   - new: entity stays proposed with entity_outcome 'new'; an entity is only selected while one of its
  *     signals has a null entity_reviewed_at, so the next run makes NO LLM call for it until a new
  *     (unreviewed) signal lands there, then it is reviewed again;
@@ -29,7 +29,7 @@ import { Pool, type Pool as PoolType } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 import { parseAnalystOutput } from '@myboon/contracts';
 
-import { PgDecisionSink } from './d36-worker.js';
+import { PgDecisionSink } from './signal-worker.js';
 import { reviewProposedEntities, type EntityManagerOptions } from './entity-manager.js';
 import { createQuotaGuard } from './ollama-quota.js';
 import type { ChatMessage, Llm } from './session.js';
@@ -208,7 +208,7 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
       ['s2', 'reject', null, true],
     ]);
 
-    // Existing d36-worker behaviour is preserved: a later kind-new target for the now-retired
+    // Existing signal-worker behaviour is preserved: a later kind-new target for the now-retired
     // slug files no item and logs target_dropped (the live worker sink, as analyst_worker).
     await seedSignal('s3', { withDecision: false });
     const sinkLog: Record<string, unknown>[] = [];

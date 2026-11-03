@@ -1,6 +1,6 @@
 /** #490 CTO nits: routing rules are validated when the runner loads them, and default to none. */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ROUTING_RULES, RoutingRuleError, linkerStory, validateRoutingRules, type RoutingRule } from './index.js';
+import { DEFAULT_ROUTING_RULES, RoutingRuleError, linkerStory, validateRoutingRules, type RoutingRule } from './linker-story.js';
 
 const ok: RoutingRule = { tokenSlug: 'uni-token', projectSlug: 'uniswap', routeTo: 'uniswap' };
 

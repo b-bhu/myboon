@@ -11,7 +11,7 @@ import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
-import { PgDecisionSink, entitySearchFromDb, type D36Options } from './d36-worker.js';
+import { PgDecisionSink, entitySearchFromDb, type D36Options } from './signal-worker.js';
 import { analystMain, runAnalystOnce } from './runner.js';
 import type { ChatMessage, Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';

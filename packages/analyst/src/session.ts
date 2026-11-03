@@ -2,7 +2,7 @@
  * #504 D36 analyst session, pure (no DB): one LLM session dissects a signal and proposes where it should
  * live; every decision is made by the decision tool (Jev, falling back to Clef) through the injected
  * `ask`. The LLM never overrules the decision tool; this code owns kind and candidate validity, and the
- * entity matching runs over whatever `search` is wired to (see entitySearchFromDb in d36-worker.ts).
+ * entity matching runs over whatever `search` is wired to (see entitySearchFromDb in signal-worker.ts).
  */
 import {
   ANGLES,
@@ -33,6 +33,8 @@ export const SYSTEM_PROMPT =
   'needs a new one, or is not related. Use the entity tool to see what exists. After the decision tool answers, decide the angle for each entity: what is forming ' +
   "there, written the way it was said: if someone announces it, it's announced; if people are talking about it, it's talk. Don't make it sound weaker or stronger than it is. " +
   "The signal comes from a source (a news site, an account, a feed). The source is only the messenger; don't treat it as an entity unless the news is about the source itself. " +
+  "Your summary and headline are for the reader: lead with the fact and why it matters to them. Never name the source, publisher, sharer or account, never say what kind of source it was, " +
+  'and never use lead-ins like "According to", "reports", "per" or "shared by"; the source link is stored separately. ' +
   "Your note is what you'd want to read months later. Say who said it: if the entity itself says it, it's their announcement; if a news site or someone else says it, it's their report; if people are just talking, it's talk. Never overrule the decision tool; if its answer makes no sense, mark the signal unclear. " +
   'Return only the structured output.';
 
@@ -253,6 +255,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
       analyst_version: ANALYST_D36_VERSION,
       signal_id: signal.signal_id,
       summary,
+      ...(headline ? { headline } : {}),
       decision,
       reason,
       targets,
@@ -264,11 +267,14 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const request = { signal_id: signal.signal_id, text: signal.text, source: signal.source ?? null, link: signal.link ?? null };
   const turn1 = await step(
     `Signal:\n${JSON.stringify(request, null, 2)}\n\nReply with JSON only:\n` +
-      `{"summary": string, "mentions": [{"name": string, "type": ${ENTITY_TYPE_VALUES}, "search_terms": string[]}]}\n` +
-      'summary: 2-3 sentences (who, what, why it matters). ' +
+      `{"headline": string, "summary": string, "mentions": [{"name": string, "type": ${ENTITY_TYPE_VALUES}, "search_terms": string[]}]}\n` +
+      'headline: one complete headline of at most 90 characters stating what happened. ' +
+      'summary: 2-3 sentences (what happened, who it touches, why it matters to the reader). ' +
+      'Neither may name the source, publisher, sharer or account, or start with "According to", "per", "reports" or "shared by". ' +
       'mentions: at most 3 entities this signal touches, each with a type (exactly one of the listed values) and search_terms.',
   );
   const summary = str(turn1.summary);
+  const headline = str(turn1.headline);
   if (!summary) throw new Error('no summary in the first reply');
   const mentions = toMentions(turn1.mentions);
 

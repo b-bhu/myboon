@@ -8,17 +8,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { newsSampleSignals } from '@myboon/contracts/test-fixtures';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
-import {
-  DeciderError,
-  linkerStory,
-  processNext,
-  ADDS_NOTHING,
-  type Decider,
-  type DecisionCase,
-  type ProcessOptions,
-  type RoutingRule,
-  type StoryState,
-} from './index.js';
+import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
+import { processNext, type ProcessOptions } from './process.js';
+import { linkerStory, ADDS_NOTHING, type RoutingRule, type StoryState } from './linker-story.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
