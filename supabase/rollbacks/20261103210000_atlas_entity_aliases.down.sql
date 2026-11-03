@@ -9,6 +9,7 @@ set local statement_timeout = '60s';
 
 drop function if exists atlas.move_entity_aliases(uuid, uuid);
 drop function if exists atlas.entity_candidates(text, text[]);
+drop function if exists atlas.entity_candidates_any(text[]);
 drop table if exists atlas.entity_alias_merge_source;
 drop table if exists atlas.entity_alias_conflicts;
 drop table if exists atlas.entity_aliases;

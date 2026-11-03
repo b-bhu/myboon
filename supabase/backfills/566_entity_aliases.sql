@@ -82,6 +82,13 @@ insert into atlas.entity_aliases (entity_id, type, alias)
   order by s.type, atlas.norm_alias(s.alias), s.winner_id
 on conflict do nothing;
 
+-- CTO decision (PR #568 review): 'USD₮' normalizes to 'usd', held by us-dollar; usdt keeps its own
+-- name, so the clash is a no-op. Marked resolved (rerun-safe).
+update atlas.entity_alias_conflicts c
+set resolved_at = now(), resolution = 'noop: usdt keeps its own name (CTO, PR #568)'
+where c.resolved_at is null and c.type = 'asset' and c.norm_alias = 'usd' and c.alias = 'USD₮'
+  and c.wanted_entity_id = (select id from atlas.entities where slug = 'usdt');
+
 -- report
 select (select count(*) from atlas.entity_aliases) as alias_rows,
        (select count(*) from atlas.entity_aliases a join atlas.entity_alias_merge_source m

@@ -6,6 +6,7 @@
 --   atlas.entity_alias_conflicts      review list: aliases the backfill/merge could not place
 --   atlas.entity_alias_merge_source   staging for the backfill: names of merged losers (Nov 3 cleanup)
 --   atlas.entity_candidates(type, names[])  candidate fetch, active entities only
+--   atlas.entity_candidates_any(names[])   fallback: exact match across all types, active only
 --   atlas.move_entity_aliases(loser, winner) merge rule: loser's aliases move to the winner
 --   index entities (type, status)
 -- Index builds are plain, not CONCURRENTLY: prod entities has 1,162 rows (Nov 3) and the new tables
@@ -49,6 +50,8 @@ create table if not exists atlas.entity_aliases (
 );
 -- the unique index serves the candidate lookup: WHERE type = $1 AND norm_alias = ANY($2)
 create index if not exists entity_aliases_entity_idx on atlas.entity_aliases (entity_id);
+-- serves the all-types fallback (entity_candidates_any)
+create index if not exists entity_aliases_norm_idx on atlas.entity_aliases (norm_alias);
 alter table atlas.entity_aliases enable row level security;
 
 create table if not exists atlas.entity_alias_conflicts (
@@ -92,6 +95,20 @@ as $f$
     and e.status = 'active'
 $f$;
 
+-- Fallback after both typed tries miss: exact norm_alias match across ALL types, active only.
+-- Covers cross-type merges (e.g. he-yi person -> binance organization). No fuzzy matching.
+create or replace function atlas.entity_candidates_any(p_names text[])
+  returns table (entity_id uuid, slug text, name text, type text, matched_alias text)
+  language sql stable parallel safe
+  set search_path = pg_catalog
+as $f$
+  select e.id, e.slug, e.name, e.type, a.alias
+  from atlas.entity_aliases a
+  join atlas.entities e on e.id = a.entity_id
+  where a.norm_alias = any (array(select atlas.norm_alias(n) from unnest(p_names) n))
+    and e.status = 'active'
+$f$;
+
 -- Merge rule: move the loser's aliases to the winner (winner's type). A clash with a third entity
 -- goes to the review list. Returns the number of aliases moved. Caller merges items and retires.
 create or replace function atlas.move_entity_aliases(p_loser uuid, p_winner uuid) returns integer
@@ -118,6 +135,8 @@ end
 $f$;
 
 revoke all on function atlas.move_entity_aliases(uuid, uuid) from public;
+revoke all on function atlas.entity_candidates(text, text[]) from public;
+revoke all on function atlas.entity_candidates_any(text[]) from public;
 revoke all on atlas.entity_aliases, atlas.entity_alias_conflicts, atlas.entity_alias_merge_source
   from public, anon, authenticated;
 
@@ -126,6 +145,7 @@ grant insert (entity_id, type, alias), delete on atlas.entity_aliases to entity_
 grant select, insert on atlas.entity_alias_conflicts to entity_worker;
 grant select on atlas.entity_alias_conflicts to service_role;
 grant execute on function atlas.entity_candidates(text, text[]) to atlas_analyst, analyst_worker, entity_worker, service_role;
+grant execute on function atlas.entity_candidates_any(text[]) to atlas_analyst, analyst_worker, entity_worker, service_role;
 grant execute on function atlas.move_entity_aliases(uuid, uuid) to entity_worker;
 
 drop policy if exists entity_aliases_read on atlas.entity_aliases;
