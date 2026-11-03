@@ -230,6 +230,7 @@ function normalizePostedAt(value: unknown): string | null {
 function normalizeArticle(item: UpstreamFeedItem): NewsFeedArticle {
   return {
     kind: 'article',
+    feedSource: 'coingecko',
     title: readString(item.title),
     url: readString(item.url),
     publishedAt: normalizePostedAt(item.posted_at),
@@ -244,12 +245,14 @@ function normalizePost(item: UpstreamFeedItem): NewsFeedPost {
   const handle = readOptionalString(item.source_name)
   return {
     kind: 'post',
+    feedSource: 'x',
     text: readString(item.title),
     url: readString(item.url),
     postedAt: normalizePostedAt(item.posted_at),
     // `author` is the bare username ('tokens'); `source_name` is the display
     // handle ('@tokens'). Prefer the handle, fall back to the username.
     handle: handle ?? readOptionalString(item.author),
+    author: readOptionalString(item.author),
     imageUrl: readOptionalString(item.image),
     relatedCoinIds: readStringArray(item.related_coin_ids),
   }

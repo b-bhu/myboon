@@ -1,0 +1,87 @@
+{
+  "items": [
+    {
+      "title": "The Magnificent 7 and Bitcoin, in one token, now mintable 24/7 on Solana. @Ondo's MAG7Xon holds Tesla, Apple, Nvidia, Amazon, Microsoft, Alphabet and Meta, plus Bitcoin and Ether ETFs, and can be created or redeemed around the clock. https://t.co/zV8HrVi2wS",
+      "url": "https://x.com/tokens/status/2117269602837352668",
+      "image": "https://pbs.twimg.com/amplify_video_thumb/2117263045533548544/img/UYJTrFPNF0W6o6KQ.jpg",
+      "author": "tokens",
+      "posted_at": "2026-11-02T14:56:24.000Z",
+      "type": "news",
+      "source_name": "@tokens",
+      "related_coin_ids": [],
+      "feed_source": "x"
+    },
+    {
+      "title": "BREAKING: GameStop, Disney, Exxon, Lockheed Martin and nine more are now on @Solana through @Securitize. 13 new stocks, 25 in total, each backed 1:1 by a real share, with dividends paid to holders. https://t.co/tB1xH1xfj8",
+      "url": "https://x.com/tokens/status/2117261996131574226",
+      "image": "https://pbs.twimg.com/media/HWIGkLQb0AAfsH1.jpg",
+      "author": "tokens",
+      "posted_at": "2026-11-02T14:26:11.000Z",
+      "type": "news",
+      "source_name": "@tokens",
+      "related_coin_ids": [],
+      "feed_source": "x"
+    },
+    {
+      "title": "INSIGHT: $3.89 billion in tokenized stocks traded on @Solana in October, the second-biggest month ever. @Backpack led with $2.06 billion. @xStocksFi followed with $1.68 billion. https://t.co/V4E2reT5KG",
+      "url": "https://x.com/tokens/status/2117247217006494171",
+      "image": "https://pbs.twimg.com/media/HWH5H4ka4AE9sVM.jpg",
+      "author": "tokens",
+      "posted_at": "2026-11-02T13:27:27.000Z",
+      "type": "news",
+      "source_name": "@tokens",
+      "related_coin_ids": [],
+      "feed_source": "x"
+    },
+    {
+      "title": "Solana marks 1,000 days without a network halt as activity climbs",
+      "url": "https://cryptobriefing.com/solana-1000-days-without-network-halt/",
+      "image": "https://assets.coingecko.com/articles/images/108717001/large/data.?1793630556",
+      "author": "Estefano Gomez",
+      "posted_at": "2026-11-02T14:31:16Z",
+      "type": "news",
+      "source_name": "Crypto Briefing",
+      "related_coin_ids": [
+        "1-token-2",
+        "1-token",
+        "solana"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Is This the Calm Before the Storm in the Cryptocurrency Market? Whales Made Millions of Dollars Worth of Bitcoin and Altcoin Transactions: Here Are Their Preferred Altcoins!",
+      "url": "https://en.bitcoinsistemi.com/is-this-the-calm-before-the-storm-in-the-cryptocurrency-market-whales-made-millions-of-dollars-worth/",
+      "image": "https://assets.coingecko.com/articles/images/108716730/large/open-uri20261102-1-qewx8t.?1793629226",
+      "author": "Elif Azra G\u00fcven",
+      "posted_at": "2026-11-02T14:13:10Z",
+      "type": "news",
+      "source_name": "Bitcoin Sistemi (EN)",
+      "related_coin_ids": [
+        "altcoin-2",
+        "hype-3",
+        "solana",
+        "ethereum",
+        "ripple",
+        "bitcoin"
+      ],
+      "feed_source": "coingecko"
+    }
+  ],
+  "meta": {
+    "mode": "token",
+    "source": "all",
+    "coin_id": "solana",
+    "coin_id_source": "param",
+    "mint": null,
+    "terms": [
+      "solana"
+    ],
+    "limit": 5,
+    "tweet_reserve": 3,
+    "counts": {
+      "items": 5,
+      "coingecko_candidates": 5,
+      "x_candidates": 3
+    }
+  }
+}

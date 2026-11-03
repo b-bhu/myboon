@@ -38,6 +38,7 @@ returning signal_id`;
 
 const articleItem: NewsFeedArticle = {
   kind: 'article',
+  feedSource: 'coingecko',
   title: 'Bitcoin ETF inflows resume as desks reprice April risk',
   url: 'https://www.theblock.co/post/333210/bitcoin-etf-inflows-resume-reprice-april-risk',
   publishedAt: '2026-10-26T08:05:00.000Z',
@@ -49,6 +50,8 @@ const articleItem: NewsFeedArticle = {
 
 const postItem: NewsFeedPost = {
   kind: 'post',
+  feedSource: 'x',
+  author: null,
   text: 'SOL-USD perps are live on the terminal, BTC-USD spreads tightened to 4bps for the week.',
   url: 'https://x.com/myboontokens/status/1917764102417182722',
   postedAt: '2026-10-26T07:10:16.000Z',

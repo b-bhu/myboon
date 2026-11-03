@@ -1,0 +1,183 @@
+{
+  "items": [
+    {
+      "title": "US stocks saw LITE drop over 10% intraday, MRVL fall more than 6%, and Neocloud's shares weaken across the board.",
+      "url": "https://lookonchain.com/feeds/80020",
+      "image": "https://assets.coingecko.com/articles/images/108717471/large/data.?1793632928",
+      "author": "Lookonchain",
+      "posted_at": "2026-11-02T15:22:08Z",
+      "type": "news",
+      "source_name": "Lookonchain",
+      "related_coin_ids": [
+        "1-token-2",
+        "cipher-3",
+        "p",
+        "higher",
+        "4",
+        "u",
+        "4-2",
+        "1-token",
+        "composite",
+        "6-token",
+        "7-token"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "USDC treasury burns 100 million tokens, valued at approximately $100.2 million.",
+      "url": "https://lookonchain.com/feeds/80021",
+      "image": "https://assets.coingecko.com/articles/images/108717468/large/data.?1793632927",
+      "author": "Lookonchain",
+      "posted_at": "2026-11-02T15:22:07Z",
+      "type": "news",
+      "source_name": "Lookonchain",
+      "related_coin_ids": [
+        "whale-2",
+        "2-token",
+        "solana",
+        "usd-coin"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Domain Hacks and Linux Kernel Flaws Keep Crypto Users on Edge",
+      "url": "https://solanafloor.com/news/domain-hacks-and-linux-kernel-flaws-keep-crypto-users-on-edge",
+      "image": "https://assets.coingecko.com/articles/images/108717426/large/open-uri20261102-1-j0wme1.?1793632884",
+      "author": "",
+      "posted_at": "2026-11-02T15:21:23Z",
+      "type": "news",
+      "source_name": "SolanaFloor",
+      "related_coin_ids": [
+        "2026-token",
+        "edge"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "tZERO to Go Public in $350M SPAC Merger With FG Imperii, Listing as TZRO on NYSE American",
+      "url": "https://blockchainreporter.net/tzero-go-public-spac-fg-imperii-tzro-nyse/",
+      "image": "https://assets.coingecko.com/articles/images/108717427/large/open-uri20261102-1-mq0ot5.?1793632887",
+      "author": "Jide Idowu",
+      "posted_at": "2026-11-02T15:21:14Z",
+      "type": "news",
+      "source_name": "Blockchain Reporter",
+      "related_coin_ids": [
+        "build-5",
+        "tokenization",
+        "tokenization-2"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Tether\u5728\u4ee5\u592a\u574a\u4e0a\u9500\u6bc120\u4ebf\u679aUSDT",
+      "url": "https://www.panewslab.com/en/articles/01a19cd8-ac0c-7578-8bac-e10c442c759b",
+      "image": "https://assets.coingecko.com/articles/images/108717428/large/open-uri20261102-1-21wvub.?1793632890",
+      "author": "",
+      "posted_at": "2026-11-02T15:20:07Z",
+      "type": "news",
+      "source_name": "PANews (EN)",
+      "related_coin_ids": [
+        "tether"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Aave adopts Chainlink 24/7 for tokenized US stock collateral",
+      "url": "https://crypto.news/aave-horizon-chainlink-24-7-tokenized-stock-collateral/",
+      "image": "https://assets.coingecko.com/articles/images/108717454/large/open-uri20261102-1-lnf0cc.?1793632914",
+      "author": "Lawrence Mondal",
+      "posted_at": "2026-11-02T15:20:04Z",
+      "type": "news",
+      "source_name": "Crypto.news",
+      "related_coin_ids": [
+        "traded",
+        "u",
+        "2-token",
+        "horizon-5",
+        "7-token",
+        "aave",
+        "chainlink"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Uniswap Extends VolatilePair Hook to Robinhood Chain",
+      "url": "https://thedefiant.io/news/defi/uniswap-extends-volatilepair-hook-to-robinhood-chain",
+      "image": "https://assets.coingecko.com/articles/images/108717447/large/open-uri20261102-1-egt4dc.?1793632910",
+      "author": "The Defiant Team",
+      "posted_at": "2026-11-02T15:17:56Z",
+      "type": "news",
+      "source_name": "The Defiant",
+      "related_coin_ids": [
+        "robinhood-2",
+        "robinhood-3",
+        "uniswap",
+        "ethereum"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Strategy acquires 811 BTC at $80,846, boosts STRC buyback with $208.2 million",
+      "url": "https://en.coin-turk.com/strategy-acquires-811-btc-at-80846-boosts-strc-buyback-with-208-2-million/?utm_source=rss&utm_medium=rss&utm_campaign=strategy-acquires-811-btc-at-80846-boosts-strc-buyback-with-208-2-million",
+      "image": "https://assets.coingecko.com/articles/images/108717325/large/open-uri20261102-1-6r6j72.?1793632806",
+      "author": "Dr. Levent Kurt",
+      "posted_at": "2026-11-02T15:17:29Z",
+      "type": "news",
+      "source_name": "COINTURK NEWS",
+      "related_coin_ids": [
+        "4",
+        "4-2",
+        "2-token",
+        "bitcoin"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Tether Says It Froze Over 4.5 Million USDT Tied to Mercado Bitcoin Incident",
+      "url": "https://thedefiant.io/news/hacks/tether-says-it-froze-over-4-5-million-usdt-tied-to-mercado-bitcoin-incident",
+      "image": "https://assets.coingecko.com/articles/images/108717450/large/open-uri20261102-1-fexmnk.?1793632912",
+      "author": "The Defiant Team",
+      "posted_at": "2026-11-02T15:17:24Z",
+      "type": "news",
+      "source_name": "The Defiant",
+      "related_coin_ids": [
+        "4",
+        "4-2",
+        "million",
+        "ethereum",
+        "bitcoin",
+        "tether"
+      ],
+      "feed_source": "coingecko"
+    },
+    {
+      "title": "Crypto Detective ZachXBT Issues New Hack Alert! Ethereum (ETH) and an Altcoin are Mentioned!",
+      "url": "https://en.bitcoinsistemi.com/crypto-detective-zachxbt-issues-new-hack-alert-ethereum-eth-and-an-altcoin-are-mentioned/",
+      "image": "https://assets.coingecko.com/articles/images/108717332/large/open-uri20261102-1-n3ktso.?1793632811",
+      "author": "Elif Azra G\u00fcven",
+      "posted_at": "2026-11-02T15:17:08Z",
+      "type": "news",
+      "source_name": "Bitcoin Sistemi (EN)",
+      "related_coin_ids": [
+        "altcoin-2",
+        "ethereum"
+      ],
+      "feed_source": "coingecko"
+    }
+  ],
+  "meta": {
+    "mode": "global",
+    "source": "news",
+    "coin_id": null,
+    "coin_id_source": null,
+    "mint": null,
+    "terms": [],
+    "limit": 10,
+    "tweet_reserve": 0,
+    "counts": {
+      "items": 10,
+      "coingecko_candidates": 10,
+      "x_candidates": 0
+    }
+  }
+}
