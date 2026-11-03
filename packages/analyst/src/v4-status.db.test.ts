@@ -10,17 +10,9 @@ import { Pool } from 'pg';
 import { newsSampleSignals } from '@myboon/contracts/test-fixtures';
 import { MIGRATIONS_DIR, ROLLBACKS_DIR, applySqlFile, createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
-import {
-  SystemOneDecider,
-  DeciderError,
-  claimNext,
-  failClaim,
-  finishClaim,
-  processNext,
-  type Decider,
-  type DecisionCase,
-  type ProcessOptions,
-} from './index.js';
+import { SystemOneDecider, DeciderError, type Decider, type DecisionCase } from './deciders.js';
+import { claimNext, failClaim, finishClaim } from './states.js';
+import { processNext, type ProcessOptions } from './process.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const MIGRATION = '20261027120000_atlas_signal_status.sql';

@@ -4,14 +4,6 @@
   "description": "Issue #478 V4 analyst foundation: status + claim columns on atlas.signals, decider slot (Jev, Clef fallback, Clef shadow), decisions with provenance",
   "private": true,
   "type": "module",
-  "main": "src/index.ts",
-  "exports": {
-    ".": {
-      "import": "./src/index.ts",
-      "default": "./src/index.ts",
-      "types": "./src/index.ts"
-    }
-  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

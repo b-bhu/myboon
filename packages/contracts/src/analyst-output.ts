@@ -37,6 +37,8 @@ export const analystOutputSchema = z
     analyst_version: z.string().min(1),
     signal_id: z.string().min(1),
     summary: z.string(),
+    /** #559: short headline (~90 chars) with no source attribution; optional for older outputs. */
+    headline: z.string().optional(),
     decision: z.enum(['keep', 'ignore', 'unclear']),
     reason: z.string().min(1),
     targets: z.array(analystTargetSchema).max(3),

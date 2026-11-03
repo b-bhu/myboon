@@ -62,7 +62,7 @@ echo "== analyst path as analyst_worker (must succeed) =="
 run "signal_claim" "select signal_id||'|'||claim_token from atlas.signal_claim('5 minutes'::interval, 'test-worker', 5)"
 CLAIM=$(grep sig-512 "$TMP/out"); TOKEN=${CLAIM#*|}
 [[ -n $TOKEN && $CLAIM == sig-512* ]] && ok "claimed sig-512" || bad "claim returned: $CLAIM"
-run "signal reads (process.ts / d36-worker)" "select signal_id, source, text, excerpt, link from atlas.signals where signal_id='sig-512'"
+run "signal reads (process.ts / signal-worker)" "select signal_id, source, text, excerpt, link from atlas.signals where signal_id='sig-512'"
 run "entity search on shelves" "select slug, name, type, aliases from atlas.shelves where status='active'"
 # The PgDecisionSink transaction, verbatim shape: decision insert returning, advisory lock,
 # active shelf lookup, proposed shelf lookup + insert returning id, item inserts from signals.

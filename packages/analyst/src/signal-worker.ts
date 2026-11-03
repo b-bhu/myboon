@@ -15,6 +15,7 @@ import type { AnalystOutput } from '@myboon/contracts';
 import type { Pool, PoolClient } from 'pg';
 
 import type { DecisionCase, Decider } from './deciders.js';
+import { itemSummary, itemTitle } from './item-wording.js';
 import { decideTimed } from './process.js';
 import type { Ask, AskInput, AskResult, EntitySearch, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
 import { runSession, searchEntities } from './session.js';
@@ -132,7 +133,7 @@ async function fileItems(
            from atlas.signals s
           where s.signal_id = $5
        on conflict do nothing`,
-      [`${output.signal_id}:${target.entity}`, itemTitle(output.summary, target.note), target.note, mainEntityId, output.signal_id, target.angle, target.note],
+      [`${output.signal_id}:${target.entity}`, itemTitle(output.headline, output.summary, target.note), itemSummary(output.summary, target.note), mainEntityId, output.signal_id, target.angle, target.note],
     );
   }
 }
@@ -202,10 +203,6 @@ async function proposedEntityId(
   return inserted.rows[0].id;
 }
 
-/** The item title: the signal summary, or the target note when the summary is empty, capped at 200 chars. */
-function itemTitle(summary: string, note: string): string {
-  return (summary.length > 0 ? summary : note).slice(0, 200);
-}
 
 /** Entity search over the DB entities: one read-only select per call, then the in-memory matcher. */
 export function entitySearchFromDb(db: Db): EntitySearch {

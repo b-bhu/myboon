@@ -25,7 +25,7 @@ import { Pool } from 'pg';
 import type { AnalystConfig } from './config.js';
 import { parseAnalystConfig } from './config.js';
 import type { Decider } from './deciders.js';
-import { PgDecisionSink, processNextD36, entitySearchFromDb, type D36Options } from './d36-worker.js';
+import { PgDecisionSink, processNextD36, entitySearchFromDb, type D36Options } from './signal-worker.js';
 import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { defaultDeciders } from './runner.js';
 import { createOllamaLlm, type JevLogEntry, type Llm } from './session.js';

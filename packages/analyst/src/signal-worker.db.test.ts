@@ -19,7 +19,7 @@ import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystOutput } from '@myboon/contr
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
 import {
   InMemoryDecisionSink, PgDecisionSink, classifySignalFailure, processNextD36, entitySearchFromDb, type D36Options,
-} from './d36-worker.js';
+} from './signal-worker.js';
 import { createOllamaLlm, type ChatMessage, type JevLogEntry, type Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 
@@ -301,8 +301,34 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       signal_id: KALSHI.signal_id, entity_slug: 'stanley-druckenmiller',
-      angle: 'new_story', note: 'Reported move into Hyperliquid.', summary: 'Reported move into Hyperliquid.',
+      angle: 'new_story', note: 'Reported move into Hyperliquid.', summary: 'Druckenmiller moved into Hyperliquid.', // #559: summary is not the note
     });
+  });
+
+  it('#559 PANews case: title is the headline with no source names, summary differs from the note, link stays on the signal', async () => {
+    const output = parseAnalystOutput({
+      schema_version: ANALYST_OUTPUT_SCHEMA_VERSION,
+      analyst_version: 'analyst-504-v1',
+      signal_id: KALSHI.signal_id,
+      headline: 'According to PANews, China Merchants Bank adds digital RMB payments to its app',
+      summary: 'According to a PANews report shared by tokens_xyz, China Merchants Bank added digital RMB payments to its mobile app. It widens retail access to the e-CNY.',
+      decision: 'keep',
+      reason: 'A new entity is needed.',
+      targets: [{ entity: 'china-merchants-bank', kind: 'new', type: 'organization', angle: 'new_story', note: 'PANews reports the bank shipped an e-CNY feature.' }],
+    });
+    await new PgDecisionSink(svcPool).save(output);
+    const row = (await pool.query(
+      'select i.title, i.summary, i.note, s.link from atlas.entity_items i join atlas.signals s on s.signal_id = i.signal_id where i.signal_id = $1',
+      [KALSHI.signal_id],
+    )).rows[0];
+    expect(row.title).toBe('China Merchants Bank adds digital RMB payments to its app');
+    expect(row.summary).toBe('China Merchants Bank added digital RMB payments to its mobile app. It widens retail access to the e-CNY.');
+    for (const bad of ['PANews', 'tokens_xyz', 'According to', 'shared by']) {
+      expect(row.title).not.toContain(bad);
+      expect(row.summary).not.toContain(bad);
+    }
+    expect(row.summary).not.toBe(row.note);
+    expect(row.link).toBe(KALSHI.link);
   });
 
   it('an existing target whose slug is not an active entity throws and writes nothing (PgDecisionSink)', async () => {

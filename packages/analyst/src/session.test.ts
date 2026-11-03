@@ -143,6 +143,16 @@ describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
     expect(jev.asked[0].question).toContain(KEEP_QUESTION);
   });
 
+  it('#559: turn 1 asks for a headline and the output carries it', async () => {
+    const c = spikeCases[0];
+    const llm = scriptedLlm([{ headline: 'Kalshi raises $1B', summary: 'S', mentions: MENTIONS[c.signal.signal_id] }, { reason: 'Nobody would care.' }]);
+    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'ignore' }), search });
+    const turn1 = llm.calls[0].at(-1)?.content ?? '';
+    expect(turn1).toContain('"headline": string');
+    expect(turn1).toContain('at most 90 characters');
+    expect(out.headline).toBe('Kalshi raises $1B');
+  });
+
   it('the keep question is the fixed D36 wording', () => {
     expect(KEEP_QUESTION).toBe('Would a crypto trader or market watcher care about this, even if it is only talk for now?');
   });
