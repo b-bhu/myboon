@@ -1,6 +1,8 @@
 /** A published press article from the configured structured news feed. */
 export interface NewsFeedArticle {
   kind: 'article'
+  /** Upstream `feed_source`; internal provenance only, never user-facing. */
+  feedSource: 'coingecko'
   title: string
   url: string
   /** ISO 8601, normalized. null when the upstream value was missing/unparseable. */
@@ -19,11 +21,15 @@ export interface NewsFeedArticle {
 /** A post from the @tokens account on X. */
 export interface NewsFeedPost {
   kind: 'post'
+  /** Upstream `feed_source`; internal provenance only, never user-facing. */
+  feedSource: 'x'
   text: string
   url: string
   /** ISO 8601, normalized. null when the upstream value was missing/unparseable. */
   postedAt: string | null
   handle: string | null
+  /** Upstream `author`: the bare username (e.g. `tokens`). null when empty. */
+  author: string | null
   imageUrl: string | null
   /** Untrusted upstream coin tagging; see NewsFeedArticle.relatedCoinIds. */
   relatedCoinIds: string[]

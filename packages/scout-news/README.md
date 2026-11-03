@@ -48,7 +48,16 @@ source 'tokens_xyz', source_id/link = item.url, type 'news' (article) /
 'post' (post), text = title/text, excerpt = same text truncated to 500 chars,
 occurred_at = publishedAt/postedAt (or null), numbers {}, priority 0,
 raw_ids only for non-empty members (coingecko: comma-joined relatedCoinIds,
-plus outlet/handle when present), raw_hash = sha256 of the upstream JSON.
+plus outlet/handle when present), raw_hash = sha256 of the normalized item.
+
+Since #561 raw_ids also keeps the upstream feed item's `image` (URL),
+`author` (byline; the bare username `tokens` for X posts) and `feed_source`
+(`coingecko` | `x`, always set). image/author are omitted when upstream sends
+nothing or `""`. `feed_source` is internal provenance only and never goes into
+user-facing text (#559). No backfill: rows written before #561 lack these keys.
+Adding `feedSource`/post `author` to the normalized item changed raw_hash for
+the same URL; nothing compares raw_hash today and dedupe is on
+`(source, source_id)`, so re-seen URLs are still skipped as duplicates.
 
 ## Downstream
 

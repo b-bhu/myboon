@@ -16,6 +16,7 @@ import type { Signal } from '@myboon/contracts';
 
 const articleItem: NewsFeedArticle = {
   kind: 'article',
+  feedSource: 'coingecko',
   title: 'Ethereum staking inflows slow ahead of the upgrade vote',
   url: 'https://www.theblock.co/post/333211/ethereum-staking-inflows-slow-upgrade-vote',
   publishedAt: '2026-10-26T08:45:00.000Z',
@@ -27,6 +28,7 @@ const articleItem: NewsFeedArticle = {
 
 const articleThatNeverMaps: NewsFeedArticle = {
   kind: 'article',
+  feedSource: 'coingecko',
   title: 'x',
   url: 'not a url',
   publishedAt: '2026-10-26T08:45:00.000Z',

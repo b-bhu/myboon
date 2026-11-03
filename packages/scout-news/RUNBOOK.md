@@ -73,6 +73,22 @@ pm2 logs myboon-scout --lines 200 | jq -c 'select(.level != "info")'
 `| jq 'select(.msg == "health")'`. One `health` line lands at the end of each
 run, so 15-minute cadence is the expected rate.
 
+## Feed fields check (#561)
+
+Read-only count of how many recent signals carry image/author/feed_source:
+
+```sql
+select count(*) total,
+       count(*) filter (where raw_ids ? 'image') with_image,
+       count(*) filter (where raw_ids ? 'author') with_author,
+       count(*) filter (where raw_ids ? 'feed_source') with_feed_source
+from atlas.signals
+where source = 'tokens_xyz' and fetched_at > now() - interval '1 day';
+```
+
+Expect `with_feed_source = total` for rows written after #561 deploys;
+`with_author` is lower because some coingecko articles have no byline.
+
 ## Health numbers (`health` log lines)
 
 Service_role's atlas grants (20261026011119, 20261026011428, 20261027120000)

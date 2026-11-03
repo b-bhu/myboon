@@ -38,7 +38,8 @@ function truncateExcerpt(text: string): string {
  * - occurred_at: publishedAt (article) / postedAt (post), null when upstream
  *   had none; fetched_at: the moment the feed was fetched
  * - raw_ids: only non-empty members ({ coingecko: comma-joined ids, plus
- *   { outlet } or { handle } when present)
+ *   { outlet } or { handle } when present; plus image, author when
+ *   non-empty and feed_source ('coingecko' | 'x') always, #561)
  * - raw_hash: sha256 of the upstream item as delivered (unchanged JSON)
  */
 export function feedItemToSignal(item: NewsFeedItem, fetchedAt: Date): Signal {
@@ -53,6 +54,11 @@ export function feedItemToSignal(item: NewsFeedItem, fetchedAt: Date): Signal {
   if (item.kind === 'post' && item.handle) {
     rawIds.handle = item.handle;
   }
+  // #561: provenance + byline + image, only when non-empty (the normalizer
+  // already turns '' into null). feed_source is internal-only (#559).
+  if (item.imageUrl) rawIds.image = item.imageUrl;
+  if (item.author) rawIds.author = item.author;
+  rawIds.feed_source = item.feedSource;
 
   return parseSignal({
     schema_version: SIGNAL_SCHEMA_VERSION,
