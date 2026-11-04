@@ -237,6 +237,14 @@ describe('#567 type-first matching (scripted LLM + decision tool, in-memory #566
     expect(logs.map((l) => l.answer)).toEqual(['keep', 'bitcoin', 'plain_update']);
   });
 
+  it('a prose reasoning reply (no JSON) does not fail the signal; it is used as context', async () => {
+    const out = await runSession(sig('BTC'), {
+      llm: scriptedLlm([turn1([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), 'This continues a story.', { note: 'n', reason: 'r' }]),
+      ask: scriptedAsk({}), lookup: memLookup(),
+    });
+    expect(out.targets.map((t) => t.entity)).toEqual(['bitcoin']);
+  });
+
   it('articlePhrases gives 1-3 word windows, lowercased, punctuation stripped', () => {
     const p = articlePhrases('Binance exploit: hot-wallet, $BTC!');
     expect(p).toEqual(expect.arrayContaining(['binance', 'binance exploit', 'binance exploit hot-wallet', '$btc']));

@@ -69,9 +69,10 @@ export async function main(): Promise<void> {
     for (const signal of signals) {
       const traces: MatchTrace[] = [];
       const misses: EntityMissEntry[] = [];
+      let allMentions: unknown[] = [];
       totals.signals += 1;
       try {
-        const out = await runSession(signal, { llm, ask, lookup, trace: (t) => traces.push(t), missLog: (m) => misses.push(m) });
+        const out = await runSession(signal, { llm, ask, lookup, trace: (t) => traces.push(t), onMentions: (m) => { allMentions = m; }, missLog: (m) => misses.push(m) });
         const pick = traces.find((t) => t.pick)?.pick ?? null;
         if (out.decision === 'ignore') totals.ignored += 1;
         else if (out.decision === 'unclear') totals.unclear += 1;
@@ -80,13 +81,13 @@ export async function main(): Promise<void> {
           if (traces.some((t) => t.pick && t.tries.at(-1)?.type === 'any')) totals.fallback_matched += 1;
         } else totals.none += 1;
         console.log(JSON.stringify({
-          signal_id: signal.signal_id, text: signal.text.slice(0, 160), decision: out.decision,
+          signal_id: signal.signal_id, text: signal.text.slice(0, 160), decision: out.decision, all_mentions: allMentions,
           mentions: traces.map((t) => ({ mention: t.mention, types: t.types, type_decision: t.type_decision, chosen_type: t.chosen_type, tries: t.tries, pick: t.pick?.slug ?? null })),
           final: pick ? `${pick.slug} (${pick.type})` : 'none', misses: misses.length, reason: out.decision === 'keep' ? undefined : out.reason,
         }));
       } catch (e) {
         totals.failed += 1;
-        console.log(JSON.stringify({ signal_id: signal.signal_id, error: e instanceof Error ? e.message : String(e) }));
+        console.log(JSON.stringify({ signal_id: signal.signal_id, error: e instanceof Error ? e.message : String(e), all_mentions: allMentions, traces, misses }));
       }
     }
     console.log(JSON.stringify({ event: 'dry_run_totals', ...totals }));

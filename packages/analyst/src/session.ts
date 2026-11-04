@@ -229,6 +229,8 @@ export type SessionDeps = {
   missLog?: (e: EntityMissEntry) => void;
   /** Per-mention matching trace (dry run); off by default. */
   trace?: (e: MatchTrace) => void;
+  /** Every validated mention from turn 1 (dry run); off by default. */
+  onMentions?: (mentions: AnalystMention[]) => void;
 };
 
 /** A thrown marker so a decision-tool answer outside the offered choices ends the session as unclear. */
@@ -244,11 +246,13 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const missLog = deps.missLog ?? ((e: EntityMissEntry) => { console.log(JSON.stringify(e)); });
 
   /** One turn of the single session: send, keep the reply in history, parse its JSON. */
-  const step = async (userContent: string): Promise<Record<string, unknown>> => {
+  const step = async (userContent: string, o: { lenientKey?: string } = {}): Promise<Record<string, unknown>> => {
     history.push({ role: 'user', content: userContent });
     const raw = await deps.llm(history);
     history.push({ role: 'assistant', content: raw });
-    return parseJsonReply(raw);
+    if (!o.lenientKey) return parseJsonReply(raw);
+    // Context-only turns: a prose reply is used as the value instead of failing the signal.
+    try { return parseJsonReply(raw); } catch { return { [o.lenientKey]: raw.trim() }; }
   };
 
   /** Ask the decision tool, log the answered question, and refuse answers outside the offered choices. */
@@ -295,6 +299,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const headline = str(turn1.headline);
   if (!summary) throw new Error('no summary in the first reply');
   const mentions = toMentions(turn1.mentions);
+  deps.onMentions?.(mentions);
 
   try {
     // Decision 1: is the signal worth keeping at all?
@@ -327,6 +332,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
         'Reply with JSON only:\n{"reasoning": string}\n' +
         'One or two sentences on what this signal means for that entity and whether it starts something new, ' +
         'continues an ongoing story, or is a minor update. Do not pick an angle; the decision tool will.',
+      { lenientKey: 'reasoning' },
     );
     // Decision 3: the angle with a fixed question.
     const angle = (await askAndLog(
