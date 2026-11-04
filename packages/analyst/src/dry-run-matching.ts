@@ -36,7 +36,7 @@ export function parseArgs(argv: string[]): Args {
   return a;
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const c = parseAnalystConfig(process.env);
   const pool = new Pool({ ...analystPoolConfig(c.databaseUrl, loadAnalystDatabaseCa(process.env)), max: 2 });
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1]?.endsWith('dry-run-matching.ts')) {
+if (process.argv[1]?.endsWith('dry-run-matching.ts') || process.env.DRY_RUN_MATCHING_MAIN === '1') {
   main().catch((e: unknown) => {
     console.error(`dry-run: ${e instanceof Error ? e.message : String(e)}`);
     process.exitCode = 1;
