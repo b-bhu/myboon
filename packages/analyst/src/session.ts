@@ -104,7 +104,7 @@ export type MatchTrace = {
   confidence: number | null;
 };
 
-/** Shortlist size cap (alias hits are always kept, even past it). */
+/** Shortlist size cap. Alias hits come first and are kept ahead of the fill, but the total never exceeds it. */
 export const SHORTLIST_CAP = 40;
 
 /** Most article phrases sent to the lookup; 1-3 word windows over the signal text. */
@@ -311,7 +311,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
     const mainMention = mentions.find((m) => m.main) ?? mentions[0];
     const types = [...new Set([mainMention, ...mentions].flatMap((m) => m.types))];
     const names = [...mentions.flatMap((m) => [m.name, ...m.search_terms]), ...articlePhrases(`${headline}\n${signal.text}`)];
-    const shortlist = dedupeBySlug(await deps.lookup.shortlist(types, names, SHORTLIST_CAP));
+    const shortlist = dedupeBySlug(await deps.lookup.shortlist(types, names, SHORTLIST_CAP)).slice(0, SHORTLIST_CAP);
     const aliasHits = shortlist.filter((c) => c.alias_hit).map((c) => c.slug);
     let picked: ShortlistCandidate | null = null;
     let confidence: number | null = null;

@@ -157,7 +157,11 @@ export function pgCandidateLookup(db: Db): CandidateLookup {
       });
       const seen = new Set<string>();
       const out: ShortlistCandidate[] = [];
-      for (const r of rows.filter((x) => x.alias_hit)) if (!seen.has(r.slug)) { seen.add(r.slug); out.push(toCandidate(r)); }
+      // Alias hits first (most items first), but the cap holds for them too: a noisy article can't push past it.
+      for (const r of rows.filter((x) => x.alias_hit).sort((a, b) => b.item_count - a.item_count || a.slug.localeCompare(b.slug))) {
+        if (out.length >= cap) break;
+        if (!seen.has(r.slug)) { seen.add(r.slug); out.push(toCandidate(r)); }
+      }
       for (const r of rows.filter((x) => !x.alias_hit).sort((a, b) => b.item_count - a.item_count || a.slug.localeCompare(b.slug))) {
         if (out.length >= cap) break;
         if (!seen.has(r.slug)) { seen.add(r.slug); out.push(toCandidate(r)); }
