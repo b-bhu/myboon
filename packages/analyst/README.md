@@ -26,9 +26,48 @@ tables: everything it touches is created by
 - `src/signal-worker.ts` (renamed from `d36-worker.ts` in #559) — the signal worker (#504): claim, one LLM session per
   signal with Jev/Clef as the decision tool, the sink, plus the standing rule
   that a signal older than 24 hours is parked `backlog_skip_24h` (#391) before
-  the LLM runs. `PgDecisionSink` takes `{ allowNewEntities: false }` to drop
-  every kind-new target (active slugs still file) so a catch-up run cannot
-  create entities.
+  the LLM runs. `PgDecisionSink` files at most one item per signal, on the
+  first existing target, and never creates or proposes an entity (#567): other
+  targets are dropped with a `target_dropped` log line. `pgCandidateLookup` is
+  the read-only #566 candidate fetch.
+- `src/session.ts` — the analyst session and type-first matching (#567, see
+  below). `src/dry-run-matching.ts` is the read-only matching dry run.
+
+## Entity matching (#567, shortlist + one pick)
+
+```mermaid
+flowchart LR
+  A[Signal] --> M[Turn 1: mentions, exactly 2 types each, one marked main]
+  M --> S[Shortlist over all mentioned types, per type in parallel]
+  S --> H[Alias hits first, always kept]
+  H --> F[Fill by entity item count, cap 40]
+  F --> P[One decision-tool call: slug or none]
+  P -->|slug| E[One main entity per signal]
+  P -->|none| L[entity_miss log, nothing created]
+```
+
+- Mentions are validated with zod (`analystMentionSchema` in `@myboon/contracts`):
+  exactly 2 distinct types, a `main` flag (first mention if none is marked).
+- `pgCandidateLookup().shortlist(types, names, cap)` runs one read-only query per
+  type in parallel: active entities whose name or alias (`atlas.entity_candidates`,
+  #566, exact on `atlas.norm_alias`) matches the mentions or a 1-3 word phrase of
+  the headline and text, always kept; then the most active entities of those types
+  by `entity_items` count, deduped, up to `SHORTLIST_CAP` (40). Each row carries
+  id, slug, name, type, aliases and a one-line summary.
+- One decision-tool (Jev) call gets the article, the main subject and the full shortlist
+  and answers one slug or `none` (closed choice). Anything outside the list counts
+  as none. There is no type-decision call, no retry and no cross-type fallback.
+- None logs one `entity_miss` line (see the RUNBOOK) and routes nothing. No code
+  path inserts into `atlas.entities`. No CoinGecko, no embeddings.
+- The reasoning and note turns accept a plain-text reply.
+
+Dry run (read-only, needs the analyst env; nothing is written):
+`pnpm --filter @myboon/analyst matching:dry-run --recent 20` or
+`--ids id1,id2` or `--text "..."`, plus `--force-keep` to skip the keep gate.
+On 100 recent prod signals (Nov 4, 2026): 72 matched, 21 `entity_miss`, 7 ignored,
+0 failed, mean confidence 0.94. Design record: wiki V4-Design (analyst session) and
+Decision-Log D37.
+
 - `src/item-wording.ts` (#559) — entity item title and summary. Title = the
   LLM's turn-1 `headline` (asked for at most 90 chars), or the summary's first
   whole sentence when there is none; never sliced. Summary = the signal

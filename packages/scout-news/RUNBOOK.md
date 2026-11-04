@@ -89,6 +89,26 @@ where source = 'tokens_xyz' and fetched_at > now() - interval '1 day';
 Expect `with_feed_source = total` for rows written after #561 deploys;
 `with_author` is lower because some coingecko articles have no byline.
 
+## Analyst `entity_miss` lines (#567)
+
+The analyst logs one JSON line when the decision tool picks no existing entity
+for a kept signal. It never creates an entity, so this line is the only trace:
+
+```json
+{"event":"entity_miss","signal_id":"...","main_subject":"France","types":["place","regulation"],
+ "shortlist_size":40,"alias_hits":[]}
+```
+
+- `main_subject`: the mention the LLM marked as the article's subject; `types`:
+  every mentioned type the shortlist covered (main subject first).
+- `alias_hits` empty means no active entity's name or alias appears in the
+  article: usually a missing alias, a retired entity, or a truly new name.
+  Non-empty means candidates matched by name but the decision tool said none.
+- `shortlist_size` 0 means the types have no active entities at all.
+- Read them with `pm2 logs myboon-analyst --nostream --lines 500 | grep entity_miss`.
+  Repeated misses on one name are the cue to add an alias (DB Guy) or an entity
+  by hand; the analyst never adds either.
+
 ## Health numbers (`health` log lines)
 
 Service_role's atlas grants (20261026011119, 20261026011428, 20261027120000)

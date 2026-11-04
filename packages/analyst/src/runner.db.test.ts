@@ -11,10 +11,11 @@ import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
-import { PgDecisionSink, entitySearchFromDb, type D36Options } from './signal-worker.js';
+import { PgDecisionSink, pgCandidateLookup, type D36Options } from './signal-worker.js';
 import { analystMain, runAnalystOnce } from './runner.js';
 import type { ChatMessage, Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
+import { seedAliases } from './test-fixtures/aliases.js';
 
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const KALSHI = spikeCases[5].signal;
@@ -31,15 +32,15 @@ function scripted(name: 'jev' | 'clef', rule: Rule): Decider {
     },
   } as Decider;
 }
-const keepAll: Rule = (c) => (c.choices.includes('keep') ? 'keep' : c.choices.includes('new_story') ? 'existing_story' : 'existing');
+const keepAll: Rule = (c) => (c.choices.includes('keep') ? 'keep' : c.choices.includes('new_story') ? 'existing_story' : c.choices[0]);
 
 /** Scripted LLM: the reply depends on how many turns this session has already had, so each signal gets a fresh script. */
 const kalshiLlm: Llm = async (messages: ChatMessage[]) => {
   const turn = messages.filter((m) => m.role === 'assistant').length;
   const replies = [
-    { summary: 'Kalshi raised $1B at a $40B valuation, per Cointelegraph.', mentions: [{ name: 'Kalshi', type: 'organization', search_terms: [] }] },
-    { reasoning: [{ mention: 'Kalshi', reasoning: 'Continues its growth story.' }], reason: 'Not interesting.' },
-    { targets: [{ mention: 'Kalshi', type: 'organization', note: 'Cointelegraph reports the raise.' }], reason: 'Routed.' },
+    { summary: 'Kalshi raised $1B at a $40B valuation, per Cointelegraph.', mentions: [{ name: 'Kalshi', types: ['organization', 'product'], main: true, search_terms: [] }] },
+    { reasoning: 'Continues its growth story.', reason: 'Not interesting.' },
+    { note: 'Cointelegraph reports the raise.', reason: 'Routed.' },
   ];
   return JSON.stringify(replies[Math.min(turn, replies.length - 1)]);
 };
@@ -55,7 +56,7 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
   };
   const opts = (o: Partial<D36Options> = {}): D36Options => ({
     llm: kalshiLlm, primary: scripted('jev', keepAll), fallback: scripted('clef', keepAll), shadow: null,
-    search: entitySearchFromDb(workerPool), sink: new PgDecisionSink(workerPool, () => {}), log: () => {},
+    lookup: pgCandidateLookup(workerPool), missLog: () => {}, sink: new PgDecisionSink(workerPool, () => {}), log: () => {},
     leaseMs: 60_000, timeoutMs: 1_000, backoffMs: 60_000, maxAttempts: 3, worker: 'w512', ...o,
   });
   const seedSignals = async (n: number) => {
@@ -81,6 +82,7 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
     for (const s of spikeEntities) {
       await pool.query('insert into atlas.entities (slug, name, type, aliases) values ($1, $2, $3, $4)', [s.slug, s.name, s.type, s.aliases]);
     }
+    await seedAliases(pool);
   });
 
   it('RLS is on for every atlas table the worker touches', async () => {
