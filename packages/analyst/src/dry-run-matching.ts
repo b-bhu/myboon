@@ -1,8 +1,9 @@
 /**
  * #567 read-only dry run of type-first matching. For each signal id (read from atlas.signals) or raw
  * article text, runs the analyst session with the real LLM and decision tool and the #566 lookup, and
- * prints one JSON line per signal: mentions with top-3 types, the chosen type (obvious or decided), the
- * candidates per try, and the final pick or none. Nothing is written: no sink, no claim, and every
+ * prints one JSON line per signal: the mentions with their 2 types and the main subject, the types
+ * searched, the alias hits, the merged shortlist (alias hits first, then fill by item count, at most 40),
+ * and Jev's single pick (slug, type, confidence) or none. Nothing is written: no sink, no claim, and every
  * connection runs with default_transaction_read_only = on.
  *
  * Usage (env as the analyst: ANALYST_DATABASE_URL, OLLAMA_API_KEY, JEV_API_TOKEN; never printed):

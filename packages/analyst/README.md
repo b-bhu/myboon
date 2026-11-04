@@ -51,7 +51,7 @@ flowchart LR
 - `pgCandidateLookup().shortlist(types, names, cap)` runs one read-only query per
   type in parallel: active entities whose name or alias (`atlas.entity_candidates`,
   #566, exact on `atlas.norm_alias`) matches the mentions or a 1-3 word phrase of
-  the headline and text, always kept; then the most active entities of those types
+  the headline and text, kept first (the cap holds for them too); then the most active entities of those types
   by `entity_items` count, deduped, up to `SHORTLIST_CAP` (40). Each row carries
   id, slug, name, type, aliases and a one-line summary.
 - One decision-tool (Jev) call gets the article, the main subject and the full shortlist
