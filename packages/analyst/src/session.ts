@@ -293,7 +293,8 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
       'summary: 2-3 sentences (what happened, who it touches, why it matters to the reader). ' +
       'Neither may name the source, publisher, sharer or account, or start with "According to", "per", "reports" or "shared by". ' +
       'mentions: at most 3 entities this signal touches, the main one first. types: the 1-3 most likely entity types for that mention, ' +
-      'most likely first, each exactly one of the listed values; give one type when it is obvious. search_terms: other names or tickers for it.',
+      'most likely first, each exactly one of the listed values. Give one type only when you are certain; ' +
+      'whenever the type is not certain give 2 or 3 (for example "stablecoins" could be asset or topic, a project name could be protocol or product). search_terms: other names or tickers for it.',
   );
   const summary = str(turn1.summary);
   const headline = str(turn1.headline);
@@ -422,7 +423,10 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   }
 }
 
-/** Dedupe by slug, entities named like the mention first, capped at MAX_CANDIDATES. */
+/**
+ * Dedupe by slug (first row wins), then entities named like the mention first; otherwise the lookup's
+ * order is kept (alias hits before the event window), and only then the MAX_CANDIDATES cap.
+ */
 function rankCandidates(rows: Candidate[], own: string[]): Candidate[] {
   const norm = (v: string): string => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const wanted = new Set(own.map(norm));

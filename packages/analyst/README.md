@@ -52,9 +52,12 @@ flowchart LR
 - Mentions are validated with zod (`analystMentionSchema` in `@myboon/contracts`).
 - Candidates come from `atlas.entity_candidates(type, names)` (#566, active
   entities only, exact on `atlas.norm_alias`). `names` is the mention's name and
-  search terms plus every 1-3 word phrase in the article. A type with at most
-  `SMALL_TYPE_MAX` (25) active entities offers all of them. For `event`, active
-  events with an item in the last `EVENT_WINDOW_DAYS` (7) days are added.
+  search terms plus every 1-3 word phrase in the article. Alias-first for every
+  type: a type with no alias hit has no candidates (then the 2nd-type retry, then
+  the fallback). For `event`, active events with an item in the last
+  `EVENT_WINDOW_DAYS` (7) days are added after the alias hits. The cap
+  (`MAX_CANDIDATES`, 8) applies after that ordering.
+- Turn 1 asks for one type only when certain, else 2-3 (e.g. stablecoins: asset or topic).
 - The pick is a closed choice: candidate slugs plus `none`. An answer outside
   that list makes the signal `unclear`; no name is ever invented.
 - The cross-type fallback (`atlas.entity_candidates_any`, mention names only)

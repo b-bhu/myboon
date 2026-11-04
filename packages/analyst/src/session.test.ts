@@ -34,6 +34,12 @@ const ENTITIES: Ent[] = [
   { slug: 'binance', name: 'Binance', type: 'organization', status: 'active', aliases: ['He Yi', 'BNB Chain'] },
   { slug: 'binance-hack', name: 'Binance hot wallet exploit', type: 'event', status: 'active', aliases: ['Binance exploit'] },
   { slug: 'digital-rmb', name: 'Digital RMB', type: 'product', status: 'active', aliases: ['e-CNY'] },
+  { slug: 'stablecoins', name: 'Stablecoins', type: 'topic', status: 'active', aliases: ['stablecoin'] },
+  { slug: 'usdc', name: 'USDC', type: 'asset', status: 'active', aliases: [] },
+  { slug: 'usdt', name: 'USDT', type: 'asset', status: 'active', aliases: [] },
+  ...['argentina', 'australia', 'canada', 'china', 'iran', 'finland', 'japan', 'brazil', 'india'].map(
+    (p): Ent => ({ slug: p, name: p[0].toUpperCase() + p.slice(1), type: 'place', status: 'active', aliases: [] })),
+  { slug: 'france', name: 'France', type: 'place', status: 'active', aliases: ['French Republic'] },
   { slug: 'old-kalshi', name: 'Kalshi Inc', type: 'organization', status: 'retired', aliases: ['Kalshi'] },
 ];
 
@@ -243,6 +249,41 @@ describe('#567 type-first matching (scripted LLM + decision tool, in-memory #566
       ask: scriptedAsk({}), lookup: memLookup(),
     });
     expect(out.targets.map((t) => t.entity)).toEqual(['bitcoin']);
+  });
+
+  it('alias-first: France is found by its alias among more than 8 active places; only it is offered', async () => {
+    const ask = scriptedAsk({});
+    const out = await runSession(sig('France delays budget vote again'), {
+      llm: kept([{ name: 'France', types: ['place'], search_terms: [] }]), ask, lookup: memLookup(),
+    });
+    const offered = ask.asked.filter((a) => a.question.includes('Answer one slug'))[0].choices;
+    expect(offered).toEqual(['france', 'none']);
+    expect(out.targets.map((t) => t.entity)).toEqual(['france']);
+  });
+
+  it('stablecoins: asset offers only USDC/USDT, the decision says none, the retry with topic finds stablecoins', async () => {
+    const lookup = memLookup();
+    const ask = scriptedAsk({});
+    const realAsk: typeof ask = Object.assign(async (input: AskInput) => {
+      if (input.question.includes('Answer one slug') && input.choices.includes('usdc')) {
+        ask.asked.push(input);
+        return { choice: 'none', probabilities: { none: 0.9 }, provider: 'jev' as const };
+      }
+      return ask(input);
+    }, { asked: ask.asked });
+    const traces: MatchTrace[] = [];
+    const out = await runSession(sig('Stablecoins USDC USDT tax pending'), {
+      llm: kept([{ name: 'Stablecoins', types: ['asset', 'topic'], search_terms: ['USDC', 'USDT'] }]), ask: realAsk, lookup, trace: (t) => traces.push(t),
+    });
+    expect(lookup.calls).toEqual(['typed:asset', 'typed:topic']);
+    expect(traces[0].tries.map((t) => [t.type, t.pick])).toEqual([['asset', null], ['topic', 'stablecoins']]);
+    expect(out.targets.map((t) => t.entity)).toEqual(['stablecoins']);
+  });
+
+  it('turn 1 asks for 2-3 types whenever the type is not certain', async () => {
+    const llm = kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]);
+    await runSession(sig('BTC'), { llm, ask: scriptedAsk({}), lookup: memLookup() });
+    expect(llm.calls[0][1].content).toContain('give 2 or 3');
   });
 
   it('articlePhrases gives 1-3 word windows, lowercased, punctuation stripped', () => {

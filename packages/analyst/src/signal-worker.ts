@@ -124,29 +124,26 @@ async function activeEntityId(client: PoolClient, slug: string): Promise<string>
 /** Days of recent events offered as candidates for the event type (#567). */
 export const EVENT_WINDOW_DAYS = 7;
 
-/** Types with at most this many active entities offer all of them as candidates, not only name hits. */
-export const SMALL_TYPE_MAX = 25;
-
 /**
- * The #566 lookup over Postgres, read-only. typed(): atlas.entity_candidates(type, names) (active only,
- * exact on norm_alias), plus every active entity of a small type, plus, for events, active events with
- * an item in the last EVENT_WINDOW_DAYS days. anyType(): atlas.entity_candidates_any(names).
+ * The #566 lookup over Postgres, read-only. typed(): alias-first for every type (#567, Bucket Nov 4):
+ * atlas.entity_candidates(type, names) (active only, exact on norm_alias). A type with no alias hit
+ * has no candidates, except event, which also offers active events with an item in the last
+ * EVENT_WINDOW_DAYS days, always after the alias hits. anyType(): atlas.entity_candidates_any(names).
  */
 export function pgCandidateLookup(db: Db): CandidateLookup {
   return {
     async typed(type: EntityType, names: string[]): Promise<Candidate[]> {
       const { rows } = await db.query<Candidate>(
-        `select c.slug, c.name, $1::text as type from atlas.entity_candidates($1, $2::text[]) c
-         union
-         select e.slug, e.name, e.type from atlas.entities e
-          where e.type = $1 and e.status = 'active'
-            and (select count(*) from atlas.entities x where x.type = $1 and x.status = 'active') <= $3
-         union
-         select e.slug, e.name, e.type from atlas.entities e
-          where $1 = 'event' and e.type = 'event' and e.status = 'active'
-            and exists (select 1 from atlas.entity_items i
-                         where i.main_entity_id = e.id and i.occurred_at > now() - make_interval(days => $4))`,
-        [type, names, SMALL_TYPE_MAX, EVENT_WINDOW_DAYS],
+        `select slug, name, type from (
+           select c.slug, c.name, $1::text as type, 0 as rank from atlas.entity_candidates($1, $2::text[]) c
+           union all
+           select e.slug, e.name, e.type, 1 as rank from atlas.entities e
+            where $1 = 'event' and e.type = 'event' and e.status = 'active'
+              and exists (select 1 from atlas.entity_items i
+                           where i.main_entity_id = e.id and i.occurred_at > now() - make_interval(days => $3))
+         ) x
+         order by rank, slug`,
+        [type, names, EVENT_WINDOW_DAYS],
       );
       return rows;
     },

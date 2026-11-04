@@ -18,7 +18,7 @@ import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystOutput } from '@myboon/contr
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
 import {
-  InMemoryDecisionSink, PgDecisionSink, classifySignalFailure, processNextD36, pgCandidateLookup, SMALL_TYPE_MAX, type D36Options,
+  InMemoryDecisionSink, PgDecisionSink, classifySignalFailure, processNextD36, pgCandidateLookup, type D36Options,
 } from './signal-worker.js';
 import { createOllamaLlm, type ChatMessage, type JevLogEntry, type Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
@@ -441,9 +441,25 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       await pool.query(`insert into atlas.entity_items (item_key, title, summary, main_entity_id, signal_id, angle, note, occurred_at)
         select 'k-'||slug, 't', 's', id, $1, 'plain_update', 'n', case when slug = 'old-event' then now() - interval '30 days' else now() end
           from atlas.entities where slug in ('binance-hack', 'old-event')`, [KALSHI.signal_id]);
-      const slugs = (await pgCandidateLookup(svcPool).typed('event', ['nothing matches'])).map((c) => c.slug);
-      expect(slugs).toContain('binance-hack');
-      expect(slugs.length).toBeLessThanOrEqual(SMALL_TYPE_MAX + 1);
+      const lookup = pgCandidateLookup(svcPool);
+      await seedAliases(pool);
+      expect((await lookup.typed('event', ['nothing matches'])).map((c) => c.slug)).toEqual(['binance-hack']);
+      await pool.query("insert into atlas.entities (slug, name, type) values ('aa-alias-event', 'Zeta Fork', 'event')");
+      await seedAliases(pool);
+      // Alias hits come first, then the recent-events window.
+      expect((await lookup.typed('event', ['zeta fork'])).map((c) => c.slug)).toEqual(['aa-alias-event', 'binance-hack']);
+    });
+
+    it('alias-first for every type: 10 active places, only the alias hit (France) is offered; no hit means no candidates', async () => {
+      const places = ['argentina', 'australia', 'canada', 'china', 'iran', 'finland', 'japan', 'brazil', 'india', 'france'];
+      for (const p of places) await pool.query("insert into atlas.entities (slug, name, type) values ($1, initcap($1), 'place')", [p]);
+      await pool.query("update atlas.entities set aliases = array['French Republic'] where slug = 'france'");
+      await seedAliases(pool);
+      const lookup = pgCandidateLookup(svcPool);
+      const phrases = ['france delays', 'france', 'budget vote'];
+      expect((await lookup.typed('place', phrases)).map((c) => c.slug)).toEqual(['france']);
+      expect((await lookup.typed('place', ['French Republic'])).map((c) => c.slug)).toEqual(['france']);
+      expect(await lookup.typed('place', ['budget vote'])).toEqual([]);
     });
   });
 });
