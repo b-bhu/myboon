@@ -192,3 +192,112 @@
   .gt { --py: 0px; }
   .dot { display: none; }
 }
+
+/* ── Landing clarity (issue #564): numbered hero flow, app strip, tiles, wallet chip, story ── */
+/* Hero numbered flow */
+.v2Step {
+  position: absolute; top: -13px; left: -13px; z-index: 6; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--c-walletCore); border: 1.5px solid var(--c-borderMuted); color: var(--c-textDim);
+  font: 600 13px var(--m); display: grid; place-items: center; transition: all 0.35s; pointer-events: none;
+}
+.v2Lbl {
+  position: absolute; top: -11px; left: 22px; z-index: 6; height: 22px; padding: 0 8px; border-radius: 11px;
+  background: var(--c-walletCore); border: 1px solid var(--c-borderMuted); color: var(--c-textDim);
+  font: 600 11px var(--m); letter-spacing: 0.4px; display: flex; align-items: center; text-transform: uppercase;
+  transition: all 0.35s; pointer-events: none;
+}
+.v2Flow { outline: 2px solid transparent; outline-offset: 4px; transition: outline-color 0.35s; }
+.v2On { outline-color: var(--c-viridian); }
+.v2On .v2Step { background: var(--c-viridian); border-color: var(--c-viridian); color: var(--c-walletCore); }
+.v2On .v2Lbl { color: var(--c-bone); border-color: var(--c-viridian); }
+.v2Tag { display: none; }
+
+/* App-in-motion strip between hero and feed */
+.v2Strip { max-width: 1180px; margin: 40px auto 170px; padding: 0 40px; position: relative; z-index: 10; }
+.v2Phones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 56px; position: relative; }
+.v2Ph { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.v2Fr { width: 255px; aspect-ratio: 776 / 1686; height: auto; border-radius: 30px; overflow: hidden; border: 1px solid var(--c-borderMuted); background: var(--c-ground); transition: border-color 0.35s; }
+.v2Fr img { opacity: 0.5; transition: opacity 0.35s; width: 100%; display: block; height: auto; }
+.v2Ph.v2Lit .v2Fr img { opacity: 1; }
+.v2Ph.v2Lit .v2Fr { border-color: var(--c-viridian); }
+.v2Cap { display: flex; align-items: center; gap: 10px; color: var(--c-textDim); font: 600 13px var(--m); letter-spacing: 0.5px; text-transform: uppercase; }
+.v2Cap i { font-style: normal; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--c-borderMuted); display: grid; place-items: center; }
+.v2Ph.v2Lit .v2Cap { color: var(--c-bone); }
+.v2Ph.v2Lit .v2Cap i { background: var(--c-viridian); border-color: var(--c-viridian); color: var(--c-walletCore); }
+.v2Rail { position: absolute; left: 16.6%; right: 16.6%; top: 277px; height: 2px; background: var(--c-borderMuted); z-index: -1; }
+.v2Rail b { position: absolute; top: -5px; left: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--c-viridian); transition: left 0.9s ease-in-out; }
+
+/* Labelled app tiles after the apps burst */
+.v2Tiles { max-width: 1100px; margin: 20px auto 80px; padding: 0 40px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; position: relative; z-index: 10; }
+.v2Tile { background: var(--c-ground); border: 1px solid var(--c-borderMuted); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.v2TileH { display: flex; align-items: center; gap: 10px; color: var(--c-bone); font: 600 15px var(--h); }
+.v2TileH img { width: 32px; height: 32px; border-radius: 8px; background: var(--c-walletCore); padding: 4px; }
+.v2TileK { align-self: flex-start; height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--c-borderMuted); color: var(--c-viridian); font: 600 11px var(--m); text-transform: uppercase; letter-spacing: 0.4px; display: flex; align-items: center; }
+.v2Tile svg { width: 100%; height: 46px; }
+
+/* Wallet chip: $50 slides Polymarket → Pacifica */
+.pf { position: relative; }
+.pf li { position: relative; }
+.v2Chip { position: absolute; left: 46%; z-index: 7; height: 24px; padding: 0 9px; border-radius: 12px; background: var(--c-viridian); color: var(--c-walletCore); font: 700 12px var(--m); display: flex; align-items: center; transition: top 1.1s ease-in-out, opacity 0.3s; pointer-events: none; }
+.v2Tick { transition: color 0.3s; }
+.v2Dn { color: var(--c-vermillion); }
+.v2Upc { color: var(--c-viridian); }
+
+/* Sample story card + timeline after Feed; the feed lets tilted cards poke out */
+.feed { overflow: visible; }
+.v2Story { max-width: 1100px; margin: 30px auto 90px; padding: 0 40px; display: grid; grid-template-columns: 560px 1fr; gap: 48px; align-items: start; position: relative; z-index: 10; }
+.v2Sc { background: var(--c-ground); border: 1px solid var(--c-borderMuted); border-radius: 16px; padding: 20px; cursor: pointer; transition: border-color 0.25s; }
+.v2Sc:hover, .v2Open { border-color: var(--c-viridian); }
+.v2Sc:focus-visible { outline: 2px solid var(--c-viridian); outline-offset: 2px; }
+.v2ScTop { display: flex; justify-content: space-between; align-items: center; font: 600 11px var(--m); color: var(--c-textDim); text-transform: uppercase; letter-spacing: 0.4px; }
+.v2Plus { font-style: normal; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--c-borderMuted); display: grid; place-items: center; color: var(--c-bone); transition: transform 0.25s; }
+.v2Open .v2Plus { transform: rotate(45deg); }
+.v2Sc h4 { margin: 10px 0 0; color: var(--c-bone); font: 600 22px/1.25 var(--h); }
+.v2More { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.35s; }
+.v2Open .v2More { grid-template-rows: 1fr; }
+.v2More > div { overflow: hidden; }
+.v2Chips { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.v2Chips span { height: 28px; padding: 0 10px; border-radius: 8px; background: var(--c-backgroundDark); border: 1px solid var(--c-borderMuted); color: var(--c-bone); font: 500 13px var(--b); display: flex; align-items: center; gap: 6px; }
+.v2Chips b { color: var(--c-viridian); font: 600 12px var(--m); }
+.v2Chart { width: 100%; height: 90px; margin-top: 14px; display: block; }
+.v2Act { margin-top: 14px; display: flex; align-items: center; justify-content: space-between; }
+.v2Act span { font: 600 13px var(--m); color: var(--c-viridian); }
+.v2Act button { height: 44px; padding: 0 20px; border-radius: 10px; border: 0; background: var(--c-accent); color: var(--c-walletCore); font: 700 14px var(--h); cursor: pointer; }
+.v2Tl { position: relative; padding-left: 28px; margin: 6px 0 0; list-style: none; }
+.v2Tl::before { content: ''; position: absolute; left: 8px; top: 10px; bottom: 10px; width: 2px; background: var(--c-borderMuted); }
+.v2TlStep { position: relative; padding: 0 0 30px; }
+.v2TlStep::before { content: ''; position: absolute; left: -25px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--c-walletCore); border: 2px solid var(--c-borderMuted); transition: all 0.35s; }
+.v2TlStep.v2Lit::before { background: var(--c-viridian); border-color: var(--c-viridian); }
+.v2TlTime { font: 600 13px var(--m); color: var(--c-textDim); }
+.v2TlStep.v2Lit .v2TlTime { color: var(--c-viridian); }
+.v2TlLbl { margin-top: 6px; display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 10px; background: var(--c-ground); border: 1px solid var(--c-borderMuted); color: var(--c-bone); font: 600 14px var(--h); }
+
+/* Mobile: strip becomes one tabbed phone; hero restacks; flow cards and story hide */
+.v2Mob { display: none; }
+@media (max-width: 767px) {
+  .v2Strip { margin: 0 auto 140px; padding: 40px 20px 0; }
+  .v2Phones { display: none; }
+  .v2Mob { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .v2Tabs { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; max-width: 340px; padding: 4px; gap: 4px; border-radius: 12px; background: var(--c-ground); border: 1px solid var(--c-borderMuted); }
+  .v2Tabs button { min-height: 44px; border: 0; border-radius: 9px; background: transparent; color: var(--c-textDim); font: 600 13px var(--m); letter-spacing: 0.3px; text-transform: uppercase; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .v2Tabs button i { font-style: normal; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--c-borderMuted); display: grid; place-items: center; font-size: 11px; }
+  .v2Tabs button[aria-selected='true'] { background: var(--c-backgroundDark); color: var(--c-bone); box-shadow: inset 0 0 0 1.5px var(--c-viridian); }
+  .v2Tabs button[aria-selected='true'] i { background: var(--c-viridian); border-color: var(--c-viridian); color: var(--c-walletCore); }
+  .v2Tabs button:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+  .v2Mfr { position: relative; width: 220px; aspect-ratio: 776 / 1686; border-radius: 26px; overflow: hidden; border: 1px solid var(--c-viridian); background: var(--c-ground); }
+  .v2Mfr img { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity 0.2s; }
+  .v2Mfr img.v2Lit { opacity: 1; }
+  .v2Tiles { grid-template-columns: repeat(2, 1fr); padding: 0 16px; gap: 10px; margin: 20px auto 60px; }
+  .v2Tile { padding: 12px; min-width: 0; }
+  .v2TileH { font-size: 14px; }
+  .v2Flow, .v2Story { display: none; }
+  .hero { min-height: 100svh; height: auto; display: flex; flex-direction: column; padding-bottom: 40px; }
+  .path { display: none; }
+  .heroWords { position: relative; inset: auto; top: auto; transform: none; margin-top: auto; }
+  .v2Tag { display: block; position: relative; z-index: 5; margin: 28px 24px 0; font: 400 18px/1.5 var(--b); color: var(--c-textDim); text-align: center; text-wrap: balance; }
+  .copy { position: relative; inset: auto; transform: none; margin-top: auto; padding-top: 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2Step, .v2Lbl, .v2Ph, .v2Fr img, .v2Rail b, .v2Chip, .v2More, .v2Plus, .v2TlStep, .v2TlStep::before, .v2TlTime, .v2Mfr img, .v2Tick { transition: none; }
+}

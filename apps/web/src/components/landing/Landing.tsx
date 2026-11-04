@@ -3,6 +3,7 @@ import Image from 'next/image'
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties, type PointerEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { PolicyLinks } from '@/components/policy/PolicyLinks'
 import { colors, colorVars, usdcBlue } from '@/lib/tokens'
+import { Strip, Story, Tiles, WalletFlow, TICK_MS, nextTick } from './clarity'
 import { appTiles, crops, STORE_URL, X_URL, type Place } from './data'
 import { curve, type Pt } from './route'
 import { initialSlider, RESET_MS, sliderReducer } from './slider'
@@ -190,33 +191,6 @@ function MoveCard() {
   )
 }
 
-function PortfolioCard() {
-  const rows = [
-    ['Polymarket', '/landing/logo-polymarket.svg', '$1,240'],
-    ['Phoenix', '/landing/logo-phoenix.svg', '$2,180'],
-    ['Pacifica', '/landing/logo-pacifica.svg', '$1,400'],
-  ] as const
-  return (
-    <div className={`${s.card} ${s.pf}`}>
-      <div className={s.tag}>
-        <span>Total balance</span>
-        <Pill />
-      </div>
-      <p className={s.total}>$4,820.15</p>
-      <span className={s.up}><span aria-hidden>▲</span> $126.40 today</span>
-      <ul>
-        {rows.map(([n, logo, v]) => (
-          <li key={n}>
-            <Image src={logo} alt="" width={24} height={24} unoptimized />
-            {n}
-            <b>{v}</b>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
 function Shot({ k }: { k: keyof typeof crops }) {
   const c = crops[k]
   return (
@@ -241,7 +215,7 @@ function Tl({ d, m, node, dOnly, children }: { d: Place; m?: Place; node?: 'd' |
   )
 }
 
-function Hero({ reduced }: { reduced: boolean }) {
+function Hero({ reduced, tick }: { reduced: boolean; tick: number }) {
   const ref = useRef<HTMLElement>(null)
   const [paths, setPaths] = useState({ p1: '', p2: '', all: '' })
 
@@ -289,15 +263,22 @@ function Hero({ reduced }: { reduced: boolean }) {
           </circle>
         )}
       </svg>
-      <div className={`${s.tile} ${s.dOnly}`} style={{ ...place({ x: 15, y: 27, w: 300, r: -4 }), '--d': '5s' } as CSSProperties}>
+      <div className={`${s.tile} ${s.dOnly} ${s.v2Flow} ${tick === 0 ? s.v2On : ''}`} style={{ ...place({ x: 15, y: 27, w: 300, r: -4 }), '--d': '5s' } as CSSProperties}>
+        <span className={s.v2Step} aria-hidden>1</span>
+        <span className={s.v2Lbl}>Read</span>
         <StoryCard tag="Why it moved" title="SOL clears $180 as ETF inflows hit a weekly high" body="Three reasons it moved, in 20 seconds." why={['ETF flows', 'DEX volume', '+2']} />
       </div>
-      <div className={s.tile} style={{ ...place({ x: 17, y: 71, w: 230, r: 3 }, { x: 50, y: 36, w: 220, r: -2 }), '--d': '5.7s', animationDelay: '-1.3s' } as CSSProperties}>
+      <div className={`${s.tile} ${s.v2Flow} ${tick === 1 ? s.v2On : ''}`} style={{ ...place({ x: 17, y: 71, w: 230, r: 3 }, { x: 50, y: 36, w: 220, r: -2 }), '--d': '5.7s', animationDelay: '-1.3s' } as CSSProperties}>
+        <span className={s.v2Step} aria-hidden>2</span>
+        <span className={s.v2Lbl}>Why</span>
         <PriceCard />
       </div>
-      <div className={s.tile} style={{ ...place({ x: 84, y: 70, w: 290, r: 3 }, { x: 50, y: 54, w: 250, r: 2 }), '--d': '6.4s', animationDelay: '-2.6s' } as CSSProperties}>
+      <div className={`${s.tile} ${s.v2Flow} ${tick === 2 ? s.v2On : ''}`} style={{ ...place({ x: 84, y: 70, w: 290, r: 3 }, { x: 50, y: 54, w: 250, r: 2 }), '--d': '6.4s', animationDelay: '-2.6s' } as CSSProperties}>
+        <span className={s.v2Step} aria-hidden>3</span>
+        <span className={s.v2Lbl}>Swap</span>
         <SwapCard />
       </div>
+      <p className={s.v2Tag}>MyBoon tells you why the market moved, and lets you act in the same app.</p>
       <div className={s.copy}>
         <Ctas />
       </div>
@@ -319,6 +300,14 @@ export default function Landing() {
   const root = useRef<HTMLElement>(null)
   const [armed, setArmed] = useState(false)
   const [gp, setGp] = useState({ h: 0, g1: '', g2: '', all: '' })
+  const [tick, setTick] = useState(0)
+
+  // One shared 1.6s cadence lights hero steps, strip phones and the story timeline.
+  useEffect(() => {
+    if (reduced) return
+    const id = window.setInterval(() => setTick(nextTick), TICK_MS)
+    return () => window.clearInterval(id)
+  }, [reduced])
 
   /** Page route: hero swap card → Feed story → left margin → Pacifica tile → Wallet card. */
   const measure = useCallback(() => {
@@ -429,9 +418,10 @@ export default function Landing() {
 
   return (
     <main ref={root} className={`${s.page} ${armed ? s.armed : ''}`} style={{ ...colorVars, '--c-usdc': usdcBlue } as CSSProperties}>
-      <Hero reduced={reduced} />
+      <Hero reduced={reduced} tick={tick} />
+      <Strip tick={tick} reduced={reduced} />
 
-      <section className={s.sec} id="feed" style={{ '--c': colors.primary } as CSSProperties}>
+      <section className={`${s.sec} ${s.feed}`} id="feed" style={{ '--c': colors.primary } as CSSProperties}>
         <Words word="Feed" echo className={s.feedWords} />
         <Tl d={{ x: 24, y: 22, w: 340, r: -5, dp: 0.25 }} m={{ x: 35, y: 17, w: 270, r: -5 }} node="dm">
           <StoryCard tag="Why it moved" title="Jupiter volume jumps 40% after new perps launch" body="Traders moved fast. Here is the short version." why={['JUP', 'Perps']} />
@@ -442,6 +432,7 @@ export default function Landing() {
           <StoryCard icon="◷" tag="What’s next" title="Fed rate call · Wed" body="Prediction markets price a hold." />
         </Tl>
       </section>
+      <Story tick={tick} reduced={reduced} />
 
       <section className={`${s.sec} ${s.apps}`} id="apps" style={{ '--c': colors.viridian } as CSSProperties}>
         <Words word="Apps" className={s.appsWords} />
@@ -474,10 +465,11 @@ export default function Landing() {
           ))}
         </ul>
       </section>
+      <Tiles />
 
       <section className={`${s.sec} ${s.wallet}`} id="wallet" style={{ '--c': colors.accent } as CSSProperties}>
         <Words word="Wallet" echo className={s.walletWords} />
-        <Tl d={{ x: 16, y: 34, w: 300, r: -4, dp: 0.25 }} m={{ x: 50, y: 18, w: 300, r: -3 }} node="m"><PortfolioCard /></Tl>
+        <Tl d={{ x: 16, y: 34, w: 300, r: -4, dp: 0.25 }} m={{ x: 50, y: 18, w: 300, r: -3 }} node="m"><WalletFlow reduced={reduced} /></Tl>
         <Tl d={{ x: 85, y: 66, w: 290, r: 4, dp: 0.2 }} m={{ x: 50, y: 73, w: 300, r: 3 }} node="d"><MoveCard /></Tl>
         <p className={s.line}><b>Understand the market and act in the same app.</b></p>
       </section>
