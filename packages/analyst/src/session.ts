@@ -3,13 +3,13 @@
  * live; every decision is made by the decision tool (Jev, falling back to Clef) through the injected
  * `ask`. The LLM never overrules the decision tool.
  *
- * #567 type-first matching: each mention carries its top 1-3 types (zod at the boundary). The type is
- * obvious when only one is given or the top type's lookup already has candidates; otherwise the decision
- * tool picks the type. Candidates come from the injected `lookup` (atlas.entity_candidates, #566: active
- * only, the mention's names plus names found in the article). The decision tool picks one candidate slug
- * or none (a closed choice). A miss retries once with the second type; only after both typed tries miss
- * does the cross-type exact fallback run. One main entity per signal: mentions are tried in order and
- * the first pick wins. The analyst never proposes or creates an entity; a full miss logs `entity_miss`.
+ * #567 matching (Bucket, Nov 4 redesign): turn 1 lists the mentions, each with exactly 2 types, and marks
+ * the article's main subject (zod at the boundary). The injected `lookup` builds one shortlist over every
+ * mentioned type, per type in parallel: active entities whose name or alias appears in the article or
+ * mentions (alias hits, always kept), then filled with the most active entities of those types by item
+ * count, up to SHORTLIST_CAP. One decision-tool call gets the article, the main subject and the shortlist
+ * and picks one candidate or none (a closed choice). One main entity per signal; on none an
+ * `entity_miss` line is logged and nothing is created. The analyst never proposes an entity.
  */
 import {
   ANGLES,
@@ -30,7 +30,7 @@ export const ANALYST_D36_VERSION = 'analyst-567-v1';
 export const KEEP_QUESTION = 'Would a crypto trader or market watcher care about this, even if it is only talk for now?';
 
 /** The keep result when nothing is left to route (no mentions, all not related, or all new targets dropped). */
-const NOTHING_TO_ROUTE = 'The decision tool said keep, but no mention matched an existing entity, so there is nothing to route.';
+const NOTHING_TO_ROUTE = 'The decision tool said keep, but no existing entity on the shortlist fits the main subject, so there is nothing to route.';
 
 /** The allowed entity-type values for the LLM's JSON shapes, generated from the contracts' ENTITY_TYPES. */
 const ENTITY_TYPE_VALUES = ENTITY_TYPES.map((t) => `"${t}"`).join(' | ');
@@ -57,15 +57,13 @@ export type SignalInput = { signal_id: string; text: string; source?: string | n
 /** One existing, active entity offered to the pick step. */
 export type Candidate = { slug: string; name: string; type: string };
 
-/**
- * The #566 candidate lookup (atlas.entity_candidates / entity_candidates_any). Both are active-only and
- * exact on atlas.norm_alias; the DB normalizes the names, so callers pass raw text.
- */
+/** One shortlist row: an existing, active entity with what the decision tool needs to judge it. */
+export type ShortlistCandidate = Candidate & { id: string; aliases: string[]; summary: string; alias_hit: boolean; item_count: number };
+
+/** The shortlist builder (#566 tables, active only); the DB normalizes the names, so callers pass raw text. */
 export interface CandidateLookup {
-  /** Active entities of one type whose alias matches one of `names` (plus the type's recent/small-type extras). */
-  typed(type: EntityType, names: string[]): Promise<Candidate[]>;
-  /** The cross-type exact fallback: active entities of any type whose alias matches one of `names`. */
-  anyType(names: string[]): Promise<Candidate[]>;
+  /** Alias hits of these types first (always kept), then the most active entities of these types, deduped, up to `cap`. */
+  shortlist(types: EntityType[], names: string[], cap: number): Promise<ShortlistCandidate[]>;
 }
 
 export type AskInput = { question: string; choices: string[]; state: Record<string, unknown>; shortlist: Candidate[] };
@@ -85,31 +83,29 @@ export type JevLogEntry = {
   provider: 'jev' | 'clef';
 };
 
-/** The structured miss line (#567): no candidate was picked for any mention of a kept signal. */
+/** The structured miss line (#567): the decision tool picked none for a kept signal. */
 export type EntityMissEntry = {
   event: 'entity_miss';
   signal_id: string;
-  mention: string;
+  main_subject: string;
   types: EntityType[];
-  types_tried: EntityType[];
-  candidate_count: number;
-  fallback_tried: boolean;
-  fallback_candidate_count: number;
+  shortlist_size: number;
+  alias_hits: string[];
 };
 
-/** One matching trace row per mention, for the dry run and debugging. Never written to the DB. */
+/** The matching trace for one signal, for the dry run and debugging. Never written to the DB. */
 export type MatchTrace = {
   signal_id: string;
-  mention: string;
+  main_subject: string;
   types: EntityType[];
-  type_decision: 'obvious' | 'decided';
-  chosen_type: EntityType;
-  tries: { type: EntityType | 'any'; candidates: string[]; pick: string | null }[];
+  alias_hits: string[];
+  shortlist: string[];
   pick: Candidate | null;
+  confidence: number | null;
 };
 
-/** Most candidates shown to the pick step per try. */
-export const MAX_CANDIDATES = 8;
+/** Shortlist size cap (alias hits are always kept, even past it). */
+export const SHORTLIST_CAP = 40;
 
 /** Most article phrases sent to the lookup; 1-3 word windows over the signal text. */
 const MAX_ARTICLE_PHRASES = 600;
@@ -193,13 +189,9 @@ function keepQuestionFor(summary: string): string {
   return `Signal summary: "${summary}". ${KEEP_QUESTION}`;
 }
 
-function typeQuestionFor(mention: string, types: EntityType[]): string {
-  return `This signal touches "${mention}". Which kind of entity is it? Answer ${types.join(', ')}.`;
-}
-
-function pickQuestionFor(mention: string, candidates: Candidate[]): string {
-  return `This signal touches "${mention}". Candidate existing entities: ${candidates.map((c) => `${c.slug} (${c.name}, ${c.type})`).join('; ')}. ` +
-    `Which one is "${mention}"? Answer one slug, or none if none of them is it.`;
+function pickQuestionFor(main: string): string {
+  return `The main subject of this article is "${main}". The state holds the article and a shortlist of existing entities ` +
+    '(id, slug, name, type, aliases, summary). Which one entity is this article mainly about? Answer its slug, or none if no entity on the shortlist fits.';
 }
 
 function angleQuestionFor(mention: string): string {
@@ -227,7 +219,7 @@ export type SessionDeps = {
   log?: (e: JevLogEntry) => void;
   /** entity_miss lines; default is one JSON line on stdout. */
   missLog?: (e: EntityMissEntry) => void;
-  /** Per-mention matching trace (dry run); off by default. */
+  /** Matching trace (dry run); off by default. */
   trace?: (e: MatchTrace) => void;
   /** Every validated mention from turn 1 (dry run); off by default. */
   onMentions?: (mentions: AnalystMention[]) => void;
@@ -288,13 +280,13 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
   const request = { signal_id: signal.signal_id, text: signal.text, source: signal.source ?? null, link: signal.link ?? null };
   const turn1 = await step(
     `Signal:\n${JSON.stringify(request, null, 2)}\n\nReply with JSON only:\n` +
-      `{"headline": string, "summary": string, "mentions": [{"name": string, "types": [${ENTITY_TYPE_VALUES}], "search_terms": string[]}]}\n` +
+      `{"headline": string, "summary": string, "mentions": [{"name": string, "types": [${ENTITY_TYPE_VALUES}, ${ENTITY_TYPE_VALUES}], "main": boolean, "search_terms": string[]}]}\n` +
       'headline: one complete headline of at most 90 characters stating what happened. ' +
       'summary: 2-3 sentences (what happened, who it touches, why it matters to the reader). ' +
       'Neither may name the source, publisher, sharer or account, or start with "According to", "per", "reports" or "shared by". ' +
-      'mentions: at most 3 entities this signal touches, the main one first. types: the 1-3 most likely entity types for that mention, ' +
-      'most likely first, each exactly one of the listed values. Give one type only when you are certain; ' +
-      'whenever the type is not certain give 2 or 3 (for example "stablecoins" could be asset or topic, a project name could be protocol or product). search_terms: other names or tickers for it.',
+      'mentions: at most 3 entities this signal touches. types: exactly 2 entity types for that mention, the most likely first, ' +
+      'each one of the listed values (for example "stablecoins" could be asset then topic). main: true for exactly one mention, the article\'s main subject. ' +
+      'search_terms: other names or tickers for it.',
   );
   const summary = str(turn1.summary);
   const headline = str(turn1.headline);
@@ -315,17 +307,38 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
       return final('keep', 'The decision tool said keep, but no entities were mentioned, so there is nothing to route.', []);
     }
 
-    // Decision 2: type-first matching, mention by mention, until one picks an existing entity (one main entity).
-    const phrases = articlePhrases(signal.text);
-    let main: { mention: string; entity: Candidate } | null = null;
-    for (const mention of mentions) {
-      const picked = await matchMention(mention, phrases);
-      if (picked) {
-        main = { mention: mention.name, entity: picked };
-        break;
-      }
+    // Decision 2 (#567): one shortlist over every mentioned type, one closed pick for the main subject.
+    const mainMention = mentions.find((m) => m.main) ?? mentions[0];
+    const types = [...new Set([mainMention, ...mentions].flatMap((m) => m.types))];
+    const names = [...mentions.flatMap((m) => [m.name, ...m.search_terms]), ...articlePhrases(`${headline}\n${signal.text}`)];
+    const shortlist = dedupeBySlug(await deps.lookup.shortlist(types, names, SHORTLIST_CAP));
+    const aliasHits = shortlist.filter((c) => c.alias_hit).map((c) => c.slug);
+    let picked: ShortlistCandidate | null = null;
+    let confidence: number | null = null;
+    if (shortlist.length > 0) {
+      const choices = [...shortlist.map((c) => c.slug), 'none'];
+      const answer = await deps.ask({
+        question: pickQuestionFor(mainMention.name),
+        choices,
+        state: {
+          article: { headline, summary, text: signal.text },
+          main_subject: mainMention.name,
+          mentions: mentions.map((m) => ({ name: m.name, types: m.types })),
+          shortlist: shortlist.map(({ id, slug, name, type, aliases, summary: s1 }) => ({ id, slug, name, type, aliases, summary: s1 })),
+        },
+        shortlist,
+      });
+      confidence = answer.probabilities[answer.choice] ?? null;
+      deps.log?.({ signal_id: signal.signal_id, question: pickQuestionFor(mainMention.name), choices, answer: answer.choice, confidence, provider: answer.provider });
+      // Closed choice: anything outside the shortlist counts as none.
+      picked = shortlist.find((c) => c.slug === answer.choice) ?? null;
     }
-    if (!main) return final('keep', NOTHING_TO_ROUTE, []);
+    deps.trace?.({ signal_id: signal.signal_id, main_subject: mainMention.name, types, alias_hits: aliasHits, shortlist: shortlist.map((c) => c.slug), pick: picked ? { slug: picked.slug, name: picked.name, type: picked.type } : null, confidence });
+    if (!picked) {
+      missLog({ event: 'entity_miss', signal_id: signal.signal_id, main_subject: mainMention.name, types, shortlist_size: shortlist.length, alias_hits: aliasHits });
+      return final('keep', NOTHING_TO_ROUTE, []);
+    }
+    const main = { mention: mainMention.name, entity: picked as Candidate };
 
     // Turn 3: the LLM reasons about what this signal means for the main entity (context for the decision tool only).
     const turn3 = await step(
@@ -348,6 +361,7 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
       `The decision tool picked the angle ${angle} for ${main.entity.slug}; it is fixed.\n` +
         'Reply with JSON only:\n{"note": string, "reason": string}\n' +
         'note: one line on what is forming there, written to match the given angle.',
+      { lenientKey: 'note' },
     );
     // entities.type mirrors ENTITY_TYPES (the atlas type check), so the entity's own type always parses.
     return final('keep', str(turn4.reason) || 'The decision tool answered keep and the main entity is routed.', [
@@ -357,84 +371,13 @@ export async function runSession(signal: SignalInput, deps: SessionDeps): Promis
     if (e instanceof OffChoice) return final('unclear', e.message, []);
     throw e;
   }
-
-  /**
-   * Type-first match for one mention: pick the type (obvious or decided), try it, retry once with the
-   * second type, then the cross-type exact fallback. Returns the picked candidate or null (entity_miss).
-   */
-  async function matchMention(mention: AnalystMention, phrases: string[]): Promise<Candidate | null> {
-    const own = [mention.name, ...mention.search_terms];
-    const names = [...own, ...phrases];
-    const cache = new Map<EntityType, Candidate[]>();
-    const fetchTyped = async (t: EntityType): Promise<Candidate[]> => {
-      const hit = cache.get(t);
-      if (hit) return hit;
-      const rows = rankCandidates(await deps.lookup.typed(t, names), own);
-      cache.set(t, rows);
-      return rows;
-    };
-
-    const [top] = mention.types;
-    let order: EntityType[];
-    let typeDecision: MatchTrace['type_decision'] = 'obvious';
-    if (mention.types.length === 1 || (await fetchTyped(top)).length > 0) {
-      order = mention.types;
-    } else {
-      typeDecision = 'decided';
-      const chosen = (await askAndLog(typeQuestionFor(mention.name, mention.types), mention.types, { signal: signal.text, summary, mention: mention.name }, [])) as EntityType;
-      order = [chosen, ...mention.types.filter((t) => t !== chosen)];
-    }
-
-    const tries: MatchTrace['tries'] = [];
-    const pickFrom = async (candidates: Candidate[]): Promise<Candidate | null> => {
-      if (candidates.length === 0) return null;
-      const choice = await askAndLog(
-        pickQuestionFor(mention.name, candidates),
-        [...candidates.map((c) => c.slug), 'none'],
-        { signal: signal.text, summary, mention: mention.name, candidates },
-        candidates,
-      );
-      return candidates.find((c) => c.slug === choice) ?? null;
-    };
-    const done = (pick: Candidate | null): Candidate | null => {
-      deps.trace?.({ signal_id: signal.signal_id, mention: mention.name, types: mention.types, type_decision: typeDecision, chosen_type: order[0], tries, pick });
-      return pick;
-    };
-
-    let candidateCount = 0;
-    const typesTried = order.slice(0, 2); // the chosen type, then one retry with the next
-    for (const t of typesTried) {
-      const candidates = await fetchTyped(t);
-      candidateCount += candidates.length;
-      const pick = await pickFrom(candidates);
-      tries.push({ type: t, candidates: candidates.map((c) => c.slug), pick: pick?.slug ?? null });
-      if (pick) return done(pick);
-    }
-    // Both typed tries missed: exact match across all types on the mention's own names only.
-    const fallback = rankCandidates(await deps.lookup.anyType(own), own);
-    const pick = await pickFrom(fallback);
-    tries.push({ type: 'any', candidates: fallback.map((c) => c.slug), pick: pick?.slug ?? null });
-    if (pick) return done(pick);
-    missLog({
-      event: 'entity_miss', signal_id: signal.signal_id, mention: mention.name, types: mention.types,
-      types_tried: typesTried, candidate_count: candidateCount, fallback_tried: true, fallback_candidate_count: fallback.length,
-    });
-    return done(null);
-  }
 }
 
-/**
- * Dedupe by slug (first row wins), then entities named like the mention first; otherwise the lookup's
- * order is kept (alias hits before the event window), and only then the MAX_CANDIDATES cap.
- */
-function rankCandidates(rows: Candidate[], own: string[]): Candidate[] {
-  const norm = (v: string): string => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  const wanted = new Set(own.map(norm));
-  const bySlug = new Map<string, Candidate>();
+/** Dedupe by slug, first row wins (the lookup orders alias hits first). */
+function dedupeBySlug(rows: ShortlistCandidate[]): ShortlistCandidate[] {
+  const bySlug = new Map<string, ShortlistCandidate>();
   for (const r of rows) if (!bySlug.has(r.slug)) bySlug.set(r.slug, r);
-  return [...bySlug.values()]
-    .sort((a, b) => Number(wanted.has(norm(b.name)) || wanted.has(norm(b.slug))) - Number(wanted.has(norm(a.name)) || wanted.has(norm(a.slug))))
-    .slice(0, MAX_CANDIDATES);
+  return [...bySlug.values()];
 }
 
 /** Validate the LLM's mention rows with the contracts' zod schema; invalid rows are dropped; at most 3. */
@@ -443,9 +386,7 @@ function toMentions(raw: unknown): AnalystMention[] {
   return raw
     .map((row) => {
       const rec = asRec(row);
-      // Older shape: a single "type" becomes a one-element types list.
-      const input = rec.types === undefined && typeof rec.type === 'string' ? { ...rec, types: [rec.type] } : rec;
-      const parsed = analystMentionSchema.safeParse(input);
+      const parsed = analystMentionSchema.safeParse(rec);
       return parsed.success ? { ...parsed.data, search_terms: parsed.data.search_terms.filter((t) => t.trim().length > 0) } : null;
     })
     .filter((m): m is AnalystMention => m !== null)

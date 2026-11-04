@@ -38,7 +38,7 @@ const keepAll: Rule = (c) => (c.choices.includes('keep') ? 'keep' : c.choices.in
 const kalshiLlm: Llm = async (messages: ChatMessage[]) => {
   const turn = messages.filter((m) => m.role === 'assistant').length;
   const replies = [
-    { summary: 'Kalshi raised $1B at a $40B valuation, per Cointelegraph.', mentions: [{ name: 'Kalshi', types: ['organization'], search_terms: [] }] },
+    { summary: 'Kalshi raised $1B at a $40B valuation, per Cointelegraph.', mentions: [{ name: 'Kalshi', types: ['organization', 'product'], main: true, search_terms: [] }] },
     { reasoning: 'Continues its growth story.', reason: 'Not interesting.' },
     { note: 'Cointelegraph reports the raise.', reason: 'Routed.' },
   ];

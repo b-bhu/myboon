@@ -65,7 +65,7 @@ export async function main(): Promise<void> {
     }
 
     const lookup = pgCandidateLookup(pool);
-    const totals = { signals: 0, matched: 0, none: 0, fallback_matched: 0, ignored: 0, unclear: 0, failed: 0 };
+    const totals = { signals: 0, matched: 0, none: 0, ignored: 0, unclear: 0, failed: 0 };
     for (const signal of signals) {
       const traces: MatchTrace[] = [];
       const misses: EntityMissEntry[] = [];
@@ -73,17 +73,16 @@ export async function main(): Promise<void> {
       totals.signals += 1;
       try {
         const out = await runSession(signal, { llm, ask, lookup, trace: (t) => traces.push(t), onMentions: (m) => { allMentions = m; }, missLog: (m) => misses.push(m) });
-        const pick = traces.find((t) => t.pick)?.pick ?? null;
+        const t = traces[0];
         if (out.decision === 'ignore') totals.ignored += 1;
         else if (out.decision === 'unclear') totals.unclear += 1;
-        else if (pick) {
-          totals.matched += 1;
-          if (traces.some((t) => t.pick && t.tries.at(-1)?.type === 'any')) totals.fallback_matched += 1;
-        } else totals.none += 1;
+        else if (t?.pick) totals.matched += 1;
+        else totals.none += 1;
         console.log(JSON.stringify({
-          signal_id: signal.signal_id, text: signal.text.slice(0, 160), decision: out.decision, all_mentions: allMentions,
-          mentions: traces.map((t) => ({ mention: t.mention, types: t.types, type_decision: t.type_decision, chosen_type: t.chosen_type, tries: t.tries, pick: t.pick?.slug ?? null })),
-          final: pick ? `${pick.slug} (${pick.type})` : 'none', misses: misses.length, reason: out.decision === 'keep' ? undefined : out.reason,
+          signal_id: signal.signal_id, text: signal.text.slice(0, 200), decision: out.decision, headline: out.headline, all_mentions: allMentions,
+          main_subject: t?.main_subject, types: t?.types, shortlist_size: t?.shortlist.length ?? 0, alias_hits: t?.alias_hits ?? [],
+          shortlist: t?.shortlist ?? [], pick: t?.pick ? `${t.pick.slug} (${t.pick.type})` : 'none', confidence: t?.confidence ?? null,
+          target: out.targets[0] ?? null, reason: out.reason,
         }));
       } catch (e) {
         totals.failed += 1;

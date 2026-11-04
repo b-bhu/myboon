@@ -33,39 +33,33 @@ tables: everything it touches is created by
 - `src/session.ts` — the analyst session and type-first matching (#567, see
   below). `src/dry-run-matching.ts` is the read-only matching dry run.
 
-## Entity matching (#567, type-first)
+## Entity matching (#567, shortlist + one pick)
 
 ```mermaid
 flowchart LR
-  A[Signal] --> M[Turn 1: mentions, main first, top 1-3 types each]
-  M --> O{Type obvious?}
-  O -->|one type, or top type has candidates| F
-  O -->|no| D[Decision tool picks the type]
-  D --> F[Fetch candidates of that type]
-  F --> P[Decision tool: one slug or none]
-  P -->|none| R[Retry once with the 2nd type]
-  R -->|none| X[Cross-type exact fallback]
-  X -->|none| L[entity_miss log, next mention]
+  A[Signal] --> M[Turn 1: mentions, exactly 2 types each, one marked main]
+  M --> S[Shortlist over all mentioned types, per type in parallel]
+  S --> H[Alias hits first, always kept]
+  H --> F[Fill by entity item count, cap 40]
+  F --> P[One decision-tool call: slug or none]
   P -->|slug| E[One main entity per signal]
+  P -->|none| L[entity_miss log, nothing created]
 ```
 
-- Mentions are validated with zod (`analystMentionSchema` in `@myboon/contracts`).
-- Candidates come from `atlas.entity_candidates(type, names)` (#566, active
-  entities only, exact on `atlas.norm_alias`). `names` is the mention's name and
-  search terms plus every 1-3 word phrase in the article. Alias-first for every
-  type: a type with no alias hit has no candidates (then the 2nd-type retry, then
-  the fallback). For `event`, active events with an item in the last
-  `EVENT_WINDOW_DAYS` (7) days are added after the alias hits. The cap
-  (`MAX_CANDIDATES`, 8) applies after that ordering.
-- Turn 1 asks for one type only when certain, else 2-3 (e.g. stablecoins: asset or topic).
-- The pick is a closed choice: candidate slugs plus `none`. An answer outside
-  that list makes the signal `unclear`; no name is ever invented.
-- The cross-type fallback (`atlas.entity_candidates_any`, mention names only)
-  runs only after both typed tries miss.
-- Mentions are tried in order; the first pick is the signal's one main entity.
-- Never proposes: no code path inserts into `atlas.entities`. No CoinGecko, no
-  embeddings, no pre-pass.
-- A full miss logs one `entity_miss` line (see the RUNBOOK).
+- Mentions are validated with zod (`analystMentionSchema` in `@myboon/contracts`):
+  exactly 2 distinct types, a `main` flag (first mention if none is marked).
+- `pgCandidateLookup().shortlist(types, names, cap)` runs one read-only query per
+  type in parallel: active entities whose name or alias (`atlas.entity_candidates`,
+  #566, exact on `atlas.norm_alias`) matches the mentions or a 1-3 word phrase of
+  the headline and text, always kept; then the most active entities of those types
+  by `entity_items` count, deduped, up to `SHORTLIST_CAP` (40). Each row carries
+  id, slug, name, type, aliases and a one-line summary.
+- One decision-tool call gets the article, the main subject and the full shortlist
+  and answers one slug or `none` (closed choice). Anything outside the list counts
+  as none. There is no type-decision call, no retry and no cross-type fallback.
+- None logs one `entity_miss` line (see the RUNBOOK) and routes nothing. No code
+  path inserts into `atlas.entities`. No CoinGecko, no embeddings.
+- The reasoning and note turns accept a plain-text reply.
 
 Dry run (read-only, needs the analyst env; nothing is written):
 `pnpm --filter @myboon/analyst matching:dry-run --recent 20` or

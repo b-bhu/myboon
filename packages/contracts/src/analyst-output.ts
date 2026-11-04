@@ -24,16 +24,17 @@ export const ANGLES = ['new_story', 'existing_story', 'plain_update'] as const;
 export type Angle = (typeof ANGLES)[number];
 
 /**
- * #567 one analyst mention from the first turn: the name, its top 1-3 likely types (most likely
- * first, unique, each one of ENTITY_TYPES) and optional search terms. Validated at the LLM boundary.
+ * #567 one analyst mention from the first turn: the name, exactly 2 likely types (most likely first,
+ * distinct, each one of ENTITY_TYPES), whether it is the article's main subject, and optional search
+ * terms. Validated at the LLM boundary.
  */
 export const analystMentionSchema = z.object({
   name: z.string().trim().min(1),
   types: z
     .array(z.preprocess((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v), z.enum(ENTITY_TYPES)))
-    .min(1)
-    .max(3)
-    .refine((ts) => new Set(ts).size === ts.length, { message: 'types must be unique' }),
+    .length(2)
+    .refine((ts) => ts[0] !== ts[1], { message: 'types must be distinct' }),
+  main: z.boolean().default(false),
   search_terms: z.array(z.string()).default([]),
 });
 

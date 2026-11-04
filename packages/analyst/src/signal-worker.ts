@@ -16,7 +16,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { DecisionCase, Decider } from './deciders.js';
 import { itemSummary, itemTitle } from './item-wording.js';
 import { decideTimed } from './process.js';
-import type { Ask, AskInput, AskResult, Candidate, CandidateLookup, EntityMissEntry, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
+import type { Ask, AskInput, AskResult, CandidateLookup, ShortlistCandidate, EntityMissEntry, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
 import { runSession } from './session.js';
 import { claimNext, failClaim, finishClaim, type Db } from './states.js';
 
@@ -121,35 +121,48 @@ async function activeEntityId(client: PoolClient, slug: string): Promise<string>
   throw new Error(`target ${slug}: no active entity`);
 }
 
-/** Days of recent events offered as candidates for the event type (#567). */
-export const EVENT_WINDOW_DAYS = 7;
+type ShortlistRow = { id: string; slug: string; name: string; type: string; summary: string | null; aliases: string[] | null; alias_hit: boolean; item_count: number };
+
+/** The one-line summary shown to the decision tool: first sentence, at most 160 chars. */
+function oneLine(summary: string | null): string {
+  const text = (summary ?? '').replace(/\s+/g, ' ').trim();
+  const first = text.match(/^.*?[.!?](\s|$)/)?.[0]?.trim() ?? text;
+  return first.length > 160 ? `${first.slice(0, 157)}...` : first;
+}
 
 /**
- * The #566 lookup over Postgres, read-only. typed(): alias-first for every type (#567, Bucket Nov 4):
- * atlas.entity_candidates(type, names) (active only, exact on norm_alias). A type with no alias hit
- * has no candidates, except event, which also offers active events with an item in the last
- * EVENT_WINDOW_DAYS days, always after the alias hits. anyType(): atlas.entity_candidates_any(names).
+ * The #567 shortlist over Postgres, read-only, one query per type run in parallel: active entities of
+ * the type whose alias matches a name (atlas.entity_candidates, #566: exact on norm_alias), always kept,
+ * then the type's most active entities by entity item count. Merged as all alias hits first (in type
+ * order), then the fill by item count across types, deduped, capped at `cap` (alias hits are never cut).
  */
 export function pgCandidateLookup(db: Db): CandidateLookup {
   return {
-    async typed(type: EntityType, names: string[]): Promise<Candidate[]> {
-      const { rows } = await db.query<Candidate>(
-        `select slug, name, type from (
-           select c.slug, c.name, $1::text as type, 0 as rank from atlas.entity_candidates($1, $2::text[]) c
-           union all
-           select e.slug, e.name, e.type, 1 as rank from atlas.entities e
-            where $1 = 'event' and e.type = 'event' and e.status = 'active'
-              and exists (select 1 from atlas.entity_items i
-                           where i.main_entity_id = e.id and i.occurred_at > now() - make_interval(days => $3))
-         ) x
-         order by rank, slug`,
-        [type, names, EVENT_WINDOW_DAYS],
-      );
-      return rows;
-    },
-    async anyType(names: string[]): Promise<Candidate[]> {
-      const { rows } = await db.query<Candidate>('select slug, name, type from atlas.entity_candidates_any($1::text[])', [names]);
-      return rows;
+    async shortlist(types: EntityType[], names: string[], cap: number): Promise<ShortlistCandidate[]> {
+      const perType = await Promise.all(types.map(async (type) => (await db.query<ShortlistRow>(
+        `with hits as (select distinct c.entity_id from atlas.entity_candidates($1, $2::text[]) c),
+              ents as (
+                select e.id, e.slug, e.name, e.type, e.summary, (e.id in (select entity_id from hits)) as alias_hit,
+                       (select count(*) from atlas.entity_items i where i.main_entity_id = e.id)::int as item_count
+                  from atlas.entities e where e.type = $1 and e.status = 'active')
+         select ents.*, (select array_agg(a.alias order by a.alias) from atlas.entity_aliases a where a.entity_id = ents.id) as aliases
+           from ents
+          where alias_hit or ents.id in (select id from ents order by item_count desc, slug limit $3)
+          order by alias_hit desc, item_count desc, slug`,
+        [type, names, cap],
+      )).rows));
+      const rows = perType.flat();
+      const toCandidate = (r: ShortlistRow): ShortlistCandidate => ({
+        id: r.id, slug: r.slug, name: r.name, type: r.type, aliases: r.aliases ?? [], summary: oneLine(r.summary), alias_hit: r.alias_hit, item_count: r.item_count,
+      });
+      const seen = new Set<string>();
+      const out: ShortlistCandidate[] = [];
+      for (const r of rows.filter((x) => x.alias_hit)) if (!seen.has(r.slug)) { seen.add(r.slug); out.push(toCandidate(r)); }
+      for (const r of rows.filter((x) => !x.alias_hit).sort((a, b) => b.item_count - a.item_count || a.slug.localeCompare(b.slug))) {
+        if (out.length >= cap) break;
+        if (!seen.has(r.slug)) { seen.add(r.slug); out.push(toCandidate(r)); }
+      }
+      return out;
     },
   };
 }

@@ -9,14 +9,15 @@ import { ENTITY_TYPES, type EntityType } from '@myboon/contracts';
 
 import {
   KEEP_QUESTION,
+  SHORTLIST_CAP,
   articlePhrases,
   createOllamaLlm,
   isEntityType,
   runSession,
   type Ask,
   type AskInput,
-  type Candidate,
   type CandidateLookup,
+  type ShortlistCandidate,
   type ChatMessage,
   type EntityMissEntry,
   type JevLogEntry,
@@ -43,23 +44,24 @@ const ENTITIES: Ent[] = [
   { slug: 'old-kalshi', name: 'Kalshi Inc', type: 'organization', status: 'retired', aliases: ['Kalshi'] },
 ];
 
-/** In-memory lookup with the #566 contract; records every call. */
-function memLookup(entities: Ent[] = ENTITIES): CandidateLookup & { calls: string[] } {
-  const calls: string[] = [];
+/** In-memory shortlist with the #567 contract: alias hits of the types first, then fill by item count, active only. */
+function memLookup(entities: Ent[] = ENTITIES, items: Record<string, number> = {}): CandidateLookup & { calls: string[][] } {
+  const calls: string[][] = [];
   const hit = (e: Ent, names: string[]): boolean => {
     const wanted = new Set(names.map(norm));
-    return e.status === 'active' && [e.name, e.slug.replaceAll('-', ' '), ...e.aliases].some((a) => wanted.has(norm(a)));
+    return [e.name, ...e.aliases].some((a) => wanted.has(norm(a)));
   };
-  const out = (e: Ent): Candidate => ({ slug: e.slug, name: e.name, type: e.type });
+  const out = (e: Ent, aliasHit: boolean): ShortlistCandidate => ({
+    id: `id-${e.slug}`, slug: e.slug, name: e.name, type: e.type, aliases: e.aliases, summary: `${e.name} summary.`, alias_hit: aliasHit, item_count: items[e.slug] ?? 0,
+  });
   return {
     calls,
-    async typed(type, names) {
-      calls.push(`typed:${type}`);
-      return entities.filter((e) => e.type === type && hit(e, names)).map(out);
-    },
-    async anyType(names) {
-      calls.push('any');
-      return entities.filter((e) => hit(e, names)).map(out);
+    async shortlist(types, names, cap) {
+      calls.push(types);
+      const pool = entities.filter((e) => e.status === 'active' && types.includes(e.type));
+      const hits = pool.filter((e) => hit(e, names)).map((e) => out(e, true));
+      const fill = pool.filter((e) => !hit(e, names)).map((e) => out(e, false)).sort((a, b) => b.item_count - a.item_count);
+      return [...hits, ...fill.slice(0, Math.max(0, cap - hits.length))];
     },
   };
 }
@@ -76,16 +78,15 @@ function scriptedLlm(replies: unknown[]): Llm & { calls: ChatMessage[][] } {
   return llm;
 }
 
-/** Scripted decision tool: keep, type and pick answers by mention; angle defaults to plain_update. */
-function scriptedAsk(o: { keep?: string; type?: Record<string, string>; pick?: Record<string, string>; angle?: string }): Ask & { asked: AskInput[] } {
+/** Scripted decision tool: keep, the pick (by main subject; default the first choice), angle (default plain_update). */
+function scriptedAsk(o: { keep?: string; pick?: Record<string, string>; angle?: string }): Ask & { asked: AskInput[] } {
   const asked: AskInput[] = [];
   const ask = (async (input: AskInput) => {
     asked.push(input);
     const answer = (choice: string) => ({ choice, probabilities: { [choice]: 0.9 }, provider: 'jev' as const });
     if (input.choices.includes('keep')) return answer(o.keep ?? 'keep');
     if (input.choices.includes('new_story')) return answer(o.angle ?? 'plain_update');
-    const name = input.question.match(/touches "([^"]+)"/)?.[1] ?? '';
-    if (input.question.includes('Which kind of entity')) return answer(o.type?.[name] ?? input.choices[0]);
+    const name = input.question.match(/main subject of this article is "([^"]+)"/)?.[1] ?? '';
     return answer(o.pick?.[name] ?? input.choices[0]);
   }) as Ask & { asked: AskInput[] };
   ask.asked = asked;
@@ -96,194 +97,169 @@ const turn1 = (mentions: unknown[], extra: Record<string, unknown> = {}) => ({ h
 const kept = (mentions: unknown[]) => scriptedLlm([turn1(mentions), { reasoning: 'r' }, { note: 'n', reason: 'why' }]);
 const sig = (text: string) => ({ signal_id: 'sig-1', text });
 
-describe('#567 type-first matching (scripted LLM + decision tool, in-memory #566 lookup)', () => {
-  it('BTC and Bitcoin map to the bitcoin asset; the type is obvious so no decision call runs', async () => {
+const isPick = (a: AskInput): boolean => a.question.includes('main subject of this article');
+const m = (name: string, types: [EntityType, EntityType], o: { main?: boolean; search_terms?: string[] } = {}) =>
+  ({ name, types, main: o.main ?? false, search_terms: o.search_terms ?? [] });
+
+describe('#567 shortlist matching (scripted LLM + decision tool, in-memory shortlist)', () => {
+  it('BTC and Bitcoin map to the bitcoin asset with one pick call; alias hits lead the shortlist', async () => {
     const ask = scriptedAsk({});
     const traces: MatchTrace[] = [];
     const out = await runSession(sig('BTC tops $100k as Bitcoin ETFs see inflows'), {
-      llm: kept([{ name: 'Bitcoin', types: ['asset', 'topic'], search_terms: ['BTC'] }]), ask, lookup: memLookup(), trace: (t) => traces.push(t),
+      llm: kept([m('Bitcoin', ['asset', 'topic'], { main: true, search_terms: ['BTC'] })]), ask, lookup: memLookup(), trace: (t) => traces.push(t),
     });
     expect(out.targets).toEqual([{ entity: 'bitcoin', kind: 'existing', type: 'asset', angle: 'plain_update', note: 'n' }]);
-    expect(ask.asked.some((a) => a.question.includes('Which kind of entity'))).toBe(false);
-    expect(traces[0]).toMatchObject({ type_decision: 'obvious', chosen_type: 'asset', pick: { slug: 'bitcoin' } });
+    expect(ask.asked.filter(isPick)).toHaveLength(1);
+    expect(traces[0]).toMatchObject({ main_subject: 'Bitcoin', types: ['asset', 'topic'], alias_hits: ['bitcoin'], pick: { slug: 'bitcoin' } });
+    expect(traces[0].shortlist[0]).toBe('bitcoin');
   });
 
-  it('a Binance exploit article matches the existing Binance-hack event, not a new one', async () => {
-    const out = await runSession(sig('Binance exploit drains hot wallet'), {
-      llm: kept([{ name: 'Binance exploit', types: ['event'], search_terms: [] }]), ask: scriptedAsk({}), lookup: memLookup(),
+  it('the pick call gets the article, the main subject and the full shortlist with id, aliases and summary', async () => {
+    const ask = scriptedAsk({});
+    await runSession(sig('Binance exploit drains hot wallet'), {
+      llm: kept([m('Binance', ['organization', 'event']), m('Binance exploit', ['event', 'topic'], { main: true })]), ask, lookup: memLookup(),
     });
-    expect(out.targets.map((t) => t.entity)).toEqual(['binance-hack']);
+    const pick = ask.asked.find(isPick)!;
+    expect(pick.question).toContain('"Binance exploit"');
+    expect(pick.state).toMatchObject({ main_subject: 'Binance exploit', article: { headline: 'H', text: 'Binance exploit drains hot wallet' } });
+    const shortlist = (pick.state as { shortlist: { id: string; aliases: string[]; summary: string }[] }).shortlist;
+    expect(shortlist[0]).toMatchObject({ id: expect.any(String), aliases: expect.any(Array), summary: expect.any(String) });
+    expect(pick.choices.at(-1)).toBe('none');
+    expect(pick.choices).toContain('binance-hack');
   });
 
-  it('a mention with no candidate in either type logs entity_miss and routes nothing', async () => {
-    const misses: EntityMissEntry[] = [];
+  it('one shortlist over every mentioned type, main subject types first, built once', async () => {
     const lookup = memLookup();
-    const out = await runSession(sig('Zorblax launches'), {
-      llm: kept([{ name: 'Zorblax', types: ['protocol', 'product', 'organization'], search_terms: [] }]),
-      ask: scriptedAsk({ type: { Zorblax: 'product' } }), lookup, missLog: (e) => misses.push(e),
+    await runSession(sig('x'), {
+      llm: kept([m('XRP', ['asset', 'protocol']), m('Binance', ['organization', 'person'], { main: true })]), ask: scriptedAsk({}), lookup,
     });
-    expect(out.decision).toBe('keep');
-    expect(out.targets).toEqual([]);
-    expect(misses).toEqual([{
-      event: 'entity_miss', signal_id: 'sig-1', mention: 'Zorblax', types: ['protocol', 'product', 'organization'],
-      types_tried: ['product', 'protocol'], candidate_count: 0, fallback_tried: true, fallback_candidate_count: 0,
-    }]);
-    // Top type probed for obviousness, chosen type, one retry, then the cross-type fallback; never the third type.
-    expect(lookup.calls).toEqual(['typed:protocol', 'typed:product', 'any']);
+    expect(lookup.calls).toEqual([['organization', 'person', 'asset', 'protocol']]);
   });
 
-  it('an ambiguous mention runs the decision call and retries the second type at most once', async () => {
-    const ask = scriptedAsk({ type: { 'Digital RMB': 'protocol' } });
-    const lookup = memLookup();
-    const out = await runSession(sig('Digital RMB pilot expands'), {
-      llm: kept([{ name: 'Digital RMB', types: ['regulation', 'protocol', 'product'], search_terms: [] }]), ask, lookup, missLog: () => {},
+  it('alias hits are always kept and the fill is by item count, capped at SHORTLIST_CAP', async () => {
+    const many: Ent[] = Array.from({ length: 60 }, (_, i) => ({ slug: `p-${i}`, name: `P ${i}`, type: 'place' as const, status: 'active' as const, aliases: [] }));
+    const items = Object.fromEntries(many.map((e, i) => [e.slug, i]));
+    const traces: MatchTrace[] = [];
+    await runSession(sig('France delays budget vote again'), {
+      llm: kept([m('France', ['place', 'regulation'], { main: true })]), ask: scriptedAsk({}),
+      lookup: memLookup([...many, ...ENTITIES], items), trace: (t) => traces.push(t),
     });
-    expect(ask.asked.filter((a) => a.question.includes('Which kind of entity'))).toHaveLength(1);
-    // protocol (chosen) missed, regulation (2nd) missed, so the cross-type exact fallback finds the product.
-    expect(lookup.calls).toEqual(['typed:regulation', 'typed:protocol', 'any']);
-    expect(out.targets.map((t) => t.entity)).toEqual(['digital-rmb']);
+    expect(traces[0].alias_hits).toEqual(['france']);
+    expect(traces[0].shortlist[0]).toBe('france');
+    expect(traces[0].shortlist).toHaveLength(SHORTLIST_CAP);
+    expect(traces[0].shortlist[1]).toBe('p-59'); // most active first
   });
 
-  it('the cross-type fallback runs only after both typed tries miss (He Yi -> binance)', async () => {
-    const lookup = memLookup();
-    const out = await runSession(sig('He Yi comments'), {
-      llm: kept([{ name: 'He Yi', types: ['person'], search_terms: [] }]), ask: scriptedAsk({}), lookup,
+  it('France is found by its alias among more than 8 active places', async () => {
+    const out = await runSession(sig('France delays budget vote again'), {
+      llm: kept([m('France', ['place', 'regulation'], { main: true })]), ask: scriptedAsk({}), lookup: memLookup(),
     });
-    expect(lookup.calls).toEqual(['typed:person', 'any']);
-    expect(out.targets.map((t) => t.entity)).toEqual(['binance']);
+    expect(out.targets.map((t) => t.entity)).toEqual(['france']);
   });
 
-  it('the pick is a closed choice of candidate slugs plus none; none on every try is a miss', async () => {
-    const ask = scriptedAsk({ pick: { Bitcoin: 'none' } });
+  it('stablecoins: asset then topic in one shortlist, so the topic entity is on it and can be picked', async () => {
+    const ask = scriptedAsk({ pick: { Stablecoins: 'stablecoins' } });
+    const out = await runSession(sig('Stablecoin tax pending'), {
+      llm: kept([m('Stablecoins', ['asset', 'topic'], { main: true, search_terms: ['stablecoin'] })]), ask, lookup: memLookup(),
+    });
+    expect(ask.asked.find(isPick)!.choices).toEqual(expect.arrayContaining(['stablecoins', 'usdc', 'usdt', 'none']));
+    expect(out.targets.map((t) => t.entity)).toEqual(['stablecoins']);
+  });
+
+  it('none: entity_miss is logged with the shortlist size and alias hits, nothing is routed', async () => {
     const misses: EntityMissEntry[] = [];
     const out = await runSession(sig('Bitcoin'), {
-      llm: kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), ask, lookup: memLookup(), missLog: (e) => misses.push(e),
+      llm: kept([m('Bitcoin', ['asset', 'topic'], { main: true })]), ask: scriptedAsk({ pick: { Bitcoin: 'none' } }), lookup: memLookup(), missLog: (e) => misses.push(e),
     });
-    const picks = ask.asked.filter((a) => a.question.includes('Answer one slug'));
-    expect(picks[0].choices).toEqual(['bitcoin', 'none']);
+    expect(out).toMatchObject({ decision: 'keep', targets: [] });
+    expect(misses).toEqual([expect.objectContaining({ event: 'entity_miss', main_subject: 'Bitcoin', types: ['asset', 'topic'], alias_hits: ['bitcoin'] })]);
+  });
+
+  it('an empty shortlist makes no pick call and logs entity_miss', async () => {
+    const ask = scriptedAsk({});
+    const misses: EntityMissEntry[] = [];
+    await runSession(sig('Zorblax'), { llm: kept([m('Zorblax', ['protocol', 'product'], { main: true })]), ask, lookup: memLookup([]), missLog: (e) => misses.push(e) });
+    expect(ask.asked.filter(isPick)).toHaveLength(0);
+    expect(misses[0]).toMatchObject({ shortlist_size: 0 });
+  });
+
+  it('a pick outside the shortlist (an invented slug) counts as none: no target, never a new entity', async () => {
+    const misses: EntityMissEntry[] = [];
+    const out = await runSession(sig('Bitcoin'), {
+      llm: kept([m('Bitcoin', ['asset', 'topic'], { main: true })]), ask: scriptedAsk({ pick: { Bitcoin: 'bitcoin-new' } }), lookup: memLookup(), missLog: (e) => misses.push(e),
+    });
     expect(out.targets).toEqual([]);
     expect(misses).toHaveLength(1);
   });
 
-  it('a pick outside the offered slugs (an invented name) makes the signal unclear, never a new entity', async () => {
-    const out = await runSession(sig('Bitcoin'), {
-      llm: scriptedLlm([turn1([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }])]),
-      ask: scriptedAsk({ pick: { Bitcoin: 'bitcoin-new' } }), lookup: memLookup(),
+  it('#560: 3 mentions still give exactly one main entity, the marked main subject (XRP case)', async () => {
+    const ask = scriptedAsk({ pick: { XRP: 'xrp' } });
+    const out = await runSession(sig('XRP rallies as Binance lists Bitcoin pairs'), {
+      llm: kept([m('Binance', ['organization', 'person']), m('XRP', ['asset', 'protocol'], { main: true }), m('Bitcoin', ['asset', 'topic'])]), ask, lookup: memLookup(),
     });
-    expect(out.decision).toBe('unclear');
-    expect(out.targets).toEqual([]);
+    expect(out.targets.map((t) => t.entity)).toEqual(['xrp']);
+    expect(ask.asked.filter(isPick)).toHaveLength(1);
   });
 
-  it('#560: a signal with 3 mentions still yields exactly one main entity (XRP case)', async () => {
+  it('no mention marked main: the first mention is the main subject', async () => {
     const ask = scriptedAsk({});
-    const out = await runSession(sig('XRP rallies as Binance lists Bitcoin pairs'), {
-      llm: kept([
-        { name: 'XRP', types: ['asset'], search_terms: [] },
-        { name: 'Binance', types: ['organization'], search_terms: [] },
-        { name: 'Bitcoin', types: ['asset'], search_terms: [] },
-      ]), ask, lookup: memLookup(),
-    });
-    expect(out.targets).toHaveLength(1);
-    expect(out.targets[0].entity).toBe('xrp');
-    // The first match wins; later mentions are not looked up at all.
-    expect(ask.asked.filter((a) => a.question.includes('Answer one slug'))).toHaveLength(1);
+    await runSession(sig('x'), { llm: kept([m('Digital RMB', ['product', 'asset']), m('China', ['place', 'organization'])]), ask, lookup: memLookup() });
+    expect(ask.asked.find(isPick)!.question).toContain('"Digital RMB"');
   });
 
   it('#560: the Digital RMB signal gives one item on the existing product', async () => {
     const out = await runSession(sig('China expands e-CNY'), {
-      llm: kept([{ name: 'Digital RMB', types: ['product'], search_terms: ['e-CNY'] }, { name: 'China', types: ['place'], search_terms: [] }]),
-      ask: scriptedAsk({}), lookup: memLookup(), missLog: () => {},
+      llm: kept([m('Digital RMB', ['product', 'asset'], { main: true, search_terms: ['e-CNY'] }), m('China', ['place', 'organization'])]),
+      ask: scriptedAsk({ pick: { 'Digital RMB': 'digital-rmb' } }), lookup: memLookup(),
     });
     expect(out.targets.map((t) => t.entity)).toEqual(['digital-rmb']);
   });
 
-  it('#560: active-only candidates: a retired entity alias is never offered', async () => {
-    const misses: EntityMissEntry[] = [];
+  it('#560: active-only: a retired entity is never on the shortlist', async () => {
     const ask = scriptedAsk({});
-    const out = await runSession(sig('Kalshi raises'), {
-      llm: kept([{ name: 'Kalshi', types: ['organization'], search_terms: [] }]), ask, lookup: memLookup(), missLog: (e) => misses.push(e),
-    });
-    expect(ask.asked.flatMap((a) => a.shortlist).map((c) => c.slug)).not.toContain('old-kalshi');
-    expect(out.targets).toEqual([]);
-    expect(misses).toHaveLength(1);
+    await runSession(sig('Kalshi raises'), { llm: kept([m('Kalshi', ['organization', 'product'], { main: true })]), ask, lookup: memLookup(), missLog: () => {} });
+    expect(ask.asked.flatMap((a) => a.choices)).not.toContain('old-kalshi');
   });
 
-  it('#560: ignore still writes nothing and makes no lookup', async () => {
+  it('#560: ignore writes nothing and builds no shortlist', async () => {
     const lookup = memLookup();
     const out = await runSession(sig('meh'), {
-      llm: scriptedLlm([turn1([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), { reason: 'noise' }]),
-      ask: scriptedAsk({ keep: 'ignore' }), lookup,
+      llm: scriptedLlm([turn1([m('Bitcoin', ['asset', 'topic'])]), { reason: 'noise' }]), ask: scriptedAsk({ keep: 'ignore' }), lookup,
     });
     expect(out).toMatchObject({ decision: 'ignore', reason: 'noise', targets: [] });
     expect(lookup.calls).toEqual([]);
   });
 
-  it('mentions are validated with zod: bad types are dropped, an old single "type" still parses', async () => {
+  it('mentions are validated with zod: exactly 2 distinct types; bad rows are dropped', async () => {
     const lookup = memLookup();
-    const out = await runSession(sig('BTC'), {
-      llm: kept([{ name: 'Foo', types: ['jurisdiction'] }, { name: '', types: ['asset'] }, { name: 'Bitcoin', type: 'Asset' }]),
+    await runSession(sig('BTC'), {
+      llm: kept([{ name: 'Foo', types: ['asset'] }, { name: 'Bar', types: ['asset', 'asset'] }, { name: 'Baz', types: ['jurisdiction', 'asset'] }, m('Bitcoin', ['asset', 'topic'])]),
       ask: scriptedAsk({}), lookup,
     });
-    expect(out.targets.map((t) => t.entity)).toEqual(['bitcoin']);
-    expect(lookup.calls).toEqual(['typed:asset']);
+    expect(lookup.calls).toEqual([['asset', 'topic']]);
   });
 
-  it('turn 1 asks for top types per mention, main first; the keep question is the fixed wording', async () => {
-    const llm = kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]);
+  it('turn 1 asks for exactly 2 types and a main flag; the keep question is the fixed wording', async () => {
+    const llm = kept([m('Bitcoin', ['asset', 'topic'])]);
     const ask = scriptedAsk({});
     await runSession(sig('BTC'), { llm, ask, lookup: memLookup() });
-    expect(llm.calls[0][1].content).toContain('"types": [');
-    expect(llm.calls[0][1].content).toContain('the main one first');
+    expect(llm.calls[0][1].content).toContain('exactly 2 entity types');
+    expect(llm.calls[0][1].content).toContain('"main": boolean');
     expect(ask.asked[0].question).toContain(KEEP_QUESTION);
+  });
+
+  it('prose replies to the reasoning and note steps do not fail the signal; the prose becomes the note', async () => {
+    const out = await runSession(sig('BTC'), {
+      llm: scriptedLlm([turn1([m('Bitcoin', ['asset', 'topic'])]), 'This continues a story.', 'note: HYPE tests support.']),
+      ask: scriptedAsk({}), lookup: memLookup(),
+    });
+    expect(out.targets[0]).toMatchObject({ entity: 'bitcoin', note: 'note: HYPE tests support.' });
   });
 
   it('every decision-tool call is logged', async () => {
     const logs: JevLogEntry[] = [];
-    await runSession(sig('BTC'), { llm: kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), ask: scriptedAsk({}), lookup: memLookup(), log: (e) => logs.push(e) });
+    await runSession(sig('BTC'), { llm: kept([m('Bitcoin', ['asset', 'topic'])]), ask: scriptedAsk({}), lookup: memLookup(), log: (e) => logs.push(e) });
     expect(logs.map((l) => l.answer)).toEqual(['keep', 'bitcoin', 'plain_update']);
-  });
-
-  it('a prose reasoning reply (no JSON) does not fail the signal; it is used as context', async () => {
-    const out = await runSession(sig('BTC'), {
-      llm: scriptedLlm([turn1([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), 'This continues a story.', { note: 'n', reason: 'r' }]),
-      ask: scriptedAsk({}), lookup: memLookup(),
-    });
-    expect(out.targets.map((t) => t.entity)).toEqual(['bitcoin']);
-  });
-
-  it('alias-first: France is found by its alias among more than 8 active places; only it is offered', async () => {
-    const ask = scriptedAsk({});
-    const out = await runSession(sig('France delays budget vote again'), {
-      llm: kept([{ name: 'France', types: ['place'], search_terms: [] }]), ask, lookup: memLookup(),
-    });
-    const offered = ask.asked.filter((a) => a.question.includes('Answer one slug'))[0].choices;
-    expect(offered).toEqual(['france', 'none']);
-    expect(out.targets.map((t) => t.entity)).toEqual(['france']);
-  });
-
-  it('stablecoins: asset offers only USDC/USDT, the decision says none, the retry with topic finds stablecoins', async () => {
-    const lookup = memLookup();
-    const ask = scriptedAsk({});
-    const realAsk: typeof ask = Object.assign(async (input: AskInput) => {
-      if (input.question.includes('Answer one slug') && input.choices.includes('usdc')) {
-        ask.asked.push(input);
-        return { choice: 'none', probabilities: { none: 0.9 }, provider: 'jev' as const };
-      }
-      return ask(input);
-    }, { asked: ask.asked });
-    const traces: MatchTrace[] = [];
-    const out = await runSession(sig('Stablecoins USDC USDT tax pending'), {
-      llm: kept([{ name: 'Stablecoins', types: ['asset', 'topic'], search_terms: ['USDC', 'USDT'] }]), ask: realAsk, lookup, trace: (t) => traces.push(t),
-    });
-    expect(lookup.calls).toEqual(['typed:asset', 'typed:topic']);
-    expect(traces[0].tries.map((t) => [t.type, t.pick])).toEqual([['asset', null], ['topic', 'stablecoins']]);
-    expect(out.targets.map((t) => t.entity)).toEqual(['stablecoins']);
-  });
-
-  it('turn 1 asks for 2-3 types whenever the type is not certain', async () => {
-    const llm = kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]);
-    await runSession(sig('BTC'), { llm, ask: scriptedAsk({}), lookup: memLookup() });
-    expect(llm.calls[0][1].content).toContain('give 2 or 3');
   });
 
   it('articlePhrases gives 1-3 word windows, lowercased, punctuation stripped', () => {

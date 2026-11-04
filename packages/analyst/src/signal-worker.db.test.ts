@@ -48,7 +48,7 @@ const keepAll: Rule = (c) => (c.choices.includes('keep') ? 'keep' : c.choices.in
 /** Scripted LLM for the Kalshi signal: dissect, reasoning, notes (ignore path uses the 2nd reply as the reason). */
 function kalshiLlm(o: { fail?: boolean } = {}): Llm & { turns: number } {
   const replies = [
-    { summary: 'Kalshi raised $1B at a $40B valuation, per Cointelegraph.', mentions: [{ name: 'Kalshi', types: ['organization'], search_terms: [] }] },
+    { summary: 'Kalshi raised $1B at a $40B valuation, per Cointelegraph.', mentions: [{ name: 'Kalshi', types: ['organization', 'product'], main: true, search_terms: [] }] },
     { reasoning: 'Continues its growth story.', reason: 'Not interesting.' },
     { note: 'Cointelegraph reports the raise.', reason: 'Routed.' },
   ];
@@ -116,7 +116,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   it('unclear: the signal is parked with the reason', async () => {
-    const r = await processNextD36(svcPool, opts({ primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : 'banana')) }));
+    const r = await processNextD36(svcPool, opts({ primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : c.choices.includes('new_story') ? 'banana' : c.choices[0])) }));
     expect(r?.result).toBe('parked');
     const s = await sig();
     expect(s.status).toBe('parked');
@@ -275,7 +275,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   it('unclear writes a decision row (targets []) and no items (PgDecisionSink)', async () => {
-    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : 'banana')) }));
+    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : c.choices.includes('new_story') ? 'banana' : c.choices[0])) }));
     expect(r?.result).toBe('parked');
     const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
     expect(d.decision).toBe('unclear');
@@ -425,41 +425,42 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     });
   });
 
-  describe('#567 pgCandidateLookup on the #566 tables', () => {
-    it('typed: exact alias hits of one type, active only; anyType: cross-type exact', async () => {
-      const lookup = pgCandidateLookup(svcPool);
-      await pool.query("update atlas.entities set status = 'retired' where slug = 'base'");
-      const typed = await lookup.typed('organization', ['COINBASE', 'base', 'unrelated words']);
-      expect(typed.map((c) => c.slug)).toContain('coinbase');
-      expect(typed.every((c) => c.type === 'organization')).toBe(true);
-      expect((await lookup.anyType(['Base'])).map((c) => c.slug)).not.toContain('base');
-      expect((await lookup.anyType(['Coinbase'])).map((c) => c.slug)).toEqual(['coinbase']);
+  describe('#567 pgCandidateLookup shortlist on the #566 tables', () => {
+    const seedPlaces = async (n: number) => {
+      for (let k = 0; k < n; k += 1) await pool.query("insert into atlas.entities (slug, name, type) values ($1, $2, 'place')", [`place-${k}`, `Place ${k}`]);
+      await pool.query("insert into atlas.entities (slug, name, type, aliases, summary) values ('france', 'France', 'place', array['French Republic'], 'A country. Second sentence.')");
+      await seedAliases(pool);
+    };
+    const giveItems = async (slug: string, count: number) => {
+      for (let k = 0; k < count; k += 1) {
+        await pool.query(`insert into atlas.signals (signal_id, schema_version, source, source_id, type, text, link, occurred_at)
+          values ($1, 1, 'tokens_xyz', $1, 'news', 'x', null, now())`, [`${slug}-${k}`]);
+        await pool.query(`insert into atlas.entity_items (item_key, title, summary, main_entity_id, signal_id, angle, note, occurred_at)
+          select $1, 't', 's', id, $1, 'plain_update', 'n', now() from atlas.entities where slug = $2`, [`${slug}-${k}`, slug]);
+      }
+    };
+
+    it('alias hits first and always kept, then the fill by item count, capped; carries id, aliases and one-line summary', async () => {
+      await seedPlaces(50);
+      await giveItems('place-7', 3);
+      await giveItems('place-3', 1);
+      const rows = await pgCandidateLookup(svcPool).shortlist(['place', 'regulation'], ['france delays', 'french republic'], 10);
+      expect(rows.map((r) => r.slug).slice(0, 3)).toEqual(['france', 'place-7', 'place-3']);
+      expect(rows).toHaveLength(10);
+      expect(rows[0]).toMatchObject({ id: expect.any(String), type: 'place', alias_hit: true, summary: 'A country.' });
+      expect(rows[0].aliases).toEqual(expect.arrayContaining(['France', 'French Republic']));
+      expect(rows.filter((r) => r.alias_hit).map((r) => r.slug)).toEqual(['france']);
     });
 
-    it('event: active events with an item in the last EVENT_WINDOW_DAYS days are offered', async () => {
-      await pool.query("insert into atlas.entities (slug, name, type) values ('binance-hack', 'Binance hot wallet exploit', 'event'), ('old-event', 'Old Event', 'event')");
-      await pool.query(`insert into atlas.entity_items (item_key, title, summary, main_entity_id, signal_id, angle, note, occurred_at)
-        select 'k-'||slug, 't', 's', id, $1, 'plain_update', 'n', case when slug = 'old-event' then now() - interval '30 days' else now() end
-          from atlas.entities where slug in ('binance-hack', 'old-event')`, [KALSHI.signal_id]);
-      const lookup = pgCandidateLookup(svcPool);
-      await seedAliases(pool);
-      expect((await lookup.typed('event', ['nothing matches'])).map((c) => c.slug)).toEqual(['binance-hack']);
-      await pool.query("insert into atlas.entities (slug, name, type) values ('aa-alias-event', 'Zeta Fork', 'event')");
-      await seedAliases(pool);
-      // Alias hits come first, then the recent-events window.
-      expect((await lookup.typed('event', ['zeta fork'])).map((c) => c.slug)).toEqual(['aa-alias-event', 'binance-hack']);
-    });
-
-    it('alias-first for every type: 10 active places, only the alias hit (France) is offered; no hit means no candidates', async () => {
-      const places = ['argentina', 'australia', 'canada', 'china', 'iran', 'finland', 'japan', 'brazil', 'india', 'france'];
-      for (const p of places) await pool.query("insert into atlas.entities (slug, name, type) values ($1, initcap($1), 'place')", [p]);
-      await pool.query("update atlas.entities set aliases = array['French Republic'] where slug = 'france'");
-      await seedAliases(pool);
-      const lookup = pgCandidateLookup(svcPool);
-      const phrases = ['france delays', 'france', 'budget vote'];
-      expect((await lookup.typed('place', phrases)).map((c) => c.slug)).toEqual(['france']);
-      expect((await lookup.typed('place', ['French Republic'])).map((c) => c.slug)).toEqual(['france']);
-      expect(await lookup.typed('place', ['budget vote'])).toEqual([]);
+    it('both types are searched; active only; deduped', async () => {
+      await seedPlaces(2);
+      await pool.query("update atlas.entities set status = 'retired' where slug = 'place-0'");
+      const rows = await pgCandidateLookup(svcPool).shortlist(['organization', 'place'], ['Coinbase', 'Place 0'], 40);
+      const slugs = rows.map((r) => r.slug);
+      expect(slugs[0]).toBe('coinbase');
+      expect(slugs).not.toContain('place-0');
+      expect(new Set(slugs).size).toBe(slugs.length);
+      expect(rows.some((r) => r.type === 'place')).toBe(true);
     });
   });
 });
