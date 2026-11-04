@@ -89,6 +89,25 @@ where source = 'tokens_xyz' and fetched_at > now() - interval '1 day';
 Expect `with_feed_source = total` for rows written after #561 deploys;
 `with_author` is lower because some coingecko articles have no byline.
 
+## Analyst `entity_miss` lines (#567)
+
+The analyst logs one JSON line when a kept signal's mention matches no
+existing entity. It never creates an entity, so this line is the only trace:
+
+```json
+{"event":"entity_miss","signal_id":"...","mention":"Zorblax","types":["protocol","product"],
+ "types_tried":["product","protocol"],"candidate_count":0,"fallback_tried":true,"fallback_candidate_count":0}
+```
+
+- `types`: the LLM's top types; `types_tried`: the chosen type, then the one retry.
+- `candidate_count` 0 means no alias of those types appears in the article or
+  the mention names: usually a missing alias or a truly new name. A count above
+  0 means candidates were offered and the decision tool said `none`.
+- `fallback_candidate_count`: hits from the cross-type exact fallback.
+- Read them with `pm2 logs myboon-analyst --nostream --lines 500 | grep entity_miss`.
+  Repeated misses on one name are the cue to add an alias (DB Guy) or a new
+  entity by hand; the analyst never adds either.
+
 ## Health numbers (`health` log lines)
 
 Service_role's atlas grants (20261026011119, 20261026011428, 20261027120000)

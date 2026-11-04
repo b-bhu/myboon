@@ -208,8 +208,7 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
       ['s2', 'reject', null, true],
     ]);
 
-    // Existing signal-worker behaviour is preserved: a later kind-new target for the now-retired
-    // slug files no item and logs target_dropped (the live worker sink, as analyst_worker).
+    // #567: a later kind-new target for the now-retired slug files no item and logs target_dropped (never proposes).
     await seedSignal('s3', { withDecision: false });
     const sinkLog: Record<string, unknown>[] = [];
     const sink = new PgDecisionSink(workerPool, (e) => sinkLog.push(e));
@@ -225,7 +224,7 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
     expect((await pool.query<{ n: number }>("select count(*)::int n from atlas.entity_items where signal_id = 's3'")).rows[0]!.n).toBe(0);
     expect((await pool.query<{ n: number }>("select count(*)::int n from atlas.decisions where signal_id = 's3'")).rows[0]!.n).toBe(1);
     expect(sinkLog).toEqual([{
-      event: 'target_dropped', signal_id: 's3', entity: 'kalshi-inc', reason: expect.stringContaining('retired'),
+      event: 'target_dropped', signal_id: 's3', entity: 'kalshi-inc', reason: 'new entities are never created (#567)',
     }]);
     expect(await entityStatus('kalshi-inc')).toBe('retired');
   });

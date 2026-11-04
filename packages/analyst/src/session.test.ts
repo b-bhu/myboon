@@ -1,30 +1,63 @@
 /**
- * #504 D36 analyst session, pure (no DB). The LLM and Jev are scripted; the entity search runs over the spike's
- * read-only entity snapshot subset. Scenarios from the issue's acceptance list.
+ * #567 type-first analyst session, pure (no DB). The LLM and the decision tool are scripted; the
+ * candidate lookup is an in-memory stand-in for atlas.entity_candidates(_any) (#566: active only,
+ * exact on the normalized alias). Covers the #567 acceptance scenarios and the #560 folded tests.
  */
 import { describe, expect, it } from 'vitest';
 
-import { ENTITY_TYPES } from '@myboon/contracts';
+import { ENTITY_TYPES, type EntityType } from '@myboon/contracts';
 
 import {
   KEEP_QUESTION,
-  SYSTEM_PROMPT,
-  canonicalSlug,
+  articlePhrases,
   createOllamaLlm,
   isEntityType,
   runSession,
-  searchEntities,
   type Ask,
   type AskInput,
+  type Candidate,
+  type CandidateLookup,
   type ChatMessage,
+  type EntityMissEntry,
   type JevLogEntry,
   type Llm,
+  type MatchTrace,
 } from './session.js';
-import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 
-type Mention = { name: string; type: string; search_terms: string[] };
+type Ent = { slug: string; name: string; type: EntityType; status: 'active' | 'retired'; aliases: string[] };
 
-/** Scripted LLM: replays JSON replies in order and records every message list it was sent. */
+const norm = (v: string): string => v.toLowerCase().replace(/[^a-z0-9$]+/g, ' ').trim();
+
+const ENTITIES: Ent[] = [
+  { slug: 'bitcoin', name: 'Bitcoin', type: 'asset', status: 'active', aliases: ['BTC', 'XBT'] },
+  { slug: 'xrp', name: 'XRP', type: 'asset', status: 'active', aliases: ['Ripple XRP'] },
+  { slug: 'binance', name: 'Binance', type: 'organization', status: 'active', aliases: ['He Yi', 'BNB Chain'] },
+  { slug: 'binance-hack', name: 'Binance hot wallet exploit', type: 'event', status: 'active', aliases: ['Binance exploit'] },
+  { slug: 'digital-rmb', name: 'Digital RMB', type: 'product', status: 'active', aliases: ['e-CNY'] },
+  { slug: 'old-kalshi', name: 'Kalshi Inc', type: 'organization', status: 'retired', aliases: ['Kalshi'] },
+];
+
+/** In-memory lookup with the #566 contract; records every call. */
+function memLookup(entities: Ent[] = ENTITIES): CandidateLookup & { calls: string[] } {
+  const calls: string[] = [];
+  const hit = (e: Ent, names: string[]): boolean => {
+    const wanted = new Set(names.map(norm));
+    return e.status === 'active' && [e.name, e.slug.replaceAll('-', ' '), ...e.aliases].some((a) => wanted.has(norm(a)));
+  };
+  const out = (e: Ent): Candidate => ({ slug: e.slug, name: e.name, type: e.type });
+  return {
+    calls,
+    async typed(type, names) {
+      calls.push(`typed:${type}`);
+      return entities.filter((e) => e.type === type && hit(e, names)).map(out);
+    },
+    async anyType(names) {
+      calls.push('any');
+      return entities.filter((e) => hit(e, names)).map(out);
+    },
+  };
+}
+
 function scriptedLlm(replies: unknown[]): Llm & { calls: ChatMessage[][] } {
   const calls: ChatMessage[][] = [];
   const llm = (async (messages: ChatMessage[]) => {
@@ -37,292 +70,180 @@ function scriptedLlm(replies: unknown[]): Llm & { calls: ChatMessage[][] } {
   return llm;
 }
 
-/** Scripted Jev: answers by question kind and mention name; records every question. */
-function scriptedJev(o: { keep: string; existence?: Record<string, string>; angle?: Record<string, string> }): Ask & { asked: AskInput[] } {
+/** Scripted decision tool: keep, type and pick answers by mention; angle defaults to plain_update. */
+function scriptedAsk(o: { keep?: string; type?: Record<string, string>; pick?: Record<string, string>; angle?: string }): Ask & { asked: AskInput[] } {
   const asked: AskInput[] = [];
   const ask = (async (input: AskInput) => {
     asked.push(input);
     const answer = (choice: string) => ({ choice, probabilities: { [choice]: 0.9 }, provider: 'jev' as const });
-    if (input.choices.includes('keep')) return answer(o.keep);
-    const name = Object.keys({ ...o.existence, ...o.angle }).find((n) => input.question.includes(`"${n}"`));
-    if (!name) throw new Error(`unscripted Jev question: ${input.question}`);
-    if (input.choices.includes('new_story')) return answer(o.angle?.[name] ?? 'plain_update');
-    return answer(o.existence?.[name] ?? 'not_related');
+    if (input.choices.includes('keep')) return answer(o.keep ?? 'keep');
+    if (input.choices.includes('new_story')) return answer(o.angle ?? 'plain_update');
+    const name = input.question.match(/touches "([^"]+)"/)?.[1] ?? '';
+    if (input.question.includes('Which kind of entity')) return answer(o.type?.[name] ?? input.choices[0]);
+    return answer(o.pick?.[name] ?? input.choices[0]);
   }) as Ask & { asked: AskInput[] };
   ask.asked = asked;
   return ask;
 }
 
-const search = async (terms: string[]) => searchEntities(terms, spikeEntities);
+const turn1 = (mentions: unknown[], extra: Record<string, unknown> = {}) => ({ headline: 'H', summary: 'S.', mentions, ...extra });
+const kept = (mentions: unknown[]) => scriptedLlm([turn1(mentions), { reasoning: 'r' }, { note: 'n', reason: 'why' }]);
+const sig = (text: string) => ({ signal_id: 'sig-1', text });
 
-/** Per spike case: the mentions the scripted LLM lists (names from the v5 Jev questions, search terms scripted). */
-const MENTIONS: Record<string, Mention[]> = {
-  'test-standuquesne-2115777839622689036': [
-    { name: 'trade.xyz', type: 'protocol', search_terms: ['Trade.XYZ', 'trade(xyz)'] },
-    { name: 'Intercontinental Exchange (ICE)', type: 'organization', search_terms: ['ICE'] },
-    { name: 'Hyperliquid', type: 'protocol', search_terms: ['HYPE'] },
-  ],
-  '05d904405cc85501c44bd32ba7744b3217665245b7cf3431ed451af28f5b5b72': [
-    { name: 'Base', type: 'protocol', search_terms: [] },
-    { name: 'Coinbase', type: 'organization', search_terms: ['Base'] },
-    { name: 'Tokenized stocks', type: 'topic', search_terms: ['Tokenization of real-world assets'] },
-  ],
-  '3bed46f7813adab73db18d8e45a9e143bafd080b901f80cd064565821cc9233a': [
-    { name: 'Elon Musk', type: 'person', search_terms: [] },
-    { name: 'Stanley Druckenmiller', type: 'person', search_terms: ['Druckenmiller'] },
-    { name: 'Hyperliquid', type: 'protocol', search_terms: [] },
-  ],
-  '0d4c3fb8ff4265b631a4859cf5594055e100972b1d336776aed0d11abff2a81b': [
-    { name: 'Solana', type: 'asset', search_terms: [] },
-    { name: 'Real-World Assets (RWA) on Solana', type: 'topic', search_terms: ['Tokenization of real-world assets'] },
-  ],
-  '9b5c85c270f40b67a668a9ad1a8247d6452f56ad2f5cf57ff0fc90efcfa05410': [
-    { name: 'Tokenized stocks', type: 'topic', search_terms: ['Tokenization of real-world assets'] },
-    { name: 'Jersey', type: 'jurisdiction', search_terms: [] },
-    { name: 'ADGM (Abu Dhabi Global Market)', type: 'jurisdiction', search_terms: [] },
-  ],
-  'f89d45bbd398a54e02a11569426a5c7b171205d46823b41afbfe60fb027cd563': [
-    { name: 'Kalshi', type: 'organization', search_terms: [] },
-  ],
-};
-
-/** Jev's v5 answers keyed by mention name (the v5 questions name the mention; ADGM was asked as "ADGM"). */
-function jevFromV5(c: (typeof spikeCases)[number]) {
-  const existence: Record<string, string> = {};
-  const angle: Record<string, string> = {};
-  const mentions = MENTIONS[c.signal.signal_id];
-  for (const j of c.v5.jev) {
-    if (j.choices.includes('keep')) continue;
-    const m = mentions.find((x) => j.question.includes(`"${x.name}"`) || x.name.startsWith(j.question.match(/"([^"]+)"/)?.[1] ?? '\u0000'));
-    if (!m) throw new Error(`fixture: no mention for ${j.question}`);
-    if (j.choices.includes('new_story')) angle[m.name] = j.answer;
-    else existence[m.name] = j.answer;
-  }
-  return { keep: 'keep', existence, angle };
-}
-
-/** The four scripted LLM turns for a keep path; the LLM's own angle is deliberately wrong. */
-function keepReplies(summary: string, mentions: Mention[], kept: { name: string; type: string; note: string }[]) {
-  return [
-    { summary, mentions },
-    { reasoning: kept.map((k) => ({ mention: k.name, reasoning: `What this means for ${k.name}.` })) },
-    { targets: kept.map((k) => ({ mention: k.name, type: k.type, note: k.note, angle: 'new_story', entity: 'llm-made-this-up' })), reason: 'Routed per the decision tool.' },
-  ];
-}
-
-describe('#504 D36 analyst session (scripted LLM + Jev)', () => {
-  for (const c of spikeCases) {
-    it(`spike signal ${c.signal.signal_id.slice(0, 12)}: output matches the v5 decision, targets, kinds and angles`, async () => {
-      const mentions = MENTIONS[c.signal.signal_id];
-      const jev = jevFromV5(c);
-      const kept = mentions.filter((m) => jev.existence[m.name] !== 'not_related')
-        .map((m) => ({ name: m.name, type: c.v5.targets.find((t) => t.entity === canonicalSlug(m.name))?.type ?? m.type, note: `Note on ${m.name}.` }));
-      const llm = scriptedLlm(keepReplies(c.v5.summary, mentions, kept));
-      const out = await runSession(c.signal, { llm, ask: scriptedJev(jev), search });
-      expect(out.decision).toBe(c.v5.decision);
-      // Strict type rules: an existing target carries the entity's own type; a kept new target with a
-      // non-entity type is dropped like not_related (the v5 fixtures classed Jersey/ADGM 'jurisdiction').
-      const want = c.v5.targets.flatMap((t): { entity: string; kind: 'existing' | 'new'; type: string; angle: string }[] => {
-        if (t.kind === 'existing') return [{ entity: t.entity, kind: t.kind, type: spikeEntities.find((s) => s.slug === t.entity)?.type ?? t.type, angle: t.angle }];
-        return isEntityType(t.type) ? [{ entity: t.entity, kind: t.kind, type: t.type, angle: t.angle }] : [];
-      });
-      expect(out.targets.map(({ entity, kind, type, angle }) => ({ entity, kind, type, angle }))).toEqual(want);
-      expect(out.signal_id).toBe(c.signal.signal_id);
-      expect(out.summary).toBe(c.v5.summary);
+describe('#567 type-first matching (scripted LLM + decision tool, in-memory #566 lookup)', () => {
+  it('BTC and Bitcoin map to the bitcoin asset; the type is obvious so no decision call runs', async () => {
+    const ask = scriptedAsk({});
+    const traces: MatchTrace[] = [];
+    const out = await runSession(sig('BTC tops $100k as Bitcoin ETFs see inflows'), {
+      llm: kept([{ name: 'Bitcoin', types: ['asset', 'topic'], search_terms: ['BTC'] }]), ask, lookup: memLookup(), trace: (t) => traces.push(t),
     });
-  }
-
-  it('Jev says ignore: decision ignore with a reason and no targets; only the keep question is asked', async () => {
-    const c = spikeCases[0];
-    const llm = scriptedLlm([{ summary: 'S', mentions: MENTIONS[c.signal.signal_id] }, { reason: 'Nobody would care.' }]);
-    const jev = scriptedJev({ keep: 'ignore' });
-    const out = await runSession(c.signal, { llm, ask: jev, search });
-    expect(out).toMatchObject({ decision: 'ignore', reason: 'Nobody would care.', targets: [] });
-    expect(jev.asked).toHaveLength(1);
-    expect(jev.asked[0].choices).toEqual(['keep', 'ignore']);
-    expect(jev.asked[0].question).toContain(KEEP_QUESTION);
+    expect(out.targets).toEqual([{ entity: 'bitcoin', kind: 'existing', type: 'asset', angle: 'plain_update', note: 'n' }]);
+    expect(ask.asked.some((a) => a.question.includes('Which kind of entity'))).toBe(false);
+    expect(traces[0]).toMatchObject({ type_decision: 'obvious', chosen_type: 'asset', pick: { slug: 'bitcoin' } });
   });
 
-  it('#559: turn 1 asks for a headline and the output carries it', async () => {
-    const c = spikeCases[0];
-    const llm = scriptedLlm([{ headline: 'Kalshi raises $1B', summary: 'S', mentions: MENTIONS[c.signal.signal_id] }, { reason: 'Nobody would care.' }]);
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'ignore' }), search });
-    const turn1 = llm.calls[0].at(-1)?.content ?? '';
-    expect(turn1).toContain('"headline": string');
-    expect(turn1).toContain('at most 90 characters');
-    expect(out.headline).toBe('Kalshi raises $1B');
+  it('a Binance exploit article matches the existing Binance-hack event, not a new one', async () => {
+    const out = await runSession(sig('Binance exploit drains hot wallet'), {
+      llm: kept([{ name: 'Binance exploit', types: ['event'], search_terms: [] }]), ask: scriptedAsk({}), lookup: memLookup(),
+    });
+    expect(out.targets.map((t) => t.entity)).toEqual(['binance-hack']);
   });
 
-  it('the keep question is the fixed D36 wording', () => {
-    expect(KEEP_QUESTION).toBe('Would a crypto trader or market watcher care about this, even if it is only talk for now?');
+  it('a mention with no candidate in either type logs entity_miss and routes nothing', async () => {
+    const misses: EntityMissEntry[] = [];
+    const lookup = memLookup();
+    const out = await runSession(sig('Zorblax launches'), {
+      llm: kept([{ name: 'Zorblax', types: ['protocol', 'product', 'organization'], search_terms: [] }]),
+      ask: scriptedAsk({ type: { Zorblax: 'product' } }), lookup, missLog: (e) => misses.push(e),
+    });
+    expect(out.decision).toBe('keep');
+    expect(out.targets).toEqual([]);
+    expect(misses).toEqual([{
+      event: 'entity_miss', signal_id: 'sig-1', mention: 'Zorblax', types: ['protocol', 'product', 'organization'],
+      types_tried: ['product', 'protocol'], candidate_count: 0, fallback_tried: true, fallback_candidate_count: 0,
+    }]);
+    // Top type probed for obviousness, chosen type, one retry, then the cross-type fallback; never the third type.
+    expect(lookup.calls).toEqual(['typed:protocol', 'typed:product', 'any']);
   });
 
-  it('no entity candidates for a mention: Jev is only offered new / not_related', async () => {
-    const c = spikeCases[4];
-    const mentions = MENTIONS[c.signal.signal_id];
-    const jev = scriptedJev(jevFromV5(c));
-    const llm = scriptedLlm(keepReplies('S', mentions, [
-      { name: 'Tokenized stocks', type: 'topic', note: 'n' }, { name: 'Jersey', type: 'jurisdiction', note: 'n' }, { name: 'ADGM (Abu Dhabi Global Market)', type: 'jurisdiction', note: 'n' },
-    ]));
-    await runSession(c.signal, { llm, ask: jev, search });
-    const jersey = jev.asked.find((a) => a.question.includes('"Jersey"') && !a.choices.includes('new_story'));
-    expect(jersey?.choices).toEqual(['new', 'not_related']);
-    const tokenized = jev.asked.find((a) => a.question.includes('"Tokenized stocks"') && !a.choices.includes('new_story'));
-    expect(tokenized?.choices).toEqual(['existing', 'new', 'not_related']);
+  it('an ambiguous mention runs the decision call and retries the second type at most once', async () => {
+    const ask = scriptedAsk({ type: { 'Digital RMB': 'protocol' } });
+    const lookup = memLookup();
+    const out = await runSession(sig('Digital RMB pilot expands'), {
+      llm: kept([{ name: 'Digital RMB', types: ['regulation', 'protocol', 'product'], search_terms: [] }]), ask, lookup, missLog: () => {},
+    });
+    expect(ask.asked.filter((a) => a.question.includes('Which kind of entity'))).toHaveLength(1);
+    // protocol (chosen) missed, regulation (2nd) missed, so the cross-type exact fallback finds the product.
+    expect(lookup.calls).toEqual(['typed:regulation', 'typed:protocol', 'any']);
+    expect(out.targets.map((t) => t.entity)).toEqual(['digital-rmb']);
   });
 
-  it('a news outlet only mentioned as the source is not a target (messenger prompt line; Jev not_related drops it)', async () => {
-    expect(SYSTEM_PROMPT).toContain("The source is only the messenger; don't treat it as an entity unless the news is about the source itself.");
-    expect(SYSTEM_PROMPT).toContain("Your note is what you'd want to read months later. Say who said it: if the entity itself says it, it's their announcement; if a news site or someone else says it, it's their report; if people are just talking, it's talk.");
-    const c = spikeCases[5];
-    const mentions = [...MENTIONS[c.signal.signal_id], { name: 'Cointelegraph', type: 'organization', search_terms: [] }];
-    const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing', Cointelegraph: 'not_related' }, angle: { Kalshi: 'existing_story' } }), search });
-    expect(out.targets.map((t) => t.entity)).toEqual(['kalshi']);
-    expect(llm.calls[0][0]).toEqual({ role: 'system', content: SYSTEM_PROMPT });
+  it('the cross-type fallback runs only after both typed tries miss (He Yi -> binance)', async () => {
+    const lookup = memLookup();
+    const out = await runSession(sig('He Yi comments'), {
+      llm: kept([{ name: 'He Yi', types: ['person'], search_terms: [] }]), ask: scriptedAsk({}), lookup,
+    });
+    expect(lookup.calls).toEqual(['typed:person', 'any']);
+    expect(out.targets.map((t) => t.entity)).toEqual(['binance']);
   });
 
-  it("the LLM returns an angle and an entity: the saved angle is Jev's and the entity is code's", async () => {
-    const c = spikeCases[5];
-    const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing' }, angle: { Kalshi: 'plain_update' } }), search });
-    expect(out.targets).toEqual([{ entity: 'kalshi', kind: 'existing', type: 'organization', angle: 'plain_update', note: 'n' }]);
+  it('the pick is a closed choice of candidate slugs plus none; none on every try is a miss', async () => {
+    const ask = scriptedAsk({ pick: { Bitcoin: 'none' } });
+    const misses: EntityMissEntry[] = [];
+    const out = await runSession(sig('Bitcoin'), {
+      llm: kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), ask, lookup: memLookup(), missLog: (e) => misses.push(e),
+    });
+    const picks = ask.asked.filter((a) => a.question.includes('Answer one slug'));
+    expect(picks[0].choices).toEqual(['bitcoin', 'none']);
+    expect(out.targets).toEqual([]);
+    expect(misses).toHaveLength(1);
   });
 
-  it('the angle question carries summary, kind and the LLM reasoning as context', async () => {
-    const c = spikeCases[5];
-    const jev = scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing' }, angle: { Kalshi: 'existing_story' } });
-    await runSession(c.signal, { llm: scriptedLlm(keepReplies('The summary.', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }])), ask: jev, search });
-    const angleQ = jev.asked.find((a) => a.choices.includes('new_story'));
-    expect(angleQ?.choices).toEqual(['new_story', 'existing_story', 'plain_update']);
-    expect(angleQ?.state).toMatchObject({ summary: 'The summary.', kind: 'existing', reasoning: 'What this means for Kalshi.' });
-  });
-
-  it('Jev answers outside the offered choices: the signal is unclear with no targets', async () => {
-    const c = spikeCases[5];
-    const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
-    const ask: Ask = async (input) => ({ choice: input.choices.includes('keep') ? 'keep' : 'banana', probabilities: { banana: 1 }, provider: 'jev' });
-    const out = await runSession(c.signal, { llm, ask, search });
+  it('a pick outside the offered slugs (an invented name) makes the signal unclear, never a new entity', async () => {
+    const out = await runSession(sig('Bitcoin'), {
+      llm: scriptedLlm([turn1([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }])]),
+      ask: scriptedAsk({ pick: { Bitcoin: 'bitcoin-new' } }), lookup: memLookup(),
+    });
     expect(out.decision).toBe('unclear');
     expect(out.targets).toEqual([]);
-    expect(out.reason).toMatch(/banana/);
   });
 
-  it('a free-text type on an existing target keeps the signal with the entity type (no parking)', async () => {
-    const c = spikeCases[0]; // any keep signal works; the mentions are scripted below
-    const mentions: Mention[] = [{ name: 'Hyperliquid', type: 'crypto platform', search_terms: ['HYPE'] }];
-    const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Hyperliquid', type: 'crypto platform', note: 'n' }]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Hyperliquid: 'existing' }, angle: { Hyperliquid: 'existing_story' } }), search });
-    expect(out.decision).toBe('keep');
-    expect(out.targets).toEqual([{ entity: 'hyperliquid', kind: 'existing', type: 'protocol', angle: 'existing_story', note: 'n' }]);
+  it('#560: a signal with 3 mentions still yields exactly one main entity (XRP case)', async () => {
+    const ask = scriptedAsk({});
+    const out = await runSession(sig('XRP rallies as Binance lists Bitcoin pairs'), {
+      llm: kept([
+        { name: 'XRP', types: ['asset'], search_terms: [] },
+        { name: 'Binance', types: ['organization'], search_terms: [] },
+        { name: 'Bitcoin', types: ['asset'], search_terms: [] },
+      ]), ask, lookup: memLookup(),
+    });
+    expect(out.targets).toHaveLength(1);
+    expect(out.targets[0].entity).toBe('xrp');
+    // The first match wins; later mentions are not looked up at all.
+    expect(ask.asked.filter((a) => a.question.includes('Answer one slug'))).toHaveLength(1);
   });
 
-  it('a kept NEW target with a free-text type is dropped like not_related; the existing target keeps its entity type', async () => {
-    const c = spikeCases[0];
-    const mentions: Mention[] = [
-      { name: 'Backpack', type: 'crypto exchange / company', search_terms: [] },
-      { name: 'SK Securities', type: 'securities firm / company', search_terms: [] },
-    ];
-    const llm = scriptedLlm(keepReplies('S', mentions, [
-      { name: 'Backpack', type: 'crypto exchange / company', note: 'n' },
-      { name: 'SK Securities', type: 'securities firm / company', note: 'n' },
-    ]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Backpack: 'existing', 'SK Securities': 'new' }, angle: { Backpack: 'new_story' } }), search });
-    expect(out.decision).toBe('keep');
-    expect(out.targets).toEqual([{ entity: 'backpack', kind: 'existing', type: 'organization', angle: 'new_story', note: 'n' }]);
+  it('#560: the Digital RMB signal gives one item on the existing product', async () => {
+    const out = await runSession(sig('China expands e-CNY'), {
+      llm: kept([{ name: 'Digital RMB', types: ['product'], search_terms: ['e-CNY'] }, { name: 'China', types: ['place'], search_terms: [] }]),
+      ask: scriptedAsk({}), lookup: memLookup(), missLog: () => {},
+    });
+    expect(out.targets.map((t) => t.entity)).toEqual(['digital-rmb']);
   });
 
-  it('every kept NEW target dropped for a free-text type: keep with no targets, the nothing-to-route result', async () => {
-    const c = spikeCases[1];
-    const mentions: Mention[] = [{ name: 'Tokenized stocks', type: 'market/sector', search_terms: [] }];
-    const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Tokenized stocks', type: 'market/sector', note: 'n' }]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { 'Tokenized stocks': 'new' }, angle: { 'Tokenized stocks': 'plain_update' } }), search: async () => [] });
-    expect(out.decision).toBe('keep');
+  it('#560: active-only candidates: a retired entity alias is never offered', async () => {
+    const misses: EntityMissEntry[] = [];
+    const ask = scriptedAsk({});
+    const out = await runSession(sig('Kalshi raises'), {
+      llm: kept([{ name: 'Kalshi', types: ['organization'], search_terms: [] }]), ask, lookup: memLookup(), missLog: (e) => misses.push(e),
+    });
+    expect(ask.asked.flatMap((a) => a.shortlist).map((c) => c.slug)).not.toContain('old-kalshi');
     expect(out.targets).toEqual([]);
-    expect(out.reason).toMatch(/judged not related/);
+    expect(misses).toHaveLength(1);
   });
 
-  it('an existing target takes the entity type even when the LLM names a different entity type', async () => {
-    const c = spikeCases[3];
-    const mentions: Mention[] = [{ name: 'Solana', type: 'protocol', search_terms: [] }];
-    const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Solana', type: 'protocol', note: 'n' }]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Solana: 'existing' }, angle: { Solana: 'existing_story' } }), search });
-    expect(out.decision).toBe('keep');
-    expect(out.targets).toEqual([{ entity: 'solana', kind: 'existing', type: 'asset', angle: 'existing_story', note: 'n' }]);
+  it('#560: ignore still writes nothing and makes no lookup', async () => {
+    const lookup = memLookup();
+    const out = await runSession(sig('meh'), {
+      llm: scriptedLlm([turn1([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), { reason: 'noise' }]),
+      ask: scriptedAsk({ keep: 'ignore' }), lookup,
+    });
+    expect(out).toMatchObject({ decision: 'ignore', reason: 'noise', targets: [] });
+    expect(lookup.calls).toEqual([]);
   });
 
-  it('the T1 dissect and T4 notes prompts tell the LLM that type is one of the nine ENTITY_TYPES', async () => {
-    const c = spikeCases[5];
-    const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
-    await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing' }, angle: { Kalshi: 'existing_story' } }), search });
-    // Turn 1 (dissect) is the first LLM call, turn 4 (notes) the third; each call is [system, user].
-    const prompts = [llm.calls[0][1].content, llm.calls[2][1].content];
-    for (const prompt of prompts) {
-      for (const t of ENTITY_TYPES) expect(prompt).toContain(`"${t}"`);
-    }
+  it('mentions are validated with zod: bad types are dropped, an old single "type" still parses', async () => {
+    const lookup = memLookup();
+    const out = await runSession(sig('BTC'), {
+      llm: kept([{ name: 'Foo', types: ['jurisdiction'] }, { name: '', types: ['asset'] }, { name: 'Bitcoin', type: 'Asset' }]),
+      ask: scriptedAsk({}), lookup,
+    });
+    expect(out.targets.map((t) => t.entity)).toEqual(['bitcoin']);
+    expect(lookup.calls).toEqual(['typed:asset']);
   });
 
-  it('a kept NEW target with a type no entity has: dropped like not_related, the same result as the all-not-related path', async () => {
-    const c = spikeCases[5];
-    const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'media_account', note: 'n' }]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'new' }, angle: { Kalshi: 'new_story' } }), search: async () => [] });
-    expect(out.decision).toBe('keep');
-    expect(out.targets).toEqual([]);
-    expect(out.reason).toBe('The decision tool said keep, but every mentioned entity was judged not related or dropped as a target, so there is nothing to route.');
+  it('turn 1 asks for top types per mention, main first; the keep question is the fixed wording', async () => {
+    const llm = kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]);
+    const ask = scriptedAsk({});
+    await runSession(sig('BTC'), { llm, ask, lookup: memLookup() });
+    expect(llm.calls[0][1].content).toContain('"types": [');
+    expect(llm.calls[0][1].content).toContain('the main one first');
+    expect(ask.asked[0].question).toContain(KEEP_QUESTION);
   });
 
-  it('the T4 note prompt says "Reply with JSON only:" immediately before the targets JSON shape line', async () => {
-    const c = spikeCases[5];
-    const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
-    await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing' }, angle: { Kalshi: 'existing_story' } }), search });
-    const call = llm.calls[2]; // the third call carries the full history; its last message is the T4 note prompt
-    const prompt = call[call.length - 1].content;
-    expect(prompt).toContain('The decision tool has picked each angle');
-    expect(prompt).toContain('Reply with JSON only:\n{"targets": ');
+  it('every decision-tool call is logged', async () => {
+    const logs: JevLogEntry[] = [];
+    await runSession(sig('BTC'), { llm: kept([{ name: 'Bitcoin', types: ['asset'], search_terms: [] }]), ask: scriptedAsk({}), lookup: memLookup(), log: (e) => logs.push(e) });
+    expect(logs.map((l) => l.answer)).toEqual(['keep', 'bitcoin', 'plain_update']);
   });
 
-  it('the decision tool keeps a NEW entity and turn 4 returns an invalid type for it: it is dropped, targets [] and the nothing-to-route reason', async () => {
-    const c = spikeCases[0];
-    const mentions: Mention[] = [{ name: 'Backpack', type: 'organization', search_terms: [] }];
-    const llm = scriptedLlm(keepReplies('S', mentions, [{ name: 'Backpack', type: 'crypto exchange', note: 'n' }]));
-    const out = await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Backpack: 'new' }, angle: { Backpack: 'new_story' } }), search: async () => [] });
-    expect(out.decision).toBe('keep');
-    expect(out.targets).toEqual([]);
-    expect(out.reason).toBe('The decision tool said keep, but every mentioned entity was judged not related or dropped as a target, so there is nothing to route.');
-  });
-
-  it('every Jev call is logged with question, choices, answer and confidence', async () => {
-    const c = spikeCases[5];
-    const log: JevLogEntry[] = [];
-    const llm = scriptedLlm(keepReplies('S', MENTIONS[c.signal.signal_id], [{ name: 'Kalshi', type: 'organization', note: 'n' }]));
-    await runSession(c.signal, { llm, ask: scriptedJev({ keep: 'keep', existence: { Kalshi: 'existing' }, angle: { Kalshi: 'existing_story' } }), search, log: (e) => log.push(e) });
-    expect(log).toHaveLength(3);
-    for (const e of log) expect(e).toMatchObject({ signal_id: c.signal.signal_id, question: expect.any(String), choices: expect.any(Array), answer: expect.any(String), confidence: 0.9, provider: 'jev' });
-  });
-
-  it('an LLM failure or unparseable reply throws (the worker retries the signal)', async () => {
-    const c = spikeCases[5];
-    await expect(runSession(c.signal, { llm: scriptedLlm(['not json at all']), ask: scriptedJev({ keep: 'keep' }), search })).rejects.toThrow();
-    await expect(runSession(c.signal, { llm: async () => { throw new Error('LLM HTTP 500'); }, ask: scriptedJev({ keep: 'keep' }), search })).rejects.toThrow(/500/);
+  it('articlePhrases gives 1-3 word windows, lowercased, punctuation stripped', () => {
+    const p = articlePhrases('Binance exploit: hot-wallet, $BTC!');
+    expect(p).toEqual(expect.arrayContaining(['binance', 'binance exploit', 'binance exploit hot-wallet', '$btc']));
   });
 });
 
-describe('#504 entity search, slugs and type mapping', () => {
-  it('an exact name/alias/slug match on the mention ranks first (Coinbase -> coinbase, not base)', () => {
-    expect(searchEntities(['Coinbase', 'Base'], spikeEntities)[0].slug).toBe('coinbase');
-    expect(searchEntities(['HYPE'], spikeEntities)[0].slug).toBe('hyperliquid');
-    expect(searchEntities(['trade-xyz'], spikeEntities)[0].slug).toBe('trade-xyz');
-    expect(searchEntities(['Jersey'], spikeEntities)).toEqual([]);
-  });
-
-  it('canonicalSlug prefers a bracketed abbreviation', () => {
-    expect(canonicalSlug('ADGM (Abu Dhabi Global Market)')).toBe('adgm');
-    expect(canonicalSlug('Abu Dhabi Global Market (ADGM)')).toBe('adgm');
-    expect(canonicalSlug('British Virgin Islands (BVI)')).toBe('bvi');
-    expect(canonicalSlug('trade(xyz)')).toBe('trade-xyz');
-    expect(canonicalSlug('Stanley Druckenmiller')).toBe('stanley-druckenmiller');
-  });
-
+describe('#504 helpers', () => {
   it('isEntityType is strict: only the nine entity types after trim + lowercase, no synonyms', () => {
     for (const t of ENTITY_TYPES) expect(isEntityType(t)).toBe(true);
     expect(isEntityType(' Organization ')).toBe(true);

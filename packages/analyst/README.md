@@ -26,9 +26,48 @@ tables: everything it touches is created by
 - `src/signal-worker.ts` (renamed from `d36-worker.ts` in #559) — the signal worker (#504): claim, one LLM session per
   signal with Jev/Clef as the decision tool, the sink, plus the standing rule
   that a signal older than 24 hours is parked `backlog_skip_24h` (#391) before
-  the LLM runs. `PgDecisionSink` takes `{ allowNewEntities: false }` to drop
-  every kind-new target (active slugs still file) so a catch-up run cannot
-  create entities.
+  the LLM runs. `PgDecisionSink` files at most one item per signal, on the
+  first existing target, and never creates or proposes an entity (#567): other
+  targets are dropped with a `target_dropped` log line. `pgCandidateLookup` is
+  the read-only #566 candidate fetch.
+- `src/session.ts` — the analyst session and type-first matching (#567, see
+  below). `src/dry-run-matching.ts` is the read-only matching dry run.
+
+## Entity matching (#567, type-first)
+
+```mermaid
+flowchart LR
+  A[Signal] --> M[Turn 1: mentions, main first, top 1-3 types each]
+  M --> O{Type obvious?}
+  O -->|one type, or top type has candidates| F
+  O -->|no| D[Decision tool picks the type]
+  D --> F[Fetch candidates of that type]
+  F --> P[Decision tool: one slug or none]
+  P -->|none| R[Retry once with the 2nd type]
+  R -->|none| X[Cross-type exact fallback]
+  X -->|none| L[entity_miss log, next mention]
+  P -->|slug| E[One main entity per signal]
+```
+
+- Mentions are validated with zod (`analystMentionSchema` in `@myboon/contracts`).
+- Candidates come from `atlas.entity_candidates(type, names)` (#566, active
+  entities only, exact on `atlas.norm_alias`). `names` is the mention's name and
+  search terms plus every 1-3 word phrase in the article. A type with at most
+  `SMALL_TYPE_MAX` (25) active entities offers all of them. For `event`, active
+  events with an item in the last `EVENT_WINDOW_DAYS` (7) days are added.
+- The pick is a closed choice: candidate slugs plus `none`. An answer outside
+  that list makes the signal `unclear`; no name is ever invented.
+- The cross-type fallback (`atlas.entity_candidates_any`, mention names only)
+  runs only after both typed tries miss.
+- Mentions are tried in order; the first pick is the signal's one main entity.
+- Never proposes: no code path inserts into `atlas.entities`. No CoinGecko, no
+  embeddings, no pre-pass.
+- A full miss logs one `entity_miss` line (see the RUNBOOK).
+
+Dry run (read-only, needs the analyst env; nothing is written):
+`pnpm --filter @myboon/analyst matching:dry-run --recent 20` or
+`--ids id1,id2` or `--text "..."`, plus `--force-keep` to skip the keep gate.
+
 - `src/item-wording.ts` (#559) — entity item title and summary. Title = the
   LLM's turn-1 `headline` (asked for at most 90 chars), or the summary's first
   whole sentence when there is none; never sliced. Summary = the signal

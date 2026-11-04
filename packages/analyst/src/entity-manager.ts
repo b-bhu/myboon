@@ -21,7 +21,9 @@
 import type { Pool } from 'pg';
 
 import type { QuotaGuard } from './ollama-quota.js';
-import { searchEntities, type ChatMessage, type Llm } from './session.js';
+import type { Candidate, ChatMessage, Llm } from './session.js';
+
+type EntityLike = { slug: string; name: string; type: string; aliases: string[] };
 
 /** The one run-summary line the reviewer returns (and logs once as entity_manager_run). */
 export type EntityManagerSummary = {
@@ -350,3 +352,39 @@ async function recordVerdict(
 function asMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+/**
+ * Legacy in-memory shortlist for reviewing leftover proposed entities only (#567: the analyst no longer uses it): case-insensitive over name/slug/aliases. Rank:
+ * exact match on terms[0] (the mention name) first, then exact on other terms, then whole-word
+ * match (terms < 3 chars exact only), then substring (so tickers like HYPE resolve to Hyperliquid);
+ * max 5, first match per slug by rank.
+ */
+function searchEntities(terms: string[], entities: EntityLike[]): Candidate[] {
+  const wordMatch = (value: string, needle: string): boolean =>
+    new RegExp(`(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(value);
+  const query = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0))];
+  const ranked = new Map<string, { rank: number; entity: EntityLike }>();
+  for (const term of query) {
+    for (const entity of entities) {
+      const haystacks = [entity.name, entity.slug, ...entity.aliases].map((v) => v.trim().toLowerCase());
+      const exact = haystacks.includes(term);
+      const rank = exact ? (term === query[0] ? -1 : 0) : looserMatch(haystacks, term, wordMatch);
+      if (rank === null) continue;
+      const previous = ranked.get(entity.slug);
+      if (!previous || rank < previous.rank) ranked.set(entity.slug, { rank, entity });
+    }
+  }
+  return [...ranked.values()]
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 5)
+    .map(({ entity }) => ({ slug: entity.slug, name: entity.name, type: entity.type }));
+}
+
+/** Whole-word match, or substring as a last resort; null when the term matches nothing. */
+function looserMatch(haystacks: string[], term: string, wordMatch: (value: string, needle: string) => boolean): number | null {
+  if (term.length < 3) return null;
+  if (haystacks.some((v) => wordMatch(v, term))) return 1;
+  if (haystacks.some((v) => v.includes(term))) return 2;
+  return null;
+}
+

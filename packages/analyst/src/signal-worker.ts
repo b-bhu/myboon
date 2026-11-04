@@ -6,26 +6,26 @@
  * payload rides the finish call). A shadow decider, when set, sees every case in parallel and its
  * answers are never recorded. The standing #391 rule parks any signal older than 24 hours
  * (occurred_at, judged in SQL with the claim's row read) with reason BACKLOG_SKIP_REASON before the
- * session runs, and PgDecisionSink's `allowNewEntities: false` drops kind-new targets so a catch-up
- * run cannot create entities. A failed attempt (missing signal row, or the session/sink save
+ * session runs. No run ever creates entities (#567). A failed attempt (missing signal row, or the session/sink save
  * throwing) fails the claim and logs one structured `signal_failed` line whose `reason` comes
  * from classifySignalFailure, so the retry/dead story of every signal is on stdout.
  */
-import type { AnalystOutput } from '@myboon/contracts';
+import type { AnalystOutput, EntityType } from '@myboon/contracts';
 import type { Pool, PoolClient } from 'pg';
 
 import type { DecisionCase, Decider } from './deciders.js';
 import { itemSummary, itemTitle } from './item-wording.js';
 import { decideTimed } from './process.js';
-import type { Ask, AskInput, AskResult, EntitySearch, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
-import { runSession, searchEntities } from './session.js';
+import type { Ask, AskInput, AskResult, Candidate, CandidateLookup, EntityMissEntry, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
+import { runSession } from './session.js';
 import { claimNext, failClaim, finishClaim, type Db } from './states.js';
 
 /** The fixed parked_reason for the #391 standing rule: a signal older than 24h is parked in the claim path, never analysed. */
 export const BACKLOG_SKIP_REASON = 'backlog_skip_24h';
 
-/** The target_dropped reason when PgDecisionSink is created with allowNewEntities: false (the #391 catch-up run). */
-const NEW_ENTITY_DISABLED_REASON = 'new-entity creation disabled (catch-up)';
+/** target_dropped reasons (#567): the analyst never creates entities, and files one main entity per signal. */
+const NO_NEW_ENTITIES_REASON = 'new entities are never created (#567)';
+const ONE_MAIN_ENTITY_REASON = 'one main entity per signal (#567)';
 
 /** Where finished outputs go: in-memory for tests, or atlas.decisions (+ atlas.entity_items) via PgDecisionSink. */
 export interface DecisionSink {
@@ -47,33 +47,22 @@ export class InMemoryDecisionSink implements DecisionSink {
 
 /**
  * The atlas.decisions sink on the #503 schema, one transaction per save: insert the decision row,
- * then (keep) one entity item per target on its entity. Per #482 the filing serialises per entity:
- * before touching any entity it takes one advisory lock per target slug, in sorted slug order inside
- * this transaction, so two saves for one entity cannot race; every item copies the signal's
- * occurred_at so an entity timeline orders by signal time, not write order. A kind existing target
- * needs an active entity and throws when it is missing; a kind new target reuses an entity whose status
- * is proposed, files on an already active slug with a target_reclassified log line (#511), and a
- * retired slug drops the target unless an active entity aliases it (#480: filed there with a
- * target_redirected log line, allowNewEntities or not). A drop is a target_dropped log line, no item,
- * no throw: the other targets still file and the row stores the output as-is. With
- * `{ allowNewEntities: false }` (#391 catch-up) the reclassification and alias redirect still file,
- * but every other kind-new target — a proposed entity, an unaliased retired slug, or no row at all —
- * is dropped through the same target_dropped path: no entity is proposed or inserted, no item lands
- * on a proposed entity.
- * `on conflict (signal_id)` makes the second save of the same signal a no-op commit (items are not
- * rewritten), and any failure rolls the transaction back so nothing is written.
+ * then (keep) at most one entity item, on the signal's one main entity (#567). Per #482 the filing
+ * takes an advisory lock on the target slug inside this transaction, and the item copies the signal's
+ * occurred_at so an entity timeline orders by signal time, not write order. The target must be an
+ * active entity (else it throws: the item has nowhere to land). The sink never creates or proposes an
+ * entity (#567): a kind new target, or any target after the first, is dropped with a target_dropped
+ * log line and no item. `on conflict (signal_id)` makes the second save of the same signal a no-op
+ * commit, and any failure rolls the transaction back so nothing is written.
  */
 export class PgDecisionSink implements DecisionSink {
   private readonly pool: Pool;
   /** Where dropped targets are logged; the default keeps them on the worker's stdout. */
   private readonly log: (e: Record<string, unknown>) => void;
-  /** False only for the #391 catch-up run: kind-new targets never create entities. */
-  private readonly allowNewEntities: boolean;
 
-  constructor(pool: Pool, log?: (e: Record<string, unknown>) => void, o: { allowNewEntities?: boolean } = {}) {
+  constructor(pool: Pool, log?: (e: Record<string, unknown>) => void) {
     this.pool = pool;
     this.log = log ?? ((e) => console.log(JSON.stringify(e)));
-    this.allowNewEntities = o.allowNewEntities ?? true;
   }
 
   async save(output: AnalystOutput): Promise<void> {
@@ -93,10 +82,7 @@ export class PgDecisionSink implements DecisionSink {
           await client.query('commit');
           return;
         }
-        if (output.decision === 'keep') {
-          await lockEntitySlugs(client, output.targets);
-          await fileItems(client, output, this.log, this.allowNewEntities);
-        }
+        if (output.decision === 'keep') await fileMainItem(client, output, this.log);
         await client.query('commit');
       } catch (e) {
         await client.query('rollback');
@@ -108,115 +94,66 @@ export class PgDecisionSink implements DecisionSink {
   }
 }
 
-/** One advisory lock per target slug, sorted so two saves of overlapping slugs take locks in the same order and cannot deadlock (#482). */
-async function lockEntitySlugs(client: PoolClient, targets: AnalystOutput['targets']): Promise<void> {
-  for (const slug of targets.map((t) => t.entity).sort()) {
-    await client.query("select pg_advisory_xact_lock(hashtext('atlas.entity:' || $1))", [slug]);
+/** File the one main item: the first existing target; every other target is dropped and logged (#567). */
+async function fileMainItem(client: PoolClient, output: AnalystOutput, log: (e: Record<string, unknown>) => void): Promise<void> {
+  const main = output.targets.find((t) => t.kind === 'existing');
+  for (const t of output.targets) {
+    if (t === main) continue;
+    log({ event: 'target_dropped', signal_id: output.signal_id, entity: t.entity, reason: t.kind === 'new' ? NO_NEW_ENTITIES_REASON : ONE_MAIN_ENTITY_REASON });
   }
+  if (!main) return;
+  await client.query("select pg_advisory_xact_lock(hashtext('atlas.entity:' || $1))", [main.entity]);
+  const mainEntityId = await activeEntityId(client, main.entity);
+  await client.query(
+    `insert into atlas.entity_items (item_key, title, summary, main_entity_id, signal_id, angle, note, occurred_at)
+       select $1, $2, $3, $4, $5, $6, $7, s.occurred_at
+         from atlas.signals s
+        where s.signal_id = $5
+     on conflict do nothing`,
+    [`${output.signal_id}:${main.entity}`, itemTitle(output.headline, output.summary, main.note), itemSummary(output.summary, main.note), mainEntityId, output.signal_id, main.angle, main.note],
+  );
 }
 
-/** One entity item per keep target, filed on the target's entity in the sink's open transaction; each item copies the signal's occurred_at (#482). */
-async function fileItems(
-  client: PoolClient,
-  output: AnalystOutput,
-  log: (e: Record<string, unknown>) => void,
-  allowNewEntities: boolean,
-): Promise<void> {
-  for (const target of output.targets) {
-    const mainEntityId = target.kind === 'existing'
-      ? await activeEntityId(client, target.entity)
-      : await proposedEntityId(client, target.entity, target.type, output.signal_id, log, allowNewEntities);
-    if (mainEntityId === null) continue; // dropped target: already logged, the other targets in the output still file
-    await client.query(
-      `insert into atlas.entity_items (item_key, title, summary, main_entity_id, signal_id, angle, note, occurred_at)
-         select $1, $2, $3, $4, $5, $6, $7, s.occurred_at
-           from atlas.signals s
-          where s.signal_id = $5
-       on conflict do nothing`,
-      [`${output.signal_id}:${target.entity}`, itemTitle(output.headline, output.summary, target.note), itemSummary(output.summary, target.note), mainEntityId, output.signal_id, target.angle, target.note],
-    );
-  }
-}
-
-/** The active entity for a kind existing target, or throw: the item has nowhere to land. */
+/** The active entity for the main target, or throw: the item has nowhere to land. */
 async function activeEntityId(client: PoolClient, slug: string): Promise<string> {
   const { rows } = await client.query<{ id: string }>(`select id from atlas.entities where slug = $1 and status = 'active'`, [slug]);
   if (rows[0]) return rows[0].id;
   throw new Error(`target ${slug}: no active entity`);
 }
 
+/** Days of recent events offered as candidates for the event type (#567). */
+export const EVENT_WINDOW_DAYS = 7;
+
+/** Types with at most this many active entities offer all of them as candidates, not only name hits. */
+export const SMALL_TYPE_MAX = 25;
+
 /**
- * The entity for a kind new target: reuse a proposed entity; an already active slug files on that
- * existing entity with a target_reclassified log line (#511); a retired slug aliased by an active
- * entity files there with a target_redirected log line, as does a slug with no row that an active
- * entity aliases (#480, regardless of allowNewEntities); a
- * retired slug with no active alias drops the target (target_dropped, no item, no throw, #482);
- * else propose one (name = slug). With `allowNewEntities = false` (#391 catch-up) the proposed/
- * unaliased-retired/no-row cases all drop through the same target_dropped path with the fixed
- * catch-up reason: never insert an entity.
+ * The #566 lookup over Postgres, read-only. typed(): atlas.entity_candidates(type, names) (active only,
+ * exact on norm_alias), plus every active entity of a small type, plus, for events, active events with
+ * an item in the last EVENT_WINDOW_DAYS days. anyType(): atlas.entity_candidates_any(names).
  */
-async function proposedEntityId(
-  client: PoolClient,
-  slug: string,
-  type: string,
-  signalId: string,
-  log: (e: Record<string, unknown>) => void,
-  allowNewEntities: boolean,
-): Promise<string | null> {
-  const { rows } = await client.query<{ id: string; status: string }>('select id, status from atlas.entities where slug = $1', [slug]);
-  if (rows[0] && rows[0].status === 'proposed') {
-    if (!allowNewEntities) {
-      log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: NEW_ENTITY_DISABLED_REASON });
-      return null;
-    }
-    return rows[0].id;
-  }
-  if (rows[0] && rows[0].status === 'active') {
-    log({ event: 'target_reclassified', signal_id: signalId, entity: slug, reason: `entity ${slug} is already active; filed as existing` });
-    return rows[0].id;
-  }
-  // A retired or row-less slug that an active entity lists in its aliases files on that entity,
-  // regardless of allowNewEntities: filing on an existing active entity creates no entity (#480).
-  const redirected = await client.query<{ id: string; slug: string }>(
-    "select id, slug from atlas.entities where status = 'active' and $1 = any(aliases) order by slug limit 1",
-    [slug],
-  );
-  if (redirected.rows[0]) {
-    const why = rows[0] ? `entity ${slug} is ${rows[0].status}` : `no entity ${slug}`;
-    log({ event: 'target_redirected', signal_id: signalId, entity: slug, filed_on: redirected.rows[0].slug, reason: `${why}; alias of ${redirected.rows[0].slug}, filed there` });
-    return redirected.rows[0].id;
-  }
-  if (rows[0]) {
-    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: allowNewEntities
-      ? `entity ${slug} is ${rows[0].status}, not proposed or active`
-      : NEW_ENTITY_DISABLED_REASON });
-    return null;
-  }
-  if (!allowNewEntities) {
-    log({ event: 'target_dropped', signal_id: signalId, entity: slug, reason: NEW_ENTITY_DISABLED_REASON });
-    return null;
-  }
-  const inserted = await client.query<{ id: string }>(
-    `insert into atlas.entities (slug, name, type, status) values ($1, $1, $2, 'proposed') returning id`,
-    [slug, type],
-  );
-  return inserted.rows[0].id;
-}
-
-
-/** Entity search over the DB entities: one read-only select per call, then the in-memory matcher. */
-export function entitySearchFromDb(db: Db): EntitySearch {
-  return async (terms: string[]) => {
-    const { rows } = await db.query<{ slug: string; name: string; type: string; aliases: unknown }>(
-      "select slug, name, type, aliases from atlas.entities where status = 'active'",
-    );
-    const entities = rows.map((row) => ({
-      slug: row.slug,
-      name: row.name,
-      type: row.type,
-      aliases: Array.isArray(row.aliases) ? row.aliases.filter((a): a is string => typeof a === 'string') : [],
-    }));
-    return searchEntities(terms, entities);
+export function pgCandidateLookup(db: Db): CandidateLookup {
+  return {
+    async typed(type: EntityType, names: string[]): Promise<Candidate[]> {
+      const { rows } = await db.query<Candidate>(
+        `select c.slug, c.name, $1::text as type from atlas.entity_candidates($1, $2::text[]) c
+         union
+         select e.slug, e.name, e.type from atlas.entities e
+          where e.type = $1 and e.status = 'active'
+            and (select count(*) from atlas.entities x where x.type = $1 and x.status = 'active') <= $3
+         union
+         select e.slug, e.name, e.type from atlas.entities e
+          where $1 = 'event' and e.type = 'event' and e.status = 'active'
+            and exists (select 1 from atlas.entity_items i
+                         where i.main_entity_id = e.id and i.occurred_at > now() - make_interval(days => $4))`,
+        [type, names, SMALL_TYPE_MAX, EVENT_WINDOW_DAYS],
+      );
+      return rows;
+    },
+    async anyType(names: string[]): Promise<Candidate[]> {
+      const { rows } = await db.query<Candidate>('select slug, name, type from atlas.entity_candidates_any($1::text[])', [names]);
+      return rows;
+    },
   };
 }
 
@@ -226,9 +163,11 @@ export type D36Options = {
   fallback: Decider;
   /** Same cases in parallel, never recorded; a null shadow skips it. */
   shadow: Decider | null;
-  search: EntitySearch;
+  lookup: CandidateLookup;
   sink: DecisionSink;
   log?: (e: JevLogEntry) => void;
+  /** entity_miss lines (#567); default prints JSON to stdout. */
+  missLog?: (e: EntityMissEntry) => void;
   /** One `signal_failed` record per failed attempt, logged after failClaim; default prints JSON to stdout. */
   failLog?: (e: Record<string, unknown>) => void;
   leaseMs: number;
@@ -345,7 +284,7 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
   };
 
   const signal: SignalInput = { signal_id: row.signal_id, text: row.text ?? '', source: row.source, link: row.link };
-  const deps: SessionDeps = { llm: o.llm, ask, search: o.search, log: logJev };
+  const deps: SessionDeps = { llm: o.llm, ask, lookup: o.lookup, log: logJev, ...(o.missLog ? { missLog: o.missLog } : {}) };
 
   let output: AnalystOutput;
   // `sink.save` and the session throw differently: the stage tags the failure reason.
