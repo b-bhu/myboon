@@ -54,7 +54,7 @@ flowchart LR
   the headline and text, always kept; then the most active entities of those types
   by `entity_items` count, deduped, up to `SHORTLIST_CAP` (40). Each row carries
   id, slug, name, type, aliases and a one-line summary.
-- One decision-tool call gets the article, the main subject and the full shortlist
+- One decision-tool (Jev) call gets the article, the main subject and the full shortlist
   and answers one slug or `none` (closed choice). Anything outside the list counts
   as none. There is no type-decision call, no retry and no cross-type fallback.
 - None logs one `entity_miss` line (see the RUNBOOK) and routes nothing. No code
@@ -64,6 +64,9 @@ flowchart LR
 Dry run (read-only, needs the analyst env; nothing is written):
 `pnpm --filter @myboon/analyst matching:dry-run --recent 20` or
 `--ids id1,id2` or `--text "..."`, plus `--force-keep` to skip the keep gate.
+On 100 recent prod signals (Nov 4, 2026): 72 matched, 21 `entity_miss`, 7 ignored,
+0 failed, mean confidence 0.94. Design record: wiki V4-Design (analyst session) and
+Decision-Log D37.
 
 - `src/item-wording.ts` (#559) — entity item title and summary. Title = the
   LLM's turn-1 `headline` (asked for at most 90 chars), or the summary's first
