@@ -4,8 +4,7 @@
  * safe against the 30-minute cron), while
  *   - the standing 24h rule in processNextD36 parks every signal older than 24 hours without an
  *     LLM call (parked_reason backlog_skip_24h), so only the fresh backlog is analysed,
- *   - PgDecisionSink runs with allowNewEntities: false, so a catch-up run cannot create entities
- *     (an already active slug still files) and items copy the signal's occurred_at via the sink,
+ *   - PgHandoffSink only records the handoff (#571): no run creates entities or items,
  *   - guard.check() runs before every signal and stops the loop fail-closed (Ollama balance below
  *     15% remaining, or the balance endpoint unreadable; reads are cached to <= 1/min).
  * It keeps ANALYST_ENABLED out of the picture: the only gate is ANALYST_CATCHUP_CONFIRM=yes,
@@ -25,7 +24,7 @@ import { Pool } from 'pg';
 import type { AnalystConfig } from './config.js';
 import { parseAnalystConfig } from './config.js';
 import type { Decider } from './deciders.js';
-import { PgDecisionSink, processNextD36, pgCandidateLookup, type D36Options } from './signal-worker.js';
+import { PgHandoffSink, processNextD36, pgCandidateLookup, type D36Options } from './signal-worker.js';
 import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { defaultDeciders } from './runner.js';
 import { createOllamaLlm, type JevLogEntry, type Llm } from './session.js';
@@ -175,7 +174,8 @@ export async function catchupMain(o: CatchupMainOptions): Promise<CatchupSummary
       lookup: pgCandidateLookup(pool),
       missLog: (e) => { log(JSON.stringify(e)); },
       // No run creates entities (#567); the sink drops any kind-new target.
-      sink: new PgDecisionSink(pool, (e) => { log(JSON.stringify(e)); }),
+      sink: new PgHandoffSink(pool),
+      dropLog: (e) => { log(JSON.stringify(e)); },
       log: (e: JevLogEntry) => { log(JSON.stringify({ event: 'jev_call', ...e })); },
       leaseMs: c.leaseMs,
       timeoutMs: c.timeoutMs,
