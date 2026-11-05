@@ -250,10 +250,17 @@ const dayKeyNearNow = (offset: number): string => {
   return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}-${String(shifted.getDate()).padStart(2, '0')}`;
 };
 
+// ISO startsAt for local `hour`:00 on now+offset days, so timed fixtures share
+// the same local day as their dayKeyNearNow pair and never drift into the past.
+const startsAtNearNow = (offset: number, hour = 9): string => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, hour, 0, 0).toISOString();
+};
+
 test('weekCount counts only high-impact macro events inside the local week window', () => {
   const events = [
     economic(dayKeyNearNow(0), null), // Today: counts (High default).
-    economic(dayKeyNearNow(3), '2026-11-04T09:00:00Z'), // Timed mid-week: counts.
+    economic(dayKeyNearNow(3), startsAtNearNow(3)), // Timed mid-week: counts.
     economic(dayKeyNearNow(6), null), // Last day of the window: counts.
     economic(dayKeyNearNow(-1), null), // Yesterday: out.
     economic(dayKeyNearNow(7), null), // Past the window: out.
