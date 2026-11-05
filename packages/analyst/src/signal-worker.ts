@@ -50,12 +50,17 @@ export class InMemoryHandoffSink implements HandoffSink {
   }
 }
 
+/** The entity manager's queue status (#571 task 2): every keep is pending (entity null = growth), the rest none. */
+export function emStatusFor(h: AnalystHandoff): 'pending' | 'none' {
+  return h.decision === 'keep' ? 'pending' : 'none';
+}
+
 /**
- * Persists the handoff with what exists today: one atlas.decisions row (decision, reason, the one
- * entity pick in targets, summary null). The full signal is the atlas.signals row itself, which the
- * analyst never changes, so the row's signal_id is the pointer to it. `on conflict (signal_id) do
- * nothing` makes a second save of the same signal a no-op. A dedicated handoff store with a claim
- * status is DB Guy's #571 task 2.
+ * Persists the handoff in one atlas.decisions insert (#571, migration 20261105150000): decision,
+ * reason, the one entity pick in targets, summary null, the full AnalystHandoff snapshot in
+ * `handoff`, its `handoff_version`, and `em_status` (pending for keep, none otherwise) so the
+ * entity manager claims it via atlas.em_claim. `on conflict (signal_id) do nothing` makes a second
+ * save of the same signal a no-op.
  */
 export class PgHandoffSink implements HandoffSink {
   constructor(private readonly db: Db) {}
@@ -64,10 +69,10 @@ export class PgHandoffSink implements HandoffSink {
     const targets = h.entity ? [{ entity: h.entity.slug, kind: 'existing', type: h.entity.type, angle: h.entity.angle, note: h.entity.note }] : [];
     await this.db.query(
       `insert into atlas.decisions
-         (schema_version, signal_id, analyst_version, decision_type, summary, decision, reason, targets)
-       values ($1, $2, $3, 'file', null, $4, $5, $6::jsonb)
+         (schema_version, signal_id, analyst_version, decision_type, summary, decision, reason, targets, handoff, handoff_version, em_status)
+       values ($1, $2, $3, 'file', null, $4, $5, $6::jsonb, $7::jsonb, $8, $9)
        on conflict (signal_id) do nothing`,
-      [h.schema_version, h.signal_id, h.analyst_version, h.decision, h.reason, JSON.stringify(targets)],
+      [h.schema_version, h.signal_id, h.analyst_version, h.decision, h.reason, JSON.stringify(targets), JSON.stringify(h), h.schema_version, emStatusFor(h)],
     );
   }
 }
