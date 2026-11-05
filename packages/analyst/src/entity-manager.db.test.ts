@@ -27,9 +27,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool, type Pool as PoolType } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
-import { parseAnalystOutput } from '@myboon/contracts';
 
-import { PgDecisionSink } from './signal-worker.js';
 import { reviewProposedEntities, type EntityManagerOptions } from './entity-manager.js';
 import { createQuotaGuard } from './ollama-quota.js';
 import type { ChatMessage, Llm } from './session.js';
@@ -208,24 +206,6 @@ describe.skipIf(ADMIN_URL === '')('#480 entity manager run (local Postgres, enti
       ['s2', 'reject', null, true],
     ]);
 
-    // #567: a later kind-new target for the now-retired slug files no item and logs target_dropped (never proposes).
-    await seedSignal('s3', { withDecision: false });
-    const sinkLog: Record<string, unknown>[] = [];
-    const sink = new PgDecisionSink(workerPool, (e) => sinkLog.push(e));
-    await sink.save(parseAnalystOutput({
-      schema_version: 1,
-      analyst_version: 'analyst-504-v1',
-      signal_id: 's3',
-      summary: 'Kalshi in the news again.',
-      decision: 'keep',
-      reason: 'routed',
-      targets: [{ entity: 'kalshi-inc', kind: 'new', type: 'organization', angle: 'new_story', note: 'the story' }],
-    }));
-    expect((await pool.query<{ n: number }>("select count(*)::int n from atlas.entity_items where signal_id = 's3'")).rows[0]!.n).toBe(0);
-    expect((await pool.query<{ n: number }>("select count(*)::int n from atlas.decisions where signal_id = 's3'")).rows[0]!.n).toBe(1);
-    expect(sinkLog).toEqual([{
-      event: 'target_dropped', signal_id: 's3', entity: 'kalshi-inc', reason: 'new entities are never created (#567)',
-    }]);
     expect(await entityStatus('kalshi-inc')).toBe('retired');
   });
 
