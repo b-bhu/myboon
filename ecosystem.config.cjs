@@ -140,10 +140,12 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 
 // #444 V4 runtime, Sprint 1 scope: the scout stage. #391 adds the analyst
 // worker; #480 adds the timed entity manager (the only stage scheduled twice:
-// :00 and :45, so a proposed entity is picked up within 45 minutes).
+// :00 and :45, so a proposed entity is picked up within 45 minutes); #582 adds
+// the web reader (15-min cron tick, flag off).
 //   myboon-scout            -> packages/scout-news/src/run.ts                (15-min cron tick)
 //   myboon-analyst          -> packages/analyst/src/run.ts                    (30-min cron tick)
 //   myboon-entity-manager   -> packages/analyst/src/entity-manager-run.ts     (cron '0,45 * * * *')
+//   myboon-web-reader       -> packages/web-reader/src/run.ts                 (15-min cron tick)
 // Each V4 app runs one cycle and exits; PM2 starts it again at the next
 // cron tick (cron_restart). autorestart stays off so a failing run neither
 // loops nor hides in backoff: the crash state is visible until the next
@@ -245,6 +247,40 @@ const V4_APPS = [
       ENTITY_MANAGER_LLM_MODEL: 'glm-5.3-flash',
       ENTITY_MANAGER_MAX_ENTITIES: '40',
       ENTITY_MANAGER_TIMEOUT_MS: '20000',
+    },
+  },
+  {
+    // #582 the web reader: fills the planned atlas.signals body columns for
+    // linked tokens_xyz news signals (plain fetch first, headless Hermes
+    // oneshot `--ignore-rules --provider ollama-cloud -m <model> -z <prompt>`
+    // as the only fallback — never a browser toolset). One run of 50 signals
+    // is bounded by 5 parallel x 10 sequential Hermes calls at the 90s cap.
+    // Secrets WEB_READER_DATABASE_URL is never set in this file; it comes from
+    // the sourced .env. Depends on DB Guy's migration PR (columns +
+    // web_reader_worker role); go-live is the analyst sequence with
+    // --only myboon-web-reader and needs Bucket's yes.
+    name: 'myboon-web-reader',
+    script: 'src/run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/web-reader`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '*/15 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'web-reader',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `WEB_READER_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-web-reader --update-env`
+      WEB_READER_ENABLED: process.env.WEB_READER_ENABLED ?? 'false',
+      WEB_READER_HERMES_MODEL: 'glm-5.3-flash',
+      WEB_READER_MAX_PER_RUN: '50',
+      WEB_READER_BATCH_SIZE: '10',
+      WEB_READER_MAX_PARALLEL_BATCHES: '5',
+      WEB_READER_BODY_CAP_CHARS: '4000',
+      WEB_READER_HERMES_TIMEOUT_MS: '90000',
     },
   },
 ]

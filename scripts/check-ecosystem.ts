@@ -23,7 +23,7 @@ type EcosystemApp = {
   env?: Record<string, string | undefined>;
 };
 
-const V4_NAMES = ['myboon-scout', 'myboon-analyst'];
+const V4_NAMES = ['myboon-scout', 'myboon-analyst', 'myboon-web-reader'];
 const ANALYST_NAME = 'myboon-analyst';
 // requireString keys in config.ts; they must never sit in the tracked env.
 const ANALYST_SECRET_KEYS = ['ANALYST_DATABASE_URL', 'OLLAMA_API_KEY', 'JEV_API_TOKEN'];
