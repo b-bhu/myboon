@@ -452,6 +452,16 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       expect(rows.filter((r) => r.alias_hit).map((r) => r.slug)).toEqual(['france']);
     });
 
+    it('alias hits are capped too: more hits than the cap returns exactly cap rows, most items first', async () => {
+      await seedPlaces(12);
+      await giveItems('place-7', 3);
+      const names = Array.from({ length: 12 }, (_, i) => `place ${i}`);
+      const rows = await pgCandidateLookup(svcPool).shortlist(['place'], names, 5);
+      expect(rows).toHaveLength(5);
+      expect(rows.every((r) => r.alias_hit)).toBe(true);
+      expect(rows[0].slug).toBe('place-7');
+    });
+
     it('both types are searched; active only; deduped', async () => {
       await seedPlaces(2);
       await pool.query("update atlas.entities set status = 'retired' where slug = 'place-0'");

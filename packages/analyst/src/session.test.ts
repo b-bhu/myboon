@@ -61,7 +61,7 @@ function memLookup(entities: Ent[] = ENTITIES, items: Record<string, number> = {
       const pool = entities.filter((e) => e.status === 'active' && types.includes(e.type));
       const hits = pool.filter((e) => hit(e, names)).map((e) => out(e, true));
       const fill = pool.filter((e) => !hit(e, names)).map((e) => out(e, false)).sort((a, b) => b.item_count - a.item_count);
-      return [...hits, ...fill.slice(0, Math.max(0, cap - hits.length))];
+      return [...hits.slice(0, cap), ...fill.slice(0, Math.max(0, cap - hits.length))];
     },
   };
 }
@@ -148,6 +148,17 @@ describe('#567 shortlist matching (scripted LLM + decision tool, in-memory short
     expect(traces[0].shortlist[0]).toBe('france');
     expect(traces[0].shortlist).toHaveLength(SHORTLIST_CAP);
     expect(traces[0].shortlist[1]).toBe('p-59'); // most active first
+  });
+
+  it('the cap holds even when alias hits alone exceed SHORTLIST_CAP', async () => {
+    const many: Ent[] = Array.from({ length: 60 }, (_, i) => ({ slug: `p-${i}`, name: `P ${i}`, type: 'place' as const, status: 'active' as const, aliases: [`alias${i}`] }));
+    const traces: MatchTrace[] = [];
+    await runSession(sig(many.map((e) => e.aliases[0]).join(' ')), {
+      llm: kept([m('Somewhere', ['place', 'regulation'], { main: true, search_terms: many.map((e) => e.aliases[0]) })]), ask: scriptedAsk({}),
+      lookup: memLookup(many), trace: (t) => traces.push(t),
+    });
+    expect(traces[0].shortlist).toHaveLength(SHORTLIST_CAP);
+    expect(traces[0].alias_hits).toHaveLength(SHORTLIST_CAP);
   });
 
   it('France is found by its alias among more than 8 active places', async () => {
