@@ -9,11 +9,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
-import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystOutput } from '@myboon/contracts';
+import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystHandoff, parseAnalystOutput } from '@myboon/contracts';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
 import {
-  InMemoryHandoffSink, PgHandoffSink, classifySignalFailure, processNextD36, pgCandidateLookup, toHandoff, type D36Options,
+  InMemoryHandoffSink, PgHandoffSink, classifySignalFailure, processNextD36, pgCandidateLookup, toHandoff, emStatusFor, type D36Options,
 } from './signal-worker.js';
 import { createOllamaLlm, type ChatMessage, type JevLogEntry, type Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
@@ -225,7 +225,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   });
 
   const itemCount = async () => (await pool.query('select count(*)::int n from atlas.entity_items')).rows[0].n;
-  const decisionRow = async () => (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
+  const decisionRow = async () => (await pool.query('select decision, summary, reason, targets, handoff, handoff_version, em_status from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
 
   it('#571 keep: the handoff carries the one entity pick and the full signal row, unchanged; no item, no summary', async () => {
     await pool.query(`update atlas.signals set raw_ids = $2::jsonb, excerpt = text, raw_hash = $3 where signal_id = $1`,
@@ -242,7 +242,9 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
       raw_ids: { image: 'https://img.example/k.jpg', author: 'Jane', feed_source: 'coingecko', outlet: 'Cointelegraph' },
     });
     const d = await decisionRow();
-    expect(d).toMatchObject({ decision: 'keep', summary: null, reason: h.reason });
+    expect(d).toMatchObject({ decision: 'keep', summary: null, reason: h.reason, handoff_version: 1, em_status: 'pending' });
+    // The stored snapshot round-trips through the contract unchanged.
+    expect(parseAnalystHandoff(d.handoff)).toEqual(h);
     expect(d.targets).toEqual([{ entity: 'kalshi', kind: 'existing', type: 'organization', angle: 'existing_story', note: h.entity!.note }]);
     expect(await itemCount()).toBe(0);
   });
@@ -258,8 +260,23 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   it('#571 ignore and unclear hand over no entity and write no items', async () => {
     const r = await processNextD36(svcPool, opts({ sink: new PgHandoffSink(svcPool), primary: scripted('jev', () => 'ignore') }));
     expect(r?.handoff).toMatchObject({ decision: 'ignore', reason: 'Not interesting.', entity: null });
-    expect(await decisionRow()).toMatchObject({ decision: 'ignore', summary: null, targets: [] });
+    const d = await decisionRow();
+    expect(d).toMatchObject({ decision: 'ignore', summary: null, targets: [], em_status: 'none' });
+    expect(parseAnalystHandoff(d.handoff)).toEqual(r!.handoff);
     expect(await itemCount()).toBe(0);
+  });
+
+  it('#571 unclear is stored with em_status none; keep with no entity pick is pending (growth path)', async () => {
+    const r = await processNextD36(svcPool, opts({ sink: new PgHandoffSink(svcPool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : c.choices.includes('new_story') ? 'banana' : c.choices[0])) }));
+    expect(r?.result).toBe('parked');
+    expect(await decisionRow()).toMatchObject({ decision: 'unclear', em_status: 'none' });
+    const keepNone = { ...r!.handoff!, decision: 'keep' as const, entity: null };
+    expect(emStatusFor(keepNone)).toBe('pending');
+    await pool.query('delete from atlas.decisions');
+    await new PgHandoffSink(svcPool).save(keepNone);
+    const d = await decisionRow();
+    expect(d).toMatchObject({ decision: 'keep', em_status: 'pending', targets: [] });
+    expect(parseAnalystHandoff(d.handoff).entity).toBeNull();
   });
 
   it('#571/#567 extra or kind-new targets are dropped and logged; the handoff keeps only the first existing one', async () => {

@@ -17,7 +17,6 @@ import type { ChatMessage, Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 import { seedAliases } from './test-fixtures/aliases.js';
 
-import { HANDOFF_SIGNAL_GRANT } from './test-fixtures/handoff-grant.js';
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const KALSHI = spikeCases[5].signal;
 
@@ -155,7 +154,6 @@ describe.skipIf(ADMIN_URL === '')('#391 catchup run (local Postgres, analyst_wor
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
     pool = new Pool({ connectionString: db.url, max: 2 });
-    await pool.query(HANDOFF_SIGNAL_GRANT); // #571: until DB Guy's grant migration lands
     workerPool = workerPoolFor(db.url);
   });
   afterAll(async () => { await workerPool?.end(); await pool?.end(); await db?.drop(); });
@@ -195,7 +193,7 @@ describe.skipIf(ADMIN_URL === '')('#391 catchup run (local Postgres, analyst_wor
       .resolves.toMatchObject({ rows: [{ n: 1 }] });
     expect(await statuses()).toEqual([{ status: 'analysed', n: 3 }, { status: 'parked', n: 1 }]);
     // #571: the analyst hands over 3 decisions and writes no items; no entity is created.
-    expect((await pool.query("select count(*)::int n from atlas.decisions where decision = 'keep' and summary is null")).rows[0].n).toBe(3);
+    expect((await pool.query("select count(*)::int n from atlas.decisions where decision = 'keep' and summary is null and em_status = 'pending' and handoff_version = 1")).rows[0].n).toBe(3);
     expect((await pool.query('select count(*)::int n from atlas.entity_items')).rows[0].n).toBe(0);
     expect((await pool.query('select count(*)::int n from atlas.entities')).rows[0].n).toBe(spikeEntities.length);
   });

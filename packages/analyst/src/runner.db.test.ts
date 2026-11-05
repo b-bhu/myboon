@@ -17,7 +17,6 @@ import type { ChatMessage, Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
 import { seedAliases } from './test-fixtures/aliases.js';
 
-import { HANDOFF_SIGNAL_GRANT } from './test-fixtures/handoff-grant.js';
 const ADMIN_URL = process.env.ANALYST_TEST_ADMIN_URL?.trim() ?? '';
 const KALSHI = spikeCases[5].signal;
 
@@ -74,7 +73,6 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
   beforeAll(async () => {
     db = await createThrowawayDatabase(ADMIN_URL);
     pool = new Pool({ connectionString: db.url, max: 2 });
-    await pool.query(HANDOFF_SIGNAL_GRANT); // #571: until DB Guy's grant migration lands
     workerPool = workerPoolFor(db.url);
   });
   afterAll(async () => { await workerPool?.end(); await pool?.end(); await db?.drop(); });

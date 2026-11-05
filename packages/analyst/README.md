@@ -50,10 +50,12 @@ flowchart LR
 id, source, type, priority, times, `text`, `numbers`, `link`, `raw_ids`
 (`image`, `author`, `feed_source`, `outlet`, `handle`, `coingecko`, plus any
 other key), `unusual_score`, `excerpt`, `raw_hash`. Scout stores no article
-body: `text` is the article title or the full post. Today only the decision row
-is persisted; a stored handoff snapshot with a claim status is DB Guy's task 2,
-and the analyst role needs a select grant on the extra signal columns
-(`HANDOFF_SIGNAL_GRANT` in the DB tests) before this runs in prod.
+body: `text` is the article title or the full post. `PgHandoffSink` stores it in
+one `atlas.decisions` insert: `handoff` (the AnalystHandoff JSON snapshot),
+`handoff_version` (1) and `em_status` (`pending` for every keep, entity null =
+growth path; `none` for ignore/unclear), the entity manager's claim queue. The
+columns and the analyst_worker grants come from DB Guy's migration
+`20261105150000_atlas_em_handoff.sql` (#581), which must be applied first.
 
 ## Entity matching (#567, shortlist + one pick)
 
