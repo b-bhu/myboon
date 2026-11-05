@@ -31,6 +31,8 @@ alter table atlas.item_signals drop column if exists role;
 alter table atlas.entity_items drop constraint if exists entity_items_image_url_https;
 alter table atlas.entity_items drop column if exists image_url;
 
+drop trigger if exists decisions_em_status_insert_guard on atlas.decisions;
+drop function if exists atlas.decisions_em_status_insert_guard();
 drop index if exists atlas.decisions_em_pending_idx;
 drop index if exists atlas.decisions_em_claimed_idx;
 drop index if exists atlas.decisions_em_duplicate_of_idx;

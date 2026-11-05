@@ -8,6 +8,8 @@
 -- Output (last line): item_signals_origin_rows|items_with_signal|items_with_image_url
 set lock_timeout = '3s';
 set statement_timeout = '30s';
+-- Note: the whole DO block below is ONE top-level statement, so statement_timeout (30s) covers
+-- all batches together, not each batch. Prod (~8.8k items, 18 batches) runs well under that.
 
 do $b$
 declare

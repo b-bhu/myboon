@@ -77,6 +77,12 @@ insert into atlas.decisions (schema_version, signal_id, analyst_version, decisio
   (1,'s3','v','keep','r','{"schema_version":1,"entity":{"slug":"binance"}}',1,'pending'),
   (1,'s4','v','ignore','r','{}',1,'none');
 SQL
+rejects "analyst_worker cannot insert em_status story (insert guard)" "set role analyst_worker; insert into atlas.decisions (schema_version, signal_id, analyst_version, decision, handoff, em_status) values (1,'s5','v','keep','{\"a\":1}','story')"
+rejects "owner cannot insert em_status claimed either (insert guard)" "insert into atlas.decisions (schema_version, signal_id, analyst_version, decision, handoff, em_status) values (1,'s5','v','keep','{\"a\":1}','claimed')"
+check "insert guard trigger present" "select count(*) from pg_trigger where tgname='decisions_em_status_insert_guard' and tgrelid='atlas.decisions'::regclass" "1"
+check "pending index is (created_at, id)" "select indexdef like '%(created_at, id) WHERE%' from pg_indexes where indexname='decisions_em_pending_idx'" "t"
+plan=$("${PSQL[@]}" -t -A -c "set enable_seqscan=off; explain (costs off) select c.id from atlas.decisions c where (c.em_status = 'pending' and c.em_next_attempt_at <= now()) or (c.em_status = 'claimed' and c.em_claim_expires_at < now()) order by c.created_at, c.id limit 1" 2>&1)
+grep -q decisions_em_pending_idx <<<"$plan" && ok "em_claim's pick query can use decisions_em_pending_idx (EXPLAIN)" || bad "EXPLAIN does not use decisions_em_pending_idx: $plan"
 check "analyst_worker reads SignalMetadata columns" "set role analyst_worker; select count(*) from (select schema_version, type, priority, fetched_at, numbers, raw_ids, unusual_score, raw_hash from atlas.signals) s" "5"
 rejects "analyst_worker cannot write em claim columns" "set role analyst_worker; insert into atlas.decisions (schema_version, signal_id, analyst_version, decision, em_attempts) values (1,'s5','v','ignore',2)"
 rejects "analyst_worker cannot run em_claim" "set role analyst_worker; select * from atlas.em_claim('a')"
@@ -113,6 +119,10 @@ check "failed row: done_at set, claim cleared" "select em_status||'|'||(em_done_
 "${PSQL[@]}" -c "update atlas.decisions set em_status='claimed', em_attempts=3, em_claim_token=atlas.uuidv7(), em_claim_expires_at=now()-interval '1 s', em_done_at=null where id='$D2'" >/dev/null
 check "expired lease at max attempts: em_claim marks failed, claims nothing" "$EW select count(*) from atlas.em_claim('w1')" "0"
 check "...and the row is failed" "select em_status from atlas.decisions where id='$D2'" "failed"
+"${PSQL[@]}" -c "set role analyst_worker; insert into atlas.decisions (schema_version, signal_id, analyst_version, decision, reason, handoff, em_status) values (1,'s5','v','keep','r','{\"schema_version\":1}','pending')" >/dev/null 2>&1 && ok "analyst_worker insert pending still allowed by guard" || bad "insert pending s5"
+c=$(q "$EW select decision_id||'|'||claim_token from atlas.em_claim('w1')")
+check "em_finish to story still works under the insert guard" "$EW select atlas.em_finish('${c%%|*}', '${c##*|}', 'story')" "t"
+check "...row is story" "select em_status from atlas.decisions where signal_id='s5'" "story"
 
 # entity_context + item_signals as entity_worker
 check "entity_worker inserts entity_context" "$EW insert into atlas.entity_context (entity_id, signal_id, decision_id, reason, sentiment) values ('01a17278-0000-7000-8000-000000000002','s3','$D2','parked: minor update','neutral') returning 1" "1"

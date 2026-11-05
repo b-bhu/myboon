@@ -59,8 +59,35 @@ begin
   end loop;
 end $c$;
 
--- queue scan: pending rows, oldest first (answer 3)
-create index if not exists decisions_em_pending_idx on atlas.decisions (created_at) where em_status = 'pending';
+-- queue scan: pending rows, oldest first (answer 3). (created_at, id) matches em_claim's
+-- ORDER BY c.created_at, c.id. An older (created_at)-only build of this index is replaced.
+do $i$ begin
+  if exists (select 1 from pg_indexes where schemaname = 'atlas' and indexname = 'decisions_em_pending_idx'
+             and indexdef not like '%(created_at, id)%') then
+    drop index atlas.decisions_em_pending_idx;
+  end if;
+end $i$;
+create index if not exists decisions_em_pending_idx on atlas.decisions (created_at, id) where em_status = 'pending';
+
+-- Insert guard: a new decision may only start as NULL (legacy), 'pending' or 'none'. Outcomes
+-- (claimed/story/parked/duplicate/new_entity/failed) are set only by em_claim/em_finish/em_fail
+-- via UPDATE. decisions_em_status_check still lists every value the column may hold.
+create or replace function atlas.decisions_em_status_insert_guard()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $f$
+begin
+  if new.em_status is not null and new.em_status not in ('pending', 'none') then
+    raise exception 'decisions.em_status on insert must be null, pending or none (got %)', new.em_status
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end $f$;
+revoke all on function atlas.decisions_em_status_insert_guard() from public;
+drop trigger if exists decisions_em_status_insert_guard on atlas.decisions;
+create trigger decisions_em_status_insert_guard before insert on atlas.decisions
+  for each row execute function atlas.decisions_em_status_insert_guard();
 -- expired-lease scan
 create index if not exists decisions_em_claimed_idx on atlas.decisions (em_claim_expires_at) where em_status = 'claimed';
 -- FK lookup
