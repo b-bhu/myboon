@@ -132,9 +132,9 @@ function oneLine(summary: string | null): string {
 
 /**
  * The #567 shortlist over Postgres, read-only, one query per type run in parallel: active entities of
- * the type whose alias matches a name (atlas.entity_candidates, #566: exact on norm_alias), always kept,
- * then the type's most active entities by entity item count. Merged as all alias hits first (in type
- * order), then the fill by item count across types, deduped, capped at `cap` (alias hits are never cut).
+ * the type whose alias matches a name (atlas.entity_candidates, #566: exact on norm_alias), then the
+ * type's most active entities by entity item count. Merged as alias hits first (in type order), then the
+ * fill by item count across types, deduped, hard-capped at `cap` in total (alias hits count toward it).
  */
 export function pgCandidateLookup(db: Db): CandidateLookup {
   return {
