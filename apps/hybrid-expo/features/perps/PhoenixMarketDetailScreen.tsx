@@ -1,5 +1,4 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { WAITLIST_MODE, WAITLIST_PITCH, waitlistLabel } from '@/features/waitlist/waitlist.mode';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
@@ -537,7 +536,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
   const primaryButton = useMemo(() => {
     if (!wallet.connected) {
       return {
-        label: waitlistLabel('Connect wallet'),
+        label: 'Connect wallet',
         disabled: false,
         onPress: () => connectSheet.open('solana'),
       };
@@ -677,10 +676,10 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
             <View style={styles.disconnectedCta}>
               <MaterialIcons name="lock" size={32} color={semantic.text.dim} />
               <Text style={styles.disconnectedText}>
-                {WAITLIST_MODE ? WAITLIST_PITCH : `Connect your wallet to trade ${market.baseSymbol} perpetuals`}
+                {`Connect your wallet to trade ${market.baseSymbol} perpetuals`}
               </Text>
               <Pressable style={styles.connectWalletBtn} onPress={() => connectSheet.open('solana')}>
-                <Text style={styles.connectWalletText}>{waitlistLabel('Connect wallet')}</Text>
+                <Text style={styles.connectWalletText}>Connect wallet</Text>
               </Pressable>
             </View>
           ) : (

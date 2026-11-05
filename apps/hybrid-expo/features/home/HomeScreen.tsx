@@ -27,8 +27,6 @@ import {
   RAYDIUM_MARK_SVG,
 } from '@/features/home/marketBrandAssets';
 import { HomeWalletOverview } from '@/features/wallet/HomeWalletOverview';
-import { WaitlistProfileContent } from '@/features/waitlist/WaitlistProfileScreen';
-import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
 import { WalletSecondarySheet } from '@/features/wallet/WalletSecondarySheet';
 import { HomeFeedOverview } from '@/features/home/components/HomeFeedOverview';
 import { HomeNavigation, type HomeDestination } from '@/features/home/components/HomeNavigation';
@@ -355,40 +353,37 @@ export default function HomeScreen() {
       </View>
 
       <View style={[styles.destination, destination !== 'wallet' && styles.hiddenDestination]}>
-        {/* Waitlist build (#432): no wallet; the tab is the waitlist + settings. */}
-        {WAITLIST_MODE ? <WaitlistProfileContent /> : (
-          <HomeWalletOverview
-            active={walletSectionVisible}
-            surfaceVersion={surfaceVersion}
-            chains={displayChains}
-            chainAddress={chainAddress}
-            chainBalance={chainBalance}
-            solanaConnected={wallet.connected}
-            onDisconnectChain={handleDisconnectChain}
-            walletTotals={walletTotals}
-            walletSources={walletSources}
-            walletRefreshing={walletRefreshing}
-            onWalletRefresh={handleWalletRefresh}
-            onRetrySource={retryWalletSource}
-            onOpenMeteora={() => router.push('/markets/meteora/profile')}
-            onOpenPhoenix={() => router.push('/markets/phoenix/profile')}
-            onOpenPacifica={() => router.push('/markets/pacifica/profile')}
-            onOpenSpot={() => router.push('/spot' as never)}
-            onConnect={() => {
-              Keyboard.dismiss();
-              setSurfaceVersion((key) => key + 1);
-              connectSheet.open('solana');
-            }}
-            dormantNotices={fundedDormantChains.map((entry) => (
-              <DormantChainNotice
-                key={entry.chain}
-                chain={entry.chain}
-                balanceUsd={entry.balanceUsd}
-                onActivate={handleActivateDormantChain}
-              />
-            ))}
-          />
-        )}
+        <HomeWalletOverview
+          active={walletSectionVisible}
+          surfaceVersion={surfaceVersion}
+          chains={displayChains}
+          chainAddress={chainAddress}
+          chainBalance={chainBalance}
+          solanaConnected={wallet.connected}
+          onDisconnectChain={handleDisconnectChain}
+          walletTotals={walletTotals}
+          walletSources={walletSources}
+          walletRefreshing={walletRefreshing}
+          onWalletRefresh={handleWalletRefresh}
+          onRetrySource={retryWalletSource}
+          onOpenMeteora={() => router.push('/markets/meteora/profile')}
+          onOpenPhoenix={() => router.push('/markets/phoenix/profile')}
+          onOpenPacifica={() => router.push('/markets/pacifica/profile')}
+          onOpenSpot={() => router.push('/spot' as never)}
+          onConnect={() => {
+            Keyboard.dismiss();
+            setSurfaceVersion((key) => key + 1);
+            connectSheet.open('solana');
+          }}
+          dormantNotices={fundedDormantChains.map((entry) => (
+            <DormantChainNotice
+              key={entry.chain}
+              chain={entry.chain}
+              balanceUsd={entry.balanceUsd}
+              onActivate={handleActivateDormantChain}
+            />
+          ))}
+        />
       </View>
       <HomeNavigation
         selected={destination}

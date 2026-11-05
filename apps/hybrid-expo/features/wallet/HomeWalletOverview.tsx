@@ -22,6 +22,7 @@ import { WalletActionPanel } from '@/features/wallet/WalletActionPanel';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
 import { ChainRow } from '@/features/wallet/components/ChainRow';
+import { LegalLinks } from '@/features/wallet/components/LegalLinks';
 import {
   type WalletProtocolId,
   type WalletSourcesState,
@@ -300,6 +301,7 @@ export function HomeWalletOverview({
             )}
             {/* EVM funds remain explicitly separate from the Solana portfolio. */}
             {chainRows}
+            <LegalLinks />
           </Animated.View>
         </Animated.ScrollView>
       </Animated.View>
