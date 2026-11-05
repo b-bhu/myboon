@@ -1,4 +1,5 @@
--- squawk-ignore-file require-concurrent-index-creation, adding-foreign-key-constraint, disallowed-unique-constraint, adding-not-nullable-field, constraint-missing-not-valid
+-- squawk-ignore-file require-concurrent-index-creation, adding-foreign-key-constraint, disallowed-unique-constraint, adding-not-nullable-field, constraint-missing-not-valid, prefer-bigint-over-int
+-- (smallint handoff_version per Backend Dev answer 2; integer em_attempts matches signals.attempts and signal_* returns)
 -- #571 task 2: analyst -> entity-manager handoff on atlas.decisions, plus the tables the entity
 -- manager writes. Answers: Backend Dev on #571 (issuecomment-6654717699).
 --   decisions.handoff jsonb NOT NULL default '{}' (object) + handoff_version smallint default 1
