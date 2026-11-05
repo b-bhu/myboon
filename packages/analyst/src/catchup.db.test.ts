@@ -192,15 +192,9 @@ describe.skipIf(ADMIN_URL === '')('#391 catchup run (local Postgres, analyst_wor
     await expect(pool.query("select count(*)::int n from atlas.signals where status = 'parked' and parked_reason = 'backlog_skip_24h'"))
       .resolves.toMatchObject({ rows: [{ n: 1 }] });
     expect(await statuses()).toEqual([{ status: 'analysed', n: 3 }, { status: 'parked', n: 1 }]);
-    // Items keep the signal's occurred_at, and only the pre-existing entities exist.
-    const items = (await pool.query<{ occurred_at: Date; signal_occurred_at: Date; entity_slug: string }>(
-      `select i.occurred_at, (select occurred_at from atlas.signals where signal_id = i.signal_id) as signal_occurred_at,
-              s.slug as entity_slug
-         from atlas.entity_items i join atlas.entities s on s.id = i.main_entity_id order by i.occurred_at`,
-    )).rows;
-    expect(items).toHaveLength(3);
-    for (const i of items) expect(i.occurred_at?.getTime()).toBe(i.signal_occurred_at?.getTime());
-    expect(items.every((i) => i.entity_slug === 'kalshi')).toBe(true);
+    // #571: the analyst hands over 3 decisions and writes no items; no entity is created.
+    expect((await pool.query("select count(*)::int n from atlas.decisions where decision = 'keep' and summary is null and em_status = 'pending' and handoff_version = 1")).rows[0].n).toBe(3);
+    expect((await pool.query('select count(*)::int n from atlas.entity_items')).rows[0].n).toBe(0);
     expect((await pool.query('select count(*)::int n from atlas.entities')).rows[0].n).toBe(spikeEntities.length);
   });
 

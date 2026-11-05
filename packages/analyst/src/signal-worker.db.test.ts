@@ -1,24 +1,19 @@
 /**
  * #504 D36 analyst worker on a throwaway LOCAL Postgres (ANALYST_TEST_ADMIN_URL). The worker (claims,
- * signal reads, entity search) and PgDecisionSink run on a second pool whose connections set role
+ * signal reads, entity search) and PgHandoffSink run on a second pool whose connections set role
  * service_role, so the tests prove the migration grants suffice; the admin/superuser pool stays for
  * setup only (truncate, seed entities/signals, resets) and assertion reads. Claim and finish use the
- * existing atlas.signal_* functions (#478/#479). The decision write goes to a DecisionSink: the
- * in-memory sink, and PgDecisionSink writing atlas.decisions + atlas.entity_items (proposed entities for new
- * targets) on the #503 schema. The LLM, Jev and Clef are scripted (answers, errors, timeouts).
- *
- * #482 filing rules (tests written first; sink changes follow): per-slug advisory-lock serialisation,
- * items stamped with the signal's occurred_at, and kind-new slugs: reuse only a proposed entity, file on
- * an active entity with a target_reclassified log (#511), drop a retired slug (target_dropped, no item).
+ * existing atlas.signal_* functions (#478/#479). The handoff goes to a HandoffSink: the
+ * in-memory sink, and PgHandoffSink writing the atlas.decisions row only (#571: no items). The LLM, Jev and Clef are scripted (answers, errors, timeouts).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
-import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystOutput } from '@myboon/contracts';
+import { ANALYST_OUTPUT_SCHEMA_VERSION, parseAnalystHandoff, parseAnalystOutput } from '@myboon/contracts';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
 import {
-  InMemoryDecisionSink, PgDecisionSink, classifySignalFailure, processNextD36, pgCandidateLookup, type D36Options,
+  InMemoryHandoffSink, PgHandoffSink, classifySignalFailure, processNextD36, pgCandidateLookup, toHandoff, emStatusFor, type D36Options,
 } from './signal-worker.js';
 import { createOllamaLlm, type ChatMessage, type JevLogEntry, type Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
@@ -67,7 +62,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   let pool: Pool;
   /** The worker/sink pool: same throwaway DB with every connection running as service_role. */
   let svcPool: Pool;
-  let sink: InMemoryDecisionSink;
+  let sink: InMemoryHandoffSink;
   const logs: JevLogEntry[] = [];
   const opts = (o: Partial<D36Options>): D36Options => ({
     llm: kalshiLlm(), primary: scripted('jev', keepAll), fallback: scripted('clef', keepAll), shadow: null,
@@ -86,7 +81,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   afterAll(async () => { await pool?.end(); await svcPool?.end(); await db?.drop(); });
   beforeEach(async () => {
     logs.length = 0;
-    sink = new InMemoryDecisionSink();
+    sink = new InMemoryHandoffSink();
     await pool.query('truncate atlas.item_signals, atlas.decisions, atlas.signals cascade');
     await pool.query('delete from atlas.entities');
     for (const s of spikeEntities) {
@@ -103,16 +98,16 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     const r = await processNextD36(svcPool, opts({}));
     expect(r).toMatchObject({ signalId: KALSHI.signal_id, result: 'analysed' });
     expect(await sig()).toMatchObject({ status: 'analysed', claim_token: null });
-    expect(sink.outputs()).toHaveLength(1);
-    expect(sink.outputs()[0]).toMatchObject({ decision: 'keep', analyst_version: 'analyst-567-v1', schema_version: 1,
-      targets: [{ entity: 'kalshi', kind: 'existing', type: 'organization', angle: 'existing_story' }] });
+    expect(sink.handoffs()).toHaveLength(1);
+    expect(sink.handoffs()[0]).toMatchObject({ decision: 'keep', analyst_version: 'analyst-567-v1', schema_version: 1,
+      entity: { slug: 'kalshi', type: 'organization', angle: 'existing_story' } });
     expect(logs.map((l) => l.provider)).toEqual(['jev', 'jev', 'jev']);
   });
 
   it('ignore: the signal is analysed and the output has a reason and no targets', async () => {
     const r = await processNextD36(svcPool, opts({ primary: scripted('jev', () => 'ignore') }));
     expect(r?.result).toBe('analysed');
-    expect(sink.outputs()[0]).toMatchObject({ decision: 'ignore', reason: 'Not interesting.', targets: [] });
+    expect(sink.handoffs()[0]).toMatchObject({ decision: 'ignore', reason: 'Not interesting.', entity: null });
   });
 
   it('unclear: the signal is parked with the reason', async () => {
@@ -121,7 +116,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     const s = await sig();
     expect(s.status).toBe('parked');
     expect(s.parked_reason).toMatch(/banana/);
-    expect(sink.outputs()[0]).toMatchObject({ decision: 'unclear', targets: [] });
+    expect(sink.handoffs()[0]).toMatchObject({ decision: 'unclear', entity: null });
   });
 
   it('Jev times out: Clef answers (fallback) and the signal is analysed', async () => {
@@ -130,7 +125,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(r?.result).toBe('analysed');
     expect(clef.calls).toBe(3);
     expect(logs.every((l) => l.provider === 'clef')).toBe(true);
-    expect(sink.outputs()).toHaveLength(1);
+    expect(sink.handoffs()).toHaveLength(1);
   });
 
   it('Jev and Clef both fail: the signal stays unfinished (received, claim cleared, attempt counted) and is retried', async () => {
@@ -140,7 +135,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(s).toMatchObject({ status: 'received', attempts: 1, claim_token: null });
     expect(s.last_error).toMatch(/jev/);
     expect(s.last_error).toMatch(/clef/);
-    expect(sink.outputs()).toHaveLength(0);
+    expect(sink.handoffs()).toHaveLength(0);
     await pool.query('update atlas.signals set next_attempt_at = now() where signal_id = $1', [KALSHI.signal_id]);
     expect((await processNextD36(svcPool, opts({})))?.result).toBe('analysed');
   });
@@ -149,7 +144,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     const r = await processNextD36(svcPool, opts({ llm: kalshiLlm({ fail: true }) }));
     expect(r?.result).toBe('failed');
     expect(await sig()).toMatchObject({ status: 'received', attempts: 1 });
-    expect(sink.outputs()).toHaveLength(0);
+    expect(sink.handoffs()).toHaveLength(0);
   });
 
   it('the Ollama LLM call hangs: it aborts at timeoutMs and takes the same retry path (Refs #512)', async () => {
@@ -161,7 +156,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     const s = await sig();
     expect(s).toMatchObject({ status: 'received', attempts: 1, claim_token: null });
     expect(s.last_error).toMatch(/LLM timed out after 50ms/);
-    expect(sink.outputs()).toHaveLength(0);
+    expect(sink.handoffs()).toHaveLength(0);
   });
 
   it('a signal_failed line is logged for every failed attempt: retry then dead at the attempt cap', async () => {
@@ -188,17 +183,17 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     await processNextD36(svcPool, opts({}));
     expect(shadow.calls).toBe(0);
     await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
-    sink = new InMemoryDecisionSink();
+    sink = new InMemoryHandoffSink();
     await processNextD36(svcPool, opts({ shadow, sink }));
     expect(shadow.calls).toBe(3);
-    expect(sink.outputs()[0]).toMatchObject({ decision: 'keep', targets: [{ entity: 'kalshi' }] });
+    expect(sink.handoffs()[0]).toMatchObject({ decision: 'keep', entity: { slug: 'kalshi' } });
   });
 
   it('the same signal processed twice keeps one output in the sink', async () => {
     await processNextD36(svcPool, opts({}));
     await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
     await processNextD36(svcPool, opts({}));
-    expect(sink.outputs()).toHaveLength(1);
+    expect(sink.handoffs()).toHaveLength(1);
   });
 
   it('nothing due: returns null', async () => {
@@ -209,7 +204,7 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
   it('a signal older than 24h is parked backlog_skip_24h before the LLM, deciders or sink run (#391)', async () => {
     await pool.query("update atlas.signals set occurred_at = now() - interval '25 hours' where signal_id = $1", [KALSHI.signal_id]);
     const llm = kalshiLlm();
-    const r = await processNextD36(svcPool, opts({ llm, sink: new PgDecisionSink(svcPool) }));
+    const r = await processNextD36(svcPool, opts({ llm, sink: new PgHandoffSink(svcPool) }));
     expect(r).toMatchObject({ signalId: KALSHI.signal_id, result: 'parked' });
     // Never LLM'd: the session started with zero turns and not a single decider call was logged.
     expect(llm.turns).toBe(0);
@@ -229,200 +224,79 @@ describe.skipIf(ADMIN_URL === '')('#504 D36 analyst worker (local Postgres)', ()
     expect(await sig()).toMatchObject({ status: 'analysed', parked_reason: null });
   });
 
-  it('the same signal processed twice gives one atlas.decisions row (PgDecisionSink)', async () => {
-    await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool) }));
+  const itemCount = async () => (await pool.query('select count(*)::int n from atlas.entity_items')).rows[0].n;
+  const decisionRow = async () => (await pool.query('select decision, summary, reason, targets, handoff, handoff_version, em_status from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
+
+  it('#571 keep: the handoff carries the one entity pick and the full signal row, unchanged; no item, no summary', async () => {
+    await pool.query(`update atlas.signals set raw_ids = $2::jsonb, excerpt = text, raw_hash = $3 where signal_id = $1`,
+      [KALSHI.signal_id, JSON.stringify({ image: 'https://img.example/k.jpg', author: 'Jane', feed_source: 'coingecko', outlet: 'Cointelegraph' }), 'f'.repeat(64)]);
+    const stored = (await pool.query('select * from atlas.signals where signal_id = $1', [KALSHI.signal_id])).rows[0];
+    const r = await processNextD36(svcPool, opts({ sink: new PgHandoffSink(svcPool) }));
+    expect(r?.result).toBe('analysed');
+    const h = r!.handoff!;
+    expect(h).toMatchObject({ decision: 'keep', entity: { slug: 'kalshi', type: 'organization', angle: 'existing_story' } });
+    expect(h).not.toHaveProperty('summary');
+    expect(h.signal).toMatchObject({
+      signal_id: KALSHI.signal_id, source: stored.source, source_id: stored.source_id, type: 'news', text: stored.text, link: stored.link,
+      excerpt: stored.text, raw_hash: 'f'.repeat(64), occurred_at: stored.occurred_at.toISOString(), fetched_at: stored.fetched_at.toISOString(),
+      raw_ids: { image: 'https://img.example/k.jpg', author: 'Jane', feed_source: 'coingecko', outlet: 'Cointelegraph' },
+    });
+    const d = await decisionRow();
+    expect(d).toMatchObject({ decision: 'keep', summary: null, reason: h.reason, handoff_version: 1, em_status: 'pending' });
+    // The stored snapshot round-trips through the contract unchanged.
+    expect(parseAnalystHandoff(d.handoff)).toEqual(h);
+    expect(d.targets).toEqual([{ entity: 'kalshi', kind: 'existing', type: 'organization', angle: 'existing_story', note: h.entity!.note }]);
+    expect(await itemCount()).toBe(0);
+  });
+
+  it('#571 the same signal processed twice gives one atlas.decisions row and no items', async () => {
+    await processNextD36(svcPool, opts({ sink: new PgHandoffSink(svcPool) }));
     await pool.query("update atlas.signals set status = 'received', next_attempt_at = now() where signal_id = $1", [KALSHI.signal_id]);
-    await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool) }));
+    await processNextD36(svcPool, opts({ sink: new PgHandoffSink(svcPool) }));
     expect((await pool.query('select count(*)::int n from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(1);
-    expect((await pool.query('select count(*)::int n from atlas.entity_items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(1);
+    expect(await itemCount()).toBe(0);
   });
 
-  it('keep with targets: the decisions row carries the output and one item per target (PgDecisionSink)', async () => {
-    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool) }));
-    expect(r?.result).toBe('analysed');
-    const out = r?.output;
-    expect(out?.decision).toBe('keep');
-    const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
-    expect(d.decision).toBe('keep');
-    expect(d.summary).toBe(out?.summary);
-    expect(d.reason).toBe(out?.reason);
-    expect(d.targets).toEqual(out!.targets);
-    const items = (await pool.query(
-      'select i.*, s.slug as entity_slug from atlas.entity_items i join atlas.entities s on s.id = i.main_entity_id where i.signal_id = $1',
-      [KALSHI.signal_id],
-    )).rows;
-    expect(items).toHaveLength(out!.targets.length);
-    for (const t of out!.targets) {
-      const item = items.find((i: { entity_slug: string }) => i.entity_slug === t.entity);
-      expect(item).toBeDefined();
-      expect(item.item_key).toBe(`${KALSHI.signal_id}:${t.entity}`);
-      expect(item.signal_id).toBe(KALSHI.signal_id);
-      expect(item.angle).toBe(t.angle);
-      expect(item.note).toBe(t.note);
-    }
-    expect((await pool.query('select count(*)::int n from atlas.item_signals')).rows[0].n).toBe(0);
+  it('#571 ignore and unclear hand over no entity and write no items', async () => {
+    const r = await processNextD36(svcPool, opts({ sink: new PgHandoffSink(svcPool), primary: scripted('jev', () => 'ignore') }));
+    expect(r?.handoff).toMatchObject({ decision: 'ignore', reason: 'Not interesting.', entity: null });
+    const d = await decisionRow();
+    expect(d).toMatchObject({ decision: 'ignore', summary: null, targets: [], em_status: 'none' });
+    expect(parseAnalystHandoff(d.handoff)).toEqual(r!.handoff);
+    expect(await itemCount()).toBe(0);
   });
 
-  it('ignore writes a decision row and no items (PgDecisionSink)', async () => {
-    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool), primary: scripted('jev', () => 'ignore') }));
-    expect(r?.result).toBe('analysed');
-    const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
-    expect(d.decision).toBe('ignore');
-    expect(d.summary).toBe(r?.output?.summary);
-    expect(d.reason).toBe('Not interesting.');
-    expect(d.targets).toEqual([]);
-    expect((await pool.query('select count(*)::int n from atlas.entity_items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
-  });
-
-  it('unclear writes a decision row (targets []) and no items (PgDecisionSink)', async () => {
-    const r = await processNextD36(svcPool, opts({ sink: new PgDecisionSink(svcPool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : c.choices.includes('new_story') ? 'banana' : c.choices[0])) }));
+  it('#571 unclear is stored with em_status none; keep with no entity pick is pending (growth path)', async () => {
+    const r = await processNextD36(svcPool, opts({ sink: new PgHandoffSink(svcPool), primary: scripted('jev', (c) => (c.choices.includes('keep') ? 'keep' : c.choices.includes('new_story') ? 'banana' : c.choices[0])) }));
     expect(r?.result).toBe('parked');
-    const d = (await pool.query('select decision, summary, reason, targets from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0];
-    expect(d.decision).toBe('unclear');
-    expect(d.reason).toMatch(/banana/);
-    expect(d.targets).toEqual([]);
-    expect((await pool.query('select count(*)::int n from atlas.entity_items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
+    expect(await decisionRow()).toMatchObject({ decision: 'unclear', em_status: 'none' });
+    const keepNone = { ...r!.handoff!, decision: 'keep' as const, entity: null };
+    expect(emStatusFor(keepNone)).toBe('pending');
+    await pool.query('delete from atlas.decisions');
+    await new PgHandoffSink(svcPool).save(keepNone);
+    const d = await decisionRow();
+    expect(d).toMatchObject({ decision: 'keep', em_status: 'pending', targets: [] });
+    expect(parseAnalystHandoff(d.handoff).entity).toBeNull();
   });
 
-  it('#559 PANews case: title is the headline with no source names, summary differs from the note, link stays on the signal', async () => {
-    const output = parseAnalystOutput({
-      schema_version: ANALYST_OUTPUT_SCHEMA_VERSION,
-      analyst_version: 'analyst-504-v1',
-      signal_id: KALSHI.signal_id,
-      headline: 'According to PANews, China Merchants Bank adds digital RMB payments to its app',
-      summary: 'According to a PANews report shared by tokens_xyz, China Merchants Bank added digital RMB payments to its mobile app. It widens retail access to the e-CNY.',
-      decision: 'keep',
-      reason: 'A new entity is needed.',
-      targets: [{ entity: 'coinbase', kind: 'existing', type: 'organization', angle: 'new_story', note: 'PANews reports the bank shipped an e-CNY feature.' }],
+  it('#571/#567 extra or kind-new targets are dropped and logged; the handoff keeps only the first existing one', async () => {
+    const drops: Record<string, unknown>[] = [];
+    const signal = (await processNextD36(svcPool, opts({})))!.handoff!.signal;
+    const out = parseAnalystOutput({
+      schema_version: ANALYST_OUTPUT_SCHEMA_VERSION, analyst_version: 'v', signal_id: KALSHI.signal_id, summary: 'S.', decision: 'keep', reason: 'r',
+      targets: [
+        { entity: 'fresh-567', kind: 'new', type: 'organization', angle: 'new_story', note: 'n' },
+        { entity: 'base', kind: 'existing', type: 'protocol', angle: 'existing_story', note: 'n' },
+        { entity: 'coinbase', kind: 'existing', type: 'organization', angle: 'plain_update', note: 'n' },
+      ],
     });
-    await new PgDecisionSink(svcPool).save(output);
-    const row = (await pool.query(
-      'select i.title, i.summary, i.note, s.link from atlas.entity_items i join atlas.signals s on s.signal_id = i.signal_id where i.signal_id = $1',
-      [KALSHI.signal_id],
-    )).rows[0];
-    expect(row.title).toBe('China Merchants Bank adds digital RMB payments to its app');
-    expect(row.summary).toBe('China Merchants Bank added digital RMB payments to its mobile app. It widens retail access to the e-CNY.');
-    for (const bad of ['PANews', 'tokens_xyz', 'According to', 'shared by']) {
-      expect(row.title).not.toContain(bad);
-      expect(row.summary).not.toContain(bad);
-    }
-    expect(row.summary).not.toBe(row.note);
-    expect(row.link).toBe(KALSHI.link);
-  });
-
-  it('an existing target whose slug is not an active entity throws and writes nothing (PgDecisionSink)', async () => {
-    const output = parseAnalystOutput({
-      schema_version: ANALYST_OUTPUT_SCHEMA_VERSION,
-      analyst_version: 'analyst-504-v1',
-      signal_id: KALSHI.signal_id,
-      summary: 'Nobody special.',
-      decision: 'keep',
-      reason: 'Bad route.',
-      targets: [{ entity: 'no-such-entity', kind: 'existing', type: 'organization', angle: 'plain_update', note: 'Nothing here.' }],
-    });
-    await expect(new PgDecisionSink(svcPool).save(output)).rejects.toThrow(/no active entity/);
-    expect((await pool.query('select count(*)::int n from atlas.decisions where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
-    expect((await pool.query('select count(*)::int n from atlas.entity_items where signal_id = $1', [KALSHI.signal_id])).rows[0].n).toBe(0);
-    expect((await pool.query('select count(*)::int n from atlas.entities where slug = $1', ['no-such-entity'])).rows[0].n).toBe(0);
-  });
-
-  describe('#482 filing rules (PgDecisionSink, tests first)', () => {
-    type ItemRow = {
-      item_key: string; signal_id: string; occurred_at: Date | null;
-      entity_slug: string; entity_status: string; signal_occurred_at: Date | null;
-    };
-    /** Extra signal with a fixed occurred_at: the sink must copy it onto every filed item. */
-    const addSignal = (signalId: string, occurredAt: string) => pool.query(
-      `insert into atlas.signals (signal_id, schema_version, source, source_id, type, text, link, occurred_at)
-         values ($1, 1, 'tokens_xyz', $2, 'news', $3, null, $4::timestamptz)`,
-      [signalId, `${signalId}-src`, `Signal ${signalId} for #482.`, occurredAt],
-    );
-    const tgt = (entity: string, kind: 'existing' | 'new', type: string, angle: string) =>
-      ({ entity, kind, type, angle, note: `Note on ${entity}.` });
-    const out = (signalId: string, targets: { entity: string; kind: 'existing' | 'new'; type: string; angle: string; note: string }[]) =>
-      parseAnalystOutput({
-        schema_version: ANALYST_OUTPUT_SCHEMA_VERSION,
-        analyst_version: 'analyst-504-v1',
-        signal_id: signalId,
-        summary: `Summary for ${signalId}.`,
-        decision: 'keep',
-        reason: 'Worth filing.',
-        targets,
-      });
-    /** Items joined to their entity and signal (for occurred_at and timeline-order reads). */
-    const itemsOf = (slug?: string) => pool.query<ItemRow>(
-      `select i.item_key, i.signal_id, i.occurred_at, s.slug as entity_slug, s.status as entity_status,
-              (select occurred_at from atlas.signals where signal_id = i.signal_id) as signal_occurred_at
-         from atlas.entity_items i join atlas.entities s on s.id = i.main_entity_id
-        where ($1::text is null or s.slug = $1::text)
-        order by i.occurred_at, i.item_key`,
-      [slug ?? null],
-    );
-    const n = (sql: string, params: unknown[] = []) => pool.query<{ n: number }>(sql, params).then((r) => r.rows[0].n);
-
-    it('#567/#560: 3 targets still file exactly 1 item, on the first existing target; the rest are dropped and logged', async () => {
-      await addSignal('sig-567-a', '2026-10-30T09:00:00.000Z');
-      const drops: Record<string, unknown>[] = [];
-      await new PgDecisionSink(svcPool, (e) => { drops.push(e); }).save(out('sig-567-a', [
-        tgt('base', 'existing', 'protocol', 'existing_story'),
-        tgt('coinbase', 'existing', 'organization', 'plain_update'),
-        tgt('stanley-druckenmiller', 'new', 'person', 'new_story'),
-      ]));
-      expect(await n('select count(*)::int n from atlas.decisions where signal_id = $1', ['sig-567-a'])).toBe(1);
-      const items = (await itemsOf()).rows;
-      expect(items.map((i) => i.entity_slug)).toEqual(['base']);
-      expect(items[0].occurred_at?.getTime()).toBe(items[0].signal_occurred_at?.getTime());
-      expect(drops).toEqual([
-        { event: 'target_dropped', signal_id: 'sig-567-a', entity: 'coinbase', reason: 'one main entity per signal (#567)' },
-        { event: 'target_dropped', signal_id: 'sig-567-a', entity: 'stanley-druckenmiller', reason: 'new entities are never created (#567)' },
-      ]);
-    });
-
-    it('#567/#560: never propose: kind new targets insert no atlas.entities row and set nothing to proposed', async () => {
-      await addSignal('sig-567-b', '2026-10-30T09:00:00.000Z');
-      const before = await n('select count(*)::int n from atlas.entities');
-      await new PgDecisionSink(svcPool, () => {}).save(out('sig-567-b', [
-        tgt('fresh-567', 'new', 'organization', 'new_story'),
-        tgt('coinbase', 'new', 'organization', 'new_story'),
-      ]));
-      expect(await n('select count(*)::int n from atlas.entities')).toBe(before);
-      expect(await n("select count(*)::int n from atlas.entities where status = 'proposed'")).toBe(0);
-      expect((await itemsOf()).rows).toHaveLength(0);
-      expect(await n('select count(*)::int n from atlas.decisions where signal_id = $1', ['sig-567-b'])).toBe(1);
-    });
-
-    it('#560: saving the same output twice still leaves 1 item and 1 decision; existing items stay unchanged', async () => {
-      await addSignal('sig-567-c', '2026-10-30T09:00:00.000Z');
-      const output = out('sig-567-c', [tgt('hyperliquid', 'existing', 'protocol', 'plain_update')]);
-      const sink = new PgDecisionSink(svcPool);
-      await sink.save(output);
-      const first = (await itemsOf()).rows;
-      await sink.save(out('sig-567-c', [tgt('base', 'existing', 'protocol', 'new_story')]));
-      expect(await n('select count(*)::int n from atlas.decisions where signal_id = $1', ['sig-567-c'])).toBe(1);
-      expect((await itemsOf()).rows).toEqual(first);
-    });
-
-    it('a save waits while another transaction holds the advisory lock on the slug', async () => {
-      await addSignal('sig-482-d3', '2026-10-30T09:00:00.000Z');
-      const holder = await pool.connect();
-      try {
-        await holder.query('begin');
-        await holder.query("select pg_advisory_xact_lock(hashtext('atlas.entity:' || $1))", ['coinbase']);
-        let settled = false;
-        const done = new PgDecisionSink(svcPool)
-          .save(out('sig-482-d3', [tgt('coinbase', 'existing', 'organization', 'new_story')]))
-          .then(() => { settled = true; });
-        await new Promise((r) => setTimeout(r, 200));
-        expect(settled).toBe(false);
-        await holder.query('commit');
-        await done;
-        expect(settled).toBe(true);
-        expect((await itemsOf('coinbase')).rows).toHaveLength(1);
-      } finally {
-        try { await holder.query('rollback'); } catch { /* committed above */ }
-        holder.release();
-      }
-    });
+    const before = (await pool.query('select count(*)::int n from atlas.entities')).rows[0].n;
+    expect(toHandoff(out, signal, (e) => { drops.push(e); }).entity?.slug).toBe('base');
+    expect(drops).toEqual([
+      { event: 'target_dropped', signal_id: KALSHI.signal_id, entity: 'fresh-567', reason: 'new entities are never created (#567)' },
+      { event: 'target_dropped', signal_id: KALSHI.signal_id, entity: 'coinbase', reason: 'one main entity per signal (#567)' },
+    ]);
+    expect((await pool.query('select count(*)::int n from atlas.entities')).rows[0].n).toBe(before);
   });
 
   describe('#567 pgCandidateLookup shortlist on the #566 tables', () => {

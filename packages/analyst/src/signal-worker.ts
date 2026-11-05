@@ -1,20 +1,22 @@
 /**
  * #504 D36 worker: claims one due signal, runs the D36 session over it with the decision tool wired
- * to primary + fallback deciders, saves the output to a DecisionSink and finishes the claim. The
+ * to primary + fallback deciders, hands over its decision plus the full
+ * signal (#571 AnalystHandoff) to a HandoffSink and finishes the claim. It writes no entity items
+ * and no summaries (#571). The
  * claim never spans the session: claimNext picks the signal, the LLM and deciders run inside the
- * live claim lease, and finish/fail records the outcome (the sink persists the decision; no decision
- * payload rides the finish call). A shadow decider, when set, sees every case in parallel and its
+ * live claim lease, and finish/fail records the outcome (the sink persists the handoff). A shadow decider, when set, sees every case in parallel and its
  * answers are never recorded. The standing #391 rule parks any signal older than 24 hours
  * (occurred_at, judged in SQL with the claim's row read) with reason BACKLOG_SKIP_REASON before the
  * session runs. No run ever creates entities (#567). A failed attempt (missing signal row, or the session/sink save
  * throwing) fails the claim and logs one structured `signal_failed` line whose `reason` comes
  * from classifySignalFailure, so the retry/dead story of every signal is on stdout.
  */
-import type { AnalystOutput, EntityType } from '@myboon/contracts';
-import type { Pool, PoolClient } from 'pg';
+import {
+  ANALYST_HANDOFF_SCHEMA_VERSION, parseAnalystHandoff, signalMetadataSchema,
+  type AnalystHandoff, type AnalystOutput, type EntityType, type SignalMetadata,
+} from '@myboon/contracts';
 
 import type { DecisionCase, Decider } from './deciders.js';
-import { itemSummary, itemTitle } from './item-wording.js';
 import { decideTimed } from './process.js';
 import type { Ask, AskInput, AskResult, CandidateLookup, ShortlistCandidate, EntityMissEntry, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
 import { runSession } from './session.js';
@@ -27,98 +29,92 @@ export const BACKLOG_SKIP_REASON = 'backlog_skip_24h';
 const NO_NEW_ENTITIES_REASON = 'new entities are never created (#567)';
 const ONE_MAIN_ENTITY_REASON = 'one main entity per signal (#567)';
 
-/** Where finished outputs go: in-memory for tests, or atlas.decisions (+ atlas.entity_items) via PgDecisionSink. */
-export interface DecisionSink {
-  save(output: AnalystOutput): Promise<void>;
+/**
+ * #571 where the analyst's work ends: the handoff goes to a HandoffSink (in-memory for tests, or the
+ * atlas.decisions row via PgHandoffSink). The analyst never writes entity items or summaries.
+ */
+export interface HandoffSink {
+  save(handoff: AnalystHandoff): Promise<void>;
 }
 
-/** In-memory sink: the first save per signal_id wins, so reprocessing a signal cannot duplicate rows. */
-export class InMemoryDecisionSink implements DecisionSink {
-  private readonly saved = new Map<string, AnalystOutput>();
+/** In-memory sink: the first save per signal_id wins, so reprocessing a signal cannot duplicate. */
+export class InMemoryHandoffSink implements HandoffSink {
+  private readonly saved = new Map<string, AnalystHandoff>();
 
-  async save(output: AnalystOutput): Promise<void> {
-    if (!this.saved.has(output.signal_id)) this.saved.set(output.signal_id, output);
+  async save(handoff: AnalystHandoff): Promise<void> {
+    if (!this.saved.has(handoff.signal_id)) this.saved.set(handoff.signal_id, handoff);
   }
 
-  outputs(): AnalystOutput[] {
+  handoffs(): AnalystHandoff[] {
     return [...this.saved.values()];
   }
 }
 
+/** The entity manager's queue status (#571 task 2): every keep is pending (entity null = growth), the rest none. */
+export function emStatusFor(h: AnalystHandoff): 'pending' | 'none' {
+  return h.decision === 'keep' ? 'pending' : 'none';
+}
+
 /**
- * The atlas.decisions sink on the #503 schema, one transaction per save: insert the decision row,
- * then (keep) at most one entity item, on the signal's one main entity (#567). Per #482 the filing
- * takes an advisory lock on the target slug inside this transaction, and the item copies the signal's
- * occurred_at so an entity timeline orders by signal time, not write order. The target must be an
- * active entity (else it throws: the item has nowhere to land). The sink never creates or proposes an
- * entity (#567): a kind new target, or any target after the first, is dropped with a target_dropped
- * log line and no item. `on conflict (signal_id)` makes the second save of the same signal a no-op
- * commit, and any failure rolls the transaction back so nothing is written.
+ * Persists the handoff in one atlas.decisions insert (#571, migration 20261105150000): decision,
+ * reason, the one entity pick in targets, summary null, the full AnalystHandoff snapshot in
+ * `handoff`, its `handoff_version`, and `em_status` (pending for keep, none otherwise) so the
+ * entity manager claims it via atlas.em_claim. `on conflict (signal_id) do nothing` makes a second
+ * save of the same signal a no-op.
  */
-export class PgDecisionSink implements DecisionSink {
-  private readonly pool: Pool;
-  /** Where dropped targets are logged; the default keeps them on the worker's stdout. */
-  private readonly log: (e: Record<string, unknown>) => void;
+export class PgHandoffSink implements HandoffSink {
+  constructor(private readonly db: Db) {}
 
-  constructor(pool: Pool, log?: (e: Record<string, unknown>) => void) {
-    this.pool = pool;
-    this.log = log ?? ((e) => console.log(JSON.stringify(e)));
-  }
-
-  async save(output: AnalystOutput): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('begin');
-      try {
-        const decisions = await client.query<{ signal_id: string }>(
-          `insert into atlas.decisions
-             (schema_version, signal_id, analyst_version, decision_type, summary, decision, reason, targets)
-           values ($1, $2, $3, 'file', $4, $5, $6, $7::jsonb)
-           on conflict (signal_id) do nothing
-           returning signal_id`,
-          [output.schema_version, output.signal_id, output.analyst_version, output.summary, output.decision, output.reason, JSON.stringify(output.targets)],
-        );
-        if (decisions.rows.length === 0) {
-          await client.query('commit');
-          return;
-        }
-        if (output.decision === 'keep') await fileMainItem(client, output, this.log);
-        await client.query('commit');
-      } catch (e) {
-        await client.query('rollback');
-        throw e;
-      }
-    } finally {
-      client.release();
-    }
+  async save(h: AnalystHandoff): Promise<void> {
+    const targets = h.entity ? [{ entity: h.entity.slug, kind: 'existing', type: h.entity.type, angle: h.entity.angle, note: h.entity.note }] : [];
+    await this.db.query(
+      `insert into atlas.decisions
+         (schema_version, signal_id, analyst_version, decision_type, summary, decision, reason, targets, handoff, handoff_version, em_status)
+       values ($1, $2, $3, 'file', null, $4, $5, $6::jsonb, $7::jsonb, $8, $9)
+       on conflict (signal_id) do nothing`,
+      [h.schema_version, h.signal_id, h.analyst_version, h.decision, h.reason, JSON.stringify(targets), JSON.stringify(h), h.schema_version, emStatusFor(h)],
+    );
   }
 }
 
-/** File the one main item: the first existing target; every other target is dropped and logged (#567). */
-async function fileMainItem(client: PoolClient, output: AnalystOutput, log: (e: Record<string, unknown>) => void): Promise<void> {
-  const main = output.targets.find((t) => t.kind === 'existing');
+/**
+ * Build the handoff: the first existing target is the one entity pick (#567); every other target
+ * (kind new, or a second one) is dropped with a target_dropped line. No run creates entities.
+ */
+export function toHandoff(output: AnalystOutput, signal: SignalMetadata, log: (e: Record<string, unknown>) => void): AnalystHandoff {
+  const main = output.decision === 'keep' ? output.targets.find((t) => t.kind === 'existing') : undefined;
   for (const t of output.targets) {
     if (t === main) continue;
     log({ event: 'target_dropped', signal_id: output.signal_id, entity: t.entity, reason: t.kind === 'new' ? NO_NEW_ENTITIES_REASON : ONE_MAIN_ENTITY_REASON });
   }
-  if (!main) return;
-  await client.query("select pg_advisory_xact_lock(hashtext('atlas.entity:' || $1))", [main.entity]);
-  const mainEntityId = await activeEntityId(client, main.entity);
-  await client.query(
-    `insert into atlas.entity_items (item_key, title, summary, main_entity_id, signal_id, angle, note, occurred_at)
-       select $1, $2, $3, $4, $5, $6, $7, s.occurred_at
-         from atlas.signals s
-        where s.signal_id = $5
-     on conflict do nothing`,
-    [`${output.signal_id}:${main.entity}`, itemTitle(output.headline, output.summary, main.note), itemSummary(output.summary, main.note), mainEntityId, output.signal_id, main.angle, main.note],
-  );
+  return parseAnalystHandoff({
+    schema_version: ANALYST_HANDOFF_SCHEMA_VERSION,
+    analyst_version: output.analyst_version,
+    signal_id: output.signal_id,
+    decision: output.decision,
+    reason: output.reason,
+    entity: main ? { slug: main.entity, type: main.type, angle: main.angle, note: main.note } : null,
+    signal,
+  });
 }
 
-/** The active entity for the main target, or throw: the item has nowhere to land. */
-async function activeEntityId(client: PoolClient, slug: string): Promise<string> {
-  const { rows } = await client.query<{ id: string }>(`select id from atlas.entities where slug = $1 and status = 'active'`, [slug]);
-  if (rows[0]) return rows[0].id;
-  throw new Error(`target ${slug}: no active entity`);
+/** The atlas.signals row in the #571 metadata shape (timestamps as ISO strings). */
+export type SignalRow = Omit<SignalMetadata, 'occurred_at' | 'fetched_at' | 'created_at' | 'priority' | 'schema_version'> & {
+  occurred_at: Date | null; fetched_at: Date; created_at: Date; priority: number | string; schema_version: number | string;
+};
+
+export const SIGNAL_METADATA_COLUMNS =
+  'signal_id, schema_version, source, source_id, type, priority, occurred_at, fetched_at, text, numbers, link, raw_ids, unusual_score, excerpt, raw_hash, created_at';
+
+export function signalMetadataFromRow(r: SignalRow): SignalMetadata {
+  return signalMetadataSchema.parse({
+    ...r,
+    schema_version: Number(r.schema_version),
+    priority: Number(r.priority),
+    occurred_at: r.occurred_at ? new Date(r.occurred_at).toISOString() : null,
+    fetched_at: new Date(r.fetched_at).toISOString(),
+    created_at: new Date(r.created_at).toISOString(),
+  });
 }
 
 type ShortlistRow = { id: string; slug: string; name: string; type: string; summary: string | null; aliases: string[] | null; alias_hit: boolean; item_count: number };
@@ -178,7 +174,9 @@ export type D36Options = {
   /** Same cases in parallel, never recorded; a null shadow skips it. */
   shadow: Decider | null;
   lookup: CandidateLookup;
-  sink: DecisionSink;
+  sink: HandoffSink;
+  /** target_dropped lines; default prints JSON to stdout. */
+  dropLog?: (e: Record<string, unknown>) => void;
   log?: (e: JevLogEntry) => void;
   /** entity_miss lines (#567); default prints JSON to stdout. */
   missLog?: (e: EntityMissEntry) => void;
@@ -191,7 +189,7 @@ export type D36Options = {
   worker: string;
 };
 
-export type D36Result = { signalId: string; result: 'analysed' | 'parked' | 'failed' | 'lost_claim'; output?: AnalystOutput };
+export type D36Result = { signalId: string; result: 'analysed' | 'parked' | 'failed' | 'lost_claim'; output?: AnalystOutput; handoff?: AnalystHandoff };
 
 function asMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -231,11 +229,8 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
     });
   };
 
-  const row = (await db.query<{
-    signal_id: string; source: string | null; text: string | null; link: string | null; occurred_at: Date | null; stale: boolean;
-  }>(
-    `select signal_id, source, text, link,
-            occurred_at,
+  const row = (await db.query<SignalRow & { stale: boolean }>(
+    `select ${SIGNAL_METADATA_COLUMNS},
             (occurred_at < now() - interval '24 hours') as stale
        from atlas.signals where signal_id = $1`,
     [claim.signalId],
@@ -301,12 +296,15 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
   const deps: SessionDeps = { llm: o.llm, ask, lookup: o.lookup, log: logJev, ...(o.missLog ? { missLog: o.missLog } : {}) };
 
   let output: AnalystOutput;
+  let handoff: AnalystHandoff;
   // `sink.save` and the session throw differently: the stage tags the failure reason.
   let stage: 'session' | 'sink' = 'session';
   try {
     output = await runSession(signal, deps);
     stage = 'sink';
-    await o.sink.save(output);
+    const { stale: _stale, ...signalRow } = row;
+    handoff = toHandoff(output, signalMetadataFromRow(signalRow), o.dropLog ?? ((e) => { console.log(JSON.stringify(e)); }));
+    await o.sink.save(handoff);
   } catch (e) {
     const outcome = await failClaim(db, claim, { error: asMessage(e), backoffMs: o.backoffMs, maxAttempts: o.maxAttempts });
     signalFailed(classifySignalFailure(e, stage), asMessage(e), outcome);
@@ -318,6 +316,6 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
     status: parked ? 'parked' : 'analysed',
     parkedReason: parked ? output.reason : undefined,
   });
-  if (!written) return { signalId: claim.signalId, result: 'lost_claim', output };
-  return { signalId: claim.signalId, result: parked ? 'parked' : 'analysed', output };
+  if (!written) return { signalId: claim.signalId, result: 'lost_claim', output, handoff };
+  return { signalId: claim.signalId, result: parked ? 'parked' : 'analysed', output, handoff };
 }
