@@ -1,5 +1,3 @@
-import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
-import { WaitlistProfileScreen } from '@/features/waitlist/WaitlistProfileScreen';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -100,9 +98,7 @@ function getOrderCost(order: OpenOrder): number {
   return remainingOrderCost(order) ?? 0;
 }
 
-// Waitlist build (#432): profile has no wallet parts.
 export default function PredictProfileRoute() {
-  if (WAITLIST_MODE) return <WaitlistProfileScreen />;
   return <PredictProfileScreen />;
 }
 

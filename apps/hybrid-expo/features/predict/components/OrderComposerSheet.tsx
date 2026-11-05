@@ -9,8 +9,6 @@ import type { PredictOrderGuardrail } from '@/features/predict/predictActivitySt
 import { truncateUsd } from '@/features/predict/formatPredictMoney';
 import { usePredictQuickAmounts } from '@/features/predict/usePredictQuickAmounts';
 import { semantic, tokens } from '@/theme';
-import { WaitlistSheet } from '@/features/waitlist/WaitlistSheet';
-import { WAITLIST_MODE } from '@/features/waitlist/waitlist.mode';
 
 /**
  * Shared order composer (Predict redesign PRD §6) — one bottom sheet used by
@@ -76,13 +74,7 @@ function formatAmountInput(value: number): string {
   return truncated.toFixed(2).replace(/\.00$/u, '').replace(/(\.\d)0$/u, '$1');
 }
 
-/** Waitlist build (#432): buy/sell opens the waitlist instead of the order composer. */
-export function OrderComposerSheet(props: OrderComposerSheetProps) {
-  if (WAITLIST_MODE) return <WaitlistSheet visible={props.visible} onClose={props.onClose} />;
-  return <FullOrderComposerSheet {...props} />;
-}
-
-function FullOrderComposerSheet({
+export function OrderComposerSheet({
   visible,
   side,
   pickLabel,

@@ -25,7 +25,7 @@ test('development and release config need no client RPC credentials', () => {
 });
 
 test('every build blocks the unused Android permissions the dApp Store flagged (PER-001)', () => {
-  for (const flags of [{}, { EAS_BUILD: 'true', EAS_BUILD_PROFILE: 'dapp-store-waitlist' }, { EAS_BUILD_PROFILE: 'production' }]) {
+  for (const flags of [{}, { EAS_BUILD: 'true', EAS_BUILD_PROFILE: 'dapp-store' }, { EAS_BUILD_PROFILE: 'production' }]) {
     const config = evaluate({ ...publicEnv, ...flags }, { android: { blockedPermissions: ['android.permission.CAMERA'] } });
     assert.deepEqual([...config.android.blockedPermissions].sort(), [
       'android.permission.CAMERA',
