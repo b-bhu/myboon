@@ -109,7 +109,7 @@ the CLIs via the `analyst:*` / `entity-manager:once` scripts.
 - `ANALYST_LLM_MODEL` (default `glm-5.3-flash`), `ANALYST_WORKER`
   (default `<hostname>:<pid>`), `ANALYST_SHADOW` (`true` enables the Clef shadow).
 
-The analyst connects as `service_role` (only the granted columns and functions
+The analyst connects as `analyst_worker` (only the granted columns and functions
 exist to it). Jev and Clef are never contacted by the tests; see
 `src/v4-status.db.test.ts` (local Postgres via `ANALYST_TEST_ADMIN_URL`) and
 `src/deciders.test.ts` (fake fetch).
