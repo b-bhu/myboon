@@ -10,8 +10,8 @@ export const metadata: Metadata = {
 
 export default function Terms() {
   return (
-    <PolicyPage kicker="Terms" title="Terms of Use" updated="23 October 2026"
-      lede="MyBoon is a crypto and market news feed with a wallet on Solana. By using the MyBoon app or website, you agree to these terms.">
+    <PolicyPage kicker="Terms" title="Terms of Use" updated="6 November 2026"
+      lede="MyBoon sticks market context to the next action — understand why it moved, then act in the same app. By using the MyBoon app or website, you agree to these terms.">
       <div className={s.callout}>
         <p><b>Your keys, your funds.</b> MyBoon is non-custodial. We never hold your private keys or your funds, and every transaction needs your approval.</p>
       </div>

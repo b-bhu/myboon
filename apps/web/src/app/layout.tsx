@@ -22,22 +22,22 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://myboon.tech'),
-  title: 'MyBoon: Understand markets. Act in the same app.',
+  title: 'MyBoon sticks market context to the next action — understand why it moved, then act in the same app.',
   description:
-    'MyBoon tells you why the market moved and lets you act on it in the same app: researched stories, Solana apps and your own wallet.',
+    'MyBoon sticks market context to the next action — understand why it moved, then act in the same app.',
   openGraph: {
     type: 'website',
     siteName: 'MyBoon',
     url: '/',
-    title: 'MyBoon: Understand markets. Act in the same app.',
-    description: 'Every market move explained as it happens, with the trade one tap away on Solana.',
-    images: [{ url: '/landing/og.png', width: 1200, height: 630, alt: 'MyBoon: Understand markets. Act in the same app.' }],
+    title: 'MyBoon sticks market context to the next action — understand why it moved, then act in the same app.',
+    description: 'MyBoon sticks market context to the next action — understand why it moved, then act in the same app.',
+    images: [{ url: '/landing/og.png', width: 1200, height: 630, alt: 'MyBoon sticks market context to the next action — understand why it moved, then act in the same app.' }],
   },
   twitter: {
     card: 'summary_large_image',
     site: '@myboonapp',
-    title: 'MyBoon: Understand markets. Act in the same app.',
-    description: 'Every market move explained as it happens, with the trade one tap away on Solana.',
+    title: 'MyBoon sticks market context to the next action — understand why it moved, then act in the same app.',
+    description: 'MyBoon sticks market context to the next action — understand why it moved, then act in the same app.',
     images: ['/landing/og.png'],
   },
 }

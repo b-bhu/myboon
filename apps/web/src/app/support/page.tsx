@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function Support() {
   return (
-    <PolicyPage kicker="Support" title="Get help" updated="23 October 2026"
+    <PolicyPage kicker="Support" title="Get help" updated="6 November 2026"
       lede="Stuck on something in MyBoon? Here’s how to reach us and fix the common issues yourself.">
       <h2>Contact us</h2>
       <ul>
@@ -24,7 +24,7 @@ export default function Support() {
       <ul>
         <li><b>Stories or updates won’t load:</b> check your connection, then close and reopen the app.</li>
         <li><b>Prices look out of date:</b> market data can lag by a few seconds. Reopen the screen to refresh it.</li>
-        <li><b>Waitlist:</b> to change or remove your waitlist email, email us.</li>
+        <li><b>Wallet:</b> disconnect it in the app. Every transaction still needs your approval.</li>
       </ul>
 
       <h2>Your data</h2>

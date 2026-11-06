@@ -1,6 +1,6 @@
 # myboon
 
-> **myboon tells you why the market moved and lets you act in the same app.**
+> **MyBoon sticks market context to the next action — understand why it moved, then act in the same app.**
 
 Crypto users currently understand the market in one place and act in another.
 myboon brings those two parts together: it turns scattered signals into

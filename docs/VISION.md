@@ -2,7 +2,7 @@
 
 ## What Is myboon?
 
-**myboon** tells users why the market moved and lets them act in the same app.
+**myboon** sticks market context to the next action — understand why it moved, then act in the same app.
 It is a mobile product built around Solana.
 
 It helps users understand why markets are moving, what changed, and where the
