@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MyBoon · Connect</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#031F2C;--card:#063343;--surf:#073B4C;--edge:#185A70;--bone:#F5FAFC;--dim:#9CB8C2;--faint:#6B95A1;
+  --vir:#06D6A0;--gold:#FFD166;--verm:#EF476F;
+  --font:"Inter",system-ui,sans-serif;--display:"Space Grotesk",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:#020f16;color:var(--bone);font:15px/1.4 var(--font)}
+button,input{font:inherit;color:inherit;background:none;border:0}
+button{cursor:pointer}
+.stage{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 16px 72px;gap:18px}
+.phone{
+  width:min(390px,100%);height:min(844px,calc(100vh - 96px));
+  background:var(--bg);border-radius:36px;border:1px solid #124255;
+  overflow:hidden;display:flex;flex-direction:column;position:relative;
+  box-shadow:0 24px 64px #0006;
+}
+.status{height:48px;flex:none;display:flex;align-items:flex-end;justify-content:center;padding-bottom:8px;font:500 12px var(--font);color:var(--dim)}
+.view{flex:1;min-height:0;position:relative;overflow:hidden}
+.wallet{position:absolute;inset:0;padding:8px 20px 24px;overflow:auto}
+.wallet .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.wallet .hd h1{font:600 22px/1.2 var(--display)}
+.wallet .link{color:var(--dim);font:500 14px var(--font);min-height:44px;padding:0 4px}
+.wallet .bal{font:600 40px/1.05 var(--display);letter-spacing:-.6px;font-variant-numeric:tabular-nums}
+.wallet .hint{margin-top:8px;color:var(--dim);font-size:13px;max-width:100%;word-break:break-all;overflow-wrap:anywhere;line-height:1.4}
+.wallet .tabs{display:flex;gap:18px;margin:28px 0 12px;border-bottom:1px solid var(--edge)}
+.wallet .tabs span{padding:10px 0 12px;color:var(--faint);font:500 14px var(--font)}
+.wallet .tabs .on{color:var(--bone);box-shadow:inset 0 -2px 0 var(--bone)}
+.asset{display:flex;align-items:center;gap:12px;min-height:64px}
+.asset .ic{width:40px;height:40px;border-radius:20px;background:var(--card);display:grid;place-items:center;font:600 12px var(--font);color:var(--dim)}
+.asset .nm{flex:1}.asset .nm b{display:block;font:500 15px var(--font)}.asset .nm span{color:var(--faint);font-size:13px}
+.asset .amt{font:500 15px var(--font);font-variant-numeric:tabular-nums;color:var(--faint)}
+.fab{
+  position:absolute;left:20px;right:20px;bottom:28px;height:52px;border-radius:14px;
+  background:var(--bone);color:var(--bg);font:600 16px var(--display);
+}
+.scrim{position:absolute;inset:0;background:#031F2Cb8;opacity:0;pointer-events:none;transition:opacity .2s}
+.scrim.on{opacity:1;pointer-events:auto}
+.sheet{
+  position:absolute;left:0;right:0;bottom:0;max-height:92%;
+  background:var(--surf);border-radius:20px 20px 0 0;border-top:1px solid var(--edge);
+  display:flex;flex-direction:column;transform:translateY(105%);transition:transform .25s ease;
+  padding-bottom:max(20px,env(safe-area-inset-bottom));
+}
+.sheet.on{transform:none}
+.handle{width:36px;height:4px;border-radius:2px;background:#1f5a6e;margin:10px auto 0;flex:none}
+.sheet-hd{display:flex;align-items:flex-start;gap:8px;padding:12px 16px 4px;flex:none}
+.sheet-hd .back{width:44px;height:44px;margin:-4px 0 0 -6px;border-radius:12px;color:var(--dim);font-size:22px;line-height:1;display:none}
+.sheet-hd .back.show{display:grid;place-items:center}
+.sheet-hd .t{flex:1;min-width:0;padding-top:6px}
+.sheet-hd h2{font:600 20px/1.25 var(--display)}
+.sheet-hd p{margin-top:4px;color:var(--dim);font-size:14px;max-width:34ch}
+.sheet-hd .x{width:44px;height:44px;margin:-6px -8px 0 0;border-radius:12px;color:var(--dim);font-size:22px;line-height:1}
+.sheet-bd{padding:10px 16px 8px;overflow:auto;-webkit-overflow-scrolling:touch;flex:1;min-height:0}
+
+.choice{display:flex;flex-direction:column;gap:10px;padding-top:6px}
+.btn-primary{
+  min-height:56px;width:100%;padding:16px 18px;border-radius:14px;
+  background:var(--bone);color:var(--bg);font:600 16px var(--display);text-align:center;
+}
+.btn-primary:active{opacity:.9}
+.btn-secondary{
+  min-height:56px;width:100%;padding:16px 18px;border-radius:14px;
+  background:var(--card);color:var(--bone);font:600 16px var(--display);text-align:center;
+  border:1px solid var(--edge);
+}
+.btn-secondary:active{background:#0a3d4f}
+
+.list{display:flex;flex-direction:column;gap:8px}
+.row{
+  min-height:56px;width:100%;padding:12px 14px;border-radius:14px;background:var(--card);
+  display:flex;align-items:center;gap:12px;text-align:left;
+}
+.row:active{background:#0a3d4f}
+.row .mark{width:36px;height:36px;border-radius:10px;background:var(--bg);display:grid;place-items:center;flex:none;font:600 13px var(--font)}
+.row .mark svg{width:20px;height:20px;display:block}
+.row .mark.g{background:#fff}
+.row .mark.sk{background:#5b21b6;color:#fff}
+.row .mark.ph{background:#ab9ff2;color:#1b1438}
+.row .mark.em{background:#0a4a5c;color:var(--vir)}
+.row .txt{flex:1;min-width:0}
+.row .txt b{display:block;font:500 15px var(--font)}
+.row .txt span{display:block;color:var(--faint);font-size:13px;margin-top:1px}
+.row .chev{color:var(--faint);font-size:18px}
+
+.field{
+  display:flex;align-items:center;gap:10px;min-height:52px;padding:0 14px;border-radius:14px;
+  background:var(--card);margin-bottom:10px;
+}
+.field input{flex:1;outline:none;font-size:16px;min-width:0}
+.field input::placeholder{color:var(--faint)}
+.cta{
+  min-height:52px;width:100%;border-radius:14px;background:var(--bone);color:var(--bg);
+  font:600 16px var(--display);margin-top:4px;
+}
+.cta:disabled{opacity:.35}
+.cta.ghost{background:var(--card);color:var(--bone);border:1px solid var(--edge)}
+.cta.danger{background:transparent;color:var(--verm);border:1px solid #7a2a3c}
+.otp{display:flex;gap:8px;justify-content:center;margin:8px 0 10px}
+.otp i{
+  width:44px;height:52px;border-radius:12px;background:var(--card);display:grid;place-items:center;
+  font:600 20px var(--display);font-variant-numeric:tabular-nums;
+}
+.otp-paste{
+  display:block;margin:0 auto 14px;min-height:40px;padding:0 12px;
+  color:var(--vir);font:500 14px var(--font);
+}
+.wait{padding:28px 8px 20px;text-align:center}
+.wait .spin{
+  width:36px;height:36px;margin:0 auto 16px;border-radius:50%;
+  border:3px solid var(--edge);border-top-color:var(--vir);animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.wait h3{font:600 18px var(--display);margin-bottom:6px}
+.wait p{color:var(--dim);font-size:14px}
+
+.fail{padding:12px 4px 8px;text-align:center}
+.fail .icon{
+  width:48px;height:48px;margin:4px auto 14px;border-radius:24px;background:#3a1a24;
+  color:var(--verm);display:grid;place-items:center;font-size:22px;
+}
+.fail h3{font:600 18px var(--display);margin-bottom:6px}
+.fail p{color:var(--dim);font-size:14px;margin-bottom:18px}
+.fail .logout{margin-top:14px;color:var(--faint);font:500 14px var(--font);min-height:44px;text-decoration:underline;text-underline-offset:3px}
+
+.ok{padding:8px 4px}
+.ok .ident{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.ok .ident .mark{width:44px;height:44px;border-radius:12px;background:var(--card);display:grid;place-items:center;flex:none;font:600 15px var(--font)}
+.ok .ident .mark svg{width:22px;height:22px;display:block}
+.ok .ident .mark.g{background:#fff}
+.ok .ident .mark.sk{background:#5b21b6;color:#fff}
+.ok .ident .mark.ph{background:#ab9ff2;color:#1b1438}
+.ok .ident .mark.em{background:#0a4a5c;color:var(--vir)}
+.ok .ident .who b{display:block;font:600 17px/1.25 var(--display)}
+.ok .ident .who span{display:block;color:var(--faint);font-size:13px;margin-top:2px}
+.ok .addr{
+  padding:0 2px;
+  color:var(--dim);font-size:13px;font-variant-numeric:tabular-nums;
+}
+.ok .addr .str{
+  display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:12.5px;line-height:1.4;white-space:nowrap;color:var(--dim);
+}
+.ok .net{color:var(--faint);font-size:13px;margin:2px 0 18px;padding:0 2px}
+.ok .chain{
+  margin:0 0 14px;padding:12px 12px 10px;border-radius:14px;background:var(--card);
+}
+.ok .chain .labrow{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin-bottom:6px;padding:0 2px;min-height:28px;
+}
+.ok .chain .lab{color:var(--faint);font:500 12px var(--font);letter-spacing:.02em}
+.ok .chain .labrow button{color:var(--vir);font:500 13px var(--font);min-height:28px;padding:0 2px;flex:none}
+.ok .chain .addr{padding:0}
+.ok .actions{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+
+.homebar{height:18px;flex:none}
+
+#dock{
+  display:flex;flex-wrap:wrap;gap:6px 10px;justify-content:center;max-width:390px;
+  opacity:.55;font-size:11px;line-height:1;
+}
+#dock button{
+  min-height:28px;padding:0 2px;color:#7a9aa6;font:500 11px var(--font);letter-spacing:.01em;
+}
+#dock button:hover,#dock button.on{color:#c5dce4}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="phone" id="phone">
+    <div class="status">9:41</div>
+    <div class="view">
+      <div class="wallet">
+        <div class="hd">
+          <h1>Wallet</h1>
+          <button class="link" type="button" id="manageBtn">Manage</button>
+        </div>
+        <div class="bal" id="bal">$0.00</div>
+        <p class="hint" id="hint">Connect a wallet to trade and hold positions.</p>
+        <div class="tabs"><span class="on">Assets</span><span>Activity</span></div>
+        <div class="asset"><div class="ic">SOL</div><div class="nm"><b>Solana</b><span>SOL</span></div><div class="amt" id="amtSol">—</div></div>
+        <div class="asset"><div class="ic">USDC</div><div class="nm"><b>USD Coin</b><span>USDC</span></div><div class="amt" id="amtUsdc">—</div></div>
+      </div>
+      <button class="fab" type="button" id="openBtn">Connect wallet</button>
+      <div class="scrim" id="scrim"></div>
+      <div class="sheet" id="sheet" role="dialog" aria-modal="true">
+        <div class="handle"></div>
+        <div class="sheet-hd">
+          <button class="back" type="button" id="backBtn" aria-label="Back">‹</button>
+          <div class="t">
+            <h2 id="title">Connect</h2>
+            <p id="sub"></p>
+          </div>
+          <button class="x" type="button" id="closeBtn" aria-label="Close">×</button>
+        </div>
+        <div class="sheet-bd" id="body"></div>
+        <div class="homebar"></div>
+      </div>
+    </div>
+  </div>
+  <div id="dock" aria-label="Mock states"></div>
+</div>
+<script>
+const STATES = [
+  ['home','Home'],
+  ['choice','Choice'],
+  ['create','Create'],
+  ['email','Email'],
+  ['otp','OTP'],
+  ['wait_create','Creating'],
+  ['have','Have wallet'],
+  ['wait_ext','Connecting'],
+  ['fail_login','Fail login'],
+  ['fail_setup','Fail setup'],
+  ['ok_privy','Connected · Privy'],
+  ['ok_ext','Connected · Ext'],
+  ['export','Export'],
+  ['export_wait','Privy…'],
+  ['export_done','Export done'],
+  ['confirm','Disconnect'],
+];
+
+const copy = {
+  choice:  { title:'Connect', sub:'Create a MyBoon wallet or use one you already have.' },
+  create:  { title:'Create a wallet', sub:'Continue with email or Google.' },
+  email:   { title:'Email', sub:'We’ll send a one-time code.' },
+  otp:     { title:'Enter code', sub:'Sent to you@example.com' },
+  wait_create: { title:'Creating wallet', sub:'' },
+  have:    { title:'Connect a wallet', sub:'Seeker or Phantom via Solana Mobile.' },
+  wait_ext:{ title:'Waiting for wallet', sub:'' },
+  fail_login: { title:'Sign-in failed', sub:'' },
+  fail_setup: { title:'Wallet setup failed', sub:'' },
+  ok_privy: { title:'Wallets', sub:'' },
+  ok_ext:   { title:'Wallet', sub:'' },
+  export:   { title:'Export / recovery', sub:'Recover your MyBoon wallet with Privy.' },
+  export_wait: { title:'Privy', sub:'' },
+  export_done: { title:'Ready', sub:'' },
+  confirm:  { title:'Disconnect?', sub:'You can reconnect anytime.' },
+};
+
+const body = document.getElementById('body');
+const title = document.getElementById('title');
+const sub = document.getElementById('sub');
+const sheet = document.getElementById('sheet');
+const scrim = document.getElementById('scrim');
+const backBtn = document.getElementById('backBtn');
+const openBtn = document.getElementById('openBtn');
+const manageBtn = document.getElementById('manageBtn');
+const bal = document.getElementById('bal');
+const hint = document.getElementById('hint');
+
+let state = 'home';
+let stack = [];
+/** null | 'privy' | 'ext' */
+let linked = null;
+let setupFails = 0;
+let confirmFrom = 'ok_privy';
+let extWallet = 'Seeker'; // Seeker | Phantom
+let privyIdent = { kind:'email', label:'you@example.com' }; // kind: email|google
+
+const ADDR_PRIVY_SOL = '7nYxK9QmR2pLsT4vW8cJ1dF6hG3aB0eZpX9mQ2rL4kNw';
+const ADDR_PRIVY_EVM = '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEbA';
+const ADDR_EXT       = 'DRpbFRkq9x2mHn4sT8vW1cJ6dF3hG0aBxY4nP7qK2mH';
+
+const ICON_EMAIL = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z" stroke="currentColor" stroke-width="1.75"/><path d="m4.5 8 6.7 5.1a1.5 1.5 0 0 0 1.8 0L19.5 8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_GOOGLE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>`;
+
+function syncHome(){
+  if (linked === 'privy'){
+    bal.textContent = '$12.40';
+    hint.textContent = ADDR_PRIVY_SOL + ' · Solana + EVM';
+    openBtn.style.display = 'none';
+    document.getElementById('amtSol').textContent = '0.08';
+    document.getElementById('amtUsdc').textContent = '4.00';
+  } else if (linked === 'ext'){
+    bal.textContent = '$128.50';
+    hint.textContent = extWallet + ' · ' + ADDR_EXT;
+    openBtn.style.display = 'none';
+    document.getElementById('amtSol').textContent = '0.92';
+    document.getElementById('amtUsdc').textContent = '18.00';
+  } else {
+    bal.textContent = '$0.00';
+    hint.textContent = 'Connect a wallet to trade and hold positions.';
+    openBtn.style.display = state === 'home' ? '' : 'none';
+    document.getElementById('amtSol').textContent = '—';
+    document.getElementById('amtUsdc').textContent = '—';
+  }
+}
+
+function manageTarget(){
+  if (linked === 'privy') return 'ok_privy';
+  if (linked === 'ext') return 'ok_ext';
+  return 'choice';
+}
+
+function render(s, push){
+  if (s === 'home'){
+    state = 'home'; sheet.classList.remove('on'); scrim.classList.remove('on');
+    syncHome(); syncDock(); return;
+  }
+  if (push && state !== 'home' && state !== s) stack.push(state);
+  if (state === 'home') stack = [];
+  state = s;
+  sheet.classList.add('on'); scrim.classList.add('on');
+  openBtn.style.display = 'none';
+  const c = copy[s] || { title:'Connect', sub:'' };
+  title.textContent = c.title;
+  sub.textContent = c.sub;
+  sub.style.display = c.sub ? '' : 'none';
+  const canBack = ['create','email','otp','have','export'].includes(s);
+  backBtn.classList.toggle('show', canBack);
+  body.innerHTML = '';
+  const el = document.createElement('div');
+
+  if (s === 'choice'){
+    el.className = 'choice';
+    el.innerHTML = `
+      <button class="btn-primary" type="button" data-go="create">Create a new wallet</button>
+      <button class="btn-secondary" type="button" data-go="have">I already have a wallet</button>`;
+  } else if (s === 'create'){
+    el.className = 'list';
+    el.innerHTML = `
+      <button class="row" type="button" data-go="email">
+        <span class="mark em">${ICON_EMAIL}</span>
+        <span class="txt"><b>Continue with email</b><span>One-time code</span></span>
+        <span class="chev">›</span>
+      </button>
+      <button class="row" type="button" data-act="google">
+        <span class="mark g">${ICON_GOOGLE}</span>
+        <span class="txt"><b>Continue with Google</b><span>Uses your Google account</span></span>
+        <span class="chev">›</span>
+      </button>`;
+  } else if (s === 'email'){
+    el.innerHTML = `
+      <div class="field"><input type="email" placeholder="you@email.com" value="you@example.com"></div>
+      <button class="cta" type="button" data-act="email-send">Send code</button>`;
+  } else if (s === 'otp'){
+    el.innerHTML = `
+      <div class="otp" id="otpBoxes"><i>·</i><i>·</i><i>·</i><i>·</i><i>·</i><i>·</i></div>
+      <button class="otp-paste" type="button" data-act="otp-paste">Paste</button>
+      <button class="cta" type="button" data-act="email-verify">Verify</button>`;
+  } else if (s === 'wait_create'){
+    el.className = 'wait';
+    el.innerHTML = `<div class="spin"></div><h3>Creating your wallet</h3><p>This only takes a moment.</p>`;
+    setTimeout(()=>{ if(state==='wait_create'){ linked='privy'; setupFails=0; go('ok_privy', true); } }, 900);
+  } else if (s === 'have'){
+    el.className = 'list';
+    el.innerHTML = `
+      <button class="row" type="button" data-act="ext-seeker">
+        <span class="mark sk">S</span>
+        <span class="txt"><b>Seeker</b><span>Solana Mobile</span></span>
+        <span class="chev">›</span>
+      </button>
+      <button class="row" type="button" data-act="ext-phantom">
+        <span class="mark ph">◈</span>
+        <span class="txt"><b>Phantom</b><span>Mobile Wallet Adapter</span></span>
+        <span class="chev">›</span>
+      </button>`;
+  } else if (s === 'wait_ext'){
+    el.className = 'wait';
+    el.innerHTML = `<div class="spin"></div><h3>Approve in your wallet</h3><p>Waiting for ${extWallet}.</p>`;
+    setTimeout(()=>{ if(state==='wait_ext'){ linked='ext'; setupFails=0; go('ok_ext', true); } }, 900);
+  } else if (s === 'fail_login'){
+    el.className = 'fail';
+    el.innerHTML = `
+      <div class="icon">!</div>
+      <h3>Sign-in failed</h3>
+      <p>Couldn’t verify email or Google.</p>
+      <button class="cta" type="button" data-go="create">Try again</button>`;
+  } else if (s === 'fail_setup'){
+    el.className = 'fail';
+    const showLogout = setupFails >= 3;
+    el.innerHTML = `
+      <div class="icon">!</div>
+      <h3>Wallet setup failed</h3>
+      <p>You’re signed in, but the wallet didn’t finish connecting.</p>
+      <button class="cta" type="button" data-act="retry-setup">Try wallet again</button>
+      ${showLogout ? '<button class="logout" type="button" data-act="logout">Log out and start over</button>' : ''}`;
+  } else if (s === 'ok_privy'){
+    linked = 'privy';
+    confirmFrom = 'ok_privy';
+    syncHome();
+    const mark = privyIdent.kind === 'google'
+      ? `<span class="mark g">${ICON_GOOGLE}</span>`
+      : `<span class="mark em">${ICON_EMAIL}</span>`;
+    const subIdent = privyIdent.kind === 'google' ? 'Google' : 'Email';
+    el.className = 'ok';
+    el.innerHTML = `
+      <div class="ident">
+        ${mark}
+        <div class="who"><b>${privyIdent.label}</b><span>${subIdent}</span></div>
+      </div>
+      <div class="chain">
+        <div class="labrow"><span class="lab">Solana</span><button type="button" data-act="copy-privy-sol">Copy</button></div>
+        <div class="addr"><span class="str">${ADDR_PRIVY_SOL}</span></div>
+      </div>
+      <div class="chain">
+        <div class="labrow"><span class="lab">EVM</span><button type="button" data-act="copy-privy-evm">Copy</button></div>
+        <div class="addr"><span class="str">${ADDR_PRIVY_EVM}</span></div>
+      </div>
+      <div class="actions">
+        <button class="cta ghost" type="button" data-go="export">Export / recovery</button>
+        <button class="cta danger" type="button" data-go="confirm">Disconnect</button>
+      </div>`;
+  } else if (s === 'ok_ext'){
+    linked = 'ext';
+    confirmFrom = 'ok_ext';
+    syncHome();
+    const mark = extWallet === 'Phantom'
+      ? '<span class="mark ph">◈</span>'
+      : '<span class="mark sk">S</span>';
+    const subW = extWallet === 'Phantom' ? 'Mobile Wallet Adapter' : 'Solana Mobile';
+    el.className = 'ok';
+    el.innerHTML = `
+      <div class="ident">
+        ${mark}
+        <div class="who"><b>${extWallet}</b><span>${subW}</span></div>
+      </div>
+      <div class="chain">
+        <div class="labrow"><span class="lab">Solana</span><button type="button" data-act="copy-ext">Copy</button></div>
+        <div class="addr"><span class="str">${ADDR_EXT}</span></div>
+      </div>
+      <div class="actions">
+        <button class="cta danger" type="button" data-go="confirm">Disconnect</button>
+      </div>`;
+  } else if (s === 'export'){
+    if (linked !== 'privy'){ go('ok_ext'); return; }
+    el.className = 'choice';
+    el.innerHTML = `
+      <p style="color:var(--dim);font-size:14px;margin:4px 0 14px;text-align:left">
+        Opens Privy so you can export or recover this wallet. MyBoon never sees your key.
+      </p>
+      <button class="btn-primary" type="button" data-go="export_wait">Continue with Privy</button>
+      <button class="btn-secondary" type="button" data-go="ok_privy">Not now</button>`;
+  } else if (s === 'export_wait'){
+    if (linked !== 'privy'){ go('ok_ext'); return; }
+    el.className = 'wait';
+    el.innerHTML = `<div class="spin"></div><h3>Opening Privy</h3><p>Complete export or recovery there.</p>`;
+    setTimeout(()=>{ if(state==='export_wait') go('export_done', true); }, 1000);
+  } else if (s === 'export_done'){
+    el.className = 'fail';
+    el.style.paddingTop = '20px';
+    el.innerHTML = `
+      <div class="icon" style="background:#0a3d34;color:var(--vir)">✓</div>
+      <h3>Done</h3>
+      <p>Your wallet is ready to use or import elsewhere.</p>
+      <button class="cta" type="button" data-go="ok_privy">Back to wallet</button>`;
+  } else if (s === 'confirm'){
+    el.className = 'fail';
+    el.innerHTML = `
+      <h3 style="margin-top:12px">Disconnect this wallet?</h3>
+      <p>You’ll need to connect again to trade.</p>
+      <button class="cta danger" type="button" data-act="do-disconnect">Disconnect</button>
+      <button class="cta ghost" type="button" style="margin-top:8px" data-act="cancel-disconnect">Cancel</button>`;
+  }
+  body.appendChild(el);
+  syncDock();
+}
+
+function go(s, fromAuto){
+  if (s === 'home'){ stack=[]; render('home'); return; }
+  if (fromAuto){ stack=[]; }
+  render(s, !fromAuto);
+}
+
+function syncDock(){
+  document.querySelectorAll('#dock button').forEach(b=>{
+    b.classList.toggle('on', b.dataset.go === state);
+  });
+}
+
+document.getElementById('dock').innerHTML = STATES.map(([id,label])=>
+  `<button type="button" data-go="${id}">${label}</button>`
+).join('');
+
+document.body.addEventListener('click', (e)=>{
+  const act = e.target.closest('[data-act]');
+  if (act){
+    const a = act.dataset.act;
+    if (a === 'google'){ privyIdent = { kind:'google', label:'you@gmail.com' }; go('wait_create'); return; }
+    if (a === 'email-send'){ privyIdent = { kind:'email', label:'you@example.com' }; go('otp'); return; }
+    if (a === 'otp-paste'){
+      const boxes = document.getElementById('otpBoxes');
+      if (boxes){
+        const code = '482193';
+        [...boxes.querySelectorAll('i')].forEach((el, i) => { el.textContent = code[i] || '·'; });
+      }
+      return;
+    }
+    if (a === 'email-verify'){ go('wait_create'); return; }
+    if (a === 'ext-seeker'){ extWallet = 'Seeker'; go('wait_ext'); return; }
+    if (a === 'ext-phantom'){ extWallet = 'Phantom'; go('wait_ext'); return; }
+    if (a === 'retry-setup'){ setupFails = 0; go(linked === 'ext' || extWallet ? 'have' : 'have'); return; }
+    if (a === 'logout'){ linked=null; setupFails=0; stack=[]; go('choice'); return; }
+    if (a === 'do-disconnect'){ linked=null; setupFails=0; go('home'); return; }
+    if (a === 'cancel-disconnect'){ go(confirmFrom); return; }
+    if (a === 'copy-privy-sol' || a === 'copy-privy-evm' || a === 'copy-ext'){
+      act.textContent = 'Copied';
+      setTimeout(()=>{ if(act.isConnected) act.textContent = 'Copy'; }, 900);
+      return;
+    }
+  }
+  const t = e.target.closest('[data-go]');
+  if (!t) return;
+  const s = t.dataset.go;
+  if (t.closest('#dock')){
+    stack = [];
+    if (s === 'ok_privy' || s === 'export' || s === 'export_wait' || s === 'export_done'){
+      linked = 'privy';
+      privyIdent = privyIdent || { kind:'email', label:'you@example.com' };
+      confirmFrom = 'ok_privy';
+    } else if (s === 'ok_ext'){
+      linked = 'ext';
+      confirmFrom = 'ok_ext';
+    } else if (s === 'confirm'){
+      if (!linked) linked = 'privy';
+      confirmFrom = linked === 'ext' ? 'ok_ext' : 'ok_privy';
+    } else if (['choice','create','email','otp','wait_create','have','wait_ext','fail_login','fail_setup','home'].includes(s)){
+      linked = null;
+    }
+    if (s === 'fail_setup'){ setupFails = 3; }
+    syncHome();
+    go(s); return;
+  }
+  go(s);
+});
+
+manageBtn.addEventListener('click', ()=> go(manageTarget()));
+openBtn.addEventListener('click', ()=> go('choice'));
+backBtn.addEventListener('click', ()=>{
+  const prev = stack.pop() || (linked === 'privy' ? 'ok_privy' : 'choice');
+  render(prev, false);
+});
+document.getElementById('closeBtn').addEventListener('click', ()=> go('home'));
+scrim.addEventListener('click', ()=> go('home'));
+
+go('choice');
+</script>
+</body>
+</html>
