@@ -58,11 +58,6 @@ Refs: [Privy export a wallet](https://docs.privy.io/wallets/wallets/export), [Pr
 - Rainbow — [Get started with the Rainbow app](https://rainbow.me/support/app/get-started-with-the-rainbow-app)
 - U1CORE — [Web3 onboarding UX: first 90 seconds](https://www.u1core.com/web3-onboarding-ux-what-happens-in-the-first-90-seconds/)
 
-## Screenshot refs (optional)
-
-`refs/` — public Phantom gallery / learn OG when reachable (density only).
-
-
 ## Icons + OTP
 
 - Email / Google marks: quiet envelope outline + official-style 4-color Google G (inline SVG). No `@` / serif `G` tiles.
