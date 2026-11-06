@@ -12,7 +12,7 @@ or team structure change.
 
 ## Canonical One-Line Description
 
-myboon tells you why the market moved and lets you act in the same app.
+MyBoon sticks market context to the next action — understand why it moved, then act in the same app.
 
 ## Brief Project Description
 

@@ -265,7 +265,7 @@ function Hero({ reduced, tick }: { reduced: boolean; tick: number }) {
       </svg>
       <div className={`${s.tile} ${s.dOnly} ${s.v2Flow} ${tick === 0 ? s.v2On : ''}`} style={{ ...place({ x: 15, y: 27, w: 300, r: -4 }), '--d': '5s' } as CSSProperties}>
         <span className={s.v2Step} aria-hidden>1</span>
-        <span className={s.v2Lbl}>Read</span>
+        <span className={s.v2Lbl}>Context</span>
         <StoryCard tag="Why it moved" title="SOL clears $180 as ETF inflows hit a weekly high" body="Three reasons it moved, in 20 seconds." why={['ETF flows', 'DEX volume', '+2']} />
       </div>
       <div className={`${s.tile} ${s.v2Flow} ${tick === 1 ? s.v2On : ''}`} style={{ ...place({ x: 17, y: 71, w: 230, r: 3 }, { x: 50, y: 36, w: 220, r: -2 }), '--d': '5.7s', animationDelay: '-1.3s' } as CSSProperties}>
@@ -278,7 +278,7 @@ function Hero({ reduced, tick }: { reduced: boolean; tick: number }) {
         <span className={s.v2Lbl}>Swap</span>
         <SwapCard />
       </div>
-      <p className={s.v2Tag}>MyBoon tells you why the market moved, and lets you act in the same app.</p>
+      <p className={s.v2Tag}>MyBoon sticks market context to the next action — understand why it moved, then act in the same app.</p>
       <div className={s.copy}>
         <Ctas />
       </div>
@@ -471,7 +471,7 @@ export default function Landing() {
         <Words word="Wallet" echo className={s.walletWords} />
         <Tl d={{ x: 16, y: 34, w: 300, r: -4, dp: 0.25 }} m={{ x: 50, y: 18, w: 300, r: -3 }} node="m"><WalletFlow reduced={reduced} /></Tl>
         <Tl d={{ x: 85, y: 66, w: 290, r: 4, dp: 0.2 }} m={{ x: 50, y: 73, w: 300, r: 3 }} node="d"><MoveCard /></Tl>
-        <p className={s.line}><b>Understand the market and act in the same app.</b></p>
+        <p className={s.line}><b>MyBoon sticks market context to the next action — understand why it moved, then act in the same app.</b></p>
       </section>
 
       <section className={s.end} id="try">

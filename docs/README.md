@@ -43,8 +43,8 @@ describe current scope and which preserve earlier contracts.
 ## Messaging Rules
 
 - Product name: **myboon**
-- Primary line: **myboon tells you why the market moved and lets you act in the
-  same app.**
+- Primary line: **MyBoon sticks market context to the next action — understand
+  why it moved, then act in the same app.**
 - Explain both parts of the problem: fragmented understanding and complicated,
   disconnected action.
 - Lead with the user journey, not terms such as "AI knowledge graph," "entity

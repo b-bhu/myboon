@@ -14,18 +14,11 @@ people understand what myboon is, see that it is real, and want early access.
 
 ## Current Positioning
 
-myboon tells you why the market moved and lets you act in the same app.
+MyBoon sticks market context to the next action — understand why it moved, then act in the same app.
 
 It turns scattered signals into researched, developing stories, connects each
 story to the relevant asset and market, and keeps wallet balances and resulting
 positions visible in one consistent mobile experience.
-
-Short version:
-
-```text
-Understand what moved, why it moved, and what happened before.
-Act if you choose, then track what you own without changing apps.
-```
 
 ## Validation Baseline
 
@@ -59,7 +52,7 @@ Message:
 
 ```text
 myboon is built for the mobile market user: context, markets, and positions in
-one wallet-like app.
+one app.
 ```
 
 ### 2. Solana Ecosystem Builders
@@ -240,7 +233,7 @@ Minimum:
 Beta page copy:
 
 ```text
-myboon tells you why the market moved and lets you act in the same app.
+MyBoon sticks market context to the next action — understand why it moved, then act in the same app.
 
 It turns scattered signals into researched, developing stories, connects those
 stories to relevant Solana markets, and tracks what happens next from one mobile
@@ -279,8 +272,7 @@ Target:
 DM structure:
 
 ```text
-Hey, I am building myboon. It tells you why the market moved and lets you act in
-the same mobile app.
+Hey, I am building myboon. MyBoon sticks market context to the next action — understand why it moved, then act in the same app.
 I am preparing the Seeker beta path and looking for early feedback from people
 who care about mobile crypto UX or market context.
 
@@ -380,8 +372,7 @@ These are useful builder details, but they are not the first user-facing hook.
 Lead with:
 
 ```text
-Markets move fast. Context gets scattered. myboon remembers what matters and
-connects it to action.
+MyBoon sticks market context to the next action — understand why it moved, then act in the same app.
 ```
 
 ## First Launch Milestone
