@@ -62,6 +62,35 @@ ANALYST_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.c
 
 ---
 
+## Entity manager (myboon-entity-manager)
+
+`myboon-entity-manager` (`packages/entity-manager`) runs one cycle and exits;
+PM2 starts it again at the hourly :00 and :45 ticks (`0,45 * * * *`,
+`autorestart` off). Like the gated scout and analyst, it joins the process list
+only when `MYBOON_V4_RUNTIME_ENABLED=1`, and a plain `pm2 start/reload` of the
+ecosystem file never registers it. Secrets (`ENTITY_MANAGER_DATABASE_URL`,
+`OLLAMA_API_KEY`, optional `JEV_API_TOKEN`) come only from the sourced `.env`;
+they are never set in the ecosystem file. Config check:
+`pnpm exec tsx scripts/check-ecosystem.ts`.
+
+```bash
+# Go-live (register). Back up the process list BEFORE anything else:
+cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
+
+# From the repo root as the PM2 user. Source the .env silently —
+# never echo it; secrets must stay out of history and the ecosystem file:
+set -a; . ./.env; set +a
+MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-entity-manager
+pm2 save
+
+# Switch on / off (ENTITY_MANAGER_ENABLED defaults to false; set in the shell,
+# never by editing the tracked ecosystem file):
+ENTITY_MANAGER_ENABLED=true MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env && pm2 save
+ENTITY_MANAGER_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env && pm2 save
+```
+
+---
+
 ## Hermes CLI prerequisite
 
 The shared Research worker, shared Entity worker, and editor-draft can shell

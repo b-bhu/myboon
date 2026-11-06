@@ -139,13 +139,16 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
   .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
 
 // #444 V4 runtime, Sprint 1 scope: the scout stage. #391 adds the analyst
-// worker; #582 adds the web reader (15-min cron tick, flag off). The old #480
-// myboon-entity-manager app (packages/analyst/src/entity-manager-run.ts) was
-// retired in the #571 cleanup. The new entity manager is the separate
-// @myboon/entity-manager package; it is NOT registered here and stays off
-// until CTO approves its own go-live.
+// worker; #582 adds the web reader (15-min cron tick; still flag-off / not
+// go-live'd). The old #480 myboon-entity-manager app
+// (packages/analyst/src/entity-manager-run.ts) was retired in the #571
+// cleanup. #593 registers the new entity manager, the separate
+// @myboon/entity-manager package, as myboon-entity-manager below:
+// ENTITY_MANAGER_ENABLED defaults to false in this file, so a plain reload
+// never enables it; the shell/env turns it on.
 //   myboon-scout            -> packages/scout-news/src/run.ts                (15-min cron tick)
 //   myboon-analyst          -> packages/analyst/src/run.ts                    (30-min cron tick)
+//   myboon-entity-manager   -> packages/entity-manager/src/run.ts             (tick at :00 and :45, flag off)
 //   myboon-web-reader       -> packages/web-reader/src/run.ts                 (15-min cron tick)
 // Each V4 app runs one cycle and exits; PM2 starts it again at the next
 // cron tick (cron_restart). autorestart stays off so a failing run neither
@@ -216,6 +219,32 @@ const V4_APPS = [
       ANALYST_BACKOFF_MS: '60000',
       ANALYST_MAX_ATTEMPTS: '3',
       ANALYST_SHADOW: 'false',
+    },
+  },
+  {
+    // #593 the entity manager: claims analyst handoffs and decides story /
+    // park / duplicate per entity (the @myboon/entity-manager package). One
+    // run per tick at :00 and :45, then exit. Secrets
+    // ENTITY_MANAGER_DATABASE_URL, OLLAMA_API_KEY and optional JEV_API_TOKEN
+    // are never set in this file; they come from the sourced .env.
+    name: 'myboon-entity-manager',
+    script: 'src/run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/entity-manager`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '0,45 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'entity-manager',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `ENTITY_MANAGER_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env`
+      ENTITY_MANAGER_ENABLED: process.env.ENTITY_MANAGER_ENABLED ?? 'false',
+      ENTITY_MANAGER_LLM_MODEL: 'glm-5.3-flash',
+      ENTITY_MANAGER_MAX_PER_RUN: '20',
     },
   },
   {
