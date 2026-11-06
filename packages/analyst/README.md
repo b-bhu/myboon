@@ -99,7 +99,8 @@ Decision-Log D37.
 
 There is no package entry point: `src/index.ts` was removed in #559 (nothing
 imported `@myboon/analyst`). Import from the module that owns a symbol, and run
-the CLIs via the `analyst:*` / `entity-manager:once` scripts.
+the CLIs via the `analyst:*` scripts. Entity-manager code lives in
+`@myboon/entity-manager` (the old analyst EM scripts were removed in the #571 cleanup).
 
 ## Configuration knobs (`src/config.ts`, all optional, positive integers)
 

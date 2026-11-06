@@ -139,12 +139,13 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
   .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))
 
 // #444 V4 runtime, Sprint 1 scope: the scout stage. #391 adds the analyst
-// worker; #480 adds the timed entity manager (the only stage scheduled twice:
-// :00 and :45, so a proposed entity is picked up within 45 minutes); #582 adds
-// the web reader (15-min cron tick, flag off).
+// worker; #582 adds the web reader (15-min cron tick, flag off). The old #480
+// myboon-entity-manager app (packages/analyst/src/entity-manager-run.ts) was
+// retired in the #571 cleanup. The new entity manager is the separate
+// @myboon/entity-manager package; it is NOT registered here and stays off
+// until CTO approves its own go-live.
 //   myboon-scout            -> packages/scout-news/src/run.ts                (15-min cron tick)
 //   myboon-analyst          -> packages/analyst/src/run.ts                    (30-min cron tick)
-//   myboon-entity-manager   -> packages/analyst/src/entity-manager-run.ts     (cron '0,45 * * * *')
 //   myboon-web-reader       -> packages/web-reader/src/run.ts                 (15-min cron tick)
 // Each V4 app runs one cycle and exits; PM2 starts it again at the next
 // cron tick (cron_restart). autorestart stays off so a failing run neither
@@ -161,8 +162,6 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 //   3. pm2 save   (persists the new list; dump backup is the rollback path)
 // Analyst go-live is the same sequence with:
 //   MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-analyst
-// Entity-manager go-live is that same sequence with --only myboon-entity-manager;
-// it is the systems manager's call after CTO approval, never this file's default.
 const V4_APPS = [
   {
     name: 'myboon-scout',
@@ -217,36 +216,6 @@ const V4_APPS = [
       ANALYST_BACKOFF_MS: '60000',
       ANALYST_MAX_ATTEMPTS: '3',
       ANALYST_SHADOW: 'false',
-    },
-  },
-  {
-    // #480 the timed entity manager: reviews every proposed entity, LLM decides
-    // alias/reject/new; alias and reject are applied, `new` stays proposed.
-    // :00/:45 ticks so proposed entities never wait longer than 45 minutes.
-    // Secrets ENTITY_MANAGER_DATABASE_URL and OLLAMA_API_KEY are never set in
-    // this file; they come from the sourced .env. One run of 40 entities is a
-    // few minutes at the 20s per-call timeout; cron_restart restarts (kills)
-    // rather than overlapping runs, and applied verdicts are committed
-    // per-entity, so a killed run only leaves its remaining entities proposed.
-    name: 'myboon-entity-manager',
-    script: 'src/entity-manager-run.ts',
-    interpreter: TSX,
-    cwd: `${ROOT}/packages/analyst`,
-    watch: false,
-    // One run per tick, then exit; autorestart must not fight that exit.
-    autorestart: false,
-    cron_restart: '0,45 * * * *',
-    max_memory_restart: '300M',
-    kill_timeout: 30000,
-    log_date_format: 'YYYY-MM-DD HH:mm:ss',
-    env: {
-      V4_STAGE: 'entity-manager',
-      // Off-switch: set in the shell, never by editing this tracked file:
-      // `ENTITY_MANAGER_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env`
-      ENTITY_MANAGER_ENABLED: process.env.ENTITY_MANAGER_ENABLED ?? 'false',
-      ENTITY_MANAGER_LLM_MODEL: 'glm-5.3-flash',
-      ENTITY_MANAGER_MAX_ENTITIES: '40',
-      ENTITY_MANAGER_TIMEOUT_MS: '20000',
     },
   },
   {

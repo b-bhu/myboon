@@ -9,7 +9,6 @@
     "typecheck": "tsc --noEmit",
     "analyst:once": "tsx src/run.ts",
     "analyst:catchup": "tsx src/catchup.ts",
-    "entity-manager:once": "tsx src/entity-manager-run.ts",
     "matching:dry-run": "tsx src/dry-run-matching.ts"
   },
   "dependencies": {
