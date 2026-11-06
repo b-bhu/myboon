@@ -1,5 +1,7 @@
 # Wallet connect sheet — research notes
 
+Open `index.html` in a browser. The dock under the phone jumps to every state.
+
 Mobbin MCP (`user-Mobbin`) is paywalled / not used for this mock.
 
 Issue: [#590](https://github.com/b-bhu/myboon/issues/590) WS1 (ConnectionSheet) + WS2 (Privy export/recovery). Folded [#316](https://github.com/b-bhu/myboon/issues/316) fail states.
