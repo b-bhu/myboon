@@ -1,7 +1,7 @@
 /**
  * #567 read-only dry run of type-first matching. For each signal id (read from atlas.signals) or raw
  * article text, runs the analyst session with the real LLM and decision tool and the #566 lookup, and
- * prints one JSON line per signal: the mentions with their 2 types and the main subject, the types
+ * prints one JSON line per signal (with the #571 handoff the worker would save): the mentions with their 2 types and the main subject, the types
  * searched, the alias hits, the merged shortlist (alias hits first, then fill by item count, at most 40),
  * and Jev's single pick (slug, type, confidence) or none. Nothing is written: no sink, no claim, and every
  * connection runs with default_transaction_read_only = on.
@@ -19,7 +19,7 @@ import { decideTimed } from './process.js';
 import { analystPoolConfig, loadAnalystDatabaseCa } from './db-pool.js';
 import { defaultDeciders } from './runner.js';
 import { createOllamaLlm, runSession, type Ask, type EntityMissEntry, type MatchTrace, type SignalInput } from './session.js';
-import { pgCandidateLookup } from './signal-worker.js';
+import { SIGNAL_METADATA_COLUMNS, pgCandidateLookup, signalMetadataFromRow, toHandoff, type SignalRow } from './signal-worker.js';
 
 type Args = { ids: string[]; texts: string[]; recent: number | null; forceKeep: boolean };
 
@@ -58,11 +58,14 @@ export async function main(): Promise<void> {
     };
 
     const signals: SignalInput[] = args.texts.map((text, i) => ({ signal_id: `text-${i + 1}`, text }));
+    /** #571 full rows for the handoff preview; --text inputs have none. */
+    const fullRows = new Map<string, SignalRow>();
     if (args.ids.length > 0 || args.recent) {
       const { rows } = args.ids.length > 0
-        ? await pool.query<SignalInput>('select signal_id, text, source, link from atlas.signals where signal_id = any($1::text[])', [args.ids])
-        : await pool.query<SignalInput>('select signal_id, text, source, link from atlas.signals where text is not null order by occurred_at desc limit $1', [args.recent]);
-      signals.push(...rows.map((r) => ({ ...r, text: r.text ?? '' })));
+        ? await pool.query<SignalRow>(`select ${SIGNAL_METADATA_COLUMNS} from atlas.signals where signal_id = any($1::text[])`, [args.ids])
+        : await pool.query<SignalRow>(`select ${SIGNAL_METADATA_COLUMNS} from atlas.signals where text is not null order by occurred_at desc limit $1`, [args.recent]);
+      for (const r of rows) fullRows.set(r.signal_id, r);
+      signals.push(...rows.map((r) => ({ signal_id: r.signal_id, text: r.text ?? '', source: r.source, link: r.link })));
     }
 
     const lookup = pgCandidateLookup(pool);
@@ -84,6 +87,7 @@ export async function main(): Promise<void> {
           main_subject: t?.main_subject, types: t?.types, shortlist_size: t?.shortlist.length ?? 0, alias_hits: t?.alias_hits ?? [],
           shortlist: t?.shortlist ?? [], pick: t?.pick ? `${t.pick.slug} (${t.pick.type})` : 'none', confidence: t?.confidence ?? null,
           target: out.targets[0] ?? null, reason: out.reason,
+          handoff: fullRows.has(signal.signal_id) ? toHandoff(out, signalMetadataFromRow(fullRows.get(signal.signal_id)!), () => {}) : null,
         }));
       } catch (e) {
         totals.failed += 1;

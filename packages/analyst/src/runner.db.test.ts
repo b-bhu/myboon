@@ -4,14 +4,14 @@
  * (#514, applied by createThrowawayDatabase with its tool_log stand-in), RLS on, so the test proves
  * those grants and policies suffice. The LLM, Jev
  * and Clef are scripted. One run processes due signals up to the cap, writes through
- * PgDecisionSink, logs one summary line and ends its pool.
+ * PgHandoffSink, logs one summary line and ends its pool.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createThrowawayDatabase, type ThrowawayDatabase } from '@myboon/atlas-schema';
 
 import { DeciderError, type Decider, type DecisionCase } from './deciders.js';
-import { PgDecisionSink, pgCandidateLookup, type D36Options } from './signal-worker.js';
+import { PgHandoffSink, pgCandidateLookup, type D36Options } from './signal-worker.js';
 import { analystMain, runAnalystOnce } from './runner.js';
 import type { ChatMessage, Llm } from './session.js';
 import { spikeCases, spikeEntities } from './test-fixtures/d36-spike.js';
@@ -56,7 +56,7 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
   };
   const opts = (o: Partial<D36Options> = {}): D36Options => ({
     llm: kalshiLlm, primary: scripted('jev', keepAll), fallback: scripted('clef', keepAll), shadow: null,
-    lookup: pgCandidateLookup(workerPool), missLog: () => {}, sink: new PgDecisionSink(workerPool, () => {}), log: () => {},
+    lookup: pgCandidateLookup(workerPool), missLog: () => {}, sink: new PgHandoffSink(workerPool), dropLog: () => {}, log: () => {},
     leaseMs: 60_000, timeoutMs: 1_000, backoffMs: 60_000, maxAttempts: 3, worker: 'w512', ...o,
   });
   const seedSignals = async (n: number) => {
@@ -92,14 +92,14 @@ describe.skipIf(ADMIN_URL === '')('#512 analyst worker run (local Postgres, anal
     expect(rows).toEqual(['decisions', 'entities', 'entity_items', 'signals'].map((relname) => ({ relname, on: true })));
   });
 
-  it('processes every due signal as analyst_worker and writes decisions and items through PgDecisionSink', async () => {
+  it('processes every due signal as analyst_worker and writes decisions and no items through PgHandoffSink (#571)', async () => {
     await seedSignals(3);
     const lines: string[] = [];
     const s = await runAnalystOnce(workerPool, opts(), { maxSignals: 20, log: (l) => lines.push(l) });
     expect(s).toEqual({ processed: 3, analysed: 3, parked: 0, failed: 0, lost_claim: 0 });
     expect(await statuses()).toEqual([{ status: 'analysed', n: 3 }]);
     expect((await pool.query('select count(*)::int n from atlas.decisions')).rows[0].n).toBe(3);
-    expect((await pool.query('select count(*)::int n from atlas.entity_items')).rows[0].n).toBe(3);
+    expect((await pool.query('select count(*)::int n from atlas.entity_items')).rows[0].n).toBe(0);
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ event: 'analyst_run', processed: 3, analysed: 3 });
   });

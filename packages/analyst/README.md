@@ -26,12 +26,36 @@ tables: everything it touches is created by
 - `src/signal-worker.ts` (renamed from `d36-worker.ts` in #559) — the signal worker (#504): claim, one LLM session per
   signal with Jev/Clef as the decision tool, the sink, plus the standing rule
   that a signal older than 24 hours is parked `backlog_skip_24h` (#391) before
-  the LLM runs. `PgDecisionSink` files at most one item per signal, on the
-  first existing target, and never creates or proposes an entity (#567): other
-  targets are dropped with a `target_dropped` log line. `pgCandidateLookup` is
+  the LLM runs. Since #571 the analyst writes **no entity items and no
+  summaries**: its work ends at the handoff (below). `PgHandoffSink` records
+  the `atlas.decisions` row (decision, reason, the one entity pick in
+  `targets`, `summary` null); other targets are dropped with a
+  `target_dropped` log line, and no entity is ever created (#567). `pgCandidateLookup` is
   the read-only #566 candidate fetch.
 - `src/session.ts` — the analyst session and type-first matching (#567, see
   below). `src/dry-run-matching.ts` is the read-only matching dry run.
+
+## The handoff (#571)
+
+```mermaid
+flowchart LR
+  S[atlas.signals row] --> A[analyst session]
+  A --> H[AnalystHandoff: decision, reason, entity pick or null, full signal]
+  H --> D[atlas.decisions row]
+  D -.-> EM[entity manager, #571 task 3]
+```
+
+`AnalystHandoff` and `SignalMetadata` live in `@myboon/contracts`
+(`signal-metadata.ts`). The signal is the whole `atlas.signals` row, unchanged:
+id, source, type, priority, times, `text`, `numbers`, `link`, `raw_ids`
+(`image`, `author`, `feed_source`, `outlet`, `handle`, `coingecko`, plus any
+other key), `unusual_score`, `excerpt`, `raw_hash`. Scout stores no article
+body: `text` is the article title or the full post. `PgHandoffSink` stores it in
+one `atlas.decisions` insert: `handoff` (the AnalystHandoff JSON snapshot),
+`handoff_version` (1) and `em_status` (`pending` for every keep, entity null =
+growth path; `none` for ignore/unclear), the entity manager's claim queue. The
+columns and the analyst_worker grants come from DB Guy's migration
+`20261105150000_atlas_em_handoff.sql` (#581), which must be applied first.
 
 ## Entity matching (#567, shortlist + one pick)
 
@@ -64,18 +88,11 @@ flowchart LR
 Dry run (read-only, needs the analyst env; nothing is written):
 `pnpm --filter @myboon/analyst matching:dry-run --recent 20` or
 `--ids id1,id2` or `--text "..."`, plus `--force-keep` to skip the keep gate.
+Each line also shows the `handoff` the worker would save (null for `--text`).
 On 100 recent prod signals (Nov 4, 2026): 72 matched, 21 `entity_miss`, 7 ignored,
 0 failed, mean confidence 0.94. Design record: wiki V4-Design (analyst session) and
 Decision-Log D37.
 
-- `src/item-wording.ts` (#559) — entity item title and summary. Title = the
-  LLM's turn-1 `headline` (asked for at most 90 chars), or the summary's first
-  whole sentence when there is none; never sliced. Summary = the signal
-  summary, stored as `''` when it would just repeat the note. Both strip source
-  lead-ins ("According to X,", "Per X:", "X reports that", "shared by X",
-  "via @x"). The prompt in `session.ts` forbids naming the source, publisher,
-  sharer or account; the source link stays on `atlas.signals.link`. Existing
-  items are not rewritten.
 - `src/catchup.ts` — the #391 one-off catch-up CLI (confirm-gated, Ollama
   quota guard, no new entities); `src/ollama-quota.ts` reads ollama.com's
   `/api/balance` for its quota guard.
@@ -92,7 +109,7 @@ the CLIs via the `analyst:*` / `entity-manager:once` scripts.
 - `ANALYST_LLM_MODEL` (default `glm-5.3-flash`), `ANALYST_WORKER`
   (default `<hostname>:<pid>`), `ANALYST_SHADOW` (`true` enables the Clef shadow).
 
-The analyst connects as `service_role` (only the granted columns and functions
+The analyst connects as `analyst_worker` (only the granted columns and functions
 exist to it). Jev and Clef are never contacted by the tests; see
 `src/v4-status.db.test.ts` (local Postgres via `ANALYST_TEST_ADMIN_URL`) and
 `src/deciders.test.ts` (fake fetch).
