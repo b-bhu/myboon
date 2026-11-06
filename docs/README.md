@@ -8,6 +8,7 @@ the current documents below take precedence.
 
 - [`VISION.md`](VISION.md) — canonical product thesis, target user, current
   status, differentiation, business model, and success criteria
+- [`PRODUCT_BRIEF.md`](PRODUCT_BRIEF.md) — short public product brief
 - [`applications/2026-08-founder-application-qa.md`](applications/2026-08-founder-application-qa.md)
   — verified founder and accelerator application answers
 - [`FEED.md`](FEED.md) — current feed role and research-memory pipeline

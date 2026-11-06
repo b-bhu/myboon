@@ -48,6 +48,7 @@ connected experience reduces confusion and unnecessary app switching.
 ## Architecture
 
 Start with the current [`product vision`](./docs/VISION.md), the
+[`product brief`](./docs/PRODUCT_BRIEF.md), the
 [`documentation index`](./docs/README.md), the
 [`founder application Q&A`](./docs/applications/2026-08-founder-application-qa.md),
 and the CI behavior in [`docs/CI.md`](./docs/CI.md).
