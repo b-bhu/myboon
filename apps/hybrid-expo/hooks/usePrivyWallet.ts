@@ -25,6 +25,8 @@ export interface PrivyWalletState {
   connected: boolean;
   /** Whether the user is authenticated via Privy (may not have wallet yet) */
   isPrivyUser: boolean;
+  /** Privy has finished restoring the session. False until then — do not guess. */
+  isReady: boolean;
   /** Whether Privy auth is complete but the embedded wallet is still hydrating/creating */
   isPreparing: boolean;
   /** Solana address from embedded wallet */
@@ -199,6 +201,7 @@ export function usePrivyWallet(): PrivyWalletState {
   return {
     connected: authenticated && !!wallet,
     isPrivyUser: authenticated,
+    isReady,
     isPreparing,
     address,
     shortAddress: address ? `${address.slice(0, 4)}···${address.slice(-4)}` : null,
