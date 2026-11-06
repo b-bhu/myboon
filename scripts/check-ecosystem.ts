@@ -2,10 +2,12 @@
  * #391 PM2 ecosystem guard for the gated V4 apps.
  *
  * Verifies, with MYBOON_V4_RUNTIME_ENABLED=1 forced on:
- *  - both V4 apps (myboon-scout, myboon-analyst) are registered, with their
- *    cwd and entry point present on disk;
+ *  - the gated V4 apps (myboon-scout, myboon-analyst, myboon-entity-manager,
+ *    myboon-web-reader) are registered, with their cwd and entry points
+ *    present on disk;
  *  - the myboon-analyst env block covers every non-secret config key that
- *    packages/analyst/src/config.ts reads optionally, plus ANALYST_ENABLED.
+ *    packages/analyst/src/config.ts reads optionally, plus ANALYST_ENABLED;
+ *  - the myboon-entity-manager env block declares ENTITY_MANAGER_ENABLED (#593).
  *
  * Run:  pnpm exec tsx scripts/check-ecosystem.ts
  *
@@ -23,8 +25,9 @@ type EcosystemApp = {
   env?: Record<string, string | undefined>;
 };
 
-const V4_NAMES = ['myboon-scout', 'myboon-analyst', 'myboon-web-reader'];
+const V4_NAMES = ['myboon-scout', 'myboon-analyst', 'myboon-entity-manager', 'myboon-web-reader'];
 const ANALYST_NAME = 'myboon-analyst';
+const ENTITY_MANAGER_NAME = 'myboon-entity-manager';
 // requireString keys in config.ts; they must never sit in the tracked env.
 const ANALYST_SECRET_KEYS = ['ANALYST_DATABASE_URL', 'OLLAMA_API_KEY', 'JEV_API_TOKEN'];
 const ANALYST_CONFIG_PATH = path.join(here(), '..', 'packages', 'analyst', 'src', 'config.ts');
@@ -89,6 +92,16 @@ function main(): void {
     }
     if (analystEnv['ANALYST_ENABLED'] === undefined) {
       failures.push(`${ANALYST_NAME} env: missing ANALYST_ENABLED`);
+    }
+  }
+
+  // #593 the entity manager: the gate flag must be declared in the tracked
+  // env (same style as the ANALYST_ENABLED check). Secrets stay out of this file.
+  const entityManagerApp = apps.find((candidate) => candidate.name === ENTITY_MANAGER_NAME);
+  if (entityManagerApp) {
+    const entityManagerEnv = entityManagerApp.env ?? {};
+    if (entityManagerEnv['ENTITY_MANAGER_ENABLED'] === undefined) {
+      failures.push(`${ENTITY_MANAGER_NAME} env: missing ENTITY_MANAGER_ENABLED`);
     }
   }
 
