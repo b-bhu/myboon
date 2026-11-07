@@ -31,6 +31,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
+import * as WebBrowser from 'expo-web-browser';
 import Svg, { Path } from 'react-native-svg';
 import type { Chain } from '@/features/chain/chain.contract';
 import { useChainActivation } from '@/features/chain/activation';
@@ -40,8 +41,10 @@ import {
   CONNECT_COPY,
   EXTERNAL_WALLET_CHOICES,
   INITIAL_CONNECT_FLOW,
+  assertPrivyHomeUrl,
   beginPrivyExport,
   canGoBack,
+  interpretPrivyExportSession,
   classifyWalletSetupError,
   connectedChainLabel,
   externalWaitingLabel,
@@ -146,6 +149,7 @@ export function ConnectionSheet({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const exportInFlight = useRef(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const otpInput = useRef<TextInput>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
@@ -349,10 +353,17 @@ export function ConnectionSheet({
   }, []);
 
   const handleExportContinue = useCallback(() => {
-    if (flow.linked !== 'privy') return;
+    if (flow.linked !== 'privy' || exportInFlight.current) return;
+    const handoff = beginPrivyExport();
+    exportInFlight.current = true;
     dispatch({ type: 'export_continue' });
-    const result = beginPrivyExport();
-    if (result.status === 'unavailable') dispatch({ type: 'export_unavailable' });
+    void openPrivyExportPage(handoff.url)
+      .then((outcome) => {
+        dispatch(outcome === 'handed_off' ? { type: 'export_handed_off' } : { type: 'export_failed' });
+      })
+      .finally(() => {
+        exportInFlight.current = false;
+      });
   }, [dispatch, flow.linked]);
 
   const confirmDisconnect = useCallback(async () => {
@@ -691,6 +702,7 @@ export function ConnectionSheet({
 
             {flow.step.kind === 'export' ? (
               <View style={styles.stack}>
+                <Text style={styles.warning}>{CONNECT_COPY.exportWarning}</Text>
                 <Text style={styles.plain}>{CONNECT_COPY.exportIntro}</Text>
                 <PrimaryButton label={CONNECT_COPY.continuePrivy} onPress={handleExportContinue} />
                 <SecondaryButton
@@ -704,10 +716,14 @@ export function ConnectionSheet({
               <WaitBlock title={CONNECT_COPY.openingPrivyTitle} body={CONNECT_COPY.openingPrivyBody} />
             ) : null}
 
-            {flow.step.kind === 'export_unavailable' ? (
+            {flow.step.kind === 'export_failed' ? (
               <View style={styles.stack}>
-                <Text style={styles.plain}>{CONNECT_COPY.exportUnavailable}</Text>
+                <Text style={styles.plain}>{CONNECT_COPY.exportFailed}</Text>
                 <PrimaryButton
+                  label={CONNECT_COPY.exportTryAgain}
+                  onPress={() => dispatch({ type: 'export_retry' })}
+                />
+                <SecondaryButton
                   label={CONNECT_COPY.backToWallet}
                   onPress={() => dispatch({ type: 'back' })}
                 />
@@ -1244,4 +1260,36 @@ const styles = StyleSheet.create({
     fontSize: tokens.fontSize.md,
     lineHeight: 20,
   },
+  warning: {
+    color: semantic.text.primary,
+    fontSize: tokens.fontSize.md,
+    lineHeight: 20,
+  },
 });
+
+/**
+ * Open Privy Home in the system browser (Safari view on iOS, Custom Tab on
+ * Android). The page stays in that browser. This function returns only whether
+ * the handoff started, and it does not read the page, the result URL, or a key.
+ */
+async function openPrivyExportPage(url: string): Promise<'handed_off' | 'failed'> {
+  let safeUrl: string;
+  try {
+    safeUrl = assertPrivyHomeUrl(url);
+  } catch {
+    return 'failed';
+  }
+  try {
+    const result = await WebBrowser.openBrowserAsync(safeUrl, {
+      dismissButtonStyle: 'close',
+      readerMode: false,
+      showTitle: true,
+      createTask: false,
+      showInRecents: false,
+      enableDefaultShareMenuItem: false,
+    });
+    return interpretPrivyExportSession(result);
+  } catch {
+    return 'failed';
+  }
+}

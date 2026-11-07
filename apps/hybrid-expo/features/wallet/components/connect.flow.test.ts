@@ -18,7 +18,10 @@ import {
   CONNECT_COPY,
   EXTERNAL_WALLET_CHOICES,
   INITIAL_CONNECT_FLOW,
+  PRIVY_HOME_URL,
+  assertPrivyHomeUrl,
   beginPrivyExport,
+  interpretPrivyExportSession,
   classifyWalletSetupError,
   connectedChainLabel,
   connectedTitle,
@@ -257,30 +260,93 @@ describe('already-have is Seeker or Phantom and never Privy', () => {
 });
 
 describe('Privy export entry', () => {
-  it('only a connected Privy session can open the entry, and it does not claim a key was shown', () => {
-    const connected = reduceConnectFlow(INITIAL_CONNECT_FLOW, {
-      type: 'open',
-      linked: 'privy',
-      privyAuthenticated: true,
-      hasEmbeddedWallet: true,
-    });
-    const entry = reduceConnectFlow(connected, { type: 'open_export' });
+  const connected = () => reduceConnectFlow(INITIAL_CONNECT_FLOW, {
+    type: 'open',
+    linked: 'privy',
+    privyAuthenticated: true,
+    hasEmbeddedWallet: true,
+  });
+
+  it('warns, then hands a Privy session to Privy Home without claiming the key was copied', () => {
+    const entry = reduceConnectFlow(connected(), { type: 'open_export' });
     assert.equal(entry.step.kind, 'export');
+    assert.match(CONNECT_COPY.exportWarning, /controls the funds/i);
+    assert.match(CONNECT_COPY.exportWarning, /never sees it/i);
+    assert.doesNotMatch(`${CONNECT_COPY.exportWarning} ${CONNECT_COPY.exportIntro}`, /here is your (seed|key)/i);
 
     const notNow = reduceConnectFlow(entry, { type: 'export_not_now' });
     assert.equal(notNow.step.kind, 'connected');
+    assert.equal(notNow.linked, 'privy');
 
-    const unavailable = apply(entry, [
+    const opening = reduceConnectFlow(entry, { type: 'export_continue' });
+    assert.equal(opening.step.kind, 'export_opening');
+
+    const returned = reduceConnectFlow(opening, { type: 'export_handed_off' });
+    assert.equal(returned.step.kind, 'connected');
+    assert.equal(returned.linked, 'privy');
+    assert.equal(returned.history.length, 0);
+
+    assert.deepEqual(beginPrivyExport(), { status: 'open_browser', url: PRIVY_HOME_URL });
+    assert.equal(assertPrivyHomeUrl(PRIVY_HOME_URL), 'https://home.privy.io');
+    assert.equal(new URL(PRIVY_HOME_URL).search, '');
+  });
+
+  it('stays on the failure step when Privy does not open, and try again returns to the warning', () => {
+    const opening = apply(connected(), [
+      { type: 'open_export' },
       { type: 'export_continue' },
-      { type: 'export_unavailable' },
     ]);
-    assert.equal(unavailable.step.kind, 'export_unavailable');
-    assert.deepEqual(beginPrivyExport(), {
-      status: 'unavailable',
-      reason: 'expo_sdk_has_no_export_wallet',
+    const failed = reduceConnectFlow(opening, { type: 'export_failed' });
+    assert.equal(failed.step.kind, 'export_failed');
+    assert.match(CONNECT_COPY.exportFailed, /nothing was exported/i);
+
+    const retry = reduceConnectFlow(failed, { type: 'export_retry' });
+    assert.equal(retry.step.kind, 'export');
+    assert.equal(retry.linked, 'privy');
+
+    const left = reduceConnectFlow(failed, { type: 'back' });
+    assert.equal(left.step.kind, 'connected');
+  });
+
+  it('treats a closed or opened browser as a handoff, and anything else as a failure to open', () => {
+    assert.equal(interpretPrivyExportSession({ type: 'cancel' }), 'handed_off');
+    assert.equal(interpretPrivyExportSession({ type: 'dismiss' }), 'handed_off');
+    assert.equal(interpretPrivyExportSession({ type: 'opened' }), 'handed_off');
+    assert.equal(interpretPrivyExportSession({ type: 'locked' }), 'failed');
+    assert.equal(interpretPrivyExportSession({ type: 'success' }), 'failed');
+    assert.equal(interpretPrivyExportSession(null), 'failed');
+  });
+
+  it('refuses any export URL that is not the bare Privy Home address', () => {
+    assert.throws(() => assertPrivyHomeUrl('https://home.privy.io/export?address=secret'));
+    assert.throws(() => assertPrivyHomeUrl('https://home.privy.io/#key'));
+    assert.throws(() => assertPrivyHomeUrl('http://home.privy.io'));
+    assert.throws(() => assertPrivyHomeUrl('https://evil.example/?next=https://home.privy.io'));
+    assert.throws(() => assertPrivyHomeUrl('not a url'));
+  });
+
+  it('ignores export events unless a Privy session is on the matching step', () => {
+    const privy = connected();
+    assert.equal(reduceConnectFlow(privy, { type: 'export_continue' }), privy);
+    assert.equal(reduceConnectFlow(privy, { type: 'export_handed_off' }), privy);
+    assert.equal(reduceConnectFlow(privy, { type: 'export_failed' }), privy);
+    assert.equal(reduceConnectFlow(privy, { type: 'export_retry' }), privy);
+
+    const external = reduceConnectFlow(INITIAL_CONNECT_FLOW, {
+      type: 'open',
+      linked: 'external',
+      privyAuthenticated: false,
+      hasEmbeddedWallet: false,
     });
-    assert.match(CONNECT_COPY.exportUnavailable, /nothing was exported/i);
-    assert.doesNotMatch(CONNECT_COPY.exportUnavailable, /here is your (seed|key)/i);
+    const untouched = apply(external, [
+      { type: 'open_export' },
+      { type: 'export_continue' },
+      { type: 'export_handed_off' },
+      { type: 'export_failed' },
+      { type: 'export_retry' },
+      { type: 'export_not_now' },
+    ]);
+    assert.equal(untouched, external);
   });
 });
 
@@ -304,5 +370,18 @@ describe('ConnectionSheet wires the external path off Privy', () => {
     assert.equal(/waitForWallet|\.provision\(|loginWith/.test(body), false);
     assert.match(body, /connectExternal/);
     assert.match(body, /external_mwa|activate\('solana'\)/);
+  });
+
+  it('opens Privy Home in the system browser and does not read a key', () => {
+    const start = source.indexOf('async function openPrivyExportPage');
+    assert.ok(start >= 0);
+    const body = source.slice(start);
+    assert.match(body, /WebBrowser\.openBrowserAsync/);
+    assert.match(body, /assertPrivyHomeUrl/);
+    assert.equal(/exportWallet|console\.|Clipboard|privateKey|mnemonic/.test(body), false);
+    assert.match(source, /flow\.linked !== 'privy'/);
+    const exportRow = source.indexOf('CONNECT_COPY.export');
+    const privyBranch = source.lastIndexOf("flow.linked === 'privy'", exportRow);
+    assert.ok(privyBranch >= 0 && exportRow > privyBranch);
   });
 });
