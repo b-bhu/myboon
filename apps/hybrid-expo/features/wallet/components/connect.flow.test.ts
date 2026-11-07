@@ -1,9 +1,9 @@
 /**
  * Connection sheet step machine.
  *
- * Locks the staged create vs already-have flow, the #316 split between a bad
- * code and a wallet-setup failure, and the rule that Seeker / Phantom never
- * become a Privy login.
+ * Locks the inline email entry, the #316 split between a bad code and a
+ * wallet-setup failure, and the rule that the external-wallet action never
+ * becomes a Privy login.
  *
  * Run: pnpm --filter hybrid-expo test:wallet
  */
@@ -16,7 +16,6 @@ import { fileURLToPath } from 'node:url';
 
 import {
   CONNECT_COPY,
-  EXTERNAL_WALLET_CHOICES,
   INITIAL_CONNECT_FLOW,
   PRIVY_HOME_URL,
   assertPrivyHomeUrl,
@@ -25,10 +24,12 @@ import {
   classifyWalletSetupError,
   connectedChainLabel,
   connectedTitle,
+  emailEntryError,
   externalConnectBackend,
   isUserCancelled,
   otpFailureMessage,
   reduceConnectFlow,
+  sheetChrome,
   showsLogout,
   type ConnectFlowEvent,
   type ConnectFlowState,
@@ -43,8 +44,6 @@ function apply(state: ConnectFlowState, events: ConnectFlowEvent[]): ConnectFlow
 
 function signedInCreating(): ConnectFlowState {
   return apply(INITIAL_CONNECT_FLOW, [
-    { type: 'choose_create' },
-    { type: 'choose_email' },
     { type: 'code_sent' },
     { type: 'login_succeeded' },
   ]);
@@ -53,8 +52,6 @@ function signedInCreating(): ConnectFlowState {
 describe('login and wallet setup stay separate (#316)', () => {
   it('a wrong code stays on the OTP step and uses Invalid code', () => {
     const otp = apply(INITIAL_CONNECT_FLOW, [
-      { type: 'choose_create' },
-      { type: 'choose_email' },
       { type: 'code_sent' },
     ]);
     const rejected = reduceConnectFlow(otp, { type: 'otp_rejected' });
@@ -101,23 +98,7 @@ describe('login and wallet setup stay separate (#316)', () => {
     assert.equal(retried.step.kind, 'creating');
     assert.equal(retried.setupAttempts, 1);
     assert.equal(reduceConnectFlow(retried, { type: 'code_sent' }).step.kind, 'creating');
-    assert.equal(reduceConnectFlow(retried, { type: 'choose_email' }).step.kind, 'creating');
-  });
-
-  it('Google login ok then wallet setup fails the same way', () => {
-    const creating = apply(INITIAL_CONNECT_FLOW, [
-      { type: 'choose_create' },
-      { type: 'start_google' },
-      { type: 'login_succeeded' },
-    ]);
-    const failed = reduceConnectFlow(creating, {
-      type: 'wallet_setup_failed',
-      failure: 'create',
-    });
-
-    assert.equal(creating.step.kind, 'creating');
-    assert.equal(failed.step.kind, 'fail_setup');
-    assert.equal(failed.setupFailure, 'create');
+    assert.equal(reduceConnectFlow(retried, { type: 'choose_external' }).step.kind, 'creating');
   });
 
   it('closing and reopening while still signed in resumes wallet setup', () => {
@@ -159,10 +140,10 @@ describe('login and wallet setup stay separate (#316)', () => {
       hasEmbeddedWallet: true,
     });
 
-    assert.equal(opened.step.kind, 'choice');
+    assert.equal(opened.step.kind, 'entry');
   });
 
-  it('the third wallet-setup failure offers log out, and that sign-out returns to the choice', () => {
+  it('the third wallet-setup failure offers log out, and that sign-out returns to the email form', () => {
     let state = signedInCreating();
     for (let attempt = 0; attempt < 3; attempt += 1) {
       state = reduceConnectFlow(state, { type: 'wallet_setup_failed', failure: 'timeout' });
@@ -177,7 +158,7 @@ describe('login and wallet setup stay separate (#316)', () => {
     assert.equal(CONNECT_COPY.logoutAndRestart, 'Log out and start over');
 
     const loggedOut = reduceConnectFlow(state, { type: 'logout' });
-    assert.equal(loggedOut.step.kind, 'choice');
+    assert.equal(loggedOut.step.kind, 'entry');
     assert.equal(loggedOut.setupAttempts, 0);
     assert.equal(loggedOut.setupOutstanding, false);
     assert.equal(loggedOut.linked, null);
@@ -202,27 +183,58 @@ describe('login and wallet setup stay separate (#316)', () => {
   });
 });
 
-describe('already-have is Seeker or Phantom and never Privy', () => {
-  it('offers only those two wallets, on the external adapter', () => {
-    assert.deepEqual(
-      EXTERNAL_WALLET_CHOICES.map((choice) => choice.id),
-      ['seeker', 'phantom'],
-    );
-    assert.equal(externalConnectBackend(), 'external_mwa');
-    assert.equal(JSON.stringify(EXTERNAL_WALLET_CHOICES).includes('Solana Wallet'), false);
+describe('the first sheet is email, then one external wallet', () => {
+  it('opens on the email form and keeps an invalid address there', () => {
+    assert.equal(INITIAL_CONNECT_FLOW.step.kind, 'entry');
+    assert.equal(sheetChrome(INITIAL_CONNECT_FLOW, {}).title, 'Connect to MyBoon');
+    assert.equal(CONNECT_COPY.continue, 'Continue');
+    assert.equal(CONNECT_COPY.connectExternal, 'Connect external wallet');
+    assert.equal(emailEntryError(''), CONNECT_COPY.emailInvalid);
+    assert.equal(emailEntryError('not-an-email'), CONNECT_COPY.emailInvalid);
+    assert.equal(emailEntryError('  user@example.com  '), null);
+    assert.equal(reduceConnectFlow(INITIAL_CONNECT_FLOW, { type: 'login_succeeded' }).step.kind, 'entry');
   });
 
-  it('a cancelled or failed external connect returns to the wallet list and does not create Privy', () => {
-    const waiting = apply(INITIAL_CONNECT_FLOW, [
-      { type: 'choose_have' },
-      { type: 'choose_external', wallet: 'phantom' },
-    ]);
+  it('Continue sends the code, Back returns to the same form, and a send failure retries sign-in', () => {
+    const otp = reduceConnectFlow(INITIAL_CONNECT_FLOW, { type: 'code_sent' });
+    assert.equal(otp.step.kind, 'otp');
+    assert.equal(sheetChrome(otp, { email: 'user@example.com' }).subtitle, 'Sent to user@example.com');
+
+    const back = reduceConnectFlow(otp, { type: 'back' });
+    assert.equal(back.step.kind, 'entry');
+    assert.equal(back.history.length, 0);
+
+    const failed = reduceConnectFlow(INITIAL_CONNECT_FLOW, { type: 'login_failed' });
+    assert.equal(failed.step.kind, 'fail_login');
+    assert.equal(failed.setupAttempts, 0);
+    assert.equal(CONNECT_COPY.signInFailedBody, "Couldn't verify your email.");
+
+    const retried = reduceConnectFlow(failed, { type: 'retry_login' });
+    assert.equal(retried.step.kind, 'entry');
+    assert.equal(reduceConnectFlow(otp, { type: 'login_failed' }), otp);
+  });
+});
+
+describe('external wallet is the shared adapter and never Privy', () => {
+  it('uses one external action on the adapter, with no provider list', () => {
+    assert.equal(externalConnectBackend(), 'external_mwa');
+    assert.equal(CONNECT_COPY.connectExternal, 'Connect external wallet');
+    assert.equal(CONNECT_COPY.externalWallet, 'External wallet');
+    assert.equal(JSON.stringify(CONNECT_COPY).includes('Solana Wallet'), false);
+    assert.equal(JSON.stringify(CONNECT_COPY).includes('Google'), false);
+    assert.equal(JSON.stringify(CONNECT_COPY).includes('Seeker'), false);
+    assert.equal(JSON.stringify(CONNECT_COPY).includes('Phantom'), false);
+  });
+
+  it('a cancelled or failed external connect returns to the email form and does not create Privy', () => {
+    const waiting = reduceConnectFlow(INITIAL_CONNECT_FLOW, { type: 'choose_external' });
     assert.equal(waiting.step.kind, 'connecting_external');
     assert.equal(waiting.linked, null);
     assert.equal(waiting.setupOutstanding, false);
+    assert.equal(sheetChrome(waiting, {}).title, 'Waiting for wallet');
 
     const cancelled = reduceConnectFlow(waiting, { type: 'external_cancelled' });
-    assert.equal(cancelled.step.kind, 'have');
+    assert.equal(cancelled.step.kind, 'entry');
     assert.equal(cancelled.linked, null);
     assert.equal(cancelled.setupAttempts, 0);
     assert.equal(cancelled.setupOutstanding, false);
@@ -231,10 +243,11 @@ describe('already-have is Seeker or Phantom and never Privy', () => {
       type: 'external_failed',
       message: 'Could not connect that wallet.',
     });
-    assert.equal(failed.step.kind, 'have');
+    assert.equal(failed.step.kind, 'entry');
     assert.equal(failed.linked, null);
     assert.equal(failed.externalError, 'Could not connect that wallet.');
     assert.equal(reduceConnectFlow(failed, { type: 'retry_wallet' }), failed);
+    assert.equal(reduceConnectFlow(failed, { type: 'login_succeeded' }).step.kind, 'entry');
   });
 
   it('an external session opens the Wallet sheet, not Wallets, and cannot export', () => {
@@ -356,20 +369,40 @@ describe('ConnectionSheet wires the external path off Privy', () => {
     'utf8',
   );
 
-  it('does not offer a generic Solana Wallet row or the Privy-creating connect()', () => {
+  it('does not offer a generic Solana Wallet row, Google, or the Privy-creating connect()', () => {
     assert.equal(source.includes('Solana Wallet'), false);
+    assert.equal(source.includes('loginWithGoogle'), false);
     assert.equal(source.includes('solana.connect('), false);
     assert.equal(source.includes('connectExternal'), true);
+    assert.equal(source.includes('482193'), false);
+    assert.equal(/Continue with Google|Create a new wallet|I already have a wallet/.test(source), false);
   });
 
   it('the external handler does not log in, wait for, or create a Privy wallet', () => {
     const start = source.indexOf('const handleExternalWallet');
-    const end = source.indexOf('const handleSendEmail');
+    const end = source.indexOf('const handleContinue');
     assert.ok(start >= 0 && end > start);
     const body = source.slice(start, end);
-    assert.equal(/waitForWallet|\.provision\(|loginWith/.test(body), false);
-    assert.match(body, /connectExternal/);
+    assert.equal(/waitForWallet|\.provision\(|loginWith|sendEmailOTP|Phantom|Seeker/.test(body), false);
+    assert.match(body, /connectExternal\(\)/);
     assert.match(body, /external_mwa|activate\('solana'\)/);
+  });
+
+  it('checks the email, then calls Privy sendCode, and keeps the draft across close', () => {
+    const start = source.indexOf('const handleContinue');
+    const end = source.indexOf('const handleVerifyOTP');
+    assert.ok(start >= 0 && end > start);
+    const body = source.slice(start, end);
+    assert.ok(body.indexOf('emailEntryError') < body.indexOf('sendEmailOTP'));
+    assert.match(body, /login_failed/);
+    assert.equal(/loginWithGoogle|waitForWallet|482193/.test(body), false);
+    assert.match(source, /loginWithEmailOTP\(otpCode\.trim\(\), sentEmail\)/);
+
+    const closeStart = source.indexOf('const requestClose');
+    const closeEnd = source.indexOf('const finishActivated');
+    assert.equal(source.slice(closeStart, closeEnd).includes('setEmailInput'), false);
+    assert.match(source, /Clipboard\.getStringAsync/);
+    assert.match(source, /Clipboard\.setStringAsync/);
   });
 
   it('opens Privy Home in the system browser and does not read a key', () => {
