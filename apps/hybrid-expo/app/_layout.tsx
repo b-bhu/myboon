@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { PrivyProvider } from '@/providers/PrivyProvider';
 import { WalletProvider } from '@/providers/WalletProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -23,53 +24,55 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PrivyProvider>
-        <WalletProvider>
-          <PolymarketWalletProvider>
-            <WalletSheetProvider>
-              <View style={{ flex: 1 }}>
-                <ErrorBoundary>
-                  <Stack>
-                      <Stack.Screen name="index" options={{ headerShown: false }} />
-                      <Stack.Screen name="feed" options={{ headerShown: false }} />
-                      <Stack.Screen name="stories" options={{ headerShown: false }} />
-                      <Stack.Screen name="calendar" options={{ headerShown: false }} />
-                      <Stack.Screen name="wallets" options={{ headerShown: false }} />
-                      <Stack.Screen name="market" options={{ headerShown: false }} />
-                      <Stack.Screen name="story/[slug]" options={{ headerShown: false }} />
-                      <Stack.Screen
-                        name="swap"
-                        options={{
-                          headerShown: false,
-                          presentation: 'transparentModal',
-                          animation: 'slide_from_bottom',
-                          contentStyle: { backgroundColor: 'transparent' },
-                        }}
-                      />
-                      <Stack.Screen name="spot" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/polymarket" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/polymarket/profile" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/polymarket/market/[slug]" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/polymarket/updown" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/polymarket/sport/[sport]/[slug]" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/polymarket/position/[conditionId]" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/pacifica" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/pacifica/profile" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/pacifica/[symbol]" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/phoenix" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/phoenix/profile" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/phoenix/[symbol]" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/meteora" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/meteora/profile" options={{ headerShown: false }} />
-                      <Stack.Screen name="markets/meteora/[poolAddress]" options={{ headerShown: false }} />
-                  </Stack>
-                </ErrorBoundary>
-              </View>
-              <StatusBar style="light" />
-            </WalletSheetProvider>
-          </PolymarketWalletProvider>
-        </WalletProvider>
-      </PrivyProvider>
+      <KeyboardProvider>
+        <PrivyProvider>
+          <WalletProvider>
+            <PolymarketWalletProvider>
+              <WalletSheetProvider>
+                <View style={{ flex: 1 }}>
+                  <ErrorBoundary>
+                    <Stack>
+                        <Stack.Screen name="index" options={{ headerShown: false }} />
+                        <Stack.Screen name="feed" options={{ headerShown: false }} />
+                        <Stack.Screen name="stories" options={{ headerShown: false }} />
+                        <Stack.Screen name="calendar" options={{ headerShown: false }} />
+                        <Stack.Screen name="wallets" options={{ headerShown: false }} />
+                        <Stack.Screen name="market" options={{ headerShown: false }} />
+                        <Stack.Screen name="story/[slug]" options={{ headerShown: false }} />
+                        <Stack.Screen
+                          name="swap"
+                          options={{
+                            headerShown: false,
+                            presentation: 'transparentModal',
+                            animation: 'slide_from_bottom',
+                            contentStyle: { backgroundColor: 'transparent' },
+                          }}
+                        />
+                        <Stack.Screen name="spot" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/polymarket" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/polymarket/profile" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/polymarket/market/[slug]" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/polymarket/updown" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/polymarket/sport/[sport]/[slug]" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/polymarket/position/[conditionId]" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/pacifica" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/pacifica/profile" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/pacifica/[symbol]" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/phoenix" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/phoenix/profile" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/phoenix/[symbol]" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/meteora" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/meteora/profile" options={{ headerShown: false }} />
+                        <Stack.Screen name="markets/meteora/[poolAddress]" options={{ headerShown: false }} />
+                    </Stack>
+                  </ErrorBoundary>
+                </View>
+                <StatusBar style="light" />
+              </WalletSheetProvider>
+            </PolymarketWalletProvider>
+          </WalletProvider>
+        </PrivyProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

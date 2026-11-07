@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -12,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { SecureClient } from '@polymarket/client';
@@ -465,10 +465,10 @@ export function WithdrawModal({
   };
 
   return (
-    <Modal visible={isOpen} transparent animationType="slide" onRequestClose={handleClose}>
+    <Modal visible={isOpen} transparent animationType="slide" onRequestClose={handleClose} statusBarTranslucent navigationBarTranslucent>
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        behavior="padding">
         <View style={styles.sheet}>
           <ScrollView
             contentContainerStyle={styles.sheetContent}

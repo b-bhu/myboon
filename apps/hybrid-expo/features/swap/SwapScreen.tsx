@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,7 +28,7 @@ export default function SwapScreen() {
     router.back();
   }, [controller.interactionBusy, controller.phase, router]);
   const onBusyChange = useCallback(() => {}, []);
-  return <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+  return <KeyboardAvoidingView style={styles.overlay} behavior="padding">
     <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel="Close trade sheet"
       disabled={controller.interactionBusy && controller.phase !== 'unknown'} />
     <View style={[styles.sheet, { marginTop: insets.top + 16, paddingBottom: Math.max(insets.bottom, 12) }]}>
