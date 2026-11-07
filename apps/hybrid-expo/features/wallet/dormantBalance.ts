@@ -133,7 +133,7 @@ function redactAddress(address: string): string {
  * by a UI that quietly starts showing an extra row.
  *
  * Uses `console.warn` with a bracketed module tag, matching the convention
- * already used across the app (`features/predict/redeemErrors.ts`,
+ * already used across the app (`features/polymarket/redeemErrors.ts`,
  * `features/perps/phoenix.execution.ts`). No key material is logged — only the
  * public address, truncated.
  */

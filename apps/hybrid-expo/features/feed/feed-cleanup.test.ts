@@ -27,9 +27,9 @@ test('feed-state no longer exports calendar helpers', () => {
   assert.equal('shiftCalendarDate' in state, false, 'shiftCalendarDate should be removed from feed-state');
 });
 
-test('feed.api.ts no longer declares dead predict/explanation helpers', () => {
+test('feed.api.ts no longer declares dead polymarket/explanation helpers', () => {
   const source = fs.readFileSync(path.join(here, 'feed.api.ts'), 'utf8');
-  for (const name of ['fetchPredictMarket', 'fetchSimpleExplanation', 'detectSlugType', 'extractSport', 'getApiBaseUrl']) {
+  for (const name of ['fetchPolymarketMarket', 'fetchSimpleExplanation', 'detectSlugType', 'extractSport', 'getApiBaseUrl']) {
     assert.doesNotMatch(source, new RegExp(`\\b${name}\\b`), `${name} should be removed from feed.api.ts`);
   }
 });

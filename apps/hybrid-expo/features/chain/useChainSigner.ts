@@ -91,7 +91,7 @@ export function useChainSigner(requirement: ChainRequirement): ChainSignerResult
   );
 
   // Stage 2: how the requirement resolved, and from what. `status` here is the
-  // single fact every Predict screen gates on, so when a screen says "connect"
+  // single fact every Polymarket screen gates on, so when a screen says "connect"
   // for a wallet that exists, this line names which input produced that.
   logChainState(`resolve.${requirement.applicationId}`, {
     chain: requirement.chain,

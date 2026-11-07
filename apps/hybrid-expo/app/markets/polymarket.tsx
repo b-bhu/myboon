@@ -1,1 +1,1 @@
-export { default } from '@/features/predict/PredictDiscoverScreen';
+export { default } from '@/features/polymarket/PolymarketDiscoverScreen';

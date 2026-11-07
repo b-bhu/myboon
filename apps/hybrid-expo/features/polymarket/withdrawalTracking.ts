@@ -1,0 +1,335 @@
+import type { BridgeQuote, DepositBridgeTransaction } from './polymarket.api';
+
+export type WithdrawalTrackingStatus =
+  | 'PREPARED'
+  | 'SUBMITTING'
+  | 'SUBMITTED'
+  | 'AMBIGUOUS'
+  | 'BRIDGING'
+  | 'COMPLETED'
+  | 'FAILED';
+
+export interface TrackedWithdrawal {
+  amount: number;
+  recipientAddress: string;
+  bridgeAddress: string;
+  transactionId: string | null;
+  transactionHash: string | null;
+  quote: BridgeQuote;
+  status: WithdrawalTrackingStatus;
+  startedAt: number;
+  updatedAt: number;
+  lastError: string | null;
+}
+
+export interface WithdrawalRelayerStatus {
+  state: string;
+  transactionId: string;
+  transactionHash: string | null;
+  errorMessage: string | null;
+}
+
+const WITHDRAWAL_STATUS_RANK: Record<WithdrawalTrackingStatus, number> = {
+  PREPARED: 0,
+  SUBMITTING: 1,
+  SUBMITTED: 2,
+  AMBIGUOUS: 2,
+  BRIDGING: 3,
+  COMPLETED: 4,
+  FAILED: 4,
+};
+
+export function createPreparedWithdrawal(input: {
+  amount: number;
+  recipientAddress: string;
+  bridgeAddress: string;
+  quote: BridgeQuote;
+  now?: number;
+}): TrackedWithdrawal {
+  const now = input.now ?? Date.now();
+  return {
+    amount: input.amount,
+    recipientAddress: input.recipientAddress,
+    bridgeAddress: input.bridgeAddress,
+    transactionId: null,
+    transactionHash: null,
+    quote: input.quote,
+    status: 'PREPARED',
+    startedAt: now,
+    updatedAt: now,
+    lastError: null,
+  };
+}
+
+function updateTracking(
+  tracking: TrackedWithdrawal,
+  patch: Partial<TrackedWithdrawal>,
+  now = Date.now(),
+): TrackedWithdrawal {
+  const unchanged = Object.entries(patch).every(([key, value]) => (
+    tracking[key as keyof TrackedWithdrawal] === value
+  ));
+  if (unchanged) return tracking;
+  return { ...tracking, ...patch, updatedAt: now };
+}
+
+function transitionTracking(
+  tracking: TrackedWithdrawal,
+  patch: Partial<TrackedWithdrawal> & { status: WithdrawalTrackingStatus },
+  now?: number,
+): TrackedWithdrawal {
+  if (isWithdrawalTerminal(tracking)) return tracking;
+  if (WITHDRAWAL_STATUS_RANK[patch.status] < WITHDRAWAL_STATUS_RANK[tracking.status]) {
+    return tracking;
+  }
+  return updateTracking(tracking, patch, now);
+}
+
+export function markWithdrawalSubmitting(tracking: TrackedWithdrawal, now?: number): TrackedWithdrawal {
+  return transitionTracking(tracking, { status: 'SUBMITTING', lastError: null }, now);
+}
+
+export function markWithdrawalSubmitted(
+  tracking: TrackedWithdrawal,
+  transactionId: string | null,
+  transactionHash: string | null,
+  now?: number,
+): TrackedWithdrawal {
+  return transitionTracking(tracking, {
+    status: 'SUBMITTED',
+    transactionId,
+    transactionHash,
+    lastError: null,
+  }, now);
+}
+
+export function markWithdrawalAmbiguous(
+  tracking: TrackedWithdrawal,
+  errorMessage: string,
+  now?: number,
+): TrackedWithdrawal {
+  return transitionTracking(tracking, { status: 'AMBIGUOUS', lastError: errorMessage }, now);
+}
+
+export function markWithdrawalBridging(
+  tracking: TrackedWithdrawal,
+  transactionId: string | null,
+  transactionHash: string | null,
+  now?: number,
+): TrackedWithdrawal {
+  return transitionTracking(tracking, {
+    status: 'BRIDGING',
+    transactionId: transactionId ?? tracking.transactionId,
+    transactionHash: transactionHash ?? tracking.transactionHash,
+    lastError: null,
+  }, now);
+}
+
+export function markWithdrawalFailed(
+  tracking: TrackedWithdrawal,
+  errorMessage: string,
+  now?: number,
+): TrackedWithdrawal {
+  return transitionTracking(tracking, { status: 'FAILED', lastError: errorMessage }, now);
+}
+
+export function isWithdrawalTerminal(tracking: TrackedWithdrawal): boolean {
+  return tracking.status === 'COMPLETED' || tracking.status === 'FAILED';
+}
+
+export interface TrackingSaveDecisionInput {
+  /** Whether the modal still holds a withdrawal whose tracking record matters. */
+  hasTrackedWithdrawal: boolean;
+  /** Whether the latest tracking persistence write succeeded. */
+  saveSucceeded: boolean;
+}
+
+/**
+ * Next "Tracking not saved" banner state after a tracking save completes.
+ * A failed save keeps the warning while a tracked (unsaved) withdrawal
+ * remains; a successful save — or there being no tracked withdrawal at all —
+ * clears it.
+ */
+export function nextTrackingSaveFailed({
+  hasTrackedWithdrawal,
+  saveSucceeded,
+}: TrackingSaveDecisionInput): boolean {
+  if (!hasTrackedWithdrawal) return false;
+  return !saveSucceeded;
+}
+
+export interface ReopenedWithdrawalChoice {
+  /** The record the reopen should present and keep tracking. */
+  tracking: TrackedWithdrawal;
+  /** True when the in-memory record was newer-or-equal and was chosen. */
+  preferInMemory: boolean;
+}
+
+/**
+ * Choose which withdrawal record a reopened modal presents. Storage can hold
+ * an older snapshot than memory when the last save failed, so when the modal
+ * still tracks the same withdrawal (same Bridge address) the in-memory record
+ * wins — regressing to storage could roll a SUBMITTED record back to
+ * PREPARED and hide the pending-unsaved warning. A fresh app start (no
+ * in-memory record) or a different withdrawal falls back to storage.
+ */
+export function chooseReopenedWithdrawal(
+  inMemory: TrackedWithdrawal | null,
+  stored: TrackedWithdrawal,
+): ReopenedWithdrawalChoice {
+  if (inMemory && inMemory.bridgeAddress === stored.bridgeAddress) {
+    return { tracking: inMemory, preferInMemory: true };
+  }
+  return { tracking: stored, preferInMemory: false };
+}
+
+/**
+ * Whether closing the modal may clear the "Tracking not saved" warning.
+ * Closing must keep the warning while an unsaved tracked withdrawal remains,
+ * so the pending state survives close/reopen. Dismissal (nothing tracked)
+ * is the only close path that clears it.
+ */
+export function shouldClearTrackingSaveFailedOnClose({
+  hasTrackedWithdrawal,
+}: {
+  hasTrackedWithdrawal: boolean;
+}): boolean {
+  return !hasTrackedWithdrawal;
+}
+
+/**
+ * Pre-submission guard: never send a transfer without a recoverable tracking
+ * record. Throws so the caller's catch path surfaces the failure before any
+ * submission continues.
+ */
+export function requireTrackingSaved(saved: boolean): void {
+  if (!saved) {
+    throw new Error('Could not save withdrawal tracking. Try again.');
+  }
+}
+
+function bridgeAmountMatches(transaction: DepositBridgeTransaction, tracking: TrackedWithdrawal): boolean {
+  if (!transaction.fromAmountBaseUnit) return true;
+  const amount = Number(transaction.fromAmountBaseUnit) / 1e6;
+  const tolerance = Math.max(0.01, tracking.amount * 0.005);
+  return Number.isFinite(amount) && Math.abs(amount - tracking.amount) <= tolerance;
+}
+
+function latestBridgeTransaction(
+  transactions: DepositBridgeTransaction[],
+  tracking: TrackedWithdrawal,
+): DepositBridgeTransaction | null {
+  const matching = transactions.filter((transaction) => {
+    if (!bridgeAmountMatches(transaction, tracking)) return false;
+    return typeof transaction.createdTimeMs !== 'number'
+      || transaction.createdTimeMs >= tracking.startedAt - 30_000;
+  });
+  return [...matching].sort((a, b) => (b.createdTimeMs ?? 0) - (a.createdTimeMs ?? 0))[0] ?? null;
+}
+
+/** Reconcile persisted intent against both relayer and Bridge authorities after restart. */
+export function reconcileWithdrawalTracking(
+  tracking: TrackedWithdrawal,
+  bridgeTransactions: DepositBridgeTransaction[],
+  relayer: WithdrawalRelayerStatus | null,
+  now = Date.now(),
+): TrackedWithdrawal {
+  if (isWithdrawalTerminal(tracking)) return tracking;
+  const bridge = latestBridgeTransaction(bridgeTransactions, tracking);
+  const transactionHash = bridge?.txHash ?? relayer?.transactionHash ?? tracking.transactionHash;
+  const transactionId = relayer?.transactionId ?? tracking.transactionId;
+
+  if (bridge?.status === 'COMPLETED') {
+    return transitionTracking(tracking, {
+      status: 'COMPLETED', transactionId, transactionHash, lastError: null,
+    }, now);
+  }
+  if (bridge?.status === 'FAILED') {
+    return transitionTracking(tracking, {
+      status: 'FAILED', transactionId, transactionHash,
+      lastError: 'Bridge reported that the withdrawal failed.',
+    }, now);
+  }
+  if (bridge?.status) {
+    return transitionTracking(tracking, {
+      status: 'BRIDGING', transactionId, transactionHash, lastError: null,
+    }, now);
+  }
+
+  if (relayer?.state === 'STATE_FAILED' || relayer?.state === 'STATE_INVALID') {
+    return transitionTracking(tracking, {
+      status: 'FAILED', transactionId, transactionHash,
+      lastError: relayer.errorMessage ?? 'Relayer reported that the withdrawal failed.',
+    }, now);
+  }
+  if (
+    relayer?.state === 'STATE_EXECUTED'
+    || relayer?.state === 'STATE_MINED'
+    || relayer?.state === 'STATE_CONFIRMED'
+  ) {
+    return transitionTracking(tracking, {
+      status: 'BRIDGING', transactionId, transactionHash, lastError: null,
+    }, now);
+  }
+  if (relayer?.state === 'STATE_NEW') {
+    return transitionTracking(tracking, {
+      status: 'SUBMITTED', transactionId, transactionHash, lastError: null,
+    }, now);
+  }
+
+  return tracking;
+}
+
+export interface PersistWithdrawalTrackingOptions {
+  /** Total write attempts, including the first. Defaults to 3. */
+  retries?: number;
+  /** Delay before the first retry; doubles with each further retry. Defaults to 500ms. */
+  baseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  /** Invoked once per failed attempt. Defaults to console.warn without payload. */
+  onError?: (error: unknown, attempt: number) => void;
+}
+
+const DEFAULT_PERSIST_ATTEMPTS = 3;
+const DEFAULT_PERSIST_BASE_DELAY_MS = 500;
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function defaultPersistErrorLogger(error: unknown, attempt: number): void {
+  console.warn(
+    `Withdrawal tracking save failed (attempt ${attempt}).`,
+    error instanceof Error ? error.message : 'Unknown storage error.',
+  );
+}
+
+/**
+ * Persist one tracking snapshot with bounded exponential-backoff retries.
+ * Resolves false only after every attempt failed, so callers can surface a
+ * visible recovery path instead of dropping the restore/reconciliation write.
+ */
+export async function persistWithdrawalTracking(
+  setItem: (key: string, value: string) => Promise<void>,
+  key: string,
+  value: string,
+  options: PersistWithdrawalTrackingOptions = {},
+): Promise<boolean> {
+  const attempts = Math.max(1, options.retries ?? DEFAULT_PERSIST_ATTEMPTS);
+  const baseDelayMs = options.baseDelayMs ?? DEFAULT_PERSIST_BASE_DELAY_MS;
+  const sleep = options.sleep ?? defaultSleep;
+  const onError = options.onError ?? defaultPersistErrorLogger;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await setItem(key, value);
+      return true;
+    } catch (error: unknown) {
+      onError(error, attempt);
+      if (attempt < attempts) {
+        await sleep(baseDelayMs * 2 ** (attempt - 1));
+      }
+    }
+  }
+  return false;
+}
