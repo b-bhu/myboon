@@ -38,13 +38,13 @@ Entry: Privy connected → **Export / recovery**.
 
 Flow stays product-honest to Privy (no custom seed-phrase UI):
 
-1. Short sheet: “Continue with Privy” / “Not now”
-2. Wait: opening Privy
-3. Done → back to Privy connected
+1. Short sheet: warning, then “Continue with Privy” / “Not now”
+2. Wait: opening Privy Home (`https://home.privy.io`) in the system browser
+3. Browser closes → back to the Privy connected sheet. The app is not told whether a key was copied, so it does not show a success check.
 
-External connected cannot reach export (guarded in render + no action row).
+External connected cannot reach export (guarded in render + no action row). `@privy-io/expo` has no export method; Privy documents that call for the web SDK only.
 
-Refs: [Privy export a wallet](https://docs.privy.io/wallets/wallets/export), [Privy Home key controls](https://privy.dev/blog/enhanced-wallet-controls-in-privy-home).
+Refs: [Privy export a wallet](https://docs.privy.io/wallets/wallets/export), [mobile key export](https://docs.privy.io/recipes/mobile-key-export), [Privy Home](https://docs.privy.io/basics/get-started/dashboard/privy-home), [Privy Home key controls](https://privy.dev/blog/enhanced-wallet-controls-in-privy-home).
 
 ## Fail setup (#316)
 

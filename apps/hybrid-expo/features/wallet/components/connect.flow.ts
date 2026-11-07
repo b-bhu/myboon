@@ -33,7 +33,7 @@ export type ConnectStep =
   | { kind: 'connected' }
   | { kind: 'export' }
   | { kind: 'export_opening' }
-  | { kind: 'export_unavailable' }
+  | { kind: 'export_failed' }
   | { kind: 'confirm_disconnect' };
 
 export interface ConnectFlowState {
@@ -78,7 +78,9 @@ export type ConnectFlowEvent =
   | { type: 'open_export' }
   | { type: 'export_not_now' }
   | { type: 'export_continue' }
-  | { type: 'export_unavailable' }
+  | { type: 'export_handed_off' }
+  | { type: 'export_failed' }
+  | { type: 'export_retry' }
   | { type: 'request_disconnect' }
   | { type: 'cancel_disconnect' }
   | { type: 'disconnected' };
@@ -103,8 +105,10 @@ export const CONNECT_COPY = {
   phantom: 'Phantom',
   phantomHint: 'Mobile Wallet Adapter',
   export: 'Export / recovery',
+  exportWarning: 'Anyone with this key controls the funds. MyBoon never sees it.',
   continuePrivy: 'Continue with Privy',
   notNow: 'Not now',
+  exportTryAgain: 'Try again',
   disconnect: 'Disconnect',
   cancel: 'Cancel',
   backToWallet: 'Back to wallet',
@@ -121,9 +125,8 @@ export const CONNECT_COPY = {
   setupTimeoutDetail: 'The wallet is still preparing.',
   setupCreateDetail: "The wallet couldn't be created.",
   finishSetupBody: "You're signed in. Finish connecting the wallet.",
-  exportIntro: 'Opens Privy so you can export or recover this wallet. MyBoon never sees your key.',
-  exportUnavailable:
-    "Privy has to open the export. This build can't open that page yet, so nothing was exported and no seed phrase was shown.",
+  exportIntro: 'Opens Privy so you can export or recover this wallet. Sign in there if Privy asks.',
+  exportFailed: "Couldn't open Privy. Nothing was exported.",
   creatingTitle: 'Creating your wallet',
   creatingBody: 'This only takes a moment.',
   signingInBody: 'Waiting for Google.',
@@ -154,7 +157,7 @@ const BACK_STEPS = new Set<ConnectStep['kind']>([
   'otp',
   'have',
   'export',
-  'export_unavailable',
+  'export_failed',
 ]);
 
 export const INITIAL_CONNECT_FLOW: ConnectFlowState = {
@@ -228,7 +231,7 @@ export function sheetChrome(
       return { title: CONNECT_COPY.export, subtitle: 'Recover your MyBoon wallet with Privy.' };
     case 'export_opening':
       return { title: 'Privy', subtitle: '' };
-    case 'export_unavailable':
+    case 'export_failed':
       return { title: CONNECT_COPY.export, subtitle: '' };
     case 'confirm_disconnect':
       return { title: 'Disconnect?', subtitle: 'You can reconnect anytime.' };
@@ -277,22 +280,68 @@ export function externalConnectBackend(): 'external_mwa' {
   return 'external_mwa';
 }
 
-export type PrivyExportResult = {
-  status: 'unavailable';
-  reason: 'expo_sdk_has_no_export_wallet';
+/**
+ * Privy Home. Users re-authenticate there and export from Privy's page.
+ * https://docs.privy.io/basics/get-started/dashboard/privy-home
+ *
+ * No query, hash, or user data. The app must not attach an address or token.
+ */
+export const PRIVY_HOME_URL = 'https://home.privy.io';
+
+export type PrivyExportHandoff = {
+  status: 'open_browser';
+  url: typeof PRIVY_HOME_URL;
 };
 
 /**
- * Ask Privy to open key export.
+ * Where to send a Privy embedded wallet for export.
  *
- * `@privy-io/expo` 0.65 (the SDK this app ships) has no `exportWallet`. Privy's
- * docs put that method on `@privy-io/react-auth` and say a wallet created on
- * device can only be exported in a browser. `useRecoverEmbeddedWallet().recover()`
- * restores on-device entropy; it does not show the key, so it is not called here.
- * PR2 owns the hosted export page. This entry must not pretend a key was shown.
+ * `@privy-io/expo` 0.65.1 (and 0.78.2) has no browser export method. Privy only
+ * runs that in the React web SDK, inside a secure browser. `recover()` restores
+ * on-device entropy and does not show the key, so it is not used. This returns
+ * Privy Home and nothing else — the sheet opens that URL and never reads a key.
  */
-export function beginPrivyExport(): PrivyExportResult {
-  return { status: 'unavailable', reason: 'expo_sdk_has_no_export_wallet' };
+export function beginPrivyExport(): PrivyExportHandoff {
+  return { status: 'open_browser', url: PRIVY_HOME_URL };
+}
+
+/** Accept only the bare Privy Home URL. Returns that constant, never the input. */
+export function assertPrivyHomeUrl(url: string): typeof PRIVY_HOME_URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('Privy export URL is not Privy Home');
+  }
+  const barePath = parsed.pathname === '/' || parsed.pathname === '';
+  if (
+    parsed.protocol !== 'https:'
+    || parsed.hostname !== 'home.privy.io'
+    || parsed.port !== ''
+    || !barePath
+    || parsed.search !== ''
+    || parsed.hash !== ''
+    || parsed.username !== ''
+    || parsed.password !== ''
+  ) {
+    throw new Error('Privy export URL is not Privy Home');
+  }
+  return PRIVY_HOME_URL;
+}
+
+/**
+ * What the system browser told us. `cancel` and `dismiss` mean the in-app
+ * browser closed. `opened` means Android launched it and will not call back.
+ * None of these say the key was copied. `locked` and anything else mean the
+ * browser never became the user's next step.
+ */
+export function interpretPrivyExportSession(
+  result: { type?: string } | null | undefined,
+): 'handed_off' | 'failed' {
+  if (result?.type === 'cancel' || result?.type === 'dismiss' || result?.type === 'opened') {
+    return 'handed_off';
+  }
+  return 'failed';
 }
 
 function remember(state: ConnectFlowState, step: ConnectStep): ConnectFlowState {
@@ -430,9 +479,15 @@ export function reduceConnectFlow(state: ConnectFlowState, event: ConnectFlowEve
     case 'export_continue':
       if (state.step.kind !== 'export' || state.linked !== 'privy') return state;
       return { ...state, step: { kind: 'export_opening' } };
-    case 'export_unavailable':
+    case 'export_handed_off':
       if (state.step.kind !== 'export_opening' || state.linked !== 'privy') return state;
-      return { ...state, step: { kind: 'export_unavailable' } };
+      return { ...state, step: { kind: 'connected' }, history: [] };
+    case 'export_failed':
+      if (state.step.kind !== 'export_opening' || state.linked !== 'privy') return state;
+      return { ...state, step: { kind: 'export_failed' } };
+    case 'export_retry':
+      if (state.step.kind !== 'export_failed' || state.linked !== 'privy') return state;
+      return { ...state, step: { kind: 'export' }, history: [{ kind: 'connected' }] };
     case 'request_disconnect':
       if (state.step.kind !== 'connected' || !state.linked) return state;
       return { ...state, step: { kind: 'confirm_disconnect' }, history: [] };
