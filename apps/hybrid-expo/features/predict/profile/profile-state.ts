@@ -44,37 +44,37 @@ export function getPredictProfileSetupCopy(state: PredictProfileAccountState): {
   switch (state) {
     case 'signed_out':
       return {
-        title: 'Connect to Predict',
-        description: 'Sign in to create your Predict wallet and keep positions with your account.',
+        title: 'Connect to Polymarket',
+        description: 'Sign in to create your Polymarket wallet and keep positions with your account.',
         action: 'Connect wallet',
       };
     case 'wallet_setup':
       return {
-        title: 'Set up your Predict wallet',
+        title: 'Set up your Polymarket wallet',
         description: 'Your MyBoon account is ready. Create and activate its Polygon wallet to continue.',
         action: 'Set up wallet',
       };
     case 'predict_setup':
       return {
-        title: 'Finish Predict setup',
+        title: 'Finish Polymarket setup',
         description: 'One signature prepares trading and connects this wallet to Polymarket.',
         action: 'Set up Polymarket',
       };
     case 'session_expired':
       return {
-        title: 'Predict needs to reconnect',
+        title: 'Polymarket needs to reconnect',
         description: 'Your positions are unchanged. Reconnect the trading session to refresh balances and take action.',
         action: 'Reconnect',
       };
     case 'unsupported':
       return {
-        title: 'Predict is unavailable',
-        description: 'This wallet cannot provide the Polygon signing capabilities Predict needs.',
+        title: 'Polymarket is unavailable',
+        description: 'This wallet cannot provide the Polygon signing capabilities Polymarket needs.',
         action: null,
       };
     case 'preparing':
       return {
-        title: 'Preparing Predict',
+        title: 'Preparing Polymarket',
         description: 'Checking your account and wallet setup.',
         action: null,
       };

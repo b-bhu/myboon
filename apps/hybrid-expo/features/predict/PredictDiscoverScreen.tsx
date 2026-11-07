@@ -462,7 +462,7 @@ function MoverCard({ item, livePrices, onPress }: { item: FeedItem; livePrices: 
       style={({ pressed }) => [styles.moverCard, pressed && styles.cardPressed]}
     >
       <View style={styles.moverCopy}>
-        <Text style={styles.moverKicker}>{item.category.toUpperCase()} · {item.type === 'match' ? (LEAGUE_LABELS[item.sport] ?? item.sport) : 'PREDICTION'}</Text>
+        <Text style={styles.moverKicker}>{item.category.toUpperCase()} · {item.type === 'match' ? (LEAGUE_LABELS[item.sport] ?? item.sport) : 'POLYMARKET'}</Text>
         <Text style={styles.moverQuestion} numberOfLines={2}>{item.title}</Text>
         <Text style={styles.moverMeta}>{formatUsdCompact(item.volume)} traded</Text>
       </View>
@@ -606,7 +606,7 @@ function SearchSheet({
   const hasResults = Boolean(results && (results.events.length || results.teams.length || results.tags.length));
 
   return (
-    <BottomSheetShell visible={visible} title="Search Predict" onClose={onClose}>
+    <BottomSheetShell visible={visible} title="Search Polymarket" onClose={onClose}>
       <View style={styles.searchField}>
         <MaterialIcons name="search" size={20} color={semantic.text.faint} />
         <TextInput
@@ -647,7 +647,7 @@ function SearchSheet({
             image={event.image}
             mark={event.kind === 'sports' ? 'VS' : '?'}
             title={event.title}
-            subtitle={`${event.kind === 'sports' ? 'Sports market' : 'Prediction'}${event.volume24h !== null ? ` · ${formatUsdCompact(event.volume24h)} traded` : ''}`}
+            subtitle={`${event.kind === 'sports' ? 'Sports market' : 'Polymarket'}${event.volume24h !== null ? ` · ${formatUsdCompact(event.volume24h)} traded` : ''}`}
             onPress={() => onOpenEvent(event)}
           />
         ))}
@@ -828,15 +828,15 @@ export default function PredictDiscoverScreen() {
           <View style={styles.headerBrand}>
             <AppTopBarLogo />
             <View style={styles.headerDivider} />
-            <Text style={styles.headerSection}>PREDICT</Text>
+            <Text style={styles.headerSection}>POLYMARKET</Text>
           </View>
         )}
         right={(
           <AppProfileButton
             onPress={() => router.push('/markets/polymarket/profile')}
             connected={Boolean(signer)}
-            label="Open Predict profile"
-            hint="View your Predict account, picks, and winnings"
+            label="Open Polymarket profile"
+            hint="View your Polymarket account, picks, and winnings"
             backgroundColor={tokens.colors.accent}
             borderColor={tokens.colors.accent}
             iconColor={tokens.colors.backgroundDark}
@@ -976,7 +976,7 @@ export default function PredictDiscoverScreen() {
         >
           <View style={styles.bottomSearchIcon}><MaterialIcons name="search" size={20} color={tokens.colors.accent} /></View>
           <View style={styles.bottomSearchCopy}>
-            <Text style={styles.bottomSearchTitle}>Search Predict</Text>
+            <Text style={styles.bottomSearchTitle}>Search Polymarket</Text>
             <Text style={styles.bottomSearchSubtitle}>Markets, teams, leagues</Text>
           </View>
           <MaterialIcons name="keyboard-arrow-up" size={20} color={semantic.text.faint} />

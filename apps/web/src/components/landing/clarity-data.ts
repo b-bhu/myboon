@@ -13,7 +13,7 @@ export const STRIP_STEPS = [
 
 /** The four labelled app tiles after the apps burst. `viz` picks the mini-chart. */
 export const TILE_DEFS = [
-  { name: 'Polymarket', kind: 'Predict', logo: '/landing/logo-polymarket.svg', viz: 'odds' },
+  { name: 'Polymarket', kind: 'Polymarket', logo: '/landing/logo-polymarket.svg', viz: 'odds' },
   { name: 'Pacifica', kind: 'Perps', logo: '/landing/logo-pacifica.svg', viz: 'perps' },
   { name: 'Phoenix', kind: 'Spot', logo: '/landing/logo-phoenix.svg', viz: 'spot' },
   { name: 'Meteora', kind: 'Earn', logo: '/landing/logo-meteora.svg', viz: 'earn' },

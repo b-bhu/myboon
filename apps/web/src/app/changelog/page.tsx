@@ -15,10 +15,10 @@ const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-04-09',
     version: '0.8.0',
-    title: 'Predict UI redesign — 3-zone layout, tabs, bet slip',
+    title: 'Polymarket UI redesign — 3-zone layout, tabs, bet slip',
     description:
-      'Rebuilt the Predict detail screens with a 3-zone layout, tabbed navigation, and an integrated bet slip for faster position entry.',
-    tags: ['mobile', 'predict'],
+      'Rebuilt the Polymarket detail screens with a 3-zone layout, tabbed navigation, and an integrated bet slip for faster position entry.',
+    tags: ['mobile', 'polymarket'],
   },
   {
     date: '2026-04-07',
@@ -34,7 +34,7 @@ const CHANGELOG: ChangelogEntry[] = [
     title: 'Multi-format odds display',
     description:
       'Odds can now be shown as decimal, points, or probability — user picks their preferred format.',
-    tags: ['mobile', 'predict'],
+    tags: ['mobile', 'polymarket'],
   },
   {
     date: '2026-04-03',
@@ -47,18 +47,18 @@ const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-03-30',
     version: '0.5.0',
-    title: 'Predict UI + trending strip + sparklines',
+    title: 'Polymarket UI + trending strip + sparklines',
     description:
-      'New Predict tab with a trending market strip, inline sparkline charts, and refreshed trade screen layout.',
-    tags: ['mobile', 'predict'],
+      'New Polymarket tab with a trending market strip, inline sparkline charts, and refreshed trade screen layout.',
+    tags: ['mobile', 'polymarket'],
   },
   {
     date: '2026-03-28',
     version: '0.4.0',
-    title: 'Dome migration + predict API',
+    title: 'Dome migration + Polymarket API',
     description:
       'Migrated the API layer to Dome architecture and added prediction market endpoints for market data and pricing.',
-    tags: ['api', 'predict'],
+    tags: ['api', 'polymarket'],
   },
   {
     date: '2026-03-25',
@@ -88,7 +88,7 @@ const CHANGELOG: ChangelogEntry[] = [
 
 const TAG_COLORS: Record<string, string> = {
   mobile: 'bg-tertiary/15 text-tertiary',
-  predict: 'bg-primary/15 text-primary',
+  polymarket: 'bg-primary/15 text-primary',
   wallet: 'bg-secondary/20 text-secondary',
   api: 'bg-primary-fixed/15 text-primary-fixed',
   trade: 'bg-tertiary/15 text-tertiary',

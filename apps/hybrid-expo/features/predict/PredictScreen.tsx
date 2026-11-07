@@ -380,7 +380,7 @@ export default function PredictScreen() {
       const data = await fetchFeaturedMarkets();
       setFeedData(data);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load predict feed';
+      const message = error instanceof Error ? error.message : 'Unable to load the Polymarket feed';
       setErrorMessage(message);
       setFeedData(null);
     } finally {
@@ -654,12 +654,12 @@ export default function PredictScreen() {
       {/* error */}
       {!loading && errorMessage ? (
         <View style={styles.stateCard}>
-          <Text style={styles.stateTitle}>Predict unavailable</Text>
+          <Text style={styles.stateTitle}>Polymarket unavailable</Text>
           <Text style={styles.stateText}>{errorMessage}</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Try again"
-            accessibilityHint="Reload predict markets"
+            accessibilityHint="Reload Polymarket markets"
             style={styles.retryButton}
             onPress={() => void loadFeed()}>
             <Text style={styles.retryButtonText}>Try Again</Text>
@@ -709,7 +709,7 @@ export default function PredictScreen() {
               onChangeText={setSearchQuery}
               placeholder="Search markets"
               placeholderTextColor={semantic.text.faint}
-              accessibilityLabel="Search Predict markets"
+              accessibilityLabel="Search Polymarket markets"
               autoCorrect={false}
               style={styles.searchInput}
             />
@@ -786,8 +786,8 @@ export default function PredictScreen() {
           <AppProfileButton
             onPress={() => router.push('/markets/polymarket/profile')}
             connected={!!evmSigner}
-            label="Open Predict profile"
-            hint="View your Predict account, picks, and winnings"
+            label="Open Polymarket profile"
+            hint="View your Polymarket account, picks, and winnings"
           />
         }
       />

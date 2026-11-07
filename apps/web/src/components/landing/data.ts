@@ -22,7 +22,7 @@ export type AppTile = {
 
 /** Seven unlabelled glass tiles in front of "Apps" (five on mobile). */
 export const appTiles: AppTile[] = [
-  { name: 'Polymarket', kind: 'Predict', logo: '/landing/logo-polymarket.svg', d: { x: 23, y: 37, w: 88, r: -14 }, m: { x: 22, y: 40, w: 64, r: -14 }, dp: 0.6 },
+  { name: 'Polymarket', kind: 'Polymarket', logo: '/landing/logo-polymarket.svg', d: { x: 23, y: 37, w: 88, r: -14 }, m: { x: 22, y: 40, w: 64, r: -14 }, dp: 0.6 },
   { name: 'Phoenix', kind: 'Perps', logo: '/landing/logo-phoenix.svg', d: { x: 31, y: 60, w: 76, r: 10 }, m: { x: 35, y: 53, w: 58, r: 10 }, dp: 0.9 },
   { name: 'Pacifica', kind: 'Perps', logo: '/landing/logo-pacifica.svg', d: { x: 19, y: 63, w: 64, r: -6 }, m: { x: 16, y: 68, w: 56, r: -6 }, dp: 0.4, node: true },
   { name: 'Jupiter', kind: 'Swap', logo: '/landing/logo-jupiter.svg', d: { x: 71, y: 28, w: 84, r: 12 }, m: { x: 77, y: 33, w: 62, r: 12 }, dp: 0.7 },

@@ -44,7 +44,7 @@ const POLYMARKET_ENVIRONMENT = forkEnvironmentConfig({
 async function assertSignerAddress(signer: Signer, expected: string): Promise<void> {
   const actual = await signer.getAddress();
   if (actual.toLowerCase() !== expected.toLowerCase()) {
-    throw new Error('Predict signer changed. Reconnect Predict and try again.');
+    throw new Error('Polymarket signer changed. Reconnect Polymarket and try again.');
   }
 }
 

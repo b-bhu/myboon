@@ -225,7 +225,7 @@ function usePolymarketWalletController(): PolymarketWallet {
   const disable = useCallback(async () => {
     const address = evmAddress;
     if (!address || !client) {
-      throw new Error('Predict is not active, so its API key could not be revoked.');
+      throw new Error('Polymarket is not active, so its API key could not be revoked.');
     }
     setIsLoading(true);
     try {

@@ -802,7 +802,7 @@ export function PredictSportDetailScreen({ sport, slug }: PredictSportDetailScre
       await poly.enable();
       await Promise.allSettled([loadCashBalance(), loadPicks()]);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to sign in to Predict';
+      const msg = err instanceof Error ? err.message : 'Failed to sign in to Polymarket';
       Alert.alert('Sign in failed', msg);
     } finally {
       setSetupSubmitting(false);

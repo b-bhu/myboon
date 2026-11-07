@@ -418,7 +418,7 @@ export default function PredictUpDownScreen() {
         await poly.enable();
       } catch (error) {
         setPendingComposerSide(null);
-        Alert.alert('Predict setup failed', error instanceof Error ? error.message : 'Try again in a moment.');
+        Alert.alert('Polymarket setup failed', error instanceof Error ? error.message : 'Try again in a moment.');
       } finally {
         setSetupSubmitting(false);
       }
@@ -532,7 +532,7 @@ export default function PredictUpDownScreen() {
             <AppTopBarCashPill value={truncateUsd(cashBalance)} />
             <AppTopBarIconButton
               icon="person-outline"
-              accessibilityLabel="Open Predict profile"
+              accessibilityLabel="Open Polymarket profile"
               onPress={() => router.push('/markets/polymarket/profile')}
             />
           </View>
@@ -798,7 +798,7 @@ export default function PredictUpDownScreen() {
                     onPress={() => void requestComposer(selectedSide)}
                   >
                     <Text style={styles.makePickText}>
-                      {setupSubmitting ? 'Setting up Predict...' : `Back ${selectedSide === 'up' ? 'Higher' : 'Lower'} for $${amount}`}
+                      {setupSubmitting ? 'Setting up Polymarket...' : `Back ${selectedSide === 'up' ? 'Higher' : 'Lower'} for $${amount}`}
                     </Text>
                     <Text style={styles.makePickReturn}>
                       {ctaPayout === null ? 'Review live quote' : `Get ${truncateUsd(ctaPayout)} if right`}

@@ -107,7 +107,7 @@ export async function activatePolymarketClient(
     await storeCredentials(key, client.credentials);
     if (desiredAddress !== key) {
       await closeClient(client);
-      throw new Error('Predict wallet changed while the account was connecting.');
+      throw new Error('Polymarket wallet changed while the account was connecting.');
     }
     active = { address: key, client };
     notifyListeners();
@@ -140,7 +140,7 @@ export async function disablePolymarketClient(
   const key = normalizedAddress(address);
   const client = expectedClient ?? (active?.address === key ? active.client : null);
   if (!client) {
-    throw new Error('Predict is not active, so its API key could not be revoked. Reopen Predict and try again.');
+    throw new Error('Polymarket is not active, so its API key could not be revoked. Reopen Polymarket and try again.');
   }
 
   // Explicit disconnect is credential revocation, unlike background release.

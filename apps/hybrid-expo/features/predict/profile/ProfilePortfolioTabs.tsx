@@ -297,7 +297,7 @@ export function ProfilePortfolioTabs({
               return (
                 <View key={order.id} style={styles.orderCard}>
                   <View style={styles.cardTop}><Text style={styles.cardKind}>Limit order</Text><Text style={styles.orderStatus}>{waitingLabel}</Text></View>
-                  <Text style={styles.cardTitle} numberOfLines={1}>{order.market || 'Prediction market'}</Text>
+                  <Text style={styles.cardTitle} numberOfLines={1}>{order.market || 'Polymarket market'}</Text>
                   <Text style={styles.positionOutcome}>{order.outcome || 'Outcome'} · {Math.round((Number.parseFloat(order.price) || 0) * 100)}¢</Text>
                   <View style={styles.orderMeta}>
                     <Text style={styles.orderMetaText}>{cost === null ? '--' : `${money(cost)} reserved`}{formatAge(order.created_at) ? ` · ${formatAge(order.created_at)}` : ''}</Text>
