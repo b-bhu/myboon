@@ -11,7 +11,7 @@ function source(relativeUrl: string): string {
 describe('shared chart boundary', () => {
   it('does not import venue, wallet, route, API, or analytics concerns', () => {
     const chart = source('./market-chart.tsx');
-    assert.doesNotMatch(chart, /features\/(?:perps|wallet|predict|meteora)/);
+    assert.doesNotMatch(chart, /features\/(?:perps|wallet|polymarket|meteora)/);
     assert.doesNotMatch(chart, /fetchPhoenix|fetchPacifica|useRouter|useWallet|analytics/i);
     assert.doesNotMatch(chart, /\b(?:1H|1D|1W|1M)\b/);
   });

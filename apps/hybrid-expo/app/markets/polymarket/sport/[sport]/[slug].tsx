@@ -1,11 +1,11 @@
 import { useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { PredictSportDetailScreen } from '@/features/predict/PredictSportDetailScreen';
+import { PolymarketSportDetailScreen } from '@/features/polymarket/PolymarketSportDetailScreen';
 import { semantic, tokens } from '@/theme';
 
 const SAFE_SPORT_CODE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
-export default function PredictSportDetailRoute() {
+export default function PolymarketSportDetailRoute() {
   const params = useLocalSearchParams<{ sport?: string; slug?: string }>();
   const sport = typeof params.sport === 'string' ? params.sport.toLowerCase() : '';
   const slug = typeof params.slug === 'string' ? params.slug : '';
@@ -18,7 +18,7 @@ export default function PredictSportDetailRoute() {
     );
   }
 
-  return <PredictSportDetailScreen sport={sport} slug={slug} />;
+  return <PolymarketSportDetailScreen sport={sport} slug={slug} />;
 }
 
 const styles = StyleSheet.create({

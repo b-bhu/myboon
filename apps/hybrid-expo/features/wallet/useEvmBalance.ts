@@ -1,7 +1,7 @@
 /**
  * useEvmBalance — USDC collateral held at a Polygon address.
  *
- * Reads through the active mobile-owned Polymarket SecureClient. When Predict
+ * Reads through the active mobile-owned Polymarket SecureClient. When Polymarket
  * has not been restored in this process there is deliberately no server-side
  * session fallback, so the value remains unknown.
  *
@@ -14,8 +14,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { SecureClient } from '@polymarket/client';
-import { fetchClobBalance } from '@/features/predict/predict.api';
-import { getActivePolymarketClient } from '@/features/predict/predict.client';
+import { fetchClobBalance } from '@/features/polymarket/polymarket.api';
+import { getActivePolymarketClient } from '@/features/polymarket/polymarket.client';
 
 export function useEvmBalance(address: string | null, secureClient: SecureClient | null = null): {
   balanceUsd: number | null;

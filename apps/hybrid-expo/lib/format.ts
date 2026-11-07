@@ -1,6 +1,6 @@
 /**
  * Shared, nullable-safe formatting utilities used across the whole app —
- * Feed, Predict, Trade, and every venue market list.
+ * Feed, Polymarket, Trade, and every venue market list.
  *
  * Consolidates what used to be four drifted copies: `formatPrice` /
  * `formatPhoenixPrice`, `formatChange` / `formatPhoenixPercent`,

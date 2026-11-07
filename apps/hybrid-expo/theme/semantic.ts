@@ -28,7 +28,7 @@ export const semantic = {
     positive: tokens.colors.viridian,
     negative: tokens.colors.vermillion,
   },
-  predict: {
+  polymarket: {
     cardFeatured: 'rgba(17, 138, 178, 0.2)',
     rowBorderSoft: 'rgba(245, 250, 252, 0.1)',
     badgeGeoBg: 'rgba(255, 209, 102, 0.1)',

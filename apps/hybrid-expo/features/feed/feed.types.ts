@@ -3,15 +3,15 @@ import type MaterialIcons from '@expo/vector-icons/MaterialIcons';
 
 export type FeedCategory = string;
 
-export interface PredictOutcome {
+export interface PolymarketOutcome {
   label: string;
   price: number; // 0.0–1.0
 }
 
 export interface NarrativeAction {
-  type: 'predict' | 'perps';
+  type: 'polymarket' | 'perps';
   asset?: string; // perps: 'BTC', 'ETH'
-  slug?: string;  // predict: polymarket slug
+  slug?: string;  // polymarket: polymarket slug
 }
 
 export interface FeedItem {

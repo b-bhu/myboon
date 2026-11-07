@@ -1,9 +1,9 @@
 import { useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { PredictMarketDetailScreen } from '@/features/predict/PredictMarketDetailScreen';
+import { PolymarketMarketDetailScreen } from '@/features/polymarket/PolymarketMarketDetailScreen';
 import { semantic, tokens } from '@/theme';
 
-export default function PredictMarketDetailRoute() {
+export default function PolymarketMarketDetailRoute() {
   const params = useLocalSearchParams<{ slug?: string }>();
   const slug = typeof params.slug === 'string' ? params.slug : '';
 
@@ -15,7 +15,7 @@ export default function PredictMarketDetailRoute() {
     );
   }
 
-  return <PredictMarketDetailScreen slug={slug} />;
+  return <PolymarketMarketDetailScreen slug={slug} />;
 }
 
 const styles = StyleSheet.create({
