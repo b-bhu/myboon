@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <title>MyBoon · Connect</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
@@ -61,7 +61,13 @@ button{cursor:pointer}
 .sheet-hd .x{width:44px;height:44px;margin:-6px -8px 0 0;border-radius:12px;color:var(--dim);font-size:22px;line-height:1}
 .sheet-bd{padding:10px 16px 8px;overflow:auto;-webkit-overflow-scrolling:touch;flex:1;min-height:0}
 
-.export-options{display:flex;flex-direction:column;gap:10px;padding-top:6px}
+.export-options{display:flex;flex-direction:column;gap:12px;padding-top:2px}
+.sheet[data-state="export"] .sheet-bd{padding-top:8px;padding-bottom:0}
+.sheet[data-state="export"] .homebar{height:8px}
+.export-actions{display:flex;flex-direction:column;gap:8px}
+.export-actions .btn-primary{min-height:52px;padding:14px}
+.export-actions .btn-secondary{min-height:44px;padding:10px}
+/* Content-sized at ordinary text sizes; existing overflow:auto remains an accessibility fallback. */
 .btn-primary{
   min-height:56px;width:100%;padding:16px 18px;border-radius:14px;
   background:var(--bone);color:var(--bg);font:600 16px var(--display);text-align:center;
@@ -94,15 +100,22 @@ button{cursor:pointer}
 .cta:disabled{opacity:.35}
 .cta.ghost{background:var(--card);color:var(--bone);border:1px solid var(--edge)}
 .cta.danger{background:transparent;color:var(--verm);border:1px solid #7a2a3c}
-.otp{display:flex;gap:8px;justify-content:center;margin:8px 0 10px}
-.otp i{
-  width:44px;height:52px;border-radius:12px;background:var(--card);display:grid;place-items:center;
-  font:600 20px var(--display);font-variant-numeric:tabular-nums;
-}
-.otp-paste{
-  display:block;margin:0 auto 14px;min-height:40px;padding:0 12px;
-  color:var(--vir);font:500 14px var(--font);
-}
+.otp{margin:8px 0 4px}
+.otp input{display:block;width:100%;height:56px;padding:0 12px;border-radius:12px;background:var(--card);text-align:center;font:600 24px var(--display);letter-spacing:.35em;caret-color:var(--vir)}
+.otp input::placeholder{color:var(--faint)}
+.otp input[aria-invalid="true"]{outline:1px solid var(--verm)}
+.otp-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.otp-paste,.otp-resend{min-height:44px;padding:0 8px;color:var(--vir);font:500 14px var(--font)}
+.otp-resend:disabled{color:var(--dim);cursor:default}
+.otp-feedback{min-height:20px;color:var(--dim);font-size:13px;margin-bottom:4px}
+.otp-error{color:var(--bone);font-size:13px;margin-bottom:8px}
+.export-steps{padding-left:24px;margin:0;color:var(--bone);font-size:16px;line-height:1.45}
+.export-steps li{padding-left:2px;margin-bottom:12px}
+.export-steps li:last-child{margin-bottom:0}
+.export-steps li::marker{color:var(--dim);font-weight:500}
+.key-warning{padding:8px 10px;border-radius:12px;background:var(--card);color:var(--gold);font-size:14px;line-height:1.5}
+.sheet-hd p{overflow-wrap:anywhere}
+@supports(height:100dvh){.phone{height:min(844px,calc(100dvh - 96px))}}
 .wait{padding:28px 8px 20px;text-align:center}
 .wait .spin{
   width:36px;height:36px;margin:0 auto 16px;border-radius:50%;
@@ -231,7 +244,7 @@ const copy = {
   fail_setup: { title:'Wallet setup failed', sub:'' },
   ok_privy: { title:'Wallets', sub:'' },
   ok_ext:   { title:'Wallet', sub:'' },
-  export:   { title:'Export / recovery', sub:'Simulated Privy handoff.' },
+  export:   { title:'Export / recovery', sub:'' },
   export_wait: { title:'Privy demo', sub:'' },
   export_done: { title:'Demo complete', sub:'' },
   confirm:  { title:'Disconnect?', sub:'You can reconnect anytime.' },
@@ -256,6 +269,58 @@ let setupFails = 0;
 let confirmFrom = 'ok_privy';
 let emailIdentity = 'you@example.com';
 let emailDraft = '';
+// Illustrative timings only; production must use the auth service's retry deadline.
+const DEMO_RESEND_SECONDS = 30;
+const DEMO_SEND_MS = 700;
+let otpEmail = '';
+let otpCode = '';
+let otpResendAt = 0;
+let otpSendingUntil = 0;
+let otpMessage = '';
+let otpIsResend = false;
+let otpTimer = null;
+
+function stopOtpTimer(){
+  if (otpTimer !== null) clearInterval(otpTimer);
+  otpTimer = null;
+}
+
+function beginDemoSend(resend){
+  otpIsResend = resend;
+  otpSendingUntil = Date.now() + DEMO_SEND_MS;
+  otpResendAt = Date.now() + DEMO_RESEND_SECONDS * 1000;
+  otpMessage = resend ? 'Resending code… (demo)' : 'Sending code… (demo)';
+}
+
+function prepareOtp(email){
+  if (otpEmail === email) return;
+  otpEmail = email;
+  otpCode = '';
+  beginDemoSend(false);
+}
+
+function syncOtp(){
+  if (state !== 'otp') return;
+  const now = Date.now();
+  if (otpSendingUntil && now >= otpSendingUntil){
+    otpSendingUntil = 0;
+    otpMessage = otpIsResend ? 'Code resent (demo).' : 'Code sent (demo).';
+  }
+  const remaining = Math.max(0, Math.ceil((otpResendAt - now) / 1000));
+  const resend = document.getElementById('otpResend');
+  resend.disabled = Boolean(otpSendingUntil) || remaining > 0;
+  resend.textContent = remaining > 0 ? 'Resend code · ' + remaining + 's' : 'Resend code';
+  const status = document.getElementById('otpStatus');
+  if (status.textContent !== otpMessage) status.textContent = otpMessage;
+  if (!otpSendingUntil && remaining === 0) stopOtpTimer();
+}
+
+function watchOtp(){
+  stopOtpTimer();
+  syncOtp();
+  if (otpSendingUntil || Date.now() < otpResendAt) otpTimer = setInterval(syncOtp, 250);
+}
+
 
 const ADDR_PRIVY_SOL = '7nYxK9QmR2pLsT4vW8cJ1dF6hG3aB0eZpX9mQ2rL4kNw';
 const ADDR_PRIVY_EVM = '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEbA';
@@ -298,6 +363,8 @@ function manageTarget(){
 }
 
 function render(s, push){
+  stopOtpTimer();
+  sheet.dataset.state = s;
   if (s === 'home'){
     state = 'home'; sheet.classList.remove('on'); scrim.classList.remove('on');
     syncHome(); syncDock(); return;
@@ -331,10 +398,18 @@ function render(s, push){
         ${ICON_WALLET}<span>Connect external wallet</span>
       </button>`;
   } else if (s === 'otp'){
+    prepareOtp(emailIdentity);
     el.innerHTML = `
-      <div class="otp" id="otpBoxes"><i>·</i><i>·</i><i>·</i><i>·</i><i>·</i><i>·</i></div>
-      <button class="otp-paste" type="button" data-act="otp-paste">Paste</button>
-      <button class="cta" type="button" data-act="email-verify">Verify</button>`;
+      <p class="otp-feedback" id="otpStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+      <form id="otpForm" novalidate>
+        <div class="otp" id="otpBoxes"><input id="otpInput" aria-label="Six-digit code" aria-describedby="otpError" type="text" inputmode="numeric" autocomplete="one-time-code" enterkeyhint="go" required pattern="[0-9]{6}" maxlength="6" placeholder="000000" value="${escapeText(otpCode)}"></div>
+        <div class="otp-tools">
+          <button class="otp-paste" type="button" data-act="otp-paste">Paste</button>
+          <button class="otp-resend" id="otpResend" type="button" data-act="otp-resend">Resend code</button>
+        </div>
+        <p class="otp-error" id="otpError" aria-live="polite" hidden></p>
+        <button class="cta" type="submit">Verify</button>
+      </form>`;
   } else if (s === 'wait_setup'){
     el.className = 'wait';
     el.innerHTML = `<div class="spin"></div><h3>Setting up your wallet</h3><p>This only takes a moment.</p>`;
@@ -404,11 +479,16 @@ function render(s, push){
     if (linked !== 'privy'){ go(linked === 'ext' ? 'ok_ext' : 'connect'); return; }
     el.className = 'export-options';
     el.innerHTML = `
-      <p style="color:var(--dim);font-size:14px;margin:4px 0 14px;text-align:left">
-        This demo simulates the Privy export / recovery handoff. No keys are exported.
-      </p>
-      <button class="btn-primary" type="button" data-go="export_wait">Preview Privy handoff</button>
-      <button class="btn-secondary" type="button" data-go="ok_privy">Not now</button>`;
+      <ol class="export-steps">
+        <li>Sign in to Privy with your <strong>MyBoon email</strong>.</li>
+        <li>Open <strong>My Apps</strong> → <strong>MyBoon</strong>.</li>
+        <li>Choose your wallet and follow the export instructions.</li>
+      </ol>
+      <p class="key-warning">Keep your private key to yourself.</p>
+      <div class="export-actions">
+      <button class="btn-primary" type="button" data-go="export_wait">Continue with Privy</button>
+      <button class="btn-secondary" type="button" data-go="ok_privy">Not now</button>
+      </div>`;
   } else if (s === 'export_wait'){
     if (linked !== 'privy'){ go(linked === 'ext' ? 'ok_ext' : 'connect'); return; }
     el.className = 'wait';
@@ -432,6 +512,7 @@ function render(s, push){
       <button class="cta ghost" type="button" style="margin-top:8px" data-act="cancel-disconnect">Cancel</button>`;
   }
   body.appendChild(el);
+  if (s === 'otp') watchOtp();
   syncDock();
 }
 
@@ -452,6 +533,13 @@ document.getElementById('dock').innerHTML = STATES.map(([id,label])=>
 ).join('');
 
 document.body.addEventListener('input', (e)=>{
+  if (e.target.id === 'otpInput'){
+    otpCode = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+    e.target.value = otpCode;
+    e.target.removeAttribute('aria-invalid');
+    document.getElementById('otpError').hidden = true;
+    return;
+  }
   if (e.target.id !== 'emailInput') return;
   emailDraft = e.target.value;
   e.target.removeAttribute('aria-invalid');
@@ -460,6 +548,17 @@ document.body.addEventListener('input', (e)=>{
 });
 
 document.body.addEventListener('submit', (e)=>{
+  if (e.target.id === 'otpForm'){
+    e.preventDefault();
+    const input = document.getElementById('otpInput');
+    if (!input.checkValidity()){
+      const error = document.getElementById('otpError');
+      error.textContent = 'Enter the six-digit code.'; error.hidden = false;
+      input.setAttribute('aria-invalid', 'true'); input.focus();
+      return;
+    }
+    otpCode = input.value; go('wait_setup'); return;
+  }
   if (e.target.id !== 'emailForm') return;
   e.preventDefault();
   const input = document.getElementById('emailInput');
@@ -480,14 +579,14 @@ document.body.addEventListener('click', (e)=>{
   if (act){
     const a = act.dataset.act;
     if (a === 'otp-paste'){
-      const boxes = document.getElementById('otpBoxes');
-      if (boxes){
-        const code = '482193';
-        [...boxes.querySelectorAll('i')].forEach((el, i) => { el.textContent = code[i] || '·'; });
-      }
+      const input = document.getElementById('otpInput');
+      if (input){ input.value = '482193'; input.dispatchEvent(new Event('input', { bubbles:true })); }
       return;
     }
-    if (a === 'email-verify'){ go('wait_setup'); return; }
+    if (a === 'otp-resend'){
+      if (state !== 'otp' || otpSendingUntil || Date.now() < otpResendAt) return;
+      beginDemoSend(true); watchOtp(); return;
+    }
     if (a === 'retry-setup'){ setupFails = 0; go('wait_setup'); return; }
     if (a === 'logout'){ linked=null; setupFails=0; stack=[]; go('connect'); return; }
     if (a === 'do-disconnect'){ linked=null; setupFails=0; go('home'); return; }
@@ -531,6 +630,9 @@ backBtn.addEventListener('click', ()=>{
 });
 document.getElementById('closeBtn').addEventListener('click', ()=> go('home'));
 scrim.addEventListener('click', ()=> go('home'));
+
+window.addEventListener('pagehide', stopOtpTimer);
+window.addEventListener('pageshow', ()=>{ if (state === 'otp') watchOtp(); });
 
 go('connect');
 </script>
