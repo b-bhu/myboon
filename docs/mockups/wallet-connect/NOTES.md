@@ -1,70 +1,38 @@
-# Wallet connect sheet — research notes
+# Wallet connection mock — November 7 direction
 
-Open `index.html` in a browser. The dock under the phone jumps to every state.
+This local review supersedes the previous create-new / already-have staging and Google design. The latest Reown-inspired direction replaces the email-choice row with an inline **Email** form on the first **Connect to MyBoon** sheet: email input → **Continue**, with **Connect external wallet** secondary below. There is no intermediate email screen. Provider selection belongs to the external adapter, not this sheet. No provider plugin is installed or required.
 
-Mobbin MCP (`user-Mobbin`) is paywalled / not used for this mock.
+## Flow
 
-Issue: [#590](https://github.com/b-bhu/myboon/issues/590) WS1 (ConnectionSheet) + WS2 (Privy export/recovery). Folded [#316](https://github.com/b-bhu/myboon/issues/316) fail states.
+- Connect to MyBoon → inline email field → Continue → Enter code → Paste → Verify → setting up → email-connected wallets.
+- Connect external wallet → Approve in your wallet → external connected.
+- External identity is generic **External wallet** with a neutral wallet SVG; no provider is assumed.
+- Email identity retains the envelope SVG. Paste fills six demo digits (`482193`); Verify remains.
+- Email-connected Privy sheet: Solana + EVM, Export / recovery, Disconnect.
+- External-connected sheet: Solana only and Disconnect; no export action.
+- Every chain label has Copy aligned right. The complete sample address is one unbroken monospace line below, horizontally scrollable, never ellipsized.
+- Manage opens the matching connected sheet; when unlinked it opens the inline-email Connect to MyBoon sheet.
+- Login failure retries email sign-in. Setup failure retries wallet setup without restarting login; the failure demo includes Log out and start over after three simulated failures.
 
-## Pattern adopted
+- Email form uses a visible label, required email type, email inputmode/autocomplete and a submit button; pressing Enter submits. Empty or invalid email shows a short inline error and stays on the first sheet.
+- Draft email is preserved across back/close; OTP Back always returns to the initial sheet with that value. Login retry returns to the same form; setup retry still bypasses login.
+- Input, Continue, external entry and sheet Close have at least 44px touch targets. Address scrollbars use muted teal track/thumb styling. Global phone dimensions/scaling were not changed.
+- Reown references informed inline-email placement only; no social/provider lists, badges, or reference images ship.
 
-First screen of the sheet is **two choices only**:
+## Demo boundaries
 
-1. **Create a new wallet** (primary filled control)
-2. **I already have a wallet** (secondary)
+All screens are demo states only. Addresses, balances, connections, OTP verification, Copy feedback, and timed transitions are simulated. No authentication, clipboard read/write, adapter connection, wallet creation, or key export takes place.
 
-Create drills into **Continue with email** / **Continue with Google** (Privy).  
-Already-have drills into **Seeker** / **Phantom** only (MWA) — never creates Privy.
+Export / recovery explicitly previews a simulated Privy handoff, then displays “No keys were exported.” It does not open Privy, show keys, claim export success, or assert security properties. External and unlinked states are guarded from the export path; dock export jumps deliberately select the email-connected demo context.
 
-Matches MyBoon `connect.options.ts` backends (`privy_embedded` → email/google, `external_mwa` → external wallet) but fixes the flat four-row list into a staged choice → method flow.
+The existing dark MyBoon palette, bottom-sheet structure, and Wallet background remain. No Wallet tab redesign, network picker, provider chooser, or extra login method is included. Icons are inline SVG; no image assets are referenced. Existing optional web fonts retain system fallbacks.
 
-## Connected state (WS1)
+## Review / handoff
 
-Same sheet chrome for both paths; distinction is identity chrome + chains, not badges.
-Labels match live `ConnectionSheet` `ConnectedStep` / chain rows.
+Handoff is **index.html + NOTES.md only**. Old screenshots and capture scripts in the working folder are historical and not part of this handoff. No repository, PR, teammate message, or Mac copy was changed for this pass.
 
-| | Privy (create) | External (connect) |
-|---|---|---|
-| Title | **Wallets** (dual) | **Wallet** |
-| Identity | Envelope / multicolor Google G + account string | Seeker / Phantom mark + wallet name |
-| Chains | **Solana** + **EVM** — label+Copy on one row; full address nowrap (scroll) below | **Solana only** (MWA has no EVM); same address/Copy layout |
-| Actions | **Export / recovery** once, **Disconnect** once (embedded logout drops both chains) | **Disconnect** only |
+Open `index.html` directly. It starts at Connect to MyBoon (`connect`). The demo dock offers Connect, OTP, Setting up, Connecting, failure states, connected states, export preview states, and Disconnect.
 
-Home **Manage** opens the matching connected sheet when linked; otherwise the choice screen. No Receive / Send / QR here (later workstreams). No Solana|EVM picker on create/connect first screens (caller already opens with a chain).
+For visual QA: capture the initial sheet, email field, OTP before/after Paste, email-connected dual-chain sheet, generic external-connected sheet, and simulated export entry/end. Check at a mobile viewport that addresses scroll horizontally without wrapping and that Copy stays on the label row. Waiting states auto-resolve after 900 ms (export preview after 1000 ms); capture promptly or pause timers in the reviewing browser.
 
-## Export / recovery (WS2, Privy only)
-
-Entry: Privy connected → **Export / recovery**.
-
-Flow stays product-honest to Privy (no custom seed-phrase UI):
-
-1. Short sheet: warning, then “Continue with Privy” / “Not now”
-2. Wait: opening Privy Home (`https://home.privy.io`) in the system browser
-3. Browser closes → back to the Privy connected sheet. The app is not told whether a key was copied, so it does not show a success check.
-
-External connected cannot reach export (guarded in render + no action row). `@privy-io/expo` has no export method; Privy documents that call for the web SDK only.
-
-Refs: [Privy export a wallet](https://docs.privy.io/wallets/wallets/export), [mobile key export](https://docs.privy.io/recipes/mobile-key-export), [Privy Home](https://docs.privy.io/basics/get-started/dashboard/privy-home), [Privy Home key controls](https://privy.dev/blog/enhanced-wallet-controls-in-privy-home).
-
-## Fail setup (#316)
-
-- Sign-in failed → retry create (email/Google).
-- Wallet setup failed → “signed in, wallet didn’t finish” + **Try wallet again** only.
-- After 3 setup fails: optional **Log out and start over**.
-
-## Sources (choice hierarchy)
-
-- Phantom — [How to create a new Phantom wallet](https://phantom.com/learn/guides/how-to-create-a-new-wallet)  
-  Welcome CTA pair: **Create a New Wallet** vs **I Already Have a Wallet**.
-- Phantom Help — [Sign in to or import an existing Phantom wallet](https://help.phantom.com/articles/sign-in-to-or-import-an-existing-phantom-wallet-15079894392851)
-- Rainbow — [Get started with the Rainbow app](https://rainbow.me/support/app/get-started-with-the-rainbow-app)
-- U1CORE — [Web3 onboarding UX: first 90 seconds](https://www.u1core.com/web3-onboarding-ux-what-happens-in-the-first-90-seconds/)
-
-## Icons + OTP
-
-- Email / Google marks: quiet envelope outline + official-style 4-color Google G (inline SVG). No `@` / serif `G` tiles.
-- OTP **Enter code**: **Paste** fills all 6 digits with a mock clipboard code (`482193`); Verify stays.
-
-## Deliberately cut
-
-CREATE/CONNECT chips, OR dividers, path badges, safety-policy essays, metadata tables, Receive/Send/QR, custom seed-phrase product UI, Wallet tab layout redesign.
+Programmatic checks use a non-rendering DOM harness, not a browser. Actual rendering, contrast, focus appearance, and horizontal scrolling need parent-led computerUse review before handoff is approved.
