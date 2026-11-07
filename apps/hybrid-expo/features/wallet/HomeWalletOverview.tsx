@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Platform,
   Pressable,
@@ -35,6 +35,145 @@ const accountTabs: { id: AccountTab; label: string }[] = [
   { id: 'perps', label: 'Perps' },
   { id: 'meteora', label: 'Meteora' },
 ];
+
+const MemoActionPanel = memo(WalletActionPanel);
+
+function rememberHeight(current: number, next: number): number {
+  return current === next ? current : next;
+}
+
+const AccountTabs = memo(function AccountTabs({
+  accountTab,
+  tradeBusy,
+  onSelect,
+}: {
+  accountTab: AccountTab;
+  tradeBusy: boolean;
+  onSelect: (id: AccountTab) => void;
+}) {
+  return (
+    <View style={styles.accountTabs}>
+      {accountTabs.map(({ id, label }) => (
+        <Pressable
+          key={id}
+          disabled={tradeBusy}
+          accessibilityRole="tab"
+          accessibilityLabel={`${label} accounts`}
+          accessibilityState={{ selected: accountTab === id, disabled: tradeBusy }}
+          onPress={() => onSelect(id)}
+          style={[styles.accountTab, accountTab === id && styles.accountTabSelected]}
+        >
+          <Text style={[styles.accountLabel, accountTab === id && styles.accountLabelSelected]}>
+            {label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+});
+
+const AccountBody = memo(function AccountBody({
+  dormantNotices,
+  showSolana,
+  accountTab,
+  walletSources,
+  onRetrySource,
+  onOpenSpot,
+  onOpenPhoenix,
+  onOpenPacifica,
+  onOpenMeteora,
+  onConnect,
+  chains,
+  chainAddress,
+  chainBalance,
+  onDisconnectChain,
+}: {
+  dormantNotices?: ReactNode;
+  showSolana: boolean;
+  accountTab: AccountTab;
+  walletSources: WalletSourcesState;
+  onRetrySource: (id: WalletProtocolId) => void;
+  onOpenSpot: () => void;
+  onOpenPhoenix: () => void;
+  onOpenPacifica: () => void;
+  onOpenMeteora: () => void;
+  onConnect: () => void;
+  chains: readonly Chain[];
+  chainAddress: (chain: Chain) => string | null;
+  chainBalance: (chain: Chain) => number | null;
+  onDisconnectChain: (chain: Chain) => void;
+}) {
+  return (
+    <>
+      {dormantNotices}
+      {showSolana ? (
+        <>
+          {accountTab === 'spot' ? (
+            <WalletAccountRow
+              protocol="spot"
+              source={walletSources.spot}
+              onRetry={onRetrySource}
+              onPress={onOpenSpot}
+            />
+          ) : null}
+          {accountTab === 'perps' ? (
+            <>
+              <PerpsAccountRow
+                protocol="phoenix"
+                source={walletSources.phoenix}
+                onRetry={onRetrySource}
+                onPress={onOpenPhoenix}
+              />
+              <PerpsAccountRow
+                protocol="pacifica"
+                source={walletSources.pacifica}
+                onRetry={onRetrySource}
+                onPress={onOpenPacifica}
+              />
+            </>
+          ) : null}
+          {accountTab === 'meteora' ? (
+            <WalletAccountRow
+              protocol="meteora"
+              source={walletSources.meteora}
+              onRetry={onRetrySource}
+              onPress={onOpenMeteora}
+            />
+          ) : null}
+        </>
+      ) : (
+        <View style={styles.disconnected}>
+          <Text style={styles.accountTitle}>Connect a Solana wallet</Text>
+          <Text style={styles.description}>
+            Connect to see Spot, Perps and Meteora accounts.
+          </Text>
+          <Pressable
+            onPress={onConnect}
+            accessibilityRole="button"
+            accessibilityLabel="Connect Solana wallet"
+            style={styles.connect}
+          >
+            <Text style={styles.connectLabel}>Connect wallet</Text>
+          </Pressable>
+        </View>
+      )}
+      {/* EVM funds remain explicitly separate from the Solana portfolio. */}
+      {chains.map((chain) => {
+        const address = chainAddress(chain);
+        return address ? (
+          <ChainRow
+            key={chain}
+            chain={chain}
+            address={address}
+            balanceUsd={chainBalance(chain)}
+            onDisconnect={onDisconnectChain}
+          />
+        ) : null;
+      })}
+      <LegalLinks />
+    </>
+  );
+});
 
 export function HomeWalletOverview({
   active,
@@ -109,10 +248,17 @@ export function HomeWalletOverview({
   }, [active, surfaceVersion, scrollY]);
 
   const panelRest = Math.max(0, upperHeight - color.panelOverlap);
+  const selectAccountTab = useCallback((id: AccountTab) => {
+    setSurfaceKey((key) => key + 1);
+    setAccountTab(id);
+  }, []);
+  // Drag used to animate `top`, which resized this scroller on every frame and
+  // made the sheet jump. translateY stays on the UI thread and the height stays put.
   const panelStyle = useAnimatedStyle(() => {
-    const progress = Math.min(1, Math.max(0, scrollY.value / Math.max(panelRest, 1)));
+    const rest = Math.max(panelRest, 0);
+    const progress = Math.min(1, Math.max(0, scrollY.value / Math.max(rest, 1)));
     return {
-      top: panelRest * (1 - progress),
+      transform: [{ translateY: -rest * progress }],
       borderTopLeftRadius: width * 0.14 * (1 - progress),
       borderTopRightRadius: width * 0.14 * (1 - progress),
     };
@@ -149,28 +295,21 @@ export function HomeWalletOverview({
   const actionActive = active && !panelCovered;
   const showSolana = solanaConnected && chains.includes('solana');
 
-  const chainRows = chains.map((chain) => {
-    const address = chainAddress(chain);
-    return address ? (
-      <ChainRow
-        key={chain}
-        chain={chain}
-        address={address}
-        balanceUsd={chainBalance(chain)}
-        onDisconnect={onDisconnectChain}
-      />
-    ) : null;
-  });
-
   return (
     <View
       style={styles.wallet}
-      onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+      onLayout={(event) => {
+        const height = event.nativeEvent.layout.height;
+        setViewportHeight((current) => rememberHeight(current, height));
+      }}
     >
       <View
         collapsable={false}
         style={[styles.upper, compactLayout && { maxHeight: Math.max(34, viewportHeight - 96) }, panelCovered && { height: upperHeight }]}
-        onLayout={(event) => setUpperHeight(event.nativeEvent.layout.height)}
+        onLayout={(event) => {
+          const height = event.nativeEvent.layout.height;
+          setUpperHeight((current) => rememberHeight(current, height));
+        }}
         pointerEvents={panelCovered ? 'none' : 'auto'}
         accessibilityElementsHidden={panelCovered}
         importantForAccessibility={panelCovered ? 'no-hide-descendants' : 'auto'}
@@ -184,10 +323,17 @@ export function HomeWalletOverview({
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           showsVerticalScrollIndicator={compactLayout}
-          onContentSizeChange={(_, height) => { if (!panelCovered) setComposerContentHeight(height); }}
+          onContentSizeChange={(_, height) => {
+            if (panelCovered) return;
+            setComposerContentHeight((current) => rememberHeight(current, height));
+          }}
         >
-          <View onLayout={(event) => { if (!panelCovered) setComposerContentHeight(event.nativeEvent.layout.height); }}>
-            <WalletActionPanel
+          <View onLayout={(event) => {
+            if (panelCovered) return;
+            const height = event.nativeEvent.layout.height;
+            setComposerContentHeight((current) => rememberHeight(current, height));
+          }}>
+            <MemoActionPanel
               active={actionActive}
               controllerActive={active}
               surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
@@ -200,6 +346,7 @@ export function HomeWalletOverview({
       <Animated.View
         style={[
           styles.panel,
+          { top: panelRest, bottom: -panelRest },
           panelStyle,
           {
             opacity: upperHeight > 0 ? 1 : 0,
@@ -208,6 +355,7 @@ export function HomeWalletOverview({
       >
         <Animated.ScrollView
           ref={accountScrollRef}
+          style={styles.panelScroll}
           scrollEnabled={active && !tradeBusy}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
@@ -223,85 +371,25 @@ export function HomeWalletOverview({
           contentContainerStyle={{ minHeight: viewportHeight + panelRest }}
         >
           <View style={styles.tabsHeader}>
-            <View style={styles.accountTabs}>
-              {accountTabs.map(({ id, label }) => (
-                <Pressable
-                  key={id}
-                  disabled={tradeBusy}
-                  accessibilityRole="tab"
-                  accessibilityLabel={`${label} accounts`}
-                  accessibilityState={{ selected: accountTab === id, disabled: tradeBusy }}
-                  onPress={() => {
-                    setSurfaceKey((key) => key + 1);
-                    setAccountTab(id);
-                  }}
-                  style={[styles.accountTab, accountTab === id && styles.accountTabSelected]}
-                >
-                  <Text
-                    style={[styles.accountLabel, accountTab === id && styles.accountLabelSelected]}
-                  >
-                    {label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            <AccountTabs accountTab={accountTab} tradeBusy={tradeBusy} onSelect={selectAccountTab} />
           </View>
           <Animated.View style={[styles.accounts, { paddingBottom: 24 + panelRest }, panelLiftStyle]}>
-            {dormantNotices}
-            {showSolana ? (
-              <>
-                {accountTab === 'spot' ? (
-                  <WalletAccountRow
-                    protocol="spot"
-                    source={walletSources.spot}
-                    onRetry={onRetrySource}
-                    onPress={onOpenSpot}
-                  />
-                ) : null}
-                {accountTab === 'perps' ? (
-                  <>
-                    <PerpsAccountRow
-                      protocol="phoenix"
-                      source={walletSources.phoenix}
-                      onRetry={onRetrySource}
-                      onPress={onOpenPhoenix}
-                    />
-                    <PerpsAccountRow
-                      protocol="pacifica"
-                      source={walletSources.pacifica}
-                      onRetry={onRetrySource}
-                      onPress={onOpenPacifica}
-                    />
-                  </>
-                ) : null}
-                {accountTab === 'meteora' ? (
-                  <WalletAccountRow
-                    protocol="meteora"
-                    source={walletSources.meteora}
-                    onRetry={onRetrySource}
-                    onPress={onOpenMeteora}
-                  />
-                ) : null}
-              </>
-            ) : (
-              <View style={styles.disconnected}>
-                <Text style={styles.accountTitle}>Connect a Solana wallet</Text>
-                <Text style={styles.description}>
-                  Connect to see Spot, Perps and Meteora accounts.
-                </Text>
-                <Pressable
-                  onPress={onConnect}
-                  accessibilityRole="button"
-                  accessibilityLabel="Connect Solana wallet"
-                  style={styles.connect}
-                >
-                  <Text style={styles.connectLabel}>Connect wallet</Text>
-                </Pressable>
-              </View>
-            )}
-            {/* EVM funds remain explicitly separate from the Solana portfolio. */}
-            {chainRows}
-            <LegalLinks />
+            <AccountBody
+              dormantNotices={dormantNotices}
+              showSolana={showSolana}
+              accountTab={accountTab}
+              walletSources={walletSources}
+              onRetrySource={onRetrySource}
+              onOpenSpot={onOpenSpot}
+              onOpenPhoenix={onOpenPhoenix}
+              onOpenPacifica={onOpenPacifica}
+              onOpenMeteora={onOpenMeteora}
+              onConnect={onConnect}
+              chains={chains}
+              chainAddress={chainAddress}
+              chainBalance={chainBalance}
+              onDisconnectChain={onDisconnectChain}
+            />
           </Animated.View>
         </Animated.ScrollView>
       </Animated.View>
@@ -310,17 +398,17 @@ export function HomeWalletOverview({
 }
 
 const styles = StyleSheet.create({
-  wallet: { flex: 1, backgroundColor: color.gold },
+  wallet: { flex: 1, overflow: 'hidden', backgroundColor: color.gold },
   upper: { paddingHorizontal: color.composerInset, paddingBottom: 34, backgroundColor: color.gold },
   panel: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
     overflow: 'hidden',
     backgroundColor: color.navy,
     boxShadow: '0 -6px 22px rgba(3,31,44,0.22), 0 -2px 6px rgba(3,31,44,0.15)',
   },
+  panelScroll: { flex: 1 },
   tabsHeader: {
     paddingTop: 18,
     paddingBottom: 4,

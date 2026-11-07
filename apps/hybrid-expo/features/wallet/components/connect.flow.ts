@@ -91,7 +91,7 @@ export const CONNECT_COPY = {
   externalWallet: 'External wallet',
   externalDetail: 'Solana',
   export: 'Export / recovery',
-  exportWarning: 'Anyone with this key controls the funds. MyBoon never sees it.',
+  exportWarning: 'Keep your private key to yourself.',
   continuePrivy: 'Continue with Privy',
   notNow: 'Not now',
   exportTryAgain: 'Try again',
@@ -102,6 +102,7 @@ export const CONNECT_COPY = {
   copied: 'Copied',
   verify: 'Verify',
   paste: 'Paste',
+  resend: 'Resend code',
   signInFailedTitle: 'Sign-in failed',
   signInFailedBody: "Couldn't verify your email.",
   setupFailedTitle: 'Wallet setup failed',
@@ -110,7 +111,6 @@ export const CONNECT_COPY = {
   setupTimeoutDetail: 'The wallet is still preparing.',
   setupCreateDetail: "The wallet couldn't be created.",
   finishSetupBody: "You're signed in. Finish connecting the wallet.",
-  exportIntro: 'Opens Privy so you can export or recover this wallet. Sign in there if Privy asks.',
   exportFailed: "Couldn't open Privy. Nothing was exported.",
   creatingTitle: 'Setting up your wallet',
   creatingBody: 'This only takes a moment.',
@@ -123,6 +123,28 @@ export const CONNECT_COPY = {
   privyDisconnectBody:
     'This signs you out and disconnects every MyBoon wallet in this session. You can sign back in anytime.',
 } as const;
+
+/**
+ * Export entry, in order. Emphasis is the bold phrase from the wallet-connect
+ * notes. No simulation line and no claim about who can see the key.
+ */
+export const EXPORT_INSTRUCTIONS: readonly (readonly { text: string; emphasis?: boolean }[])[] = [
+  [
+    { text: 'Sign in to Privy with your ' },
+    { text: 'MyBoon email', emphasis: true },
+    { text: '.' },
+  ],
+  [
+    { text: 'Open ' },
+    { text: 'My Apps', emphasis: true },
+    { text: ' → ' },
+    { text: 'MyBoon', emphasis: true },
+    { text: '.' },
+  ],
+  [
+    { text: 'Choose your wallet and follow the export instructions.' },
+  ],
+];
 
 /** Logout appears on the third wallet-setup failure, matching the approved mock. */
 export const WALLET_SETUP_LOGOUT_AFTER = 3;
@@ -193,7 +215,7 @@ export function sheetChrome(
     case 'connected':
       return { title: state.linked === 'external' ? 'Wallet' : 'Wallets', subtitle: '' };
     case 'export':
-      return { title: CONNECT_COPY.export, subtitle: 'Recover your MyBoon wallet with Privy.' };
+      return { title: CONNECT_COPY.export, subtitle: '' };
     case 'export_opening':
       return { title: 'Privy', subtitle: '' };
     case 'export_failed':
