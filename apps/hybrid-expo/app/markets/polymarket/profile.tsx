@@ -288,7 +288,7 @@ function PredictProfileScreen() {
 
   const handleDisconnectPredict = useCallback(() => {
     Alert.alert(
-      'Disconnect Predict?',
+      'Disconnect Polymarket?',
       'This revokes the Polymarket API key on the server and removes its encrypted device copy. Your wallet and funds are unchanged.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -304,10 +304,10 @@ function PredictProfileScreen() {
               })
               .catch((error: unknown) => {
                 Alert.alert(
-                  'Predict was not disconnected',
+                  'Polymarket was not disconnected',
                   error instanceof Error
                     ? error.message
-                    : 'The API key could not be revoked. Your local Predict credentials were preserved.',
+                    : 'The API key could not be revoked. Your local Polymarket credentials were preserved.',
                 );
               })
               .finally(() => setBusy(false));
@@ -484,7 +484,7 @@ function PredictProfileScreen() {
     }
 
     if (!poly.client) {
-      Alert.alert('Cash out failed', 'Predict account not ready.');
+      Alert.alert('Cash out failed', 'Polymarket account not ready.');
       return;
     }
 
@@ -687,10 +687,10 @@ function PredictProfileScreen() {
         center={(
           <View style={styles.titleLockup}>
             <Text style={styles.topTitle}>Profile</Text>
-            <Text style={styles.topSubtitle}>Account · Predict</Text>
+            <Text style={styles.topSubtitle}>Account · Polymarket</Text>
           </View>
         )}
-        right={<AppTopBarIconButton icon="settings" onPress={() => { setSettingsView('menu'); setSettingsOpen(true); }} accessibilityLabel="Open Predict settings" />}
+        right={<AppTopBarIconButton icon="settings" onPress={() => { setSettingsView('menu'); setSettingsOpen(true); }} accessibilityLabel="Open Polymarket settings" />}
       />
 
       <ScrollView
@@ -744,7 +744,7 @@ function PredictProfileScreen() {
           <View style={styles.loadingCard}>
             <ActivityIndicator color={tokens.colors.primary} size="small" />
             <View style={styles.loadingCopy}>
-              <Text style={styles.loadingTitle}>Preparing Predict</Text>
+              <Text style={styles.loadingTitle}>Preparing Polymarket</Text>
               <Text style={styles.loadingText}>Checking your account and wallet setup.</Text>
             </View>
           </View>
@@ -775,7 +775,7 @@ function PredictProfileScreen() {
           <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
             <MaterialIcons name="refresh" size={14} color={tokens.colors.primary} />
             <Text style={styles.reconnectText}>
-              {busy ? 'Retrying…' : 'Could not refresh Predict — tap to retry'}
+              {busy ? 'Retrying…' : 'Could not refresh Polymarket — tap to retry'}
             </Text>
           </Pressable>
         ) : null}
@@ -784,7 +784,7 @@ function PredictProfileScreen() {
           <View style={styles.loadingCard}>
             <ActivityIndicator color={tokens.colors.primary} size="small" />
             <View style={styles.loadingCopy}>
-              <Text style={styles.loadingTitle}>Loading your Predict account</Text>
+              <Text style={styles.loadingTitle}>Loading your Polymarket account</Text>
               <Text style={styles.loadingText}>Balances, positions and orders are updating.</Text>
             </View>
           </View>
@@ -796,7 +796,7 @@ function PredictProfileScreen() {
             <View style={styles.moneyCard}>
               <View pointerEvents="none" style={styles.moneyOrb} />
               <View style={styles.moneyTop}>
-                <Text style={styles.moneyEyebrow}>Your Predict value</Text>
+                <Text style={styles.moneyEyebrow}>Your Polymarket value</Text>
                 <Pressable style={styles.currencyChip} onPress={() => { setSettingsView('currency'); setSettingsOpen(true); }}>
                   <Text style={styles.currencyChipText}>{currencyFormat} display</Text>
                   <MaterialIcons name="keyboard-arrow-down" size={13} color={semantic.text.faint} />
@@ -810,7 +810,7 @@ function PredictProfileScreen() {
                 {predictValue === null
                   ? 'Waiting for current balance and position quotes'
                   : currencyFormat === 'INR'
-                    ? `Approximately ${formatProfileCurrency(predictValue, 'INR', usdToInrRate)} across your Predict account`
+                    ? `Approximately ${formatProfileCurrency(predictValue, 'INR', usdToInrRate)} across your Polymarket account`
                     : 'Available cash, positions and ready payouts'}
               </Text>
               {portfolioSummary?.totalsPartial ? (
@@ -858,7 +858,7 @@ function PredictProfileScreen() {
               <View style={styles.moneyActions}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Deposit into Predict"
+                  accessibilityLabel="Deposit into Polymarket"
                   style={[styles.moneyActionBtn, styles.moneyActionPrimary, accountState !== 'ready' && styles.btnDisabled]}
                   disabled={accountState !== 'ready'}
                   onPress={() => setDepositOpen(true)}>
@@ -867,7 +867,7 @@ function PredictProfileScreen() {
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Withdraw from Predict"
+                  accessibilityLabel="Withdraw from Polymarket"
                   style={[styles.moneyActionBtn, accountState !== 'ready' && styles.btnDisabled]}
                   disabled={accountState !== 'ready'}
                   onPress={handleWithdrawPress}>
@@ -962,10 +962,10 @@ function PredictProfileScreen() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             accessibilityViewIsModal
-            accessibilityLabel="Predict settings dialog">
+            accessibilityLabel="Polymarket settings dialog">
             <View style={styles.sheetGrabber} />
             <View style={styles.sheetTop}>
-              <Text style={styles.settingsEyebrow}>{settingsView === 'security' ? 'Account & security' : 'Predict settings'}</Text>
+              <Text style={styles.settingsEyebrow}>{settingsView === 'security' ? 'Account & security' : 'Polymarket settings'}</Text>
               <Pressable accessibilityRole="button" accessibilityLabel="Close settings" style={styles.sheetClose} onPress={closeSettings}>
                 <MaterialIcons name="close" size={18} color={semantic.text.dim} />
               </Pressable>
@@ -979,7 +979,7 @@ function PredictProfileScreen() {
 
             {settingsView === 'menu' && (
               <>
-                <Text style={styles.settingsTitle}>Predict settings</Text>
+                <Text style={styles.settingsTitle}>Polymarket settings</Text>
                 <Text style={styles.settingsCopy}>Preferences follow you across every market.</Text>
                 <Text style={styles.sheetSectionLabel}>Trading display</Text>
                 <Pressable
@@ -1075,12 +1075,12 @@ function PredictProfileScreen() {
                   <Text style={styles.settingsValue}>{authLabel ?? '—'}</Text>
                 </View>
                 <Text style={styles.sheetSectionLabel}>Connected wallets</Text>
-                <Pressable style={styles.settingsOption} onPress={() => setSettingsView('wallet')} accessibilityRole="button" accessibilityLabel="View Predict wallet">
+                <Pressable style={styles.settingsOption} onPress={() => setSettingsView('wallet')} accessibilityRole="button" accessibilityLabel="View Polymarket wallet">
                   <View style={styles.settingsOptionIcon}>
                     <MaterialIcons name="account-balance-wallet" size={15} color={tokens.colors.viridian} />
                   </View>
                   <View style={styles.settingsOptionCopy}>
-                    <Text style={styles.settingsOptionTitle}>Predict wallet</Text>
+                    <Text style={styles.settingsOptionTitle}>Polymarket wallet</Text>
                     <Text style={styles.settingsOptionSub}>{walletAddress ? `${truncate(walletAddress)} · ${isEnabled ? 'Connected' : 'Setup needed'}` : 'Not created'}</Text>
                   </View>
                   <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
@@ -1109,7 +1109,7 @@ function PredictProfileScreen() {
             {settingsView === 'odds' && (
               <>
                 <Text style={styles.settingsTitle}>Odds format</Text>
-                <Text style={styles.settingsCopy}>How prices show across Predict. Books and limit prices always stay in cents.</Text>
+                <Text style={styles.settingsCopy}>How prices show across Polymarket. Books and limit prices always stay in cents.</Text>
                 {([
                   { key: 'probability', title: 'Probability', sub: '57% — the chance' },
                   { key: 'decimal', title: 'Decimal', sub: '1.75 — total return per $1' },
@@ -1170,13 +1170,13 @@ function PredictProfileScreen() {
 
             {settingsView === 'wallet' && (
               <>
-                <Text style={styles.settingsTitle}>Predict wallet</Text>
+                <Text style={styles.settingsTitle}>Polymarket wallet</Text>
                 <Text style={styles.settingsCopy}>
                   The active mobile SDK account owns authentication, approvals, orders, transfers, and redemption for this deposit wallet.
                 </Text>
                 <View style={styles.walletInfoBox}>
                   <View style={styles.walletInfoRow}>
-                    <Text style={styles.walletInfoLabel}>Predict signer</Text>
+                    <Text style={styles.walletInfoLabel}>Polymarket signer</Text>
                     <Text selectable style={styles.walletInfoValue}>{walletAddress ? truncate(walletAddress) : '--'}</Text>
                   </View>
                   <View style={styles.walletInfoRow}>
@@ -1189,18 +1189,18 @@ function PredictProfileScreen() {
                   </View>
                 </View>
                 <Text style={styles.settingsFinePrint}>
-                  Your Predict wallet is managed through your MyBoon login. Private keys are never displayed here.
+                  Your Polymarket wallet is managed through your MyBoon login. Private keys are never displayed here.
                 </Text>
                 {poly.isReady && (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Disconnect Predict"
+                    accessibilityLabel="Disconnect Polymarket"
                     disabled={busy}
                     onPress={handleDisconnectPredict}
                     style={[styles.settingsDisconnectBtn, busy && { opacity: 0.5 }]}
                   >
                     <Text style={styles.settingsDisconnectText}>
-                      {busy ? 'Disconnecting…' : 'Disconnect Predict'}
+                      {busy ? 'Disconnecting…' : 'Disconnect Polymarket'}
                     </Text>
                   </Pressable>
                 )}
@@ -1240,7 +1240,7 @@ function PredictProfileScreen() {
                   <MaterialIcons name="logout" size={22} color={tokens.colors.vermillion} />
                 </View>
                 <Text style={styles.settingsTitle}>Sign out of MyBoon?</Text>
-                <Text style={styles.settingsCopy}>Your Predict positions and pUSD stay with your account. Sign in again to trade, withdraw, or collect.</Text>
+                <Text style={styles.settingsCopy}>Your Polymarket positions and pUSD stay with your account. Sign in again to trade, withdraw, or collect.</Text>
                 {signOutError ? <Text selectable style={styles.quickAmountError}>{signOutError}</Text> : null}
                 <View style={styles.signOutActions}>
                   <Pressable style={[styles.staySignedInBtn, signOutBusy && styles.btnDisabled]} disabled={signOutBusy} onPress={() => setSettingsView('security')}>

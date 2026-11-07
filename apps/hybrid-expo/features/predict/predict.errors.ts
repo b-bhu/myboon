@@ -64,7 +64,7 @@ function statusFrom(error: unknown): number | null {
 }
 
 /** Convert SDK, proxy and bridge failures into stable user-facing categories. */
-export function normalizePredictError(error: unknown, fallback = 'Predict action failed.'): NormalizedPredictError {
+export function normalizePredictError(error: unknown, fallback = 'Polymarket action failed.'): NormalizedPredictError {
   const raw = errorText(error);
   const text = raw.toLowerCase();
   const status = statusFrom(error);
@@ -90,8 +90,8 @@ export function normalizePredictError(error: unknown, fallback = 'Predict action
     return {
       kind: 'network', code: 'RATE_LIMITED',
       message: retryAfter
-        ? `Predict is busy. Try again in ${Math.ceil(retryAfter)} seconds.`
-        : 'Predict is busy. Try again shortly.',
+        ? `Polymarket is busy. Try again in ${Math.ceil(retryAfter)} seconds.`
+        : 'Polymarket is busy. Try again shortly.',
       retryable: true, status: 429, retryAfter,
     };
   }
@@ -99,14 +99,14 @@ export function normalizePredictError(error: unknown, fallback = 'Predict action
     const sdkCode = error.code ?? 'REQUEST_REJECTED';
     if (error.status === 401 || /auth|api.?key|credential|builder.auth/u.test(text)) {
       return {
-        kind: 'authentication', code: sdkCode, message: 'Predict authentication failed. Reconnect and try again.',
+        kind: 'authentication', code: sdkCode, message: 'Polymarket authentication failed. Reconnect and try again.',
         retryable: true, status: error.status, retryAfter,
       };
     }
     if (error.status === 403 || /restrict|geoblock|not available in|closed.only/u.test(text)) {
       return {
         kind: 'restriction', code: sdkCode,
-        message: raw || 'This Predict action is restricted for the current account or location.',
+        message: raw || 'This Polymarket action is restricted for the current account or location.',
         retryable: false, status: error.status, retryAfter,
       };
     }
@@ -122,7 +122,7 @@ export function normalizePredictError(error: unknown, fallback = 'Predict action
     return { kind: 'order_waiting', code: 'ORDER_WAITING', message: 'Submitted successfully; confirmation is still pending.', retryable: false };
   }
   if (error instanceof TransportError || error instanceof UnexpectedResponseError) {
-    return { kind: 'network', code: 'NETWORK_FAILED', message: 'Predict is temporarily unreachable. Try again.', retryable: true };
+    return { kind: 'network', code: 'NETWORK_FAILED', message: 'Polymarket is temporarily unreachable. Try again.', retryable: true };
   }
   if (error instanceof UserInputError) {
     return { kind: 'order_rejected', code: 'INVALID_INPUT', message: raw || fallback, retryable: false };
@@ -162,13 +162,13 @@ export function normalizePredictError(error: unknown, fallback = 'Predict action
     return { kind: 'relayer', code: 'RELAYER_FAILED', message: raw || 'The Polymarket transaction failed.', retryable: true };
   }
   if (status === 401 || status === 403 || /auth|api.?key|credential|builder.auth/u.test(text)) {
-    return { kind: 'authentication', code: 'AUTH_FAILED', message: 'Predict authentication failed. Reconnect and try again.', retryable: true, ...(status ? { status } : {}) };
+    return { kind: 'authentication', code: 'AUTH_FAILED', message: 'Polymarket authentication failed. Reconnect and try again.', retryable: true, ...(status ? { status } : {}) };
   }
   if (
     (status !== null && (status === 408 || status === 429 || status >= 500))
     || /network|fetch failed|timeout|timed out|transport|non-json|proxy/u.test(text)
   ) {
-    return { kind: 'network', code: 'NETWORK_FAILED', message: 'Predict is temporarily unreachable. Try again.', retryable: true, ...(status ? { status } : {}) };
+    return { kind: 'network', code: 'NETWORK_FAILED', message: 'Polymarket is temporarily unreachable. Try again.', retryable: true, ...(status ? { status } : {}) };
   }
   return { kind: 'unknown', code: 'PREDICT_FAILED', message: raw || fallback, retryable: true };
 }

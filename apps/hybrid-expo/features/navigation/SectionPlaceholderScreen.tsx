@@ -4,7 +4,7 @@ import { FeedHeader } from '@/features/feed/components/FeedHeader';
 import { semantic, tokens } from '@/theme';
 
 interface SectionPlaceholderScreenProps {
-  title: 'Predict' | 'Swap' | 'Trade';
+  title: 'Polymarket' | 'Swap' | 'Trade';
 }
 
 export function SectionPlaceholderScreen({ title }: SectionPlaceholderScreenProps) {

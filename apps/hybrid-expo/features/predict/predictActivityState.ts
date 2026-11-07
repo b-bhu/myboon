@@ -109,7 +109,7 @@ function remainingOrderShares(order: OpenOrder): number {
 }
 
 function orderMarketTitle(order: OpenOrder): string {
-  if (!order.market) return 'Prediction market';
+  if (!order.market) return 'Polymarket market';
   return formatPredictTitle({ title: order.market, slug: order.market });
 }
 
@@ -343,7 +343,7 @@ export function getPredictOrderGuardrail(params: {
     return { blocking: true, title: 'Market closed', message: 'This market is no longer accepting new picks.' };
   }
   if (params.walletReady === false) {
-    return { blocking: true, title: 'Wallet session needed', message: 'Reconnect your Predict wallet to place a pick.' };
+    return { blocking: true, title: 'Wallet session needed', message: 'Reconnect your Polymarket wallet to place a pick.' };
   }
   if (!Number.isFinite(params.amount) || params.amount <= 0) {
     return { blocking: true, title: 'Enter an amount', message: 'Choose how much cash to put in.' };

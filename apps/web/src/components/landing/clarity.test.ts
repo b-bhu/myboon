@@ -19,7 +19,7 @@ test('strip: three phones in Read → Pick → Act order with real screenshots',
 
 test('tiles: Polymarket, Pacifica, Phoenix, Meteora with a kind and a viz', () => {
   assert.deepEqual(TILE_DEFS.map((t) => t.name), ['Polymarket', 'Pacifica', 'Phoenix', 'Meteora'])
-  assert.deepEqual(TILE_DEFS.map((t) => t.kind), ['Predict', 'Perps', 'Spot', 'Earn'])
+  assert.deepEqual(TILE_DEFS.map((t) => t.kind), ['Polymarket', 'Perps', 'Spot', 'Earn'])
   for (const t of TILE_DEFS) {
     assert.ok(t.logo.startsWith('/landing/logo-'), t.logo)
     assert.ok(['odds', 'perps', 'spot', 'earn'].includes(t.viz), t.viz)

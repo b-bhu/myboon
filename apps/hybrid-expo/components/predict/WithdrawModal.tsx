@@ -512,7 +512,7 @@ export function WithdrawModal({
                 </Text>
               </View>
               {cashBalance === null ? (
-                <Text style={styles.errorHint}>Refresh your Predict balance before withdrawing.</Text>
+                <Text style={styles.errorHint}>Refresh your Polymarket balance before withdrawing.</Text>
               ) : null}
 
               {routeLoading && (
@@ -593,7 +593,7 @@ export function WithdrawModal({
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>From</Text>
-                  <Text style={styles.confirmValue}>Predict deposit wallet</Text>
+                  <Text style={styles.confirmValue}>Polymarket deposit wallet</Text>
                 </View>
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>To</Text>
