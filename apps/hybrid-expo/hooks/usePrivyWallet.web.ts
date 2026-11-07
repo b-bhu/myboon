@@ -6,7 +6,7 @@ export interface PrivyWalletState {
   shortAddress: string | null;
   loginWithGoogle: () => Promise<void>;
   sendEmailOTP: (email: string) => Promise<void>;
-  loginWithEmailOTP: (code: string) => Promise<void>;
+  loginWithEmailOTP: (code: string, email?: string) => Promise<void>;
   disconnect: () => Promise<void>;
   waitForWallet: () => Promise<void>;
   signMessage: ((message: Uint8Array) => Promise<Uint8Array>) | null;

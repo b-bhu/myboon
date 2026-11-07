@@ -1,14 +1,15 @@
 /**
  * ConnectionSheet — the one connection surface in the product.
  *
- * Staged, not a flat list: create a wallet (email / Google → Privy) or use one
- * you already have (Seeker / Phantom → Mobile Wallet Adapter). Already-have
- * calls `connectExternal`, which authorizes MWA and never creates a Privy
- * wallet. Login and wallet setup are separate tries: a bad code stays on the
- * code step, and a failed `waitForWallet` / `create()` retries only the wallet.
+ * The first step is an email field and Continue (Privy email OTP), with
+ * Connect external wallet underneath on Solana. That action calls
+ * `connectExternal` (Mobile Wallet Adapter) and never creates a Privy wallet.
+ * Login and wallet setup are separate tries: a bad code stays on the code
+ * step, and a failed `waitForWallet` / `create()` retries only the wallet.
  *
- * Visual language follows the approved connect mock
- * (`docs/mockups/wallet-connect`) using this app's theme tokens.
+ * Visual language follows the connect mock (`docs/mockups/wallet-connect`)
+ * using this app's theme tokens. Auth, clipboard, and export are the real
+ * calls, not the mock's timers.
  *
  * Model: docs/modules/wallet/specs/wallet_connectivity.md ("The connection modal")
  */
@@ -19,7 +20,6 @@ import {
   ActivityIndicator,
   Animated,
   Keyboard,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -29,17 +29,17 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import type { Chain } from '@/features/chain/chain.contract';
 import { useChainActivation } from '@/features/chain/activation';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { availableOptions } from '@/features/wallet/components/connect.options';
 import {
   CONNECT_COPY,
-  EXTERNAL_WALLET_CHOICES,
   INITIAL_CONNECT_FLOW,
   assertPrivyHomeUrl,
   beginPrivyExport,
@@ -47,7 +47,7 @@ import {
   interpretPrivyExportSession,
   classifyWalletSetupError,
   connectedChainLabel,
-  externalWaitingLabel,
+  emailEntryError,
   isUserCancelled,
   otpFailureMessage,
   reduceConnectFlow,
@@ -55,7 +55,6 @@ import {
   showsLogout,
   type ConnectFlowEvent,
   type ConnectFlowState,
-  type ExternalWalletChoice,
   type LinkedKind,
 } from '@/features/wallet/components/connect.flow';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
@@ -94,10 +93,10 @@ function useConnectFlow(
     && decided.current
     && session.linked
     && flow.linked !== session.linked
-    && (flow.step.kind === 'choice' || flow.step.kind === 'fail_setup')
+    && (flow.step.kind === 'entry' || flow.step.kind === 'fail_setup')
   ) {
     // The session can land a moment after the sheet opens. Show the connected
-    // sheet once it does, instead of leaving the user on the choice screen.
+    // sheet once it does, instead of leaving the user on the email form.
     display = reduceConnectFlow(flow, openEvent);
     if (display !== flow) setFlow(display);
   }
@@ -143,6 +142,8 @@ export function ConnectionSheet({
   });
 
   const [emailInput, setEmailInput] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailFocused, setEmailFocused] = useState(false);
   const [sentEmail, setSentEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpError, setOtpError] = useState<string | null>(null);
@@ -151,6 +152,7 @@ export function ConnectionSheet({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const exportInFlight = useRef(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const emailField = useRef<TextInput>(null);
   const otpInput = useRef<TextInput>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
   const [lifted, setLifted] = useState(false);
@@ -198,10 +200,13 @@ export function ConnectionSheet({
   }, []);
 
   const options = availableOptions(chain);
+  const emailAvailable = options.includes('email');
   const externalAvailable = options.includes('external_wallet');
-  const chrome = sheetChrome(flow, { email: sentEmail, externalAvailable });
+  const chrome = sheetChrome(flow, { email: sentEmail });
 
   const requestClose = useCallback(() => {
+    // The typed email stays. Closing and reopening, or backing out of the
+    // code step, should still show it.
     setBusy(false);
     setLifted(false);
     keyboardLift.setValue(0);
@@ -226,15 +231,15 @@ export function ConnectionSheet({
     finishActivated('privy');
   }, [activate, chain, evm, finishActivated, privy]);
 
-  const handleExternalWallet = useCallback(async (wallet: ExternalWalletChoice) => {
-    // Seeker / Phantom authorize through Mobile Wallet Adapter (external_mwa).
+  const handleExternalWallet = useCallback(async () => {
+    // Mobile Wallet Adapter (external_mwa). The system chooser picks the wallet.
     // connectExternal is that call. This path does not sign in or create a wallet.
     if (busy || chain !== 'solana') return;
     setActionError(null);
-    dispatch({ type: 'choose_external', wallet });
+    dispatch({ type: 'choose_external' });
     setBusy(true);
     try {
-      await solana.connectExternal(wallet === 'phantom' ? 'Phantom' : 'Seeker');
+      await solana.connectExternal();
       await activate('solana');
       finishActivated('external');
     } catch (error: unknown) {
@@ -251,17 +256,28 @@ export function ConnectionSheet({
     }
   }, [activate, busy, chain, dispatch, finishActivated, solana]);
 
-  const handleSendEmail = useCallback(async () => {
+  const handleContinue = useCallback(async () => {
     const email = emailInput.trim();
-    if (!email || busy) return;
+    const invalid = emailEntryError(email);
+    if (invalid) {
+      setEmailInput(email);
+      setEmailError(invalid);
+      emailField.current?.focus();
+      return;
+    }
+    if (busy) return;
+    setEmailInput(email);
+    setEmailError(null);
     setBusy(true);
     setActionError(null);
     try {
       await privy.sendEmailOTP(email);
       setSentEmail(email);
+      setOtpCode('');
+      setOtpError(null);
       dispatch({ type: 'code_sent' });
-    } catch (error: unknown) {
-      setActionError(error instanceof Error && error.message ? error.message : 'Failed to send code');
+    } catch {
+      dispatch({ type: 'login_failed' });
     } finally {
       setBusy(false);
     }
@@ -272,7 +288,7 @@ export function ConnectionSheet({
     setBusy(true);
     setOtpError(null);
     try {
-      await privy.loginWithEmailOTP(otpCode.trim());
+      await privy.loginWithEmailOTP(otpCode.trim(), sentEmail);
     } catch (error: unknown) {
       setOtpError(otpFailureMessage(error));
       dispatch({ type: 'otp_rejected' });
@@ -287,30 +303,7 @@ export function ConnectionSheet({
     } finally {
       setBusy(false);
     }
-  }, [busy, dispatch, otpCode, privy, runWalletSetup]);
-
-  const handleGoogle = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    dispatch({ type: 'start_google' });
-    try {
-      await privy.loginWithGoogle();
-    } catch (error: unknown) {
-      if (isUserCancelled(error)) dispatch({ type: 'login_cancelled' });
-      else dispatch({ type: 'login_failed' });
-      setBusy(false);
-      return;
-    }
-    dispatch({ type: 'login_succeeded' });
-    try {
-      await runWalletSetup();
-    } catch (error: unknown) {
-      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, privy, runWalletSetup]);
+  }, [busy, dispatch, otpCode, privy, runWalletSetup, sentEmail]);
 
   const handleRetryWallet = useCallback(async () => {
     if (busy) return;
@@ -332,10 +325,9 @@ export function ConnectionSheet({
     setActionError(null);
     try {
       await privy.disconnect(selectMwaDisconnect(solana));
-      setEmailInput('');
-      setSentEmail('');
       setOtpCode('');
       setOtpError(null);
+      setEmailError(null);
       dispatch({ type: 'logout' });
     } catch (error: unknown) {
       setActionError(error instanceof Error && error.message ? error.message : 'Could not log out.');
@@ -390,6 +382,7 @@ export function ConnectionSheet({
   }, [busy, chain, deactivate, dispatch, flow.linked, onClose, privy, solana]);
 
   const goBack = useCallback(() => {
+    setOtpCode('');
     setOtpError(null);
     setActionError(null);
     dispatch({ type: 'back' });
@@ -408,24 +401,13 @@ export function ConnectionSheet({
         : []),
     ];
 
-  const privyDetail = privy.authMethod === 'google' ? 'Google' : 'Email';
-  const privyLabel = privy.identityEmail
-    ?? privy.identityName
-    ?? (privy.authMethod === 'google' ? 'Google account' : 'Email');
-  const externalName = flow.externalWallet === 'phantom'
-    ? CONNECT_COPY.phantom
-    : flow.externalWallet === 'seeker'
-      ? CONNECT_COPY.seeker
-      : 'Solana wallet';
-  const externalDetail = flow.externalWallet === 'seeker'
-    ? CONNECT_COPY.seekerHint
-    : CONNECT_COPY.phantomHint;
+  const privyLabel = privy.identityEmail ?? privy.identityName ?? CONNECT_COPY.emailDetail;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={requestClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={requestClose} statusBarTranslucent navigationBarTranslucent>
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? undefined : 'height'}
+        behavior={Platform.OS === 'ios' ? undefined : 'padding'}
       >
         <Animated.View
           style={[
@@ -475,64 +457,75 @@ export function ConnectionSheet({
               <WaitBlock title="Connect" body="Checking your session." />
             ) : null}
 
-            {flow.step.kind === 'choice' ? (
+            {flow.step.kind === 'entry' ? (
               <View style={styles.stack}>
-                <PrimaryButton
-                  label={CONNECT_COPY.createWallet}
-                  onPress={() => dispatch({ type: 'choose_create' })}
-                />
+                {emailAvailable ? (
+                  <View>
+                    <Text style={styles.fieldLabel}>{CONNECT_COPY.emailLabel}</Text>
+                    <View
+                      style={[
+                        styles.emailField,
+                        emailFocused && !emailError && styles.emailFieldFocused,
+                        emailError && styles.emailFieldInvalid,
+                      ]}
+                    >
+                      <EmailMark color={semantic.text.dim} />
+                      <TextInput
+                        ref={emailField}
+                        style={styles.emailInput}
+                        placeholder={CONNECT_COPY.emailPlaceholder}
+                        placeholderTextColor={semantic.text.dim}
+                        value={emailInput}
+                        onChangeText={(value) => {
+                          setEmailInput(value);
+                          if (emailError) setEmailError(null);
+                        }}
+                        onFocus={() => setEmailFocused(true)}
+                        onBlur={() => setEmailFocused(false)}
+                        onSubmitEditing={() => void handleContinue()}
+                        keyboardType="email-address"
+                        inputMode="email"
+                        autoCapitalize="none"
+                        autoComplete="email"
+                        autoCorrect={false}
+                        spellCheck={false}
+                        textContentType="emailAddress"
+                        enterKeyHint="go"
+                        returnKeyType="go"
+                        accessibilityLabel={CONNECT_COPY.emailLabel}
+                      />
+                    </View>
+                    {emailError ? (
+                      <Text style={styles.emailError} accessibilityLiveRegion="polite">{emailError}</Text>
+                    ) : null}
+                    <View style={styles.continueGap}>
+                      <PrimaryButton
+                        label={CONNECT_COPY.continue}
+                        busy={busy}
+                        onPress={() => void handleContinue()}
+                      />
+                    </View>
+                  </View>
+                ) : null}
                 {externalAvailable ? (
-                  <SecondaryButton
-                    label={CONNECT_COPY.alreadyHave}
-                    onPress={() => dispatch({ type: 'choose_have' })}
-                  />
+                  <View style={styles.externalWrap}>
+                    {flow.externalError ? <Text style={styles.errorText}>{flow.externalError}</Text> : null}
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.externalEntry,
+                        busy && styles.disabled,
+                        pressed && !busy && styles.pressed,
+                      ]}
+                      disabled={busy}
+                      onPress={() => void handleExternalWallet()}
+                      accessibilityRole="button"
+                      accessibilityLabel={CONNECT_COPY.connectExternal}
+                    >
+                      <WalletMark color={semantic.text.dim} />
+                      <Text style={styles.externalEntryText}>{CONNECT_COPY.connectExternal}</Text>
+                    </Pressable>
+                  </View>
                 ) : null}
-              </View>
-            ) : null}
-
-            {flow.step.kind === 'create' ? (
-              <View style={styles.stack}>
-                {options.includes('email') ? (
-                  <MethodRow
-                    title={CONNECT_COPY.continueEmail}
-                    detail={CONNECT_COPY.emailHint}
-                    mark={<View style={[styles.mark, styles.markEmail]}><EmailMark /></View>}
-                    onPress={() => dispatch({ type: 'choose_email' })}
-                  />
-                ) : null}
-                {options.includes('google') ? (
-                  <MethodRow
-                    title={CONNECT_COPY.continueGoogle}
-                    detail={CONNECT_COPY.googleHint}
-                    mark={<View style={[styles.mark, styles.markGoogle]}><GoogleMark /></View>}
-                    onPress={() => void handleGoogle()}
-                    disabled={busy}
-                  />
-                ) : null}
-              </View>
-            ) : null}
-
-            {flow.step.kind === 'email' ? (
-              <View style={styles.stack}>
-                <TextInput
-                  style={styles.field}
-                  placeholder="you@email.com"
-                  placeholderTextColor={semantic.text.faint}
-                  value={emailInput}
-                  onChangeText={setEmailInput}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoFocus
-                  accessibilityLabel="Email address"
-                />
-                {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
-                <PrimaryButton
-                  label={CONNECT_COPY.sendCode}
-                  disabled={!emailInput.trim()}
-                  busy={busy}
-                  onPress={() => void handleSendEmail()}
-                />
               </View>
             ) : null}
 
@@ -574,37 +567,12 @@ export function ConnectionSheet({
               </View>
             ) : null}
 
-            {flow.step.kind === 'signing_in' ? (
-              <WaitBlock title="Signing in" body={CONNECT_COPY.signingInBody} />
-            ) : null}
-
             {flow.step.kind === 'creating' ? (
               <WaitBlock title={CONNECT_COPY.creatingTitle} body={CONNECT_COPY.creatingBody} />
             ) : null}
 
-            {flow.step.kind === 'have' ? (
-              <View style={styles.stack}>
-                {flow.externalError ? <Text style={styles.errorText}>{flow.externalError}</Text> : null}
-                {EXTERNAL_WALLET_CHOICES.map((choice) => (
-                  <MethodRow
-                    key={choice.id}
-                    title={choice.name}
-                    detail={choice.detail}
-                    mark={choice.id === 'phantom'
-                      ? <View style={[styles.mark, styles.markPhantom]}><Text style={styles.markPhantomText}>◈</Text></View>
-                      : <View style={[styles.mark, styles.markSeeker]}><Text style={styles.markSeekerText}>S</Text></View>}
-                    onPress={() => void handleExternalWallet(choice.id)}
-                    disabled={busy}
-                  />
-                ))}
-              </View>
-            ) : null}
-
             {flow.step.kind === 'connecting_external' ? (
-              <WaitBlock
-                title={CONNECT_COPY.approveTitle}
-                body={`Waiting for ${externalWaitingLabel(flow.step.wallet)}.`}
-              />
+              <WaitBlock title={CONNECT_COPY.approveTitle} body={CONNECT_COPY.approveBody} />
             ) : null}
 
             {flow.step.kind === 'fail_login' ? (
@@ -648,21 +616,21 @@ export function ConnectionSheet({
               <View style={styles.stack}>
                 <View style={styles.ident}>
                   {flow.linked === 'privy' ? (
-                    privy.authMethod === 'google'
-                      ? <View style={[styles.identMark, styles.markGoogle]}><GoogleMark /></View>
-                      : <View style={[styles.identMark, styles.markEmail]}><EmailMark /></View>
-                  ) : flow.externalWallet === 'phantom' ? (
-                    <View style={[styles.identMark, styles.markPhantom]}><Text style={styles.markPhantomText}>◈</Text></View>
-                  ) : flow.externalWallet === 'seeker' ? (
-                    <View style={[styles.identMark, styles.markSeeker]}><Text style={styles.markSeekerText}>S</Text></View>
-                  ) : (
                     <View style={[styles.identMark, styles.markEmail]}>
-                      <MaterialIcons name="account-balance-wallet" size={18} color={tokens.colors.viridian} />
+                      <EmailMark color={tokens.colors.viridian} size={22} />
+                    </View>
+                  ) : (
+                    <View style={styles.identMark}>
+                      <WalletMark color={semantic.text.primary} size={22} />
                     </View>
                   )}
                   <View style={styles.identText}>
-                    <Text style={styles.identName}>{flow.linked === 'privy' ? privyLabel : externalName}</Text>
-                    <Text style={styles.identDetail}>{flow.linked === 'privy' ? privyDetail : externalDetail}</Text>
+                    <Text style={styles.identName}>
+                      {flow.linked === 'privy' ? privyLabel : CONNECT_COPY.externalWallet}
+                    </Text>
+                    <Text style={styles.identDetail}>
+                      {flow.linked === 'privy' ? CONNECT_COPY.emailDetail : CONNECT_COPY.externalDetail}
+                    </Text>
                   </View>
                 </View>
                 {chainRows.map((row) => (
@@ -868,48 +836,17 @@ function DangerButton({
   );
 }
 
-function MethodRow({
-  title,
-  detail,
-  mark,
-  onPress,
-  disabled,
-}: {
-  title: string;
-  detail: string;
-  mark: ReactNode;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
+function EmailMark({ color, size = 20 }: { color: string; size?: number }) {
   return (
-    <Pressable
-      style={({ pressed }) => [styles.row, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={title}
-    >
-      {mark}
-      <View style={styles.rowText}>
-        <Text style={styles.rowTitle}>{title}</Text>
-        <Text style={styles.rowDetail}>{detail}</Text>
-      </View>
-      <MaterialIcons name="chevron-right" size={22} color={semantic.text.faint} />
-    </Pressable>
-  );
-}
-
-function EmailMark() {
-  return (
-    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <Path
         d="M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"
-        stroke={tokens.colors.viridian}
+        stroke={color}
         strokeWidth={1.75}
       />
       <Path
         d="m4.5 8 6.7 5.1a1.5 1.5 0 0 0 1.8 0L19.5 8"
-        stroke={tokens.colors.viridian}
+        stroke={color}
         strokeWidth={1.75}
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -918,13 +855,23 @@ function EmailMark() {
   );
 }
 
-function GoogleMark() {
+function WalletMark({ color, size = 20 }: { color: string; size?: number }) {
   return (
-    <Svg width={18} height={18} viewBox="0 0 24 24">
-      <Path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-      <Path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-      <Path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-      <Path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M19 7V5a2 2 0 0 0-2-2H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H6a1 1 0 0 1 0-2"
+        stroke={color}
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M21 12h-5v5h5"
+        stroke={color}
+        strokeWidth={1.75}
+        strokeLinejoin="round"
+      />
+      <Circle cx={17.5} cy={14.5} r={0.75} fill={color} />
     </Svg>
   );
 }
@@ -1052,65 +999,68 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.85,
   },
-  row: {
-    minHeight: 56,
-    borderRadius: 14,
-    backgroundColor: semantic.background.surface,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.md,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  rowText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowTitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: semantic.text.primary,
-  },
-  rowDetail: {
-    marginTop: 1,
-    fontSize: 13,
-    color: semantic.text.faint,
-  },
-  mark: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   markEmail: {
     backgroundColor: tokens.colors.lift,
   },
-  markGoogle: {
-    backgroundColor: '#fff',
+  fieldLabel: {
+    marginBottom: 8,
+    color: semantic.text.dim,
+    fontSize: 13,
+    fontWeight: '500',
   },
-  markSeeker: {
-    backgroundColor: '#5b21b6',
-  },
-  markPhantom: {
-    backgroundColor: '#ab9ff2',
-  },
-  markSeekerText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  markPhantomText: {
-    color: '#1b1438',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  field: {
+  emailField: {
     minHeight: 52,
     borderRadius: 14,
     backgroundColor: semantic.background.surface,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     paddingHorizontal: 14,
+  },
+  emailFieldFocused: {
+    borderColor: tokens.colors.viridian,
+  },
+  emailFieldInvalid: {
+    borderColor: tokens.colors.vermillion,
+  },
+  emailInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 52,
     fontSize: 16,
+    color: semantic.text.primary,
+    paddingVertical: 0,
+  },
+  emailError: {
+    marginTop: 8,
+    color: semantic.text.primary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  continueGap: {
+    marginTop: 12,
+  },
+  externalWrap: {
+    marginTop: 8,
+    gap: tokens.spacing.sm,
+  },
+  externalEntry: {
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  externalEntryText: {
+    fontSize: 15,
+    fontWeight: '500',
     color: semantic.text.primary,
   },
   otpRow: {
@@ -1207,6 +1157,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
+    backgroundColor: semantic.background.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },

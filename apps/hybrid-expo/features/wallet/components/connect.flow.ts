@@ -2,32 +2,26 @@
  * connect.flow — the connection sheet's step machine.
  *
  * Kept apart from `ConnectionSheet.tsx` so login vs wallet setup, the
- * already-have path, and the export entry can be tested without React Native.
+ * external-wallet path, and the export entry can be tested without React Native.
  *
- * The sheet is a staged choice, not a flat list: create (email / Google →
- * Privy) or already-have (Seeker / Phantom → Mobile Wallet Adapter). The
- * already-have events never mark the session as Privy and never count as a
- * wallet-setup failure. That is what stops a cancelled external connect from
- * being retried as `waitForWallet()` / `create()`.
+ * The first step is one sheet: an email address (Privy email OTP) and, on
+ * Solana, one external-wallet action. That action is Mobile Wallet Adapter.
+ * It never marks the session as Privy and never counts as a wallet-setup
+ * failure, so a cancelled external connect cannot be retried as
+ * `waitForWallet()` / `create()`.
  *
  * Model: docs/mockups/wallet-connect/NOTES.md and issue #316 (folded into #590).
  */
-
-export type ExternalWalletChoice = 'seeker' | 'phantom';
 
 export type LinkedKind = 'privy' | 'external';
 
 export type WalletSetupFailure = 'timeout' | 'create';
 
 export type ConnectStep =
-  | { kind: 'choice' }
-  | { kind: 'create' }
-  | { kind: 'email' }
+  | { kind: 'entry' }
   | { kind: 'otp' }
-  | { kind: 'signing_in' }
   | { kind: 'creating' }
-  | { kind: 'have' }
-  | { kind: 'connecting_external'; wallet: ExternalWalletChoice }
+  | { kind: 'connecting_external' }
   | { kind: 'fail_login' }
   | { kind: 'fail_setup' }
   | { kind: 'connected' }
@@ -45,7 +39,6 @@ export interface ConnectFlowState {
   setupOutstanding: boolean;
   setupFailure: WalletSetupFailure | null;
   linked: LinkedKind | null;
-  externalWallet: ExternalWalletChoice | null;
   externalError: string | null;
 }
 
@@ -58,13 +51,8 @@ export type ConnectFlowEvent =
       hasEmbeddedWallet: boolean;
     }
   | { type: 'back' }
-  | { type: 'choose_create' }
-  | { type: 'choose_have' }
-  | { type: 'choose_email' }
   | { type: 'code_sent' }
   | { type: 'otp_rejected' }
-  | { type: 'start_google' }
-  | { type: 'login_cancelled' }
   | { type: 'login_failed' }
   | { type: 'login_succeeded' }
   | { type: 'retry_login' }
@@ -72,7 +60,7 @@ export type ConnectFlowEvent =
   | { type: 'wallet_setup_succeeded'; linked: LinkedKind }
   | { type: 'retry_wallet' }
   | { type: 'logout' }
-  | { type: 'choose_external'; wallet: ExternalWalletChoice }
+  | { type: 'choose_external' }
   | { type: 'external_cancelled' }
   | { type: 'external_failed'; message: string }
   | { type: 'open_export' }
@@ -94,16 +82,14 @@ export const CONNECT_COPY = {
   retryWallet: 'Try wallet again',
   logoutAndRestart: 'Log out and start over',
   trySignInAgain: 'Try again',
-  createWallet: 'Create a new wallet',
-  alreadyHave: 'I already have a wallet',
-  continueEmail: 'Continue with email',
-  emailHint: 'One-time code',
-  continueGoogle: 'Continue with Google',
-  googleHint: 'Uses your Google account',
-  seeker: 'Seeker',
-  seekerHint: 'Solana Mobile',
-  phantom: 'Phantom',
-  phantomHint: 'Mobile Wallet Adapter',
+  emailLabel: 'Email',
+  emailPlaceholder: 'you@example.com',
+  emailInvalid: 'Enter a valid email address.',
+  emailDetail: 'Email',
+  continue: 'Continue',
+  connectExternal: 'Connect external wallet',
+  externalWallet: 'External wallet',
+  externalDetail: 'Solana',
   export: 'Export / recovery',
   exportWarning: 'Anyone with this key controls the funds. MyBoon never sees it.',
   continuePrivy: 'Continue with Privy',
@@ -114,11 +100,10 @@ export const CONNECT_COPY = {
   backToWallet: 'Back to wallet',
   copy: 'Copy',
   copied: 'Copied',
-  sendCode: 'Send code',
   verify: 'Verify',
   paste: 'Paste',
   signInFailedTitle: 'Sign-in failed',
-  signInFailedBody: "Couldn't verify email or Google.",
+  signInFailedBody: "Couldn't verify your email.",
   setupFailedTitle: 'Wallet setup failed',
   finishSetupTitle: 'Finish wallet setup',
   setupFailedLead: "You're signed in, but the wallet didn't finish connecting.",
@@ -127,10 +112,10 @@ export const CONNECT_COPY = {
   finishSetupBody: "You're signed in. Finish connecting the wallet.",
   exportIntro: 'Opens Privy so you can export or recover this wallet. Sign in there if Privy asks.',
   exportFailed: "Couldn't open Privy. Nothing was exported.",
-  creatingTitle: 'Creating your wallet',
+  creatingTitle: 'Setting up your wallet',
   creatingBody: 'This only takes a moment.',
-  signingInBody: 'Waiting for Google.',
   approveTitle: 'Approve in your wallet',
+  approveBody: 'Approve the request in your wallet.',
   openingPrivyTitle: 'Opening Privy',
   openingPrivyBody: 'Complete export or recovery there.',
   disconnectTitle: 'Disconnect this wallet?',
@@ -142,34 +127,28 @@ export const CONNECT_COPY = {
 /** Logout appears on the third wallet-setup failure, matching the approved mock. */
 export const WALLET_SETUP_LOGOUT_AFTER = 3;
 
-export const EXTERNAL_WALLET_CHOICES: readonly {
-  id: ExternalWalletChoice;
-  name: string;
-  detail: string;
-}[] = [
-  { id: 'seeker', name: CONNECT_COPY.seeker, detail: CONNECT_COPY.seekerHint },
-  { id: 'phantom', name: CONNECT_COPY.phantom, detail: CONNECT_COPY.phantomHint },
-];
-
 const BACK_STEPS = new Set<ConnectStep['kind']>([
-  'create',
-  'email',
   'otp',
-  'have',
   'export',
   'export_failed',
 ]);
 
 export const INITIAL_CONNECT_FLOW: ConnectFlowState = {
-  step: { kind: 'choice' },
+  step: { kind: 'entry' },
   history: [],
   setupAttempts: 0,
   setupOutstanding: false,
   setupFailure: null,
   linked: null,
-  externalWallet: null,
   externalError: null,
 };
+
+/** Empty or malformed addresses stay on the first sheet. One message for both. */
+export function emailEntryError(value: string): string | null {
+  const email = value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return CONNECT_COPY.emailInvalid;
+  return null;
+}
 
 export function canGoBack(state: ConnectFlowState): boolean {
   return state.history.length > 0 && BACK_STEPS.has(state.step.kind);
@@ -188,34 +167,20 @@ export function connectedChainLabel(chain: 'solana' | 'evm'): 'Solana' | 'EVM' {
   return chain === 'evm' ? 'EVM' : 'Solana';
 }
 
-export function choiceSubtitle(externalAvailable: boolean): string {
-  return externalAvailable
-    ? 'Create a MyBoon wallet or use one you already have.'
-    : 'Create a MyBoon wallet with email or Google.';
-}
-
 export function sheetChrome(
   state: ConnectFlowState,
-  options: { email?: string; externalAvailable: boolean },
+  options: { email?: string },
 ): { title: string; subtitle: string } {
   switch (state.step.kind) {
-    case 'choice':
-      return { title: 'Connect', subtitle: choiceSubtitle(options.externalAvailable) };
-    case 'create':
-      return { title: 'Create a wallet', subtitle: 'Continue with email or Google.' };
-    case 'email':
-      return { title: 'Email', subtitle: "We'll send a one-time code." };
+    case 'entry':
+      return { title: 'Connect to MyBoon', subtitle: '' };
     case 'otp':
       return {
         title: 'Enter code',
         subtitle: options.email ? `Sent to ${options.email}` : 'Enter the code you were sent.',
       };
-    case 'signing_in':
-      return { title: 'Signing in', subtitle: '' };
     case 'creating':
-      return { title: 'Creating wallet', subtitle: '' };
-    case 'have':
-      return { title: 'Connect a wallet', subtitle: 'Seeker or Phantom via Solana Mobile.' };
+      return { title: 'Setting up wallet', subtitle: '' };
     case 'connecting_external':
       return { title: 'Waiting for wallet', subtitle: '' };
     case 'fail_login':
@@ -240,10 +205,6 @@ export function sheetChrome(
       return _exhaustive;
     }
   }
-}
-
-export function externalWaitingLabel(wallet: ExternalWalletChoice): string {
-  return wallet === 'phantom' ? CONNECT_COPY.phantom : CONNECT_COPY.seeker;
 }
 
 /**
@@ -271,10 +232,9 @@ export function otpFailureMessage(error: unknown): string {
 }
 
 /**
- * Already-have is Mobile Wallet Adapter only. The name is a hint for web,
- * where an extension can be selected. Native MWA opens the system chooser
- * either way — it cannot pre-select Seeker or Phantom — and must not create
- * a Privy wallet to "fill in" that gap.
+ * The external action is Mobile Wallet Adapter only. Native MWA opens the
+ * system chooser; this sheet does not pick a provider, and it must not create
+ * a Privy wallet to fill that in.
  */
 export function externalConnectBackend(): 'external_mwa' {
   return 'external_mwa';
@@ -375,7 +335,7 @@ export function reduceConnectFlow(state: ConnectFlowState, event: ConnectFlowEve
       }
       return {
         ...state,
-        step: { kind: 'choice' },
+        step: { kind: 'entry' },
         linked: null,
         history: [],
         externalError: null,
@@ -387,37 +347,20 @@ export function reduceConnectFlow(state: ConnectFlowState, event: ConnectFlowEve
       const step = state.history[state.history.length - 1];
       return { ...state, history, step, externalError: null };
     }
-    case 'choose_create':
-      if (state.step.kind !== 'choice') return state;
-      return remember(state, { kind: 'create' });
-    case 'choose_have':
-      if (state.step.kind !== 'choice') return state;
-      return remember(state, { kind: 'have' });
-    case 'choose_email':
-      if (state.step.kind !== 'create') return state;
-      return remember(state, { kind: 'email' });
     case 'code_sent':
-      if (state.step.kind !== 'email') return state;
-      return remember(state, { kind: 'otp' });
+      if (state.step.kind !== 'entry') return state;
+      return { ...remember(state, { kind: 'otp' }), externalError: null };
     case 'otp_rejected':
       if (state.step.kind !== 'otp') return state;
       return state;
-    case 'start_google':
-      if (state.step.kind !== 'create') return state;
-      return { ...state, step: { kind: 'signing_in' } };
-    case 'login_cancelled':
-      if (state.step.kind !== 'signing_in') return state;
-      return { ...state, step: { kind: 'create' }, history: [{ kind: 'choice' }] };
     case 'login_failed':
-      if (state.step.kind !== 'signing_in' && state.step.kind !== 'email' && state.step.kind !== 'otp') {
-        return state;
-      }
-      return { ...state, step: { kind: 'fail_login' }, history: [] };
+      if (state.step.kind !== 'entry') return state;
+      return { ...state, step: { kind: 'fail_login' }, history: [], externalError: null };
     case 'retry_login':
       if (state.step.kind !== 'fail_login') return state;
-      return { ...state, step: { kind: 'create' }, history: [{ kind: 'choice' }] };
+      return { ...state, step: { kind: 'entry' }, history: [] };
     case 'login_succeeded':
-      if (state.step.kind !== 'otp' && state.step.kind !== 'signing_in') return state;
+      if (state.step.kind !== 'otp') return state;
       return {
         ...state,
         step: { kind: 'creating' },
@@ -457,19 +400,18 @@ export function reduceConnectFlow(state: ConnectFlowState, event: ConnectFlowEve
     case 'disconnected':
       return { ...INITIAL_CONNECT_FLOW };
     case 'choose_external':
-      if (state.step.kind !== 'have') return state;
+      if (state.step.kind !== 'entry') return state;
       return {
         ...state,
-        step: { kind: 'connecting_external', wallet: event.wallet },
-        externalWallet: event.wallet,
+        step: { kind: 'connecting_external' },
         externalError: null,
       };
     case 'external_cancelled':
       if (state.step.kind !== 'connecting_external') return state;
-      return { ...state, step: { kind: 'have' }, externalError: null };
+      return { ...state, step: { kind: 'entry' }, externalError: null };
     case 'external_failed':
       if (state.step.kind !== 'connecting_external') return state;
-      return { ...state, step: { kind: 'have' }, externalError: event.message };
+      return { ...state, step: { kind: 'entry' }, externalError: event.message };
     case 'open_export':
       if (state.step.kind !== 'connected' || state.linked !== 'privy') return state;
       return remember(state, { kind: 'export' });

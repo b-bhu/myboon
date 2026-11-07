@@ -3,7 +3,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AccessibilityInfo,
   findNodeHandle,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -12,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { swapTheme as color } from '@/features/swap/swap.theme';
 
@@ -57,6 +57,8 @@ export function WalletSecondarySheet({
       transparent
       animationType={reducedMotion ? 'none' : dialog ? 'fade' : 'slide'}
       onRequestClose={close}
+      statusBarTranslucent
+      navigationBarTranslucent
       onShow={() => {
         if (!dialog) return;
         const heading = findNodeHandle(headingRef.current);
@@ -65,7 +67,7 @@ export function WalletSecondarySheet({
     >
       <KeyboardAvoidingView
         style={[styles.overlay, dialog && styles.dialogOverlay]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
       >
         <Pressable
           style={styles.backdrop}

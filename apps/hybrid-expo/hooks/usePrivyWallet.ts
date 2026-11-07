@@ -37,8 +37,11 @@ export interface PrivyWalletState {
   loginWithGoogle: () => Promise<void>;
   /** Send email OTP code */
   sendEmailOTP: (email: string) => Promise<void>;
-  /** Login with email OTP code */
-  loginWithEmailOTP: (code: string) => Promise<void>;
+  /**
+   * Login with the email OTP. Pass the same address `sendEmailOTP` used.
+   * Privy's Expo hook recommends it on `loginWithCode`.
+   */
+  loginWithEmailOTP: (code: string, email?: string) => Promise<void>;
   /** Log out of Privy */
   disconnect: (disconnectMwa?: () => Promise<unknown>) => Promise<void>;
   /** Wait until the embedded Solana wallet is hydrated after auth */
@@ -213,8 +216,8 @@ export function usePrivyWallet(): PrivyWalletState {
     sendEmailOTP: async (email: string) => {
       await sendEmailCode({ email });
     },
-    loginWithEmailOTP: async (code: string) => {
-      await loginWithEmailCode({ code });
+    loginWithEmailOTP: async (code: string, email?: string) => {
+      await loginWithEmailCode(email ? { code, email } : { code });
     },
     disconnect: async (disconnectMwa) => {
       // Logout is one of the two explicit session boundaries (the other is
