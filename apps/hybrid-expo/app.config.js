@@ -66,7 +66,7 @@ function assertE2EStubIsFencedOff(env) {
       '',
       `Detected: ${E2E_FLAG}=1, EAS_BUILD_PROFILE=${profile}, NODE_ENV=${env.NODE_ENV ?? '(none)'}`,
       '',
-      `Fix: unset ${E2E_FLAG} for this build. It belongs only to the Predict E2E`,
+      `Fix: unset ${E2E_FLAG} for this build. It belongs only to the Polymarket E2E`,
       'harness (playwright.predict.config.ts), which sets it on its own dev server.',
     ].join('\n'),
   );

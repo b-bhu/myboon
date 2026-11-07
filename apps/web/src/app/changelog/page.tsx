@@ -55,10 +55,10 @@ const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-03-28',
     version: '0.4.0',
-    title: 'Dome migration + Polymarket API',
+    title: 'Dome migration + predict API',
     description:
       'Migrated the API layer to Dome architecture and added prediction market endpoints for market data and pricing.',
-    tags: ['api', 'polymarket'],
+    tags: ['api', 'predict'],
   },
   {
     date: '2026-03-25',
@@ -89,6 +89,7 @@ const CHANGELOG: ChangelogEntry[] = [
 const TAG_COLORS: Record<string, string> = {
   mobile: 'bg-tertiary/15 text-tertiary',
   polymarket: 'bg-primary/15 text-primary',
+  predict: 'bg-primary/15 text-primary',
   wallet: 'bg-secondary/20 text-secondary',
   api: 'bg-primary-fixed/15 text-primary-fixed',
   trade: 'bg-tertiary/15 text-tertiary',

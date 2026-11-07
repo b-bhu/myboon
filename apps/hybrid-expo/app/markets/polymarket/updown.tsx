@@ -20,14 +20,14 @@ import {
   AppTopBarCashPill,
   AppTopBarIconButton,
 } from '@/components/AppTopBar';
-import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
-import { CycleChart, type CyclePoint } from '@/features/predict/components/CycleChart';
-import { OrderComposerSheet, type ComposerMode } from '@/features/predict/components/OrderComposerSheet';
-import { truncateUsd } from '@/features/predict/formatPredictMoney';
-import { buildExecutableBuyQuote, getBestAsk } from '@/features/predict/orderbookQuote';
-import { getMinimumOrderGuardrail } from '@/features/predict/minimumOrderSize';
-import { makePendingOpenOrder } from '@/features/predict/pendingOpenOrders';
-import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
+import { CashOutConfirmModal } from '@/features/polymarket/components/CashOutConfirmModal';
+import { CycleChart, type CyclePoint } from '@/features/polymarket/components/CycleChart';
+import { OrderComposerSheet, type ComposerMode } from '@/features/polymarket/components/OrderComposerSheet';
+import { truncateUsd } from '@/features/polymarket/formatPolymarketMoney';
+import { buildExecutableBuyQuote, getBestAsk } from '@/features/polymarket/orderbookQuote';
+import { getMinimumOrderGuardrail } from '@/features/polymarket/minimumOrderSize';
+import { makePendingOpenOrder } from '@/features/polymarket/pendingOpenOrders';
+import { usePositionSellQuotes } from '@/features/polymarket/positionSellQuotes';
 import {
   fetchClobBalance,
   fetchLivePrices,
@@ -39,9 +39,9 @@ import {
   type PortfolioPosition,
   type UpDownHistory,
   type UpDownRound,
-} from '@/features/predict/predict.api';
-import type { Orderbook } from '@/features/predict/predict.types';
-import { usePredictQuickAmounts } from '@/features/predict/usePredictQuickAmounts';
+} from '@/features/polymarket/polymarket.api';
+import type { Orderbook } from '@/features/polymarket/polymarket.types';
+import { usePolymarketQuickAmounts } from '@/features/polymarket/usePolymarketQuickAmounts';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
@@ -194,13 +194,13 @@ function CompactBook({ books, loading }: { books: BooksState; loading: boolean }
   );
 }
 
-export default function PredictUpDownScreen() {
+export default function PolymarketUpDownScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: viewportWidth } = useWindowDimensions();
   const poly = usePolymarketWallet();
   const connectSheet = useConnectionSheet('evm');
-  const { quickAmounts } = usePredictQuickAmounts();
+  const { quickAmounts } = usePolymarketQuickAmounts();
 
   const [asset, setAsset] = useState<Asset>('btc');
   const [duration, setDuration] = useState<Duration>('hourly');
@@ -922,8 +922,8 @@ const styles = StyleSheet.create({
   negative: { color: tokens.colors.vermillion },
   pickRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingVertical: 14, backgroundColor: tokens.colors.surface },
   pickButton: { flex: 1, minHeight: 88, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 16, borderCurve: 'continuous', borderWidth: 1 },
-  pickHigher: { backgroundColor: tokens.colors.ground, borderColor: semantic.predict.outcomeYesBorder },
-  pickLower: { backgroundColor: tokens.colors.ground, borderColor: semantic.predict.outcomeNoBorder },
+  pickHigher: { backgroundColor: tokens.colors.ground, borderColor: semantic.polymarket.outcomeYesBorder },
+  pickLower: { backgroundColor: tokens.colors.ground, borderColor: semantic.polymarket.outcomeNoBorder },
   pickHigherSelected: { backgroundColor: tokens.colors.viridian, borderColor: tokens.colors.viridian },
   pickLowerSelected: { backgroundColor: tokens.colors.vermillion, borderColor: tokens.colors.vermillion },
   pickCopy: { flex: 1, paddingRight: 6 },

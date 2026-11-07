@@ -1,0 +1,994 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { SecureClient } from '@polymarket/client';
+import {
+  fetchBridgeSupportedAssets,
+  fetchDepositStatus,
+  fetchWithdrawalTransferStatus,
+  fetchWithdrawalQuote,
+  preparePolymarketWithdrawal,
+  selectSupportedDepositAssets,
+  SOLANA_CHAIN_ID,
+  submitPreparedWithdrawal,
+} from '@/features/polymarket/polymarket.api';
+import type { BridgeQuote, BridgeSupportedAsset } from '@/features/polymarket/polymarket.api';
+import { normalizePolymarketError } from '@/features/polymarket/polymarket.errors';
+import {
+  chooseReopenedWithdrawal,
+  createPreparedWithdrawal,
+  isWithdrawalTerminal,
+  markWithdrawalAmbiguous,
+  markWithdrawalBridging,
+  markWithdrawalFailed,
+  markWithdrawalSubmitted,
+  markWithdrawalSubmitting,
+  nextTrackingSaveFailed,
+  persistWithdrawalTracking,
+  reconcileWithdrawalTracking,
+  requireTrackingSaved,
+  shouldClearTrackingSaveFailedOnClose,
+} from '@/features/polymarket/withdrawalTracking';
+import type { TrackedWithdrawal } from '@/features/polymarket/withdrawalTracking';
+import { createSingleFlightLock, runSingleFlight } from '@/features/polymarket/singleFlight';
+import { semantic, tokens } from '@/theme';
+
+interface WithdrawModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  client: SecureClient;
+  /** Withdrawal destination on Solana — the bridge recipient, not a signer. */
+  solanaAddress: string;
+  cashBalance: number | null;
+  onSuccess?: () => void;
+}
+
+type WithdrawState = 'input' | 'quoting' | 'confirming' | 'submitting' | 'success' | 'error';
+
+const WITHDRAW_POLL_MS = 10_000;
+const WITHDRAW_TRACKING_PREFIX = 'predict.withdraw.tracking.v1';
+
+function isAmbiguousSubmissionError(code: string): boolean {
+  return code === 'NETWORK_FAILED' || code === 'ORDER_WAITING' || code === 'POLYMARKET_FAILED';
+}
+
+function trackingMessage(tracking: TrackedWithdrawal): string {
+  switch (tracking.status) {
+    case 'PREPARED': return 'Ready for confirmation. No transfer has been submitted.';
+    case 'SUBMITTING':
+    case 'AMBIGUOUS':
+      return 'Submission outcome is being reconciled. Do not retry this withdrawal.';
+    case 'SUBMITTED': return 'Relayer accepted the transfer. Waiting for settlement.';
+    case 'BRIDGING': return 'Relayer settled the transfer. Bridge delivery is in progress.';
+    case 'COMPLETED': return 'Bridge completed the withdrawal.';
+    case 'FAILED': return tracking.lastError ?? 'The withdrawal failed before Bridge delivery.';
+  }
+}
+
+export function WithdrawModal({
+  isOpen,
+  onClose,
+  client,
+  solanaAddress,
+  cashBalance,
+  onSuccess,
+}: WithdrawModalProps) {
+  const [amount, setAmount] = useState('');
+  const [state, setState] = useState<WithdrawState>('input');
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState('Bridge processing');
+  const [error, setError] = useState<string | null>(null);
+  const [recipientAddress, setRecipientAddress] = useState(solanaAddress);
+  const [destinationAsset, setDestinationAsset] = useState<BridgeSupportedAsset | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [quote, setQuote] = useState<BridgeQuote | null>(null);
+  const [trackedWithdrawal, setTrackedWithdrawal] = useState<TrackedWithdrawal | null>(null);
+  // Not reset on close: the pending-unsaved warning must survive close/reopen
+  // while trackedWithdrawalRef still holds an unsaved record.
+  const [trackingSaveFailed, setTrackingSaveFailed] = useState(false);
+  const [retrySaving, setRetrySaving] = useState(false);
+  const trackedWithdrawalRef = useRef<TrackedWithdrawal | null>(null);
+  const isMountedRef = useRef(true);
+  const retryInFlightRef = useRef(false);
+  const submitLockRef = useRef(createSingleFlightLock());
+  const refreshLockRef = useRef(createSingleFlightLock());
+  const trackingKey = `${WITHDRAW_TRACKING_PREFIX}:${client.account.wallet.toLowerCase()}`;
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const setTrackingSaveFailedIfMounted = useCallback((failed: boolean) => {
+    if (isMountedRef.current) setTrackingSaveFailed(failed);
+  }, []);
+
+  const saveTracking = useCallback(async (tracking: TrackedWithdrawal): Promise<boolean> => {
+    return persistWithdrawalTracking(
+      (key, value) => AsyncStorage.setItem(key, value),
+      trackingKey,
+      JSON.stringify(tracking),
+    );
+  }, [trackingKey]);
+
+  const persistTracking = useCallback(async (tracking: TrackedWithdrawal) => {
+    const saved = await saveTracking(tracking);
+    // Pre-submission: never send a transfer without a recoverable tracking
+    // record, and never adopt it into state until the save succeeded. Abort
+    // so the catch path surfaces the failure instead of continuing toward an
+    // unrecoverable submission.
+    requireTrackingSaved(saved);
+    if (isMountedRef.current) {
+      setTrackingSaveFailed(false);
+      trackedWithdrawalRef.current = tracking;
+      setTrackedWithdrawal(tracking);
+    }
+  }, [saveTracking]);
+  const persistAfterSubmission = useCallback(async (tracking: TrackedWithdrawal): Promise<boolean> => {
+    // Once submission was attempted, never fall back to a clean retry screen
+    // just because local persistence failed. Retain the state in memory and
+    // continue reconciliation conservatively.
+    const saved = await saveTracking(tracking);
+    setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+      hasTrackedWithdrawal: true,
+      saveSucceeded: saved,
+    }));
+    trackedWithdrawalRef.current = tracking;
+    if (isMountedRef.current) setTrackedWithdrawal(tracking);
+    return saved;
+  }, [saveTracking, setTrackingSaveFailedIfMounted]);
+
+  const retryTrackingSave = useCallback(async () => {
+    const tracking = trackedWithdrawalRef.current;
+    // In-flight guard: ignore extra taps while a retry is running.
+    if (!tracking || retryInFlightRef.current) return;
+    retryInFlightRef.current = true;
+    if (isMountedRef.current) setRetrySaving(true);
+    const saved = await saveTracking(tracking);
+    if (isMountedRef.current) {
+      if (saved) {
+        setTrackingSaveFailed(false);
+      }
+      setRetrySaving(false);
+    }
+    retryInFlightRef.current = false;
+  }, [saveTracking]);
+
+  const parsedAmount = parseFloat(amount);
+  const minimumWithdraw = destinationAsset?.minCheckoutUsd ?? Number.POSITIVE_INFINITY;
+  const trimmedRecipientAddress = recipientAddress.trim();
+  const isRecipientValid = useMemo(() => {
+    // Solana base58 addresses are usually 32-44 chars. Keep this client-side check light;
+    // the bridge/server remains the source of truth.
+    return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmedRecipientAddress);
+  }, [trimmedRecipientAddress]);
+  const isValid =
+    cashBalance !== null &&
+    parsedAmount >= minimumWithdraw &&
+    parsedAmount <= cashBalance &&
+    isRecipientValid;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setRecipientAddress(solanaAddress);
+    setRouteLoading(true);
+    setError(null);
+    Promise.all([
+      fetchBridgeSupportedAssets(),
+      AsyncStorage.getItem(trackingKey),
+    ])
+      .then(([assets, rawTracking]) => {
+        const selected = selectSupportedDepositAssets(assets)
+          .find((asset) => asset.chainId === SOLANA_CHAIN_ID) ?? null;
+        setDestinationAsset(selected);
+        if (!selected) setError('Solana USDC withdrawals are unavailable right now.');
+        if (!rawTracking) {
+          trackedWithdrawalRef.current = null;
+          setTrackedWithdrawal(null);
+          setState('input');
+          return;
+        }
+        if (rawTracking) {
+          const parsed = JSON.parse(rawTracking) as TrackedWithdrawal & { txHash?: string | null };
+          const legacyStatus = parsed.status as string;
+          const saved: TrackedWithdrawal = {
+            ...parsed,
+            transactionId: parsed.transactionId ?? null,
+            transactionHash: parsed.transactionHash ?? parsed.txHash ?? null,
+            status: legacyStatus === 'DEPOSIT_DETECTED'
+              || legacyStatus === 'PROCESSING'
+              || legacyStatus === 'ORIGIN_TX_CONFIRMED'
+              || legacyStatus === 'COMPLETED'
+                ? legacyStatus === 'COMPLETED' ? 'COMPLETED' : 'BRIDGING'
+                : legacyStatus === 'FAILED' ? 'FAILED' : parsed.status,
+            updatedAt: parsed.updatedAt ?? parsed.startedAt,
+            lastError: parsed.lastError ?? null,
+          };
+          if (saved?.bridgeAddress && saved.quote) {
+            const wasAlreadyTracked = trackedWithdrawalRef.current?.bridgeAddress === saved.bridgeAddress;
+            const chosen = wasAlreadyTracked
+              ? chooseReopenedWithdrawal(trackedWithdrawalRef.current, saved)
+              : { tracking: saved, preferInMemory: false };
+            const restored = chosen.preferInMemory
+              ? chosen.tracking
+              : saved.status === 'SUBMITTING'
+                // Fresh reopen from storage: a snapshot saved mid-submission
+                // has an unknown outcome, so mark it ambiguous instead of
+                // retrying.
+                ? markWithdrawalAmbiguous(saved, 'The app closed while submission was in progress.')
+                : saved;
+            if (chosen.preferInMemory) {
+              // Reopen over an unsaved record: storage may hold an older
+              // snapshot, so memory stays authoritative and the pending-unsaved
+              // warning survives until this one retry save succeeds.
+              void saveTracking(restored).then((ok) => {
+                setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+                  hasTrackedWithdrawal: trackedWithdrawalRef.current?.bridgeAddress === restored.bridgeAddress,
+                  saveSucceeded: ok,
+                }));
+              });
+            } else {
+              setTrackingSaveFailedIfMounted(false);
+              trackedWithdrawalRef.current = restored;
+              setTrackedWithdrawal(restored);
+              if (restored !== saved) {
+                void saveTracking(restored).then((ok) => {
+                  setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+                    hasTrackedWithdrawal: trackedWithdrawalRef.current?.bridgeAddress === restored.bridgeAddress,
+                    saveSucceeded: ok,
+                  }));
+                });
+              }
+            }
+            setAmount(String(restored.amount));
+            setRecipientAddress(restored.recipientAddress);
+            setQuote(restored.quote);
+            setTxHash(restored.transactionHash);
+            setBridgeStatus(trackingMessage(restored));
+            setState(restored.status === 'PREPARED' ? 'confirming' : 'success');
+          } else {
+            trackedWithdrawalRef.current = null;
+            setTrackedWithdrawal(null);
+            setState('input');
+          }
+        }
+      })
+      .catch((loadError: unknown) => {
+        setError(loadError instanceof Error ? loadError.message : 'Could not load the withdrawal route.');
+      })
+      .finally(() => setRouteLoading(false));
+  }, [isOpen, saveTracking, setTrackingSaveFailedIfMounted, solanaAddress, trackingKey]);
+
+  const handleClose = () => {
+    Keyboard.dismiss();
+    // Closing must not clear the pending-unsaved warning while a tracked
+    // withdrawal is still unsaved — the flag has to survive close/reopen.
+    if (shouldClearTrackingSaveFailedOnClose({
+      hasTrackedWithdrawal: trackedWithdrawalRef.current !== null,
+    })) {
+      setTrackingSaveFailedIfMounted(false);
+    }
+    if (!trackedWithdrawal) {
+      setAmount('');
+      setState('input');
+      setTxHash(null);
+      setBridgeStatus('Bridge processing');
+      setError(null);
+      setQuote(null);
+      setRecipientAddress(solanaAddress);
+    }
+    onClose();
+  };
+
+  const handleConfirm = async () => {
+    if (!isValid) return;
+    Keyboard.dismiss();
+    setState('quoting');
+    setError(null);
+    try {
+      const reviewed = await fetchWithdrawalQuote(parsedAmount, trimmedRecipientAddress);
+      setDestinationAsset(reviewed.asset);
+      setQuote(reviewed.quote);
+      setState('confirming');
+    } catch (quoteError: unknown) {
+      setError(quoteError instanceof Error ? quoteError.message : 'Could not quote this withdrawal.');
+      setState('error');
+    }
+  };
+
+  const submitWithdrawal = async () => {
+    setState('submitting');
+    setError(null);
+    try {
+      const prepared = await preparePolymarketWithdrawal(client, {
+        amount: parsedAmount,
+        solanaAddress: trimmedRecipientAddress,
+      });
+      const preparedTracking = createPreparedWithdrawal({
+        amount: prepared.amount,
+        recipientAddress: prepared.solanaAddress,
+        bridgeAddress: prepared.bridgeAddress,
+        quote: prepared.quote,
+      });
+      // The reviewed intent and generated Bridge address are durable before any
+      // transfer can be accepted upstream.
+      await persistTracking(preparedTracking);
+      setQuote(prepared.quote);
+
+      const submitting = markWithdrawalSubmitting(preparedTracking);
+      await persistTracking(submitting);
+
+      let handle;
+      try {
+        handle = await submitPreparedWithdrawal(client, prepared);
+      } catch (submitError: unknown) {
+        const normalized = normalizePolymarketError(submitError, 'Withdrawal submission failed.');
+        const next = isAmbiguousSubmissionError(normalized.code)
+          ? markWithdrawalAmbiguous(submitting, normalized.message)
+          : markWithdrawalFailed(submitting, normalized.message);
+        const saved = await persistAfterSubmission(next);
+        setBridgeStatus(saved
+          ? trackingMessage(next)
+          : 'Recovery storage is unavailable. Keep this app open and do not retry.');
+        setState('success');
+        return;
+      }
+
+      // Save the relayer identifiers before waiting. A timeout, app kill, or
+      // transport failure after this point can be recovered on restart.
+      const submitted = markWithdrawalSubmitted(
+        submitting,
+        handle.transactionId ? String(handle.transactionId) : null,
+        handle.transactionHash ? String(handle.transactionHash) : null,
+      );
+      const submissionSaved = await persistAfterSubmission(submitted);
+      setTxHash(submitted.transactionHash);
+      setBridgeStatus(submissionSaved
+        ? trackingMessage(submitted)
+        : 'Relayer accepted the transfer, but recovery storage is unavailable. Do not retry.');
+      setState('success');
+      try { onSuccess?.(); } catch { /* submission remains accepted and tracked */ }
+
+      try {
+        const outcome = await handle.wait();
+        const current = trackedWithdrawalRef.current?.bridgeAddress === submitted.bridgeAddress
+          ? trackedWithdrawalRef.current
+          : submitted;
+        const bridging = markWithdrawalBridging(
+          current,
+          outcome.transactionId ? String(outcome.transactionId) : null,
+          outcome.transactionHash ? String(outcome.transactionHash) : null,
+        );
+        const saved = await persistAfterSubmission(bridging);
+        setTxHash(bridging.transactionHash);
+        setBridgeStatus(saved
+          ? trackingMessage(bridging)
+          : 'Transfer settled, but recovery storage is unavailable. Keep this app open.');
+      } catch (waitError: unknown) {
+        const normalized = normalizePolymarketError(waitError, 'Withdrawal confirmation is unknown.');
+        const current = trackedWithdrawalRef.current?.bridgeAddress === submitted.bridgeAddress
+          ? trackedWithdrawalRef.current
+          : submitted;
+        const next = normalized.code === 'TRANSACTION_FAILED'
+          ? markWithdrawalFailed(current, normalized.message)
+          : markWithdrawalAmbiguous(current, normalized.message);
+        const saved = await persistAfterSubmission(next);
+        setBridgeStatus(saved
+          ? trackingMessage(next)
+          : 'Recovery storage is unavailable. Keep this app open and do not retry.');
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Withdraw failed');
+      setState('error');
+    }
+  };
+
+  const handleSubmit = async () => {
+    await runSingleFlight(submitLockRef.current, submitWithdrawal);
+  };
+
+  useEffect(() => {
+    if (!trackedWithdrawal?.bridgeAddress) return;
+    if (trackedWithdrawal.status === 'PREPARED' || isWithdrawalTerminal(trackedWithdrawal)) return;
+    let cancelled = false;
+    const refresh = () => runSingleFlight(refreshLockRef.current, async () => {
+      const [bridgeResult, relayerResult] = await Promise.allSettled([
+        fetchDepositStatus(trackedWithdrawal.bridgeAddress),
+        trackedWithdrawal.transactionId
+          ? fetchWithdrawalTransferStatus(client, trackedWithdrawal.transactionId)
+          : Promise.resolve(null),
+      ]);
+      if (cancelled) return;
+      const bridgeTransactions = bridgeResult.status === 'fulfilled' ? bridgeResult.value : [];
+      const relayer = relayerResult.status === 'fulfilled' ? relayerResult.value : null;
+      const current = trackedWithdrawalRef.current?.bridgeAddress === trackedWithdrawal.bridgeAddress
+        ? trackedWithdrawalRef.current
+        : trackedWithdrawal;
+      const next = reconcileWithdrawalTracking(current, bridgeTransactions, relayer);
+      setBridgeStatus(trackingMessage(next));
+      setTxHash(next.transactionHash);
+      if (next !== current) {
+        trackedWithdrawalRef.current = next;
+        setTrackedWithdrawal(next);
+        const saved = await saveTracking(next);
+        if (cancelled || !isMountedRef.current) return;
+        setTrackingSaveFailedIfMounted(nextTrackingSaveFailed({
+          hasTrackedWithdrawal: true,
+          saveSucceeded: saved,
+        }));
+      }
+    });
+    void refresh();
+    const interval = setInterval(() => void refresh(), WITHDRAW_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [client, saveTracking, setTrackingSaveFailedIfMounted, trackedWithdrawal, trackingKey]);
+
+  const handleDismissTracking = async () => {
+    await AsyncStorage.removeItem(trackingKey);
+    trackedWithdrawalRef.current = null;
+    setTrackedWithdrawal(null);
+    // Nothing is tracked anymore, so the pending-unsaved warning can go.
+    if (isMountedRef.current) setTrackingSaveFailed(false);
+    setRetrySaving(false);
+    retryInFlightRef.current = false;
+    setAmount('');
+    setQuote(null);
+    setTxHash(null);
+    setBridgeStatus('Bridge processing');
+    setState('input');
+    onClose();
+  };
+
+  const handleMax = () => {
+    if (cashBalance !== null && cashBalance > 0) {
+      // Floor to 2 decimals to avoid exceeding balance
+      setAmount((Math.floor(cashBalance * 100) / 100).toFixed(2));
+    }
+  };
+
+  return (
+    <Modal visible={isOpen} transparent animationType="slide" onRequestClose={handleClose}>
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.sheet}>
+          <ScrollView
+            contentContainerStyle={styles.sheetContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.title}>Withdraw</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close withdraw" onPress={handleClose} style={styles.closeBtn}>
+              <MaterialIcons name="close" size={18} color={semantic.text.dim} />
+            </Pressable>
+          </View>
+
+          {trackingSaveFailed && (
+            <View style={styles.trackingBanner}>
+              <Text style={styles.trackingBannerText}>Tracking not saved</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry saving tracking"
+                onPress={retrySaving ? undefined : () => void retryTrackingSave()}
+                disabled={retrySaving}
+                style={[styles.trackingBannerRetryBtn, retrySaving && styles.trackingBannerRetryDisabled]}
+              >
+                <Text style={styles.trackingBannerRetry}>{retrySaving ? 'Saving…' : 'Retry'}</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {state === 'input' && (
+            <>
+              <Text style={styles.subtitle}>
+                Withdraw USDC from Polymarket to a Solana wallet. Your connected wallet is prefilled, but you can change it.
+              </Text>
+
+              {/* Balance row */}
+              <View style={styles.balanceRow}>
+                <Text style={styles.balanceLabel}>Available</Text>
+                <Text style={styles.balanceValue}>
+                  {cashBalance !== null ? `$${cashBalance.toFixed(2)}` : '--'}
+                </Text>
+              </View>
+              {cashBalance === null ? (
+                <Text style={styles.errorHint}>Refresh your Polymarket balance before withdrawing.</Text>
+              ) : null}
+
+              {routeLoading && (
+                <View style={styles.routeRow}>
+                  <ActivityIndicator size="small" color={tokens.colors.primary} />
+                  <Text style={styles.statusSubtext}>Loading live Solana USDC route…</Text>
+                </View>
+              )}
+              {error && !routeLoading && <Text style={styles.errorHint}>{error}</Text>}
+
+              {/* Amount input */}
+              <View style={styles.inputRow}>
+                <Text style={styles.dollarSign}>$</Text>
+                <TextInput
+                  style={styles.amountInput}
+                  value={amount}
+                  onChangeText={setAmount}
+                  placeholder="0.00"
+                  placeholderTextColor={semantic.text.faint}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+                <Pressable onPress={handleMax} style={styles.maxBtn}>
+                  <Text style={styles.maxText}>MAX</Text>
+                </Pressable>
+              </View>
+
+              {/* Destination */}
+              <View style={styles.destinationWrap}>
+                <View style={styles.destRow}>
+                  <MaterialIcons name="arrow-forward" size={10} color={semantic.text.faint} />
+                  <Text style={styles.destLabel}>To Solana wallet</Text>
+                  <Pressable onPress={() => setRecipientAddress(solanaAddress)}>
+                    <Text style={styles.useConnectedText}>USE CONNECTED</Text>
+                  </Pressable>
+                </View>
+                <TextInput
+                  style={[styles.addressInput, recipientAddress.length > 0 && !isRecipientValid && styles.inputError]}
+                  value={recipientAddress}
+                  onChangeText={setRecipientAddress}
+                  placeholder="Solana wallet address"
+                  placeholderTextColor={semantic.text.faint}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  spellCheck={false}
+                />
+                {recipientAddress.length > 0 && !isRecipientValid && (
+                  <Text style={styles.errorHint}>Enter a valid Solana wallet address.</Text>
+                )}
+              </View>
+
+              <Pressable
+                onPress={() => void handleConfirm()}
+                disabled={!isValid || routeLoading}
+                style={[styles.withdrawBtn, (!isValid || routeLoading) && styles.btnDisabled]}
+              >
+                <Text style={styles.withdrawBtnText}>Review Withdraw</Text>
+              </Pressable>
+            </>
+          )}
+
+          {state === 'quoting' && (
+            <View style={styles.statusWrap}>
+              <ActivityIndicator color={tokens.colors.primary} />
+              <Text style={styles.statusText}>Checking the live Bridge quote…</Text>
+              <Text style={styles.statusSubtext}>No transfer is sent until you review and confirm.</Text>
+            </View>
+          )}
+
+          {state === 'confirming' && (
+            <>
+              <Text style={styles.subtitle}>Confirm your withdrawal</Text>
+
+              <View style={styles.confirmCard}>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>You send</Text>
+                  <Text style={styles.confirmValue}>${parsedAmount.toFixed(2)} pUSD</Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>From</Text>
+                  <Text style={styles.confirmValue}>Polymarket deposit wallet</Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>To</Text>
+                  <Text style={styles.confirmValue}>
+                    {trimmedRecipientAddress.slice(0, 8)}...{trimmedRecipientAddress.slice(-6)}
+                  </Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>Estimated receive</Text>
+                  <Text style={styles.confirmValue}>${quote?.estOutputUsd.toFixed(2) ?? '--'} USDC</Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>Fee / impact</Text>
+                  <Text style={styles.confirmValue}>
+                    {quote?.estFeeBreakdown.totalImpactUsd != null
+                      ? `$${quote.estFeeBreakdown.totalImpactUsd.toFixed(2)} · ${quote.estFeeBreakdown.totalImpact?.toFixed(3) ?? '--'}%`
+                      : '--'}
+                  </Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>Minimum receive</Text>
+                  <Text style={styles.confirmValue}>
+                    {quote?.estFeeBreakdown.minReceived != null
+                      ? `$${quote.estFeeBreakdown.minReceived.toFixed(2)} USDC`
+                      : '--'}
+                  </Text>
+                </View>
+                <View style={styles.confirmRow}>
+                  <Text style={styles.confirmLabel}>Estimated time</Text>
+                  <Text style={styles.confirmValue}>
+                    {quote ? `${Math.max(1, Math.ceil(quote.estCheckoutTimeMs / 60_000))} min` : '--'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.confirmActions}>
+                <Pressable onPress={() => setState('input')} style={styles.backBtn}>
+                  <Text style={styles.backBtnText}>Back</Text>
+                </Pressable>
+                <Pressable onPress={handleSubmit} style={[styles.withdrawBtn, { flex: 2 }]}>
+                  <Text style={styles.withdrawBtnText}>Withdraw</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+
+          {state === 'submitting' && (
+            <View style={styles.statusWrap}>
+              <ActivityIndicator color={tokens.colors.primary} />
+              <Text style={styles.statusText}>Withdrawing ${parsedAmount.toFixed(2)} USDC...</Text>
+              <Text style={styles.statusSubtext}>
+                Saving recovery details and reconciling the gasless transfer. Do not submit again.
+              </Text>
+            </View>
+          )}
+
+          {state === 'success' && (
+            <View style={styles.statusWrap}>
+              <MaterialIcons
+                name={trackedWithdrawal?.status === 'FAILED'
+                  ? 'error-outline'
+                  : trackedWithdrawal?.status === 'COMPLETED'
+                    ? 'check-circle'
+                    : 'schedule'}
+                size={32}
+                color={trackedWithdrawal?.status === 'FAILED'
+                  ? tokens.colors.vermillion
+                  : trackedWithdrawal?.status === 'COMPLETED'
+                    ? tokens.colors.viridian
+                    : tokens.colors.primary}
+              />
+              <Text style={styles.statusText}>
+                {trackedWithdrawal?.status === 'FAILED'
+                  ? 'Withdrawal failed'
+                  : trackedWithdrawal?.status === 'COMPLETED'
+                    ? 'Withdrawal complete'
+                    : 'Withdrawal tracking'}
+              </Text>
+              <Text style={styles.statusSubtext}>
+                ${parsedAmount.toFixed(2)} pUSD bridging to {trimmedRecipientAddress.slice(0, 8)}...{trimmedRecipientAddress.slice(-6)} as Solana USDC.{'\n'}
+                {bridgeStatus}
+              </Text>
+              {txHash && (
+                <Text style={styles.txHash}>tx: {txHash.slice(0, 10)}...{txHash.slice(-8)}</Text>
+              )}
+              {trackedWithdrawal?.transactionId && (
+                <Text style={styles.txHash}>relayer: {trackedWithdrawal.transactionId}</Text>
+              )}
+              <Pressable
+                onPress={trackedWithdrawal && isWithdrawalTerminal(trackedWithdrawal)
+                  ? () => void handleDismissTracking()
+                  : handleClose}
+                style={[styles.withdrawBtn, { marginTop: 16, alignSelf: 'stretch' }]}
+              >
+                <Text style={styles.withdrawBtnText}>
+                  {trackedWithdrawal && isWithdrawalTerminal(trackedWithdrawal)
+                    ? 'Done'
+                    : 'Close · keep tracking'}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
+          {state === 'error' && (
+            <View style={styles.statusWrap}>
+              <MaterialIcons name="error-outline" size={32} color={tokens.colors.vermillion} />
+              <Text style={styles.statusText}>Withdraw failed</Text>
+              <Text style={styles.statusSubtext}>{error}</Text>
+              <Pressable onPress={() => setState('input')} style={[styles.withdrawBtn, { marginTop: 16, alignSelf: 'stretch' }]}>
+                <Text style={styles.withdrawBtnText}>Try Again</Text>
+              </Pressable>
+            </View>
+          )}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: semantic.background.surface,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderTopWidth: 1,
+    borderColor: semantic.border.muted,
+    overflow: 'hidden',
+    maxHeight: '88%',
+  },
+  sheetContent: {
+    paddingHorizontal: tokens.spacing.lg,
+    paddingTop: tokens.spacing.lg,
+    paddingBottom: 40,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  title: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    fontWeight: '700',
+    color: semantic.text.primary,
+    letterSpacing: 1,
+  },
+  trackingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(232,197,71,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(232,197,71,0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  trackingBannerText: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '700',
+    color: tokens.colors.primary,
+    letterSpacing: 0.5,
+    flex: 1,
+  },
+  trackingBannerRetryBtn: {
+    paddingHorizontal: tokens.spacing.sm,
+    paddingVertical: tokens.spacing.xs,
+  },
+  trackingBannerRetryDisabled: {
+    opacity: tokens.opacity.muted,
+  },
+  trackingBannerRetry: {
+    fontFamily: 'monospace',
+    fontSize: tokens.fontSize.xs,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: tokens.colors.primary,
+    textTransform: 'uppercase',
+  },
+  closeBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: semantic.background.lift,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subtitle: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.primary,
+    lineHeight: 14,
+    marginBottom: 14,
+    opacity: 0.7,
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  balanceLabel: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    color: semantic.text.dim,
+    letterSpacing: 0.5,
+  },
+  balanceValue: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  routeRow: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: semantic.background.lift,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    gap: 4,
+  },
+  dollarSign: {
+    fontFamily: 'monospace',
+    fontSize: 18,
+    fontWeight: '700',
+    color: semantic.text.dim,
+  },
+  amountInput: {
+    flex: 1,
+    fontFamily: 'monospace',
+    fontSize: 18,
+    fontWeight: '700',
+    color: semantic.text.primary,
+    padding: 0,
+  },
+  maxBtn: {
+    backgroundColor: 'rgba(232,197,71,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(232,197,71,0.25)',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  maxText: {
+    fontFamily: 'monospace',
+    fontSize: 7.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: tokens.colors.primary,
+  },
+  destRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  destinationWrap: {
+    marginBottom: 16,
+  },
+  destLabel: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    color: semantic.text.dim,
+    flex: 1,
+  },
+  useConnectedText: {
+    fontFamily: 'monospace',
+    fontSize: 7,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: tokens.colors.primary,
+  },
+  addressInput: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.primary,
+    backgroundColor: semantic.background.lift,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  inputError: {
+    borderColor: tokens.colors.vermillion,
+  },
+  errorHint: {
+    fontFamily: 'monospace',
+    fontSize: 7.5,
+    color: tokens.colors.vermillion,
+    marginTop: 5,
+  },
+  withdrawBtn: {
+    backgroundColor: tokens.colors.primary,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  withdrawBtnText: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    fontWeight: '700',
+    color: tokens.colors.backgroundDark,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  btnDisabled: { opacity: 0.4 },
+  confirmCard: {
+    backgroundColor: semantic.background.lift,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    borderRadius: 8,
+    padding: 12,
+    gap: 8,
+    marginBottom: 16,
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  confirmLabel: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    color: semantic.text.dim,
+    letterSpacing: 0.5,
+  },
+  confirmValue: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  backBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  backBtnText: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    fontWeight: '700',
+    color: semantic.text.dim,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  statusWrap: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusText: {
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  statusSubtext: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    color: semantic.text.dim,
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  txHash: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    color: semantic.text.faint,
+    marginTop: 4,
+  },
+});

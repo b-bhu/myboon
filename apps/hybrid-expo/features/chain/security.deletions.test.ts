@@ -14,7 +14,7 @@
  * Scope note: most cases scan `apps/hybrid-expo` **application source**, since
  * docs and manifests quote the deleted symbols in order to specify that they
  * must not exist. TC-SEC-002 / TC-SEC-003 additionally assert repo-wide, which
- * they can now do cleanly: the Predict Playwright harness used to mirror the
+ * they can now do cleanly: the Polymarket Playwright harness used to mirror the
  * app's derivation and was deleted with it rather than rewritten.
  */
 
@@ -124,10 +124,10 @@ describe('TC-SEC-001: the signature-derived EVM signer is deleted', () => {
   });
 
   it('the three former importers no longer reference it', () => {
-    // predict.signing.ts, usePolymarketWallet.ts and PredictOwnerKeyExportModal
+    // polymarket.signing.ts, usePolymarketWallet.ts and PredictOwnerKeyExportModal
     // all imported it before the restructure.
     for (const file of [
-      'features/predict/predict.signing.ts',
+      'features/polymarket/polymarket.signing.ts',
       'hooks/usePolymarketWallet.ts',
     ]) {
       const source = readFileSync(path.join(APP_ROOT, file), 'utf8');
@@ -172,10 +172,10 @@ describe('TC-SEC-003: PREDICT_DERIVE_MESSAGE is gone from the app', () => {
   });
 });
 
-describe('TC-SEC-004: predict.signing.ts has no Solana knowledge', () => {
+describe('TC-SEC-004: polymarket.signing.ts has no Solana knowledge', () => {
   it('contains no Solana reference', () => {
     const source = readFileSync(
-      path.join(APP_ROOT, 'features/predict/predict.signing.ts'),
+      path.join(APP_ROOT, 'features/polymarket/polymarket.signing.ts'),
       'utf8',
     );
     // Strip comments: the file's header legitimately explains *why* Solana is
@@ -183,18 +183,18 @@ describe('TC-SEC-004: predict.signing.ts has no Solana knowledge', () => {
     const code = source
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/.*$/gm, '');
-    assert.equal(/solana/i.test(code), false, 'predict.signing.ts references Solana in code');
+    assert.equal(/solana/i.test(code), false, 'polymarket.signing.ts references Solana in code');
   });
 
   it('obtains its signer from the chain layer, not a global', () => {
     const source = readFileSync(
-      path.join(APP_ROOT, 'features/predict/predict.signing.ts'),
+      path.join(APP_ROOT, 'features/polymarket/polymarket.signing.ts'),
       'utf8',
     );
     assert.equal(
       source.includes('requireActiveEvmWallet'),
       false,
-      'predict.signing.ts still reaches for the module-level wallet singleton',
+      'polymarket.signing.ts still reaches for the module-level wallet singleton',
     );
   });
 });
@@ -203,7 +203,7 @@ describe('TC-SEC-005: no key material reaches the clipboard', () => {
   it('PredictOwnerKeyExportModal.tsx does not exist', () => {
     assert.equal(
       existsSync(
-        path.join(APP_ROOT, 'features/predict/components/PredictOwnerKeyExportModal.tsx'),
+        path.join(APP_ROOT, 'features/polymarket/components/PredictOwnerKeyExportModal.tsx'),
       ),
       false,
     );
@@ -263,20 +263,20 @@ describe('TC-SEC-009: exactly two wallet backends exist', () => {
     // The superseded draft proposed a device-bound secure-store EVM key. It must
     // not have landed: it would reintroduce a key this app can read.
     //
-    // Predict stores revocable Polymarket API credentials in SecureStore. That
+    // Polymarket stores revocable Polymarket API credentials in SecureStore. That
     // reviewed cache is not wallet key material and is the only application-level
     // import allowed here; any additional caller must still be reviewed.
     const hits = appSourceHits("from 'expo-secure-store'|require\\('expo-secure-store'\\)");
-    const allowedPredictCredentialCache = /apps\/hybrid-expo\/features\/predict\/predict\.client\.ts:\d+:import \* as SecureStore from 'expo-secure-store';/;
+    const allowedPolymarketCredentialCache = /apps\/hybrid-expo\/features\/polymarket\/polymarket\.client\.ts:\d+:import \* as SecureStore from 'expo-secure-store';/;
     assert.deepEqual(
-      hits.filter((hit) => !allowedPredictCredentialCache.test(hit)),
+      hits.filter((hit) => !allowedPolymarketCredentialCache.test(hit)),
       [],
       `secure-store import to review for key material: ${hits.join(', ')}`,
     );
     assert.equal(
-      hits.filter((hit) => allowedPredictCredentialCache.test(hit)).length,
+      hits.filter((hit) => allowedPolymarketCredentialCache.test(hit)).length,
       1,
-      'expected only the reviewed Predict API-credential cache to import SecureStore',
+      'expected only the reviewed Polymarket API-credential cache to import SecureStore',
     );
   });
 });
@@ -359,7 +359,7 @@ describe('TC-MODAL-008: applications do not own connection UI', () => {
 /**
  * The derivation is gone repo-wide, harness included.
  *
- * The Predict Playwright harness used to mirror the app's old scheme so it
+ * The Polymarket Playwright harness used to mirror the app's old scheme so it
  * could predict the deposit address in advance. It was deleted along with the
  * derivation rather than rewritten — it tested a flow that no longer exists.
  *

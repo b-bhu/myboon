@@ -18,35 +18,35 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppTopBar, AppTopBarIconButton } from '@/components/AppTopBar';
-import { DepositModal } from '@/components/predict/DepositModal';
-import { WithdrawModal } from '@/components/predict/WithdrawModal';
-import { fetchPortfolio, fetchClobBalance, fetchOpenOrders, cancelOrder, placeBet } from '@/features/predict/predict.api';
-import type { OpenOrder, PortfolioPosition } from '@/features/predict/predict.api';
-import { getPredictMarketHref } from '@/features/predict/predict.navigation';
-import { truncateUsd } from '@/features/predict/formatPredictMoney';
-import { usePositionSellQuotes } from '@/features/predict/positionSellQuotes';
+import { DepositModal } from '@/components/polymarket/DepositModal';
+import { WithdrawModal } from '@/components/polymarket/WithdrawModal';
+import { fetchPortfolio, fetchClobBalance, fetchOpenOrders, cancelOrder, placeBet } from '@/features/polymarket/polymarket.api';
+import type { OpenOrder, PortfolioPosition } from '@/features/polymarket/polymarket.api';
+import { getPolymarketMarketHref } from '@/features/polymarket/polymarket.navigation';
+import { truncateUsd } from '@/features/polymarket/formatPolymarketMoney';
+import { usePositionSellQuotes } from '@/features/polymarket/positionSellQuotes';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
-import { ProfilePortfolioTabs } from '@/features/predict/profile/ProfilePortfolioTabs';
-import { CashOutConfirmModal } from '@/features/predict/components/CashOutConfirmModal';
+import { ProfilePortfolioTabs } from '@/features/polymarket/profile/ProfilePortfolioTabs';
+import { CashOutConfirmModal } from '@/features/polymarket/components/CashOutConfirmModal';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import {
-  applyPredictUserEvent,
-  isPredictTradeEvent,
+  applyPolymarketUserEvent,
+  isPolymarketTradeEvent,
   usePolymarketUserStream,
-} from '@/features/predict/usePolymarketUserStream';
-import { usePredictQuickAmounts } from '@/features/predict/usePredictQuickAmounts';
+} from '@/features/polymarket/usePolymarketUserStream';
+import { usePolymarketQuickAmounts } from '@/features/polymarket/usePolymarketQuickAmounts';
 import {
-  getPredictProfileAccountState,
-  getPredictProfileSetupCopy,
-} from '@/features/predict/profile/profile-state';
-import { remainingOrderCost } from '@/features/predict/profile/profile-portfolio-state';
-import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel, resolveCashOutNow } from '@/features/predict/profile/portfolio-totals';
-import { usePredictProfileStore } from '@/features/predict/profile/profile-store';
+  getPolymarketProfileAccountState,
+  getPolymarketProfileSetupCopy,
+} from '@/features/polymarket/profile/profile-state';
+import { remainingOrderCost } from '@/features/polymarket/profile/profile-portfolio-state';
+import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel, resolveCashOutNow } from '@/features/polymarket/profile/portfolio-totals';
+import { usePolymarketProfileStore } from '@/features/polymarket/profile/profile-store';
 import { semantic, tokens } from '@/theme';
 
 function truncate(addr: string, start = 6, end = 4): string {
@@ -60,18 +60,18 @@ function maskEmail(email: string | null): string | null {
   return `${local.slice(0, Math.min(2, local.length))}•••@${domain}`;
 }
 
-const PREDICT_PROFILE_FALLBACK_USD_TO_INR = 95.67;
+const POLYMARKET_PROFILE_FALLBACK_USD_TO_INR = 95.67;
 const USD_INR_RATE_URL = 'https://open.er-api.com/v6/latest/USD';
-const PREDICT_PROFILE_CURRENCY_KEY = 'predict-profile-currency-format';
-type PredictProfileCurrency = 'USD' | 'INR';
-type PredictSettingsView = 'menu' | 'currency' | 'wallet' | 'security' | 'odds' | 'amounts' | 'signout';
-type ConnectionIntent = 'predict' | 'withdrawal' | null;
+const POLYMARKET_PROFILE_CURRENCY_KEY = 'predict-profile-currency-format';
+type PolymarketProfileCurrency = 'USD' | 'INR';
+type PolymarketSettingsView = 'menu' | 'currency' | 'wallet' | 'security' | 'odds' | 'amounts' | 'signout';
+type ConnectionIntent = 'polymarket' | 'withdrawal' | null;
 const EMPTY_PORTFOLIO_POSITIONS: PortfolioPosition[] = [];
 
 function formatProfileCurrency(
   value: number | null | undefined,
-  currency: PredictProfileCurrency,
-  usdToInr = PREDICT_PROFILE_FALLBACK_USD_TO_INR,
+  currency: PolymarketProfileCurrency,
+  usdToInr = POLYMARKET_PROFILE_FALLBACK_USD_TO_INR,
 ): string {
   if (currency === 'USD') return truncateUsd(value);
   if (value == null || !Number.isFinite(value)) return '--';
@@ -98,15 +98,15 @@ function getOrderCost(order: OpenOrder): number {
   return remainingOrderCost(order) ?? 0;
 }
 
-export default function PredictProfileRoute() {
-  return <PredictProfileScreen />;
+export default function PolymarketProfileRoute() {
+  return <PolymarketProfileScreen />;
 }
 
-function PredictProfileScreen() {
+function PolymarketProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   // Solana is read only as a withdrawal destination — never as this screen's
-  // connection state. Predict settles on Polygon, so `poly` is the source of truth.
+  // connection state. Polymarket settles on Polygon, so `poly` is the source of truth.
   const { address: solanaAddress } = useWallet();
   const privy = usePrivyWallet();
   const privyAuthMethod = privy.authMethod;
@@ -117,7 +117,7 @@ function PredictProfileScreen() {
     ? `${poly.signer.descriptor.address.toLowerCase()}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}`
     : 'disconnected';
   const { format: oddsFormat, setFormat: setOddsFormat } = useOddsFormat();
-  // Predict settles on Polygon, so its requirement is EVM.
+  // Polymarket settles on Polygon, so its requirement is EVM.
   const connectSheet = useConnectionSheet('evm');
   const [connectionIntent, setConnectionIntent] = useState<ConnectionIntent>(null);
   const [busy, setBusy] = useState(false);
@@ -132,7 +132,7 @@ function PredictProfileScreen() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
-  // Account data belongs to the Predict profile domain, not this route
+  // Account data belongs to the Polymarket profile domain, not this route
   // instance. The shared wallet-scoped store survives navigation while still
   // resetting whenever the active signer/deposit wallet changes.
   const {
@@ -140,24 +140,24 @@ function PredictProfileScreen() {
     cashBalance,
     openOrders,
     portfolioLoading,
-    predictUnavailable,
+    polymarketUnavailable,
     activityFreshness,
     hasLoaded: profileHasLoaded,
     setPortfolio,
     setCashBalance,
     setOpenOrders,
     setPortfolioLoading,
-    setPredictUnavailable,
+    setPolymarketUnavailable,
     setActivityFreshness,
     markLoaded: markProfileLoaded,
     reset: resetProfileStore,
-  } = usePredictProfileStore(walletScopedKey);
+  } = usePolymarketProfileStore(walletScopedKey);
   const [refreshing, setRefreshing] = useState(false);
-  const [usdToInrRate, setUsdToInrRate] = useState(PREDICT_PROFILE_FALLBACK_USD_TO_INR);
-  const [currencyFormat, setCurrencyFormat] = useState<PredictProfileCurrency>('INR');
+  const [usdToInrRate, setUsdToInrRate] = useState(POLYMARKET_PROFILE_FALLBACK_USD_TO_INR);
+  const [currencyFormat, setCurrencyFormat] = useState<PolymarketProfileCurrency>('INR');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsView, setSettingsView] = useState<PredictSettingsView>('menu');
-  const { quickAmounts, setQuickAmounts } = usePredictQuickAmounts();
+  const [settingsView, setSettingsView] = useState<PolymarketSettingsView>('menu');
+  const { quickAmounts, setQuickAmounts } = usePolymarketQuickAmounts();
   const [quickAmountDraft, setQuickAmountDraft] = useState(() => quickAmounts.map(String));
   const [quickAmountError, setQuickAmountError] = useState<string | null>(null);
   const [quickAmountSaving, setQuickAmountSaving] = useState(false);
@@ -178,15 +178,15 @@ function PredictProfileScreen() {
   //                        SDK-resolved account is ready.
   // Gating connection UI on polygonAddress showed "Connect wallet" to a user who
   // already had a working wallet, with no control that advanced them.
-  const accountState = getPredictProfileAccountState({
+  const accountState = getPolymarketProfileAccountState({
     signerStatus: poly.signerStatus,
     isPrivyUser: privy.isPrivyUser,
     hasSigner: walletAddress !== null,
-    predictReady: isEnabled,
-    predictLoading: poly.isLoading || busy,
+    polymarketReady: isEnabled,
+    polymarketLoading: poly.isLoading || busy,
     sessionExpired: poly.sessionExpired,
   });
-  const setupCopy = getPredictProfileSetupCopy(accountState);
+  const setupCopy = getPolymarketProfileSetupCopy(accountState);
   const displayName = privy.identityName ?? portfolio?.profile?.name ?? (walletAddress ? truncate(walletAddress) : 'MyBoon account');
   const maskedIdentity = maskEmail(privy.identityEmail);
   const authLabel = privyAuthMethod === 'google'
@@ -210,18 +210,18 @@ function PredictProfileScreen() {
   );
 
   useEffect(() => {
-    AsyncStorage.getItem(PREDICT_PROFILE_CURRENCY_KEY)
+    AsyncStorage.getItem(POLYMARKET_PROFILE_CURRENCY_KEY)
       .then((stored) => {
         if (stored === 'USD' || stored === 'INR') setCurrencyFormat(stored);
       })
       .catch(() => {});
   }, []);
 
-  const selectCurrencyFormat = useCallback((next: PredictProfileCurrency) => {
+  const selectCurrencyFormat = useCallback((next: PolymarketProfileCurrency) => {
     setCurrencyFormat(next);
     setSettingsOpen(false);
     setSettingsView('menu');
-    AsyncStorage.setItem(PREDICT_PROFILE_CURRENCY_KEY, next).catch(() => {});
+    AsyncStorage.setItem(POLYMARKET_PROFILE_CURRENCY_KEY, next).catch(() => {});
   }, []);
 
   const closeSettings = useCallback(() => {
@@ -286,7 +286,7 @@ function PredictProfileScreen() {
     ordersRefreshInFlight.current = false;
   }, [resetProfileStore]);
 
-  const handleDisconnectPredict = useCallback(() => {
+  const handleDisconnectPolymarket = useCallback(() => {
     Alert.alert(
       'Disconnect Polymarket?',
       'This revokes the Polymarket API key on the server and removes its encrypted device copy. Your wallet and funds are unchanged.',
@@ -371,10 +371,10 @@ function PredictProfileScreen() {
     if (ordersData && balanceData) setOpenOrders(ordersData);
     if (balanceData) {
       setCashBalance(balanceData.balance);
-      setPredictUnavailable(false);
+      setPolymarketUnavailable(false);
     } else {
       setCashBalance(null);
-      setPredictUnavailable(true);
+      setPolymarketUnavailable(true);
     }
     const failed = portfolioResult.status === 'rejected'
       || balanceResult.status === 'rejected'
@@ -395,7 +395,7 @@ function PredictProfileScreen() {
     setCashBalance,
     setOpenOrders,
     setPortfolio,
-    setPredictUnavailable,
+    setPolymarketUnavailable,
   ]);
 
   const refreshPortfolioQuietly = useCallback(async () => {
@@ -415,7 +415,7 @@ function PredictProfileScreen() {
       if (portfolioData) setPortfolio(portfolioData);
       if (balanceData) {
         setCashBalance(balanceData.balance);
-        setPredictUnavailable(false);
+        setPolymarketUnavailable(false);
       }
 
       const failed = portfolioResult.status === 'rejected'
@@ -436,7 +436,7 @@ function PredictProfileScreen() {
     setActivityFreshness,
     setCashBalance,
     setPortfolio,
-    setPredictUnavailable,
+    setPolymarketUnavailable,
   ]);
 
   const refreshOpenOrdersQuietly = useCallback(async () => {
@@ -458,8 +458,8 @@ function PredictProfileScreen() {
   const realtimeStatus = usePolymarketUserStream(
     isEnabled ? poly.client : null,
     (event) => {
-      setOpenOrders((orders) => applyPredictUserEvent(orders, event));
-      if (isPredictTradeEvent(event)) void refreshPortfolioQuietly();
+      setOpenOrders((orders) => applyPolymarketUserEvent(orders, event));
+      if (isPolymarketTradeEvent(event)) void refreshPortfolioQuietly();
     },
     loadPortfolio,
   );
@@ -562,33 +562,33 @@ function PredictProfileScreen() {
     resetKey: poly.polygonAddress,
   });
 
-  const connectPredictAccount = useCallback(async () => {
+  const connectPolymarketAccount = useCallback(async () => {
     setBusy(true);
     try {
       await poly.enable();
-      setPredictUnavailable(false);
+      setPolymarketUnavailable(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to connect Polymarket account';
       Alert.alert('Error', msg);
     } finally {
       setBusy(false);
     }
-  }, [poly, setPredictUnavailable]);
+  }, [poly, setPolymarketUnavailable]);
 
-  const handleConnectPredictAccount = useCallback(() => {
-    // Predict signs on Polygon, so the requirement is EVM. When the resolver
+  const handleConnectPolymarketAccount = useCallback(() => {
+    // Polymarket signs on Polygon, so the requirement is EVM. When the resolver
     // has no signer yet, the shared connection sheet is the entry point and the
     // effect below resumes setup once the signer lands — signing in and setting
     // up Polymarket is one user action, not two.
     if (!poly.signer) {
-      setConnectionIntent('predict');
+      setConnectionIntent('polymarket');
       setSetupAfterConnect(true);
       connectSheet.open('evm');
       return;
     }
 
-    void connectPredictAccount();
-  }, [connectPredictAccount, connectSheet, poly.signer]);
+    void connectPolymarketAccount();
+  }, [connectPolymarketAccount, connectSheet, poly.signer]);
 
   const handleWithdrawPress = useCallback(() => {
     if (accountState !== 'ready') return;
@@ -608,9 +608,9 @@ function PredictProfileScreen() {
   }, [connectionIntent, solanaAddress]);
 
   // Resume setup after the connection sheet resolves a signer. Mirrors
-  // PredictMarketDetailScreen / PredictSportDetailScreen.
+  // PolymarketMarketDetailScreen / PolymarketSportDetailScreen.
   //
-  // `connectPredictAccount` is deliberately not a dependency: it closes over
+  // `connectPolymarketAccount` is deliberately not a dependency: it closes over
   // `poly`, which is a new object every render, so including it would re-run
   // this effect continuously. The ref guard is what makes the resume fire once
   // per connection rather than on every render while setup is in flight.
@@ -620,7 +620,7 @@ function PredictProfileScreen() {
     if (setupResumeRef.current) return;
     setupResumeRef.current = true;
     setSetupAfterConnect(false);
-    void connectPredictAccount().finally(() => {
+    void connectPolymarketAccount().finally(() => {
       setupResumeRef.current = false;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -641,7 +641,7 @@ function PredictProfileScreen() {
   }, [loadPortfolio, poly]);
 
   const handleOpenMarket = useCallback((slug: string) => {
-    router.push(getPredictMarketHref(slug));
+    router.push(getPolymarketMarketHref(slug));
   }, [router]);
 
   const handleCashOut = useCallback((position: PortfolioPosition) => {
@@ -663,7 +663,7 @@ function PredictProfileScreen() {
   const readyToCollect = portfolio?.summary.readyToCollect ?? redeemablePositions.reduce((sum, p) => sum + (p.currentValue ?? 0), 0);
   const waitingPickValue = openOrders.reduce((sum, order) => sum + getOrderCost(order), 0);
   const activePicksValue = cashOutNow === null ? null : cashOutNow + waitingPickValue;
-  const predictValue = cashBalance === null || activePicksValue === null
+  const polymarketValue = cashBalance === null || activePicksValue === null
     ? null
     : cashBalance + activePicksValue + readyToCollect;
   const portfolioVisible = accountState === 'ready' || accountState === 'session_expired';
@@ -715,7 +715,7 @@ function PredictProfileScreen() {
           style={styles.identity}
           onPress={() => {
             if (accountState === 'signed_out') {
-              handleConnectPredictAccount();
+              handleConnectPolymarketAccount();
               return;
             }
             setSettingsView('security');
@@ -756,7 +756,7 @@ function PredictProfileScreen() {
             <Text style={styles.setupTitle}>{setupCopy.title}</Text>
             <Text style={styles.setupDescription}>{setupCopy.description}</Text>
             {setupCopy.action ? (
-              <Pressable style={styles.setupAction} onPress={handleConnectPredictAccount} disabled={busy}>
+              <Pressable style={styles.setupAction} onPress={handleConnectPolymarketAccount} disabled={busy}>
                 <Text style={styles.setupActionText}>{busy ? 'Working…' : setupCopy.action}</Text>
               </Pressable>
             ) : null}
@@ -771,7 +771,7 @@ function PredictProfileScreen() {
               <Text style={styles.reconnectText}>{busy ? 'Reconnecting…' : setupCopy.description}</Text>
             </View>
           </Pressable>
-        ) : predictUnavailable && isEnabled && !portfolioLoading ? (
+        ) : polymarketUnavailable && isEnabled && !portfolioLoading ? (
           <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
             <MaterialIcons name="refresh" size={14} color={tokens.colors.primary} />
             <Text style={styles.reconnectText}>
@@ -803,14 +803,14 @@ function PredictProfileScreen() {
                 </Pressable>
               </View>
               <View style={styles.moneyValueRow}>
-                <Text style={styles.moneyTotal}>{formatApproxTotal(truncateUsd(predictValue), portfolioSummary)}</Text>
+                <Text style={styles.moneyTotal}>{formatApproxTotal(truncateUsd(polymarketValue), portfolioSummary)}</Text>
                 <Text style={styles.moneyUnit}>pUSD value</Text>
               </View>
               <Text style={styles.moneyCaption}>
-                {predictValue === null
+                {polymarketValue === null
                   ? 'Waiting for current balance and position quotes'
                   : currencyFormat === 'INR'
-                    ? `Approximately ${formatProfileCurrency(predictValue, 'INR', usdToInrRate)} across your Polymarket account`
+                    ? `Approximately ${formatProfileCurrency(polymarketValue, 'INR', usdToInrRate)} across your Polymarket account`
                     : 'Available cash, positions and ready payouts'}
               </Text>
               {portfolioSummary?.totalsPartial ? (
@@ -1196,7 +1196,7 @@ function PredictProfileScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Disconnect Polymarket"
                     disabled={busy}
-                    onPress={handleDisconnectPredict}
+                    onPress={handleDisconnectPolymarket}
                     style={[styles.settingsDisconnectBtn, busy && { opacity: 0.5 }]}
                   >
                     <Text style={styles.settingsDisconnectText}>
@@ -1270,7 +1270,7 @@ function PredictProfileScreen() {
           if (!completed) {
             setSetupAfterConnect(false);
             setConnectionIntent(null);
-          } else if (connectionIntent === 'predict') {
+          } else if (connectionIntent === 'polymarket') {
             setConnectionIntent(null);
           }
           connectSheet.close();

@@ -23,7 +23,7 @@ import {
   releasePolymarketClient,
   retainPolymarketClientLifecycle,
   subscribePolymarketClient,
-} from '@/features/predict/predict.client';
+} from '@/features/polymarket/polymarket.client';
 
 const STORAGE_KEY = 'polymarket_polygon_address';
 const DEPOSIT_WALLET_STORAGE_KEY = 'polymarket_deposit_wallet_address';

@@ -1,9 +1,9 @@
 import { useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { PositionDetailScreen } from '@/features/predict/profile/PositionDetailScreen';
+import { PositionDetailScreen } from '@/features/polymarket/profile/PositionDetailScreen';
 import { semantic, tokens } from '@/theme';
 
-export default function PredictPositionDetailRoute() {
+export default function PolymarketPositionDetailRoute() {
   const params = useLocalSearchParams<{
     conditionId?: string;
     slug?: string;
