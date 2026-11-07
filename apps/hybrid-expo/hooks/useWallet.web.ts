@@ -75,6 +75,7 @@ export function useWallet() {
       address: fakeAddress,
       shortAddress: 'E2eP···1111',
       connect: async () => {},
+      connectExternal: async () => {},
       disconnect: async () => {},
       signMessage: async () => new Uint8Array(64).fill(1),
       signTransaction: signTransaction ?? (async () => { throw new Error('signTransaction not supported in E2E'); }),
@@ -95,6 +96,9 @@ export function useWallet() {
       ? `${addressStr.slice(0, 4)}···${addressStr.slice(-4)}`
       : null,
     connect: handleConnect,
+    // Same selector as `connect` on web (no Privy branch). Named so the sheet's
+    // already-have path cannot be pointed at a Privy-creating `connect`.
+    connectExternal: handleConnect,
     disconnect: handleDisconnect,
     signMessage: signMessage ?? (async () => { throw new Error('signMessage not supported'); }),
     signTransaction: signTransaction ?? (async () => { throw new Error('signTransaction not supported'); }),

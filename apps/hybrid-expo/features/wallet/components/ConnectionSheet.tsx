@@ -1,35 +1,29 @@
 /**
  * ConnectionSheet — the one connection surface in the product.
  *
- * Every entry point that needs a wallet opens this sheet rather than calling
- * `wallet.connect()` directly. Calling connect directly jumps straight to the
- * MWA system chooser on native, so a user who wants email or passkey never sees
- * those options — that gap is what this component closes by construction.
+ * Staged, not a flat list: create a wallet (email / Google → Privy) or use one
+ * you already have (Seeker / Phantom → Mobile Wallet Adapter). Already-have
+ * calls `connectExternal`, which authorizes MWA and never creates a Privy
+ * wallet. Login and wallet setup are separate tries: a bad code stays on the
+ * code step, and a failed `waitForWallet` / `create()` retries only the wallet.
  *
- * The option list is *derived* from `CHAIN_BACKENDS` in `chain.contract`, not
- * hardcoded here. Mobile Wallet Adapter is Solana-only by specification, so an
- * EVM requirement drops the external-wallet row and nothing else. Adding an
- * external EVM transport later is a change to the capability table plus the
- * `BACKEND_OPTIONS` mapping below — no restructuring of this sheet.
- *
- * Visual language follows the four deposit/withdraw modals
- * (`features/perps/DepositModal.tsx`), not the drawer's monospace/uppercase
- * island.
+ * Visual language follows the approved connect mock
+ * (`docs/mockups/wallet-connect`) using this app's theme tokens.
  *
  * Model: docs/modules/wallet/specs/wallet_connectivity.md ("The connection modal")
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Animated,
-  Image,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -37,40 +31,79 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import type { Chain, WalletBackend } from '@/features/chain/chain.contract';
-import {
-  availableOptions,
-  type ConnectOption,
-} from '@/features/wallet/components/connect.options';
+import Svg, { Path } from 'react-native-svg';
+import type { Chain } from '@/features/chain/chain.contract';
 import { useChainActivation } from '@/features/chain/activation';
-import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
+import { availableOptions } from '@/features/wallet/components/connect.options';
+import {
+  CONNECT_COPY,
+  EXTERNAL_WALLET_CHOICES,
+  INITIAL_CONNECT_FLOW,
+  beginPrivyExport,
+  canGoBack,
+  classifyWalletSetupError,
+  connectedChainLabel,
+  externalWaitingLabel,
+  isUserCancelled,
+  otpFailureMessage,
+  reduceConnectFlow,
+  sheetChrome,
+  showsLogout,
+  type ConnectFlowEvent,
+  type ConnectFlowState,
+  type ExternalWalletChoice,
+  type LinkedKind,
+} from '@/features/wallet/components/connect.flow';
+import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useWallet } from '@/hooks/useWallet';
 import { selectMwaDisconnect } from '@/features/wallet/signOut';
 import { semantic, tokens } from '@/theme';
 
-type ConnectStep =
-  | { kind: 'options' }
-  | { kind: 'email_otp'; email: string }
-  | { kind: 'connecting'; backend: WalletBackend }
-  | { kind: 'confirm_disconnect'; chain: Chain }
-  | { kind: 'error'; message: string; disconnectChain?: Chain };
+function useConnectFlow(
+  visible: boolean,
+  session: {
+    linked: LinkedKind | null;
+    privyAuthenticated: boolean;
+    hasEmbeddedWallet: boolean;
+    privyReady: boolean;
+  },
+) {
+  const [flow, setFlow] = useState<ConnectFlowState>(INITIAL_CONNECT_FLOW);
+  const decided = useRef(false);
+  let display = flow;
 
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
+  const openEvent: ConnectFlowEvent = {
+    type: 'open',
+    linked: session.linked,
+    privyAuthenticated: session.privyAuthenticated,
+    hasEmbeddedWallet: session.hasEmbeddedWallet,
+  };
 
-/**
- * Did the user dismiss the wallet's own prompt?
- *
- * Wallet adapters signal this by throwing, with no error code to key off — so
- * matching the message text is the only option available. Kept deliberately
- * narrow: an unrecognised failure falls through to the error step rather than
- * being silently swallowed as a cancellation.
- */
-function isUserCancelled(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return /plugin closed|user rejected|user denied|request rejected|cancell?ed/i.test(message);
+  if (!visible) {
+    decided.current = false;
+  } else if (!decided.current && session.privyReady) {
+    decided.current = true;
+    display = reduceConnectFlow(flow, openEvent);
+    if (display !== flow) setFlow(display);
+  } else if (
+    visible
+    && decided.current
+    && session.linked
+    && flow.linked !== session.linked
+    && (flow.step.kind === 'choice' || flow.step.kind === 'fail_setup')
+  ) {
+    // The session can land a moment after the sheet opens. Show the connected
+    // sheet once it does, instead of leaving the user on the choice screen.
+    display = reduceConnectFlow(flow, openEvent);
+    if (display !== flow) setFlow(display);
+  }
+
+  const dispatch = useCallback((event: ConnectFlowEvent) => {
+    setFlow((current) => reduceConnectFlow(current, event));
+  }, []);
+
+  return { flow: display, dispatch, deciding: visible && !session.privyReady };
 }
 
 export function ConnectionSheet({
@@ -80,7 +113,7 @@ export function ConnectionSheet({
   onConnected,
 }: {
   visible: boolean;
-  /** The chain the requesting application needs. Drives the option list. */
+  /** The chain the requesting application needs. Drives which choices exist. */
   chain: Chain;
   onClose: () => void;
   /** Fired after a backend resolves and the chain has been activated. */
@@ -91,40 +124,33 @@ export function ConnectionSheet({
   const solana = useWallet();
   const { activate, deactivate } = useChainActivation();
 
-  const [step, setStep] = useState<ConnectStep>({ kind: 'options' });
+  const linked: LinkedKind | null = chain === 'solana'
+    ? (solana.source === 'mwa' && solana.connected && solana.address
+      ? 'external'
+      : privy.connected && privy.address
+        ? 'privy'
+        : null)
+    : (evm.isProvisioned && evm.address ? 'privy' : null);
+
+  const { flow, dispatch, deciding } = useConnectFlow(visible, {
+    linked,
+    privyAuthenticated: privy.isPrivyUser,
+    hasEmbeddedWallet: Boolean((privy.connected && privy.address) || (evm.isProvisioned && evm.address)),
+    privyReady: privy.isReady,
+  });
+
   const [emailInput, setEmailInput] = useState('');
+  const [sentEmail, setSentEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  /**
-   * How far the sheet is lifted so the keyboard does not cover it.
-   *
-   * The sheet stays bottom-anchored and simply translates upward by the
-   * keyboard's height — one continuous motion, driven by the keyboard's own
-   * show/hide events so it uses the same duration and easing the OS does.
-   *
-   * An earlier version re-anchored the sheet to the top of the screen while a
-   * field held focus. That required cross-fading between two positions, which
-   * read as the sheet vanishing and reappearing somewhere else rather than as
-   * a sheet moving.
-   */
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const otpInput = useRef<TextInput>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
-  /** True while the sheet is lifted, so the body can shed its bottom padding. */
   const [lifted, setLifted] = useState(false);
 
-  /**
-   * Lift the sheet by the keyboard's height, iOS only.
-   *
-   * `keyboardWillShow` fires *before* the keyboard animates and carries the
-   * OS's own duration, so the sheet travels alongside it as one motion.
-   *
-   * Android is handled by `KeyboardAvoidingView` in the render instead. Doing
-   * it manually there needs the keyboard height and the Modal window's bottom
-   * edge to share a baseline, and they do not: Android reports keyboard height
-   * against the full screen while a Modal window is inset by the system bars,
-   * so the sheet lifted by roughly keyboard + navigation bar and shot off the
-   * top. `KeyboardAvoidingView` measures the window itself and avoids that
-   * arithmetic entirely.
-   */
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
 
@@ -153,276 +179,239 @@ export function ConnectionSheet({
     };
   }, [keyboardLift]);
 
-  /**
-   * Android's keyboard state, tracked only so the body can shed its bottom
-   * padding while raised — the movement itself is `KeyboardAvoidingView`'s job.
-   */
   useEffect(() => {
     if (Platform.OS === 'ios') return;
-
     const onShow = Keyboard.addListener('keyboardDidShow', () => setLifted(true));
     const onHide = Keyboard.addListener('keyboardDidHide', () => setLifted(false));
-
     return () => {
       onShow.remove();
       onHide.remove();
     };
   }, []);
 
-  const options = availableOptions(chain);
+  useEffect(() => () => {
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+  }, []);
 
-  /**
-   * Clear every piece of step state before closing, so a later open never shows
-   * a stale OTP screen or a previous error. Mirrors
-   * `MeteoraPositionActionSheet.resetAndClose`.
-   */
-  const resetAndClose = useCallback(() => {
-    setStep({ kind: 'options' });
-    setEmailInput('');
-    setOtpCode('');
+  const options = availableOptions(chain);
+  const externalAvailable = options.includes('external_wallet');
+  const chrome = sheetChrome(flow, { email: sentEmail, externalAvailable });
+
+  const requestClose = useCallback(() => {
     setBusy(false);
-    // The keyboard's hide event does not fire when the sheet unmounts with a
-    // field still focused, so the lift is reset here rather than left to
-    // carry over into the next open.
     setLifted(false);
     keyboardLift.setValue(0);
     onClose();
-  }, [onClose, keyboardLift]);
+  }, [keyboardLift, onClose]);
 
-  /**
-   * Record intent for the requested chain once a backend has resolved.
-   *
-   * Only the requested chain is activated. A user who logs in through an EVM
-   * application does not get Solana surfaced — that is the dormancy rule, and
-   * activating both here would quietly break it.
-   *
-   * For EVM, Privy auth alone provisions nothing (`createOnLogin: 'off'`), so
-   * the embedded wallet is created here at the activation moment.
-   */
-  const finishConnect = useCallback(async () => {
-    if (chain === 'evm' && !evm.isProvisioned) {
-      // Throws with a readable message when the account has an unusable wallet
-      // (entropy missing on this device), which the error step then shows.
-      await evm.provision();
-    }
-    await activate(chain);
+  const finishActivated = useCallback((kind: LinkedKind) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     onConnected?.();
-    resetAndClose();
-  }, [chain, evm, activate, onConnected, resetAndClose]);
+    dispatch({ type: 'wallet_setup_succeeded', linked: kind });
+    onClose();
+  }, [dispatch, onClose, onConnected]);
+
+  /**
+   * Wallet step only. The caller has already signed in. A throw here is a
+   * setup failure, never an "Invalid code".
+   */
+  const runWalletSetup = useCallback(async () => {
+    if (chain === 'solana') await privy.waitForWallet();
+    else if (!evm.isProvisioned) await evm.provision();
+    await activate(chain);
+    finishActivated('privy');
+  }, [activate, chain, evm, finishActivated, privy]);
+
+  const handleExternalWallet = useCallback(async (wallet: ExternalWalletChoice) => {
+    // Seeker / Phantom authorize through Mobile Wallet Adapter (external_mwa).
+    // connectExternal is that call. This path does not sign in or create a wallet.
+    if (busy || chain !== 'solana') return;
+    setActionError(null);
+    dispatch({ type: 'choose_external', wallet });
+    setBusy(true);
+    try {
+      await solana.connectExternal(wallet === 'phantom' ? 'Phantom' : 'Seeker');
+      await activate('solana');
+      finishActivated('external');
+    } catch (error: unknown) {
+      if (isUserCancelled(error)) {
+        dispatch({ type: 'external_cancelled' });
+      } else {
+        const message = error instanceof Error && error.message
+          ? error.message
+          : 'Could not connect that wallet.';
+        dispatch({ type: 'external_failed', message });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [activate, busy, chain, dispatch, finishActivated, solana]);
 
   const handleSendEmail = useCallback(async () => {
     const email = emailInput.trim();
     if (!email || busy) return;
     setBusy(true);
+    setActionError(null);
     try {
       await privy.sendEmailOTP(email);
-      setStep({ kind: 'email_otp', email });
+      setSentEmail(email);
+      dispatch({ type: 'code_sent' });
     } catch (error: unknown) {
-      setStep({ kind: 'error', message: errorMessage(error, 'Failed to send code') });
+      setActionError(error instanceof Error && error.message ? error.message : 'Failed to send code');
     } finally {
       setBusy(false);
     }
-  }, [emailInput, busy, privy]);
+  }, [busy, dispatch, emailInput, privy]);
 
   const handleVerifyOTP = useCallback(async () => {
     if (!otpCode.trim() || busy) return;
     setBusy(true);
+    setOtpError(null);
     try {
       await privy.loginWithEmailOTP(otpCode.trim());
-      // Solana needs the embedded Solana wallet hydrated before the address is
-      // usable. EVM provisions its own wallet in finishConnect.
-      if (chain === 'solana') await privy.waitForWallet();
-      await finishConnect();
     } catch (error: unknown) {
-      setStep({ kind: 'error', message: errorMessage(error, 'Invalid code') });
+      setOtpError(otpFailureMessage(error));
+      dispatch({ type: 'otp_rejected' });
+      setBusy(false);
+      return;
+    }
+    dispatch({ type: 'login_succeeded' });
+    try {
+      await runWalletSetup();
+    } catch (error: unknown) {
+      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
     } finally {
       setBusy(false);
     }
-  }, [otpCode, busy, privy, chain, finishConnect]);
+  }, [busy, dispatch, otpCode, privy, runWalletSetup]);
 
-  /**
-   * Google login.
-   *
-   * Unlike email and passkey, this leaves the app: Privy opens a browser for
-   * Google's consent screen and returns through the `myboon` deep link declared
-   * in `app.json`. Signup and login are the same call — Privy creates the
-   * account if the Google identity is new.
-   */
   const handleGoogle = useCallback(async () => {
     if (busy) return;
     setBusy(true);
-    setStep({ kind: 'connecting', backend: 'privy_embedded' });
+    setActionError(null);
+    dispatch({ type: 'start_google' });
     try {
       await privy.loginWithGoogle();
-      if (chain === 'solana') await privy.waitForWallet();
-      await finishConnect();
     } catch (error: unknown) {
-      // Closing the browser without finishing is a choice, not a failure.
-      if (isUserCancelled(error)) {
-        setStep({ kind: 'options' });
-        return;
-      }
-      setStep({ kind: 'error', message: errorMessage(error, 'Google sign-in failed') });
+      if (isUserCancelled(error)) dispatch({ type: 'login_cancelled' });
+      else dispatch({ type: 'login_failed' });
+      setBusy(false);
+      return;
+    }
+    dispatch({ type: 'login_succeeded' });
+    try {
+      await runWalletSetup();
+    } catch (error: unknown) {
+      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
     } finally {
       setBusy(false);
     }
-  }, [busy, privy, chain, finishConnect]);
+  }, [busy, dispatch, privy, runWalletSetup]);
 
-  /**
-   * External Solana wallet over MWA.
-   *
-   * The drawer's version swallows every error and closes, so a user who
-   * cancelled the wallet chooser or hit a transport failure sees the UI simply
-   * vanish with nothing connected. Here the failure surfaces as an error step.
-   */
-  const handleWalletConnect = useCallback(async (walletName?: string) => {
+  const handleRetryWallet = useCallback(async () => {
     if (busy) return;
     setBusy(true);
-    setStep({ kind: 'connecting', backend: 'external_mwa' });
+    setActionError(null);
+    dispatch({ type: 'retry_wallet' });
     try {
-      // Naming the wallet matters on web, where the adapter can enumerate
-      // installed extensions: without one it silently connects to `wallets[0]`,
-      // so a user with several extensions gets whichever happens to be first
-      // rather than the one they meant. On native the argument is ignored —
-      // MWA cannot enumerate, and the OS shows its own chooser.
-      await solana.connect(walletName);
-      await finishConnect();
+      await runWalletSetup();
     } catch (error: unknown) {
-      // Cancelling is not a failure. Wallet adapters report a dismissed popup
-      // as a thrown error ("Plugin Closed", "User rejected the request"), and
-      // showing that as a connection failure blames the user for changing
-      // their mind. Return to the options instead.
-      if (isUserCancelled(error)) {
-        setStep({ kind: 'options' });
-        return;
-      }
-      setStep({
-        kind: 'error',
-        message: errorMessage(error, 'Could not connect a Solana wallet.'),
-      });
+      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
     } finally {
       setBusy(false);
     }
-  }, [busy, solana, finishConnect]);
+  }, [busy, dispatch, runWalletSetup]);
 
-  /**
-   * A wallet is already connected for the requested chain, so the sheet shows
-   * who you are rather than how to connect. Same sheet, two states — opening it
-   * from the avatar when connected must not offer to connect again.
-   */
-  /**
-   * Every wallet this session actually holds, not just the requested chain's.
-   *
-   * The avatar opens this sheet for Solana (the provider's default), so a user
-   * whose only wallet is the Privy EVM one saw an empty connect screen and had
-   * no way to sign out — the disconnect control was reachable only from a chain
-   * they had not connected. Listing both chains makes the sheet report the
-   * session rather than one slice of it.
-   */
-  const connectedWallets = useMemo(
-    () => [
-      ...(solana.address
-        ? [{ chain: 'solana' as Chain, label: 'Solana', address: solana.address }]
-        : []),
-      ...(evm.address
-        ? [{ chain: 'evm' as Chain, label: 'Polygon / EVM', address: evm.address }]
-        : []),
-    ],
-    [solana.address, evm.address],
-  );
+  const handleLogout = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await privy.disconnect(selectMwaDisconnect(solana));
+      setEmailInput('');
+      setSentEmail('');
+      setOtpCode('');
+      setOtpError(null);
+      dispatch({ type: 'logout' });
+    } catch (error: unknown) {
+      setActionError(error instanceof Error && error.message ? error.message : 'Could not log out.');
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, dispatch, privy, solana]);
 
-  // A wallet on the other chain does not satisfy the requested connection.
-  // Predict requests EVM, so a Solana-only session must still show EVM options.
-  const isConnected =
-    step.kind === 'options' && connectedWallets.some((wallet) => wallet.chain === chain);
-
-  const handleCopyAddress = useCallback(async (address: string) => {
+  const handleCopy = useCallback(async (key: string, address: string) => {
     await Clipboard.setStringAsync(address);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setCopiedKey(key);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopiedKey(null), 900);
   }, []);
 
-  /**
-   * Confirmation is a step in the sheet, not `Alert.alert`.
-   *
-   * `Alert.alert` renders nothing on React Native Web — it is a no-op there, so
-   * a confirm-then-act flow built on it silently never acts. The old drawer had
-   * this bug too, which is why disconnect never worked in a browser.
-   */
-  const handleDisconnect = useCallback((target: Chain) => {
-    if (busy) return;
-    setStep({ kind: 'confirm_disconnect', chain: target });
-  }, [busy]);
+  const handleExportContinue = useCallback(() => {
+    if (flow.linked !== 'privy') return;
+    dispatch({ type: 'export_continue' });
+    const result = beginPrivyExport();
+    if (result.status === 'unavailable') dispatch({ type: 'export_unavailable' });
+  }, [dispatch, flow.linked]);
 
-  const confirmDisconnect = useCallback(async (retryTarget?: Chain) => {
-    if (busy) return;
-    const target = retryTarget ?? (step.kind === 'confirm_disconnect' ? step.chain : chain);
+  const confirmDisconnect = useCallback(async () => {
+    if (busy || !flow.linked) return;
     setBusy(true);
+    setActionError(null);
     try {
-      // Drop the connection first, then the activation record. The reverse
-      // order re-activates immediately: activation reconciles from the live
-      // connection, so clearing the record while the wallet is still connected
-      // just gets undone on the next render.
-      //
-      // An external Solana wallet can be dropped on its own. The Privy embedded
-      // wallets cannot: one login owns every chain, so signing out of Privy ends
-      // both. `privy.disconnect()` calls `clearActivation()` for that reason,
-      // and deactivating the single requested chain afterwards would be a no-op
-      // over an already-cleared record.
-      if (target === 'solana' && solana.source !== 'privy' && solana.disconnect) {
-        await solana.disconnect();
-        await deactivate(target);
+      if (flow.linked === 'external') {
+        if (solana.disconnect) await solana.disconnect();
+        await deactivate('solana');
       } else if (privy.isPrivyUser) {
         await privy.disconnect(selectMwaDisconnect(solana));
       } else if (solana.disconnect) {
         await solana.disconnect();
-        await deactivate(target);
+        await deactivate(chain);
       }
-      resetAndClose();
-    } catch (error) {
-      setStep({
-        kind: 'error',
-        message: errorMessage(error, 'Could not disconnect.'),
-        disconnectChain: target,
-      });
+      dispatch({ type: 'disconnected' });
+      onClose();
+    } catch (error: unknown) {
+      setActionError(error instanceof Error && error.message ? error.message : 'Could not disconnect.');
     } finally {
       setBusy(false);
     }
-  }, [busy, chain, step, deactivate, solana, privy, resetAndClose]);
+  }, [busy, chain, deactivate, dispatch, flow.linked, onClose, privy, solana]);
 
-  const title =
-    step.kind === 'email_otp'
-      ? 'Enter code'
-      : step.kind === 'error'
-        ? 'Connection failed'
-        : step.kind === 'confirm_disconnect'
-          ? 'Disconnect?'
-          : isConnected
-            ? (connectedWallets.length > 1 ? 'Wallets' : 'Wallet')
-            : 'Connect wallet';
+  const goBack = useCallback(() => {
+    setOtpError(null);
+    setActionError(null);
+    dispatch({ type: 'back' });
+  }, [dispatch]);
+
+  const chainRows = flow.linked === 'external'
+    ? (solana.address
+      ? [{ key: 'solana', label: connectedChainLabel('solana'), address: solana.address }]
+      : [])
+    : [
+      ...(privy.connected && privy.address
+        ? [{ key: 'solana', label: connectedChainLabel('solana'), address: privy.address }]
+        : []),
+      ...(evm.address
+        ? [{ key: 'evm', label: connectedChainLabel('evm'), address: evm.address }]
+        : []),
+    ];
+
+  const privyDetail = privy.authMethod === 'google' ? 'Google' : 'Email';
+  const privyLabel = privy.identityEmail
+    ?? privy.identityName
+    ?? (privy.authMethod === 'google' ? 'Google account' : 'Email');
+  const externalName = flow.externalWallet === 'phantom'
+    ? CONNECT_COPY.phantom
+    : flow.externalWallet === 'seeker'
+      ? CONNECT_COPY.seeker
+      : 'Solana wallet';
+  const externalDetail = flow.externalWallet === 'seeker'
+    ? CONNECT_COPY.seekerHint
+    : CONNECT_COPY.phantomHint;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={resetAndClose}>
-      {/*
-        The sheet stays bottom-anchored and rises so the keyboard never covers
-        the email or OTP input — by two different mechanisms, because the two
-        platforms expose different things.
-
-        iOS translates the sheet by the keyboard height from `keyboardWillShow`
-        (see the effect above). That fires ahead of the animation and carries
-        the OS duration, so the sheet moves as one gesture with the keyboard,
-        and `useNativeDriver` keeps it off the JS thread. The extra bottom
-        padding while lifted fills the strip the translate opens up underneath,
-        which would otherwise show the dark overlay.
-
-        Android uses `KeyboardAvoidingView`. A manual translate needs the
-        keyboard height and the sheet's bottom edge to share a baseline, and on
-        Android they do not — keyboard height is reported against the full
-        screen while a Modal window is inset by the system bars, so the sheet
-        lifted by roughly keyboard + navigation bar and shot off the top of the
-        screen. `KeyboardAvoidingView` measures the window itself, so none of
-        that arithmetic is ours to get wrong.
-      */}
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={requestClose}>
       <KeyboardAvoidingView
         style={styles.overlay}
         behavior={Platform.OS === 'ios' ? undefined : 'height'}
@@ -434,574 +423,825 @@ export function ConnectionSheet({
             { transform: [{ translateY: Animated.multiply(keyboardLift, -1) }] },
           ]}
         >
+          <View style={styles.handle} />
           <View style={styles.header}>
-            <Text style={styles.title}>{title}</Text>
-            <Pressable onPress={resetAndClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close">
-              <MaterialIcons name="close" size={18} color={semantic.text.dim} />
+            {canGoBack(flow) ? (
+              <Pressable
+                onPress={goBack}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+                style={styles.iconBtn}
+              >
+                <MaterialIcons name="chevron-left" size={28} color={semantic.text.dim} />
+              </Pressable>
+            ) : (
+              <View style={styles.iconBtn} />
+            )}
+            <View style={styles.headerText}>
+              <Text style={styles.title}>{deciding ? 'Connect' : chrome.title}</Text>
+              {!deciding && chrome.subtitle ? (
+                <Text style={styles.subtitle}>{chrome.subtitle}</Text>
+              ) : null}
+            </View>
+            <Pressable
+              onPress={requestClose}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={styles.iconBtn}
+            >
+              <MaterialIcons name="close" size={22} color={semantic.text.dim} />
             </Pressable>
           </View>
 
-          {isConnected ? (
-            <ConnectedStep
-              wallets={connectedWallets}
-              busy={busy}
-              onCopy={handleCopyAddress}
-              onDisconnect={handleDisconnect}
-            />
-          ) : null}
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            bounces={false}
+            contentContainerStyle={[styles.body, lifted && styles.bodyLifted]}
+          >
+            {deciding ? (
+              <WaitBlock title="Connect" body="Checking your session." />
+            ) : null}
 
-          {step.kind === 'confirm_disconnect' ? (
-            <View style={styles.body}>
-              {/*
-                Say what actually happens. One Privy login owns every embedded
-                chain, so signing out of it drops Solana and EVM together —
-                promising a per-chain disconnect it cannot deliver would be a
-                lie the next screen exposes.
-              */}
-              <Text style={styles.infoText}>
-                {privy.isPrivyUser && !(step.chain === 'solana' && solana.source !== 'privy')
-                  ? 'This signs you out of Privy and disconnects every wallet in this session. You can sign back in anytime.'
-                  : 'You can reconnect anytime.'}
-              </Text>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.disconnectBtn,
-                  busy && styles.primaryBtnDisabled,
-                  pressed && styles.primaryBtnPressed,
-                ]}
-                onPress={() => void confirmDisconnect()}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel="Confirm disconnect"
-              >
-                <MaterialIcons name="power-settings-new" size={14} color={tokens.colors.vermillion} />
-                <Text style={styles.disconnectText}>
-                  {busy ? 'Disconnecting...' : 'Disconnect'}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setStep({ kind: 'options' })}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel="Cancel"
-              >
-                <Text style={styles.backLink}>Cancel</Text>
-              </Pressable>
-            </View>
-          ) : null}
+            {flow.step.kind === 'choice' ? (
+              <View style={styles.stack}>
+                <PrimaryButton
+                  label={CONNECT_COPY.createWallet}
+                  onPress={() => dispatch({ type: 'choose_create' })}
+                />
+                {externalAvailable ? (
+                  <SecondaryButton
+                    label={CONNECT_COPY.alreadyHave}
+                    onPress={() => dispatch({ type: 'choose_have' })}
+                  />
+                ) : null}
+              </View>
+            ) : null}
 
-          {step.kind === 'options' && !isConnected ? (
-            <OptionsStep
-              chain={chain}
-              options={options}
-              busy={busy}
-              emailInput={emailInput}
-              onChangeEmail={setEmailInput}
-              onSendEmail={handleSendEmail}
-              compactBody={lifted}
-              onGoogle={handleGoogle}
-              onWalletConnect={handleWalletConnect}
-              walletOptions={solana.walletOptions ?? []}
-            />
-          ) : null}
+            {flow.step.kind === 'create' ? (
+              <View style={styles.stack}>
+                {options.includes('email') ? (
+                  <MethodRow
+                    title={CONNECT_COPY.continueEmail}
+                    detail={CONNECT_COPY.emailHint}
+                    mark={<View style={[styles.mark, styles.markEmail]}><EmailMark /></View>}
+                    onPress={() => dispatch({ type: 'choose_email' })}
+                  />
+                ) : null}
+                {options.includes('google') ? (
+                  <MethodRow
+                    title={CONNECT_COPY.continueGoogle}
+                    detail={CONNECT_COPY.googleHint}
+                    mark={<View style={[styles.mark, styles.markGoogle]}><GoogleMark /></View>}
+                    onPress={() => void handleGoogle()}
+                    disabled={busy}
+                  />
+                ) : null}
+              </View>
+            ) : null}
 
-          {step.kind === 'email_otp' ? (
-            <View style={[styles.body, lifted && styles.bodyLifted]}>
-              <Text style={styles.infoText}>Code sent to {step.email}</Text>
-              <View style={styles.inputRow}>
-                <MaterialIcons name="pin" size={16} color={semantic.text.faint} />
+            {flow.step.kind === 'email' ? (
+              <View style={styles.stack}>
                 <TextInput
-                  style={styles.input}
-                  placeholder="Enter code"
+                  style={styles.field}
+                  placeholder="you@email.com"
                   placeholderTextColor={semantic.text.faint}
-                  value={otpCode}
-                  onChangeText={setOtpCode}
-                  keyboardType="number-pad"
+                  value={emailInput}
+                  onChangeText={setEmailInput}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                   autoFocus
+                  accessibilityLabel="Email address"
+                />
+                {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+                <PrimaryButton
+                  label={CONNECT_COPY.sendCode}
+                  disabled={!emailInput.trim()}
+                  busy={busy}
+                  onPress={() => void handleSendEmail()}
                 />
               </View>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.primaryBtn,
-                  (!otpCode.trim() || busy) && styles.primaryBtnDisabled,
-                  pressed && styles.primaryBtnPressed,
-                ]}
-                disabled={!otpCode.trim() || busy}
-                onPress={handleVerifyOTP}
-                accessibilityRole="button"
-              >
-                {busy ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.primaryBtnText}>Verify Code</Text>
-                )}
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setOtpCode('');
-                  setStep({ kind: 'options' });
-                }}
-                accessibilityRole="button"
-              >
-                <Text style={styles.backLink}>Back</Text>
-              </Pressable>
-            </View>
-          ) : null}
+            ) : null}
 
-          {step.kind === 'connecting' ? (
-            <View style={styles.body}>
-              <ActivityIndicator size="small" color={semantic.text.accent} />
-              <Text style={styles.infoText}>
-                {step.backend === 'external_mwa'
-                  ? 'Waiting for your wallet app...'
-                  : 'Connecting...'}
-              </Text>
-            </View>
-          ) : null}
-
-          {step.kind === 'error' ? (
-            <View style={styles.body}>
-              <View style={styles.errorRow}>
-                <MaterialIcons name="error-outline" size={16} color={tokens.colors.vermillion} />
-                <Text style={styles.errorText}>{step.message}</Text>
+            {flow.step.kind === 'otp' ? (
+              <View style={styles.stack}>
+                <Pressable onPress={() => otpInput.current?.focus()} accessibilityRole="button" accessibilityLabel="One-time code">
+                  <View style={styles.otpRow}>
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <View key={index} style={styles.otpBox}>
+                        <Text style={styles.otpDigit}>{otpCode[index] ?? ''}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </Pressable>
+                <TextInput
+                  ref={otpInput}
+                  value={otpCode}
+                  onChangeText={(value) => {
+                    setOtpError(null);
+                    setOtpCode(value.replace(/\D/g, '').slice(0, 6));
+                  }}
+                  keyboardType="number-pad"
+                  autoFocus
+                  maxLength={6}
+                  caretHidden
+                  style={styles.hiddenInput}
+                  accessibilityLabel="Enter code"
+                />
+                <Pressable onPress={() => void pasteCode(setOtpCode)} accessibilityRole="button" style={styles.pasteBtn}>
+                  <Text style={styles.pasteText}>{CONNECT_COPY.paste}</Text>
+                </Pressable>
+                {otpError ? <Text style={styles.errorText}>{otpError}</Text> : null}
+                <PrimaryButton
+                  label={CONNECT_COPY.verify}
+                  disabled={!otpCode.trim()}
+                  busy={busy}
+                  onPress={() => void handleVerifyOTP()}
+                />
               </View>
-              <Pressable
-                style={({ pressed }) => [styles.primaryBtn, pressed && styles.primaryBtnPressed]}
-                onPress={() => step.disconnectChain
-                  ? void confirmDisconnect(step.disconnectChain)
-                  : setStep({ kind: 'options' })}
-                accessibilityRole="button"
+            ) : null}
+
+            {flow.step.kind === 'signing_in' ? (
+              <WaitBlock title="Signing in" body={CONNECT_COPY.signingInBody} />
+            ) : null}
+
+            {flow.step.kind === 'creating' ? (
+              <WaitBlock title={CONNECT_COPY.creatingTitle} body={CONNECT_COPY.creatingBody} />
+            ) : null}
+
+            {flow.step.kind === 'have' ? (
+              <View style={styles.stack}>
+                {flow.externalError ? <Text style={styles.errorText}>{flow.externalError}</Text> : null}
+                {EXTERNAL_WALLET_CHOICES.map((choice) => (
+                  <MethodRow
+                    key={choice.id}
+                    title={choice.name}
+                    detail={choice.detail}
+                    mark={choice.id === 'phantom'
+                      ? <View style={[styles.mark, styles.markPhantom]}><Text style={styles.markPhantomText}>◈</Text></View>
+                      : <View style={[styles.mark, styles.markSeeker]}><Text style={styles.markSeekerText}>S</Text></View>}
+                    onPress={() => void handleExternalWallet(choice.id)}
+                    disabled={busy}
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {flow.step.kind === 'connecting_external' ? (
+              <WaitBlock
+                title={CONNECT_COPY.approveTitle}
+                body={`Waiting for ${externalWaitingLabel(flow.step.wallet)}.`}
+              />
+            ) : null}
+
+            {flow.step.kind === 'fail_login' ? (
+              <FailBlock title={CONNECT_COPY.signInFailedTitle} body={CONNECT_COPY.signInFailedBody}>
+                <PrimaryButton
+                  label={CONNECT_COPY.trySignInAgain}
+                  onPress={() => dispatch({ type: 'retry_login' })}
+                />
+              </FailBlock>
+            ) : null}
+
+            {flow.step.kind === 'fail_setup' ? (
+              <FailBlock
+                title={flow.setupFailure ? CONNECT_COPY.setupFailedTitle : CONNECT_COPY.finishSetupTitle}
+                body={flow.setupFailure === 'timeout'
+                  ? `${CONNECT_COPY.setupFailedLead} ${CONNECT_COPY.setupTimeoutDetail}`
+                  : flow.setupFailure === 'create'
+                    ? `${CONNECT_COPY.setupFailedLead} ${CONNECT_COPY.setupCreateDetail}`
+                    : CONNECT_COPY.finishSetupBody}
               >
-                <Text style={styles.primaryBtnText}>
-                  {step.disconnectChain ? 'Retry disconnect' : 'Try again'}
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
+                {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+                <PrimaryButton
+                  label={CONNECT_COPY.retryWallet}
+                  busy={busy}
+                  onPress={() => void handleRetryWallet()}
+                />
+                {showsLogout(flow) ? (
+                  <Pressable
+                    onPress={() => void handleLogout()}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    style={styles.logoutBtn}
+                  >
+                    <Text style={styles.logoutText}>{CONNECT_COPY.logoutAndRestart}</Text>
+                  </Pressable>
+                ) : null}
+              </FailBlock>
+            ) : null}
+
+            {flow.step.kind === 'connected' ? (
+              <View style={styles.stack}>
+                <View style={styles.ident}>
+                  {flow.linked === 'privy' ? (
+                    privy.authMethod === 'google'
+                      ? <View style={[styles.identMark, styles.markGoogle]}><GoogleMark /></View>
+                      : <View style={[styles.identMark, styles.markEmail]}><EmailMark /></View>
+                  ) : flow.externalWallet === 'phantom' ? (
+                    <View style={[styles.identMark, styles.markPhantom]}><Text style={styles.markPhantomText}>◈</Text></View>
+                  ) : flow.externalWallet === 'seeker' ? (
+                    <View style={[styles.identMark, styles.markSeeker]}><Text style={styles.markSeekerText}>S</Text></View>
+                  ) : (
+                    <View style={[styles.identMark, styles.markEmail]}>
+                      <MaterialIcons name="account-balance-wallet" size={18} color={tokens.colors.viridian} />
+                    </View>
+                  )}
+                  <View style={styles.identText}>
+                    <Text style={styles.identName}>{flow.linked === 'privy' ? privyLabel : externalName}</Text>
+                    <Text style={styles.identDetail}>{flow.linked === 'privy' ? privyDetail : externalDetail}</Text>
+                  </View>
+                </View>
+                {chainRows.map((row) => (
+                  <View key={row.key} style={styles.chainCard}>
+                    <View style={styles.labRow}>
+                      <Text style={styles.lab}>{row.label}</Text>
+                      <Pressable
+                        onPress={() => void handleCopy(row.key, row.address)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Copy ${row.label} address`}
+                      >
+                        <Text style={styles.copyText}>
+                          {copiedKey === row.key ? CONNECT_COPY.copied : CONNECT_COPY.copy}
+                        </Text>
+                      </Pressable>
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <Text selectable style={styles.addressValue}>{row.address}</Text>
+                    </ScrollView>
+                  </View>
+                ))}
+                <View style={styles.stack}>
+                  {flow.linked === 'privy' ? (
+                    <SecondaryButton
+                      label={CONNECT_COPY.export}
+                      onPress={() => dispatch({ type: 'open_export' })}
+                    />
+                  ) : null}
+                  <DangerButton
+                    label={CONNECT_COPY.disconnect}
+                    disabled={busy}
+                    onPress={() => dispatch({ type: 'request_disconnect' })}
+                  />
+                </View>
+              </View>
+            ) : null}
+
+            {flow.step.kind === 'export' ? (
+              <View style={styles.stack}>
+                <Text style={styles.plain}>{CONNECT_COPY.exportIntro}</Text>
+                <PrimaryButton label={CONNECT_COPY.continuePrivy} onPress={handleExportContinue} />
+                <SecondaryButton
+                  label={CONNECT_COPY.notNow}
+                  onPress={() => dispatch({ type: 'export_not_now' })}
+                />
+              </View>
+            ) : null}
+
+            {flow.step.kind === 'export_opening' ? (
+              <WaitBlock title={CONNECT_COPY.openingPrivyTitle} body={CONNECT_COPY.openingPrivyBody} />
+            ) : null}
+
+            {flow.step.kind === 'export_unavailable' ? (
+              <View style={styles.stack}>
+                <Text style={styles.plain}>{CONNECT_COPY.exportUnavailable}</Text>
+                <PrimaryButton
+                  label={CONNECT_COPY.backToWallet}
+                  onPress={() => dispatch({ type: 'back' })}
+                />
+              </View>
+            ) : null}
+
+            {flow.step.kind === 'confirm_disconnect' ? (
+              <FailBlock
+                icon={false}
+                title={CONNECT_COPY.disconnectTitle}
+                body={flow.linked === 'privy' ? CONNECT_COPY.privyDisconnectBody : CONNECT_COPY.disconnectBody}
+              >
+                {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+                <DangerButton
+                  label={busy ? 'Disconnecting...' : CONNECT_COPY.disconnect}
+                  disabled={busy}
+                  onPress={() => void confirmDisconnect()}
+                />
+                <SecondaryButton
+                  label={CONNECT_COPY.cancel}
+                  disabled={busy}
+                  onPress={() => dispatch({ type: 'cancel_disconnect' })}
+                />
+              </FailBlock>
+            ) : null}
+          </ScrollView>
         </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-/**
- * The sheet when a wallet is already connected: identity, not connection.
- *
- * Address and disconnect only. Balances and positions live in the wallet
- * module — this answers "who am I", not "what do I have".
- */
-function ConnectedStep({
-  wallets,
-  busy,
-  onCopy,
-  onDisconnect,
-}: {
-  /** Every wallet held this session, one row each. */
-  wallets: readonly { chain: Chain; label: string; address: string }[];
-  busy: boolean;
-  onCopy: (address: string) => void;
-  onDisconnect: (chain: Chain) => void;
-}) {
-  return (
-    <View style={styles.body}>
-      {wallets.map((wallet) => {
-        const short = `${wallet.address.slice(0, 6)}···${wallet.address.slice(-4)}`;
-        return (
-          <View key={wallet.chain} style={styles.walletGroup}>
-            <Text style={styles.chainLabel}>{wallet.label}</Text>
-            <Pressable
-              style={({ pressed }) => [styles.addressRow, pressed && styles.primaryBtnPressed]}
-              onPress={() => onCopy(wallet.address)}
-              accessibilityRole="button"
-              accessibilityLabel={`Copy ${wallet.label} address ${short}`}
-            >
-              <View style={styles.addressText}>
-                <Text style={styles.addressValue}>{short}</Text>
-                <Text style={styles.addressHint}>Tap to copy</Text>
-              </View>
-              <MaterialIcons name="content-copy" size={16} color={semantic.text.dim} />
-            </Pressable>
+async function pasteCode(setOtpCode: (value: string) => void) {
+  const text = (await Clipboard.getStringAsync()) ?? '';
+  const digits = text.replace(/\D/g, '').slice(0, 6);
+  if (digits) setOtpCode(digits);
+}
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.disconnectBtn,
-                busy && styles.primaryBtnDisabled,
-                pressed && styles.primaryBtnPressed,
-              ]}
-              onPress={() => onDisconnect(wallet.chain)}
-              disabled={busy}
-              accessibilityRole="button"
-              accessibilityLabel={`Disconnect ${wallet.label} wallet`}
-            >
-              <MaterialIcons name="power-settings-new" size={14} color={tokens.colors.vermillion} />
-              <Text style={styles.disconnectText}>
-                {busy ? 'Disconnecting...' : `Disconnect ${wallet.label}`}
-              </Text>
-            </Pressable>
-          </View>
-        );
-      })}
+function WaitBlock({ title, body }: { title: string; body: string }) {
+  return (
+    <View style={styles.wait}>
+      <ActivityIndicator size="small" color={tokens.colors.viridian} />
+      <Text style={styles.waitTitle}>{title}</Text>
+      {body ? <Text style={styles.waitBody}>{body}</Text> : null}
     </View>
   );
 }
 
-function OptionsStep({
-  chain,
-  options,
-  busy,
-  emailInput,
-  onChangeEmail,
-  onSendEmail,
-  compactBody,
-  onGoogle,
-  onWalletConnect,
-  walletOptions,
+function FailBlock({
+  title,
+  body,
+  icon = true,
+  children,
 }: {
-  chain: Chain;
-  options: readonly ConnectOption[];
-  busy: boolean;
-  emailInput: string;
-  onChangeEmail: (value: string) => void;
-  onSendEmail: () => void;
-  /** True while the sheet is lifted, so the body can drop its bottom padding. */
-  compactBody: boolean;
-  onGoogle: () => void;
-  onWalletConnect: (walletName?: string) => void;
-  /** Detected external wallets. Empty where the platform cannot enumerate. */
-  walletOptions: readonly { name: string; icon?: string }[];
+  title: string;
+  body: string;
+  icon?: boolean;
+  children: ReactNode;
 }) {
-  const hasEmail = options.includes('email');
-  const secondary = options.filter((option) => option !== 'email');
-
   return (
-    <View style={[styles.body, compactBody && styles.bodyLifted]}>
-      <Text style={styles.blurb}>
-        {chain === 'evm'
-          ? 'Sign in to create a wallet that can sign on Polygon and other EVM networks.'
-          : 'Sign in, or connect a Solana wallet you already use.'}
-      </Text>
-
-      {hasEmail ? (
-        <>
-          <View style={styles.inputRow}>
-            <MaterialIcons name="email" size={16} color={semantic.text.faint} />
-            <TextInput
-              style={styles.input}
-              placeholder="you@email.com"
-              placeholderTextColor={semantic.text.faint}
-              value={emailInput}
-              onChangeText={onChangeEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.primaryBtn,
-              (!emailInput.trim() || busy) && styles.primaryBtnDisabled,
-              pressed && styles.primaryBtnPressed,
-            ]}
-            disabled={!emailInput.trim() || busy}
-            onPress={onSendEmail}
-            accessibilityRole="button"
-          >
-            {busy ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.primaryBtnText}>Continue with Email</Text>
-            )}
-          </Pressable>
-        </>
-      ) : null}
-
-      {hasEmail && secondary.length > 0 ? (
-        <View style={styles.orRow}>
-          <View style={styles.orLine} />
-          <Text style={styles.orText}>or</Text>
-          <View style={styles.orLine} />
+    <View style={styles.fail}>
+      {icon ? (
+        <View style={styles.failIcon}>
+          <MaterialIcons name="error-outline" size={22} color={tokens.colors.vermillion} />
         </View>
       ) : null}
-
-      {secondary.map((option) => {
-        if (option === 'google') {
-          return (
-            <Pressable
-              key={option}
-              style={({ pressed }) => [
-                styles.secondaryBtn,
-                busy && styles.primaryBtnDisabled,
-                pressed && styles.primaryBtnPressed,
-              ]}
-              disabled={busy}
-              onPress={onGoogle}
-              accessibilityRole="button"
-            >
-              <MaterialIcons name="account-circle" size={16} color={semantic.text.dim} />
-              <Text style={styles.secondaryBtnText}>Continue with Google</Text>
-            </Pressable>
-          );
-        }
-
-        // One row per detected wallet where the platform can enumerate them
-        // (web, via the wallet adapter). Naming the wallet is what stops the
-        // adapter silently defaulting to `wallets[0]`. Native returns an empty
-        // list — MWA cannot enumerate — so it falls through to a single button
-        // and the OS shows its own chooser.
-        if (walletOptions.length > 0) {
-          return walletOptions.map((wallet) => (
-            <Pressable
-              key={wallet.name}
-              style={({ pressed }) => [
-                styles.secondaryBtn,
-                busy && styles.primaryBtnDisabled,
-                pressed && styles.primaryBtnPressed,
-              ]}
-              disabled={busy}
-              onPress={() => onWalletConnect(wallet.name)}
-              accessibilityRole="button"
-              accessibilityLabel={`Connect ${wallet.name}`}
-            >
-              {wallet.icon ? (
-                <Image source={{ uri: wallet.icon }} style={styles.walletIcon} />
-              ) : (
-                <MaterialIcons name="account-balance-wallet" size={16} color={semantic.text.dim} />
-              )}
-              <Text style={styles.secondaryBtnText}>{wallet.name}</Text>
-            </Pressable>
-          ));
-        }
-
-        return (
-          <Pressable
-            key={option}
-            style={({ pressed }) => [
-              styles.secondaryBtn,
-              busy && styles.primaryBtnDisabled,
-              pressed && styles.primaryBtnPressed,
-            ]}
-            disabled={busy}
-            onPress={() => onWalletConnect()}
-            accessibilityRole="button"
-          >
-            <MaterialIcons name="account-balance-wallet" size={16} color={semantic.text.dim} />
-            <Text style={styles.secondaryBtnText}>Solana Wallet</Text>
-          </Pressable>
-        );
-      })}
+      <Text style={styles.waitTitle}>{title}</Text>
+      <Text style={styles.waitBody}>{body}</Text>
+      {children}
     </View>
+  );
+}
+
+function PrimaryButton({
+  label,
+  onPress,
+  disabled,
+  busy,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+}) {
+  const off = disabled || busy;
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.primaryBtn, off && styles.disabled, pressed && !off && styles.pressed]}
+      disabled={off}
+      onPress={onPress}
+      accessibilityRole="button"
+    >
+      {busy ? (
+        <ActivityIndicator size="small" color={tokens.colors.walletCore} />
+      ) : (
+        <Text style={styles.primaryText}>{label}</Text>
+      )}
+    </Pressable>
+  );
+}
+
+function SecondaryButton({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.secondaryBtn, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
+      disabled={disabled}
+      onPress={onPress}
+      accessibilityRole="button"
+    >
+      <Text style={styles.secondaryText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function DangerButton({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.dangerBtn, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
+      disabled={disabled}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Text style={styles.dangerText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function MethodRow({
+  title,
+  detail,
+  mark,
+  onPress,
+  disabled,
+}: {
+  title: string;
+  detail: string;
+  mark: ReactNode;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.row, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
+      disabled={disabled}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+    >
+      {mark}
+      <View style={styles.rowText}>
+        <Text style={styles.rowTitle}>{title}</Text>
+        <Text style={styles.rowDetail}>{detail}</Text>
+      </View>
+      <MaterialIcons name="chevron-right" size={22} color={semantic.text.faint} />
+    </Pressable>
+  );
+}
+
+function EmailMark() {
+  return (
+    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"
+        stroke={tokens.colors.viridian}
+        strokeWidth={1.75}
+      />
+      <Path
+        d="m4.5 8 6.7 5.1a1.5 1.5 0 0 0 1.8 0L19.5 8"
+        stroke={tokens.colors.viridian}
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+function GoogleMark() {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24">
+      <Path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+      <Path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+      <Path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+      <Path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+    </Svg>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    backgroundColor: 'rgba(3, 31, 44, 0.72)',
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: semantic.background.surface,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    backgroundColor: semantic.background.screen,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     borderTopWidth: 1,
     borderColor: semantic.border.muted,
+    maxHeight: '92%',
   },
-  /**
-   * Extends the sheet's own background below its content while it is lifted,
-   * so the strip the `translateY` opens up underneath shows sheet rather than
-   * the dark overlay. Any value at least as tall as the tallest keyboard works;
-   * the excess is simply off-screen.
-   *
-   * iOS only — it pairs with the translate, and applying it on Android (where
-   * `KeyboardAvoidingView` does the moving) just adds 400pt of empty sheet.
-   */
   sheetLifted: {
     paddingBottom: 400,
   },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: semantic.border.muted,
+    alignSelf: 'center',
+    marginTop: 10,
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingHorizontal: tokens.spacing.sm,
+    paddingTop: tokens.spacing.sm,
+    paddingBottom: tokens.spacing.xs,
+  },
+  iconBtn: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
-    paddingHorizontal: tokens.spacing.lg,
-    paddingVertical: tokens.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: semantic.border.muted,
+    justifyContent: 'center',
+  },
+  headerText: {
+    flex: 1,
+    minWidth: 0,
+    paddingTop: 8,
   },
   title: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.md,
-    fontWeight: '700',
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '600',
     color: semantic.text.primary,
-    letterSpacing: 1,
+  },
+  subtitle: {
+    marginTop: 4,
+    fontSize: tokens.fontSize.md,
+    lineHeight: 20,
+    color: semantic.text.dim,
   },
   body: {
-    padding: tokens.spacing.lg,
+    paddingHorizontal: tokens.spacing.lg,
+    paddingTop: tokens.spacing.sm,
+    paddingBottom: 36,
     gap: tokens.spacing.md,
-    paddingBottom: 40,
-    alignItems: 'stretch',
   },
-  /**
-   * `body`'s 40pt bottom padding clears the home indicator on a resting bottom
-   * sheet. Lifted above the keyboard there is no home indicator to clear, so
-   * it is only dead space between the last control and the keyboard.
-   */
   bodyLifted: {
     paddingBottom: tokens.spacing.lg,
   },
-  blurb: {
-    fontSize: tokens.fontSize.sm,
-    lineHeight: 18,
+  stack: {
+    gap: tokens.spacing.sm,
+  },
+  primaryBtn: {
+    width: '100%',
+    minHeight: 56,
+    borderRadius: 14,
+    backgroundColor: tokens.colors.bone,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  primaryText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: tokens.colors.walletCore,
+    textAlign: 'center',
+  },
+  secondaryBtn: {
+    width: '100%',
+    minHeight: 56,
+    borderRadius: 14,
+    backgroundColor: semantic.background.surface,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  secondaryText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: semantic.text.primary,
+    textAlign: 'center',
+  },
+  dangerBtn: {
+    width: '100%',
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#7a2a3c',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  dangerText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: tokens.colors.vermillion,
+  },
+  disabled: {
+    opacity: 0.4,
+  },
+  pressed: {
+    opacity: 0.85,
+  },
+  row: {
+    minHeight: 56,
+    borderRadius: 14,
+    backgroundColor: semantic.background.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing.md,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  rowText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rowTitle: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: semantic.text.primary,
+  },
+  rowDetail: {
+    marginTop: 1,
+    fontSize: 13,
+    color: semantic.text.faint,
+  },
+  mark: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markEmail: {
+    backgroundColor: tokens.colors.lift,
+  },
+  markGoogle: {
+    backgroundColor: '#fff',
+  },
+  markSeeker: {
+    backgroundColor: '#5b21b6',
+  },
+  markPhantom: {
+    backgroundColor: '#ab9ff2',
+  },
+  markSeekerText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  markPhantomText: {
+    color: '#1b1438',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  field: {
+    minHeight: 52,
+    borderRadius: 14,
+    backgroundColor: semantic.background.surface,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    color: semantic.text.primary,
+  },
+  otpRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: tokens.spacing.sm,
+  },
+  otpBox: {
+    width: 44,
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: semantic.background.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  otpDigit: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: semantic.text.primary,
+  },
+  hiddenInput: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
+  pasteBtn: {
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pasteText: {
+    color: tokens.colors.viridian,
+    fontSize: tokens.fontSize.md,
+    fontWeight: '500',
+  },
+  wait: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    gap: 6,
+  },
+  waitTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: semantic.text.primary,
+    textAlign: 'center',
+  },
+  waitBody: {
+    fontSize: tokens.fontSize.md,
+    lineHeight: 20,
     color: semantic.text.dim,
     textAlign: 'center',
   },
-  inputRow: {
-    flexDirection: 'row',
+  fail: {
+    alignItems: 'stretch',
+    gap: tokens.spacing.sm,
+    paddingTop: 8,
+  },
+  failIcon: {
+    alignSelf: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(239, 71, 111, 0.16)',
     alignItems: 'center',
-    backgroundColor: semantic.background.lift,
-    borderRadius: tokens.radius.md,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  errorText: {
+    color: tokens.colors.vermillion,
+    fontSize: tokens.fontSize.sm,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  logoutBtn: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: tokens.spacing.md,
-    gap: tokens.spacing.sm,
   },
-  input: {
-    flex: 1,
+  logoutText: {
+    color: semantic.text.faint,
     fontSize: tokens.fontSize.md,
-    color: semantic.text.primary,
-    paddingVertical: tokens.spacing.md,
+    fontWeight: '500',
+    textAlign: 'center',
+    textDecorationLine: 'underline',
   },
-  primaryBtn: {
-    backgroundColor: tokens.colors.viridian,
-    borderRadius: tokens.radius.md,
-    paddingVertical: tokens.spacing.md + 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  primaryBtnDisabled: {
-    opacity: 0.4,
-  },
-  primaryBtnPressed: {
-    opacity: 0.8,
-  },
-  primaryBtnText: {
-    fontSize: tokens.fontSize.md,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  secondaryBtn: {
+  ident: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: tokens.spacing.md,
+    marginBottom: 2,
+  },
+  identMark: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: tokens.spacing.sm,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    borderRadius: tokens.radius.md,
-    paddingVertical: tokens.spacing.md + 2,
-    minHeight: 44,
   },
-  secondaryBtnText: {
-    fontSize: tokens.fontSize.md,
+  identText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  identName: {
+    fontSize: 17,
     fontWeight: '600',
-    color: semantic.text.dim,
+    color: semantic.text.primary,
   },
-  walletIcon: {
-    width: 16,
-    height: 16,
-    borderRadius: 4,
+  identDetail: {
+    marginTop: 2,
+    fontSize: 13,
+    color: semantic.text.faint,
   },
-  addressRow: {
+  chainCard: {
+    borderRadius: 14,
+    backgroundColor: semantic.background.surface,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    gap: 6,
+  },
+  labRow: {
+    minHeight: 28,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: tokens.spacing.md,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    borderRadius: tokens.radius.md,
-    paddingVertical: tokens.spacing.md,
-    paddingHorizontal: tokens.spacing.md,
-    minHeight: 44,
-  },
-  walletGroup: {
     gap: tokens.spacing.sm,
   },
-  chainLabel: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+  lab: {
     color: semantic.text.faint,
+    fontSize: 12,
+    fontWeight: '500',
   },
-  addressText: {
-    gap: 2,
+  copyText: {
+    color: tokens.colors.viridian,
+    fontSize: 13,
+    fontWeight: '500',
   },
   addressValue: {
     fontFamily: 'monospace',
-    fontSize: tokens.fontSize.md,
-    fontWeight: '700',
-    color: semantic.text.primary,
-  },
-  addressHint: {
-    fontSize: tokens.fontSize.xs,
-    color: semantic.text.faint,
-  },
-  disconnectBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: tokens.spacing.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(239,71,111,0.35)',
-    borderRadius: tokens.radius.md,
-    paddingVertical: tokens.spacing.md + 2,
-    minHeight: 44,
-  },
-  disconnectText: {
-    fontSize: tokens.fontSize.md,
-    fontWeight: '600',
-    color: tokens.colors.vermillion,
-  },
-  orRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.md,
-  },
-  orLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: semantic.border.muted,
-  },
-  orText: {
-    fontSize: tokens.fontSize.sm,
-    color: semantic.text.faint,
-  },
-  infoText: {
-    fontSize: tokens.fontSize.sm,
-    color: semantic.text.dim,
-    textAlign: 'center',
-    paddingVertical: tokens.spacing.sm,
-  },
-  backLink: {
-    fontSize: tokens.fontSize.sm,
-    color: semantic.text.dim,
-    textAlign: 'center',
-    paddingVertical: tokens.spacing.sm,
-  },
-  errorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.sm,
-    paddingVertical: tokens.spacing.sm,
-    paddingHorizontal: tokens.spacing.md,
-    backgroundColor: 'rgba(239,71,111,0.08)',
-    borderRadius: tokens.radius.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(239,71,111,0.20)',
-  },
-  errorText: {
-    flex: 1,
-    fontSize: tokens.fontSize.sm,
+    fontSize: 12.5,
     lineHeight: 18,
-    color: tokens.colors.vermillion,
+    color: semantic.text.dim,
+  },
+  plain: {
+    color: semantic.text.dim,
+    fontSize: tokens.fontSize.md,
+    lineHeight: 20,
   },
 });

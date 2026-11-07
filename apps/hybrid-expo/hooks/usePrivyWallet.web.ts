@@ -1,6 +1,7 @@
 export interface PrivyWalletState {
   connected: boolean;
   isPrivyUser: boolean;
+  isReady: boolean;
   address: string | null;
   shortAddress: string | null;
   loginWithGoogle: () => Promise<void>;
@@ -21,6 +22,7 @@ const unavailable = async () => {
 const webPrivyWallet: PrivyWalletState = {
   connected: false,
   isPrivyUser: false,
+  isReady: true,
   address: null,
   shortAddress: null,
   loginWithGoogle: unavailable,

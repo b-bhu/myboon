@@ -39,6 +39,9 @@ export function useWallet() {
       address: fakeAddress,
       shortAddress: 'E2eP···1111',
       connect: async () => {},
+      // Already-have must not share `connect`. That one creates a Privy wallet
+      // when a Privy session is signed in. See the privy branch below.
+      connectExternal: async () => {},
       disconnect: async () => {},
       signMessage: async () => new Uint8Array(64).fill(1),
       signTransaction: async <T,>(transaction: T) => transaction,
@@ -76,10 +79,15 @@ export function useWallet() {
       connected: privy.connected,
       address: privy.connected ? privy.address : null,
       shortAddress: privy.connected ? privy.shortAddress : null,
+      // Explicit Solana activation for someone already signed into Privy
+      // (`useChainSigner`). This creates the embedded wallet. The connection
+      // sheet must not use it for Seeker / Phantom — that was the silent
+      // MWA → Privy path. Already-have calls `connectExternal` instead.
       connect: async (_walletName?: string) => {
         if (privy.connected) return;
         await privy.waitForWallet();
       },
+      connectExternal: async (_walletName?: string) => connectMwa(),
       disconnect: privy.disconnect,
       signMessage: privy.connected ? privy.signMessage : null,
       signTransaction: privy.connected ? privy.signTransaction : null,
@@ -104,6 +112,7 @@ export function useWallet() {
       ? `${mwaAddress.slice(0, 4)}···${mwaAddress.slice(-4)}`
       : null,
     connect: async (_walletName?: string) => connectMwa(),
+    connectExternal: async (_walletName?: string) => connectMwa(),
     disconnect: disconnectMwa,
     signMessage,
     signTransaction,
