@@ -438,7 +438,8 @@ function render(s, push){
     el.className = 'choice';
     el.innerHTML = `
       <p style="color:var(--dim);font-size:14px;margin:4px 0 14px;text-align:left">
-        Opens Privy so you can export or recover this wallet. MyBoon never sees your key.
+        Anyone with this key controls the funds. MyBoon never sees it.
+        Opens Privy so you can export or recover this wallet.
       </p>
       <button class="btn-primary" type="button" data-go="export_wait">Continue with Privy</button>
       <button class="btn-secondary" type="button" data-go="ok_privy">Not now</button>`;
