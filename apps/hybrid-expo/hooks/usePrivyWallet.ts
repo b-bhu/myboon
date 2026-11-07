@@ -214,7 +214,12 @@ export function usePrivyWallet(): PrivyWalletState {
       await loginWithOAuth({ provider: 'google' });
     },
     sendEmailOTP: async (email: string) => {
-      await sendEmailCode({ email });
+      // Resend is the same call: sendCode({ email }) again. Expo resolves
+      // `{ success: boolean }` and rejects on a rate limit.
+      const sent = await sendEmailCode({ email });
+      if (sent?.success === false) {
+        throw new Error('Could not send the code.');
+      }
     },
     loginWithEmailOTP: async (code: string, email?: string) => {
       await loginWithEmailCode(email ? { code, email } : { code });

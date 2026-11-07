@@ -132,6 +132,7 @@ function loadOverview() {
     '@/features/wallet/WalletAccountRow': { WalletAccountRow: () => null },
     '@/features/wallet/PerpsAccountRow': { PerpsAccountRow: () => null },
     '@/features/wallet/components/ChainRow': { ChainRow: () => null },
+    '@/features/wallet/components/LegalLinks': { LegalLinks: () => null },
     '@/features/chain/chain.contract': {},
     '@/features/wallet/wallet.types': {},
   };
@@ -149,6 +150,7 @@ function loadOverview() {
     View,
     ScrollView,
     AnimatedScrollView,
+    AnimatedView: Animated.View,
     actionRenders,
     scrollCalls,
     get actionMounts() {
@@ -196,6 +198,19 @@ test('wallet panel scroll keeps composer mounted and only toggles it at the pane
     views[1].props.onLayout({ nativeEvent: { layout: { height: 500 } } });
   });
   const accountScroll = renderer.root.findByType(loaded.AnimatedScrollView);
+  const animatedStyles = renderer.root.findAllByType(loaded.AnimatedView).flatMap((node) => {
+    const found: Record<string, unknown>[] = [];
+    const visit = (style: unknown) => {
+      if (Array.isArray(style)) style.forEach(visit);
+      else if (style && typeof style === 'object') found.push(style as Record<string, unknown>);
+    };
+    visit(node.props.style);
+    return found;
+  });
+  const dragStyle = animatedStyles.find((style) => 'borderTopLeftRadius' in style);
+  assert.ok(dragStyle);
+  assert.equal('top' in dragStyle, false);
+  assert.equal(Array.isArray(dragStyle.transform), true);
   const baselineRenders = loaded.actionRenders.length;
   assert.equal(loaded.actionRenders.at(-1)?.active, true);
 

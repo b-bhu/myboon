@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   CONNECT_COPY,
+  EXPORT_INSTRUCTIONS,
   INITIAL_CONNECT_FLOW,
   PRIVY_HOME_URL,
   assertPrivyHomeUrl,
@@ -283,9 +284,19 @@ describe('Privy export entry', () => {
   it('warns, then hands a Privy session to Privy Home without claiming the key was copied', () => {
     const entry = reduceConnectFlow(connected(), { type: 'open_export' });
     assert.equal(entry.step.kind, 'export');
-    assert.match(CONNECT_COPY.exportWarning, /controls the funds/i);
-    assert.match(CONNECT_COPY.exportWarning, /never sees it/i);
-    assert.doesNotMatch(`${CONNECT_COPY.exportWarning} ${CONNECT_COPY.exportIntro}`, /here is your (seed|key)/i);
+    assert.equal(sheetChrome(entry, {}).subtitle, '');
+    assert.equal(CONNECT_COPY.exportWarning, 'Keep your private key to yourself.');
+    const steps = EXPORT_INSTRUCTIONS.map((parts) => parts.map((part) => part.text).join(''));
+    assert.deepEqual(steps, [
+      'Sign in to Privy with your MyBoon email.',
+      'Open My Apps → MyBoon.',
+      'Choose your wallet and follow the export instructions.',
+    ]);
+    assert.equal(EXPORT_INSTRUCTIONS[0][1]?.emphasis, true);
+    assert.equal(EXPORT_INSTRUCTIONS[1][1]?.emphasis, true);
+    assert.equal(EXPORT_INSTRUCTIONS[1][3]?.emphasis, true);
+    const entryCopy = `${steps.join(' ')} ${CONNECT_COPY.exportWarning}`;
+    assert.doesNotMatch(entryCopy, /never sees|simulated|disclaimer|no keys were exported/i);
 
     const notNow = reduceConnectFlow(entry, { type: 'export_not_now' });
     assert.equal(notNow.step.kind, 'connected');
@@ -389,14 +400,20 @@ describe('ConnectionSheet wires the external path off Privy', () => {
   });
 
   it('checks the email, then calls Privy sendCode, and keeps the draft across close', () => {
-    const start = source.indexOf('const handleContinue');
+    const start = source.indexOf('const requestEmailCode');
     const end = source.indexOf('const handleVerifyOTP');
     assert.ok(start >= 0 && end > start);
     const body = source.slice(start, end);
-    assert.ok(body.indexOf('emailEntryError') < body.indexOf('sendEmailOTP'));
+    const checked = body.indexOf('emailEntryError');
+    const sent = body.indexOf('sendEmailOTP');
+    assert.ok(checked >= 0 && sent >= 0);
+    assert.match(body, /emailEntryError[\s\S]*requestEmailCode\(email, false\)/);
+    assert.match(body, /sendEmailOTP\(email\)/);
     assert.match(body, /login_failed/);
     assert.equal(/loginWithGoogle|waitForWallet|482193/.test(body), false);
     assert.match(source, /loginWithEmailOTP\(otpCode\.trim\(\), sentEmail\)/);
+    assert.match(body, /Resend code|handleResend/);
+    assert.match(source, /accessibilityLiveRegion="polite"/);
 
     const closeStart = source.indexOf('const requestClose');
     const closeEnd = source.indexOf('const finishActivated');

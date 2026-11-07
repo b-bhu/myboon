@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { memo } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { swapTheme as color } from '@/features/swap/swap.theme';
 
@@ -12,7 +13,7 @@ const links = [
   { label: 'Delete account', url: DELETE_ACCOUNT_URL },
 ] as const;
 
-export function LegalLinks() {
+export const LegalLinks = memo(function LegalLinks() {
   return (
     <View style={styles.section}>
       <Text style={styles.label}>ABOUT</Text>
@@ -36,7 +37,7 @@ export function LegalLinks() {
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   section: { gap: 8 },
