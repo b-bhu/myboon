@@ -3,7 +3,6 @@ import type { MeteoraStrategy } from '@myboon/shared/meteora';
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Keyboard,
-  KeyboardAvoidingView,
   PanResponder,
   Platform,
   Pressable,
@@ -14,6 +13,7 @@ import {
   View,
   Modal,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TokenIcon } from '@/components/TokenIcon';
 import {
@@ -794,10 +794,12 @@ export function PriceField({
           animationType="slide"
           onRequestClose={finishEditing}
           accessibilityViewIsModal
+          statusBarTranslucent
+          navigationBarTranslucent
         >
           <KeyboardAvoidingView
             style={styles.editorKeyboardAvoiding}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior="padding"
           >
             <View style={styles.editorOverlay}>
               <View style={[styles.editorSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>

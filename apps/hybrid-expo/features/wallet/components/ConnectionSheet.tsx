@@ -20,7 +20,6 @@ import {
   ActivityIndicator,
   Animated,
   Keyboard,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -30,6 +29,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
@@ -404,10 +404,10 @@ export function ConnectionSheet({
   const privyLabel = privy.identityEmail ?? privy.identityName ?? CONNECT_COPY.emailDetail;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={requestClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={requestClose} statusBarTranslucent navigationBarTranslucent>
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? undefined : 'height'}
+        behavior={Platform.OS === 'ios' ? undefined : 'padding'}
       >
         <Animated.View
           style={[
