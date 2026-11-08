@@ -94,16 +94,39 @@ section h3{font-size:var(--t20);margin:0 0 var(--s12);font-weight:600}
 .spin{width:16px;height:16px;border:1.6px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:r .8s linear infinite}
 @keyframes r{to{transform:rotate(360deg)}}
 .parked{border:1px dashed var(--border);border-radius:var(--r-card);padding:var(--s24);text-align:center;color:var(--dim);font-size:var(--t14)}
-@media (max-width:800px){.wrap{display:block}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:0 var(--s12)}nav .lbl{flex-basis:100%}main{padding:var(--s16)}.phone{flex-basis:100%;width:100%}}
+.layout-stage{flex:1 1 420px;min-width:min(100%,390px);max-width:460px;display:flex;flex-direction:column;gap:var(--s12)}
+.layout-stage .seg button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.layout-stage iframe{display:block;width:100%;height:1120px;border:1px solid var(--border);border-radius:28px;background:#021821}
+@media (max-width:800px){.wrap{display:block}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:0 var(--s12)}nav .lbl{flex-basis:100%}main{padding:var(--s16)}.phone{flex-basis:100%;width:100%}.layout-stage{flex-basis:100%;max-width:none}}
 </style></head><body><div class="wrap">
 <nav>
+<div class="lbl">Application</div>
+<a href="#layout">Application layout</a>
 <div class="lbl">Foundations</div>
 <a href="#colour">Colour roles</a><a href="#type">Typography</a><a href="#spacing">Spacing</a><a href="#shape">Shape</a><a href="#icons">Icons</a><a href="#haptics">Haptics</a>
 <div class="lbl">Components</div>
 <a href="#cards">Cards</a><a href="#carousel">Carousel</a><a href="#tabs">Tabs</a><a href="#buttons">Buttons</a><a href="#swipe">Swipe-to-confirm</a><a href="#sheet">Bottom sheet</a><a href="#forms">Forms</a><a href="#alerts">Alerts &amp; toasts</a><a href="#notifs">Notifications</a><a href="#signing">Signing</a><a href="#states">Loading &amp; empty</a>
 </nav>
 <main>
-<header><div class="lbl">MyBoon Design Language · v1 · Oct 26, 2026</div><h1>Component catalog</h1><p>Every approved rule, rendered live. DESIGN.md is the written spec; if this page and DESIGN.md disagree, DESIGN.md wins.</p></header>
+<header><div class="lbl">MyBoon Design Language · v1 · Oct 26, 2026</div><h1>Component catalog</h1><p>Every approved rule, rendered live, plus the application layouts. This file is the review entry. DESIGN.md is the written spec; if this page and DESIGN.md disagree, DESIGN.md wins.</p></header>
+
+<h2 class="grp">Application</h2>
+<section id="layout">
+<div class="layout-stage">
+<div class="seg" id="app-tabs" role="tablist" aria-label="Application layout">
+<button type="button" role="tab" id="app-tab-feed" aria-selected="true" aria-controls="app-preview" tabindex="0" data-i="0" class="on">Feed</button>
+<button type="button" role="tab" id="app-tab-apps" aria-selected="false" aria-controls="app-preview" tabindex="-1" data-i="1">Apps</button>
+<button type="button" role="tab" id="app-tab-wallet" aria-selected="false" aria-controls="app-preview" tabindex="-1" data-i="2">Wallet</button>
+<button type="button" role="tab" id="app-tab-connect" aria-selected="false" aria-controls="app-preview" tabindex="-1" data-i="3">Connect</button>
+</div>
+<iframe id="app-preview" title="Feed layout" role="tabpanel" aria-labelledby="app-tab-feed" scrolling="no" src="feed-mock.html?proto&amp;embed=1"></iframe>
+</div>
+<div class="spec"><h3>Application layout</h3><ul>
+<li>Feed, Apps, Wallet, and Connect are the existing screens, shown here so this page is the place to review them.</li>
+<li>The control above switches screens. On Feed, Apps, and Wallet the tab bar inside the phone does the same. Connect runs in the frame: email, code, resend, and export stay on this page.</li>
+<li>The screen files remain the source. New mock files are not added for UX work in this folder.</li>
+</ul><div class="tok">feed-mock.html · apps-mock.html · wallet-mock.html · wallet-connect/index.html</div></div>
+</section>
 
 <h2 class="grp">Foundations</h2>
 <section id="colour"><div class="phone stack">
@@ -315,4 +338,57 @@ function set(x){knob.style.left=(3+x)+'px';fill.style.width=(x+47)+'px'}
 knob.addEventListener('pointerdown',e=>{x0=e.clientX;max=trk.clientWidth-50;knob.setPointerCapture(e.pointerId);knob.style.transition=fill.style.transition='none'});
 knob.addEventListener('pointermove',e=>{if(x0===null)return;set(Math.max(0,Math.min(max,e.clientX-x0)))});
 knob.addEventListener('pointerup',e=>{const d=e.clientX-x0;x0=null;if(d>=max-4){set(max);trk.classList.add('done');tl.textContent='Confirmed';setTimeout(()=>{trk.classList.remove('done');tl.textContent='Swipe to buy · $50';knob.style.transition=fill.style.transition='all .2s';set(0);fill.style.width='0'},1500)}else{knob.style.transition=fill.style.transition='all .2s';set(0);fill.style.width='0'}});
+</script>
+<script>
+(function(){
+const tabs=[
+ {id:'feed',src:'feed-mock.html?proto&embed=1',title:'Feed layout',tab:'app-tab-feed'},
+ {id:'apps',src:'apps-mock.html?proto&embed=1',title:'Apps layout',tab:'app-tab-apps'},
+ {id:'wallet',src:'wallet-mock.html?proto&embed=1',title:'Wallet layout',tab:'app-tab-wallet'},
+ {id:'connect',src:'wallet-connect/index.html?embed=1',title:'Wallet connect',tab:'app-tab-connect'}
+];
+const list=document.getElementById('app-tabs'),frame=document.getElementById('app-preview');
+let current=0;
+function select(i,focus){
+ current=i;
+ const buttons=[...list.querySelectorAll('[role=tab]')];
+ buttons.forEach(function(b,j){
+  const on=j===i;
+  b.setAttribute('aria-selected',on?'true':'false');
+  b.tabIndex=on?0:-1;
+  b.classList.toggle('on',on);
+ });
+ frame.title=tabs[i].title;
+ frame.setAttribute('aria-labelledby',tabs[i].tab);
+ if(frame.getAttribute('src')!==tabs[i].src)frame.src=tabs[i].src;
+ if(focus)buttons[i].focus();
+}
+list.addEventListener('click',function(e){
+ const b=e.target.closest('[role=tab]');
+ if(!b)return;
+ select(+b.dataset.i,false);
+});
+list.addEventListener('keydown',function(e){
+ if(['ArrowLeft','ArrowRight','Home','End'].indexOf(e.key)<0)return;
+ e.preventDefault();
+ let n=current;
+ if(e.key==='ArrowRight')n=(current+1)%tabs.length;
+ if(e.key==='ArrowLeft')n=(current+tabs.length-1)%tabs.length;
+ if(e.key==='Home')n=0;
+ if(e.key==='End')n=tabs.length-1;
+ select(n,true);
+});
+addEventListener('message',function(e){
+ if(e.source!==frame.contentWindow||!e.data||typeof e.data!=='object')return;
+ if(e.data.t==='mb-scroll')scrollBy(0,e.data.y);
+ if(e.data.t==='mb-nav'){
+  const i=tabs.findIndex(function(t){return t.id===e.data.tab});
+  if(i>=0)select(i,false);
+ }
+ if(e.data.t==='mb-size'){
+  const h=Math.min(1400,Math.max(720,Number(e.data.h)||0));
+  if(Math.abs((parseInt(frame.style.height,10)||0)-h)>1)frame.style.height=h+'px';
+ }
+});
+})();
 </script></body></html>

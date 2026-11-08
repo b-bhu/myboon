@@ -1,8 +1,83 @@
 /* MyBoon prototype notes. Usage: set window.PROTO_NOTES = {pages:[...], notes:[{sel,title,comp,tokens,beh,states,data,q}]} then load this file.
    Pins show only on notes whose element is visible. ?notes turns notes on at load, ?note=N also opens card N. */
 (function(){
-const cfg=window.PROTO_NOTES||{notes:[]},Q=new URLSearchParams(location.search),isProto=Q.has('proto');
+const cfg=window.PROTO_NOTES||{notes:[]},Q=new URLSearchParams(location.search),isProto=Q.has('proto'),embed=Q.has('embed');
 const esc=s=>String(s==null?'':s);
+if(embed&&window.parent!==window){
+ document.documentElement.classList.add('mb-embed');
+ const st=document.createElement('style');
+ st.textContent='html.mb-embed,html.mb-embed body{height:auto!important;min-height:0!important;background:#021821}'
+  +'html.mb-embed body.proto{height:auto!important;overflow:visible!important;padding:12px 0!important}'
+  +'html.mb-embed .stage{min-height:0!important;height:auto!important;justify-content:flex-start!important;padding:8px 0 16px!important}'
+  +'html.mb-embed .phone,html.mb-embed .ap-ph,html.mb-embed #pp{height:844px!important}'
+  +'html.mb-embed #ap{width:min(390px,100%);margin:0 auto}'
+  +'html.mb-embed .nav>div,html.mb-embed nav.tabs>span{cursor:pointer}';
+ document.head.appendChild(st);
+ if(isProto){
+  document.querySelectorAll(cfg.phone||'.phone').forEach(function(ph){
+   ph.querySelectorAll('.nav').forEach(function(n){
+    if(getComputedStyle(n).position==='absolute'){
+     n.parentElement.appendChild(n);
+     Object.assign(n.style,{position:'sticky',bottom:'0',left:'auto',right:'auto',zIndex:20});
+    }
+   });
+  });
+ }
+ const scrollable=function(el,axis){
+  while(el&&el!==document.documentElement){
+   const cs=getComputedStyle(el),ov=axis==='x'?cs.overflowX:cs.overflowY;
+   const size=axis==='x'?el.scrollWidth-el.clientWidth:el.scrollHeight-el.clientHeight;
+   if((ov==='auto'||ov==='scroll')&&size>2)return el;
+   el=el.parentElement;
+  }
+  return null;
+ };
+ const forward=function(dy){if(dy)parent.postMessage({t:'mb-scroll',y:dy},'*')};
+ const handsOff=function(t){return t.closest&&t.closest('[data-grab],[data-thumb],[data-swipe],input,textarea')};
+ addEventListener('wheel',function(e){
+  if(handsOff(e.target))return;
+  const sc=scrollable(e.target,'y');
+  if(sc){
+   const atTop=sc.scrollTop<=0,atBot=sc.scrollTop+sc.clientHeight>=sc.scrollHeight-1;
+   if(e.deltaY<0&&!atTop)return;
+   if(e.deltaY>0&&!atBot)return;
+  }
+  if(!e.deltaY)return;
+  e.preventDefault();
+  forward(e.deltaY);
+ },{passive:false,capture:true});
+ let tx=0,ty=0;
+ addEventListener('touchstart',function(e){tx=e.touches[0].clientX;ty=e.touches[0].clientY},{passive:true,capture:true});
+ addEventListener('touchmove',function(e){
+  if(handsOff(e.target))return;
+  const x=e.touches[0].clientX,y=e.touches[0].clientY,dx=tx-x,dy=ty-y;tx=x;ty=y;
+  if(Math.abs(dx)>Math.abs(dy)&&scrollable(e.target,'x'))return;
+  const sc=scrollable(e.target,'y');
+  if(sc){
+   const atTop=sc.scrollTop<=0,atBot=sc.scrollTop+sc.clientHeight>=sc.scrollHeight-1;
+   if(dy<0&&!atTop)return;
+   if(dy>0&&!atBot)return;
+  }
+  if(!dy)return;
+  e.preventDefault();
+  forward(dy);
+ },{passive:false,capture:true});
+ addEventListener('click',function(e){
+  const tab=e.target.closest('.nav > div, nav.tabs > span');
+  if(!tab)return;
+  const label=tab.textContent.replace(/[^a-z]/gi,'').toLowerCase();
+  if(label!=='feed'&&label!=='apps'&&label!=='wallet')return;
+  e.preventDefault();
+  e.stopPropagation();
+  parent.postMessage({t:'mb-nav',tab:label},'*');
+ },true);
+ const report=function(){parent.postMessage({t:'mb-size',h:Math.ceil(document.body.getBoundingClientRect().height)},'*')};
+ addEventListener('load',report);
+ requestAnimationFrame(report);
+ setTimeout(report,250);
+ setTimeout(report,800);
+ return;
+}
 // index nav
 const nav=document.createElement('nav');nav.className='pn-nav';
 const here=location.pathname.split('/').pop();
