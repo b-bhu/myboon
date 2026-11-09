@@ -36,15 +36,15 @@ const event = (text: string, eventAt: string): StoryEvent => ({
 const iso = new Date('2026-10-30T12:00:00Z');
 const ago = (hours: number) => new Date(iso.getTime() - hours * 3_600_000).toISOString();
 
-test('splitStories keeps the 7-day window: exactly 7 days past, 6d23h active', () => {
+test('splitStories keeps stories older than 7 days on ACTIVE, newest first', () => {
   const week = { ...story('week', 0), updatedAt: ago(24 * 7) };
   const almostWeek = { ...story('almost', 0), updatedAt: ago(24 * 6 + 23) };
   const split = splitStories([week, almostWeek], iso);
-  assert.deepEqual(split.active.map((item) => item.storySlug), ['almost']);
-  assert.deepEqual(split.past.map((item) => item.storySlug), ['week']);
+  assert.deepEqual(split.active.map((item) => item.storySlug), ['almost', 'week']);
+  assert.deepEqual(split.past.map((item) => item.storySlug), []);
 });
 
-test('splitStories sorts both lists newest first with storySlug ascending ties', () => {
+test('splitStories sorts ACTIVE newest first with storySlug ascending ties and no age past bucket', () => {
   const stories = [
     story('bravo', 5),
     story('alpha', 5), // Ties with bravo: slug ascending keeps alpha first.
@@ -53,8 +53,8 @@ test('splitStories sorts both lists newest first with storySlug ascending ties',
     story('echo', 24 * 10),
   ];
   const split = splitStories(stories, iso);
-  assert.deepEqual(split.active.map((item) => item.storySlug), ['charlie', 'alpha', 'bravo', 'delta']);
-  assert.deepEqual(split.past.map((item) => item.storySlug), ['echo']);
+  assert.deepEqual(split.active.map((item) => item.storySlug), ['charlie', 'alpha', 'bravo', 'delta', 'echo']);
+  assert.deepEqual(split.past.map((item) => item.storySlug), []);
   // The input list is never reordered in place.
   assert.deepEqual(stories.map((item) => item.storySlug), ['bravo', 'alpha', 'charlie', 'delta', 'echo']);
 });

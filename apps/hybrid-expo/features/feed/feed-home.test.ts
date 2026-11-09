@@ -70,9 +70,10 @@ test('developingStory picks the most recently updated active story', () => {
   const stories = [story('older', 72), story('newer', 3)];
   assert.equal(developingStory(stories, now)?.storySlug, 'newer');
 });
-test('developingStory ignores stories outside the 7-day active window', () => {
-  assert.equal(developingStory([story('stale', 24 * 8)], now), null);
+test('developingStory keeps stories older than 7 days and still prefers the newest', () => {
+  assert.equal(developingStory([story('stale', 24 * 8)], now)?.storySlug, 'stale');
   assert.equal(developingStory([story('stale', 24 * 8), story('fresh', 5)], now)?.storySlug, 'fresh');
+  assert.equal(developingStory([story('older', 24 * 14), story('newest', 24 * 10)], now)?.storySlug, 'newest');
 });
 test('developingStory ignores invalid dates and lists without stories', () => {
   const broken = { ...story('broken', 3), updatedAt: 'not-a-date' };
