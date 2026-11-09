@@ -2,6 +2,12 @@
 
 Rules every screen follows. Change a rule here first, never ad hoc in code. Colours come only from `apps/hybrid-expo/theme/tokens.ts`.
 
+## Where to review
+
+Open `index.html` in this folder. That file is the review entry for the design system and the application layouts.
+
+**Application layout** on that page shows Feed, Apps, Wallet, and Wallet Connect. Those are the existing files (`feed-mock.html`, `apps-mock.html`, `wallet-mock.html`, `wallet-connect/index.html`), embedded so Connect can be used without leaving the page. Opening a screen file directly still works. Do not add a new mock, variant, or HTML file for UX work here — edit the existing file. `web-landing-page/` is the landing mock and stays as it is.
+
 ## Progress
 - [x] 1. Colour roles
 - [x] 2. Typography

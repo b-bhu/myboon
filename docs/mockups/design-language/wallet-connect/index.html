@@ -116,6 +116,9 @@ button{cursor:pointer}
 .key-warning{padding:8px 10px;border-radius:12px;background:var(--card);color:var(--gold);font-size:14px;line-height:1.5}
 .sheet-hd p{overflow-wrap:anywhere}
 @supports(height:100dvh){.phone{height:min(844px,calc(100dvh - 96px))}}
+html.mb-embed,html.mb-embed body{height:auto;min-height:0;background:#020f16}
+html.mb-embed .stage{min-height:0;height:auto;justify-content:flex-start;padding:8px 0 16px}
+html.mb-embed .phone{height:844px !important;width:min(390px,100%)}
 .wait{padding:28px 8px 20px;text-align:center}
 .wait .spin{
   width:36px;height:36px;margin:0 auto 16px;border-radius:50%;
@@ -219,6 +222,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--vir);outline-of
   <div id="dock" aria-label="Demo states"></div>
 </div>
 <script>
+if(location.search.indexOf('embed')!==-1)document.documentElement.classList.add('mb-embed');
 const STATES = [
   ['home','Home'],
   ['connect','Connect'],
@@ -635,6 +639,11 @@ window.addEventListener('pagehide', stopOtpTimer);
 window.addEventListener('pageshow', ()=>{ if (state === 'otp') watchOtp(); });
 
 go('connect');
+if(document.documentElement.classList.contains('mb-embed')&&window.parent!==window){
+ const embedNotes=document.createElement('script');
+ embedNotes.src='../proto-notes.js';
+ document.body.appendChild(embedNotes);
+}
 </script>
 </body>
 </html>

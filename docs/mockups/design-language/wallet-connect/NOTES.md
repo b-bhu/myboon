@@ -1,5 +1,7 @@
 # Wallet connection mock — November 7 direction
 
+Canonical review entry is `../index.html` (Application layout → Connect). This folder is the implementation: `index.html` and `NOTES.md`. The flow below is unchanged. Open this `index.html` directly for a focused pass. Do not add another mock file for UX work in `docs/mockups/design-language/`.
+
 This local review supersedes the previous create-new / already-have staging and Google design. The latest Reown-inspired direction replaces the email-choice row with an inline **Email** form on the first **Connect to MyBoon** sheet: email input → **Continue**, with **Connect external wallet** secondary below. There is no intermediate email screen. Provider selection belongs to the external adapter, not this sheet. No provider plugin is installed or required.
 
 ## Flow
@@ -52,9 +54,9 @@ Privacy Policy, Terms of Service, and Delete Account were **not present in the l
 
 ## Review / handoff
 
-Handoff is **index.html + NOTES.md only**. Old screenshots and capture scripts in the working folder are historical and not part of this handoff. No repository, PR, teammate message, or Mac copy was changed for this pass.
+Handoff for this screen is **index.html + NOTES.md** in this folder. The design-language `index.html` embeds this file on Application layout → Connect; that page is the main review destination. Old screenshots and capture scripts are historical and not part of this handoff.
 
-Open `index.html` directly. It starts at Connect to MyBoon (`connect`). The demo dock offers Connect, OTP, Setting up, Connecting, failure states, connected states, export preview states, and Disconnect.
+Open this `index.html` directly and it still starts at Connect to MyBoon (`connect`). Inside the design-language index, the same file loads with `?embed=1` so the phone and demo dock fit the frame. The connect, code, resend, and export behavior is the same either way. The demo dock offers Connect, OTP, Setting up, Connecting, failure states, connected states, export preview states, and Disconnect.
 
 For parent computerUse visual QA: start at `connect` (default / Connect dock); submit email for `otp`, or use OTP dock. Capture editable code, inline invalid-code error, Paste, countdown-disabled Resend, enabled Resend after 30 seconds, then sending/resent feedback. Use Export dock or Connected · Privy → Export / recovery to inspect numbered instructions, warning, Continue / Not now, then simulated end. Also check initial email, connected dual-chain and external Solana-only remain intact. Check at a mobile viewport that addresses scroll horizontally without wrapping and that Copy stays on the label row. Waiting states auto-resolve after 900 ms (export preview after 1000 ms); capture promptly or pause timers in the reviewing browser.
 
