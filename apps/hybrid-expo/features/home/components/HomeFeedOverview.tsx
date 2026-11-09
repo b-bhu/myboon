@@ -61,7 +61,7 @@ export function HomeFeedOverview({ active, onScroll, bottomPadding }: {
         {stories.loading && !stories.data ? <StoryCarouselSkeleton /> : null}
         {stories.error ? <FeedSectionState title="Developing story unavailable" text={stories.data?.length ? 'Showing the last loaded Stories.' : 'Developing story could not be loaded.'} onRetry={() => { void stories.load(); }} /> : null}
         {developing ? <DevelopingStoryCard story={developing} onWatch={(target) => router.push(storyHref(target.storySlug))} /> : null}
-        {stories.data && !developing && !stories.error ? <FeedSectionState title="No developing story" text="Active stories from the last 7 days appear here." /> : null}
+        {stories.data && !developing && !stories.error ? <FeedSectionState title="No developing story" text="New developing stories will appear here." /> : null}
       </View>
       <MarketsCarousel active={active} refreshVersion={refreshVersion} />
     </Animated.ScrollView>

@@ -1,4 +1,4 @@
-import { isStoryActive, withMock } from './feed-mocks';
+import { withMock } from './feed-mocks';
 import { dayLabel, updateAge } from './feed-updates';
 import type { StoryEvent, StorySummary } from './feed.types';
 
@@ -11,13 +11,18 @@ import type { StoryEvent, StorySummary } from './feed.types';
  * (node:test) can exercise every branch, mirroring feed-home.ts.
  */
 
+/** Whether a story stamp can appear on the ACTIVE tab (usable updatedAt only; no age cutoff). */
+function hasUsableUpdatedAt(updatedAt: string): boolean {
+  return !Number.isNaN(Date.parse(updatedAt));
+}
+
 /** Split stories into the ACTIVE and PAST tab lists of the "All stories" screen. */
-export function splitStories(stories: StorySummary[], now: Date): { active: StorySummary[]; past: StorySummary[] } {
+export function splitStories(stories: StorySummary[], _now?: Date): { active: StorySummary[]; past: StorySummary[] } {
   const newestFirst = (a: StorySummary, b: StorySummary) => updatedOrder(a, b);
   return {
-    active: stories.filter((story) => isStoryActive(story.updatedAt, now)).sort(newestFirst),
-    // isStoryActive also rejects invalid dates, so unusable stamps land here.
-    past: stories.filter((story) => !isStoryActive(story.updatedAt, now)).sort(newestFirst),
+    active: stories.filter((story) => hasUsableUpdatedAt(story.updatedAt)).sort(newestFirst),
+    // Unusable stamps land under PAST; age no longer moves a story there.
+    past: stories.filter((story) => !hasUsableUpdatedAt(story.updatedAt)).sort(newestFirst),
   };
 }
 

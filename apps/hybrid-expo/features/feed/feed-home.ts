@@ -1,4 +1,3 @@
-import { isStoryActive } from './feed-mocks';
 import type { FeedItem, StorySummary } from './feed.types';
 
 /**
@@ -29,14 +28,13 @@ export function carouselIndex(offsetX: number, slideWidth: number, count: number
   return Math.max(0, Math.min(count - 1, index));
 }
 
-/** The still-active story updated least recently ago, or null when none qualify. */
-export function developingStory(stories: StorySummary[], now: Date): StorySummary | null {
+/** The most recently updated story with a usable timestamp, or null when none qualify. */
+export function developingStory(stories: StorySummary[], _now?: Date): StorySummary | null {
   let best: StorySummary | null = null;
   let bestMs = -Infinity;
   for (const story of stories) {
-    // isStoryActive also rejects invalid dates, so Date.parse below is safe.
-    if (!isStoryActive(story.updatedAt, now)) continue;
     const updatedAtMs = Date.parse(story.updatedAt);
+    if (Number.isNaN(updatedAtMs)) continue;
     if (!best || updatedAtMs > bestMs) {
       best = story;
       bestMs = updatedAtMs;

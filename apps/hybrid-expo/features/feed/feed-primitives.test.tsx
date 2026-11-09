@@ -30,8 +30,6 @@ type FeedTokensType = {
 type FeedMocksType = {
   isFeedMocksEnabled: (value: string | undefined) => boolean;
   FEED_MOCKS: boolean;
-  STORY_ACTIVE_DAYS: number;
-  isStoryActive: (updatedAt: string, now?: Date) => boolean;
   withMock: <T>(value: T, enabled?: boolean) => T | null;
 };
 
@@ -368,14 +366,10 @@ test('feed-mocks: isFeedMocksEnabled accepts only 1/true/on and exposes the modu
   assert.equal(enabled.FEED_MOCKS, true);
 });
 
-test('feed-mocks: story activity keeps the 7 day window fresh and rejects invalid dates', () => {
-  const mocks = loadFeedMocksModule();
-  assert.equal(mocks.STORY_ACTIVE_DAYS, 7);
-  const updatedAt = '2026-10-01T00:00:00Z';
-  assert.equal(mocks.isStoryActive(updatedAt, new Date('2026-10-07T23:59:59Z')), true, 'under 7 days is fresh');
-  assert.equal(mocks.isStoryActive(updatedAt, new Date('2026-10-08T00:00:00Z')), false, 'exactly 7 days is stale');
-  assert.equal(mocks.isStoryActive('not-a-date', new Date('2026-10-05T00:00:00Z')), false, 'invalid date is stale');
-  assert.equal(mocks.isStoryActive('2100-01-01T00:00:00Z'), true, 'defaults now to the current time');
+test('feed-mocks: no longer exports a story age cutoff', () => {
+  const mocks = loadFeedMocksModule() as FeedMocksType & Record<string, unknown>;
+  assert.equal('STORY_ACTIVE_DAYS' in mocks, false);
+  assert.equal('isStoryActive' in mocks, false);
 });
 
 test('feed-mocks: withMock keeps values only when mocks are enabled', () => {
