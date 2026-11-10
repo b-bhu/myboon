@@ -26,3 +26,8 @@ Raw take, frames and contact sheets: /workspace/myboon-news/signoff_tests/
 | endcard_v1.mp4 | 1920x1080, 30 fps, 3.0 s, silent. Remotion composition `EndCard` (src/components/EndCard.tsx): walletCore #031F2C, wordmark (630 px wide) fades up over 0.5 s, then holds. No glow, gradient, tagline or SFX | yes |
 
 Re-render: `npx remotion render src/index.ts EndCard locked/bookends/endcard_v1.mp4`
+
+## Weekly intro (v1, locked, approved Nov 9, 2026)
+| File | What | Locked |
+|---|---|---|
+| weekly_intro_v1.mp4 | Format intro for "The week that was, the week ahead". 6.04 s, 720p Grok Imagine image-to-video from locked/hosts/hank_master_center_wide_v1.jpg, voice in the same take. Line: "Good evening. This is MyBoon News: the week that was, and the week ahead." Wide center push-in to medium (Intro camera move). Known: desk-front panels glow green from ~2 s; Bibhu accepted as is. | yes |
