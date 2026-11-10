@@ -24,8 +24,11 @@ export const useTickerData = (slug: string): TickerItem[] | null => {
       .then((j) => {
         if (!isTickerFile(j)) throw new Error(`episodes/${slug}/ticker.json does not match TickerFile schema`);
         setItems(j.items);
-        continueRender(handle);
-      });
+      })
+      .catch((err) => {
+        console.warn("ticker load failed", slug, err);
+      })
+      .finally(() => continueRender(handle));
   }, [slug, handle]);
   return items;
 };

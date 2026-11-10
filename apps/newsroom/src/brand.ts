@@ -55,14 +55,16 @@ let loaded = false;
 export const loadBrandFonts = () => {
   if (loaded || typeof document === "undefined") return;
   loaded = true;
-  const handle = delayRender("brand fonts");
+  // Fire-and-forget. Do NOT delayRender on FontFace — OffthreadVideo-heavy
+  // episodes can starve the main thread so face.load() never settles, and a
+  // setTimeout race deadlocks because Remotion freezes timers while delayed.
   Promise.all(
     fontFiles.map(async ({ family, weight, file }) => {
       const face = new FontFace(family, `url(${staticFile(`locked/fonts/${file}`)}) format("woff2")`, { weight });
       await face.load();
       document.fonts.add(face);
     }),
-  ).then(() => continueRender(handle));
+  ).catch((err) => console.warn("brand fonts load failed", err));
 };
 
 export const logos = {

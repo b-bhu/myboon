@@ -11,12 +11,13 @@ export const EpisodeShell: React.FC<{
   tickerSlug: string;
   lowerThirds?: LowerThirdCue[];
   breaking?: BreakingCue[];
+  dateLabel?: string;
   children: React.ReactNode; // intro + rows, sequenced in body frames
-}> = ({ bodyFrames, tickerSlug, lowerThirds, breaking, children }) => (
+}> = ({ bodyFrames, tickerSlug, lowerThirds, breaking, dateLabel, children }) => (
   <AbsoluteFill style={{ backgroundColor: "#031F2C" }}>
     <Sequence durationInFrames={bodyFrames}>
       {children}
-      <Overlays tickerSlug={tickerSlug} lowerThirds={lowerThirds} breaking={breaking} />
+      <Overlays tickerSlug={tickerSlug} lowerThirds={lowerThirds} breaking={breaking} dateLabel={dateLabel} />
     </Sequence>
     <Sequence from={bodyFrames} durationInFrames={END_CARD_FRAMES}>
       <OffthreadVideo src={staticFile("locked/bookends/endcard_v1.mp4")} />
