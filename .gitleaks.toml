@@ -1,0 +1,11 @@
+# Catch-up POC snapshot (#612) is a read-only dump of public entity items and
+# signal hashes, not credentials. Gitleaks' generic-api-key rule flags those
+# hashes. Default rules stay in force for the rest of the repo.
+title = "myboon"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Catch-up POC public entity-manager snapshot"
+paths = ['''(^|/)packages/collectors/artifacts/catch-up-poc/snapshot\.json$''']
