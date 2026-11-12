@@ -1,0 +1,135 @@
+{
+  "generated_at": "2026-11-12T05:30:00+00:00",
+  "window": {
+    "field": "created_at",
+    "since": "2026-11-11T05:30:00+00:00",
+    "until": "2026-11-12T05:30:00+00:00"
+  },
+  "notes": [
+    "Forced decision cases for PR #613: one should be skip (prior update already covers the new item), one should be hold (a single thin, low-signal item). Not live entity-manager data."
+  ],
+  "entities": [
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+      "slug": "poc-skip-repeat",
+      "name": "Acme Protocol",
+      "type": "organization",
+      "summary": "A mid-size DeFi lending protocol.",
+      "legacy_entity_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+      "latest_item_created_at": "2026-11-12T04:00:00+00:00",
+      "new_item_count": 1,
+      "new_item_ids": [
+        "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
+      ],
+      "new_items": [
+        {
+          "id": "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+          "title": "Acme Protocol pauses withdrawals after a $12 million exploit",
+          "summary": "Acme Protocol has paused withdrawals after attackers drained $12 million from its lending pools on November 8. The team said it is investigating and that users cannot withdraw while the pause is in place.",
+          "occurred_at": "2026-11-08T16:00:00+00:00",
+          "created_at": "2026-11-12T04:00:00+00:00",
+          "signal_id": "sig-acme-exploit-1",
+          "angle": "new_story",
+          "note": "Repeat of the already published withdrawal-pause story.",
+          "image_url": null,
+          "status": "active"
+        }
+      ],
+      "recent_items": [
+        {
+          "id": "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+          "title": "Acme Protocol pauses withdrawals after a $12 million exploit",
+          "summary": "Acme Protocol has paused withdrawals after attackers drained $12 million from its lending pools on November 8. The team said it is investigating and that users cannot withdraw while the pause is in place.",
+          "occurred_at": "2026-11-08T16:00:00+00:00",
+          "created_at": "2026-11-12T04:00:00+00:00",
+          "signal_id": "sig-acme-exploit-1",
+          "angle": "new_story",
+          "note": "Repeat of the already published withdrawal-pause story.",
+          "image_url": null,
+          "status": "active"
+        }
+      ],
+      "origin_signals": [
+        {
+          "signal_id": "sig-acme-exploit-1",
+          "type": "news",
+          "source": "fixture",
+          "text": "Acme Protocol pauses withdrawals after a $12 million exploit on November 8.",
+          "excerpt": "The lending protocol paused withdrawals after $12 million was drained from its pools.",
+          "numbers": {
+            "usd_million": 12
+          },
+          "link": null,
+          "occurred_at": "2026-11-08T16:00:00+00:00",
+          "created_at": "2026-11-08T16:05:00+00:00"
+        }
+      ],
+      "last_published": {
+        "id": "dddddddd-dddd-4ddd-8ddd-ddddddddddd1",
+        "title": "Acme Protocol pauses withdrawals after a $12 million exploit",
+        "content_small": "Acme Protocol paused withdrawals on November 8 after attackers drained $12 million from its lending pools. The team is investigating and users cannot withdraw while the pause holds.",
+        "content_full": "Acme Protocol has paused withdrawals after attackers drained $12 million from its lending pools on November 8. The team said it is investigating and that users cannot withdraw while the pause is in place. No other change has been reported since that announcement.",
+        "published_at": "2026-11-08T18:00:00+00:00",
+        "entity_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+        "entity_slug": "poc-skip-repeat",
+        "entity_name": "Acme Protocol",
+        "angle": "The withdrawal pause after the $12 million exploit."
+      }
+    },
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      "slug": "poc-hold-thin",
+      "name": "Northstar Labs",
+      "type": "organization",
+      "summary": "A small research lab. Little public history.",
+      "legacy_entity_id": null,
+      "latest_item_created_at": "2026-11-12T03:00:00+00:00",
+      "new_item_count": 1,
+      "new_item_ids": [
+        "cccccccc-cccc-4ccc-8ccc-ccccccccccc2"
+      ],
+      "new_items": [
+        {
+          "id": "cccccccc-cccc-4ccc-8ccc-ccccccccccc2",
+          "title": "Unverified post hints someone may be looking at Northstar Labs",
+          "summary": "A single unverified social post said an unnamed person might be looking at Northstar Labs. There is no confirmation, no second source, and no figures.",
+          "occurred_at": "2026-11-12T02:40:00+00:00",
+          "created_at": "2026-11-12T03:00:00+00:00",
+          "signal_id": "sig-northstar-rumor-1",
+          "angle": "plain_update",
+          "note": "Thin, single, low-signal item.",
+          "image_url": null,
+          "status": "active"
+        }
+      ],
+      "recent_items": [
+        {
+          "id": "cccccccc-cccc-4ccc-8ccc-ccccccccccc2",
+          "title": "Unverified post hints someone may be looking at Northstar Labs",
+          "summary": "A single unverified social post said an unnamed person might be looking at Northstar Labs. There is no confirmation, no second source, and no figures.",
+          "occurred_at": "2026-11-12T02:40:00+00:00",
+          "created_at": "2026-11-12T03:00:00+00:00",
+          "signal_id": "sig-northstar-rumor-1",
+          "angle": "plain_update",
+          "note": "Thin, single, low-signal item.",
+          "image_url": null,
+          "status": "active"
+        }
+      ],
+      "origin_signals": [
+        {
+          "signal_id": "sig-northstar-rumor-1",
+          "type": "news",
+          "source": "fixture",
+          "text": "Someone might be looking at Northstar Labs, an unverified post said. No names, no confirmation.",
+          "excerpt": "Unverified post, no second source.",
+          "numbers": {},
+          "link": null,
+          "occurred_at": "2026-11-12T02:40:00+00:00",
+          "created_at": "2026-11-12T02:45:00+00:00"
+        }
+      ],
+      "last_published": null
+    }
+  ]
+}

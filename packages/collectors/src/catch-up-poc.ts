@@ -33,14 +33,14 @@ touched as (
   group by i.main_entity_id
 ),
 new_items as (
-  select i.main_entity_id as entity_id, i.id, i.item_key, i.title, i.summary,
+  select i.main_entity_id as entity_id, i.id, i.title, i.summary,
          i.occurred_at, i.created_at, i.signal_id, i.angle, i.note, i.image_url, i.status
   from atlas.entity_items i, params p
   where i.status = 'active' and i.created_at >= p.since
 ),
 recent as (
   select t.entity_id,
-         i.id, i.item_key, i.title, i.summary, i.occurred_at, i.created_at,
+         i.id, i.title, i.summary, i.occurred_at, i.created_at,
          i.signal_id, i.angle, i.note, i.image_url, i.status
   from touched t
   join lateral (
@@ -97,7 +97,7 @@ select jsonb_build_object(
           'new_item_ids', t.new_item_ids,
           'new_items', (
             select coalesce(jsonb_agg(jsonb_build_object(
-              'id', n.id, 'item_key', n.item_key, 'title', n.title, 'summary', n.summary,
+              'id', n.id, 'title', n.title, 'summary', n.summary,
               'occurred_at', n.occurred_at, 'created_at', n.created_at, 'signal_id', n.signal_id,
               'angle', n.angle, 'note', n.note, 'image_url', n.image_url, 'status', n.status
             ) order by n.created_at desc, n.id desc), '[]'::jsonb)
@@ -105,7 +105,7 @@ select jsonb_build_object(
           ),
           'recent_items', (
             select coalesce(jsonb_agg(jsonb_build_object(
-              'id', r.id, 'item_key', r.item_key, 'title', r.title, 'summary', r.summary,
+              'id', r.id, 'title', r.title, 'summary', r.summary,
               'occurred_at', r.occurred_at, 'created_at', r.created_at, 'signal_id', r.signal_id,
               'angle', r.angle, 'note', r.note, 'image_url', r.image_url, 'status', r.status
             ) order by coalesce(r.occurred_at, r.created_at) desc, r.id desc), '[]'::jsonb)
@@ -188,7 +188,6 @@ export const DECISIONS = ['write', 'hold', 'skip'] as const
 
 export type CatchUpItem = {
   id: string
-  item_key?: string | null
   title: string
   summary: string | null
   occurred_at: string | null

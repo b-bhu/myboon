@@ -1,0 +1,48 @@
+{
+  "run_id": "20261112T052128Z",
+  "started_at": "2026-11-12T05:21:28.640Z",
+  "finished_at": "2026-11-12T05:21:32.012Z",
+  "duration_ms": 3372,
+  "model": "glm-5.3-flash",
+  "snapshot": "packages/collectors/artifacts/catch-up-poc/decision-cases.json",
+  "window": {
+    "field": "created_at",
+    "since": "2026-11-11T05:30:00+00:00",
+    "until": "2026-11-12T05:30:00+00:00"
+  },
+  "since": null,
+  "limit": 0,
+  "summary": {
+    "entities": 2,
+    "write": 0,
+    "hold": 1,
+    "skip": 1,
+    "errored": 0,
+    "checks_passed": 0,
+    "checks_failed": 0
+  },
+  "results": [
+    {
+      "entity_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+      "slug": "poc-skip-repeat",
+      "name": "Acme Protocol",
+      "status": "ok",
+      "action": "skip",
+      "reason": "The last published update on November 8 already covers this exact event — the $12 million exploit, the withdrawal pause, and the ongoing investigation — and the new item adds no new facts.",
+      "would_replace": {
+        "id": "dddddddd-dddd-4ddd-8ddd-ddddddddddd1",
+        "title": "Acme Protocol pauses withdrawals after a $12 million exploit",
+        "published_at": "2026-11-08T18:00:00+00:00"
+      }
+    },
+    {
+      "entity_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      "slug": "poc-hold-thin",
+      "name": "Northstar Labs",
+      "status": "ok",
+      "action": "hold",
+      "reason": "A single unverified, unnamed social post with no confirmation, second source, or detail is too thin to share with readers.",
+      "would_replace": null
+    }
+  ]
+}
