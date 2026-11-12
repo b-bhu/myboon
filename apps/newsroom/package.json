@@ -1,0 +1,25 @@
+{
+  "name": "@myboon/newsroom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MyBoon News bulletin: Remotion compositions, locked assets, episode pipeline",
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "still": "remotion still src/index.ts NewsroomEpisode out/still.png",
+    "render": "remotion render src/index.ts NewsroomEpisode out/episode.mp4",
+    "voice": "tsx scripts/voice.ts",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.448",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.448"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.5.0"
+  }
+}

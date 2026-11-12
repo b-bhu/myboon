@@ -1,0 +1,9 @@
+out/
+node_modules/
+# Episode media is never committed
+episodes/**/*.mp4
+episodes/**/*.mp3
+episodes/**/*.wav
+episodes/**/*.mov
+# locked/ media (mp4/mp3/jpg/png) is small and IS committed.
+episodes/**/visuals/

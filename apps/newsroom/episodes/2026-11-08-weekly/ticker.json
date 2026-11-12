@@ -1,0 +1,36 @@
+{
+  "source": "https://api.hyperliquid.xyz/info type=metaAndAssetCtxs",
+  "asOf": "2026-11-09T11:34:27.059Z",
+  "items": [
+    {
+      "symbol": "BTC",
+      "price": 74500.0,
+      "changePct": -1.92
+    },
+    {
+      "symbol": "ETH",
+      "price": 2118.7,
+      "changePct": -5.39
+    },
+    {
+      "symbol": "SOL",
+      "price": 86.364,
+      "changePct": -3.64
+    },
+    {
+      "symbol": "XRP",
+      "price": 1.0861,
+      "changePct": -6.8
+    },
+    {
+      "symbol": "DOGE",
+      "price": 0.069008,
+      "changePct": -2.99
+    },
+    {
+      "symbol": "BNB",
+      "price": 684.9,
+      "changePct": -1.9
+    }
+  ]
+}
