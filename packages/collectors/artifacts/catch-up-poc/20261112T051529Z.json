@@ -1,0 +1,640 @@
+{
+  "run_id": "20261112T051529Z",
+  "started_at": "2026-11-12T05:15:29.861Z",
+  "finished_at": "2026-11-12T05:17:30.606Z",
+  "duration_ms": 120745,
+  "model": "glm-5.3-flash",
+  "snapshot": "packages/collectors/artifacts/catch-up-poc/snapshot.json",
+  "window": {
+    "field": "created_at",
+    "since": "2026-11-11T05:07:57.506479+00:00",
+    "until": "2026-11-12T05:07:57.506479+00:00"
+  },
+  "since": null,
+  "limit": 12,
+  "summary": {
+    "entities": 12,
+    "write": 12,
+    "hold": 0,
+    "skip": 0,
+    "errored": 0,
+    "checks_passed": 12,
+    "checks_failed": 0
+  },
+  "results": [
+    {
+      "entity_id": "01a17278-8e2e-73d8-af86-31754a0ff414",
+      "slug": "bitcoin",
+      "name": "Bitcoin",
+      "status": "ok",
+      "action": "write",
+      "reason": "The last published update (Oct 19, Sberbank licensing) predates this entirely new development: a fresh break below $75,000 with escalating ETF outflows and capitulation signals not yet covered.",
+      "draft": {
+        "title": "Bitcoin breaks below $75,000 as ETF outflows swell to $2.1 billion",
+        "what_happened": "Bitcoin has slipped below $75,000 as the spot-ETF sell-off swelled to $2.1 billion, with IBIT alone accounting for 78% of the withdrawals. On-chain, the most patient cohort is capitulating: long-term holders have moved coins at a loss for eight straight days, with their SOPR reading 0.94.",
+        "how_we_got_here": "The pressure built in stages. ETFs first shed $1.28 billion in the same window the price lost its 50-week line, then the outflow wave grew to $2.1 billion with the largest spot fund leading the exit, while long-term holders joined the selling after weeks of holding through the decline.",
+        "what_to_watch": "Whether ETF demand returns to defend support, and the upcoming U.S. CPI report, which analysts flag as a key test even if inflation cools. The on-chain picture is split: 1-100 BTC wallets added 14,207 BTC over two weeks, whales moved 2,492 BTC off BitGo and Binance into fresh wallets, and roughly 108,700 non-empty wallets closed in a retail exit some read as a bullish contrary signal.",
+        "claims": [
+          {
+            "text": "Bitcoin slipped below the $75,000 level",
+            "source_item_id": "01a1ce13-3c85-77d1-bae9-e15048014299",
+            "source_signal_id": "7050f0f3e21840f998d83228ecd6db64fb529b250bceef07f1c18393217f85e0"
+          },
+          {
+            "text": "Spot ETF outflows reached $2.1 billion, with IBIT accounting for 78% of the withdrawals",
+            "source_item_id": "01a1ce13-3c85-77d1-bae9-e15048014299",
+            "source_signal_id": "7050f0f3e21840f998d83228ecd6db64fb529b250bceef07f1c18393217f85e0"
+          },
+          {
+            "text": "Long-term holders' SOPR fell to 0.94, with coins moved at a loss for eight consecutive days",
+            "source_item_id": "01a1cca0-7b05-7a80-8e17-1c4fec41c5cb",
+            "source_signal_id": "a6076edd0209b98a2a117a7ef8e503ac8696aa060d749774bd4d553319925553"
+          },
+          {
+            "text": "Bitcoin ETFs saw $1.28 billion of outflows in the window the price lost its 50-week line",
+            "source_item_id": "01a1c7b1-3ecc-74b9-aa17-0abc2aed0f28",
+            "source_signal_id": "2c5df15830083d8b61e762c09f29b2c9fe3e1e6e3d7d0553d3a702f71d742aa6"
+          },
+          {
+            "text": "Wallets holding 1 to 100 BTC added 14,207 BTC over the past two weeks",
+            "source_item_id": "01a1cab2-81f4-7f8d-b710-6fbbffa82bd2",
+            "source_signal_id": "b6f419d17e7d0aef85d2ab5154df300027a822098076e0c243d8859498571514"
+          },
+          {
+            "text": "A new wallet received 1,489 BTC from BitGo and three wallets withdrew 1,003 BTC from Binance, roughly 2,492 BTC moving off exchanges",
+            "source_item_id": "01a1cadb-4106-70ab-bb5e-12248a48fcf9",
+            "source_signal_id": "094c1d510c9852e73d8028b6c83720de5d5da7550bf097827b252fa8ae20b428"
+          },
+          {
+            "text": "The number of non-empty Bitcoin wallets fell by around 108,700, attributed to retail selling",
+            "source_item_id": "01a1cb12-8f34-7e78-8c06-021cb7b78d0d",
+            "source_signal_id": "d0af9cf9e37e4da505b8a504c7c0ad498993e86152ab564655a1b45fc20fe351"
+          },
+          {
+            "text": "The upcoming U.S. CPI report is seen as a key macro test, with analysts warning a softer inflation reading may not be enough to steady the price",
+            "source_item_id": "01a1c9c9-23fa-7276-aea6-2feb16abc22a",
+            "source_signal_id": "32884b635badd367d319e21baa9930a2bb4801d5703830fa1c4f1297a2ee30ba"
+          }
+        ]
+      },
+      "word_count": 161,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": {
+        "id": "76ce1370-18e7-47b0-92d7-a821eaa44785",
+        "title": "Russia has licensed its biggest bank to trade bitcoin",
+        "published_at": "2026-10-19T04:16:45.116+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-acb4-71f9-a9ee-3540ae806c93",
+      "slug": "us-spot-bitcoin-etfs",
+      "name": "US spot Bitcoin ETFs",
+      "status": "ok",
+      "action": "write",
+      "reason": "New November figures show 2026 flipping to the first net-negative year for US spot Bitcoin ETFs with a sustained IBIT drain, a materially different and later episode than the September update.",
+      "draft": {
+        "title": "Bitcoin ETFs turn net-negative for 2026 as IBIT's $1.66B drain stretches to seven sessions",
+        "what_happened": "US spot Bitcoin ETFs have given back $1.1 billion so far in 2026, flipping the full-year tally negative after $25 billion of inflows in 2025. The latest session saw a net $201 million of exits, the third straight down day, and BlackRock's IBIT alone has shed $1.66 billion across seven trading sessions.",
+        "how_we_got_here": "The drain built through last week: $1.3 billion of net weekly outflows, the heaviest since late June, pushed total complex assets below $100 billion. Even the week's counter-move of roughly $5 billion of holders' coins moving into IBIT hasn't dented the broader redemption streak, which is now concentrated in the complex's largest fund.",
+        "what_to_watch": "Whether the third consecutive day of exits breaks or extends, whether IBIT's seven-session loss stabilizes or deepens, and how far the 2026 net figure travels past $1.1 billion.",
+        "claims": [
+          {
+            "text": "US spot Bitcoin ETFs have shed $1.1 billion in 2026 after $25 billion of 2025 inflows, turning full-year flows negative",
+            "source_item_id": "01a1cde9-efe5-7299-916c-f6c36392be19",
+            "source_signal_id": "9ea736a4a0570c90e7aeb991433a1e228f86f88a84c11286413cfa6df1e9f0e8"
+          },
+          {
+            "text": "The complex logged a net $201 million outflow in the latest session, its third consecutive day of exits",
+            "source_item_id": "01a1ca7b-8caa-7ea8-976f-58dc734042ff",
+            "source_signal_id": "f3de6207caa75278450dd4c440bc6086e0c8270480ef879c4d6a4a68bfc12b84"
+          },
+          {
+            "text": "BlackRock's IBIT, the complex's largest fund, has shed $1.66 billion over the last seven trading sessions",
+            "source_item_id": "01a1ccc9-7add-71c9-bf70-d5a5a21563c8",
+            "source_signal_id": "124307d86e75a8cc26d30dcfb7f227ecbba789bbfb2621ca966b86dbeb59b6c4"
+          },
+          {
+            "text": "Bitcoin ETFs shed $1.3 billion in a week, the largest weekly outflow since late June",
+            "source_item_id": "01a1bfb3-5a43-70b0-8753-5ca1952b575b",
+            "source_signal_id": "5bab1e496ab30b5b1115477a1ac3b4a17986a67e84433a8a6ff0a89a3ff7d02e"
+          },
+          {
+            "text": "Combined assets of US spot Bitcoin ETFs have fallen below $100 billion",
+            "source_item_id": "01a1c0d3-1908-73c7-bcd2-01f5bc03f65e",
+            "source_signal_id": "6e90ee1eeab6cd5e218ffa4860a8f97cf2f73b6ae866f3b82ff1e403a6df44c9"
+          },
+          {
+            "text": "Roughly $5 billion of holders' coins moved into IBIT during the recent stretch",
+            "source_item_id": "01a1c3d4-80c5-7d00-b94e-711bfedcdd84",
+            "source_signal_id": "e8b19756b280b40a1e8961ef6fc10e5b6244683304d66c7d3f69eb8a8fc16a88"
+          }
+        ]
+      },
+      "word_count": 133,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": {
+        "id": "8f0e99bc-7672-4f6b-8b5e-b20141fea7e2",
+        "title": "Bitcoin ETF flows flip to outflows while Ethereum ETFs pull in $216M in a day",
+        "published_at": "2026-09-12T04:58:22.466+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9f61-7f68-9aeb-6a16f9ea46e8",
+      "slug": "moonshot-ai",
+      "name": "Moonshot AI",
+      "status": "ok",
+      "action": "write",
+      "reason": "Fresh, concrete development — a 32-server, 432-million-yuan B300 lease just before the IPO window — with no prior published update covering it.",
+      "draft": {
+        "title": "Kimi leases 32 top-tier NVIDIA B300 servers in China ahead of Hong Kong listing",
+        "what_happened": "Moonshot AI's Kimi has leased 32 of NVIDIA's top-tier B300 servers within China, in a deal valued at 432 million yuan, Bloomberg reports. It is a sizable batch of advanced chips for the lab as it scales its Kimi models.",
+        "how_we_got_here": "The lease lands days after Moonshot closed its final private round at a reported $50 billion valuation and confidentially filed for a Hong Kong IPO, with Bloomberg pointing to early 2027 and a roughly $3 billion raise. The build-up has been steady: the Kimi API added native OpenAI and Anthropic formats in September, and Kimi has since been reported pushing into gaming with AI agents.",
+        "what_to_watch": "Whether the added compute shows up in Kimi's next model releases and performance, and how the Hong Kong listing timing firms up — the window could open as early as late 2026.",
+        "claims": [
+          {
+            "text": "Kimi leased 32 of NVIDIA's top-tier B300 servers within China, with the lease valued at 432 million yuan.",
+            "source_item_id": "01a1cddc-8980-7355-a1da-617f7c8bf631",
+            "source_signal_id": "2c836ceb85c96fb793db3f9d5ef1984a72e025415f1b7fb105552c7056906590"
+          },
+          {
+            "text": "Moonshot AI closed its final pre-IPO financing round at a valuation of roughly $50 billion.",
+            "source_item_id": "01a172ce-9c15-7e73-8613-9dd4116cf51c",
+            "source_signal_id": null
+          },
+          {
+            "text": "Moonshot AI confidentially filed for a Hong Kong IPO, with Bloomberg pointing to early 2027 and a targeted raise of about $3 billion.",
+            "source_item_id": "01a172ce-e93d-778c-a515-db698a06f09f",
+            "source_signal_id": null
+          },
+          {
+            "text": "The Hong Kong listing window could open as early as late 2026.",
+            "source_item_id": "01a172ce-e93d-778c-a515-db698a06f09f",
+            "source_signal_id": null
+          },
+          {
+            "text": "Moonshot's Kimi API natively supports OpenAI's Responses API and Anthropic's Messages API formats.",
+            "source_item_id": "01a172ce-e93f-7a48-a71d-6cf8a8995d01",
+            "source_signal_id": null
+          },
+          {
+            "text": "Kimi has been reported entering the gaming industry, with AI Agents said to take over the full workflow from development to operations.",
+            "source_item_id": "01a19bd2-7ed5-75e8-8ff8-9d616063763a",
+            "source_signal_id": "4a120824c07ec9c24fcff2fd95f66ab4d61d36ad1741eb4d468f2d826f1cb2c5"
+          }
+        ]
+      },
+      "word_count": 137,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": null
+    },
+    {
+      "entity_id": "01a17278-9772-7dcd-95f8-014206852d93",
+      "slug": "ethereum",
+      "name": "Ethereum",
+      "status": "ok",
+      "action": "write",
+      "reason": "New price lows, a Glamsterdam hold call, a security alert, and split whale behavior — none of it covered by the month-old fees update.",
+      "draft": {
+        "title": "Ether breaks below $2,100 as audit concerns and whale crosscurrents build",
+        "what_happened": "Ether broke below $2,100, down 2.24% intraday, sliding well under the $2.45-2.6K range that had framed its recent trading. The new low lands amid two network-level worries: Ethlabs is urging a hold on the Glamsterdam rollout until audit findings are in, raising the prospect of a delay, and a critical alert warns that Ethereum-related software has been compromised.",
+        "how_we_got_here": "Old wallets are the story around the lows. A 2015-era whale appears to have sold more than 7,500 ETH from a 37,000-coin stack — a return of up to 156,358% — and a genesis-era wallet that moved millions after roughly a decade drew scam attempts within minutes. Against that selling, BitMine added 9,587 ETH even as price fell, an address dormant for a year picked up $5.4 million worth of ETH, and staking has kept climbing through the slide.",
+        "what_to_watch": "Whether Glamsterdam slips while audits wrap up, what the compromised-software alert actually points to, and which way old-wallet flows tip next — more dormant selling, or more bottom-fishing like this round's.",
+        "claims": [
+          {
+            "text": "Ether fell below $2,100, down 2.24% intraday",
+            "source_item_id": "01a1cd6e-41f3-79e0-ac8e-70c307ad2e65",
+            "source_signal_id": "e6b1697b30e1e06f5779da26cb7433525a713bf816f92ef1162c47681e4c153f"
+          },
+          {
+            "text": "The drop pushed Ether deeper below the $2.45-2.6K range that had defined its recent trading",
+            "source_item_id": "01a1cd6e-41f3-79e0-ac8e-70c307ad2e65",
+            "source_signal_id": "e6b1697b30e1e06f5779da26cb7433525a713bf816f92ef1162c47681e4c153f"
+          },
+          {
+            "text": "Ethlabs called for the Glamsterdam rollout to be put on hold pending audit findings, raising the prospect of a delay",
+            "source_item_id": "01a1cddc-1165-71d2-ad47-abe8b4ab30e4",
+            "source_signal_id": "cbd8589bd5aecf822eda01c5a8c91576ab84d5435ae82a9913041bdb00fb483f"
+          },
+          {
+            "text": "A critical security alert warned that Ethereum-related software has been compromised",
+            "source_item_id": "01a1ccd7-5b0f-7429-a8d0-1724a8dc860a",
+            "source_signal_id": "afcd02743813f379358203a06251ecb0901a4840c71aab2f59c6fce9659f675e"
+          },
+          {
+            "text": "A 2015-era whale may have sold more than 7,500 ETH from a 37,000-ETH stack, locking in up to a 156,358% return",
+            "source_item_id": "01a1c923-d235-7f04-b18b-8d6620e49ea4",
+            "source_signal_id": "05413c0f84b2a9fc8b9d7ad1a93bd09602bfae80f70f8020d1d7eec5be0ad065"
+          },
+          {
+            "text": "A genesis-era wallet moved millions in ETH after roughly a decade of dormancy, with scam attempts following within minutes",
+            "source_item_id": "01a1cbc4-ab4a-7bc1-8733-2be9c37cf044",
+            "source_signal_id": "5add8081aceb68cf49256f06538f78557f2feefd5dddb15a21cf00654cff4962"
+          },
+          {
+            "text": "BitMine bought another 9,587 ETH while Ether's price continued to fall",
+            "source_item_id": "01a1cae9-09a3-7d5f-bd22-63319a75b238",
+            "source_signal_id": "8212073f147bd4309a745e10edcfc07bf86f8ee51b58282e52bd86f0f985458f"
+          },
+          {
+            "text": "An address dormant for a year bought $5.4 million worth of ETH as a bottom-fishing bet",
+            "source_item_id": "01a1cdb3-41c1-78d2-9156-44ee8d9be73b",
+            "source_signal_id": "bad1835b949873602b18e14710c5a510ce1a18e7919bb472e3fcf0e5b298b35d"
+          },
+          {
+            "text": "Staking on Ethereum is climbing even as Ether's price slides",
+            "source_item_id": "01a1cd6e-962a-7e07-b1f9-bebf013c85e9",
+            "source_signal_id": "f4d0dc3e62b3547bf9ff93dd28d57ab55c567e60bf563e65f02871593409472f"
+          }
+        ]
+      },
+      "word_count": 168,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": {
+        "id": "4f51d5e1-578c-4719-b373-e315db44ded7",
+        "title": "Ethereum fees are down 87% since April — a transfer now costs under a dime",
+        "published_at": "2026-10-06T18:15:51.693+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e31-75ab-8627-fac56704bb45",
+      "slug": "canada",
+      "name": "Canada",
+      "status": "ok",
+      "action": "write",
+      "reason": "A concrete new government action — sanctions reinstated on 11 Iranian entities — with no prior published update covering it.",
+      "draft": {
+        "title": "Canada brings back sanctions on 11 Iranian entities",
+        "what_happened": "Canada is reimposing sanctions on 11 Iranian entities, with the measures aimed at key sectors. It is a fresh use of Canada's sanctions powers abroad, and a separate thread from the tariff and domestic-regulation stories that have dominated Ottawa's recent headlines.",
+        "how_we_got_here": "This is the first Iran-sanctions move in the tracked record for Canada. It arrives amid a busy stretch of other policy news: new rules barring banks from directly issuing crypto, with stablecoins pushed into independent non-financial subsidiaries; a Budget 2026 pledge of 500 megawatts of sovereign AI compute; and US Democrats weighing a rollback of Trump tariffs on Canadian imports.",
+        "what_to_watch": "The announcement names entities and points to key sectors, but which specific sectors are covered, how the measures will be enforced, and whether allies move in step all remain open.",
+        "claims": [
+          {
+            "text": "Canada is reimposing sanctions on 11 Iranian entities, with the measures aimed at key sectors.",
+            "source_item_id": "01a1cdb3-6ec6-78bf-ad33-0416d854905f",
+            "source_signal_id": "be9ad039daec809b83424316720bcf5c8c0636b935b7d3189075c8da938b4f2a"
+          },
+          {
+            "text": "Canada's new rules would bar financial institutions from directly issuing crypto, with stablecoins required to come from independent non-financial subsidiaries.",
+            "source_item_id": "01a1c8b6-6705-7ae1-abff-6b929f1b988a",
+            "source_signal_id": "14b3420804edf81e8e35dd2c8929eca6c674731a54e1df787542cf1241a0c98b"
+          },
+          {
+            "text": "Canada's Budget 2026 pledges 500 megawatts of sovereign AI compute.",
+            "source_item_id": "01a1c6c7-cd0c-784e-a444-14f840d425ee",
+            "source_signal_id": "bdc9244a2adf5fff92183ed3eed3528026321f0248b6ecee70e340aedc6e18fb"
+          },
+          {
+            "text": "Democrats are considering reversing Trump tariffs on Canadian imports.",
+            "source_item_id": "01a1c16a-9ffa-78ab-9e6f-313a24ed2088",
+            "source_signal_id": "23a279e89719db79eeb377063e9000ee44731a7283b44130da0579616beadcfe"
+          }
+        ]
+      },
+      "word_count": 131,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": null
+    },
+    {
+      "entity_id": "01a17278-a6bb-7a20-892e-e07978588d3e",
+      "slug": "sp-500",
+      "name": "S&P 500",
+      "status": "ok",
+      "action": "write",
+      "reason": "The new futures plunge directly reverses the Nov 9 rebound rally — a fresh whipsaw turn not covered since the Oct 18 update on the initial selloff.",
+      "draft": {
+        "title": "Reversed again: futures plunge unwinds S&P 500's biggest rally in three months",
+        "what_happened": "All three major U.S. stock index futures dropped sharply in short-term trading, unwinding the S&P 500's rebound attempt. It came just a day after the index notched its largest intraday advance in three months.",
+        "how_we_got_here": "The index has been sliding from record highs amid an AI-led selloff. On November 9 the S&P 500 stretched its intraday gain to 2%, its biggest single-session advance in three months — a marked swing in momentum. The next day, that bounce unraveled as futures plunged, putting the rebound rally back in question.",
+        "what_to_watch": "Whether the sharp futures weakness carries into regular trading, and whether the index can put together a durable bounce while the AI-led slide from record highs remains the backdrop.",
+        "claims": [
+          {
+            "text": "All three major U.S. stock index futures dropped sharply in short-term trading, unwinding the S&P 500's rebound rally.",
+            "source_item_id": "01a1cd45-3919-740a-ab6c-8aeb64ec8b4a",
+            "source_signal_id": "b2292c2deac431198ae2133eb86cd80baf6ea6185121906fea97adcc2ebbdb1a"
+          },
+          {
+            "text": "The futures plunge came a day after the S&P 500 notched its largest intraday advance in three months.",
+            "source_item_id": "01a1cd45-3919-740a-ab6c-8aeb64ec8b4a",
+            "source_signal_id": null
+          },
+          {
+            "text": "On November 9 the S&P 500 extended its intraday gain to 2%, its biggest single-session advance in three months.",
+            "source_item_id": "01a1c40b-127d-77f5-8119-3aa2b55e70b7",
+            "source_signal_id": "1949e4d43a2fd3f5f8f056c5870ef2b72d09d1f27e1f8b887d2f340a7ab56399"
+          },
+          {
+            "text": "The index has been sliding from record highs amid an AI-led selloff.",
+            "source_item_id": "01a1cd45-3919-740a-ab6c-8aeb64ec8b4a",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 116,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": {
+        "id": "8a6e632d-a1d0-43d5-83e1-1ce8c9ac0e52",
+        "title": "S&P 500 bull market turns four — just as volatility spikes",
+        "published_at": "2026-10-18T17:16:45.177+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9f64-771b-9eb6-b3f43a3ee4ad",
+      "slug": "okx",
+      "name": "OKX",
+      "status": "ok",
+      "action": "write",
+      "reason": "Fresh, concrete product launch (Contract Combo on Nov 10) with no prior published update covering it; recent context items make the update easy to place for the reader.",
+      "draft": {
+        "title": "OKX launches Contract Combo for long-short trades across multi-asset perps",
+        "what_happened": "OKX launched Contract Combo, a product for running long-short combination trades on multi-asset perpetual contracts. It adds a combined-position tool to the exchange's derivatives lineup.",
+        "how_we_got_here": "The launch lands in a busy stretch for OKX. Founder Star Xu has been courting Binance France users ahead of that exchange's December shutdown, OKX has warned MEXC users that deposits there risk being frozen before a FinCEN cutoff, and OKX Wallet is set to be the first to support the Elysium mainnet. Contract Combo is the newest move on the trading side.",
+        "what_to_watch": "Whether Contract Combo gains traction with derivatives traders, whether OKX extends the combined-position format to more contract types, and how the new tool sits alongside the exchange's push to absorb users from rivals like Binance France and MEXC.",
+        "claims": [
+          {
+            "text": "OKX launched Contract Combo, a product supporting long-short combination trading of multi-asset perpetual contracts.",
+            "source_item_id": "01a1cd45-071b-7408-b907-deec972d5a89",
+            "source_signal_id": "82aa002d75764b8546ff99f279ae82b38cfdb7a9522a35baec9249cb46b82001"
+          },
+          {
+            "text": "Contract Combo adds a combined-position tool to OKX's derivatives lineup.",
+            "source_item_id": "01a1cd45-071b-7408-b907-deec972d5a89",
+            "source_signal_id": "82aa002d75764b8546ff99f279ae82b38cfdb7a9522a35baec9249cb46b82001"
+          },
+          {
+            "text": "Star Xu is targeting Binance France's user base ahead of that exchange's December shutdown.",
+            "source_item_id": "01a1b4c1-76ac-78b3-b323-8946900a174c",
+            "source_signal_id": "29ec342b6a7169db546382ba5d7a9f5454b40dfb1cf43460d5f9347b8ec4d782"
+          },
+          {
+            "text": "OKX warned MEXC users that deposits on that exchange risk being frozen ahead of a FinCEN deadline.",
+            "source_item_id": "01a1b867-1e6e-73e0-a133-e1327785cb94",
+            "source_signal_id": "08987f985ccfe13cac3cf440c16cdc94021463602ea25a9ef54387ddc524f3c8"
+          },
+          {
+            "text": "OKX Wallet will be the first wallet to support the Elysium mainnet.",
+            "source_item_id": "01a1c02f-1bd3-70a3-a983-11988648f7d6",
+            "source_signal_id": "b77107595ac3d315415404d8e69bbadbc9c9f9b461cd25865b39f83ae0f4e85f"
+          }
+        ]
+      },
+      "word_count": 126,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": null
+    },
+    {
+      "entity_id": "01a17278-976a-7208-864c-ab014fa61ac0",
+      "slug": "christopher-waller",
+      "name": "Christopher Waller",
+      "status": "ok",
+      "action": "write",
+      "reason": "First and concrete signal on Waller's stance for next month's rate decision, with a specific 25 bp call and a live 50 bp option — clear reader value.",
+      "draft": {
+        "title": "Waller backs a 25 bp hike next month, keeps a 50 bp move on the table",
+        "what_happened": "Fed Governor Christopher Waller said he will support a 25 basis point rate hike at the Fed's next meeting, and would back a 50 basis point move if conditions warrant it. The comments signal readiness for tighter policy ahead of the decision.",
+        "how_we_got_here": "There are no earlier items on Waller to weigh, so this statement lands on its own as a fresh read on his stance: he is set on a quarter-point hike next month, with explicit openness to going bigger if conditions justify it.",
+        "what_to_watch": "How the rest of the committee lines up on 25 versus 50 basis points before next month's meeting, and whether Waller keeps the bigger move on the table as conditions shift.",
+        "claims": [
+          {
+            "text": "Waller will back a 25 basis point rate hike at next month's Fed meeting.",
+            "source_item_id": "01a1cd37-6b8d-7aa4-9fed-84a10e699daa",
+            "source_signal_id": "2eeb6f9d6e916a0e8f00c48f0716990dbf18e7a8c97173ccee846340ebdb3957"
+          },
+          {
+            "text": "Waller would support a 50 basis point rate hike if conditions warrant it.",
+            "source_item_id": "01a1cd37-6b8d-7aa4-9fed-84a10e699daa",
+            "source_signal_id": "2eeb6f9d6e916a0e8f00c48f0716990dbf18e7a8c97173ccee846340ebdb3957"
+          },
+          {
+            "text": "His comments signal readiness for tighter policy and a read on the Fed's next steps.",
+            "source_item_id": "01a1cd37-6b8d-7aa4-9fed-84a10e699daa",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 115,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": null
+    },
+    {
+      "entity_id": "01a17278-8e2d-7c20-b83a-68c4e91e7faf",
+      "slug": "binance",
+      "name": "Binance",
+      "status": "ok",
+      "action": "write",
+      "reason": "The MEXC transfer cutoff is a fresh, concrete action that severs a corridor between two major exchanges and isn't covered by the last published update.",
+      "draft": {
+        "title": "Binance Cuts Fund-Transfer Corridor to MEXC",
+        "what_happened": "Binance announced it will cease processing fund transfers involving MEXC and the associated entities named in its announcement — severing a transfer corridor between the two exchanges. The notice doesn't state a reason. Housekeeping landed the same day: a limited-time futures taker promotion, tick-size tweaks on seven dollar-margined perpetuals, and a Nov. 19 contract-size change for the BITOUSDT perpetual.",
+        "how_we_got_here": "The cutoff lands mid-recovery. Binance has been restarting services after its record hack — HYPE and APT withdrawals are back online — while Elliptic tracked stolen funds moving through homemade memecoins. It also just decided to shut down its Bitcoin mining pool despite $233 million in Q3 revenue.",
+        "what_to_watch": "Whether MEXC-bound flows reroute through other corridors, whether other venues mirror the cutoff, and whether Binance later explains the move.",
+        "claims": [
+          {
+            "text": "Binance will cease processing fund transfers involving MEXC and associated entities named in its announcement",
+            "source_item_id": "01a1cd0e-6b6c-769c-9a14-bf3d2de5b999",
+            "source_signal_id": "dcfcf1d16fb0ce695f77671d10137b8bbea5322a34cae5a18962380644870269"
+          },
+          {
+            "text": "The announcement does not state a reason for the MEXC transfer cutoff",
+            "source_item_id": "01a1cd0e-6b6c-769c-9a14-bf3d2de5b999",
+            "source_signal_id": null
+          },
+          {
+            "text": "Binance launched a limited-time futures taker promotion",
+            "source_item_id": "01a1cca0-bd4a-7700-ab6a-63e6bf51f2dd",
+            "source_signal_id": "d96847cb23b411db7633cdce2d9d88cca5c50bd821df920b8851270b4bc2cad4"
+          },
+          {
+            "text": "Binance Futures will change the minimum price increment on seven dollar-margined perpetual contracts",
+            "source_item_id": "01a1c969-062e-79ff-898c-0003ebe193dc",
+            "source_signal_id": "49249fcd11f0589ef6e4200c20cc2a9cccb858c4f48e22bfae8ee1a15e04f7f5"
+          },
+          {
+            "text": "Binance Futures will adjust the contract size of the USDⓈ-margined BITOUSDT perpetual on Nov. 19",
+            "source_item_id": "01a1c931-caaa-7c3e-95e1-90a27296d25b",
+            "source_signal_id": "7d29b2fe117306f19d00c8c560a3ab90034596605e26681431aca093be988a29"
+          },
+          {
+            "text": "Binance re-enabled HYPE and APT withdrawals as part of recovery from its record hack",
+            "source_item_id": "01a1c7a3-5304-78fe-9906-2748700b8d79",
+            "source_signal_id": "6071b95f2dd2ce63203aa7c5efd817377abee64ced192a5beea3b74d824a7579"
+          },
+          {
+            "text": "Elliptic found stolen Binance hack funds being laundered via homemade memecoins",
+            "source_item_id": "01a1c3fe-33f4-722a-8167-9fb35f833d7d",
+            "source_signal_id": "aa5a01851b238f9ccf89889b01c9fef3048472687ffa26120aa2b98a7b7134cf"
+          },
+          {
+            "text": "Binance is shutting down its Bitcoin mining pool despite $233 million in Q3 revenue",
+            "source_item_id": "01a1c4b0-2a16-7c10-ac2f-99cd969920e8",
+            "source_signal_id": "225c77c34d2c1212ca8b620bfa3575e7de733ef34beb2df6d73ee232d50bd478"
+          }
+        ]
+      },
+      "word_count": 127,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": {
+        "id": "12afe43b-f126-42aa-b4fa-8f7795c7d216",
+        "title": "Binance Rolls Out Auto Order Routing for Spot Trades",
+        "published_at": "2026-10-20T03:20:25.01+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9c18-73d4-9db2-854d76646f39",
+      "slug": "huobi-htx",
+      "name": "Huobi HTX",
+      "status": "ok",
+      "action": "write",
+      "reason": "Spot trading for MSTR and TSLA stock tokens is a concrete new step in HTX's tokenized TradFi push, backed by a fresh proof-of-reserve update; no prior update exists to duplicate.",
+      "draft": {
+        "title": "HTX moves MSTR and TSLA stock tokens to spot trading",
+        "what_happened": "Huobi HTX opened spot trading for MSTR and TSLA stock tokens on November 10, taking its tokenized TradFi lineup past stock perpetuals and one-off listings into direct spot pairs. The rollout landed a day after the exchange listed 20 stock tokens and ETF assets, including SNDK, SOXL, SPCX, CRCL and MSTR. Alongside, HTX published its November proof of reserves, with reserve ratios for major assets above 100%.",
+        "how_we_got_here": "The exchange has spent recent weeks steadily widening its tokenized stock offering, and the spot debut of two of the most-watched names is its clearest step in that direction so far. The reserve attestation lands as HTX works to shore up trust — it ended its UK activity earlier this month after the FCA secured court undertakings over crypto promotions.",
+        "what_to_watch": "Whether spot pairs follow for the rest of the newly listed tokens, how much activity the stock tokens actually attract, and whether the TradFi expansion keeps pace alongside regulatory pressure in other jurisdictions.",
+        "claims": [
+          {
+            "text": "Huobi HTX launched spot trading for MSTR and TSLA stock tokens on November 10",
+            "source_item_id": "01a1ccca-0783-7498-8ee5-8d6fac706e3a",
+            "source_signal_id": "7c9accfb72ba749d3ef8879714120a309cda9ad45acabdd0af29763d1bd3c80f"
+          },
+          {
+            "text": "The spot rollout landed a day after HTX listed 20 stock tokens and ETF assets, including MSTR, on November 9",
+            "source_item_id": "01a1ccca-0783-7498-8ee5-8d6fac706e3a",
+            "source_signal_id": null
+          },
+          {
+            "text": "The listed stock tokens and ETF assets include SNDK, SOXL, SPCX, CRCL and MSTR",
+            "source_item_id": "01a1bf8a-2ea6-7a48-b00b-1e512ad83f0c",
+            "source_signal_id": "878f15465b749f966944dffd444c1e8f1a45448063168dd55c4196676c9c59f2"
+          },
+          {
+            "text": "HTX's November Merkle Tree proof of reserves shows reserve ratios for major assets staying above 100%",
+            "source_item_id": "01a1c931-f120-761f-bc9b-aaee64457fb4",
+            "source_signal_id": "e7743d7b7eb11f2c249afa67c8ef35c8d5a4032f56807778b4ea41da24a583d1"
+          },
+          {
+            "text": "HTX ended its UK activity after the FCA secured court undertakings over crypto promotions",
+            "source_item_id": "01a1993d-1a94-7bda-95cd-844e8d2e50b6",
+            "source_signal_id": "af246e7fde7f20c8ac74a4fa5a49976d6893c01a01ede83179020eec0727d764"
+          }
+        ]
+      },
+      "word_count": 160,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": null
+    },
+    {
+      "entity_id": "01a17278-8e2b-7be5-8d4b-a61e66702e9e",
+      "slug": "anthropic",
+      "name": "Anthropic",
+      "status": "ok",
+      "action": "write",
+      "reason": "The IPO story has moved sharply since the last published update (the October data-center lease): concrete pricing, $26B in anchor commitments, a roadshow launch, retail access, and a filing correction all land days before a targeted Nasdaq debut.",
+      "draft": {
+        "title": "Anthropic's IPO enters its final stretch — with a last-minute filing correction",
+        "what_happened": "Anthropic's roadshow kicked off Nov. 10 with shares priced at $70-$80 and up to $69.3 billion sought in the offering. Seven companies including Google and NVIDIA are committing a combined $26 billion at the IPO price. Along the way, the filing laying out the raise was withdrawn shortly after disclosure, and errors surfaced in the previously filed IPO documents, which the company plans to update.",
+        "how_we_got_here": "The offering moved from valuation talk to concrete per-share terms with anchor capital locked in, ahead of a Nasdaq debut targeted for Nov. 19-20. Bitget's IPO Prime Phase 3 also opened public subscription for pre-IPO shares with a $100 minimum, putting a slice of the listing in reach of everyday investors, and a CEO livestream is set for Nov. 13.",
+        "what_to_watch": "The corrected filings and what changes in the data, whether pricing holds within the $70-$80 range, and what the Nov. 13 CEO livestream covers days before the targeted debut.",
+        "claims": [
+          {
+            "text": "Anthropic's IPO roadshow kicked off on Nov. 10",
+            "source_item_id": "01a1c9d6-cce5-71a4-89a3-b96832bf1c65",
+            "source_signal_id": "8918fd7ec045992e488860761d113c691e0ea53035fddf4a4fe2341cc00242df"
+          },
+          {
+            "text": "The IPO is priced at $70-$80 per share, seeking up to $69.3 billion",
+            "source_item_id": "01a1c8b5-cd80-7f40-b00d-b23a77ac70ec",
+            "source_signal_id": "3a302d4702400e7d1c5afd7a24f09b951c7f343da4c10cd9bb5aca5af91402a0"
+          },
+          {
+            "text": "Seven companies including Google and NVIDIA are investing a combined $26 billion at the IPO price",
+            "source_item_id": "01a1c8c3-7f4d-7735-b8af-e42977d6f737",
+            "source_signal_id": "7b0ef6c61dd8fd467f55ae5a2292eec76a548f7bd4259cd7a5b413fa0301b085"
+          },
+          {
+            "text": "The filing laying out the up-to-$69.3 billion raise was withdrawn shortly after it was disclosed",
+            "source_item_id": "01a1c9d6-cce5-71a4-89a3-b96832bf1c65",
+            "source_signal_id": "8918fd7ec045992e488860761d113c691e0ea53035fddf4a4fe2341cc00242df"
+          },
+          {
+            "text": "Anthropic's previously filed IPO documents contain errors, and the company plans to update the relevant data",
+            "source_item_id": "01a1c923-907b-719f-a68b-7c3bb839de02",
+            "source_signal_id": "af2dfff5271ce576bbaed07c457ae475c01315071c57027633b3707b69923119"
+          },
+          {
+            "text": "The Nasdaq debut is targeted for Nov. 19-20",
+            "source_item_id": "01a1c923-907b-719f-a68b-7c3bb839de02",
+            "source_signal_id": null
+          },
+          {
+            "text": "Bitget's IPO Prime Phase 3 opened public round subscription for Anthropic pre-IPO shares with a minimum investment of $100",
+            "source_item_id": "01a1ccc9-cf18-7d76-aa28-c4dc92961627",
+            "source_signal_id": "538d5268c4e229693cbb31a3825feec1228d19e068f9f7ee94cb00c8f9a79e1c"
+          },
+          {
+            "text": "The CEO is scheduled to speak in a livestream on Nov. 13",
+            "source_item_id": "01a1c9d6-cce5-71a4-89a3-b96832bf1c65",
+            "source_signal_id": "8918fd7ec045992e488860761d113c691e0ea53035fddf4a4fe2341cc00242df"
+          }
+        ]
+      },
+      "word_count": 154,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": {
+        "id": "c5419ce5-8d9d-4e7c-bc02-ac8c952cb347",
+        "title": "Anthropic signs its first Canadian data center lease in Nova Scotia",
+        "published_at": "2026-10-19T00:16:45.113+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e31-760e-b1fc-5e5808906c24",
+      "slug": "capital-b",
+      "name": "Capital B",
+      "status": "ok",
+      "action": "write",
+      "reason": "First update on Capital B with a concrete, numbered treasury action (12 BTC for €840k, total 3,550) plus useful recent context from an executive's public stance.",
+      "draft": {
+        "title": "Capital B adds 12 BTC for €840,000 — holdings now 3,550",
+        "what_happened": "Capital B, the French Bitcoin treasury company, bought 12 more bitcoin for roughly €840,000 on November 10. Total holdings now stand at 3,550 BTC, another steady notch in the firm's accumulate-and-hold playbook.",
+        "how_we_got_here": "The purchase follows a quiet stretch for the company. In late October, executive Alexandre Laizet was reported publicly arguing that Bitcoin could be an answer to France's debt crisis — an opinion piece of advocacy rather than a company action, but useful context for the conviction behind the buying.",
+        "what_to_watch": "Open questions: the pace and size of future additions to the 3,550 BTC stack, the price paid for each new tranche, and whether leadership keeps making the public case for Bitcoin as a sovereign-debt solution.",
+        "claims": [
+          {
+            "text": "Capital B purchased 12 bitcoin for roughly €840,000 on November 10, 2026.",
+            "source_item_id": "01a1cc69-bde1-724d-a1bc-5fcd0b7f3555",
+            "source_signal_id": "9bd2e877c1a0074280ca7170e5fb62575de3875d598207e7cc88566608ee2eb9"
+          },
+          {
+            "text": "Capital B's total Bitcoin holdings are now 3,550 BTC.",
+            "source_item_id": "01a1cc69-bde1-724d-a1bc-5fcd0b7f3555",
+            "source_signal_id": "9bd2e877c1a0074280ca7170e5fb62575de3875d598207e7cc88566608ee2eb9"
+          },
+          {
+            "text": "Capital B follows an accumulate-and-hold Bitcoin treasury strategy.",
+            "source_item_id": "01a1cc69-bde1-724d-a1bc-5fcd0b7f3555",
+            "source_signal_id": "9bd2e877c1a0074280ca7170e5fb62575de3875d598207e7cc88566608ee2eb9"
+          },
+          {
+            "text": "Capital B executive Alexandre Laizet was reported in late October arguing Bitcoin could be an answer to France's debt crisis.",
+            "source_item_id": "01a18ef0-0caa-7c9c-8c7c-819f3574528d",
+            "source_signal_id": "2bd122670c6f938cbe3225d3ce575ecec731be430e9d927feb996aced074e27e"
+          }
+        ]
+      },
+      "word_count": 116,
+      "check_status": "passed",
+      "check_failures": [],
+      "would_replace": null
+    }
+  ]
+}

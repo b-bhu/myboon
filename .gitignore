@@ -41,6 +41,11 @@ coverage/
 # Generated analysis artifacts
 artifacts/
 packages/*/artifacts/
+# Catch-up POC review artifacts for #612 (snapshot + sample run)
+!packages/collectors/artifacts/
+!packages/collectors/artifacts/catch-up-poc/
+!packages/collectors/artifacts/catch-up-poc/**
+
 .data/
 packages/collectors/.data/
 packages/collectors/logs/
