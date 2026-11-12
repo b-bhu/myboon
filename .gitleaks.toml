@@ -1,0 +1,12 @@
+# Narrow allowlist for Catch-up POC artifacts (#612).
+# item_key was removed from the current snapshot, but gitleaks scans the
+# whole PR history and still flags the earlier commit. These are public
+# entity-manager dedupe keys and signal hashes, not credentials.
+title = "myboon"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Catch-up POC artifacts (public entity-manager snapshot and sample runs)"
+paths = ['''(^|/)packages/collectors/artifacts/catch-up-poc/''']
