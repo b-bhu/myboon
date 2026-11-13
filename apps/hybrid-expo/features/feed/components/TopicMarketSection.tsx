@@ -88,10 +88,6 @@ export function TopicMarketSection({ link, active }: TopicMarketSectionProps) {
       {view && (view.price !== null || available.length > 0) ? (
         <FeedBox tone="ground" style={styles.card}>
           <View style={styles.assetRow}>
-            <View style={styles.assetCopy}>
-              <Text style={styles.symbol}>{link.symbol.replace(/-PERP$/, '')}</Text>
-              <Text style={styles.assetName}>{link.assetName}</Text>
-            </View>
             <View style={styles.priceBlock}>
               {view.price !== null ? <Text style={styles.price}>{formatMarketPrice(view.price)}</Text> : null}
               {change !== null ? (
@@ -180,15 +176,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   card: { gap: 12 },
-  assetRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
-  assetCopy: { flex: 1, minWidth: 0 },
-  symbol: {
-    color: FEED_TOKENS.colors.textFaint,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-  },
-  assetName: { color: FEED_TOKENS.colors.text, fontSize: 15, lineHeight: 20, fontWeight: '600', marginTop: 4 },
+  assetRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'flex-end' },
   priceBlock: { alignItems: 'flex-end' },
   price: { color: FEED_TOKENS.colors.text, fontFamily: monoFontFamily(), fontSize: 34, lineHeight: 38, fontWeight: '700' },
   change: { fontFamily: monoFontFamily(), fontSize: 14, lineHeight: 20, fontWeight: '600', marginTop: 4 },

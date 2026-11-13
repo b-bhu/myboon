@@ -129,60 +129,61 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
         <Text accessibilityRole="header" style={styles.heading}>Developing story</Text>
         <MosaicDots page={current} count={pages.length} />
       </View>
-    <View
-      style={styles.pager}
-      accessibilityRole="adjustable"
-      accessibilityLabel="Developing topics"
-      accessibilityValue={{ text: `Page ${current + 1} of ${pages.length}` }}
-      accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
-      onAccessibilityAction={(event) => {
-        if (event.nativeEvent.actionName === 'increment') goTo(current + 1);
-        if (event.nativeEvent.actionName === 'decrement') goTo(current - 1);
-      }}
-      onLayout={(event) => {
-        const next = event.nativeEvent.layout.width;
-        if (next > 0) {
-          setWidth(next);
-          widthSv.value = next;
-        }
-      }}
-    >
-      {width > 0 ? (
-        <GestureDetector gesture={pan}>
-          <Animated.View style={[styles.track, trackStyle]}>
-            {pages.map((group, index) => (
-              <View
-                key={group.items.map((item) => item.storySlug).join('|') || String(index)}
-                style={[styles.page, { width: index < pages.length - 1 ? narrow : width, marginRight: index < pages.length - 1 ? GAP : 0 }]}
-                accessibilityLabel={`Topic page ${index + 1} of ${pages.length}`}
-              >
-                {group.placements.map((placement) => {
-                  const story = group.items[placement.index];
-                  if (!story) return null;
-                  const link = topicMarket(story.storySlug);
-                  const quote = link ? quotes[story.storySlug] : undefined;
-                  return (
-                    <TopicTile
-                      key={story.storySlug}
-                      pan={pan}
-                      story={story}
-                      kind={placement.kind}
-                      now={now}
-                      change={quote?.change ?? null}
-                      closes={quote?.closes ?? []}
-                      marketLabel={link?.assetName ?? null}
-                      showExcerpt={stories.length <= 4}
-                      frame={placement}
-                      onPress={() => router.push(storyHref(story.storySlug))}
-                    />
-                  );
-                })}
-              </View>
-            ))}
-          </Animated.View>
-        </GestureDetector>
-      ) : null}
-    </View>
+      <GestureDetector gesture={pan}>
+        <View
+          style={styles.pager}
+          accessibilityRole="adjustable"
+          accessibilityLabel="Developing topics"
+          accessibilityValue={{ text: `Page ${current + 1} of ${pages.length}` }}
+          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === 'increment') goTo(current + 1);
+            if (event.nativeEvent.actionName === 'decrement') goTo(current - 1);
+          }}
+          onLayout={(event) => {
+            const next = event.nativeEvent.layout.width;
+            if (next > 0) {
+              setWidth(next);
+              widthSv.value = next;
+            }
+          }}
+        >
+          {width > 0 ? (
+            <Animated.View style={[styles.track, trackStyle]}>
+              {pages.map((group, index) => (
+                <View
+                  key={group.items.map((item) => item.storySlug).join('|') || String(index)}
+                  style={[styles.page, { width: index < pages.length - 1 ? narrow : width, marginRight: index < pages.length - 1 ? GAP : 0 }]}
+                  accessibilityLabel={`Topic page ${index + 1} of ${pages.length}`}
+                >
+                  {group.placements.map((placement) => {
+                    const story = group.items[placement.index];
+                    if (!story) return null;
+                    const link = topicMarket(story.storySlug);
+                    const quote = link ? quotes[story.storySlug] : undefined;
+                    return (
+                      <TopicTile
+                        key={story.storySlug}
+                        pan={pan}
+                        reduced={reduced}
+                        story={story}
+                        kind={placement.kind}
+                        now={now}
+                        change={quote?.change ?? null}
+                        closes={quote?.closes ?? []}
+                        marketLabel={link?.assetName ?? null}
+                        showExcerpt={stories.length <= 4}
+                        frame={placement}
+                        onPress={() => router.push(storyHref(story.storySlug))}
+                      />
+                    );
+                  })}
+                </View>
+              ))}
+            </Animated.View>
+          ) : null}
+        </View>
+      </GestureDetector>
     </View>
   );
 }
@@ -200,6 +201,7 @@ export function MosaicDots({ page, count }: { page: number; count: number }) {
 
 function TopicTile({
   pan,
+  reduced,
   story,
   kind,
   now,
@@ -211,6 +213,7 @@ function TopicTile({
   onPress,
 }: {
   pan: GestureType;
+  reduced: boolean;
   story: StorySummary;
   kind: MosaicTileKind;
   now: Date;
@@ -226,9 +229,22 @@ function TopicTile({
   const meta = kind === 'slim' ? age : storyCountLabel(story.eventCount);
   const direction = change === null || change === 0 ? null : change > 0 ? 'up' : 'down';
   const quote = marketLabel && change !== null ? `${marketLabel} ${formatSignedPercent(change)}` : '';
+  const pressed = useSharedValue(0);
+  const reduceMotion = useSharedValue(reduced ? 1 : 0);
+  useEffect(() => { reduceMotion.value = reduced ? 1 : 0; }, [reduceMotion, reduced]);
+  const pressedStyle = useAnimatedStyle(() => ({
+    opacity: pressed.value ? 0.72 : 1,
+    transform: [{ scale: reduceMotion.value ? 1 : 1 - pressed.value * 0.02 }],
+  }));
   const tap = Gesture.Tap()
     .maxDistance(18)
     .requireExternalGestureToFail(pan)
+    .onBegin(() => {
+      pressed.value = 1;
+    })
+    .onFinalize(() => {
+      pressed.value = 0;
+    })
     .onEnd(() => {
       runOnJS(onPress)();
     });
@@ -245,12 +261,12 @@ function TopicTile({
       ]}
     >
       <GestureDetector gesture={tap}>
-        <View
+        <Animated.View
           accessible
           accessibilityRole="button"
           accessibilityLabel={`${story.name}, ${storyCountLabel(story.eventCount)}${quote ? `, ${quote}` : ''}`}
           onAccessibilityTap={onPress}
-          style={[styles.tile, lead && styles.tileLead]}
+          style={[styles.tile, lead && styles.tileLead, pressedStyle]}
         >
           <Text style={[styles.name, lead && styles.nameLead, kind === 'slim' && styles.nameSlim]} numberOfLines={lead ? 3 : 2}>
             {story.name}
@@ -270,7 +286,7 @@ function TopicTile({
               {direction === 'up' ? '↑' : '↓'}
             </Text>
           ) : null}
-        </View>
+        </Animated.View>
       </GestureDetector>
     </View>
   );
