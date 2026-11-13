@@ -115,6 +115,18 @@ exist to it). Jev and Clef are never contacted by the tests; see
 `src/v4-status.db.test.ts` (local Postgres via `ANALYST_TEST_ADMIN_URL`) and
 `src/deciders.test.ts` (fake fetch).
 
+## Intake filter (#625, off by default)
+
+`ANALYST_INTAKE_FILTER_ENABLED=true` makes the analyst check each claimed signal before the LLM and deciders
+(`src/intake-filter.ts`, pure and deterministic, no model, no outlet rule). A signal is parked, never deleted, with
+`parked_reason = intake_filter:<rule>[:<matched signal_id>]` when it is: `url_dup` (same page apart from tracking
+parameters), `near_dup` (title trigram Jaccard >= 0.6 with a signal from the last 24 h), `same_event` (>= 70% of its own
+words already in an earlier title, >= 4 shared words and a shared number of 3+ characters), or `low_content` (title under
+12 characters). Earlier signals the filter dropped are not matched against. Each drop logs one `intake_filter_drop` line;
+a filter error logs `intake_filter_error` and the signal goes on to the analyst (fail open). Flag off: nothing changes.
+Needs no migration (reads columns `analyst_worker` already has). Eval on stored rows (read-only):
+`npx tsx src/intake-eval.ts <dir of atlas helper exports>`, see the header of `src/intake-eval.ts`.
+
 ## Environment
 
 - `ANALYST_DATABASE_CA_FILE` — optional PEM CA file the pool trusts instead of

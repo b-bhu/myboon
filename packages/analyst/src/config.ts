@@ -26,6 +26,8 @@ export type AnalystConfig = {
   maxAttempts: number;
   worker: string;
   shadow: boolean;
+  /** #625 intake filter before the analyst; ANALYST_INTAKE_FILTER_ENABLED, default off. */
+  intakeFilter: boolean;
 };
 
 /** Positive integers only: digits with no leading zero, so '0', '-1', '1.5', '1e3' all fail. */
@@ -72,5 +74,6 @@ export function parseAnalystConfig(env: Env): AnalystConfig {
     maxAttempts: optionalPositiveInt(env, 'ANALYST_MAX_ATTEMPTS', 3),
     worker: optionalString(env, 'ANALYST_WORKER', `${os.hostname()}:${process.pid}`),
     shadow: env['ANALYST_SHADOW'] === 'true',
+    intakeFilter: env['ANALYST_INTAKE_FILTER_ENABLED'] === 'true',
   };
 }

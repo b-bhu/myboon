@@ -219,6 +219,8 @@ const V4_APPS = [
       ANALYST_BACKOFF_MS: '60000',
       ANALYST_MAX_ATTEMPTS: '3',
       ANALYST_SHADOW: 'false',
+      // #625 intake filter (near-duplicate / empty titles parked before the LLM). Off by default; the shell turns it on.
+      ANALYST_INTAKE_FILTER_ENABLED: process.env.ANALYST_INTAKE_FILTER_ENABLED ?? 'false',
     },
   },
   {

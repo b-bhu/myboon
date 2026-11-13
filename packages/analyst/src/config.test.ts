@@ -26,7 +26,7 @@ describe('#512 parseAnalystConfig', () => {
     const c = parseAnalystConfig(base);
     expect(c).toMatchObject({
       databaseUrl: CANARY_URL, ollamaApiKey: CANARY_OLLAMA, jevApiToken: CANARY_JEV,
-      llmModel: 'glm-5.3-flash', maxSignalsPerRun: 40, shadow: false,
+      llmModel: 'glm-5.3-flash', maxSignalsPerRun: 40, shadow: false, intakeFilter: false,
     });
     for (const k of ['leaseMs', 'timeoutMs', 'backoffMs', 'maxAttempts'] as const) {
       expect(Number.isSafeInteger(c[k]) && c[k] > 0).toBe(true);
@@ -42,6 +42,12 @@ describe('#512 parseAnalystConfig', () => {
     });
     expect(c).toMatchObject({ llmModel: 'glm-x', maxSignalsPerRun: 5, leaseMs: 1000, timeoutMs: 2000,
       backoffMs: 3000, maxAttempts: 4, worker: 'vps-1', shadow: true });
+  });
+
+  it('#625 the intake filter is off unless ANALYST_INTAKE_FILTER_ENABLED is exactly "true"', () => {
+    expect(parseAnalystConfig(base).intakeFilter).toBe(false);
+    for (const v of ['TRUE', '1', 'yes', '']) expect(parseAnalystConfig({ ...base, ANALYST_INTAKE_FILTER_ENABLED: v }).intakeFilter).toBe(false);
+    expect(parseAnalystConfig({ ...base, ANALYST_INTAKE_FILTER_ENABLED: 'true' }).intakeFilter).toBe(true);
   });
 
   it('shadow is on only for the exact string "true"', () => {

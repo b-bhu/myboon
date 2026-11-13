@@ -17,6 +17,7 @@ import {
 } from '@myboon/contracts';
 
 import type { DecisionCase, Decider } from './deciders.js';
+import { decideIntake, intakeFeatures, intakeReason, LOOKBACK_HOURS, INTAKE_FILTER_REASON_PREFIX, type IntakeVerdict } from './intake-filter.js';
 import { decideTimed } from './process.js';
 import type { Ask, AskInput, AskResult, CandidateLookup, ShortlistCandidate, EntityMissEntry, JevLogEntry, Llm, SignalInput, SessionDeps } from './session.js';
 import { runSession } from './session.js';
@@ -182,12 +183,30 @@ export type D36Options = {
   missLog?: (e: EntityMissEntry) => void;
   /** One `signal_failed` record per failed attempt, logged after failClaim; default prints JSON to stdout. */
   failLog?: (e: Record<string, unknown>) => void;
+  /** #625: when true, a claimed signal is first checked by the intake filter (default off = every signal goes to the session as before). */
+  intakeFilter?: boolean;
+  /** One `intake_filter_drop` line per dropped signal; default prints JSON to stdout. */
+  intakeLog?: (e: Record<string, unknown>) => void;
   leaseMs: number;
   timeoutMs: number;
   backoffMs: number;
   maxAttempts: number;
   worker: string;
 };
+
+/**
+ * #625 the verdict for one claimed signal: compared with the signals created in the 24 hours before it that this filter has not
+ * dropped. The query reads only columns analyst_worker already has. A query error is the caller's to swallow (fail open).
+ */
+export async function intakeVerdictFor(db: Db, row: { signal_id: string; text: string | null; link: string | null; created_at: Date | string }): Promise<IntakeVerdict> {
+  const earlier = await db.query<{ signal_id: string; text: string | null; link: string | null }>(
+    `select signal_id, text, link from atlas.signals
+      where created_at >= $2::timestamptz - make_interval(hours => $3) and created_at < $2::timestamptz and signal_id <> $1
+        and (parked_reason is null or parked_reason not like $4)`,
+    [row.signal_id, row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at, LOOKBACK_HOURS, `${INTAKE_FILTER_REASON_PREFIX}%`],
+  );
+  return decideIntake(intakeFeatures(row), earlier.rows.map(intakeFeatures));
+}
 
 export type D36Result = { signalId: string; result: 'analysed' | 'parked' | 'failed' | 'lost_claim'; output?: AnalystOutput; handoff?: AnalystHandoff };
 
@@ -253,6 +272,25 @@ export async function processNextD36(db: Db, o: D36Options): Promise<D36Result |
     const written = await finishClaim(db, claim, { status: 'parked', parkedReason: BACKLOG_SKIP_REASON });
     if (!written) return { signalId: claim.signalId, result: 'lost_claim' };
     return { signalId: claim.signalId, result: 'parked' };
+  }
+
+  // #625 intake filter (flag off by default): a near-duplicate or empty signal is parked with the rule and the matched signal as
+  // the reason, counted in the run summary and logged; the LLM, deciders and sink never run on it. Fail open: if the filter
+  // itself errors the signal goes on to the session unchanged.
+  if (o.intakeFilter) {
+    const intakeLog = o.intakeLog ?? ((e: Record<string, unknown>) => { console.log(JSON.stringify(e)); });
+    let verdict: IntakeVerdict = { keep: true };
+    try {
+      verdict = await intakeVerdictFor(db, row);
+    } catch (e) {
+      intakeLog({ event: 'intake_filter_error', signal_id: row.signal_id, error: asMessage(e) });
+    }
+    if (!verdict.keep) {
+      const written = await finishClaim(db, claim, { status: 'parked', parkedReason: intakeReason(verdict) });
+      if (!written) return { signalId: claim.signalId, result: 'lost_claim' };
+      intakeLog({ event: 'intake_filter_drop', signal_id: row.signal_id, rule: verdict.rule, match_signal_id: verdict.match_signal_id, score: verdict.score });
+      return { signalId: claim.signalId, result: 'parked' };
+    }
   }
 
   const logJev: (e: JevLogEntry) => void =

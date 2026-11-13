@@ -97,6 +97,8 @@ export async function analystMain(o: AnalystMainOptions): Promise<RunSummary> {
       backoffMs: c.backoffMs,
       maxAttempts: c.maxAttempts,
       worker: c.worker,
+      intakeFilter: c.intakeFilter,
+      intakeLog: (e) => { log(JSON.stringify(e)); },
     };
 
     return await runAnalystOnce(pool, opts, { maxSignals: c.maxSignalsPerRun, log });
