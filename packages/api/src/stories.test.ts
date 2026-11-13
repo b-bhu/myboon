@@ -40,7 +40,30 @@ function app(
     memoryReader,
     ...(source ? { source } : {}),
     fetch: fetchImpl,
+    now: () => ATLAS_NOW,
   })
+}
+
+// Fixed clock for the Atlas 7-day window: items dated 2026-07-06T00:00Z or later (and not after this) count.
+const ATLAS_NOW = Date.parse('2026-07-13T00:00:00.000Z')
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** True for the one bounded 7-day eligibility read of atlas.entity_items. */
+function isWindowRead(url: URL): boolean {
+  return url.pathname.endsWith('/entity_items') && url.searchParams.get('select') === 'main_entity_id,occurred_at'
+}
+
+/** Window rows for `entityId`: `count` active items, newest at `latest`, one hour apart going back. */
+function windowRows(entityId: string, count: number, latest = '2026-07-12T00:00:00.000Z') {
+  return Array.from({ length: count }, (_, index) => ({
+    main_entity_id: entityId,
+    occurred_at: new Date(Date.parse(latest) - index * 3_600_000).toISOString(),
+  }))
+}
+
+/** Serves `rows` on the first window page and nothing after it, like PostgREST paging past the end. */
+function windowResponse(url: URL, rows: unknown[]): Response {
+  return jsonResponse(Number(url.searchParams.get('offset')) === 0 ? rows : [])
 }
 
 test('Story list selects and caps Entities, reads bounded latest memories, and allowlists output', async () => {
@@ -393,12 +416,12 @@ test('Story summary moves updatedAt forward when a new later reported memory arr
   assert.equal(after?.updatedAt, '2026-07-13T09:30:00.000Z')
 })
 
-test('Story Atlas list selects active carousel entities, caps and orders them, and maps latest items', async () => {
+test('Story Atlas list selects eligible active entities by latest development and maps latest items', async () => {
   const requests: Array<{ url: URL; headers: Record<string, string> }> = []
   const entityRows = [
-    { id: atlasEntityIds[0], slug: 'story-1', name: 'Story 1', status: 'active', show_in_carousel: true },
-    { id: atlasEntityIds[1], slug: 'story-2', name: 'Story 2', status: 'active', show_in_carousel: true },
-    { id: atlasEntityIds[2], slug: 'story-3', name: 'Story 3', status: 'active', show_in_carousel: true },
+    { id: atlasEntityIds[2], slug: 'story-3', name: 'Story 3', status: 'active', show_in_carousel: false },
+    { id: atlasEntityIds[1], slug: 'story-2', name: 'Story 2', status: 'active', show_in_carousel: false },
+    { id: atlasEntityIds[0], slug: 'story-1', name: 'Story 1', status: 'active', show_in_carousel: false },
   ]
   const itemsByEntity: Record<string, { latest: unknown; total: number }> = {
     [atlasEntityIds[0]]: {
@@ -418,11 +441,17 @@ test('Story Atlas list selects active carousel entities, caps and orders them, a
     assert.equal(headers['Accept-Profile'], 'atlas')
     if (url.pathname.endsWith('/entities')) {
       assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
-      assert.equal(url.searchParams.get('show_in_carousel'), 'eq.true')
+      assert.equal(url.searchParams.has('show_in_carousel'), false)
       assert.equal(url.searchParams.get('status'), 'eq.active')
-      assert.equal(url.searchParams.get('order'), 'updated_at.desc')
-      assert.equal(url.searchParams.get('limit'), '5')
+      assert.equal(url.searchParams.get('id'), `in.(${atlasEntityIds[0]},${atlasEntityIds[1]},${atlasEntityIds[2]})`)
       return jsonResponse(entityRows)
+    }
+    if (isWindowRead(url)) {
+      return windowResponse(url, [
+        ...windowRows(atlasEntityIds[2], 3, '2026-07-08T00:00:00.000Z'),
+        ...windowRows(atlasEntityIds[0], 3, '2026-07-12T00:00:00.000Z'),
+        ...windowRows(atlasEntityIds[1], 3, '2026-07-09T00:00:00.000Z'),
+      ])
     }
     if (url.pathname.endsWith('/entity_items')) {
       const entityId = String(url.searchParams.get('main_entity_id') ?? '').replace(/^eq\./, '')
@@ -471,7 +500,8 @@ test('Story Atlas list selects active carousel entities, caps and orders them, a
     ],
   })
   assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entities')).length, 1)
-  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entity_items')).length, 6)
+  assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entity_items') && !isWindowRead(url)).length, 6)
+  assert.equal(requests.filter(({ url }) => isWindowRead(url)).length, 1)
 })
 
 test('Story Atlas list returns an entity with a production UUIDv7 id', async () => {
@@ -482,6 +512,7 @@ test('Story Atlas list returns an entity with a production UUIDv7 id', async () 
     if (url.pathname.endsWith('/entities')) {
       return jsonResponse([{ id: atlasEntityIds[0], slug: 'story-v7', name: 'Story v7' }])
     }
+    if (isWindowRead(url)) return windowResponse(url, windowRows(atlasEntityIds[0], 3))
     if (url.pathname.endsWith('/entity_items')) {
       assert.equal(url.searchParams.get('main_entity_id'), `eq.${atlasEntityIds[0]}`)
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
@@ -524,6 +555,9 @@ test('Story Atlas list carries the entity card image with kind content and the e
       assert.equal(url.searchParams.get('select'), 'id,slug,name,type,image:card->image->>url')
       assert.equal(url.searchParams.get('status'), 'eq.active')
       return jsonResponse(entityRows)
+    }
+    if (isWindowRead(url)) {
+      return windowResponse(url, [...windowRows(atlasEntityIds[0], 3), ...windowRows(atlasEntityIds[1], 3, '2026-07-11T00:00:00.000Z')])
     }
     if (url.pathname.endsWith('/entity_items')) {
       const entityId = String(url.searchParams.get('main_entity_id') ?? '').replace(/^eq\./, '')
@@ -616,6 +650,9 @@ test('Story Atlas entity images fail closed on empty and non-https values', asyn
     if (url.pathname.endsWith('/entities')) {
       return jsonResponse(entityRows)
     }
+    if (isWindowRead(url)) {
+      return windowResponse(url, entityRows.flatMap((row, index) => windowRows(row.id, 3, new Date(Date.parse('2026-07-12T00:00:00.000Z') - index * 3_600_000).toISOString())))
+    }
     if (url.pathname.endsWith('/entity_items')) {
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
       return jsonResponse([
@@ -649,6 +686,7 @@ test('Story Atlas entities select the card image through card->image->>url; the 
       atlasEntitySelects.push(url.searchParams.get('select'))
       return jsonResponse([])
     }
+    if (isWindowRead(url)) return windowResponse(url, windowRows(atlasEntityIds[0], 3))
     throw new Error(`Unexpected request: ${url}`)
   }, undefined, 'atlas').request('/')
   assert.equal(atlasResponse.status, 200)
@@ -680,7 +718,7 @@ test('Story Atlas detail pages items newest-first with pagination fields', async
     assert.equal(headers['Accept-Profile'], 'atlas')
     if (url.pathname.endsWith('/entities')) {
       assert.equal(url.searchParams.get('slug'), 'eq.us-and-iran')
-      assert.equal(url.searchParams.get('show_in_carousel'), 'eq.true')
+      assert.equal(url.searchParams.has('show_in_carousel'), false)
       assert.equal(url.searchParams.get('status'), 'eq.active')
       assert.equal(url.searchParams.get('limit'), '1')
       return jsonResponse([{ id: atlasEntityIds[0], slug: 'us-and-iran', name: 'US and Iran' }])
@@ -831,6 +869,188 @@ test('Story Atlas failures return the generic 500 response', async () => {
   }
 })
 
+// ---- Atlas automatic story selection (#618): eligibility, window, cap, ordering, by-slug ----
+
+interface FakeItem {
+  main_entity_id: string
+  occurred_at: string
+  status?: string
+  merged_into_id?: string | null
+  title?: string
+}
+
+interface FakeEntity {
+  id: string
+  slug: string
+  name: string
+  status?: string
+  show_in_carousel?: boolean
+}
+
+/** Minimal PostgREST stand-in for the atlas reads the Stories route makes; honours the filters it is sent. */
+function atlasFake(entities: FakeEntity[], items: FakeItem[], options: { maxRows?: number } = {}) {
+  const requests: URL[] = []
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    requests.push(url)
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    if (url.pathname.endsWith('/entities')) {
+      const id = url.searchParams.get('id')
+      const slug = url.searchParams.get('slug')
+      let rows = entities.filter((entity) => (url.searchParams.get('status') !== 'eq.active' || (entity.status ?? 'active') === 'active'))
+      if (id?.startsWith('in.(')) rows = rows.filter((entity) => id.slice(4, -1).split(',').includes(entity.id))
+      if (slug?.startsWith('eq.')) rows = rows.filter((entity) => entity.slug === slug.slice(3))
+      const limit = Number(url.searchParams.get('limit') ?? rows.length)
+      return jsonResponse(rows.slice(0, limit).map(({ id: rowId, slug: rowSlug, name }) => ({ id: rowId, slug: rowSlug, name })))
+    }
+    assert.ok(url.pathname.endsWith('/entity_items'), `unexpected table: ${url}`)
+    const gte = url.searchParams.getAll('occurred_at').find((value) => value.startsWith('gte.'))
+    const lte = url.searchParams.getAll('occurred_at').find((value) => value.startsWith('lte.'))
+    const entityFilter = url.searchParams.get('main_entity_id') ?? ''
+    let rows = items.filter((item) => {
+      if (url.searchParams.get('status') === 'eq.active' && (item.status ?? 'active') !== 'active') return false
+      if (url.searchParams.get('merged_into_id') === 'is.null' && item.merged_into_id) return false
+      if (entityFilter.startsWith('eq.') && item.main_entity_id !== entityFilter.slice(3)) return false
+      if (gte && Date.parse(item.occurred_at) < Date.parse(gte.slice(4))) return false
+      if (lte && Date.parse(item.occurred_at) > Date.parse(lte.slice(4))) return false
+      return true
+    })
+    rows = rows.sort((a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at))
+    if (headers.Prefer === 'count=exact') return jsonResponse([], rows.length)
+    const offset = Number(url.searchParams.get('offset') ?? 0)
+    const limit = Math.min(Number(url.searchParams.get('limit') ?? rows.length), options.maxRows ?? Infinity)
+    const page = rows.slice(offset, offset + limit)
+    return jsonResponse(isWindowRead(url)
+      ? page.map(({ main_entity_id, occurred_at }) => ({ main_entity_id, occurred_at }))
+      : page.map((item) => ({ id: `item-${item.occurred_at}`, title: item.title ?? 'Item', summary: item.title ?? 'Item', occurred_at: item.occurred_at })))
+  }
+  return { fetchImpl, requests }
+}
+
+const entityUuid = (n: number) => `01a17278-acb3-7ccd-8ec1-${String(n).padStart(12, '0')}`
+const hoursBeforeNow = (hours: number) => new Date(ATLAS_NOW - hours * 3_600_000).toISOString()
+const fakeEntity = (n: number, extra: Partial<FakeEntity> = {}): FakeEntity => ({ id: entityUuid(n), slug: `topic-${n}`, name: `Topic ${n}`, ...extra })
+const fakeItems = (n: number, count: number, latestHoursAgo: number, extra: Partial<FakeItem> = {}): FakeItem[] =>
+  Array.from({ length: count }, (_, index) => ({ main_entity_id: entityUuid(n), occurred_at: hoursBeforeNow(latestHoursAgo + index), ...extra }))
+
+async function listSlugs(fake: ReturnType<typeof atlasFake>): Promise<string[]> {
+  const response = await app(fake.fetchImpl, undefined, 'atlas').request('/')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { stories: Array<{ storySlug: string }> }
+  return body.stories.map((story) => story.storySlug)
+}
+
+test('Story Atlas eligibility: 2 items in 7 days is excluded, 3 is included, and the carousel flag is ignored', async () => {
+  const fake = atlasFake(
+    [fakeEntity(1, { show_in_carousel: false }), fakeEntity(2, { show_in_carousel: true })],
+    [...fakeItems(1, 3, 5), ...fakeItems(2, 2, 1)],
+  )
+  assert.deepEqual(await listSlugs(fake), ['topic-1'])
+})
+
+test('Story Atlas eligibility counts only items inside the last 7 days, never future-dated ones', async () => {
+  const fake = atlasFake(
+    [fakeEntity(1), fakeEntity(2), fakeEntity(3), fakeEntity(4)],
+    [
+      // 3 inside the window: included
+      ...fakeItems(1, 3, 24),
+      // 2 inside + 1 just older than 7 days (168h): excluded
+      ...fakeItems(2, 2, 24), ...fakeItems(2, 1, 168.5),
+      // 2 inside + 1 dated in the future: excluded
+      ...fakeItems(3, 2, 24), ...fakeItems(3, 1, -6),
+      // exactly on the 7-day boundary counts
+      ...fakeItems(4, 1, 24), ...fakeItems(4, 1, 100), ...fakeItems(4, 1, 168),
+    ],
+  )
+  assert.deepEqual(await listSlugs(fake), ['topic-1', 'topic-4'])
+  const windowRead = fake.requests.find(isWindowRead)
+  assert.ok(windowRead)
+  const bounds = windowRead.searchParams.getAll('occurred_at')
+  assert.deepEqual(bounds, [`gte.${hoursBeforeNow(168)}`, `lte.${hoursBeforeNow(0)}`])
+})
+
+test('Story Atlas eligibility ignores merged and inactive items and only lists active entities', async () => {
+  const fake = atlasFake(
+    [fakeEntity(1), fakeEntity(2), fakeEntity(3), fakeEntity(4, { status: 'archived' })],
+    [
+      ...fakeItems(1, 3, 10),
+      // 2 active + 1 merged: excluded
+      ...fakeItems(2, 2, 10), ...fakeItems(2, 1, 11, { merged_into_id: entityUuid(99) }),
+      // 2 active + 1 inactive: excluded
+      ...fakeItems(3, 2, 10), ...fakeItems(3, 1, 11, { status: 'rejected' }),
+      // eligible items but the entity itself is not active
+      ...fakeItems(4, 5, 2),
+    ],
+  )
+  assert.deepEqual(await listSlugs(fake), ['topic-1'])
+  const windowRead = fake.requests.find(isWindowRead)
+  assert.equal(windowRead?.searchParams.get('status'), 'eq.active')
+  assert.equal(windowRead?.searchParams.get('merged_into_id'), 'is.null')
+})
+
+test('Story Atlas list returns at most 12 topics, newest latest development first', async () => {
+  const entities = Array.from({ length: 15 }, (_, index) => fakeEntity(index + 1))
+  // Topic n's newest item is n hours old, so topic-1 is the freshest and topic-15 the stalest.
+  const items = entities.flatMap((_, index) => fakeItems(index + 1, 3, index + 1))
+  const fake = atlasFake(entities, items)
+  const slugs = await listSlugs(fake)
+  assert.equal(slugs.length, 12)
+  assert.deepEqual(slugs, Array.from({ length: 12 }, (_, index) => `topic-${index + 1}`))
+})
+
+test('Story Atlas ordering uses the latest item, not the item count', async () => {
+  const fake = atlasFake(
+    [fakeEntity(1), fakeEntity(2), fakeEntity(3)],
+    [...fakeItems(1, 40, 30), ...fakeItems(2, 3, 2), ...fakeItems(3, 5, 12)],
+  )
+  assert.deepEqual(await listSlugs(fake), ['topic-2', 'topic-3', 'topic-1'])
+})
+
+test('Story Atlas eligibility counts correctly across PostgREST pages when the server caps rows per read', async () => {
+  const filler = Array.from({ length: 2300 }, (_, index) => ({
+    main_entity_id: entityUuid(1),
+    occurred_at: hoursBeforeNow(1 + index * 0.05),
+  }))
+  // Topic 2's three items are the oldest rows in the window, so they only show up on the third page.
+  const fake = atlasFake([fakeEntity(1), fakeEntity(2)], [...filler, ...fakeItems(2, 3, 160)], { maxRows: 1000 })
+  assert.deepEqual(await listSlugs(fake), ['topic-1', 'topic-2'])
+  assert.ok(fake.requests.filter(isWindowRead).length >= 3)
+})
+
+test('Story Atlas list is empty, with no entity read, when nothing is eligible', async () => {
+  const fake = atlasFake([fakeEntity(1)], fakeItems(1, 2, 3))
+  assert.deepEqual(await listSlugs(fake), [])
+  assert.equal(fake.requests.some((url) => url.pathname.endsWith('/entities')), false)
+})
+
+test('Story Atlas by-slug opens an entity that is not currently eligible but has items, flag or no flag', async () => {
+  const fake = atlasFake(
+    [fakeEntity(1, { show_in_carousel: false })],
+    // 1 item in the window and 2 old ones: not eligible for the list, still has a timeline
+    [...fakeItems(1, 1, 5), ...fakeItems(1, 2, 400)],
+  )
+  assert.deepEqual(await listSlugs(fake), [])
+  const response = await app(fake.fetchImpl, undefined, 'atlas').request('/topic-1')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { story: { storySlug: string; eventCount: number }; events: unknown[] }
+  assert.equal(body.story.storySlug, 'topic-1')
+  assert.equal(body.story.eventCount, 3)
+  assert.equal(body.events.length, 3)
+  const entityRead = fake.requests.find((url) => url.pathname.endsWith('/entities') && url.searchParams.get('slug') === 'eq.topic-1')
+  assert.equal(entityRead?.searchParams.has('show_in_carousel'), false)
+})
+
+test('Story Atlas by-slug still returns 404 for an unknown, inactive or item-less entity', async () => {
+  const fake = atlasFake(
+    [fakeEntity(1), fakeEntity(2, { status: 'archived' }), fakeEntity(3)],
+    [...fakeItems(2, 4, 3)],
+  )
+  for (const slug of ['topic-1', 'topic-2', 'topic-3', 'unknown']) {
+    const response = await app(fake.fetchImpl, undefined, 'atlas').request(`/${slug}`)
+    assert.equal(response.status, 404, slug)
+  }
+})
+
 test('Story routes default to the legacy source when source is omitted or legacy', async () => {
   for (const source of [undefined, 'legacy'] as const) {
     const requests: Array<{ url: URL; init?: RequestInit }> = []
@@ -867,6 +1087,7 @@ test('Contract: Atlas and legacy Story responses share key sets and value types'
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
     if (url.pathname.endsWith('/entities')) return jsonResponse([atlasRow])
+    if (isWindowRead(url)) return windowResponse(url, windowRows(atlasEntityIds[0], 3))
     if (url.pathname.endsWith('/entity_items')) {
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
       return jsonResponse([

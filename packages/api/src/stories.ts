@@ -6,6 +6,16 @@ import entityManager from '@myboon/collectors/entity-manager'
 const { ENTITY_KNOWLEDGE_MAX_PAGE_SIZE } = entityManager
 
 const MAX_STORIES = 5
+// Atlas Feed: how many topics the stories list returns (one full 10-tile mosaic page plus a short second page).
+const MAX_ATLAS_STORIES = 12
+// An entity is an Atlas Story when it has at least this many active, unmerged items in the window below.
+const ATLAS_MIN_ITEMS = 3
+const ATLAS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+// Bounded 7-day read: PostgREST pages of this size, at most this many pages (10k newest rows).
+const ATLAS_WINDOW_PAGE_SIZE = 1000
+const ATLAS_WINDOW_MAX_PAGES = 10
+// Top-ranked eligible ids whose entity rows are fetched; spare room beyond the cap in case some are inactive or malformed.
+const ATLAS_CANDIDATE_LIMIT = 40
 const DEFAULT_STORY_EVENT_LIMIT = 20
 const MAX_STORY_EVENT_LIMIT = 50
 const MAX_STORY_EVENT_OFFSET = 10_000
@@ -33,6 +43,11 @@ interface AtlasItemRow {
   id: unknown
   title: unknown
   summary: unknown
+  occurred_at: unknown
+}
+
+interface AtlasWindowRow {
+  main_entity_id: unknown
   occurred_at: unknown
 }
 
@@ -93,6 +108,8 @@ export interface StoryRoutesConfig {
   /** Backing store for Stories; 'atlas' reads the PostgREST atlas schema. Anything else (or missing) is legacy. */
   source?: 'legacy' | 'atlas'
   fetch?: typeof globalThis.fetch
+  /** Clock for the Atlas 7-day window; defaults to Date.now. Tests inject it. */
+  now?: () => number
 }
 
 /**
@@ -219,23 +236,69 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     return { memories, total: exactTotal, latest }
   }
 
+  /**
+   * Atlas Stories pick themselves: entities with ATLAS_MIN_ITEMS+ active, unmerged
+   * items dated inside the last 7 days, newest latest item first, capped at
+   * MAX_ATLAS_STORIES. Counted here from one bounded read, no database view.
+   */
   async function atlasSelectedEntities(): Promise<SelectedEntity[]> {
+    const ranked = await atlasEligibleEntityIds()
+    if (ranked.length === 0) return []
+    const candidates = ranked.slice(0, ATLAS_CANDIDATE_LIMIT)
     const params = new URLSearchParams({
       select: ATLAS_ENTITY_SELECT,
-      show_in_carousel: 'eq.true',
+      id: `in.(${candidates.join(',')})`,
       status: 'eq.active',
-      order: 'updated_at.desc',
-      limit: String(MAX_STORIES),
+      limit: String(candidates.length),
     })
     const rows = await readRows<AtlasEntityRow>('entities', params, 'atlas')
-    return rows.map(atlasSelectedEntity).filter((row): row is SelectedEntity => row !== null).slice(0, MAX_STORIES)
+    const byId = new Map<string, SelectedEntity>()
+    for (const row of rows) {
+      const entity = atlasSelectedEntity(row)
+      if (entity) byId.set(entity.id, entity)
+    }
+    return candidates.flatMap((id) => byId.get(id) ?? []).slice(0, MAX_ATLAS_STORIES)
+  }
+
+  /** Eligible entity ids (valid UUIDs), newest latest development first. */
+  async function atlasEligibleEntityIds(): Promise<string[]> {
+    const now = (config.now ?? Date.now)()
+    const since = now - ATLAS_WINDOW_MS
+    const stats = new Map<string, { count: number, latest: number }>()
+    // Offset paging over a live table can skip or double-count a row if the entity
+    // manager writes mid-read. Harmless for an eligibility threshold at 1-2 pages.
+    for (let page = 0; page < ATLAS_WINDOW_MAX_PAGES; page += 1) {
+      const rows = await readRows<AtlasWindowRow>('entity_items', atlasWindowParams(since, now, page), 'atlas')
+      if (rows.length === 0) break
+      for (const row of rows) {
+        if (typeof row.main_entity_id !== 'string' || !UUID_RE.test(row.main_entity_id)) continue
+        const at = typeof row.occurred_at === 'string' ? Date.parse(row.occurred_at) : Number.NaN
+        if (!Number.isFinite(at) || at < since || at > now) continue
+        const stat = stats.get(row.main_entity_id)
+        if (stat) {
+          stat.count += 1
+          if (at > stat.latest) stat.latest = at
+        } else {
+          stats.set(row.main_entity_id, { count: 1, latest: at })
+        }
+      }
+      if (rows.length < ATLAS_WINDOW_PAGE_SIZE) break
+      if (page === ATLAS_WINDOW_MAX_PAGES - 1) {
+        console.warn('[stories] Atlas 7-day window hit the page cap; counts use the newest rows only')
+      }
+    }
+    return [...stats.entries()]
+      .filter(([, stat]) => stat.count >= ATLAS_MIN_ITEMS)
+      .sort(([idA, a], [idB, b]) => b.latest - a.latest || (idA < idB ? -1 : idA > idB ? 1 : 0))
+      .map(([id]) => id)
   }
 
   async function atlasSelectedEntityBySlug(storySlug: string): Promise<SelectedEntity | null> {
+    // No eligibility or carousel-flag gate: an entity that dropped out of the
+    // list still opens as long as it is active (the route 404s if it has no items).
     const params = new URLSearchParams({
       select: ATLAS_ENTITY_SELECT,
       slug: `eq.${storySlug}`,
-      show_in_carousel: 'eq.true',
       status: 'eq.active',
       limit: '1',
     })
@@ -420,6 +483,22 @@ function atlasItemFilterParams(entityId: string): URLSearchParams {
     occurred_at: 'not.is.null',
     order: 'occurred_at.desc,id.desc',
   })
+}
+
+/** Page `page` of the bounded 7-day window read: same item filter as the endpoint, plus occurred_at in [since, now]. */
+function atlasWindowParams(since: number, now: number, page: number): URLSearchParams {
+  const params = new URLSearchParams({
+    select: 'main_entity_id,occurred_at',
+    status: 'eq.active',
+    merged_into_id: 'is.null',
+    main_entity_id: 'not.is.null',
+    order: 'occurred_at.desc,id.desc',
+    limit: String(ATLAS_WINDOW_PAGE_SIZE),
+    offset: String(page * ATLAS_WINDOW_PAGE_SIZE),
+  })
+  params.append('occurred_at', `gte.${new Date(since).toISOString()}`)
+  params.append('occurred_at', `lte.${new Date(now).toISOString()}`)
+  return params
 }
 
 function atlasItemParams(entityId: string, limit: number, offset: number): URLSearchParams {
