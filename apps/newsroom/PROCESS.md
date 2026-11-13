@@ -7,11 +7,11 @@ If a step is not here, we don't do it. If we change how we work, we change this 
 1. Only two things are generated per episode: **voice** (Grok TTS API) and **characters' ON CAM shots** (currently Hank; Grok Imagine). Everything else is locked kit or real assets assembled in Remotion.
 2. Every line in an episode is one of three row types. The type decides the work.
 3. Nothing is made that is not on the approved episode sheet.
-4. Each step ends with Bibhu's OK before the next starts. No skipping, no bundling.
+4. Bibhu's OK is needed at exactly three points: the script (episode sheet, step 3), the rough cut (step 7) and the final (step 10). Every other step runs straight on to the next.
 5. Timing comes from the news, not from fixed numbers.
 6. **Default ship path is OVER VISUAL only.** Daily bulletins ship as locked intro → OV rows → end card until lip sync is solved. ON CAM is optional and last (or skipped).
 7. **Content Producer supplies verified facts.** News Producer does not re-verify numbers — starts at script / the next production step. Bibhu still owns claim checks on the brief.
-8. **Don't re-confirm locked kit or already-approved voice.** State the next pipeline step and move.
+8. **Don't re-confirm locked kit.** State the next pipeline step and move.
 
 ## Show types
 Every episode is one of these. The show type picks the intro; everything else in this file applies to both.
@@ -37,16 +37,17 @@ Every intro uses the same camera behaviour, whatever the format. The footage and
 | OVER VISUAL | A real X post, chart or page, the character's voice over it | Built in Remotion, no generation |
 
 ## Steps: brief to delivery
+Bibhu's OK at three gates only: **Gate 1 (script)** at step 3, **Gate 2 (rough cut)** at step 7, and **Gate 3 (final)** at step 10.
 1. **Brief in.** Content Producer sends stories and verified facts. Bibhu picks stories and owns claim checks. News Producer does **not** re-verify the numbers.
 2. **Rundown.** Stories ordered by importance. One host per story, no handoffs inside a story. Default: OV-only path unless Bibhu asks for ON CAM bridges.
-3. **Episode sheet.** Script and visuals written together in `episodes/<date-slug>/sheet.md`. Every line gets a row type, camera mark or visual, and its asset. Sheet also lists **ticker symbols** and the expected **asOf** window. Bibhu approves the sheet.
+3. **Episode sheet.** Script and visuals written together in `episodes/<date-slug>/sheet.md`. Every line gets a row type, camera mark or visual, and its asset. Sheet also lists **ticker symbols** and the expected **asOf** window. **Gate 1 (script):** Bibhu approves the sheet.
 4. **Assets locked for the episode.** All screenshots/charts in `visuals/`. **Real** `ticker.json` filled (see Ticker gate). Nothing generated before this. Date badge label set if used (`FRI D MMM`).
 5. **Visual–script lock.** Fill `ASSET-MAP.md` from the template (one row per spoken beat). Content Producer reviews the map; News Producer fixes mismatches. Every spoken name / ticker / print must appear on the still for that line — **or rewrite the line**. No first stitch until CP feedback is OK.
-6. **Voice.** Every line voiced with `scripts/voice.ts` in the locked voice. Bibhu listens and approves once. The voice track is the timeline. Do not re-ask for voice OK after approval.
-7. **Edit OV cut (Remotion).** Locked intro → OVER VISUAL rows in sheet order → end card. Hard cuts only. Mid-line picture cuts allowed when one VO line names two screens (e.g. SOXL then KORU): hard cut at the named boundary; each fund matches its screen. Overlays: logo bug, price ticker, and optional date badge on from frame 0 and continuous until the hard cut to the end card (one layer via `EpisodeShell`, never per row); anchor lower third (name/role) over the intro ~1.0–4.0 s; other lower thirds and BREAKING bar only where the sheet says.
+6. **Voice.** Every line voiced with `scripts/voice.ts` in the locked voice. The voice track is the timeline and goes straight to step 7.
+7. **Edit OV cut (Remotion).** Locked intro → OVER VISUAL rows in sheet order → end card. Hard cuts only. Mid-line picture cuts allowed when one VO line names two screens (e.g. SOXL then KORU): hard cut at the named boundary; each fund matches its screen. Overlays: logo bug, price ticker, and optional date badge on from frame 0 and continuous until the hard cut to the end card (one layer via `EpisodeShell`, never per row); anchor lower third (name/role) over the intro ~1.0–4.0 s; other lower thirds and BREAKING bar only where the sheet says. **Gate 2 (rough cut):** stop for Bibhu's OK on the OV cut before step 8 or 9.
 8. **ON CAM shots (optional / last).** Only when Bibhu asks. Generate only ON CAM rows, from the character's locked master frame (currently Hank), starting at the camera mark where the previous ON CAM ended. One take each; max 2 retakes after a failed check. Frame check: seated, one desk, screen dark, no warping, no generated text. Skip entirely while lip sync is open unless Bibhu overrides.
 9. **QC.** Frames every 0.5 s and at every cut; transcript vs sheet word for word; gaps >0.4 s; loudness −14 LUFS, peak ≤ −1 dBTP; every number on screen matches approved facts; every spoken name/ticker/print appears on the still for that line; ticker is real (not EXAMPLE); date badge correct if used; final cut checked row by row against the sheet and asset map.
-10. **Delivery.** Cut + short QC report to Bibhu. Prefer a light encode + Desktop / Library copy when chat attachments fail. Bibhu uploads. **We never post.**
+10. **Delivery.** Cut + short QC report to Bibhu. Prefer a light encode + Desktop / Library copy when chat attachments fail. **Gate 3 (final):** Bibhu OKs the final cut and QC report before delivery is called done. Bibhu uploads. **We never post.**
 
 ## Episode sheet template
 | # | Story | Line | Type | Camera mark / visual | Asset | Status |
