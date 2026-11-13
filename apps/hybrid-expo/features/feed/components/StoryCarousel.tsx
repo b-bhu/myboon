@@ -245,7 +245,7 @@ function TodaySlide({ item, onPress, compact = false }: { item: FeedItem; onPres
           <Text style={styles.monoLabel} numberOfLines={1}>{compact && tag ? `${tag} · ${time}` : time}</Text>
           {source && !compact ? <Text style={[styles.monoLabel, styles.todaySlideMetaSource]} numberOfLines={1}>{source}</Text> : null}
         </View>
-        <Text style={[styles.todaySlideHeadline, compact && styles.todaySlideHeadlineCompact]} numberOfLines={compact ? 2 : 3}>{item.headline}</Text>
+        <Text style={[styles.todaySlideHeadline, compact && styles.todaySlideHeadlineCompact]} numberOfLines={compact ? 4 : 3}>{item.headline}</Text>
         {compact ? null : <Text style={styles.todaySlideBody} numberOfLines={2}>{item.description}</Text>}
       </View>
     </FeedBox>

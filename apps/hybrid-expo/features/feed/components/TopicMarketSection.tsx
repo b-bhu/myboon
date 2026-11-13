@@ -74,9 +74,10 @@ export function TopicMarketSection({ link, active }: TopicMarketSectionProps) {
   return (
     <View style={styles.section}>
       <View style={styles.head}>
-        <Text accessibilityRole="header" style={styles.heading}>Market impact</Text>
+        <Text accessibilityRole="header" style={styles.heading}>{link.assetName}</Text>
         {view ? <Text style={styles.live}>Updated {new Date(view.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</Text> : null}
       </View>
+      <Text style={styles.note}>{link.note}</Text>
       {loading && !view ? <FeedSectionState title="Loading market…" loading /> : null}
       {error && !view ? (
         <FeedSectionState title={sectionFailureTitle(error, 'Market unavailable')} text="This market could not be loaded." onRetry={retry} />
@@ -151,15 +152,17 @@ function CloseChart({ closes }: { closes: number[] }) {
   const endX = Number(end[0]);
   const endY = Number(end[1]);
   return (
-    <View style={styles.chartWrap}>
-      <View style={styles.axisRow}>
+    <View style={styles.chartRow}>
+      <View style={[styles.axisCol, { height }]}>
         <Text style={styles.axis}>{formatMarketPrice(max)}</Text>
         <Text style={styles.axis}>{formatMarketPrice(min)}</Text>
       </View>
-      <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
-        <Polyline points={points} fill="none" stroke={color} strokeWidth={1.6} />
-        {Number.isFinite(endX) && Number.isFinite(endY) ? <Circle cx={endX} cy={endY} r={3} fill={color} /> : null}
-      </Svg>
+      <View style={styles.chartPlot}>
+        <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
+          <Polyline points={points} fill="none" stroke={color} strokeWidth={1.6} />
+          {Number.isFinite(endX) && Number.isFinite(endY) ? <Circle cx={endX} cy={endY} r={3} fill={color} /> : null}
+        </Svg>
+      </View>
     </View>
   );
 }
@@ -167,7 +170,8 @@ function CloseChart({ closes }: { closes: number[] }) {
 const styles = StyleSheet.create({
   section: { gap: 12 },
   head: { minHeight: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  heading: { color: FEED_TOKENS.colors.text, fontSize: FEED_TOKENS.type.section, lineHeight: 24, fontWeight: '700' },
+  heading: { color: FEED_TOKENS.colors.text, fontSize: FEED_TOKENS.type.section, lineHeight: 24, fontWeight: '700', flexShrink: 1 },
+  note: { color: FEED_TOKENS.colors.textDim, fontSize: 13, lineHeight: 18, marginTop: -4 },
   live: {
     color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
@@ -189,12 +193,13 @@ const styles = StyleSheet.create({
   price: { color: FEED_TOKENS.colors.text, fontFamily: monoFontFamily(), fontSize: 34, lineHeight: 38, fontWeight: '700' },
   change: { fontFamily: monoFontFamily(), fontSize: 14, lineHeight: 20, fontWeight: '600', marginTop: 4 },
   ranges: { flexDirection: 'row', borderWidth: 1, borderColor: FEED_TOKENS.colors.border, borderRadius: 6, padding: 2, gap: 2 },
-  range: { flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 4 },
+  range: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 4 },
   rangeOn: { backgroundColor: FEED_TOKENS.colors.lift },
   rangeLabel: { color: FEED_TOKENS.colors.textDim, fontFamily: monoFontFamily(), fontSize: 11, fontWeight: '600', letterSpacing: 1 },
   rangeLabelOn: { color: FEED_TOKENS.colors.text },
-  chartWrap: { gap: 4 },
-  axisRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  chartRow: { flexDirection: 'row', alignItems: 'stretch', gap: 8 },
+  chartPlot: { flex: 1, minWidth: 0 },
+  axisCol: { width: 52, justifyContent: 'space-between' },
   axis: { color: FEED_TOKENS.colors.textFaint, fontFamily: monoFontFamily(), fontSize: 11 },
   notice: { color: FEED_TOKENS.colors.textDim, fontSize: 13, lineHeight: 18 },
 });

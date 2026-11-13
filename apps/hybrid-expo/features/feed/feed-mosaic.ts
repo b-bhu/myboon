@@ -4,8 +4,8 @@ import type { StorySummary } from './feed.types';
 /**
  * Topic mosaic layout and the topic-to-market table for issue #615.
  * Tile size follows event count (the activity field the stories API returns).
- * A pinned action appears only when the story name or slug matches a market
- * that Phoenix already lists. Unknown topics get no action and no chart.
+ * A pinned action appears only for an exact story slug in the market table.
+ * Unknown topics get no action and no chart.
  */
 
 export const MOSAIC_PAGE_SIZE = 10;
@@ -33,6 +33,8 @@ export interface TopicMarketLink {
   symbol: string;
   action: string;
   assetName: string;
+  /** One line on the detail, until a real causal chain exists. */
+  note: string;
 }
 
 export interface ChartRangeRequest {
@@ -40,13 +42,6 @@ export interface ChartRangeRequest {
   interval: PhoenixCandleInterval;
   count: number;
 }
-
-const SPANS: Record<MosaicTileKind, { col: number; row: number }> = {
-  large: { col: 3, row: 2 },
-  tall: { col: 2, row: 2 },
-  regular: { col: 2, row: 1 },
-  slim: { col: 1, row: 1 },
-};
 
 /** 1D/1W/1M/1Y as candle windows Phoenix already serves. A range with fewer than two closes is hidden. */
 export const CHART_RANGES: readonly ChartRangeRequest[] = [
@@ -56,25 +51,21 @@ export const CHART_RANGES: readonly ChartRangeRequest[] = [
   { key: '1Y', interval: '1d', count: 365 },
 ];
 
-interface MarketRule {
-  tokens: readonly string[];
-  link: TopicMarketLink;
-}
-
-const MARKET_RULES: readonly MarketRule[] = [
-  { tokens: ['bitcoin', 'btc'], link: { symbol: 'BTC-PERP', action: 'Trade BTC perps', assetName: 'Bitcoin' } },
-  { tokens: ['ethereum', 'ether', 'eth'], link: { symbol: 'ETH-PERP', action: 'Trade ETH perps', assetName: 'Ether' } },
-  { tokens: ['solana', 'sol'], link: { symbol: 'SOL-PERP', action: 'Trade SOL perps', assetName: 'Solana' } },
-  { tokens: ['gold'], link: { symbol: 'GOLD-PERP', action: 'Trade gold perps', assetName: 'Gold' } },
-  { tokens: ['silver'], link: { symbol: 'SILVER-PERP', action: 'Trade silver perps', assetName: 'Silver' } },
-  { tokens: ['eurusd', 'euro'], link: { symbol: 'EURUSD-PERP', action: 'Trade EUR/USD perps', assetName: 'Euro' } },
-  { tokens: ['gbpusd', 'sterling', 'pound'], link: { symbol: 'GBPUSD-PERP', action: 'Trade GBP/USD perps', assetName: 'Sterling' } },
-  { tokens: ['usdjpy', 'yen'], link: { symbol: 'USDJPY-PERP', action: 'Trade USD/JPY perps', assetName: 'Yen' } },
-  { tokens: ['nasdaq', 'qqq'], link: { symbol: 'QQQ-PERP', action: 'Trade Nasdaq perps', assetName: 'Nasdaq 100' } },
-  { tokens: ['spy', 'spx'], link: { symbol: 'SPY-PERP', action: 'Trade S&P 500 perps', assetName: 'S&P 500' } },
-  { tokens: ['bonk'], link: { symbol: 'KBONK-PERP', action: 'Trade BONK perps', assetName: 'Bonk' } },
-  { tokens: ['iran', 'oil', 'brent', 'wti', 'hormuz', 'crude'], link: { symbol: 'WTIOIL-PERP', action: 'Trade WTI perps', assetName: 'WTI crude' } },
-];
+/** Exact story slugs only. A word inside a headline must not pick a market. */
+const MARKET_BY_SLUG: Readonly<Record<string, TopicMarketLink>> = {
+  bitcoin: {
+    symbol: 'BTC-PERP',
+    action: 'Trade BTC perps',
+    assetName: 'Bitcoin',
+    note: 'Bitcoin is the market this story follows.',
+  },
+  'us-iran-conflict': {
+    symbol: 'WTIOIL-PERP',
+    action: 'Trade WTI perps',
+    assetName: 'WTI crude',
+    note: 'Oil is the market most tied to this story.',
+  },
+};
 
 /** Largest event count first. That is the stand-in for 24h activity, which the API does not return. */
 export function rankStories(stories: readonly StorySummary[]): StorySummary[] {
@@ -85,78 +76,110 @@ export function rankStories(stories: readonly StorySummary[]): StorySummary[] {
   ));
 }
 
-export function mosaicTileKinds(count: number): MosaicTileKind[] {
-  if (count <= 0) return [];
-  if (count === 1) return ['large'];
-  if (count === 2) return ['large', 'tall'];
-  if (count <= 8) {
-    return ['large', 'tall', ...Array.from({ length: count - 2 }, (): MosaicTileKind => 'regular')];
-  }
-  const regulars = count - 4;
-  return ['large', 'tall', 'slim', 'slim', ...Array.from({ length: regulars }, (): MosaicTileKind => 'regular')];
+interface TileSpec {
+  colSpan: number;
+  rowSpan: number;
+  kind: MosaicTileKind;
 }
 
-export function placeMosaicTiles(count: number): MosaicPlacement[] {
-  // A short list still fills the mosaic. Empty cells would read as a missing page.
-  if (count === 1) {
-    return [{ index: 0, kind: 'large', col: 0, row: 0, colSpan: MOSAIC_COLUMNS, rowSpan: MOSAIC_ROWS }];
+/** Rows whose widths sum to 6 and whose heights sum to 4, so counts 1–10 fill the grid. */
+const FULL_LAYOUTS: Readonly<Record<number, readonly (readonly TileSpec[])[]>> = {
+  1: [[{ colSpan: 6, rowSpan: 4, kind: 'large' }]],
+  2: [[
+    { colSpan: 3, rowSpan: 4, kind: 'large' },
+    { colSpan: 3, rowSpan: 4, kind: 'tall' },
+  ]],
+  3: [
+    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
+    [{ colSpan: 6, rowSpan: 2, kind: 'regular' }],
+  ],
+  4: [
+    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
+    [{ colSpan: 3, rowSpan: 2, kind: 'regular' }, { colSpan: 3, rowSpan: 2, kind: 'regular' }],
+  ],
+  5: [
+    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
+    [{ colSpan: 2, rowSpan: 2, kind: 'regular' }, { colSpan: 2, rowSpan: 2, kind: 'regular' }, { colSpan: 2, rowSpan: 2, kind: 'regular' }],
+  ],
+  6: [
+    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+  ],
+  7: [
+    [{ colSpan: 3, rowSpan: 1, kind: 'large' }, { colSpan: 3, rowSpan: 1, kind: 'tall' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 6, rowSpan: 1, kind: 'regular' }],
+  ],
+  8: [
+    [{ colSpan: 3, rowSpan: 1, kind: 'large' }, { colSpan: 3, rowSpan: 1, kind: 'tall' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+  ],
+  9: [
+    [{ colSpan: 2, rowSpan: 2, kind: 'large' }, { colSpan: 2, rowSpan: 2, kind: 'tall' }, { colSpan: 2, rowSpan: 2, kind: 'regular' }],
+    [{ colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
+  ],
+  10: [
+    [{ colSpan: 2, rowSpan: 1, kind: 'large' }, { colSpan: 2, rowSpan: 1, kind: 'tall' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
+  ],
+};
+
+function placementsFromRows(rows: readonly (readonly TileSpec[])[]): MosaicPlacement[] {
+  const placed: MosaicPlacement[] = [];
+  let index = 0;
+  let rowCursor = 0;
+  for (const line of rows) {
+    let col = 0;
+    const rowSpan = line[0]?.rowSpan ?? 1;
+    for (const tile of line) {
+      placed.push({ index, kind: tile.kind, col, row: rowCursor, colSpan: tile.colSpan, rowSpan: tile.rowSpan });
+      col += tile.colSpan;
+      index += 1;
+    }
+    rowCursor += rowSpan;
   }
-  if (count === 2) {
+  return placed;
+}
+
+/**
+ * Pack `count` tiles into the 6×4 mosaic.
+ * `stretch: false` keeps a 1- or 2-tile continuation page at lead size instead of filling the band.
+ */
+export function placeMosaicTiles(count: number, options?: { stretch?: boolean }): MosaicPlacement[] {
+  if (count <= 0) return [];
+  if (options?.stretch === false && count <= 2) {
+    if (count === 1) return [{ index: 0, kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 }];
     return [
-      { index: 0, kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: MOSAIC_ROWS },
-      { index: 1, kind: 'tall', col: 3, row: 0, colSpan: 3, rowSpan: MOSAIC_ROWS },
+      { index: 0, kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 },
+      { index: 1, kind: 'tall', col: 3, row: 0, colSpan: 3, rowSpan: 2 },
     ];
   }
-  const kinds = mosaicTileKinds(count);
-  const grid = Array.from({ length: MOSAIC_ROWS }, () => Array.from({ length: MOSAIC_COLUMNS }, () => false));
-  const placed: MosaicPlacement[] = [];
-  kinds.forEach((kind, index) => {
-    const span = SPANS[kind];
-    for (let row = 0; row <= MOSAIC_ROWS - span.row; row += 1) {
-      for (let col = 0; col <= MOSAIC_COLUMNS - span.col; col += 1) {
-        let free = true;
-        for (let y = 0; y < span.row && free; y += 1) {
-          for (let x = 0; x < span.col; x += 1) {
-            if (grid[row + y]?.[col + x]) {
-              free = false;
-              break;
-            }
-          }
-        }
-        if (!free) continue;
-        for (let y = 0; y < span.row; y += 1) {
-          for (let x = 0; x < span.col; x += 1) {
-            const line = grid[row + y];
-            if (line) line[col + x] = true;
-          }
-        }
-        placed.push({ index, kind, col, row, colSpan: span.col, rowSpan: span.row });
-        return;
-      }
-    }
-  });
-  return placed;
+  const rows = FULL_LAYOUTS[count];
+  return rows ? placementsFromRows(rows) : [];
 }
 
 export function mosaicPages<T>(items: readonly T[]): MosaicPage<T>[] {
   if (items.length === 0) return [];
+  const pageCount = Math.ceil(items.length / MOSAIC_PAGE_SIZE);
   const pages: MosaicPage<T>[] = [];
-  for (let start = 0; start < items.length; start += MOSAIC_PAGE_SIZE) {
-    const slice = items.slice(start, start + MOSAIC_PAGE_SIZE);
-    pages.push({ items: slice, placements: placeMosaicTiles(slice.length) });
+  for (let index = 0; index < pageCount; index += 1) {
+    const slice = items.slice(index * MOSAIC_PAGE_SIZE, (index + 1) * MOSAIC_PAGE_SIZE);
+    const laterShort = pageCount > 1 && index > 0 && slice.length <= 2;
+    pages.push({ items: slice, placements: placeMosaicTiles(slice.length, { stretch: !laterShort }) });
   }
   return pages;
 }
 
-function storyTokens(slug: string, name: string): Set<string> {
-  return new Set(`${slug} ${name}`.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 0));
-}
-
-/** Pinned market for a story, or null when no listed market matches its name or slug. */
-export function topicMarket(slug: string, name: string): TopicMarketLink | null {
-  const tokens = storyTokens(slug, name);
-  const rule = MARKET_RULES.find((candidate) => candidate.tokens.some((token) => tokens.has(token)));
-  return rule ? rule.link : null;
+/** Pinned market for an exact story slug. The display name is ignored on purpose. */
+export function topicMarket(slug: string, _name?: string): TopicMarketLink | null {
+  return MARKET_BY_SLUG[slug.trim().toLowerCase()] ?? null;
 }
 
 /** Today and mosaic heights. 25% and 40% of the phone, shrunk together if the column cannot hold a calendar card. */

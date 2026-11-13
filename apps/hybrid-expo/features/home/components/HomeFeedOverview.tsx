@@ -82,7 +82,7 @@ export function HomeFeedOverview({ active, onScroll }: {
             {reports.data && !slides.length && !reports.error ? <FeedSectionState title="No published updates yet" text="New reports will appear here." /> : null}
           </View>
         </View>
-        <View style={[styles.mosaic, { height: bands.mosaic }]}>
+        <View style={[styles.mosaic, { height: bands.mosaic }, storyList.length ? null : styles.mosaicEmpty]}>
           {stories.loading && !stories.data ? <FeedSectionState title="Loading stories…" loading /> : null}
           {stories.error ? (
             <FeedSectionState
@@ -121,6 +121,7 @@ const styles = StyleSheet.create({
   todayLinkLabel: { color: FEED_TOKENS.colors.accent, fontFamily: monoFontFamily(), fontSize: FEED_TOKENS.type.label, fontWeight: '600', letterSpacing: 0.6, textTransform: 'uppercase' },
   todayBody: { flex: 1, minHeight: 0 },
   mosaic: { overflow: 'hidden' },
+  mosaicEmpty: { justifyContent: 'center' },
   calendar: { flex: 1, minHeight: 96 },
   newUpdates: { position: 'absolute', bottom: 12, left: 16, right: 16, zIndex: 2, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: color.border, borderRadius: 8, backgroundColor: color.card },
   action: { color: color.accent, fontSize: 12, fontWeight: '700' },

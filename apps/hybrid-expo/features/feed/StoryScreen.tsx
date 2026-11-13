@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +9,7 @@ import { FEED_TOKENS, monoFontFamily } from './feed-design';
 import { topicMarket } from './feed-mosaic';
 import { storyAge, storyCountLabel, timelineEvents, timelineLabel } from './feed-stories';
 import { useStoryDetail } from './use-story-detail';
+import type { StoryEvent } from './feed.types';
 
 /**
  * Topic detail. Real story fields fill the header, latest development and
@@ -24,8 +26,12 @@ export default function StoryScreen() {
   const story = detail?.story ?? null;
   const events = detail ? timelineEvents(detail.events) : [];
   const now = new Date();
-  const link = story ? topicMarket(story.storySlug, story.name) : null;
+  const link = story ? topicMarket(story.storySlug) : null;
   const latest = events[0];
+  const timeline = story
+    ? events.filter((event, index) => index !== 0 || event.text !== story.latestDevelopment)
+    : [];
+  const [openEvents, setOpenEvents] = useState<Record<string, boolean>>({});
 
   const share = () => {
     if (!story) return;
@@ -75,11 +81,15 @@ export default function StoryScreen() {
               <Text style={styles.kickerText}>Newest first</Text>
             </View>
             {events.length === 0 ? <FeedSectionState title="No developments yet" text="New developments will appear here." /> : null}
-            {events.map((event, index) => (
-              <View key={`${event.eventAt}-${index}`} style={styles.event}>
-                <Text style={styles.eventDate}>{timelineLabel(event.eventAt, now, index === 0)}</Text>
-                <Text style={styles.eventText}>{event.text}</Text>
-              </View>
+            {timeline.map((event, index) => (
+              <TimelineEntry
+                key={`${event.eventAt}-${index}`}
+                event={event}
+                latest={index === 0}
+                now={now}
+                expanded={openEvents[`${event.eventAt}-${index}`] === true}
+                onToggle={() => setOpenEvents((current) => ({ ...current, [`${event.eventAt}-${index}`]: !current[`${event.eventAt}-${index}`] }))}
+              />
             ))}
             {detail && loadMoreError ? (
               <FeedSectionState
@@ -115,6 +125,33 @@ export default function StoryScreen() {
           <Text style={styles.actionNote}>Optional · continues in MyBoon</Text>
         </View>
       ) : <View style={{ height: insets.bottom }} />}
+    </View>
+  );
+}
+
+function TimelineEntry({
+  event,
+  latest,
+  now,
+  expanded,
+  onToggle,
+}: {
+  event: StoryEvent;
+  latest: boolean;
+  now: Date;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const long = event.text.length > 180;
+  return (
+    <View style={styles.event}>
+      <Text style={styles.eventDate}>{timelineLabel(event.eventAt, now, latest)}</Text>
+      <Text style={styles.eventText} numberOfLines={expanded || !long ? undefined : 3}>{event.text}</Text>
+      {long ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={expanded ? 'Show less' : 'Read more'} onPress={onToggle} style={styles.readMoreHit}>
+          <Text style={styles.readMore}>{expanded ? 'Show less' : 'Read more'}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -166,6 +203,8 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   eventText: { color: FEED_TOKENS.colors.text, fontSize: 15, lineHeight: 20 },
+  readMoreHit: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  readMore: { color: FEED_TOKENS.colors.accent, fontSize: 15, fontWeight: '600' },
   loadEarlier: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   loadEarlierLabel: { color: FEED_TOKENS.colors.accent, fontSize: 15, fontWeight: '600' },
   dock: { paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: FEED_TOKENS.colors.border, backgroundColor: FEED_TOKENS.colors.screen, gap: 8 },

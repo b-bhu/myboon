@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +13,11 @@ export default function MarketsNowScreen() {
   const router = useRouter();
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    if (!refreshing) return undefined;
+    const timer = setTimeout(() => setRefreshing(false), 700);
+    return () => clearTimeout(timer);
+  }, [refreshing, refreshVersion]);
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -34,7 +39,6 @@ export default function MarketsNowScreen() {
             onRefresh={() => {
               setRefreshing(true);
               setRefreshVersion((value) => value + 1);
-              setRefreshing(false);
             }}
           />
         )}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector, type GestureType } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
@@ -17,7 +17,6 @@ import {
 } from '../feed-mosaic';
 import { useReducedMotion } from '../use-reduced-motion';
 import type { StorySummary } from '../feed.types';
-import { tokens } from '@/theme';
 
 const PEEK = 28;
 const GAP = 8;
@@ -132,17 +131,20 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
       </View>
     <View
       style={styles.pager}
+      accessibilityRole="adjustable"
+      accessibilityLabel="Developing topics"
+      accessibilityValue={{ text: `Page ${current + 1} of ${pages.length}` }}
+      accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'increment') goTo(current + 1);
+        if (event.nativeEvent.actionName === 'decrement') goTo(current - 1);
+      }}
       onLayout={(event) => {
         const next = event.nativeEvent.layout.width;
         if (next > 0) {
           setWidth(next);
           widthSv.value = next;
         }
-      }}
-      accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
-      onAccessibilityAction={(event) => {
-        if (event.nativeEvent.actionName === 'increment') goTo(current + 1);
-        if (event.nativeEvent.actionName === 'decrement') goTo(current - 1);
       }}
     >
       {width > 0 ? (
@@ -157,17 +159,19 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
                 {group.placements.map((placement) => {
                   const story = group.items[placement.index];
                   if (!story) return null;
-                  const link = topicMarket(story.storySlug, story.name);
+                  const link = topicMarket(story.storySlug);
                   const quote = link ? quotes[story.storySlug] : undefined;
                   return (
                     <TopicTile
                       key={story.storySlug}
+                      pan={pan}
                       story={story}
                       kind={placement.kind}
                       now={now}
                       change={quote?.change ?? null}
                       closes={quote?.closes ?? []}
-                      symbol={link ? link.symbol.replace(/-PERP$/, '') : null}
+                      marketLabel={link?.assetName ?? null}
+                      showExcerpt={stories.length <= 4}
                       frame={placement}
                       onPress={() => router.push(storyHref(story.storySlug))}
                     />
@@ -195,21 +199,25 @@ export function MosaicDots({ page, count }: { page: number; count: number }) {
 }
 
 function TopicTile({
+  pan,
   story,
   kind,
   now,
   change,
   closes,
-  symbol,
+  marketLabel,
+  showExcerpt,
   frame,
   onPress,
 }: {
+  pan: GestureType;
   story: StorySummary;
   kind: MosaicTileKind;
   now: Date;
   change: number | null;
   closes: number[];
-  symbol: string | null;
+  marketLabel: string | null;
+  showExcerpt: boolean;
   frame: { col: number; row: number; colSpan: number; rowSpan: number };
   onPress: () => void;
 }) {
@@ -217,6 +225,13 @@ function TopicTile({
   const age = storyAge(story.updatedAt, now).replace(' ago', '');
   const meta = kind === 'slim' ? age : storyCountLabel(story.eventCount);
   const direction = change === null || change === 0 ? null : change > 0 ? 'up' : 'down';
+  const quote = marketLabel && change !== null ? `${marketLabel} ${formatSignedPercent(change)}` : '';
+  const tap = Gesture.Tap()
+    .maxDistance(18)
+    .requireExternalGestureToFail(pan)
+    .onEnd(() => {
+      runOnJS(onPress)();
+    });
   return (
     <View
       style={[
@@ -229,34 +244,34 @@ function TopicTile({
         },
       ]}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${story.name}, ${storyCountLabel(story.eventCount)}${symbol && change !== null ? `, ${symbol} ${formatSignedPercent(change)}` : ''}`}
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.tile,
-          lead && styles.tileLead,
-          pressed && styles.tilePressed,
-        ]}
-      >
-        <Text style={[styles.name, lead && styles.nameLead, kind === 'slim' && styles.nameSlim]} numberOfLines={lead ? 3 : 2}>
-          {story.name}
-        </Text>
-        {lead && symbol && change !== null ? (
-          <View style={styles.market}>
-            {closes.length >= 2 ? <LeadSpark closes={closes} /> : null}
-            <Text style={styles.marketLabel} numberOfLines={1}>
-              {symbol} <Text style={{ color: change > 0 ? FEED_TOKENS.colors.up : FEED_TOKENS.colors.down }}>{formatSignedPercent(change)}</Text>
-            </Text>
-          </View>
-        ) : null}
-        {meta ? <Text style={styles.meta} numberOfLines={1}>{meta}</Text> : null}
-        {direction ? (
-          <Text style={[styles.direction, { color: direction === 'up' ? FEED_TOKENS.colors.up : FEED_TOKENS.colors.down }]}>
-            {direction === 'up' ? '↑' : '↓'}
+      <GestureDetector gesture={tap}>
+        <View
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`${story.name}, ${storyCountLabel(story.eventCount)}${quote ? `, ${quote}` : ''}`}
+          onAccessibilityTap={onPress}
+          style={[styles.tile, lead && styles.tileLead]}
+        >
+          <Text style={[styles.name, lead && styles.nameLead, kind === 'slim' && styles.nameSlim]} numberOfLines={lead ? 3 : 2}>
+            {story.name}
           </Text>
-        ) : null}
-      </Pressable>
+          {showExcerpt && lead ? <Text style={styles.excerpt} numberOfLines={4}>{story.latestDevelopment}</Text> : null}
+          {lead && marketLabel && change !== null ? (
+            <View style={styles.market}>
+              {closes.length >= 2 ? <LeadSpark closes={closes} /> : null}
+              <Text style={styles.marketLabel} numberOfLines={1}>
+                {marketLabel} <Text style={{ color: change > 0 ? FEED_TOKENS.colors.up : FEED_TOKENS.colors.down }}>{formatSignedPercent(change)}</Text>
+              </Text>
+            </View>
+          ) : null}
+          {meta ? <Text style={styles.meta} numberOfLines={1}>{meta}</Text> : null}
+          {direction ? (
+            <Text style={[styles.direction, { color: direction === 'up' ? FEED_TOKENS.colors.up : FEED_TOKENS.colors.down }]}>
+              {direction === 'up' ? '↑' : '↓'}
+            </Text>
+          ) : null}
+        </View>
+      </GestureDetector>
     </View>
   );
 }
@@ -308,33 +323,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: FEED_TOKENS.colors.border,
     borderRadius: 6,
-    backgroundColor: tokens.colors.backgroundDark,
+    backgroundColor: FEED_TOKENS.colors.card,
     padding: 8,
     overflow: 'hidden',
     justifyContent: 'space-between',
   },
-  tileLead: { backgroundColor: tokens.colors.surface },
-  tilePressed: { backgroundColor: FEED_TOKENS.colors.lift },
-  name: { color: FEED_TOKENS.colors.text, fontSize: 14, lineHeight: 16, fontWeight: '600', paddingRight: 14 },
-  nameLead: { fontSize: 18, lineHeight: 22, fontWeight: '700' },
-  nameSlim: { fontSize: 12, lineHeight: 16, paddingRight: 12 },
+  tileLead: { backgroundColor: FEED_TOKENS.colors.ground },
+  name: { color: FEED_TOKENS.colors.text, fontSize: FEED_TOKENS.type.secondary, lineHeight: 18, fontWeight: '600', paddingRight: 14 },
+  nameLead: { fontSize: FEED_TOKENS.type.cardTitle, lineHeight: 22, fontWeight: '700' },
+  nameSlim: { fontSize: FEED_TOKENS.type.caption, lineHeight: 16, paddingRight: 12 },
+  excerpt: { color: FEED_TOKENS.colors.textDim, fontSize: FEED_TOKENS.type.secondary, lineHeight: 18, marginTop: 8 },
   market: { marginTop: 'auto', marginBottom: 8, gap: 4 },
   marketLabel: {
     color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
-    fontSize: 11,
+    fontSize: FEED_TOKENS.type.label,
     lineHeight: 14,
   },
   meta: {
     color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
-    fontSize: 11,
-    lineHeight: 12,
+    fontSize: FEED_TOKENS.type.label,
+    lineHeight: 14,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  direction: { position: 'absolute', top: 6, right: 8, fontSize: 14, fontWeight: '700' },
+  direction: { position: 'absolute', top: 6, right: 8, fontSize: FEED_TOKENS.type.secondary, fontWeight: '700' },
   dots: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dot: { width: 8, height: 3, backgroundColor: FEED_TOKENS.colors.border },
+  dot: { width: 8, height: 4, backgroundColor: FEED_TOKENS.colors.textFaint },
   dotOn: { width: 16, backgroundColor: FEED_TOKENS.colors.accent },
 });
