@@ -38,7 +38,7 @@ new_items as (
   from atlas.entity_items i, params p
   where i.status = 'active' and i.created_at >= p.since
 ),
-recent as (
+prior as (
   select t.entity_id,
          i.id, i.title, i.summary, i.occurred_at, i.created_at,
          i.signal_id, i.angle, i.note, i.image_url, i.status
@@ -47,12 +47,13 @@ recent as (
     select *
     from atlas.entity_items i
     where i.main_entity_id = t.entity_id and i.status = 'active'
+      and i.created_at < (select since from params)
     order by coalesce(i.occurred_at, i.created_at) desc, i.id desc
     limit 7
   ) i on true
 ),
 item_rows as (
-  select * from recent
+  select * from prior
   union
   select * from new_items
 ),
@@ -75,10 +76,10 @@ select jsonb_build_object(
   ),
   'notes', jsonb_build_array(
     'Touched entities are those with an active entity_items row added in the window (created_at).',
-    'recent_items are the last 7 active items ordered by coalesce(occurred_at, created_at) desc, id desc.',
+    'prior_items are the last 7 active items created BEFORE the window, ordered by coalesce(occurred_at, created_at) desc, id desc. Items added in the window are never prior context.',
     'new_items are every active item added in the window, included even when they fall outside the last 7.',
     'origin_signals come from item_signals.role = origin, plus item.signal_id when no link row exists.',
-    'last_published is the latest published_narratives row for atlas.entities.legacy_entity_id, or null.',
+    'last_update is the newest prior item (what Atlas already holds for the entity), or null. atlas.stories is empty on prod, so Atlas has no editorial narrative yet. No public.* table is read.',
     'Parked entity_context is omitted in v1.'
   ),
   'entities', (
@@ -91,7 +92,6 @@ select jsonb_build_object(
           'name', e.name,
           'type', e.type,
           'summary', e.summary,
-          'legacy_entity_id', e.legacy_entity_id,
           'latest_item_created_at', t.latest_item_created_at,
           'new_item_count', t.new_item_count,
           'new_item_ids', t.new_item_ids,
@@ -103,13 +103,13 @@ select jsonb_build_object(
             ) order by n.created_at desc, n.id desc), '[]'::jsonb)
             from new_items n where n.entity_id = t.entity_id
           ),
-          'recent_items', (
+          'prior_items', (
             select coalesce(jsonb_agg(jsonb_build_object(
               'id', r.id, 'title', r.title, 'summary', r.summary,
               'occurred_at', r.occurred_at, 'created_at', r.created_at, 'signal_id', r.signal_id,
               'angle', r.angle, 'note', r.note, 'image_url', r.image_url, 'status', r.status
             ) order by coalesce(r.occurred_at, r.created_at) desc, r.id desc), '[]'::jsonb)
-            from recent r where r.entity_id = t.entity_id
+            from prior r where r.entity_id = t.entity_id
           ),
           'origin_signals', (
             select coalesce(jsonb_agg(jsonb_build_object(
@@ -121,17 +121,14 @@ select jsonb_build_object(
             join atlas.signals s on s.signal_id = o.signal_id
             where o.entity_id = t.entity_id
           ),
-          'last_published', (
+          'last_update', (
             select jsonb_build_object(
-              'id', n.id, 'title', n.title, 'content_small', n.content_small,
-              'content_full', n.content_full, 'published_at', n.published_at,
-              'entity_id', n.entity_id, 'entity_slug', n.entity_slug,
-              'entity_name', n.entity_name, 'angle', n.angle
+              'id', r.id, 'title', r.title, 'summary', r.summary, 'note', r.note,
+              'occurred_at', r.occurred_at, 'created_at', r.created_at
             )
-            from public.published_narratives n
-            where n.status = 'published' and e.legacy_entity_id is not null
-              and n.entity_id = e.legacy_entity_id
-            order by n.published_at desc nulls last, n.id desc
+            from prior r
+            where r.entity_id = t.entity_id
+            order by coalesce(r.occurred_at, r.created_at) desc, r.id desc
             limit 1
           )
         ) as entity_json
@@ -164,7 +161,7 @@ For write, draft a short Catch-up update with:
 
 Aim for about 90-140 words across the three parts. Use concrete numbers only when they appear in the supplied items or their linked origin signals. Do not invent facts or numbers. Do not promise an edge. Do not give trading, investment, or any other advice. Do not overstate causality.
 
-If a prior published update is supplied, compare the new items with it before choosing write. If that update already covers the new items, choose skip.
+If a last update is supplied, it is the newest earlier item Atlas already holds for this entity. Compare the new items with it and the earlier items before choosing write. If they already cover the new items, choose skip.
 
 Return strict JSON only, no markdown outside a JSON object:
 
@@ -211,16 +208,13 @@ export type CatchUpSignal = {
   created_at?: string | null
 }
 
-export type LastPublished = {
+export type LastUpdate = {
   id: string
   title: string | null
-  content_small: string | null
-  content_full: string | null
-  published_at: string | null
-  entity_id?: string | null
-  entity_slug?: string | null
-  entity_name?: string | null
-  angle?: string | null
+  summary: string | null
+  note?: string | null
+  occurred_at: string | null
+  created_at: string
 }
 
 export type CatchUpEntity = {
@@ -229,14 +223,13 @@ export type CatchUpEntity = {
   name: string
   type: string
   summary: string | null
-  legacy_entity_id?: string | null
   latest_item_created_at: string
   new_item_count?: number
   new_item_ids?: string[]
   new_items: CatchUpItem[]
-  recent_items: CatchUpItem[]
+  prior_items: CatchUpItem[]
   origin_signals: CatchUpSignal[]
-  last_published: LastPublished | null
+  last_update: LastUpdate | null
 }
 
 export type CatchUpSnapshot = {
@@ -271,7 +264,7 @@ export type DraftCheckResult = {
   failures: CheckFailure[]
 }
 
-export type WouldReplace = { id: string; title: string | null; published_at: string | null }
+export type LastUpdateRef = { id: string; title: string | null; date: string | null }
 
 export type EntityResult =
   | {
@@ -281,7 +274,7 @@ export type EntityResult =
       status: 'ok'
       action: 'hold' | 'skip'
       reason: string
-      would_replace: WouldReplace | null
+      last_update: LastUpdateRef | null
     }
   | {
       entity_id: string
@@ -294,7 +287,7 @@ export type EntityResult =
       word_count: number
       check_status: 'passed' | 'failed'
       check_failures: CheckFailure[]
-      would_replace: WouldReplace | null
+      last_update: LastUpdateRef | null
     }
   | {
       entity_id: string
@@ -302,7 +295,7 @@ export type EntityResult =
       name: string
       status: 'errored'
       error: string
-      would_replace: WouldReplace | null
+      last_update: LastUpdateRef | null
     }
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
@@ -360,10 +353,10 @@ export function extractNumericTokens(text: string): string[] {
   return found
 }
 
-export function buildNumberCorpus(entity: Pick<CatchUpEntity, 'new_items' | 'recent_items' | 'origin_signals'>): string {
+export function buildNumberCorpus(entity: Pick<CatchUpEntity, 'new_items' | 'prior_items' | 'origin_signals'>): string {
   const parts: string[] = []
   const seen = new Set<string>()
-  for (const item of [...entity.new_items, ...entity.recent_items]) {
+  for (const item of [...entity.new_items, ...entity.prior_items]) {
     if (seen.has(item.id)) continue
     seen.add(item.id)
     parts.push(item.title, item.summary ?? '', item.note ?? '')
@@ -384,15 +377,15 @@ export function checkDraftNumbers(draftText: string, corpus: string): CheckFailu
   return failures
 }
 
-export function loadedSourceIds(entity: Pick<CatchUpEntity, 'new_items' | 'recent_items' | 'origin_signals'>): {
+export function loadedSourceIds(entity: Pick<CatchUpEntity, 'new_items' | 'prior_items' | 'origin_signals'>): {
   itemIds: Set<string>
   signalIds: Set<string>
 } {
   const itemIds = new Set<string>()
-  for (const item of [...entity.new_items, ...entity.recent_items]) itemIds.add(item.id)
+  for (const item of [...entity.new_items, ...entity.prior_items]) itemIds.add(item.id)
   const signalIds = new Set<string>()
   for (const signal of entity.origin_signals) signalIds.add(signal.signal_id)
-  for (const item of [...entity.new_items, ...entity.recent_items]) {
+  for (const item of [...entity.new_items, ...entity.prior_items]) {
     if (item.signal_id) signalIds.add(item.signal_id)
   }
   return { itemIds, signalIds }
@@ -516,17 +509,17 @@ function isDecision(value: string): value is DecisionAction {
   return (DECISIONS as readonly string[]).includes(value)
 }
 
-export function wouldReplace(entity: CatchUpEntity): WouldReplace | null {
-  const prior = entity.last_published
+export function lastUpdateRef(entity: CatchUpEntity): LastUpdateRef | null {
+  const prior = entity.last_update
   if (!prior) return null
-  return { id: prior.id, title: prior.title, published_at: prior.published_at }
+  return { id: prior.id, title: prior.title, date: prior.occurred_at ?? prior.created_at }
 }
 
 export function selectEntities(entities: CatchUpEntity[], limit: number): CatchUpEntity[] {
   const byRecency = (a: CatchUpEntity, b: CatchUpEntity) =>
     b.latest_item_created_at.localeCompare(a.latest_item_created_at) || a.slug.localeCompare(b.slug)
-  const withPrior = entities.filter((entity) => entity.last_published).sort(byRecency)
-  const withoutPrior = entities.filter((entity) => !entity.last_published).sort(byRecency)
+  const withPrior = entities.filter((entity) => entity.last_update).sort(byRecency)
+  const withoutPrior = entities.filter((entity) => !entity.last_update).sort(byRecency)
   if (limit === 0 || limit >= entities.length) return [...entities].sort(byRecency)
   const targetEach = Math.ceil(limit / 2)
   const picked = [
@@ -557,7 +550,7 @@ export function buildUserMessage(entity: CatchUpEntity): string {
   const itemLine = (item: CatchUpItem, index: number) =>
     `${index + 1}. id: ${item.id} | created_at: ${item.created_at} | occurred_at: ${item.occurred_at ?? 'unknown'} | angle: ${item.angle ?? 'unknown'} | title: ${item.title} | summary: ${item.summary ?? '(none)'}`
   const newIds = new Set(entity.new_items.map((item) => item.id))
-  const priorLane = entity.recent_items.filter((item) => !newIds.has(item.id))
+  const priorLane = entity.prior_items.filter((item) => !newIds.has(item.id))
   const signals = entity.origin_signals.length
     ? entity.origin_signals.map((signal, index) => {
         const numbers = signal.numbers == null ? '{}' : JSON.stringify(signal.numbers)
@@ -569,16 +562,15 @@ export function buildUserMessage(entity: CatchUpEntity): string {
         ].join('\n')
       }).join('\n\n')
     : '(none)'
-  const prior = entity.last_published
+  const prior = entity.last_update
   const priorBlock = prior
     ? [
         `id: ${prior.id}`,
-        `published_at: ${prior.published_at ?? 'unknown'}`,
+        `date: ${prior.occurred_at ?? prior.created_at}`,
         `title: ${prior.title ?? '(none)'}`,
-        `summary: ${prior.content_small ?? '(none)'}`,
-        `content: ${prior.content_full ?? prior.content_small ?? '(none)'}`,
+        `summary: ${prior.summary ?? '(none)'}`,
       ].join('\n')
-    : 'no prior update'
+    : 'no earlier item'
   return [
     'ENTITY:',
     `name: ${entity.name}`,
@@ -589,13 +581,13 @@ export function buildUserMessage(entity: CatchUpEntity): string {
     'NEW ITEMS (added in the window):',
     ...(entity.new_items.length ? entity.new_items.map((item, index) => itemLine(item, index)) : ['(none)']),
     '',
-    'RECENT ITEMS (last 7, excluding those already listed as new):',
+    'EARLIER ITEMS (last 7 before the window):',
     ...(priorLane.length ? priorLane.map((item, index) => itemLine(item, index)) : ['(none)']),
     '',
     'ORIGIN SIGNALS:',
     signals,
     '',
-    'LAST PUBLISHED UPDATE:',
+    'LAST UPDATE (newest earlier item):',
     priorBlock,
   ].join('\n')
 }
@@ -699,7 +691,7 @@ function errorMessage(error: unknown): string {
 }
 
 export async function decideEntity(entity: CatchUpEntity, llm: Llm): Promise<EntityResult> {
-  const prior = wouldReplace(entity)
+  const prior = lastUpdateRef(entity)
   try {
     const raw = await llm([
       { role: 'system', content: SYSTEM_PROMPT },
@@ -714,7 +706,7 @@ export async function decideEntity(entity: CatchUpEntity, llm: Llm): Promise<Ent
         status: 'ok',
         action: parsed.decision,
         reason: parsed.reason,
-        would_replace: prior,
+        last_update: prior,
       }
     }
     const checks = runDraftChecks(parsed.draft, entity)
@@ -729,7 +721,7 @@ export async function decideEntity(entity: CatchUpEntity, llm: Llm): Promise<Ent
       word_count: draftWordCount(parsed.draft),
       check_status: checks.status,
       check_failures: checks.failures,
-      would_replace: prior,
+      last_update: prior,
     }
   } catch (error) {
     return {
@@ -738,7 +730,7 @@ export async function decideEntity(entity: CatchUpEntity, llm: Llm): Promise<Ent
       name: entity.name,
       status: 'errored',
       error: errorMessage(error).slice(0, 1000),
-      would_replace: prior,
+      last_update: prior,
     }
   }
 }
@@ -832,12 +824,12 @@ export function formatMarkdown(run: {
         lines.push(`**What to watch.** ${result.draft.what_to_watch}`)
       }
     }
-    if (result.would_replace) {
+    if (result.last_update) {
       lines.push('')
-      lines.push(`Would replace published update \`${result.would_replace.id}\` (${result.would_replace.title ?? 'untitled'}, ${result.would_replace.published_at ?? 'no date'}).`)
+      lines.push(`Atlas last update \`${result.last_update.id}\` (${result.last_update.title ?? 'untitled'}, ${result.last_update.date ?? 'no date'}).`)
     } else {
       lines.push('')
-      lines.push('No prior published update.')
+      lines.push('No earlier Atlas item for this entity.')
     }
     lines.push('')
   }

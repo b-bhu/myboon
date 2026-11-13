@@ -47,14 +47,14 @@ const entity = (over: Partial<CatchUpEntity> = {}): CatchUpEntity => ({
   summary: 'Largest crypto asset',
   latest_item_created_at: '2026-11-12T04:45:29.076Z',
   new_items: [item()],
-  recent_items: [item()],
+  prior_items: [item()],
   origin_signals: [signal()],
-  last_published: {
-    id: 'pub-1',
-    title: 'Earlier bitcoin note',
-    content_small: 'Old summary',
-    content_full: 'Old full',
-    published_at: '2026-10-21T02:03:14Z',
+  last_update: {
+    id: 'prior-1',
+    title: 'Earlier bitcoin item',
+    summary: 'Old summary',
+    occurred_at: '2026-11-10T02:03:14Z',
+    created_at: '2026-11-10T02:05:00Z',
   },
   ...over,
 })
@@ -154,16 +154,16 @@ test('runDraftChecks marks write+failed when a number is invented, and passes a 
   assert.equal(failed.failures.some((failure) => failure.check === 'numbers'), true)
 })
 
-test('selectEntities mixes entities with and without a prior published update', () => {
+test('selectEntities mixes entities with and without an earlier Atlas item', () => {
   const entities = [
     entity({ id: 'w1', slug: 'w1', latest_item_created_at: '2026-11-12T04:00:00Z' }),
     entity({ id: 'w2', slug: 'w2', latest_item_created_at: '2026-11-12T03:00:00Z' }),
     entity({ id: 'w3', slug: 'w3', latest_item_created_at: '2026-11-12T02:00:00Z' }),
     entity({
-      id: 'n1', slug: 'n1', latest_item_created_at: '2026-11-12T05:00:00Z', last_published: null,
+      id: 'n1', slug: 'n1', latest_item_created_at: '2026-11-12T05:00:00Z', last_update: null,
     }),
     entity({
-      id: 'n2', slug: 'n2', latest_item_created_at: '2026-11-12T01:00:00Z', last_published: null,
+      id: 'n2', slug: 'n2', latest_item_created_at: '2026-11-12T01:00:00Z', last_update: null,
     }),
   ]
   const picked = selectEntities(entities, 4)
@@ -191,16 +191,16 @@ test('parseCli defaults and summarize counts write checks separately from hold a
   const summary = summarize([
     {
       entity_id: '1', slug: 'a', name: 'A', status: 'ok', action: 'write', reason: 'r',
-      draft: draft(), word_count: 40, check_status: 'passed', check_failures: [], would_replace: null,
+      draft: draft(), word_count: 40, check_status: 'passed', check_failures: [], last_update: null,
     },
     {
       entity_id: '2', slug: 'b', name: 'B', status: 'ok', action: 'write', reason: 'r',
       draft: draft(), word_count: 40, check_status: 'failed',
-      check_failures: [{ check: 'numbers', detail: 'x' }], would_replace: null,
+      check_failures: [{ check: 'numbers', detail: 'x' }], last_update: null,
     },
-    { entity_id: '3', slug: 'c', name: 'C', status: 'ok', action: 'hold', reason: 'thin', would_replace: null },
-    { entity_id: '4', slug: 'd', name: 'D', status: 'ok', action: 'skip', reason: 'repeat', would_replace: null },
-    { entity_id: '5', slug: 'e', name: 'E', status: 'errored', error: 'model timed out', would_replace: null },
+    { entity_id: '3', slug: 'c', name: 'C', status: 'ok', action: 'hold', reason: 'thin', last_update: null },
+    { entity_id: '4', slug: 'd', name: 'D', status: 'ok', action: 'skip', reason: 'repeat', last_update: null },
+    { entity_id: '5', slug: 'e', name: 'E', status: 'errored', error: 'model timed out', last_update: null },
   ])
   assert.deepEqual(summary, {
     entities: 5, write: 2, hold: 1, skip: 1, errored: 1, checks_passed: 1, checks_failed: 1,

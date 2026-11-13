@@ -1,0 +1,1394 @@
+{
+  "run_id": "20261113T122258Z",
+  "started_at": "2026-11-13T12:22:58.572Z",
+  "finished_at": "2026-11-13T12:30:18.063Z",
+  "duration_ms": 439491,
+  "model": "glm-5.3-flash",
+  "snapshot": "packages/collectors/artifacts/catch-up-poc/snapshot.json",
+  "window": {
+    "field": "created_at",
+    "since": "2026-11-12T12:20:12.685699+00:00",
+    "until": "2026-11-13T12:20:12.685699+00:00"
+  },
+  "since": null,
+  "limit": 0,
+  "summary": {
+    "entities": 32,
+    "write": 25,
+    "hold": 2,
+    "skip": 2,
+    "errored": 3,
+    "checks_passed": 25,
+    "checks_failed": 0
+  },
+  "results": [
+    {
+      "entity_id": "01a17278-9c14-7336-a1cb-88e987f2b58b",
+      "slug": "gmgn",
+      "name": "GMGN",
+      "status": "ok",
+      "action": "write",
+      "reason": "A concrete new product launch (Clans) that the newest earlier item does not cover, and directly relevant context for readers tracking GMGN's trajectory.",
+      "draft": {
+        "title": "GMGN rolls out 'Clans' feature with Magnet Gang and Providence among first groups",
+        "what_happened": "GMGN has launched a \"Clans\" feature on its platform, with Magnet Gang and Providence listed among the first groups to join — the platform's newest product expansion.",
+        "how_we_got_here": "The rollout lands roughly five weeks after GMGN's high-profile ETH moves. In early October, on-chain analyst Ai Yi reported GMGN transferred 11,999.5 ETH to Coinbase's batch staking address, following a $16.38 million ETH deposit that had prompted sell-off speculation — though the report did not establish whether the two were connected.",
+        "what_to_watch": "Whether Clans draws wider participation is still unclear, and the open question of a GMGN token launch by December 31, 2026 remains unresolved.",
+        "claims": [
+          {
+            "text": "GMGN launched a 'Clans' feature, with Magnet Gang and Providence among the first groups to join.",
+            "source_item_id": "01a1d4c7-f71b-7ec7-a0fb-4ad43eb84a80",
+            "source_signal_id": "acc5e2a6805d10b63bfcd52bdfd4c63583ec06fec693757c0964301f28f37c78"
+          },
+          {
+            "text": "On-chain analyst Ai Yi reported GMGN transferred 11,999.5 ETH to Coinbase's Batch Staking address for staking.",
+            "source_item_id": "01a172d4-7518-7966-85ff-dd01700c2e8a",
+            "source_signal_id": null
+          },
+          {
+            "text": "GMGN had deposited ETH worth $16.38 million into a trading platform a week earlier, which prompted speculation about a possible sell-off; the report did not establish whether that deposit was connected to the staking transfer.",
+            "source_item_id": "01a172d4-7518-7966-85ff-dd01700c2e8a",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 101,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a172d4-7518-7966-85ff-dd01700c2e8a",
+        "title": "GMGN moves 11,999.5 ETH to Coinbase for staking",
+        "date": "2026-10-06T00:11:34+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-976d-7b85-85ee-c286203641b8",
+      "slug": "crypto-margin-liquidation",
+      "name": "Crypto margin calls and liquidations",
+      "status": "ok",
+      "action": "skip",
+      "reason": "The last update already covered the billion-dollar liquidation wave at full scale; the new item is a single $3.42M trader anecdote inside that same wave with no fresh aggregate data or trend change.",
+      "last_update": {
+        "id": "01a1c3d4-cd24-7568-884c-08d1d3a4de28",
+        "title": "$1.187 billion wiped out in 24 hours as crypto liquidations keep climbing",
+        "date": "2026-11-09T15:30:00+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9776-756e-9746-626ba0356cb3",
+      "slug": "fomo",
+      "name": "Fomo",
+      "status": "ok",
+      "action": "write",
+      "reason": "A concrete new product expansion (Solana trading via X cashtags) that is not covered by the last update, which was about phishing, or by the earlier acquisition item.",
+      "draft": {
+        "title": "Fomo brings Solana token trading to X cashtags",
+        "what_happened": "Fomo now lets users trade Solana tokens through X's cashtags. The new route connects Fomo's onchain trading app to the $-tags on X where token chatter and discovery happen, extending its trading surface beyond its own app into X itself.",
+        "how_we_got_here": "The integration lands after a stretch of rapid growth: weekly trading volume hit an all-time high of $1.06 billion in late August, Fomo passed 1.9 million users, and it paid $17 million for Mobula's onchain data technology to bring infrastructure in-house.",
+        "what_to_watch": "Open questions include how much trading actually flows through cashtags, whether Fomo shares adoption figures for the route, and whether extending into X adds security exposure after October's bookmark phishing warnings on its web platform.",
+        "claims": [
+          {
+            "text": "Fomo added a route for trading Solana tokens through X's cashtags.",
+            "source_item_id": "01a1d483-436c-7989-84c0-08e1030bb110",
+            "source_signal_id": "09f3c0faa042cbd60c5b768c82387d49ef342a8759a2f8b804ab8617e56a27ce"
+          },
+          {
+            "text": "The route links Fomo's trading app to the $-tags on X where token chatter and discovery happen, extending trading beyond its own app.",
+            "source_item_id": "01a1d483-436c-7989-84c0-08e1030bb110",
+            "source_signal_id": null
+          },
+          {
+            "text": "Fomo recorded an all-time high of $1.06 billion in weekly trading volume in late August.",
+            "source_item_id": "01a172ce-d793-7f60-b78e-a736aa906172",
+            "source_signal_id": null
+          },
+          {
+            "text": "Fomo has more than 1.9 million users.",
+            "source_item_id": "01a172ce-d793-7f60-b78e-a736aa906172",
+            "source_signal_id": null
+          },
+          {
+            "text": "Fomo acquired Mobula's proprietary software and intellectual property for $17 million.",
+            "source_item_id": "01a172ce-d793-7f60-b78e-a736aa906172",
+            "source_signal_id": null
+          },
+          {
+            "text": "SlowMist's Cos warned in October of bookmark phishing attacks targeting the FOMO web platform.",
+            "source_item_id": "01a172ce-e92b-7941-95e4-a9b4b42db3c8",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 116,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a172ce-e92b-7941-95e4-a9b4b42db3c8",
+        "title": "SlowMist's Cos warns of bookmark phishing attacks targeting the FOMO web platform",
+        "date": "2026-10-08T01:10:00+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-976a-72f6-9d81-d0be124aa1cf",
+      "slug": "circle",
+      "name": "Circle",
+      "status": "ok",
+      "action": "write",
+      "reason": "The Global Citizen partnership and Rwanda USDC pilot are new — the first concrete, named deployment in Circle's emerging-markets push — and are not covered by the last update or earlier items.",
+      "draft": {
+        "title": "Circle names Rwanda as first stop for USDC in Africa push",
+        "what_happened": "Circle and Global Citizen have announced a multi-year partnership to expand digital financial access across Africa. Its first concrete step: a pilot rolling out USDC payments in Rwanda starting in 2027.",
+        "how_we_got_here": "Circle has been hunting for new USDC demand beyond trading — pitching Arc and USDC for securities lending last week, even as Q3 reserve income slipped while revenue climbed 17% to $865M on the strength of the ARC token sale. This tie-up is the first country-level deployment Circle has named in its effort to bring stablecoin rails to emerging markets.",
+        "what_to_watch": "The announcement gives no funding figure, local rollout partners, or regulatory specifics, and the pilot doesn't begin until 2027 — whether Rwanda becomes a template for a wider African rollout is still open.",
+        "claims": [
+          {
+            "text": "Circle and Global Citizen announced a partnership to expand economic opportunity across Africa through digital financial innovation.",
+            "source_item_id": "01a1d2d9-b77a-7667-b82e-16cae57dac97",
+            "source_signal_id": "1058f2c7d29bafb8237810ecc050312bbccfa2904e60aa90b0b01f92d96100b2"
+          },
+          {
+            "text": "The multi-year partnership begins with a pilot rolling out USDC payments in Rwanda starting in 2027.",
+            "source_item_id": "01a1d459-faab-7ee2-93c7-555293833a70",
+            "source_signal_id": "ee7b90cafc2fbd795e318048ba44695fdef357ed033884cafdce75fffa1fb894"
+          },
+          {
+            "text": "The Rwanda pilot is the first concrete deployment named in Circle's push to bring stablecoin rails into emerging markets.",
+            "source_item_id": "01a1d459-faab-7ee2-93c7-555293833a70",
+            "source_signal_id": "ee7b90cafc2fbd795e318048ba44695fdef357ed033884cafdce75fffa1fb894"
+          },
+          {
+            "text": "Circle's Kris Gower made the case for using Arc and USDC as infrastructure in securities lending.",
+            "source_item_id": "01a1b29d-cae0-7fe5-8dd2-cdc835b047d0",
+            "source_signal_id": "04ea360694f7e99eecd6361218475498f9d42fc2e6802a2a2f09d00ddd96aee7"
+          },
+          {
+            "text": "Circle's Q3 revenue rose 17% to $865 million, lifted by the ARC token sale as income from stablecoin reserves declined.",
+            "source_item_id": "01a1b866-d535-7ddc-9f68-e5e3d4c68487",
+            "source_signal_id": "12420005389aa8e526b30631370310d6efde24613167e444c812493fa59d3cc1"
+          }
+        ]
+      },
+      "word_count": 124,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1ca44-78a7-7b2c-aca7-656626521258",
+        "title": "Circle shifts its USYC fund into longer-dated US Treasury bills",
+        "date": "2026-11-10T04:53:53+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6c3-79ec-9388-46904781f645",
+      "slug": "us-cpi",
+      "name": "US CPI",
+      "status": "ok",
+      "action": "write",
+      "reason": "The actual October CPI print is new, material information beyond the prior anticipation and data-gap coverage: headline +0.4% and core +0.3% both topped forecasts in a report missing year-over-year figures.",
+      "draft": {
+        "title": "October CPI runs hot: headline up 0.4%, core up 0.3%",
+        "what_happened": "October CPI came in hotter than expected, with headline prices up 0.4% and core up 0.3% month over month — both topping forecasts. Adding a wrinkle, the release omitted the year-over-year figures markets usually lean on.",
+        "how_we_got_here": "The print had been set as Tuesday's centerpiece of the macro calendar, and the BLS had already flagged that year-over-year numbers would be missing. Earlier in the run-up, Kevin Hassett said the Fed may take action if October inflation turned out to be high.",
+        "what_to_watch": "With the usual year-over-year anchor absent, how traders gauge this print — and whether the hot October data triggers the Fed action Hassett pointed to — is still unresolved.",
+        "claims": [
+          {
+            "text": "October CPI headline rose 0.4% month over month, above forecasts",
+            "source_item_id": "01a1d44c-2d94-76e2-aee1-64356cce6371",
+            "source_signal_id": "aff3a729ab75d4d67b3cb3c4a40e95e5b02e221365adae6af0594988ee66c6ff"
+          },
+          {
+            "text": "October core CPI rose 0.3% month over month, above forecasts",
+            "source_item_id": "01a1d44c-2d94-76e2-aee1-64356cce6371",
+            "source_signal_id": "aff3a729ab75d4d67b3cb3c4a40e95e5b02e221365adae6af0594988ee66c6ff"
+          },
+          {
+            "text": "The BLS said the October CPI release would not include year-over-year inflation figures",
+            "source_item_id": "01a1c931-5734-7f64-8eb2-f1da8ce4b05b",
+            "source_signal_id": "a0f2b6979e44e0dec083bd41fd22263ec7e9ed9a87334b1f3a34e1eb652f14fc"
+          },
+          {
+            "text": "The October CPI was due Tuesday as the centerpiece of the week's macro calendar",
+            "source_item_id": "01a1bac3-b3f3-725a-936f-71a2cd5757d0",
+            "source_signal_id": "7f6480092c1653aa463d12f7208f23117844bbc96505dc01a14da3d370f3c8cb"
+          },
+          {
+            "text": "Kevin Hassett said the Federal Reserve may take action if October inflation is high",
+            "source_item_id": "01a18d72-2c5f-77fa-82a2-6f65187384e3",
+            "source_signal_id": "f74d0654c06a5b35fa937958b5922a5080721ffd51c956a74a20e365d4393c08"
+          }
+        ]
+      },
+      "word_count": 109,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c931-5734-7f64-8eb2-f1da8ce4b05b",
+        "title": "BLS says October CPI release this week will omit year-over-year inflation figures",
+        "date": "2026-11-10T02:11:45+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2e-73d8-af86-31754a0ff414",
+      "slug": "bitcoin",
+      "name": "Bitcoin",
+      "status": "ok",
+      "action": "write",
+      "reason": "Two fresh developments after the last update — a hotter-than-expected September CPI print that pushed Bitcoin lower, and a new $10B short-positioning stat near $83K — genuinely extend the sell-off story rather than repeat it.",
+      "draft": {
+        "title": "Hotter CPI drags Bitcoin lower again as $10B in shorts pile up near $83K",
+        "what_happened": "Bitcoin sold off again after September US CPI inflation came in above expectations, adding a fresh macro headwind to a slide toward $74,000. Separately, more than $10 billion in leveraged short positions have stacked up around the $83,000 level, creating a crowded bet against a rebound.",
+        "how_we_got_here": "The new selling extends a heavy stretch: Fed's Waller backed a December rate hike, ETF outflows swelled to $2.1 billion with IBIT alone accounting for 78%, and 14 listed companies have sold 108,247 BTC so far this year.",
+        "what_to_watch": "Whether the ETF outflow and corporate-selling pace eases, and how the heavy short base near $83,000 resolves if price pushes back toward that zone — a setup flagged as raising squeeze risk.",
+        "claims": [
+          {
+            "text": "Bitcoin sold off again after September US CPI inflation came in above expectations",
+            "source_item_id": "01a1d415-acb0-71ab-9557-b07350d61bd8",
+            "source_signal_id": "538eebae56a3ee92c8bd9ad7cabb93aef66a2148ceb40551f21e107560db4198"
+          },
+          {
+            "text": "Bitcoin has been sliding toward $74,000",
+            "source_item_id": "01a1ce8e-d465-77ac-8c94-e02798c675cb",
+            "source_signal_id": "7038d042c87f9c5cefb22307f60a47b3f5514462fb962f1d0535f26f01a58b3b"
+          },
+          {
+            "text": "More than $10 billion in leveraged short positions have piled up around the $83,000 level, raising squeeze risk",
+            "source_item_id": "01a1d37e-6789-749a-b7d1-663cef523b00",
+            "source_signal_id": "a637e79a6a26c4bbec9736dd79fbd6458c55f02fc16f3b4c3ed30cb4f5db1df7"
+          },
+          {
+            "text": "Fed's Waller backed a December rate hike",
+            "source_item_id": "01a1ce8e-d465-77ac-8c94-e02798c675cb",
+            "source_signal_id": "7038d042c87f9c5cefb22307f60a47b3f5514462fb962f1d0535f26f01a58b3b"
+          },
+          {
+            "text": "ETF outflows swelled to $2.1 billion, with IBIT accounting for 78% of the withdrawals",
+            "source_item_id": "01a1ce13-3c85-77d1-bae9-e15048014299",
+            "source_signal_id": "7050f0f3e21840f998d83228ecd6db64fb529b250bceef07f1c18393217f85e0"
+          },
+          {
+            "text": "14 publicly listed companies have sold 108,247 BTC so far this year",
+            "source_item_id": "01a1ce4a-45eb-794f-8547-cbc65fbed2c1",
+            "source_signal_id": "bd813fa07f6b1152a0328a7aa1a8d6fe296d80810c46c348635d9f6529a55202"
+          }
+        ]
+      },
+      "word_count": 116,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1ce8e-d465-77ac-8c94-e02798c675cb",
+        "title": "Bitcoin slides toward $74K as Fed's Waller backs a December rate hike",
+        "date": "2026-11-10T10:22:21+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6b9-7384-8fd8-935dfe26d82b",
+      "slug": "shiba-inu",
+      "name": "Shiba Inu",
+      "status": "ok",
+      "action": "write",
+      "reason": "A 49% burn-rate jump and a Ryoshi impersonation scheme pushing 137 fake tokens are fresh, concrete developments the last update (holder count surge) does not cover.",
+      "draft": {
+        "title": "Shiba Inu burn rate jumps 49% as scammers pose as creator 'Ryoshi'",
+        "what_happened": "Shiba Inu's token burn rate jumped 49% while the price holds at $0.00000426 despite ongoing market pressure. Separately, imposters posing as 'Ryoshi', the pseudonymous Shiba Inu creator, have been promoting 137 scam tokens to dupe investors.",
+        "how_we_got_here": "The burn spike lands on a supply storyline the team itself flagged this month when it called massive circulating supply the main obstacle to its $1 price target. It follows a bruising stretch: a 606% surge in exchange inflows pushed exchange-held supply up to 86 trillion tokens, even as the holder count kept growing through a severe price correction.",
+        "what_to_watch": "Whether the faster burn pace visibly shrinks circulating supply, and whether more counterfeit 'Ryoshi' tokens surface, remain open questions.",
+        "claims": [
+          {
+            "text": "Shiba Inu's token burn rate climbed 49% while broader market pressure persists",
+            "source_item_id": "01a1d415-6c53-716b-acfd-ebdc3a19927f",
+            "source_signal_id": "4842f296618d65c5b974131564f6bb0fb9b2b1ff82f4691d82b343da1347a676"
+          },
+          {
+            "text": "Shiba Inu is holding at $0.00000426",
+            "source_item_id": "01a1d415-6c53-716b-acfd-ebdc3a19927f",
+            "source_signal_id": "4842f296618d65c5b974131564f6bb0fb9b2b1ff82f4691d82b343da1347a676"
+          },
+          {
+            "text": "Impersonators posing as 'Ryoshi', the pseudonymous figure behind Shiba Inu, have promoted 137 fraudulent tokens to dupe investors",
+            "source_item_id": "01a1d226-bd75-7f8c-bd6d-069368445f9d",
+            "source_signal_id": "0e8af466ec20ccfc95bd268c7319c53a89151b606ed11bec892a5584b337dfd1"
+          },
+          {
+            "text": "The Shiba Inu team publicly addressed the $1 price target, citing massive circulating supply as the key obstacle",
+            "source_item_id": "01a1b309-fff9-7982-977c-e491f2d9977a",
+            "source_signal_id": "cca498bd0b532dafda93b52b03dc27607d01564a028ba50f1be867b5db331131"
+          },
+          {
+            "text": "A 606% surge in inflows pushed Shiba Inu's exchange supply up to 86 trillion tokens, building sell-side pressure",
+            "source_item_id": "01a1c40b-c44b-7466-92d9-b0e864aee980",
+            "source_signal_id": "99b81e62debfbc7c2655a493f720c6395a6637e1abe53c71b0c85a09182a5779"
+          },
+          {
+            "text": "Shiba Inu's holder count surged while the token endured a severe price correction",
+            "source_item_id": "01a1c547-a118-70ad-98be-13b3d9003151",
+            "source_signal_id": "cf74d02495892246a2a65aae7a458278361ada0ea3ef3c192e207183a5e2959d"
+          }
+        ]
+      },
+      "word_count": 114,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c547-a118-70ad-98be-13b3d9003151",
+        "title": "Shiba Inu holder count surges even as the token suffers a severe price correction",
+        "date": "2026-11-09T17:43:31+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9c15-792a-9e74-77502a93cb61",
+      "slug": "google",
+      "name": "Google",
+      "status": "ok",
+      "action": "write",
+      "reason": "A concrete, previously uncovered product launch — Gemini becoming a dedicated healthcare offering — distinct from the last update about the Signal Protocol proof.",
+      "draft": {
+        "title": "Google Cloud launches Gemini for healthcare",
+        "what_happened": "Google Cloud has launched Gemini for healthcare, a dedicated version of the model aimed at both clinical care and administrative work in medical settings. It is Gemini's move into one of the biggest, most paper-heavy sectors AI vendors are chasing.",
+        "how_we_got_here": "The launch extends a stretch where Google has pushed its AI into specialized, high-stakes work: Gemini models now help design the company's own AI chips, its AI completed a cryptographic proof of the Signal Protocol in four weeks, and Google's entire available TPU supply is sold out ahead of two more chip versions planned for 2027.",
+        "what_to_watch": "Whether healthcare organizations actually adopt the offering, how it is priced and integrated with hospital systems, and whether Google spins Gemini into more dedicated vertical products — plus how rivals respond in clinical AI.",
+        "claims": [
+          {
+            "text": "Google Cloud launched Gemini for healthcare, targeting clinical and administrative workflows in medical settings",
+            "source_item_id": "01a1d3ec-45ab-7f04-827b-dc3a81e7af2b",
+            "source_signal_id": "2377d9147df493a172ddd949b8ade5f1d33c6f8004ff97e6b4515aa789461874"
+          },
+          {
+            "text": "Gemini models are being used to help design Google's own AI chips, speeding up chip development",
+            "source_item_id": "01a1c57e-c8ea-7585-833c-d136316ae73a",
+            "source_signal_id": "d14c3100aac2ed6cdcaf69a3d0921ab58698c16c06873d8ad445f18eb8305d5a"
+          },
+          {
+            "text": "Google's AI completed a mathematical proof of the Signal Protocol in four weeks",
+            "source_item_id": "01a1ce8f-39be-7cad-bc3b-7c3efb6f73e4",
+            "source_signal_id": "97b3c576d11d0c7ecec5b31979da3de058be84aacd054f52fc339cbade2a3748"
+          },
+          {
+            "text": "Google's entire available TPU supply is sold out, with two more chip versions planned for 2027",
+            "source_item_id": "01a1c442-ff73-79fe-b1e4-30865469f16b",
+            "source_signal_id": "a5b1223d39e0b65455e1bf6db560305f95a8317d53a95623455855fc3760088c"
+          }
+        ]
+      },
+      "word_count": 130,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1ce8f-39be-7cad-bc3b-7c3efb6f73e4",
+        "title": "Google's AI proves the Signal Protocol in four weeks, finds flaws in old versions",
+        "date": "2026-11-10T10:11:57+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2f-72da-ad13-90037e5879f5",
+      "slug": "blackrock",
+      "name": "BlackRock, Inc.",
+      "status": "ok",
+      "action": "write",
+      "reason": "A fresh deposit and a new cumulative figure (~791,800 ETH out since October) extend the ongoing story beyond the last conversion-focused update.",
+      "draft": {
+        "title": "BlackRock's ETH outflows keep stacking up",
+        "what_happened": "BlackRock deposited another 72,200 ETH into Coinbase Prime, pushing net ETH outflows since October to nearly 791,800 coins. The steady stream of coins moving to the exchange lands as redemptions from the firm's Ethereum ETF continue to run heavy.",
+        "how_we_got_here": "Earlier this month, wallets linked to BlackRock moved 580,145 ETH while its ETHA fund recorded $1.42 billion in October outflows. Days later, the firm transferred 5,320 BTC and 40,000 ETH to Coinbase, and billions have shifted out of its crypto ETFs, with security fears cited as the driver.",
+        "what_to_watch": "Whether the drip of ETH into Coinbase Prime continues or pauses, whether Ethereum ETF redemptions ease, and whether the transfers prove to be custody repositioning rather than sales — the selling-pressure question is still open.",
+        "claims": [
+          {
+            "text": "BlackRock deposited 72,200 ETH to Coinbase Prime",
+            "source_item_id": "01a1d3b5-5552-78e4-b989-503985680985",
+            "source_signal_id": "ddc39d3727e051e1de5b1fc1e81fcec84c48c366373d42e320492f4fdf506e9d"
+          },
+          {
+            "text": "Net ETH outflows from BlackRock-linked wallets since October are nearly 791,800 ETH",
+            "source_item_id": "01a1d3b5-5552-78e4-b989-503985680985",
+            "source_signal_id": "ddc39d3727e051e1de5b1fc1e81fcec84c48c366373d42e320492f4fdf506e9d"
+          },
+          {
+            "text": "Wallets linked to BlackRock transferred 580,145 ETH while its Ethereum ETF (ETHA) recorded $1.42 billion in net outflows over October",
+            "source_item_id": "01a1a057-23c0-7646-8066-d6c553e80865",
+            "source_signal_id": "85308dafe5f52b93929f932c25bffce5ca4dc5b9f49ef37c312835a5b01360a0"
+          },
+          {
+            "text": "BlackRock transferred 5,320 BTC and 40,000 ETH to Coinbase",
+            "source_item_id": "01a1c1e5-af04-7106-863b-248214f78872",
+            "source_signal_id": "2fc241d09e169e44d28c2afbeceb7241fae1ae1980b6c870cc893235bf1f3664"
+          },
+          {
+            "text": "BlackRock has seen billions of dollars in crypto ETF conversions, with security fears cited as the driver",
+            "source_item_id": "01a1c28b-363b-7aec-a9df-a18bf9aa318e",
+            "source_signal_id": "29ca9e85417bb49a53d2024f0a665ad9e93170075254d63140fa3ed0d9de85f1"
+          }
+        ]
+      },
+      "word_count": 122,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c28b-363b-7aec-a9df-a18bf9aa318e",
+        "title": "BlackRock crypto ETFs see billions in conversions as security fears drive the trade",
+        "date": "2026-11-09T13:43:46+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-acb3-7e03-8163-be93490bb139",
+      "slug": "us-jobs-report-nfp",
+      "name": "US Jobs Report (NFP)",
+      "status": "ok",
+      "action": "skip",
+      "reason": "The only new item is one weekly ADP figure (19,750 vs 16,750) for a week ended October 24 that predates the blowout October payrolls report already covered by the last update, making it too minor and stale for a new Catch-up.",
+      "last_update": {
+        "id": "01a1b3af-1587-7370-ae78-46ca4e61b7b3",
+        "title": "October jobs report adds 165,000 as dollar logs biggest daily gain in nearly five months",
+        "date": "2026-11-07T01:02:24+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-acca-7485-b53c-cae1761a1fcd",
+      "slug": "xrp",
+      "name": "XRP",
+      "status": "ok",
+      "action": "hold",
+      "reason": "A single analyst's $2.90 projection rests on an unconfirmed bullish RSI divergence while price and flows still skew bearish; wait for corroboration before elevating.",
+      "last_update": {
+        "id": "01a1cc5b-d6f3-75e9-9e36-30b92f00d85c",
+        "title": "Binance XRP funding rate hits a one-year high while spot XRP ETFs log $10.4M outflow",
+        "date": "2026-11-10T07:25:55+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9772-7dcd-95f8-014206852d93",
+      "slug": "ethereum",
+      "name": "Ethereum",
+      "status": "ok",
+      "action": "write",
+      "reason": "Both new items postdate the last update and add concrete, uncovered facts — BlackRock's $151.4M deposit pushing cumulative outflows to $1.74B, and a 10,000 ETH exchange withdrawal by a nine-month-dormant whale that contrasts with the ongoing sell-off.",
+      "draft": {
+        "title": "BlackRock lifts ETH outflows to $1.74B as a dormant whale pulls 10,000 ETH off Binance",
+        "what_happened": "BlackRock deposited 72,212 ETH — about $151.4 million — to Coinbase on Nov 10, lifting cumulative net outflows since Oct 1 to $1.74 billion. Hours later, a wallet inactive for nine months withdrew 10,000 ETH from Binance, a type of move usually read as a bet on holding or accumulating rather than selling.",
+        "how_we_got_here": "Ether had just broken below $2,100, down 2.24% intraday, after a $432 million liquidation wave put the $2,000 support level in question. Staking has kept climbing through the slide, and a year-dormant address had bought $5.4 million of ETH as a bottom-fishing bet — making the new withdrawal the latest of several large-holder moves on both sides of the market.",
+        "what_to_watch": "Whether further exchange deposits keep building on the $1.74 billion outflow tally, whether the $2,000 level holds, and whether more long-dormant wallets keep moving coins off exchanges.",
+        "claims": [
+          {
+            "text": "BlackRock deposited 72,212 ETH worth about $151.4 million to Coinbase on Nov 10, 2026.",
+            "source_item_id": "01a1d2d9-43d0-7b38-a923-580a67c7517f",
+            "source_signal_id": "399af6f924cdec0f6f76b09ae0608a8be4aaca689c904044eb1039d92497507a"
+          },
+          {
+            "text": "Cumulative net outflows since Oct 1 reached $1.74 billion.",
+            "source_item_id": "01a1d2d9-43d0-7b38-a923-580a67c7517f",
+            "source_signal_id": "399af6f924cdec0f6f76b09ae0608a8be4aaca689c904044eb1039d92497507a"
+          },
+          {
+            "text": "A wallet dormant for nine months withdrew 10,000 ETH from Binance on Nov 10, 2026.",
+            "source_item_id": "01a1d370-7ff6-7adc-b7ca-afbf11e76eee",
+            "source_signal_id": "5be9fdd1073e591a632f59e49b459b05c7ae6c36a2e4a465e5cecb68b8689962"
+          },
+          {
+            "text": "Exchange withdrawals of this kind are typically read as a bet on holding or accumulation rather than imminent selling.",
+            "source_item_id": "01a1d370-7ff6-7adc-b7ca-afbf11e76eee",
+            "source_signal_id": null
+          },
+          {
+            "text": "Ether broke below $2,100, down 2.24% intraday.",
+            "source_item_id": "01a1cd6e-41f3-79e0-ac8e-70c307ad2e65",
+            "source_signal_id": "e6b1697b30e1e06f5779da26cb7433525a713bf816f92ef1162c47681e4c153f"
+          },
+          {
+            "text": "A $432 million liquidation wave put Ether's $2,000 support level at risk.",
+            "source_item_id": "01a1cf5c-f43c-7da6-a515-00e4b2949a69",
+            "source_signal_id": "06d346c6c0a386e0c5cb0c2b96560d8a1290f5a6d5c92f7c19be968d7dad5778"
+          },
+          {
+            "text": "Ethereum staking has kept rising despite the price slide.",
+            "source_item_id": "01a1cd6e-962a-7e07-b1f9-bebf013c85e9",
+            "source_signal_id": "f4d0dc3e62b3547bf9ff93dd28d57ab55c567e60bf563e65f02871593409472f"
+          },
+          {
+            "text": "A year-dormant address bought $5.4 million of ETH in a bottom-fishing bet.",
+            "source_item_id": "01a1cdb3-41c1-78d2-9156-44ee8d9be73b",
+            "source_signal_id": "bad1835b949873602b18e14710c5a510ce1a18e7919bb472e3fcf0e5b298b35d"
+          }
+        ]
+      },
+      "word_count": 140,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cf5c-f43c-7da6-a515-00e4b2949a69",
+        "title": "$432M liquidation shock puts ETH's $2,000 support level at risk",
+        "date": "2026-11-10T11:00:24+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2f-7eb0-8177-2925c9616aee",
+      "slug": "bitgo",
+      "name": "BitGo",
+      "status": "ok",
+      "action": "hold",
+      "reason": "The APT holding claim rests on a single one-line announcement with no size, purpose, or confirmation — a direct token position by a custodian is notable but the evidence is too thin to publish now.",
+      "last_update": {
+        "id": "01a1c9c8-e82f-768e-b9ea-b728912889df",
+        "title": "BitGo posts $44.1M Q3 net income as total revenue falls 50.9% YoY",
+        "date": "2026-11-10T03:49:21+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2d-7c20-b83a-68c4e91e7faf",
+      "slug": "binance",
+      "name": "Binance",
+      "status": "ok",
+      "action": "write",
+      "reason": "A fresh $3 billion milestone for the tokenized TradFi push plus a new laundering trace from the hack are not covered by the last iOS-bug update and are concrete enough to surface now.",
+      "draft": {
+        "title": "Binance's tokenized TradFi push crosses $3 billion in user holdings",
+        "what_happened": "User holdings of traditional financial assets on Binance have passed $3 billion, the clearest sign yet that its tokenized stock-style products are accumulating real balances rather than staying a niche experiment. In a separate post-hack development, Elliptic traced $430,000 from the Binance hack being laundered into NEAR through six meme coins.",
+        "how_we_got_here": "The milestone lands mid-comeback after Binance's record hack: withdrawals for HYPE and APT have been restored, transfers involving MEXC and linked entities were cut off, and iPhone users were warned about an iOS bug that could expose wallet keys.",
+        "what_to_watch": "Whether tokenized TradFi balances keep building on Binance, and whether more of the hacked funds surface on-chain as the exchange's recovery continues.",
+        "claims": [
+          {
+            "text": "User holdings of traditional financial assets on Binance have topped $3 billion.",
+            "source_item_id": "01a1d302-b831-7650-9838-ebbd82bfd8b0",
+            "source_signal_id": "5aa624756c2e2edbd6341196b2ef114aa53fbf3932050bca4e366f0c025ff13a"
+          },
+          {
+            "text": "Elliptic says North Korean launderers moved $430,000 into NEAR via six meme coins after the Binance hack.",
+            "source_item_id": "01a1d0dd-7178-7877-92b3-406874f1fc6e",
+            "source_signal_id": "f66a001a65d614af382d9e6db4902a7fba828a7614a0642a34f71ada03b30e91"
+          },
+          {
+            "text": "Binance restored HYPE and APT withdrawals as a step in its post-hack recovery, which it described as a record hack.",
+            "source_item_id": "01a1c7a3-5304-78fe-9906-2748700b8d79",
+            "source_signal_id": "6071b95f2dd2ce63203aa7c5efd817377abee64ced192a5beea3b74d824a7579"
+          },
+          {
+            "text": "Binance will cease processing fund transfers involving MEXC and associated named entities.",
+            "source_item_id": "01a1cd0e-6b6c-769c-9a14-bf3d2de5b999",
+            "source_signal_id": "dcfcf1d16fb0ce695f77671d10137b8bbea5322a34cae5a18962380644870269"
+          },
+          {
+            "text": "Binance warned iPhone users that an iOS bug could expose crypto wallet private keys.",
+            "source_item_id": "01a1cefc-99b6-7c86-812d-195b53b71ebe",
+            "source_signal_id": "d57b99b18475bc96e7e5352e5193618246ec1ba1be25a8143548928dff4fefe1"
+          }
+        ]
+      },
+      "word_count": 112,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cefc-99b6-7c86-812d-195b53b71ebe",
+        "title": "Binance warns iPhone users of iOS bug that could expose crypto wallet keys",
+        "date": "2026-11-10T10:38:05+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9f68-7b54-b9c8-981be6ebdb3d",
+      "slug": "polymarket",
+      "name": "Polymarket",
+      "status": "ok",
+      "action": "write",
+      "reason": "New concrete financial milestone ($1.8B annualized revenue) not covered by the last update, which was about a withdrawal whitelist feature.",
+      "draft": {
+        "title": "Polymarket's annualized revenue crosses $1.8 billion",
+        "what_happened": "Polymarket says its annualized revenue has surpassed $1.8 billion, its biggest disclosed financial milestone yet as it pushes beyond event betting toward a broader trading venue.",
+        "how_we_got_here": "The milestone lands after a busy stretch: pre-market perpetual contracts tied to Anthropic launched in early November, US senators pressed the platform to prove its midterm odds weren't manipulated, a trader was suspected of betting on an unreleased poll, a post-election review found it caught the blue wave early but missed key upsets, and a withdrawal whitelist with a 48-hour lock rolled out earlier the same day.",
+        "what_to_watch": "The revenue disclosure arrives while election-market integrity scrutiny is still live — whether that pressure shapes product or regulatory responses, and how revenue holds up going forward, remains open.",
+        "claims": [
+          {
+            "text": "Polymarket disclosed its annualized revenue has surpassed $1.8 billion.",
+            "source_item_id": "01a1d302-599c-74f5-9ad6-c87d8cc2e3c7",
+            "source_signal_id": "155e0e13c91ee674635e222db5f26c69a25a79c3489c4a263a43738dcd3201f4"
+          },
+          {
+            "text": "The platform is pushing from event betting into a broader trading venue.",
+            "source_item_id": "01a1d302-599c-74f5-9ad6-c87d8cc2e3c7",
+            "source_signal_id": "155e0e13c91ee674635e222db5f26c69a25a79c3489c4a263a43738dcd3201f4"
+          },
+          {
+            "text": "Polymarket launched pre-market perpetual contracts tied to Anthropic in early November.",
+            "source_item_id": "01a19f9c-0a18-76c1-b566-fb1fb9cd0ab7",
+            "source_signal_id": "60d39c845411784cad4892dc38dd71e6234118a2c8daba6c450e28220bd1d8ab"
+          },
+          {
+            "text": "US senators pressed Polymarket to prove its midterm election odds were not manipulated.",
+            "source_item_id": "01a19f55-d873-7d4d-b179-7c15975b3fd7",
+            "source_signal_id": "64de518a6c9d05c9a4c74467d62a6dc6962917a2a3a88cdf259bc6592cfc6ace"
+          },
+          {
+            "text": "A Polymarket trader was suspected of betting on an election poll ahead of its release.",
+            "source_item_id": "01a1b5d3-e249-7e8e-80d5-7f9fa3ac3c05",
+            "source_signal_id": "1fe0afd7a41a6d2bf32462836d6d3e4094739b050eb6f18c3b4ad4ecaa2ffbac"
+          },
+          {
+            "text": "A post-election review found Polymarket priced the blue wave early but missed key midterm upsets.",
+            "source_item_id": "01a1bcf7-2f57-7b47-9247-6d70e42afbea",
+            "source_signal_id": "40215785a972402a181552d51b04b7153bd39cb4ae8abbcb6e3c967a81f177e8"
+          },
+          {
+            "text": "Polymarket rolled out a withdrawal address whitelist requiring email verification and a 48-hour lock earlier the same day as the revenue disclosure.",
+            "source_item_id": "01a1cb12-3603-7761-9a70-c55dddc70e16",
+            "source_signal_id": "3d3ae2a614c5f7ddca7f3b6dfd80a8a95728d81d8b628a88a04b0530df19e9ae"
+          }
+        ]
+      },
+      "word_count": 122,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cb12-3603-7761-9a70-c55dddc70e16",
+        "title": "Polymarket adds withdrawal address whitelist with 48-hour lock and email verification",
+        "date": "2026-11-10T06:15:15+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6bc-752f-bdfc-855e29a64fb9",
+      "slug": "stablecoins",
+      "name": "Stablecoins",
+      "status": "ok",
+      "action": "write",
+      "reason": "A fresh, concrete datapoint — France's 192% stablecoin activity surge tied to tax dynamics — adds a new European adoption angle not covered by the last euro-supply update.",
+      "draft": {
+        "title": "France's stablecoin activity jumps 192% as tax rules drive the move",
+        "what_happened": "Stablecoin usage in France jumped 192%, with tax considerations emerging as a key force behind the surge. The jump lands even as the sector's overall dollar float keeps contracting.",
+        "how_we_got_here": "The France jump extends a European streak from the past week: euro-pegged stablecoin supply hit an all-time high of 751 million euros. That growth runs counter to the broader market, where total stablecoin market capitalization is down $21 billion from its May 2026 peak.",
+        "what_to_watch": "Whether France's tax-driven jump proves durable or fades as a short-lived spike, and whether other European countries show similar tax-linked usage. The contrast between rising euro-side activity and the shrinking dollar float remains the open question.",
+        "claims": [
+          {
+            "text": "Stablecoin usage in France surged 192%.",
+            "source_item_id": "01a1d2d9-8354-723c-aee7-51cde8fd9874",
+            "source_signal_id": "038fb526fb942595e62c68bde6e1b019a3043a38fc6ebf253d53a8878e55573f"
+          },
+          {
+            "text": "Tax considerations emerged as a key force behind France's stablecoin jump.",
+            "source_item_id": "01a1d2d9-8354-723c-aee7-51cde8fd9874",
+            "source_signal_id": "038fb526fb942595e62c68bde6e1b019a3043a38fc6ebf253d53a8878e55573f"
+          },
+          {
+            "text": "Euro-pegged stablecoin supply reached an all-time high of 751 million euros.",
+            "source_item_id": "01a1c8b6-2600-72ae-bc61-09f011228689",
+            "source_signal_id": "e78d69239e2b3f16b734fca60eca15e9701e8a0a9d6f786b598674cfa482b9fd"
+          },
+          {
+            "text": "Total stablecoin market capitalization is down $21 billion from its May 2026 peak.",
+            "source_item_id": "01a1c3d4-1484-74e7-9cd8-2695a6f9c494",
+            "source_signal_id": "a5726ae9a2a8b0f79db8f9340bca2b24de64e51108526d21fc8f07f104b0ce98"
+          },
+          {
+            "text": "The France surge highlights how national tax dynamics are pushing stablecoin adoption in Europe while the sector's overall dollar float contracts.",
+            "source_item_id": "01a1d2d9-8354-723c-aee7-51cde8fd9874",
+            "source_signal_id": "038fb526fb942595e62c68bde6e1b019a3043a38fc6ebf253d53a8878e55573f"
+          }
+        ]
+      },
+      "word_count": 109,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c8b6-2600-72ae-bc61-09f011228689",
+        "title": "Euro-pegged stablecoin supply hits a record 751 million euros",
+        "date": "2026-11-10T01:12:05+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2b-7be5-8d4b-a61e66702e9e",
+      "slug": "anthropic",
+      "name": "Anthropic",
+      "status": "errored",
+      "error": "model timed out",
+      "last_update": {
+        "id": "01a1ccc9-cf18-7d76-aa28-c4dc92961627",
+        "title": "Retail investors can now subscribe to Anthropic pre-IPO shares via Bitget from $100",
+        "date": "2026-11-10T08:24:02+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-976c-7373-94c3-5cb11ac45a19",
+      "slug": "compound-foundation",
+      "name": "Compound Foundation",
+      "status": "ok",
+      "action": "write",
+      "reason": "The November 10 V2 COMP rewards deadline is a new, dated milestone in Compound's legacy wind-down that the last update (the Scroll USDC market shutdown) does not cover.",
+      "draft": {
+        "title": "Compound V2's COMP rewards hit their November 10 cutoff",
+        "what_happened": "Compound's COMP reward program for users of its legacy V2 lending market hit its deadline on November 10, setting a firm cutoff for that market's incentive program.",
+        "how_we_got_here": "The cutoff lands days after Compound said on November 8 that it would shut down its USDC market on Scroll, with outstanding loans liquidated within weeks. In late October, supply was also paused across Compound's major markets on Ethereum, Optimism, Arbitrum and Base amid an ongoing incident.",
+        "what_to_watch": "What support remains for V2 users now that the rewards cutoff has passed, and whether further retirement steps for the legacy market follow.",
+        "claims": [
+          {
+            "text": "Compound's COMP rewards for V2 users hit a deadline on November 10, setting a firm cutoff for the legacy lending market's incentive program.",
+            "source_item_id": "01a1d2a2-cd51-7a42-94d0-c82ad1b9bbde",
+            "source_signal_id": "b1008fc4a5c6ae5581dd71a23e3d13749b3084ac2c0af96e5052d8e9f8ab8fe7"
+          },
+          {
+            "text": "On November 8, Compound said it would shut down its USDC market on Scroll, with outstanding loans to be liquidated within weeks.",
+            "source_item_id": "01a1b8d5-05f0-7bd8-9b54-81db9f4e8224",
+            "source_signal_id": "f01ae956c4051a773078d68d280ff97df19132b093d2c69336b871c4b4f495f5"
+          },
+          {
+            "text": "In late October, Compound paused supply across its major markets on Ethereum, Optimism, Arbitrum and Base over an ongoing incident.",
+            "source_item_id": "01a18e12-44e2-7293-8776-531ee11567ef",
+            "source_signal_id": "f0f6f84ba511ddc642dd83f1174471645c88f7569b5b15fea4a862e3296bd5f5"
+          }
+        ]
+      },
+      "word_count": 97,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1b8d5-05f0-7bd8-9b54-81db9f4e8224",
+        "title": "Compound will shut down its USDC market on Scroll, with loans liquidated within weeks",
+        "date": "2026-11-08T00:46:52+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6bb-7202-b51c-14db8ec1e602",
+      "slug": "solana",
+      "name": "Solana",
+      "status": "errored",
+      "error": "model timed out",
+      "last_update": {
+        "id": "01a1cf33-b514-7480-aac7-bc27d3e1bf98",
+        "title": "SOL falls below $85 as the slide from its $100-$121 range deepens",
+        "date": "2026-11-10T10:54:57+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-acc1-7040-bee6-b7aec36405d2",
+      "slug": "vitalik-buterin",
+      "name": "Vitalik Buterin",
+      "status": "ok",
+      "action": "write",
+      "reason": "A new, distinct lawsuit (alleged discrimination by a former foundation manager) landed hours after the covered organizer-firing suit, escalating Buterin's legal exposure beyond what the last update described.",
+      "draft": {
+        "title": "A third lawsuit lands on Vitalik Buterin, this one alleging discrimination",
+        "what_happened": "A former Ethereum Foundation manager has sued Vitalik Buterin and the foundation, alleging discrimination. It is the third legal action to name the Ethereum co-founder in a matter of days.",
+        "how_we_got_here": "Buterin was first sued on Nov 9 over a dispute involving an Ethereum 'suicide pledge.' On Nov 10, another suit named him over the firing of a staff protest organizer. Hours after that, a former foundation manager's discrimination claim landed, opening a separate front alongside the other two.",
+        "what_to_watch": "How Buterin and the foundation respond, and whether any of the cases move beyond initial filings or draw more plaintiffs.",
+        "claims": [
+          {
+            "text": "A former Ethereum Foundation manager has filed suit against Vitalik Buterin and the foundation, alleging discrimination.",
+            "source_item_id": "01a1d294-ec1b-73ff-851b-e965d3c93a62",
+            "source_signal_id": "2e28a0c18ec1da27d90374539aa4d1f398a49750849ecd4f64461b1a8213bb97"
+          },
+          {
+            "text": "It is the latest in a string of lawsuits naming Buterin in recent days.",
+            "source_item_id": "01a1d294-ec1b-73ff-851b-e965d3c93a62",
+            "source_signal_id": "2e28a0c18ec1da27d90374539aa4d1f398a49750849ecd4f64461b1a8213bb97"
+          },
+          {
+            "text": "A lawsuit against Vitalik Buterin over an Ethereum 'suicide pledge' dispute was filed on Nov 9.",
+            "source_item_id": "01a1c70c-6f43-79e8-b6ef-a21a7c156ce2",
+            "source_signal_id": "95341d3e8ffecf56ec7f9d33fc7ce80108332767a722b7d79ac574af7d522317"
+          },
+          {
+            "text": "On Nov 10, Vitalik Buterin was named in a lawsuit over the firing of an Ethereum staff protest organizer.",
+            "source_item_id": "01a1cf25-e65b-7081-a885-eeab8fd4ac57",
+            "source_signal_id": "be1e10030fbc7eaef199bcb5be3de3dd576d31cca5a7081f2def8d3e1c9e1cbf"
+          },
+          {
+            "text": "The discrimination suit emerged on Nov 10, hours after the organizer-firing lawsuit.",
+            "source_item_id": "01a1d294-ec1b-73ff-851b-e965d3c93a62",
+            "source_signal_id": "2e28a0c18ec1da27d90374539aa4d1f398a49750849ecd4f64461b1a8213bb97"
+          }
+        ]
+      },
+      "word_count": 98,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cf25-e65b-7081-a885-eeab8fd4ac57",
+        "title": "Vitalik Buterin named in lawsuit over firing of Ethereum staff protest organizer",
+        "date": "2026-11-10T10:47:49+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2b-7c2c-9692-177757b813b4",
+      "slug": "alibaba",
+      "name": "Alibaba Group",
+      "status": "ok",
+      "action": "write",
+      "reason": "A brand-new corporate development — spinning off the Pingtouge chip unit for an independent Hong Kong listing — that the last Qwen-focused update does not cover.",
+      "draft": {
+        "title": "Alibaba plans to spin off chip unit Pingtouge for standalone Hong Kong listing",
+        "what_happened": "Alibaba plans to spin off its semiconductor subsidiary Pingtouge and pursue an independent listing on the Hong Kong Stock Exchange, which would put the chip business on public markets as a standalone company.",
+        "how_we_got_here": "Alibaba's recent headlines have centered on its Qwen AI push: Apple announced Apple Intelligence would integrate Qianwen with testing starting November 4, a report flagged 5,077% year-on-year growth in Qwen's monthly active users alongside a drop of 9 million users since June, and Alibaba Cloud launched the Qovest investment research assistant at 99 yuan per month. The chip spinoff opens a separate corporate-structure thread alongside that AI momentum.",
+        "what_to_watch": "No timeline, valuation, or details on how much of the unit Alibaba would retain have been reported. Whether the listing moves forward as planned, and how the chip business develops against Alibaba's broader AI ambitions, remains open.",
+        "claims": [
+          {
+            "text": "Alibaba plans to spin off its semiconductor subsidiary Pingtouge and list it independently on the Hong Kong Stock Exchange.",
+            "source_item_id": "01a1d294-a081-70f9-a977-28f49a68f28a",
+            "source_signal_id": "0972f6fd216eacb303ca4d78d5bd013ca9a5a72b129e70bf65aa5fbcefca9a7f"
+          },
+          {
+            "text": "Apple announced that Apple Intelligence will integrate Alibaba's Qianwen (Qwen), with testing launching on November 4.",
+            "source_item_id": "01a18fcd-fcdf-7f97-9463-fcf3a23b09d0",
+            "source_signal_id": "b644214925579f55a433a6c09bf8077a37683583e74f91c68d69d70a3dc83bf8"
+          },
+          {
+            "text": "A report stated Qwen's monthly active users grew 5,077% year-on-year, topping 100-million-user apps, while losing 9 million users compared to June.",
+            "source_item_id": "01a1a008-22a8-7820-b805-c39674b94fb5",
+            "source_signal_id": "5efb2aea1ae7caf95b76727166cf11870f59714658ba62c99619818ae4890c68"
+          },
+          {
+            "text": "Alibaba Cloud launched Qovest, an AI 'super investment research assistant', with subscription pricing starting at 99 yuan per month.",
+            "source_item_id": "01a19b66-d098-776d-8804-718efb6f4d7b",
+            "source_signal_id": "e2227365dd165c25347ce21ad14454d52fb1d09c55a224f19b0183433d171908"
+          },
+          {
+            "text": "The spinoff announcement did not include a timeline, valuation, or details on Alibaba's retained stake.",
+            "source_item_id": "01a1d294-a081-70f9-a977-28f49a68f28a",
+            "source_signal_id": "0972f6fd216eacb303ca4d78d5bd013ca9a5a72b129e70bf65aa5fbcefca9a7f"
+          }
+        ]
+      },
+      "word_count": 138,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1a008-22a8-7820-b805-c39674b94fb5",
+        "title": "A lookonchain feed report states that Alibaba's Qwen AI assistant (Qianwen) saw its monthly active users grow 5,077% year-on-year, placing it first in growth rate among apps with over 100 million user",
+        "date": "2026-11-03T03:15:12+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2e-76ff-91ad-a744fa218e52",
+      "slug": "bitdeer",
+      "name": "Bitdeer Technologies Group",
+      "status": "ok",
+      "action": "write",
+      "reason": "Record Q3 earnings with concrete revenue, BTC production, and backlog figures land after the last update, which only tracked Bitcoin-holding practices — genuinely new material for the reader.",
+      "draft": {
+        "title": "Bitdeer logs its strongest quarter yet: Q3 revenue up 89% to $320.7 million",
+        "what_happened": "Bitdeer just posted its best quarter on record. Q3 revenue climbed 89% year-over-year to $320.7 million, its mining operations produced 3,855 BTC, and the AI Cloud revenue backlog stands at roughly $2.9 billion.",
+        "how_we_got_here": "This is the first major financial checkpoint since Bitdeer laid out its data center roadmap in late October: a January 2027 delivery start for its 901 site, a 67 MW target by Q2 2027, and an AI Cloud backlog it had estimated at around $2.9 billion — a figure the earnings report now confirms on the books.",
+        "what_to_watch": "The open milestones are the 901 delivery start in January 2027, A201's first-quarter 2027 energization, and whether Bitdeer closes the remaining gap toward 350 MW of AI Cloud capacity by Q1 2028.",
+        "claims": [
+          {
+            "text": "Bitdeer's Q3 revenue rose 89% year-over-year to $320.7 million.",
+            "source_item_id": "01a1d26b-adc9-714b-b396-1c1ca4678d03",
+            "source_signal_id": "fa865247058ea7efa92783a2abf824eca2ac568bd3b82e7d6331ffe9d36bf8d9"
+          },
+          {
+            "text": "Q3 was Bitdeer's strongest quarter on record.",
+            "source_item_id": "01a1d26b-adc9-714b-b396-1c1ca4678d03",
+            "source_signal_id": null
+          },
+          {
+            "text": "Bitdeer's mining operations produced 3,855 BTC in the quarter.",
+            "source_item_id": "01a1d26b-adc9-714b-b396-1c1ca4678d03",
+            "source_signal_id": null
+          },
+          {
+            "text": "Bitdeer's AI Cloud revenue backlog stands at roughly $2.9 billion.",
+            "source_item_id": "01a1d25e-0a8e-77c1-aabe-39cc191511ac",
+            "source_signal_id": "9fed0d51934d9f480de2d29075614657a9951aebe4eadae1d074f8bc336f0f4e"
+          },
+          {
+            "text": "Bitdeer set a January 2027 delivery start for its 901 site and a 67 MW target by Q2 2027.",
+            "source_item_id": "01a172ce-ce08-7dbe-9b42-3326e9e3ba36",
+            "source_signal_id": null
+          },
+          {
+            "text": "Bitdeer targets up to 350 MW of AI Cloud capacity by the first quarter of 2028, with A201 expected to energize in Q1 2027.",
+            "source_item_id": "01a172ce-ce08-7dbe-9b42-3326e9e3ba36",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 122,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1908b-902a-732b-aa42-bb67c6c29390",
+        "title": "Report from PANews (relayed by the tokens_xyz feed): Bitcoin mining company Bitdeer says it continues to hold zero Bitcoin and sold 265.5 BTC over the past week. This is a report on Bitdeer's disclose",
+        "date": "2026-10-31T05:28:39+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9c17-77b4-aa87-d07631d62e98",
+      "slug": "hive-digital-technologies",
+      "name": "HIVE Digital Technologies",
+      "status": "errored",
+      "error": "model timed out",
+      "last_update": {
+        "id": "01a1c856-2ca4-711b-9d7d-81f8073de68d",
+        "title": "HIVE's Bitcoin output climbs 49%, but mining revenue still falls",
+        "date": "2026-11-10T00:43:04+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-acdb-7999-828b-ddef16c84043",
+      "slug": "zksync",
+      "name": "ZKsync",
+      "status": "ok",
+      "action": "write",
+      "reason": "Prividium Connect is a new product launch with a ZK-denominated fee plan that extends the institutional arc and is not covered by the earlier SOC 2 update.",
+      "draft": {
+        "title": "Matter Labs launches Prividium Connect with a fee plan built on the ZK token",
+        "what_happened": "Matter Labs launched Prividium Connect, a new addition to its enterprise privacy platform, and introduced a fee plan built around the ZK token. The move extends the company's push to make Prividium institutional-grade.",
+        "how_we_got_here": "The launch caps a rapid build-out of Prividium for regulated users. Matter Labs open-sourced the platform's permissioning engine under the Apache 2.0 license on September 8, 2026, with Germany's Deutsche Bundesbank testing a self-hosted instance. It then completed a SOC 2 Type II audit of the Prividium platform in early November.",
+        "what_to_watch": "The Bundesbank engagement remains a test rather than a production rollout, and it is not yet clear whether institutional adopters will take up Prividium Connect or its ZK-based fee plan.",
+        "claims": [
+          {
+            "text": "Matter Labs launched Prividium Connect, a new addition to its enterprise privacy platform.",
+            "source_item_id": "01a1d234-c90b-7721-b4fc-0585afd884fe",
+            "source_signal_id": "2bc166beecc7c784e356d7246c09998c4611b0e10b48e1acc6e1f343eedf51b7"
+          },
+          {
+            "text": "Prividium Connect introduces a fee plan built around the ZK token.",
+            "source_item_id": "01a1d234-c90b-7721-b4fc-0585afd884fe",
+            "source_signal_id": "2bc166beecc7c784e356d7246c09998c4611b0e10b48e1acc6e1f343eedf51b7"
+          },
+          {
+            "text": "Matter Labs completed a SOC 2 Type II audit of its Prividium platform.",
+            "source_item_id": "01a1a117-73f1-7d86-b88b-511b5a1a61aa",
+            "source_signal_id": "a2d6d5a950c4c3a58ddad25ed1670bb14f3c39dce3d89a2c06773485cd728b33"
+          },
+          {
+            "text": "Matter Labs open-sourced the Prividium permissioning engine under the Apache 2.0 license on September 8, 2026.",
+            "source_item_id": "01a172ce-d420-7d4a-a55c-2570a828a901",
+            "source_signal_id": null
+          },
+          {
+            "text": "Deutsche Bundesbank is testing a self-hosted instance of Prividium.",
+            "source_item_id": "01a172ce-d420-7d4a-a55c-2570a828a901",
+            "source_signal_id": null
+          },
+          {
+            "text": "The Bundesbank engagement is presented as a test rather than a production rollout.",
+            "source_item_id": "01a172ce-d420-7d4a-a55c-2570a828a901",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 114,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1a117-73f1-7d86-b88b-511b5a1a61aa",
+        "title": "Matter Labs completes SOC 2 Type II audit for its Prividium platform",
+        "date": "2026-11-03T10:31:53+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9f6a-731a-adc9-ade0c9935921",
+      "slug": "ripple",
+      "name": "Ripple",
+      "status": "ok",
+      "action": "write",
+      "reason": "A leadership change at the top of Ripple Prime is new, concrete news tied to Ripple's Wall Street push and is not covered by the last update, which was about RLUSD treasury minting.",
+      "draft": {
+        "title": "Ripple Prime changes hands: Noel Kimmel to succeed Marc Asch as head",
+        "what_happened": "Marc Asch is stepping down as head of Ripple Prime, the company's prime brokerage arm, with Noel Kimmel named as successor.",
+        "how_we_got_here": "The handoff comes as Ripple leans on its prime brokerage arm to push deeper into Wall Street financing. The past week added other traditional-finance footholds: OCC approval to operate as a trust bank with BNY adding custody for XRP and RLUSD, and new API access letting corporate treasury desks mint RLUSD directly.",
+        "what_to_watch": "The timing of the handover, Kimmel's plans for the unit, and whether Ripple Prime's Wall Street financing push keeps its pace under new leadership all remain open questions.",
+        "claims": [
+          {
+            "text": "Marc Asch is stepping down as head of Ripple Prime, Ripple's prime brokerage arm.",
+            "source_item_id": "01a1d234-8fd6-7a67-8cbe-fceec278a2e4",
+            "source_signal_id": "253f6114370baa4e0ba6832ec591f7e0fb0d149d59cba17ca3dee68540537f3e"
+          },
+          {
+            "text": "Noel Kimmel has been named to succeed Marc Asch as Ripple Prime head.",
+            "source_item_id": "01a1d234-8fd6-7a67-8cbe-fceec278a2e4",
+            "source_signal_id": "253f6114370baa4e0ba6832ec591f7e0fb0d149d59cba17ca3dee68540537f3e"
+          },
+          {
+            "text": "The leadership handoff comes as Ripple leans on its prime brokerage arm to push deeper into Wall Street financing.",
+            "source_item_id": "01a1d234-8fd6-7a67-8cbe-fceec278a2e4",
+            "source_signal_id": "253f6114370baa4e0ba6832ec591f7e0fb0d149d59cba17ca3dee68540537f3e"
+          },
+          {
+            "text": "Ripple won approval from the OCC to operate as a trust bank, with BNY adding custody support for XRP and RLUSD.",
+            "source_item_id": "01a1b566-8f8f-7fc7-9433-224a571618bb",
+            "source_signal_id": "9847cdc714297584499c2e20270d4131f2bb53ba062fbf15d3f8fce9c87f66a0"
+          },
+          {
+            "text": "Ripple rolled out API access that lets corporate treasury desks mint its RLUSD stablecoin.",
+            "source_item_id": "01a1cf26-1242-7b9e-878c-7ebc95b205b4",
+            "source_signal_id": "be3c9fd31a3eafbf37dc985958e85e38af2057f33b1fd0681aa06b5394b5e9dc"
+          }
+        ]
+      },
+      "word_count": 101,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cf26-1242-7b9e-878c-7ebc95b205b4",
+        "title": "Ripple opens RLUSD stablecoin minting to treasury desks through new API access",
+        "date": "2026-11-10T10:43:03+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9c18-77c9-887b-ab15280c0b1c",
+      "slug": "hyperscale-data",
+      "name": "Hyperscale Data",
+      "status": "ok",
+      "action": "write",
+      "reason": "Concrete, new development completing the company's crypto exit (~211 BTC sold for ~$16M) that goes beyond the exchange offer covered in the last update.",
+      "draft": {
+        "title": "Hyperscale Data sells its last ~211 Bitcoin for ~$16M, finishing its crypto exit",
+        "what_happened": "Hyperscale Data has fully liquidated its remaining roughly 211 Bitcoin, raising about $16 million. The proceeds are earmarked for repaying debt and building out its AI data center, completing the exit from BTC it began when it moved away from mining.",
+        "how_we_got_here": "In early September the company shut down Bitcoin mining at its Michigan site to convert it into an AI data center and started selling BTC, with holdings falling from about 1,006 at the end of July to roughly 215. Since then it has lined up a 20 MW AI compute customer for the site, scheduled a Nov. 12 investor day centered on a potential sale of the Michigan campus, and proposed an exchange offer valuing its stock at $0.26, an 82% premium.",
+        "what_to_watch": "How the ~$16 million is split between debt repayment and data center build-out, progress on the 20 MW AI deployment, and what the company says about the potential Michigan campus sale.",
+        "claims": [
+          {
+            "text": "Hyperscale Data sold its remaining roughly 211 Bitcoin, raising about $16 million.",
+            "source_item_id": "01a1d18f-a734-7247-a62f-ade2ffa64e8d",
+            "source_signal_id": "c064cb8313a8919a655fd77f3a78d7c22c469bbdadbf9d7b0de0c4cd16ffd960"
+          },
+          {
+            "text": "Proceeds are earmarked for debt repayment and building out the AI data center.",
+            "source_item_id": "01a1d18f-a734-7247-a62f-ade2ffa64e8d",
+            "source_signal_id": "c064cb8313a8919a655fd77f3a78d7c22c469bbdadbf9d7b0de0c4cd16ffd960"
+          },
+          {
+            "text": "The company shut down Bitcoin mining at its Michigan facility in early September to convert the site into an AI data center.",
+            "source_item_id": "01a172ce-9c10-72e8-a658-2cb059bfc2a2",
+            "source_signal_id": null
+          },
+          {
+            "text": "Bitcoin holdings fell from about 1,006 BTC at the end of July to about 215 BTC.",
+            "source_item_id": "01a172ce-9c10-72e8-a658-2cb059bfc2a2",
+            "source_signal_id": null
+          },
+          {
+            "text": "A customer signed a contract for 20 MW of AI computing capacity at the Michigan facility over a 10-year term with two five-year renewal options.",
+            "source_item_id": "01a172ce-9c10-72e8-a658-2cb059bfc2a2",
+            "source_signal_id": null
+          },
+          {
+            "text": "Hyperscale Data scheduled a Nov. 12 investor day to detail a potential sale of its Michigan campus.",
+            "source_item_id": "01a172ce-d799-76b2-9b7c-7713da3cd7ea",
+            "source_signal_id": null
+          },
+          {
+            "text": "The company proposed an exchange offer valuing its common stock at $0.26, an 82% premium over its November 6 closing price.",
+            "source_item_id": "01a1c0fc-54b7-7381-b55d-dd3a010e0213",
+            "source_signal_id": "8a59eec86e58de55b5f5db7916a55fb72df248248c4614898f32f00dad428932"
+          }
+        ]
+      },
+      "word_count": 154,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c0fc-54b7-7381-b55d-dd3a010e0213",
+        "title": "Hyperscale Data proposes up to $50M exchange offer valuing stock at $0.26, an 82% premium",
+        "date": "2026-11-09T11:42:40+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6bb-7206-b220-0474aa9af9f9",
+      "slug": "softbank-group",
+      "name": "SoftBank Group Corp.",
+      "status": "ok",
+      "action": "write",
+      "reason": "The last update reported SoftBank's first loss in nearly two years but not its size or cause; the ~$7B figure and the $3.7B US AI data center power charge are concrete new detail worth surfacing.",
+      "draft": {
+        "title": "SoftBank's quarterly loss lands at roughly $7 billion, with a $3.7 billion charge on US AI data center power gear",
+        "what_happened": "SoftBank's second-quarter net loss came in at roughly $7 billion, including a $3.7 billion hit from revised procurement costs for power equipment used in its U.S. AI data center operations.",
+        "how_we_got_here": "On Nov. 6, Elon Musk publicly accused SoftBank of defaulting on its turbine orders and shares slid 10.83%. On Nov. 10 the company posted its first net loss in nearly two years, landing as AI-related concerns weigh on tech stocks more broadly. These new figures now size that loss and point to power equipment procurement for U.S. data centers as the main driver of the hit.",
+        "what_to_watch": "Whether SoftBank says more about the power equipment costs behind the charge, and how the loss sits against its wider AI slate, including its OpenAI stake, talks toward a new large AI fund, and the early-stage discussions over a potential Allied Universal acquisition.",
+        "claims": [
+          {
+            "text": "SoftBank posted a net loss of roughly $7 billion for its second fiscal quarter.",
+            "source_item_id": "01a1d182-67de-788d-bd5c-237a229415f1",
+            "source_signal_id": "bfab8f629cf16e9124f27c4e8ecd8319a5132204d7c50699b54573b5bd6c559a"
+          },
+          {
+            "text": "The quarter included a $3.7 billion charge from revised procurement costs for power equipment used in SoftBank's U.S. AI data center operations.",
+            "source_item_id": "01a1d182-67de-788d-bd5c-237a229415f1",
+            "source_signal_id": "bfab8f629cf16e9124f27c4e8ecd8319a5132204d7c50699b54573b5bd6c559a"
+          },
+          {
+            "text": "On Nov. 6, Elon Musk publicly accused SoftBank of defaulting on its turbine orders and SoftBank shares slid 10.83%.",
+            "source_item_id": "01a1b197-0890-70da-bde9-5c7a5449f791",
+            "source_signal_id": "33a6139bbe6eb91528719c0f517ce3170e60be8ee5f39a194e43408fe4a1ec43"
+          },
+          {
+            "text": "On Nov. 10, SoftBank posted its first net loss in nearly two years.",
+            "source_item_id": "01a1cbb7-369e-708f-a95e-0888eaaa3882",
+            "source_signal_id": "e1491a54981ca0b22d46cbc3c09a460aa8368a3e4b633d581ee19290138c3f33"
+          },
+          {
+            "text": "The loss landed as AI-related concerns weigh on tech stocks more broadly.",
+            "source_item_id": "01a1cbb7-369e-708f-a95e-0888eaaa3882",
+            "source_signal_id": "e1491a54981ca0b22d46cbc3c09a460aa8368a3e4b633d581ee19290138c3f33"
+          },
+          {
+            "text": "SoftBank carries AI commitments including its OpenAI stake and plans for a new large AI fund.",
+            "source_item_id": "01a1cbb7-369e-708f-a95e-0888eaaa3882",
+            "source_signal_id": null
+          },
+          {
+            "text": "SoftBank is in early discussions over a potential acquisition of Allied Universal that could value its equity at up to $18 billion.",
+            "source_item_id": "01a172ce-d7b5-71bf-ae7f-7b9e183d1ebc",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 139,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cbb7-369e-708f-a95e-0888eaaa3882",
+        "title": "SoftBank posts its first net loss in nearly two years as AI concerns hit tech stocks",
+        "date": "2026-11-10T07:02:08+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e25-716d-af14-fb7ff05f944b",
+      "slug": "ai-industry",
+      "name": "AI Industry",
+      "status": "ok",
+      "action": "write",
+      "reason": "Two fresh, opposing datapoints from Nov 10 — JPMorgan's bullish upstream-supply-chain call and trust-driven adoption lag weighing on valuations — postdate the last item and shift the debate's focus.",
+      "draft": {
+        "title": "AI trade splits: JPMorgan sees buying opportunities upstream as trust slows adoption",
+        "what_happened": "The AI trade pulls in two directions. JPMorgan research argues the upstream end of the AI supply chain now offers buying opportunities, a bullish counterpoint to warnings that the buildout may be overextended. Separately, AI adoption is trailing expectations as companies balk over trust concerns, with the slow uptake pressing down on company valuations.",
+        "how_we_got_here": "The debate has centered on spending and infrastructure: enterprise AI spending hit $177B, data centers are buying secondhand jet engines because new turbines take about six years to deliver, Democratic election wins threatened data-center projects with restrictions, and the UBS chief executive warned of a possible buildout slowdown.",
+        "what_to_watch": "Whether trust worries show up as measurably slower enterprise uptake, whether the bullish upstream call holds against tightening regulatory and power constraints, and which side of the debate valuations follow.",
+        "claims": [
+          {
+            "text": "JPMorgan research argues the upstream end of the AI supply chain now offers buying opportunities.",
+            "source_item_id": "01a1cfca-c554-7295-88fe-8f5acf145fc5",
+            "source_signal_id": "6cd172c4788e29ef5e21eea7e5c762e095d6266b6305246669c8c55ed6f32da6"
+          },
+          {
+            "text": "AI adoption is trailing expectations as companies balk over trust concerns, and the slow uptake is pressing down on company valuations.",
+            "source_item_id": "01a1d0dd-320e-700e-899d-3ee29178e296",
+            "source_signal_id": "e78da27383739ef063af4bbcdfea3dbc71b2a32f6d61ab4bb4d061330dd52cec"
+          },
+          {
+            "text": "Enterprise AI spending has surged to $177B.",
+            "source_item_id": "01a1c5eb-d2ed-70cd-ad83-d05c45fc3dae",
+            "source_signal_id": "645986842a30bd1617aa92010f20c6584e27f0e8d3b1dc1e0ea04c8f5ea95683"
+          },
+          {
+            "text": "New power turbines take about six years to deliver, leading data centers to buy secondhand jet engines.",
+            "source_item_id": "01a1c70c-5718-7319-ba65-a1179b399419",
+            "source_signal_id": "7dd2fd8098d2e7d79a7172cfa2ade03bbdd7329982b46cf5ed3c66e79bc42487"
+          },
+          {
+            "text": "Democratic election wins are threatening AI data-center projects with new restrictions across the US.",
+            "source_item_id": "01a1c7da-248a-7211-8efa-29f0c47a0318",
+            "source_signal_id": "d569724aa0575c04686d82c0ea560645deafcc929cc70d848b80b4c2c164e148"
+          },
+          {
+            "text": "The UBS chief executive has warned that the AI buildout could be headed for a slowdown.",
+            "source_item_id": "01a1bed6-ca69-78d7-864b-05d173bf3fb5",
+            "source_signal_id": "38a60ec6486c493c10168959bac80a5546009b526b6d7293619234a9c646c80a"
+          }
+        ]
+      },
+      "word_count": 132,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c7da-248a-7211-8efa-29f0c47a0318",
+        "title": "Democratic wins threaten US AI data center projects with new restrictions",
+        "date": "2026-11-09T22:32:17+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6bd-7d52-aca1-9b16bb8a64b1",
+      "slug": "strategy-microstrategy",
+      "name": "Strategy",
+      "status": "ok",
+      "action": "write",
+      "reason": "A fresh sell-side datapoint — Cantor reaffirming buy at $208 — is new since the last update and fits the ongoing below-cost-basis arc.",
+      "draft": {
+        "title": "Cantor keeps its buy on Strategy with a $208 target as the treasury sits underwater",
+        "what_happened": "Cantor Fitzgerald reiterated its buy rating on Strategy and held its $208 price target, standing by the largest corporate bitcoin holder while its bitcoin treasury trades below its average purchase price.",
+        "how_we_got_here": "Strategy's 849,327 BTC slipped 2.3% below its $75,451 average cost basis. The company pushed back by saying its dollar assets cover 3.4 years of interest and dividend payments, and it steered recent spending toward repurchasing STRC preferred shares — $188 million against $82 million of new bitcoin — funded partly by $283.8 million of MSTR stock sales. Amundi, meanwhile, lifted its stake 43.7% with a $72.3 million purchase.",
+        "what_to_watch": "Whether bitcoin climbs back above Strategy's cost basis, how long the spending tilt toward STRC buybacks lasts, and whether other analysts line up with or push back on Cantor's $208 target.",
+        "claims": [
+          {
+            "text": "Cantor Fitzgerald reiterated its buy rating on Strategy with a $208 price target.",
+            "source_item_id": "01a1d06f-ac40-71b1-afaf-c18dbd9f00a4",
+            "source_signal_id": "6c8517ace0e8ada1e203efbc7c278cf3504916855db24695cbb29a20b91269ff"
+          },
+          {
+            "text": "Strategy's bitcoin holdings of 849,327 BTC sat 2.3% below its $75,451 average cost basis.",
+            "source_item_id": "01a1bfb2-8587-7a97-b07c-c7a2aeeee683",
+            "source_signal_id": "c86c92df3a79f9f8c5cc8ce0ab19ecf259810c77a76ec8841eae59cf314898fc"
+          },
+          {
+            "text": "Strategy said its dollar holdings are large enough to fund 3.4 years of interest and dividend payments.",
+            "source_item_id": "01a1c7e8-8b98-715b-80ae-d6a931cad016",
+            "source_signal_id": "86e379fb1799d61dc44096fc566de557d7f46b926175b71cd5b2255ff1ff6e0d"
+          },
+          {
+            "text": "Strategy disclosed $188 million of STRC repurchases alongside $82 million of new bitcoin purchases.",
+            "source_item_id": "01a1c27d-77d6-7ceb-903e-f5c715efa3c0",
+            "source_signal_id": "413ece3521887629512670acd2aafe5e9a71c911f3199e53a0ba2503cd64b163"
+          },
+          {
+            "text": "Strategy raised $283.8 million by selling MSTR common stock.",
+            "source_item_id": "01a1c367-2ba2-7b8d-8da3-47c128b6036c",
+            "source_signal_id": "83f385c9487b1db44e8e7cd5cfa000d1cd690907863f10e8bb3425ba40c7b801"
+          },
+          {
+            "text": "Amundi raised its Strategy stake by 43.7% through a $72.3 million share purchase.",
+            "source_item_id": "01a1c09c-5047-7da5-8383-c68158a26c56",
+            "source_signal_id": "ca59169197bf291c9a993cc3799a5ddb6243abcdd95d2d6071c5cd99d5aa0752"
+          }
+        ]
+      },
+      "word_count": 130,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c7e8-8b98-715b-80ae-d6a931cad016",
+        "title": "Strategy says dollar assets cover 3.4 years of interest and dividend payments",
+        "date": "2026-11-09T23:24:53+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2b-72eb-897d-81b928b88dd2",
+      "slug": "amd",
+      "name": "AMD",
+      "status": "ok",
+      "action": "write",
+      "reason": "A major new commitment — up to $5B into Anthropic tied to a GPU deal — is fresh news not covered by the last Google Cloud update.",
+      "draft": {
+        "title": "AMD to put up to $5 billion into Anthropic alongside a GPU deal",
+        "what_happened": "AMD has agreed to invest up to $5 billion in Anthropic's Class N stock, with the investment paired to a GPU deal between the two companies. The move makes AMD a direct financial backer of one of the leading AI labs while securing a commercial channel for its chips.",
+        "how_we_got_here": "The deal lands on the heels of a strong run for AMD: shares jumped 13% after Google Cloud picked EPYC chips for its TPU 8tx platform, following an 11% close in a broad chip-stock rebound, and the company is targeting $94 billion in revenue by 2027 — right at the doorstep of $100 billion in annual sales.",
+        "what_to_watch": "The details are still thin: the timing and structure of the investment, what the GPU arrangement actually covers, and how Anthropic's commitment fits alongside the Google Cloud EPYC win and that $94 billion revenue target.",
+        "claims": [
+          {
+            "text": "AMD agreed to invest up to $5 billion in Anthropic Class N stock, with the investment paired to a GPU deal between the two companies.",
+            "source_item_id": "01a1d046-6617-7d40-9934-86a5ad81899c",
+            "source_signal_id": "0b58e1424d632d0c68d192ce5c6578b1baaa2ef1da6ee344d312acca612cf243"
+          },
+          {
+            "text": "The move makes AMD a direct financial backer of one of the leading AI labs while securing a commercial channel for its chips.",
+            "source_item_id": "01a1d046-6617-7d40-9934-86a5ad81899c",
+            "source_signal_id": "0b58e1424d632d0c68d192ce5c6578b1baaa2ef1da6ee344d312acca612cf243"
+          },
+          {
+            "text": "AMD shares jumped 13% after Google Cloud picked EPYC chips for its TPU 8tx platform.",
+            "source_item_id": "01a1c8b5-e675-74f3-8074-c4b503f532a3",
+            "source_signal_id": "49df92050e283193f9bd4a854b19430d1ad3a0a0249cfcb8b1d68ea07c9d0b3f"
+          },
+          {
+            "text": "AMD closed up more than 11% in a broad rebound across US chip stocks.",
+            "source_item_id": "01a1b3ae-d3d1-7942-95f4-05bd7ec40af3",
+            "source_signal_id": "7c26f8d46c95c9781bc17b14941cd6be82af9ff15ad46804dbb783bb04bb7716"
+          },
+          {
+            "text": "AMD is targeting $94 billion in revenue by 2027, which would put it near $100 billion in annual sales.",
+            "source_item_id": "01a1bf1c-0ddc-7b84-a3a2-e7d9fa4d646c",
+            "source_signal_id": "12b01e0fc06a8525f8f3f8e960901ee723b8c0ff664a0e0a9180408cdc1cecb7"
+          }
+        ]
+      },
+      "word_count": 141,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c8b5-e675-74f3-8074-c4b503f532a3",
+        "title": "AMD shares jump 13% after Google Cloud taps EPYC chips for TPU 8tx",
+        "date": "2026-11-10T01:13:58+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6c1-7a12-90a3-e4966e56b5e7",
+      "slug": "ubs",
+      "name": "UBS",
+      "status": "ok",
+      "action": "write",
+      "reason": "Concrete new development: UBS now ties its bull case to a specific S&P 500 target of 8,900 for 2027, going beyond the earlier AI-cycle research item.",
+      "draft": {
+        "title": "UBS puts a number on its bull case: S&P 500 at 8,900 by 2027",
+        "what_happened": "UBS put a concrete number and horizon on its market optimism, projecting the S&P 500 will reach 8,900 by 2027. The bank says it is bullish on both earnings and valuations.",
+        "how_we_got_here": "The target extends UBS's recent research line arguing the market underestimates how long the AI investment cycle will last. That analysis also flagged an expected return-on-investment inflection point by 2027.",
+        "what_to_watch": "Still open: whether the earnings strength and AI-cycle inflection UBS expects actually materialize on the timeline it lays out, and how the index travels toward that level.",
+        "claims": [
+          {
+            "text": "UBS projected the S&P 500 will reach 8,900 by 2027.",
+            "source_item_id": "01a1d038-70cb-7c24-bac1-b19d9ddf84a3",
+            "source_signal_id": "de7879c533b10202258fcbb2803faf6db57c1dc64eef40653a4eba4afd74c78c"
+          },
+          {
+            "text": "UBS says it is bullish on both earnings and valuations.",
+            "source_item_id": "01a1d038-70cb-7c24-bac1-b19d9ddf84a3",
+            "source_signal_id": "de7879c533b10202258fcbb2803faf6db57c1dc64eef40653a4eba4afd74c78c"
+          },
+          {
+            "text": "UBS research argues the market underestimates how long the AI investment cycle will last.",
+            "source_item_id": "01a19c41-6f56-7a4f-be38-fcad8dd6e34c",
+            "source_signal_id": "b9df477d0bca9d0ea6d5770c39c09b16ae9be810c03bc01248cb3d8bd990aaf7"
+          },
+          {
+            "text": "UBS expects an inflection point for return on investment by 2027.",
+            "source_item_id": "01a19c41-6f56-7a4f-be38-fcad8dd6e34c",
+            "source_signal_id": "b9df477d0bca9d0ea6d5770c39c09b16ae9be810c03bc01248cb3d8bd990aaf7"
+          }
+        ]
+      },
+      "word_count": 88,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a19c41-6f56-7a4f-be38-fcad8dd6e34c",
+        "title": "A crypto news feed (tokens_xyz/Lookonchain) reports that UBS, in its analysis, argues the market is underestimating how long the AI investment cycle will last, and that the bank expects an inflection ",
+        "date": "2026-11-02T10:46:31+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6c0-7f06-9e59-cbeb194ce19b",
+      "slug": "tokenization-rwa",
+      "name": "Tokenization of real-world assets",
+      "status": "ok",
+      "action": "write",
+      "reason": "A Bitcoin-holding central bank tokenizing a bond while shunning stablecoins is a new, distinct development not covered by the last update.",
+      "draft": {
+        "title": "Bitcoin-holding central bank puts a bond onchain — and skips stablecoins",
+        "what_happened": "A central bank known for holding Bitcoin has tokenized a bond, putting debt onchain while explicitly steering away from stablecoins. It is an early step into tokenized securities by a monetary authority, and a deliberate line between tokenizing individual assets and embracing stablecoins.",
+        "how_we_got_here": "Tokenization activity has broadened quickly in recent days: the first tokenized stock venue launched under the SEC's innovation exemption, tokenized stocks reached $3.74 billion in distributed value, the ECB and EU regulators are converging on a common rulebook for tokenized securities, and Alaska moved from a state-backed platform to tokenizing specific deals like data centers. A central bank entering the picture adds a new kind of issuer to that mix.",
+        "what_to_watch": "Whether other central banks follow with their own tokenized debt, how the Bitcoin-holding bank's onchain bond is treated under securities rules, and whether its stablecoin wariness signals a broader official-sector stance",
+        "claims": [
+          {
+            "text": "A central bank known for holding Bitcoin has tokenized a bond, putting debt onchain.",
+            "source_item_id": "01a1d001-fd0d-79c7-8b6a-641124379877",
+            "source_signal_id": "d647d7c2cc582b95a299b4f7a15de7c53a957f606d2eca582736fff6d8b2a945"
+          },
+          {
+            "text": "The central bank is explicitly steering away from stablecoins.",
+            "source_item_id": "01a1d001-fd0d-79c7-8b6a-641124379877",
+            "source_signal_id": "d647d7c2cc582b95a299b4f7a15de7c53a957f606d2eca582736fff6d8b2a945"
+          },
+          {
+            "text": "The first tokenized stock venue launched under the SEC's innovation exemption.",
+            "source_item_id": "01a1bdfb-17c2-7728-b3fc-6372ec3c9601",
+            "source_signal_id": "975543af728a9d87966a2b90d83f5cd973beec831bc5ead0c30353d7ddebf522"
+          },
+          {
+            "text": "Tokenized stocks have reached $3.74 billion in distributed value.",
+            "source_item_id": "01a1c57d-b75f-744c-9119-c641251a96da",
+            "source_signal_id": "daba7e4ff2f684a8b8dbe2fc58ea17c89404e1bf76e125c6058b6c28c46f1a89"
+          },
+          {
+            "text": "The ECB and EU regulators are working toward a common rulebook for tokenized securities.",
+            "source_item_id": "01a1c28a-bc9d-78c8-835d-81bc23b1b94d",
+            "source_signal_id": "96d9385c6118f1f5fd1f669e1ad7554834996e32082b883c4c3504b1f00d472b"
+          },
+          {
+            "text": "Alaska launched a state-backed tokenization platform and partnered with Plural to tokenize data center investments.",
+            "source_item_id": "01a1c8fa-d4cb-7296-8f75-9bbefbce7092",
+            "source_signal_id": "ab0081691f9b6c6b4bc1b67aa6eccd9740b03073ce87240b0894308d2e03ec26"
+          }
+        ]
+      },
+      "word_count": 144,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c8fa-d4cb-7296-8f75-9bbefbce7092",
+        "title": "Alaska partners with Plural to tokenize data center investments",
+        "date": "2026-11-10T02:03:30+00:00"
+      }
+    }
+  ]
+}

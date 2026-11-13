@@ -1,0 +1,622 @@
+{
+  "run_id": "20261113T122032Z",
+  "started_at": "2026-11-13T12:20:32.475Z",
+  "finished_at": "2026-11-13T12:22:53.326Z",
+  "duration_ms": 140851,
+  "model": "glm-5.3-flash",
+  "snapshot": "artifacts/catch-up-poc/snapshot.json",
+  "window": {
+    "field": "created_at",
+    "since": "2026-11-12T12:20:12.685699+00:00",
+    "until": "2026-11-13T12:20:12.685699+00:00"
+  },
+  "since": null,
+  "limit": 12,
+  "summary": {
+    "entities": 12,
+    "write": 10,
+    "hold": 0,
+    "skip": 2,
+    "errored": 0,
+    "checks_passed": 10,
+    "checks_failed": 0
+  },
+  "results": [
+    {
+      "entity_id": "01a17278-9c14-7336-a1cb-88e987f2b58b",
+      "slug": "gmgn",
+      "name": "GMGN",
+      "status": "ok",
+      "action": "write",
+      "reason": "A new, concrete product development (Clans launch) that the last update's ETH staking story does not cover.",
+      "draft": {
+        "title": "GMGN launches 'Clans' feature with Magnet Gang and Providence among first joiners",
+        "what_happened": "GMGN has rolled out a 'Clans' feature, with Magnet Gang and Providence listed among the first groups to join. It is a new product expansion for the platform.",
+        "how_we_got_here": "The launch lands about a month after an eventful October: on-chain analyst Ai Yi reported that GMGN transferred 11,999.5 ETH to Coinbase's Batch Staking address, following an earlier $16.38 million ETH deposit to a trading platform that had fueled sell-off speculation. That earlier deposit was not established as connected to the staking move.",
+        "what_to_watch": "Whether Clans attracts more groups beyond its first joiners, and how GMGN follows up on pairing product expansion with large treasury moves like October's staking transfer.",
+        "claims": [
+          {
+            "text": "GMGN launched a 'Clans' feature, with Magnet Gang and Providence among the first groups to join.",
+            "source_item_id": "01a1d4c7-f71b-7ec7-a0fb-4ad43eb84a80",
+            "source_signal_id": "acc5e2a6805d10b63bfcd52bdfd4c63583ec06fec693757c0964301f28f37c78"
+          },
+          {
+            "text": "The Clans rollout marks a new product expansion for GMGN.",
+            "source_item_id": "01a1d4c7-f71b-7ec7-a0fb-4ad43eb84a80",
+            "source_signal_id": null
+          },
+          {
+            "text": "According to on-chain analyst Ai Yi, GMGN transferred 11,999.5 ETH to Coinbase's Batch Staking address for staking in early October 2026.",
+            "source_item_id": "01a172d4-7518-7966-85ff-dd01700c2e8a",
+            "source_signal_id": null
+          },
+          {
+            "text": "A week before that staking transfer, GMGN had deposited ETH worth $16.38 million into a trading platform, which prompted speculation about a possible sell-off; the article did not establish whether the deposit was connected.",
+            "source_item_id": "01a172d4-7518-7966-85ff-dd01700c2e8a",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 107,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a172d4-7518-7966-85ff-dd01700c2e8a",
+        "title": "GMGN moves 11,999.5 ETH to Coinbase for staking",
+        "date": "2026-10-06T00:11:34+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-976d-7b85-85ee-c286203641b8",
+      "slug": "crypto-margin-liquidation",
+      "name": "Crypto margin calls and liquidations",
+      "status": "ok",
+      "action": "skip",
+      "reason": "The Nov 9 update already covers the ongoing liquidation wave, and a single $3.42M trader wipeout adds little beyond the individual-position stories already reported earlier in the wave.",
+      "last_update": {
+        "id": "01a1c3d4-cd24-7568-884c-08d1d3a4de28",
+        "title": "$1.187 billion wiped out in 24 hours as crypto liquidations keep climbing",
+        "date": "2026-11-09T15:30:00+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9776-756e-9746-626ba0356cb3",
+      "slug": "fomo",
+      "name": "Fomo",
+      "status": "ok",
+      "action": "write",
+      "reason": "A concrete new product expansion — Solana trading via X cashtags — that the last update (the October phishing warning) does not cover.",
+      "draft": {
+        "title": "Fomo turns X cashtags into a Solana trading entry point",
+        "what_happened": "Fomo has added a route for trading Solana tokens through X's cashtags, plugging its onchain trading app into the $-tags where token chatter and discovery happen on the social platform. The feature pushes Fomo's trading surface beyond its own app, into X itself.",
+        "how_we_got_here": "The move extends a stretch of rapid expansion. In late August, Fomo bought the software and IP of onchain data firm Mobula for $17M as weekly trading volume topped $1B, and its product has been spreading beyond the core app through Fomo Web, Perpetuals and Clans — while its contest with Pump.fun over social token discovery intensified.",
+        "what_to_watch": "How much trading the cashtag route actually attracts is unknown — the news carries no usage figures. Also open: whether the route stays Solana-only or reaches other chains, and whether it deepens the competition with Pump.fun for discovery on social platforms.",
+        "claims": [
+          {
+            "text": "Fomo added a route for trading Solana tokens through X's cashtags.",
+            "source_item_id": "01a1d483-436c-7989-84c0-08e1030bb110",
+            "source_signal_id": "09f3c0faa042cbd60c5b768c82387d49ef342a8759a2f8b804ab8617e56a27ce"
+          },
+          {
+            "text": "Cashtags ($-tags) are where token chatter and discovery happen on X.",
+            "source_item_id": "01a1d483-436c-7989-84c0-08e1030bb110",
+            "source_signal_id": null
+          },
+          {
+            "text": "The feature extends Fomo's trading surface beyond its own app into X itself.",
+            "source_item_id": "01a1d483-436c-7989-84c0-08e1030bb110",
+            "source_signal_id": null
+          },
+          {
+            "text": "Fomo acquired the proprietary software and IP of Mobula in a $17 million deal in late August, with key Mobula team members joining Fomo's engineering organization.",
+            "source_item_id": "01a172ce-d793-7f60-b78e-a736aa906172",
+            "source_signal_id": null
+          },
+          {
+            "text": "Fomo's weekly trading volume topped $1B around the time of the Mobula deal, including a record $1.06 billion weekly figure with $356.56 million from Solana.",
+            "source_item_id": "01a172ce-d793-7f60-b78e-a736aa906172",
+            "source_signal_id": null
+          },
+          {
+            "text": "Fomo's product has broadened beyond its original offering through Fomo Web, Fomo Perpetuals, and the Clans feature.",
+            "source_item_id": "01a172ce-d793-7f60-b78e-a736aa906172",
+            "source_signal_id": null
+          },
+          {
+            "text": "Fomo's rise has intensified its competition with Pump.fun, particularly around SocialFi and memecoin trading.",
+            "source_item_id": "01a172ce-d793-7f60-b78e-a736aa906172",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 141,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a172ce-e92b-7941-95e4-a9b4b42db3c8",
+        "title": "SlowMist's Cos warns of bookmark phishing attacks targeting the FOMO web platform",
+        "date": "2026-10-08T01:10:00+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-976a-72f6-9d81-d0be124aa1cf",
+      "slug": "circle",
+      "name": "Circle",
+      "status": "ok",
+      "action": "write",
+      "reason": "The Global Citizen partnership naming Rwanda as the first USDC pilot is a concrete new step in Circle's emerging-markets push, and the latest held update (USYC treasury shift) does not cover it.",
+      "draft": {
+        "title": "Circle names Rwanda as first stop for USDC payments under Global Citizen deal",
+        "what_happened": "Circle has signed a multi-year partnership with Global Citizen to expand digital finance access across Africa, beginning with a pilot that will roll out USDC payments in Rwanda starting in 2027.",
+        "how_we_got_here": "Circle has been broadening its stablecoin and payments rails toward emerging markets for some time, but this is the first concrete deployment the company has named in that push — turning a general ambition into a specific country and timeline.",
+        "what_to_watch": "Open questions include how users in Rwanda will actually access USDC through the program, whether the 2027 pilot proceeds on schedule, and which other countries get named under the partnership.",
+        "claims": [
+          {
+            "text": "Circle and Global Citizen announced a partnership to expand economic opportunity across Africa through digital financial innovation.",
+            "source_item_id": "01a1d2d9-b77a-7667-b82e-16cae57dac97",
+            "source_signal_id": "1058f2c7d29bafb8237810ecc050312bbccfa2904e60aa90b0b01f92d96100b2"
+          },
+          {
+            "text": "The multi-year Circle-Global Citizen partnership begins with a pilot rolling out USDC payments in Rwanda starting in 2027.",
+            "source_item_id": "01a1d459-faab-7ee2-93c7-555293833a70",
+            "source_signal_id": "ee7b90cafc2fbd795e318048ba44695fdef357ed033884cafdce75fffa1fb894"
+          },
+          {
+            "text": "This is the first concrete deployment named in Circle's effort to bring stablecoin rails into emerging markets.",
+            "source_item_id": "01a1d459-faab-7ee2-93c7-555293833a70",
+            "source_signal_id": null
+          }
+        ]
+      },
+      "word_count": 101,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1ca44-78a7-7b2c-aca7-656626521258",
+        "title": "Circle shifts its USYC fund into longer-dated US Treasury bills",
+        "date": "2026-11-10T04:53:53+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6c3-79ec-9388-46904781f645",
+      "slug": "us-cpi",
+      "name": "US CPI",
+      "status": "ok",
+      "action": "write",
+      "reason": "The actual October CPI print just landed hot, which is new information distinct from the last update that only covered the year-over-year omission announcement.",
+      "draft": {
+        "title": "October CPI comes in hot, and without the year-over-year figures",
+        "what_happened": "October's CPI print landed hotter than expected: headline inflation rose 0.4% and core rose 0.3% month over month, both above forecasts. The report also arrived missing the year-over-year figures traders usually lean on.",
+        "how_we_got_here": "The BLS had flagged the year-over-year omission days before the release, and the print was already set as the centerpiece of the week's macro calendar. Hassett had also tied potential Fed action directly to October inflation, giving the number extra weight.",
+        "what_to_watch": "How markets digest a hot print without the year-over-year gauge they typically watch, and whether the reading feeds expectations that the Fed may act on October inflation.",
+        "claims": [
+          {
+            "text": "October headline CPI rose 0.4% month over month, above forecasts.",
+            "source_item_id": "01a1d44c-2d94-76e2-aee1-64356cce6371",
+            "source_signal_id": "aff3a729ab75d4d67b3cb3c4a40e95e5b02e221365adae6af0594988ee66c6ff"
+          },
+          {
+            "text": "October core CPI rose 0.3% month over month, above forecasts.",
+            "source_item_id": "01a1d44c-2d94-76e2-aee1-64356cce6371",
+            "source_signal_id": "aff3a729ab75d4d67b3cb3c4a40e95e5b02e221365adae6af0594988ee66c6ff"
+          },
+          {
+            "text": "The October CPI report does not include year-over-year inflation figures.",
+            "source_item_id": "01a1c931-5734-7f64-8eb2-f1da8ce4b05b",
+            "source_signal_id": "a0f2b6979e44e0dec083bd41fd22263ec7e9ed9a87334b1f3a34e1eb652f14fc"
+          },
+          {
+            "text": "The October CPI reading was set as the anchor of the week's macro calendar.",
+            "source_item_id": "01a1bac3-b3f3-725a-936f-71a2cd5757d0",
+            "source_signal_id": "7f6480092c1653aa463d12f7208f23117844bbc96505dc01a14da3d370f3c8cb"
+          },
+          {
+            "text": "Hassett said the Federal Reserve may take action if October inflation turns out to be high.",
+            "source_item_id": "01a18d72-2c5f-77fa-82a2-6f65187384e3",
+            "source_signal_id": "f74d0654c06a5b35fa937958b5922a5080721ffd51c956a74a20e365d4393c08"
+          }
+        ]
+      },
+      "word_count": 101,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c931-5734-7f64-8eb2-f1da8ce4b05b",
+        "title": "BLS says October CPI release this week will omit year-over-year inflation figures",
+        "date": "2026-11-10T02:11:45+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2e-73d8-af86-31754a0ff414",
+      "slug": "bitcoin",
+      "name": "Bitcoin",
+      "status": "ok",
+      "action": "write",
+      "reason": "Two genuinely new developments since the last update — a hotter-than-expected September CPI print and a crowded $10B short base near $83K — extend the live down-move story rather than repeating it.",
+      "draft": {
+        "title": "Bitcoin sinks again on hot CPI as $10B of shorts stack near $83K",
+        "what_happened": "September CPI came in hotter than expected and Bitcoin sold off again on the print — a fresh macro hit for a market already sliding toward $74,000. Meanwhile, over $10 billion in leveraged shorts have piled up near $83,000, a crowded short base that could fuel a violent squeeze if price pushes back into that zone.",
+        "how_we_got_here": "BTC lost $75,000 on a $2.1 billion ETF outflow wave — IBIT alone accounted for 78% of the exit — then slid toward $74,000 after Fed's Waller backed a December rate hike. Supply has swelled too: 14 listed companies have sold 108,247 BTC this year, and long-term holders have moved coins at a loss for eight straight days (SOPR 0.94), while wallets holding 1–100 BTC bought 14,207 BTC over two weeks.",
+        "what_to_watch": "Whether ETF outflows extend or cool, how the market weighs the hot inflation print against December rate-hike expectations, and whether the $83,000 short stack powers a squeeze if price climbs back toward it.",
+        "claims": [
+          {
+            "text": "September US CPI inflation came in above expectations and Bitcoin sold off again after the release",
+            "source_item_id": "01a1d415-acb0-71ab-9557-b07350d61bd8",
+            "source_signal_id": "538eebae56a3ee92c8bd9ad7cabb93aef66a2148ceb40551f21e107560db4198"
+          },
+          {
+            "text": "More than $10 billion in leveraged Bitcoin short positions have piled up around the $83,000 level, raising squeeze risk",
+            "source_item_id": "01a1d37e-6789-749a-b7d1-663cef523b00",
+            "source_signal_id": "a637e79a6a26c4bbec9736dd79fbd6458c55f02fc16f3b4c3ed30cb4f5db1df7"
+          },
+          {
+            "text": "Bitcoin lost the $75,000 level amid a $2.1 billion ETF outflow wave, with IBIT accounting for 78% of the withdrawals",
+            "source_item_id": "01a1ce13-3c85-77d1-bae9-e15048014299",
+            "source_signal_id": "7050f0f3e21840f998d83228ecd6db64fb529b250bceef07f1c18393217f85e0"
+          },
+          {
+            "text": "Bitcoin slid toward $74,000 after Fed's Waller backed a December rate hike",
+            "source_item_id": "01a1ce8e-d465-77ac-8c94-e02798c675cb",
+            "source_signal_id": "7038d042c87f9c5cefb22307f60a47b3f5514462fb962f1d0535f26f01a58b3b"
+          },
+          {
+            "text": "Fourteen listed companies have sold 108,247 BTC so far this year, with MARA the largest seller",
+            "source_item_id": "01a1ce4a-45eb-794f-8547-cbc65fbed2c1",
+            "source_signal_id": "bd813fa07f6b1152a0328a7aa1a8d6fe296d80810c46c348635d9f6529a55202"
+          },
+          {
+            "text": "Long-term holders have moved coins at a loss for eight consecutive days, with SOPR at 0.94",
+            "source_item_id": "01a1cca0-7b05-7a80-8e17-1c4fec41c5cb",
+            "source_signal_id": "a6076edd0209b98a2a117a7ef8e503ac8696aa060d749774bd4d553319925553"
+          },
+          {
+            "text": "Wallets holding 1 to 100 BTC have bought 14,207 BTC over the past two weeks",
+            "source_item_id": "01a1cab2-81f4-7f8d-b710-6fbbffa82bd2",
+            "source_signal_id": "b6f419d17e7d0aef85d2ab5154df300027a822098076e0c243d8859498571514"
+          }
+        ]
+      },
+      "word_count": 160,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1ce8e-d465-77ac-8c94-e02798c675cb",
+        "title": "Bitcoin slides toward $74K as Fed's Waller backs a December rate hike",
+        "date": "2026-11-10T10:22:21+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-a6b9-7384-8fd8-935dfe26d82b",
+      "slug": "shiba-inu",
+      "name": "Shiba Inu",
+      "status": "ok",
+      "action": "write",
+      "reason": "Two fresh, concrete developments — a 49% jump in burn rate with a new price level, and a 'Ryoshi' impersonation scam pushing 137 fake tokens — are not covered by the last update on holder counts.",
+      "draft": {
+        "title": "Shiba Inu burn rate jumps 49% as price holds; fake 'Ryoshi' scam tokens circulate",
+        "what_happened": "Shiba Inu's token burn rate climbed 49% while the price holds at $0.00000426, even as broader market pressure persists. Faster burns chip away at circulating supply, the lever the project itself has flagged as the obstacle between SHIB and its price goals. Separately, impostors posing as pseudonymous creator 'Ryoshi' are promoting 137 fraudulent tokens.",
+        "how_we_got_here": "The latest burn push follows a turbulent stretch: a 606% surge in inflows lifted exchange supply to 86 trillion tokens, then the ten largest wallets slowed deposits to roughly 2 billion tokens in a day, and holder counts kept climbing through a severe price correction. The team has publicly tied SHIB's $1 price target to its massive circulating supply.",
+        "what_to_watch": "Whether the faster burn pace makes a visible dent in the 86-trillion-token exchange overhang, whether the $0.00000426 level holds, and how the fake 'Ryoshi' token scheme develops.",
+        "claims": [
+          {
+            "text": "Shiba Inu's token burn rate climbed 49%",
+            "source_item_id": "01a1d415-6c53-716b-acfd-ebdc3a19927f",
+            "source_signal_id": "4842f296618d65c5b974131564f6bb0fb9b2b1ff82f4691d82b343da1347a676"
+          },
+          {
+            "text": "SHIB is holding at $0.00000426 while broader market pressure persists",
+            "source_item_id": "01a1d415-6c53-716b-acfd-ebdc3a19927f",
+            "source_signal_id": "4842f296618d65c5b974131564f6bb0fb9b2b1ff82f4691d82b343da1347a676"
+          },
+          {
+            "text": "Faster burns chip away at circulating supply, which the project has pointed to as the obstacle to its price goals",
+            "source_item_id": "01a1d415-6c53-716b-acfd-ebdc3a19927f",
+            "source_signal_id": "4842f296618d65c5b974131564f6bb0fb9b2b1ff82f4691d82b343da1347a676"
+          },
+          {
+            "text": "Impersonators posing as 'Ryoshi', the pseudonymous figure behind Shiba Inu, are promoting 137 fraudulent tokens",
+            "source_item_id": "01a1d226-bd75-7f8c-bd6d-069368445f9d",
+            "source_signal_id": "0e8af466ec20ccfc95bd268c7319c53a89151b606ed11bec892a5584b337dfd1"
+          },
+          {
+            "text": "A 606% surge in inflows pushed Shiba Inu's exchange supply to 86 trillion tokens",
+            "source_item_id": "01a1c40b-c44b-7466-92d9-b0e864aee980",
+            "source_signal_id": "99b81e62debfbc7c2655a493f720c6395a6637e1abe53c71b0c85a09182a5779"
+          },
+          {
+            "text": "The ten largest Shiba Inu wallets slowed exchange deposits to about 2 billion tokens in 24 hours",
+            "source_item_id": "01a1bb67-e95e-70c9-a222-876903617a53",
+            "source_signal_id": "6ad199a311c547d08afe4b6629c9d41310aa439340f672a3abf8b905eb75d59f"
+          },
+          {
+            "text": "Shiba Inu's holder count climbed during a severe price correction",
+            "source_item_id": "01a1c547-a118-70ad-98be-13b3d9003151",
+            "source_signal_id": "cf74d02495892246a2a65aae7a458278361ada0ea3ef3c192e207183a5e2959d"
+          },
+          {
+            "text": "The Shiba Inu team publicly tied its $1 price target to the token's massive circulating supply",
+            "source_item_id": "01a1b309-fff9-7982-977c-e491f2d9977a",
+            "source_signal_id": "cca498bd0b532dafda93b52b03dc27607d01564a028ba50f1be867b5db331131"
+          }
+        ]
+      },
+      "word_count": 140,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c547-a118-70ad-98be-13b3d9003151",
+        "title": "Shiba Inu holder count surges even as the token suffers a severe price correction",
+        "date": "2026-11-09T17:43:31+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9c15-792a-9e74-77502a93cb61",
+      "slug": "google",
+      "name": "Google",
+      "status": "ok",
+      "action": "write",
+      "reason": "The newly added Gemini for healthcare launch is a distinct, concrete product move not covered by the last Signal Protocol update, and it lands amid a heavy run of chip and compute news worth tying together.",
+      "draft": {
+        "title": "Google Cloud launches Gemini for healthcare",
+        "what_happened": "Google Cloud has launched Gemini for healthcare, a dedicated offering built to handle both clinical and administrative work in medical settings. The launch turns Gemini into a vertical product aimed at one of the most paper-heavy sectors AI vendors are chasing.",
+        "how_we_got_here": "The past week's Google news has been dominated by chips and compute: TPU supply is sold out with two more chip versions planned for 2027, a new Nvidia-challenging chip has a reported OpenAI order on the way, Gemini models are helping design Google's own chips faster, and Google committed $17 billion to the Wyoming data center project it acquired from Crusoe. The healthcare launch shows Gemini also being pushed into industry-specific territory beyond the infrastructure race.",
+        "what_to_watch": "The launch news leaves open how the offering will handle regulated clinical data, which health systems adopt it early, and whether healthcare becomes the template Gemini follows into other industries.",
+        "claims": [
+          {
+            "text": "Google Cloud launched Gemini for healthcare, aimed at handling both clinical and administrative work in medical settings.",
+            "source_item_id": "01a1d3ec-45ab-7f04-827b-dc3a81e7af2b",
+            "source_signal_id": "2377d9147df493a172ddd949b8ade5f1d33c6f8004ff97e6b4515aa789461874"
+          },
+          {
+            "text": "The launch makes Gemini a dedicated vertical offering in one of the biggest, most paper-heavy sectors AI vendors are chasing.",
+            "source_item_id": "01a1d3ec-45ab-7f04-827b-dc3a81e7af2b",
+            "source_signal_id": "2377d9147df493a172ddd949b8ade5f1d33c6f8004ff97e6b4515aa789461874"
+          },
+          {
+            "text": "Google's entire available TPU supply is already contracted, with two more chip versions planned for 2027.",
+            "source_item_id": "01a1c442-ff73-79fe-b1e4-30865469f16b",
+            "source_signal_id": "a5b1223d39e0b65455e1bf6db560305f95a8317d53a95623455855fc3760088c"
+          },
+          {
+            "text": "Google has unveiled a new AI chip positioned as a direct challenger to Nvidia, and OpenAI is reportedly planning to procure it.",
+            "source_item_id": "01a1c1d8-332d-7722-9a82-a73c006d5b21",
+            "source_signal_id": "19248a96d4064a0b8a40803b6e6367da66a4c7d2244fe25919da78650c85175a"
+          },
+          {
+            "text": "Google says its Gemini models are helping design the company's own AI chips faster.",
+            "source_item_id": "01a1c57e-c8ea-7585-833c-d136316ae73a",
+            "source_signal_id": "d14c3100aac2ed6cdcaf69a3d0921ab58698c16c06873d8ad445f18eb8305d5a"
+          },
+          {
+            "text": "Google plans to invest $17 billion to take over development of the Wyoming data center project it bought from Crusoe.",
+            "source_item_id": "01a1b453-c862-7616-b467-dc554f646c77",
+            "source_signal_id": "419b5d0dd33a79bb84731a1a757d2d5686d1fb7c7f390f5fb904b5fa8d073b95"
+          }
+        ]
+      },
+      "word_count": 147,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1ce8f-39be-7cad-bc3b-7c3efb6f73e4",
+        "title": "Google's AI proves the Signal Protocol in four weeks, finds flaws in old versions",
+        "date": "2026-11-10T10:11:57+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-8e2f-72da-ad13-90037e5879f5",
+      "slug": "blackrock",
+      "name": "BlackRock, Inc.",
+      "status": "ok",
+      "action": "write",
+      "reason": "A fresh deposit brings net ETH outflows to nearly 791,800 since October — a new quantified milestone that the last update (ETF conversions on Nov 9) does not cover.",
+      "draft": {
+        "title": "BlackRock's Ether exits near 791,800 coins since October",
+        "what_happened": "BlackRock deposited another 72,200 ETH to Coinbase Prime, taking net ETH outflows since October to nearly 791,800. The steady stream of deposits lands amid heavy redemptions from the firm's Ethereum ETF, keeping ETH selling-pressure concerns on the table.",
+        "how_we_got_here": "This has been a relentless stretch. Wallets linked to BlackRock moved 580,145 ETH earlier in November as its ETHA fund logged $1.42 billion in October outflows, and the next day it also shifted 5,320 BTC and 40,000 ETH to Coinbase. Its IBIT Bitcoin fund led early-November outflows of $398 million, the largest exit since June, while billions in crypto ETF conversions — with security fears cited — added a new twist to the outflow story.",
+        "what_to_watch": "Whether the deposits to Coinbase slow down or keep building, and whether the security-fears conversion theme offsets ETF redemptions or confirms a sustained pullback in institutional crypto appetite.",
+        "claims": [
+          {
+            "text": "BlackRock deposited 72,200 ETH to Coinbase Prime on Nov 10, 2026",
+            "source_item_id": "01a1d3b5-5552-78e4-b989-503985680985",
+            "source_signal_id": "ddc39d3727e051e1de5b1fc1e81fcec84c48c366373d42e320492f4fdf506e9d"
+          },
+          {
+            "text": "Net ETH outflows from BlackRock since October total nearly 791,800 ETH",
+            "source_item_id": "01a1d3b5-5552-78e4-b989-503985680985",
+            "source_signal_id": "ddc39d3727e051e1de5b1fc1e81fcec84c48c366373d42e320492f4fdf506e9d"
+          },
+          {
+            "text": "The continued deposits land amid heavy redemptions from BlackRock's Ethereum ETF",
+            "source_item_id": "01a1d3b5-5552-78e4-b989-503985680985",
+            "source_signal_id": "ddc39d3727e051e1de5b1fc1e81fcec84c48c366373d42e320492f4fdf506e9d"
+          },
+          {
+            "text": "Wallets linked to BlackRock transferred 580,145 ETH in early November",
+            "source_item_id": "01a1a057-23c0-7646-8066-d6c553e80865",
+            "source_signal_id": "85308dafe5f52b93929f932c25bffce5ca4dc5b9f49ef37c312835a5b01360a0"
+          },
+          {
+            "text": "BlackRock's spot Ethereum ETF (ETHA) recorded $1.42 billion in October outflows",
+            "source_item_id": "01a1a057-23c0-7646-8066-d6c553e80865",
+            "source_signal_id": "85308dafe5f52b93929f932c25bffce5ca4dc5b9f49ef37c312835a5b01360a0"
+          },
+          {
+            "text": "BlackRock transferred 5,320 BTC and 40,000 ETH to Coinbase on Nov 9",
+            "source_item_id": "01a1c1e5-af04-7106-863b-248214f78872",
+            "source_signal_id": "2fc241d09e169e44d28c2afbeceb7241fae1ae1980b6c870cc893235bf1f3664"
+          },
+          {
+            "text": "BlackRock's IBIT led $398 million in Bitcoin ETF outflows, the largest exit since June",
+            "source_item_id": "01a1a133-3f50-7324-86ee-2e52e71ea55e",
+            "source_signal_id": "aebe990b6a41a78998b05ece60011cdbfe2776903836422739e529191649ecdc"
+          },
+          {
+            "text": "BlackRock is seeing billions of dollars in crypto ETF conversions, with security fears cited as the reason",
+            "source_item_id": "01a1c28b-363b-7aec-a9df-a18bf9aa318e",
+            "source_signal_id": "29ca9e85417bb49a53d2024f0a665ad9e93170075254d63140fa3ed0d9de85f1"
+          }
+        ]
+      },
+      "word_count": 141,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1c28b-363b-7aec-a9df-a18bf9aa318e",
+        "title": "BlackRock crypto ETFs see billions in conversions as security fears drive the trade",
+        "date": "2026-11-09T13:43:46+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-acb3-7e03-8163-be93490bb139",
+      "slug": "us-jobs-report-nfp",
+      "name": "US Jobs Report (NFP)",
+      "status": "ok",
+      "action": "skip",
+      "reason": "A single small ADP weekly reading (19,750 vs 16,750) is noise that does not advance the story the November 7 update already covered with the blowout October payrolls report.",
+      "last_update": {
+        "id": "01a1b3af-1587-7370-ae78-46ca4e61b7b3",
+        "title": "October jobs report adds 165,000 as dollar logs biggest daily gain in nearly five months",
+        "date": "2026-11-07T01:02:24+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-acca-7485-b53c-cae1761a1fcd",
+      "slug": "xrp",
+      "name": "XRP",
+      "status": "ok",
+      "action": "write",
+      "reason": "A new, specific bullish counterpoint (analyst's $2.90 target on a forming RSI divergence) that the last update, which covered the funding spike and ETF outflow, does not address.",
+      "draft": {
+        "title": "Analyst maps $2.90 XRP path as a bullish RSI divergence forms against a bearish backdrop",
+        "what_happened": "A closely followed analyst projects a recovery toward $2.90 for XRP as a bullish RSI divergence takes shape on the chart — a rare bullish counterpoint to the whale deposits, liquidations, and ETF outflows that have pushed the token back toward $1.",
+        "how_we_got_here": "XRP's grind down from September's highs has been defined by supply flows: whales bought 16.46 million XRP over five days just before roughly $900 million in tokens landed on Binance, the exchange's hacker moved 139 million XRP, $38.8 million in long positions were liquidated in 24 hours, and US spot ETFs swung to a $10.4 million outflow as Binance funding hit a one-year high. Some big holders have been buying too, including a $167 million purchase during the slide.",
+        "what_to_watch": "Whether the divergence plays out against the overhang — where the hacker's 139 million XRP surfaces, whether the ~$900 million Binance deposit is sold or absorbed, and any shift in ETF flows as $1.25 resistance and the $1 level get tested.",
+        "claims": [
+          {
+            "text": "A closely followed analyst projects a recovery toward $2.90 for XRP as a bullish RSI divergence forms",
+            "source_item_id": "01a1d37e-22eb-76c1-ab82-15a1dada3c63",
+            "source_signal_id": "9a8ca12cd4fc5f2a128bc190063969bf9edd0006c35b9a5cd92221851f99a022"
+          },
+          {
+            "text": "XRP has been fighting to hold the $1 level",
+            "source_item_id": "01a1cc5b-d6f3-75e9-9e36-30b92f00d85c",
+            "source_signal_id": "b95e235ea56689c743c96b1072cbf10c152b01837c6589b33f255426d0d00c9d"
+          },
+          {
+            "text": "Whales bought 16.46 million XRP over five days just before roughly $900 million in XRP flowed into Binance",
+            "source_item_id": "01a1c968-69b0-7213-a9cd-ba8cab450a41",
+            "source_signal_id": "5f5fdce9aaa1871cf8ca8693d408a43501e77aed844a5dab3e9a59e5637a5929"
+          },
+          {
+            "text": "The Binance exploiter moved 139 million XRP as the token presses toward $1",
+            "source_item_id": "01a1c4d9-2bb7-7117-a814-5b11b571d9fa",
+            "source_signal_id": "eae5c450d5b37c5559a7cbc48890eaf291538331febd2cf511ebcb9eeaf9adf7"
+          },
+          {
+            "text": "Roughly $38.8 million in XRP long positions were liquidated over 24 hours",
+            "source_item_id": "01a1c622-a6ec-75a6-af95-501528844f58",
+            "source_signal_id": "c96173c836556f45613877c000a4083a978411c1c372ecddf5306bd9c25824f5"
+          },
+          {
+            "text": "US spot XRP ETFs logged $10.4 million in net outflows",
+            "source_item_id": "01a1cc5b-d6f3-75e9-9e36-30b92f00d85c",
+            "source_signal_id": "b95e235ea56689c743c96b1072cbf10c152b01837c6589b33f255426d0d00c9d"
+          },
+          {
+            "text": "Binance's XRP perpetual futures funding rate hit a one-year high",
+            "source_item_id": "01a1cc5b-d6f3-75e9-9e36-30b92f00d85c",
+            "source_signal_id": "b95e235ea56689c743c96b1072cbf10c152b01837c6589b33f255426d0d00c9d"
+          },
+          {
+            "text": "A whale bought $167 million worth of XRP while the price was falling",
+            "source_item_id": "01a1c39d-bd0f-74dc-bcdd-d367a1041cb5",
+            "source_signal_id": "dd66b843aee13bfd93981e561295aa3188c965483cebc38a5a3edd1b812d08ef"
+          },
+          {
+            "text": "$1.25 is viewed as the resistance level for XRP to push through",
+            "source_item_id": "01a1c622-a6ec-75a6-af95-501528844f58",
+            "source_signal_id": "c96173c836556f45613877c000a4083a978411c1c372ecddf5306bd9c25824f5"
+          },
+          {
+            "text": "XRP has been grinding down from September's highs",
+            "source_item_id": "01a1c622-a6ec-75a6-af95-501528844f58",
+            "source_signal_id": "c96173c836556f45613877c000a4083a978411c1c372ecddf5306bd9c25824f5"
+          }
+        ]
+      },
+      "word_count": 162,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cc5b-d6f3-75e9-9e36-30b92f00d85c",
+        "title": "Binance XRP funding rate hits a one-year high while spot XRP ETFs log $10.4M outflow",
+        "date": "2026-11-10T07:25:55+00:00"
+      }
+    },
+    {
+      "entity_id": "01a17278-9772-7dcd-95f8-014206852d93",
+      "slug": "ethereum",
+      "name": "Ethereum",
+      "status": "ok",
+      "action": "write",
+      "reason": "Two concrete, later-timed developments — BlackRock's $151.4M ETH deposit lifting cumulative outflows to $1.74B, and a 9-month-dormant whale pulling 10,000 ETH off Binance — deepen the sell-off story and add an accumulation counter-signal the last update does not cover.",
+      "draft": {
+        "title": "BlackRock sends $151.4M of ETH to Coinbase as outflows hit $1.74B — while a dormant whale pulls 10,000 ETH off Binance",
+        "what_happened": "BlackRock deposited 72,212 ETH worth $151.4 million to Coinbase, pushing cumulative net outflows since Oct. 1 to $1.74 billion. The deposit lands as Ether trades below $2,100 after a $432 million liquidation wave. Countering that sell pressure, a wallet dormant for nine months withdrew 10,000 ETH from Binance.",
+        "how_we_got_here": "Ether broke under $2,100 — down 2.24% intraday — and a $432 million liquidation cascade put its $2,000 support level in question. Earlier in the slide, a year-dormant address bought $5.4 million of ETH in a bottom-fishing bet, and exchange withdrawals like the 10,000 ETH pull are typically read as holding or accumulation rather than imminent selling.",
+        "what_to_watch": "Whether the $2,000 level holds if institutional outflows persist, whether the whale withdrawal marks the start of more large-holder accumulation against the outflow tide, and how BlackRock's ETH positioning evolves from here.",
+        "claims": [
+          {
+            "text": "BlackRock deposited 72,212 ETH worth $151.4 million to Coinbase",
+            "source_item_id": "01a1d2d9-43d0-7b38-a923-580a67c7517f",
+            "source_signal_id": "399af6f924cdec0f6f76b09ae0608a8be4aaca689c904044eb1039d92497507a"
+          },
+          {
+            "text": "Cumulative net ETH outflows since Oct. 1 have reached $1.74 billion",
+            "source_item_id": "01a1d2d9-43d0-7b38-a923-580a67c7517f",
+            "source_signal_id": "399af6f924cdec0f6f76b09ae0608a8be4aaca689c904044eb1039d92497507a"
+          },
+          {
+            "text": "Ether trades below $2,100",
+            "source_item_id": "01a1cd6e-41f3-79e0-ac8e-70c307ad2e65",
+            "source_signal_id": "e6b1697b30e1e06f5779da26cb7433525a713bf816f92ef1162c47681e4c153f"
+          },
+          {
+            "text": "A $432 million liquidation wave hit Ether, raising doubts about its $2,000 support level",
+            "source_item_id": "01a1cf5c-f43c-7da6-a515-00e4b2949a69",
+            "source_signal_id": "06d346c6c0a386e0c5cb0c2b96560d8a1290f5a6d5c92f7c19be968d7dad5778"
+          },
+          {
+            "text": "A wallet dormant for nine months withdrew 10,000 ETH from Binance",
+            "source_item_id": "01a1d370-7ff6-7adc-b7ca-afbf11e76eee",
+            "source_signal_id": "5be9fdd1073e591a632f59e49b459b05c7ae6c36a2e4a465e5cecb68b8689962"
+          },
+          {
+            "text": "Ether fell below $2,100, down 2.24% intraday",
+            "source_item_id": "01a1cd6e-41f3-79e0-ac8e-70c307ad2e65",
+            "source_signal_id": "e6b1697b30e1e06f5779da26cb7433525a713bf816f92ef1162c47681e4c153f"
+          },
+          {
+            "text": "An address dormant for a year bought $5.4 million of ETH in a bottom-fishing bet",
+            "source_item_id": "01a1cdb3-41c1-78d2-9156-44ee8d9be73b",
+            "source_signal_id": "bad1835b949873602b18e14710c5a510ce1a18e7919bb472e3fcf0e5b298b35d"
+          },
+          {
+            "text": "Exchange withdrawals like the 10,000 ETH pull are typically read as holding or accumulation rather than imminent selling",
+            "source_item_id": "01a1d370-7ff6-7adc-b7ca-afbf11e76eee",
+            "source_signal_id": "5be9fdd1073e591a632f59e49b459b05c7ae6c36a2e4a465e5cecb68b8689962"
+          }
+        ]
+      },
+      "word_count": 137,
+      "check_status": "passed",
+      "check_failures": [],
+      "last_update": {
+        "id": "01a1cf5c-f43c-7da6-a515-00e4b2949a69",
+        "title": "$432M liquidation shock puts ETH's $2,000 support level at risk",
+        "date": "2026-11-10T11:00:24+00:00"
+      }
+    }
+  ]
+}
