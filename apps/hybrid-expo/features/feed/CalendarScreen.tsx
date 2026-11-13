@@ -88,7 +88,9 @@ export default function CalendarScreen() {
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
         <Text accessibilityRole="header" style={styles.barLabel}>Calendar</Text>
-        <View style={styles.barSpacer} />
+        <Pressable accessibilityRole="link" accessibilityLabel="Markets now" onPress={() => router.push('/markets-now')} style={styles.marketsLink}>
+          <Text style={styles.marketsLinkLabel}>Markets →</Text>
+        </Pressable>
       </View>
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -124,8 +126,8 @@ export default function CalendarScreen() {
           </Pressable>
         </View>
         <View style={styles.weekdayRow}>
-          {WEEKDAYS.map((weekday) => (
-            <Text key={weekday} style={styles.weekday}>{weekday}</Text>
+          {WEEKDAYS.map((weekday, index) => (
+            <Text key={`${weekday}-${index}`} style={styles.weekday}>{weekday}</Text>
           ))}
         </View>
         {grid.map((row, rowIndex) => (
@@ -250,8 +252,14 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  barSpacer: {
-    width: 32,
+  marketsLink: { minHeight: 44, justifyContent: 'center', paddingLeft: 12 },
+  marketsLinkLabel: {
+    color: FEED_TOKENS.colors.accent,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    fontWeight: '600',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
   pressed: {
     opacity: 0.76,

@@ -51,8 +51,19 @@ export function WalletsSlide({ active, refreshVersion }: WalletsSlideProps) {
   }, null);
   const sheetRow = sheetAddress ? rows.find((row) => row.address === sheetAddress) ?? null : null;
 
+  const boardOpen = !(usable && top && latestRow);
   return (
     <View>
+      {boardOpen ? (
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="Open smart wallet leaderboard"
+          onPress={() => router.push('/wallets')}
+          style={[styles.linkTouch, { alignSelf: 'flex-end' }]}
+        >
+          <Text style={styles.link}>Leaderboard →</Text>
+        </Pressable>
+      ) : null}
       {section.loading && !data ? <FeedSectionState title="Loading wallet activity…" loading /> : null}
       {section.error && !data ? (
         <FeedSectionState title="Activity refresh failed" text="Wallet activity could not be loaded." onRetry={() => { void section.load(); }} />
