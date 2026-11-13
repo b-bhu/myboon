@@ -6,7 +6,6 @@ import {
   isOfflineMessage,
   mosaicPages,
   placeMosaicTiles,
-  rankStories,
   topicMarket,
 } from './feed-mosaic';
 import type { StorySummary } from './feed.types';
@@ -20,16 +19,6 @@ const story = (slug: string, eventCount: number, name = slug): StorySummary => (
   imageUrl: null,
   imageKind: null,
   imageAttribution: null,
-});
-
-test('rankStories orders by event count, then recency, then slug', () => {
-  const ranked = rankStories([
-    story('small', 2),
-    { ...story('older', 9), updatedAt: '2026-10-01T00:00:00.000Z' },
-    { ...story('newer', 9), updatedAt: '2026-10-20T00:00:00.000Z' },
-    story('big', 40),
-  ]);
-  assert.deepEqual(ranked.map((item) => item.storySlug), ['big', 'newer', 'older', 'small']);
 });
 
 function emptyCells(placed: ReturnType<typeof placeMosaicTiles>): number {
@@ -60,7 +49,31 @@ test('mosaic pages fill the grid for 1–10 stories and keep a short last page s
   assert.equal(pages[1]?.placements[0]?.colSpan, 3);
   assert.equal(pages[1]?.placements[0]?.rowSpan, 2);
   const dozen = mosaicPages(Array.from({ length: 12 }, (_, index) => index));
-  assert.ok(dozen[1]?.placements.every((tile) => tile.rowSpan === 2));
+  assert.equal(dozen[1]?.items.length, 2);
+  assert.equal(emptyCells(dozen[1]?.placements ?? []), 0);
+});
+
+test('mosaicPages keeps API order and pages twelve stories as ten then two', () => {
+  const quietFirst = [story('quiet-new', 1), story('loud-old', 99)];
+  assert.deepEqual(
+    mosaicPages(quietFirst)[0]?.items.map((item) => item.storySlug),
+    ['quiet-new', 'loud-old'],
+  );
+
+  const dozen = Array.from({ length: 12 }, (_, index) => story(`topic-${index}`, 12 - index));
+  const pages = mosaicPages(dozen);
+  assert.equal(pages.length, 2);
+  assert.equal(pages[0]?.items.length, 10);
+  assert.equal(pages[0]?.placements.length, 10);
+  assert.equal(pages[0]?.placements[0]?.kind, 'large');
+  assert.equal(pages[0]?.placements[0]?.index, 0);
+  assert.equal(pages[1]?.items.length, 2);
+  assert.equal(pages[1]?.placements.length, 2);
+  assert.deepEqual(
+    pages.flatMap((page) => page.items.map((item) => item.storySlug)),
+    dozen.map((item) => item.storySlug),
+  );
+  assert.equal(emptyCells(pages[1]?.placements ?? []), 0);
 });
 
 test('topicMarket matches exact slugs and ignores words in the name', () => {

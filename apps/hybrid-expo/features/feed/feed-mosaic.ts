@@ -1,9 +1,8 @@
 import type { PhoenixCandleInterval } from '@/features/perps/phoenix.api';
-import type { StorySummary } from './feed.types';
 
 /**
  * Topic mosaic layout and the topic-to-market table for issue #615.
- * Tile size follows event count (the activity field the stories API returns).
+ * The first story, the newest one the API returns, gets the large tile.
  * A pinned action appears only for an exact story slug in the market table.
  * Unknown topics get no action and no chart.
  */
@@ -66,15 +65,6 @@ const MARKET_BY_SLUG: Readonly<Record<string, TopicMarketLink>> = {
     note: 'Oil is the market most tied to this story.',
   },
 };
-
-/** Largest event count first. That is the stand-in for 24h activity, which the API does not return. */
-export function rankStories(stories: readonly StorySummary[]): StorySummary[] {
-  return stories.slice().sort((a, b) => (
-    b.eventCount - a.eventCount
-    || Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
-    || a.storySlug.localeCompare(b.storySlug)
-  ));
-}
 
 interface TileSpec {
   colSpan: number;
@@ -171,8 +161,9 @@ export function mosaicPages<T>(items: readonly T[]): MosaicPage<T>[] {
   const pages: MosaicPage<T>[] = [];
   for (let index = 0; index < pageCount; index += 1) {
     const slice = items.slice(index * MOSAIC_PAGE_SIZE, (index + 1) * MOSAIC_PAGE_SIZE);
-    const laterShort = pageCount > 1 && index > 0 && slice.length <= 2;
-    pages.push({ items: slice, placements: placeMosaicTiles(slice.length, { stretch: !laterShort }) });
+    // A single leftover stays lead-sized. Two tiles use the full 2-tile layout.
+    const loneLeftover = pageCount > 1 && index > 0 && slice.length === 1;
+    pages.push({ items: slice, placements: placeMosaicTiles(slice.length, { stretch: !loneLeftover }) });
   }
   return pages;
 }
