@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { applySqlFile, createThrowawayDatabase, ROLLBACKS_DIR, type ThrowawayDatabase } from '../../atlas-schema/src/index.js';
 import type { Llm } from './clients.js';
-import { NO_ENTITY_PARK_REASON, runOnce } from './worker.js';
+import { MISSING_SCOPED_CLAIM_MSG, NO_ENTITY_PARK_REASON, oldestReadyEntityAgeMinutes, runOnce } from './worker.js';
 
 const ADMIN_URL = process.env.EM_TEST_ADMIN_URL?.trim() ?? '';
 const ROLLBACK = '20261113190000_atlas_em_claim_scoped.down.sql';
@@ -106,6 +106,17 @@ describe.skipIf(ADMIN_URL === '')('#621 em_claim_scoped (local Postgres)', () =>
     expect(await claim('entity')).toBe(id);
   });
 
+  it('lag signal: age of the oldest ready pending row with an entity; ignores no-entity, deferred and claimed rows', async () => {
+    expect(await oldestReadyEntityAgeMinutes(worker)).toBeNull();
+    await seed('null', 500);
+    await seed('entity', 90, { nextAttemptInMinutes: 60 });
+    const age = await oldestReadyEntityAgeMinutes(worker);
+    expect(age).toBeNull();
+    await seed('entity', 150);
+    await seed('entity', 30);
+    expect(await oldestReadyEntityAgeMinutes(worker)).toBe(150);
+  });
+
   it('an invalid scope raises and claims nothing', async () => {
     await seed('entity', 30);
     await expect(claim('everything')).rejects.toThrow(/scope must be entity or no_entity/);
@@ -166,6 +177,9 @@ describe.skipIf(ADMIN_URL === '')('#621 em_claim_scoped (local Postgres)', () =>
   it('the rollback removes the function and leaves atlas.em_claim working; the migration can be applied again', async () => {
     await applySqlFile(db.url, join(ROLLBACKS_DIR, ROLLBACK));
     await expect(claim('entity')).rejects.toThrow(/em_claim_scoped/);
+    const llm: Llm = async () => { throw new Error('model must not be called'); };
+    await expect(runOnce({ pool: worker, llm, worker: 'w', limit: 5, scope: 'entity', log: () => {} })).rejects.toThrow(MISSING_SCOPED_CLAIM_MSG);
+    expect((await runOnce({ pool: worker, llm, worker: 'w', limit: 0, log: () => {} })).claimed).toBe(0); // flag off path still runs
     await seed('null', 10);
     expect((await worker.query('select * from atlas.em_claim($1)', ['w'])).rows).toHaveLength(1);
     await applySqlFile(db.url, MIGRATION);

@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import type { Llm } from './clients.js';
-import { claimQuery, NO_ENTITY_PARK_REASON, runOnce, type WorkerDeps } from './worker.js';
+import { claimQuery, lagWarning, MISSING_SCOPED_CLAIM_MSG, NO_ENTITY_PARK_REASON, oldestReadyEntityAgeMinutes, runOnce, type WorkerDeps } from './worker.js';
 
 type Call = { sql: string; params: unknown[] };
 
@@ -117,5 +117,42 @@ describe('#621 stale no-entity handoffs are parked for good', () => {
     const sum = await runOnce(deps(pool, {}));
     expect(sum).toMatchObject({ claimed: 2, deferred_no_entity: 2, parked_stale_no_entity: 0 });
     expect(parks(calls)).toHaveLength(0);
+  });
+});
+
+describe('#621 missing migration with the flag on', () => {
+  const missingFn = { async query() { throw Object.assign(new Error('function atlas.em_claim_scoped(unknown, unknown, interval, integer) does not exist'), { code: '42883' }); } } as unknown as pg.Pool;
+
+  it('a scoped run stops once with a clear error naming the migration, instead of failing each claim', async () => {
+    await expect(runOnce(deps(missingFn, { scope: 'entity' }))).rejects.toThrow(MISSING_SCOPED_CLAIM_MSG);
+    expect(MISSING_SCOPED_CLAIM_MSG).toContain('20261113190000_atlas_em_claim_scoped.sql');
+  });
+
+  it('other claim errors are passed through unchanged', async () => {
+    const boom = { async query() { throw Object.assign(new Error('connection reset'), { code: '08006' }); } } as unknown as pg.Pool;
+    await expect(runOnce(deps(boom, { scope: 'entity' }))).rejects.toThrow('connection reset');
+  });
+
+  it('flag off never calls em_claim_scoped, even when the function is missing', async () => {
+    const { pool, calls } = fakePool(3);
+    await runOnce(deps(pool, {}));
+    expect(calls.some((c) => c.sql.includes('em_claim_scoped'))).toBe(false);
+  });
+});
+
+describe('#621 lag signal', () => {
+  it('lagWarning: silent at or under the threshold and when nothing is ready, a WARN line over it', () => {
+    expect(lagWarning(null, 120)).toBeNull();
+    expect(lagWarning(120, 120)).toBeNull();
+    expect(lagWarning(45, 120)).toBeNull();
+    expect(lagWarning(121, 120)).toMatchObject({ level: 'warn', event: 'em_lag_warn', oldest_ready_entity_age_min: 121, threshold_min: 120 });
+    expect(lagWarning(121, 120)!.msg).toMatch(/121 min behind.*120 min threshold/);
+    expect(lagWarning(121, 180)).toBeNull();
+  });
+
+  it('oldestReadyEntityAgeMinutes: rounds the database age, null when no row is ready', async () => {
+    const db = (age: string | null) => ({ async query() { return { rows: [{ age }] }; } }) as never;
+    expect(await oldestReadyEntityAgeMinutes(db('125.4'))).toBe(125);
+    expect(await oldestReadyEntityAgeMinutes(db(null))).toBeNull();
   });
 });

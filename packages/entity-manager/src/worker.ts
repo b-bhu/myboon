@@ -115,6 +115,25 @@ export async function apply(pool: pg.Pool, c: Claim, h: AnalystHandoff, entity: 
   }
 }
 
+export const MISSING_SCOPED_CLAIM_MSG =
+  'atlas.em_claim_scoped does not exist: apply supabase/migrations/20261113190000_atlas_em_claim_scoped.sql (DB Guy) before turning ENTITY_MANAGER_CLAIM_ENTITY_ONLY or ENTITY_MANAGER_RETRY_ENABLED on; nothing was claimed';
+
+/** #621 lag signal: age in minutes of the oldest ready pending handoff that has an entity, or null when there is none. */
+export async function oldestReadyEntityAgeMinutes(db: Q): Promise<number | null> {
+  const r = await db.query<{ age: string | null }>(
+    `select extract(epoch from now() - min(created_at)) / 60 as age from atlas.decisions
+      where em_status = 'pending' and em_next_attempt_at <= now() and jsonb_typeof(handoff -> 'entity') = 'object'`,
+  );
+  const age = r.rows[0]?.age;
+  return age == null ? null : Math.round(Number(age));
+}
+
+/** The WARN line when the oldest ready entity row is older than `thresholdMinutes`; null otherwise. */
+export function lagWarning(ageMinutes: number | null, thresholdMinutes: number): Record<string, unknown> | null {
+  if (ageMinutes === null || ageMinutes <= thresholdMinutes) return null;
+  return { level: 'warn', event: 'em_lag_warn', oldest_ready_entity_age_min: ageMinutes, threshold_min: thresholdMinutes, msg: `entity manager is ${ageMinutes} min behind (oldest ready row with an entity), over the ${thresholdMinutes} min threshold` };
+}
+
 /** Claim SQL: no scope is the #593 atlas.em_claim (unchanged); a scope uses atlas.em_claim_scoped (#621). */
 export function claimQuery(scope: ClaimScope | undefined): string {
   return scope === undefined
@@ -130,7 +149,14 @@ export async function runOnce(deps: WorkerDeps): Promise<RunSummary> {
   for (let i = 0; i < deps.limit; i++) {
     const params: unknown[] = [deps.worker, deps.leaseSeconds ?? 300];
     if (deps.scope !== undefined) params.push(deps.scope);
-    const r = await deps.pool.query<Claim>(claimQuery(deps.scope), params);
+    let r: pg.QueryResult<Claim>;
+    try {
+      r = await deps.pool.query<Claim>(claimQuery(deps.scope), params);
+    } catch (e) {
+      // 42883 undefined_function: the flag is on but the migration is not applied. Stop the run once, loudly (never reached with the flag off).
+      if (deps.scope !== undefined && (e as { code?: string }).code === '42883') throw new Error(MISSING_SCOPED_CLAIM_MSG);
+      throw e;
+    }
     const c = r.rows[0];
     if (!c) break;
     sum.claimed++;
