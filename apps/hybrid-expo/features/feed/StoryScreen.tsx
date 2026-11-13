@@ -1,18 +1,21 @@
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TakeActionApps } from './components/TakeActionApps';
 import { FeedSectionState } from './components/feed-section-state';
 import { FeedBox } from './components/ui/FeedBox';
-import { SampleDataLabel } from './components/ui/SampleDataLabel';
+import { TopicMarketSection } from './components/TopicMarketSection';
 import { FEED_TOKENS, monoFontFamily } from './feed-design';
-import { storyAge, storyCountLabel, storySample, timelineEvents, timelineLabel } from './feed-stories';
+import { topicMarket } from './feed-mosaic';
+import { storyAge, storyCountLabel, timelineEvents, timelineLabel } from './feed-stories';
 import { useStoryDetail } from './use-story-detail';
+import type { StoryEvent } from './feed.types';
 
 /**
- * Story page, "Catch me up" (issue #497, markup per feed-mock.html #s-story,
- * DESIGN.md sections 2, 7). Replaces the StorySheet; real events come from
- * useStoryDetail, the catch-me-up card and key numbers are mock-gated.
+ * Topic detail. Real story fields fill the header, latest development and
+ * timeline. The market block and pinned action appear only when the story
+ * matches a Phoenix market. Causal chain and a separate news list are not
+ * returned by the API, so they stay off this screen.
  */
 export default function StoryScreen() {
   const insets = useSafeAreaInsets();
@@ -22,330 +25,190 @@ export default function StoryScreen() {
   const { detail, loading, error, loadingMore, loadMoreError, loadEarlierMemories, retry } = useStoryDetail(slug);
   const story = detail?.story ?? null;
   const events = detail ? timelineEvents(detail.events) : [];
-  const sample = storySample();
-  // One snapshot per render so every label is aged against the same instant.
   const now = new Date();
+  const link = story ? topicMarket(story.storySlug) : null;
+  const latest = events[0];
+  const timeline = story
+    ? events.filter((event, index) => index !== 0 || event.text !== story.latestDevelopment)
+    : [];
+  const [openEvents, setOpenEvents] = useState<Record<string, boolean>>({});
+
+  const share = () => {
+    if (!story) return;
+    void Share.share({ message: `${story.name}\n${story.latestDevelopment}` });
+  };
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-        >
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to Feed" onPress={() => router.back()} style={styles.iconButton}>
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
-        <Text accessibilityRole="header" style={styles.barLabel}>Story</Text>
-        <View style={styles.barSpacer} />
+        <Text style={styles.barLabel}>Developing story</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Share topic" onPress={share} style={styles.iconButton}>
+          <Text style={styles.shareGlyph}>↑</Text>
+        </Pressable>
       </View>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl
-            refreshing={loading}
-            onRefresh={retry}
-            tintColor={FEED_TOKENS.colors.accent}
-            colors={[FEED_TOKENS.colors.accent]}
-          />
-        }
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={retry} tintColor={FEED_TOKENS.colors.accent} colors={[FEED_TOKENS.colors.accent]} />}
       >
         {loading && !detail ? <FeedSectionState title="Loading story…" loading /> : null}
         {error && !detail ? (
-          <FeedSectionState title="Story unavailable" text="This story could not be loaded." onRetry={retry} />
+          <FeedSectionState title="Story unavailable" text="This story could not be loaded. If you are offline, reconnect and try again." onRetry={retry} />
         ) : null}
         {!story && !loading && !error ? <FeedSectionState title="Story unavailable" text="This story could not be loaded." /> : null}
-
         {story ? (
           <>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaName} numberOfLines={1}>
-                {story.name} · {storyCountLabel(story.eventCount)}
-              </Text>
-              <Text style={styles.metaUpdated} numberOfLines={1}>
-                Updated {storyAge(story.updatedAt, now)}
-              </Text>
-            </View>
-            <Text accessibilityRole="header" style={styles.title}>{story.name}</Text>
-
-            {sample ? (
-              <>
-                <FeedBox tone="ground">
-                  <SampleDataLabel />
-                  <Text style={styles.catchUpLabel}>CATCH ME UP · 30 SEC</Text>
-                  <View style={styles.catchUpPoints}>
-                    {sample.catchUp.map((point, index) => (
-                      <Text key={point} style={[styles.catchUpPoint, index > 0 && styles.catchUpPointDivided]}>{point}</Text>
-                    ))}
-                  </View>
-                </FeedBox>
-                <View style={styles.keyNumbers} accessibilityLabel="Sample key numbers">
-                  <SampleDataLabel />
-                  <View style={styles.keyRow}>
-                    {sample.keyNumbers.map((box) => (
-                      <FeedBox key={box.label} tone="ground" style={styles.keyBox}>
-                        <Text style={styles.keyLabel} numberOfLines={1}>{box.label}</Text>
-                        <Text style={styles.keyValue}>{box.value}</Text>
-                        <Text style={styles.keyNote} numberOfLines={1}>{box.note}</Text>
-                      </FeedBox>
-                    ))}
-                  </View>
+            <View style={styles.intro}>
+              <View style={styles.kicker}>
+                <Text style={styles.kickerText} numberOfLines={1}>{storyCountLabel(story.eventCount)}</Text>
+                <Text style={styles.kickerText} numberOfLines={1}>{storyAge(story.updatedAt, now)}</Text>
+              </View>
+              <Text accessibilityRole="header" style={styles.title}>{story.name}</Text>
+              <FeedBox tone="card" style={styles.latest}>
+                <View style={styles.kicker}>
+                  <Text style={styles.kickerText}>Latest development</Text>
+                  {latest ? <Text style={styles.kickerText}>{timelineLabel(latest.eventAt, now, true)}</Text> : null}
                 </View>
-              </>
-            ) : null}
-
-            <View style={styles.sectionHeader}>
-              <Text accessibilityRole="header" style={styles.sectionTitle}>Timeline</Text>
-              <Text style={styles.sectionCaption}>NEWEST FIRST</Text>
+                <Text style={styles.latestBody} numberOfLines={4}>{story.latestDevelopment}</Text>
+              </FeedBox>
             </View>
-            <View>
-              {events.map((event, index) => (
-                <View key={`${event.eventAt}-${index}`} style={styles.eventRow}>
-                  <View style={styles.markerColumn}>
-                    {index < events.length - 1 ? <View style={styles.eventLine} /> : null}
-                    <View style={[styles.eventDot, index === 0 && styles.eventDotLatest]} />
-                  </View>
-                  <View style={styles.eventCopy}>
-                    <Text style={styles.eventDate}>{timelineLabel(event.eventAt, now, index === 0)}</Text>
-                    <Text style={styles.eventText}>{event.text}</Text>
-                  </View>
-                </View>
-              ))}
+            {link ? <TopicMarketSection link={link} active /> : null}
+            <View style={styles.sectionHead}>
+              <Text accessibilityRole="header" style={styles.sectionTitle}>How we got here</Text>
+              <Text style={styles.kickerText}>Newest first</Text>
             </View>
-
+            {events.length === 0 ? <FeedSectionState title="No developments yet" text="New developments will appear here." /> : null}
+            {timeline.map((event, index) => (
+              <TimelineEntry
+                key={`${event.eventAt}-${index}`}
+                event={event}
+                latest={index === 0}
+                now={now}
+                expanded={openEvents[`${event.eventAt}-${index}`] === true}
+                onToggle={() => setOpenEvents((current) => ({ ...current, [`${event.eventAt}-${index}`]: !current[`${event.eventAt}-${index}`] }))}
+              />
+            ))}
             {detail && loadMoreError ? (
               <FeedSectionState
-                title="Earlier memories unavailable"
-                text="Earlier memories on this timeline could not be loaded."
+                title="Earlier developments unavailable"
+                text="Earlier developments on this timeline could not be loaded."
                 onRetry={() => void loadEarlierMemories()}
               />
             ) : null}
             {detail?.pagination.hasMore ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Load earlier memories"
+                accessibilityLabel="Load earlier developments"
                 onPress={() => void loadEarlierMemories()}
                 disabled={loadingMore}
-                style={({ pressed }) => [styles.loadEarlier, pressed && styles.pressed]}
+                style={styles.loadEarlier}
               >
                 <Text style={styles.loadEarlierLabel}>{loadingMore ? 'Loading…' : 'Load earlier'}</Text>
               </Pressable>
             ) : null}
-
-            <TakeActionApps storySlug={slug} />
           </>
         ) : null}
       </ScrollView>
+      {link ? (
+        <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${link.action} for ${story?.name ?? 'this topic'}`}
+            onPress={() => router.push({ pathname: '/markets/phoenix/[symbol]', params: { symbol: link.symbol } })}
+            style={styles.action}
+          >
+            <Text style={styles.actionLabel}>{link.action}</Text>
+          </Pressable>
+          <Text style={styles.actionNote}>Optional · continues in MyBoon</Text>
+        </View>
+      ) : <View style={{ height: insets.bottom }} />}
+    </View>
+  );
+}
+
+function TimelineEntry({
+  event,
+  latest,
+  now,
+  expanded,
+  onToggle,
+}: {
+  event: StoryEvent;
+  latest: boolean;
+  now: Date;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const long = event.text.length > 180;
+  return (
+    <View style={styles.event}>
+      <Text style={styles.eventDate}>{timelineLabel(event.eventAt, now, latest)}</Text>
+      <Text style={styles.eventText} numberOfLines={expanded || !long ? undefined : 3}>{event.text}</Text>
+      {long ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={expanded ? 'Show less' : 'Read more'} onPress={onToggle} style={styles.readMoreHit}>
+          <Text style={styles.readMore}>{expanded ? 'Show less' : 'Read more'}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: FEED_TOKENS.colors.screen,
-  },
+  screen: { flex: 1, backgroundColor: FEED_TOKENS.colors.screen },
   bar: {
-    minHeight: 52,
+    height: 52,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: FEED_TOKENS.space.md,
-    gap: FEED_TOKENS.space.sm,
+    paddingHorizontal: 12,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: FEED_TOKENS.colors.border,
   },
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: FEED_TOKENS.radius.button,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: FEED_TOKENS.colors.border,
-    backgroundColor: FEED_TOKENS.colors.lift,
-  },
-  backGlyph: {
-    color: FEED_TOKENS.colors.text,
-    fontSize: 22,
-    lineHeight: 26,
-  },
+  iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  backGlyph: { color: FEED_TOKENS.colors.text, fontSize: 28, lineHeight: 32 },
+  shareGlyph: { color: FEED_TOKENS.colors.text, fontSize: 18, fontWeight: '700' },
   barLabel: {
     flex: 1,
-    color: FEED_TOKENS.colors.text,
-    fontSize: FEED_TOKENS.type.secondary,
-    fontWeight: '700',
     textAlign: 'center',
-  },
-  barSpacer: {
-    width: 44,
-  },
-  content: {
-    paddingHorizontal: FEED_TOKENS.space.md,
-    paddingTop: FEED_TOKENS.space.xs,
-    paddingBottom: FEED_TOKENS.space.lg,
-    gap: FEED_TOKENS.space.md,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: FEED_TOKENS.space.sm,
-  },
-  metaName: {
-    flexShrink: 1,
     color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
     fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-  },
-  metaUpdated: {
-    flexShrink: 1,
-    color: FEED_TOKENS.colors.textFaint,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-  },
-  title: {
-    color: FEED_TOKENS.colors.text,
-    fontSize: FEED_TOKENS.type.title,
-    lineHeight: 34,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
-  catchUpLabel: {
-    color: FEED_TOKENS.colors.accent,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    fontWeight: '600',
-    letterSpacing: 1,
-  },
-  catchUpPoints: {
-    gap: 0,
-  },
-  catchUpPoint: {
-    color: FEED_TOKENS.colors.textDim,
-    fontSize: FEED_TOKENS.type.body,
-    lineHeight: 21,
-    paddingVertical: 6,
-  },
-  catchUpPointDivided: {
-    borderTopWidth: 1,
-    borderTopColor: FEED_TOKENS.colors.border,
-  },
-  keyNumbers: {
-    alignItems: 'flex-start',
-    gap: FEED_TOKENS.space.xs,
-  },
-  keyRow: {
-    alignSelf: 'stretch',
-    flexDirection: 'row',
-    gap: FEED_TOKENS.space.sm,
-  },
-  keyBox: {
-    flex: 1,
-    padding: 10,
-    gap: 4,
-  },
-  keyLabel: {
-    color: FEED_TOKENS.colors.textFaint,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-  },
-  keyValue: {
-    color: FEED_TOKENS.colors.text,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.section,
-    fontWeight: '700',
-  },
-  keyNote: {
-    color: FEED_TOKENS.colors.textFaint,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.caption,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: FEED_TOKENS.space.md,
-    marginTop: FEED_TOKENS.space.sm,
-  },
-  sectionTitle: {
-    flex: 1,
-    color: FEED_TOKENS.colors.text,
-    fontSize: FEED_TOKENS.type.section,
-    fontWeight: '700',
-  },
-  sectionCaption: {
-    color: FEED_TOKENS.colors.textFaint,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-  },
-  eventRow: {
-    flexDirection: 'row',
-  },
-  markerColumn: {
-    width: 18,
-    alignItems: 'center',
-  },
-  eventLine: {
-    position: 'absolute',
-    top: 8,
-    bottom: 0,
-    width: 1,
-    backgroundColor: FEED_TOKENS.colors.border,
-  },
-  eventDot: {
-    width: 7,
-    height: 7,
-    marginTop: 6,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: FEED_TOKENS.colors.textFaint,
-    backgroundColor: FEED_TOKENS.colors.screen,
-  },
-  eventDotLatest: {
-    backgroundColor: FEED_TOKENS.colors.accent,
-    borderColor: FEED_TOKENS.colors.accent,
-  },
-  eventCopy: {
-    flex: 1,
-    minWidth: 0,
-    paddingLeft: FEED_TOKENS.space.sm,
-    paddingBottom: FEED_TOKENS.space.md,
-  },
-  eventDate: {
-    color: FEED_TOKENS.colors.textFaint,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  eventText: {
-    color: FEED_TOKENS.colors.textDim,
-    fontSize: FEED_TOKENS.type.body,
-    lineHeight: 21,
-  },
-  loadEarlier: {
-    minHeight: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: FEED_TOKENS.radius.card,
-    borderWidth: 1,
-    borderColor: FEED_TOKENS.colors.border,
-    backgroundColor: FEED_TOKENS.colors.lift,
-  },
-  loadEarlierLabel: {
-    color: FEED_TOKENS.colors.accent,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.caption,
-    fontWeight: '600',
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  pressed: {
-    opacity: 0.72,
+  content: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24, gap: 12 },
+  intro: { gap: 8, marginBottom: 12 },
+  kicker: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  kickerText: {
+    color: FEED_TOKENS.colors.textFaint,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
+  title: { color: FEED_TOKENS.colors.text, fontSize: 28, lineHeight: 34, fontWeight: '700', letterSpacing: -0.3 },
+  latest: { marginTop: 8, gap: 8, backgroundColor: FEED_TOKENS.colors.card },
+  latestBody: { color: FEED_TOKENS.colors.textDim, fontSize: 15, lineHeight: 22 },
+  sectionHead: { minHeight: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 12 },
+  sectionTitle: { color: FEED_TOKENS.colors.text, fontSize: FEED_TOKENS.type.section, lineHeight: 24, fontWeight: '700' },
+  event: { borderWidth: 1, borderColor: FEED_TOKENS.colors.border, borderRadius: 8, backgroundColor: FEED_TOKENS.colors.ground, padding: 12, gap: 6 },
+  eventDate: {
+    color: FEED_TOKENS.colors.textDim,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  eventText: { color: FEED_TOKENS.colors.text, fontSize: 15, lineHeight: 20 },
+  readMoreHit: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  readMore: { color: FEED_TOKENS.colors.accent, fontSize: 15, fontWeight: '600' },
+  loadEarlier: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  loadEarlierLabel: { color: FEED_TOKENS.colors.accent, fontSize: 15, fontWeight: '600' },
+  dock: { paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: FEED_TOKENS.colors.border, backgroundColor: FEED_TOKENS.colors.screen, gap: 8 },
+  action: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: FEED_TOKENS.colors.accent, borderRadius: 6 },
+  actionLabel: { color: FEED_TOKENS.colors.accent, fontSize: 15, lineHeight: 20, fontWeight: '600' },
+  actionNote: { textAlign: 'center', color: FEED_TOKENS.colors.textFaint, fontFamily: monoFontFamily(), fontSize: 11, letterSpacing: 1, textTransform: 'uppercase' },
 });

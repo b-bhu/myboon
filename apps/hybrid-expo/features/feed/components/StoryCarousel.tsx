@@ -153,6 +153,8 @@ export function StoryCarouselSkeleton() {
 interface TodayCarouselProps {
   items: FeedItem[];
   onPress: (item: FeedItem) => void;
+  /** Short row that fits the home's 25% band. */
+  compact?: boolean;
 }
 
 /**
@@ -160,7 +162,7 @@ interface TodayCarouselProps {
  * card per view, gold progress bars below. No auto-advance — safe for
  * reduced motion; the active bar follows manual swipes only.
  */
-export function TodayCarousel({ items, onPress }: TodayCarouselProps) {
+export function TodayCarousel({ items, onPress, compact = false }: TodayCarouselProps) {
   const [slideWidth, setSlideWidth] = useState(0);
   const [active, setActive] = useState(0);
   if (!items.length) return null;
@@ -170,6 +172,7 @@ export function TodayCarousel({ items, onPress }: TodayCarouselProps) {
   };
   return (
     <View
+      style={compact ? styles.todayCompact : undefined}
       onLayout={(event) => {
         const width = event.nativeEvent.layout.width;
         if (width > 0) setSlideWidth(width);
@@ -184,10 +187,11 @@ export function TodayCarousel({ items, onPress }: TodayCarouselProps) {
             scrollEventThrottle={16}
             onScroll={track}
             onMomentumScrollEnd={track}
+            style={compact ? styles.todayCompactTrack : undefined}
           >
             {items.map((item) => (
-              <View key={item.id} style={{ width: slideWidth }}>
-                <TodaySlide item={item} onPress={onPress} />
+              <View key={item.id} style={{ width: slideWidth, flex: compact ? 1 : undefined }}>
+                <TodaySlide item={item} onPress={onPress} compact={compact} />
               </View>
             ))}
           </ScrollView>
@@ -202,7 +206,7 @@ export function TodayCarousel({ items, onPress }: TodayCarouselProps) {
   );
 }
 
-function TodaySlide({ item, onPress }: { item: FeedItem; onPress: (item: FeedItem) => void }) {
+function TodaySlide({ item, onPress, compact = false }: { item: FeedItem; onPress: (item: FeedItem) => void; compact?: boolean }) {
   const { hasContentImage, onImageError } = useContentImageFailed(item);
   const tag = slideTag(item);
   const time = toRelativeTime(item.createdAt);
@@ -220,29 +224,29 @@ function TodaySlide({ item, onPress }: { item: FeedItem; onPress: (item: FeedIte
       tone="ground"
       onPress={() => onPress(item)}
       accessibilityLabel={`${item.headline}, ${tag}, ${time}`}
-      style={styles.todaySlide}
+      style={[styles.todaySlide, compact && styles.todaySlideCompact]}
     >
       {hasContentImage && item.imageUrl ? (
-        <View style={styles.todaySlideImageWrap}>
+        <View style={[styles.todaySlideImageWrap, compact && styles.todaySlideImageWrapCompact]}>
           <Image
             source={item.imageUrl}
             onError={onImageError}
-            style={styles.todaySlideImage}
+            style={[styles.todaySlideImage, compact && styles.todaySlideImageCompact]}
             contentFit="cover"
             transition={180}
             accessibilityLabel={item.imageAttribution ? `${item.headline}, ${item.imageAttribution}` : item.headline}
           />
-          {tagChip}
+          {compact ? null : tagChip}
         </View>
       ) : null}
-      <View style={styles.todaySlideCopy}>
-        {!hasContentImage && tagChip}
+      <View style={[styles.todaySlideCopy, compact && styles.todaySlideCopyCompact]}>
+        {!hasContentImage && !compact && tagChip}
         <View style={styles.todaySlideMeta}>
-          <Text style={styles.monoLabel} numberOfLines={1}>{time}</Text>
-          {source ? <Text style={[styles.monoLabel, styles.todaySlideMetaSource]} numberOfLines={1}>{source}</Text> : null}
+          <Text style={styles.monoLabel} numberOfLines={1}>{compact && tag ? `${tag} · ${time}` : time}</Text>
+          {source && !compact ? <Text style={[styles.monoLabel, styles.todaySlideMetaSource]} numberOfLines={1}>{source}</Text> : null}
         </View>
-        <Text style={styles.todaySlideHeadline} numberOfLines={3}>{item.headline}</Text>
-        <Text style={styles.todaySlideBody} numberOfLines={2}>{item.description}</Text>
+        <Text style={[styles.todaySlideHeadline, compact && styles.todaySlideHeadlineCompact]} numberOfLines={compact ? 4 : 3}>{item.headline}</Text>
+        {compact ? null : <Text style={styles.todaySlideBody} numberOfLines={2}>{item.description}</Text>}
       </View>
     </FeedBox>
   );
@@ -493,11 +497,18 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   // Today slide (mock .slide): boxed card, image bleed, 12 padding copy block.
+  todayCompact: { flex: 1, minHeight: 0 },
+  todayCompactTrack: { flex: 1 },
   todaySlide: {
     width: '100%',
     padding: 0,
     overflow: 'hidden',
   },
+  todaySlideCompact: { flex: 1, flexDirection: 'row', minHeight: 0 },
+  todaySlideImageWrapCompact: { width: 96, height: '100%' },
+  todaySlideImageCompact: { width: 96, height: '100%' },
+  todaySlideCopyCompact: { flex: 1, justifyContent: 'center' },
+  todaySlideHeadlineCompact: { fontSize: 18, lineHeight: 23 },
   todaySlideImageWrap: {
     height: 178,
     backgroundColor: FEED_TOKENS.colors.card,
