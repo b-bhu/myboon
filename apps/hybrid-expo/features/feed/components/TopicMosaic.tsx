@@ -11,7 +11,6 @@ import {
   formatSignedPercent,
   mosaicPages,
   percentChange,
-  rankStories,
   topicMarket,
   type MosaicTileKind,
 } from '../feed-mosaic';
@@ -34,7 +33,7 @@ interface TileQuote {
 export function TopicMosaic({ stories, now }: TopicMosaicProps) {
   const router = useRouter();
   const reduced = useReducedMotion();
-  const pages = mosaicPages(rankStories(stories));
+  const pages = mosaicPages(stories);
   const [width, setWidth] = useState(0);
   const [page, setPage] = useState(0);
   const [quotes, setQuotes] = useState<Record<string, TileQuote>>({});
