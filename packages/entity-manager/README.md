@@ -19,7 +19,7 @@ Without the flags below nothing changes: `atlas.em_claim` (oldest first, all row
 | flag / knob | default | effect |
 |---|---|---|
 | `ENTITY_MANAGER_CLAIM_ENTITY_ONLY=true` (on `myboon-entity-manager`) | off | claim with `atlas.em_claim_scoped(..., 'entity')`: only handoffs whose `entity` is an object; batch `ENTITY_MANAGER_ENTITY_ONLY_MAX_PER_RUN` (60) |
-| `ENTITY_MANAGER_RETRY_ENABLED=true` (on `myboon-entity-manager-retry`, `src/run-retry.ts`) | off | once a day (20:15 UTC), claim the no-entity handoffs (`'no_entity'`, batch `ENTITY_MANAGER_RETRY_MAX_PER_RUN`, 2000) and put them back as pending for a day, so they no longer take slots in the main run |
+| `ENTITY_MANAGER_RETRY_ENABLED=true` (on `myboon-entity-manager-retry`, `src/run-retry.ts`) | off | once a day (20:15 UTC), claim the no-entity handoffs (`'no_entity'`, batch `ENTITY_MANAGER_RETRY_MAX_PER_RUN`, 2000) and put them back as pending for a day, so they no longer take slots in the main run; a no-entity row whose decision is older than 7 days is parked for good (`em_status = 'parked'`, `em_last_error` = reason) |
 
 Both need migration `20261113190000_atlas_em_claim_scoped.sql` (DB Guy review; not applied). `EM_TEST_ADMIN_URL` (a local Postgres) enables `src/claim-scoped.db.test.ts`.
 Writes run in one transaction under `pg_advisory_xact_lock(hashtext('atlas.entity:' || slug))`.

@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import type { Llm } from './clients.js';
-import { claimQuery, runOnce, type WorkerDeps } from './worker.js';
+import { claimQuery, NO_ENTITY_PARK_REASON, runOnce, type WorkerDeps } from './worker.js';
 
 type Call = { sql: string; params: unknown[] };
 
@@ -17,7 +17,7 @@ const NO_ENTITY_HANDOFF = {
 };
 
 /** A pool that always has `available` claims to give and records every query. */
-function fakePool(available: number) {
+function fakePool(available: number, staleParks = false) {
   const calls: Call[] = [];
   let given = 0;
   const pool = {
@@ -29,7 +29,8 @@ function fakePool(available: number) {
         return { rows: [{ decision_id: `d${given}`, signal_id: `sig-${given}`, claim_token: `t${given}`, attempts: 1 }] };
       }
       if (sql.includes('select handoff from atlas.decisions')) return { rows: [{ handoff: NO_ENTITY_HANDOFF }] };
-      return { rows: [] };
+      if (sql.includes("set em_status = 'parked'")) return { rows: [], rowCount: staleParks ? 1 : 0 };
+      return { rows: [], rowCount: 1 };
     },
   };
   return { pool: pool as unknown as pg.Pool, calls };
@@ -89,5 +90,32 @@ describe('#621 daily retry of no-entity handoffs', () => {
     const sum = await runOnce(deps(pool, { scope: 'no_entity', limit: 2000 }));
     expect(sum).toMatchObject({ claimed: 5, deferred_no_entity: 5, story: 0, parked: 0, duplicate: 0, failed: 0 });
     expect(defers(calls)).toHaveLength(5);
+  });
+});
+
+describe('#621 stale no-entity handoffs are parked for good', () => {
+  const parks = (calls: Call[]) => calls.filter((c) => c.sql.includes("set em_status = 'parked'"));
+
+  it('retry run: a row the DB says is older than 7 days is parked with the reason and is not put back', async () => {
+    const { pool, calls } = fakePool(3, true);
+    const sum = await runOnce(deps(pool, { scope: 'no_entity', limit: 2000 }));
+    expect(sum).toMatchObject({ claimed: 3, parked_stale_no_entity: 3, deferred_no_entity: 0, failed: 0 });
+    expect(defers(calls)).toHaveLength(0);
+    expect(parks(calls)[0]!.params).toEqual(['d1', 't1', NO_ENTITY_PARK_REASON, 7]);
+    expect(NO_ENTITY_PARK_REASON).toMatch(/no entity after 7 days: parked, not retried/);
+  });
+
+  it('retry run: a row not older than 7 days is put back for a day as before', async () => {
+    const { pool, calls } = fakePool(2, false);
+    const sum = await runOnce(deps(pool, { scope: 'no_entity', limit: 2000 }));
+    expect(sum).toMatchObject({ claimed: 2, parked_stale_no_entity: 0, deferred_no_entity: 2 });
+    expect(defers(calls)).toHaveLength(2);
+  });
+
+  it('flag off (no scope): never parks, every no-entity row is put back for a day exactly as before', async () => {
+    const { pool, calls } = fakePool(2, true);
+    const sum = await runOnce(deps(pool, {}));
+    expect(sum).toMatchObject({ claimed: 2, deferred_no_entity: 2, parked_stale_no_entity: 0 });
+    expect(parks(calls)).toHaveLength(0);
   });
 });

@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { applySqlFile, createThrowawayDatabase, ROLLBACKS_DIR, type ThrowawayDatabase } from '../../atlas-schema/src/index.js';
 import type { Llm } from './clients.js';
-import { runOnce } from './worker.js';
+import { NO_ENTITY_PARK_REASON, runOnce } from './worker.js';
 
 const ADMIN_URL = process.env.EM_TEST_ADMIN_URL?.trim() ?? '';
 const ROLLBACK = '20261113190000_atlas_em_claim_scoped.down.sql';
@@ -134,6 +134,33 @@ describe.skipIf(ADMIN_URL === '')('#621 em_claim_scoped (local Postgres)', () =>
     expect((await status(entityRow)).em_status).toBe('pending');
     const again = await runOnce({ pool: worker, llm, worker: 'w:retry', limit: 2000, scope: 'no_entity', log: () => {} });
     expect(again.claimed).toBe(0);
+  });
+
+  it('retry run parks a no-entity row older than 7 days for good (reason kept), puts younger ones back, and the flag-off claim path never parks', async () => {
+    const DAY = 24 * 60;
+    const stale = await seed('null', 8 * DAY);
+    const young = await seed('null', 6 * DAY);
+    const entityOld = await seed('entity', 9 * DAY);
+    const llm: Llm = async () => { throw new Error('model must not be called'); };
+    const sum = await runOnce({ pool: worker, llm, worker: 'w:retry', limit: 2000, scope: 'no_entity', log: () => {} });
+    expect(sum).toMatchObject({ claimed: 2, parked_stale_no_entity: 1, deferred_no_entity: 1, failed: 0 });
+    const row = (await admin.query('select em_status, em_last_error, em_done_at, em_claim_token, em_claimed_by from atlas.decisions where id = $1', [stale])).rows[0];
+    expect(row).toMatchObject({ em_status: 'parked', em_last_error: NO_ENTITY_PARK_REASON, em_claim_token: null, em_claimed_by: null });
+    expect(row.em_done_at).not.toBeNull();
+    expect((await status(young)).em_status).toBe('pending');
+    expect((await status(entityOld)).em_status).toBe('pending');
+    // terminal: the next retry pass and both claim scopes never see the parked row again
+    await admin.query("update atlas.decisions set em_next_attempt_at = now() - interval '1 minute'");
+    expect(await claim('no_entity')).toBe(young);
+    expect((await status(stale)).em_status).toBe('parked');
+  });
+
+  it('flag off: runOnce without a scope (atlas.em_claim) puts an 8-day-old no-entity row back for a day, it is not parked', async () => {
+    const old = await seed('null', 8 * 24 * 60);
+    const llm: Llm = async () => { throw new Error('model must not be called'); };
+    const sum = await runOnce({ pool: worker, llm, worker: 'w', limit: 5, log: () => {} });
+    expect(sum).toMatchObject({ claimed: 1, deferred_no_entity: 1, parked_stale_no_entity: 0 });
+    expect((await status(old)).em_status).toBe('pending');
   });
 
   it('the rollback removes the function and leaves atlas.em_claim working; the migration can be applied again', async () => {
