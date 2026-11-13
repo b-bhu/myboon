@@ -139,39 +139,269 @@ body{background:#021821;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Ar
 [data-go],[data-back]{cursor:pointer}
 body.proto .scr.shown{width:390px;margin:0 auto}body.proto .row{display:contents}body.proto .arr,body.proto .notes,body.proto h1.top,body.proto p.cap,body.proto .scr>.cap{display:none}body.proto{padding:12px}body.proto .scr{display:none}body.proto .scr.shown{display:block}
 body.proto .phone{height:min(844px,calc(100vh - 32px))!important;overflow-y:auto;scrollbar-width:none}body.proto{padding:16px 0!important}body.proto .phone::-webkit-scrollbar{display:none}
-h1.top{font-size:28px;margin-bottom:4px}</style><link rel="stylesheet" href="proto-notes.css"></head><body>
-<h1 class="top">MyBoon Feed · locked flow</h1><p class="cap" style="margin-bottom:24px">All content is fake example data · open feed-mock.html?proto for the clickable phone</p>
+h1.top{font-size:28px;margin-bottom:4px}
+.sx :root{--screen:#031F2C;--ground:#063343;--lift:#0A4A60;--surface:#083D50;--story:#073B4C;
+  --border:#185A70;--bone:#F5FAFC;--dim:#9CB8C2;--faint:#6B95A1;--gold:#FFD166;
+  --up:#06D6A0;--down:#EF476F;}
+.sx .lab,.sx .price,.sx .pct,.sx .tile-meta,.sx .event-date,.sx .axis{font-family:ui-monospace,Menlo,"DejaVu Sans Mono",monospace}
+.sx .lab{font-size:11px;line-height:14px;font-weight:500;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.sx .dim{color:var(--dim)}
+.sx .faint{color:var(--faint)}
+.sx .up{color:var(--up)}
+.sx .down{color:var(--down)}
+.sx .icon-button{width:44px;height:44px;display:flex;align-items:center;justify-content:center;flex:0 0 44px;color:var(--bone);border-radius:6px}
+.sx .icon-button.boxed{width:44px;height:44px;border:1px solid var(--border)}
+.sx .icon-button svg,.sx .direction svg,.sx .chain-direction svg{stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:square;stroke-linejoin:miter}
+.sx .detail-scroll::-webkit-scrollbar{display:none}
+.sx .section-head{min-height:32px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.sx .section-head h1{font-size:28px;line-height:32px;font-weight:700;letter-spacing:-.3px}
+.sx .section-head h2{font-size:20px;line-height:24px;font-weight:700;letter-spacing:-.2px}
+.sx .card{border:1px solid var(--border);border-radius:8px;background:var(--ground);padding:12px}
+.sx .topic{position:relative;min-width:0;height:100%;padding:8px;overflow:hidden;text-align:left;border:1px solid var(--border);border-radius:6px;background:var(--story);display:flex;flex-direction:column;align-items:stretch;justify-content:space-between;transition:background-color 120ms ease,border-color 120ms ease}
+.sx .topic.large{grid-column:span 3;grid-row:span 2;justify-content:flex-start;background:var(--surface)}
+.sx .topic.tall{grid-column:span 2;grid-row:span 2;background:var(--surface)}
+.sx .topic:not(.large):not(.tall):not(.slim){grid-column:span 2}
+.sx .topic.slim{grid-column:span 1}
+.sx .topic:hover{background:var(--lift)}
+.sx .topic.selected{border-color:var(--bone);background:var(--lift)}
+.sx .topic-name{display:block;min-width:0;padding-right:16px;color:var(--bone);font-size:14px;line-height:16px;font-weight:650;letter-spacing:-.1px}
+.sx .topic.large .topic-name,.sx .topic.tall .topic-name{font-size:18px;line-height:22px;font-weight:700;letter-spacing:-.2px}
+.sx .topic.slim .topic-name{padding-right:12px;font-size:12px;line-height:16px}
+.sx .tile-meta{display:block;color:var(--dim);font-size:11px;line-height:12px;font-weight:500;letter-spacing:1px;text-transform:uppercase;white-space:nowrap}
+.sx .topic.large .tile-meta{margin-top:auto}
+.sx .direction{position:absolute;top:8px;right:8px;display:flex;align-items:center;justify-content:center}
+.sx .direction svg{width:14px;height:14px;display:block}
+.sx .topic.slim .direction svg{width:12px;height:12px}
+.sx .lead-market{display:block;margin-top:8px}
+.sx .lead-spark{display:block;width:100%;height:32px;margin-bottom:4px}
+.sx .lead-market-label{display:block;color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:14px;font-weight:500;letter-spacing:1px;white-space:nowrap}
+.sx .lead-market-label b{color:var(--up);font-weight:600}
+.sx .mosaic-key{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px}
+.sx .tab-bar{height:calc(74px + env(safe-area-inset-bottom));flex:0 0 calc(74px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:space-around;background:var(--ground);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom)}
+.sx .tab.active{color:var(--gold)}
+.sx .detail-bar{height:52px;flex:0 0 52px;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border)}
+.sx .detail-bar .lab{text-align:center;color:var(--dim)}
+.sx .detail-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;padding:16px 16px 24px}
+.sx .detail-intro{margin-bottom:24px}
+.sx .detail-kicker{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.sx .detail-kicker .lab:last-child{white-space:nowrap}
+.sx .detail-intro h1{font-size:28px;line-height:34px;font-weight:700;letter-spacing:-.3px;margin-bottom:8px}
+.sx .detail-lede{font-size:15px;line-height:22px;color:var(--dim)}
+.sx .latest-card{background:var(--story);margin-top:16px}
+.sx .latest-card h2{font-size:18px;line-height:23px;font-weight:700;margin:4px 0 8px}
+.sx .latest-card p{font-size:15px;line-height:22px;color:var(--dim)}
+.sx .latest-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--border);padding-top:8px;margin-top:12px}
+.sx .detail-section{margin-top:24px}
+.sx .detail-section .section-head{margin-bottom:12px}
+.sx .live-label{color:var(--dim);white-space:nowrap}
+.sx .chart-card{background:var(--ground)}
+.sx .asset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.sx .asset-name{font-size:15px;line-height:20px;font-weight:600;margin-top:4px}
+.sx .price-block{text-align:right;flex:0 0 auto}
+.sx .price{display:block;font-size:34px;line-height:38px;font-weight:700;letter-spacing:-.3px;white-space:nowrap}
+.sx .pct{display:block;font-size:14px;line-height:20px;font-weight:600;margin-top:4px}
+.sx .segmented{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;border:1px solid var(--border);border-radius:6px;padding:2px;margin-top:12px}
+.sx .segmented button{min-height:40px;border-radius:4px;color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:14px;font-weight:600;letter-spacing:1px}
+.sx .segmented button.on{background:var(--lift);color:var(--bone)}
+.sx .chart{display:block;width:100%;height:auto;margin-top:12px;overflow:visible}
+.sx .chart .grid{stroke:var(--border);stroke-width:1;vector-effect:non-scaling-stroke}
+.sx .chart .axis{fill:var(--faint);font-size:11px;letter-spacing:0}
+.sx .chart .series{fill:none;stroke-width:1.6;stroke-linecap:square;stroke-linejoin:miter;vector-effect:non-scaling-stroke}
+.sx .secondary-card{margin-top:12px;background:var(--ground)}
+.sx .secondary-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.sx .secondary-title{font-size:15px;line-height:20px;font-weight:600;margin-top:4px}
+.sx .secondary-value{text-align:right}
+.sx .secondary-price{font-family:ui-monospace,Menlo,monospace;font-size:20px;line-height:24px;font-weight:700;white-space:nowrap}
+.sx .secondary-change{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:16px;font-weight:600;margin-top:4px}
+.sx .event-card{position:relative;display:grid;grid-template-columns:52px minmax(0,1fr);gap:12px;background:var(--ground)}
+.sx .event-card:not(:last-child){margin-bottom:12px}
+.sx .event-card:not(:last-child)::after{content:"";position:absolute;left:25px;bottom:-12px;width:1px;height:12px;background:var(--border)}
+.sx .event-date{padding-top:2px;color:var(--dim);font-size:11px;line-height:16px;letter-spacing:1px;text-transform:uppercase}
+.sx .event-date span{display:block;white-space:nowrap}
+.sx .event-date span:last-child{color:var(--faint)}
+.sx .event-copy h3{font-size:15px;line-height:20px;font-weight:650}
+.sx .event-copy p{font-size:14px;line-height:20px;color:var(--dim);margin-top:4px}
+.sx .event-meta{margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:14px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.sx .news-list{display:flex;flex-direction:column;gap:12px}
+.sx .news-card{background:var(--ground)}
+.sx .news-card h3{font-size:18px;line-height:23px;font-weight:700}
+.sx .news-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding-top:8px;border-top:1px solid var(--border)}
+.sx .news-meta .lab:last-child{color:var(--dim);white-space:nowrap}
+.sx .chain-note{font-size:12px;line-height:16px;color:var(--dim);margin:-4px 0 12px}
+.sx .chain-node{background:var(--ground)}
+.sx .chain-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.sx .chain-direction{position:static;display:inline-flex;gap:4px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:14px;font-weight:600;letter-spacing:1px}
+.sx .chain-direction svg{width:14px;height:14px}
+.sx .chain-node h3{font-size:15px;line-height:20px;font-weight:650;margin:4px 0}
+.sx .chain-evidence{font-size:12px;line-height:16px;color:var(--dim)}
+.sx .chain-confidence{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.sx .chain-connector{height:16px;display:flex;align-items:center;justify-content:center;color:var(--faint)}
+.sx .chain-connector svg{display:block;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:square}
+.sx .action-dock{flex:0 0 auto;padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:var(--screen)}
+.sx .primary-action{width:100%;min-height:48px;border:1px solid var(--gold);border-radius:6px;color:var(--gold);font-size:15px;line-height:20px;font-weight:600}
+.sx .action-note{display:block;text-align:center;margin-top:8px;color:var(--faint)}
+.sx{--screen:#031F2C;--ground:#063343;--lift:#0A4A60;--surface:#083D50;--story:#073B4C;--border:#185A70;--bone:#F5FAFC;--dim:#9CB8C2;--faint:#6B95A1;--gold:#FFD166;--up:#06D6A0;--down:#EF476F;color:var(--bone)}
+.sx .section-head{min-height:32px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.sx .section-head.compact{min-height:24px;margin-bottom:12px}
+.sx .card-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}
+.sx .lab{font-family:ui-monospace,Menlo,"DejaVu Sans Mono",monospace;font-size:11px;line-height:14px;font-weight:500;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.sx .mono,.sx .tile-meta,.sx .price,.sx .pct{font-family:ui-monospace,Menlo,"DejaVu Sans Mono",monospace}
+.sx button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.sx button:focus-visible{outline:1px solid var(--bone);outline-offset:2px}
+.sx .card{padding:12px}
+
+/* ===== Stories redesign (Kimi topic mosaic + topic detail) · scoped under .sx / .hx ===== */
+/* Home: 25% today · 40% stories · calendar. Percentages are of the phone height (container query units). */
+#s-home .phone{height:844px;container-type:size}
+#s-home .re{display:flex;flex-direction:column;height:100%;min-height:0}
+#s-home .re .body{flex:1;min-height:0;padding:4px 16px 12px;gap:16px;overflow:hidden}
+#s-home .re .nav{position:relative!important;bottom:auto!important;left:auto;right:auto;flex:0 0 auto;height:calc(74px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom)}
+.hx-top{height:25cqh;flex:0 0 auto;display:flex;flex-direction:column;gap:8px;min-height:0}
+.hx-top .today{margin-bottom:0;flex:0 0 auto}
+.hx-top .today h1{font-size:28px;line-height:32px}
+.hx-slide{flex:1;min-height:0;display:flex}
+.hx-slide .img{flex:0 0 96px;width:96px;height:auto}
+.hx-slide .img img{border-right:1px solid #185A70}
+.hx-slide .tx{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:12px}
+.hx-slide .meta{margin:0}
+.hx-slide h3{font-size:18px;line-height:23px;margin:0;letter-spacing:-.2px}
+.hx-top .bars{margin-top:0;flex:0 0 auto}
+.hx-stories{height:40cqh;flex:0 0 auto;display:flex;flex-direction:column;min-height:0}
+.hx-head{flex:0 0 24px;display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.hx-head h2{font-size:20px;line-height:24px;font-weight:700;letter-spacing:-.2px}
+.hx-dots{display:flex;gap:4px;align-items:center}
+.hx-dots i{display:block;width:8px;height:3px;background:#185A70;transition:width .15s,background-color .15s}
+.hx-dots i.on{width:16px;background:#FFD166}
+.hx-cal{flex:1;min-height:0;display:flex}
+.hx-cal .card{flex:1;height:auto;min-height:0;display:flex;flex-direction:column;justify-content:space-between;padding:12px;gap:4px}
+.hx-cal .r1,.hx-cal .r2,.hx-cal .r3{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.hx-cal .r2{align-items:flex-end}
+.hx-cal h4{font-size:18px;line-height:23px;font-weight:700}
+.hx-cal .cdn{font:700 28px/32px ui-monospace,Menlo,monospace;letter-spacing:-.3px;white-space:nowrap}
+/* Pager: horizontal, snap, next page peeks in from the right */
+.sx-pager{flex:1;min-height:0;display:flex;gap:8px;margin:0 -16px 0 0;padding:0 16px 0 0;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;touch-action:pan-x pan-y;cursor:grab}
+.sx-pager::-webkit-scrollbar{display:none}
+.sx-pager.drag{scroll-snap-type:none;cursor:grabbing;user-select:none}
+.sx-page:last-of-type{flex-basis:100%}
+.sx-page{flex:0 0 calc(100% - 28px);scroll-snap-align:start;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr));gap:4px;min-width:0}
+.sx .topic{height:auto}
+.sx .topic.large{grid-column:span 3;grid-row:span 2}
+.sx .topic.tall{grid-column:span 2;grid-row:span 2}
+.sx .topic.slim{grid-column:span 1}
+.sx .topic:not(.large):not(.tall):not(.slim){grid-column:span 2}
+.sx .topic.tall .topic-name,.sx .topic.large .topic-name{font-size:18px;line-height:22px}
+.sx .topic.tall .lead-market,.sx .topic.large .lead-market{margin-top:auto;margin-bottom:8px}
+.sx .topic.large .tile-meta,.sx .topic.tall .tile-meta{margin-top:0}
+.sx .lead-spark{height:28px;margin-bottom:4px}
+.sx .lead-market-label b.down{color:#EF476F}
+@keyframes sxIn{from{transform:translateX(100%)}to{transform:none}}
+body.proto #s-story.shown .sx-detail{animation:sxIn 280ms cubic-bezier(.22,.8,.24,1) both}
+#s-story .phone{height:844px}
+#s-story .re.sx-detail{height:100%;min-height:0;display:flex;flex-direction:column;background:#031F2C}
+.sx-detail .detail-scroll{flex:1;min-height:0}
+@media (prefers-reduced-motion:reduce){body.proto #s-story.shown .sx-detail{animation:none}.hx-dots i,.sx .topic{transition:none}.sx-pager{scroll-behavior:auto}}
+</style><link rel="stylesheet" href="proto-notes.css"></head><body>
+<svg style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0v5l2 3H4l2-3z"/><path d="M10 20h4"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 16V3M8 7l4-4 4 4M5 12v8h14v-8"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M3 12L12 3M6 3h6v6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M3 4l9 9M6 13h6V7"/></symbol>
+  <symbol id="i-feed" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></symbol>
+  <symbol id="i-apps" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M3 6h17v13H3zM3 6l3-3h11v3M15 11h6v5h-6z"/></symbol>
+</svg><h1 class="top">MyBoon Feed · locked flow</h1><p class="cap" style="margin-bottom:24px">All content is fake example data · open feed-mock.html?proto for the clickable phone</p>
 <div class="row"><div class="col scr" id="s-home"><div class="cap"><b>Feed home</b></div><div class="phone tall"><div class="re">
  <div class="top"><img src="ref/wordmark.png"><div class="ic">
   <div class="ib"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F5FAFC" stroke-width="1.6" stroke-linecap="square"><path d="M6 9a6 6 0 1 1 12 0v5l2 3H4l2-3z"/><path d="M10 20h4"/></svg></div>
   <div class="av">b</div></div></div>
  <div class="body">
-  <section>
-   <div class="today"><div><h1>Today</h1><span class="lab">Mon 26 Oct · 5 updates</span></div><span class="lnk" data-go="allupdates">All updates →</span></div>
-   <div class="slide" data-go="todaysheet"><div class="img"><img src="ref/feed-editorial-macro-lead.png"><span class="tag lab">Bitcoin</span></div>
-    <div class="tx"><div class="meta"><span class="lab">Macro · 2h ago</span><span class="lab">MyBoon</span></div>
-    <h3>Rate-cut bets jump after a softer inflation print</h3>
-    <p>Traders now price two cuts by March. Bitcoin rose as yields fell and the dollar slipped.</p></div></div>
+  <section class="hx-top">
+   <div class="today"><div><h1>Today</h1><span class="lab">Fri 13 Nov · 5 updates</span></div><span class="lnk" data-go="allupdates">All updates →</span></div>
+   <div class="slide hx-slide" data-go="todaysheet"><div class="img"><img src="ref/feed-editorial-macro-lead.png" alt=""></div>
+    <div class="tx"><div class="meta"><span class="lab">Macro · 2h ago</span></div>
+    <h3>Rate-cut bets jump after a softer inflation print</h3></div></div>
    <div class="bars"><i class="on"></i><i></i><i></i><i></i><i></i></div>
   </section>
-  <section>
-   <div class="sh"><h2>Developing story</h2><span class="lnk" data-go="allstories">All stories →</span></div>
-   <div class="card" data-go="story"><div class="story"><img src="ref/feed-editorial-us-iran.png"><div style="flex:1;min-width:0">
-    <span class="lab">US–Iran · 3 updates</span>
-    <h4 style="margin-top:4px">Talks stall over sanctions relief</h4>
-    <div class="tl2"><i class="on"></i><s></s><i class="on"></i><s></s><i class="on"></i></div></div></div>
-    <p>Second round ends without a date for the next. Brent gave back early gains.</p>
-    <div class="cm"><span class="lab">Updated 40m ago</span><span class="lnk">Watch full story</span></div></div>
+  <section class="sx hx-stories" aria-label="Developing stories">
+   <div class="hx-head"><h2>Developing story</h2><div class="hx-dots" id="sxDots" role="img" aria-label="Page 1 of 3"><i class="on"></i><i></i><i></i></div></div>
+   <div class="sx-pager" id="sxPager" role="group" aria-label="Developing topics. Swipe left for more. Tile size shows 24 hour update activity."></div>
   </section>
-  <section><div class="sh"><h2>Markets now</h2><span class="lab" id="mnl"><b style="color:#F5FAFC">CALENDAR</b> · WALLETS · MARKET</span></div>
-<div class="hs" id="mcar"><div class="hsi" data-go="calendar"><div class="card sl"><div class="sh2"><span class="lab">Calendar · next big event</span><span class="lnk">Calendar →</span></div><div class="cd"><b class="mono">2D 07H</b><span class="lab">until</span></div><h4 style="margin:2px 0 4px">FOMC rate decision</h4><span class="lab" style="color:#9CB8C2">Wed 28 Oct · 23:30 IST · Est 4.25%</span><div class="cm"><span class="lab" style="color:#F5FAFC">Last time: BTC −2.1% in 24h</span><span class="lab">+3 this week</span></div></div></div><div class="hsi" data-go="wallets"><div class="card sl"><div class="sh2"><span class="lab">Smart wallets · 24h</span><span class="lnk">All activity →</span></div><span class="lab">Most bought</span><div class="cd" style="margin-top:2px"><b class="mono">JUP</b><span class="mono up" style="font-size:18px;font-weight:700">+$118K</span></div><span class="lab" style="color:#9CB8C2">3 wallets bought · 0 sold</span><div class="tbl" style="margin-top:12px;border:0;border-top:1px solid #185A70;border-radius:0"><div class="tr2" style="padding:10px 0"><span class="ti" style="border-color:#FFD166;color:#FFD166">B</span><div class="nm"><span>Sold BONK</span><span class="tk">Smart · 9Kd…e21</span></div><div class="rt2"><span class="mono">$31.0K</span><span class="mono dn" style="font-size:12px">▼ sell · 38m</span></div></div></div><div class="cm"><span class="lab">Birdeye · 24 wallets</span></div></div></div><div class="hsi" data-go="market"><div class="card sl"><div class="sh2"><span class="lab">Market · Solana · 24h</span><span class="lnk">Heatmap →</span></div><div class="tm" data-set="home" data-h="168"></div></div></div></div>
-<div class="bars" id="mbars"><i class="on"></i><i></i><i></i></div></section>
+  <section class="hx-cal">
+   <div class="card sl" data-go="calendar"><div class="r1"><span class="lab">Calendar · next big event</span><span class="lnk">Calendar →</span></div>
+    <div class="r2"><h4>FOMC rate decision</h4><span class="cdn">26D 15H</span></div>
+    <div class="r3"><span class="lab" style="color:#9CB8C2">Thu 10 Dec · 00:30 IST</span><span class="lab">Est 4.25%</span></div></div>
+  </section>
  </div>
  <div class="nav"><div class="on">▣<span>FEED</span></div><div>▦<span>APPS</span></div><div>▭<span>WALLET</span></div></div>
-</div></div></div><div class="arr">→</div><div class="col scr" id="s-slides"><div class="cap"><b>Markets now · 3 slides</b> · swipe on home</div><div class="phone tall" style="background:#031F2C;padding:16px;display:flex;flex-direction:column;gap:16px"><div class="card sl"><div class="sh2"><span class="lab">Calendar · next big event</span><span class="lnk">Calendar →</span></div><div class="cd"><b class="mono">2D 07H</b><span class="lab">until</span></div><h4 style="margin:2px 0 4px">FOMC rate decision</h4><span class="lab" style="color:#9CB8C2">Wed 28 Oct · 23:30 IST · Est 4.25%</span><div class="cm"><span class="lab" style="color:#F5FAFC">Last time: BTC −2.1% in 24h</span><span class="lab">+3 this week</span></div></div><div class="card sl"><div class="sh2"><span class="lab">Smart wallets · 24h</span><span class="lnk">All activity →</span></div><span class="lab">Most bought</span><div class="cd" style="margin-top:2px"><b class="mono">JUP</b><span class="mono up" style="font-size:18px;font-weight:700">+$118K</span></div><span class="lab" style="color:#9CB8C2">3 wallets bought · 0 sold</span><div class="tbl" style="margin-top:12px;border:0;border-top:1px solid #185A70;border-radius:0"><div class="tr2" style="padding:10px 0"><span class="ti" style="border-color:#FFD166;color:#FFD166">B</span><div class="nm"><span>Sold BONK</span><span class="tk">Smart · 9Kd…e21</span></div><div class="rt2"><span class="mono">$31.0K</span><span class="mono dn" style="font-size:12px">▼ sell · 38m</span></div></div></div><div class="cm"><span class="lab">Birdeye · 24 wallets</span></div></div><div class="card sl"><div class="sh2"><span class="lab">Market · Solana · 24h</span><span class="lnk">Heatmap →</span></div><div class="tm" data-set="home" data-h="168"></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-todaysheet"><div class="cap"><b>Today news sheet</b> · tap Today slide or any update</div><div class="phone"><div class="re dpage" style="height:844px"><div class="dim" data-back><div class="ghost"></div></div><div class="sheet"><div class="grab" data-back></div><div class="pad" style="padding-top:8px"><div class="meta" style="margin-top:12px"><span class="lab" style="color:#F5FAFC">Bitcoin · Macro</span><span class="lab">2h ago · MyBoon</span></div><h1 class="dh">Rate-cut bets jump after a softer inflation print</h1><img class="hero" style="height:150px;margin-top:12px" src="ref/feed-editorial-macro-lead.png"><p class="rd lead">Traders now price two cuts by March. Bitcoin rose as yields fell and the dollar slipped.</p><div class="kp"><span class="lab">Key points</span><ul><li>Core CPI <b class="mono">0.2%</b> vs <b class="mono">0.3%</b> expected</li><li>March cut odds <b class="mono">41% → 68%</b></li><li>BTC <b class="mono up">+2.4%</b>, 10Y yield <b class="mono dn">−9bp</b></li></ul></div><span class="lab">The full picture</span><p class="rd">The softer core reading was the first downside surprise in four months. Futures moved quickly to price a second cut, and risk assets followed through the US session.</p><p class="rd">Bitcoin led majors as funding stayed neutral, suggesting spot demand rather than leverage drove the move.</p></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-allupdates"><div class="cap"><b>All updates</b> · tap “All updates →”</div><div class="phone"><div class="re dpage" style="min-height:844px"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">All updates</span><div style="width:32px"></div></div><div class="pad"><div class="dl">Today</div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Rate-cut bets jump after a softer inflation print</h4><p class=sm>Traders now price two cuts by March.</p></div></div><div class="mm"><span class="lab">2H · MACRO</span><span class="lab">Tradable</span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Oil swings as US–Iran talks stall</h4><p class=sm>Prediction markets on a deal slipped to 31%.</p></div></div><div class="mm"><span class="lab">5H · GEO</span><span class="lab">Market open</span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Solana fees hit a 3-month low</h4><p class=sm>Activity cooled after the memecoin rush faded.</p></div></div><div class="mm"><span class="lab">7H · CRYPTO</span><span class="lab">Tradable</span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Meta guides capex higher ahead of Q3</h4><p class=sm>Tokenized META trades 24/7 on two venues.</p></div></div><div class="mm"><span class="lab">9H · STOCKS</span><span class="lab">Tradable</span></div></div><div class="dl">Yesterday</div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Dollar slides into CPI week</h4><p class=sm>DXY at a 6-week low before the print.</p></div></div><div class="mm"><span class="lab">YDA · MACRO</span><span class="lab"></span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Jupiter volume jumps 40% after perps launch</h4><p class=sm>Traders moved fast after the listing.</p></div></div><div class="mm"><span class="lab">YDA · CRYPTO</span><span class="lab">Tradable</span></div></div></div></div></div></div></div><div class="row"><div class="col scr" id="s-story"><div class="cap"><b>Story · catch me up</b> · tap story card</div><div class="phone tall"><div class="re dpage"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">Story</span><div class="ib">☆</div></div><div class="pad"><div class="meta"><span class="lab" style="color:#F5FAFC">US–Iran · 12 updates</span><span class="lab">Updated 40m ago</span></div><h1 class="dh">US–Iran talks</h1><div class="card"><span class="lab">Catch me up · 30 sec</span><ul class="cu"><li>Talks restarted in Oman after a tanker seizure spiked oil.</li><li>Round two ended with no date for the next.</li><li>Iran wants sanctions relief first; the US won't move.</li></ul></div><div class="km"><div class="card"><span class="lab">Brent</span><b class="mono">−3.0%</b><span class="lab">since talks</span></div><div class="card"><span class="lab">Deal odds</span><b class="mono">31%</b><span class="lab">Polymarket</span></div><div class="card"><span class="lab">Rounds</span><b class="mono">2</b><span class="lab">of talks</span></div></div><div class="sh" style="margin-top:24px"><h2>Timeline</h2><span class="lab">Newest first</span></div><div class="tlv"><div data-go="todaysheet"><i class=""></i><span class="lab">26 OCT · 40M AGO</span><p class="et">Second round ends without a date for the next. Brent gave back early gains.</p></div><div data-go="todaysheet"><i class="o"></i><span class="lab">25 OCT</span><p class="et">Iran says sanctions relief must come first; US negotiators hold firm.</p></div><div data-go="todaysheet"><i class="o"></i><span class="lab">23 OCT</span><p class="et">Talks open in Muscat. Oil drops 3% on headline.</p></div><div data-go="todaysheet"><i class="o"></i><span class="lab">19 OCT</span><p class="et">Oman confirms it will host a second round.</p></div></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-allstories"><div class="cap"><b>All stories</b> · tap “All stories →”</div><div class="phone tall"><div class="re"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">All stories</span><div style="width:32px"></div></div><div class="pad"><div class="seg"><span class="on">FOLLOWING</span><span>ALL</span></div><div class="card" data-go="story"><div style="display:flex;gap:12px"><img class=th src=ref/feed-editorial-us-iran.png><div style="flex:1;min-width:0"><h4>US–Iran talks</h4><p class="sm">Latest: no date for round three.</p></div></div><div class="mm"><span class="lab">12 updates · 40m ago</span><span class="lab" style="color:#F5FAFC">Following</span></div></div><div class="card" data-go="story"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Fed path to cuts</h4><p class="sm">Latest: no date for round three.</p></div></div><div class="mm"><span class="lab">8 updates · 2h ago</span><span class="lab" style="color:#F5FAFC">Following</span></div></div><div class="card" data-go="story"><div style="display:flex;gap:12px"><img class=th src=ref/feed-editorial-us-iran.png><div style="flex:1;min-width:0"><h4>Solana ETF filings</h4><p class="sm">Latest: no date for round three.</p></div></div><div class="mm"><span class="lab">5 updates · Yesterday</span><span class="lab" style="color:#FFD166">Follow</span></div></div><div class="card" data-go="story"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Meta AI capex</h4><p class="sm">Latest: no date for round three.</p></div></div><div class="mm"><span class="lab">4 updates · Fri</span><span class="lab" style="color:#FFD166">Follow</span></div></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-calendar"><div class="cap"><b>Calendar</b> · tap Calendar slide</div><div class="phone tall"><div class="re dpage"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">Calendar</span><div class="ib">⌕</div></div><div class="pad"><div class="meta"><span class="lab" style="color:#F5FAFC">October 2026</span><span class="lab">‹ ›</span></div><div class="mg"><span class="lab">M</span><span class="lab">T</span><span class="lab">W</span><span class="lab">T</span><span class="lab">F</span><span class="lab">S</span><span class="lab">S</span><span></span><span></span><span></span><div class=""><b class="mono">1</b></div><div class=""><b class="mono">2</b></div><div class=""><b class="mono">3</b></div><div class=""><b class="mono">4</b></div><div class=""><b class="mono">5</b></div><div class=""><b class="mono">6</b></div><div class=" ev"><b class="mono">7</b></div><div class=""><b class="mono">8</b></div><div class=""><b class="mono">9</b></div><div class=" ev"><b class="mono">10</b></div><div class=""><b class="mono">11</b></div><div class=""><b class="mono">12</b></div><div class=""><b class="mono">13</b></div><div class=" ev"><b class="mono">14</b></div><div class=" ev"><b class="mono">15</b></div><div class=""><b class="mono">16</b></div><div class=""><b class="mono">17</b></div><div class=""><b class="mono">18</b></div><div class=""><b class="mono">19</b></div><div class=""><b class="mono">20</b></div><div class=""><b class="mono">21</b></div><div class=""><b class="mono">22</b></div><div class=""><b class="mono">23</b></div><div class=""><b class="mono">24</b></div><div class=""><b class="mono">25</b></div><div class=""><b class="mono">26</b></div><div class=""><b class="mono">27</b></div><div class="on ev"><b class="mono">28</b></div><div class=" ev"><b class="mono">29</b></div><div class=" ev"><b class="mono">30</b></div><div class=""><b class="mono">31</b></div></div><div class="sh" style="margin-top:16px"><h2>Wed 28</h2><span class="lab">2 events</span></div><div class="card" data-go="eventsheet"><div class="meta" style="margin:0"><span class="lab">23:30 IST</span><span class="imp"><i class="on"></i><i class="on"></i><i class="on"></i></span></div><h4 style="margin:4px 0 2px">FOMC rate decision</h4><span class="lab" style="color:#9CB8C2">USD · Est 4.25% · Prev 4.50%</span></div><div class="card" data-go="eventsheet"><div class="meta" style="margin:0"><span class="lab">After close IST</span><span class="imp"><i class="on"></i><i class="on"></i><i class="on"></i></span></div><h4 style="margin:4px 0 2px">Meta Q3 earnings</h4><span class="lab" style="color:#9CB8C2">META · EPS est $5.25</span></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-eventsheet"><div class="cap"><b>Event sheet</b> · tap an event</div><div class="phone"><div class="re" style="height:844px;position:relative"><div class="dim" data-back></div><div class="sheet"><div class="grab" data-back></div><div class="pad" style="padding-top:8px"><div class="meta"><span class="lab" style="color:#F5FAFC">Macro · USD</span><span class="imp"><i class="on"></i><i class="on"></i><i class="on"></i></span></div><h1 class="dh" style="margin-bottom:4px">FOMC rate decision</h1><span class="lab">Wed 28 Oct · 23:30 IST · in 2d 07h</span>
+</div></div></div><div class="arr">→</div><div class="col scr" id="s-slides"><div class="cap"><b>Markets now</b> · tap “Markets →” on Calendar</div><div class="phone tall" style="background:#031F2C;display:flex;flex-direction:column"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">Markets now</span><div style="width:32px"></div></div><div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:16px"><div class="card sl" data-go="calendar"><div class="sh2"><span class="lab">Calendar · next big event</span><span class="lnk">Calendar →</span></div><div class="cd"><b class="mono">26D 15H</b><span class="lab">until</span></div><h4 style="margin:2px 0 4px">FOMC rate decision</h4><span class="lab" style="color:#9CB8C2">Thu 10 Dec · 00:30 IST · Est 4.25%</span><div class="cm"><span class="lab" style="color:#F5FAFC">Last time: BTC −2.1% in 24h</span><span class="lab">+3 this week</span></div></div><div class="card sl" data-go="wallets"><div class="sh2"><span class="lab">Smart wallets · 24h</span><span class="lnk">All activity →</span></div><span class="lab">Most bought</span><div class="cd" style="margin-top:2px"><b class="mono">JUP</b><span class="mono up" style="font-size:18px;font-weight:700">+$118K</span></div><span class="lab" style="color:#9CB8C2">3 wallets bought · 0 sold</span><div class="tbl" style="margin-top:12px;border:0;border-top:1px solid #185A70;border-radius:0"><div class="tr2" style="padding:10px 0"><span class="ti" style="border-color:#FFD166;color:#FFD166">B</span><div class="nm"><span>Sold BONK</span><span class="tk">Smart · 9Kd…e21</span></div><div class="rt2"><span class="mono">$31.0K</span><span class="mono dn" style="font-size:12px">▼ sell · 38m</span></div></div></div><div class="cm"><span class="lab">Birdeye · 24 wallets</span></div></div><div class="card sl" data-go="market"><div class="sh2"><span class="lab">Market · Solana · 24h</span><span class="lnk">Heatmap →</span></div><div class="tm" data-set="home" data-h="168"></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-todaysheet"><div class="cap"><b>Today news sheet</b> · tap Today slide or any update</div><div class="phone"><div class="re dpage" style="height:844px"><div class="dim" data-back><div class="ghost"></div></div><div class="sheet"><div class="grab" data-back></div><div class="pad" style="padding-top:8px"><div class="meta" style="margin-top:12px"><span class="lab" style="color:#F5FAFC">Bitcoin · Macro</span><span class="lab">2h ago · MyBoon</span></div><h1 class="dh">Rate-cut bets jump after a softer inflation print</h1><img class="hero" style="height:150px;margin-top:12px" src="ref/feed-editorial-macro-lead.png"><p class="rd lead">Traders now price two cuts by March. Bitcoin rose as yields fell and the dollar slipped.</p><div class="kp"><span class="lab">Key points</span><ul><li>Core CPI <b class="mono">0.2%</b> vs <b class="mono">0.3%</b> expected</li><li>March cut odds <b class="mono">41% → 68%</b></li><li>BTC <b class="mono up">+2.4%</b>, 10Y yield <b class="mono dn">−9bp</b></li></ul></div><span class="lab">The full picture</span><p class="rd">The softer core reading was the first downside surprise in four months. Futures moved quickly to price a second cut, and risk assets followed through the US session.</p><p class="rd">Bitcoin led majors as funding stayed neutral, suggesting spot demand rather than leverage drove the move.</p></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-allupdates"><div class="cap"><b>All updates</b> · tap “All updates →”</div><div class="phone"><div class="re dpage" style="min-height:844px"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">All updates</span><div style="width:32px"></div></div><div class="pad"><div class="dl">Today</div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Rate-cut bets jump after a softer inflation print</h4><p class=sm>Traders now price two cuts by March.</p></div></div><div class="mm"><span class="lab">2H · MACRO</span><span class="lab">Tradable</span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Oil swings as US–Iran talks stall</h4><p class=sm>Prediction markets on a deal slipped to 31%.</p></div></div><div class="mm"><span class="lab">5H · GEO</span><span class="lab">Market open</span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Solana fees hit a 3-month low</h4><p class=sm>Activity cooled after the memecoin rush faded.</p></div></div><div class="mm"><span class="lab">7H · CRYPTO</span><span class="lab">Tradable</span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Meta guides capex higher for 2027</h4><p class=sm>Tokenized META trades 24/7 on two venues.</p></div></div><div class="mm"><span class="lab">9H · STOCKS</span><span class="lab">Tradable</span></div></div><div class="dl">Yesterday</div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Dollar slides into CPI week</h4><p class=sm>DXY at a 6-week low before the print.</p></div></div><div class="mm"><span class="lab">YDA · MACRO</span><span class="lab"></span></div></div><div class="card" data-go="todaysheet"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Jupiter volume jumps 40% after perps launch</h4><p class=sm>Traders moved fast after the listing.</p></div></div><div class="mm"><span class="lab">YDA · CRYPTO</span><span class="lab">Tradable</span></div></div></div></div></div></div></div><div class="row"><div class="col scr" id="s-story"><div class="cap"><b>Topic detail</b> · tap any story tile</div><div class="phone tall"><div class="re sx sx-detail">
+        <header class="detail-bar">
+          <button class="icon-button" data-back type="button" aria-label="Back to Feed"><svg width="22" height="22" viewBox="0 0 24 24"><use href="#i-left"/></svg></button>
+          <span class="lab">Developing story</span>
+          <button class="icon-button" type="button" aria-label="Share topic"><svg width="20" height="20" viewBox="0 0 24 24"><use href="#i-share"/></svg></button>
+        </header>
+        <div class="detail-scroll" id="detailScroll">
+          <section class="detail-intro" aria-labelledby="detailTitle">
+            <div class="detail-kicker"><span class="lab" id="detailKicker">Geopolitics · 12 updates</span><span class="lab" id="detailUpdated">40m ago</span></div>
+            <h1 id="detailTitle">US vs Iran</h1>
+            <p class="detail-lede" id="detailLede"></p>
+            <article class="latest-card card">
+              <div class="card-meta"><span class="lab">Latest development</span><span class="lab" id="latestTime">14:52 IST</span></div>
+              <h2 id="latestTitle"></h2>
+              <p id="latestBody"></p>
+              <div class="latest-meta"><span class="lab" id="latestSource"></span><span class="lab">Catch up ↓</span></div>
+            </article>
+          </section>
+
+          <section class="detail-section" aria-labelledby="impactTitle">
+            <div class="section-head compact"><h2 id="impactTitle">Market impact</h2><span class="lab live-label" id="liveLabel">Live · 15:42 IST</span></div>
+            <article class="card chart-card">
+              <div class="asset-head">
+                <div><span class="lab" id="assetSymbol"></span><div class="asset-name" id="assetName"></div></div>
+                <div class="price-block"><span class="price" id="assetPrice"></span><span class="pct" id="assetChange"></span></div>
+              </div>
+              <div class="segmented" role="group" aria-label="Chart range">
+                <button class="on" type="button" data-range="1D" aria-pressed="true">1D</button>
+                <button type="button" data-range="1W" aria-pressed="false">1W</button>
+                <button type="button" data-range="1M" aria-pressed="false">1M</button>
+                <button type="button" data-range="1Y" aria-pressed="false">1Y</button>
+              </div>
+              <svg class="chart" id="mainChart" viewBox="0 0 328 164" role="img" aria-label="Main affected market price chart"></svg>
+            </article>
+            <article class="card secondary-card">
+              <div class="secondary-head">
+                <div><span class="lab" id="secondarySymbol"></span><div class="secondary-title" id="secondaryName"></div></div>
+                <div class="secondary-value"><div class="secondary-price" id="secondaryPrice"></div><div class="secondary-change" id="secondaryChange"></div></div>
+              </div>
+              <svg class="chart" id="secondaryChart" viewBox="0 0 328 88" role="img" aria-label="Secondary affected market price chart"></svg>
+            </article>
+          </section>
+
+          <section class="detail-section" aria-labelledby="threadTitle">
+            <div class="section-head compact"><h2 id="threadTitle">How we got here</h2><span class="lab">Newest first</span></div>
+            <div id="eventList"></div>
+          </section>
+
+          <section class="detail-section" aria-labelledby="newsTitle">
+            <div class="section-head compact"><h2 id="newsTitle">Topic news</h2><span class="lab" id="newsCount"></span></div>
+            <div class="news-list" id="newsList"></div>
+          </section>
+
+          <section class="detail-section" aria-labelledby="chainTitle">
+            <div class="section-head compact"><h2 id="chainTitle">What could be affected</h2><span class="lab">Causal chain</span></div>
+            <p class="chain-note">MyBoon linkage · evidence-weighted, not a forecast</p>
+            <div id="chainList"></div>
+          </section>
+        </div>
+        <footer class="action-dock">
+          <button class="primary-action" id="primaryAction" type="button">Trade BTC perps</button>
+          <span class="lab action-note" id="actionNote" aria-live="polite">Optional · continues in MyBoon</span>
+        </footer>
+</div></div></div><div class="arr">→</div><div class="col scr" id="s-allstories"><div class="cap"><b>All stories</b> · tap “All stories →”</div><div class="phone tall"><div class="re"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">All stories</span><div style="width:32px"></div></div><div class="pad"><div class="seg"><span class="on">FOLLOWING</span><span>ALL</span></div><div class="card" data-go="story" data-topic="us-iran"><div style="display:flex;gap:12px"><img class=th src=ref/feed-editorial-us-iran.png><div style="flex:1;min-width:0"><h4>US vs Iran</h4><p class="sm">Latest: Talks stall over sanctions relief.</p></div></div><div class="mm"><span class="lab">12 updates · 40m ago</span><span class="lab" style="color:#F5FAFC">Following</span></div></div><div class="card" data-go="story" data-topic="fed-rates"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>Fed rates</h4><p class="sm">Latest: March cut probability rises to 68%.</p></div></div><div class="mm"><span class="lab">9 updates · 18m ago</span><span class="lab" style="color:#F5FAFC">Following</span></div></div><div class="card" data-go="story" data-topic="sol-etf"><div style="display:flex;gap:12px"><img class=th src=ref/feed-editorial-us-iran.png><div style="flex:1;min-width:0"><h4>SOL ETF</h4><p class="sm">Latest: Two issuers amend SOL filings.</p></div></div><div class="mm"><span class="lab">7 updates · 26m ago</span><span class="lab" style="color:#FFD166">Follow</span></div></div><div class="card" data-go="story" data-topic="ai-stocks"><div style="display:flex;gap:12px"><div style="flex:1;min-width:0"><h4>AI stocks</h4><p class="sm">Latest: Chip guidance tempers AI rally.</p></div></div><div class="mm"><span class="lab">2 updates · 1h ago</span><span class="lab" style="color:#FFD166">Follow</span></div></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-calendar"><div class="cap"><b>Calendar</b> · tap the calendar card</div><div class="phone tall"><div class="re dpage"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">Calendar</span><span class="lnk" data-go="slides" style="padding:12px 0 12px 12px;margin:-12px 0">Markets →</span></div><div class="pad"><div class="meta"><span class="lab" style="color:#F5FAFC">December 2026</span><span class="lab">‹ ›</span></div><div class="mg"><span class="lab">M</span><span class="lab">T</span><span class="lab">W</span><span class="lab">T</span><span class="lab">F</span><span class="lab">S</span><span class="lab">S</span><span></span><div class=""><b class="mono">1</b></div><div class=""><b class="mono">2</b></div><div class=""><b class="mono">3</b></div><div class="ev"><b class="mono">4</b></div><div class=""><b class="mono">5</b></div><div class=""><b class="mono">6</b></div><div class=""><b class="mono">7</b></div><div class=""><b class="mono">8</b></div><div class=""><b class="mono">9</b></div><div class="on ev"><b class="mono">10</b></div><div class=""><b class="mono">11</b></div><div class=""><b class="mono">12</b></div><div class=""><b class="mono">13</b></div><div class=""><b class="mono">14</b></div><div class="ev"><b class="mono">15</b></div><div class=""><b class="mono">16</b></div><div class="ev"><b class="mono">17</b></div><div class=""><b class="mono">18</b></div><div class=""><b class="mono">19</b></div><div class=""><b class="mono">20</b></div><div class=""><b class="mono">21</b></div><div class=""><b class="mono">22</b></div><div class=""><b class="mono">23</b></div><div class=""><b class="mono">24</b></div><div class=""><b class="mono">25</b></div><div class=""><b class="mono">26</b></div><div class=""><b class="mono">27</b></div><div class=""><b class="mono">28</b></div><div class=""><b class="mono">29</b></div><div class=""><b class="mono">30</b></div><div class=""><b class="mono">31</b></div></div></div><div class="sh" style="margin-top:16px"><h2>Thu 10</h2><span class="lab">2 events</span></div><div class="card" data-go="eventsheet"><div class="meta" style="margin:0"><span class="lab">00:30 IST</span><span class="imp"><i class="on"></i><i class="on"></i><i class="on"></i></span></div><h4 style="margin:4px 0 2px">FOMC rate decision</h4><span class="lab" style="color:#9CB8C2">USD · Est 4.25% · Prev 4.50%</span></div><div class="card" data-go="eventsheet"><div class="meta" style="margin:0"><span class="lab">18:45 IST</span><span class="imp"><i class="on"></i><i class="on"></i><i class="on"></i></span></div><h4 style="margin:4px 0 2px">ECB rate decision</h4><span class="lab" style="color:#9CB8C2">EUR · Est 2.00% · Prev 2.25%</span></div></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-eventsheet"><div class="cap"><b>Event sheet</b> · tap an event</div><div class="phone"><div class="re" style="height:844px;position:relative"><div class="dim" data-back></div><div class="sheet"><div class="grab" data-back></div><div class="pad" style="padding-top:8px"><div class="meta"><span class="lab" style="color:#F5FAFC">Macro · USD</span><span class="imp"><i class="on"></i><i class="on"></i><i class="on"></i></span></div><h1 class="dh" style="margin-bottom:4px">FOMC rate decision</h1><span class="lab">Thu 10 Dec · 00:30 IST · in 26d 15h</span>
 <p class="rd">The Fed sets US interest rates. Markets usually go quiet in the days before and move hard in the hour after.</p>
 <div class="km" style="grid-template-columns:1fr 1fr"><div class="card"><span class="lab">Consensus</span><b class="mono">4.25%</b></div><div class="card"><span class="lab">Previous</span><b class="mono">4.50%</b></div></div>
-<div class="sh" style="margin-top:24px"><h2>Last 3 times</h2><span class="lab">24h move</span></div><table class="rt"><tr><th class="lab">Date</th><th class="lab">Result</th><th class="lab">BTC</th><th class="lab">SPX</th><th class="lab">Gold</th></tr><tr><td class="mono ">18 Sep</td><td class="mono ">Cut 50bp</td><td class="mono dn">−2.1%</td><td class="mono up">+0.4%</td><td class="mono up">+1.2%</td></tr><tr><td class="mono ">31 Jul</td><td class="mono ">Hold</td><td class="mono up">+1.8%</td><td class="mono dn">−1.1%</td><td class="mono up">+0.3%</td></tr><tr><td class="mono ">12 Jun</td><td class="mono ">Hold</td><td class="mono dn">−0.9%</td><td class="mono up">+0.2%</td><td class="mono dn">−0.4%</td></tr></table>
+<div class="sh" style="margin-top:24px"><h2>Last 3 times</h2><span class="lab">24h move</span></div><table class="rt"><tr><th class="lab">Date</th><th class="lab">Result</th><th class="lab">BTC</th><th class="lab">SPX</th><th class="lab">Gold</th></tr><tr><td class="mono ">28 Oct</td><td class="mono ">Hold</td><td class="mono dn">−2.1%</td><td class="mono up">+0.4%</td><td class="mono up">+1.2%</td></tr><tr><td class="mono ">16 Sep</td><td class="mono ">Cut 25bp</td><td class="mono up">+1.8%</td><td class="mono dn">−1.1%</td><td class="mono up">+0.3%</td></tr><tr><td class="mono ">29 Jul</td><td class="mono ">Hold</td><td class="mono dn">−0.9%</td><td class="mono up">+0.2%</td><td class="mono dn">−0.4%</td></tr></table>
 <div class="chips" style="margin-top:20px"><span class="chip">Fed</span><span class="chip">Bitcoin</span><span class="chip">Dollar</span></div>
 <div class="btn">Remind me 1h before</div></div></div></div></div></div></div><div class="row"><div class="col scr" id="s-wallets"><div class="cap"><b>Smart wallets</b> · tap Wallets slide</div><div class="phone"><div class="re dpage"><div class="bar"><div class="ib" data-back>‹</div><span class="lab" style="color:#F5FAFC">Smart wallets</span><div class="ib">⌕</div></div><div class="pad"><div class="seg"><span class="on">TOP WALLETS</span><span>FOLLOWING</span></div><div class="tbl"><div class="th2"><span class="lab"># · Wallet</span><span class="lab">30d PnL · Win</span></div><div class="tr2" data-go="tradesheet"><span class="ti" style="border-color:#185A70;color:#9CB8C2">1</span><div class="nm"><span class="mono" style="font-size:15px">7xQp…3fA</span><span class="tk">KOL · 18 trades · last JUP</span></div><div class="rt2"><span class="mono up">+$412K</span><span class="mono" style="font-size:12px;color:#9CB8C2">64%</span></div></div><div class="tr2" data-go="tradesheet"><span class="ti" style="border-color:#185A70;color:#9CB8C2">2</span><div class="nm"><span class="mono" style="font-size:15px">9Kd…e21</span><span class="tk">Smart · 42 trades · last JUP</span></div><div class="rt2"><span class="mono up">+$188K</span><span class="mono" style="font-size:12px;color:#9CB8C2">58%</span></div></div><div class="tr2" data-go="tradesheet"><span class="ti" style="border-color:#185A70;color:#9CB8C2">3</span><div class="nm"><span class="mono" style="font-size:15px">Fq2…k9L</span><span class="tk">KOL · 9 trades · last JUP</span></div><div class="rt2"><span class="mono up">+$96K</span><span class="mono" style="font-size:12px;color:#9CB8C2">71%</span></div></div><div class="tr2" data-go="tradesheet"><span class="ti" style="border-color:#185A70;color:#9CB8C2">4</span><div class="nm"><span class="mono" style="font-size:15px">3mN…pQ7</span><span class="tk">Smart · 27 trades · last JUP</span></div><div class="rt2"><span class="mono up">+$54K</span><span class="mono" style="font-size:12px;color:#9CB8C2">52%</span></div></div><div class="tr2" data-go="tradesheet"><span class="ti" style="border-color:#185A70;color:#9CB8C2">5</span><div class="nm"><span class="mono" style="font-size:15px">Qe4…tt2</span><span class="tk">Smart · 13 trades · last JUP</span></div><div class="rt2"><span class="mono up">+$31K</span><span class="mono" style="font-size:12px;color:#9CB8C2">61%</span></div></div><div class="tr2" data-go="tradesheet"><span class="ti" style="border-color:#185A70;color:#9CB8C2">6</span><div class="nm"><span class="mono" style="font-size:15px">Lm0…aa9</span><span class="tk">KOL · 22 trades · last JUP</span></div><div class="rt2"><span class="mono up">+$12K</span><span class="mono" style="font-size:12px;color:#9CB8C2">50%</span></div></div></div><p class="lab" style="margin-top:12px">Tap a wallet to follow · example data</p></div></div></div></div><div class="arr">→</div><div class="col scr" id="s-tradesheet"><div class="cap"><b>Wallet sheet</b> · tap a wallet</div><div class="phone"><div class="re" style="height:844px;position:relative"><div class="dim" data-back></div><div class="sheet"><div class="grab" data-back></div><div class="pad" style="padding-top:8px"><div class="meta"><span class="lab" style="color:#F5FAFC">KOL · Solana</span><span class="lab">12m ago</span></div><h1 class="dh" style="margin-bottom:4px">Bought JUP</h1><span class="lab mono">7xQp…3fA</span>
 <div class="km" style="grid-template-columns:1fr 1fr 1fr"><div class="card"><span class="lab">Value</span><b class="mono up">$84.2K</b></div><div class="card"><span class="lab">Amount</span><b class="mono">1.2M</b></div><div class="card"><span class="lab">Price</span><b class="mono">$0.70</b></div></div>
@@ -207,4 +437,366 @@ const P=location.search.includes('proto');const st=['home'];
 function show(k){document.querySelectorAll('.scr').forEach(e=>e.classList.toggle('shown',e.id=='s-'+k))}
 if(P){document.body.classList.add('proto');show('home');document.addEventListener('click',e=>{const b=e.target.closest('[data-back]');if(b){if(st.length>1){st.pop();show(st[st.length-1])}return}const g=e.target.closest('[data-go]');if(g){e.preventDefault();st.push(g.dataset.go);show(g.dataset.go)}})}
 const car=document.getElementById('mcar');car&&car.addEventListener('scroll',()=>{const i=Math.round(car.scrollLeft/car.clientWidth);document.querySelectorAll('#mbars i').forEach((b,j)=>b.classList.toggle('on',j==i));document.getElementById('mnl').innerHTML=['CALENDAR','WALLETS','MARKET'].map((n,j)=>j==i?'<b style="color:#F5FAFC">'+n+'</b>':n).join(' · ')})
-</script><script>if(location.search.includes('proto'))document.addEventListener('click',e=>{const c=e.target.closest('.seg>*,.cts>*,.chips>*,.mg .ev,.mg>*');if(!c||c.closest('[data-go]'))return;[...c.parentElement.children].forEach(x=>x.classList.toggle('on',x===c))})</script><script>window.PROTO_NOTES={"pages": [["Feed", "feed-mock.html"], ["Apps", "apps-mock.html"], ["Wallet", "wallet-mock.html"]], "notes": [{"sel": "#s-home .top", "title": "Top bar", "comp": "TopBar (shared with Apps / Wallet)", "tokens": "bg #073B4C, wordmark, icon buttons 36px, thin outline icons", "beh": "Bell opens notifications; avatar opens profile.", "states": "Unread dot on bell (gold).", "data": "Static.", "q": "Does the Feed top bar use the blue band or plain bg? Mock uses plain."}, {"sel": "#s-home .today", "title": "Today carousel", "comp": "StoryCarousel → TodayCarousel", "tokens": "card radius 8, 1px #185A70 border, title 17/600, body 15, mono meta caps 10.5", "beh": "Horizontal snap, 1 slide per view, bars show position. Tap slide opens news sheet (90%).", "states": "Loading: skeleton card. Empty: hide section.", "data": "published_narratives, latest 5 today (title, summary, publishedAt, tag).", "q": "Auto-advance or manual only? Mock is manual."}, {"sel": "#s-home .lnk", "title": "All updates link", "comp": "SectionHeader link", "tokens": "gold #FFD166 13/600, the only gold text", "beh": "Pushes All updates screen.", "states": "—", "data": "Route /feed/updates (new).", "q": null}, {"sel": "#s-home .story", "title": "Developing story", "comp": "StoryCard", "tokens": "card, 1 lead line, mono timestamp chips", "beh": "Tap “Watch full story” → Story (catch-me-up). Other link → All stories.", "states": "No active story: section hidden.", "data": "stories table, top by updatedAt.", "q": "Which story wins when two are active?"}, {"sel": "#s-home .bars", "title": "Second carousel · Calendar / Wallets / Market", "comp": "FeedCarousel (3 fixed slides)", "tokens": "same card spec; label row CALENDAR · WALLETS · MARKET mono", "beh": "Swipe between 3 slides; each slide header opens its full screen.", "states": "Per slide skeleton while loading.", "data": "calendar events, wallet_activity, token heatmap.", "q": null}, {"sel": "#s-todaysheet .sheet", "title": "News sheet", "comp": "Bottom sheet 90%", "tokens": "grabber only, bg #031F2C, radius 12 top", "beh": "Drag down or tap backdrop to close. Take-action apps at bottom.", "states": "Long body scrolls inside the sheet.", "data": "narrative by id: title, summary, content, imageUrl, related apps.", "q": "Share action needed?"}, {"sel": "#s-allupdates .row", "title": "All updates row", "comp": "UpdateRow (text only, grouped by day)", "tokens": "15 body, mono time, hairline #185A70", "beh": "Tap opens the same news sheet.", "states": "Paginate on scroll, 20 per page.", "data": "published_narratives ordered by publishedAt desc.", "q": null}, {"sel": "#s-story .cu", "title": "Catch me up", "comp": "StoryDetail · CatchUp block", "tokens": "card; key points list; mono dates", "beh": "Scroll timeline below; back returns to the screen it came from.", "states": "—", "data": "story + story_events.", "q": null}, {"sel": "#s-allstories .seg", "title": "All stories filter", "comp": "Segmented tabs (locked C)", "tokens": "seg bg #031F2C, on #0E3A4C, gold underline", "beh": "Filters list Active / Past.", "states": "—", "data": "stories.", "q": null}, {"sel": "#s-calendar .mg", "title": "Month grid", "comp": "CalendarMonth", "tokens": "mono dates, gold dot = high impact, on = selected day", "beh": "Tap a day filters the list; tap event opens event sheet.", "states": "Today ring; past days dim.", "data": "calendar events (date, impact, kind).", "q": "Swipe for next month or arrows?"}, {"sel": "#s-eventsheet .chips", "title": "Event history chips", "comp": "Chips", "tokens": "chip radius 999, 1px border, on = gold outline", "beh": "Switch which past release is shown (market reaction).", "states": "—", "data": "event history per kind (CPI, FOMC …).", "q": "Is past-reaction data available for every event kind?"}, {"sel": "#s-wallets .tbl", "title": "Wallet leaderboard", "comp": "tokens.xyz table", "tokens": "row 58px, mono right numbers, green/pink change", "beh": "Tap row opens wallet sheet with recent trades.", "states": "—", "data": "smart wallets ranked by 7d PnL.", "q": null}, {"sel": "#s-tradesheet .btn", "title": "Trade CTA", "comp": "Button primary (app colour)", "tokens": "height 48, radius 8, outline in app brand colour, not gold", "beh": "Opens the app (Pacifica / Polymarket …) prefilled.", "states": "Disabled when app unsupported.", "data": "deep link route of the app.", "q": null}, {"sel": "#s-market .cts", "title": "Market categories", "comp": "Scrollable tabs", "tokens": "mono caps 11, on = ink + gold underline", "beh": "Trending / Crypto / Tokenized stocks / Memes filter map + table.", "states": "—", "data": "HeatmapToken by category.", "q": null}, {"sel": "#s-market .tm", "title": "Treemap", "comp": "Squarified treemap", "tokens": "green/pink 5-step scale from change %", "beh": "Tap tile opens token sheet.", "states": "Tiny tiles show ticker only.", "data": "token-heatmap (volume = area, change = colour).", "q": null}, {"sel": "#s-tilesheet .btn", "title": "Token actions", "comp": "Buttons", "tokens": "primary outline in app colour", "beh": "Routes to the venue that can trade the token.", "states": "—", "data": "venues per token.", "q": "Which venue is default when several can trade it?"}], "phone": ".phone"}</script><script src="proto-notes.js"></script></body></html>
+</script><script>if(location.search.includes('proto'))document.addEventListener('click',e=>{const c=e.target.closest('.seg>*,.cts>*,.chips>*,.mg .ev,.mg>*');if(!c||c.closest('[data-go]'))return;[...c.parentElement.children].forEach(x=>x.classList.toggle('on',x===c))})</script><script>window.PROTO_NOTES={"pages": [["Feed", "feed-mock.html"], ["Apps", "apps-mock.html"], ["Wallet", "wallet-mock.html"]], "notes": [{"sel": "#s-home .top", "title": "Top bar", "comp": "TopBar (shared with Apps / Wallet)", "tokens": "bg #073B4C, wordmark, icon buttons 36px, thin outline icons", "beh": "Bell opens notifications; avatar opens profile.", "states": "Unread dot on bell (gold).", "data": "Static.", "q": "Does the Feed top bar use the blue band or plain bg? Mock uses plain."}, {"sel": "#s-home .today", "title": "Today carousel", "comp": "StoryCarousel \u2192 TodayCarousel", "tokens": "card radius 8, 1px #185A70 border, title 17/600, body 15, mono meta caps 10.5", "beh": "Horizontal snap, 1 slide per view, bars show position. Tap slide opens news sheet (90%).", "states": "Loading: skeleton card. Empty: hide section.", "data": "published_narratives, latest 5 today (title, summary, publishedAt, tag).", "q": "Auto-advance or manual only? Mock is manual."}, {"sel": "#s-home .lnk", "title": "All updates link", "comp": "SectionHeader link", "tokens": "gold #FFD166 13/600, the only gold text", "beh": "Pushes All updates screen.", "states": "\u2014", "data": "Route /feed/updates (new).", "q": null}, {"sel": "#s-home .sx-pager", "title": "Developing stories \u00b7 topic mosaic", "comp": "TopicMosaic (replaces StoryCard)", "tokens": "tiles radius 6, 1px #185A70, bg #073B4C / #083D50 for lead tiles, name 14 / 18 bold, mono 11 meta, arrow 14", "beh": "Name-only tiles sized by 24h activity; large and tall tiles carry their linked market. Swipe left for pages 2 and 3 (scroll-snap, next page peeks, dots top right). Tap a tile \u2192 Topic detail.", "states": "Loading: skeleton tiles. No active topics: section hidden.", "data": "stories table (topic name, update count, updatedAt, linked market).", "q": "How many pages before \u201cAll topics\u201d? Prototype shows 3 pages of 10, 10 and 5 tiles."}, {"sel": "#s-home .hx-cal .card", "title": "Calendar \u00b7 next big event", "comp": "CalendarCard", "tokens": "card spec, label row mono caps, countdown mono 28", "beh": "Shows the next big event with countdown; tap opens Calendar.", "states": "No upcoming event: hide block.", "data": "calendar events.", "q": "Wallets and Market slides no longer sit on Feed home; where should they live?"}, {"sel": "#s-todaysheet .sheet", "title": "News sheet", "comp": "Bottom sheet 90%", "tokens": "grabber only, bg #031F2C, radius 12 top", "beh": "Drag down or tap backdrop to close. Take-action apps at bottom.", "states": "Long body scrolls inside the sheet.", "data": "narrative by id: title, summary, content, imageUrl, related apps.", "q": "Share action needed?"}, {"sel": "#s-allupdates .row", "title": "All updates row", "comp": "UpdateRow (text only, grouped by day)", "tokens": "15 body, mono time, hairline #185A70", "beh": "Tap opens the same news sheet.", "states": "Paginate on scroll, 20 per page.", "data": "published_narratives ordered by publishedAt desc.", "q": null}, {"sel": "#s-story .latest-card", "title": "Topic detail", "comp": "TopicDetail", "tokens": "card spec, mono labels, sticky action dock 48 tall gold outline", "beh": "Slides in from the right. Latest development, live market chart (1D/1W/1M/1Y), secondary market, dated thread, topic news, causal chain, one optional action.", "states": "Loading: skeleton cards. Offline price: freeze with last-updated label.", "data": "story events, asset price feed, linked-market model.", "q": "Is the action optional-by-design enough?"}, {"sel": "#s-allstories .seg", "title": "All stories filter", "comp": "Segmented tabs (locked C)", "tokens": "seg bg #031F2C, on #0E3A4C, gold underline", "beh": "Filters list Active / Past.", "states": "\u2014", "data": "stories.", "q": null}, {"sel": "#s-calendar .mg", "title": "Month grid", "comp": "CalendarMonth", "tokens": "mono dates, gold dot = high impact, on = selected day", "beh": "Tap a day filters the list; tap event opens event sheet.", "states": "Today ring; past days dim.", "data": "calendar events (date, impact, kind).", "q": "Swipe for next month or arrows?"}, {"sel": "#s-eventsheet .chips", "title": "Event history chips", "comp": "Chips", "tokens": "chip radius 999, 1px border, on = gold outline", "beh": "Switch which past release is shown (market reaction).", "states": "\u2014", "data": "event history per kind (CPI, FOMC \u2026).", "q": "Is past-reaction data available for every event kind?"}, {"sel": "#s-wallets .tbl", "title": "Wallet leaderboard", "comp": "tokens.xyz table", "tokens": "row 58px, mono right numbers, green/pink change", "beh": "Tap row opens wallet sheet with recent trades.", "states": "\u2014", "data": "smart wallets ranked by 7d PnL.", "q": null}, {"sel": "#s-tradesheet .btn", "title": "Trade CTA", "comp": "Button primary (app colour)", "tokens": "height 48, radius 8, outline in app brand colour, not gold", "beh": "Opens the app (Pacifica / Polymarket \u2026) prefilled.", "states": "Disabled when app unsupported.", "data": "deep link route of the app.", "q": null}, {"sel": "#s-market .cts", "title": "Market categories", "comp": "Scrollable tabs", "tokens": "mono caps 11, on = ink + gold underline", "beh": "Trending / Crypto / Tokenized stocks / Memes filter map + table.", "states": "\u2014", "data": "HeatmapToken by category.", "q": null}, {"sel": "#s-market .tm", "title": "Treemap", "comp": "Squarified treemap", "tokens": "green/pink 5-step scale from change %", "beh": "Tap tile opens token sheet.", "states": "Tiny tiles show ticker only.", "data": "token-heatmap (volume = area, change = colour).", "q": null}, {"sel": "#s-tilesheet .btn", "title": "Token actions", "comp": "Buttons", "tokens": "primary outline in app colour", "beh": "Routes to the venue that can trade the token.", "states": "\u2014", "data": "venues per token.", "q": "Which venue is default when several can trade it?"}], "phone": ".phone"}</script><script>
+(function(){
+
+const paths={
+  up:{
+    '1D':'M42 112L62 108L82 116L102 94L122 99L142 85L162 90L182 69L202 75L222 62L242 68L262 42L282 50L306 28',
+    '1W':'M42 118L62 101L82 109L102 91L122 72L142 82L162 65L182 76L202 55L222 60L242 39L262 48L282 35L306 28',
+    '1M':'M42 104L62 115L82 96L102 100L122 76L142 88L162 60L182 71L202 49L222 58L242 34L262 42L282 22L306 28',
+    '1Y':'M42 121L62 110L82 114L102 89L122 96L142 71L162 79L182 58L202 63L222 44L242 51L262 31L282 38L306 20'
+  },
+  down:{
+    '1D':'M42 30L62 38L82 28L102 51L122 43L142 62L162 55L182 76L202 69L222 86L242 78L262 99L282 91L306 116',
+    '1W':'M42 24L62 43L82 35L102 54L122 73L142 63L162 82L182 72L202 91L222 85L242 104L262 96L282 110L306 116',
+    '1M':'M42 38L62 27L82 46L102 41L122 66L142 54L162 82L182 70L202 94L222 83L242 108L262 99L282 121L306 116',
+    '1Y':'M42 20L62 32L82 27L102 53L122 45L142 70L162 61L182 83L202 77L222 96L242 89L262 110L282 102L306 124'
+  }
+};
+const sparkPaths={
+  up:'M44 56L64 49L84 54L104 43L124 47L144 35L164 40L184 29L204 34L224 22L244 28L264 16L284 21L304 12',
+  down:'M44 12L64 20L84 15L104 29L124 24L144 38L164 32L184 46L204 40L224 53L244 47L264 60L284 54L304 64'
+};
+const xLabels={'1D':['09:00','12:00','15:00'],'1W':['MON','WED','FRI'],'1M':['14 OCT','30 OCT','13 NOV'],'1Y':['NOV 25','MAY','NOV 26']};
+const data={
+  'us-iran':{
+    name:'US vs Iran',category:'Geopolitics',updates:'12 updates',updated:'40m ago',latestTime:'14:52 IST',
+    lede:'Sanctions relief remains the sticking point as oil and shipping markets reprice Gulf risk.',
+    latestTitle:'Talks stall over sanctions relief',latestBody:'The second Oman-mediated round ends without a date for the next. Brent holds its gain as tanker rates climb.',latestSource:'REUTERS · MUSCAT',
+    asset:{name:'Brent crude',symbol:'BRENT · ICE',value:78.42,decimals:2,prefix:'$',step:.02,dir:'up',moves:[2.84,6.10,11.42,18.06],axis:['$80.0','$77.5','$75.0']},
+    secondary:{name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']},
+    events:[
+      ['13 NOV','14:52','Second round ends without a date','Negotiators leave Muscat after failing to agree the sequence of sanctions relief.','REUTERS · 40M AGO'],
+      ['13 NOV','09:20','Sanctions relief remains the obstacle','Iran seeks verified oil payments before limits on enrichment resume.','BLOOMBERG · 6H AGO'],
+      ['12 NOV','18:10','Gulf shipping risk premiums rise','Two insurers quote higher war-risk cover for Hormuz transits.','LLOYD’S LIST · 21H AGO'],
+      ['10 NOV','07:30','Back-channel talks resume','Oman hosts technical teams after a three-week pause in contact.','AP · 2D AGO']
+    ],
+    news:[
+      ['Reuters','40m ago','Iran talks adjourn with sanctions sequencing unresolved'],
+      ['Bloomberg','2h ago','Tanker rates climb as Gulf insurers reassess Hormuz risk'],
+      ['Associated Press','5h ago','Oman says diplomatic channel remains open despite stalled round']
+    ],
+    chain:[
+      ['BRENT · ICE','Oil prices rise','up','Prompt spread firms; front-month volume is 1.4× its 20-day norm.','HIGH CONFIDENCE · 4/5 SIGNALS'],
+      ['HORMUZ · AIS','Shipping congestion rises','up','Tanker tracking shows 14 laden vessels waiting, versus 9 on Friday.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],
+      ['BDTI · FREIGHT','Freight and fuel costs rise','up','Dirty tanker index adds 5.2% over five sessions.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],
+      ['5Y5Y · INFLATION','Inflation expectations rise','up','US 5Y5Y breakeven is up 7 bp since the talks began.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],
+      ['FED FUNDS · MAR','Rate-cut bets fade','down','March implied easing falls 9 bp as energy risk returns.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],
+      ['BTC · REAL YIELDS','Bitcoin faces pressure','down','BTC’s 30-day sensitivity to real yields remains negative.','LOW CONFIDENCE · 1/5 SIGNALS']
+    ],action:'Trade Brent perps',actionNote:'OPTIONAL · BRENT PERPS IN MYBOON'
+  },
+  'fed-rates':{
+    name:'Fed rates',category:'Macro',updates:'9 updates',updated:'18m ago',latestTime:'15:14 IST',lede:'Softer inflation pulls rate-cut expectations forward while Treasury yields and the dollar reprice.',
+    latestTitle:'March cut probability rises to 68%',latestBody:'Fed funds futures add 11 bp of easing after core inflation cools for a second month.',latestSource:'CME · FEDWATCH',
+    asset:{name:'Bitcoin',symbol:'BTC · USD',value:67840,decimals:0,prefix:'$',step:5,dir:'down',moves:[1.26,3.40,8.72,42.18],axis:['$69K','$68K','$67K']},
+    secondary:{name:'US Dollar Index',symbol:'DXY · ICE',price:'104.18',change:'+0.32%',dir:'up',axis:['104.6','104.2','103.8']},
+    events:[['13 NOV','15:14','March cut odds reach 68%','Rates futures price 11 bp more easing than before the inflation release.','CME · 18M AGO'],['13 NOV','13:30','Core inflation cools to 0.2%','Shelter and services contribute less to the monthly price basket.','BLS · 2H AGO'],['12 NOV','18:00','Powell keeps options open','The Fed chair repeats that decisions remain meeting by meeting.','FED · 1D AGO']],
+    news:[['Reuters','18m ago','Traders pull forward Fed cut bets after soft inflation'],['Bloomberg','1h ago','Two-year Treasury yield slips as March easing odds climb'],['MarketWatch','3h ago','Dollar steadies as traders weigh growth against rate relief']],
+    chain:[['US CPI · CORE','Inflation pressure eases','down','Core goods and shelter both cool in the latest release.','HIGH CONFIDENCE · 4/5 SIGNALS'],['FED FUNDS · MAR','Rate-cut expectations rise','up','March contract implies 68% odds of at least one cut.','HIGH CONFIDENCE · 4/5 SIGNALS'],['UST 2Y · REAL','Real yields decline','down','Two-year TIPS yield falls 6 bp from Friday’s close.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['BTC · LIQUIDITY','Bitcoin liquidity support rises','up','Stablecoin balances and lower yields support risk appetite.','MEDIUM CONFIDENCE · 2/5 SIGNALS']],action:'Trade BTC perps',actionNote:'OPTIONAL · BTC PERPS IN MYBOON'
+  },
+  'sol-etf':{
+    name:'SOL ETF',category:'Crypto policy',updates:'7 updates',updated:'26m ago',latestTime:'15:06 IST',lede:'Issuer amendments and rising regulated volume keep a potential Solana ETF in focus.',
+    latestTitle:'Two issuers amend SOL filings',latestBody:'Updated language covers staking limitations and creation custody as CME SOL volume reaches a weekly high.',latestSource:'SEC · EDGAR',
+    asset:{name:'Solana',symbol:'SOL · USD',value:182.40,decimals:2,prefix:'$',step:.04,dir:'up',moves:[2.40,8.60,21.30,68.40],axis:['$188','$180','$172']},
+    secondary:{name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']},
+    events:[['13 NOV','15:06','Two amended S-1 filings land','Issuers clarify custody and exclude staking from initial operations.','SEC · 26M AGO'],['12 NOV','20:30','CME SOL volume sets weekly high','Regulated futures volume rises 34% week over week.','CME · 1D AGO'],['10 NOV','12:10','Exchange comment window closes','The next procedural step is an exchange decision or extension.','THE BLOCK · 2D AGO']],
+    news:[['Bloomberg','26m ago','Solana ETF hopefuls refine custody language in amendments'],['The Block','2h ago','CME Solana futures activity climbs ahead of filing deadline'],['Reuters','1d ago','Asset managers broaden crypto fund filings beyond Bitcoin']],
+    chain:[['SEC · FILINGS','ETF approval expectations rise','up','Two amendments address operational questions without new delays.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['CME · SOL','Regulated SOL demand rises','up','Futures open interest adds 12% over five sessions.','HIGH CONFIDENCE · 4/5 SIGNALS'],['SOL · SPOT','Spot liquidity improves','up','Top-of-book depth rises 8% on major USD venues.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['SOL · PERPS','Funding pressure rises','up','Positive funding suggests traders are already adding exposure.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Trade SOL perps',actionNote:'OPTIONAL · SOL PERPS IN MYBOON'
+  },
+  'trump-tariffs':{
+    name:'Trump tariffs',category:'Trade policy',updates:'6 updates',updated:'52m ago',latestTime:'14:40 IST',lede:'A proposed tariff expansion revives concerns about import costs, margins and global growth.',
+    latestTitle:'Tariff scope expands to industrial inputs',latestBody:'The draft list adds machinery components while leaving a 30-day comment window before implementation.',latestSource:'USTR · WASHINGTON',
+    asset:{name:'S&P 500',symbol:'SPX · INDEX',value:5812.40,decimals:2,prefix:'',step:.4,dir:'down',moves:[.84,2.10,3.20,14.60],axis:['5,860','5,800','5,740']},
+    secondary:{name:'US Dollar Index',symbol:'DXY · ICE',price:'104.18',change:'+0.32%',dir:'up',axis:['104.6','104.2','103.8']},
+    events:[['13 NOV','14:40','Industrial inputs join draft list','The proposal broadens coverage to selected machinery components.','USTR · 52M AGO'],['13 NOV','11:05','Retail groups request exemptions','Trade associations flag inventory and consumer-price effects.','REUTERS · 4H AGO'],['12 NOV','16:20','Comment period set at 30 days','Businesses can submit cost and supply-chain evidence before review.','USTR · 1D AGO']],
+    news:[['Reuters','52m ago','New tariff draft reaches industrial supply chains'],['Bloomberg','3h ago','Manufacturers reassess margins as tariff list broadens'],['Financial Times','6h ago','Exporters weigh rerouting orders ahead of US review']],
+    chain:[['USTR · DRAFT','Imported input costs rise','up','Draft coverage includes components with few near-term substitutes.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['SPX · MARGINS','Corporate margins compress','down','Import-sensitive sectors trade below the broader index.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['US CPI · GOODS','Goods inflation pressure rises','up','Economists estimate a modest addition if costs are passed through.','LOW CONFIDENCE · 1/5 SIGNALS'],['FED FUNDS · MAR','Rate-cut bets fade','down','Tariff-related inflation complicates the path to easier policy.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open S&P 500 market',actionNote:'OPTIONAL · S&P 500 MARKET IN MYBOON'
+  },
+  'btc-halving':{
+    name:'BTC halving',category:'Bitcoin cycle',updates:'5 updates',updated:'1h ago',latestTime:'14:32 IST',lede:'Post-halving issuance and miner behavior are reshaping Bitcoin’s available spot supply.',
+    latestTitle:'Miner reserves fall to 1.79M BTC',latestBody:'Miners continue to fund operations from reserves while daily issuance remains near 450 BTC.',latestSource:'GLASSNODE · ON-CHAIN',
+    asset:{name:'Bitcoin',symbol:'BTC · USD',value:67840,decimals:0,prefix:'$',step:5,dir:'up',moves:[1.84,7.20,14.60,42.18],axis:['$69K','$66K','$63K']},
+    secondary:{name:'Solana',symbol:'SOL · USD',price:'$182.40',change:'+2.40%',dir:'up',axis:['$188','$180','$172']},
+    events:[['13 NOV','14:32','Miner reserves keep declining','Tracked miner wallets hold 1.79M BTC, down 1.8% in 30 days.','GLASSNODE · 1H AGO'],['12 NOV','09:00','Hash rate reaches a weekly high','Network difficulty is positioned for another upward adjustment.','MEMPOOL · 1D AGO'],['09 NOV','18:45','Long-term holder supply steadies','Coins older than six months stop declining after two weeks.','CRYPTOQUANT · 3D AGO']],
+    news:[['CoinDesk','1h ago','Bitcoin miner reserves extend post-halving decline'],['The Block','4h ago','Hash rate rebound sets up another difficulty increase'],['Bloomberg','1d ago','Long-term Bitcoin holders pause distribution']],
+    chain:[['BTC · ISSUANCE','New BTC supply falls','down','Protocol issuance remains near 450 BTC per day after halving.','HIGH CONFIDENCE · 5/5 SIGNALS'],['MINERS · RESERVES','Miner sell capacity declines','down','Reserve balances fall while operating costs remain elevated.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['BTC · EXCHANGES','Liquid exchange supply falls','down','Exchange balances decline 0.6% over the past month.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['BTC · SPOT','Spot price support rises','up','Less structural issuance meets steady spot demand.','LOW CONFIDENCE · 2/5 SIGNALS']],action:'Trade BTC perps',actionNote:'OPTIONAL · BTC PERPS IN MYBOON'
+  },
+  'oil-supply':{
+    name:'Oil supply',category:'Energy',updates:'4 updates',updated:'34m ago',latestTime:'14:58 IST',lede:'OPEC+ discipline and lower US inventories tighten the near-term crude balance.',
+    latestTitle:'US crude stocks draw 3.8M barrels',latestBody:'The weekly draw exceeds expectations as refinery runs increase and Gulf exports remain constrained.',latestSource:'EIA · WEEKLY STATUS',
+    asset:{name:'Brent crude',symbol:'BRENT · ICE',value:78.42,decimals:2,prefix:'$',step:.02,dir:'up',moves:[2.84,6.10,11.42,18.06],axis:['$80.0','$77.5','$75.0']},
+    secondary:{name:'US Dollar Index',symbol:'DXY · ICE',price:'104.18',change:'+0.32%',dir:'up',axis:['104.6','104.2','103.8']},
+    events:[['13 NOV','14:58','Crude inventories fall 3.8M barrels','The draw is larger than the 1.2M-barrel consensus estimate.','EIA · 34M AGO'],['12 NOV','17:40','OPEC+ holds current quotas','Delegates keep existing output targets through the next review.','OPEC · 1D AGO'],['10 NOV','10:15','Gulf loadings slip','Weekly export tracking shows fewer cargoes leaving major terminals.','KPLER · 2D AGO']],
+    news:[['Reuters','34m ago','Oil extends gain after larger-than-expected US stock draw'],['Bloomberg','2h ago','Brent curve tightens as prompt supply concerns build'],['S&P Global','7h ago','Gulf export tracking points to fewer crude loadings']],
+    chain:[['EIA · CRUDE','Available inventories fall','down','Commercial stocks decline for a second consecutive week.','HIGH CONFIDENCE · 4/5 SIGNALS'],['BRENT · CURVE','Prompt crude premium rises','up','The front spread strengthens as nearby barrels tighten.','HIGH CONFIDENCE · 4/5 SIGNALS'],['JET · CRACKS','Transport fuel costs rise','up','Refined-product cracks follow crude higher.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['CPI · ENERGY','Energy inflation pressure rises','up','Fuel costs feed the energy component with a short lag.','MEDIUM CONFIDENCE · 2/5 SIGNALS']],action:'Trade Brent perps',actionNote:'OPTIONAL · BRENT PERPS IN MYBOON'
+  },
+  'china-stimulus':{
+    name:'China stimulus',category:'Global macro',updates:'4 updates',updated:'3h ago',latestTime:'12:30 IST',lede:'New fiscal support lifts China exposure while markets test whether credit demand will follow.',
+    latestTitle:'Beijing adds ¥500B housing support',latestBody:'The facility targets unfinished projects and local-government inventory purchases.',latestSource:'XINHUA · BEIJING',
+    asset:{name:'CSI 300',symbol:'CSI300 · INDEX',value:4126.80,decimals:2,prefix:'',step:.6,dir:'up',moves:[1.62,4.80,9.30,12.70],axis:['4,180','4,100','4,020']},
+    secondary:{name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']},
+    events:[['13 NOV','12:30','Housing support facility expands','The ¥500B program targets completion and inventory absorption.','XINHUA · 3H AGO'],['12 NOV','15:20','Local bond issuance accelerates','Special bonds add funding for infrastructure and public housing.','MOF · 1D AGO'],['10 NOV','09:45','Banks guide credit growth higher','Lenders receive incentives to support small-business lending.','PBOC · 2D AGO']],
+    news:[['Reuters','3h ago','China rolls out fresh support for unfinished housing'],['Bloomberg','5h ago','Chinese equities rise as fiscal facility expands'],['Caixin','1d ago','Local governments accelerate special-bond issuance']],
+    chain:[['PBOC · CREDIT','Credit impulse rises','up','New lending facilities and bond issuance add policy support.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['CNH · LIQUIDITY','Offshore liquidity improves','up','CNH funding conditions ease as policy expectations shift.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['CSI300 · EARNINGS','Growth expectations improve','up','Construction and consumer shares lead the initial response.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['BTC · GLOBAL M2','Global liquidity support rises','up','Additional credit contributes to broader liquidity conditions.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open CSI 300 market',actionNote:'OPTIONAL · CSI 300 MARKET IN MYBOON'
+  },
+  'vix':{
+    name:'VIX',category:'Volatility',updates:'4 updates',updated:'2h ago',latestTime:'13:32 IST',lede:'Equity hedging demand rises as investors protect gains ahead of the next US inflation release.',
+    latestTitle:'VIX climbs above 19 as hedging returns',latestBody:'Front-month volatility leads the futures curve higher while put demand concentrates in technology exposure.',latestSource:'CBOE · 13 NOV',
+    asset:{name:'CBOE Volatility Index',symbol:'VIX · CBOE',value:18.72,decimals:2,prefix:'',step:.02,dir:'up',moves:[8.40,14.20,22.60,31.80],axis:['21.0','18.0','15.0']},
+    secondary:{name:'S&P 500',symbol:'SPX · INDEX',price:'5,812.40',change:'−0.84%',dir:'down',axis:['5,860','5,800','5,740']},
+    events:[['13 NOV','13:32','VIX moves back above 19','Front-month futures rise as investors add near-term equity protection.','CBOE · 2H AGO'],['12 NOV','20:15','Put skew steepens in technology','Downside option prices rise faster than broad-index protection.','CBOE · 1D AGO'],['11 NOV','14:40','Dealer positioning turns less supportive','A decline in positive gamma leaves indexes more sensitive to flows.','NOMURA · 2D AGO']],
+    news:[['Reuters','2h ago','Wall Street volatility gauge climbs as investors buy protection'],['Bloomberg','5h ago','Technology put skew steepens ahead of US inflation data'],['CNBC','1d ago','Options traders brace for larger swings after quiet month']],
+    chain:[['SPX · OPTIONS','Demand for downside protection rises','up','Put volumes and skew rise together across major index venues.','HIGH CONFIDENCE · 4/5 SIGNALS'],['VIX · FRONT MONTH','Expected equity volatility rises','up','The front contract outpaces longer-dated volatility futures.','HIGH CONFIDENCE · 4/5 SIGNALS'],['SPX · LIQUIDITY','Dealer dampening of index moves falls','down','Lower positive gamma can leave prices more sensitive to flows.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['BTC · VOLATILITY','Cross-asset risk appetite softens','down','Crypto volatility rises modestly alongside equity hedging.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open VIX market',actionNote:'OPTIONAL · VIX MARKET IN MYBOON'
+  },
+  'boj-policy':{
+    name:'BOJ policy',category:'Japan macro',updates:'3 updates',updated:'2h ago',latestTime:'13:08 IST',lede:'Hawkish BOJ guidance lifts Japanese yields and revives the case for a stronger yen.',
+    latestTitle:'BOJ keeps a December hike in view',latestBody:'Governor Ueda points to sustained wage growth while money markets raise December tightening odds to 58%.',latestSource:'BOJ · TOKYO',
+    asset:{name:'US dollar / Japanese yen',symbol:'USD/JPY · FX',value:154.82,decimals:2,prefix:'',step:.02,dir:'down',moves:[.72,1.40,2.80,6.20],axis:['156.0','154.0','152.0']},
+    secondary:{name:'Japan 10-year yield',symbol:'JGB 10Y · JAPAN',price:'0.96%',change:'+3.2 bp',dir:'up',axis:['1.02','0.96','0.90']},
+    events:[['13 NOV','13:08','Ueda keeps December in play','The BOJ governor says wage and price trends are moving closer to the bank’s projection.','BOJ · 2H AGO'],['12 NOV','09:30','December hike odds reach 58%','Overnight index swaps add tightening after firm wage data.','BLOOMBERG · 1D AGO'],['11 NOV','16:45','Ten-year JGB yield tests 1%','Japanese bonds soften as investors reassess the policy path.','JSDA · 2D AGO']],
+    news:[['Reuters','2h ago','BOJ’s Ueda says wage momentum supports policy normalization'],['Bloomberg','4h ago','Yen strengthens as traders lift December BOJ hike odds'],['Nikkei','1d ago','Japanese banks prepare for a higher government-bond yield curve']],
+    chain:[['BOJ · OIS','December hike expectations rise','up','Overnight swaps price 58% odds of a December increase.','HIGH CONFIDENCE · 4/5 SIGNALS'],['JGB · 10Y','Japanese government yields rise','up','The ten-year yield adds 3.2 bp toward the 1% threshold.','HIGH CONFIDENCE · 4/5 SIGNALS'],['JPY · CARRY','Yen-funded carry demand falls','down','Higher domestic yields reduce the appeal of short-yen funding.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['USD/JPY · SPOT','Dollar-yen moves lower','down','Narrower rate differentials support yen repatriation flows.','MEDIUM CONFIDENCE · 2/5 SIGNALS']],action:'Open USD/JPY market',actionNote:'OPTIONAL · USD/JPY MARKET IN MYBOON'
+  },
+  'stablecoins':{
+    name:'Stablecoins',category:'Crypto policy',updates:'2 updates',updated:'3h ago',latestTime:'12:26 IST',lede:'A new reserve and disclosure draft brings regulatory clarity to issuers and payment distributors.',
+    latestTitle:'Senate draft sets stablecoin reserve rules',latestBody:'The proposal requires segregated cash and Treasury reserves, monthly attestations and clear redemption rights.',latestSource:'US SENATE · WASHINGTON',
+    asset:{name:'USDC circulating supply',symbol:'USDC · SUPPLY $B',value:41.86,decimals:2,prefix:'$',step:.01,dir:'up',moves:[1.84,3.20,6.80,24.60],axis:['$42.4','$41.4','$40.4']},
+    secondary:{name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']},
+    events:[['13 NOV','12:26','Reserve draft reaches the Senate','The text standardizes eligible reserves, disclosures and redemption rights.','US SENATE · 3H AGO'],['12 NOV','18:20','USDC supply extends monthly growth','Circulating supply rises 6.8% as payment settlement volumes improve.','CIRCLE · 1D AGO'],['11 NOV','11:00','Banks seek distribution clarity','Payment firms ask regulators to define permitted reserve partnerships.','REUTERS · 2D AGO']],
+    news:[['Reuters','3h ago','US stablecoin draft backs segregated reserves and redemption rights'],['Bloomberg','6h ago','Payment firms weigh bank partnerships under Senate draft'],['CoinDesk','1d ago','USDC supply climbs as on-chain settlement volumes recover']],
+    chain:[['SENATE · DRAFT','Reserve-rule clarity improves','up','Eligible assets and redemption rights become more explicit.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['ISSUERS · COMPLIANCE','Attestation requirements rise','up','Monthly reporting and segregation add operational obligations.','HIGH CONFIDENCE · 4/5 SIGNALS'],['BANKS · DISTRIBUTION','Payment distribution expands','up','Clearer rules give banks a path to support settlement.','LOW CONFIDENCE · 2/5 SIGNALS'],['USDC · LIQUIDITY','Stablecoin settlement liquidity rises','up','Circulating supply and transfer volumes trend higher together.','MEDIUM CONFIDENCE · 2/5 SIGNALS']],action:'Open USDC market',actionNote:'OPTIONAL · USDC MARKET IN MYBOON'
+  },
+  'dxy':{
+    name:'DXY',category:'Currencies',updates:'3 updates',updated:'44m ago',latestTime:'14:48 IST',lede:'The dollar firms as relative yields favor the US and traders reduce short exposure.',
+    latestTitle:'DXY holds above 104 after data',latestBody:'Resilient activity and wider rate differentials support the index for a third session.',latestSource:'ICE · 14:48 IST',
+    asset:{name:'US Dollar Index',symbol:'DXY · ICE',value:104.18,decimals:2,prefix:'',step:.01,dir:'up',moves:[.32,1.10,2.40,5.80],axis:['104.6','104.2','103.8']},
+    secondary:{name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']},
+    events:[['13 NOV','14:48','Dollar holds above 104','The index extends its weekly gain after resilient activity data.','ICE · 44M AGO'],['13 NOV','10:00','Euro softness adds support','EUR/USD slips as regional rate expectations diverge.','ECB · 5H AGO'],['12 NOV','16:30','Short positioning unwinds','Leveraged funds reduce net dollar shorts for a second week.','CFTC · 1D AGO']],
+    news:[['Reuters','44m ago','Dollar steadies above 104 as US data holds up'],['Bloomberg','3h ago','Euro decline adds support to the dollar index'],['Financial Times','1d ago','Funds trim dollar shorts as rate gap persists']],
+    chain:[['UST · SPREADS','US yield advantage rises','up','Two-year differentials widen against euro-area peers.','HIGH CONFIDENCE · 4/5 SIGNALS'],['DXY · FLOWS','Dollar demand rises','up','Short covering adds to spot demand for a second week.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['GLOBAL · LIQUIDITY','Financial conditions tighten','down','A stronger dollar raises costs for dollar borrowers abroad.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['BTC · USD','Bitcoin faces pressure','down','Dollar strength has coincided with softer crypto demand.','LOW CONFIDENCE · 2/5 SIGNALS']],action:'Open DXY market',actionNote:'OPTIONAL · DXY MARKET IN MYBOON'
+  },
+  'eth-staking':{
+    name:'ETH staking',category:'Ethereum',updates:'2 updates',updated:'2h ago',latestTime:'13:20 IST',lede:'Staking inflows and a shorter validator exit queue tighten liquid Ether supply.',
+    latestTitle:'Staked ETH share reaches 28.4%',latestBody:'Deposits outpace withdrawals for a fifth day while the validator exit queue falls below eight hours.',latestSource:'BEACONCHAIN · ON-CHAIN',
+    asset:{name:'Ether',symbol:'ETH · USD',value:2584.20,decimals:2,prefix:'$',step:.4,dir:'up',moves:[1.14,5.90,12.40,38.20],axis:['$2,640','$2,560','$2,480']},
+    secondary:{name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']},
+    events:[['13 NOV','13:20','Staked share reaches 28.4%','Net deposits add 38K ETH over the latest 24-hour window.','BEACONCHAIN · 2H AGO'],['12 NOV','19:10','Exit queue drops below 8 hours','Validator withdrawals process faster as pending exits decline.','RATED · 1D AGO'],['10 NOV','08:40','Liquid staking share steadies','Major protocols see little change in relative deposit share.','DUNE · 2D AGO']],
+    news:[['CoinDesk','2h ago','Ether staking deposits extend five-day inflow streak'],['The Block','8h ago','Ethereum validator exit queue falls below eight hours'],['Cointelegraph','1d ago','Staking share climbs as exchange balances decline']],
+    chain:[['BEACON · DEPOSITS','Staking inflows rise','up','Net validator deposits remain positive for five days.','HIGH CONFIDENCE · 4/5 SIGNALS'],['ETH · FLOAT','Liquid ETH supply falls','down','More ETH is locked while exchange balances decline.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['ETH · YIELD','Native yield demand rises','up','Staking participation grows despite a stable reward rate.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['ETH · SPOT','Spot price support rises','up','Reduced liquid supply can amplify steady spot demand.','LOW CONFIDENCE · 2/5 SIGNALS']],action:'Trade ETH perps',actionNote:'OPTIONAL · ETH PERPS IN MYBOON'
+  },
+  'ai-stocks':{
+    name:'AI stocks',category:'Equities',updates:'2 updates',updated:'1h ago',latestTime:'14:20 IST',lede:'Chip guidance and data-center spending drive another reset in crowded AI equity trades.',
+    latestTitle:'Chip guidance tempers AI rally',latestBody:'A major supplier keeps strong demand language but flags slower networking deliveries.',latestSource:'NASDAQ · EARNINGS',
+    asset:{name:'Nasdaq 100',symbol:'NDX · INDEX',value:20184.60,decimals:2,prefix:'',step:1.2,dir:'down',moves:[.64,1.80,4.20,28.40],axis:['20,400','20,100','19,800']},
+    secondary:{name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']},
+    events:[['13 NOV','14:20','Networking delivery timing shifts','Supplier guidance moves some shipments into the next quarter.','NASDAQ · 1H AGO'],['12 NOV','21:00','Cloud capex remains elevated','Two hyperscalers reaffirm data-center spending plans.','REUTERS · 1D AGO'],['10 NOV','16:45','Semiconductor breadth narrows','Fewer chip stocks participate as the index approaches its high.','BLOOMBERG · 2D AGO']],
+    news:[['Reuters','1h ago','AI stocks slip as supplier flags delivery timing'],['Bloomberg','3h ago','Chip rally loses breadth despite resilient cloud spending'],['Barron’s','7h ago','Investors parse data-center capex for the next AI leg']],
+    chain:[['AI · GUIDANCE','Near-term revenue timing slips','down','Networking deliveries move partly into the next quarter.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['SOX · BREADTH','Chip-market breadth weakens','down','Fewer constituents close above their 20-day average.','HIGH CONFIDENCE · 4/5 SIGNALS'],['NDX · MULTIPLES','Valuation pressure rises','down','High-multiple stocks become more sensitive to guidance changes.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['BTC · CORRELATION','Crypto risk appetite softens','down','BTC’s short-term equity correlation remains positive.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open Nasdaq 100 market',actionNote:'OPTIONAL · NASDAQ 100 MARKET IN MYBOON'
+  }
+};
+
+const BTC2={name:'Bitcoin',symbol:'BTC · USD',price:'$67,840',change:'−1.26%',dir:'down',axis:['$69K','$68K','$67K']};
+const DXY2={name:'US Dollar Index',symbol:'DXY · ICE',price:'104.18',change:'+0.32%',dir:'up',axis:['104.6','104.2','103.8']};
+const SOL2={name:'Solana',symbol:'SOL · USD',price:'$182.40',change:'+2.40%',dir:'up',axis:['$188','$180','$172']};
+const OIL2={name:'Brent crude',symbol:'BRENT · ICE',price:'$78.42',change:'+2.84%',dir:'up',axis:['$80.0','$77.5','$75.0']};
+const NDX2={name:'Nasdaq 100',symbol:'NDX · INDEX',price:'20,184.60',change:'−0.64%',dir:'down',axis:['20,400','20,100','19,800']};
+const TY2={name:'US 10Y yield',symbol:'UST 10Y',price:'4.12%',change:'−0.06 pt',dir:'down',axis:['4.20%','4.12%','4.04%']};
+Object.assign(data,{
+'gold-record':{name:'Gold record',category:'Metals',updates:'6 updates',updated:'22m ago',latestTime:'15:20 IST',lede:'Central-bank buying and lower real yields keep gold within reach of a new all-time high.',
+ latestTitle:'Gold trades within 1% of its record',latestBody:'Spot gold extends a fourth weekly gain as real yields slip and ETF holdings rise.',latestSource:'REUTERS · LONDON',
+ asset:{name:'Gold spot',symbol:'XAU · USD',value:4128.40,decimals:2,prefix:'$',step:.8,dir:'up',moves:[1.18,2.90,6.40,41.20],axis:['$4,160','$4,120','$4,080']},secondary:TY2,
+ events:[['13 NOV','15:20','Spot gold nears record high','Real yields slip as traders add to cut bets after the softer inflation data.','REUTERS · 22M AGO'],['12 NOV','17:30','Central banks keep buying','Official-sector purchases stay above the five-year average for October.','WGC · 20H AGO'],['10 NOV','09:15','Gold ETF holdings rise a fourth week','Physically backed funds add 6.2 tonnes over five sessions.','BLOOMBERG · 3D AGO']],
+ news:[['Reuters','22m ago','Gold edges toward record as real yields retreat'],['Bloomberg','4h ago','Central-bank demand underpins bullion despite stretched positioning'],['FT','1d ago','Gold ETF inflows return as rate-cut bets build']],
+ chain:[['UST 10Y · REAL','Real yields fall','down','Ten-year TIPS yield is 7 bp lower this week.','HIGH CONFIDENCE · 4/5 SIGNALS'],['XAU · FLOWS','Gold demand rises','up','ETF holdings and central-bank buying both increase.','HIGH CONFIDENCE · 4/5 SIGNALS'],['GDX · MINERS','Gold miners outperform','up','Miner equities add 2.1% against a flat broad market.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['BTC · SAFE HAVEN','Bitcoin competes for hedge flows','down','Gold ETFs gain while spot BTC ETFs see small outflows.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open gold market',actionNote:'OPTIONAL · GOLD MARKET IN MYBOON'},
+'jpy':{name:'Yen',category:'FX',updates:'3 updates',updated:'2h ago',latestTime:'13:05 IST',lede:'A weak yen is testing the level where Tokyo has stepped in before, putting carry trades in focus.',
+ latestTitle:'Finance minister warns on one-sided moves',latestBody:'Officials say they are watching the currency closely as USD/JPY holds near 155.',latestSource:'NIKKEI · TOKYO',
+ asset:{name:'USD/JPY',symbol:'FX · SPOT',value:154.82,decimals:2,prefix:'',step:.03,dir:'up',moves:[.72,1.40,2.60,9.80],axis:['155.4','154.8','154.2']},secondary:BTC2,
+ events:[['13 NOV','13:05','Tokyo warns on excessive yen weakness','The finance minister says all options remain open on the currency.','NIKKEI · 2H AGO'],['12 NOV','11:40','BOJ governor keeps policy path unchanged','Rate rises remain data-dependent, widening the gap with US yields.','BLOOMBERG · 1D AGO'],['10 NOV','08:30','Carry-trade positioning hits a high','Leveraged funds hold the largest short-yen position this year.','CFTC · 3D AGO']],
+ news:[['Nikkei','2h ago','Japan warns against speculative moves in the yen'],['Bloomberg','1d ago','BOJ signals patience as US yield gap persists'],['Reuters','2d ago','Funds pile into carry trades as yen weakens']],
+ chain:[['USD/JPY','Yen weakens further','up','Spot trades 0.7% higher on the week.','HIGH CONFIDENCE · 4/5 SIGNALS'],['MOF · INTERVENTION','Intervention risk rises','up','Officials escalate wording at each step above 154.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['CARRY · UNWIND','Carry-trade unwind risk rises','up','Crowded positions leave markets exposed to a sharp reversal.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['BTC · RISK','Bitcoin hit by forced selling','down','August 2024 saw BTC drop sharply during a yen unwind.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open USD/JPY market',actionNote:'OPTIONAL · USD/JPY MARKET IN MYBOON'},
+'gbp':{name:'UK gilts',category:'Rates',updates:'3 updates',updated:'3h ago',latestTime:'12:10 IST',lede:'A weak auction and sticky UK inflation push gilt yields higher and unsettle sterling.',
+ latestTitle:'30-year gilt auction tails',latestBody:'Demand is thin and the yield clears above 5.3%, the highest since the summer.',latestSource:'DMO · LONDON',
+ asset:{name:'GBP/USD',symbol:'FX · SPOT',value:1.2640,decimals:4,prefix:'',step:.0004,dir:'down',moves:[.48,1.10,2.20,3.60],axis:['1.270','1.265','1.260']},secondary:TY2,
+ events:[['13 NOV','12:10','Long gilt auction tails','Bid-to-cover falls to 2.2x, the weakest since June.','DMO · 3H AGO'],['12 NOV','09:00','UK inflation stays above 3%','Services prices re-accelerate in October.','ONS · 1D AGO'],['10 NOV','10:20','BoE members split on timing','Two members call for a pause in cuts into next year.','REUTERS · 3D AGO']],
+ news:[['Reuters','3h ago','UK long-end borrowing costs jump after weak auction'],['FT','1d ago','Sterling slips as services inflation surprises'],['Bloomberg','2d ago','BoE hawks gain ground on cut timing']],
+ chain:[['UK 30Y','Gilt yields rise','up','The yield is 11 bp higher on the week.','HIGH CONFIDENCE · 4/5 SIGNALS'],['GBP/USD','Sterling weakens','down','Spot gives back 0.5% as funding concerns return.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['UST 10Y','Global yields drift higher','up','Long-end moves spill over into US and euro-area rates.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['BTC · LIQUIDITY','Risk assets lose liquidity support','down','Higher term premia weigh on long-duration assets.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open GBP/USD market',actionNote:'OPTIONAL · GBP/USD MARKET IN MYBOON'},
+'russia-sanctions':{name:'Russia sanctions',category:'Geopolitics',updates:'5 updates',updated:'1h ago',latestTime:'14:30 IST',lede:'A new EU package targets LNG and shipping, tightening a European gas market heading into winter.',
+ latestTitle:'EU debates ban on Russian LNG',latestBody:'Ambassadors discuss a phased import ban while storage sits below its five-year average.',latestSource:'REUTERS · BRUSSELS',
+ asset:{name:'TTF natural gas',symbol:'TTF · ICE',value:38.60,decimals:2,prefix:'€',step:.06,dir:'up',moves:[1.90,5.20,9.60,22.40],axis:['€39.5','€38.5','€37.5']},secondary:OIL2,
+ events:[['13 NOV','14:30','EU ambassadors discuss LNG ban','A phased ban would start with spot cargoes next year.','REUTERS · 1H AGO'],['11 NOV','16:00','Price cap lowered on seaborne crude','The cap is reviewed every six months under the new rules.','BLOOMBERG · 2D AGO'],['09 NOV','10:00','Storage 83% full, below average','Cold forecasts raise withdrawals earlier than usual.','GIE · 4D AGO']],
+ news:[['Reuters','1h ago','EU weighs phased ban on Russian LNG imports'],['Bloomberg','1d ago','European gas rallies as storage lags five-year average'],['FT','2d ago','Traders rework shipping routes as sanctions bite']],
+ chain:[['TTF · FRONT MONTH','European gas prices rise','up','Front-month futures add 1.9% on the headline.','HIGH CONFIDENCE · 4/5 SIGNALS'],['EU POWER','Power prices follow gas','up','Gas sets the marginal power price across most of the grid.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['EZ CPI','Eurozone inflation pressure rises','up','Energy costs add to services stickiness.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['EUR/USD','Euro weakens on growth risk','down','Higher energy costs weigh on the euro-area outlook.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open TTF gas market',actionNote:'OPTIONAL · TTF GAS MARKET IN MYBOON'},
+'opec-output':{name:'OPEC+ output',category:'Energy',updates:'4 updates',updated:'4h ago',latestTime:'11:45 IST',lede:'The group weighs delaying planned output increases as demand forecasts soften.',
+ latestTitle:'OPEC+ considers pausing January hike',latestBody:'Delegates say a pause would support prices while inventories rebuild outside the group.',latestSource:'BLOOMBERG · VIENNA',
+ asset:{name:'WTI crude',symbol:'WTI · NYMEX',value:74.18,decimals:2,prefix:'$',step:.03,dir:'up',moves:[1.40,3.10,5.60,-4.20],axis:['$75.0','$74.0','$73.0']},secondary:OIL2,
+ events:[['13 NOV','11:45','Pause on January hike under discussion','Talks continue ahead of the group’s next ministerial meeting.','BLOOMBERG · 4H AGO'],['11 NOV','15:00','IEA trims 2027 demand growth','The agency cites weaker Chinese oil use and efficiency gains.','IEA · 2D AGO'],['09 NOV','09:30','Saudi sets December prices for Asia','Official selling prices are cut for a second month.','ARAMCO · 4D AGO']],
+ news:[['Bloomberg','4h ago','OPEC+ weighs pausing its planned January output increase'],['Reuters','2d ago','IEA trims oil demand growth outlook for next year'],['FT','3d ago','Saudi Arabia cuts Asia crude prices again']],
+ chain:[['OPEC+ · QUOTAS','Supply increase delayed','down','A pause removes about 137k b/d from planned supply.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['WTI · CURVE','Crude prices firm','up','The prompt spread moves back into backwardation.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['US CPI · ENERGY','Gasoline prices stop falling','up','Pump prices lag crude by two to three weeks.','LOW CONFIDENCE · 2/5 SIGNALS'],['FED FUNDS · MAR','Cut path gets harder','down','Energy no longer lowers headline inflation.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open WTI crude market',actionNote:'OPTIONAL · WTI MARKET IN MYBOON'},
+'eurozone-cpi':{name:'Eurozone CPI',category:'Macro',updates:'3 updates',updated:'5h ago',latestTime:'11:00 IST',lede:'Euro-area inflation is back near target but services prices are holding the ECB’s next move in doubt.',
+ latestTitle:'Flash inflation prints 2.1%',latestBody:'Services inflation holds at 3.8% while energy prices fall on the year.',latestSource:'EUROSTAT · LUXEMBOURG',
+ asset:{name:'EUR/USD',symbol:'FX · SPOT',value:1.0742,decimals:4,prefix:'',step:.0003,dir:'down',moves:[.22,.80,1.60,2.40],axis:['1.078','1.074','1.070']},secondary:DXY2,
+ events:[['13 NOV','11:00','Flash CPI at 2.1%','Core inflation eases to 2.6% but services stay elevated.','EUROSTAT · 5H AGO'],['12 NOV','14:30','ECB officials favor patience','Two policymakers say the next move will depend on wage data.','REUTERS · 1D AGO'],['10 NOV','09:00','German factory orders disappoint','Orders fall 1.4% in September on weaker exports.','DESTATIS · 3D AGO']],
+ news:[['Reuters','5h ago','Euro-area inflation eases to 2.1% but services stay sticky'],['Bloomberg','1d ago','ECB officials signal patience on the next cut'],['FT','3d ago','German orders drop as exporters brace for tariffs']],
+ chain:[['EZ CPI · SERVICES','Services inflation stays high','up','Wage-sensitive prices ease only slowly.','HIGH CONFIDENCE · 4/5 SIGNALS'],['ECB · DEC','Cut odds fall','down','Money markets trim December easing by 9 bp.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['EUR/USD','Euro holds steady against the dollar','up','A smaller rate gap supports the euro near 1.074.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['DXY','Dollar upside is capped','down','Euro strength limits dollar-index gains.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open EUR/USD market',actionNote:'OPTIONAL · EUR/USD MARKET IN MYBOON'},
+'treasury-auctions':{name:'Treasury auctions',category:'Rates',updates:'3 updates',updated:'6h ago',latestTime:'10:30 IST',lede:'Heavy issuance and uneven demand keep term premia in focus for long-dated Treasuries.',
+ latestTitle:'10-year auction draws strong demand',latestBody:'Bid-to-cover rises to 2.7x and indirect bidders take the largest share this year.',latestSource:'US TREASURY',
+ asset:{name:'US 10Y yield',symbol:'UST 10Y',value:4.12,decimals:2,prefix:'',step:.004,dir:'down',moves:[1.40,2.60,4.10,-6.40],axis:['4.20%','4.12%','4.04%']},secondary:DXY2,
+ events:[['13 NOV','10:30','10-year auction sees strong demand','Indirect bidders take 74% of the allotment.','TREASURY · 6H AGO'],['12 NOV','17:00','Refunding sizes unchanged','Auction sizes stay flat for another quarter.','TREASURY · 1D AGO'],['10 NOV','09:00','Term premium climbs to a 3-month high','Investors ask for more compensation on long maturities.','NY FED · 3D AGO']],
+ news:[['Reuters','6h ago','Strong 10-year auction eases supply worries'],['Bloomberg','1d ago','Treasury keeps auction sizes steady for now'],['WSJ','3d ago','Term premium rises as deficits stay wide']],
+ chain:[['UST 10Y · AUCTION','Demand for duration rises','up','Bid-to-cover beats the six-auction average.','HIGH CONFIDENCE · 4/5 SIGNALS'],['UST 10Y','Yields drift lower','down','The auction takes 3 bp off the benchmark yield.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['DXY','Dollar softens','down','Lower US yields narrow the gap with other majors.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['BTC · RISK','Risk appetite improves','up','Falling yields support high-beta assets.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open US 10Y market',actionNote:'OPTIONAL · US 10Y MARKET IN MYBOON'},
+'btc-etf-flows':{name:'Bitcoin ETF flows',category:'Crypto',updates:'8 updates',updated:'35m ago',latestTime:'14:45 IST',lede:'Spot Bitcoin ETFs swing between inflows and redemptions as macro bets shift.',
+ latestTitle:'Bitcoin ETFs post a $212M outflow',latestBody:'The second outflow in three sessions comes as Bitcoin slips below $68,000.',latestSource:'FARSIDE · DAILY FLOWS',
+ asset:{name:'Bitcoin',symbol:'BTC · USD',value:67840,decimals:0,prefix:'$',step:5,dir:'down',moves:[1.26,3.40,8.72,42.18],axis:['$69K','$68K','$67K']},secondary:SOL2,
+ events:[['13 NOV','14:45','ETF outflow reaches $212M','Redemptions are led by the two largest funds.','FARSIDE · 35M AGO'],['12 NOV','21:00','Inflows return for a day','Funds add $96M as yields dip after the data.','FARSIDE · 18H AGO'],['10 NOV','21:00','Three-day streak of inflows ends','Net flows total $540M over the streak.','BLOOMBERG · 3D AGO']],
+ news:[['Bloomberg','35m ago','Bitcoin ETFs shed $212 million as price slips'],['CoinDesk','6h ago','Institutional desks trim exposure ahead of the Fed'],['The Block','1d ago','ETF inflows rebound on softer inflation data']],
+ chain:[['BTC · ETF','ETF demand weakens','down','Five-day flows turn net negative.','HIGH CONFIDENCE · 4/5 SIGNALS'],['BTC · SPOT','Spot liquidity thins','down','Order-book depth is down 9% from last week.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['BTC · FUNDING','Perp funding turns neutral','down','Long positioning is no longer paying a premium.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['SOL · ALTS','Alts follow Bitcoin lower','down','Altcoin beta to BTC remains above 1.2.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Trade BTC perps',actionNote:'OPTIONAL · BTC PERPS IN MYBOON'},
+'memecoins':{name:'Memecoins',category:'Crypto',updates:'5 updates',updated:'50m ago',latestTime:'14:30 IST',lede:'Speculative tokens on Solana lead gains as trading volume climbs.',
+ latestTitle:'Solana memecoin volume doubles',latestBody:'DEX volume in memecoins reaches a three-month high as new launches pile in.',latestSource:'DEFILLAMA · SOLANA',
+ asset:{name:'Bonk',symbol:'BONK · USD',value:.00002840,decimals:8,prefix:'$',step:.00000008,dir:'up',moves:[6.40,14.20,31.80,88.40],axis:['$0.0000300','$0.0000280','$0.0000260']},secondary:SOL2,
+ events:[['13 NOV','14:30','Memecoin DEX volume doubles','Launchpad activity adds 1,900 new tokens in a day.','DEFILLAMA · 50M AGO'],['12 NOV','19:00','Large wallets rotate into memecoins','Smart wallets add $18M across five tokens.','ARKHAM · 20H AGO'],['10 NOV','12:00','Exchange lists three memecoins','New listings lift trading volume across the sector.','THE BLOCK · 3D AGO']],
+ news:[['The Block','50m ago','Solana memecoin trading volume doubles in 24 hours'],['CoinDesk','1d ago','Smart wallets rotate into memecoins as liquidity returns'],['Decrypt','3d ago','Exchange lists three new memecoins']],
+ chain:[['SOL · DEX VOLUME','On-chain activity rises','up','Memecoin trades drive a 38% jump in Solana DEX volume.','HIGH CONFIDENCE · 4/5 SIGNALS'],['SOL · FEES','Network fees rise','up','Priority fees reach a six-week high.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['MEME · LEVERAGE','Speculative leverage builds','up','Funding rates climb on the larger tokens.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['MEME · DRAWDOWN','Reversal risk grows','down','Past volume spikes were followed by 30% pullbacks.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open BONK market',actionNote:'OPTIONAL · BONK MARKET IN MYBOON'},
+'ai-regulation':{name:'AI regulation',category:'Policy',updates:'4 updates',updated:'2h ago',latestTime:'13:40 IST',lede:'New safety and export rules could change costs and timelines for large AI labs and chipmakers.',
+ latestTitle:'Draft rules cover frontier model testing',latestBody:'The proposal requires pre-release evaluations and incident reporting for the largest models.',latestSource:'POLITICO · WASHINGTON',
+ asset:{name:'Nasdaq 100',symbol:'NDX · INDEX',value:20184.60,decimals:2,prefix:'',step:1.2,dir:'down',moves:[.64,1.80,4.20,28.40],axis:['20,400','20,100','19,800']},secondary:BTC2,
+ events:[['13 NOV','13:40','Draft rules add testing requirements','Covered labs must share evaluation results with a federal office.','POLITICO · 2H AGO'],['11 NOV','17:20','Export curbs on advanced chips extended','New thresholds apply to cloud customers abroad.','COMMERCE · 2D AGO'],['09 NOV','10:00','EU begins AI Act enforcement review','Regulators publish guidance on high-risk systems.','EC · 4D AGO']],
+ news:[['Politico','2h ago','White House drafts testing rules for frontier AI models'],['Reuters','2d ago','US extends export limits on advanced AI chips'],['FT','4d ago','EU readies enforcement guidance for the AI Act']],
+ chain:[['US · DRAFT RULES','Compliance costs for large labs rise','up','Testing and reporting add months to some release cycles.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['NVDA · EXPORTS','Chip export revenue at risk','down','Extended curbs limit some overseas data-center sales.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['NDX · AI','AI equities lose momentum','down','Mega-cap AI names lag the index on the news.','LOW CONFIDENCE · 2/5 SIGNALS'],['BTC · RISK','Risk appetite cools','down','Growth stocks and crypto keep a positive correlation.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open Nasdaq 100 market',actionNote:'OPTIONAL · NASDAQ 100 MARKET IN MYBOON'},
+'bank-earnings':{name:'Bank earnings',category:'Equities',updates:'3 updates',updated:'3h ago',latestTime:'12:30 IST',lede:'Lenders report stable credit quality but guide to slower trading revenue as markets calm.',
+ latestTitle:'Large banks beat on lending income',latestBody:'Net interest income holds up while investment-banking fees improve for a third quarter.',latestSource:'REUTERS · NEW YORK',
+ asset:{name:'KBW Bank Index',symbol:'BKX · INDEX',value:118.60,decimals:2,prefix:'',step:.08,dir:'up',moves:[.92,2.40,5.10,24.60],axis:['119.5','118.5','117.5']},secondary:TY2,
+ events:[['13 NOV','12:30','Large banks beat on lending income','Net interest income exceeds forecasts at four of six lenders.','REUTERS · 3H AGO'],['12 NOV','19:00','Credit card delinquencies stabilize','Charge-off rates hold steady versus the prior quarter.','BLOOMBERG · 18H AGO'],['10 NOV','08:45','Dealmaking fees rise for a third quarter','Advisory pipelines point to a stronger year-end.','FT · 3D AGO']],
+ news:[['Reuters','3h ago','Big banks beat estimates on resilient lending income'],['Bloomberg','18h ago','Card delinquencies steady as consumers keep spending'],['FT','3d ago','Dealmaking rebounds as advisory pipelines fill']],
+ chain:[['BKX · EARNINGS','Bank profits beat estimates','up','Four of six lenders top consensus EPS.','HIGH CONFIDENCE · 4/5 SIGNALS'],['UST 10Y','Steeper curve helps margins','up','The 2s10s spread widens by 4 bp this week.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['CREDIT · SPREADS','Credit stress stays contained','down','High-yield spreads tighten two basis points.','MEDIUM CONFIDENCE · 2/5 SIGNALS'],['SPX · FINANCIALS','Financial stocks lead the index','up','The sector outperforms the S&P 500 by 0.6%.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open KBW Bank market',actionNote:'OPTIONAL · KBW BANK MARKET IN MYBOON'},
+'taiwan-chips':{name:'Taiwan chips',category:'Geopolitics',updates:'4 updates',updated:'1h ago',latestTime:'14:10 IST',lede:'Regional tension and export curbs keep supply risk for advanced chips on investors’ radar.',
+ latestTitle:'Naval drills near the strait raise supply worries',latestBody:'Shipping lanes stay open but insurers watch the exercises and chip stocks react.',latestSource:'REUTERS · TAIPEI',
+ asset:{name:'SOX semiconductors',symbol:'SOX · INDEX',value:5128.40,decimals:2,prefix:'',step:2.4,dir:'down',moves:[.88,2.30,4.80,31.20],axis:['5,200','5,120','5,040']},secondary:NDX2,
+ events:[['13 NOV','14:10','Naval drills begin near the strait','Exercises are announced for the next five days.','REUTERS · 1H AGO'],['11 NOV','11:00','Chipmakers brief on inventory buffers','Firms say stocks of key materials cover several months.','NIKKEI · 2D AGO'],['09 NOV','09:30','Export curbs tighten on equipment','New licensing rules apply to advanced tools.','COMMERCE · 4D AGO']],
+ news:[['Reuters','1h ago','Naval drills near Taiwan lift supply-chain concerns'],['Nikkei','2d ago','Chipmakers say inventories cover several months'],['Bloomberg','4d ago','Equipment curbs tighten on advanced chipmaking tools']],
+ chain:[['TSM · SUPPLY','Supply-chain risk premium rises','up','Insurers quote higher cover for regional shipments.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['SOX · SELLING','Semiconductor stocks fall','down','The index gives back 0.9% on the headline.','MEDIUM CONFIDENCE · 3/5 SIGNALS'],['NDX · AI','AI equities follow chips lower','down','Chip weights drag the Nasdaq 100.','LOW CONFIDENCE · 2/5 SIGNALS'],['BTC · RISK','Crypto moves with risk assets','down','Spot Bitcoin tracks the Nasdaq on headline days.','LOW CONFIDENCE · 1/5 SIGNALS']],action:'Open SOX market',actionNote:'OPTIONAL · SOX MARKET IN MYBOON'}
+});
+
+const PAGES=[
+ [['us-iran','large',['BRENT','+2.8%','up']],['fed-rates','tall',['US2Y','−6 bp','down']],['dxy','slim'],['vix','slim'],['sol-etf'],['trump-tariffs'],['btc-halving'],['oil-supply'],['china-stimulus'],['boj-policy']],
+ [['gold-record','tall',['XAU','+1.2%','up']],['ai-stocks','large',['NDX','−0.6%','down']],['jpy','slim'],['gbp','slim'],['eth-staking'],['stablecoins'],['russia-sanctions'],['opec-output'],['eurozone-cpi'],['treasury-auctions']],
+ [['btc-etf-flows','large',['BTC','−1.3%','down']],['memecoins','large',['BONK','+6.4%','up']],['ai-regulation','tall',['NDX','−0.6%','down']],['bank-earnings','tall',['BKX','+0.9%','up']],['taiwan-chips','tall',['SOX','−0.9%','down']]]
+];
+const ids=[].concat(...PAGES.map(p=>p.map(t=>t[0])));
+let currentTopic='us-iran',currentRange='1D',liveValue=data[currentTopic].asset.value,liveTick=0;
+const $=id=>document.getElementById(id);
+const reduce=matchMedia('(prefers-reduced-motion: reduce)');
+const directionIcon=dir=>`<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-${dir}"/></svg>`;
+const signed=(value,dir)=>`${dir==='up'?'+':'−'}${value.toFixed(2)}%`;
+const money=(value,decimals,prefix)=>`${prefix}${value.toLocaleString('en-US',{minimumFractionDigits:decimals,maximumFractionDigits:decimals})}`;
+function chartMarkup(asset,range){
+  const d=paths[asset.dir][range];
+  const xs=xLabels[range];
+  const color=asset.dir==='up'?'#06D6A0':'#EF476F';
+  const end=d.endsWith('306 28')?[306,28]:d.endsWith('306 20')?[306,20]:d.endsWith('306 116')?[306,116]:[306,124];
+  return `<line class="grid" x1="38" y1="20" x2="316" y2="20"/><line class="grid" x1="38" y1="70" x2="316" y2="70"/><line class="grid" x1="38" y1="120" x2="316" y2="120"/>
+  <text class="axis" x="0" y="24">${asset.axis[0]}</text><text class="axis" x="0" y="74">${asset.axis[1]}</text><text class="axis" x="0" y="124">${asset.axis[2]}</text>
+  <text class="axis" x="42" y="152">${xs[0]}</text><text class="axis" x="166" y="152" text-anchor="middle">${xs[1]}</text><text class="axis" x="316" y="152" text-anchor="end">${xs[2]}</text>
+  <path class="series" stroke="${color}" d="${d}"/><rect x="${end[0]-3}" y="${end[1]-3}" width="6" height="6" fill="${color}"/>`;
+}
+function secondaryMarkup(asset){
+  const color=asset.dir==='up'?'#06D6A0':'#EF476F';
+  return `<line class="grid" x1="38" y1="12" x2="316" y2="12"/><line class="grid" x1="38" y1="36" x2="316" y2="36"/><line class="grid" x1="38" y1="60" x2="316" y2="60"/>
+  <text class="axis" x="0" y="15">${asset.axis[0]}</text><text class="axis" x="0" y="39">${asset.axis[1]}</text><text class="axis" x="0" y="63">${asset.axis[2]}</text>
+  <text class="axis" x="44" y="84">09:00</text><text class="axis" x="316" y="84" text-anchor="end">15:00</text>
+  <path class="series" stroke="${color}" d="${sparkPaths[asset.dir]}"/>`;
+}
+function renderDetail(id){
+  const d=data[id];if(!d)return;
+  currentTopic=id;currentRange='1D';liveValue=d.asset.value;liveTick=0;
+  $('detailKicker').textContent=`${d.category} · ${d.updates}`;
+  $('detailUpdated').textContent=d.updated;
+  $('detailTitle').textContent=d.name;
+  $('detailLede').textContent=d.lede;
+  $('latestTime').textContent=d.latestTime;
+  $('latestTitle').textContent=d.latestTitle;
+  $('latestBody').textContent=d.latestBody;
+  $('latestSource').textContent=d.latestSource;
+  $('assetSymbol').textContent=d.asset.symbol;
+  $('assetName').textContent=d.asset.name;
+  $('assetPrice').textContent=money(liveValue,d.asset.decimals,d.asset.prefix);
+  $('assetChange').textContent=signed(d.asset.moves[0],d.asset.dir);
+  $('assetChange').className=`pct ${d.asset.dir}`;
+  $('secondarySymbol').textContent=d.secondary.symbol;
+  $('secondaryName').textContent=d.secondary.name;
+  $('secondaryPrice').textContent=d.secondary.price;
+  $('secondaryChange').textContent=d.secondary.change;
+  $('secondaryChange').className=`secondary-change ${d.secondary.dir}`;
+  $('mainChart').innerHTML=chartMarkup(d.asset,'1D');
+  $('mainChart').setAttribute('aria-label',`${d.asset.name} price chart, one day`);
+  $('secondaryChart').innerHTML=secondaryMarkup(d.secondary);
+  $('secondaryChart').setAttribute('aria-label',`${d.secondary.name} intraday price chart`);
+  document.querySelectorAll('#s-story [data-range]').forEach(b=>{const on=b.dataset.range==='1D';b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));});
+  $('eventList').innerHTML=d.events.map(e=>`<article class="card event-card"><div class="event-date"><span>${e[0]}</span><span>${e[1]}</span></div><div class="event-copy"><h3>${e[2]}</h3><p>${e[3]}</p><div class="event-meta">${e[4]}</div></div></article>`).join('');
+  $('newsCount').textContent=`${d.news.length} reports`;
+  $('newsList').innerHTML=d.news.map(n=>`<article class="card news-card"><h3>${n[2]}</h3><div class="news-meta"><span class="lab">${n[0]}</span><span class="lab">${n[1]}</span></div></article>`).join('');
+  $('chainList').innerHTML=d.chain.map((n,i)=>`${i?'<div class="chain-connector" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 1v12M4 9l4 4 4-4"/></svg></div>':''}<article class="card chain-node"><div class="chain-top"><span class="lab">${n[0]}</span><span class="chain-direction ${n[2]}">${directionIcon(n[2])}${n[2]==='up'?'UP':'DOWN'}</span></div><h3>${n[1]}</h3><p class="chain-evidence">${n[3]}</p><div class="chain-confidence lab">${n[4]}</div></article>`).join('');
+  $('primaryAction').textContent=d.action;
+  $('primaryAction').setAttribute('aria-label',`${d.action} for ${d.name}`);
+  $('actionNote').textContent=d.actionNote;
+  document.querySelectorAll('#sxPager .topic').forEach(b=>{const on=b.dataset.topic===id;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on));});
+  $('detailScroll').scrollTop=0;
+}
+/* ---- home: topic pager ---- */
+function sparkSvg(seed,dir){
+  let s=seed*9301+49297,pts=[];const n=12;
+  for(let i=0;i<n;i++){s=(s*9301+49297)%233280;const r=s/233280;const base=dir==='up'?26-i*(22/(n-1)):4+i*(22/(n-1));pts.push([i/(n-1)*120+1,Math.max(2,Math.min(26,base+(r-.5)*8))]);}
+  const c=dir==='up'?'#06D6A0':'#EF476F',l=pts[n-1];
+  return `<svg class="lead-spark" viewBox="0 0 122 28" preserveAspectRatio="none" fill="none" aria-hidden="true"><path d="M${pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')}" stroke="${c}" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter" vector-effect="non-scaling-stroke"/><rect x="${(l[0]-3).toFixed(1)}" y="${(l[1]-3).toFixed(1)}" width="6" height="6" fill="${c}"/></svg>`;
+}
+const pager=$('sxPager'),dots=$('sxDots');
+pager.innerHTML=PAGES.map((pg,pi)=>`<div class="sx-page" role="group" aria-label="Page ${pi+1} of ${PAGES.length}">`+pg.map(([id,kind,mk],ti)=>{
+  const d=data[id],dir=d.asset.dir,big=kind==='large'||kind==='tall',arrow=(mk?mk[2]:dir);
+  const short=d.updated.replace(' ago','');
+  const meta=kind==='slim'?short:d.updates;
+  const market=mk?`<span class="lead-market" aria-hidden="true">${sparkSvg(pi*13+ti+3,mk[2])}<span class="lead-market-label">${mk[0]} <b class="${mk[2]}">${mk[1]}</b></span></span>`:'';
+  return `<button class="topic ${kind||''}" type="button" data-go="story" data-topic="${id}" aria-pressed="${id===currentTopic}" aria-label="${d.name}, ${d.updates}${mk?', '+mk[0]+' '+mk[1]:''}, ${arrow==='up'?'rising':'falling'}"><span class="topic-name">${d.name}</span>${market}<span class="tile-meta">${meta}</span><span class="direction ${arrow}">${directionIcon(arrow)}</span></button>`;
+}).join('')+'</div>').join('');
+function pageIndex(){
+  const pages=pager.querySelectorAll('.sx-page');if(pager.scrollLeft>=pager.scrollWidth-pager.clientWidth-4)return pages.length-1;
+  let best=0,bd=1e9;pages.forEach((p,i)=>{const dd=Math.abs(p.offsetLeft-pager.scrollLeft);if(dd<bd){bd=dd;best=i}});return best;
+}
+function syncDots(){const i=pageIndex();dots.querySelectorAll('i').forEach((d,j)=>d.classList.toggle('on',j===i));dots.setAttribute('aria-label',`Page ${i+1} of ${PAGES.length}`);}
+pager.addEventListener('scroll',syncDots,{passive:true});
+function goPage(i){const p=pager.querySelectorAll('.sx-page')[i];if(p)pager.scrollTo({left:p.offsetLeft,behavior:reduce.matches?'auto':'smooth'});}
+/* mouse drag (touch and trackpad scroll natively) */
+(function(){let down=false,sx=0,sl=0,moved=false;
+  pager.addEventListener('pointerdown',e=>{if(e.pointerType!=='mouse'||e.button!==0)return;down=true;moved=false;sx=e.clientX;sl=pager.scrollLeft;});
+  addEventListener('pointermove',e=>{if(!down)return;const dx=e.clientX-sx;if(!moved&&Math.abs(dx)>5){moved=true;pager.classList.add('drag')}if(moved)pager.scrollLeft=sl-dx;});
+  addEventListener('pointerup',()=>{if(!down)return;down=false;if(moved){pager.classList.remove('drag');goPage(pageIndex())}});
+  pager.addEventListener('click',e=>{if(moved){e.stopPropagation();e.preventDefault();moved=false}},true);
+  pager.addEventListener('keydown',e=>{if(e.key==='ArrowRight')goPage(Math.min(PAGES.length-1,pageIndex()+1));if(e.key==='ArrowLeft')goPage(Math.max(0,pageIndex()-1));});
+})();
+/* tapping a tile loads that topic; the feed's own [data-go] router opens the detail screen */
+document.addEventListener('click',e=>{const t=e.target.closest('[data-topic]');if(t&&data[t.dataset.topic])renderDetail(t.dataset.topic);});
+$('s-story').querySelector('.segmented').addEventListener('click',e=>{
+  const b=e.target.closest('[data-range]');if(!b)return;
+  currentRange=b.dataset.range;
+  $('s-story').querySelectorAll('[data-range]').forEach(x=>{const on=x===b;x.classList.toggle('on',on);x.setAttribute('aria-pressed',String(on));});
+  const d=data[currentTopic];
+  $('mainChart').innerHTML=chartMarkup(d.asset,currentRange);
+  $('mainChart').setAttribute('aria-label',`${d.asset.name} price chart, ${currentRange}`);
+  $('assetChange').textContent=signed(d.asset.moves[['1D','1W','1M','1Y'].indexOf(currentRange)],d.asset.dir);
+});
+$('primaryAction').addEventListener('click',()=>{$('actionNote').textContent=`${data[currentTopic].action.toUpperCase()} · READY TO CONTINUE`;});
+renderDetail(currentTopic);
+const t0=Date.now();
+function updateLive(){const t=new Date(Date.UTC(2026,10,13,15,42,0)+(Date.now()-t0));$('liveLabel').textContent=`Live · ${String(t.getUTCHours()+0).padStart(2,'0')}:${String(t.getUTCMinutes()).padStart(2,'0')} IST`;}
+updateLive();
+if(!reduce.matches){
+  const deltas=[1,0,-1,1,1,0,-1,0];
+  setInterval(()=>{
+    const d=data[currentTopic];liveTick=(liveTick+1)%deltas.length;
+    liveValue=Math.max(0,liveValue+d.asset.step*deltas[liveTick]);
+    $('assetPrice').textContent=money(liveValue,d.asset.decimals,d.asset.prefix);
+    updateLive();
+  },4000);
+}
+
+})();
+</script><script src="proto-notes.js"></script></body></html>
