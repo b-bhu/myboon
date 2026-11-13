@@ -6,6 +6,7 @@ import { parseAnalystHandoff, type AnalystHandoff } from '@myboon/contracts';
 import pg from 'pg';
 
 import type { Jev, Llm } from './clients.js';
+import type { ClaimScope } from './config.js';
 import { decide, emOutcome, MAX_RECENT_ITEMS, signalImage, type DecideResult, type EntityRow, type RecentItem } from './decide.js';
 
 export type Claim = { decision_id: string; signal_id: string; claim_token: string; attempts: number };
@@ -95,13 +96,22 @@ export async function apply(pool: pg.Pool, c: Claim, h: AnalystHandoff, entity: 
   }
 }
 
-export type WorkerDeps = { pool: pg.Pool; llm: Llm; jev?: Jev; worker: string; limit: number; leaseSeconds?: number; log?: (e: Record<string, unknown>) => void };
+/** Claim SQL: no scope is the #593 atlas.em_claim (unchanged); a scope uses atlas.em_claim_scoped (#621). */
+export function claimQuery(scope: ClaimScope | undefined): string {
+  return scope === undefined
+    ? 'select * from atlas.em_claim($1, make_interval(secs => $2), 3)'
+    : 'select * from atlas.em_claim_scoped($1, $3, make_interval(secs => $2), 3)';
+}
+
+export type WorkerDeps = { pool: pg.Pool; llm: Llm; jev?: Jev; worker: string; limit: number; scope?: ClaimScope; leaseSeconds?: number; log?: (e: Record<string, unknown>) => void };
 
 export async function runOnce(deps: WorkerDeps): Promise<RunSummary> {
   const sum: RunSummary = { claimed: 0, story: 0, parked: 0, duplicate: 0, deferred_no_entity: 0, failed: 0, retry: 0, lost: 0 };
   const log = deps.log ?? ((e) => console.log(JSON.stringify(e)));
   for (let i = 0; i < deps.limit; i++) {
-    const r = await deps.pool.query<Claim>('select * from atlas.em_claim($1, make_interval(secs => $2), 3)', [deps.worker, deps.leaseSeconds ?? 300]);
+    const params: unknown[] = [deps.worker, deps.leaseSeconds ?? 300];
+    if (deps.scope !== undefined) params.push(deps.scope);
+    const r = await deps.pool.query<Claim>(claimQuery(deps.scope), params);
     const c = r.rows[0];
     if (!c) break;
     sum.claimed++;
