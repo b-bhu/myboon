@@ -265,6 +265,8 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     const now = (config.now ?? Date.now)()
     const since = now - ATLAS_WINDOW_MS
     const stats = new Map<string, { count: number, latest: number }>()
+    // Offset paging over a live table can skip or double-count a row if the entity
+    // manager writes mid-read. Harmless for an eligibility threshold at 1-2 pages.
     for (let page = 0; page < ATLAS_WINDOW_MAX_PAGES; page += 1) {
       const rows = await readRows<AtlasWindowRow>('entity_items', atlasWindowParams(since, now, page), 'atlas')
       if (rows.length === 0) break
@@ -280,6 +282,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
           stats.set(row.main_entity_id, { count: 1, latest: at })
         }
       }
+      if (rows.length < ATLAS_WINDOW_PAGE_SIZE) break
       if (page === ATLAS_WINDOW_MAX_PAGES - 1) {
         console.warn('[stories] Atlas 7-day window hit the page cap; counts use the newest rows only')
       }

@@ -501,7 +501,7 @@ test('Story Atlas list selects eligible active entities by latest development an
   })
   assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entities')).length, 1)
   assert.equal(requests.filter(({ url }) => url.pathname.endsWith('/entity_items') && !isWindowRead(url)).length, 6)
-  assert.equal(requests.filter(({ url }) => isWindowRead(url)).length, 2)
+  assert.equal(requests.filter(({ url }) => isWindowRead(url)).length, 1)
 })
 
 test('Story Atlas list returns an entity with a production UUIDv7 id', async () => {
