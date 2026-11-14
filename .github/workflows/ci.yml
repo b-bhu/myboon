@@ -246,6 +246,8 @@ jobs:
       - run: pnpm exec tsx scripts/check-ecosystem.ts
       - run: pnpm --filter @myboon/api test:internal
       - run: pnpm --filter @myboon/api test:phoenix
+      - run: pnpm --filter @myboon/api test:latest-updates
+      - run: pnpm --filter @myboon/api test:feed
       - run: pnpm --filter @myboon/api typecheck
 
   # Single stable PR check: green when every job that actually ran succeeded.
