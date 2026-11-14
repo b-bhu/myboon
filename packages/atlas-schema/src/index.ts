@@ -77,6 +77,17 @@ export async function applyAtlasSchema(url: string, opts: { before?: string } = 
   }
 }
 
+/** Poll until no other session is connected to `dbName`, or `timeoutMs` passes (then the caller forces the drop). */
+export async function waitForSessionsToClose(admin: pg.Client, dbName: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { rows } = await admin.query<{ n: number }>(
+      'select count(*)::int n from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()', [dbName]);
+    if (rows[0]!.n === 0 || Date.now() >= deadline) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 /** Create a fresh database on a LOCAL server, add the Supabase roles, apply every atlas migration. */
 export async function createThrowawayDatabase(
   adminUrl: string,
@@ -103,6 +114,11 @@ export async function createThrowawayDatabase(
       const a = new pg.Client({ connectionString: adminUrl });
       await a.connect();
       try {
+        // pg's Pool.end() resolves once its clients are removed from the pool, not once their
+        // sockets are closed. A `drop ... with (force)` that lands in that gap kills the backend
+        // under a client that is still closing, and the client emits an unhandled 57P01 error.
+        // Let closing sessions finish first; `force` stays as the fallback for a real leak.
+        await waitForSessionsToClose(a, name);
         await a.query(`drop database if exists ${name} with (force)`);
       } finally {
         await a.end();
