@@ -36,8 +36,8 @@ function emptyDb(): Db {
   return { latest_updates: [], latest_update_items: [], entities: [], entity_items: [], item_signals: [], signals: [] }
 }
 
-function addEntity(db: Db, id: string, slug: string, name: string, type = 'asset'): void {
-  db.entities.push({ id, slug, name, type })
+function addEntity(db: Db, id: string, slug: string, name: string, type = 'asset', status = 'active'): void {
+  db.entities.push({ id, slug, name, type, status })
 }
 
 function addItem(db: Db, id: string, title: string, occurredAt: string, signalId: string | null): void {
@@ -308,6 +308,52 @@ test('one entity with more live rows than a page does not crowd out other entiti
   assert.deepEqual(body.updates.map((update) => update.entitySlug), ['bitcoin', 'ethereum'])
   assert.equal(body.updates[1]!.id, other)
   assert.equal(seen.filter((read) => read.table === 'latest_updates').length, 2)
+})
+
+test('inactive entity: its live update is hidden, active entities still show, and the guard is sent to PostgREST', async () => {
+  const db = emptyDb()
+  seedBasics(db)
+  db.entities.find((row) => row.id === ENTITY_B)!.status = 'inactive'
+  addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00')
+  const hidden = addUpdate(db, ENTITY_B, 'live', '2026-11-14T03:00:00+00:00')
+  addUpdate(db, ENTITY_B, 'live', '2026-11-13T03:00:00+00:00')
+  const { fetchImpl, seen } = fakeRest(db)
+
+  const { status, body } = await get(routes(fetchImpl))
+
+  assert.equal(status, 200)
+  assert.deepEqual(body.updates.map((update) => update.entitySlug), ['bitcoin'])
+  assert.ok(!body.updates.some((update) => update.id === hidden))
+  const entityReads = seen.filter((read) => read.table === 'entities')
+  assert.ok(entityReads.length > 0)
+  for (const read of entityReads) assert.equal(read.params.get('status'), 'eq.active')
+})
+
+test('inactive entity does not use up a limit slot', async () => {
+  const db = emptyDb()
+  seedBasics(db)
+  db.entities.find((row) => row.id === ENTITY_B)!.status = 'inactive'
+  const active = addUpdate(db, ENTITY_A, 'live', '2026-11-13T01:00:00+00:00')
+  addUpdate(db, ENTITY_B, 'live', '2026-11-14T03:00:00+00:00')
+  const { fetchImpl } = fakeRest(db)
+
+  const { body } = await get(routes(fetchImpl), '/?limit=1')
+
+  assert.deepEqual(body.updates.map((update) => update.id), [active])
+})
+
+test('only inactive entities: empty list with HTTP 200', async () => {
+  const db = emptyDb()
+  seedBasics(db)
+  for (const row of db.entities) row.status = 'inactive'
+  addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00')
+  addUpdate(db, ENTITY_B, 'live', '2026-11-14T02:00:00+00:00')
+  const { fetchImpl } = fakeRest(db)
+
+  const { status, body } = await get(routes(fetchImpl))
+
+  assert.equal(status, 200)
+  assert.deepEqual(body, { updates: [] })
 })
 
 test('read-only: GET only, no body, allowed tables only, service-role headers on the atlas schema', async () => {
