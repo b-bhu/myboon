@@ -6,10 +6,11 @@ import { parseAnalystHandoff, type AnalystHandoff } from '@myboon/contracts';
 import pg from 'pg';
 
 import type { Jev, Llm } from './clients.js';
+import type { ClaimScope } from './config.js';
 import { decide, emOutcome, MAX_RECENT_ITEMS, signalImage, type DecideResult, type EntityRow, type RecentItem } from './decide.js';
 
 export type Claim = { decision_id: string; signal_id: string; claim_token: string; attempts: number };
-export type RunSummary = { claimed: number; story: number; parked: number; duplicate: number; deferred_no_entity: number; failed: number; retry: number; lost: number };
+export type RunSummary = { claimed: number; story: number; parked: number; duplicate: number; deferred_no_entity: number; parked_stale_no_entity: number; failed: number; retry: number; lost: number };
 
 const CA_PATH = fileURLToPath(new URL('../certs/supabase-prod-ca-2021.crt', import.meta.url));
 const LOCAL = new Set(['', 'localhost', '127.0.0.1', '::1', '[::1]']);
@@ -51,6 +52,25 @@ async function defer(db: Q, c: Claim): Promise<void> {
       where id = $1 and em_status = 'claimed' and em_claim_token = $2`,
     [c.decision_id, c.claim_token],
   );
+}
+
+/** #621: a no-entity handoff older than this is parked for good instead of being put back for another day. */
+export const NO_ENTITY_MAX_AGE_DAYS = 7;
+export const NO_ENTITY_PARK_REASON = `no entity after ${NO_ENTITY_MAX_AGE_DAYS} days: parked, not retried (#621)`;
+
+/**
+ * Terminal park for a stale no-entity handoff (same end state as atlas.em_finish(..., 'parked'), plus the reason in
+ * em_last_error). Only a live claim of ours, only a decision older than NO_ENTITY_MAX_AGE_DAYS. Returns true if parked.
+ */
+export async function parkStaleNoEntity(db: Q, c: Claim): Promise<boolean> {
+  const r = await db.query(
+    `update atlas.decisions set em_status = 'parked', em_last_error = $3, em_done_at = now(),
+            em_claim_token = null, em_claim_expires_at = null, em_claimed_by = null
+      where id = $1 and em_status = 'claimed' and em_claim_token = $2 and em_claim_expires_at >= now()
+        and created_at < now() - make_interval(days => $4)`,
+    [c.decision_id, c.claim_token, NO_ENTITY_PARK_REASON, NO_ENTITY_MAX_AGE_DAYS],
+  );
+  return r.rowCount === 1;
 }
 
 /** Apply one decision in one transaction, under the per-entity advisory lock. Returns false if the claim was lost. */
@@ -95,19 +115,61 @@ export async function apply(pool: pg.Pool, c: Claim, h: AnalystHandoff, entity: 
   }
 }
 
-export type WorkerDeps = { pool: pg.Pool; llm: Llm; jev?: Jev; worker: string; limit: number; leaseSeconds?: number; log?: (e: Record<string, unknown>) => void };
+export const MISSING_SCOPED_CLAIM_MSG =
+  'atlas.em_claim_scoped does not exist: apply supabase/migrations/20261113190000_atlas_em_claim_scoped.sql (DB Guy) before turning ENTITY_MANAGER_CLAIM_ENTITY_ONLY or ENTITY_MANAGER_RETRY_ENABLED on; nothing was claimed';
+
+/** #621 lag signal: age in minutes of the oldest ready pending handoff that has an entity, or null when there is none. */
+export async function oldestReadyEntityAgeMinutes(db: Q): Promise<number | null> {
+  const r = await db.query<{ age: string | null }>(
+    `select extract(epoch from now() - min(created_at)) / 60 as age from atlas.decisions
+      where em_status = 'pending' and em_next_attempt_at <= now() and jsonb_typeof(handoff -> 'entity') = 'object'`,
+  );
+  const age = r.rows[0]?.age;
+  return age == null ? null : Math.round(Number(age));
+}
+
+/** The WARN line when the oldest ready entity row is older than `thresholdMinutes`; null otherwise. */
+export function lagWarning(ageMinutes: number | null, thresholdMinutes: number): Record<string, unknown> | null {
+  if (ageMinutes === null || ageMinutes <= thresholdMinutes) return null;
+  return { level: 'warn', event: 'em_lag_warn', oldest_ready_entity_age_min: ageMinutes, threshold_min: thresholdMinutes, msg: `entity manager is ${ageMinutes} min behind (oldest ready row with an entity), over the ${thresholdMinutes} min threshold` };
+}
+
+/** Claim SQL: no scope is the #593 atlas.em_claim (unchanged); a scope uses atlas.em_claim_scoped (#621). */
+export function claimQuery(scope: ClaimScope | undefined): string {
+  return scope === undefined
+    ? 'select * from atlas.em_claim($1, make_interval(secs => $2), 3)'
+    : 'select * from atlas.em_claim_scoped($1, $3, make_interval(secs => $2), 3)';
+}
+
+export type WorkerDeps = { pool: pg.Pool; llm: Llm; jev?: Jev; worker: string; limit: number; scope?: ClaimScope; leaseSeconds?: number; log?: (e: Record<string, unknown>) => void };
 
 export async function runOnce(deps: WorkerDeps): Promise<RunSummary> {
-  const sum: RunSummary = { claimed: 0, story: 0, parked: 0, duplicate: 0, deferred_no_entity: 0, failed: 0, retry: 0, lost: 0 };
+  const sum: RunSummary = { claimed: 0, story: 0, parked: 0, duplicate: 0, deferred_no_entity: 0, parked_stale_no_entity: 0, failed: 0, retry: 0, lost: 0 };
   const log = deps.log ?? ((e) => console.log(JSON.stringify(e)));
   for (let i = 0; i < deps.limit; i++) {
-    const r = await deps.pool.query<Claim>('select * from atlas.em_claim($1, make_interval(secs => $2), 3)', [deps.worker, deps.leaseSeconds ?? 300]);
+    const params: unknown[] = [deps.worker, deps.leaseSeconds ?? 300];
+    if (deps.scope !== undefined) params.push(deps.scope);
+    let r: pg.QueryResult<Claim>;
+    try {
+      r = await deps.pool.query<Claim>(claimQuery(deps.scope), params);
+    } catch (e) {
+      // 42883 undefined_function: the flag is on but the migration is not applied. Stop the run once, loudly (never reached with the flag off).
+      if (deps.scope !== undefined && (e as { code?: string }).code === '42883') throw new Error(MISSING_SCOPED_CLAIM_MSG);
+      throw e;
+    }
     const c = r.rows[0];
     if (!c) break;
     sum.claimed++;
     try {
       const h = await loadHandoff(deps.pool, c.decision_id);
       if (!h.entity) {
+        // #621 retry run only (scope 'no_entity'): a row that has had no entity for 7 days is parked for good. With the flag off
+        // (no scope) nothing changes: every no-entity row is put back for a day as before.
+        if (deps.scope === 'no_entity' && (await parkStaleNoEntity(deps.pool, c))) {
+          sum.parked_stale_no_entity++;
+          log({ event: 'em_park_stale_no_entity', decision_id: c.decision_id, signal_id: c.signal_id });
+          continue;
+        }
         await defer(deps.pool, c);
         sum.deferred_no_entity++;
         continue;

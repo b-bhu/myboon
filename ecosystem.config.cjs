@@ -149,6 +149,7 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 //   myboon-scout            -> packages/scout-news/src/run.ts                (15-min cron tick)
 //   myboon-analyst          -> packages/analyst/src/run.ts                    (30-min cron tick)
 //   myboon-entity-manager   -> packages/entity-manager/src/run.ts             (tick at :00 and :45, flag off)
+//   myboon-entity-manager-retry -> packages/entity-manager/src/run-retry.ts   (once a day, flag off, #621)
 //   myboon-web-reader       -> packages/web-reader/src/run.ts                 (15-min cron tick)
 // Each V4 app runs one cycle and exits; PM2 starts it again at the next
 // cron tick (cron_restart). autorestart stays off so a failing run neither
@@ -245,6 +246,31 @@ const V4_APPS = [
       ENTITY_MANAGER_ENABLED: process.env.ENTITY_MANAGER_ENABLED ?? 'false',
       ENTITY_MANAGER_LLM_MODEL: 'glm-5.3-flash',
       ENTITY_MANAGER_MAX_PER_RUN: '20',
+      // #621 default off = claim in the same way as before (atlas.em_claim, batch 20). On: claim only handoffs
+      // with an entity, batch 60 (ENTITY_MANAGER_ENTITY_ONLY_MAX_PER_RUN). Needs the em_claim_scoped migration.
+      ENTITY_MANAGER_CLAIM_ENTITY_ONLY: process.env.ENTITY_MANAGER_CLAIM_ENTITY_ONLY ?? 'false',
+    },
+  },
+  {
+    // #621 the entity manager's daily retry of handoffs with no entity: one run a day at
+    // 20:15 UTC (1:45 AM IST), then exit. Off until ENTITY_MANAGER_RETRY_ENABLED=true; go live together with
+    // ENTITY_MANAGER_CLAIM_ENTITY_ONLY=true on myboon-entity-manager, after DB Guy's
+    // 20261113190000_atlas_em_claim_scoped migration is applied. Secrets come from the sourced .env.
+    name: 'myboon-entity-manager-retry',
+    script: 'src/run-retry.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/entity-manager`,
+    watch: false,
+    autorestart: false,
+    cron_restart: '15 20 * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'entity-manager-retry',
+      ENTITY_MANAGER_RETRY_ENABLED: process.env.ENTITY_MANAGER_RETRY_ENABLED ?? 'false',
+      ENTITY_MANAGER_LLM_MODEL: 'glm-5.3-flash',
+      ENTITY_MANAGER_RETRY_MAX_PER_RUN: '2000',
     },
   },
   {

@@ -31,6 +31,7 @@ jobs:
       tx_parser: ${{ steps.filter.outputs.tx_parser }}
       contracts: ${{ steps.filter.outputs.contracts }}
       analyst: ${{ steps.filter.outputs.analyst }}
+      entity_manager: ${{ steps.filter.outputs.entity_manager }}
       scout: ${{ steps.filter.outputs.scout }}
       api: ${{ steps.filter.outputs.api }}
       collectors: ${{ steps.filter.outputs.collectors }}
@@ -61,6 +62,8 @@ jobs:
               - 'packages/contracts/**'
             analyst:
               - 'packages/analyst/**'
+            entity_manager:
+              - 'packages/entity-manager/**'
             scout:
               - 'packages/scout-news/**'
             api:
@@ -163,6 +166,36 @@ jobs:
           ANALYST_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       - run: pnpm --filter @myboon/analyst typecheck
 
+  # #621 the entity manager package had no CI job. Unit tests, plus the em_claim_scoped suite on a local Postgres.
+  entity-manager:
+    needs: detect
+    if: needs.detect.outputs.full == 'true' || needs.detect.outputs.entity_manager == 'true' || needs.detect.outputs.shared == 'true' || needs.detect.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @myboon/entity-manager test
+        env:
+          EM_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      - run: pnpm --filter @myboon/entity-manager typecheck
+
   scout-news:
     needs: detect
     if: needs.detect.outputs.full == 'true' || needs.detect.outputs.scout == 'true' || needs.detect.outputs.shared == 'true' || needs.detect.outputs.contracts == 'true'
@@ -218,7 +251,7 @@ jobs:
   # Skipped jobs (paths not touched / filtered out) do not block it. No checkout
   # needed; it only inspects the needs results.
   ci-ok:
-    needs: [detect, secrets, migrations-lint, hybrid-expo, shared, tx-parser, contracts, analyst, scout-news, api]
+    needs: [detect, secrets, migrations-lint, hybrid-expo, shared, tx-parser, contracts, analyst, entity-manager, scout-news, api]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -234,6 +267,7 @@ jobs:
             tx-parser:${{ needs.tx-parser.result }} \
             contracts:${{ needs.contracts.result }} \
             analyst:${{ needs.analyst.result }} \
+            entity-manager:${{ needs.entity-manager.result }} \
             scout-news:${{ needs.scout-news.result }} \
             api:${{ needs.api.result }}; do
             job="${pair%%:*}"
