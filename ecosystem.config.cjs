@@ -151,6 +151,7 @@ const COLLECTOR_OWNERSHIP_ENV = Object.fromEntries(COLLECTOR_OWNERSHIP_KEYS
 //   myboon-entity-manager   -> packages/entity-manager/src/run.ts             (tick at :00 and :45, flag off)
 //   myboon-entity-manager-retry -> packages/entity-manager/src/run-retry.ts   (once a day, flag off, #621)
 //   myboon-web-reader       -> packages/web-reader/src/run.ts                 (15-min cron tick)
+//   myboon-latest-updates   -> packages/latest-updates/src/run.ts             (tick at :25 and :55, flag off, #634)
 // Each V4 app runs one cycle and exits; PM2 starts it again at the next
 // cron tick (cron_restart). autorestart stays off so a failing run neither
 // loops nor hides in backoff: the crash state is visible until the next
@@ -307,6 +308,31 @@ const V4_APPS = [
       WEB_READER_MAX_PARALLEL_BATCHES: '5',
       WEB_READER_BODY_CAP_CHARS: '4000',
       WEB_READER_HERMES_TIMEOUT_MS: '90000',
+    },
+  },
+  {
+    // #634 the latest-updates job (packages/latest-updates): one run per tick
+    // at :25 and :55, then exit. Secrets LATEST_UPDATES_DATABASE_URL and
+    // OLLAMA_API_KEY are never set in this file; they come from the sourced
+    // .env. The gate defaults to false in this file so a plain reload never
+    // enables it; the shell turns it on.
+    name: 'myboon-latest-updates',
+    script: 'src/run.ts',
+    interpreter: TSX,
+    cwd: `${ROOT}/packages/latest-updates`,
+    watch: false,
+    // One run per tick, then exit; autorestart must not fight that exit.
+    autorestart: false,
+    cron_restart: '25,55 * * * *',
+    max_memory_restart: '300M',
+    kill_timeout: 30000,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    env: {
+      V4_STAGE: 'latest-updates',
+      // Off-switch: set in the shell, never by editing this tracked file:
+      // `LATEST_UPDATES_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-latest-updates --update-env`
+      LATEST_UPDATES_ENABLED: process.env.LATEST_UPDATES_ENABLED ?? 'false',
+      LATEST_UPDATES_VISIBILITY: process.env.LATEST_UPDATES_VISIBILITY ?? 'dark',
     },
   },
 ]

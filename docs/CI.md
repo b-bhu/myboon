@@ -26,11 +26,16 @@ Every package job runs (all seven, plus the always-on jobs) when a PR touches an
 - `pnpm-lock.yaml`
 - root `package.json` (exact path, not subpackages)
 - `tsconfig.base.json`
+- `ecosystem.config.cjs`
+- `scripts/check-ecosystem.ts`
 - `.github/workflows/**`
 - `packages/atlas-schema/**`
 - `supabase/migrations/**`
 
-Any push to `main` is always a full run.
+Any push to `main` is always a full run. The two ecosystem paths are in the
+`full` list because every package job runs `pnpm exec tsx scripts/check-ecosystem.ts`
+before its own commands — an ecosystem-only PR must run the package jobs
+instead of skipping them all and still passing `ci-ok`.
 
 ## Always on
 

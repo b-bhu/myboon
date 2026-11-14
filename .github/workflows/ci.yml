@@ -50,6 +50,8 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'package.json'
               - 'tsconfig.base.json'
+              - 'ecosystem.config.cjs'
+              - 'scripts/check-ecosystem.ts'
               - '.github/workflows/**'
               - 'packages/atlas-schema/**'
               - 'supabase/migrations/**'
