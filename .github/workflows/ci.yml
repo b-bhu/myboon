@@ -32,6 +32,7 @@ jobs:
       contracts: ${{ steps.filter.outputs.contracts }}
       analyst: ${{ steps.filter.outputs.analyst }}
       entity_manager: ${{ steps.filter.outputs.entity_manager }}
+      latest_updates: ${{ steps.filter.outputs.latest_updates }}
       scout: ${{ steps.filter.outputs.scout }}
       api: ${{ steps.filter.outputs.api }}
       collectors: ${{ steps.filter.outputs.collectors }}
@@ -64,6 +65,8 @@ jobs:
               - 'packages/analyst/**'
             entity_manager:
               - 'packages/entity-manager/**'
+            latest_updates:
+              - 'packages/latest-updates/**'
             scout:
               - 'packages/scout-news/**'
             api:
@@ -197,6 +200,39 @@ jobs:
           EM_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       - run: pnpm --filter @myboon/entity-manager typecheck
 
+  # #631 latest updates: unit tests, plus the store and runner suite on a local Postgres with every atlas migration
+  # applied (the job connects as latest_update_worker), then the eval script on the frozen set (it says so and exits 0
+  # while labels.csv is blank).
+  latest-updates:
+    needs: detect
+    if: needs.detect.outputs.full == 'true' || needs.detect.outputs.latest_updates == 'true' || needs.detect.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @myboon/latest-updates test
+        env:
+          LU_TEST_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      - run: pnpm --filter @myboon/latest-updates typecheck
+      - run: pnpm --filter @myboon/latest-updates eval
+
   scout-news:
     needs: detect
     if: needs.detect.outputs.full == 'true' || needs.detect.outputs.scout == 'true' || needs.detect.outputs.shared == 'true' || needs.detect.outputs.contracts == 'true'
@@ -254,7 +290,7 @@ jobs:
   # Skipped jobs (paths not touched / filtered out) do not block it. No checkout
   # needed; it only inspects the needs results.
   ci-ok:
-    needs: [detect, secrets, migrations-lint, hybrid-expo, shared, tx-parser, contracts, analyst, entity-manager, scout-news, api]
+    needs: [detect, secrets, migrations-lint, hybrid-expo, shared, tx-parser, contracts, analyst, entity-manager, latest-updates, scout-news, api]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -271,6 +307,7 @@ jobs:
             contracts:${{ needs.contracts.result }} \
             analyst:${{ needs.analyst.result }} \
             entity-manager:${{ needs.entity-manager.result }} \
+            latest-updates:${{ needs.latest-updates.result }} \
             scout-news:${{ needs.scout-news.result }} \
             api:${{ needs.api.result }}; do
             job="${pair%%:*}"

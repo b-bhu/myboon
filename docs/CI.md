@@ -13,6 +13,7 @@ A PR runs lint/test/typecheck only for the packages it changes, plus packages th
 | tx-parser | `packages/tx-parser/**` |
 | contracts | `packages/contracts/**` |
 | analyst | `packages/analyst/**`, `packages/shared/**`, or `packages/contracts/**` |
+| latest-updates | `packages/latest-updates/**` or `packages/shared/**` (unit tests, the store and runner suite on a postgres:17 service, typecheck, and the eval script on the frozen set) |
 | scout-news | `packages/scout-news/**`, `packages/shared/**`, or `packages/contracts/**` |
 | api | `packages/api/**`, `packages/shared/**`, or `packages/collectors/**` |
 

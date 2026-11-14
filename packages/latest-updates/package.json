@@ -1,0 +1,24 @@
+{
+  "name": "@myboon/latest-updates",
+  "version": "0.1.0",
+  "description": "#631 latest updates: the editor job that writes, holds or skips one latest update per entity (part of #623)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "once": "tsx src/run.ts",
+    "eval": "tsx src/eval.ts"
+  },
+  "dependencies": {
+    "@myboon/shared": "workspace:*",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/pg": "8.15.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
