@@ -1,0 +1,130 @@
+[
+ {
+  "slug": "adobe",
+  "stratum": "D_no_prior"
+ },
+ {
+  "slug": "ai-industry",
+  "stratum": "B_no_number"
+ },
+ {
+  "slug": "alibaba",
+  "stratum": "B_no_number"
+ },
+ {
+  "slug": "apple",
+  "stratum": "B_no_number"
+ },
+ {
+  "slug": "australia",
+  "stratum": "B_no_number"
+ },
+ {
+  "slug": "binance",
+  "stratum": "C_many_items"
+ },
+ {
+  "slug": "bitcoin",
+  "stratum": "C_many_items"
+ },
+ {
+  "slug": "bitdeer",
+  "stratum": "C_many_items"
+ },
+ {
+  "slug": "blackrock",
+  "stratum": "E_seeded_random"
+ },
+ {
+  "slug": "cftc",
+  "stratum": "B_no_number"
+ },
+ {
+  "slug": "christopher-waller",
+  "stratum": "D_no_prior"
+ },
+ {
+  "slug": "compound-foundation",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "crude-oil-wti",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "hive-digital-technologies",
+  "stratum": "C_many_items"
+ },
+ {
+  "slug": "houthi-movement",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "huobi-htx",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "hyperscale-data",
+  "stratum": "E_seeded_random"
+ },
+ {
+  "slug": "japan-government-bond-market",
+  "stratum": "D_no_prior"
+ },
+ {
+  "slug": "jensen-huang",
+  "stratum": "E_seeded_random"
+ },
+ {
+  "slug": "kospi",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "machi",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "microsoft",
+  "stratum": "E_seeded_random"
+ },
+ {
+  "slug": "monetary-authority-of-singapore",
+  "stratum": "E_seeded_random"
+ },
+ {
+  "slug": "nvidia",
+  "stratum": "C_many_items"
+ },
+ {
+  "slug": "russia-ukraine-war",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "solana",
+  "stratum": "B_no_number"
+ },
+ {
+  "slug": "sp-500",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "spot-eth-altcoin-etfs",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "u-s-stocks",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "united-states",
+  "stratum": "B_no_number"
+ },
+ {
+  "slug": "vitalik-buterin",
+  "stratum": "A_high_overlap"
+ },
+ {
+  "slug": "zksync",
+  "stratum": "A_high_overlap"
+ }
+]
