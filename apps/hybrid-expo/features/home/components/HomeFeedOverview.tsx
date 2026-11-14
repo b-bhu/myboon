@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Animated, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View, type ScrollViewProps } from 'react-native';
 import { useRouter } from 'expo-router';
 import { HomeCalendarCard } from '@/features/feed/components/HomeCalendarCard';
+import { LatestUpdateSegment } from '@/features/feed/components/LatestUpdateSegment';
 import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
 import { TodayCarousel } from '@/features/feed/components/StoryCarousel';
 import { TopicMosaic } from '@/features/feed/components/TopicMosaic';
@@ -13,7 +14,9 @@ import { todayLabel, todaySlides } from '@/features/feed/feed-home';
 import { feedBandHeights, sectionFailureTitle } from '@/features/feed/feed-mosaic';
 import { FEED_COLORS as color } from '@/features/feed/feed.constants';
 import type { FeedItem } from '@/features/feed/feed.types';
+import { EMPTY_LATEST_UPDATES, LATEST_UPDATE_LOADING_GRACE_MS } from '@/features/feed/latest-updates';
 import { useFeedSection } from '@/features/feed/use-feed-section';
+import { useLatestUpdates } from '@/features/feed/use-latest-updates';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 
 const fetchToday = (signal: AbortSignal) => fetchFeedItems(5, 0, { signal });
@@ -27,16 +30,30 @@ export function HomeFeedOverview({ active, onScroll }: {
   const [columnHeight, setColumnHeight] = useState(0);
   const stories = useFeedSection(fetchSelectedStories, active);
   const reports = useFeedSection(fetchToday, active);
+  const latest = useLatestUpdates(active);
   const [refreshing, setRefreshing] = useState(false);
   const [report, setReport] = useState<NarrativeSheetItem | null>(null);
+  const [holdLatestLoading, setHoldLatestLoading] = useState(true);
   const [, setClock] = useState(0);
-  useFocusedAppStateInterval(() => Promise.all([stories.load(true), reports.load(true)]).then(() => undefined), 5 * 60_000, { enabled: active });
+  useEffect(() => {
+    if (latest.view.status !== 'loading') {
+      setHoldLatestLoading(false);
+      return undefined;
+    }
+    if (!active) return undefined;
+    setHoldLatestLoading(true);
+    const timer = setTimeout(() => setHoldLatestLoading(false), LATEST_UPDATE_LOADING_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [active, latest.view.status]);
+  useFocusedAppStateInterval(() => Promise.all([
+    stories.load(true), reports.load(true), latest.load(true),
+  ]).then(() => undefined), 5 * 60_000, { enabled: active });
   useFocusedAppStateInterval(() => setClock((value) => value + 1), 60_000, { enabled: active });
   const refresh = useCallback(async () => {
     setRefreshing(true);
-    try { await Promise.all([stories.load(), reports.load()]); }
+    try { await Promise.all([stories.load(), reports.load(), latest.load()]); }
     finally { setRefreshing(false); }
-  }, [stories.load, reports.load]);
+  }, [stories.load, reports.load, latest.load]);
   const openReport = (item: FeedItem) => setReport({
     id: item.id, title: item.headline, summary: item.description, createdAt: item.createdAt,
     imageUrl: item.imageUrl, imageKind: item.imageKind, imageAttribution: item.imageAttribution,
@@ -45,20 +62,26 @@ export function HomeFeedOverview({ active, onScroll }: {
   const bands = feedBandHeights(windowHeight, columnHeight);
   const now = new Date();
   const storyList = stories.data ?? [];
+  // A fast empty response never opens the locked Feed. The skeleton only
+  // appears when the request is still going after the short grace.
+  const latestView = latest.view.status === 'loading' && (!active || holdLatestLoading)
+    ? EMPTY_LATEST_UPDATES
+    : latest.view;
+  const latestOpen = latestView.status !== 'empty';
 
   return <>
     <Animated.ScrollView
       style={styles.scroller}
-      scrollEnabled={false}
+      scrollEnabled={latestOpen}
       showsVerticalScrollIndicator={false}
       contentInsetAdjustmentBehavior="automatic"
       scrollEventThrottle={16}
       onScroll={onScroll}
       onLayout={(event) => setColumnHeight(event.nativeEvent.layout.height)}
-      contentContainerStyle={[styles.content, columnHeight > 0 && { height: columnHeight }]}
+      contentContainerStyle={[styles.content, !latestOpen && columnHeight > 0 && { height: columnHeight }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={color.accent} colors={[color.accent]} />}
     >
-      <View style={[styles.column, columnHeight > 0 && { height: columnHeight }]}>
+      <View style={[styles.column, !latestOpen && columnHeight > 0 && { height: columnHeight }]}>
         <View style={[styles.today, { height: bands.today }]}>
           <View style={styles.todayHeader}>
             <View style={styles.todayHeading}>
@@ -94,13 +117,14 @@ export function HomeFeedOverview({ active, onScroll }: {
           {storyList.length ? <TopicMosaic stories={storyList} now={now} /> : null}
           {stories.data && !storyList.length && !stories.error ? <FeedSectionState title="No developing stories" text="New stories will appear here." /> : null}
         </View>
-        <View style={styles.calendar}>
+        <LatestUpdateSegment presentation={latestView} onRetry={latest.retry} now={now} />
+        <View style={[styles.calendar, latestOpen && styles.calendarOpen]}>
           <HomeCalendarCard active={active} />
         </View>
       </View>
     </Animated.ScrollView>
-    {stories.pending || reports.pending ? (
-      <Pressable accessibilityRole="button" accessibilityLabel="Apply new Feed updates" onPress={() => { stories.apply(); reports.apply(); }} style={styles.newUpdates}>
+    {stories.pending || reports.pending || latest.pending ? (
+      <Pressable accessibilityRole="button" accessibilityLabel="Apply new Feed updates" onPress={() => { stories.apply(); reports.apply(); latest.apply(); }} style={styles.newUpdates}>
         <Text style={styles.action}>New updates ↓</Text>
       </Pressable>
     ) : null}
@@ -123,6 +147,7 @@ const styles = StyleSheet.create({
   mosaic: { overflow: 'hidden' },
   mosaicEmpty: { justifyContent: 'center' },
   calendar: { flex: 1, minHeight: 96 },
+  calendarOpen: { flexGrow: 0, flex: 0, minHeight: 120 },
   newUpdates: { position: 'absolute', bottom: 12, left: 16, right: 16, zIndex: 2, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: color.border, borderRadius: 8, backgroundColor: color.card },
   action: { color: color.accent, fontSize: 12, fontWeight: '700' },
 });
