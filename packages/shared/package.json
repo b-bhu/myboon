@@ -45,6 +45,11 @@
       "default": "./src/supabase-client.ts",
       "types": "./src/supabase-client.ts"
     },
+    "./latest-updates": {
+      "import": "./src/latest-updates/index.ts",
+      "default": "./src/latest-updates/index.ts",
+      "types": "./src/latest-updates/index.ts"
+    },
     "./v4-runtime": {
       "import": "./src/v4-runtime/index.ts",
       "default": "./src/v4-runtime/index.ts",
@@ -63,7 +68,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts && tsx src/tokens/types.test.ts && tsx src/supabase-client.test.ts && tsx src/v4-runtime/health.test.ts && tsx src/v4-runtime/atlas-health-source.test.ts && tsx src/v4-runtime/scout-gate.test.ts && tsx src/v4-runtime/stage-gate.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts && tsx src/tokens/types.test.ts && tsx src/supabase-client.test.ts && tsx src/v4-runtime/health.test.ts && tsx src/v4-runtime/atlas-health-source.test.ts && tsx src/v4-runtime/scout-gate.test.ts && tsx src/v4-runtime/stage-gate.test.ts && tsx src/latest-updates/types.test.ts",
     "test:meteora": "tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts",
     "test:spot": "tsx src/spot/data-api.test.ts",
     "test:mobile-signing": "tsx src/pacific/mobile-signing.test.ts"
